@@ -5,6 +5,10 @@ import {
   BUILD_PACKAGE_EXPLICIT_RETIREMENTS,
   buildPackageRetirementDisposition,
 } from './build-package-retirements.mjs';
+import {
+  SUBMISSION_EXPLICIT_RETIREMENTS,
+  submissionRetirementDisposition,
+} from './submission-retirements.mjs';
 
 const COMPLETE_PLUGIN_DESCRIPTORS = new Set([
   'plugins/core/compile/plugin.yaml',
@@ -61,6 +65,10 @@ const REFEREE_REVISION_DIFFERENTIAL_SOURCE = 'paperctl_modules/referee_revision.
 
 const BUILD_PACKAGE_RETIREMENT_PATHS = new Set(
   BUILD_PACKAGE_EXPLICIT_RETIREMENTS.map((entry) => entry.sourcePath),
+);
+
+const SUBMISSION_RETIREMENT_PATHS = new Set(
+  SUBMISSION_EXPLICIT_RETIREMENTS.map((entry) => entry.sourcePath),
 );
 
 const TARGETS = Object.freeze({
@@ -125,6 +133,12 @@ function sourceSymbols(file, relative) {
 }
 
 function targetFor(entry) {
+  if (SUBMISSION_RETIREMENT_PATHS.has(entry.path)) {
+    return {
+      path: 'hepta-paper-workspace/migration/submission-retirements.mjs',
+      symbols: ['SUBMISSION_EXPLICIT_RETIREMENTS', 'submissionRetirementDisposition'],
+    };
+  }
   if (BUILD_PACKAGE_RETIREMENT_PATHS.has(entry.path)) {
     return {
       path: 'hepta-paper-workspace/migration/build-package-retirements.mjs',
@@ -203,6 +217,7 @@ export function buildP1MatrixCandidates({
   refereeRevisionDifferentialTestHash,
   refereeRetirementTestHash,
   buildPackageRetirementTestHash,
+  submissionBoundaryTestHash,
 } = {}) {
   return entries
     .filter((entry) => entry.priority === 'P1')
@@ -219,11 +234,13 @@ export function buildP1MatrixCandidates({
       const retiredRefereeReviseSurface = REFEREE_REVISE_EXPLICIT_RETIREMENTS.has(entry.path);
       const differentialRefereeRevision = entry.path === REFEREE_REVISION_DIFFERENTIAL_SOURCE;
       const retiredBuildPackageSurface = BUILD_PACKAGE_RETIREMENT_PATHS.has(entry.path);
+      const retiredSubmissionSurface = SUBMISSION_RETIREMENT_PATHS.has(entry.path);
       const completeReplacement = completePluginReplacement
         || retiredVenueResolveSurface
         || retiredRefereeReviseSurface
         || differentialRefereeRevision
-        || retiredBuildPackageSurface;
+        || retiredBuildPackageSurface
+        || retiredSubmissionSurface;
       return {
         id: candidateId(entry),
         priority: 'P1',
@@ -236,7 +253,9 @@ export function buildP1MatrixCandidates({
               ? 'port_referee_revision_decision_selectors_with_exact_differential_parity'
               : retiredBuildPackageSurface
                 ? buildPackageRetirementDisposition(entry.path).disposition
-                : entry.migrationAction,
+                : retiredSubmissionSurface
+                  ? submissionRetirementDisposition(entry.path).disposition
+                  : entry.migrationAction,
         semanticScope: completeReplacement
           ? {
             status: 'complete',
@@ -268,6 +287,13 @@ export function buildP1MatrixCandidates({
                       'no process launches, network imports, or external actions',
                       'legacy local writer constrained to runner-contract artifacts and absent from hepta production references',
                     ]
+                    : retiredSubmissionSurface
+                      ? [
+                        'all public legacy source symbols inventoried',
+                        'legacy schema, synthetic input authority, local bundle writer, and direct mutation paths explicitly retired',
+                        'native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries',
+                        'no legacy process launches, network imports, or hepta production references',
+                      ]
                     : [
                 completePluginDescriptor
                   ? 'legacy plugin descriptor identity and execution policy'
@@ -331,7 +357,13 @@ export function buildP1MatrixCandidates({
                     path: 'migration/tests/p1-build-package-retirements.mjs',
                     sha256: buildPackageRetirementTestHash,
                   }]
-                  : [],
+                  : retiredSubmissionSurface
+                    ? [{
+                      id: 'p1-submission-lifecycle-boundaries',
+                      path: 'migration/tests/p1-submission-boundaries.mjs',
+                      sha256: submissionBoundaryTestHash,
+                    }]
+                    : [],
       };
     });
 }

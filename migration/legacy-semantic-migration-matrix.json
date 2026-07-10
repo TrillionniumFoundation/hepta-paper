@@ -170,19 +170,16 @@
       "id": "p1-paperctl-modules-external-submission-handoff-bundle-py-c0fbdde67313",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/submission",
-      "migrationAction": "extract_external_lifecycle_contracts_without_live_action",
+      "migrationAction": "retired_legacy_local_handoff_bundle_writer",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "legacy schema, synthetic input authority, local bundle writer, and direct mutation paths explicitly retired",
+          "native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries",
+          "no legacy process launches, network imports, or hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/external_submission_handoff_bundle.py",
@@ -201,13 +198,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/submission/index.mjs",
-        "sha256": "b8ce155d67161e5e9c785ad62515f1c4943125a06f3935edb5cefcfbde6d9efa",
+        "path": "hepta-paper-workspace/migration/submission-retirements.mjs",
+        "sha256": "af7b0642d7b4c78d9d31547b3075160ffb3c4f865752c78f21234cb8776b9a25",
         "symbols": [
-          "buildSubmissionLifecycle"
+          "SUBMISSION_EXPLICIT_RETIREMENTS",
+          "submissionRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-submission-lifecycle-boundaries",
+          "path": "migration/tests/p1-submission-boundaries.mjs",
+          "sha256": "c4efdf903285064dadbf6d30f295b641608065cd249a8cf19d177e6d0b87f066"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-artifact-maturity-queue-py-427df38e9576",
@@ -252,19 +256,16 @@
       "id": "p1-paperctl-modules-paper-production-external-auth-boundary-py-0b6e83d6d7ec",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/submission",
-      "migrationAction": "extract_external_lifecycle_contracts_without_live_action",
+      "migrationAction": "retired_legacy_submission_schema_superseded_by_native_lifecycle",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "legacy schema, synthetic input authority, local bundle writer, and direct mutation paths explicitly retired",
+          "native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries",
+          "no legacy process launches, network imports, or hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_external_auth_boundary.py",
@@ -274,31 +275,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/submission/index.mjs",
-        "sha256": "b8ce155d67161e5e9c785ad62515f1c4943125a06f3935edb5cefcfbde6d9efa",
+        "path": "hepta-paper-workspace/migration/submission-retirements.mjs",
+        "sha256": "af7b0642d7b4c78d9d31547b3075160ffb3c4f865752c78f21234cb8776b9a25",
         "symbols": [
-          "buildSubmissionLifecycle"
+          "SUBMISSION_EXPLICIT_RETIREMENTS",
+          "submissionRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-submission-lifecycle-boundaries",
+          "path": "migration/tests/p1-submission-boundaries.mjs",
+          "sha256": "c4efdf903285064dadbf6d30f295b641608065cd249a8cf19d177e6d0b87f066"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-external-lifecycle-capstone-py-78d33072f402",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/submission",
-      "migrationAction": "extract_external_lifecycle_contracts_without_live_action",
+      "migrationAction": "retired_generated_submission_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "legacy schema, synthetic input authority, local bundle writer, and direct mutation paths explicitly retired",
+          "native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries",
+          "no legacy process launches, network imports, or hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_external_lifecycle_capstone.py",
@@ -309,31 +314,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/submission/index.mjs",
-        "sha256": "b8ce155d67161e5e9c785ad62515f1c4943125a06f3935edb5cefcfbde6d9efa",
+        "path": "hepta-paper-workspace/migration/submission-retirements.mjs",
+        "sha256": "af7b0642d7b4c78d9d31547b3075160ffb3c4f865752c78f21234cb8776b9a25",
         "symbols": [
-          "buildSubmissionLifecycle"
+          "SUBMISSION_EXPLICIT_RETIREMENTS",
+          "submissionRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-submission-lifecycle-boundaries",
+          "path": "migration/tests/p1-submission-boundaries.mjs",
+          "sha256": "c4efdf903285064dadbf6d30f295b641608065cd249a8cf19d177e6d0b87f066"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-external-lifecycle-predispatch-authoring-surface-matrix-py-304f3d56205a",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/submission",
-      "migrationAction": "extract_external_lifecycle_contracts_without_live_action",
+      "migrationAction": "retired_generated_submission_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "legacy schema, synthetic input authority, local bundle writer, and direct mutation paths explicitly retired",
+          "native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries",
+          "no legacy process launches, network imports, or hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_external_lifecycle_predispatch_authoring_surface_matrix.py",
@@ -344,31 +353,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/submission/index.mjs",
-        "sha256": "b8ce155d67161e5e9c785ad62515f1c4943125a06f3935edb5cefcfbde6d9efa",
+        "path": "hepta-paper-workspace/migration/submission-retirements.mjs",
+        "sha256": "af7b0642d7b4c78d9d31547b3075160ffb3c4f865752c78f21234cb8776b9a25",
         "symbols": [
-          "buildSubmissionLifecycle"
+          "SUBMISSION_EXPLICIT_RETIREMENTS",
+          "submissionRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-submission-lifecycle-boundaries",
+          "path": "migration/tests/p1-submission-boundaries.mjs",
+          "sha256": "c4efdf903285064dadbf6d30f295b641608065cd249a8cf19d177e6d0b87f066"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-external-lifecycle-readiness-matrix-py-545b45315bd4",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/submission",
-      "migrationAction": "extract_external_lifecycle_contracts_without_live_action",
+      "migrationAction": "retired_generated_submission_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "legacy schema, synthetic input authority, local bundle writer, and direct mutation paths explicitly retired",
+          "native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries",
+          "no legacy process launches, network imports, or hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_external_lifecycle_readiness_matrix.py",
@@ -379,13 +392,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/submission/index.mjs",
-        "sha256": "b8ce155d67161e5e9c785ad62515f1c4943125a06f3935edb5cefcfbde6d9efa",
+        "path": "hepta-paper-workspace/migration/submission-retirements.mjs",
+        "sha256": "af7b0642d7b4c78d9d31547b3075160ffb3c4f865752c78f21234cb8776b9a25",
         "symbols": [
-          "buildSubmissionLifecycle"
+          "SUBMISSION_EXPLICIT_RETIREMENTS",
+          "submissionRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-submission-lifecycle-boundaries",
+          "path": "migration/tests/p1-submission-boundaries.mjs",
+          "sha256": "c4efdf903285064dadbf6d30f295b641608065cd249a8cf19d177e6d0b87f066"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-final-settlement-gate-py-2c97c07f4a96",
@@ -471,19 +491,16 @@
       "id": "p1-paperctl-modules-paper-production-post-action-runtime-chain-regression-py-3a28b1e72471",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/submission",
-      "migrationAction": "extract_external_lifecycle_contracts_without_live_action",
+      "migrationAction": "retired_generated_submission_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "legacy schema, synthetic input authority, local bundle writer, and direct mutation paths explicitly retired",
+          "native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries",
+          "no legacy process launches, network imports, or hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_post_action_runtime_chain_regression.py",
@@ -494,13 +511,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/submission/index.mjs",
-        "sha256": "b8ce155d67161e5e9c785ad62515f1c4943125a06f3935edb5cefcfbde6d9efa",
+        "path": "hepta-paper-workspace/migration/submission-retirements.mjs",
+        "sha256": "af7b0642d7b4c78d9d31547b3075160ffb3c4f865752c78f21234cb8776b9a25",
         "symbols": [
-          "buildSubmissionLifecycle"
+          "SUBMISSION_EXPLICIT_RETIREMENTS",
+          "submissionRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-submission-lifecycle-boundaries",
+          "path": "migration/tests/p1-submission-boundaries.mjs",
+          "sha256": "c4efdf903285064dadbf6d30f295b641608065cd249a8cf19d177e6d0b87f066"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-closure-prerequisite-remediation-matrix-capstone-py-82c84d97103e",
@@ -623,19 +647,16 @@
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-evidence-candidate-handoff-preflight-capstone-py-7a1b8f528391",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/submission",
-      "migrationAction": "extract_external_lifecycle_contracts_without_live_action",
+      "migrationAction": "retired_generated_submission_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "legacy schema, synthetic input authority, local bundle writer, and direct mutation paths explicitly retired",
+          "native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries",
+          "no legacy process launches, network imports, or hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_evidence_candidate_handoff_preflight_capstone.py",
@@ -646,13 +667,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/submission/index.mjs",
-        "sha256": "b8ce155d67161e5e9c785ad62515f1c4943125a06f3935edb5cefcfbde6d9efa",
+        "path": "hepta-paper-workspace/migration/submission-retirements.mjs",
+        "sha256": "af7b0642d7b4c78d9d31547b3075160ffb3c4f865752c78f21234cb8776b9a25",
         "symbols": [
-          "buildSubmissionLifecycle"
+          "SUBMISSION_EXPLICIT_RETIREMENTS",
+          "submissionRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-submission-lifecycle-boundaries",
+          "path": "migration/tests/p1-submission-boundaries.mjs",
+          "sha256": "c4efdf903285064dadbf6d30f295b641608065cd249a8cf19d177e6d0b87f066"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-material-evidence-candidate-validation-capstone-py-b58d21ad9c24",
@@ -1011,19 +1039,16 @@
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-human-input-artifact-completeness-value-lint-handoff-intake-signature-marker-verifier-capstone-py-e81010156d2a",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/submission",
-      "migrationAction": "extract_external_lifecycle_contracts_without_live_action",
+      "migrationAction": "retired_generated_submission_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "legacy schema, synthetic input authority, local bundle writer, and direct mutation paths explicitly retired",
+          "native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries",
+          "no legacy process launches, network imports, or hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_operator_real_source_human_input_artifact_completeness_value_lint_handoff_intake_signature_marker_verifier_capstone.py",
@@ -1034,31 +1059,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/submission/index.mjs",
-        "sha256": "b8ce155d67161e5e9c785ad62515f1c4943125a06f3935edb5cefcfbde6d9efa",
+        "path": "hepta-paper-workspace/migration/submission-retirements.mjs",
+        "sha256": "af7b0642d7b4c78d9d31547b3075160ffb3c4f865752c78f21234cb8776b9a25",
         "symbols": [
-          "buildSubmissionLifecycle"
+          "SUBMISSION_EXPLICIT_RETIREMENTS",
+          "submissionRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-submission-lifecycle-boundaries",
+          "path": "migration/tests/p1-submission-boundaries.mjs",
+          "sha256": "c4efdf903285064dadbf6d30f295b641608065cd249a8cf19d177e6d0b87f066"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-human-input-artifact-manifest-checksum-handoff-signature-quarantine-capstone-py-f2f5679fcea6",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/submission",
-      "migrationAction": "extract_external_lifecycle_contracts_without_live_action",
+      "migrationAction": "retired_generated_submission_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "legacy schema, synthetic input authority, local bundle writer, and direct mutation paths explicitly retired",
+          "native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries",
+          "no legacy process launches, network imports, or hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_operator_real_source_human_input_artifact_manifest_checksum_handoff_signature_quarantine_capstone.py",
@@ -1069,13 +1098,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/submission/index.mjs",
-        "sha256": "b8ce155d67161e5e9c785ad62515f1c4943125a06f3935edb5cefcfbde6d9efa",
+        "path": "hepta-paper-workspace/migration/submission-retirements.mjs",
+        "sha256": "af7b0642d7b4c78d9d31547b3075160ffb3c4f865752c78f21234cb8776b9a25",
         "symbols": [
-          "buildSubmissionLifecycle"
+          "SUBMISSION_EXPLICIT_RETIREMENTS",
+          "submissionRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-submission-lifecycle-boundaries",
+          "path": "migration/tests/p1-submission-boundaries.mjs",
+          "sha256": "c4efdf903285064dadbf6d30f295b641608065cd249a8cf19d177e6d0b87f066"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-human-input-artifact-source-path-value-provenance-checksum-signature-identity-verifier-capstone-py-842f59b44d93",
@@ -1120,19 +1156,16 @@
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-human-input-artifact-source-value-packet-handoff-receipt-identity-verifier-capstone-py-482eab02e487",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/submission",
-      "migrationAction": "extract_external_lifecycle_contracts_without_live_action",
+      "migrationAction": "retired_generated_submission_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "legacy schema, synthetic input authority, local bundle writer, and direct mutation paths explicitly retired",
+          "native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries",
+          "no legacy process launches, network imports, or hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_operator_real_source_human_input_artifact_source_value_packet_handoff_receipt_identity_verifier_capstone.py",
@@ -1143,13 +1176,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/submission/index.mjs",
-        "sha256": "b8ce155d67161e5e9c785ad62515f1c4943125a06f3935edb5cefcfbde6d9efa",
+        "path": "hepta-paper-workspace/migration/submission-retirements.mjs",
+        "sha256": "af7b0642d7b4c78d9d31547b3075160ffb3c4f865752c78f21234cb8776b9a25",
         "symbols": [
-          "buildSubmissionLifecycle"
+          "SUBMISSION_EXPLICIT_RETIREMENTS",
+          "submissionRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-submission-lifecycle-boundaries",
+          "path": "migration/tests/p1-submission-boundaries.mjs",
+          "sha256": "c4efdf903285064dadbf6d30f295b641608065cd249a8cf19d177e6d0b87f066"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-human-input-artifact-source-value-payload-certificate-chain-materialization-verifier-capstone-py-4dd2b5ca4f25",
@@ -1701,19 +1741,16 @@
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-human-input-manifest-field-completeness-payload-checksum-handoff-signature-binding-verifier-capstone-py-d32c0d222b1a",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/submission",
-      "migrationAction": "extract_external_lifecycle_contracts_without_live_action",
+      "migrationAction": "retired_generated_submission_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "legacy schema, synthetic input authority, local bundle writer, and direct mutation paths explicitly retired",
+          "native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries",
+          "no legacy process launches, network imports, or hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_operator_real_source_human_input_manifest_field_completeness_payload_checksum_handoff_signature_binding_verifier_capstone.py",
@@ -1724,13 +1761,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/submission/index.mjs",
-        "sha256": "b8ce155d67161e5e9c785ad62515f1c4943125a06f3935edb5cefcfbde6d9efa",
+        "path": "hepta-paper-workspace/migration/submission-retirements.mjs",
+        "sha256": "af7b0642d7b4c78d9d31547b3075160ffb3c4f865752c78f21234cb8776b9a25",
         "symbols": [
-          "buildSubmissionLifecycle"
+          "SUBMISSION_EXPLICIT_RETIREMENTS",
+          "submissionRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-submission-lifecycle-boundaries",
+          "path": "migration/tests/p1-submission-boundaries.mjs",
+          "sha256": "c4efdf903285064dadbf6d30f295b641608065cd249a8cf19d177e6d0b87f066"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-human-intake-provenance-auth-quarantine-capstone-py-5d34e79c5f76",
@@ -2600,19 +2644,16 @@
       "id": "p1-paperctl-modules-paper-production-referee-repair-source-artifact-quarantine-handoff-workflow-matrix-py-462bafb4107d",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/submission",
-      "migrationAction": "extract_external_lifecycle_contracts_without_live_action",
+      "migrationAction": "retired_generated_submission_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "legacy schema, synthetic input authority, local bundle writer, and direct mutation paths explicitly retired",
+          "native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries",
+          "no legacy process launches, network imports, or hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_source_artifact_quarantine_handoff_workflow_matrix.py",
@@ -2623,13 +2664,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/submission/index.mjs",
-        "sha256": "b8ce155d67161e5e9c785ad62515f1c4943125a06f3935edb5cefcfbde6d9efa",
+        "path": "hepta-paper-workspace/migration/submission-retirements.mjs",
+        "sha256": "af7b0642d7b4c78d9d31547b3075160ffb3c4f865752c78f21234cb8776b9a25",
         "symbols": [
-          "buildSubmissionLifecycle"
+          "SUBMISSION_EXPLICIT_RETIREMENTS",
+          "submissionRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-submission-lifecycle-boundaries",
+          "path": "migration/tests/p1-submission-boundaries.mjs",
+          "sha256": "c4efdf903285064dadbf6d30f295b641608065cd249a8cf19d177e6d0b87f066"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-source-authoring-surface-matrix-py-29a05b69d6dc",
@@ -2831,19 +2879,16 @@
       "id": "p1-paperctl-modules-paper-production-release-lock-py-7c31f097c734",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/submission",
-      "migrationAction": "extract_external_lifecycle_contracts_without_live_action",
+      "migrationAction": "retired_legacy_submission_schema_superseded_by_native_lifecycle",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "legacy schema, synthetic input authority, local bundle writer, and direct mutation paths explicitly retired",
+          "native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries",
+          "no legacy process launches, network imports, or hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_release_lock.py",
@@ -2853,31 +2898,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/submission/index.mjs",
-        "sha256": "b8ce155d67161e5e9c785ad62515f1c4943125a06f3935edb5cefcfbde6d9efa",
+        "path": "hepta-paper-workspace/migration/submission-retirements.mjs",
+        "sha256": "af7b0642d7b4c78d9d31547b3075160ffb3c4f865752c78f21234cb8776b9a25",
         "symbols": [
-          "buildSubmissionLifecycle"
+          "SUBMISSION_EXPLICIT_RETIREMENTS",
+          "submissionRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-submission-lifecycle-boundaries",
+          "path": "migration/tests/p1-submission-boundaries.mjs",
+          "sha256": "c4efdf903285064dadbf6d30f295b641608065cd249a8cf19d177e6d0b87f066"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-remaining-input-autopilot-py-176ae0cf464d",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/submission",
-      "migrationAction": "extract_external_lifecycle_contracts_without_live_action",
+      "migrationAction": "retired_synthetic_submission_input_authority",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "legacy schema, synthetic input authority, local bundle writer, and direct mutation paths explicitly retired",
+          "native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries",
+          "no legacy process launches, network imports, or hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_remaining_input_autopilot.py",
@@ -2896,31 +2945,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/submission/index.mjs",
-        "sha256": "b8ce155d67161e5e9c785ad62515f1c4943125a06f3935edb5cefcfbde6d9efa",
+        "path": "hepta-paper-workspace/migration/submission-retirements.mjs",
+        "sha256": "af7b0642d7b4c78d9d31547b3075160ffb3c4f865752c78f21234cb8776b9a25",
         "symbols": [
-          "buildSubmissionLifecycle"
+          "SUBMISSION_EXPLICIT_RETIREMENTS",
+          "submissionRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-submission-lifecycle-boundaries",
+          "path": "migration/tests/p1-submission-boundaries.mjs",
+          "sha256": "c4efdf903285064dadbf6d30f295b641608065cd249a8cf19d177e6d0b87f066"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-repair-executor-py-ed4c0d45eb32",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/submission",
-      "migrationAction": "extract_external_lifecycle_contracts_without_live_action",
+      "migrationAction": "retired_legacy_direct_source_mutation_executor",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "legacy schema, synthetic input authority, local bundle writer, and direct mutation paths explicitly retired",
+          "native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries",
+          "no legacy process launches, network imports, or hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_repair_executor.py",
@@ -2941,31 +2994,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/submission/index.mjs",
-        "sha256": "b8ce155d67161e5e9c785ad62515f1c4943125a06f3935edb5cefcfbde6d9efa",
+        "path": "hepta-paper-workspace/migration/submission-retirements.mjs",
+        "sha256": "af7b0642d7b4c78d9d31547b3075160ffb3c4f865752c78f21234cb8776b9a25",
         "symbols": [
-          "buildSubmissionLifecycle"
+          "SUBMISSION_EXPLICIT_RETIREMENTS",
+          "submissionRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-submission-lifecycle-boundaries",
+          "path": "migration/tests/p1-submission-boundaries.mjs",
+          "sha256": "c4efdf903285064dadbf6d30f295b641608065cd249a8cf19d177e6d0b87f066"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-reviewed-target-evidence-autofill-py-be710505cc29",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/submission",
-      "migrationAction": "extract_external_lifecycle_contracts_without_live_action",
+      "migrationAction": "retired_synthetic_submission_input_authority",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "legacy schema, synthetic input authority, local bundle writer, and direct mutation paths explicitly retired",
+          "native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries",
+          "no legacy process launches, network imports, or hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_reviewed_target_evidence_autofill.py",
@@ -2976,13 +3033,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/submission/index.mjs",
-        "sha256": "b8ce155d67161e5e9c785ad62515f1c4943125a06f3935edb5cefcfbde6d9efa",
+        "path": "hepta-paper-workspace/migration/submission-retirements.mjs",
+        "sha256": "af7b0642d7b4c78d9d31547b3075160ffb3c4f865752c78f21234cb8776b9a25",
         "symbols": [
-          "buildSubmissionLifecycle"
+          "SUBMISSION_EXPLICIT_RETIREMENTS",
+          "submissionRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-submission-lifecycle-boundaries",
+          "path": "migration/tests/p1-submission-boundaries.mjs",
+          "sha256": "c4efdf903285064dadbf6d30f295b641608065cd249a8cf19d177e6d0b87f066"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-runner-execution-contract-artifact-queue-py-7825b10b0230",
@@ -3067,19 +3131,16 @@
       "id": "p1-paperctl-modules-paper-production-runtime-dry-run-harness-py-07dace58c53f",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/submission",
-      "migrationAction": "extract_external_lifecycle_contracts_without_live_action",
+      "migrationAction": "retired_generated_submission_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "legacy schema, synthetic input authority, local bundle writer, and direct mutation paths explicitly retired",
+          "native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries",
+          "no legacy process launches, network imports, or hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_runtime_dry_run_harness.py",
@@ -3090,31 +3151,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/submission/index.mjs",
-        "sha256": "b8ce155d67161e5e9c785ad62515f1c4943125a06f3935edb5cefcfbde6d9efa",
+        "path": "hepta-paper-workspace/migration/submission-retirements.mjs",
+        "sha256": "af7b0642d7b4c78d9d31547b3075160ffb3c4f865752c78f21234cb8776b9a25",
         "symbols": [
-          "buildSubmissionLifecycle"
+          "SUBMISSION_EXPLICIT_RETIREMENTS",
+          "submissionRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-submission-lifecycle-boundaries",
+          "path": "migration/tests/p1-submission-boundaries.mjs",
+          "sha256": "c4efdf903285064dadbf6d30f295b641608065cd249a8cf19d177e6d0b87f066"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-stale-pass-invalidation-audit-py-59cdc93945ad",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/submission",
-      "migrationAction": "extract_external_lifecycle_contracts_without_live_action",
+      "migrationAction": "retired_generated_submission_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "legacy schema, synthetic input authority, local bundle writer, and direct mutation paths explicitly retired",
+          "native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries",
+          "no legacy process launches, network imports, or hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_stale_pass_invalidation_audit.py",
@@ -3125,31 +3190,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/submission/index.mjs",
-        "sha256": "b8ce155d67161e5e9c785ad62515f1c4943125a06f3935edb5cefcfbde6d9efa",
+        "path": "hepta-paper-workspace/migration/submission-retirements.mjs",
+        "sha256": "af7b0642d7b4c78d9d31547b3075160ffb3c4f865752c78f21234cb8776b9a25",
         "symbols": [
-          "buildSubmissionLifecycle"
+          "SUBMISSION_EXPLICIT_RETIREMENTS",
+          "submissionRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-submission-lifecycle-boundaries",
+          "path": "migration/tests/p1-submission-boundaries.mjs",
+          "sha256": "c4efdf903285064dadbf6d30f295b641608065cd249a8cf19d177e6d0b87f066"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-strict-ordered-refresh-gate-py-d3a872d815e2",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/submission",
-      "migrationAction": "extract_external_lifecycle_contracts_without_live_action",
+      "migrationAction": "retired_generated_submission_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "legacy schema, synthetic input authority, local bundle writer, and direct mutation paths explicitly retired",
+          "native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries",
+          "no legacy process launches, network imports, or hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_strict_ordered_refresh_gate.py",
@@ -3161,31 +3230,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/submission/index.mjs",
-        "sha256": "b8ce155d67161e5e9c785ad62515f1c4943125a06f3935edb5cefcfbde6d9efa",
+        "path": "hepta-paper-workspace/migration/submission-retirements.mjs",
+        "sha256": "af7b0642d7b4c78d9d31547b3075160ffb3c4f865752c78f21234cb8776b9a25",
         "symbols": [
-          "buildSubmissionLifecycle"
+          "SUBMISSION_EXPLICIT_RETIREMENTS",
+          "submissionRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-submission-lifecycle-boundaries",
+          "path": "migration/tests/p1-submission-boundaries.mjs",
+          "sha256": "c4efdf903285064dadbf6d30f295b641608065cd249a8cf19d177e6d0b87f066"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-submission-action-manifest-prerequisite-surface-matrix-py-e44263218166",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/submission",
-      "migrationAction": "extract_external_lifecycle_contracts_without_live_action",
+      "migrationAction": "retired_generated_submission_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "legacy schema, synthetic input authority, local bundle writer, and direct mutation paths explicitly retired",
+          "native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries",
+          "no legacy process launches, network imports, or hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_submission_action_manifest_prerequisite_surface_matrix.py",
@@ -3196,31 +3269,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/submission/index.mjs",
-        "sha256": "b8ce155d67161e5e9c785ad62515f1c4943125a06f3935edb5cefcfbde6d9efa",
+        "path": "hepta-paper-workspace/migration/submission-retirements.mjs",
+        "sha256": "af7b0642d7b4c78d9d31547b3075160ffb3c4f865752c78f21234cb8776b9a25",
         "symbols": [
-          "buildSubmissionLifecycle"
+          "SUBMISSION_EXPLICIT_RETIREMENTS",
+          "submissionRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-submission-lifecycle-boundaries",
+          "path": "migration/tests/p1-submission-boundaries.mjs",
+          "sha256": "c4efdf903285064dadbf6d30f295b641608065cd249a8cf19d177e6d0b87f066"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-submission-decision-template-py-357963a14dc1",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/submission",
-      "migrationAction": "extract_external_lifecycle_contracts_without_live_action",
+      "migrationAction": "retired_generated_submission_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "legacy schema, synthetic input authority, local bundle writer, and direct mutation paths explicitly retired",
+          "native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries",
+          "no legacy process launches, network imports, or hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_submission_decision_template.py",
@@ -3232,31 +3309,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/submission/index.mjs",
-        "sha256": "b8ce155d67161e5e9c785ad62515f1c4943125a06f3935edb5cefcfbde6d9efa",
+        "path": "hepta-paper-workspace/migration/submission-retirements.mjs",
+        "sha256": "af7b0642d7b4c78d9d31547b3075160ffb3c4f865752c78f21234cb8776b9a25",
         "symbols": [
-          "buildSubmissionLifecycle"
+          "SUBMISSION_EXPLICIT_RETIREMENTS",
+          "submissionRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-submission-lifecycle-boundaries",
+          "path": "migration/tests/p1-submission-boundaries.mjs",
+          "sha256": "c4efdf903285064dadbf6d30f295b641608065cd249a8cf19d177e6d0b87f066"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-submission-evidence-intake-quarantine-workflow-matrix-py-f959a5fd69df",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/submission",
-      "migrationAction": "extract_external_lifecycle_contracts_without_live_action",
+      "migrationAction": "retired_generated_submission_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "legacy schema, synthetic input authority, local bundle writer, and direct mutation paths explicitly retired",
+          "native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries",
+          "no legacy process launches, network imports, or hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_submission_evidence_intake_quarantine_workflow_matrix.py",
@@ -3267,31 +3348,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/submission/index.mjs",
-        "sha256": "b8ce155d67161e5e9c785ad62515f1c4943125a06f3935edb5cefcfbde6d9efa",
+        "path": "hepta-paper-workspace/migration/submission-retirements.mjs",
+        "sha256": "af7b0642d7b4c78d9d31547b3075160ffb3c4f865752c78f21234cb8776b9a25",
         "symbols": [
-          "buildSubmissionLifecycle"
+          "SUBMISSION_EXPLICIT_RETIREMENTS",
+          "submissionRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-submission-lifecycle-boundaries",
+          "path": "migration/tests/p1-submission-boundaries.mjs",
+          "sha256": "c4efdf903285064dadbf6d30f295b641608065cd249a8cf19d177e6d0b87f066"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-submission-evidence-real-intake-acceptance-gate-py-6072709cb684",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/submission",
-      "migrationAction": "extract_external_lifecycle_contracts_without_live_action",
+      "migrationAction": "retired_generated_submission_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "legacy schema, synthetic input authority, local bundle writer, and direct mutation paths explicitly retired",
+          "native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries",
+          "no legacy process launches, network imports, or hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_submission_evidence_real_intake_acceptance_gate.py",
@@ -3303,31 +3388,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/submission/index.mjs",
-        "sha256": "b8ce155d67161e5e9c785ad62515f1c4943125a06f3935edb5cefcfbde6d9efa",
+        "path": "hepta-paper-workspace/migration/submission-retirements.mjs",
+        "sha256": "af7b0642d7b4c78d9d31547b3075160ffb3c4f865752c78f21234cb8776b9a25",
         "symbols": [
-          "buildSubmissionLifecycle"
+          "SUBMISSION_EXPLICIT_RETIREMENTS",
+          "submissionRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-submission-lifecycle-boundaries",
+          "path": "migration/tests/p1-submission-boundaries.mjs",
+          "sha256": "c4efdf903285064dadbf6d30f295b641608065cd249a8cf19d177e6d0b87f066"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-submission-handoff-py-694d31301162",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/submission",
-      "migrationAction": "extract_external_lifecycle_contracts_without_live_action",
+      "migrationAction": "retired_legacy_submission_schema_superseded_by_native_lifecycle",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "legacy schema, synthetic input authority, local bundle writer, and direct mutation paths explicitly retired",
+          "native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries",
+          "no legacy process launches, network imports, or hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_submission_handoff.py",
@@ -3337,31 +3426,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/submission/index.mjs",
-        "sha256": "b8ce155d67161e5e9c785ad62515f1c4943125a06f3935edb5cefcfbde6d9efa",
+        "path": "hepta-paper-workspace/migration/submission-retirements.mjs",
+        "sha256": "af7b0642d7b4c78d9d31547b3075160ffb3c4f865752c78f21234cb8776b9a25",
         "symbols": [
-          "buildSubmissionLifecycle"
+          "SUBMISSION_EXPLICIT_RETIREMENTS",
+          "submissionRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-submission-lifecycle-boundaries",
+          "path": "migration/tests/p1-submission-boundaries.mjs",
+          "sha256": "c4efdf903285064dadbf6d30f295b641608065cd249a8cf19d177e6d0b87f066"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-submission-intake-lint-py-656325ee9fa1",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/submission",
-      "migrationAction": "extract_external_lifecycle_contracts_without_live_action",
+      "migrationAction": "retired_legacy_submission_schema_superseded_by_native_lifecycle",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "legacy schema, synthetic input authority, local bundle writer, and direct mutation paths explicitly retired",
+          "native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries",
+          "no legacy process launches, network imports, or hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_submission_intake_lint.py",
@@ -3371,31 +3464,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/submission/index.mjs",
-        "sha256": "b8ce155d67161e5e9c785ad62515f1c4943125a06f3935edb5cefcfbde6d9efa",
+        "path": "hepta-paper-workspace/migration/submission-retirements.mjs",
+        "sha256": "af7b0642d7b4c78d9d31547b3075160ffb3c4f865752c78f21234cb8776b9a25",
         "symbols": [
-          "buildSubmissionLifecycle"
+          "SUBMISSION_EXPLICIT_RETIREMENTS",
+          "submissionRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-submission-lifecycle-boundaries",
+          "path": "migration/tests/p1-submission-boundaries.mjs",
+          "sha256": "c4efdf903285064dadbf6d30f295b641608065cd249a8cf19d177e6d0b87f066"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-submission-lifecycle-py-868812173348",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/submission",
-      "migrationAction": "extract_external_lifecycle_contracts_without_live_action",
+      "migrationAction": "retired_legacy_submission_schema_superseded_by_native_lifecycle",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "legacy schema, synthetic input authority, local bundle writer, and direct mutation paths explicitly retired",
+          "native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries",
+          "no legacy process launches, network imports, or hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_submission_lifecycle.py",
@@ -3416,31 +3513,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/submission/index.mjs",
-        "sha256": "b8ce155d67161e5e9c785ad62515f1c4943125a06f3935edb5cefcfbde6d9efa",
+        "path": "hepta-paper-workspace/migration/submission-retirements.mjs",
+        "sha256": "af7b0642d7b4c78d9d31547b3075160ffb3c4f865752c78f21234cb8776b9a25",
         "symbols": [
-          "buildSubmissionLifecycle"
+          "SUBMISSION_EXPLICIT_RETIREMENTS",
+          "submissionRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-submission-lifecycle-boundaries",
+          "path": "migration/tests/p1-submission-boundaries.mjs",
+          "sha256": "c4efdf903285064dadbf6d30f295b641608065cd249a8cf19d177e6d0b87f066"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-target-scope-audit-py-3d9106c9eabe",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/submission",
-      "migrationAction": "extract_external_lifecycle_contracts_without_live_action",
+      "migrationAction": "retired_generated_submission_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "legacy schema, synthetic input authority, local bundle writer, and direct mutation paths explicitly retired",
+          "native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries",
+          "no legacy process launches, network imports, or hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_target_scope_audit.py",
@@ -3452,31 +3553,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/submission/index.mjs",
-        "sha256": "b8ce155d67161e5e9c785ad62515f1c4943125a06f3935edb5cefcfbde6d9efa",
+        "path": "hepta-paper-workspace/migration/submission-retirements.mjs",
+        "sha256": "af7b0642d7b4c78d9d31547b3075160ffb3c4f865752c78f21234cb8776b9a25",
         "symbols": [
-          "buildSubmissionLifecycle"
+          "SUBMISSION_EXPLICIT_RETIREMENTS",
+          "submissionRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-submission-lifecycle-boundaries",
+          "path": "migration/tests/p1-submission-boundaries.mjs",
+          "sha256": "c4efdf903285064dadbf6d30f295b641608065cd249a8cf19d177e6d0b87f066"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-terminal-chain-generic-validator-py-1f2020874e04",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/submission",
-      "migrationAction": "extract_external_lifecycle_contracts_without_live_action",
+      "migrationAction": "retired_generated_submission_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "legacy schema, synthetic input authority, local bundle writer, and direct mutation paths explicitly retired",
+          "native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries",
+          "no legacy process launches, network imports, or hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_terminal_chain_generic_validator.py",
@@ -3495,31 +3600,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/submission/index.mjs",
-        "sha256": "b8ce155d67161e5e9c785ad62515f1c4943125a06f3935edb5cefcfbde6d9efa",
+        "path": "hepta-paper-workspace/migration/submission-retirements.mjs",
+        "sha256": "af7b0642d7b4c78d9d31547b3075160ffb3c4f865752c78f21234cb8776b9a25",
         "symbols": [
-          "buildSubmissionLifecycle"
+          "SUBMISSION_EXPLICIT_RETIREMENTS",
+          "submissionRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-submission-lifecycle-boundaries",
+          "path": "migration/tests/p1-submission-boundaries.mjs",
+          "sha256": "c4efdf903285064dadbf6d30f295b641608065cd249a8cf19d177e6d0b87f066"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-terminal-chain-sprawl-capstone-py-fa49391c8990",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/submission",
-      "migrationAction": "extract_external_lifecycle_contracts_without_live_action",
+      "migrationAction": "retired_generated_submission_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "legacy schema, synthetic input authority, local bundle writer, and direct mutation paths explicitly retired",
+          "native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries",
+          "no legacy process launches, network imports, or hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_terminal_chain_sprawl_capstone.py",
@@ -3530,13 +3639,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/submission/index.mjs",
-        "sha256": "b8ce155d67161e5e9c785ad62515f1c4943125a06f3935edb5cefcfbde6d9efa",
+        "path": "hepta-paper-workspace/migration/submission-retirements.mjs",
+        "sha256": "af7b0642d7b4c78d9d31547b3075160ffb3c4f865752c78f21234cb8776b9a25",
         "symbols": [
-          "buildSubmissionLifecycle"
+          "SUBMISSION_EXPLICIT_RETIREMENTS",
+          "submissionRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-submission-lifecycle-boundaries",
+          "path": "migration/tests/p1-submission-boundaries.mjs",
+          "sha256": "c4efdf903285064dadbf6d30f295b641608065cd249a8cf19d177e6d0b87f066"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-theorem-proof-appendix-gate-py-80b2981616bf",
@@ -3577,19 +3693,16 @@
       "id": "p1-paperctl-modules-paper-production-v2-semantic-release-lock-py-21191771302f",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/submission",
-      "migrationAction": "extract_external_lifecycle_contracts_without_live_action",
+      "migrationAction": "retired_legacy_submission_schema_superseded_by_native_lifecycle",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "legacy schema, synthetic input authority, local bundle writer, and direct mutation paths explicitly retired",
+          "native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries",
+          "no legacy process launches, network imports, or hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_v2_semantic_release_lock.py",
@@ -3599,13 +3712,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/submission/index.mjs",
-        "sha256": "b8ce155d67161e5e9c785ad62515f1c4943125a06f3935edb5cefcfbde6d9efa",
+        "path": "hepta-paper-workspace/migration/submission-retirements.mjs",
+        "sha256": "af7b0642d7b4c78d9d31547b3075160ffb3c4f865752c78f21234cb8776b9a25",
         "symbols": [
-          "buildSubmissionLifecycle"
+          "SUBMISSION_EXPLICIT_RETIREMENTS",
+          "submissionRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-submission-lifecycle-boundaries",
+          "path": "migration/tests/p1-submission-boundaries.mjs",
+          "sha256": "c4efdf903285064dadbf6d30f295b641608065cd249a8cf19d177e6d0b87f066"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-referee-revision-py-665a2bc60b8d",

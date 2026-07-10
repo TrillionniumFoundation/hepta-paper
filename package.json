@@ -33,6 +33,7 @@
     "migration:p1-venue-selftest": "node migration/tests/p1-venue-resolve-retirements.mjs",
     "migration:p1-referee-selftest": "node migration/tests/p1-referee-revise-retirements.mjs && node migration/tests/p1-referee-revision-differential.mjs",
     "migration:p1-build-package-selftest": "node migration/tests/p1-build-package-retirements.mjs",
+    "migration:p1-submission-selftest": "node migration/tests/p1-submission-boundaries.mjs",
     "migration:matrix-integrity": "node migration/tests/matrix-integrity.mjs",
     "audit:local-accepts": "node paper-core/bin/reassess-local-accepts.mjs",
     "store:init": "node paper-core/bin/hepta-store.mjs init",

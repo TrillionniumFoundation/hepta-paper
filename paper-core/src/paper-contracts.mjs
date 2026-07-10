@@ -1004,7 +1004,11 @@ export function nextActionForState(state) {
     return 'paper.venue.resolve';
   }
   if (blockerSet.has('artifact_package_not_submit_ready')) return PAPER_ACTIONS.SOURCE_PACKAGE;
-  if (blockerSet.has('live_submit_not_implemented_in_overlay') || blockerSet.has('explicit_reviewed_submit_approval_required')) {
+  if (blockerSet.has('live_submit_not_implemented_in_overlay')
+    || blockerSet.has('explicit_reviewed_submit_approval_required')
+    || blockerSet.has('attested_academic_evidence_required_for_reviewed_submit')
+    || blockerSet.has('independent_referee_acceptance_authority_required')
+    || blockerSet.has('live_submission_authorization_required')) {
     return PAPER_ACTIONS.REVIEWED_SUBMIT;
   }
   if (state.readinessStatus !== 'ready_for_local_dry_run') return 'paper.readiness.gate';
@@ -1019,7 +1023,11 @@ export function autoLevelForState(state) {
   if (!['compiled_pdf_present', 'build_ready', 'build_passed'].includes(state.compileStatus)) return 'local_build';
   if (!['package_present', 'package_ready'].includes(state.packageStatus)) return 'local_package';
   if (blockerSet.has('artifact_package_not_submit_ready')) return 'local_package';
-  if (blockerSet.has('live_submit_not_implemented_in_overlay') || blockerSet.has('explicit_reviewed_submit_approval_required')) {
+  if (blockerSet.has('live_submit_not_implemented_in_overlay')
+    || blockerSet.has('explicit_reviewed_submit_approval_required')
+    || blockerSet.has('attested_academic_evidence_required_for_reviewed_submit')
+    || blockerSet.has('independent_referee_acceptance_authority_required')
+    || blockerSet.has('live_submission_authorization_required')) {
     return 'reviewed_submit_blocked';
   }
   if (state.runnerStatus === 'dry_run_receipt_recorded') return 'reviewed_submit_blocked';
@@ -1087,6 +1095,10 @@ export function createPaperActionManifest({
       venueSubmissionPlanHash: venuePlan?.venueSubmissionPlanHash || null,
       freshVenueEvidenceBundleHash: venueEvidenceBundle?.freshVenueEvidenceBundleHash || null,
       approvalHash: approvalPacket?.approvalHash || null,
+      independentRefereeAuthorityReceiptHash:
+        approvalPacket?.independentRefereeAuthorityReceiptHash || null,
+      liveSubmissionAuthorizationReceiptHash:
+        approvalPacket?.liveSubmissionAuthorizationReceiptHash || null,
       externalActionAuthorized: normalizedAction === PAPER_ACTIONS.REVIEWED_SUBMIT && approvalPacket?.approved === true,
       controlledExternalExecutorRequired: normalizedAction === PAPER_ACTIONS.REVIEWED_SUBMIT,
     },
@@ -1099,6 +1111,7 @@ export function createPaperActionManifest({
       executesExternalAction: false,
       liveSubmitBlocked: false,
       controlledExecutorBoundary: normalizedAction === PAPER_ACTIONS.REVIEWED_SUBMIT,
+      cryptographicDualControlRequired: normalizedAction === PAPER_ACTIONS.REVIEWED_SUBMIT,
     },
     createdAt: createdAt || nowIso(),
   };

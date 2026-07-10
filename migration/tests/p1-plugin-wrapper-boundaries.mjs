@@ -183,7 +183,7 @@ const refereeVerdict = buildFreshRefereeVerdict({
   },
 });
 assert.equal(refereeVerdict.verdict, 'revise');
-assert.ok(refereeVerdict.blockers.includes('independent_referee_review_not_performed'));
+assert.ok(refereeVerdict.blockers.includes('independent_referee_acceptance_authority_required'));
 
 const inventory = await runPaperBatch({
   root,

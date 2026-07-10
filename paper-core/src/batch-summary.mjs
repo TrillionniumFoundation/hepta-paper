@@ -73,6 +73,16 @@ export function summarizeResults(results, legacyCleanupAudit = null) {
   const researchWorkerCatalogSize = Math.max(0, ...results.map((result) => (
     Number(result.researchReport?.researchWorkerCount || 0)
   )));
+  const nativeResearchWorkerPlans = results.filter((result) => (
+    result.researchReport?.nativeResearchWorkerExecution?.planHash
+  )).length;
+  const nativeResearchWorkersExecuted = results.reduce((count, result) => (
+    count + Number(result.researchReport?.executedResearchWorkerCount || 0)
+  ), 0);
+  const academicEvidenceVerified = results.filter((result) => (
+    result.researchReport?.academicEvidenceStatus === 'academic_evidence_verified'
+    && result.researchReport?.academicEvidenceEligible === true
+  )).length;
   const journalManageReports = results.filter((result) => (
     result.journalManagement?.kind === 'JournalManageAdapterReport'
   )).length;
@@ -543,6 +553,18 @@ export function summarizeResults(results, legacyCleanupAudit = null) {
     academicEvidenceRequired: reviewedSubmitLifecycles.filter((lifecycle) => (
       (lifecycle.approvalPacket?.blockers || []).includes('attested_academic_evidence_required_for_reviewed_submit')
     )).length,
+    independentRefereeAuthorityRequired: reviewedSubmitLifecycles.filter((lifecycle) => (
+      (lifecycle.approvalPacket?.blockers || []).includes('independent_referee_acceptance_authority_required')
+    )).length,
+    independentRefereeAuthorityVerified: reviewedSubmitLifecycles.filter((lifecycle) => (
+      lifecycle.independentReviewAuthorityReceipt?.status === 'independent_referee_acceptance_verified'
+    )).length,
+    liveAuthorizationRequired: reviewedSubmitLifecycles.filter((lifecycle) => (
+      (lifecycle.approvalPacket?.blockers || []).includes('live_submission_authorization_required')
+    )).length,
+    liveAuthorizationVerified: reviewedSubmitLifecycles.filter((lifecycle) => (
+      lifecycle.liveAuthorizationReceipt?.status === 'live_submission_authorization_verified'
+    )).length,
     approvalAgentApproved: reviewedSubmitLifecycles.filter((lifecycle) => (
       lifecycle.approvalPacket?.agentApproved === true
     )).length,
@@ -574,7 +596,10 @@ export function summarizeResults(results, legacyCleanupAudit = null) {
       lifecycle.controlledExecutorReceipt?.status === 'controlled_external_executor_blocked'
     )).length,
     liveExecutorBoundaryBlocked: reviewedSubmitLifecycles.filter((lifecycle) => (
-      (lifecycle.manifest?.blockers || []).includes('live_submit_not_implemented_in_overlay')
+      lifecycle.reviewedSubmitPreflightPacket?.liveExecutorBoundaryBlocked === true
+    )).length,
+    externalExecutorImplementationPresent: reviewedSubmitLifecycles.filter((lifecycle) => (
+      lifecycle.safety?.executorImplementationPresent === true
     )).length,
     externalActionsPerformed: reviewedSubmitLifecycles.filter((lifecycle) => (
       lifecycle.receipt?.externalActionPerformed || lifecycle.safety?.externalActionPerformed
@@ -685,6 +710,9 @@ export function summarizeResults(results, legacyCleanupAudit = null) {
     researchTypedContracts,
     researchWorkerReceipts,
     researchWorkerCatalogSize,
+    nativeResearchWorkerPlans,
+    nativeResearchWorkersExecuted,
+    academicEvidenceVerified,
     journalManageReports,
     journalConferenceRegistries,
     targetSelectionPolicies,
@@ -883,4 +911,3 @@ export function makeBlockerFamilyMarkdown(families = {}) {
   }
   return lines.join('\n') + '\n';
 }
-

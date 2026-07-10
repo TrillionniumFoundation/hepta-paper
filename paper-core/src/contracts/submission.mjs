@@ -16,6 +16,8 @@ export function buildSubmissionApprovalPacket({
   artifactPackage = null,
   venuePlan = null,
   researchReport = null,
+  independentReviewAuthorityReceipt = null,
+  liveAuthorizationReceipt = null,
   createdAt = null,
 } = {}) {
   if (!paperTask?.taskKey) throw new Error('SubmissionApprovalPacket requires paperTask');
@@ -25,8 +27,18 @@ export function buildSubmissionApprovalPacket({
   if (venuePlan?.status !== 'local_dry_run_ready') blockers.push('venue_submission_plan_not_ready');
   if (researchReport?.status === 'blocked') blockers.push('research_verify_blocked');
   if (researchReport?.academicEvidenceStatus !== 'academic_evidence_verified'
-    || researchReport?.academicEvidenceEligible !== true) {
+    || researchReport?.academicEvidenceEligible !== true
+    || researchReport?.academicEvidenceAttestation?.cryptographicSignaturesVerified !== true
+    || Number(researchReport?.academicEvidenceAttestation?.verifiedWorkerReceiptCount || 0) < 1) {
     blockers.push('attested_academic_evidence_required_for_reviewed_submit');
+  }
+  if (independentReviewAuthorityReceipt?.status !== 'independent_referee_acceptance_verified'
+    || independentReviewAuthorityReceipt?.acceptanceAuthorityReady !== true) {
+    blockers.push('independent_referee_acceptance_authority_required');
+  }
+  if (liveAuthorizationReceipt?.status !== 'live_submission_authorization_verified'
+    || liveAuthorizationReceipt?.liveExternalActionAuthorized !== true) {
+    blockers.push('live_submission_authorization_required');
   }
   const packet = {
     version: PAPER_CORE_VERSION,
@@ -38,17 +50,24 @@ export function buildSubmissionApprovalPacket({
     approved: Boolean(approved) && blockers.length === 0,
     approver: normalizeText(approver) || null,
     approvalActor: normalizeText(approvalActor) || null,
-    agentApproved: normalizeText(approvalActor) === 'agent' && Boolean(approved) && blockers.length === 0,
+    agentApproved: false,
     artifactPackageHash: artifactPackage?.artifactPackageHash || null,
     venueSubmissionPlanHash: venuePlan?.venueSubmissionPlanHash || null,
     researchReportHash: researchReport?.researchReportHash || researchReport?.researchVerifyReceiptHash || null,
+    academicEvidenceVerificationHash: researchReport?.academicEvidenceAttestation
+      ?.academicEvidenceAttestationVerificationHash || null,
+    independentRefereeAuthorityReceiptHash:
+      independentReviewAuthorityReceipt?.independentRefereeAuthorityReceiptHash || null,
+    liveSubmissionAuthorizationReceiptHash:
+      liveAuthorizationReceipt?.liveSubmissionAuthorizationReceiptHash || null,
     externalExecutorRequired: true,
     blockers: uniqueStrings(blockers, 32),
     safety: {
       grantsLiveExecutionInsideOverlay: false,
       externalActionPerformed: false,
       requiresSeparateExecutor: true,
-      agentMayApprove: true,
+      agentMayApprove: false,
+      cryptographicDualControlRequired: true,
     },
     createdAt: createdAt || nowIso(),
   };
@@ -61,6 +80,7 @@ export function buildFreshVenueEvidenceBundle({
   venuePlan,
   artifactPackage = null,
   researchReport = null,
+  independentReviewAuthorityReceipt = null,
   requireAcademicEvidence = false,
   createdAt = null,
 } = {}) {
@@ -71,8 +91,16 @@ export function buildFreshVenueEvidenceBundle({
   if (requireAcademicEvidence && (
     researchReport?.academicEvidenceStatus !== 'academic_evidence_verified'
     || researchReport?.academicEvidenceEligible !== true
+    || researchReport?.academicEvidenceAttestation?.cryptographicSignaturesVerified !== true
+    || Number(researchReport?.academicEvidenceAttestation?.verifiedWorkerReceiptCount || 0) < 1
   )) {
     blockers.push('attested_academic_evidence_required_for_reviewed_submit');
+  }
+  if (requireAcademicEvidence && (
+    independentReviewAuthorityReceipt?.status !== 'independent_referee_acceptance_verified'
+    || independentReviewAuthorityReceipt?.acceptanceAuthorityReady !== true
+  )) {
+    blockers.push('independent_referee_acceptance_authority_required');
   }
   const bundle = {
     version: PAPER_CORE_VERSION,
@@ -85,6 +113,10 @@ export function buildFreshVenueEvidenceBundle({
     researchReportHash: researchReport?.researchReportHash || researchReport?.researchVerifyReceiptHash || null,
     academicEvidenceStatus: researchReport?.academicEvidenceStatus || null,
     academicEvidenceEligible: researchReport?.academicEvidenceEligible === true,
+    academicEvidenceVerificationHash: researchReport?.academicEvidenceAttestation
+      ?.academicEvidenceAttestationVerificationHash || null,
+    independentRefereeAuthorityReceiptHash:
+      independentReviewAuthorityReceipt?.independentRefereeAuthorityReceiptHash || null,
     evidenceRefs: normalizeRefs([
       ...(artifactPackage?.evidenceRefs || []),
       ...(researchReport?.evidenceRefs || []),
@@ -182,10 +214,19 @@ export function buildReviewedSubmitPreflightPacket({
   artifactPackage = null,
   researchReport = null,
   venuePlan = null,
+  independentReviewAuthorityReceipt = null,
+  liveAuthorizationReceipt = null,
   createdAt = null,
 } = {}) {
   if (!paperTask?.taskKey || !approvalPacket?.kind || !freshVenueEvidenceBundle?.kind || !manifest?.kind || !replayGuard?.kind || !outbox?.kind) {
     throw new Error('ReviewedSubmitPreflightPacket requires paperTask, approvalPacket, freshVenueEvidenceBundle, manifest, replayGuard, and outbox');
+  }
+  const authorityBlockers = [];
+  if (independentReviewAuthorityReceipt?.status !== 'independent_referee_acceptance_verified') {
+    authorityBlockers.push('independent_referee_acceptance_authority_required');
+  }
+  if (liveAuthorizationReceipt?.status !== 'live_submission_authorization_verified') {
+    authorityBlockers.push('live_submission_authorization_required');
   }
   const blockers = uniqueStrings([
     ...(approvalPacket.blockers || []),
@@ -193,6 +234,7 @@ export function buildReviewedSubmitPreflightPacket({
     ...(manifest.blockers || []),
     ...(replayGuard.blockers || []),
     ...(outbox.blockers || []),
+    ...authorityBlockers,
   ], 64);
   const packet = {
     version: PAPER_CORE_VERSION,
@@ -205,7 +247,7 @@ export function buildReviewedSubmitPreflightPacket({
       : 'reviewed_submit_preflight_ready_for_external_executor',
     externalExecutorHandoffReady: blockers.length === 0,
     approvalRequired: blockers.includes('explicit_reviewed_submit_approval_required') || !approvalPacket.approved,
-    liveExecutorBoundaryBlocked: blockers.includes('live_submit_not_implemented_in_overlay'),
+    liveExecutorBoundaryBlocked: blockers.length > 0,
     artifactPackageHash: artifactPackage?.artifactPackageHash || null,
     researchReportHash: researchReport?.researchReportHash || researchReport?.researchVerifyReceiptHash || null,
     venueSubmissionPlanHash: venuePlan?.venueSubmissionPlanHash || null,
@@ -214,12 +256,18 @@ export function buildReviewedSubmitPreflightPacket({
     manifestHash: manifest.manifestHash || null,
     replayGuardHash: replayGuard.submissionReplayGuardHash || null,
     outboxHash: outbox.externalExecutorHandoffOutboxHash || null,
+    independentRefereeAuthorityReceiptHash:
+      independentReviewAuthorityReceipt?.independentRefereeAuthorityReceiptHash || null,
+    liveSubmissionAuthorizationReceiptHash:
+      liveAuthorizationReceipt?.liveSubmissionAuthorizationReceiptHash || null,
     blockers,
     safety: {
       preflightOnly: true,
       grantsLiveExecutionInsideOverlay: false,
       requiresSeparateReviewedApproval: !approvalPacket.approved,
       requiresExternalExecutor: true,
+      dualControlAuthorizationVerified:
+        liveAuthorizationReceipt?.status === 'live_submission_authorization_verified',
       externalActionPerformed: false,
     },
     createdAt: createdAt || nowIso(),
@@ -237,6 +285,8 @@ export function buildControlledExternalExecutorReceipt({
   manifest,
   outbox,
   replayGuard,
+  independentReviewAuthorityReceipt = null,
+  liveAuthorizationReceipt = null,
   executorId = 'openclaw-agent-controlled-reviewed-submit-executor',
   createdAt = null,
 } = {}) {
@@ -251,6 +301,13 @@ export function buildControlledExternalExecutorReceipt({
   if (manifest.status !== PAPER_MANIFEST_STATUS.READY || !manifest.readyForAdapter) blockers.push('manifest_not_ready');
   if (outbox.status !== 'queued_for_dry_run_executor') blockers.push('executor_outbox_not_ready');
   if (replayGuard.status !== 'dry_run_replay_allowed') blockers.push('replay_guard_not_ready');
+  if (independentReviewAuthorityReceipt?.status !== 'independent_referee_acceptance_verified') {
+    blockers.push('independent_referee_acceptance_authority_required');
+  }
+  if (liveAuthorizationReceipt?.status !== 'live_submission_authorization_verified'
+    || liveAuthorizationReceipt?.liveExternalActionAuthorized !== true) {
+    blockers.push('live_submission_authorization_required');
+  }
   const receipt = {
     version: PAPER_CORE_VERSION,
     kind: 'ControlledExternalExecutorReceipt',
@@ -261,6 +318,10 @@ export function buildControlledExternalExecutorReceipt({
     status: blockers.length ? 'controlled_external_executor_blocked' : 'controlled_external_executor_receipt_recorded',
     executorId: normalizeText(executorId) || null,
     agentApproved: approvalPacket.agentApproved === true,
+    independentRefereeAuthorityReceiptHash:
+      independentReviewAuthorityReceipt?.independentRefereeAuthorityReceiptHash || null,
+    liveSubmissionAuthorizationReceiptHash:
+      liveAuthorizationReceipt?.liveSubmissionAuthorizationReceiptHash || null,
     controlledExecutorReady: blockers.length === 0,
     liveSubmitPerformed: false,
     externalActionPerformed: false,
@@ -270,6 +331,10 @@ export function buildControlledExternalExecutorReceipt({
       manifestHash: manifest.manifestHash || null,
       outboxHash: outbox.externalExecutorHandoffOutboxHash || null,
       replayGuardHash: replayGuard.submissionReplayGuardHash || null,
+      independentRefereeAuthorityReceiptHash:
+        independentReviewAuthorityReceipt?.independentRefereeAuthorityReceiptHash || null,
+      liveSubmissionAuthorizationReceiptHash:
+        liveAuthorizationReceipt?.liveSubmissionAuthorizationReceiptHash || null,
     },
     blockers: uniqueStrings(blockers, 32),
     safety: {
@@ -280,6 +345,8 @@ export function buildControlledExternalExecutorReceipt({
       sourceMutation: false,
       liveSubmitPerformed: false,
       requiresSeparateRealPortalExecutor: true,
+      dualControlAuthorizationVerified:
+        liveAuthorizationReceipt?.status === 'live_submission_authorization_verified',
     },
     createdAt: createdAt || nowIso(),
   };
@@ -381,4 +448,3 @@ export function buildSubmissionReconciliation({
   };
   return { ...reconciliation, submissionReconciliationHash: hashPaperRecord('SubmissionReconciliation', reconciliation) };
 }
-

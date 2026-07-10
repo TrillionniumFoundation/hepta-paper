@@ -17,6 +17,7 @@ import {
   hashPaperRecord,
 } from '../../paper-core/src/paper-contracts.mjs';
 import { verifyAcademicEvidenceAttestation } from './academic-evidence.mjs';
+import { runNativeResearchWorkers } from './worker-runtime.mjs';
 
 function repoPath(root, value) {
   const text = normalizeText(value);
@@ -245,12 +246,21 @@ async function extractStructuredItems(root, records) {
   return { claims, obligations, evidenceItems, reproducibilityItems };
 }
 
-export async function runResearchVerifyAdapter({ root, row, runtimeRoot = null } = {}) {
+export async function runResearchVerifyAdapter({
+  root,
+  row,
+  runtimeRoot = null,
+  executeResearchWorkers = false,
+  requireNativeWorkers = false,
+  trustStoreOverride = null,
+  now = new Date(),
+} = {}) {
   const sourceRoot = repoPath(root, row.task.sourceWorkspace);
+  const resolvedRuntimeRoot = runtimeRoot
+    ? path.resolve(runtimeRoot)
+    : path.join(root, 'hepta-paper-workspace', 'runtime');
   const logRoot = path.join(root, 'logs', 'paperctl', row.task.paperId);
-  const empiricalRoot = runtimeRoot
-    ? path.join(runtimeRoot, 'empirical-analysis', row.task.paperId)
-    : path.join(root, 'hepta-paper-workspace', 'runtime', 'empirical-analysis', row.task.paperId);
+  const empiricalRoot = path.join(resolvedRuntimeRoot, 'empirical-analysis', row.task.paperId);
   const sourceEvidence = await scanEvidenceRoot(root, sourceRoot, 'source');
   const logEvidence = await scanEvidenceRoot(root, logRoot, 'log');
   const empiricalEvidence = await scanEvidenceRoot(root, empiricalRoot, 'empirical');
@@ -259,7 +269,22 @@ export async function runResearchVerifyAdapter({ root, row, runtimeRoot = null }
     /proposal.*seed.*contract|claim.*proof.*evidence.*repro.*seed/i.test(`${record.filename} ${record.path}`)
   ));
   const structured = await extractStructuredItems(root, evidenceRecords);
-  const academicEvidenceAttestation = await verifyAcademicEvidenceAttestation({ root, sourceRoot });
+  const nativeResearchWorkerExecution = await runNativeResearchWorkers({
+    root,
+    sourceRoot,
+    runtimeRoot: resolvedRuntimeRoot,
+    paperTask: row.task,
+    execute: Boolean(executeResearchWorkers),
+  });
+  const academicEvidenceAttestation = await verifyAcademicEvidenceAttestation({
+    root,
+    sourceRoot,
+    runtimeRoot: resolvedRuntimeRoot,
+    paperTask: row.task,
+    workerExecutionReport: nativeResearchWorkerExecution,
+    trustStoreOverride,
+    now,
+  });
   const evidenceRefs = uniqueStrings([
     ...(row.state.evidenceRefs || []).map((ref) => ref.ref),
     ...evidenceRecords.map((ref) => ref.path),
@@ -267,6 +292,9 @@ export async function runResearchVerifyAdapter({ root, row, runtimeRoot = null }
   const blockers = [];
   const warnings = [];
   if (!sourceRoot) blockers.push('source_workspace_missing');
+  if (requireNativeWorkers && nativeResearchWorkerExecution.status !== 'native_research_workers_verified') {
+    blockers.push('native_research_workers_required');
+  }
   if (!evidenceRefs.length) warnings.push('claim_evidence_not_found');
   if (proposalSeedEvidence.length) warnings.push('proposal_seed_contracts_require_real_evidence_followup');
   const claimScopeContract = createClaimScopeContract({
@@ -336,7 +364,10 @@ export async function runResearchVerifyAdapter({ root, row, runtimeRoot = null }
     reproducibilityItemCount: reproducibilityContract.reproducibilityItemCount,
     researchWorkerCount: researchWorkers.length,
     workerReceiptCount: workerReceipts.length,
-    executedResearchWorkerCount: 0,
+    nativeResearchWorkerPlanStatus: nativeResearchWorkerExecution.status,
+    nativeResearchWorkerCount: nativeResearchWorkerExecution.plannedResearchWorkerCount,
+    executedResearchWorkerCount: nativeResearchWorkerExecution.executedResearchWorkerCount,
+    verifiedNativeResearchWorkerCount: nativeResearchWorkerExecution.verifiedAcademicEvidenceWorkerCount,
     semanticMigrationVerifiedWorkerCount: 0,
     evidenceProvenance: {
       sourceCandidateRecordCount: sourceEvidence.length,
@@ -345,6 +376,7 @@ export async function runResearchVerifyAdapter({ root, row, runtimeRoot = null }
       pipelineSmokeExcludedFromAcademicEvidence: true,
     },
     academicEvidenceAttestation,
+    nativeResearchWorkerExecution,
     evidenceRefs,
     typedContracts: {
       claimScopeContract,
@@ -365,7 +397,8 @@ export async function runResearchVerifyAdapter({ root, row, runtimeRoot = null }
       empiricalAnalysis: relativePath(root, empiricalRoot),
     },
     safety: {
-      readsOnly: true,
+      readsOnly: !executeResearchWorkers,
+      writesRuntimeOnly: Boolean(executeResearchWorkers),
       sourceMutation: false,
       externalActionPerformed: false,
     },

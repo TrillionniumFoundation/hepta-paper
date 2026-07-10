@@ -34,13 +34,17 @@ dry-run orchestration remain available.
   verifies its hash does not change.
 - Deterministic empirical output is `pipeline_smoke_only`, never academic
   evidence, and cannot mutate a manuscript.
-- Academic evidence requires a hash-bound source-workspace
-  `ACADEMIC_EVIDENCE_ATTESTATION.json`.
+- Academic evidence requires a version-2 Ed25519-signed, hash-bound
+  source-workspace `ACADEMIC_EVIDENCE_ATTESTATION.json`, current source and
+  artifact hashes, and verified native-worker execution receipts. Version-1
+  self-declarations are ineligible.
 - Deterministic referee personas have no independent academic acceptance
   authority.
 - Reassessment found 16 unique prior autopilot acceptance receipts; all 16 are
   invalidated as academic accepts. Valid academic accept count is 0.
-- Across 20 active submission candidates, reviewed-submit preflight is now
+- Across 20 active submission candidates, native worker plans, executed native
+  workers, verified academic-evidence attestations, independent referee
+  authorities, and live authorizations are all 0. Reviewed-submit preflight is
   0 ready / 20 blocked; external actions performed remain 0.
 
 ## P1 engineering work landed
@@ -59,7 +63,7 @@ dry-run orchestration remain available.
   - generated empirical experiment code is isolated in experiment-runner.
   - patch creation/validation/application is isolated in repair-executor.
 - A 64 KiB production-module budget is now enforced by remediation selftest
-  across all 40 MJS modules under paper-core and paper-adapters.
+  across all 46 MJS modules under paper-core and paper-adapters.
 - Added deterministic vendored-core selftest distinct from the cross-repository
   workspace integration test.
 - Added failure-closed migration and referee-authority tests, SQLite rollback
@@ -68,6 +72,22 @@ dry-run orchestration remain available.
 - Added direct boundary checks for contract facade identity, batch-summary
   behavior, the 97-profile journal registry, network-free empirical code
   generation, and referee patch path containment.
+- Added a production authority pipeline:
+  - three bounded native research-worker types execute artifact integrity,
+    CSV descriptive statistics, and JSON assertions without network,
+    subprocess, or source-write authority;
+  - runtime worker receipts atomically bind the plan, engine, inputs, claims,
+    results, and execution hash;
+  - academic evidence uses trusted Ed25519 public keys and signed source,
+    artifact, claim, and worker-receipt hashes;
+  - independent referee verdicts bind the current source, evidence, package,
+    venue, and review artifact and enforce separation from evidence signers;
+  - live authorization requires two distinct trusted roles, a provider/account
+    scope, a single-use nonce, and a validity window of at most 24 hours.
+- Added `research-verify --execute`, `authority:status`, and an authority
+  pipeline selftest covering concurrent workers, atomic receipts, tamper
+  rejection, signature verification, referee independence, authorization
+  expiry, and dual control.
 
 The mechanical monolith split is complete under the current 64 KiB budget.
 Further decomposition may improve maintainability, but is no longer an
@@ -128,9 +148,10 @@ unbounded-file blocker.
 - The 155 research-assigned sources comprise 120 pure plan/report surfaces and
   35 local execution surfaces (32 writers, 21 subprocess callers, 33
   subprocess importers, and zero network-capable sources). All are explicitly
-  retired from native execution authority. Current native research verification
-  remains read-only with executed worker count 0, semantic-migration receipt
-  count 0, and academic-evidence eligibility false without an attestation.
+  retired from native execution authority. They are not re-enabled. A separate
+  hepta-native allowlisted worker engine now exists; current managed papers
+  still have executed native-worker count 0 and academic-evidence eligibility
+  false until each supplies a valid plan, receipts, and signed attestation.
 - Shared hash-bound behavior tests execute once per audit and are reused across
   rows, preventing a 263-row matrix from repeatedly running identical suites.
 - Current disposition-matrix blocker counts: P0 = 0, P1 = 0. The old control
@@ -151,11 +172,19 @@ npm run migration:p1-build-package-selftest
 npm run migration:p1-submission-selftest
 npm run migration:p1-research-selftest
 npm run migration:matrix-integrity
+npm run paper:authority-selftest
+npm run authority:status
 npm test
 ```
 
-The external submission executor must remain absent. Matrix disposition is now
-complete, but attested research evidence, genuinely executed research workers,
-independent referee authority, and explicit live-executor authorization are
-still absent. Retirement readiness must not be used as a production-equivalence
-or submission-readiness claim.
+The external submission executor remains absent. Matrix disposition and the
+four authority mechanisms are implemented, but the 20 active candidates still
+lack paper-specific native-worker receipts, cryptographically attested academic
+evidence, independent referee acceptances, and dual-signed live authorization.
+The runtime trust store is not provisioned: all four required public-key roles
+are currently missing. Final read-only replay reports approval/evidence/
+independent-referee/live-authorization blocked for all 20 active candidates,
+with 0 preflight ready, 0 controlled receipts recorded, and 0 external actions.
+Even a fully verified authority packet only makes the controlled-executor
+handoff ready; it performs no portal action. Retirement readiness must not be
+used as a production-equivalence or submission-readiness claim.

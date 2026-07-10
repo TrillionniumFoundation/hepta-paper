@@ -179,7 +179,7 @@ const verdict = buildFreshRefereeVerdict({
   },
 });
 assert.equal(verdict.verdict, 'revise');
-assert.ok(verdict.blockers.includes('independent_referee_review_not_performed'));
+assert.ok(verdict.blockers.includes('independent_referee_acceptance_authority_required'));
 
 const quickCheck = sqlite('PRAGMA quick_check;').trim();
 assert.equal(quickCheck, 'ok');

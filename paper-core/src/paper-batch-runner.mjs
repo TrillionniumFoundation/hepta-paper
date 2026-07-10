@@ -30,7 +30,10 @@ import { runRefereeReviewAdapter } from '../../paper-adapters/referee-review/ind
 import { runRefereeReviseAdapter } from '../../paper-adapters/referee-revise/index.mjs';
 import { runVenueResolveAdapter } from '../../paper-adapters/venue-resolve/index.mjs';
 import { runSourceAdaptAdapter } from '../../paper-adapters/source-adapt/index.mjs';
-import { buildSubmissionLifecycle } from '../../paper-adapters/submission/index.mjs';
+import {
+  buildSubmissionLifecycle,
+  prepareSubmissionAuthorities,
+} from '../../paper-adapters/submission/index.mjs';
 import { runLegacyCleanupAdapter } from '../../paper-adapters/legacy-cleanup/index.mjs';
 import {
   buildFreshRefereeVerdict,
@@ -54,6 +57,7 @@ export const PAPER_BATCH_MODES = Object.freeze({
   REFEREE_REVISE: 'referee-revise',
   REFEREE_AUTOPILOT: 'referee-autopilot',
   EMPIRICAL_ANALYSIS: 'empirical-analysis',
+  RESEARCH_VERIFY: 'research-verify',
   JOURNAL_MANAGE: 'journal-manage',
   VENUE_RESOLVE: 'venue-resolve',
   SOURCE_ADAPT: 'source-adapt',
@@ -119,6 +123,7 @@ function modeNeedsPackage(mode) {
 
 function modeNeedsResearch(mode) {
   return [
+    PAPER_BATCH_MODES.RESEARCH_VERIFY,
     PAPER_BATCH_MODES.LOCAL_DRY_RUN,
     PAPER_BATCH_MODES.REVIEWED_SUBMIT,
   ].includes(mode);
@@ -189,6 +194,7 @@ function stateWithAdapterResults(row, { buildResult, packageResult, researchRepo
     ...(researchReport?.blockers || []),
     ...(refereeRevision?.blockers || []),
     ...(lifecycle?.venuePlan?.blockers || []),
+    ...(lifecycle?.reviewedSubmit ? (lifecycle?.approvalPacket?.blockers || []) : []),
     ...(lifecycle?.manifest?.blockers || []),
   ];
   let blockers = rawBlockers;
@@ -378,6 +384,15 @@ async function runRefereeAutopilot({
         researchReport = await runResearchVerifyAdapter({ root, row, runtimeRoot });
       }
     }
+    const submissionAuthorities = await prepareSubmissionAuthorities({
+      root,
+      runtimeRoot,
+      row,
+      venues,
+      artifactPackage: packageResult?.artifactPackage || null,
+      researchReport,
+      mode: PAPER_BATCH_MODES.REVIEWED_SUBMIT,
+    });
     const lifecycle = buildSubmissionLifecycle({
       row,
       venues,
@@ -385,6 +400,10 @@ async function runRefereeAutopilot({
       researchReport,
       mode: PAPER_BATCH_MODES.REVIEWED_SUBMIT,
       reviewedSubmit: true,
+      venuePlanOverride: submissionAuthorities.venuePlan,
+      independentReviewAuthorityReceipt:
+        submissionAuthorities.independentReviewAuthorityReceipt,
+      liveAuthorizationReceipt: submissionAuthorities.liveAuthorizationReceipt,
     });
     const openAfter = openRefereeIssueCount(root, row.task.paperId);
     const freshRefereePool = buildFreshRefereePool({
@@ -437,6 +456,7 @@ async function runRefereeAutopilot({
       rubricPacket: journalRubricPacket,
       venueRubricManager,
       refereePool: freshRefereePool,
+      independentReviewAuthorityReceipt: lifecycle.independentReviewAuthorityReceipt,
       evidenceGate: venueEvidenceGate,
       lifecyclePolicy: venueLifecyclePolicy,
       reviewReport: freshRefereeReview?.reviewReport || null,
@@ -826,6 +846,8 @@ export async function runPaperBatch({
         root: resolvedRoot,
         row,
         runtimeRoot: resolvedRuntimeRoot,
+        executeResearchWorkers: execute && mode === PAPER_BATCH_MODES.RESEARCH_VERIFY,
+        requireNativeWorkers: mode === PAPER_BATCH_MODES.RESEARCH_VERIFY,
       });
     }
     if (modeNeedsRefereeReview(mode)) {
@@ -861,6 +883,15 @@ export async function runPaperBatch({
     if (modeNeedsSubmission(mode)) {
       const submissionIntent = row.submissionIntent || row.task.registry?.submissionIntent;
       if (!submissionIntent || submissionIntent.status === 'submission_candidate') {
+        const submissionAuthorities = await prepareSubmissionAuthorities({
+          root: resolvedRoot,
+          runtimeRoot: resolvedRuntimeRoot,
+          row,
+          venues: scan.venues,
+          artifactPackage: packageResult?.artifactPackage || null,
+          researchReport,
+          mode,
+        });
         lifecycle = buildSubmissionLifecycle({
           row,
           venues: scan.venues,
@@ -868,6 +899,10 @@ export async function runPaperBatch({
           researchReport,
           mode,
           reviewedSubmit: mode === PAPER_BATCH_MODES.REVIEWED_SUBMIT,
+          venuePlanOverride: submissionAuthorities.venuePlan,
+          independentReviewAuthorityReceipt:
+            submissionAuthorities.independentReviewAuthorityReceipt,
+          liveAuthorizationReceipt: submissionAuthorities.liveAuthorizationReceipt,
         });
       }
     }

@@ -23,8 +23,8 @@ The old `paper_factory` tree may only contribute paper-domain adapters:
 - draft/source workspace discovery
 - LaTeX build and package generation
 - research/evidence/proof/claim verification workers
-- referee revision workers, including agent-owned approval and clean
-  current-source repair patch application receipts
+- referee revision workers and clean current-source repair patch application
+  receipts; agent-owned approval is not a live-submission authority
 
 Do not move diagnostic-only report, matrix, capstone, or roadmap modules into
 the core workflow. They must stay outside the canonical production spine unless
@@ -57,6 +57,8 @@ npm run store:status
 npm run core:integrity
 npm test
 npm run paper:selftest
+npm run paper:authority-selftest
+npm run authority:status
 node paper-core/bin/paper-production-core.mjs proposal --idea "distributionally robust reinforcement learning for stochastic control" --discipline "machine learning" --venue NeurIPS --write-report
 node paper-core/bin/paper-production-core.mjs proposal --idea "distributionally robust reinforcement learning for stochastic control" --discipline "machine learning" --venue NeurIPS --approved --materialize-source --write-report
 node paper-core/bin/paper-production-core.mjs proposal --paper distributionally_robust_rl_for_stochastic_control --idea "distributionally robust reinforcement learning for stochastic control" --discipline "machine learning" --venue NeurIPS --title "Distributionally Robust RL for Stochastic Control" --approved --materialize-source --stage-inventory --write-report
@@ -65,6 +67,7 @@ node paper-core/bin/paper-production-core.mjs batch-run --mode local-build --pap
 node paper-core/bin/paper-production-core.mjs batch-run --mode local-dry-run --paper distributionally_robust_rl_for_stochastic_control
 node paper-core/bin/paper-production-core.mjs batch-run --mode reviewed-submit --paper distributionally_robust_rl_for_stochastic_control
 node paper-core/bin/paper-production-core.mjs batch-run --mode inventory
+node paper-core/bin/paper-production-core.mjs batch-run --mode research-verify --paper distributionally_robust_rl_for_stochastic_control --execute
 node paper-core/bin/paper-production-core.mjs batch-run --mode local-dry-run --write-report
 node paper-core/bin/paper-production-core.mjs batch-run --mode reviewed-submit
 ```
@@ -78,15 +81,19 @@ external venues.
 
 The deterministic empirical runner is pipeline smoke only. Its simulator
 encodes method effects and therefore cannot satisfy the academic evidence gate.
-Academic evidence requires a hash-bound `ACADEMIC_EVIDENCE_ATTESTATION.json` in
-the paper source workspace. Deterministic local referee personas have no
-academic acceptance authority.
+Academic evidence requires a version-2, Ed25519-signed, hash-bound
+`ACADEMIC_EVIDENCE_ATTESTATION.json` in the paper source workspace plus
+verified native worker receipts. Deterministic local referee personas have no
+academic acceptance authority. The complete authority protocol is documented
+in `paper-core/docs/authority-pipeline.md`.
 
 The proposal build path may execute a local LaTeX build under
 `runtime/builds/<paper_id>/` and write `BUILD_ARTIFACT_ACCEPTANCE.json` for the
 compiled PDF. That acceptance only permits local package/dry-run readiness; it
 does not approve live submission.
 
-The reviewed submit path produces a blocked manifest by design. It records the
-handoff shape plus a `ReviewedSubmitPreflightPacket` without upload, email,
-portal mutation, or live submission.
+The reviewed-submit path is fail-closed unless it has signed academic evidence,
+an independent signed referee acceptance, and a dual-signed, single-use live
+authorization scoped to the current package, venue, provider, and account. A
+fully verified fixture may make the controlled-executor handoff ready, but the
+overlay still performs no upload, email, portal mutation, or live submission.

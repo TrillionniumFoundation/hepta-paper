@@ -883,6 +883,7 @@ export function buildFreshRefereeVerdict({
   rubricPacket,
   venueRubricManager = null,
   refereePool = null,
+  independentReviewAuthorityReceipt = null,
   evidenceGate = null,
   lifecyclePolicy = null,
   reviewReport,
@@ -910,7 +911,7 @@ export function buildFreshRefereeVerdict({
   if (refereePool?.status && refereePool.status !== 'fresh_referee_pool_ready') {
     blockers.push('fresh_referee_pool_not_ready');
   }
-  blockers.push(...reviewAuthorityBlockers({ refereePool }));
+  blockers.push(...reviewAuthorityBlockers({ authorityReceipt: independentReviewAuthorityReceipt }));
   if (evidenceGate?.status) {
     if (evidenceGate.status !== 'venue_evidence_gate_ready') {
       blockers.push(...(evidenceGate.blockers || ['venue_evidence_gate_not_ready']));
@@ -934,10 +935,14 @@ export function buildFreshRefereeVerdict({
     journalRubricPacketHash: rubricPacket?.journalRubricPacketHash || null,
     venueRubricManagerHash: venueRubricManager?.venueRubricManagerHash || null,
     freshRefereePoolHash: refereePool?.freshRefereePoolHash || null,
+    independentRefereeAuthorityReceiptHash:
+      independentReviewAuthorityReceipt?.independentRefereeAuthorityReceiptHash || null,
     venueEvidenceGateHash: evidenceGate?.venueEvidenceGateHash || null,
     venueLifecyclePolicyHash: lifecyclePolicy?.venueLifecyclePolicyHash || null,
     reviewReportHash: reviewReport?.agentRefereeReviewReportHash || null,
   }).replace(/^sha256:/, '').slice(0, 16);
+  const independentAuthorityReady = independentReviewAuthorityReceipt
+    ?.status === 'independent_referee_acceptance_verified';
   const verdict = blockers.length ? 'revise' : 'accept';
   const packet = {
     version: 1,
@@ -950,6 +955,8 @@ export function buildFreshRefereeVerdict({
     journalRubricPacketHash: rubricPacket?.journalRubricPacketHash || null,
     venueRubricManagerHash: venueRubricManager?.venueRubricManagerHash || null,
     freshRefereePoolHash: refereePool?.freshRefereePoolHash || null,
+    independentRefereeAuthorityReceiptHash:
+      independentReviewAuthorityReceipt?.independentRefereeAuthorityReceiptHash || null,
     venueEvidenceGateHash: evidenceGate?.venueEvidenceGateHash || null,
     venueLifecyclePolicyHash: lifecyclePolicy?.venueLifecyclePolicyHash || null,
     reviewReportHash: reviewReport?.agentRefereeReviewReportHash || null,
@@ -968,10 +975,12 @@ export function buildFreshRefereeVerdict({
     safety: {
       freshRefereePersona: true,
       localOnly: true,
-      modelCallPerformed: false,
-      humanReviewPerformed: false,
-      independentReviewPerformed: false,
-      academicAcceptanceAuthority: false,
+      modelCallPerformed:
+        independentReviewAuthorityReceipt?.safety?.modelCallPerformed === true,
+      humanReviewPerformed:
+        independentReviewAuthorityReceipt?.safety?.humanReviewPerformed === true,
+      independentReviewPerformed: independentAuthorityReady,
+      academicAcceptanceAuthority: independentAuthorityReady,
       sourceMutation: false,
       sqliteWrites: false,
       externalActionPerformed: false,

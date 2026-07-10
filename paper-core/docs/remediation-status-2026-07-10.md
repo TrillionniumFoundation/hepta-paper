@@ -14,8 +14,17 @@ dry-run orchestration remain available.
 - Historical upstream comparison remains explicitly divergent: 478/840 files
   match and 362 differ. No report claims historical byte identity.
 - The former automatic 263 semantic migration claims are withdrawn. The
-  migration matrix has 0 verified entries and 263 missing P0/P1 entries (2 P0,
-  261 P1), so paper_factory retirement is blocked.
+  migration matrix now has an explicit row for all 263 P0/P1 source paths.
+  Both P0 rows are complete and verified; 250 P1 rows remain partial, so
+  paper_factory retirement is still blocked.
+- The primary-entrypoint P0 row exhaustively binds all 760 legacy argparse
+  commands to all 760 dispatch branches and gives each command a native,
+  pending-P1, quarantine, data-export, or retirement disposition. The old
+  entrypoint and pending-P1 routes are not allowed by the canonical hepta
+  policy.
+- The production-core P0 row uses an independent Python/JavaScript
+  differential suite covering all 11 production states, all repair-frontier
+  routes, stage ordering, summary counters, and artifact-label resolution.
 - The hepta-native SQLite store is the default inventory/referee/package store.
   The migrated snapshot has 29 papers, 3 venues, 19 ledger rows, 1,128
   submissions, 3,601 artifacts, 779 non-orphan referee requests, and 710
@@ -49,7 +58,7 @@ dry-run orchestration remain available.
   - generated empirical experiment code is isolated in experiment-runner.
   - patch creation/validation/application is isolated in repair-executor.
 - A 64 KiB production-module budget is now enforced by remediation selftest
-  across all 38 MJS modules under paper-core and paper-adapters.
+  across all 39 MJS modules under paper-core and paper-adapters.
 - Added deterministic vendored-core selftest distinct from the cross-repository
   workspace integration test.
 - Added failure-closed migration and referee-authority tests, SQLite rollback
@@ -65,15 +74,22 @@ unbounded-file blocker.
 
 ## Migration matrix progress after P1
 
-- Two hash-bound P0 rows now document the primary entrypoint and production
-  batch boundary, backed by
-  migration/tests/p0-entrypoint-and-batch-parity.mjs.
-- Both rows deliberately declare semanticScope.status as partial. The matrix
-  verifier now requires semanticScope.status to be complete, so passing a
-  narrow smoke test cannot falsely close a whole legacy file.
-- Current honest matrix status remains 0 verified, 2 partial/invalid, and 263
-  missing source paths (2 P0, 261 P1). The partial rows are progress evidence,
-  not retirement evidence.
+- Matrix version 2 contains 263/263 explicit source rows. Every row binds the
+  exact legacy hash, a top-level source-symbol inventory, an assigned native
+  capability family, the exact target hash, and target symbols.
+- Verified: 13 total = 2 P0 plus 11 plugin-descriptor replacements.
+- Remaining: 250 P1 partial/invalid rows. They have structural mappings but
+  intentionally lack a complete behavioral/retirement proof, so they continue
+  to count as blockers.
+- The 11 verified plugin descriptors cover compile, package, evidence, external
+  boundary, report, venue, section-writer retirement, structural/substantive
+  referee, revision planning, and patch-request routing. Model calls,
+  independent acceptance authority, direct manuscript mutation, and external
+  actions are explicitly not inherited from the legacy wrappers.
+- Shared hash-bound behavior tests execute once per audit and are reused across
+  rows, preventing a 263-row matrix from repeatedly running identical suites.
+- Current blocker counts: P0 = 0, P1 = 250. Retirement and old-control-plane
+  removal remain blocked.
 
 ## Verification
 
@@ -82,9 +98,11 @@ npm run store:status
 npm run core:integrity
 npm run audit:local-accepts
 npm run migration:p0-selftest
+npm run migration:p1-plugin-selftest
+npm run migration:matrix-integrity
 npm test
 ```
 
-The external submission executor must remain absent until the 263 migration
-matrix rows, attested research evidence, independent referee route, and module
-debt gates are all closed and reviewed.
+The external submission executor must remain absent until the remaining 250
+P1 matrix rows, attested research evidence, and independent referee route are
+all closed and reviewed.

@@ -28,11 +28,13 @@
     "paper:referee-review": "node paper-core/bin/paper-production-core.mjs batch-run --mode referee-review",
     "paper:referee-revise": "node paper-core/bin/paper-production-core.mjs batch-run --mode referee-revise",
     "paper:legacy-cleanup": "node paper-core/bin/paper-production-core.mjs batch-run --mode legacy-cleanup",
-    "migration:p0-selftest": "node migration/tests/p0-entrypoint-and-batch-parity.mjs",
+    "migration:p0-selftest": "node migration/tests/p0-entrypoint-and-batch-parity.mjs && node migration/tests/p0-paperctl-command-disposition.mjs && node migration/tests/p0-production-core-differential.mjs",
+    "migration:p1-plugin-selftest": "node migration/tests/p1-plugin-wrapper-boundaries.mjs",
+    "migration:matrix-integrity": "node migration/tests/matrix-integrity.mjs",
     "audit:local-accepts": "node paper-core/bin/reassess-local-accepts.mjs",
     "store:init": "node paper-core/bin/hepta-store.mjs init",
     "store:migrate-legacy": "node paper-core/bin/hepta-store.mjs migrate-legacy",
     "store:status": "node paper-core/bin/hepta-store.mjs status",
-    "selftest": "npm run core:integrity && npm run core:selftest && npm run core:runtime-dry-run && npm run paper:selftest && npm run paper:remediation-selftest"
+    "selftest": "npm run core:integrity && npm run core:selftest && npm run core:runtime-dry-run && npm run paper:selftest && npm run paper:remediation-selftest && npm run migration:matrix-integrity"
   }
 }

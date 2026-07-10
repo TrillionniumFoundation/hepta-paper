@@ -147,6 +147,7 @@ assert.ok(inventory.rows.length > 0);
 
 const matrixAudit = buildMigrationMatrixAudit({
   root,
+  matrixOverride: { version: 2, entries: [] },
   entries: [{
     path: 'bin/paperctl',
     hash: 'sha256:test',

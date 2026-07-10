@@ -15,7 +15,7 @@ dry-run orchestration remain available.
   match and 362 differ. No report claims historical byte identity.
 - The former automatic 263 semantic migration claims are withdrawn. The
   migration matrix now has an explicit row for all 263 P0/P1 source paths.
-  Both P0 rows are complete and verified; 246 P1 rows remain partial, so
+  Both P0 rows are complete and verified; 221 P1 rows remain partial, so
   paper_factory retirement is still blocked.
 - The primary-entrypoint P0 row exhaustively binds all 760 legacy argparse
   commands to all 760 dispatch branches and gives each command a native,
@@ -58,7 +58,7 @@ dry-run orchestration remain available.
   - generated empirical experiment code is isolated in experiment-runner.
   - patch creation/validation/application is isolated in repair-executor.
 - A 64 KiB production-module budget is now enforced by remediation selftest
-  across all 39 MJS modules under paper-core and paper-adapters.
+  across all 40 MJS modules under paper-core and paper-adapters.
 - Added deterministic vendored-core selftest distinct from the cross-repository
   workspace integration test.
 - Added failure-closed migration and referee-authority tests, SQLite rollback
@@ -77,9 +77,11 @@ unbounded-file blocker.
 - Matrix version 2 contains 263/263 explicit source rows. Every row binds the
   exact legacy hash, a top-level source-symbol inventory, an assigned native
   capability family, the exact target hash, and target symbols.
-- Verified: 17 total = 2 P0 plus 11 plugin-descriptor replacements and 4
-  explicitly retired legacy referee Python runners.
-- Remaining: 246 P1 partial/invalid rows. They have structural mappings but
+- Verified: 42 total = 2 P0 plus 40 P1 rows. The P1 total comprises 11
+  plugin-descriptor replacements, 4 retired plugin runners, 6 retired
+  venue-misclassified control surfaces, 18 retired generated referee
+  capstones, and 1 exact differential referee decision-routing port.
+- Remaining: 221 P1 partial/invalid rows. They have structural mappings but
   intentionally lack a complete behavioral/retirement proof, so they continue
   to count as blockers.
 - The 11 verified plugin descriptors cover compile, package, evidence, external
@@ -90,9 +92,24 @@ unbounded-file blocker.
 - The four retired referee runners have zero references from paper-core or
   paper-adapters. Their unbound model-call and draft-writing execution paths
   are not part of the hepta control plane.
+- Six sources previously assigned to venue-resolve were decision catalogs,
+  settlement/readiness reports, and operator-drop preflight surfaces rather
+  than venue selectors. Their 19 public symbols are explicitly retired after
+  AST checks prove no write/process/network side effects and no exact source
+  path is consumed by hepta production code.
+- Eighteen generated referee capstones are explicitly retired under the same
+  fail-closed proof. Their 41 public symbols only build legacy report/control
+  evidence and do not provide executable repair authority or hepta-native
+  state transitions.
+- The non-capstone `referee_revision.py` behavior is implemented in the native
+  referee-revise adapter as eight decision-plan/consuming-selection exports.
+  A 58-case Python/JavaScript differential suite has exact parity across all
+  observed plan and selection states, including unsafe command, mutation,
+  external-action, human-review, deterministic fallback, and selected-route
+  boundaries.
 - Shared hash-bound behavior tests execute once per audit and are reused across
   rows, preventing a 263-row matrix from repeatedly running identical suites.
-- Current blocker counts: P0 = 0, P1 = 246. Retirement and old-control-plane
+- Current blocker counts: P0 = 0, P1 = 221. Retirement and old-control-plane
   removal remain blocked.
 
 ## Verification
@@ -103,10 +120,12 @@ npm run core:integrity
 npm run audit:local-accepts
 npm run migration:p0-selftest
 npm run migration:p1-plugin-selftest
+npm run migration:p1-venue-selftest
+npm run migration:p1-referee-selftest
 npm run migration:matrix-integrity
 npm test
 ```
 
-The external submission executor must remain absent until the remaining 246
+The external submission executor must remain absent until the remaining 221
 P1 matrix rows, attested research evidence, and independent referee route are
 all closed and reviewed.

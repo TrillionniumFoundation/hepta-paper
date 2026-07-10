@@ -503,19 +503,16 @@
       "id": "p1-paperctl-modules-paper-production-referee-repair-closure-prerequisite-remediation-matrix-capstone-py-82c84d97103e",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/referee-revise",
-      "migrationAction": "extract_repair_semantics_into_referee_revise",
+      "migrationAction": "retire_generated_referee_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "generated referee report/control-evidence surface explicitly retired",
+          "zero source writes, process launches, and network imports",
+          "zero exact source-path references from hepta production modules"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_closure_prerequisite_remediation_matrix_capstone.py",
@@ -526,31 +523,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/referee-revise/index.mjs",
-        "sha256": "69038948c3baa9d43980299a118b24c384d1263653650f9a7ed8bbb620fbc2a0",
+        "path": "hepta-paper-workspace/migration/referee-revise-retirements.mjs",
+        "sha256": "b64f6c54ab7bdfe2919c972caddad9a6aa282ab1c5c0d4f1198fd86a7231f0ec",
         "symbols": [
-          "runRefereeReviseAdapter"
+          "REFEREE_REVISE_EXPLICIT_RETIREMENTS",
+          "refereeReviseRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-referee-revise-explicit-retirements",
+          "path": "migration/tests/p1-referee-revise-retirements.mjs",
+          "sha256": "3fd400ef5d15f0019e834f9ed13482b697ecd8d18aa30708e1a1dffc11f37ab5"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-contract-fulfillment-gate-capstone-py-940e59e2a5ec",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/referee-revise",
-      "migrationAction": "extract_repair_semantics_into_referee_revise",
+      "migrationAction": "retire_generated_referee_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "generated referee report/control-evidence surface explicitly retired",
+          "zero source writes, process launches, and network imports",
+          "zero exact source-path references from hepta production modules"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_contract_fulfillment_gate_capstone.py",
@@ -561,31 +562,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/referee-revise/index.mjs",
-        "sha256": "69038948c3baa9d43980299a118b24c384d1263653650f9a7ed8bbb620fbc2a0",
+        "path": "hepta-paper-workspace/migration/referee-revise-retirements.mjs",
+        "sha256": "b64f6c54ab7bdfe2919c972caddad9a6aa282ab1c5c0d4f1198fd86a7231f0ec",
         "symbols": [
-          "runRefereeReviseAdapter"
+          "REFEREE_REVISE_EXPLICIT_RETIREMENTS",
+          "refereeReviseRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-referee-revise-explicit-retirements",
+          "path": "migration/tests/p1-referee-revise-retirements.mjs",
+          "sha256": "3fd400ef5d15f0019e834f9ed13482b697ecd8d18aa30708e1a1dffc11f37ab5"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-executable-packet-spec-checklist-capstone-py-91373aa13037",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/referee-revise",
-      "migrationAction": "extract_repair_semantics_into_referee_revise",
+      "migrationAction": "retire_generated_referee_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "generated referee report/control-evidence surface explicitly retired",
+          "zero source writes, process launches, and network imports",
+          "zero exact source-path references from hepta production modules"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_executable_packet_spec_checklist_capstone.py",
@@ -596,13 +601,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/referee-revise/index.mjs",
-        "sha256": "69038948c3baa9d43980299a118b24c384d1263653650f9a7ed8bbb620fbc2a0",
+        "path": "hepta-paper-workspace/migration/referee-revise-retirements.mjs",
+        "sha256": "b64f6c54ab7bdfe2919c972caddad9a6aa282ab1c5c0d4f1198fd86a7231f0ec",
         "symbols": [
-          "runRefereeReviseAdapter"
+          "REFEREE_REVISE_EXPLICIT_RETIREMENTS",
+          "refereeReviseRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-referee-revise-explicit-retirements",
+          "path": "migration/tests/p1-referee-revise-retirements.mjs",
+          "sha256": "3fd400ef5d15f0019e834f9ed13482b697ecd8d18aa30708e1a1dffc11f37ab5"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-evidence-candidate-handoff-preflight-capstone-py-7a1b8f528391",
@@ -643,19 +655,16 @@
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-material-evidence-candidate-validation-capstone-py-b58d21ad9c24",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/referee-revise",
-      "migrationAction": "extract_repair_semantics_into_referee_revise",
+      "migrationAction": "retire_generated_referee_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "generated referee report/control-evidence surface explicitly retired",
+          "zero source writes, process launches, and network imports",
+          "zero exact source-path references from hepta production modules"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_material_evidence_candidate_validation_capstone.py",
@@ -666,13 +675,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/referee-revise/index.mjs",
-        "sha256": "69038948c3baa9d43980299a118b24c384d1263653650f9a7ed8bbb620fbc2a0",
+        "path": "hepta-paper-workspace/migration/referee-revise-retirements.mjs",
+        "sha256": "b64f6c54ab7bdfe2919c972caddad9a6aa282ab1c5c0d4f1198fd86a7231f0ec",
         "symbols": [
-          "runRefereeReviseAdapter"
+          "REFEREE_REVISE_EXPLICIT_RETIREMENTS",
+          "refereeReviseRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-referee-revise-explicit-retirements",
+          "path": "migration/tests/p1-referee-revise-retirements.mjs",
+          "sha256": "3fd400ef5d15f0019e834f9ed13482b697ecd8d18aa30708e1a1dffc11f37ab5"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-material-inbox-readiness-capstone-py-5afb36257f44",
@@ -717,19 +733,16 @@
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-material-promotion-quarantine-capstone-py-e2b59d1bebf1",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/referee-revise",
-      "migrationAction": "extract_repair_semantics_into_referee_revise",
+      "migrationAction": "retire_generated_referee_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "generated referee report/control-evidence surface explicitly retired",
+          "zero source writes, process launches, and network imports",
+          "zero exact source-path references from hepta production modules"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_material_promotion_quarantine_capstone.py",
@@ -740,31 +753,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/referee-revise/index.mjs",
-        "sha256": "69038948c3baa9d43980299a118b24c384d1263653650f9a7ed8bbb620fbc2a0",
+        "path": "hepta-paper-workspace/migration/referee-revise-retirements.mjs",
+        "sha256": "b64f6c54ab7bdfe2919c972caddad9a6aa282ab1c5c0d4f1198fd86a7231f0ec",
         "symbols": [
-          "runRefereeReviseAdapter"
+          "REFEREE_REVISE_EXPLICIT_RETIREMENTS",
+          "refereeReviseRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-referee-revise-explicit-retirements",
+          "path": "migration/tests/p1-referee-revise-retirements.mjs",
+          "sha256": "3fd400ef5d15f0019e834f9ed13482b697ecd8d18aa30708e1a1dffc11f37ab5"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-material-validation-failure-matrix-capstone-py-969aaacc98b1",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/referee-revise",
-      "migrationAction": "extract_repair_semantics_into_referee_revise",
+      "migrationAction": "retire_generated_referee_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "generated referee report/control-evidence surface explicitly retired",
+          "zero source writes, process launches, and network imports",
+          "zero exact source-path references from hepta production modules"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_material_validation_failure_matrix_capstone.py",
@@ -775,31 +792,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/referee-revise/index.mjs",
-        "sha256": "69038948c3baa9d43980299a118b24c384d1263653650f9a7ed8bbb620fbc2a0",
+        "path": "hepta-paper-workspace/migration/referee-revise-retirements.mjs",
+        "sha256": "b64f6c54ab7bdfe2919c972caddad9a6aa282ab1c5c0d4f1198fd86a7231f0ec",
         "symbols": [
-          "runRefereeReviseAdapter"
+          "REFEREE_REVISE_EXPLICIT_RETIREMENTS",
+          "refereeReviseRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-referee-revise-explicit-retirements",
+          "path": "migration/tests/p1-referee-revise-retirements.mjs",
+          "sha256": "3fd400ef5d15f0019e834f9ed13482b697ecd8d18aa30708e1a1dffc11f37ab5"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-materialization-intake-capstone-py-fab0a51744f7",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/referee-revise",
-      "migrationAction": "extract_repair_semantics_into_referee_revise",
+      "migrationAction": "retire_generated_referee_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "generated referee report/control-evidence surface explicitly retired",
+          "zero source writes, process launches, and network imports",
+          "zero exact source-path references from hepta production modules"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_materialization_intake_capstone.py",
@@ -810,13 +831,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/referee-revise/index.mjs",
-        "sha256": "69038948c3baa9d43980299a118b24c384d1263653650f9a7ed8bbb620fbc2a0",
+        "path": "hepta-paper-workspace/migration/referee-revise-retirements.mjs",
+        "sha256": "b64f6c54ab7bdfe2919c972caddad9a6aa282ab1c5c0d4f1198fd86a7231f0ec",
         "symbols": [
-          "runRefereeReviseAdapter"
+          "REFEREE_REVISE_EXPLICIT_RETIREMENTS",
+          "refereeReviseRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-referee-revise-explicit-retirements",
+          "path": "migration/tests/p1-referee-revise-retirements.mjs",
+          "sha256": "3fd400ef5d15f0019e834f9ed13482b697ecd8d18aa30708e1a1dffc11f37ab5"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-authoring-requirement-template-verifier-capstone-py-dfa764ba2fe0",
@@ -1793,19 +1821,16 @@
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-promotion-evidence-release-separation-ledger-capstone-py-9d892948f564",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/referee-revise",
-      "migrationAction": "extract_repair_semantics_into_referee_revise",
+      "migrationAction": "retire_generated_referee_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "generated referee report/control-evidence surface explicitly retired",
+          "zero source writes, process launches, and network imports",
+          "zero exact source-path references from hepta production modules"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_promotion_evidence_release_separation_ledger_capstone.py",
@@ -1816,31 +1841,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/referee-revise/index.mjs",
-        "sha256": "69038948c3baa9d43980299a118b24c384d1263653650f9a7ed8bbb620fbc2a0",
+        "path": "hepta-paper-workspace/migration/referee-revise-retirements.mjs",
+        "sha256": "b64f6c54ab7bdfe2919c972caddad9a6aa282ab1c5c0d4f1198fd86a7231f0ec",
         "symbols": [
-          "runRefereeReviseAdapter"
+          "REFEREE_REVISE_EXPLICIT_RETIREMENTS",
+          "refereeReviseRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-referee-revise-explicit-retirements",
+          "path": "migration/tests/p1-referee-revise-retirements.mjs",
+          "sha256": "3fd400ef5d15f0019e834f9ed13482b697ecd8d18aa30708e1a1dffc11f37ab5"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-promotion-review-authorization-dry-run-ledger-capstone-py-6d89753c6065",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/referee-revise",
-      "migrationAction": "extract_repair_semantics_into_referee_revise",
+      "migrationAction": "retire_generated_referee_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "generated referee report/control-evidence surface explicitly retired",
+          "zero source writes, process launches, and network imports",
+          "zero exact source-path references from hepta production modules"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_promotion_review_authorization_dry_run_ledger_capstone.py",
@@ -1851,31 +1880,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/referee-revise/index.mjs",
-        "sha256": "69038948c3baa9d43980299a118b24c384d1263653650f9a7ed8bbb620fbc2a0",
+        "path": "hepta-paper-workspace/migration/referee-revise-retirements.mjs",
+        "sha256": "b64f6c54ab7bdfe2919c972caddad9a6aa282ab1c5c0d4f1198fd86a7231f0ec",
         "symbols": [
-          "runRefereeReviseAdapter"
+          "REFEREE_REVISE_EXPLICIT_RETIREMENTS",
+          "refereeReviseRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-referee-revise-explicit-retirements",
+          "path": "migration/tests/p1-referee-revise-retirements.mjs",
+          "sha256": "3fd400ef5d15f0019e834f9ed13482b697ecd8d18aa30708e1a1dffc11f37ab5"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-promotion-review-decision-intake-guard-capstone-py-bda73630b6a1",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/referee-revise",
-      "migrationAction": "extract_repair_semantics_into_referee_revise",
+      "migrationAction": "retire_generated_referee_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "generated referee report/control-evidence surface explicitly retired",
+          "zero source writes, process launches, and network imports",
+          "zero exact source-path references from hepta production modules"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_promotion_review_decision_intake_guard_capstone.py",
@@ -1887,31 +1920,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/referee-revise/index.mjs",
-        "sha256": "69038948c3baa9d43980299a118b24c384d1263653650f9a7ed8bbb620fbc2a0",
+        "path": "hepta-paper-workspace/migration/referee-revise-retirements.mjs",
+        "sha256": "b64f6c54ab7bdfe2919c972caddad9a6aa282ab1c5c0d4f1198fd86a7231f0ec",
         "symbols": [
-          "runRefereeReviseAdapter"
+          "REFEREE_REVISE_EXPLICIT_RETIREMENTS",
+          "refereeReviseRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-referee-revise-explicit-retirements",
+          "path": "migration/tests/p1-referee-revise-retirements.mjs",
+          "sha256": "3fd400ef5d15f0019e834f9ed13482b697ecd8d18aa30708e1a1dffc11f37ab5"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-promotion-review-intake-quarantine-capstone-py-c0ba0085526e",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/referee-revise",
-      "migrationAction": "extract_repair_semantics_into_referee_revise",
+      "migrationAction": "retire_generated_referee_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "generated referee report/control-evidence surface explicitly retired",
+          "zero source writes, process launches, and network imports",
+          "zero exact source-path references from hepta production modules"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_promotion_review_intake_quarantine_capstone.py",
@@ -1923,13 +1960,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/referee-revise/index.mjs",
-        "sha256": "69038948c3baa9d43980299a118b24c384d1263653650f9a7ed8bbb620fbc2a0",
+        "path": "hepta-paper-workspace/migration/referee-revise-retirements.mjs",
+        "sha256": "b64f6c54ab7bdfe2919c972caddad9a6aa282ab1c5c0d4f1198fd86a7231f0ec",
         "symbols": [
-          "runRefereeReviseAdapter"
+          "REFEREE_REVISE_EXPLICIT_RETIREMENTS",
+          "refereeReviseRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-referee-revise-explicit-retirements",
+          "path": "migration/tests/p1-referee-revise-retirements.mjs",
+          "sha256": "3fd400ef5d15f0019e834f9ed13482b697ecd8d18aa30708e1a1dffc11f37ab5"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-readiness-capstone-py-363c1cd51c61",
@@ -2010,19 +2054,16 @@
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-repair-evidence-release-request-envelope-nonclosure-preflight-capstone-py-a3c2fd8aaf00",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/referee-revise",
-      "migrationAction": "extract_repair_semantics_into_referee_revise",
+      "migrationAction": "retire_generated_referee_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "generated referee report/control-evidence surface explicitly retired",
+          "zero source writes, process launches, and network imports",
+          "zero exact source-path references from hepta production modules"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_repair_evidence_release_request_envelope_nonclosure_preflight_capstone.py",
@@ -2035,13 +2076,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/referee-revise/index.mjs",
-        "sha256": "69038948c3baa9d43980299a118b24c384d1263653650f9a7ed8bbb620fbc2a0",
+        "path": "hepta-paper-workspace/migration/referee-revise-retirements.mjs",
+        "sha256": "b64f6c54ab7bdfe2919c972caddad9a6aa282ab1c5c0d4f1198fd86a7231f0ec",
         "symbols": [
-          "runRefereeReviseAdapter"
+          "REFEREE_REVISE_EXPLICIT_RETIREMENTS",
+          "refereeReviseRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-referee-revise-explicit-retirements",
+          "path": "migration/tests/p1-referee-revise-retirements.mjs",
+          "sha256": "3fd400ef5d15f0019e834f9ed13482b697ecd8d18aa30708e1a1dffc11f37ab5"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-repair-material-source-rejudge-input-index-verifier-capstone-py-ffbce3dbe119",
@@ -2083,19 +2131,16 @@
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-skeleton-inventory-currentness-capstone-py-0da89f5351a8",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/referee-revise",
-      "migrationAction": "extract_repair_semantics_into_referee_revise",
+      "migrationAction": "retire_generated_referee_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "generated referee report/control-evidence surface explicitly retired",
+          "zero source writes, process launches, and network imports",
+          "zero exact source-path references from hepta production modules"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_skeleton_inventory_currentness_capstone.py",
@@ -2106,13 +2151,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/referee-revise/index.mjs",
-        "sha256": "69038948c3baa9d43980299a118b24c384d1263653650f9a7ed8bbb620fbc2a0",
+        "path": "hepta-paper-workspace/migration/referee-revise-retirements.mjs",
+        "sha256": "b64f6c54ab7bdfe2919c972caddad9a6aa282ab1c5c0d4f1198fd86a7231f0ec",
         "symbols": [
-          "runRefereeReviseAdapter"
+          "REFEREE_REVISE_EXPLICIT_RETIREMENTS",
+          "refereeReviseRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-referee-revise-explicit-retirements",
+          "path": "migration/tests/p1-referee-revise-retirements.mjs",
+          "sha256": "3fd400ef5d15f0019e834f9ed13482b697ecd8d18aa30708e1a1dffc11f37ab5"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-source-authoring-prerequisite-template-verifier-capstone-py-2d9e22f39a92",
@@ -2335,19 +2387,16 @@
       "id": "p1-paperctl-modules-paper-production-referee-repair-request-packet-contract-lint-capstone-py-71052afa6c8e",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/referee-revise",
-      "migrationAction": "extract_repair_semantics_into_referee_revise",
+      "migrationAction": "retire_generated_referee_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "generated referee report/control-evidence surface explicitly retired",
+          "zero source writes, process launches, and network imports",
+          "zero exact source-path references from hepta production modules"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_request_packet_contract_lint_capstone.py",
@@ -2358,31 +2407,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/referee-revise/index.mjs",
-        "sha256": "69038948c3baa9d43980299a118b24c384d1263653650f9a7ed8bbb620fbc2a0",
+        "path": "hepta-paper-workspace/migration/referee-revise-retirements.mjs",
+        "sha256": "b64f6c54ab7bdfe2919c972caddad9a6aa282ab1c5c0d4f1198fd86a7231f0ec",
         "symbols": [
-          "runRefereeReviseAdapter"
+          "REFEREE_REVISE_EXPLICIT_RETIREMENTS",
+          "refereeReviseRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-referee-revise-explicit-retirements",
+          "path": "migration/tests/p1-referee-revise-retirements.mjs",
+          "sha256": "3fd400ef5d15f0019e834f9ed13482b697ecd8d18aa30708e1a1dffc11f37ab5"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-routing-capstone-py-0054b297a59c",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/referee-revise",
-      "migrationAction": "extract_repair_semantics_into_referee_revise",
+      "migrationAction": "retire_generated_referee_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "generated referee report/control-evidence surface explicitly retired",
+          "zero source writes, process launches, and network imports",
+          "zero exact source-path references from hepta production modules"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_routing_capstone.py",
@@ -2393,13 +2446,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/referee-revise/index.mjs",
-        "sha256": "69038948c3baa9d43980299a118b24c384d1263653650f9a7ed8bbb620fbc2a0",
+        "path": "hepta-paper-workspace/migration/referee-revise-retirements.mjs",
+        "sha256": "b64f6c54ab7bdfe2919c972caddad9a6aa282ab1c5c0d4f1198fd86a7231f0ec",
         "symbols": [
-          "runRefereeReviseAdapter"
+          "REFEREE_REVISE_EXPLICIT_RETIREMENTS",
+          "refereeReviseRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-referee-revise-explicit-retirements",
+          "path": "migration/tests/p1-referee-revise-retirements.mjs",
+          "sha256": "3fd400ef5d15f0019e834f9ed13482b697ecd8d18aa30708e1a1dffc11f37ab5"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-source-artifact-intake-queue-py-0701bd44bb04",
@@ -2548,19 +2608,16 @@
       "id": "p1-paperctl-modules-paper-production-referee-repair-typed-evidence-contract-matrix-py-4b381ff8cbf3",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/referee-revise",
-      "migrationAction": "extract_repair_semantics_into_referee_revise",
+      "migrationAction": "retire_generated_referee_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "generated referee report/control-evidence surface explicitly retired",
+          "zero source writes, process launches, and network imports",
+          "zero exact source-path references from hepta production modules"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_typed_evidence_contract_matrix.py",
@@ -2572,31 +2629,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/referee-revise/index.mjs",
-        "sha256": "69038948c3baa9d43980299a118b24c384d1263653650f9a7ed8bbb620fbc2a0",
+        "path": "hepta-paper-workspace/migration/referee-revise-retirements.mjs",
+        "sha256": "b64f6c54ab7bdfe2919c972caddad9a6aa282ab1c5c0d4f1198fd86a7231f0ec",
         "symbols": [
-          "runRefereeReviseAdapter"
+          "REFEREE_REVISE_EXPLICIT_RETIREMENTS",
+          "refereeReviseRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-referee-revise-explicit-retirements",
+          "path": "migration/tests/p1-referee-revise-retirements.mjs",
+          "sha256": "3fd400ef5d15f0019e834f9ed13482b697ecd8d18aa30708e1a1dffc11f37ab5"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-work-order-capstone-py-f8b1d13fdd8b",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/referee-revise",
-      "migrationAction": "extract_repair_semantics_into_referee_revise",
+      "migrationAction": "retire_generated_referee_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "generated referee report/control-evidence surface explicitly retired",
+          "zero source writes, process launches, and network imports",
+          "zero exact source-path references from hepta production modules"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_work_order_capstone.py",
@@ -2607,31 +2668,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/referee-revise/index.mjs",
-        "sha256": "69038948c3baa9d43980299a118b24c384d1263653650f9a7ed8bbb620fbc2a0",
+        "path": "hepta-paper-workspace/migration/referee-revise-retirements.mjs",
+        "sha256": "b64f6c54ab7bdfe2919c972caddad9a6aa282ab1c5c0d4f1198fd86a7231f0ec",
         "symbols": [
-          "runRefereeReviseAdapter"
+          "REFEREE_REVISE_EXPLICIT_RETIREMENTS",
+          "refereeReviseRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-referee-revise-explicit-retirements",
+          "path": "migration/tests/p1-referee-revise-retirements.mjs",
+          "sha256": "3fd400ef5d15f0019e834f9ed13482b697ecd8d18aa30708e1a1dffc11f37ab5"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-revise-loop-capstone-py-1727d1e3571b",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/referee-revise",
-      "migrationAction": "extract_repair_semantics_into_referee_revise",
+      "migrationAction": "retire_generated_referee_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "generated referee report/control-evidence surface explicitly retired",
+          "zero source writes, process launches, and network imports",
+          "zero exact source-path references from hepta production modules"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_revise_loop_capstone.py",
@@ -2642,13 +2707,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/referee-revise/index.mjs",
-        "sha256": "69038948c3baa9d43980299a118b24c384d1263653650f9a7ed8bbb620fbc2a0",
+        "path": "hepta-paper-workspace/migration/referee-revise-retirements.mjs",
+        "sha256": "b64f6c54ab7bdfe2919c972caddad9a6aa282ab1c5c0d4f1198fd86a7231f0ec",
         "symbols": [
-          "runRefereeReviseAdapter"
+          "REFEREE_REVISE_EXPLICIT_RETIREMENTS",
+          "refereeReviseRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-referee-revise-explicit-retirements",
+          "path": "migration/tests/p1-referee-revise-retirements.mjs",
+          "sha256": "3fd400ef5d15f0019e834f9ed13482b697ecd8d18aa30708e1a1dffc11f37ab5"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-release-lock-py-7c31f097c734",
@@ -3431,19 +3503,16 @@
       "id": "p1-paperctl-modules-referee-revision-py-665a2bc60b8d",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/referee-revise",
-      "migrationAction": "extract_repair_semantics_into_referee_revise",
+      "migrationAction": "port_referee_revision_decision_selectors_with_exact_differential_parity",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all eight public decision-plan and consuming-selection functions ported",
+          "exact Python-to-JavaScript differential parity across every decision and selection state",
+          "plan-only mutation, external-action, unsafe-command, and human-review guards preserved",
+          "deterministic fallback and selected-route behavior preserved"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/referee_revision.py",
@@ -3460,13 +3529,26 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/referee-revise/index.mjs",
-        "sha256": "69038948c3baa9d43980299a118b24c384d1263653650f9a7ed8bbb620fbc2a0",
+        "path": "hepta-paper-workspace/paper-adapters/referee-revise/decision-routing.mjs",
+        "sha256": "be72ffc5b103843e7dad1da5f163425af47fb4d9f6c009549b63b95f02ea5711",
         "symbols": [
-          "runRefereeReviseAdapter"
+          "refereeRevisionRequestDecisionPlan",
+          "refereeRevisionRequestConsumingSelection",
+          "evidenceResyncDecisionPlan",
+          "evidenceResyncConsumingSelection",
+          "readyMergeBoundaryDecisionPlan",
+          "readyMergeBoundaryConsumingSelection",
+          "postApplyFinalGateDecisionPlan",
+          "postApplyFinalGateConsumingSelection"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-referee-revision-differential",
+          "path": "migration/tests/p1-referee-revision-differential.mjs",
+          "sha256": "6e99d8721b8867c9b1456d86a45381cd78e281b70f953ae8f232e703e79f9f3f"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-research-compute-applyable-patch-planning-py-e37c4ed09f22",

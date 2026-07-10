@@ -32,6 +32,29 @@ const VENUE_RESOLVE_EXPLICIT_RETIREMENTS = new Set([
   'paperctl_modules/paper_production_runner_readiness_gate.py',
 ]);
 
+const REFEREE_REVISE_EXPLICIT_RETIREMENTS = new Set([
+  'paperctl_modules/paper_production_referee_repair_closure_prerequisite_remediation_matrix_capstone.py',
+  'paperctl_modules/paper_production_referee_repair_contract_fulfillment_gate_capstone.py',
+  'paperctl_modules/paper_production_referee_repair_executable_packet_spec_checklist_capstone.py',
+  'paperctl_modules/paper_production_referee_repair_packet_material_evidence_candidate_validation_capstone.py',
+  'paperctl_modules/paper_production_referee_repair_packet_material_promotion_quarantine_capstone.py',
+  'paperctl_modules/paper_production_referee_repair_packet_material_validation_failure_matrix_capstone.py',
+  'paperctl_modules/paper_production_referee_repair_packet_materialization_intake_capstone.py',
+  'paperctl_modules/paper_production_referee_repair_packet_promotion_evidence_release_separation_ledger_capstone.py',
+  'paperctl_modules/paper_production_referee_repair_packet_promotion_review_authorization_dry_run_ledger_capstone.py',
+  'paperctl_modules/paper_production_referee_repair_packet_promotion_review_decision_intake_guard_capstone.py',
+  'paperctl_modules/paper_production_referee_repair_packet_promotion_review_intake_quarantine_capstone.py',
+  'paperctl_modules/paper_production_referee_repair_packet_repair_evidence_release_request_envelope_nonclosure_preflight_capstone.py',
+  'paperctl_modules/paper_production_referee_repair_packet_skeleton_inventory_currentness_capstone.py',
+  'paperctl_modules/paper_production_referee_repair_request_packet_contract_lint_capstone.py',
+  'paperctl_modules/paper_production_referee_repair_routing_capstone.py',
+  'paperctl_modules/paper_production_referee_repair_typed_evidence_contract_matrix.py',
+  'paperctl_modules/paper_production_referee_repair_work_order_capstone.py',
+  'paperctl_modules/paper_production_referee_revise_loop_capstone.py',
+]);
+
+const REFEREE_REVISION_DIFFERENTIAL_SOURCE = 'paperctl_modules/referee_revision.py';
+
 const TARGETS = Object.freeze({
   'paper-adapters/venue-resolve': {
     path: 'hepta-paper-workspace/paper-adapters/venue-resolve/index.mjs',
@@ -100,6 +123,27 @@ function targetFor(entry) {
       symbols: ['VENUE_RESOLVE_EXPLICIT_RETIREMENTS', 'venueResolveRetirementDisposition'],
     };
   }
+  if (REFEREE_REVISE_EXPLICIT_RETIREMENTS.has(entry.path)) {
+    return {
+      path: 'hepta-paper-workspace/migration/referee-revise-retirements.mjs',
+      symbols: ['REFEREE_REVISE_EXPLICIT_RETIREMENTS', 'refereeReviseRetirementDisposition'],
+    };
+  }
+  if (entry.path === REFEREE_REVISION_DIFFERENTIAL_SOURCE) {
+    return {
+      path: 'hepta-paper-workspace/paper-adapters/referee-revise/decision-routing.mjs',
+      symbols: [
+        'refereeRevisionRequestDecisionPlan',
+        'refereeRevisionRequestConsumingSelection',
+        'evidenceResyncDecisionPlan',
+        'evidenceResyncConsumingSelection',
+        'readyMergeBoundaryDecisionPlan',
+        'readyMergeBoundaryConsumingSelection',
+        'postApplyFinalGateDecisionPlan',
+        'postApplyFinalGateConsumingSelection',
+      ],
+    };
+  }
   if (entry.path === 'plugins/core/report/plugin.yaml') {
     return {
       path: 'hepta-paper-workspace/paper-core/src/paper-batch-runner.mjs',
@@ -142,6 +186,8 @@ export function buildP1MatrixCandidates({
   entries,
   pluginBoundaryTestHash,
   venueRetirementTestHash,
+  refereeRevisionDifferentialTestHash,
+  refereeRetirementTestHash,
 } = {}) {
   return entries
     .filter((entry) => entry.priority === 'P1')
@@ -155,13 +201,22 @@ export function buildP1MatrixCandidates({
       const retiredPluginRunner = RETIRED_PLUGIN_RUNNERS.has(entry.path);
       const completePluginReplacement = completePluginDescriptor || retiredPluginRunner;
       const retiredVenueResolveSurface = VENUE_RESOLVE_EXPLICIT_RETIREMENTS.has(entry.path);
-      const completeReplacement = completePluginReplacement || retiredVenueResolveSurface;
+      const retiredRefereeReviseSurface = REFEREE_REVISE_EXPLICIT_RETIREMENTS.has(entry.path);
+      const differentialRefereeRevision = entry.path === REFEREE_REVISION_DIFFERENTIAL_SOURCE;
+      const completeReplacement = completePluginReplacement
+        || retiredVenueResolveSurface
+        || retiredRefereeReviseSurface
+        || differentialRefereeRevision;
       return {
         id: candidateId(entry),
         priority: 'P1',
         capabilityFamily: entry.targetAdapter,
         migrationAction: retiredVenueResolveSurface
           ? 'retire_generated_control_evidence_surface'
+          : retiredRefereeReviseSurface
+            ? 'retire_generated_referee_control_evidence_surface'
+            : differentialRefereeRevision
+              ? 'port_referee_revision_decision_selectors_with_exact_differential_parity'
           : entry.migrationAction,
         semanticScope: completeReplacement
           ? {
@@ -173,6 +228,20 @@ export function buildP1MatrixCandidates({
                 'zero source writes, process launches, and network imports',
                 'zero exact source-path references from hepta production modules',
               ]
+              : retiredRefereeReviseSurface
+                ? [
+                  'all public legacy source symbols inventoried',
+                  'generated referee report/control-evidence surface explicitly retired',
+                  'zero source writes, process launches, and network imports',
+                  'zero exact source-path references from hepta production modules',
+                ]
+                : differentialRefereeRevision
+                  ? [
+                    'all eight public decision-plan and consuming-selection functions ported',
+                    'exact Python-to-JavaScript differential parity across every decision and selection state',
+                    'plan-only mutation, external-action, unsafe-command, and human-review guards preserved',
+                    'deterministic fallback and selected-route behavior preserved',
+                  ]
               : [
                 completePluginDescriptor
                   ? 'legacy plugin descriptor identity and execution policy'
@@ -218,6 +287,18 @@ export function buildP1MatrixCandidates({
               path: 'migration/tests/p1-venue-resolve-retirements.mjs',
               sha256: venueRetirementTestHash,
             }]
+            : retiredRefereeReviseSurface
+              ? [{
+                id: 'p1-referee-revise-explicit-retirements',
+                path: 'migration/tests/p1-referee-revise-retirements.mjs',
+                sha256: refereeRetirementTestHash,
+              }]
+              : differentialRefereeRevision
+                ? [{
+                  id: 'p1-referee-revision-differential',
+                  path: 'migration/tests/p1-referee-revision-differential.mjs',
+                  sha256: refereeRevisionDifferentialTestHash,
+                }]
             : [],
       };
     });

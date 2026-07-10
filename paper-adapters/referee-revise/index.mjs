@@ -1,4 +1,14 @@
 import path from 'node:path';
+export {
+  evidenceResyncConsumingSelection,
+  evidenceResyncDecisionPlan,
+  postApplyFinalGateConsumingSelection,
+  postApplyFinalGateDecisionPlan,
+  readyMergeBoundaryConsumingSelection,
+  readyMergeBoundaryDecisionPlan,
+  refereeRevisionRequestConsumingSelection,
+  refereeRevisionRequestDecisionPlan,
+} from './decision-routing.mjs';
 import {
   fileRecord,
   normalizeText,

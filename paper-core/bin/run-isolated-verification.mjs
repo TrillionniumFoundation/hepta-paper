@@ -82,7 +82,10 @@ if (mode === 'release') {
   if (fs.existsSync(capabilityManifest)) {
     const currentRoot = path.join(productionRuntimeRoot, 'release-evidence', 'current');
     fs.mkdirSync(currentRoot, { recursive: true });
-    fs.copyFileSync(capabilityManifest, path.join(currentRoot, 'CAPABILITY_VERIFICATION_MANIFEST.json'));
+    const currentManifest = path.join(currentRoot, 'CAPABILITY_VERIFICATION_MANIFEST.json');
+    if (fs.existsSync(currentManifest)) fs.chmodSync(currentManifest, 0o644);
+    fs.copyFileSync(capabilityManifest, currentManifest);
+    fs.chmodSync(currentManifest, 0o444);
   }
 }
 process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`);

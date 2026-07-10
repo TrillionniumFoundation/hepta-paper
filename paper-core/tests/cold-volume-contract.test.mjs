@@ -25,7 +25,7 @@ test('cold-volume contract verifies logical links and fails closed until mounted
     entries: ['derivatives'],
   };
   fs.symlinkSync(path.join(mountRoot, contract.contentRoot, 'derivatives'), path.join(logicalRoot, 'derivatives'));
-  const unavailable = verifyColdVolumeContract({ assetRoot, contract });
+  const unavailable = verifyColdVolumeContract({ assetRoot, contract, mountAvailableOverride: false });
   assert.equal(unavailable.contractValid, true);
   assert.equal(unavailable.operationalReplayReady, false);
   fs.mkdirSync(path.join(mountRoot, contract.contentRoot, 'derivatives'), { recursive: true });
@@ -34,7 +34,7 @@ test('cold-volume contract verifies logical links and fails closed until mounted
   const sentinelPath = path.join(mountRoot, contract.sentinelRelativePath);
   fs.mkdirSync(path.dirname(sentinelPath), { recursive: true });
   fs.writeFileSync(sentinelPath, `${JSON.stringify(sentinel)}\n`);
-  const ready = verifyColdVolumeContract({ assetRoot, contract });
+  const ready = verifyColdVolumeContract({ assetRoot, contract, mountAvailableOverride: true });
   assert.equal(ready.status, 'cold_volume_mounted_and_content_verified');
   assert.equal(ready.operationalReplayReady, true);
 });

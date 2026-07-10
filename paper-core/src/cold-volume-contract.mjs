@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 function sha256File(file) {
@@ -11,7 +12,7 @@ function normalized(value) {
   return path.resolve(String(value || ''));
 }
 
-export function verifyColdVolumeContract({ assetRoot, contract, contractPath = null } = {}) {
+export function verifyColdVolumeContract({ assetRoot, contract, contractPath = null, mountAvailableOverride = null } = {}) {
   if (!assetRoot || contract?.kind !== 'ColdVolumeMountContract' || contract?.version !== 1) {
     throw new Error('A v1 ColdVolumeMountContract and assetRoot are required');
   }
@@ -42,7 +43,10 @@ export function verifyColdVolumeContract({ assetRoot, contract, contractPath = n
       targetPresent: fs.existsSync(expectedTarget),
     };
   });
-  const mountAvailable = fs.existsSync(mountRoot) && fs.statSync(mountRoot).isDirectory();
+  const mountProbe = spawnSync('findmnt', ['-rn', '--mountpoint', mountRoot, '-o', 'TARGET,SOURCE,FSTYPE'], { encoding: 'utf8' });
+  const mountAvailable = mountAvailableOverride === null
+    ? mountProbe.status === 0
+    : Boolean(mountAvailableOverride);
   const sentinelPath = path.join(mountRoot, contract.sentinelRelativePath);
   let sentinel = null;
   if (mountAvailable && contract.contentManifestRequiredWhenMounted) {
@@ -69,6 +73,7 @@ export function verifyColdVolumeContract({ assetRoot, contract, contractPath = n
     assetRoot: normalized(assetRoot),
     mountRoot,
     mountAvailable,
+    mountIdentity: mountAvailable ? String(mountProbe.stdout || '').trim() || 'test_override' : null,
     sentinelPath,
     sentinelHash: fs.existsSync(sentinelPath) ? sha256File(sentinelPath) : null,
     entryCount: rows.length,

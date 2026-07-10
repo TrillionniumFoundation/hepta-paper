@@ -17,6 +17,8 @@ import {
   paperWorkflowRow,
   hashPaperRecord,
 } from './paper-contracts.mjs';
+import { buildCoreIntegrityReport } from './core-integrity.mjs';
+import { heptaStorePath } from './hepta-store.mjs';
 import { discoverInventory } from '../../paper-adapters/inventory/index.mjs';
 import {
   runLatexBuildAdapter,
@@ -84,7 +86,7 @@ function escapeSqlText(value) {
 }
 
 function openRefereeIssueCount(root, paperId) {
-  const dbPath = path.join(root, 'paper_factory.sqlite');
+  const dbPath = heptaStorePath(root);
   const rows = sqliteJson(
     dbPath,
     [
@@ -787,8 +789,14 @@ function summarizeResults(results, legacyCleanupAudit = null) {
     lifecycleItems: lifecycles.length,
     reviewedSubmitItems: reviewedSubmitLifecycles.length,
     approvalPackets: reviewedSubmitLifecycles.filter((lifecycle) => lifecycle.approvalPacket?.kind === 'SubmissionApprovalPacket').length,
+    approvalBlocked: reviewedSubmitLifecycles.filter((lifecycle) => (
+      lifecycle.approvalPacket?.status === 'blocked_approval_packet'
+    )).length,
     approvalRequired: reviewedSubmitLifecycles.filter((lifecycle) => (
       (lifecycle.approvalPacket?.blockers || []).includes('explicit_reviewed_submit_approval_required')
+    )).length,
+    academicEvidenceRequired: reviewedSubmitLifecycles.filter((lifecycle) => (
+      (lifecycle.approvalPacket?.blockers || []).includes('attested_academic_evidence_required_for_reviewed_submit')
     )).length,
     approvalAgentApproved: reviewedSubmitLifecycles.filter((lifecycle) => (
       lifecycle.approvalPacket?.agentApproved === true
@@ -1561,6 +1569,12 @@ export async function runPaperBatch({
   if (!MODE_SET.has(mode)) throw new Error(`Unknown paper batch mode: ${mode}`);
   const resolvedRoot = path.resolve(root);
   const resolvedRuntimeRoot = runtimeRoot ? path.resolve(runtimeRoot) : defaultRuntimeRoot(resolvedRoot);
+  const coreIntegrity = buildCoreIntegrityReport({
+    workspaceRoot: path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..'),
+  });
+  if (execute && !coreIntegrity.ok) {
+    throw new Error(`Core integrity gate blocked execution: ${coreIntegrity.status}`);
+  }
   const scan = await discoverInventory({
     root: resolvedRoot,
     limit,
@@ -1790,10 +1804,13 @@ export async function runPaperBatch({
     rows,
     results,
     legacyCleanupAudit,
+    coreIntegrity,
     markdownTable: makeMarkdownTable(rows),
     blockerFamilyTable: makeBlockerFamilyMarkdown(blockerFamilies),
     safety: {
-      coreSnapshotModified: false,
+      coreSnapshotModified: coreIntegrity.coreSnapshotModified,
+      coreIntegrityStatus: coreIntegrity.status,
+      upstreamCoreSnapshotExactMatch: coreIntegrity.upstream.exactMatch,
       importsOldPaperFactoryControlPlane: false,
       externalActionPerformed: false,
       reviewedSubmitBlockedByDefault: true,

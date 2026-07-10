@@ -2792,6 +2792,10 @@ export function buildSubmissionApprovalPacket({
   if (!artifactPackage?.submitReady) blockers.push('artifact_package_not_submit_ready');
   if (venuePlan?.status !== 'local_dry_run_ready') blockers.push('venue_submission_plan_not_ready');
   if (researchReport?.status === 'blocked') blockers.push('research_verify_blocked');
+  if (researchReport?.academicEvidenceStatus !== 'academic_evidence_verified'
+    || researchReport?.academicEvidenceEligible !== true) {
+    blockers.push('attested_academic_evidence_required_for_reviewed_submit');
+  }
   const packet = {
     version: PAPER_CORE_VERSION,
     kind: 'SubmissionApprovalPacket',
@@ -2825,12 +2829,19 @@ export function buildFreshVenueEvidenceBundle({
   venuePlan,
   artifactPackage = null,
   researchReport = null,
+  requireAcademicEvidence = false,
   createdAt = null,
 } = {}) {
   if (!paperTask?.taskKey || !venuePlan?.kind) throw new Error('FreshVenueEvidenceBundle requires paperTask and venuePlan');
   const blockers = [];
   if (venuePlan.status !== 'local_dry_run_ready') blockers.push('venue_plan_not_ready');
   if (!artifactPackage?.artifactPackageHash) blockers.push('artifact_package_hash_missing');
+  if (requireAcademicEvidence && (
+    researchReport?.academicEvidenceStatus !== 'academic_evidence_verified'
+    || researchReport?.academicEvidenceEligible !== true
+  )) {
+    blockers.push('attested_academic_evidence_required_for_reviewed_submit');
+  }
   const bundle = {
     version: PAPER_CORE_VERSION,
     kind: 'FreshVenueEvidenceBundle',
@@ -2840,6 +2851,8 @@ export function buildFreshVenueEvidenceBundle({
     venueSubmissionPlanHash: venuePlan.venueSubmissionPlanHash,
     artifactPackageHash: artifactPackage?.artifactPackageHash || null,
     researchReportHash: researchReport?.researchReportHash || researchReport?.researchVerifyReceiptHash || null,
+    academicEvidenceStatus: researchReport?.academicEvidenceStatus || null,
+    academicEvidenceEligible: researchReport?.academicEvidenceEligible === true,
     evidenceRefs: normalizeRefs([
       ...(artifactPackage?.evidenceRefs || []),
       ...(researchReport?.evidenceRefs || []),

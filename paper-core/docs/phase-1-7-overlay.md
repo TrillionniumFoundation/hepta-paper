@@ -1,6 +1,6 @@
 # Paper Overlay Phase 1-7
 
-This overlay keeps `core/` as the unmodified hepta design-production-core
+This overlay keeps `core/` as a hash-locked vendored hepta design-production-core
 snapshot. Paper production lives in `paper-core/` and `paper-adapters/`.
 
 ## Implemented Spine

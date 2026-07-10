@@ -7,7 +7,6 @@ import {
   pathWithin,
   readTextIfExists,
   relativePath,
-  safeJsonParse,
   sha256File,
   sha256Text,
   uniqueStrings,
@@ -34,61 +33,21 @@ import {
   buildRepairStateMutationReceipt,
   hashPaperRecord,
 } from '../../paper-core/src/paper-contracts.mjs';
+import { heptaStorePath } from '../../paper-core/src/hepta-store.mjs';
 import {
   runLatexBuildAdapter,
   runPackageAdapter,
 } from '../build-package/index.mjs';
 import { runResearchVerifyAdapter } from '../research-verify/index.mjs';
-
-function sqliteJson(dbPath, sql) {
-  const result = spawnSync('sqlite3', ['-json', dbPath, sql], {
-    encoding: 'utf8',
-    maxBuffer: 16 * 1024 * 1024,
-  });
-  if (result.status !== 0) return [];
-  return safeJsonParse(result.stdout || '[]', []);
-}
-
-function sqliteExec(dbPath, sql) {
-  const result = spawnSync('sqlite3', [dbPath], {
-    input: sql,
-    encoding: 'utf8',
-    maxBuffer: 16 * 1024 * 1024,
-  });
-  return {
-    ok: result.status === 0,
-    stdout: result.stdout || '',
-    stderr: result.stderr || '',
-    status: result.status,
-  };
-}
-
-function escapeSqlText(value) {
-  return String(value ?? '').replace(/'/g, "''");
-}
-
-function sqlText(value) {
-  return `'${escapeSqlText(value)}'`;
-}
-
-function sqlJson(value) {
-  return sqlText(JSON.stringify(value ?? null));
-}
-
-function normalizePatch(row = {}) {
-  return {
-    ...row,
-    targetPaths: safeJsonParse(row.target_paths_json || '[]', []),
-    metadata: safeJsonParse(row.metadata_json || '{}', {}),
-  };
-}
-
-function normalizeRequest(row = {}) {
-  return {
-    ...row,
-    metadata: safeJsonParse(row.metadata_json || '{}', {}),
-  };
-}
+import {
+  escapeSqlText,
+  normalizePatch,
+  normalizeRequest,
+  sqliteExec,
+  sqliteJson,
+  sqlJson,
+  sqlText,
+} from '../referee-store.mjs';
 
 function shaDigest(value) {
   return normalizeText(value).toLowerCase().replace(/^sha256:/, '');
@@ -1177,7 +1136,7 @@ export async function runRefereeReviseAdapter({
   execute = false,
   limit = 64,
 } = {}) {
-  const dbPath = path.join(root, 'paper_factory.sqlite');
+  const dbPath = heptaStorePath(root);
   const slug = escapeSqlText(row.task.paperId);
   const requests = sqliteJson(
     dbPath,
@@ -1465,7 +1424,7 @@ export async function runRefereeReviseAdapter({
     blockers: uniqueStrings(blockers, 32),
     warnings: uniqueStrings(warnings, 32),
     source: {
-      sqlite: 'paper_factory.sqlite',
+      sqlite: 'hepta-paper-workspace/runtime/hepta-paper.sqlite',
       tables: ['referee_revision_requests', 'patch_queue'],
       agentRepairPatchBundle: agentRepairPatchBundle?.manifestPath || null,
     },

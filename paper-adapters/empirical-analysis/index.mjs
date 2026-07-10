@@ -17,6 +17,7 @@ import {
   writeTextFile,
 } from '../../paper-core/src/utils.mjs';
 import { hashPaperRecord } from '../../paper-core/src/paper-contracts.mjs';
+import { buildEmpiricalEvidenceGate } from './evidence-policy.mjs';
 
 function repoPath(root, value) {
   const text = normalizeText(value);
@@ -1176,59 +1177,6 @@ function buildResultArtifactPackage({
   };
 }
 
-function buildEmpiricalEvidenceGate({
-  paperTask,
-  plan,
-  datasetContract,
-  datasetLicenseProvenanceGate,
-  tableFigureSpec,
-  runReceipt,
-  resultPackage,
-  createdAt,
-}) {
-  const blockers = [];
-  if (plan.status !== 'empirical_analysis_plan_ready') blockers.push('empirical_analysis_plan_not_ready');
-  if (datasetContract.status !== 'dataset_access_contract_ready') blockers.push('dataset_access_contract_not_ready');
-  if (datasetLicenseProvenanceGate?.status !== 'dataset_license_provenance_gate_ready') {
-    blockers.push('dataset_license_provenance_gate_not_ready');
-  }
-  if (tableFigureSpec?.status !== 'table_figure_spec_ready') {
-    blockers.push('table_figure_spec_not_ready');
-  }
-  if (runReceipt.status !== 'experiment_run_receipt_recorded') blockers.push('experiment_run_receipt_not_recorded');
-  if (resultPackage.status !== 'result_artifact_package_ready') blockers.push('result_artifact_package_not_ready');
-  const gate = {
-    version: 1,
-    kind: 'EmpiricalEvidenceGate',
-    paperId: paperTask?.paperId || null,
-    taskKey: paperTask?.taskKey || null,
-    status: blockers.length ? 'empirical_evidence_gate_blocked' : 'empirical_evidence_gate_ready',
-    empiricalAnalysisPlanHash: plan.empiricalAnalysisPlanHash,
-    datasetAccessContractHash: datasetContract.datasetAccessContractHash,
-    datasetLicenseProvenanceGateHash: datasetLicenseProvenanceGate?.datasetLicenseProvenanceGateHash || null,
-    tableFigureSpecHash: tableFigureSpec?.tableFigureSpecHash || null,
-    experimentRunReceiptHash: runReceipt.experimentRunReceiptHash,
-    resultArtifactPackageHash: resultPackage.resultArtifactPackageHash,
-    evidenceMode: datasetContract.datasetMode === 'authorized_local_dataset'
-      ? 'authorized_local_empirical_support'
-      : 'local_generated_empirical_support',
-    blockers: uniqueStrings(blockers, 32),
-    safety: {
-      localOnly: true,
-      generatedDataDeclared: datasetContract.datasetMode !== 'authorized_local_dataset',
-      authorizedLocalData: datasetContract.datasetMode === 'authorized_local_dataset',
-      externalDataAccess: false,
-      sourceMutation: false,
-      externalActionPerformed: false,
-    },
-    createdAt: createdAt || nowIso(),
-  };
-  return {
-    ...gate,
-    empiricalEvidenceGateHash: hashPaperRecord('EmpiricalEvidenceGate', gate),
-  };
-}
-
 function manuscriptPatchText({ paperTask, plan, resultPackage }) {
   const artifacts = Object.fromEntries((resultPackage.artifacts || []).map((artifact) => [artifact.role, artifact]));
   const hasAuthorizedDataset = Boolean(artifacts.authorized_dataset_manifest);
@@ -1768,8 +1716,8 @@ export async function runEmpiricalAnalysisAdapter({
     kind: 'EmpiricalAnalysisAdapterReport',
     paperId: row.task.paperId,
     taskKey: row.task.taskKey,
-    status: empiricalEvidenceGate.status === 'empirical_evidence_gate_ready'
-      ? 'empirical_analysis_evidence_ready'
+    status: empiricalEvidenceGate.smokeValidationStatus === 'empirical_smoke_validation_ready'
+      ? 'empirical_analysis_smoke_ready'
       : 'empirical_analysis_blocked',
     execute: Boolean(execute),
     runtimeDir: relativePath(resolvedRoot, runDir),

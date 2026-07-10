@@ -210,7 +210,14 @@ function classifyCoreSpecifier(specifier, absoluteFile) {
     const modulePath = specifier.split('design-production-core/src/').pop();
     return {
       coreImport: true,
-      specifierKind: 'text_core_src',
+      // A relative sibling import remains a relative core-src import even when
+      // this vendored checkout is mounted under a directory named `core`.
+      // Classifying it as unresolved used to let the package-root migration
+      // regression miss the exact forbidden-import blocker it is meant to
+      // prove.
+      specifierKind: (specifier.startsWith('.') || specifier.startsWith('/'))
+        ? 'relative_core_src'
+        : 'text_core_src',
       moduleId: normalizeCoreModuleName(modulePath),
       modulePath,
     };

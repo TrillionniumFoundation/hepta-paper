@@ -1,12 +1,16 @@
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import {
   fileRecord,
   normalizeText,
+  relativePath,
   uniqueStrings,
   walkFiles,
   writeJsonFile,
 } from '../../paper-core/src/utils.mjs';
 import { hashPaperRecord } from '../../paper-core/src/paper-contracts.mjs';
+import { buildMigrationMatrixAudit } from './migration-matrix.mjs';
+import { heptaStorePath } from '../../paper-core/src/hepta-store.mjs';
 
 const RETIREMENT_WAVES = [
   {
@@ -472,10 +476,10 @@ function migrationContractFamilyFor(entry) {
   return 'hepta_semantic_migration_contract';
 }
 
-function migrationClaimForEntry(entry) {
+function migrationClaimForEntry(entry, matrixRow) {
   const record = {
     kind: 'PaperFactorySemanticMigrationClaim',
-    status: 'semantic_migration_claim_ready',
+    status: 'semantic_migration_verified',
     sourceLegacyFile: {
       path: entry.path,
       hash: entry.hash,
@@ -486,6 +490,10 @@ function migrationClaimForEntry(entry) {
     migrationAction: entry.migrationAction,
     retirementWaveFamily: entry.retirementWaveFamily,
     contractFamily: migrationContractFamilyFor(entry),
+    sourceSymbols: matrixRow.sourceSymbols,
+    targetPath: matrixRow.targetPath,
+    targetSymbols: matrixRow.targetSymbols,
+    behaviorTests: matrixRow.behaviorTests,
     acceptanceCriteria: [
       'do not import old paper_factory control-plane modules',
       'represent reusable semantics as hepta adapter contracts, receipts, or deterministic local logic',
@@ -496,7 +504,12 @@ function migrationClaimForEntry(entry) {
   return hashBound('PaperFactorySemanticMigrationClaim', record, 'semanticMigrationClaimHash');
 }
 
-function buildP0P1BacklogDrainReceipt({ entries, migrationBacklogPacket, execute }) {
+function buildP0P1BacklogDrainReceipt({
+  entries,
+  migrationBacklogPacket,
+  migrationMatrixAudit,
+  execute,
+}) {
   const migrationEntries = entries
     .filter((entry) => ['P0', 'P1'].includes(entry.priority))
     .filter((entry) => !['quarantine_not_migrate', 'retire_not_migrate'].includes(entry.migrationAction))
@@ -504,26 +517,35 @@ function buildP0P1BacklogDrainReceipt({ entries, migrationBacklogPacket, execute
       || left.retirementWaveFamily.localeCompare(right.retirementWaveFamily)
       || left.targetAdapter.localeCompare(right.targetAdapter)
       || left.path.localeCompare(right.path));
-  const claims = migrationEntries.map((entry) => migrationClaimForEntry(entry));
-  const blockers = claims.length === migrationEntries.length ? [] : ['semantic_migration_claim_generation_incomplete'];
+  const entryByPath = new Map(migrationEntries.map((entry) => [entry.path, entry]));
+  const claims = migrationMatrixAudit.rows
+    .filter((row) => row.verified && entryByPath.has(row.sourcePath))
+    .map((row) => migrationClaimForEntry(entryByPath.get(row.sourcePath), row));
+  const blockers = migrationMatrixAudit.ok ? [] : migrationMatrixAudit.blockers;
+  const missingP0 = migrationMatrixAudit.missingByPriority.P0;
+  const missingP1 = migrationMatrixAudit.missingByPriority.P1;
   const record = {
     kind: 'PaperFactoryP0P1BacklogDrainReceipt',
     status: blockers.length
       ? 'p0_p1_backlog_drain_blocked'
       : execute
-        ? 'p0_p1_backlog_drained_to_hepta_contract_claims'
-        : 'p0_p1_backlog_drain_planned',
+        ? 'p0_p1_backlog_verified_and_recorded'
+        : 'p0_p1_backlog_verified_by_migration_matrix',
     consumedBacklogPacketHash: migrationBacklogPacket.migrationBacklogPacketHash,
     rawBacklogCount: migrationEntries.length,
     p0RawCount: migrationEntries.filter((entry) => entry.priority === 'P0').length,
     p1RawCount: migrationEntries.filter((entry) => entry.priority === 'P1').length,
     semanticMigrationClaimCount: claims.length,
-    activeP0BlockerCount: blockers.length ? migrationEntries.filter((entry) => entry.priority === 'P0').length : 0,
-    activeP1BlockerCount: blockers.length ? migrationEntries.filter((entry) => entry.priority === 'P1').length : 0,
+    verifiedMigrationCount: claims.length,
+    missingMigrationMatrixEntryCount: migrationMatrixAudit.missingEntryCount,
+    invalidMigrationMatrixEntryCount: migrationMatrixAudit.invalidEntryCount,
+    activeP0BlockerCount: missingP0,
+    activeP1BlockerCount: missingP1,
     byContractFamily: countBy(claims, 'contractFamily'),
     byTargetAdapter: countBy(migrationEntries, 'targetAdapter'),
     byMigrationAction: countBy(migrationEntries, 'migrationAction'),
     claims,
+    migrationMatrixAudit,
     blockers,
     safety: {
       writesRuntime: Boolean(execute && !blockers.length),
@@ -578,7 +600,10 @@ function dataAssetExportRecorded(dataAssetExportReceipt) {
 }
 
 function p0P1BacklogDrained(p0P1BacklogDrainReceipt) {
-  return p0P1BacklogDrainReceipt?.status === 'p0_p1_backlog_drained_to_hepta_contract_claims';
+  return [
+    'p0_p1_backlog_verified_by_migration_matrix',
+    'p0_p1_backlog_verified_and_recorded',
+  ].includes(p0P1BacklogDrainReceipt?.status);
 }
 
 function waveBlockersFor(wave, waveEntries, heptaCapabilities, receipts = {}) {
@@ -756,6 +781,7 @@ function buildLegacyEntrypointFreezeReceipt({ legacyEntrypointDeprecationPacket,
 
 async function collectDataStoreRecords(root) {
   const candidates = [
+    heptaStorePath(root),
     path.join(root, 'paper_factory.sqlite'),
     path.join(root, 'registry', 'paper_factory.db'),
     path.join(root, 'registry', 'events.db'),
@@ -768,6 +794,18 @@ async function collectDataStoreRecords(root) {
   return records;
 }
 
+function nativeStoreMigrationStatus(root) {
+  const dbPath = heptaStorePath(root);
+  const result = spawnSync('sqlite3', ['-json', dbPath, [
+    "select value from store_metadata where key='store_role' and value='hepta-paper-native';",
+    'pragma quick_check;',
+  ].join(' ')], { encoding: 'utf8' });
+  return {
+    ready: result.status === 0 && /hepta-paper-native/.test(result.stdout || '') && /ok/.test(result.stdout || ''),
+    path: dbPath,
+  };
+}
+
 async function buildHeptaDataAssetExportReceipt({
   root,
   entries,
@@ -775,29 +813,31 @@ async function buildHeptaDataAssetExportReceipt({
   execute,
 }) {
   const dataStoreRecords = await collectDataStoreRecords(root);
+  const nativeStore = nativeStoreMigrationStatus(root);
   const assets = entriesForWaveFamily(entries, 'wave_1_promote_registry_schema_templates_docs');
   const blockers = [
-    ...(dataStoreRecords.some((record) => record.path === 'paper_factory.sqlite')
-      ? []
-      : ['paper_factory_sqlite_missing']),
+    ...(nativeStore.ready ? [] : ['hepta_native_store_migration_missing']),
   ];
   const record = {
     kind: 'HeptaDataAssetExportReceipt',
     status: blockers.length
       ? 'hepta_data_asset_export_blocked'
-      : execute
-        ? 'hepta_data_asset_export_receipt_recorded'
-        : 'hepta_data_asset_export_receipt_planned',
+      : 'hepta_data_asset_export_receipt_recorded',
     consumedPlanHash: dataAssetExportPlan.heptaDataAssetExportPlanHash,
     assetFileCount: assets.length,
     dataStoreCount: dataStoreRecords.length,
     dataStores: dataStoreRecords,
+    heptaNativeStore: {
+      path: relativePath(root, nativeStore.path),
+      ready: nativeStore.ready,
+      legacyDefaultDependency: false,
+    },
     promotedAssetsByTargetAdapter: countBy(assets, 'targetAdapter'),
     promotedAssetsByDisposition: countBy(assets, 'disposition'),
     exportedAssetRefs: sampleEntries(assets, 80),
     blockers,
     safety: {
-      writesRuntime: Boolean(execute && !blockers.length),
+      writesRuntime: false,
       writesHeptaStore: false,
       writesLegacyStore: false,
       sourceMutation: false,
@@ -1055,7 +1095,7 @@ function buildRetirementPlan(entries, heptaCapabilities) {
     })),
     immediateBacklog: backlog,
     retirementBlockers: [
-      'paper_factory.sqlite remains the active registry/state store until a hepta-native store/export plan is accepted',
+      'hepta-native store is the default; legacy paper_factory.sqlite remains import-only until migration parity is verified',
       'live external venue submission executor is intentionally not implemented in the overlay',
       'venue/source decision leftovers must be closed or archived before old workflow deletion',
       'manual review of review_manually files is still required before destructive removal',
@@ -1108,9 +1148,11 @@ export async function runLegacyCleanupAdapter({
   const legacyEntrypointDeprecationPacket = buildLegacyEntrypointDeprecationPacket(entries, heptaCapabilities);
   const heptaDataAssetExportPlan = buildDataAssetExportPlan(entries);
   const migrationBacklogPacket = buildMigrationBacklogPacket(entries);
+  const migrationMatrixAudit = buildMigrationMatrixAudit({ root, entries });
   const p0P1BacklogDrainReceipt = buildP0P1BacklogDrainReceipt({
     entries,
     migrationBacklogPacket,
+    migrationMatrixAudit,
     execute,
   });
   const quarantineManifest = buildQuarantineManifest(entries);
@@ -1210,6 +1252,7 @@ export async function runLegacyCleanupAdapter({
     heptaDataAssetExportPlan,
     dataAssetExportReceipt,
     migrationBacklogPacket,
+    migrationMatrixAudit,
     p0P1BacklogDrainReceipt,
     researchSourcePackageCoverageReceipt,
     refereeReviewRepairCoverageReceipt,
@@ -1242,6 +1285,10 @@ export async function runLegacyCleanupAdapter({
       p1MigrationBacklogCount: migrationBacklogPacket.p1Count,
       p0P1BacklogDrainStatus: p0P1BacklogDrainReceipt.status,
       semanticMigrationClaimCount: p0P1BacklogDrainReceipt.semanticMigrationClaimCount,
+      verifiedSemanticMigrationCount: p0P1BacklogDrainReceipt.verifiedMigrationCount,
+      migrationMatrixEntryCount: migrationMatrixAudit.matrixEntryCount,
+      migrationMatrixMissingEntryCount: migrationMatrixAudit.missingEntryCount,
+      migrationMatrixStatus: migrationMatrixAudit.status,
       activeP0MigrationBlockerCount: p0P1BacklogDrainReceipt.activeP0BlockerCount,
       activeP1MigrationBlockerCount: p0P1BacklogDrainReceipt.activeP1BlockerCount,
       heptaAdapterCount: heptaCapabilities.adapters.length,
@@ -1288,7 +1335,7 @@ export async function runLegacyCleanupAdapter({
       ],
       replaceEntrypointWith: 'paper-production-core batch-run',
     },
-    blockers: [],
+    blockers: retirementReadinessGate.blockers,
     warnings: uniqueStrings(
       entries.some((entry) => entry.disposition === 'blocked_primary_entrypoint')
         ? ['legacy_bin_paperctl_must_not_be_primary_workflow']

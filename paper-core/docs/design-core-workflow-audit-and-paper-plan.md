@@ -2,7 +2,7 @@
 
 ## Audit Scope
 
-This audits the unmodified `core/` snapshot as a production kernel and decides
+This audits the hash-locked vendored `core/` baseline as a production kernel and decides
 how the paper workflow should use it without importing old `paper_factory`
 control-plane sprawl.
 
@@ -97,7 +97,7 @@ Do not include these in the canonical paper production spine:
 - giant `bin/paperctl` command logic
 
 These can remain in the copied `core/` snapshot because the snapshot is kept
-unmodified, but the paper CLI must not route through them.
+isolated behind the accepted core baseline, but the paper CLI must not route through them.
 
 ## Plugin Or Core Module
 
@@ -188,7 +188,7 @@ PaperTask
 
 Phase A: Freeze core and paper overlay boundary
 
-- keep `core/` unmodified
+- keep `core/` hash-locked; any accepted change requires a reviewed baseline update
 - keep paper contracts in `paper-core/`
 - keep old `paper_factory` imports out of paper CLI
 - preserve `diff -qr hepta-source core/ == 0`

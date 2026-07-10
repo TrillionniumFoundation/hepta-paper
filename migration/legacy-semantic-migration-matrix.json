@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "kind": "LegacySemanticMigrationMatrix",
+  "policy": {
+    "verifiedRequires": [
+      "exact current legacy source hash",
+      "named legacy source symbols",
+      "exact current hepta target hash",
+      "named hepta target symbols",
+      "at least one current hash-bound passing behavior test"
+    ],
+    "filePresenceIsNotMigrationEvidence": true,
+    "automaticClaimsForbidden": true
+  },
+  "entries": []
+}

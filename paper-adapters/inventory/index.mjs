@@ -25,6 +25,7 @@ import {
   inferPaperStage,
   nextActionForState,
 } from '../../paper-core/src/paper-contracts.mjs';
+import { heptaStorePath, legacyStorePath } from '../../paper-core/src/hepta-store.mjs';
 
 const TEX_IGNORE_RE = /(\.bak|\.backup|\.orig|\.old|\.tmp|\.synctex|supplementary|appendix-only)/i;
 const QUARANTINE_SLUG_RE = /(^rust_patch_queue_shadow|_fixture_|fixture_|test_fixture|shadow_review_|review_flow_(applied|rolled)_back_patch_queue)/i;
@@ -70,7 +71,7 @@ function sqliteJson(dbPath, sql) {
   return { ok: true, rows: safeJsonParse(result.stdout || '[]', []), error: null };
 }
 
-function normalizeSqlitePaper(row = {}) {
+function normalizeSqlitePaper(row = {}, inventorySource = 'hepta_sqlite') {
   return {
     slug: row.slug,
     title: row.title,
@@ -84,7 +85,7 @@ function normalizeSqlitePaper(row = {}) {
     current_verdict: row.current_verdict,
     next_action: row.next_action,
     updated_at: row.updated_at,
-    inventory_source: 'sqlite',
+    inventory_source: inventorySource,
     metadata_json: row.metadata_json || '{}',
     ledger_lifecycle_stage: row.ledger_lifecycle_stage || '',
     ledger_submission_state: row.ledger_submission_state || '',
@@ -93,8 +94,8 @@ function normalizeSqlitePaper(row = {}) {
   };
 }
 
-function readSqliteRegistry(root) {
-  const dbPath = path.join(root, 'paper_factory.sqlite');
+function readSqliteRegistry(root, { legacy = false } = {}) {
+  const dbPath = legacy ? legacyStorePath(root) : heptaStorePath(root);
   const papersResult = sqliteJson(dbPath, [
     'select p.slug,p.title,p.status,p.venue_target,p.paper_type,p.canonical_dir,p.source_dir,p.current_pdf,p.current_source_zip,p.current_verdict,p.next_action,p.updated_at,p.metadata_json,',
     'l.lifecycle_stage as ledger_lifecycle_stage,l.submission_state as ledger_submission_state,l.next_action as ledger_next_action,l.evidence_json as ledger_evidence_json',
@@ -115,12 +116,15 @@ function readSqliteRegistry(root) {
   }
   return {
     ok: true,
-    papers: (papersResult.rows || []).map(normalizeSqlitePaper),
+    papers: (papersResult.rows || []).map((row) => normalizeSqlitePaper(
+      row,
+      legacy ? 'legacy_sqlite' : 'hepta_sqlite',
+    )),
     venues: venuesResult.ok ? (venuesResult.rows || []) : [],
     error: venuesResult.ok ? null : venuesResult.error,
     refs: {
-      papers: 'paper_factory.sqlite:papers',
-      venues: venuesResult.ok ? 'paper_factory.sqlite:venues' : null,
+      papers: `${legacy ? 'legacy:' : ''}hepta-paper.sqlite:papers`,
+      venues: venuesResult.ok ? `${legacy ? 'legacy:' : ''}hepta-paper.sqlite:venues` : null,
     },
   };
 }
@@ -135,8 +139,10 @@ async function readInventorySources(root, source = 'auto') {
       fallback: null,
     };
   }
-  const sqlite = readSqliteRegistry(root);
-  if (source === 'sqlite' || (source === 'auto' && sqlite.ok && sqlite.papers.length)) {
+  const legacyRequested = source === 'legacy-sqlite';
+  const sqlite = readSqliteRegistry(root, { legacy: legacyRequested });
+  if (['sqlite', 'hepta', 'legacy-sqlite'].includes(source)
+    || (source === 'auto' && sqlite.ok && sqlite.papers.length)) {
     return {
       papers: sqlite.papers,
       venues: sqlite.venues.length ? sqlite.venues : yaml.venues,
@@ -146,9 +152,9 @@ async function readInventorySources(root, source = 'auto') {
         papers: sqlite.refs.papers,
         venues: sqlite.refs.venues || yaml.refs.venues,
         workflows: yaml.refs.workflows,
-        source: 'sqlite',
+        source: legacyRequested ? 'legacy_sqlite' : 'hepta_sqlite',
       },
-      source: 'sqlite',
+      source: legacyRequested ? 'legacy_sqlite' : 'hepta_sqlite',
       fallback: sqlite.venues.length ? null : 'venues_yaml_fallback',
     };
   }

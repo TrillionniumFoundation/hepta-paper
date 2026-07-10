@@ -17107,7 +17107,39 @@ assert(
     && aliasRuntimeDryRunScenario.handoff.packageRole === 'human_feedback_revision',
   `runtime dry-run harness must canonicalize alias scenario handoffs: ${JSON.stringify(aliasRuntimeDryRunScenario.actualBlockers)}`,
 );
-const channelRunnerCoverageMatrix = buildChannelRunnerCoverageMatrixReport({ generatedAt: '2026-01-01T00:00:00.000Z' });
+const fixtureLiveEntrypoints = Object.fromEntries(['zbj', 'epwk', 'hepta'].map((channelId) => [
+  channelId,
+  runtimeDryRunHarness.scenarios
+    .filter((scenario) => scenario.readyForExternalRunner === true
+      && scenario.expectedReady === true
+      && scenario.handoff.channelId === channelId
+      && [
+        EXTERNAL_ACTIONS.LIVE_SUBMIT,
+        EXTERNAL_ACTIONS.ACCEPTANCE_APPLY,
+        EXTERNAL_ACTIONS.DEPLOYMENT,
+        EXTERNAL_ACTIONS.CUSTOMER_MESSAGE,
+      ].includes(scenario.handoff.action)
+      && !String(scenario.handoff.actionId || '').endsWith('Preview'))
+    .filter((scenario, index, rows) => rows.findIndex(
+      (candidate) => candidate.handoff.actionId === scenario.handoff.actionId,
+    ) === index)
+    .map((scenario) => ({
+      actionId: scenario.handoff.actionId,
+      ok: true,
+      status: 'pass_external_live_entrypoint',
+      packageScript: { exists: true },
+      files: [
+        { role: 'live_entrypoint', exists: true },
+        { role: 'core_bridge', exists: true },
+      ],
+      lifecycleValidationStatus: 'pass_external_action_lifecycle_chain',
+      lifecycleProfileId: `${channelId}_selftest_fixture`,
+    })),
+]));
+const channelRunnerCoverageMatrix = buildChannelRunnerCoverageMatrixReport({
+  generatedAt: '2026-01-01T00:00:00.000Z',
+  liveEntrypoints: fixtureLiveEntrypoints,
+});
 assert(channelRunnerCoverageMatrix.ok === true, `channel runner coverage matrix must pass: ${JSON.stringify(channelRunnerCoverageMatrix.blockers)}`);
 assert(channelRunnerCoverageMatrix.summary.routeCount === runtimeReadyRouteCount, 'channel runner coverage matrix must cover every adapter interface action');
 assert(channelRunnerCoverageMatrix.summary.classifiedRouteCount === runtimeReadyRouteCount, 'channel runner coverage matrix must classify every adapter route');

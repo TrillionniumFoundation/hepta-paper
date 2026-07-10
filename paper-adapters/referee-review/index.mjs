@@ -1,5 +1,4 @@
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import {
   ensureDir,
   fileRecord,
@@ -7,7 +6,6 @@ import {
   pathWithin,
   readTextIfExists,
   relativePath,
-  safeJsonParse,
   sha256Text,
   uniqueStrings,
   writeJsonFile,
@@ -18,41 +16,13 @@ import {
   buildRefereeReviewIntake,
   hashPaperRecord,
 } from '../../paper-core/src/paper-contracts.mjs';
-
-function sqliteJson(dbPath, sql) {
-  const result = spawnSync('sqlite3', ['-json', dbPath, sql], {
-    encoding: 'utf8',
-    maxBuffer: 16 * 1024 * 1024,
-  });
-  if (result.status !== 0) return [];
-  return safeJsonParse(result.stdout || '[]', []);
-}
-
-function sqliteExec(dbPath, sql) {
-  const result = spawnSync('sqlite3', [dbPath], {
-    input: sql,
-    encoding: 'utf8',
-    maxBuffer: 16 * 1024 * 1024,
-  });
-  return {
-    ok: result.status === 0,
-    stdout: result.stdout || '',
-    stderr: result.stderr || '',
-    status: result.status,
-  };
-}
-
-function escapeSqlText(value) {
-  return String(value ?? '').replace(/'/g, "''");
-}
-
-function sqlText(value) {
-  return `'${escapeSqlText(value)}'`;
-}
-
-function sqlJson(value) {
-  return sqlText(JSON.stringify(value ?? null));
-}
+import { heptaStorePath } from '../../paper-core/src/hepta-store.mjs';
+import {
+  sqliteExec,
+  sqliteJson,
+  sqlJson,
+  sqlText,
+} from '../referee-store.mjs';
 
 function stderrLines(value, limit = 8) {
   return String(value || '')
@@ -351,7 +321,7 @@ export async function runRefereeReviewAdapter({
   reviewerId = 'openclaw-agent-referee-reviewer',
   reviewScope = 'agent_referee_review',
 } = {}) {
-  const dbPath = path.join(root, 'paper_factory.sqlite');
+  const dbPath = heptaStorePath(root);
   const mainTexRel = normalizeText(row.task.mainTex || '');
   const mainTexAbs = mainTexRel ? path.join(root, mainTexRel) : null;
   const blockers = [];
@@ -419,7 +389,7 @@ export async function runRefereeReviewAdapter({
     blockers: uniqueStrings([...(blockers || []), ...(materialization.blockers || [])], 32),
     warnings: uniqueStrings(materialization.warnings || [], 32),
     source: {
-      sqlite: 'paper_factory.sqlite',
+      sqlite: 'hepta-paper-workspace/runtime/hepta-paper.sqlite',
       table: 'referee_revision_requests',
       runtimeDir: runtimeRoot ? relativePath(root, path.join(runtimeRoot, 'referee-review', row.task.paperId)) : null,
     },

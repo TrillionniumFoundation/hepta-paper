@@ -16,6 +16,7 @@ import {
   createReproducibilityContract,
   hashPaperRecord,
 } from '../../paper-core/src/paper-contracts.mjs';
+import { verifyAcademicEvidenceAttestation } from './academic-evidence.mjs';
 
 function repoPath(root, value) {
   const text = normalizeText(value);
@@ -124,13 +125,19 @@ function buildResearchWorkerReceipts({ paperTask, workers, contracts, evidenceRe
   for (const role of roles) {
     const roleWorkers = workers.filter((worker) => worker.role === role).slice(0, 3);
     for (const worker of roleWorkers) {
-      receipts.push(buildPaperResearchWorkerBridgeReceipt({
+      const receipt = buildPaperResearchWorkerBridgeReceipt({
         paperTask,
         worker,
         role,
         contractHashes,
         evidenceRefs: refsForRole(evidenceRefs, role),
-      }));
+      });
+      receipts.push({
+        ...receipt,
+        capabilityEvidenceClass: 'legacy_worker_catalog_reference_only',
+        legacyWorkerExecutionPerformed: false,
+        semanticMigrationVerified: false,
+      });
     }
   }
   return receipts;
@@ -252,6 +259,7 @@ export async function runResearchVerifyAdapter({ root, row, runtimeRoot = null }
     /proposal.*seed.*contract|claim.*proof.*evidence.*repro.*seed/i.test(`${record.filename} ${record.path}`)
   ));
   const structured = await extractStructuredItems(root, evidenceRecords);
+  const academicEvidenceAttestation = await verifyAcademicEvidenceAttestation({ root, sourceRoot });
   const evidenceRefs = uniqueStrings([
     ...(row.state.evidenceRefs || []).map((ref) => ref.ref),
     ...evidenceRecords.map((ref) => ref.path),
@@ -316,6 +324,8 @@ export async function runResearchVerifyAdapter({ root, row, runtimeRoot = null }
     paperId: row.task.paperId,
     taskKey: row.task.taskKey,
     status: reportStatus,
+    academicEvidenceStatus: academicEvidenceAttestation.status,
+    academicEvidenceEligible: academicEvidenceAttestation.academicEvidenceEligible,
     sourceEvidenceCount: sourceEvidence.length,
     logEvidenceCount: logEvidence.length,
     empiricalEvidenceCount: empiricalEvidence.length,
@@ -326,6 +336,15 @@ export async function runResearchVerifyAdapter({ root, row, runtimeRoot = null }
     reproducibilityItemCount: reproducibilityContract.reproducibilityItemCount,
     researchWorkerCount: researchWorkers.length,
     workerReceiptCount: workerReceipts.length,
+    executedResearchWorkerCount: 0,
+    semanticMigrationVerifiedWorkerCount: 0,
+    evidenceProvenance: {
+      sourceCandidateRecordCount: sourceEvidence.length,
+      operationalLogRecordCount: logEvidence.length,
+      pipelineSmokeRecordCount: empiricalEvidence.length,
+      pipelineSmokeExcludedFromAcademicEvidence: true,
+    },
+    academicEvidenceAttestation,
     evidenceRefs,
     typedContracts: {
       claimScopeContract,

@@ -309,6 +309,10 @@ async function main() {
     '4,0.70,-2.31,0.08',
     '',
   ].join('\n'), 'utf8');
+  const stagedMainTexPath = path.isAbsolute(stagedInventory.rows[0].task.mainTex)
+    ? stagedInventory.rows[0].task.mainTex
+    : path.join(paperFactoryRoot, stagedInventory.rows[0].task.mainTex);
+  const stagedMainTexBeforeEmpirical = await fs.readFile(stagedMainTexPath, 'utf8');
   const stagedEmpiricalReport = await runEmpiricalAnalysisAdapter({
     root: paperFactoryRoot,
     runtimeRoot: stagedRuntimeRoot,
@@ -319,7 +323,7 @@ async function main() {
     execute: true,
   });
   assert.equal(stagedEmpiricalReport.kind, 'EmpiricalAnalysisAdapterReport');
-  assert.equal(stagedEmpiricalReport.status, 'empirical_analysis_evidence_ready');
+  assert.equal(stagedEmpiricalReport.status, 'empirical_analysis_smoke_ready');
   assert.equal(stagedEmpiricalReport.empiricalBenchmarkRegistry.status, 'empirical_benchmark_registry_ready');
   assert.equal(stagedEmpiricalReport.benchmarkSuiteSelectionPolicy.status, 'benchmark_suite_selection_ready');
   assert.equal(stagedEmpiricalReport.localBenchmarkRegistry.status, 'local_benchmark_registry_ready');
@@ -332,21 +336,20 @@ async function main() {
   assert.ok(stagedEmpiricalReport.resultArtifactPackage.artifacts.some((artifact) => (
     artifact.role === 'empirical_figure_spec_json'
   )));
-  assert.equal(stagedEmpiricalReport.empiricalEvidenceGate.status, 'empirical_evidence_gate_ready');
-  assert.equal(stagedEmpiricalReport.empiricalEvidenceGate.evidenceMode, 'authorized_local_empirical_support');
-  assert.equal(stagedEmpiricalReport.manuscriptEmpiricalPatch.status, 'manuscript_empirical_patch_ready');
-  assert.equal(stagedEmpiricalReport.manuscriptEmpiricalApplyApprovalPacket.status, 'manuscript_empirical_apply_approval_ready');
-  assert.equal(stagedEmpiricalReport.manuscriptEmpiricalApplyPlan.status, 'manuscript_empirical_apply_plan_ready');
-  assert.equal(stagedEmpiricalReport.manuscriptEmpiricalApplyReceipt.status, 'manuscript_empirical_apply_applied');
-  assert.equal(stagedEmpiricalReport.safety.writesSource, true);
-  assert.equal(stagedEmpiricalReport.safety.sourceMutation, true);
+  assert.equal(stagedEmpiricalReport.empiricalEvidenceGate.status, 'empirical_evidence_gate_blocked');
+  assert.equal(stagedEmpiricalReport.empiricalEvidenceGate.smokeValidationStatus, 'empirical_smoke_validation_ready');
+  assert.equal(stagedEmpiricalReport.empiricalEvidenceGate.evidenceMode, 'pipeline_smoke_only');
+  assert.equal(stagedEmpiricalReport.empiricalEvidenceGate.academicEvidenceEligible, false);
+  assert.ok(stagedEmpiricalReport.empiricalEvidenceGate.blockers.includes('generated_simulator_outcomes_preprogrammed'));
+  assert.equal(stagedEmpiricalReport.manuscriptEmpiricalPatch.status, 'manuscript_empirical_patch_blocked');
+  assert.equal(stagedEmpiricalReport.manuscriptEmpiricalApplyApprovalPacket.status, 'manuscript_empirical_apply_approval_blocked');
+  assert.equal(stagedEmpiricalReport.manuscriptEmpiricalApplyPlan.status, 'manuscript_empirical_apply_plan_blocked');
+  assert.equal(stagedEmpiricalReport.manuscriptEmpiricalApplyReceipt.status, 'manuscript_empirical_apply_blocked');
+  assert.equal(stagedEmpiricalReport.safety.writesSource, false);
+  assert.equal(stagedEmpiricalReport.safety.sourceMutation, false);
   assert.equal(stagedEmpiricalReport.safety.externalActionPerformed, false);
-  const stagedMainTexPath = path.isAbsolute(stagedInventory.rows[0].task.mainTex)
-    ? stagedInventory.rows[0].task.mainTex
-    : path.join(paperFactoryRoot, stagedInventory.rows[0].task.mainTex);
   const stagedMainTexAfterEmpirical = await fs.readFile(stagedMainTexPath, 'utf8');
-  assert.ok(stagedMainTexAfterEmpirical.includes('BEGIN HEPTA EMPIRICAL ANALYSIS'));
-  assert.ok(stagedMainTexAfterEmpirical.includes('\\input{empirical/table_empirical_summary.tex}'));
+  assert.equal(stagedMainTexAfterEmpirical, stagedMainTexBeforeEmpirical);
   const stagedResearchAfterEmpirical = await runResearchVerifyAdapter({
     root: paperFactoryRoot,
     row: stagedInventory.rows[0],
@@ -354,6 +357,9 @@ async function main() {
   });
   assert.equal(stagedResearchAfterEmpirical.status, 'evidence_present');
   assert.ok(stagedResearchAfterEmpirical.empiricalEvidenceCount > 0);
+  assert.equal(stagedResearchAfterEmpirical.academicEvidenceEligible, false);
+  assert.equal(stagedResearchAfterEmpirical.academicEvidenceStatus, 'academic_evidence_attestation_missing');
+  assert.equal(stagedResearchAfterEmpirical.evidenceProvenance.pipelineSmokeExcludedFromAcademicEvidence, true);
   const stagedBuildResult = await runLatexBuildAdapter({
     root: paperFactoryRoot,
     row: stagedInventory.rows[0],
@@ -388,14 +394,15 @@ async function main() {
       reviewedSubmit: true,
     });
     assert.equal(stagedReviewedSubmitLifecycle.reviewedSubmitPreflightPacket?.kind, 'ReviewedSubmitPreflightPacket');
-    assert.equal(stagedReviewedSubmitLifecycle.reviewedSubmitPreflightPacket?.status, 'reviewed_submit_preflight_ready_for_external_executor');
-    assert.equal(stagedReviewedSubmitLifecycle.reviewedSubmitPreflightPacket?.approvalRequired, false);
-    assert.equal(stagedReviewedSubmitLifecycle.reviewedSubmitPreflightPacket?.liveExecutorBoundaryBlocked, false);
-    assert.equal(stagedReviewedSubmitLifecycle.approvalPacket?.status, 'approved_for_external_executor_handoff');
-    assert.equal(stagedReviewedSubmitLifecycle.approvalPacket?.agentApproved, true);
-    assert.equal(stagedReviewedSubmitLifecycle.freshVenueEvidenceBundle?.status, 'fresh_venue_evidence_ready');
-    assert.equal(stagedReviewedSubmitLifecycle.outbox?.status, 'queued_for_dry_run_executor');
-    assert.equal(stagedReviewedSubmitLifecycle.controlledExecutorReceipt?.status, 'controlled_external_executor_receipt_recorded');
+    assert.equal(stagedReviewedSubmitLifecycle.reviewedSubmitPreflightPacket?.status, 'reviewed_submit_preflight_blocked');
+    assert.equal(stagedReviewedSubmitLifecycle.reviewedSubmitPreflightPacket?.approvalRequired, true);
+    assert.equal(stagedReviewedSubmitLifecycle.reviewedSubmitPreflightPacket?.liveExecutorBoundaryBlocked, true);
+    assert.equal(stagedReviewedSubmitLifecycle.approvalPacket?.status, 'blocked_approval_packet');
+    assert.equal(stagedReviewedSubmitLifecycle.approvalPacket?.agentApproved, false);
+    assert.ok(stagedReviewedSubmitLifecycle.approvalPacket?.blockers.includes('attested_academic_evidence_required_for_reviewed_submit'));
+    assert.equal(stagedReviewedSubmitLifecycle.freshVenueEvidenceBundle?.status, 'blocked_fresh_venue_evidence');
+    assert.equal(stagedReviewedSubmitLifecycle.outbox?.status, 'blocked_outbox_item');
+    assert.equal(stagedReviewedSubmitLifecycle.controlledExecutorReceipt?.status, 'controlled_external_executor_blocked');
     assert.equal(stagedReviewedSubmitLifecycle.controlledExecutorReceipt?.externalActionPerformed, false);
     assert.equal(stagedReviewedSubmitLifecycle.receipt?.externalActionPerformed, false);
   }

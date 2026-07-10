@@ -6,7 +6,7 @@ import { runPaperProposalAdapter } from '../../paper-adapters/proposal/index.mjs
 
 function usage() {
   return `Usage:
-  paper-production-core batch-run --mode <inventory|local-build|local-package|journal-manage|empirical-analysis|venue-resolve|source-adapt|referee-review|referee-revise|referee-autopilot|local-dry-run|reviewed-submit|legacy-cleanup> [--limit N] [--paper SLUG] [--target VENUE] [--dataset-root PATH] [--benchmark-id ID] [--apply-manuscript] [--inventory-source auto|sqlite|yaml] [--max-rounds N] [--json] [--write-report] [--execute]
+  paper-production-core batch-run --mode <inventory|local-build|local-package|journal-manage|empirical-analysis|venue-resolve|source-adapt|referee-review|referee-revise|referee-autopilot|local-dry-run|reviewed-submit|legacy-cleanup> [--limit N] [--paper SLUG] [--target VENUE] [--dataset-root PATH] [--benchmark-id ID] [--apply-manuscript] [--inventory-source auto|hepta|yaml|legacy-sqlite] [--max-rounds N] [--json] [--write-report] [--execute]
   paper-production-core proposal --idea TEXT [--discipline NAME] [--venue NAME] [--title TEXT] [--paper SLUG] [--paper-type TYPE] [--material TEXT] [--constraint TEXT] [--approved] [--materialize-source] [--stage-inventory] [--json] [--write-report]
   paper-production-core selftest
 `;

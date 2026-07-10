@@ -10,7 +10,8 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "selftest": "node src/selftest.mjs",
+    "selftest": "node src/selftest-vendored.mjs",
+    "selftest:workspace": "node src/selftest.mjs",
     "selftest:lanes": "node src/selftest-lanes.mjs --strict",
     "export:samples": "node src/export-readonly-samples.mjs",
     "validate:samples": "node src/validate-readonly-samples.mjs",

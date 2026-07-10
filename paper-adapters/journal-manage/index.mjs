@@ -8,6 +8,10 @@ import {
   writeJsonFile,
 } from '../../paper-core/src/utils.mjs';
 import { hashPaperRecord } from '../../paper-core/src/paper-contracts.mjs';
+import {
+  academicEvidenceReady,
+  reviewAuthorityBlockers,
+} from './review-authority.mjs';
 
 export const JOURNAL_PROFILES = Object.freeze([
   {
@@ -2015,6 +2019,9 @@ export function buildFreshRefereePool({
       localOnly: true,
       deterministicPersonas: true,
       modelCallPerformed: false,
+      humanReviewPerformed: false,
+      independentReviewPerformed: false,
+      academicAcceptanceAuthority: false,
       externalActionPerformed: false,
     },
     createdAt: createdAt || nowIso(),
@@ -2038,8 +2045,8 @@ export function buildVenueEvidenceGate({
   if (venueRubricManager?.status && venueRubricManager.status !== 'venue_rubric_manager_ready') {
     blockers.push('venue_rubric_manager_not_ready');
   }
-  const realEvidencePresent = researchReport?.status === 'evidence_present';
-  if (!realEvidencePresent) blockers.push('research_verify_real_evidence_missing');
+  const realEvidencePresent = academicEvidenceReady(researchReport);
+  if (!realEvidencePresent) blockers.push('research_verify_attested_academic_evidence_missing');
   if (packageResult && packageResult?.artifactPackage?.submitReady !== true) {
     blockers.push('submit_ready_package_required_for_evidence_gate');
   }
@@ -2056,6 +2063,8 @@ export function buildVenueEvidenceGate({
     journalId: profile.id || null,
     requiredEvidence: policy.evidenceRequirements || [],
     researchVerifyStatus: researchReport?.status || null,
+    academicEvidenceStatus: researchReport?.academicEvidenceStatus || null,
+    academicEvidenceEligible: researchReport?.academicEvidenceEligible === true,
     packageSubmitReady: packageResult?.artifactPackage?.submitReady === true,
     proposalSeedRejectedAsRealEvidence: researchReport?.status === 'proposal_seed_present',
     blockers: uniqueStrings(blockers, 32),
@@ -2098,7 +2107,8 @@ export function buildVenueLifecyclePolicy({
     venueEvidenceGateHash: evidenceGate?.venueEvidenceGateHash || null,
     journalId: profile.id || null,
     deadlinePolicy: policy.deadlinePolicy,
-    localRefereeAcceptAllowed: blockers.length === 0,
+    localRefereeAcceptAllowed: false,
+    localWorkflowClosureAllowed: blockers.length === 0,
     reviewedSubmitControlledHandoffAllowed: preflightReady && controlledReceiptReady,
     liveExternalSubmissionAllowed: false,
     liveSubmissionBoundary: policy.liveSubmissionBoundary,
@@ -2199,12 +2209,13 @@ export function buildFreshRefereeVerdict({
   if (refereePool?.status && refereePool.status !== 'fresh_referee_pool_ready') {
     blockers.push('fresh_referee_pool_not_ready');
   }
+  blockers.push(...reviewAuthorityBlockers({ refereePool }));
   if (evidenceGate?.status) {
     if (evidenceGate.status !== 'venue_evidence_gate_ready') {
       blockers.push(...(evidenceGate.blockers || ['venue_evidence_gate_not_ready']));
     }
-  } else if (researchReport?.status !== 'evidence_present') {
-    blockers.push('research_verify_real_evidence_missing');
+  } else if (!academicEvidenceReady(researchReport)) {
+    blockers.push('research_verify_attested_academic_evidence_missing');
   }
   if (lifecyclePolicy?.status && lifecyclePolicy.status !== 'venue_lifecycle_policy_ready') {
     blockers.push(...(lifecyclePolicy.blockers || ['venue_lifecycle_policy_not_ready']));
@@ -2257,6 +2268,9 @@ export function buildFreshRefereeVerdict({
       freshRefereePersona: true,
       localOnly: true,
       modelCallPerformed: false,
+      humanReviewPerformed: false,
+      independentReviewPerformed: false,
+      academicAcceptanceAuthority: false,
       sourceMutation: false,
       sqliteWrites: false,
       externalActionPerformed: false,

@@ -57,6 +57,7 @@ export function buildSubmissionLifecycle({
     venuePlan,
     artifactPackage,
     researchReport,
+    requireAcademicEvidence: Boolean(reviewedSubmit),
   });
   const action = reviewedSubmit ? PAPER_ACTIONS.REVIEWED_SUBMIT : PAPER_ACTIONS.VENUE_DRY_RUN;
   const manifest = createPaperActionManifest({
@@ -69,7 +70,10 @@ export function buildSubmissionLifecycle({
     venueEvidenceBundle: freshVenueEvidenceBundle,
     dryRun: true,
     approvalPacket: reviewedSubmit ? approvalPacket : null,
-    extraBlockers: row.state?.blockers || [],
+    extraBlockers: [
+      ...(row.state?.blockers || []),
+      ...(reviewedSubmit ? ['live_submit_not_implemented_in_overlay'] : []),
+    ],
   });
   const handoff = buildPaperHandoffEnvelope({ manifest });
   const replayGuard = buildSubmissionReplayGuard({ manifest, venueEvidenceBundle: freshVenueEvidenceBundle });
@@ -118,7 +122,7 @@ export function buildSubmissionLifecycle({
     receiptInboxHash: receiptInbox.submissionReceiptInboxHash,
     venueStateProofHash: venueStateProof.venueStateProofHash,
     externalActionPerformed: false,
-    liveSubmitBlocked: false,
+    liveSubmitBlocked: true,
     controlledExecutorReceiptRecorded: controlledExecutorReceipt?.status === 'controlled_external_executor_receipt_recorded',
   };
   const hashedArchive = {

@@ -226,9 +226,13 @@ function summarize(rows, auditOnlyRows, runtimeDryRunHarness) {
 
 export function buildChannelRunnerCoverageMatrixReport({
   generatedAt = new Date().toISOString(),
+  liveEntrypoints = null,
 } = {}) {
   const runtimeDryRunHarness = buildRuntimeDryRunHarnessReport({ generatedAt });
-  const liveEntrypointsByChannelMap = liveEntrypointsByChannel();
+  // Production reports inspect the sibling channel workspaces. Tests may
+  // inject an audited fixture map so this package remains reproducible when
+  // vendored without those unrelated repositories.
+  const liveEntrypointsByChannelMap = liveEntrypoints || liveEntrypointsByChannel();
   const readyScenarios = (runtimeDryRunHarness.scenarios || [])
     .filter((scenario) => scenario.readyForExternalRunner === true && scenario.expectedReady === true);
   const rows = readyScenarios.map((scenario) => rowForScenario(

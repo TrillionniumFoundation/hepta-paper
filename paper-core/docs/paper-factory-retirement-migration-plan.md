@@ -10,6 +10,11 @@ The source of truth is the repeatable audit:
 paper-production-core batch-run --mode legacy-cleanup --write-report --json
 ```
 
+> Correction (2026-07-10): earlier versions of this document treated adapter
+> directory presence as semantic migration evidence and therefore reported 263
+> claims complete. That inference was invalid. Only the hash- and behavior-test
+> bound matrix under `migration/` may now create a verified claim.
+
 Latest audit report:
 
 - `runtime/reports/paper-batch-legacy-cleanup-latest.json`
@@ -20,7 +25,7 @@ Latest audit report:
 Latest scan:
 
 - scanned files: 526
-- hepta adapters detected: 10
+- hepta adapters detected: 12
 - adapter candidates: 261
 - retire-not-migrate files: 162
 - quarantine/report/matrix/capstone files: 43
@@ -30,17 +35,18 @@ Latest scan:
 - P2 triage/domain assets: 58
 - P3 retire/quarantine items: 205
 - retirement wave packets: 7
-- wave packets ready: 7
-- wave packets blocked: 0
-- wave execution receipts recorded: 7
-- wave execution receipts blocked: 0
+- wave packets ready: 5
+- wave packets blocked: 2
+- wave execution receipts recorded: 0
+- wave execution receipts blocked: at least 1
 - full P0/P1 migration backlog: 263
-- semantic migration claims: 263
-- active P0 migration blockers: 0
-- active P1 migration blockers: 0
+- verified semantic migration claims: 0
+- migration-matrix entries missing: 263
+- active P0 migration blockers: 2
+- active P1 migration blockers: 261
 - live external executor policy: `live_external_executor_policy_recorded`
-- final retirement readiness: `paper_factory_retirement_ready`
-- final retirement blockers: 0
+- final retirement readiness: `paper_factory_retirement_blocked`
+- final retirement blockers: P0/P1 semantic migration parity remains open
 
 Disposition counts:
 
@@ -211,9 +217,9 @@ Target:
 
 Status:
 
-- `PaperFactoryRetirementReadinessGate` ready
-- `OldPaperFactoryControlPlaneRemovalReceipt` recorded
-- raw P0/P1 backlog has been drained into semantic migration claims
+- `PaperFactoryRetirementReadinessGate` blocked
+- `OldPaperFactoryControlPlaneRemovalReceipt` blocked
+- raw P0/P1 backlog is not drained; all 263 items require verified matrix rows
 - destructive file removal has not been performed; old files remain retained as
   archive-readable evidence
 
@@ -222,7 +228,8 @@ Exit criteria:
 - all active papers are reachable through hepta inventory
 - normal production uses only `paper-production-core`
 - venue/source decision semantics have hepta coverage and claim receipts
-- `paper_factory.sqlite` has an accepted hepta-native store/export plan
+- `runtime/hepta-paper.sqlite` is the default store and has a recorded legacy
+  import receipt; legacy `paper_factory.sqlite` is import-only
 - live external executor policy is explicit
 
 ## P0/P1 Backlog Shape
@@ -232,11 +239,12 @@ Runtime `PaperFactoryMigrationBacklogPacket`:
 - full P0/P1 backlog: 263
 - P0: 2
 - P1: 261
-- `PaperFactoryP0P1BacklogDrainReceipt`: recorded
-- semantic migration claims: 263
-- active P0/P1 blockers after drain: 0
+- `PaperFactoryP0P1BacklogDrainReceipt`: blocked
+- verified semantic migration claims: 0
+- active P0/P1 blockers: 263
 
-Semantic migration claim families:
+Former automatically inferred claim families (backlog classification only, not
+verified migration):
 
 - `research_verify_worker_receipt`: 155
 - `build_package_contract`: 36

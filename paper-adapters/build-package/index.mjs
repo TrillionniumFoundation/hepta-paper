@@ -16,6 +16,7 @@ import {
   createPaperBuildArtifactAcceptance,
   createPaperArtifactPackage,
 } from '../../paper-core/src/paper-contracts.mjs';
+import { heptaStorePath } from '../../paper-core/src/hepta-store.mjs';
 
 function repoPath(root, value) {
   const text = normalizeText(value);
@@ -48,7 +49,7 @@ async function fileRecordFromRepoPath(root, value, role) {
 }
 
 async function sqlitePackageArtifacts(root, paperId) {
-  const dbPath = path.join(root, 'paper_factory.sqlite');
+  const dbPath = heptaStorePath(root);
   const slug = escapeSqlText(paperId);
   const submissionRows = sqliteJson(dbPath, [
     'select package_dir,pdf_path,source_zip_path,created_at',

@@ -27,6 +27,7 @@ function validateMatrixEntry({ root, workspaceRoot, row, sourceEntry }) {
   const sourceSymbols = Array.isArray(row?.source?.symbols) ? row.source.symbols.filter(Boolean) : [];
   const targetSymbols = Array.isArray(row?.target?.symbols) ? row.target.symbols.filter(Boolean) : [];
   const behaviorTests = Array.isArray(row?.behaviorTests) ? row.behaviorTests : [];
+  const semanticScopeStatus = String(row?.semanticScope?.status || '');
   if (!row?.id) blockers.push('matrix_id_missing');
   if (!sourceEntry) blockers.push('source_not_in_current_p0_p1_backlog');
   if (!sourcePath || !fs.existsSync(sourceFile)) blockers.push('source_file_missing');
@@ -34,6 +35,7 @@ function validateMatrixEntry({ root, workspaceRoot, row, sourceEntry }) {
   if (!sourceSymbols.length) blockers.push('source_symbols_missing');
   if (!targetSymbols.length) blockers.push('target_symbols_missing');
   if (!behaviorTests.length) blockers.push('behavior_tests_missing');
+  if (semanticScopeStatus !== 'complete') blockers.push('semantic_scope_incomplete');
   if (fs.existsSync(sourceFile)) {
     const actualHash = sha256File(sourceFile);
     if (row?.source?.sha256 !== actualHash) blockers.push('source_hash_mismatch');
@@ -77,6 +79,7 @@ function validateMatrixEntry({ root, workspaceRoot, row, sourceEntry }) {
     targetPath,
     sourceSymbols,
     targetSymbols,
+    semanticScopeStatus: semanticScopeStatus || null,
     behaviorTests: testResults,
     status: blockers.length ? 'blocked_migration_matrix_entry' : 'verified_migration_matrix_entry',
     verified: blockers.length === 0,
@@ -117,6 +120,7 @@ export function buildMigrationMatrixAudit({ root, entries }) {
   const verifiedSourcePaths = new Set(rows.filter((row) => row.verified).map((row) => row.sourcePath));
   const missingEntries = backlog.filter((entry) => !verifiedSourcePaths.has(entry.path));
   const invalidEntries = rows.filter((row) => !row.verified);
+  const partialEntries = rows.filter((row) => row.semanticScopeStatus !== 'complete');
   const orphanEntries = rows.filter((row) => !backlogByPath.has(row.sourcePath));
   const blockers = [
     ...globalBlockers,
@@ -135,6 +139,7 @@ export function buildMigrationMatrixAudit({ root, entries }) {
     matrixEntryCount: matrixEntries.length,
     verifiedEntryCount: rows.filter((row) => row.verified).length,
     invalidEntryCount: invalidEntries.length,
+    partialEntryCount: partialEntries.length,
     orphanEntryCount: orphanEntries.length,
     missingEntryCount: missingEntries.length,
     missingByPriority: {

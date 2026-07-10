@@ -6,9 +6,22 @@ import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { buildCoreIntegrityReport, compareCoreFileRows } from './core-integrity.mjs';
 import { heptaStorePath, legacyStorePath } from './hepta-store.mjs';
+import { summarizeRows } from './batch-summary.mjs';
+import * as contractsFacade from './paper-contracts.mjs';
+import { buildRefereeReviewIntake as buildRefereeReviewIntakeDirect } from './contracts/referee-planning.mjs';
+import { buildRefereeApplyApprovalPacket as buildRefereeApplyApprovalPacketDirect } from './contracts/referee-application.mjs';
+import { buildRepairReconciliation as buildRepairReconciliationDirect } from './contracts/referee-closure.mjs';
+import { buildSubmissionApprovalPacket as buildSubmissionApprovalPacketDirect } from './contracts/submission.mjs';
+import { buildVenueResolutionPacket as buildVenueResolutionPacketDirect } from './contracts/intake-resolution.mjs';
 import { discoverInventory } from '../../paper-adapters/inventory/index.mjs';
 import { buildMigrationMatrixAudit } from '../../paper-adapters/legacy-cleanup/migration-matrix.mjs';
-import { buildFreshRefereeVerdict } from '../../paper-adapters/journal-manage/index.mjs';
+import {
+  buildFreshRefereeVerdict,
+  JOURNAL_PROFILES as journalProfilesFacade,
+} from '../../paper-adapters/journal-manage/index.mjs';
+import { JOURNAL_PROFILES as journalProfilesDirect } from '../../paper-adapters/journal-manage/journal-registry.mjs';
+import { makeExperimentCode } from '../../paper-adapters/empirical-analysis/experiment-runner.mjs';
+import { validateAndMaybeApplyPatches } from '../../paper-adapters/referee-revise/repair-executor.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const root = path.resolve(workspaceRoot, '..');
@@ -17,6 +30,14 @@ const legacyDb = legacyStorePath(root);
 
 function hashFile(file) {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+}
+
+function moduleFiles(directory) {
+  return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const absolute = path.join(directory, entry.name);
+    if (entry.isDirectory()) return moduleFiles(absolute);
+    return entry.isFile() && entry.name.endsWith('.mjs') ? [absolute] : [];
+  });
 }
 
 function sqlite(sql, { json = false } = {}) {
@@ -43,6 +64,72 @@ function concurrentSql(sql) {
 }
 
 const legacyHashBefore = hashFile(legacyDb);
+const productionModuleBudgetBytes = 64 * 1024;
+const productionModules = [
+  ...moduleFiles(path.join(workspaceRoot, 'paper-core')),
+  ...moduleFiles(path.join(workspaceRoot, 'paper-adapters')),
+];
+const oversizedProductionModules = productionModules
+  .map((file) => ({
+    file: path.relative(workspaceRoot, file),
+    sizeBytes: fs.statSync(file).size,
+  }))
+  .filter((entry) => entry.sizeBytes > productionModuleBudgetBytes);
+assert.deepEqual(oversizedProductionModules, []);
+
+assert.equal(contractsFacade.buildRefereeReviewIntake, buildRefereeReviewIntakeDirect);
+assert.equal(contractsFacade.buildRefereeApplyApprovalPacket, buildRefereeApplyApprovalPacketDirect);
+assert.equal(contractsFacade.buildRepairReconciliation, buildRepairReconciliationDirect);
+assert.equal(contractsFacade.buildSubmissionApprovalPacket, buildSubmissionApprovalPacketDirect);
+assert.equal(contractsFacade.buildVenueResolutionPacket, buildVenueResolutionPacketDirect);
+assert.equal(journalProfilesFacade, journalProfilesDirect);
+assert.equal(journalProfilesDirect.length, 97);
+
+const summaryBoundary = summarizeRows([{
+  draft_status: 'source_tex_present',
+  compile_status: 'build_passed',
+  research_verify_status: 'verified',
+  package_status: 'package_ready',
+  readiness_status: 'ready_for_local_dry_run',
+  runner_status: 'dry_run_receipt_recorded',
+  next_action: contractsFacade.PAPER_ACTIONS.REVIEWED_SUBMIT,
+  production_disposition: 'active_submission',
+  submission_intent: 'ready_for_submission',
+}], 'selftest');
+assert.equal(summaryBoundary.total, 1);
+assert.equal(summaryBoundary.dryRunReceipts, 1);
+assert.equal(summaryBoundary.reviewedSubmitBlocked, 1);
+
+const generatedExperimentCode = makeExperimentCode({
+  paperId: 'selftest',
+  title: 'Selftest',
+  experimentFamily: 'generic_benchmark',
+  benchmarkSuiteId: 'selftest-suite',
+  benchmarkSuiteLabel: 'Selftest suite',
+  datasetMode: 'generated_local_dataset',
+  primaryDatasetAbsolutePath: null,
+  seeds: [1],
+  repetitions: 1,
+  figureSpec: null,
+});
+assert.match(generatedExperimentCode, /externalActionPerformed: false/);
+assert.doesNotMatch(generatedExperimentCode, /https?:\/\//);
+
+const repairBoundary = await validateAndMaybeApplyPatches({
+  root,
+  row: { task: { paperId: 'selftest', sourceWorkspace: 'hepta-paper-workspace' } },
+  patchApplyExecution: {
+    plannedPatchInputs: [{
+      patchId: 'outside-root',
+      patchPath: '../outside.patch',
+      targetPaths: ['../outside.tex'],
+    }],
+  },
+  preimageSnapshotLedger: { entries: [] },
+  execute: false,
+});
+assert.ok(repairBoundary.blockers.includes('target_path_outside_repo_root'));
+assert.ok(repairBoundary.blockers.includes('patch_path_outside_repo_root'));
 
 const integrity = buildCoreIntegrityReport({ workspaceRoot });
 assert.equal(integrity.ok, true, JSON.stringify(integrity.drift));
@@ -134,6 +221,13 @@ process.stdout.write(`${JSON.stringify({
   coreIntegrityStatus: integrity.status,
   migrationMatrixFailClosed: true,
   deterministicRefereeCannotAccept: true,
+  decomposedContractFacadeVerified: true,
+  batchSummaryBoundaryVerified: true,
+  journalRegistryBoundaryVerified: journalProfilesDirect.length,
+  empiricalRunnerNetworkFree: true,
+  refereeRepairPathBoundaryVerified: true,
+  productionModuleBudgetBytes,
+  productionModuleCount: productionModules.length,
   rollbackVerified: true,
   concurrentWritersVerified: 2,
   legacyStoreUnchanged: true,

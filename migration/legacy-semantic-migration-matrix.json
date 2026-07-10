@@ -12,5 +12,92 @@
     "filePresenceIsNotMigrationEvidence": true,
     "automaticClaimsForbidden": true
   },
-  "entries": []
+  "entries": [
+    {
+      "id": "p0-primary-entrypoint-boundary",
+      "priority": "P0",
+      "migrationAction": "replace_entrypoint_with_paper_production_core",
+      "semanticScope": {
+        "status": "partial",
+        "covered": [
+          "canonical inventory batch entrypoint",
+          "hepta-native inventory selection",
+          "local-only safety report"
+        ],
+        "open": [
+          "complete disposition map for legacy paperctl commands",
+          "explicit retirement evidence for commands outside the hepta-paper product surface"
+        ]
+      },
+      "source": {
+        "path": "bin/paperctl",
+        "sha256": "ffe4dfc7de97062cb99b6398c49b1e99355aba4492acc513b7d387126d617d8a",
+        "symbols": [
+          "main",
+          "cmd_paper_production_core_audit"
+        ]
+      },
+      "target": {
+        "path": "hepta-paper-workspace/paper-core/bin/paper-production-core.mjs",
+        "sha256": "1c24ec6f647748be2915598d1ca870d46969aa311857a49c7279045981a442e3",
+        "symbols": [
+          "main",
+          "runPaperBatch",
+          "PAPER_BATCH_MODES"
+        ]
+      },
+      "behaviorTests": [
+        {
+          "id": "p0-entrypoint-and-batch-parity",
+          "path": "migration/tests/p0-entrypoint-and-batch-parity.mjs",
+          "sha256": "171d4194e518b42c2c4470e218fc639f96437ff85c395919f0921a0fe4085c21"
+        }
+      ]
+    },
+    {
+      "id": "p0-production-core-batch-boundary",
+      "priority": "P0",
+      "migrationAction": "retire_after_batch_runner_and_adapters_cover_workflow",
+      "semanticScope": {
+        "status": "partial",
+        "covered": [
+          "inventory batch report",
+          "summary aggregation",
+          "local-only no-external-action invariant"
+        ],
+        "open": [
+          "state-by-state equivalence suite for evaluate_paper",
+          "repair-loop frontier equivalence",
+          "explicit retirement disposition for legacy-only report surfaces"
+        ]
+      },
+      "source": {
+        "path": "paperctl_modules/paper_production_core.py",
+        "sha256": "589e194f7f45ce0e8fff5abbd9880641d9050d9c633031288b389a4db81edf35",
+        "symbols": [
+          "evaluate_paper",
+          "summarize",
+          "audit_report",
+          "repair_loop_frontier"
+        ]
+      },
+      "target": {
+        "path": "hepta-paper-workspace/paper-core/src/paper-batch-runner.mjs",
+        "sha256": "155c951f3c0c4f0cb18481a0a3645245c356873a7e7da1e573e63d1d30f8e679",
+        "symbols": [
+          "runPaperBatch",
+          "summarizeRows",
+          "summarizeResults",
+          "stateWithAdapterResults"
+        ]
+      },
+      "behaviorTests": [
+        {
+          "id": "p0-entrypoint-and-batch-parity",
+          "path": "migration/tests/p0-entrypoint-and-batch-parity.mjs",
+          "sha256": "171d4194e518b42c2c4470e218fc639f96437ff85c395919f0921a0fe4085c21"
+        }
+      ]
+    }
+  ]
 }

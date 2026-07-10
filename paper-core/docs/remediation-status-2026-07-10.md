@@ -38,16 +38,42 @@ dry-run orchestration remain available.
 - Added explicit modules for core integrity, native store paths, migration
   matrix verification, academic evidence attestation, empirical evidence
   policy, review authority, and shared referee-store access.
+- Split the five historical orchestration monoliths behind compatibility
+  facades:
+  - paper-contracts now delegates referee planning, referee application,
+    repair closure, submission, and venue/source intake contracts to five
+    domain modules plus shared hash/normalization primitives.
+  - paper-batch-runner delegates report aggregation and blocker-family
+    rendering to batch-summary.
+  - journal profile/deadline data is isolated in journal-registry.
+  - generated empirical experiment code is isolated in experiment-runner.
+  - patch creation/validation/application is isolated in repair-executor.
+- A 64 KiB production-module budget is now enforced by remediation selftest
+  across all 38 MJS modules under paper-core and paper-adapters.
 - Added deterministic vendored-core selftest distinct from the cross-repository
   workspace integration test.
 - Added failure-closed migration and referee-authority tests, SQLite rollback
   and concurrent-writer tests, foreign-key checks, and legacy-store immutability
   checks.
+- Added direct boundary checks for contract facade identity, batch-summary
+  behavior, the 97-profile journal registry, network-free empirical code
+  generation, and referee patch path containment.
 
-The original contracts, batch-summary, journal registry, empirical runner, and
-referee-repair files remain larger than the desired module budget. Further
-mechanical extraction is engineering debt, not a reason to relax the safety
-gates above.
+The mechanical monolith split is complete under the current 64 KiB budget.
+Further decomposition may improve maintainability, but is no longer an
+unbounded-file blocker.
+
+## Migration matrix progress after P1
+
+- Two hash-bound P0 rows now document the primary entrypoint and production
+  batch boundary, backed by
+  migration/tests/p0-entrypoint-and-batch-parity.mjs.
+- Both rows deliberately declare semanticScope.status as partial. The matrix
+  verifier now requires semanticScope.status to be complete, so passing a
+  narrow smoke test cannot falsely close a whole legacy file.
+- Current honest matrix status remains 0 verified, 2 partial/invalid, and 263
+  missing source paths (2 P0, 261 P1). The partial rows are progress evidence,
+  not retirement evidence.
 
 ## Verification
 
@@ -55,6 +81,7 @@ gates above.
 npm run store:status
 npm run core:integrity
 npm run audit:local-accepts
+npm run migration:p0-selftest
 npm test
 ```
 

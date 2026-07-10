@@ -1,0 +1,886 @@
+import { PAPER_ACTIONS } from './paper-contracts.mjs';
+import { normalizeText } from './utils.mjs';
+
+export function makeMarkdownTable(rows) {
+  const headers = [
+    'paper_id',
+    'venue',
+    'draft_status',
+    'compile_status',
+    'research_verify_status',
+    'package_status',
+    'readiness_status',
+    'runner_status',
+    'submission_status',
+    'next_action',
+    'auto_level',
+    'submission_intent',
+    'production_disposition',
+  ];
+  const escapeCell = (value) => String(value ?? '').replace(/\|/g, '/').replace(/\n/g, ' ');
+  const lines = [
+    `| ${headers.join(' | ')} |`,
+    `| ${headers.map(() => '---').join(' | ')} |`,
+  ];
+  for (const row of rows) {
+    lines.push(`| ${headers.map((header) => escapeCell(row[header])).join(' | ')} |`);
+  }
+  return lines.join('\n') + '\n';
+}
+
+export function summarizeRows(rows, mode) {
+  return {
+    mode,
+    total: rows.length,
+    sourceReady: rows.filter((row) => row.draft_status === 'source_tex_present').length,
+    buildReady: rows.filter((row) => ['compiled_pdf_present', 'build_ready', 'build_passed'].includes(row.compile_status)).length,
+    researchReady: rows.filter((row) => ['verified', 'evidence_present', 'proposal_seed_present', 'manual_review_only'].includes(row.research_verify_status)).length,
+    packageReady: rows.filter((row) => ['package_present', 'package_ready'].includes(row.package_status)).length,
+    localDryRunReady: rows.filter((row) => row.readiness_status === 'ready_for_local_dry_run').length,
+    dryRunReceipts: rows.filter((row) => row.runner_status === 'dry_run_receipt_recorded').length,
+    reviewedSubmitBlocked: rows.filter((row) => row.next_action === PAPER_ACTIONS.REVIEWED_SUBMIT).length,
+    blocked: rows.filter((row) => row.readiness_status === 'blocked').length,
+    activeSubmissionCandidates: rows.filter((row) => row.production_disposition === 'active_submission').length,
+    needsVenueDecision: rows.filter((row) => row.submission_intent === 'needs_venue_decision').length,
+    needsSourceAdapt: rows.filter((row) => row.submission_intent === 'source_adapt_required').length,
+    nonSubmissionArchive: rows.filter((row) => row.submission_intent === 'non_submission_archive').length,
+  };
+}
+
+export function summarizeResults(results, legacyCleanupAudit = null) {
+  const proposalStaging = {
+    staged: results.filter((result) => result.task?.registry?.inventorySource === 'proposal_staging').length,
+    sourceSkeletons: results.filter((result) => (
+      result.task?.registry?.inventorySource === 'proposal_staging'
+      && normalizeText(result.task?.sourceWorkspace).includes('/runtime/proposals/')
+    )).length,
+  };
+  const buildArtifactAcceptance = {
+    accepted: results.filter((result) => (
+      result.buildResult?.buildArtifactAcceptance?.status === 'compiled_pdf_accepted_for_local_package'
+      || (result.packageResult?.artifactPackage?.artifacts || []).some((artifact) => artifact.role === 'build_artifact_acceptance')
+    )).length,
+    compiledPdfArtifacts: results.filter((result) => (
+      (result.packageResult?.artifactPackage?.artifacts || []).some((artifact) => artifact.role === 'compiled_pdf')
+    )).length,
+  };
+  const researchTypedContracts = results.reduce((count, result) => (
+    count + (result.researchReport?.typedContracts ? 1 : 0)
+  ), 0);
+  const researchWorkerReceipts = results.reduce((count, result) => (
+    count + Number(result.researchReport?.workerReceiptCount || 0)
+  ), 0);
+  const researchWorkerCatalogSize = Math.max(0, ...results.map((result) => (
+    Number(result.researchReport?.researchWorkerCount || 0)
+  )));
+  const journalManageReports = results.filter((result) => (
+    result.journalManagement?.kind === 'JournalManageAdapterReport'
+  )).length;
+  const journalConferenceRegistries = results.filter((result) => (
+    result.journalManagement?.registry?.kind === 'JournalConferenceRegistry'
+    || result.refereeAutopilot?.journalConferenceRegistry?.kind === 'JournalConferenceRegistry'
+  )).length;
+  const targetSelectionPolicies = results.filter((result) => (
+    result.journalManagement?.targetSelectionPolicy?.kind === 'TargetSelectionPolicy'
+    || result.refereeAutopilot?.targetSelectionPolicy?.kind === 'TargetSelectionPolicy'
+  )).length;
+  const journalTargetProfiles = results.filter((result) => (
+    result.journalManagement?.targetProfile?.kind === 'JournalTargetProfile'
+    || result.refereeAutopilot?.targetJournalProfile?.kind === 'JournalTargetProfile'
+  )).length;
+  const journalTargetProfileReady = results.filter((result) => (
+    result.journalManagement?.targetProfile?.status === 'journal_target_profile_ready'
+    || result.refereeAutopilot?.targetJournalProfile?.status === 'journal_target_profile_ready'
+  )).length;
+  const journalRubricPackets = results.filter((result) => (
+    result.journalManagement?.rubricPacket?.kind === 'JournalRubricPacket'
+    || result.refereeAutopilot?.finalJournalRubricPacket?.kind === 'JournalRubricPacket'
+  )).length;
+  const journalRubricReady = results.filter((result) => (
+    result.journalManagement?.rubricPacket?.status === 'journal_rubric_packet_ready'
+    || result.refereeAutopilot?.finalJournalRubricPacket?.status === 'journal_rubric_packet_ready'
+  )).length;
+  const venueRubricManagers = results.filter((result) => (
+    result.journalManagement?.venueRubricManager?.kind === 'VenueRubricManager'
+    || result.refereeAutopilot?.finalVenueRubricManager?.kind === 'VenueRubricManager'
+  )).length;
+  const freshRefereePools = results.filter((result) => (
+    result.journalManagement?.freshRefereePool?.kind === 'FreshRefereePool'
+    || result.refereeAutopilot?.finalFreshRefereePool?.kind === 'FreshRefereePool'
+  )).length;
+  const venueEvidenceGates = results.filter((result) => (
+    result.journalManagement?.evidenceGate?.kind === 'VenueEvidenceGate'
+    || result.refereeAutopilot?.finalVenueEvidenceGate?.kind === 'VenueEvidenceGate'
+  )).length;
+  const venueEvidenceGateReady = results.filter((result) => (
+    result.journalManagement?.evidenceGate?.status === 'venue_evidence_gate_ready'
+    || result.refereeAutopilot?.finalVenueEvidenceGate?.status === 'venue_evidence_gate_ready'
+  )).length;
+  const venueLifecyclePolicies = results.filter((result) => (
+    result.journalManagement?.lifecyclePolicy?.kind === 'VenueLifecyclePolicy'
+    || result.refereeAutopilot?.finalVenueLifecyclePolicy?.kind === 'VenueLifecyclePolicy'
+  )).length;
+  const journalConferenceSystemPackets = results.filter((result) => (
+    result.journalManagement?.systemPacket?.kind === 'JournalConferenceSystemPacket'
+    || result.refereeAutopilot?.journalConferenceSystemPacket?.kind === 'JournalConferenceSystemPacket'
+  )).length;
+  const empiricalAnalysisReports = results.filter((result) => (
+    result.empiricalAnalysis?.kind === 'EmpiricalAnalysisAdapterReport'
+    || result.refereeAutopilot?.finalEmpiricalAnalysis?.kind === 'EmpiricalAnalysisAdapterReport'
+  )).length;
+  const empiricalAnalysisEvidenceReady = results.filter((result) => (
+    result.empiricalAnalysis?.status === 'empirical_analysis_evidence_ready'
+    || result.refereeAutopilot?.finalEmpiricalAnalysis?.status === 'empirical_analysis_evidence_ready'
+  )).length;
+  const empiricalBenchmarkRegistries = results.filter((result) => (
+    result.empiricalAnalysis?.empiricalBenchmarkRegistry?.kind === 'EmpiricalBenchmarkRegistry'
+    || result.refereeAutopilot?.finalEmpiricalAnalysis?.empiricalBenchmarkRegistry?.kind === 'EmpiricalBenchmarkRegistry'
+  )).length;
+  const empiricalBenchmarkRegistriesReady = results.filter((result) => (
+    result.empiricalAnalysis?.empiricalBenchmarkRegistry?.status === 'empirical_benchmark_registry_ready'
+    || result.refereeAutopilot?.finalEmpiricalAnalysis?.empiricalBenchmarkRegistry?.status === 'empirical_benchmark_registry_ready'
+  )).length;
+  const benchmarkSuiteSelectionPolicies = results.filter((result) => (
+    result.empiricalAnalysis?.benchmarkSuiteSelectionPolicy?.kind === 'BenchmarkSuiteSelectionPolicy'
+    || result.refereeAutopilot?.finalEmpiricalAnalysis?.benchmarkSuiteSelectionPolicy?.kind === 'BenchmarkSuiteSelectionPolicy'
+  )).length;
+  const benchmarkSuiteSelectionReady = results.filter((result) => (
+    result.empiricalAnalysis?.benchmarkSuiteSelectionPolicy?.status === 'benchmark_suite_selection_ready'
+    || result.refereeAutopilot?.finalEmpiricalAnalysis?.benchmarkSuiteSelectionPolicy?.status === 'benchmark_suite_selection_ready'
+  )).length;
+  const empiricalLocalBenchmarkRegistries = results.filter((result) => (
+    result.empiricalAnalysis?.localBenchmarkRegistry?.kind === 'LocalBenchmarkRegistry'
+    || result.refereeAutopilot?.finalEmpiricalAnalysis?.localBenchmarkRegistry?.kind === 'LocalBenchmarkRegistry'
+  )).length;
+  const empiricalLocalBenchmarkRegistryReady = results.filter((result) => (
+    result.empiricalAnalysis?.localBenchmarkRegistry?.status === 'local_benchmark_registry_ready'
+    || result.refereeAutopilot?.finalEmpiricalAnalysis?.localBenchmarkRegistry?.status === 'local_benchmark_registry_ready'
+  )).length;
+  const empiricalAuthorizedLocalDatasets = results.filter((result) => (
+    result.empiricalAnalysis?.datasetAccessContract?.datasetMode === 'authorized_local_dataset'
+    || result.refereeAutopilot?.finalEmpiricalAnalysis?.datasetAccessContract?.datasetMode === 'authorized_local_dataset'
+  )).length;
+  const datasetLicenseProvenanceGates = results.filter((result) => (
+    result.empiricalAnalysis?.datasetLicenseProvenanceGate?.kind === 'DatasetLicenseProvenanceGate'
+    || result.refereeAutopilot?.finalEmpiricalAnalysis?.datasetLicenseProvenanceGate?.kind === 'DatasetLicenseProvenanceGate'
+  )).length;
+  const datasetLicenseProvenanceGateReady = results.filter((result) => (
+    result.empiricalAnalysis?.datasetLicenseProvenanceGate?.status === 'dataset_license_provenance_gate_ready'
+    || result.refereeAutopilot?.finalEmpiricalAnalysis?.datasetLicenseProvenanceGate?.status === 'dataset_license_provenance_gate_ready'
+  )).length;
+  const tableFigureSpecs = results.filter((result) => (
+    result.empiricalAnalysis?.tableFigureSpec?.kind === 'TableFigureSpec'
+    || result.refereeAutopilot?.finalEmpiricalAnalysis?.tableFigureSpec?.kind === 'TableFigureSpec'
+  )).length;
+  const tableFigureSpecReady = results.filter((result) => (
+    result.empiricalAnalysis?.tableFigureSpec?.status === 'table_figure_spec_ready'
+    || result.refereeAutopilot?.finalEmpiricalAnalysis?.tableFigureSpec?.status === 'table_figure_spec_ready'
+  )).length;
+  const empiricalExperimentRunReceipts = results.filter((result) => (
+    result.empiricalAnalysis?.experimentRunReceipt?.kind === 'ExperimentRunReceipt'
+    || result.refereeAutopilot?.finalEmpiricalAnalysis?.experimentRunReceipt?.kind === 'ExperimentRunReceipt'
+  )).length;
+  const empiricalExperimentRunRecorded = results.filter((result) => (
+    result.empiricalAnalysis?.experimentRunReceipt?.status === 'experiment_run_receipt_recorded'
+    || result.refereeAutopilot?.finalEmpiricalAnalysis?.experimentRunReceipt?.status === 'experiment_run_receipt_recorded'
+  )).length;
+  const empiricalResultArtifactPackages = results.filter((result) => (
+    result.empiricalAnalysis?.resultArtifactPackage?.kind === 'ResultArtifactPackage'
+    || result.refereeAutopilot?.finalEmpiricalAnalysis?.resultArtifactPackage?.kind === 'ResultArtifactPackage'
+  )).length;
+  const empiricalEvidenceGates = results.filter((result) => (
+    result.empiricalAnalysis?.empiricalEvidenceGate?.kind === 'EmpiricalEvidenceGate'
+    || result.refereeAutopilot?.finalEmpiricalAnalysis?.empiricalEvidenceGate?.kind === 'EmpiricalEvidenceGate'
+  )).length;
+  const empiricalEvidenceGateReady = results.filter((result) => (
+    result.empiricalAnalysis?.empiricalEvidenceGate?.status === 'empirical_evidence_gate_ready'
+    || result.refereeAutopilot?.finalEmpiricalAnalysis?.empiricalEvidenceGate?.status === 'empirical_evidence_gate_ready'
+  )).length;
+  const empiricalManuscriptPatches = results.filter((result) => (
+    result.empiricalAnalysis?.manuscriptEmpiricalPatch?.kind === 'ManuscriptEmpiricalPatch'
+    || result.refereeAutopilot?.finalEmpiricalAnalysis?.manuscriptEmpiricalPatch?.kind === 'ManuscriptEmpiricalPatch'
+  )).length;
+  const empiricalManuscriptPatchReady = results.filter((result) => (
+    result.empiricalAnalysis?.manuscriptEmpiricalPatch?.status === 'manuscript_empirical_patch_ready'
+    || result.refereeAutopilot?.finalEmpiricalAnalysis?.manuscriptEmpiricalPatch?.status === 'manuscript_empirical_patch_ready'
+  )).length;
+  const empiricalManuscriptApplyApprovalPackets = results.filter((result) => (
+    result.empiricalAnalysis?.manuscriptEmpiricalApplyApprovalPacket?.kind === 'ManuscriptEmpiricalApplyApprovalPacket'
+    || result.refereeAutopilot?.finalEmpiricalAnalysis?.manuscriptEmpiricalApplyApprovalPacket?.kind === 'ManuscriptEmpiricalApplyApprovalPacket'
+  )).length;
+  const empiricalManuscriptApplyApprovalReady = results.filter((result) => (
+    result.empiricalAnalysis?.manuscriptEmpiricalApplyApprovalPacket?.status === 'manuscript_empirical_apply_approval_ready'
+    || result.refereeAutopilot?.finalEmpiricalAnalysis?.manuscriptEmpiricalApplyApprovalPacket?.status === 'manuscript_empirical_apply_approval_ready'
+  )).length;
+  const empiricalManuscriptApplyPlans = results.filter((result) => (
+    result.empiricalAnalysis?.manuscriptEmpiricalApplyPlan?.kind === 'ManuscriptEmpiricalApplyPlan'
+    || result.refereeAutopilot?.finalEmpiricalAnalysis?.manuscriptEmpiricalApplyPlan?.kind === 'ManuscriptEmpiricalApplyPlan'
+  )).length;
+  const empiricalManuscriptApplyPlanReady = results.filter((result) => (
+    result.empiricalAnalysis?.manuscriptEmpiricalApplyPlan?.status === 'manuscript_empirical_apply_plan_ready'
+    || result.refereeAutopilot?.finalEmpiricalAnalysis?.manuscriptEmpiricalApplyPlan?.status === 'manuscript_empirical_apply_plan_ready'
+  )).length;
+  const empiricalManuscriptApplyReceipts = results.filter((result) => (
+    result.empiricalAnalysis?.manuscriptEmpiricalApplyReceipt?.kind === 'ManuscriptEmpiricalApplyReceipt'
+    || result.refereeAutopilot?.finalEmpiricalAnalysis?.manuscriptEmpiricalApplyReceipt?.kind === 'ManuscriptEmpiricalApplyReceipt'
+  )).length;
+  const empiricalManuscriptApplyApplied = results.filter((result) => (
+    result.empiricalAnalysis?.manuscriptEmpiricalApplyReceipt?.status === 'manuscript_empirical_apply_applied'
+    || result.refereeAutopilot?.finalEmpiricalAnalysis?.manuscriptEmpiricalApplyReceipt?.status === 'manuscript_empirical_apply_applied'
+  )).length;
+  const empiricalExternalActions = results.filter((result) => (
+    result.empiricalAnalysis?.safety?.externalActionPerformed === true
+    || result.refereeAutopilot?.finalEmpiricalAnalysis?.safety?.externalActionPerformed === true
+  )).length;
+  const empiricalSourceMutations = results.filter((result) => (
+    result.empiricalAnalysis?.safety?.sourceMutation === true
+    || result.refereeAutopilot?.finalEmpiricalAnalysis?.safety?.sourceMutation === true
+  )).length;
+  const freshRefereeVerdicts = results.reduce((sum, result) => (
+    sum + Number(result.refereeAutopilot?.freshRefereeVerdictCount || 0)
+  ), 0);
+  const freshRefereeAccepts = results.reduce((sum, result) => (
+    sum + Number(result.refereeAutopilot?.freshRefereeAcceptCount || 0)
+  ), 0);
+  const freshRefereeRevisions = results.reduce((sum, result) => (
+    sum + Number(result.refereeAutopilot?.freshRefereeReviseCount || 0)
+  ), 0);
+  const refereeOpenIssues = results.reduce((count, result) => (
+    count + Number(result.refereeRevision?.openIssueCount || 0)
+  ), 0);
+  const refereeReviewReports = results.filter((result) => (
+    result.refereeReview?.reviewReport?.kind === 'AgentRefereeReviewReport'
+  )).length;
+  const refereeReviewReady = results.filter((result) => (
+    result.refereeReview?.reviewReport?.status === 'agent_referee_review_ready'
+  )).length;
+  const refereeReviewBlocked = results.filter((result) => (
+    result.refereeReview?.reviewReport?.status === 'agent_referee_review_blocked'
+    || result.refereeReview?.intake?.status === 'referee_review_intake_blocked'
+  )).length;
+  const refereeReviewFindings = results.reduce((count, result) => (
+    count + Number(result.refereeReview?.findingCount || 0)
+  ), 0);
+  const refereeIssueQueueMaterializations = results.filter((result) => (
+    result.refereeReview?.materialization?.kind === 'RefereeIssueQueueMaterialization'
+  )).length;
+  const refereeIssueQueueMaterializationPlanned = results.filter((result) => (
+    result.refereeReview?.materialization?.status === 'referee_issue_queue_materialization_planned'
+  )).length;
+  const refereeIssueQueueMaterialized = results.filter((result) => (
+    result.refereeReview?.materialization?.status === 'referee_issue_queue_materialized'
+  )).length;
+  const refereeIssueQueueMaterializationBlocked = results.filter((result) => (
+    result.refereeReview?.materialization?.status === 'referee_issue_queue_materialization_blocked'
+  )).length;
+  const refereeReviewIssueRowsInserted = results.reduce((count, result) => (
+    count + Number(result.refereeReview?.materializedIssueCount || 0)
+  ), 0);
+  const refereeReviewIssueRowsAlreadyPresent = results.reduce((count, result) => (
+    count + Number(result.refereeReview?.existingIssueCount || 0)
+  ), 0);
+  const refereePreflightReady = results.filter((result) => (
+    result.refereeRevision?.patchExecutionPreflight?.status === 'dry_run_patch_execution_preflight_ready'
+  )).length;
+  const refereeRollbackLedgerDrafts = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.rollbackLedgerDraft?.status === 'rollback_ledger_draft_ready'
+  )).length;
+  const refereePreimageSnapshotLedgers = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.preimageSnapshotLedger?.kind === 'RefereeRevisionPreimageSnapshotLedger'
+  )).length;
+  const refereePreimageSnapshotReady = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.preimageSnapshotLedger?.status === 'preimage_snapshot_ready'
+  )).length;
+  const refereeExecutePlansReady = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.executePlan?.status === 'execute_plan_ready_requires_explicit_apply_mode'
+  )).length;
+  const refereeApplyModeContracts = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.applyModeContract?.kind === 'RefereeRevisionApplyModeContract'
+  )).length;
+  const refereeExecuteDesignPackets = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.executeDesignPacket?.kind === 'RefereeRevisionExecuteDesignPacket'
+  )).length;
+  const refereeExecuteDesignReadyApplyBlocked = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.executeDesignPacket?.status === 'referee_execute_design_ready_apply_blocked'
+  )).length;
+  const refereeExecuteDesignReadyForApplyExecution = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.executeDesignPacket?.status === 'referee_execute_design_ready_for_apply_execution'
+  )).length;
+  const refereeApplyApprovalPackets = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.applyApprovalPacket?.kind === 'RefereeApplyApprovalPacket'
+  )).length;
+  const refereeApplyApprovalBlocked = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.applyApprovalPacket?.status === 'referee_apply_approval_blocked'
+  )).length;
+  const refereeApplyApprovalReady = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.applyApprovalPacket?.status === 'referee_apply_approval_ready_for_patch_execution'
+  )).length;
+  const refereeApplyAgentApproved = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.applyApprovalPacket?.approvalActor === 'agent'
+    && result.refereeRevision?.applyApprovalPacket?.approved === true
+  )).length;
+  const refereePatchApplyExecutions = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.patchApplyExecution?.kind === 'RefereePatchApplyExecution'
+  )).length;
+  const refereePatchApplyExecutionBlocked = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.patchApplyExecution?.status === 'referee_patch_apply_execution_blocked'
+  )).length;
+  const refereePatchApplyExecutionReady = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.patchApplyExecution?.status === 'referee_patch_apply_ready_for_separate_executor'
+  )).length;
+  const refereePatchApplyApprovalGateBlocked = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && (result.refereeRevision?.patchApplyExecution?.blockers || []).includes('referee_apply_approval_not_ready')
+  )).length;
+  const refereePatchApplyInvocations = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.patchApplyInvocation?.kind === 'RefereePatchApplyInvocation'
+  )).length;
+  const refereePatchApplyInvocationBlocked = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.patchApplyInvocation?.status === 'referee_patch_apply_invocation_blocked'
+  )).length;
+  const refereePatchApplyInvocationRequired = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && (result.refereeRevision?.patchApplyInvocation?.blockers || []).includes('explicit_referee_patch_apply_execute_invocation_required')
+  )).length;
+  const refereePatchApplyValidationBlocked = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && Number(result.refereeRevision?.patchApplyInvocation?.validationRecordCount || 0) > 0
+    && (result.refereeRevision?.patchApplyInvocation?.blockers || []).some((blocker) => (
+      blocker.includes('patch_file')
+      || blocker.includes('patch_hash')
+      || blocker.includes('patch_path')
+      || blocker.includes('patch_target')
+      || blocker.includes('preimage_')
+      || blocker.includes('combined_patch')
+      || blocker.includes('git_apply')
+    ))
+  )).length;
+  const refereePatchApplyInvocationApplied = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.patchApplyInvocation?.status === 'referee_patch_apply_invocation_applied'
+  )).length;
+  const refereeAgentRepairPatchBundles = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.agentRepairPatchBundle?.kind === 'RefereeAgentRepairPatchBundle'
+  )).length;
+  const refereeAgentRepairPatchBundleReady = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.agentRepairPatchBundle?.status === 'agent_repair_patch_bundle_ready'
+  )).length;
+  const refereeAgentRepairPatchBundleAlreadyPresent = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.agentRepairPatchBundle?.status === 'agent_repair_patch_already_present'
+  )).length;
+  const refereeAgentRepairPatchBundleBlocked = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.agentRepairPatchBundle?.status === 'agent_repair_patch_bundle_blocked'
+  )).length;
+  const refereeSourceMutations = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.patchApplyInvocation?.safety?.sourceMutation === true
+  )).length;
+  const refereeAppliedPatchReceipts = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.appliedPatchReceipt?.kind === 'RefereeAppliedPatchReceipt'
+  )).length;
+  const refereeAppliedPatchReceiptBlocked = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.appliedPatchReceipt?.status === 'applied_patch_receipt_blocked'
+  )).length;
+  const refereeAppliedPatchReceiptRecorded = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.appliedPatchReceipt?.status === 'applied_patch_receipt_recorded'
+  )).length;
+  const refereeAppliedPatchExecutionGateBlocked = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && (result.refereeRevision?.appliedPatchReceipt?.blockers || []).includes('referee_patch_apply_execution_not_ready')
+  )).length;
+  const refereeAppliedPatchInvocationGateBlocked = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && (result.refereeRevision?.appliedPatchReceipt?.blockers || []).includes('referee_patch_apply_invocation_not_applied')
+  )).length;
+  const refereePostRepairBuildPackages = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.postRepairBuildPackage?.kind === 'PostRepairBuildPackage'
+  )).length;
+  const refereePostRepairBuildPackageBlocked = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.postRepairBuildPackage?.status === 'post_repair_build_package_blocked'
+  )).length;
+  const refereePostRepairBuildPackageReady = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.postRepairBuildPackage?.status === 'post_repair_build_package_ready'
+  )).length;
+  const refereePostRepairBuildRecheckPassed = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.postRepairRechecks?.buildRecheck?.status === 'build_recheck_passed'
+  )).length;
+  const refereePostRepairPackageRewriteReady = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.postRepairRechecks?.packageRecheck?.status === 'package_rewrite_ready'
+  )).length;
+  const refereePostRepairResearchRecheckPassed = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.postRepairRechecks?.researchRecheck?.status === 'research_recheck_passed'
+  )).length;
+  const refereePostRepairAppliedReceiptGateBlocked = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && (result.refereeRevision?.postRepairBuildPackage?.blockers || []).includes('applied_patch_receipt_not_recorded')
+  )).length;
+  const refereeIssueResolutionProofs = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.issueResolutionProof?.kind === 'RefereeIssueResolutionProof'
+  )).length;
+  const refereeIssueResolutionProofBlocked = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.issueResolutionProof?.status === 'referee_issue_resolution_proof_blocked'
+  )).length;
+  const refereeIssueResolutionProofReady = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.issueResolutionProof?.status === 'referee_issue_resolution_proof_ready'
+  )).length;
+  const refereeIssueResolutionEvidenceItems = results.reduce((sum, result) => (
+    sum + Number(result.refereeRevision?.issueResolutionProof?.resolutionEvidenceCount || 0)
+  ), 0);
+  const refereeIssueResolutionPostRepairGateBlocked = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && (result.refereeRevision?.issueResolutionProof?.blockers || []).includes('post_repair_build_package_not_ready')
+  )).length;
+  const refereeRepairReconciliations = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.repairReconciliation?.kind === 'RepairReconciliation'
+  )).length;
+  const refereeRepairReconciliationBlocked = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.repairReconciliation?.status === 'repair_reconciliation_blocked'
+  )).length;
+  const refereeRepairReconciliationReady = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.repairReconciliation?.status === 'repair_reconciliation_ready'
+  )).length;
+  const refereeRepairReconciled = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.repairReconciliation?.repairReconciled === true
+  )).length;
+  const refereeRepairStateMutationReceipts = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.repairStateMutationReceipt?.kind === 'RepairStateMutationReceipt'
+  )).length;
+  const refereeRepairStateMutationRecorded = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.repairStateMutationReceipt?.status === 'repair_state_mutation_recorded'
+  )).length;
+  const refereeRepairStateMutationBlocked = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.repairStateMutationReceipt?.status === 'repair_state_mutation_blocked'
+  )).length;
+  const refereeRepairStateMutationIssueRowsUpdated = results.reduce((sum, result) => (
+    sum + Number(result.refereeRevision?.repairStateMutationReceipt?.issueRowsUpdated || 0)
+  ), 0);
+  const refereeRepairStateMutationPatchRowsInserted = results.reduce((sum, result) => (
+    sum + Number(result.refereeRevision?.repairStateMutationReceipt?.patchRowsInserted || 0)
+  ), 0);
+  const refereeRepairStateMutationPatchRowsUpdated = results.reduce((sum, result) => (
+    sum + Number(result.refereeRevision?.repairStateMutationReceipt?.patchRowsUpdated || 0)
+  ), 0);
+  const refereeRepairStateMutationPatchRowsAlreadyPresent = results.reduce((sum, result) => (
+    sum + Number(result.refereeRevision?.repairStateMutationReceipt?.patchRowsAlreadyPresent || 0)
+  ), 0);
+  const refereeReviewedSubmitReadinessReleased = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.repairStateMutationReceipt?.reviewedSubmitReadinessReleased === true
+  )).length;
+  const refereeIssueStateMutations = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.repairReconciliation?.issueStateMutationPerformed === true
+  )).length;
+  const refereeSqliteWrites = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && result.refereeRevision?.repairReconciliation?.safety?.writesSqlite === true
+  )).length;
+  const refereeRepairReconciliationProofGateBlocked = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && (result.refereeRevision?.repairReconciliation?.blockers || []).includes('referee_issue_resolution_proof_not_ready')
+  )).length;
+  const refereeApplyApprovalRequired = results.filter((result) => (
+    Number(result.refereeRevision?.openIssueCount || 0) > 0
+    && (
+      (result.refereeRevision?.applyModeContract?.blockers || []).includes('agent_referee_apply_approval_required')
+      || (result.refereeRevision?.applyApprovalPacket?.blockers || []).includes('agent_referee_apply_approval_required')
+    )
+  )).length;
+  const lifecycleReconciled = results.filter((result) => result.lifecycle?.reconciliation?.status === 'dry_run_reconciled').length;
+  const lifecycleOutboxItems = results.filter((result) => result.lifecycle?.outbox?.kind === 'ExternalExecutorHandoffOutbox').length;
+  const lifecycles = results.map((result) => result.lifecycle).filter(Boolean);
+  const reviewedSubmitLifecycles = lifecycles.filter((lifecycle) => lifecycle.reviewedSubmit);
+  const submissionPreflight = {
+    lifecycleItems: lifecycles.length,
+    reviewedSubmitItems: reviewedSubmitLifecycles.length,
+    approvalPackets: reviewedSubmitLifecycles.filter((lifecycle) => lifecycle.approvalPacket?.kind === 'SubmissionApprovalPacket').length,
+    approvalBlocked: reviewedSubmitLifecycles.filter((lifecycle) => (
+      lifecycle.approvalPacket?.status === 'blocked_approval_packet'
+    )).length,
+    approvalRequired: reviewedSubmitLifecycles.filter((lifecycle) => (
+      (lifecycle.approvalPacket?.blockers || []).includes('explicit_reviewed_submit_approval_required')
+    )).length,
+    academicEvidenceRequired: reviewedSubmitLifecycles.filter((lifecycle) => (
+      (lifecycle.approvalPacket?.blockers || []).includes('attested_academic_evidence_required_for_reviewed_submit')
+    )).length,
+    approvalAgentApproved: reviewedSubmitLifecycles.filter((lifecycle) => (
+      lifecycle.approvalPacket?.agentApproved === true
+    )).length,
+    reviewedSubmitPreflightPackets: reviewedSubmitLifecycles.filter((lifecycle) => (
+      lifecycle.reviewedSubmitPreflightPacket?.kind === 'ReviewedSubmitPreflightPacket'
+    )).length,
+    reviewedSubmitPreflightBlocked: reviewedSubmitLifecycles.filter((lifecycle) => (
+      lifecycle.reviewedSubmitPreflightPacket?.status === 'reviewed_submit_preflight_blocked'
+    )).length,
+    reviewedSubmitPreflightReady: reviewedSubmitLifecycles.filter((lifecycle) => (
+      lifecycle.reviewedSubmitPreflightPacket?.status === 'reviewed_submit_preflight_ready_for_external_executor'
+    )).length,
+    freshVenueEvidenceReady: reviewedSubmitLifecycles.filter((lifecycle) => (
+      lifecycle.freshVenueEvidenceBundle?.status === 'fresh_venue_evidence_ready'
+    )).length,
+    executorOutboxItems: reviewedSubmitLifecycles.filter((lifecycle) => (
+      lifecycle.outbox?.kind === 'ExternalExecutorHandoffOutbox'
+    )).length,
+    executorOutboxBlocked: reviewedSubmitLifecycles.filter((lifecycle) => (
+      lifecycle.outbox?.status === 'blocked_outbox_item'
+    )).length,
+    controlledExecutorReceipts: reviewedSubmitLifecycles.filter((lifecycle) => (
+      lifecycle.controlledExecutorReceipt?.kind === 'ControlledExternalExecutorReceipt'
+    )).length,
+    controlledExecutorReceiptRecorded: reviewedSubmitLifecycles.filter((lifecycle) => (
+      lifecycle.controlledExecutorReceipt?.status === 'controlled_external_executor_receipt_recorded'
+    )).length,
+    controlledExecutorReceiptBlocked: reviewedSubmitLifecycles.filter((lifecycle) => (
+      lifecycle.controlledExecutorReceipt?.status === 'controlled_external_executor_blocked'
+    )).length,
+    liveExecutorBoundaryBlocked: reviewedSubmitLifecycles.filter((lifecycle) => (
+      (lifecycle.manifest?.blockers || []).includes('live_submit_not_implemented_in_overlay')
+    )).length,
+    externalActionsPerformed: reviewedSubmitLifecycles.filter((lifecycle) => (
+      lifecycle.receipt?.externalActionPerformed || lifecycle.safety?.externalActionPerformed
+    )).length,
+  };
+  const refereeAutopilotRuns = results.filter((result) => (
+    result.refereeAutopilot?.kind === 'RefereeAutopilotReport'
+  )).length;
+  const refereeAutopilotAccepted = results.filter((result) => (
+    result.refereeAutopilot?.accepted === true
+  )).length;
+  const refereeAutopilotBlocked = results.filter((result) => (
+    result.refereeAutopilot?.status === 'referee_autopilot_blocked'
+  )).length;
+  const refereeAutopilotRounds = results.reduce((sum, result) => (
+    sum + Number(result.refereeAutopilot?.roundsCompleted || 0)
+  ), 0);
+  const refereeAutopilotFinalOpenIssues = results.reduce((sum, result) => (
+    sum + Number(result.refereeAutopilot?.finalOpenIssueCount || 0)
+  ), 0);
+  const refereeAutopilotSourceMutations = results.reduce((sum, result) => (
+    sum + Number(result.refereeAutopilot?.sourceMutationCount || 0)
+  ), 0);
+  const refereeAutopilotSqliteWrites = results.reduce((sum, result) => (
+    sum + Number(result.refereeAutopilot?.sqliteWriteCount || 0)
+  ), 0);
+  const refereeAutopilotAcceptanceReceipts = results.filter((result) => (
+    result.refereeAutopilot?.acceptanceReceipt?.kind === 'RefereeAutopilotAcceptanceReceipt'
+  )).length;
+  const refereeAutopilotAcceptanceRecorded = results.filter((result) => (
+    result.refereeAutopilot?.acceptanceReceipt?.status === 'referee_autopilot_accept_recorded'
+  )).length;
+  const refereeAutopilotExternalActions = results.filter((result) => (
+    result.refereeAutopilot?.safety?.externalActionPerformed === true
+  )).length;
+  const venueResolution = {
+    required: results.filter((result) => result.venueResolution?.venueResolutionRequired).length,
+    packets: results.filter((result) => (
+      result.venueResolution?.venueResolutionRequired
+      && result.venueResolution?.packet?.kind === 'VenueResolutionPacket'
+    )).length,
+    manualDecisionRequired: results.filter((result) => (
+      result.venueResolution?.venueResolutionRequired
+      && result.venueResolution?.packet?.status === 'manual_venue_decision_required'
+    )).length,
+    waitingForLocalPackage: results.filter((result) => (
+      result.venueResolution?.venueResolutionRequired
+      && result.venueResolution?.packet?.status === 'venue_resolution_waiting_for_local_package'
+    )).length,
+    withCandidateVenues: results.filter((result) => (
+      result.venueResolution?.venueResolutionRequired
+      && Number(result.venueResolution?.candidateCount || 0) > 0
+    )).length,
+    submitReadyPackagePlansRequired: results.filter((result) => (
+      result.venueResolution?.venueResolutionRequired
+      && result.venueResolution?.submitReadyPackagePlan?.status === 'submit_ready_package_plan_required'
+    )).length,
+    registryAddPlansReady: results.filter((result) => (
+      result.venueResolution?.venueResolutionRequired
+      && result.venueResolution?.venueRegistryAddPlan?.status === 'registry_add_plan_requires_operator_target'
+    )).length,
+    operatorPacketsReady: results.filter((result) => (
+      result.venueResolution?.venueResolutionRequired
+      && result.venueResolution?.venueResolutionOperatorPacket?.status === 'venue_operator_decision_ready'
+    )).length,
+    operatorPacketsBlocked: results.filter((result) => (
+      result.venueResolution?.venueResolutionRequired
+      && result.venueResolution?.venueResolutionOperatorPacket?.status === 'venue_operator_packet_blocked'
+    )).length,
+  };
+  const sourceAdaptation = {
+    required: results.filter((result) => result.sourceAdaptation?.sourceAdaptationRequired).length,
+    packets: results.filter((result) => (
+      result.sourceAdaptation?.sourceAdaptationRequired
+      && result.sourceAdaptation?.packet?.kind === 'SourceAdaptationPacket'
+    )).length,
+    manualSourceDecisionRequired: results.filter((result) => (
+      result.sourceAdaptation?.sourceAdaptationRequired
+      && result.sourceAdaptation?.packet?.status === 'manual_source_decision_required'
+    )).length,
+    mainTexCandidateReviewRequired: results.filter((result) => (
+      result.sourceAdaptation?.sourceAdaptationRequired
+      && result.sourceAdaptation?.packet?.status === 'main_tex_candidate_review_required'
+    )).length,
+    withTexCandidates: results.filter((result) => (
+      result.sourceAdaptation?.sourceAdaptationRequired
+      && Number(result.sourceAdaptation?.packet?.texCandidateCount || 0) > 0
+    )).length,
+    pdfOnlyOrCodeProject: results.filter((result) => (
+      result.sourceAdaptation?.sourceAdaptationRequired
+      && Number(result.sourceAdaptation?.packet?.pdfCandidateCount || 0) > 0
+      && Number(result.sourceAdaptation?.packet?.texCandidateCount || 0) === 0
+    )).length,
+    operatorPacketsReady: results.filter((result) => (
+      result.sourceAdaptation?.sourceAdaptationRequired
+      && ['main_tex_selection_ready', 'source_material_decision_ready'].includes(
+        result.sourceAdaptation?.sourceAdaptationOperatorPacket?.status,
+      )
+    )).length,
+    operatorPacketsBlocked: results.filter((result) => (
+      result.sourceAdaptation?.sourceAdaptationRequired
+      && result.sourceAdaptation?.sourceAdaptationOperatorPacket?.status === 'source_operator_packet_blocked'
+    )).length,
+  };
+  return {
+    proposalStaging,
+    buildArtifactAcceptance,
+    researchTypedContracts,
+    researchWorkerReceipts,
+    researchWorkerCatalogSize,
+    journalManageReports,
+    journalConferenceRegistries,
+    targetSelectionPolicies,
+    journalTargetProfiles,
+    journalTargetProfileReady,
+    journalRubricPackets,
+    journalRubricReady,
+    venueRubricManagers,
+    freshRefereePools,
+    venueEvidenceGates,
+    venueEvidenceGateReady,
+    venueLifecyclePolicies,
+    journalConferenceSystemPackets,
+    empiricalAnalysisReports,
+    empiricalAnalysisEvidenceReady,
+    empiricalBenchmarkRegistries,
+    empiricalBenchmarkRegistriesReady,
+    benchmarkSuiteSelectionPolicies,
+    benchmarkSuiteSelectionReady,
+    empiricalLocalBenchmarkRegistries,
+    empiricalLocalBenchmarkRegistryReady,
+    empiricalAuthorizedLocalDatasets,
+    datasetLicenseProvenanceGates,
+    datasetLicenseProvenanceGateReady,
+    tableFigureSpecs,
+    tableFigureSpecReady,
+    empiricalExperimentRunReceipts,
+    empiricalExperimentRunRecorded,
+    empiricalResultArtifactPackages,
+    empiricalEvidenceGates,
+    empiricalEvidenceGateReady,
+    empiricalManuscriptPatches,
+    empiricalManuscriptPatchReady,
+    empiricalManuscriptApplyApprovalPackets,
+    empiricalManuscriptApplyApprovalReady,
+    empiricalManuscriptApplyPlans,
+    empiricalManuscriptApplyPlanReady,
+    empiricalManuscriptApplyReceipts,
+    empiricalManuscriptApplyApplied,
+    empiricalExternalActions,
+    empiricalSourceMutations,
+    freshRefereeVerdicts,
+    freshRefereeAccepts,
+    freshRefereeRevisions,
+    refereeReviewReports,
+    refereeReviewReady,
+    refereeReviewBlocked,
+    refereeReviewFindings,
+    refereeIssueQueueMaterializations,
+    refereeIssueQueueMaterializationPlanned,
+    refereeIssueQueueMaterialized,
+    refereeIssueQueueMaterializationBlocked,
+    refereeReviewIssueRowsInserted,
+    refereeReviewIssueRowsAlreadyPresent,
+    refereeOpenIssues,
+    refereePreflightReady,
+    refereeRollbackLedgerDrafts,
+    refereePreimageSnapshotLedgers,
+    refereePreimageSnapshotReady,
+    refereeExecutePlansReady,
+    refereeApplyModeContracts,
+    refereeExecuteDesignPackets,
+    refereeExecuteDesignReadyApplyBlocked,
+    refereeExecuteDesignReadyForApplyExecution,
+    refereeApplyApprovalPackets,
+    refereeApplyApprovalBlocked,
+    refereeApplyApprovalReady,
+    refereeApplyAgentApproved,
+    refereePatchApplyExecutions,
+    refereePatchApplyExecutionBlocked,
+    refereePatchApplyExecutionReady,
+    refereePatchApplyApprovalGateBlocked,
+    refereePatchApplyInvocations,
+    refereePatchApplyInvocationBlocked,
+    refereePatchApplyInvocationRequired,
+    refereePatchApplyValidationBlocked,
+    refereePatchApplyInvocationApplied,
+    refereeAgentRepairPatchBundles,
+    refereeAgentRepairPatchBundleReady,
+    refereeAgentRepairPatchBundleAlreadyPresent,
+    refereeAgentRepairPatchBundleBlocked,
+    refereeSourceMutations,
+    refereeAppliedPatchReceipts,
+    refereeAppliedPatchReceiptBlocked,
+    refereeAppliedPatchReceiptRecorded,
+    refereeAppliedPatchExecutionGateBlocked,
+    refereeAppliedPatchInvocationGateBlocked,
+    refereePostRepairBuildPackages,
+    refereePostRepairBuildPackageBlocked,
+    refereePostRepairBuildPackageReady,
+    refereePostRepairBuildRecheckPassed,
+    refereePostRepairPackageRewriteReady,
+    refereePostRepairResearchRecheckPassed,
+    refereePostRepairAppliedReceiptGateBlocked,
+    refereeIssueResolutionProofs,
+    refereeIssueResolutionProofBlocked,
+    refereeIssueResolutionProofReady,
+    refereeIssueResolutionEvidenceItems,
+    refereeIssueResolutionPostRepairGateBlocked,
+    refereeRepairReconciliations,
+    refereeRepairReconciliationBlocked,
+    refereeRepairReconciliationReady,
+    refereeRepairReconciled,
+    refereeRepairStateMutationReceipts,
+    refereeRepairStateMutationRecorded,
+    refereeRepairStateMutationBlocked,
+    refereeRepairStateMutationIssueRowsUpdated,
+    refereeRepairStateMutationPatchRowsInserted,
+    refereeRepairStateMutationPatchRowsUpdated,
+    refereeRepairStateMutationPatchRowsAlreadyPresent,
+    refereeReviewedSubmitReadinessReleased,
+    refereeIssueStateMutations,
+    refereeSqliteWrites,
+    refereeRepairReconciliationProofGateBlocked,
+    refereeApplyApprovalRequired,
+    refereeAutopilotRuns,
+    refereeAutopilotAccepted,
+    refereeAutopilotBlocked,
+    refereeAutopilotRounds,
+    refereeAutopilotFinalOpenIssues,
+    refereeAutopilotSourceMutations,
+    refereeAutopilotSqliteWrites,
+    refereeAutopilotAcceptanceReceipts,
+    refereeAutopilotAcceptanceRecorded,
+    refereeAutopilotExternalActions,
+    lifecycleOutboxItems,
+    lifecycleReconciled,
+    submissionPreflight,
+    venueResolution,
+    sourceAdaptation,
+    legacyCleanup: legacyCleanupAudit?.summary || null,
+  };
+}
+
+function blockerFamilyFor(code) {
+  const text = normalizeText(code).toLowerCase();
+  if (/source|main_tex|tex/.test(text)) return 'source';
+  if (/venue/.test(text)) return 'venue';
+  if (/latex|compile|build/.test(text)) return 'build';
+  if (/evidence|claim|proof|research|reproduc/.test(text)) return 'research_verify';
+  if (/artifact|package|zip|pdf|checksum|sha256/.test(text)) return 'package';
+  if (/runner|receipt|handoff|manifest|dry_run|replay/.test(text)) return 'runner_handoff';
+  if (/approval|authorize|authorization|live_submit/.test(text)) return 'authorization';
+  if (/submit|submission|portal|external/.test(text)) return 'submission';
+  return 'other';
+}
+
+export function blockerFamilySummary(results = []) {
+  const families = {};
+  for (const result of results) {
+    const blockers = result.state?.blockers || [];
+    const seenFamiliesForPaper = new Set();
+    for (const blocker of blockers) {
+      const family = blockerFamilyFor(blocker);
+      if (!families[family]) {
+        families[family] = {
+          family,
+          paperCount: 0,
+          blockerCount: 0,
+          blockers: {},
+          paperIds: [],
+        };
+      }
+      families[family].blockerCount += 1;
+      families[family].blockers[blocker] = (families[family].blockers[blocker] || 0) + 1;
+      if (!seenFamiliesForPaper.has(family)) {
+        families[family].paperCount += 1;
+        families[family].paperIds.push(result.paperId);
+        seenFamiliesForPaper.add(family);
+      }
+    }
+  }
+  return Object.fromEntries(
+    Object.values(families)
+      .sort((left, right) => right.paperCount - left.paperCount || left.family.localeCompare(right.family))
+      .map((item) => [item.family, {
+        ...item,
+        paperIds: item.paperIds.slice(0, 32),
+        topBlockers: Object.entries(item.blockers)
+          .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+          .slice(0, 12)
+          .map(([code, count]) => ({ code, count })),
+      }]),
+  );
+}
+
+export function makeBlockerFamilyMarkdown(families = {}) {
+  const values = Object.values(families);
+  if (!values.length) return '| family | papers | blockers | top_blockers |\n| --- | --- | --- | --- |\n';
+  const lines = ['| family | papers | blockers | top_blockers |', '| --- | --- | --- | --- |'];
+  for (const family of values) {
+    const top = (family.topBlockers || [])
+      .map((item) => `${item.code}:${item.count}`)
+      .join(', ');
+    lines.push(`| ${family.family} | ${family.paperCount} | ${family.blockerCount} | ${top.replace(/\|/g, '/')} |`);
+  }
+  return lines.join('\n') + '\n';
+}
+

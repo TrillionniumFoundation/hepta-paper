@@ -28,6 +28,7 @@
     "paper:referee-review": "node paper-core/bin/paper-production-core.mjs batch-run --mode referee-review",
     "paper:referee-revise": "node paper-core/bin/paper-production-core.mjs batch-run --mode referee-revise",
     "paper:legacy-cleanup": "node paper-core/bin/paper-production-core.mjs batch-run --mode legacy-cleanup",
+    "migration:p0-selftest": "node migration/tests/p0-entrypoint-and-batch-parity.mjs",
     "audit:local-accepts": "node paper-core/bin/reassess-local-accepts.mjs",
     "store:init": "node paper-core/bin/hepta-store.mjs init",
     "store:migrate-legacy": "node paper-core/bin/hepta-store.mjs migrate-legacy",

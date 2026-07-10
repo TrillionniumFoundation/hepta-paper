@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import {
   BUILD_PACKAGE_EXPLICIT_RETIREMENTS,
   buildPackageRetirementDisposition,
@@ -9,6 +10,10 @@ import {
   SUBMISSION_EXPLICIT_RETIREMENTS,
   submissionRetirementDisposition,
 } from './submission-retirements.mjs';
+import {
+  RESEARCH_VERIFY_EXPLICIT_RETIREMENTS,
+  researchVerifyRetirementDisposition,
+} from './research-verify-retirements.mjs';
 
 const COMPLETE_PLUGIN_DESCRIPTORS = new Set([
   'plugins/core/compile/plugin.yaml',
@@ -71,6 +76,10 @@ const SUBMISSION_RETIREMENT_PATHS = new Set(
   SUBMISSION_EXPLICIT_RETIREMENTS.map((entry) => entry.sourcePath),
 );
 
+const RESEARCH_VERIFY_RETIREMENT_PATHS = new Set(
+  RESEARCH_VERIFY_EXPLICIT_RETIREMENTS.map((entry) => entry.sourcePath),
+);
+
 const TARGETS = Object.freeze({
   'paper-adapters/venue-resolve': {
     path: 'hepta-paper-workspace/paper-adapters/venue-resolve/index.mjs',
@@ -124,6 +133,26 @@ function sourceSymbols(file, relative) {
     ];
     return preferred.filter((key) => new RegExp(`^${key}:`, 'm').test(text));
   }
+  if (/\.py$/i.test(relative)) {
+    const result = spawnSync('python3', ['-c', [
+      'import ast,json,pathlib,sys',
+      'tree=ast.parse(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))',
+      'names=[n.name for n in tree.body if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef,ast.ClassDef)) and not n.name.startswith("_")]',
+      'names=names or [n.targets[0].id for n in tree.body if isinstance(n,ast.Assign) and len(n.targets)==1 and isinstance(n.targets[0],ast.Name) and n.targets[0].id.isupper()]',
+      'print(json.dumps(names[:32]))',
+    ].join(';'), file], {
+      encoding: 'utf8',
+      timeout: 30000,
+    });
+    if (result.status === 0) {
+      try {
+        const symbols = JSON.parse(result.stdout || '[]');
+        if (Array.isArray(symbols) && symbols.length) return symbols;
+      } catch {
+        // Fall through to the conservative text inventory below.
+      }
+    }
+  }
   const definitions = [...text.matchAll(/^(?:def|class)\s+([A-Za-z_][A-Za-z0-9_]*)/gm)]
     .map((match) => match[1]);
   const publicDefinitions = definitions.filter((name) => !name.startsWith('_'));
@@ -133,6 +162,12 @@ function sourceSymbols(file, relative) {
 }
 
 function targetFor(entry) {
+  if (RESEARCH_VERIFY_RETIREMENT_PATHS.has(entry.path)) {
+    return {
+      path: 'hepta-paper-workspace/migration/research-verify-retirements.mjs',
+      symbols: ['RESEARCH_VERIFY_EXPLICIT_RETIREMENTS', 'researchVerifyRetirementDisposition'],
+    };
+  }
   if (SUBMISSION_RETIREMENT_PATHS.has(entry.path)) {
     return {
       path: 'hepta-paper-workspace/migration/submission-retirements.mjs',
@@ -218,6 +253,7 @@ export function buildP1MatrixCandidates({
   refereeRetirementTestHash,
   buildPackageRetirementTestHash,
   submissionBoundaryTestHash,
+  researchVerifyRetirementTestHash,
 } = {}) {
   return entries
     .filter((entry) => entry.priority === 'P1')
@@ -235,12 +271,14 @@ export function buildP1MatrixCandidates({
       const differentialRefereeRevision = entry.path === REFEREE_REVISION_DIFFERENTIAL_SOURCE;
       const retiredBuildPackageSurface = BUILD_PACKAGE_RETIREMENT_PATHS.has(entry.path);
       const retiredSubmissionSurface = SUBMISSION_RETIREMENT_PATHS.has(entry.path);
+      const retiredResearchVerifySurface = RESEARCH_VERIFY_RETIREMENT_PATHS.has(entry.path);
       const completeReplacement = completePluginReplacement
         || retiredVenueResolveSurface
         || retiredRefereeReviseSurface
         || differentialRefereeRevision
         || retiredBuildPackageSurface
-        || retiredSubmissionSurface;
+        || retiredSubmissionSurface
+        || retiredResearchVerifySurface;
       return {
         id: candidateId(entry),
         priority: 'P1',
@@ -255,7 +293,9 @@ export function buildP1MatrixCandidates({
                 ? buildPackageRetirementDisposition(entry.path).disposition
                 : retiredSubmissionSurface
                   ? submissionRetirementDisposition(entry.path).disposition
-                  : entry.migrationAction,
+                  : retiredResearchVerifySurface
+                    ? researchVerifyRetirementDisposition(entry.path).disposition
+                    : entry.migrationAction,
         semanticScope: completeReplacement
           ? {
             status: 'complete',
@@ -294,6 +334,13 @@ export function buildP1MatrixCandidates({
                         'native lifecycle remains hash-bound, dry-run-only, and fail-closed at preflight/outbox/executor boundaries',
                         'no legacy process launches, network imports, or hepta production references',
                       ]
+                      : retiredResearchVerifySurface
+                        ? [
+                          'all actual top-level Python public symbols inventoried with AST parsing',
+                          'legacy planners, source-mutation/patch-queue surfaces, external-submission chains, and claim-specific formal authoring explicitly retired',
+                          '35 local execution surfaces identified and denied inherited execution authority; zero network-capable sources found',
+                          'native research verification remains read-only with zero worker executions, zero semantic-migration receipts, and no academic-evidence authority',
+                        ]
                     : [
                 completePluginDescriptor
                   ? 'legacy plugin descriptor identity and execution policy'
@@ -363,7 +410,13 @@ export function buildP1MatrixCandidates({
                       path: 'migration/tests/p1-submission-boundaries.mjs',
                       sha256: submissionBoundaryTestHash,
                     }]
-                    : [],
+                    : retiredResearchVerifySurface
+                      ? [{
+                        id: 'p1-research-verify-explicit-retirements',
+                        path: 'migration/tests/p1-research-verify-retirements.mjs',
+                        sha256: researchVerifyRetirementTestHash,
+                      }]
+                      : [],
       };
     });
 }

@@ -15,8 +15,9 @@ dry-run orchestration remain available.
   match and 362 differ. No report claims historical byte identity.
 - The former automatic 263 semantic migration claims are withdrawn. The
   migration matrix now has an explicit row for all 263 P0/P1 source paths.
-  Both P0 rows are complete and verified; 221 P1 rows remain partial, so
-  paper_factory retirement is still blocked.
+  Both P0 rows and all 261 P1 rows now have verified dispositions. This means
+  old-control-plane replacement or explicit retirement is auditable; it does
+  not mean all 263 legacy behaviors were migrated.
 - The primary-entrypoint P0 row exhaustively binds all 760 legacy argparse
   commands to all 760 dispatch branches and gives each command a native,
   pending-P1, quarantine, data-export, or retirement disposition. The old
@@ -77,13 +78,19 @@ unbounded-file blocker.
 - Matrix version 2 contains 263/263 explicit source rows. Every row binds the
   exact legacy hash, a top-level source-symbol inventory, an assigned native
   capability family, the exact target hash, and target symbols.
-- Verified: 42 total = 2 P0 plus 40 P1 rows. The P1 total comprises 11
-  plugin-descriptor replacements, 4 retired plugin runners, 6 retired
-  venue-misclassified control surfaces, 18 retired generated referee
-  capstones, and 1 exact differential referee decision-routing port.
-- Remaining: 221 P1 partial/invalid rows. They have structural mappings but
-  intentionally lack a complete behavioral/retirement proof, so they continue
-  to count as blockers.
+- Verified dispositions: 263/263; partial/invalid: 0; P0 blockers: 0; P1
+  blockers: 0.
+- Behavioral replacements: 14. These are the 2 P0 replacements, 11 native
+  plugin descriptors, and the exact differential referee decision-routing
+  port.
+- Explicit retirements: 249. These are 4 plugin runners, 6 venue-misclassified
+  control surfaces, 18 generated referee capstones, 36 build/package-
+  misclassified surfaces, 30 legacy submission-control surfaces, and 155
+  research-control/worker surfaces.
+- Explicit retirement is not semantic migration or functional parity. The
+  cleanup summary therefore reports `semanticMigrationClaimCount: 14`,
+  `verifiedExplicitRetirementCount: 249`, and
+  `functionalParityClaimAllowed: false`.
 - The 11 verified plugin descriptors cover compile, package, evidence, external
   boundary, report, venue, section-writer retirement, structural/substantive
   referee, revision planning, and patch-request routing. Model calls,
@@ -107,10 +114,28 @@ unbounded-file blocker.
   observed plan and selection states, including unsafe command, mutation,
   external-action, human-review, deterministic fallback, and selected-route
   boundaries.
+- The 36 build/package-assigned sources contained no legacy LaTeX build or zip
+  implementation: 35 were pure generated report/verifier/intake surfaces and
+  one was a local runner-contract materializer. The latter was probed in an
+  isolated root and wrote only below
+  `logs/paperctl/_contracts/runner_execution`; all 36 are explicitly retired.
+- The 30 submission-assigned sources are explicitly separated into 20
+  generated control-evidence surfaces, 6 superseded lifecycle/auth/lock/
+  handoff schemas, 2 synthetic input authorities, 1 local handoff bundle
+  writer, and 1 direct source-mutation executor. The native submission
+  lifecycle remains hash-bound and fail-closed at approval, academic evidence,
+  preflight, outbox, controlled executor, receipt, and reconciliation gates.
+- The 155 research-assigned sources comprise 120 pure plan/report surfaces and
+  35 local execution surfaces (32 writers, 21 subprocess callers, 33
+  subprocess importers, and zero network-capable sources). All are explicitly
+  retired from native execution authority. Current native research verification
+  remains read-only with executed worker count 0, semantic-migration receipt
+  count 0, and academic-evidence eligibility false without an attestation.
 - Shared hash-bound behavior tests execute once per audit and are reused across
   rows, preventing a 263-row matrix from repeatedly running identical suites.
-- Current blocker counts: P0 = 0, P1 = 221. Retirement and old-control-plane
-  removal remain blocked.
+- Current disposition-matrix blocker counts: P0 = 0, P1 = 0. The old control
+  plane is disposition-ready for archive-only retirement, while functional
+  parity remains explicitly false because 249 rows were retired, not ported.
 
 ## Verification
 
@@ -122,10 +147,15 @@ npm run migration:p0-selftest
 npm run migration:p1-plugin-selftest
 npm run migration:p1-venue-selftest
 npm run migration:p1-referee-selftest
+npm run migration:p1-build-package-selftest
+npm run migration:p1-submission-selftest
+npm run migration:p1-research-selftest
 npm run migration:matrix-integrity
 npm test
 ```
 
-The external submission executor must remain absent until the remaining 221
-P1 matrix rows, attested research evidence, and independent referee route are
-all closed and reviewed.
+The external submission executor must remain absent. Matrix disposition is now
+complete, but attested research evidence, genuinely executed research workers,
+independent referee authority, and explicit live-executor authorization are
+still absent. Retirement readiness must not be used as a production-equivalence
+or submission-readiness claim.

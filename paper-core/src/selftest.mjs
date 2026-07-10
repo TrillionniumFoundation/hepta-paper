@@ -801,7 +801,20 @@ async function main() {
     'OldPaperFactoryControlPlaneRemovalReceipt',
   );
   assert.ok(Number.isFinite(legacyReport.legacyCleanupAudit.summary.retirementWaveExecutionReceiptCount));
-  assert.ok(Number.isFinite(legacyReport.legacyCleanupAudit.summary.semanticMigrationClaimCount));
+  assert.equal(legacyReport.legacyCleanupAudit.summary.verifiedDispositionCount, 263);
+  assert.equal(legacyReport.legacyCleanupAudit.summary.verifiedBehavioralReplacementCount, 14);
+  assert.equal(legacyReport.legacyCleanupAudit.summary.verifiedExplicitRetirementCount, 249);
+  assert.equal(legacyReport.legacyCleanupAudit.summary.semanticMigrationClaimCount, 14);
+  assert.equal(legacyReport.legacyCleanupAudit.summary.functionalParityClaimAllowed, false);
+  assert.equal(
+    legacyReport.legacyCleanupAudit.summary.explicitRetirementIsNotBehavioralMigration,
+    true,
+  );
+  assert.equal(
+    legacyReport.legacyCleanupAudit.retirementPlan?.retirementReadinessGate
+      ?.retirementReadinessDoesNotMeanFunctionalParity,
+    true,
+  );
   assert.ok(Number.isFinite(legacyReport.legacyCleanupAudit.summary.activeP0MigrationBlockerCount));
   assert.ok(Number.isFinite(legacyReport.legacyCleanupAudit.summary.activeP1MigrationBlockerCount));
   assert.equal(legacyReport.legacyCleanupAudit.summary.liveExternalActionAllowed, false);

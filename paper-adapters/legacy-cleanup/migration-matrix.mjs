@@ -35,6 +35,7 @@ function validateMatrixEntry({
   const behaviorTests = Array.isArray(row?.behaviorTests) ? row.behaviorTests : [];
   const evidenceArtifacts = Array.isArray(row?.evidenceArtifacts) ? row.evidenceArtifacts : [];
   const semanticScopeStatus = String(row?.semanticScope?.status || '');
+  const verificationClass = String(row?.verificationClass || '');
   if (!row?.id) blockers.push('matrix_id_missing');
   if (!sourceEntry) blockers.push('source_not_in_current_p0_p1_backlog');
   if (!sourcePath || !fs.existsSync(sourceFile)) blockers.push('source_file_missing');
@@ -43,6 +44,9 @@ function validateMatrixEntry({
   if (!targetSymbols.length) blockers.push('target_symbols_missing');
   if (!behaviorTests.length) blockers.push('behavior_tests_missing');
   if (semanticScopeStatus !== 'complete') blockers.push('semantic_scope_incomplete');
+  if (!['behavioral_replacement', 'explicit_retirement'].includes(verificationClass)) {
+    blockers.push('verification_class_missing_or_invalid');
+  }
   if (fs.existsSync(sourceFile)) {
     const actualHash = sha256File(sourceFile);
     if (row?.source?.sha256 !== actualHash) blockers.push('source_hash_mismatch');
@@ -125,6 +129,7 @@ function validateMatrixEntry({
     sourceSymbols,
     targetSymbols,
     semanticScopeStatus: semanticScopeStatus || null,
+    verificationClass: verificationClass || null,
     behaviorTests: testResults,
     evidenceArtifacts: evidenceArtifactResults,
     status: blockers.length ? 'blocked_migration_matrix_entry' : 'verified_migration_matrix_entry',
@@ -170,6 +175,7 @@ export function buildMigrationMatrixAudit({ root, entries, matrixOverride = null
     behaviorTestCache,
   }));
   const verifiedSourcePaths = new Set(rows.filter((row) => row.verified).map((row) => row.sourcePath));
+  const verifiedRows = rows.filter((row) => row.verified);
   const missingEntries = backlog.filter((entry) => !verifiedSourcePaths.has(entry.path));
   const invalidEntries = rows.filter((row) => !row.verified);
   const partialEntries = rows.filter((row) => row.semanticScopeStatus !== 'complete');
@@ -190,7 +196,14 @@ export function buildMigrationMatrixAudit({ root, entries, matrixOverride = null
     backlogCount: backlog.length,
     matrixEntryCount: matrixEntries.length,
     uniqueBehaviorTestExecutionCount: behaviorTestCache.size,
-    verifiedEntryCount: rows.filter((row) => row.verified).length,
+    verifiedEntryCount: verifiedRows.length,
+    verifiedDispositionCount: verifiedRows.length,
+    verifiedBehavioralReplacementCount: verifiedRows.filter((row) => (
+      row.verificationClass === 'behavioral_replacement'
+    )).length,
+    verifiedExplicitRetirementCount: verifiedRows.filter((row) => (
+      row.verificationClass === 'explicit_retirement'
+    )).length,
     invalidEntryCount: invalidEntries.length,
     partialEntryCount: partialEntries.length,
     orphanEntryCount: orphanEntries.length,

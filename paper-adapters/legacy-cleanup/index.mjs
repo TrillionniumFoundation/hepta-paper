@@ -476,10 +476,15 @@ function migrationContractFamilyFor(entry) {
   return 'hepta_semantic_migration_contract';
 }
 
-function migrationClaimForEntry(entry, matrixRow) {
+function verifiedDispositionForEntry(entry, matrixRow) {
+  const verificationClass = matrixRow.verificationClass;
+  const behavioralReplacement = verificationClass === 'behavioral_replacement';
   const record = {
-    kind: 'PaperFactorySemanticMigrationClaim',
-    status: 'semantic_migration_verified',
+    kind: 'PaperFactoryVerifiedDisposition',
+    status: behavioralReplacement
+      ? 'behavioral_replacement_verified'
+      : 'explicit_retirement_verified',
+    verificationClass,
     sourceLegacyFile: {
       path: entry.path,
       hash: entry.hash,
@@ -494,14 +499,21 @@ function migrationClaimForEntry(entry, matrixRow) {
     targetPath: matrixRow.targetPath,
     targetSymbols: matrixRow.targetSymbols,
     behaviorTests: matrixRow.behaviorTests,
-    acceptanceCriteria: [
-      'do not import old paper_factory control-plane modules',
-      'represent reusable semantics as hepta adapter contracts, receipts, or deterministic local logic',
-      'preserve source legacy file hash as audit evidence',
-      'keep external actions behind controlled executor receipts',
-    ],
+    acceptanceCriteria: behavioralReplacement
+      ? [
+        'do not import old paper_factory control-plane modules',
+        'represent reusable semantics as hepta adapter contracts, receipts, or deterministic local logic',
+        'preserve source legacy file hash as audit evidence',
+        'keep external actions behind controlled executor receipts',
+      ]
+      : [
+        'preserve source legacy file hash and public-symbol inventory as retirement evidence',
+        'prove the legacy surface is outside the hepta production import/execution boundary',
+        'do not inherit legacy mutation, subprocess, model, academic-evidence, or external-action authority',
+        'explicit retirement is not behavioral migration or functional parity',
+      ],
   };
-  return hashBound('PaperFactorySemanticMigrationClaim', record, 'semanticMigrationClaimHash');
+  return hashBound('PaperFactoryVerifiedDisposition', record, 'verifiedDispositionHash');
 }
 
 function buildP0P1BacklogDrainReceipt({
@@ -518,33 +530,46 @@ function buildP0P1BacklogDrainReceipt({
       || left.targetAdapter.localeCompare(right.targetAdapter)
       || left.path.localeCompare(right.path));
   const entryByPath = new Map(migrationEntries.map((entry) => [entry.path, entry]));
-  const claims = migrationMatrixAudit.rows
+  const verifiedDispositions = migrationMatrixAudit.rows
     .filter((row) => row.verified && entryByPath.has(row.sourcePath))
-    .map((row) => migrationClaimForEntry(entryByPath.get(row.sourcePath), row));
+    .map((row) => verifiedDispositionForEntry(entryByPath.get(row.sourcePath), row));
+  const behavioralReplacements = verifiedDispositions.filter((row) => (
+    row.verificationClass === 'behavioral_replacement'
+  ));
+  const explicitRetirements = verifiedDispositions.filter((row) => (
+    row.verificationClass === 'explicit_retirement'
+  ));
   const blockers = migrationMatrixAudit.ok ? [] : migrationMatrixAudit.blockers;
   const missingP0 = migrationMatrixAudit.missingByPriority.P0;
   const missingP1 = migrationMatrixAudit.missingByPriority.P1;
   const record = {
     kind: 'PaperFactoryP0P1BacklogDrainReceipt',
     status: blockers.length
-      ? 'p0_p1_backlog_drain_blocked'
+      ? 'p0_p1_disposition_matrix_blocked'
       : execute
-        ? 'p0_p1_backlog_verified_and_recorded'
-        : 'p0_p1_backlog_verified_by_migration_matrix',
+        ? 'p0_p1_dispositions_verified_and_recorded'
+        : 'p0_p1_dispositions_verified_by_matrix',
     consumedBacklogPacketHash: migrationBacklogPacket.migrationBacklogPacketHash,
     rawBacklogCount: migrationEntries.length,
     p0RawCount: migrationEntries.filter((entry) => entry.priority === 'P0').length,
     p1RawCount: migrationEntries.filter((entry) => entry.priority === 'P1').length,
-    semanticMigrationClaimCount: claims.length,
-    verifiedMigrationCount: claims.length,
+    verifiedDispositionCount: verifiedDispositions.length,
+    verifiedBehavioralReplacementCount: behavioralReplacements.length,
+    verifiedExplicitRetirementCount: explicitRetirements.length,
+    semanticMigrationClaimCount: behavioralReplacements.length,
+    verifiedMigrationCount: behavioralReplacements.length,
+    functionalParityClaimAllowed: explicitRetirements.length === 0,
+    explicitRetirementIsNotBehavioralMigration: true,
     missingMigrationMatrixEntryCount: migrationMatrixAudit.missingEntryCount,
     invalidMigrationMatrixEntryCount: migrationMatrixAudit.invalidEntryCount,
     activeP0BlockerCount: missingP0,
     activeP1BlockerCount: missingP1,
-    byContractFamily: countBy(claims, 'contractFamily'),
+    byContractFamily: countBy(behavioralReplacements, 'contractFamily'),
+    byVerificationClass: countBy(verifiedDispositions, 'verificationClass'),
     byTargetAdapter: countBy(migrationEntries, 'targetAdapter'),
     byMigrationAction: countBy(migrationEntries, 'migrationAction'),
-    claims,
+    claims: behavioralReplacements,
+    verifiedDispositions,
     migrationMatrixAudit,
     blockers,
     safety: {
@@ -601,8 +626,8 @@ function dataAssetExportRecorded(dataAssetExportReceipt) {
 
 function p0P1BacklogDrained(p0P1BacklogDrainReceipt) {
   return [
-    'p0_p1_backlog_verified_by_migration_matrix',
-    'p0_p1_backlog_verified_and_recorded',
+    'p0_p1_dispositions_verified_by_matrix',
+    'p0_p1_dispositions_verified_and_recorded',
   ].includes(p0P1BacklogDrainReceipt?.status);
 }
 
@@ -723,9 +748,17 @@ function buildRetirementReadinessGate({
   }
   if (!livePolicyFinalized) blockers.push('live_external_executor_policy_not_finalized');
   const uniqueBlockers = uniqueStrings(blockers, 16);
+  const verifiedBehavioralReplacementCount = Number(
+    p0P1BacklogDrainReceipt?.verifiedBehavioralReplacementCount || 0,
+  );
+  const verifiedExplicitRetirementCount = Number(
+    p0P1BacklogDrainReceipt?.verifiedExplicitRetirementCount || 0,
+  );
   const record = {
     kind: 'PaperFactoryRetirementReadinessGate',
-    status: uniqueBlockers.length ? 'paper_factory_retirement_blocked' : 'paper_factory_retirement_ready',
+    status: uniqueBlockers.length
+      ? 'paper_factory_retirement_blocked'
+      : 'paper_factory_control_plane_archive_ready',
     blockers: uniqueBlockers,
     wavePacketCount: wavePackets.length,
     wavePacketsReady: wavePackets.filter((packet) => packet.status !== 'retirement_wave_blocked').length,
@@ -738,6 +771,10 @@ function buildRetirementReadinessGate({
       || quarantineManifest.status === 'quarantine_manifest_empty',
     liveExternalExecutorPolicyStatus: liveExternalExecutorPolicyReceipt?.status || 'missing',
     canRemoveOldControlPlane: uniqueBlockers.length === 0,
+    verifiedBehavioralReplacementCount,
+    verifiedExplicitRetirementCount,
+    functionalParityClaimAllowed: verifiedExplicitRetirementCount === 0,
+    retirementReadinessDoesNotMeanFunctionalParity: true,
     nextExecutor: uniqueBlockers.length
       ? 'legacy-entrypoint deprecation enforcement and hepta data export receipts'
       : 'archive-only enforcement of retired paper_factory control-plane entrypoints',
@@ -1284,8 +1321,13 @@ export async function runLegacyCleanupAdapter({
       p0MigrationBacklogCount: migrationBacklogPacket.p0Count,
       p1MigrationBacklogCount: migrationBacklogPacket.p1Count,
       p0P1BacklogDrainStatus: p0P1BacklogDrainReceipt.status,
+      verifiedDispositionCount: p0P1BacklogDrainReceipt.verifiedDispositionCount,
+      verifiedBehavioralReplacementCount: p0P1BacklogDrainReceipt.verifiedBehavioralReplacementCount,
+      verifiedExplicitRetirementCount: p0P1BacklogDrainReceipt.verifiedExplicitRetirementCount,
       semanticMigrationClaimCount: p0P1BacklogDrainReceipt.semanticMigrationClaimCount,
       verifiedSemanticMigrationCount: p0P1BacklogDrainReceipt.verifiedMigrationCount,
+      functionalParityClaimAllowed: p0P1BacklogDrainReceipt.functionalParityClaimAllowed,
+      explicitRetirementIsNotBehavioralMigration: true,
       migrationMatrixEntryCount: migrationMatrixAudit.matrixEntryCount,
       migrationMatrixMissingEntryCount: migrationMatrixAudit.missingEntryCount,
       migrationMatrixStatus: migrationMatrixAudit.status,

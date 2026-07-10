@@ -1,0 +1,60 @@
+[
+  {
+    "name": "zbj logo shim",
+    "source": "zbj",
+    "job": {
+      "taskId": "1003740000",
+      "orderId": "2000000000",
+      "title": "企业LOGO设计",
+      "amount": "500元",
+      "category3Name": "LOGO设计",
+      "status": "package_ready"
+    },
+    "planSource": {
+      "title": "企业LOGO设计",
+      "workflowId": "logo_brand",
+      "productLineId": "logo_brand",
+      "outputCount": 5,
+      "requirementExcerpt": "为企业设计专业LOGO和VI应用方案。"
+    },
+    "expectedProductLineId": "logo_brand",
+    "expectedStatus": "plan_only_ready",
+    "expectedArtifactCount": 5
+  },
+  {
+    "name": "epwk packaging shim",
+    "source": "epwk",
+    "record": {
+      "task_id": "1154494",
+      "title": "中老年营养食品包装设计",
+      "cashStr": "3000",
+      "statusName": "投稿中",
+      "categoryTitle": "包装设计",
+      "productionType": "packaging",
+      "requirementText": "完成食品包装外观设计。",
+      "semanticRoute": {
+        "productLineId": "packaging_design",
+        "confidence": 0.96,
+        "source": "agent_semantic_intake"
+      }
+    },
+    "expectedProductLineId": "packaging_design",
+    "expectedStatus": "plan_only_ready",
+    "expectedArtifactCount": 3
+  },
+  {
+    "name": "hepta vectorization shim",
+    "source": "hepta",
+    "order": {
+      "orderId": "hv_001",
+      "title": "Logo vectorization order",
+      "status": "paid",
+      "price": 19,
+      "productLineId": "vectorization",
+      "requirementText": "Clean SVG vector delivery from uploaded logo artwork."
+    },
+    "expectedProductLineId": "vectorization",
+    "expectedStatus": "plan_only_ready",
+    "expectedArtifactCount": 1
+  }
+]

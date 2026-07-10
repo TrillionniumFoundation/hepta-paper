@@ -1,0 +1,61 @@
+[
+  {
+    "name": "default runner registry ready",
+    "capabilityFixtures": [
+      "zbj runner capability ready",
+      "epwk live runner capability ready",
+      "hepta deploy runner capability ready"
+    ],
+    "expectedStatus": "ready_adapter_runner_registry",
+    "expectedRouteCount": 18,
+    "expectedBlockers": []
+  },
+  {
+    "name": "registry blocks unsafe capability",
+    "capabilityFixtures": [
+      "zbj runner capability ready",
+      "runner blocks missing current approval"
+    ],
+    "expectedStatus": "blocked_adapter_runner_registry",
+    "expectedRouteCount": 7,
+    "expectedBlockers": ["runner_capability_not_ready", "duplicate_runner_action_route"]
+  },
+  {
+    "name": "registry blocks duplicate route",
+    "capabilityFixtures": [
+      "zbj runner capability ready",
+      "zbj duplicate submit runner capability ready"
+    ],
+    "expectedStatus": "blocked_adapter_runner_registry",
+    "expectedRouteCount": 7,
+    "expectedBlockers": ["duplicate_runner_action_route"]
+  },
+  {
+    "name": "registry blocks empty capabilities",
+    "capabilityFixtures": [],
+    "expectedStatus": "blocked_adapter_runner_registry",
+    "expectedRouteCount": 0,
+    "expectedBlockers": ["runner_capabilities_required"]
+  },
+  {
+    "name": "registry blocks locationless runner",
+    "capabilityFixtures": [
+      "runner blocks missing runner location"
+    ],
+    "expectedStatus": "blocked_adapter_runner_registry",
+    "expectedRouteCount": 1,
+    "expectedBlockers": ["runner_capability_not_ready", "runner_location_required"]
+  },
+  {
+    "name": "registry blocks core local runner location",
+    "capabilityFixtures": [
+      "runner blocks core local runner location"
+    ],
+    "expectedStatus": "blocked_adapter_runner_registry",
+    "expectedRouteCount": 1,
+    "expectedBlockers": [
+      "runner_capability_not_ready",
+      "runner_location_must_be_external_workspace"
+    ]
+  }
+]

@@ -1,0 +1,55 @@
+[
+  {
+    "name": "zbj submit handoff queued with pending ledger",
+    "actionManifestFixture": "zbj live submit manifest ready",
+    "ledgerFixture": "ledger pending runner receipt",
+    "priority": "high",
+    "expectedStatus": "queued_for_external_adapter",
+    "expectedActionId": "zbj.pitchSubmitLive",
+    "expectedBlockers": []
+  },
+  {
+    "name": "epwk prepare handoff queued without ledger warning",
+    "actionManifestFixture": "epwk prepare only manifest ready",
+    "priority": "normal",
+    "expectedStatus": "queued_for_external_adapter",
+    "expectedActionId": "epwk.prepareOnly",
+    "expectedWarnings": ["ledger_entry_recommended"],
+    "expectedBlockers": []
+  },
+  {
+    "name": "epwk submit handoff queued with pending ledger",
+    "actionManifestFixture": "epwk live submit manifest ready",
+    "ledgerFixture": "epwk ledger pending runner receipt",
+    "priority": "high",
+    "expectedStatus": "queued_for_external_adapter",
+    "expectedActionId": "epwk.submitLive",
+    "expectedBlockers": []
+  },
+  {
+    "name": "outbox blocks execute flag",
+    "actionManifestFixture": "zbj live submit manifest ready",
+    "ledgerFixture": "ledger pending runner receipt",
+    "execute": true,
+    "expectedStatus": "blocked_outbox_item",
+    "expectedActionId": "zbj.pitchSubmitLive",
+    "expectedBlockers": ["execute_not_allowed_in_core_outbox"]
+  },
+  {
+    "name": "outbox blocks completed ledger",
+    "actionManifestFixture": "zbj live submit manifest ready",
+    "ledgerFixture": "complete zbj live submit ledger verified",
+    "expectedStatus": "blocked_outbox_item",
+    "expectedActionId": "zbj.pitchSubmitLive",
+    "expectedBlockers": ["ledger_not_pending_runner_receipt"]
+  },
+  {
+    "name": "outbox blocks tampered ledger preview hash",
+    "actionManifestFixture": "zbj live submit manifest ready",
+    "ledgerFixture": "ledger pending runner receipt",
+    "tamperLedgerPreviewHash": true,
+    "expectedStatus": "blocked_outbox_item",
+    "expectedActionId": "zbj.pitchSubmitLive",
+    "expectedBlockers": ["ledger_preview_hash_mismatch"]
+  }
+]

@@ -1,0 +1,77 @@
+[
+  {
+    "name": "zbj transition enters inbox",
+    "proofInboxFixture": "zbj proof enters inbox",
+    "channelStateProofFixture": "zbj live submit proof verified",
+    "expectedStatus": "received_receipt_state_transition",
+    "expectedNextStep": "external_action_ledger_ready",
+    "expectedActionId": "zbj.pitchSubmitLive",
+    "expectedBlockers": []
+  },
+  {
+    "name": "epwk prepare transition enters inbox",
+    "proofInboxFixture": "epwk prepare proof enters inbox",
+    "channelStateProofFixture": "epwk prepare proof verified",
+    "expectedStatus": "received_receipt_state_transition",
+    "expectedNextStep": "external_action_ledger_ready",
+    "expectedActionId": "epwk.prepareOnly",
+    "expectedBlockers": []
+  },
+  {
+    "name": "epwk live submit transition enters inbox",
+    "proofInboxFixture": "epwk live submit proof enters inbox",
+    "channelStateProofFixture": "epwk live submit proof verified",
+    "expectedStatus": "received_receipt_state_transition",
+    "expectedNextStep": "external_action_ledger_ready",
+    "expectedActionId": "epwk.submitLive",
+    "expectedBlockers": []
+  },
+  {
+    "name": "transition inbox blocks blocked proof inbox",
+    "proofInboxFixture": "proof inbox blocks mismatched proof",
+    "channelStateProofFixture": "live submit proof blocks mismatched works id",
+    "expectedStatus": "blocked_receipt_state_transition_inbox",
+    "expectedNextStep": "blocked",
+    "expectedActionId": "zbj.pitchSubmitLive",
+    "expectedBlockers": ["proof_inbox_not_received", "proof_inbox_not_ready_for_transition", "receipt_state_transition_not_ready"]
+  },
+  {
+    "name": "transition inbox blocks tampered proof hash",
+    "proofInboxFixture": "zbj proof enters inbox",
+    "channelStateProofFixture": "zbj live submit proof verified",
+    "tamperTransitionProofHash": true,
+    "expectedStatus": "blocked_receipt_state_transition_inbox",
+    "expectedNextStep": "blocked",
+    "expectedActionId": "zbj.pitchSubmitLive",
+    "expectedBlockers": ["proof_hash_mismatch"]
+  },
+  {
+    "name": "transition inbox blocks action mismatch",
+    "proofInboxFixture": "epwk prepare proof enters inbox",
+    "channelStateProofFixture": "zbj live submit proof verified",
+    "expectedStatus": "blocked_receipt_state_transition_inbox",
+    "expectedNextStep": "blocked",
+    "expectedActionId": "epwk.prepareOnly",
+    "expectedBlockers": ["task_key_mismatch", "action_mismatch"]
+  },
+  {
+    "name": "transition inbox blocks forced transition failure",
+    "proofInboxFixture": "zbj proof enters inbox",
+    "channelStateProofFixture": "zbj live submit proof verified",
+    "forceTransitionBlocked": true,
+    "expectedStatus": "blocked_receipt_state_transition_inbox",
+    "expectedNextStep": "blocked",
+    "expectedActionId": "zbj.pitchSubmitLive",
+    "expectedBlockers": ["receipt_state_transition_not_ready"]
+  },
+  {
+    "name": "transition inbox blocks stage mismatch",
+    "proofInboxFixture": "zbj proof enters inbox",
+    "channelStateProofFixture": "zbj live submit proof verified",
+    "tamperTransitionToStage": "delivery_ready",
+    "expectedStatus": "blocked_receipt_state_transition_inbox",
+    "expectedNextStep": "blocked",
+    "expectedActionId": "zbj.pitchSubmitLive",
+    "expectedBlockers": ["to_stage_mismatch"]
+  }
+]

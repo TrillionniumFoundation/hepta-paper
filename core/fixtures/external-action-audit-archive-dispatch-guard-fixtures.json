@@ -1,0 +1,24 @@
+[
+  {
+    "name": "dispatch-guard audit archive ready",
+    "auditBundleDispatchGuardFixtures": ["dispatch-guard audit bundle verified"],
+    "expectedStatus": "ready_external_action_audit_archive",
+    "expectedDispatchInboxChainCount": 1,
+    "expectedBlockers": []
+  },
+  {
+    "name": "dispatch-guard archive blocks replay bundle",
+    "auditBundleDispatchGuardFixtures": ["dispatch-guard blocked replay ledger cannot bundle"],
+    "expectedStatus": "blocked_external_action_audit_archive",
+    "expectedDispatchInboxChainCount": 1,
+    "expectedBlockers": ["audit_bundle_not_verified"]
+  },
+  {
+    "name": "dispatch-guard archive blocks duplicate bundle",
+    "auditBundleDispatchGuardFixtures": ["dispatch-guard audit bundle verified"],
+    "duplicateFirstBundle": true,
+    "expectedStatus": "blocked_external_action_audit_archive",
+    "expectedDispatchInboxChainCount": 2,
+    "expectedBlockers": ["duplicate_audit_bundle_hash", "duplicate_ledger_hash"]
+  }
+]

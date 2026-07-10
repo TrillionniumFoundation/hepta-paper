@@ -1,0 +1,47 @@
+[
+  {
+    "name": "select zbj submit runner",
+    "registryFixture": "default runner registry ready",
+    "channelId": "zbj",
+    "actionId": "zbj.pitchSubmitLive",
+    "expectedStatus": "ready_adapter_runner_selection",
+    "expectedRunnerId": "zbj-auto-intake.live-runner",
+    "expectedBlockers": []
+  },
+  {
+    "name": "select hepta deploy runner",
+    "registryFixture": "default runner registry ready",
+    "channelId": "hepta",
+    "actionId": "hepta.deliveryDeploy",
+    "expectedStatus": "ready_adapter_runner_selection",
+    "expectedRunnerId": "hepta.delivery-runner",
+    "expectedBlockers": []
+  },
+  {
+    "name": "select epwk submit runner",
+    "registryFixture": "default runner registry ready",
+    "channelId": "epwk",
+    "actionId": "epwk.submitLive",
+    "expectedStatus": "ready_adapter_runner_selection",
+    "expectedRunnerId": "epwk-auto-intake.live-runner",
+    "expectedBlockers": []
+  },
+  {
+    "name": "selection blocks unsupported epwk submit",
+    "registryFixture": "default runner registry ready",
+    "channelId": "epwk",
+    "actionId": "epwk.pitchSubmitLive",
+    "expectedStatus": "blocked_adapter_runner_selection",
+    "expectedRunnerId": null,
+    "expectedBlockers": ["runner_route_not_found"]
+  },
+  {
+    "name": "selection blocks blocked registry",
+    "registryFixture": "registry blocks duplicate route",
+    "channelId": "zbj",
+    "actionId": "zbj.pitchSubmitLive",
+    "expectedStatus": "blocked_adapter_runner_selection",
+    "expectedRunnerId": "zbj-auto-intake.live-runner",
+    "expectedBlockers": ["runner_registry_not_ready"]
+  }
+]

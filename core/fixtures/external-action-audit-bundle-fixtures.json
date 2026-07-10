@@ -1,0 +1,52 @@
+[
+  {
+    "name": "zbj inbox-chain audit bundle verified",
+    "externalActionLedgerInboxFixture": "complete zbj inbox chain ledger verified",
+    "expectedStatus": "verified_action_audit_bundle",
+    "expectedBlockers": []
+  },
+  {
+    "name": "epwk inbox-chain audit bundle verified",
+    "externalActionLedgerInboxFixture": "complete epwk inbox chain ledger verified",
+    "expectedStatus": "verified_action_audit_bundle",
+    "expectedBlockers": []
+  },
+  {
+    "name": "raw ledger cannot become final audit bundle",
+    "externalActionLedgerFixture": "complete zbj live submit ledger verified",
+    "requireInboxChain": true,
+    "expectedStatus": "blocked_action_audit_bundle",
+    "expectedBlockers": [
+      "inbox_chain_required",
+      "receipt_inbox_hash_required",
+      "proof_inbox_hash_required",
+      "transition_inbox_hash_required"
+    ]
+  },
+  {
+    "name": "blocked inbox ledger cannot bundle",
+    "externalActionLedgerInboxFixture": "inbox chain ledger blocks blocked transition inbox",
+    "expectedStatus": "blocked_action_audit_bundle",
+    "expectedBlockers": ["ledger_not_verified"]
+  },
+  {
+    "name": "missing ledger hash alias cannot bundle",
+    "externalActionLedgerInboxFixture": "complete zbj inbox chain ledger verified",
+    "dropLedgerHashAlias": true,
+    "expectedStatus": "blocked_action_audit_bundle",
+    "expectedBlockers": ["ledger_hash_alias_required"]
+  },
+  {
+    "name": "pending runner ledger cannot bundle",
+    "externalActionLedgerFixture": "ledger pending runner receipt",
+    "expectedStatus": "blocked_action_audit_bundle",
+    "expectedBlockers": ["ledger_not_verified"]
+  },
+  {
+    "name": "tampered audit bundle missing transition inbox hash",
+    "externalActionLedgerInboxFixture": "complete zbj inbox chain ledger verified",
+    "dropTransitionInboxHash": true,
+    "expectedStatus": "blocked_action_audit_bundle",
+    "expectedBlockers": ["transition_inbox_hash_required"]
+  }
+]

@@ -1,0 +1,44 @@
+[
+  {
+    "name": "ready_release_health",
+    "payloadMode": "valid",
+    "expectedStatus": "ready_readonly_release_health",
+    "expectedOk": true,
+    "expectedBlockers": []
+  },
+  {
+    "name": "gate_validation_not_ok",
+    "payloadMode": "gate_validation_not_ok",
+    "expectedStatus": "blocked_readonly_release_health",
+    "expectedOk": false,
+    "expectedBlockers": ["gate_validation_not_ok"]
+  },
+  {
+    "name": "closeout_validation_not_ok",
+    "payloadMode": "closeout_validation_not_ok",
+    "expectedStatus": "blocked_readonly_release_health",
+    "expectedOk": false,
+    "expectedBlockers": ["closeout_validation_not_ok"]
+  },
+  {
+    "name": "gate_closeout_hash_mismatch",
+    "payloadMode": "gate_closeout_hash_mismatch",
+    "expectedStatus": "blocked_readonly_release_health",
+    "expectedOk": false,
+    "expectedBlockers": ["release_gate_closeout_hash_mismatch"]
+  },
+  {
+    "name": "gate_validation_hash_missing",
+    "payloadMode": "gate_validation_hash_missing",
+    "expectedStatus": "blocked_readonly_release_health",
+    "expectedOk": false,
+    "expectedBlockers": ["release_gate_validation_gate_hash_missing"]
+  },
+  {
+    "name": "unsafe_input",
+    "payloadMode": "unsafe_input",
+    "expectedStatus": "blocked_readonly_release_health",
+    "expectedOk": false,
+    "expectedBlockers": ["readonly_release_claims_external_action"]
+  }
+]

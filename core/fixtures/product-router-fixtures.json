@@ -1,0 +1,170 @@
+[
+  {
+    "name": "epwk-logo-with-packaging-application-copy",
+    "input": {
+      "channelId": "epwk",
+      "categoryTitle": "LOGO设计",
+      "title": "征集“普宁优品”品牌标识（LOGO设计）",
+      "requirementText": "作品需便于适配产品包装、电商平台、展会展览、宣传物料等多场景应用。",
+      "semanticRoute": {
+        "productLineId": "logo_brand",
+        "confidence": 0.97,
+        "source": "agent_semantic_intake",
+        "routeDecisionHash": "sha256:fixture-logo-route"
+      }
+    },
+    "expectedProductLineId": "logo_brand",
+    "expectedOutputMode": "image_set"
+  },
+  {
+    "name": "epwk-packaging-main-task",
+    "input": {
+      "channelId": "epwk",
+      "categoryTitle": "包装设计",
+      "title": "中老年营养食品包装设计（乳钙产品）",
+      "requirementText": "需要提供展开平面图和盒装的产品效果图。",
+      "semanticRoute": {
+        "productLineId": "packaging_design",
+        "confidence": 0.96,
+        "source": "agent_semantic_intake",
+        "routeDecisionHash": "sha256:fixture-packaging-route"
+      }
+    },
+    "expectedProductLineId": "packaging_design",
+    "expectedOutputMode": "image_set"
+  },
+  {
+    "name": "epwk-brochure-folding-leaflet",
+    "input": {
+      "channelId": "epwk",
+      "categoryTitle": "宣传折页",
+      "title": "宠物美容培训学校招生折页",
+      "requirementText": "需要三折页设计，突出课程优势与报名信息。",
+      "semanticRoute": {
+        "productLineId": "catalog_brochure",
+        "confidence": 0.95,
+        "source": "agent_semantic_intake",
+        "routeDecisionHash": "sha256:fixture-brochure-route"
+      }
+    },
+    "expectedProductLineId": "catalog_brochure",
+    "expectedOutputMode": "pdf_deck"
+  },
+  {
+    "name": "zbj-explicit-packaging-workflow",
+    "input": {
+      "channelId": "zbj",
+      "workflowId": "packaging_design",
+      "title": "文创礼品天地盖盒礼盒包装设计-原样输出"
+    },
+    "expectedProductLineId": "packaging_design",
+    "expectedOutputMode": "image_set"
+  },
+  {
+    "name": "hepta-vectorization-order",
+    "input": {
+      "channelId": "hepta",
+      "title": "Upload bitmap logo for clean SVG vectorization",
+      "categoryTitle": "vectorization",
+      "semanticRoute": {
+        "productLineId": "vectorization",
+        "confidence": 0.98,
+        "source": "agent_semantic_intake",
+        "routeDecisionHash": "sha256:fixture-vector-route"
+      }
+    },
+    "expectedProductLineId": "vectorization",
+    "expectedOutputMode": "vector_package"
+  },
+  {
+    "name": "human-feedback-after-submit",
+    "input": {
+      "channelId": "epwk",
+      "categoryTitle": "客户反馈修改",
+      "title": "投稿后客户提出改稿意见",
+      "requirementText": "买家反馈希望逐步调整主视觉颜色和标题位置，每次只处理一个反馈点。",
+      "semanticRoute": {
+        "productLineId": "human_feedback",
+        "confidence": 0.99,
+        "source": "agent_semantic_intake",
+        "routeDecisionHash": "sha256:fixture-feedback-route"
+      }
+    },
+    "expectedProductLineId": "human_feedback",
+    "expectedOutputMode": "mixed"
+  },
+  {
+    "name": "legacy-post-submission-revision-workflow",
+    "input": {
+      "channelId": "zbj",
+      "workflowId": "post_submission_revision",
+      "title": "中标后买家反馈修订"
+    },
+    "expectedProductLineId": "human_feedback",
+    "expectedOutputMode": "mixed"
+  },
+  {
+    "name": "explicit-consumer-feedback-alias",
+    "input": {
+      "channelId": "zbj",
+      "productLineId": "consumer_feedback",
+      "title": "Consumer feedback revision after shortlist"
+    },
+    "expectedProductLineId": "human_feedback",
+    "expectedOutputMode": "mixed"
+  },
+  {
+    "name": "explicit-buyer-feedback-alias",
+    "input": {
+      "channelId": "zbj",
+      "productLineId": "buyer-feedback",
+      "title": "Buyer feedback revision after shortlist"
+    },
+    "expectedProductLineId": "human_feedback",
+    "expectedOutputMode": "mixed"
+  },
+  {
+    "name": "legacy-post-submission-hyphen-workflow",
+    "input": {
+      "channelId": "zbj",
+      "workflowId": "post-submission-revision",
+      "title": "Post submission revision"
+    },
+    "expectedProductLineId": "human_feedback",
+    "expectedOutputMode": "mixed"
+  },
+  {
+    "name": "marketplace-naming-text-form",
+    "input": {
+      "channelId": "zbj",
+      "categoryTitle": "品牌命名",
+      "title": "新品牌取名和广告语",
+      "requirementText": "提交5个候选名字，每个名字附释义。",
+      "semanticRoute": {
+        "productLineId": "naming_text",
+        "confidence": 0.96,
+        "source": "agent_semantic_intake",
+        "routeDecisionHash": "sha256:fixture-naming-route"
+      }
+    },
+    "expectedProductLineId": "naming_text",
+    "expectedOutputMode": "text_form"
+  },
+  {
+    "name": "space-proposal-board",
+    "input": {
+      "channelId": "zbj",
+      "categoryTitle": "空间设计",
+      "title": "80平酒吧公装全案非标定制",
+      "requirementText": "需要方案板和空间效果说明。",
+      "semanticRoute": {
+        "productLineId": "proposal_board",
+        "confidence": 0.94,
+        "source": "agent_semantic_intake",
+        "routeDecisionHash": "sha256:fixture-proposal-route"
+      }
+    },
+    "expectedProductLineId": "proposal_board",
+    "expectedOutputMode": "pdf_deck"
+  }
+]

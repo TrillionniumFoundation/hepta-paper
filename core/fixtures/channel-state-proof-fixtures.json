@@ -1,0 +1,301 @@
+[
+  {
+    "name": "zbj provider spend proof verified",
+    "adapterReceiptFixture": "zbj provider spend receipt accepted",
+    "stateEvidence": {
+      "ok": true,
+      "providerRunId": "zbj-provider-run-001",
+      "cacheKey": "zbj-provider-cache-001"
+    },
+    "expectedStatus": "verified_state_proof",
+    "expectedTransitionStatus": "receipt_transition_ready",
+    "expectedStateTo": "generation_ready",
+    "expectedBlockers": []
+  },
+  {
+    "name": "zbj model spend proof verified",
+    "adapterReceiptFixture": "zbj model spend receipt accepted",
+    "stateEvidence": {
+      "ok": true,
+      "modelRunId": "zbj-model-run-001",
+      "cacheKey": "zbj-model-cache-001"
+    },
+    "expectedStatus": "verified_state_proof",
+    "expectedTransitionStatus": "receipt_transition_ready",
+    "expectedStateTo": "generation_ready",
+    "expectedBlockers": []
+  },
+  {
+    "name": "zbj prepare proof verified",
+    "adapterReceiptFixture": "zbj prepare receipt accepted",
+    "stateEvidence": {
+      "ok": true,
+      "prepareId": "zbj-prepare-001",
+      "prepareEvidenceOk": true,
+      "uploadedArtifactNames": ["example-01.png", "example-02.png"]
+    },
+    "expectedStatus": "verified_state_proof",
+    "expectedTransitionStatus": "receipt_transition_ready",
+    "expectedStateTo": "prepare_ready",
+    "expectedBlockers": []
+  },
+  {
+    "name": "zbj live submit proof verified",
+    "adapterReceiptFixture": "zbj live submit receipt accepted",
+    "stateEvidence": {
+      "ok": true,
+      "worksId": "126951999",
+      "submissionId": "zbj-submission-001",
+      "totalMyWorks": 1,
+      "worksIsHidden": true,
+      "buyerIsHide": false,
+      "artifactNames": ["example-01.png", "example-02.png"]
+    },
+    "expectedStatus": "verified_state_proof",
+    "expectedTransitionStatus": "receipt_transition_ready",
+    "expectedStateTo": "submitted_verified",
+    "expectedBlockers": []
+  },
+  {
+    "name": "zbj acceptance apply proof verified",
+    "adapterReceiptFixture": "zbj acceptance apply receipt accepted",
+    "stateEvidence": {
+      "ok": true,
+      "acceptanceId": "zbj-acceptance-001"
+    },
+    "expectedStatus": "verified_state_proof",
+    "expectedTransitionStatus": "receipt_transition_ready",
+    "expectedStateTo": "delivery_ready",
+    "expectedBlockers": []
+  },
+  {
+    "name": "zbj customer message proof verified",
+    "adapterReceiptFixture": "zbj customer message receipt accepted",
+    "stateEvidence": {
+      "ok": true,
+      "messageId": "zbj-message-001"
+    },
+    "expectedStatus": "verified_state_proof",
+    "expectedTransitionStatus": "receipt_transition_ready",
+    "expectedStateTo": "submitted_verified",
+    "expectedBlockers": []
+  },
+  {
+    "name": "epwk provider spend proof verified",
+    "adapterReceiptFixture": "epwk provider spend receipt accepted",
+    "stateEvidence": {
+      "ok": true,
+      "providerRunId": "epwk-provider-run-001",
+      "cacheKey": "epwk-provider-cache-001"
+    },
+    "expectedStatus": "verified_state_proof",
+    "expectedTransitionStatus": "receipt_transition_ready",
+    "expectedStateTo": "generation_ready",
+    "expectedBlockers": []
+  },
+  {
+    "name": "epwk model spend proof verified",
+    "adapterReceiptFixture": "epwk model spend receipt accepted",
+    "stateEvidence": {
+      "ok": true,
+      "modelRunId": "epwk-model-run-001",
+      "cacheKey": "epwk-model-cache-001"
+    },
+    "expectedStatus": "verified_state_proof",
+    "expectedTransitionStatus": "receipt_transition_ready",
+    "expectedStateTo": "generation_ready",
+    "expectedBlockers": []
+  },
+  {
+    "name": "epwk prepare proof verified",
+    "adapterReceiptFixture": "epwk prepare receipt accepted",
+    "stateEvidence": {
+      "ok": true,
+      "prepareId": "epwk-prepare-001",
+      "prepareEvidenceOk": true,
+      "uploadedArtifactNames": ["example-01.png", "example-02.png"]
+    },
+    "expectedStatus": "verified_state_proof",
+    "expectedTransitionStatus": "receipt_transition_ready",
+    "expectedStateTo": "prepare_ready",
+    "expectedBlockers": []
+  },
+  {
+    "name": "epwk live submit proof verified",
+    "adapterReceiptFixture": "epwk live submit receipt accepted",
+    "stateEvidence": {
+      "ok": true,
+      "workId": "epwk-work-001",
+      "submissionId": "epwk-manuscript-001",
+      "totalMyWorks": 1,
+      "worksIsHidden": true,
+      "buyerIsHide": false,
+      "uploadedArtifactNames": ["example-01.png", "example-02.png"]
+    },
+    "expectedStatus": "verified_state_proof",
+    "expectedTransitionStatus": "receipt_transition_ready",
+    "expectedStateTo": "submitted_verified",
+    "expectedBlockers": []
+  },
+  {
+    "name": "epwk work modify proof verified",
+    "adapterReceiptFixture": "epwk work modify receipt accepted",
+    "stateEvidence": {
+      "ok": true,
+      "workId": "epwk-work-001",
+      "submissionId": "epwk-modify-001",
+      "totalMyWorks": 1,
+      "worksIsHidden": true,
+      "buyerIsHide": false,
+      "uploadedArtifactNames": ["example-01.png", "example-02.png"]
+    },
+    "expectedStatus": "verified_state_proof",
+    "expectedTransitionStatus": "receipt_transition_ready",
+    "expectedStateTo": "submitted_verified",
+    "expectedBlockers": []
+  },
+  {
+    "name": "epwk bid submit proof verified",
+    "adapterReceiptFixture": "epwk bid submit receipt accepted",
+    "stateEvidence": {
+      "ok": true,
+      "workId": "epwk-bid-001",
+      "submissionId": "epwk-bid-submit-001",
+      "totalMyWorks": 1,
+      "worksIsHidden": false,
+      "buyerIsHide": false,
+      "uploadedArtifactNames": ["example-01.png", "example-02.png"]
+    },
+    "expectedStatus": "verified_state_proof",
+    "expectedTransitionStatus": "receipt_transition_ready",
+    "expectedStateTo": "submitted_verified",
+    "expectedBlockers": []
+  },
+  {
+    "name": "epwk acceptance apply proof verified",
+    "adapterReceiptFixture": "epwk acceptance apply receipt accepted",
+    "stateEvidence": {
+      "ok": true,
+      "acceptanceId": "epwk-acceptance-001"
+    },
+    "expectedStatus": "verified_state_proof",
+    "expectedTransitionStatus": "receipt_transition_ready",
+    "expectedStateTo": "delivery_ready",
+    "expectedBlockers": []
+  },
+  {
+    "name": "epwk customer message proof verified",
+    "adapterReceiptFixture": "epwk customer message receipt accepted",
+    "stateEvidence": {
+      "ok": true,
+      "messageId": "epwk-message-001"
+    },
+    "expectedStatus": "verified_state_proof",
+    "expectedTransitionStatus": "receipt_transition_ready",
+    "expectedStateTo": "submitted_verified",
+    "expectedBlockers": []
+  },
+  {
+    "name": "hepta provider spend proof verified",
+    "adapterReceiptFixture": "hepta provider spend receipt accepted",
+    "stateEvidence": {
+      "ok": true,
+      "providerRunId": "hepta-provider-run-001",
+      "cacheKey": "hepta-provider-cache-001"
+    },
+    "expectedStatus": "verified_state_proof",
+    "expectedTransitionStatus": "receipt_transition_ready",
+    "expectedStateTo": "generation_ready",
+    "expectedBlockers": []
+  },
+  {
+    "name": "hepta model spend proof verified",
+    "adapterReceiptFixture": "hepta model spend receipt accepted",
+    "stateEvidence": {
+      "ok": true,
+      "modelRunId": "hepta-model-run-001",
+      "cacheKey": "hepta-model-cache-001"
+    },
+    "expectedStatus": "verified_state_proof",
+    "expectedTransitionStatus": "receipt_transition_ready",
+    "expectedStateTo": "generation_ready",
+    "expectedBlockers": []
+  },
+  {
+    "name": "hepta customer message proof verified",
+    "adapterReceiptFixture": "hepta customer message receipt accepted",
+    "stateEvidence": {
+      "ok": true,
+      "messageId": "hepta-message-001"
+    },
+    "expectedStatus": "verified_state_proof",
+    "expectedTransitionStatus": "receipt_transition_ready",
+    "expectedStateTo": "delivery_ready",
+    "expectedBlockers": []
+  },
+  {
+    "name": "hepta deployment proof verified",
+    "adapterReceiptFixture": "hepta deployment receipt accepted",
+    "stateEvidence": {
+      "ok": true,
+      "deploymentId": "hepta-deploy-001",
+      "buildId": "build-001",
+      "url": "https://hepta.example/delivery/hv_001",
+      "buildEvidenceOk": true
+    },
+    "expectedStatus": "verified_state_proof",
+    "expectedTransitionStatus": "receipt_transition_ready",
+    "expectedStateTo": "delivery_ready",
+    "expectedBlockers": []
+  },
+  {
+    "name": "live submit proof blocks mismatched works id",
+    "adapterReceiptFixture": "zbj live submit receipt accepted",
+    "stateEvidence": {
+      "ok": true,
+      "worksId": "126952999",
+      "artifactCount": 2
+    },
+    "expectedStatus": "blocked_state_proof",
+    "expectedTransitionStatus": "blocked_receipt_transition",
+    "expectedBlockers": ["channel_result_id_mismatch"]
+  },
+  {
+    "name": "live submit proof requires artifact count",
+    "adapterReceiptFixture": "zbj live submit receipt accepted",
+    "stateEvidence": {
+      "ok": true,
+      "worksId": "126951999",
+      "submissionId": "zbj-submission-001"
+    },
+    "expectedStatus": "blocked_state_proof",
+    "expectedTransitionStatus": "blocked_receipt_transition",
+    "expectedBlockers": ["channel_artifact_count_required"]
+  },
+  {
+    "name": "blocked receipt cannot verify channel state",
+    "adapterReceiptFixture": "live submit success requires external result id",
+    "stateEvidence": {
+      "ok": true,
+      "worksId": "126951999",
+      "artifactCount": 2
+    },
+    "expectedStatus": "blocked_state_proof",
+    "expectedTransitionStatus": "blocked_receipt_transition",
+    "expectedBlockers": ["accepted_receipt_required"]
+  },
+  {
+    "name": "state proof blocks tampered receipt hash",
+    "adapterReceiptFixture": "zbj live submit receipt accepted",
+    "stateEvidence": {
+      "ok": true,
+      "worksId": "126951999",
+      "submissionId": "zbj-submission-001",
+      "artifactCount": 2,
+      "receiptHash": "sha256:tampered"
+    },
+    "expectedStatus": "blocked_state_proof",
+    "expectedTransitionStatus": "blocked_receipt_transition",
+    "expectedBlockers": ["receipt_hash_mismatch"]
+  }
+]

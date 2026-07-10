@@ -1,0 +1,32 @@
+[
+  {
+    "name": "dispatch-guard receipt accepts repeat approved envelope",
+    "dispatchGuardEnvelopeFixture": "dispatch envelope ready after dispatch repeat approval",
+    "adapterReceiptFixture": "hepta deployment receipt accepted",
+    "expectedStatus": "received_dispatch_receipt",
+    "expectedNextStep": "channel_state_proof_required",
+    "expectedActionId": "hepta.deliveryDeploy",
+    "expectedReplayGuardDispatchMatch": true,
+    "expectedBlockers": []
+  },
+  {
+    "name": "dispatch-guard receipt blocks archived replay envelope",
+    "dispatchGuardEnvelopeFixture": "dispatch envelope blocks dispatch archive replay",
+    "adapterReceiptFixture": "hepta deployment receipt accepted",
+    "expectedStatus": "blocked_dispatch_receipt_inbox",
+    "expectedNextStep": "blocked",
+    "expectedActionId": "hepta.deliveryDeploy",
+    "expectedReplayGuardDispatchMatch": true,
+    "expectedBlockers": ["dispatch_envelope_not_ready"]
+  },
+  {
+    "name": "dispatch-guard receipt blocks candidate mismatch envelope",
+    "dispatchGuardEnvelopeFixture": "dispatch envelope blocks dispatch replay candidate mismatch",
+    "adapterReceiptFixture": "zbj live submit receipt accepted",
+    "expectedStatus": "blocked_dispatch_receipt_inbox",
+    "expectedNextStep": "blocked",
+    "expectedActionId": "zbj.pitchSubmitLive",
+    "expectedReplayGuardDispatchMatch": true,
+    "expectedBlockers": ["dispatch_envelope_not_ready"]
+  }
+]

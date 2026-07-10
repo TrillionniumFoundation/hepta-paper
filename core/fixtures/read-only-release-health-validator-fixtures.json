@@ -1,0 +1,44 @@
+[
+  {
+    "name": "valid_release_health",
+    "payloadMode": "valid",
+    "expectedStatus": "pass_readonly_release_health_validation",
+    "expectedOk": true,
+    "expectedBlockers": []
+  },
+  {
+    "name": "health_hash_mismatch",
+    "payloadMode": "health_hash_mismatch",
+    "expectedStatus": "fail_readonly_release_health_validation",
+    "expectedOk": false,
+    "expectedBlockers": ["release_health_hash_mismatch"]
+  },
+  {
+    "name": "closeout_hash_missing",
+    "payloadMode": "closeout_hash_missing",
+    "expectedStatus": "fail_readonly_release_health_validation",
+    "expectedOk": false,
+    "expectedBlockers": ["release_health_hashes_missing"]
+  },
+  {
+    "name": "checks_not_ok",
+    "payloadMode": "checks_not_ok",
+    "expectedStatus": "fail_readonly_release_health_validation",
+    "expectedOk": false,
+    "expectedBlockers": ["release_health_ready_with_failed_checks"]
+  },
+  {
+    "name": "health_hash_alias_missing",
+    "payloadMode": "health_hash_alias_missing",
+    "expectedStatus": "fail_readonly_release_health_validation",
+    "expectedOk": false,
+    "expectedBlockers": ["release_health_hash_alias_missing"]
+  },
+  {
+    "name": "unsafe_payload",
+    "payloadMode": "unsafe_payload",
+    "expectedStatus": "fail_readonly_release_health_validation",
+    "expectedOk": false,
+    "expectedBlockers": ["readonly_release_health_claims_external_action"]
+  }
+]

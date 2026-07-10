@@ -1,0 +1,120 @@
+[
+  {
+    "name": "hepta runner sdk ready",
+    "readinessReportFixture": "hepta dispatch readiness ready",
+    "expectedStatus": "ready_adapter_runner_sdk_contract",
+    "expectedReadyForExternalImplementation": true,
+    "expectedRunnerId": "hepta.delivery-runner",
+    "expectedActionId": "hepta.deliveryDeploy",
+    "expectedPhaseCount": 5,
+    "expectedBlockers": []
+  },
+  {
+    "name": "zbj runner sdk ready after repeat approval",
+    "readinessReportFixture": "zbj dispatch readiness ready after repeat approval",
+    "expectedStatus": "ready_adapter_runner_sdk_contract",
+    "expectedReadyForExternalImplementation": true,
+    "expectedRunnerId": "zbj-auto-intake.live-runner",
+    "expectedActionId": "zbj.pitchSubmitLive",
+    "expectedPhaseCount": 5,
+    "expectedBlockers": []
+  },
+  {
+    "name": "sdk blocks mismatched readiness",
+    "readinessReportFixture": "readiness blocks mismatched assignment selection",
+    "expectedStatus": "blocked_adapter_runner_sdk_contract",
+    "expectedReadyForExternalImplementation": false,
+    "expectedRunnerId": "zbj-auto-intake.live-runner",
+    "expectedActionId": "hepta.deliveryDeploy",
+    "expectedPhaseCount": 5,
+    "expectedBlockers": ["dispatch_readiness_not_ready"]
+  },
+  {
+    "name": "sdk blocks missing approval hash",
+    "readinessReportFixture": "hepta dispatch readiness ready",
+    "payloadMode": "missing_approval_hash",
+    "expectedStatus": "blocked_adapter_runner_sdk_contract",
+    "expectedReadyForExternalImplementation": false,
+    "expectedRunnerId": "hepta.delivery-runner",
+    "expectedActionId": "hepta.deliveryDeploy",
+    "expectedPhaseCount": 5,
+    "expectedBlockers": ["required_dispatch_hash_missing"]
+  },
+  {
+    "name": "sdk blocks missing report hash",
+    "readinessReportFixture": "hepta dispatch readiness ready",
+    "payloadMode": "missing_report_hash",
+    "expectedStatus": "blocked_adapter_runner_sdk_contract",
+    "expectedReadyForExternalImplementation": false,
+    "expectedRunnerId": "hepta.delivery-runner",
+    "expectedActionId": "hepta.deliveryDeploy",
+    "expectedPhaseCount": 5,
+    "expectedBlockers": ["dispatch_readiness_report_hash_required"]
+  },
+  {
+    "name": "sdk blocks missing runner location",
+    "readinessReportFixture": "hepta dispatch readiness ready",
+    "payloadMode": "missing_runner_location",
+    "expectedStatus": "blocked_adapter_runner_sdk_contract",
+    "expectedReadyForExternalImplementation": false,
+    "expectedRunnerId": "hepta.delivery-runner",
+    "expectedActionId": "hepta.deliveryDeploy",
+    "expectedPhaseCount": 5,
+    "expectedBlockers": ["runner_location_required"]
+  },
+  {
+    "name": "sdk blocks core local runner location",
+    "readinessReportFixture": "hepta dispatch readiness ready",
+    "payloadMode": "core_local_runner_location",
+    "expectedStatus": "blocked_adapter_runner_sdk_contract",
+    "expectedReadyForExternalImplementation": false,
+    "expectedRunnerId": "hepta.delivery-runner",
+    "expectedActionId": "hepta.deliveryDeploy",
+    "expectedPhaseCount": 5,
+    "expectedBlockers": ["runner_location_must_be_external_workspace"]
+  },
+  {
+    "name": "sdk blocks unsafe readiness claims",
+    "readinessReportFixture": "hepta dispatch readiness ready",
+    "payloadMode": "unsafe_readiness",
+    "expectedStatus": "blocked_adapter_runner_sdk_contract",
+    "expectedReadyForExternalImplementation": false,
+    "expectedRunnerId": "hepta.delivery-runner",
+    "expectedActionId": "hepta.deliveryDeploy",
+    "expectedPhaseCount": 5,
+    "expectedBlockers": ["dispatch_readiness_claims_unsafe_side_effect"]
+  },
+  {
+    "name": "sdk blocks missing handoff snapshots",
+    "readinessReportFixture": "hepta dispatch readiness ready",
+    "payloadMode": "missing_handoff_snapshots",
+    "expectedStatus": "blocked_adapter_runner_sdk_contract",
+    "expectedReadyForExternalImplementation": false,
+    "expectedRunnerId": "hepta.delivery-runner",
+    "expectedActionId": "hepta.deliveryDeploy",
+    "expectedPhaseCount": 5,
+    "expectedBlockers": ["manifest_snapshot_required", "preview_snapshot_required"]
+  },
+  {
+    "name": "sdk blocks tampered manifest snapshot content",
+    "readinessReportFixture": "hepta dispatch readiness ready",
+    "payloadMode": "tampered_manifest_snapshot",
+    "expectedStatus": "blocked_adapter_runner_sdk_contract",
+    "expectedReadyForExternalImplementation": false,
+    "expectedRunnerId": "hepta.delivery-runner",
+    "expectedActionId": "hepta.deliveryDeploy",
+    "expectedPhaseCount": 5,
+    "expectedBlockers": ["manifest_snapshot_hash_content_mismatch"]
+  },
+  {
+    "name": "sdk blocks human feedback missing contract hash",
+    "readinessReportFixture": "hepta dispatch readiness ready",
+    "payloadMode": "human_feedback_missing_contract_hash",
+    "expectedStatus": "blocked_adapter_runner_sdk_contract",
+    "expectedReadyForExternalImplementation": false,
+    "expectedRunnerId": "hepta.delivery-runner",
+    "expectedActionId": "hepta.customerMessagePreview",
+    "expectedPhaseCount": 5,
+    "expectedBlockers": ["human_feedback_contract_hash_required"]
+  }
+]

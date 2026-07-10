@@ -1,0 +1,44 @@
+[
+  {
+    "name": "valid_readonly_sample_export",
+    "payloadMode": "valid",
+    "expectedStatus": "pass_readonly_sample_export_validation",
+    "expectedOk": true,
+    "expectedBlockers": []
+  },
+  {
+    "name": "blocks_payload_status_mismatch",
+    "payloadMode": "payload_status_mismatch",
+    "expectedStatus": "fail_readonly_sample_export_validation",
+    "expectedOk": false,
+    "expectedBlockers": ["payload_status_export_status_mismatch"]
+  },
+  {
+    "name": "blocks_dashboard_snapshot_hash_mismatch",
+    "payloadMode": "dashboard_snapshot_hash_mismatch",
+    "expectedStatus": "fail_readonly_sample_export_validation",
+    "expectedOk": false,
+    "expectedBlockers": ["dashboard_snapshot_hash_mismatch"]
+  },
+  {
+    "name": "blocks_export_status_hash_mismatch",
+    "payloadMode": "export_status_hash_mismatch",
+    "expectedStatus": "fail_readonly_sample_export_validation",
+    "expectedOk": false,
+    "expectedBlockers": ["export_status_hash_mismatch"]
+  },
+  {
+    "name": "blocks_external_action_claim",
+    "payloadMode": "unsafe_payload",
+    "expectedStatus": "fail_readonly_sample_export_validation",
+    "expectedOk": false,
+    "expectedBlockers": ["readonly_export_payload_claims_external_action"]
+  },
+  {
+    "name": "blocks_missing_human_feedback_coverage",
+    "payloadMode": "human_feedback_missing",
+    "expectedStatus": "fail_readonly_sample_export_validation",
+    "expectedOk": false,
+    "expectedBlockers": ["human_feedback_sample_coverage_missing"]
+  }
+]

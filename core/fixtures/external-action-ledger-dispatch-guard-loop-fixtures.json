@@ -1,0 +1,59 @@
+[
+  {
+    "name": "dispatch loop chain ledger verified",
+    "dispatchGuardLoopTransitionInboxFixture": "dispatch loop transition accepts repeat approved proof",
+    "expectedStatus": "verified_action_ledger",
+    "expectedUsesInboxChain": true,
+    "expectedUsesDispatchInboxChain": true,
+    "expectedActionId": "hepta.deliveryDeploy",
+    "expectedBlockers": []
+  },
+  {
+    "name": "dispatch loop ledger blocks archived replay chain",
+    "dispatchGuardLoopTransitionInboxFixture": "dispatch loop transition blocks archived replay proof inbox",
+    "expectedStatus": "blocked_action_ledger",
+    "expectedUsesInboxChain": true,
+    "expectedUsesDispatchInboxChain": true,
+    "expectedActionId": "hepta.deliveryDeploy",
+    "expectedBlockers": [
+      "dispatch_receipt_inbox_not_received",
+      "dispatch_receipt_inbox_not_waiting_for_proof",
+      "dispatch_proof_inbox_not_received",
+      "dispatch_proof_inbox_not_ready_for_transition",
+      "dispatch_transition_inbox_not_received",
+      "dispatch_transition_inbox_not_ready_for_ledger"
+    ]
+  },
+  {
+    "name": "dispatch loop ledger blocks exact hash replay chain",
+    "dispatchGuardLoopTransitionInboxFixture": "dispatch loop transition blocks exact hash replay proof inbox",
+    "expectedStatus": "blocked_action_ledger",
+    "expectedUsesInboxChain": true,
+    "expectedUsesDispatchInboxChain": true,
+    "expectedActionId": "hepta.deliveryDeploy",
+    "expectedBlockers": [
+      "dispatch_receipt_inbox_not_received",
+      "dispatch_receipt_inbox_not_waiting_for_proof",
+      "dispatch_proof_inbox_not_received",
+      "dispatch_proof_inbox_not_ready_for_transition",
+      "dispatch_transition_inbox_not_received",
+      "dispatch_transition_inbox_not_ready_for_ledger"
+    ]
+  },
+  {
+    "name": "dispatch loop ledger blocks candidate mismatch chain",
+    "dispatchGuardLoopTransitionInboxFixture": "dispatch loop transition blocks candidate mismatch proof inbox",
+    "expectedStatus": "blocked_action_ledger",
+    "expectedUsesInboxChain": true,
+    "expectedUsesDispatchInboxChain": true,
+    "expectedActionId": "zbj.pitchSubmitLive",
+    "expectedBlockers": [
+      "dispatch_receipt_inbox_not_received",
+      "dispatch_receipt_inbox_not_waiting_for_proof",
+      "dispatch_proof_inbox_not_received",
+      "dispatch_proof_inbox_not_ready_for_transition",
+      "dispatch_transition_inbox_not_received",
+      "dispatch_transition_inbox_not_ready_for_ledger"
+    ]
+  }
+]

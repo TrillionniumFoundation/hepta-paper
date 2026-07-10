@@ -1,0 +1,44 @@
+[
+  {
+    "name": "valid_closeout",
+    "payloadMode": "valid",
+    "expectedStatus": "pass_readonly_closeout_validation",
+    "expectedOk": true,
+    "expectedBlockers": []
+  },
+  {
+    "name": "summary_hash_mismatch",
+    "payloadMode": "summary_hash_mismatch",
+    "expectedStatus": "fail_readonly_closeout_validation",
+    "expectedOk": false,
+    "expectedBlockers": ["closeout_summary_hash_mismatch"]
+  },
+  {
+    "name": "gate_hash_mismatch",
+    "payloadMode": "gate_hash_mismatch",
+    "expectedStatus": "fail_readonly_closeout_validation",
+    "expectedOk": false,
+    "expectedBlockers": ["closeout_gate_hash_mismatch"]
+  },
+  {
+    "name": "unsafe_payload",
+    "payloadMode": "unsafe_payload",
+    "expectedStatus": "fail_readonly_closeout_validation",
+    "expectedOk": false,
+    "expectedBlockers": ["readonly_closeout_claims_external_action"]
+  },
+  {
+    "name": "summary_hash_alias_missing",
+    "payloadMode": "summary_hash_alias_missing",
+    "expectedStatus": "fail_readonly_closeout_validation",
+    "expectedOk": false,
+    "expectedBlockers": ["closeout_summary_hash_alias_missing"]
+  },
+  {
+    "name": "missing_report_files",
+    "payloadMode": "missing_report_files",
+    "expectedStatus": "fail_readonly_closeout_validation",
+    "expectedOk": false,
+    "expectedBlockers": ["report_files_missing"]
+  }
+]

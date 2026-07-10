@@ -1,0 +1,30 @@
+[
+  {
+    "name": "dispatch audit archive ready",
+    "auditBundleFixtures": [
+      "hepta dispatch audit bundle verified",
+      "zbj dispatch audit bundle verified"
+    ],
+    "expectedStatus": "ready_external_action_audit_archive",
+    "expectedDispatchInboxChainCount": 2,
+    "expectedBlockers": []
+  },
+  {
+    "name": "dispatch archive blocks tampered dispatch bundle",
+    "auditBundleFixtures": ["tampered dispatch bundle missing dispatch envelope hash"],
+    "expectedStatus": "blocked_external_action_audit_archive",
+    "expectedDispatchInboxChainCount": 1,
+    "expectedBlockers": [
+      "audit_bundle_not_verified",
+      "bundle_dispatch_envelope_hash_required"
+    ]
+  },
+  {
+    "name": "dispatch archive blocks duplicate dispatch ledger",
+    "auditBundleFixtures": ["hepta dispatch audit bundle verified"],
+    "duplicateFirstBundle": true,
+    "expectedStatus": "blocked_external_action_audit_archive",
+    "expectedDispatchInboxChainCount": 2,
+    "expectedBlockers": ["duplicate_audit_bundle_hash", "duplicate_ledger_hash"]
+  }
+]

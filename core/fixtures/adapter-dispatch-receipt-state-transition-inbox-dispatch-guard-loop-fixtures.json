@@ -1,0 +1,43 @@
+[
+  {
+    "name": "dispatch loop transition accepts repeat approved proof",
+    "dispatchGuardLoopProofInboxFixture": "dispatch loop proof accepts repeat approved receipt",
+    "expectedStatus": "received_dispatch_receipt_state_transition",
+    "expectedNextStep": "external_action_ledger_ready",
+    "expectedActionId": "hepta.deliveryDeploy",
+    "expectedBlockers": []
+  },
+  {
+    "name": "dispatch loop transition blocks archived replay proof inbox",
+    "dispatchGuardLoopProofInboxFixture": "dispatch loop proof blocks archived replay receipt inbox",
+    "expectedStatus": "blocked_dispatch_receipt_state_transition_inbox",
+    "expectedNextStep": "blocked",
+    "expectedActionId": "hepta.deliveryDeploy",
+    "expectedBlockers": [
+      "dispatch_proof_inbox_not_received",
+      "dispatch_proof_inbox_not_transition_ready"
+    ]
+  },
+  {
+    "name": "dispatch loop transition blocks exact hash replay proof inbox",
+    "dispatchGuardLoopProofInboxFixture": "dispatch loop proof blocks exact hash replay receipt inbox",
+    "expectedStatus": "blocked_dispatch_receipt_state_transition_inbox",
+    "expectedNextStep": "blocked",
+    "expectedActionId": "hepta.deliveryDeploy",
+    "expectedBlockers": [
+      "dispatch_proof_inbox_not_received",
+      "dispatch_proof_inbox_not_transition_ready"
+    ]
+  },
+  {
+    "name": "dispatch loop transition blocks candidate mismatch proof inbox",
+    "dispatchGuardLoopProofInboxFixture": "dispatch loop proof blocks candidate mismatch receipt inbox",
+    "expectedStatus": "blocked_dispatch_receipt_state_transition_inbox",
+    "expectedNextStep": "blocked",
+    "expectedActionId": "zbj.pitchSubmitLive",
+    "expectedBlockers": [
+      "dispatch_proof_inbox_not_received",
+      "dispatch_proof_inbox_not_transition_ready"
+    ]
+  }
+]

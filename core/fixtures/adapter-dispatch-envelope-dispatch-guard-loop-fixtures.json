@@ -1,0 +1,35 @@
+[
+  {
+    "name": "dispatch envelope loop blocks archived dispatch replay",
+    "actionManifestFixture": "hepta deployment manifest ready",
+    "replayGuardDispatchGuardFixture": "dispatch-guard archive blocks same task action",
+    "expectedStatus": "blocked_adapter_dispatch_envelope",
+    "expectedReplayGuardDispatchMatch": true,
+    "expectedBlockers": ["replay_guard_not_clear"]
+  },
+  {
+    "name": "dispatch envelope loop ready after repeat approval",
+    "actionManifestFixture": "hepta deployment manifest ready",
+    "replayGuardDispatchGuardFixture": "dispatch-guard archive allows repeat approval",
+    "replayGuardCandidateFromOutbox": true,
+    "expectedStatus": "ready_adapter_dispatch_envelope",
+    "expectedReplayGuardDispatchMatch": true,
+    "expectedBlockers": []
+  },
+  {
+    "name": "dispatch envelope loop blocks exact hash replay",
+    "actionManifestFixture": "hepta deployment manifest ready",
+    "replayGuardDispatchGuardFixture": "dispatch-guard archive blocks exact bundle ledger replay",
+    "expectedStatus": "blocked_adapter_dispatch_envelope",
+    "expectedReplayGuardDispatchMatch": true,
+    "expectedBlockers": ["replay_guard_not_clear"]
+  },
+  {
+    "name": "dispatch envelope loop blocks replay candidate mismatch",
+    "actionManifestFixture": "zbj live submit manifest ready",
+    "replayGuardDispatchGuardFixture": "dispatch-guard archive allows repeat approval",
+    "expectedStatus": "blocked_adapter_dispatch_envelope",
+    "expectedReplayGuardDispatchMatch": true,
+    "expectedBlockers": ["replay_guard_candidate_mismatch"]
+  }
+]

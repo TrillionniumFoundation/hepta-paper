@@ -1,0 +1,245 @@
+[
+  {
+    "name": "zbj provider spend manifest ready",
+    "channelId": "zbj",
+    "action": "provider_spend",
+    "fromStage": "plan_ready",
+    "toStage": "generation_ready",
+    "gateAllowed": true,
+    "expectedStatus": "ready_for_adapter",
+    "expectedAdapterActionId": "zbj.providerSpendGuarded",
+    "expectedBlockers": []
+  },
+  {
+    "name": "zbj model spend manifest ready",
+    "channelId": "zbj",
+    "action": "model_spend",
+    "fromStage": "plan_ready",
+    "toStage": "generation_ready",
+    "gateAllowed": true,
+    "expectedStatus": "ready_for_adapter",
+    "expectedAdapterActionId": "zbj.modelSpendGuarded",
+    "expectedBlockers": []
+  },
+  {
+    "name": "zbj prepare only manifest ready",
+    "channelId": "zbj",
+    "action": "live_prepare",
+    "fromStage": "review_ready",
+    "toStage": "prepare_ready",
+    "gateAllowed": true,
+    "expectedStatus": "ready_for_adapter",
+    "expectedAdapterActionId": "zbj.pitchPrepareOnly",
+    "expectedBlockers": []
+  },
+  {
+    "name": "zbj live submit manifest ready",
+    "channelId": "zbj",
+    "action": "live_submit",
+    "fromStage": "prepare_ready",
+    "toStage": "submitted_verified",
+    "gateAllowed": true,
+    "expectedStatus": "ready_for_adapter",
+    "expectedAdapterActionId": "zbj.pitchSubmitLive",
+    "expectedBlockers": []
+  },
+  {
+    "name": "zbj acceptance apply manifest ready",
+    "channelId": "zbj",
+    "action": "acceptance_apply",
+    "fromStage": "delivery_ready",
+    "toStage": "delivery_ready",
+    "gateAllowed": true,
+    "expectedStatus": "ready_for_adapter",
+    "expectedAdapterActionId": "zbj.acceptanceApplyLive",
+    "expectedBlockers": []
+  },
+  {
+    "name": "zbj customer message manifest ready",
+    "channelId": "zbj",
+    "action": "customer_message",
+    "fromStage": "submitted_verified",
+    "toStage": "submitted_verified",
+    "gateAllowed": true,
+    "expectedStatus": "ready_for_adapter",
+    "expectedAdapterActionId": "zbj.customerMessagePreview",
+    "expectedBlockers": []
+  },
+  {
+    "name": "epwk provider spend manifest ready",
+    "channelId": "epwk",
+    "action": "provider_spend",
+    "fromStage": "plan_ready",
+    "toStage": "generation_ready",
+    "gateAllowed": true,
+    "expectedStatus": "ready_for_adapter",
+    "expectedAdapterActionId": "epwk.providerSpendGuarded",
+    "expectedBlockers": []
+  },
+  {
+    "name": "epwk model spend manifest ready",
+    "channelId": "epwk",
+    "action": "model_spend",
+    "fromStage": "plan_ready",
+    "toStage": "generation_ready",
+    "gateAllowed": true,
+    "expectedStatus": "ready_for_adapter",
+    "expectedAdapterActionId": "epwk.modelSpendGuarded",
+    "expectedBlockers": []
+  },
+  {
+    "name": "epwk prepare only manifest ready",
+    "channelId": "epwk",
+    "action": "live_prepare",
+    "fromStage": "review_ready",
+    "toStage": "prepare_ready",
+    "gateAllowed": true,
+    "expectedStatus": "ready_for_adapter",
+    "expectedAdapterActionId": "epwk.prepareOnly",
+    "expectedBlockers": []
+  },
+  {
+    "name": "epwk live submit manifest ready",
+    "channelId": "epwk",
+    "action": "live_submit",
+    "fromStage": "prepare_ready",
+    "toStage": "submitted_verified",
+    "gateAllowed": true,
+    "expectedStatus": "ready_for_adapter",
+    "expectedAdapterActionId": "epwk.submitLive",
+    "expectedBlockers": []
+  },
+  {
+    "name": "epwk work modify manifest ready",
+    "channelId": "epwk",
+    "action": "live_submit",
+    "adapterHints": {
+      "adapterActionId": "epwk.workModifyLive",
+      "actionVariant": "work_modify_live"
+    },
+    "fromStage": "submitted_verified",
+    "toStage": "submitted_verified",
+    "gateAllowed": true,
+    "expectedStatus": "ready_for_adapter",
+    "expectedAdapterActionId": "epwk.workModifyLive",
+    "expectedBlockers": []
+  },
+  {
+    "name": "epwk bid submit manifest ready",
+    "channelId": "epwk",
+    "action": "live_submit",
+    "adapterHints": {
+      "adapterActionId": "epwk.bidSubmitLive",
+      "actionVariant": "bid_submit_live"
+    },
+    "fromStage": "submit_ready",
+    "toStage": "submitted_verified",
+    "gateAllowed": true,
+    "expectedStatus": "ready_for_adapter",
+    "expectedAdapterActionId": "epwk.bidSubmitLive",
+    "expectedBlockers": []
+  },
+  {
+    "name": "epwk unsupported adapter hint blocks manifest",
+    "channelId": "epwk",
+    "action": "live_submit",
+    "adapterHints": {
+      "adapterActionId": "epwk.unknownSubmitLive",
+      "actionVariant": "unknown_submit_live"
+    },
+    "fromStage": "submit_ready",
+    "toStage": "submitted_verified",
+    "gateAllowed": true,
+    "expectedStatus": "blocked_manifest",
+    "expectedAdapterActionId": null,
+    "expectedBlockers": ["channel_action_not_supported", "adapter_action_hint_not_supported"]
+  },
+  {
+    "name": "epwk customer message manifest ready",
+    "channelId": "epwk",
+    "action": "customer_message",
+    "fromStage": "submitted_verified",
+    "toStage": "submitted_verified",
+    "gateAllowed": true,
+    "expectedStatus": "ready_for_adapter",
+    "expectedAdapterActionId": "epwk.customerMessageLive",
+    "expectedBlockers": []
+  },
+  {
+    "name": "epwk acceptance apply manifest ready",
+    "channelId": "epwk",
+    "action": "acceptance_apply",
+    "fromStage": "delivery_ready",
+    "toStage": "delivery_ready",
+    "gateAllowed": true,
+    "expectedStatus": "ready_for_adapter",
+    "expectedAdapterActionId": "epwk.acceptanceApplyLive",
+    "expectedBlockers": []
+  },
+  {
+    "name": "hepta provider spend manifest ready",
+    "channelId": "hepta",
+    "action": "provider_spend",
+    "fromStage": "plan_ready",
+    "toStage": "generation_ready",
+    "gateAllowed": true,
+    "expectedStatus": "ready_for_adapter",
+    "expectedAdapterActionId": "hepta.providerSpendGuarded",
+    "expectedBlockers": []
+  },
+  {
+    "name": "hepta model spend manifest ready",
+    "channelId": "hepta",
+    "action": "model_spend",
+    "fromStage": "plan_ready",
+    "toStage": "generation_ready",
+    "gateAllowed": true,
+    "expectedStatus": "ready_for_adapter",
+    "expectedAdapterActionId": "hepta.modelSpendGuarded",
+    "expectedBlockers": []
+  },
+  {
+    "name": "hepta customer message manifest ready",
+    "channelId": "hepta",
+    "action": "customer_message",
+    "fromStage": "delivery_ready",
+    "toStage": "delivery_ready",
+    "gateAllowed": true,
+    "expectedStatus": "ready_for_adapter",
+    "expectedAdapterActionId": "hepta.customerMessagePreview",
+    "expectedBlockers": []
+  },
+  {
+    "name": "hepta deployment manifest ready",
+    "channelId": "hepta",
+    "action": "deployment",
+    "fromStage": "review_ready",
+    "toStage": "delivery_ready",
+    "gateAllowed": true,
+    "expectedStatus": "ready_for_adapter",
+    "expectedAdapterActionId": "hepta.deliveryDeploy",
+    "expectedBlockers": []
+  },
+  {
+    "name": "blocked transition cannot become manifest ready",
+    "channelId": "zbj",
+    "action": "live_submit",
+    "fromStage": "plan_ready",
+    "toStage": "submitted_verified",
+    "gateAllowed": true,
+    "expectedStatus": "blocked_manifest",
+    "expectedAdapterActionId": "zbj.pitchSubmitLive",
+    "expectedBlockers": ["state_transition_not_allowed"]
+  },
+  {
+    "name": "blocked gate cannot become manifest ready",
+    "channelId": "zbj",
+    "action": "live_prepare",
+    "fromStage": "review_ready",
+    "toStage": "prepare_ready",
+    "gateAllowed": false,
+    "expectedStatus": "blocked_manifest",
+    "expectedAdapterActionId": "zbj.pitchPrepareOnly",
+    "expectedBlockers": ["execution_gate_not_allowed", "state_transition_not_allowed"]
+  }
+]

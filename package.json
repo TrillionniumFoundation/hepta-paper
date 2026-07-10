@@ -1,0 +1,28 @@
+{
+  "name": "hepta-paper-workspace",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Paper production overlay around an unmodified design-production-core snapshot.",
+  "bin": {
+    "paper-production-core": "./paper-core/bin/paper-production-core.mjs"
+  },
+  "scripts": {
+    "core:selftest": "npm --prefix core run selftest",
+    "core:runtime-dry-run": "npm --prefix core run runtime:dry-run-harness",
+    "paper:selftest": "node paper-core/src/selftest.mjs",
+    "paper:batch": "node paper-core/bin/paper-production-core.mjs batch-run",
+    "paper:proposal:sample": "node paper-core/bin/paper-production-core.mjs proposal --idea \"distributionally robust reinforcement learning for stochastic control\" --discipline \"machine learning\" --venue NeurIPS",
+    "paper:proposal:stage": "node paper-core/bin/paper-production-core.mjs proposal --paper distributionally_robust_rl_for_stochastic_control --idea \"distributionally robust reinforcement learning for stochastic control\" --discipline \"machine learning\" --venue NeurIPS --title \"Distributionally Robust RL for Stochastic Control\" --approved --materialize-source --stage-inventory",
+    "paper:proposal:build": "node paper-core/bin/paper-production-core.mjs batch-run --mode local-build --paper distributionally_robust_rl_for_stochastic_control --execute",
+    "paper:proposal:dry-run": "node paper-core/bin/paper-production-core.mjs batch-run --mode local-dry-run --paper distributionally_robust_rl_for_stochastic_control",
+    "paper:proposal:reviewed-submit": "node paper-core/bin/paper-production-core.mjs batch-run --mode reviewed-submit --paper distributionally_robust_rl_for_stochastic_control",
+    "paper:empirical-analysis": "node paper-core/bin/paper-production-core.mjs batch-run --mode empirical-analysis",
+    "paper:inventory": "node paper-core/bin/paper-production-core.mjs batch-run --mode inventory",
+    "paper:local-dry-run": "node paper-core/bin/paper-production-core.mjs batch-run --mode local-dry-run",
+    "paper:referee-review": "node paper-core/bin/paper-production-core.mjs batch-run --mode referee-review",
+    "paper:referee-revise": "node paper-core/bin/paper-production-core.mjs batch-run --mode referee-revise",
+    "paper:legacy-cleanup": "node paper-core/bin/paper-production-core.mjs batch-run --mode legacy-cleanup",
+    "selftest": "npm run core:selftest && npm run core:runtime-dry-run && npm run paper:selftest"
+  }
+}

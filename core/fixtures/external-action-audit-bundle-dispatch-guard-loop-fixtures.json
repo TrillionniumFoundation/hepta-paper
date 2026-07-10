@@ -1,0 +1,24 @@
+[
+  {
+    "name": "dispatch loop audit bundle verified",
+    "externalActionLedgerDispatchGuardLoopFixture": "dispatch loop chain ledger verified",
+    "expectedStatus": "verified_action_audit_bundle",
+    "expectedUsesDispatchInboxChain": true,
+    "expectedBlockers": []
+  },
+  {
+    "name": "dispatch loop blocked replay ledger cannot bundle",
+    "externalActionLedgerDispatchGuardLoopFixture": "dispatch loop ledger blocks archived replay chain",
+    "expectedStatus": "blocked_action_audit_bundle",
+    "expectedUsesDispatchInboxChain": true,
+    "expectedBlockers": ["ledger_not_verified"]
+  },
+  {
+    "name": "dispatch loop bundle blocks missing replay guard hash",
+    "externalActionLedgerDispatchGuardLoopFixture": "dispatch loop chain ledger verified",
+    "dropDispatchReplayGuardHash": true,
+    "expectedStatus": "blocked_action_audit_bundle",
+    "expectedUsesDispatchInboxChain": true,
+    "expectedBlockers": ["dispatch_replay_guard_hash_required"]
+  }
+]

@@ -1,0 +1,86 @@
+[
+  {
+    "name": "complete zbj inbox chain ledger verified",
+    "actionManifestFixture": "zbj live submit manifest ready",
+    "adapterReceiptFixture": "zbj live submit receipt accepted",
+    "channelStateProofFixture": "zbj live submit proof verified",
+    "receiptInboxFixture": "zbj success receipt enters inbox",
+    "proofInboxFixture": "zbj proof enters inbox",
+    "transitionInboxFixture": "zbj transition enters inbox",
+    "expectedStatus": "verified_action_ledger",
+    "expectedUsesInboxChain": true,
+    "expectedBlockers": []
+  },
+  {
+    "name": "complete epwk inbox chain ledger verified",
+    "actionManifestFixture": "epwk prepare only manifest ready",
+    "adapterReceiptFixture": "epwk prepare receipt accepted",
+    "channelStateProofFixture": "epwk prepare proof verified",
+    "receiptInboxFixture": "epwk prepare receipt enters inbox",
+    "proofInboxFixture": "epwk prepare proof enters inbox",
+    "transitionInboxFixture": "epwk prepare transition enters inbox",
+    "expectedStatus": "verified_action_ledger",
+    "expectedUsesInboxChain": true,
+    "expectedBlockers": []
+  },
+  {
+    "name": "complete epwk submit inbox chain ledger verified",
+    "actionManifestFixture": "epwk live submit manifest ready",
+    "adapterReceiptFixture": "epwk live submit receipt accepted",
+    "channelStateProofFixture": "epwk live submit proof verified",
+    "receiptInboxFixture": "epwk live submit receipt enters inbox",
+    "proofInboxFixture": "epwk live submit proof enters inbox",
+    "transitionInboxFixture": "epwk live submit transition enters inbox",
+    "expectedStatus": "verified_action_ledger",
+    "expectedUsesInboxChain": true,
+    "expectedBlockers": []
+  },
+  {
+    "name": "inbox chain ledger blocks blocked receipt inbox",
+    "actionManifestFixture": "zbj live submit manifest ready",
+    "adapterReceiptFixture": "zbj live submit receipt accepted",
+    "channelStateProofFixture": "zbj live submit proof verified",
+    "receiptInboxFixture": "inbox blocks blocked outbox",
+    "proofInboxFixture": "zbj proof enters inbox",
+    "transitionInboxFixture": "zbj transition enters inbox",
+    "expectedStatus": "blocked_action_ledger",
+    "expectedUsesInboxChain": true,
+    "expectedBlockers": ["receipt_inbox_not_received"]
+  },
+  {
+    "name": "inbox chain ledger blocks blocked proof inbox",
+    "actionManifestFixture": "zbj live submit manifest ready",
+    "adapterReceiptFixture": "zbj live submit receipt accepted",
+    "channelStateProofFixture": "live submit proof blocks mismatched works id",
+    "receiptInboxFixture": "zbj success receipt enters inbox",
+    "proofInboxFixture": "proof inbox blocks mismatched proof",
+    "transitionInboxFixture": "transition inbox blocks blocked proof inbox",
+    "expectedStatus": "blocked_action_ledger",
+    "expectedUsesInboxChain": true,
+    "expectedBlockers": ["channel_state_proof_not_verified", "proof_inbox_not_received", "proof_inbox_not_ready_for_transition", "transition_inbox_not_received"]
+  },
+  {
+    "name": "inbox chain ledger blocks blocked transition inbox",
+    "actionManifestFixture": "zbj live submit manifest ready",
+    "adapterReceiptFixture": "zbj live submit receipt accepted",
+    "channelStateProofFixture": "zbj live submit proof verified",
+    "receiptInboxFixture": "zbj success receipt enters inbox",
+    "proofInboxFixture": "zbj proof enters inbox",
+    "transitionInboxFixture": "transition inbox blocks tampered proof hash",
+    "expectedStatus": "blocked_action_ledger",
+    "expectedUsesInboxChain": true,
+    "expectedBlockers": ["transition_inbox_not_received", "transition_inbox_not_ready_for_ledger", "transition_hash_content_mismatch"]
+  },
+  {
+    "name": "inbox chain ledger blocks action mismatch",
+    "actionManifestFixture": "epwk prepare only manifest ready",
+    "adapterReceiptFixture": "zbj live submit receipt accepted",
+    "channelStateProofFixture": "zbj live submit proof verified",
+    "receiptInboxFixture": "epwk prepare receipt enters inbox",
+    "proofInboxFixture": "proof inbox blocks action mismatch",
+    "transitionInboxFixture": "transition inbox blocks action mismatch",
+    "expectedStatus": "blocked_action_ledger",
+    "expectedUsesInboxChain": true,
+    "expectedBlockers": ["receipt_manifest_hash_mismatch", "proof_inbox_not_received", "transition_inbox_not_received"]
+  }
+]

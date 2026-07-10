@@ -1,0 +1,112 @@
+[
+  {
+    "name": "logo profile",
+    "productLineId": "logo_brand",
+    "expectedOutputMode": "image_set",
+    "expectedSupportedChannels": ["zbj", "epwk", "hepta"],
+    "requiredGates": ["semantic_contract", "final_visual_review"],
+    "qualityGates": ["professional_finish", "template_filler_absence", "no_occluding_overlays"],
+    "semanticRequired": true,
+    "referenceRequired": true
+  },
+  {
+    "name": "packaging profile",
+    "productLineId": "packaging_design",
+    "expectedOutputMode": "image_set",
+    "expectedSupportedChannels": ["zbj", "epwk"],
+    "requiredGates": ["semantic_contract", "package_review"],
+    "qualityGates": ["preserve_buyer_supplied_production_text", "no_invented_barcode_qr_contact"],
+    "semanticRequired": true,
+    "referenceRequired": true
+  },
+  {
+    "name": "catalog brochure profile",
+    "productLineId": "catalog_brochure",
+    "expectedOutputMode": "pdf_deck",
+    "expectedSupportedChannels": ["zbj", "epwk", "hepta"],
+    "requiredGates": ["pdf_page_render_review", "print_copy_review"],
+    "qualityGates": ["catalog_information_hierarchy", "no_demo_data_or_template_fillers"],
+    "semanticRequired": true,
+    "referenceRequired": true
+  },
+  {
+    "name": "naming text profile",
+    "productLineId": "naming_text",
+    "expectedOutputMode": "text_form",
+    "expectedSupportedChannels": ["zbj", "epwk"],
+    "requiredGates": ["semantic_contract", "final_review"],
+    "qualityGates": ["actual_name_explanation_pairs", "no_meta_only_submission_note"],
+    "semanticRequired": true,
+    "referenceRequired": false
+  },
+  {
+    "name": "vectorization profile",
+    "productLineId": "vectorization",
+    "expectedOutputMode": "vector_package",
+    "expectedSupportedChannels": ["hepta"],
+    "requiredGates": ["source_asset_hash_lock", "vector_quality_review", "delivery_preview_review"],
+    "qualityGates": ["path_cleanliness", "visual_match_to_source", "svg_pdf_png_export_integrity"],
+    "semanticRequired": true,
+    "referenceRequired": false
+  },
+  {
+    "name": "human feedback profile",
+    "productLineId": "human_feedback",
+    "expectedOutputMode": "mixed",
+    "expectedSupportedChannels": ["zbj", "epwk", "hepta", "manual"],
+    "requiredGates": ["feedback_history_refresh", "feedback_target_artifact_binding", "atomic_correction_queue", "baseline_invariant_lock", "feedback_authoritative_logo_source_lock", "model_logo_reconstruction_source_hash", "rust_core_vector_package_review", "protected_region_effect_geometry_lock", "no_effect_mockup_as_vector_source"],
+    "qualityGates": ["one_active_correction_per_iteration", "unchanged_item_regression_check", "feedback_stage_classification", "exact_wordmark_from_authoritative_source", "vector_preview_matches_reconstruction_source", "effect_preview_preserves_locked_geometry", "no_dimension_watermark_or_ui_drift"],
+    "semanticRequired": true,
+    "referenceRequired": false
+  },
+  {
+    "name": "legacy post-submission revision profile alias",
+    "productLineId": "post_submission_revision",
+    "expectedOutputMode": "mixed",
+    "expectedSupportedChannels": ["zbj", "epwk", "hepta", "manual"],
+    "requiredGates": ["feedback_history_refresh", "feedback_target_artifact_binding", "atomic_correction_queue", "baseline_invariant_lock", "feedback_authoritative_logo_source_lock", "model_logo_reconstruction_source_hash", "rust_core_vector_package_review", "protected_region_effect_geometry_lock", "no_effect_mockup_as_vector_source"],
+    "qualityGates": ["one_active_correction_per_iteration", "unchanged_item_regression_check", "feedback_stage_classification", "exact_wordmark_from_authoritative_source", "vector_preview_matches_reconstruction_source", "effect_preview_preserves_locked_geometry", "no_dimension_watermark_or_ui_drift"],
+    "semanticRequired": true,
+    "referenceRequired": false
+  },
+  {
+    "name": "consumer feedback profile alias",
+    "productLineId": "consumer_feedback",
+    "expectedOutputMode": "mixed",
+    "expectedSupportedChannels": ["zbj", "epwk", "hepta", "manual"],
+    "requiredGates": ["feedback_history_refresh", "feedback_target_artifact_binding", "atomic_correction_queue", "baseline_invariant_lock", "feedback_authoritative_logo_source_lock", "model_logo_reconstruction_source_hash", "rust_core_vector_package_review", "protected_region_effect_geometry_lock", "no_effect_mockup_as_vector_source"],
+    "qualityGates": ["one_active_correction_per_iteration", "unchanged_item_regression_check", "feedback_stage_classification", "exact_wordmark_from_authoritative_source", "vector_preview_matches_reconstruction_source", "effect_preview_preserves_locked_geometry", "no_dimension_watermark_or_ui_drift"],
+    "semanticRequired": true,
+    "referenceRequired": false
+  },
+  {
+    "name": "buyer feedback profile alias",
+    "productLineId": "buyer-feedback",
+    "expectedOutputMode": "mixed",
+    "expectedSupportedChannels": ["zbj", "epwk", "hepta", "manual"],
+    "requiredGates": ["feedback_history_refresh", "feedback_target_artifact_binding", "atomic_correction_queue", "baseline_invariant_lock", "feedback_authoritative_logo_source_lock", "model_logo_reconstruction_source_hash", "rust_core_vector_package_review", "protected_region_effect_geometry_lock", "no_effect_mockup_as_vector_source"],
+    "qualityGates": ["one_active_correction_per_iteration", "unchanged_item_regression_check", "feedback_stage_classification", "exact_wordmark_from_authoritative_source", "vector_preview_matches_reconstruction_source", "effect_preview_preserves_locked_geometry", "no_dimension_watermark_or_ui_drift"],
+    "semanticRequired": true,
+    "referenceRequired": false
+  },
+  {
+    "name": "legacy post-submission hyphen profile alias",
+    "productLineId": "post-submission-revision",
+    "expectedOutputMode": "mixed",
+    "expectedSupportedChannels": ["zbj", "epwk", "hepta", "manual"],
+    "requiredGates": ["feedback_history_refresh", "feedback_target_artifact_binding", "atomic_correction_queue", "baseline_invariant_lock", "feedback_authoritative_logo_source_lock", "model_logo_reconstruction_source_hash", "rust_core_vector_package_review", "protected_region_effect_geometry_lock", "no_effect_mockup_as_vector_source"],
+    "qualityGates": ["one_active_correction_per_iteration", "unchanged_item_regression_check", "feedback_stage_classification", "exact_wordmark_from_authoritative_source", "vector_preview_matches_reconstruction_source", "effect_preview_preserves_locked_geometry", "no_dimension_watermark_or_ui_drift"],
+    "semanticRequired": true,
+    "referenceRequired": false
+  },
+  {
+    "name": "acceptance delivery profile",
+    "productLineId": "acceptance_delivery",
+    "expectedOutputMode": "mixed",
+    "expectedSupportedChannels": ["zbj", "hepta"],
+    "requiredGates": ["current_artifact_binding", "acceptance_current_artifact_binding", "delivery_file_manifest"],
+    "qualityGates": ["final_delivery_file_integrity", "no_stale_pitch_package_binding"],
+    "semanticRequired": false,
+    "referenceRequired": false
+  }
+]

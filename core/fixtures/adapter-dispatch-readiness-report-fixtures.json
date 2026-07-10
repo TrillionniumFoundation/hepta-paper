@@ -1,0 +1,97 @@
+[
+  {
+    "name": "hepta dispatch readiness ready",
+    "runnerRegistryFixture": "default runner registry ready",
+    "runnerSelectionFixture": "select hepta deploy runner",
+    "dispatchEnvelopeFixture": "hepta dispatch envelope ready after replay guard",
+    "dispatchAssignmentFixture": "hepta dispatch assignment ready with selection",
+    "expectedStatus": "ready_adapter_dispatch_readiness_report",
+    "expectedRunnerId": "hepta.delivery-runner",
+    "expectedReadyForExternalRunner": true,
+    "expectedBlockers": []
+  },
+  {
+    "name": "zbj dispatch readiness ready after repeat approval",
+    "runnerRegistryFixture": "default runner registry ready",
+    "runnerSelectionFixture": "select zbj submit runner",
+    "dispatchEnvelopeFixture": "zbj dispatch envelope ready after repeat approval",
+    "dispatchAssignmentFixture": "zbj dispatch assignment ready with selection",
+    "expectedStatus": "ready_adapter_dispatch_readiness_report",
+    "expectedRunnerId": "zbj-auto-intake.live-runner",
+    "expectedReadyForExternalRunner": true,
+    "expectedBlockers": []
+  },
+  {
+    "name": "readiness blocks mismatched assignment selection",
+    "runnerRegistryFixture": "default runner registry ready",
+    "runnerSelectionFixture": "select zbj submit runner",
+    "dispatchEnvelopeFixture": "hepta dispatch envelope ready after replay guard",
+    "dispatchAssignmentFixture": "assignment blocks mismatched runner selection",
+    "expectedStatus": "blocked_adapter_dispatch_readiness_report",
+    "expectedRunnerId": "zbj-auto-intake.live-runner",
+    "expectedReadyForExternalRunner": false,
+    "expectedFailedChecks": [
+      "dispatch_assignment_ready",
+      "selection_matches_dispatch_route",
+      "selection_matches_assignment_runner"
+    ],
+    "expectedBlockers": [
+      "dispatch_readiness_check_failed"
+    ]
+  },
+  {
+    "name": "readiness blocks unavailable selection",
+    "runnerRegistryFixture": "default runner registry ready",
+    "runnerSelectionFixture": "selection blocks unsupported epwk submit",
+    "dispatchEnvelopeFixture": "hepta dispatch envelope ready after replay guard",
+    "dispatchAssignmentFixture": "assignment blocks unavailable runner selection",
+    "expectedStatus": "blocked_adapter_dispatch_readiness_report",
+    "expectedRunnerId": "hepta.delivery-runner",
+    "expectedReadyForExternalRunner": false,
+    "expectedFailedChecks": [
+      "runner_selection_ready",
+      "dispatch_assignment_ready",
+      "selection_matches_dispatch_route",
+      "selection_matches_assignment_runner",
+      "registry_route_matches_assignment"
+    ],
+    "expectedBlockers": [
+      "dispatch_readiness_check_failed"
+    ]
+  },
+  {
+    "name": "readiness blocks replay-conflict envelope",
+    "runnerRegistryFixture": "default runner registry ready",
+    "runnerSelectionFixture": "select zbj submit runner",
+    "dispatchEnvelopeFixture": "dispatch blocks replay guard conflict",
+    "dispatchAssignmentFixture": "assignment blocks replay-conflict envelope",
+    "expectedStatus": "blocked_adapter_dispatch_readiness_report",
+    "expectedRunnerId": "zbj-auto-intake.live-runner",
+    "expectedReadyForExternalRunner": false,
+    "expectedFailedChecks": [
+      "dispatch_envelope_ready",
+      "dispatch_assignment_ready"
+    ],
+    "expectedBlockers": [
+      "dispatch_readiness_check_failed"
+    ]
+  },
+  {
+    "name": "readiness blocks core local runner location",
+    "runnerRegistryFixture": "default runner registry ready",
+    "runnerSelectionFixture": "select zbj submit runner",
+    "dispatchEnvelopeFixture": "zbj dispatch envelope ready after repeat approval",
+    "dispatchAssignmentFixture": "assignment blocks core local runner location",
+    "expectedStatus": "blocked_adapter_dispatch_readiness_report",
+    "expectedRunnerId": "zbj-auto-intake.live-runner",
+    "expectedReadyForExternalRunner": false,
+    "expectedFailedChecks": [
+      "dispatch_assignment_ready",
+      "runner_location_external_workspace",
+      "selection_matches_assignment_runner"
+    ],
+    "expectedBlockers": [
+      "dispatch_readiness_check_failed"
+    ]
+  }
+]

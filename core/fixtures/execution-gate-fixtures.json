@@ -1,0 +1,210 @@
+[
+  {
+    "name": "safe plan blocks provider spend",
+    "channelId": "zbj",
+    "action": "provider_spend",
+    "policy": "safe-plan",
+    "approval": {
+      "approvalHash": "approval:safe-plan",
+      "policy": "safe-plan",
+      "action": "provider_spend",
+      "ok": true
+    },
+    "evidenceBundle": {
+      "evidenceHash": "evidence:safe-plan",
+      "approvalHash": "approval:safe-plan",
+      "action": "provider_spend",
+      "ok": true
+    },
+    "expectedDecision": "blocked",
+    "expectedBlockers": ["policy_does_not_allow_action"]
+  },
+  {
+    "name": "provider spend needs approval",
+    "channelId": "zbj",
+    "action": "provider_spend",
+    "policy": "spend-allowed",
+    "expectedDecision": "blocked",
+    "expectedBlockers": [
+      "approval_required",
+      "fresh_evidence_required",
+      "prompt_generation_spend_plan_prompt_chain_required",
+      "prompt_generation_spend_generation_job_required"
+    ]
+  },
+  {
+    "name": "live prepare needs approval",
+    "channelId": "zbj",
+    "action": "live_prepare",
+    "policy": "prepare-allowed",
+    "expectedDecision": "needs_approval",
+    "expectedBlockers": ["approval_required", "fresh_evidence_required"]
+  },
+  {
+    "name": "provider spend blocks approval evidence without prompt chain",
+    "channelId": "zbj",
+    "action": "provider_spend",
+    "policy": "spend-allowed",
+    "estimatedCostUsd": 0.4,
+    "approval": {
+      "approvalHash": "approval:spend",
+      "policy": "spend-allowed",
+      "action": "provider_spend",
+      "budgetUsd": 1,
+      "ok": true
+    },
+    "evidenceBundle": {
+      "evidenceHash": "evidence:spend",
+      "approvalHash": "approval:spend",
+      "action": "provider_spend",
+      "ok": true
+    },
+    "expectedDecision": "blocked",
+    "expectedBlockers": [
+      "prompt_generation_spend_plan_prompt_chain_required",
+      "prompt_generation_spend_generation_job_required"
+    ]
+  },
+  {
+    "name": "live prepare allowed with reviewed package",
+    "channelId": "zbj",
+    "action": "live_prepare",
+    "policy": "prepare-allowed",
+    "approval": {
+      "approvalHash": "approval:prepare",
+      "policy": "prepare-allowed",
+      "action": "live_prepare",
+      "ok": true
+    },
+    "evidenceBundle": {
+      "evidenceHash": "evidence:prepare",
+      "approvalHash": "approval:prepare",
+      "action": "live_prepare",
+      "ok": true
+    },
+    "expectedDecision": "allow",
+    "expectedBlockers": []
+  },
+  {
+    "name": "live submit requires prepare evidence",
+    "channelId": "zbj",
+    "action": "live_submit",
+    "policy": "submit-allowed",
+    "approval": {
+      "approvalHash": "approval:submit-missing-prepare",
+      "policy": "submit-allowed",
+      "action": "live_submit",
+      "ok": true
+    },
+    "evidenceBundle": {
+      "evidenceHash": "evidence:submit-missing-prepare",
+      "approvalHash": "approval:submit-missing-prepare",
+      "action": "live_submit",
+      "ok": true
+    },
+    "duplicatePreflight": {
+      "ok": true,
+      "totalMyWorks": 0
+    },
+    "expectedDecision": "blocked",
+    "expectedBlockers": ["prepare_evidence_required"]
+  },
+  {
+    "name": "live submit allowed after prepare and duplicate preflight",
+    "channelId": "zbj",
+    "action": "live_submit",
+    "policy": "submit-allowed",
+    "approval": {
+      "approvalHash": "approval:submit",
+      "policy": "submit-allowed",
+      "action": "live_submit",
+      "ok": true
+    },
+    "evidenceBundle": {
+      "evidenceHash": "evidence:submit",
+      "approvalHash": "approval:submit",
+      "action": "live_submit",
+      "ok": true
+    },
+    "prepareEvidence": {
+      "ok": true,
+      "filenames": ["example-01.png", "example-02.png"]
+    },
+    "duplicatePreflight": {
+      "ok": true,
+      "totalMyWorks": 0
+    },
+    "expectedDecision": "allow",
+    "expectedBlockers": []
+  },
+  {
+    "name": "epwk live submit partial",
+    "channelId": "epwk",
+    "action": "live_submit",
+    "policy": "submit-allowed",
+    "approval": {
+      "approvalHash": "approval:epwk-submit",
+      "policy": "submit-allowed",
+      "action": "live_submit",
+      "ok": true
+    },
+    "evidenceBundle": {
+      "evidenceHash": "evidence:epwk-submit",
+      "approvalHash": "approval:epwk-submit",
+      "action": "live_submit",
+      "ok": true
+    },
+    "prepareEvidence": {
+      "ok": true,
+      "filenames": ["example-01.png", "example-02.png"]
+    },
+    "duplicatePreflight": {
+      "ok": true,
+      "totalMyWorks": 0
+    },
+    "expectedDecision": "allow",
+    "expectedBlockers": []
+  },
+  {
+    "name": "customer message requires preview",
+    "channelId": "zbj",
+    "action": "customer_message",
+    "policy": "submit-allowed",
+    "approval": {
+      "approvalHash": "approval:message",
+      "policy": "submit-allowed",
+      "action": "customer_message",
+      "ok": true
+    },
+    "evidenceBundle": {
+      "evidenceHash": "evidence:message",
+      "approvalHash": "approval:message",
+      "action": "customer_message",
+      "ok": true
+    },
+    "expectedDecision": "blocked",
+    "expectedBlockers": ["message_preview_required"]
+  },
+  {
+    "name": "acceptance apply allowed with delivery binding",
+    "channelId": "zbj",
+    "action": "acceptance_apply",
+    "policy": "acceptance-allowed",
+    "packageRole": "delivery",
+    "deliveryArtifactBound": true,
+    "approval": {
+      "approvalHash": "approval:acceptance",
+      "policy": "acceptance-allowed",
+      "action": "acceptance_apply",
+      "ok": true
+    },
+    "evidenceBundle": {
+      "evidenceHash": "evidence:acceptance",
+      "approvalHash": "approval:acceptance",
+      "action": "acceptance_apply",
+      "ok": true
+    },
+    "expectedDecision": "allow",
+    "expectedBlockers": []
+  }
+]

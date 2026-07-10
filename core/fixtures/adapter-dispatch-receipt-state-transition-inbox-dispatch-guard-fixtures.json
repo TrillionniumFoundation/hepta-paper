@@ -1,0 +1,32 @@
+[
+  {
+    "name": "dispatch-guard transition accepts repeat approved proof",
+    "dispatchGuardProofInboxFixture": "dispatch-guard proof accepts repeat approved receipt",
+    "expectedStatus": "received_dispatch_receipt_state_transition",
+    "expectedNextStep": "external_action_ledger_ready",
+    "expectedActionId": "hepta.deliveryDeploy",
+    "expectedBlockers": []
+  },
+  {
+    "name": "dispatch-guard transition blocks archived replay proof inbox",
+    "dispatchGuardProofInboxFixture": "dispatch-guard proof blocks archived replay receipt inbox",
+    "expectedStatus": "blocked_dispatch_receipt_state_transition_inbox",
+    "expectedNextStep": "blocked",
+    "expectedActionId": "hepta.deliveryDeploy",
+    "expectedBlockers": [
+      "dispatch_proof_inbox_not_received",
+      "dispatch_proof_inbox_not_transition_ready"
+    ]
+  },
+  {
+    "name": "dispatch-guard transition blocks candidate mismatch proof inbox",
+    "dispatchGuardProofInboxFixture": "dispatch-guard proof blocks candidate mismatch receipt inbox",
+    "expectedStatus": "blocked_dispatch_receipt_state_transition_inbox",
+    "expectedNextStep": "blocked",
+    "expectedActionId": "zbj.pitchSubmitLive",
+    "expectedBlockers": [
+      "dispatch_proof_inbox_not_received",
+      "dispatch_proof_inbox_not_transition_ready"
+    ]
+  }
+]

@@ -54,5 +54,5 @@ const receipt = { ...payload, legacyArchiveReadOnlyReceiptHash: hashRecord('Lega
 const signature = signReleasePayload(receipt, runtimeRoot);
 fs.writeFileSync(path.join(archiveRoot, 'LEGACY_ARCHIVE_READ_ONLY_RECEIPT.json'), `${JSON.stringify(receipt, null, 2)}\n`);
 fs.writeFileSync(path.join(archiveRoot, 'LEGACY_ARCHIVE_READ_ONLY_SIGNATURE.json'), `${JSON.stringify(signature, null, 2)}\n`);
-fs.chmodSync(archivePath, 0o444);
+if ((fs.statSync(archivePath).mode & 0o777) !== 0o444) fs.chmodSync(archivePath, 0o444);
 process.stdout.write(`${JSON.stringify({ ...receipt, signatureFingerprint: signature.publicKeyFingerprint }, null, 2)}\n`);

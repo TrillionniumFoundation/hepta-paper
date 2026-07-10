@@ -1,8 +1,8 @@
 {
   "version": 1,
   "kind": "HeptaPaperCoreAcceptedBaseline",
-  "createdAt": "2026-07-10T02:36:13.581Z",
-  "acceptedFromGitCommit": "a1df01cf1fde2aff6b0019c38561b1a1bf5bb375",
+  "createdAt": "2026-07-10T02:44:17.115Z",
+  "acceptedFromGitCommit": "837c5e79d7abab425b9c5cbdc2e68143f8f06722",
   "trustBasis": "independent_git_history_plus_content_hash_manifest",
   "provenance": {
     "upstreamGitHead": "3f90aa277a9a1bde6898dc6ddd9d25d49fa94f30",

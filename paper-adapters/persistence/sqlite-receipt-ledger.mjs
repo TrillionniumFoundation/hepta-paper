@@ -6,7 +6,7 @@ function receiptHash(receipt) {
   return receipt.receiptHash
     || receipt.writeReceiptHash
     || receipt.jobReceiptHash
-    || Object.entries(receipt).find(([key]) => key.endsWith('ReceiptHash'))?.[1]
+    || Object.entries(receipt).reverse().find(([key]) => key.endsWith('ReceiptHash'))?.[1]
     || hashRecord(receipt.kind || 'Receipt', receipt);
 }
 

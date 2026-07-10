@@ -21,7 +21,7 @@ import { buildEvidenceIntake } from '../../paper-domain/research/evidence-ingest
 import { buildEvidenceQualityGate } from '../../paper-domain/research/evidence-quality-gate.mjs';
 import { buildExperimentRegistry } from '../../paper-domain/research/experiment-registry.mjs';
 import { buildResearchChangeProposal } from '../../paper-domain/research/change-proposal.mjs';
-import { buildResearchGapPlan } from '../../paper-application/research/gap-planner.mjs';
+import { bindResearchGapPlan, buildResearchGapPlan } from '../../paper-application/research/gap-planner.mjs';
 import { verifyEvidenceBatch } from './evidence-verifier.mjs';
 import { defaultPaperRuntimeRoot } from '../../paper-core/src/workspace-layout.mjs';
 
@@ -171,6 +171,8 @@ export async function runResearchVerifyAdapter({
   authorityVerifier = null,
   jobReceiptStore = null,
   artifactRepositoryFactory = null,
+  receiptLedger = null,
+  clock = null,
 } = {}) {
   const sourceRoot = repoPath(root, row.task.sourceWorkspace);
   const resolvedRuntimeRoot = runtimeRoot
@@ -270,6 +272,15 @@ export async function runResearchVerifyAdapter({
     nativeWorkerReceipts: nativeResearchWorkerExecution.workerReceipts,
   });
   const researchGapPlan = buildResearchGapPlan({ paperTask: row.task, claimRegistry, evidenceQualityGate });
+  const researchGapPlanBinding = jobReceiptStore && receiptLedger && clock
+    ? bindResearchGapPlan({
+      plan: researchGapPlan,
+      jobReceiptStore,
+      receiptLedger,
+      clock,
+      workerId: executeResearchWorkers ? 'research-gap-planner' : null,
+    })
+    : null;
   const experimentRegistry = buildExperimentRegistry({ paperTask: row.task, artifacts: evidenceRecords });
   const researchChangeProposal = buildResearchChangeProposal({
     paperTask: row.task,
@@ -328,6 +339,7 @@ export async function runResearchVerifyAdapter({
       evidenceIntake,
       evidenceQualityGate,
       researchGapPlan,
+      researchGapPlanBinding,
       experimentRegistry,
       researchChangeProposal,
       evidenceVerificationReceipts,

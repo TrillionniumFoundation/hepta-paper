@@ -9,14 +9,18 @@ dry-run orchestration remain available.
 
 - Capability v3 now reports four separate state axes: `decision_mapped=249`,
   `contract_defined=249`, `implementation_verified=161`,
-  `implementation_not_applicable=88`, and `owner_accepted=0`. The old mixed
-  `coverageStatus` field is not used.
+  `implementation_not_applicable=88`, `operationally_proven=0`, and
+  `owner_accepted=0`. The old mixed `coverageStatus` field is not used.
+  `implementation_verified` now requires an executed ledger receipt binding
+  the passing test hash and current target hashes; file/test presence alone
+  cannot set it. Conformance does not imply production operation.
 - Fourteen capability families have their own conformance suite. It currently
   runs 15 tests, including the 40 capability-level coverage obligations and a
   real OS-sandbox execution when a local kernel backend is available.
-- Batch stage handlers and the complete local diagnostic review loop are in
-  `paper-application/use-cases/`; the batch application retains composition,
-  inventory iteration and summary assembly.
+- Batch service bootstrap, state projection and report writing are separate
+  application modules. Stage handlers are in `paper-application/use-cases/`,
+  and the local diagnostic loop delegates each round to a ledger-backed round
+  executor. The batch application retains composition and inventory iteration.
 - Store, artifact repository, clock, hasher, authority verifier, receipt
   ledger, job store and submission delivery store are injected through one
   `ExecutionContext`. Non-persistence adapters no longer construct SQLite
@@ -26,6 +30,12 @@ dry-run orchestration remain available.
   release locks. Backup and restore-drill receipts also enter the ledger.
 - ClaimGraph validation, byte/hash/provenance evidence verification, formal
   experiment aggregation and Lake certificate/replay checks are implemented.
+- Artifact storage is content-addressed with immutable manifests, retention/GC
+  and mandatory ledger injection. Claim versions survive registry rebuilds;
+  transitions and gap-plan job bindings produce persistent receipts.
+- The OS sandbox mounts source read-only, copies execution into an ephemeral
+  work root, separates output, omits host `/etc`, and rejects any before/after
+  source Merkle drift.
 - The old research worker catalog is no longer scanned at runtime.
 - Paper production now uses the small `workflow-kernel`; the full vendored
   core is explicitly a reference fork.
@@ -40,7 +50,9 @@ dry-run orchestration remain available.
 These results make the old executable control plane archive-ready, not
 functionally equivalent. Owner acceptance remains 0/249, the provider executor
 remains outside this repository and unimplemented, and real trust/evidence/
-referee/live-authorization inventory remains empty.
+referee/live-authorization inventory remains empty. One real paper now has a
+verified native source-integrity worker receipt, but this is not academic
+evidence or authorization.
 
 ## P0 results
 
@@ -187,9 +199,10 @@ unbounded-file blocker.
   subprocess importers, and zero network-capable sources). All are explicitly
   retired from native execution authority. They are not re-enabled or scanned
   by production runtime. A separate
-  hepta-native allowlisted worker engine now exists; current managed papers
-  still have executed native-worker count 0 and academic-evidence eligibility
-  false until each supplies a valid plan, receipts, and signed attestation.
+  hepta-native allowlisted worker engine now exists. A controlled pilot for
+  `A_Theory_of__Expectations` executed one source-integrity worker and recorded
+  its source-bound receipt; academic-evidence eligibility remains false until
+  a real signed attestation and claim-relevant evidence are supplied.
 - Shared hash-bound behavior tests execute once per audit and are reused across
   rows, preventing a 263-row matrix from repeatedly running identical suites.
 - Current disposition-matrix blocker counts: P0 = 0, P1 = 0. The old control
@@ -226,7 +239,7 @@ unbounded-file blocker.
   conformance suite currently covers stage ordering, ports, delivery safety,
   bounded workers, research contracts, journal schema, and forbidden legacy
   acceptance/SQLite bypass patterns. The release verification run reports
-  90.94% line coverage for the selected architecture modules; all 73 checked
+  82.27% line coverage for the selected architecture modules; all 74 checked
   production MJS modules remain within the 64 KiB budget.
 
 ## Verification
@@ -253,9 +266,10 @@ npm test
 ```
 
 The external submission executor remains absent. Matrix disposition and the
-four authority mechanisms are implemented, but the 20 active candidates still
-lack paper-specific native-worker receipts, cryptographically attested academic
-evidence, independent referee acceptances, and dual-signed live authorization.
+four authority mechanisms are implemented. One of the 20 active candidates now
+has a paper-specific native source-integrity worker receipt; all 20 still lack
+cryptographically attested academic evidence, independent referee acceptances,
+and dual-signed live authorization.
 The runtime trust store is not provisioned: all four required public-key roles
 are currently missing. Final read-only replay reports approval/evidence/
 independent-referee/live-authorization blocked for all 20 active candidates,

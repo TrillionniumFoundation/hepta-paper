@@ -4,6 +4,8 @@ import { runPaperBatch, renderBatchConsole, PAPER_BATCH_MODES } from '../src/pap
 import { ensureDir } from '../src/runtime/file-utils.mjs';
 import { writeJsonFile, writeTextFile } from '../../paper-adapters/artifacts/write-artifact.mjs';
 import { runPaperProposalAdapter } from '../../paper-adapters/proposal/index.mjs';
+import { bootstrapPaperExecutionContext } from '../../paper-application/bootstrap/service-bootstrap.mjs';
+import { withArtifactWriteContext } from '../../paper-adapters/artifacts/artifact-write-context.mjs';
 import {
   defaultPaperAssetRoot,
   defaultPaperRuntimeRoot,
@@ -110,26 +112,27 @@ async function main() {
   }
   if (command === 'proposal') {
     const root = args.root ? path.resolve(args.root) : defaultPaperAssetRoot();
-    const report = await runPaperProposalAdapter({
-      root,
-      runtimeRoot: args['runtime-root'] ? path.resolve(args['runtime-root']) : defaultPaperRuntimeRoot(),
-      idea: args.idea,
-      paperId: (args.paper || [])[0] || null,
-      title: args.title || null,
-      discipline: args.discipline || null,
-      venue: args.venue || null,
-      paperType: args['paper-type'] || null,
-      materials: args.material || [],
-      constraints: args.constraint || [],
-      riskPreference: args['risk-preference'] || null,
-      approved: Boolean(args.approved),
-      materializeSource: Boolean(args['materialize-source']),
-      stageInventory: Boolean(args['stage-inventory']),
-    });
-    if (args['write-report']) await writeProposalReport({
-      root,
-      runtimeRoot: args['runtime-root'] ? path.resolve(args['runtime-root']) : defaultPaperRuntimeRoot(),
-      report,
+    const runtimeRoot = args['runtime-root'] ? path.resolve(args['runtime-root']) : defaultPaperRuntimeRoot();
+    const context = bootstrapPaperExecutionContext({ root, runtimeRoot, mode: 'proposal', execute: Boolean(args['materialize-source']), writeReport: Boolean(args['write-report']) });
+    const report = await withArtifactWriteContext(context.services, async () => {
+      const proposal = await runPaperProposalAdapter({
+        root,
+        runtimeRoot,
+        idea: args.idea,
+        paperId: (args.paper || [])[0] || null,
+        title: args.title || null,
+        discipline: args.discipline || null,
+        venue: args.venue || null,
+        paperType: args['paper-type'] || null,
+        materials: args.material || [],
+        constraints: args.constraint || [],
+        riskPreference: args['risk-preference'] || null,
+        approved: Boolean(args.approved),
+        materializeSource: Boolean(args['materialize-source']),
+        stageInventory: Boolean(args['stage-inventory']),
+      });
+      if (args['write-report']) await writeProposalReport({ root, runtimeRoot, report: proposal });
+      return proposal;
     });
     process.stdout.write(args.json ? JSON.stringify(report, null, 2) + '\n' : renderProposalConsole(report));
     return;

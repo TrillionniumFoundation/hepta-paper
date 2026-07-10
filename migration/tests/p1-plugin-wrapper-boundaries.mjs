@@ -18,11 +18,15 @@ import {
   PAPER_BATCH_MODES,
   runPaperBatch,
 } from '../../paper-core/src/paper-batch-runner.mjs';
+import { bootstrapPaperExecutionContext } from '../../paper-application/bootstrap/service-bootstrap.mjs';
+import { enterArtifactWriteContext } from '../../paper-adapters/artifacts/artifact-write-context.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const root = defaultLegacyPaperFactoryRoot();
 const runtimeRoot = path.join(workspaceRoot, 'runtime');
 const pluginRoot = path.join(root, 'plugins', 'core');
+const executionContext = bootstrapPaperExecutionContext({ root, runtimeRoot, mode: 'migration-plugin-boundary-test' });
+enterArtifactWriteContext(executionContext.services);
 
 function parseScalar(value) {
   const text = String(value || '').trim();

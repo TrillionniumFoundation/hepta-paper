@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { HEPTA_WORKSPACE_ROOT } from '../../paper-core/src/workspace-layout.mjs';
 
 function sha256File(file) {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
@@ -29,7 +30,7 @@ function validateMatrixEntry({
   const sourcePath = String(row?.source?.path || '');
   const targetPath = String(row?.target?.path || '');
   const sourceFile = path.resolve(root, sourcePath);
-  const targetFile = path.resolve(root, targetPath);
+  const targetFile = path.resolve(HEPTA_WORKSPACE_ROOT, targetPath.replace(/^hepta-paper-workspace[\\/]/, ''));
   const sourceSymbols = Array.isArray(row?.source?.symbols) ? row.source.symbols.filter(Boolean) : [];
   const targetSymbols = Array.isArray(row?.target?.symbols) ? row.target.symbols.filter(Boolean) : [];
   const behaviorTests = Array.isArray(row?.behaviorTests) ? row.behaviorTests : [];
@@ -140,7 +141,7 @@ function validateMatrixEntry({
 }
 
 export function buildMigrationMatrixAudit({ root, entries, matrixOverride = null }) {
-  const workspaceRoot = path.join(root, 'hepta-paper-workspace');
+  const workspaceRoot = HEPTA_WORKSPACE_ROOT;
   const matrixPath = path.join(workspaceRoot, 'migration', 'legacy-semantic-migration-matrix.json');
   const backlog = migrationBacklogEntries(entries);
   let matrix = null;

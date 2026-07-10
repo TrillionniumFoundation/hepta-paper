@@ -23,9 +23,20 @@ export function createSqliteSubmissionDeliveryStore({ store, receiptLedger, cloc
       if (!message) throw new Error('outbox message missing');
       if (response?.dispatchAuthorizationHash !== message.dispatch_hash) throw new Error('response dispatch hash mismatch');
       if (!response?.responseId || !['submitted', 'rejected', 'failed', 'cancelled'].includes(response.outcome)) throw new Error('invalid executor response');
-      if (response.outcome === 'submitted' && !response.providerReceiptHash) throw new Error('submitted response requires provider receipt hash');
+      if (response.outcome === 'submitted' && (!response.providerReceiptHash || !response.providerReceipt)) throw new Error('submitted response requires provider receipt and hash');
+      if (response.outcome === 'submitted' && hashRecord('ProviderSubmissionReceipt', response.providerReceipt) !== response.providerReceiptHash) throw new Error('provider receipt hash mismatch');
       const now = clock.nowIso();
-      execute(`BEGIN IMMEDIATE; INSERT OR IGNORE INTO submission_inbox(response_id,message_id,dispatch_hash,provider_receipt_hash,outcome,response_json,received_at) VALUES(${sqlText(response.responseId)},${sqlText(messageId)},${sqlText(message.dispatch_hash)},${response.providerReceiptHash ? sqlText(response.providerReceiptHash) : 'NULL'},${sqlText(response.outcome)},${sqlJson(response)},${sqlText(now)}); UPDATE submission_outbox SET status=${sqlText(response.outcome === 'failed' ? 'retryable_failure' : 'responded')},updated_at=${sqlText(now)} WHERE message_id=${sqlText(messageId)}; COMMIT;`);
+      const existing = store.query(`SELECT * FROM submission_inbox WHERE response_id=${sqlText(response.responseId)} LIMIT 1;`).rows[0] || null;
+      if (existing) {
+        const identical = existing.message_id === messageId
+          && existing.dispatch_hash === message.dispatch_hash
+          && existing.outcome === response.outcome
+          && (existing.provider_receipt_hash || null) === (response.providerReceiptHash || null)
+          && existing.response_json === JSON.stringify(response);
+        if (!identical) throw new Error('duplicate executor response conflict');
+      } else {
+        execute(`BEGIN IMMEDIATE; INSERT INTO submission_inbox(response_id,message_id,dispatch_hash,provider_receipt_hash,outcome,response_json,received_at) VALUES(${sqlText(response.responseId)},${sqlText(messageId)},${sqlText(message.dispatch_hash)},${response.providerReceiptHash ? sqlText(response.providerReceiptHash) : 'NULL'},${sqlText(response.outcome)},${sqlJson(response)},${sqlText(now)}); UPDATE submission_outbox SET status=${sqlText(response.outcome === 'failed' ? 'retryable_failure' : 'responded')},updated_at=${sqlText(now)} WHERE message_id=${sqlText(messageId)}; COMMIT;`);
+      }
       const receipt = { version: 1, kind: 'SubmissionResponsePersistedReceipt', status: 'submission_response_persisted', messageId, responseId: response.responseId, outcome: response.outcome, dispatchAuthorizationHash: message.dispatch_hash, providerReceiptHash: response.providerReceiptHash || null, createdAt: now };
       return receiptLedger.record({ ...receipt, receiptHash: hashRecord('SubmissionResponsePersistedReceipt', receipt) }, { stream: 'submission-delivery', paperId: message.paper_id });
     },
@@ -76,6 +87,9 @@ export function createSqliteSubmissionDeliveryStore({ store, receiptLedger, cloc
     },
     listOutbox({ status = null, limit = 100 } = {}) {
       return store.query(`SELECT * FROM submission_outbox${status ? ` WHERE status=${sqlText(status)}` : ''} ORDER BY created_at LIMIT ${Math.max(1, Math.min(1000, Number(limit) || 100))};`).rows;
+    },
+    recoverPending({ at = clock.nowIso(), limit = 100 } = {}) {
+      return store.query(`SELECT * FROM submission_outbox WHERE status IN ('pending','retryable_failure') AND (next_attempt_at IS NULL OR next_attempt_at<=${sqlText(at)}) ORDER BY created_at LIMIT ${Math.max(1, Math.min(1000, Number(limit) || 100))};`).rows;
     },
   });
 }

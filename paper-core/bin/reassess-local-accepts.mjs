@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { writeJsonFile } from '../../paper-adapters/artifacts/write-artifact.mjs';
 import { fileURLToPath } from 'node:url';
+import { bootstrapPaperExecutionContext } from '../../paper-application/bootstrap/service-bootstrap.mjs';
+import { withArtifactWriteContext } from '../../paper-adapters/artifacts/artifact-write-context.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const runtimeRoot = path.join(workspaceRoot, 'runtime');
@@ -138,9 +140,10 @@ const report = {
 };
 report.reportHash = `sha256:${crypto.createHash('sha256').update(JSON.stringify(report)).digest('hex')}`;
 const outputPath = path.join(runtimeRoot, 'audits', 'LOCAL_ACCEPT_REASSESSMENT.json');
-await writeJsonFile(outputPath, report, {
+const context = bootstrapPaperExecutionContext({ root: workspaceRoot, runtimeRoot, mode: 'admin-reassessment', writeReport: true });
+await withArtifactWriteContext(context.services, () => writeJsonFile(outputPath, report, {
   scopeRoot: runtimeRoot,
   role: 'local_accept_reassessment',
   atomic: true,
-});
+}));
 process.stdout.write(`${JSON.stringify({ ...report.summary, status: report.status, outputPath }, null, 2)}\n`);

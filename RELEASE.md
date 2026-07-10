@@ -1,6 +1,6 @@
 # Release process
 
-Version 0.3.0 is a capability-runtime and non-destructive retirement
+Version 0.4.0 is an operational-proof and runtime-boundary hardening
 checkpoint, not a live-submission release.
 
 Run `npm run release:verify` in the workspace with the frozen legacy source

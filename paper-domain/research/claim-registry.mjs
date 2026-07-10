@@ -37,6 +37,7 @@ export function buildClaimRegistry({ paperTask, claims = [] } = {}) {
     text: String(claim.text || claim.summary || ''),
     sourceLocator: claim.sourceLocator || claim.source_locator || null,
     status: claim.status || 'candidate',
+    version: Math.max(1, Number(claim.version || 1)),
     dependencyIds: Array.isArray(claim.dependencyIds) ? [...claim.dependencyIds].map(String).sort() : [],
   }));
   const ids = records.map((claim) => claim.claimId);
@@ -75,8 +76,28 @@ export function transitionClaim(registry, { claimId, toStatus, expectedVersion =
   const claims = registry.claims.map((claim, claimIndex) => claimIndex === index
     ? { ...claim, status: String(toStatus), version: currentVersion + 1 }
     : claim);
-  return buildClaimRegistry({ paperTask: { paperId: registry.paperId }, claims: claims.map((claim) => ({
+  const nextRegistry = buildClaimRegistry({ paperTask: { paperId: registry.paperId }, claims: claims.map((claim) => ({
     ...claim,
     id: claim.claimId,
   })) });
+  const receiptPayload = {
+    version: 1,
+    kind: 'ClaimTransitionReceipt',
+    paperId: registry.paperId,
+    claimId: current.claimId,
+    fromStatus: current.status,
+    toStatus: String(toStatus),
+    priorVersion: currentVersion,
+    nextVersion: currentVersion + 1,
+    priorRegistryHash: registry.claimRegistryHash,
+    nextRegistryHash: nextRegistry.claimRegistryHash,
+    status: 'claim_transition_recorded',
+  };
+  return {
+    ...nextRegistry,
+    transitionReceipt: {
+      ...receiptPayload,
+      claimTransitionReceiptHash: hashRecord('ClaimTransitionReceipt', receiptPayload),
+    },
+  };
 }

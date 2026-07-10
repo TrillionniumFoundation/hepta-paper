@@ -1,4 +1,4 @@
-import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
+import { hashRecord as hashPaperRecord } from '../../workflow-kernel/record-hash.mjs';
 import { buildSubmissionReleaseLock } from './release-lock.mjs';
 
 export function buildSubmissionDispatchAuthorization({
@@ -51,6 +51,13 @@ export function buildExecutorResponseIntake({ dispatchAuthorization, response = 
   }
   if (response && !['submitted', 'rejected', 'failed', 'cancelled'].includes(response.outcome)) {
     blockers.push('executor_response_outcome_invalid');
+  }
+  if (response?.outcome === 'submitted' && (!response.providerReceiptHash || !response.providerReceipt)) {
+    blockers.push('provider_receipt_missing');
+  }
+  if (response?.outcome === 'submitted' && response.providerReceipt
+    && hashPaperRecord('ProviderSubmissionReceipt', response.providerReceipt) !== response.providerReceiptHash) {
+    blockers.push('provider_receipt_hash_invalid');
   }
   const record = {
     version: 1,

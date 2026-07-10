@@ -1,4 +1,4 @@
-import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
+import { hashRecord as hashPaperRecord } from '../../workflow-kernel/record-hash.mjs';
 
 export function buildSubmissionReleaseLock({ paperTask, dispatchAuthorization, responseIntake, reconciliation } = {}) {
   const blockers = [];
@@ -23,4 +23,3 @@ export function buildSubmissionReleaseLock({ paperTask, dispatchAuthorization, r
   };
   return { ...record, submissionReleaseLockHash: hashPaperRecord('SubmissionReleaseLock', record) };
 }
-

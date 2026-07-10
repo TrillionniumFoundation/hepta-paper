@@ -5,6 +5,10 @@ import { buildClaimRegistry, transitionClaim } from '../../../paper-domain/resea
 test('research.claim-registry validates graph structure and transitions', () => {
   const valid = buildClaimRegistry({ paperTask: { paperId: 'p' }, claims: [{ id: 'a', text: 'A' }, { id: 'b', text: 'B', dependencyIds: ['a'] }] });
   assert.equal(valid.status, 'claim_graph_valid');
-  assert.equal(transitionClaim(valid, { claimId: 'a', toStatus: 'supported', expectedVersion: 1 }).claims[0].status, 'supported');
+  const transitioned = transitionClaim(valid, { claimId: 'a', toStatus: 'supported', expectedVersion: 1 });
+  assert.equal(transitioned.claims[0].status, 'supported');
+  assert.equal(transitioned.claims[0].version, 2);
+  assert.equal(transitioned.transitionReceipt.status, 'claim_transition_recorded');
+  assert.throws(() => transitionClaim(transitioned, { claimId: 'a', toStatus: 'superseded', expectedVersion: 1 }), /version conflict/);
   assert.equal(buildClaimRegistry({ claims: [{ id: 'a', dependencyIds: ['b'] }, { id: 'b', dependencyIds: ['a'] }] }).status, 'claim_graph_blocked');
 });

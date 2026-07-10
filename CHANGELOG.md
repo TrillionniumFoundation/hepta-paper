@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.4.0 - 2026-07-10
+
+- Replaced file-presence capability completion with executed, ledger-backed
+  verification receipts that bind the test result and current target hashes;
+  added a separate `operationally_proven` axis that remains false without
+  production-bound receipts.
+- Hardened the OS sandbox with read-only source mounts, isolated ephemeral
+  work/output roots, no host `/etc` mount, and before/after source Merkle
+  verification.
+- Upgraded artifact storage to content-addressed immutable objects and
+  manifests with atomic materialization, retention policy, garbage collection,
+  and mandatory persistent receipt-ledger injection.
+- Preserved Claim versions, added hash-bound transition receipts, and bound
+  research gap plans to persistent idempotent jobs, leases, and attempts.
+- Added full repair apply/rollback proof and submission restart, duplicate
+  response, provider-receipt, dead-letter, and concurrent release-lock tests.
+- Split batch service bootstrap, state projection, report writing, and local
+  diagnostic round execution into dedicated application modules; paper-domain
+  now hashes only through the workflow kernel.
+- Ran a real-paper pilot for `A_Theory_of__Expectations`: the native source
+  integrity worker passed and generated replayable receipts; the chain then
+  correctly stopped at missing real academic evidence, independent referee,
+  and dual live authorization. No provider executor or external action exists.
+
+This release remains production `No-Go`: owner acceptance is 0/249,
+`operationally_proven` is 0/161, and the real pilot lacks external authority
+materials.
+
 ## 0.3.0 - 2026-07-10
 
 - Split capability state into decision, contract, implementation and owner

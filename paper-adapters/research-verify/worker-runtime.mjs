@@ -10,7 +10,7 @@ import {
 import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
 import { createLeanFormalVerifier } from './formal-verifier.mjs';
 import { createLakeFormalVerifier } from './lake-formal-verifier.mjs';
-import { createOsSandboxedWorkerRunner } from '../runtime/os-sandboxed-worker-runner.mjs';
+import { createOsSandboxedWorkerRunner, directoryMerkleHash } from '../runtime/os-sandboxed-worker-runner.mjs';
 
 export const NATIVE_RESEARCH_WORKER_TYPES = Object.freeze([
   'artifact_integrity',
@@ -340,9 +340,13 @@ export async function runNativeResearchWorkers({
       if (!lease) blockers.push('research_worker_job_lease_unavailable');
       else attempt = jobReceiptStore.recordAttempt({ jobId, workerId: id });
     }
+    const sourceMerkleHashBefore = sourceRoot ? directoryMerkleHash(sourceRoot) : null;
     const result = blockers.length
       ? { status: 'native_research_worker_blocked', blockers }
       : await executeWorker(worker, inputValidation.records, { sourceRoot });
+    const sourceMerkleHashAfter = sourceRoot ? directoryMerkleHash(sourceRoot) : null;
+    const sourceMutationDetected = sourceMerkleHashBefore !== sourceMerkleHashAfter;
+    if (sourceMutationDetected) blockers.push('native_research_worker_source_mutation_detected');
     blockers.push(...(result.blockers || []));
     const workerDefinitionHash = hashPaperRecord(
       'NativeResearchWorkerDefinition',
@@ -364,6 +368,9 @@ export async function runNativeResearchWorkers({
       engineHash,
       inputs: inputValidation.records.map(({ absolutePath: _absolutePath, ...record }) => record),
       sourceSnapshotHash: hashPaperRecord('NativeResearchWorkerInputSnapshot', inputValidation.records.map(({ absolutePath: _absolutePath, ...record }) => record)),
+      sourceMerkleHashBefore,
+      sourceMerkleHashAfter,
+      sourceMutationDetected,
       claimIds: Array.isArray(worker.claimIds) ? worker.claimIds.map(String) : [],
       result,
       resultHash,
@@ -375,7 +382,7 @@ export async function runNativeResearchWorkers({
         networkAccess: false,
         subprocessExecution: ['formal_verifier_lean', 'formal_verifier_lake'].includes(worker.type),
         subprocessBoundedByWorkerRunnerPort: ['formal_verifier_lean', 'formal_verifier_lake'].includes(worker.type),
-        sourceMutation: false,
+        sourceMutation: sourceMutationDetected,
         writesRuntimeOnly: Boolean(execute),
         externalActionPerformed: false,
       },
@@ -449,7 +456,7 @@ export async function runNativeResearchWorkers({
       networkAccess: false,
       subprocessExecution: workers.some((worker) => ['formal_verifier_lean', 'formal_verifier_lake'].includes(worker.type)),
       subprocessBoundedByWorkerRunnerPort: true,
-      sourceMutation: false,
+      sourceMutation: receipts.some((receipt) => receipt.sourceMutationDetected === true),
       writesRuntimeOnly: Boolean(execute),
       externalActionPerformed: false,
     },

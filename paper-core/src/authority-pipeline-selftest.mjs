@@ -128,7 +128,13 @@ try {
     ],
   });
   const sourceHashBeforeWorkers = await sha256File(path.join(sourceRoot, 'main.tex'));
-  const artifactRepositoryFactory = (scopeRoot) => createFilesystemArtifactRepository({ scopeRoot });
+  let artifactLedgerCounter = 0;
+  const artifactRepositoryFactory = (scopeRoot) => createFilesystemArtifactRepository({
+    scopeRoot,
+    casRoot: path.join(runtimeRoot, 'artifact-cas'),
+    clock: { nowIso: () => new Date().toISOString() },
+    receiptLedger: { record: () => ({ receiptId: `authority-selftest:${++artifactLedgerCounter}` }) },
+  });
   await Promise.all([
     runResearchVerifyAdapter({
       root,

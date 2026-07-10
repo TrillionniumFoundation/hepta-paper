@@ -1,12 +1,12 @@
 import path from 'node:path';
-import { createFilesystemArtifactRepository } from './filesystem-artifact-repository.mjs';
 import { currentArtifactWriteContext } from './artifact-write-context.mjs';
 
 function repository(scopeRoot) {
   const context = currentArtifactWriteContext();
-  return context?.artifactRepositoryFactory
-    ? context.artifactRepositoryFactory(scopeRoot)
-    : createFilesystemArtifactRepository({ scopeRoot });
+  if (!context?.artifactRepositoryFactory) {
+    throw new Error('Artifact write requires an ExecutionContext-backed persistent ledger');
+  }
+  return context.artifactRepositoryFactory(scopeRoot);
 }
 
 export function writeJsonFile(candidate, value, {

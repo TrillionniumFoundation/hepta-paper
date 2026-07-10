@@ -40,9 +40,18 @@ const dataDir = path.join(root, 'data');
 const resultDir = path.join(root, 'results');
 const tableDir = path.join(root, 'tables');
 const figureDir = path.join(root, 'figures');
+const sandboxArtifactReceipts = [];
 const artifactRepository = createFilesystemArtifactRepository({
   scopeRoot: root,
+  casRoot: path.join(root, '.artifact-cas'),
   repositoryId: 'empirical-run-artifacts',
+  clock: { nowIso: () => new Date().toISOString() },
+  receiptLedger: {
+    record(receipt) {
+      sandboxArtifactReceipts.push(receipt);
+      return { receiptId: 'sandbox-artifact:' + sandboxArtifactReceipts.length };
+    }
+  }
 });
 
 function mulberry32(seed) {

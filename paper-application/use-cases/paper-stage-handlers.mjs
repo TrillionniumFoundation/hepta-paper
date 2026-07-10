@@ -22,11 +22,9 @@ export function createPaperStageHandlers({
       const localReviewLoopMode = [PAPER_BATCH_MODES.LOCAL_REVIEW_LOOP, PAPER_BATCH_MODES.REFEREE_AUTOPILOT].includes(mode);
       const journalManagement = await runJournalManageAdapter({ root, runtimeRoot, row, target: targetOverride, execute: execute && localReviewLoopMode });
       const localDiagnosticReviewLoop = await runLocalDiagnosticReviewLoop({
-        root, runtimeRoot, store: services.store, row, venues,
+        root, runtimeRoot, services, row, venues,
         execute: execute && localReviewLoopMode,
         maxRounds, targetOverride, datasetRoot, benchmarkId, applyManuscript,
-        authorityVerifier: services.authorityVerifier,
-        submissionDeliveryStore: services.submissionDeliveryStore,
       });
       return {
         journalManagement,
@@ -57,7 +55,7 @@ export function createPaperStageHandlers({
     },
     build: async () => ({ buildResult: await runLatexBuildAdapter({ root, row, runtimeRoot, execute: execute && mode === PAPER_BATCH_MODES.LOCAL_BUILD }) }),
     package: async ({ state }) => ({ packageResult: await runPackageAdapter({ root, row, buildResult: state.buildResult, runtimeRoot, execute: execute && mode === PAPER_BATCH_MODES.LOCAL_PACKAGE, store: services.store }) }),
-    'research-verify': async () => ({ researchReport: await runResearchVerifyAdapter({ root, row, runtimeRoot, executeResearchWorkers: execute && mode === PAPER_BATCH_MODES.RESEARCH_VERIFY, requireNativeWorkers: mode === PAPER_BATCH_MODES.RESEARCH_VERIFY, authorityVerifier: services.authorityVerifier, jobReceiptStore: services.jobReceiptStore, artifactRepositoryFactory: services.artifactRepositoryFactory }) }),
+    'research-verify': async () => ({ researchReport: await runResearchVerifyAdapter({ root, row, runtimeRoot, executeResearchWorkers: execute && mode === PAPER_BATCH_MODES.RESEARCH_VERIFY, requireNativeWorkers: mode === PAPER_BATCH_MODES.RESEARCH_VERIFY, authorityVerifier: services.authorityVerifier, jobReceiptStore: services.jobReceiptStore, artifactRepositoryFactory: services.artifactRepositoryFactory, receiptLedger: services.receiptLedger, clock: services.clock }) }),
     'referee-review': async () => ({ refereeReview: await runRefereeReviewAdapter({ root, runtimeRoot, row, execute: execute && mode === PAPER_BATCH_MODES.REFEREE_REVIEW, store: services.store }) }),
     'referee-revise': async () => ({ refereeRevision: await runRefereeReviseAdapter({ root, runtimeRoot, row, mode: 'dry-run', execute: execute && mode === PAPER_BATCH_MODES.REFEREE_REVISE, store: services.store }) }),
     'venue-resolve': async ({ state }) => ({ venueResolution: await runVenueResolveAdapter({ row, venues, packageResult: state.packageResult }) }),

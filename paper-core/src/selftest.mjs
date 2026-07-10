@@ -26,6 +26,8 @@ import {
   defaultLegacyPaperFactoryRoot,
   defaultPaperAssetRoot,
 } from './workspace-layout.mjs';
+import { bootstrapPaperExecutionContext } from '../../paper-application/bootstrap/service-bootstrap.mjs';
+import { enterArtifactWriteContext } from '../../paper-adapters/artifacts/artifact-write-context.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
 const paperFactoryRoot = defaultPaperAssetRoot();
@@ -58,6 +60,13 @@ async function assertNoOldControlPlaneImports() {
 }
 
 async function main() {
+  const selftestContext = bootstrapPaperExecutionContext({
+    root: paperFactoryRoot,
+    runtimeRoot: path.join(workspaceRoot, 'runtime', 'selftest'),
+    mode: 'selftest',
+    execute: true,
+  });
+  enterArtifactWriteContext(selftestContext.services);
   assert.equal(PAPER_PRODUCT_PROFILE.safety.importsOldControlPlane, false);
   await assertNoOldControlPlaneImports();
 

@@ -469,3 +469,66 @@ export async function validateAndMaybeApplyPatches({
     warnings: uniqueStrings(warnings, 32),
   };
 }
+
+export async function rollbackAppliedPatches({ root, row, patchApplyResult } = {}) {
+  const blockers = [];
+  const patches = (patchApplyResult?.validationRecords || []).filter((record) => !record.blockers?.length && record.patchPath);
+  if (!patchApplyResult?.applied) blockers.push('applied_patch_result_required');
+  if (!patches.length) blockers.push('applied_patch_records_missing');
+  const patchPaths = patches.map((record) => path.isAbsolute(record.patchPath) ? record.patchPath : path.join(root, record.patchPath));
+  if (!blockers.length) {
+    const check = spawnSync('git', ['apply', '--reverse', '--check', '--whitespace=nowarn', ...patchPaths], { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+    if (check.status !== 0) blockers.push('repair_rollback_check_failed');
+    if (!blockers.length) {
+      const rollback = spawnSync('git', ['apply', '--reverse', '--whitespace=nowarn', ...patchPaths], { cwd: root, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+      if (rollback.status !== 0) blockers.push('repair_rollback_apply_failed');
+    }
+  }
+  const restoredPreimages = [];
+  for (const preimage of patchApplyResult?.targetPreimageChecks || []) {
+    const candidate = path.isAbsolute(preimage.targetPath) ? preimage.targetPath : path.join(root, preimage.targetPath);
+    const record = pathWithin(root, candidate) ? await fileRecord(root, candidate, 'repair_rollback_preimage') : null;
+    const restored = Boolean(record?.hash && preimage.expectedPreimageHash && shaDigest(record.hash) === shaDigest(preimage.expectedPreimageHash));
+    if (!restored) blockers.push(`repair_rollback_preimage_mismatch:${preimage.targetPath}`);
+    restoredPreimages.push({ targetPath: preimage.targetPath, expectedHash: preimage.expectedPreimageHash || null, actualHash: record?.hash || null, restored });
+  }
+  const payload = {
+    version: 1,
+    kind: 'RepairRollbackReceipt',
+    paperId: row?.task?.paperId || null,
+    status: blockers.length ? 'repair_rollback_blocked' : 'repair_rollback_verified',
+    appliedPatchHashes: patchApplyResult?.appliedPatchHashes || [],
+    restoredPreimages,
+    blockers: uniqueStrings(blockers, 64),
+    safety: { sourceRestored: blockers.length === 0, externalActionPerformed: false },
+  };
+  return { ...payload, repairRollbackReceiptHash: sha256Text(JSON.stringify(payload)) };
+}
+
+export function buildRepairApplyProof({ row, preimageSnapshotLedger, patchApplyResult } = {}) {
+  const blockers = [];
+  if (!patchApplyResult?.applied) blockers.push('repair_apply_not_performed');
+  if (!(patchApplyResult?.targetPreimageChecks || []).every((entry) => entry.status === 'preimage_check_passed')) blockers.push('repair_preimage_checks_not_verified');
+  if (!(patchApplyResult?.postimageRecords || []).length) blockers.push('repair_postimages_missing');
+  if (!patchApplyResult?.sourceDiffHash) blockers.push('repair_source_diff_hash_missing');
+  const payload = {
+    version: 1,
+    kind: 'RepairApplyProof',
+    paperId: row?.task?.paperId || null,
+    status: blockers.length ? 'repair_apply_proof_blocked' : 'repair_apply_proof_ready',
+    preimageLedgerHash: preimageSnapshotLedger?.preimageSnapshotLedgerHash || null,
+    acceptedPreimages: patchApplyResult?.targetPreimageChecks || [],
+    appliedPatchHashes: patchApplyResult?.appliedPatchHashes || [],
+    postimageRecords: patchApplyResult?.postimageRecords || [],
+    sourceDiffHash: patchApplyResult?.sourceDiffHash || null,
+    blockers,
+    reconciliation: {
+      preimageCount: (patchApplyResult?.targetPreimageChecks || []).length,
+      postimageCount: (patchApplyResult?.postimageRecords || []).length,
+      everyPreimageAccountedFor: (patchApplyResult?.targetPreimageChecks || []).length === (patchApplyResult?.postimageRecords || []).length,
+    },
+  };
+  if (!payload.reconciliation.everyPreimageAccountedFor) payload.blockers.push('repair_preimage_postimage_count_mismatch');
+  if (payload.blockers.length) payload.status = 'repair_apply_proof_blocked';
+  return { ...payload, repairApplyProofHash: sha256Text(JSON.stringify(payload)) };
+}

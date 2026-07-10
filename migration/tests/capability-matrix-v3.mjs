@@ -24,6 +24,8 @@ assert.equal(matrix.summary.decisionMapped, 249);
 assert.equal(matrix.summary.contractsDefined, 249);
 assert.equal(matrix.summary.implementationVerified, 161);
 assert.equal(matrix.summary.implementationNotApplicable, 88);
+assert.equal(matrix.summary.operationallyProven, 0);
+assert.equal(matrix.summary.operationallyNotProven, 161);
 assert.equal(matrix.summary.ownerAccepted, 0);
 for (const entry of matrix.entries) {
   assert.ok(entry.source.path);
@@ -42,6 +44,10 @@ for (const entry of matrix.entries) {
   } else {
     assert.ok(entry.capabilityIds.length > 0, entry.source.path);
     assert.equal(entry.implementation_verified.satisfied, true);
+    assert.equal(entry.implementation_verified.capabilityReceiptHashes.length, entry.capabilityIds.length);
+    assert.equal(entry.implementation_verified.testResults.length, entry.capabilityIds.length);
+    assert.equal(entry.operationally_proven.satisfied, false);
+    assert.equal(entry.operationally_proven.status, 'production_bound_operational_receipts_pending');
     assert.ok(entry.coverageTests.some((test) => test.coverageClass.startsWith('capability_specific_')));
     for (const capabilityId of entry.capabilityIds) {
       assert.ok(entry.coverageTests.some((test) => test.capabilityId === capabilityId), `${entry.source.path}:${capabilityId}`);

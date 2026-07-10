@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { validateCapabilityOperationalEvidence } from './capability-operational-evidence.mjs';
 
 const migrationRoot = path.dirname(fileURLToPath(import.meta.url));
 const workspaceRoot = path.resolve(migrationRoot, '..');
@@ -148,12 +149,26 @@ function coverageTests(entry, decision, capabilityIds) {
   ];
 }
 
-export function buildLegacyCapabilityMatrixV3({ matrixV2 = null } = {}) {
+export function buildLegacyCapabilityMatrixV3({ matrixV2 = null, operationalEvidence = null, runtimeRoot = null } = {}) {
   const source = matrixV2 || JSON.parse(fs.readFileSync(matrixV2Path, 'utf8'));
+  const verificationReceipts = validateCapabilityOperationalEvidence({
+    runtimeRoot: runtimeRoot || path.join(workspaceRoot, 'runtime'),
+    evidence: operationalEvidence,
+  });
   const retiredEntries = source.entries.filter((entry) => entry.verificationClass === 'explicit_retirement');
   const entries = retiredEntries.map((entry) => {
     const businessDecision = decisionFor(entry);
     const capabilityIds = capabilityIdsFor(entry, businessDecision);
+    const implementationReceipts = capabilityIds
+      .map((id) => verificationReceipts.get(id))
+      .filter(Boolean);
+    const implementationVerified = businessDecision !== CAPABILITY_DECISIONS.PERMANENT_RETIREMENT
+      && implementationReceipts.length === capabilityIds.length;
+    const operationallyProven = implementationVerified && implementationReceipts.every((receipt) => (
+      receipt.operationalProof === true
+      && Array.isArray(receipt.operationalReceiptHashes)
+      && receipt.operationalReceiptHashes.length > 0
+    ));
     return {
       id: `v3-${entry.id}`,
       legacyMatrixEntryId: entry.id,
@@ -176,12 +191,30 @@ export function buildLegacyCapabilityMatrixV3({ matrixV2 = null } = {}) {
       },
       implementation_verified: {
         applicable: businessDecision !== CAPABILITY_DECISIONS.PERMANENT_RETIREMENT,
-        satisfied: businessDecision === CAPABILITY_DECISIONS.PERMANENT_RETIREMENT
-          ? false
-          : capabilityIds.every((id) => fs.existsSync(path.join(workspaceRoot, conformanceTestPath(id)))),
+        satisfied: implementationVerified,
         status: businessDecision === CAPABILITY_DECISIONS.PERMANENT_RETIREMENT
           ? 'not_applicable_permanent_retirement'
-          : 'capability_conformance_bound',
+          : implementationVerified
+            ? 'executed_capability_receipts_verified'
+            : 'executed_capability_receipts_missing_or_invalid',
+        capabilityReceiptHashes: implementationReceipts.map((receipt) => receipt.capabilityVerificationReceiptHash),
+        ledgerReceiptIds: implementationReceipts.map((receipt) => receipt.ledgerReceiptId),
+        testResults: implementationReceipts.map((receipt) => ({
+          capabilityId: receipt.capabilityId,
+          result: receipt.test.result,
+          testHash: receipt.test.sha256,
+          targetHashes: receipt.targets.map((target) => target.sha256),
+        })),
+      },
+      operationally_proven: {
+        applicable: businessDecision !== CAPABILITY_DECISIONS.PERMANENT_RETIREMENT,
+        satisfied: operationallyProven,
+        status: businessDecision === CAPABILITY_DECISIONS.PERMANENT_RETIREMENT
+          ? 'not_applicable_permanent_retirement'
+          : operationallyProven
+            ? 'production_bound_operational_receipts_verified'
+            : 'production_bound_operational_receipts_pending',
+        operationalReceiptHashes: implementationReceipts.flatMap((receipt) => receipt.operationalReceiptHashes || []),
       },
       owner_accepted: {
         required: true,
@@ -209,6 +242,8 @@ export function buildLegacyCapabilityMatrixV3({ matrixV2 = null } = {}) {
       legacyRuntimeImportsForbidden: true,
       ownerAcceptanceRequiredForRetirement: true,
       capabilityCoverageRequiredForSupersession: true,
+      implementationVerificationRequiresExecutedReceipt: true,
+      operationalProofCannotBeInferredFromConformance: true,
     },
     capabilityCatalog: CAPABILITY_CATALOG,
     summary: {
@@ -218,6 +253,8 @@ export function buildLegacyCapabilityMatrixV3({ matrixV2 = null } = {}) {
       contractsDefined: entries.filter((entry) => entry.contract_defined.satisfied).length,
       implementationVerified: entries.filter((entry) => entry.implementation_verified.satisfied).length,
       implementationNotApplicable: entries.filter((entry) => !entry.implementation_verified.applicable).length,
+      operationallyProven: entries.filter((entry) => entry.operationally_proven.satisfied).length,
+      operationallyNotProven: entries.filter((entry) => entry.operationally_proven.applicable && !entry.operationally_proven.satisfied).length,
       ownerAccepted: entries.filter((entry) => entry.owner_accepted.satisfied).length,
       ownerAcceptancePending: entries.filter((entry) => !entry.owner_accepted.satisfied).length,
       uniqueCapabilityCount: new Set(entries.flatMap((entry) => entry.capabilityIds)).size,

@@ -1,6 +1,6 @@
 {
   "name": "hepta-paper-workspace",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "description": "Fail-closed paper workflow system around an accepted vendored design-production-core baseline.",
@@ -18,7 +18,8 @@
     "paper:remediation-selftest": "node paper-core/src/remediation-selftest.mjs",
     "paper:authority-selftest": "node paper-core/src/authority-pipeline-selftest.mjs",
     "paper:architecture-selftest": "node --test paper-core/tests/architecture-conformance.test.mjs",
-    "paper:capability-conformance": "node --test migration/tests/capabilities/*.test.mjs",
+    "paper:capability-tests": "node --test migration/tests/capabilities/*.test.mjs",
+    "paper:capability-conformance": "node migration/bin/verify-capabilities.mjs",
     "paper:batch": "node paper-core/bin/paper-production-core.mjs batch-run",
     "paper:proposal:sample": "node paper-core/bin/paper-production-core.mjs proposal --idea \"distributionally robust reinforcement learning for stochastic control\" --discipline \"machine learning\" --venue NeurIPS",
     "paper:proposal:stage": "node paper-core/bin/paper-production-core.mjs proposal --paper distributionally_robust_rl_for_stochastic_control --idea \"distributionally robust reinforcement learning for stochastic control\" --discipline \"machine learning\" --venue NeurIPS --title \"Distributionally Robust RL for Stochastic Control\" --approved --materialize-source --stage-inventory",
@@ -27,6 +28,7 @@
     "paper:proposal:reviewed-submit": "node paper-core/bin/paper-production-core.mjs batch-run --mode reviewed-submit --paper distributionally_robust_rl_for_stochastic_control",
     "paper:empirical-analysis": "node paper-core/bin/paper-production-core.mjs batch-run --mode empirical-analysis",
     "paper:research-verify": "node paper-core/bin/paper-production-core.mjs batch-run --mode research-verify",
+    "paper:real-pilot": "node paper-core/bin/run-real-paper-pilot.mjs",
     "paper:inventory": "node paper-core/bin/paper-production-core.mjs batch-run --mode inventory",
     "paper:local-dry-run": "node paper-core/bin/paper-production-core.mjs batch-run --mode local-dry-run",
     "paper:referee-review": "node paper-core/bin/paper-production-core.mjs batch-run --mode referee-review",
@@ -45,7 +47,7 @@
     "test:contract-conformance": "npm run paper:architecture-selftest",
     "test:migration-differential": "node migration/tests/p0-production-core-differential.mjs && node migration/tests/p1-referee-revision-differential.mjs",
     "coverage:architecture": "node --experimental-test-coverage --test --test-coverage-lines=65 --test-coverage-include=paper-core/src/execution-context.mjs --test-coverage-include=paper-core/src/mode-registry.mjs --test-coverage-include=paper-core/src/workflow-engine.mjs --test-coverage-include=paper-adapters/artifacts/filesystem-artifact-repository.mjs --test-coverage-include=paper-adapters/persistence/sqlite-store.mjs --test-coverage-include=paper-domain/research/*.mjs --test-coverage-include=paper-domain/submission/*.mjs paper-core/tests/architecture-conformance.test.mjs",
-    "ci:selftest": "npm run core:integrity && npm run core:selftest && npm run core:runtime-dry-run && npm run paper:architecture-selftest && npm run paper:capability-conformance && npm run migration:capability-matrix-v3",
+    "ci:selftest": "npm run core:integrity && npm run core:selftest && npm run core:runtime-dry-run && npm run paper:capability-conformance && npm run paper:architecture-selftest && npm run migration:capability-matrix-v3",
     "release:verify": "npm test && npm run coverage:architecture && npm run test:migration-differential && npm run workspace:verify-decoupled && npm run store:status && npm run store:restore-drill",
     "audit:local-accepts": "node paper-core/bin/reassess-local-accepts.mjs",
     "store:init": "node paper-core/bin/hepta-store.mjs init",
@@ -57,6 +59,6 @@
     "workspace:status": "node paper-core/bin/workspace-status.mjs",
     "workspace:verify-decoupled": "node paper-core/bin/workspace-status.mjs --require-decoupled",
     "authority:status": "node paper-core/bin/authority-status.mjs --json",
-    "selftest": "npm run core:integrity && npm run core:selftest && npm run core:runtime-dry-run && npm run paper:selftest && npm run paper:remediation-selftest && npm run paper:authority-selftest && npm run paper:architecture-selftest && npm run paper:capability-conformance && npm run migration:matrix-integrity && npm run migration:capability-matrix-v3"
+    "selftest": "npm run core:integrity && npm run core:selftest && npm run core:runtime-dry-run && npm run paper:selftest && npm run paper:remediation-selftest && npm run paper:authority-selftest && npm run paper:capability-conformance && npm run paper:architecture-selftest && npm run migration:matrix-integrity && npm run migration:capability-matrix-v3"
   }
 }

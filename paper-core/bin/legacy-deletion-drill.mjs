@@ -38,6 +38,8 @@ function run(args) {
       PAPER_FACTORY_LEGACY_ROOT: drillRoot,
       HEPTA_PAPER_RUNTIME_ROOT: verificationRuntimeRoot,
       HEPTA_PAPER_RUNTIME_ISOLATED: '1',
+      HEPTA_LEGACY_REFERENCE_PREPARED: '1',
+      HEPTA_LEGACY_REFERENCE_ARCHIVE: archivePath,
     },
     timeout: 240000,
   });

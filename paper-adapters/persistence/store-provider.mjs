@@ -9,6 +9,7 @@ const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)),
 const migrations = [
   { version: 1, name: '001_initial', path: path.join(workspaceRoot, 'store', 'migrations', '001_initial.sql') },
   { version: 2, name: '002_runtime_ledger', path: path.join(workspaceRoot, 'store', 'migrations', '002_runtime_ledger.sql') },
+  { version: 3, name: '003_evidence_isolation', path: path.join(workspaceRoot, 'store', 'migrations', '003_evidence_isolation.sql') },
 ];
 
 function sqlQuote(value) {

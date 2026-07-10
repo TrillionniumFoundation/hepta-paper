@@ -3,6 +3,8 @@ import { ensureDir } from '../../paper-core/src/runtime/file-utils.mjs';
 import { nowIso } from '../../paper-core/src/runtime/time-utils.mjs';
 import { writeJsonFile, writeTextFile } from '../../paper-adapters/artifacts/write-artifact.mjs';
 import { blockerFamilySummary, makeBlockerFamilyMarkdown, makeMarkdownTable, summarizeResults, summarizeRows } from '../../paper-core/src/batch-summary.mjs';
+import { currentCodeProvenance } from '../../paper-core/src/code-provenance.mjs';
+import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 function markdown(report, includeSummaryHeading = false) {
   return [
@@ -15,8 +17,9 @@ function markdown(report, includeSummaryHeading = false) {
 export function buildBatchReport({ root, runtimeRoot, mode, execute, targetOverride, datasetRoot, benchmarkId, applyManuscript, scan, results, legacyCleanupAudit, coreIntegrity } = {}) {
   const rows = results.map((item) => item.workflowRow);
   const blockerFamilies = blockerFamilySummary(results);
-  return {
+  const report = {
     version: 1, kind: 'PaperBatchRunReport', generatedAt: nowIso(), root, runtimeRoot, mode, execute: Boolean(execute),
+    codeProvenance: currentCodeProvenance(),
     requestedTargetOverride: String(targetOverride || '').trim() || null,
     requestedDatasetRoot: String(datasetRoot || '').trim() || null,
     requestedBenchmarkId: String(benchmarkId || '').trim() || null,
@@ -28,6 +31,7 @@ export function buildBatchReport({ root, runtimeRoot, mode, execute, targetOverr
     markdownTable: makeMarkdownTable(rows), blockerFamilyTable: makeBlockerFamilyMarkdown(blockerFamilies),
     safety: { coreSnapshotModified: coreIntegrity.coreSnapshotModified, coreIntegrityStatus: coreIntegrity.status, upstreamCoreSnapshotExactMatch: coreIntegrity.upstream.exactMatch, importsOldPaperFactoryControlPlane: false, externalActionPerformed: false, reviewedSubmitBlockedByDefault: true },
   };
+  return { ...report, reportHash: hashRecord('PaperBatchRunReport', report) };
 }
 
 export async function persistBatchReport(report) {
@@ -37,8 +41,19 @@ export async function persistBatchReport(report) {
   const base = path.join(reportRoot, `paper-batch-${report.mode}-${stamp}`);
   await writeJsonFile(`${base}.json`, report, { scopeRoot: reportRoot, role: 'paper_batch_report' });
   await writeTextFile(`${base}.md`, markdown(report), { scopeRoot: reportRoot, role: 'paper_batch_report_markdown' });
-  await writeJsonFile(path.join(reportRoot, `paper-batch-${report.mode}-latest.json`), report, { scopeRoot: reportRoot, role: 'paper_batch_latest_report' });
-  await writeTextFile(path.join(reportRoot, `paper-batch-${report.mode}-latest.md`), markdown(report, true), { scopeRoot: reportRoot, role: 'paper_batch_latest_markdown' });
+  const pointer = {
+    version: 1,
+    kind: 'CurrentReportPointer',
+    status: 'current_report_pointer',
+    mode: report.mode,
+    reportPath: path.basename(`${base}.json`),
+    reportHash: report.reportHash,
+    generatedAt: report.generatedAt,
+    validUntil: new Date(Date.parse(report.generatedAt) + 24 * 60 * 60 * 1000).toISOString(),
+    codeProvenance: report.codeProvenance,
+  };
+  await writeJsonFile(path.join(reportRoot, `paper-batch-${report.mode}-latest.json`), pointer, { scopeRoot: reportRoot, role: 'paper_batch_current_report_pointer' });
+  await writeTextFile(path.join(reportRoot, `paper-batch-${report.mode}-latest.md`), ['# Current report pointer', '', '```json', JSON.stringify(pointer, null, 2), '```', ''].join('\n'), { scopeRoot: reportRoot, role: 'paper_batch_current_report_pointer_markdown' });
 }
 
 export function renderBatchConsole(report) {

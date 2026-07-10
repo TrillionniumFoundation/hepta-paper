@@ -267,8 +267,8 @@ function enrichLegacyEntry(entry) {
   };
 }
 
-async function detectHeptaCapabilities(root) {
-  const adaptersRoot = path.join(root, 'hepta-paper-workspace', 'paper-adapters');
+async function detectHeptaCapabilities(_legacyRoot) {
+  const adaptersRoot = path.join(resolveWorkspaceLayout().workspaceRoot, 'paper-adapters');
   const adapterFiles = await walkFiles(adaptersRoot, {
     maxDepth: 2,
     maxFiles: 200,

@@ -1,11 +1,14 @@
 #!/usr/bin/env node
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { runPaperBatch, renderBatchConsole, PAPER_BATCH_MODES } from '../src/paper-batch-runner.mjs';
 import { ensureDir } from '../src/runtime/file-utils.mjs';
 import { writeJsonFile, writeTextFile } from '../../paper-adapters/artifacts/write-artifact.mjs';
 import { runPaperProposalAdapter } from '../../paper-adapters/proposal/index.mjs';
 import { bootstrapPaperExecutionContext } from '../../paper-application/bootstrap/service-bootstrap.mjs';
 import { withArtifactWriteContext } from '../../paper-adapters/artifacts/artifact-write-context.mjs';
+import { currentCodeProvenance } from '../src/code-provenance.mjs';
+import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
   defaultPaperAssetRoot,
   defaultPaperRuntimeRoot,
@@ -93,10 +96,24 @@ async function writeProposalReport({ root, runtimeRoot = defaultPaperRuntimeRoot
     JSON.stringify(report.reviewGate || {}, null, 2),
     '```',
   ].join('\n');
-  await writeJsonFile(base + '.json', report);
+  const codeProvenance = currentCodeProvenance();
+  const boundReport = { ...report, codeProvenance };
+  const reportHash = hashRecord('PaperProposalReport', boundReport);
+  const pointer = {
+    version: 1,
+    kind: 'CurrentReportPointer',
+    status: 'current_report_pointer',
+    mode: 'proposal',
+    reportPath: path.basename(base + '.json'),
+    reportHash,
+    generatedAt: report.generatedAt,
+    validUntil: new Date(Date.parse(report.generatedAt) + 24 * 60 * 60 * 1000).toISOString(),
+    codeProvenance,
+  };
+  await writeJsonFile(base + '.json', { ...boundReport, reportHash });
   await writeTextFile(base + '.md', md);
-  await writeJsonFile(latest + '.json', report);
-  await writeTextFile(latest + '.md', md);
+  await writeJsonFile(latest + '.json', pointer);
+  await writeTextFile(latest + '.md', ['# Current report pointer', '', '```json', JSON.stringify(pointer, null, 2), '```', ''].join('\n'));
 }
 
 async function main() {
@@ -107,7 +124,8 @@ async function main() {
     return;
   }
   if (command === 'selftest') {
-    await import('../src/selftest.mjs');
+    const result = spawnSync('npm', ['test'], { cwd: path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..'), stdio: 'inherit' });
+    if (result.status !== 0) process.exitCode = result.status || 1;
     return;
   }
   if (command === 'proposal') {

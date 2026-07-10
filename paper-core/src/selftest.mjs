@@ -25,6 +25,7 @@ import {
 import {
   defaultLegacyPaperFactoryRoot,
   defaultPaperAssetRoot,
+  defaultPaperRuntimeRoot,
 } from './workspace-layout.mjs';
 import { bootstrapPaperExecutionContext } from '../../paper-application/bootstrap/service-bootstrap.mjs';
 import { enterArtifactWriteContext } from '../../paper-adapters/artifacts/artifact-write-context.mjs';
@@ -32,6 +33,7 @@ import { enterArtifactWriteContext } from '../../paper-adapters/artifacts/artifa
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
 const paperFactoryRoot = defaultPaperAssetRoot();
 const legacyPaperFactoryRoot = defaultLegacyPaperFactoryRoot();
+const selftestRuntimeRoot = path.join(defaultPaperRuntimeRoot(), 'selftest');
 
 async function sourceText(file) {
   return fs.readFile(path.join(workspaceRoot, file), 'utf8');
@@ -62,7 +64,7 @@ async function assertNoOldControlPlaneImports() {
 async function main() {
   const selftestContext = bootstrapPaperExecutionContext({
     root: paperFactoryRoot,
-    runtimeRoot: path.join(workspaceRoot, 'runtime', 'selftest'),
+    runtimeRoot: selftestRuntimeRoot,
     mode: 'selftest',
     execute: true,
   });
@@ -85,6 +87,7 @@ async function main() {
 
   const proposalReport = await runPaperProposalAdapter({
     root: paperFactoryRoot,
+    runtimeRoot: selftestRuntimeRoot,
     idea: 'A distributionally robust reinforcement learning theorem for stochastic control',
     discipline: 'machine learning',
     venue: 'NeurIPS',
@@ -116,6 +119,7 @@ async function main() {
 
   const autoVenueProposalReport = await runPaperProposalAdapter({
     root: paperFactoryRoot,
+    runtimeRoot: selftestRuntimeRoot,
     idea: 'A learned database query optimizer for cloud analytics',
     discipline: 'database systems',
     title: 'Learned Query Optimization for Cloud Analytics',
@@ -172,6 +176,7 @@ async function main() {
 
   const autoEconProposalReport = await runPaperProposalAdapter({
     root: paperFactoryRoot,
+    runtimeRoot: selftestRuntimeRoot,
     idea: 'A market design and political economy model of platform contracting',
     discipline: 'economics',
     title: 'Platform Contracting and Market Design',
@@ -183,6 +188,7 @@ async function main() {
 
   const autoFinanceProposalReport = await runPaperProposalAdapter({
     root: paperFactoryRoot,
+    runtimeRoot: selftestRuntimeRoot,
     idea: 'An asset pricing anomaly with corporate finance and market microstructure evidence',
     discipline: 'finance',
     title: 'Asset Pricing and Market Microstructure Evidence',
@@ -223,6 +229,7 @@ async function main() {
 
   const autoMathProposalReport = await runPaperProposalAdapter({
     root: paperFactoryRoot,
+    runtimeRoot: selftestRuntimeRoot,
     idea: 'A new theorem in algebraic geometry and number theory',
     discipline: 'mathematics',
     title: 'A Theorem in Algebraic Geometry',
@@ -237,7 +244,7 @@ async function main() {
 
   const approvedProposalReport = await runPaperProposalAdapter({
     root: paperFactoryRoot,
-    runtimeRoot: path.join(workspaceRoot, 'runtime', 'selftest'),
+    runtimeRoot: selftestRuntimeRoot,
     idea: 'A distributionally robust reinforcement learning theorem for stochastic control',
     discipline: 'machine learning',
     venue: 'NeurIPS',
@@ -266,7 +273,7 @@ async function main() {
   assert.equal(approvedProposalReport.materialization?.safety.externalActionPerformed, false);
 
   const stagedPaperId = 'selftest_proposal_staging';
-  const stagedRuntimeRoot = path.join(workspaceRoot, 'runtime', 'selftest');
+  const stagedRuntimeRoot = selftestRuntimeRoot;
   const stagedProposalReport = await runPaperProposalAdapter({
     root: paperFactoryRoot,
     runtimeRoot: stagedRuntimeRoot,
@@ -292,7 +299,7 @@ async function main() {
   assert.equal(stagedInventory.rows.length, 1);
   assert.equal(stagedInventory.rows[0].task.kind, 'PaperTask');
   assert.equal(stagedInventory.rows[0].task.registry.inventorySource, 'proposal_staging');
-  assert.equal(stagedInventory.rows[0].task.sourceWorkspace.includes('runtime/selftest/proposals'), true);
+  assert.equal(stagedInventory.rows[0].task.sourceWorkspace.includes('selftest/proposals'), true);
   assert.equal(stagedInventory.rows[0].state.compileStatus, 'build_ready');
   assert.equal(stagedInventory.rows[0].state.researchVerifyStatus, 'proposal_seed_present');
   assert.equal(stagedInventory.summary.proposalStaged, 1);
@@ -423,6 +430,7 @@ async function main() {
 
   const report = await runPaperBatch({
     root: paperFactoryRoot,
+    runtimeRoot: selftestRuntimeRoot,
     mode: 'local-dry-run',
     limit: 3,
   });
@@ -448,6 +456,7 @@ async function main() {
 
   const journalManageReport = await runPaperBatch({
     root: paperFactoryRoot,
+    runtimeRoot: selftestRuntimeRoot,
     mode: 'journal-manage',
     limit: 3,
   });
@@ -488,6 +497,7 @@ async function main() {
 
   const journalManageOverrideReport = await runPaperBatch({
     root: paperFactoryRoot,
+    runtimeRoot: selftestRuntimeRoot,
     mode: 'journal-manage',
     limit: 1,
     targetOverride: 'JMLR',
@@ -504,6 +514,7 @@ async function main() {
 
   const refereeReviewReport = await runPaperBatch({
     root: paperFactoryRoot,
+    runtimeRoot: selftestRuntimeRoot,
     mode: 'referee-review',
     limit: 3,
   });
@@ -529,6 +540,7 @@ async function main() {
 
   const refereeReport = await runPaperBatch({
     root: paperFactoryRoot,
+    runtimeRoot: selftestRuntimeRoot,
     mode: 'referee-revise',
     limit: 3,
   });
@@ -650,6 +662,7 @@ async function main() {
 
   const localReviewLoopReport = await runPaperBatch({
     root: paperFactoryRoot,
+    runtimeRoot: selftestRuntimeRoot,
     mode: 'local-review-loop',
     limit: 1,
     maxRounds: 2,
@@ -712,6 +725,7 @@ async function main() {
 
   const venueReport = await runPaperBatch({
     root: paperFactoryRoot,
+    runtimeRoot: selftestRuntimeRoot,
     mode: 'venue-resolve',
     limit: 3,
   });
@@ -726,6 +740,7 @@ async function main() {
 
   const sourceAdaptReport = await runPaperBatch({
     root: paperFactoryRoot,
+    runtimeRoot: selftestRuntimeRoot,
     mode: 'source-adapt',
     limit: 3,
   });
@@ -738,6 +753,7 @@ async function main() {
 
   const legacyReport = await runPaperBatch({
     root: legacyPaperFactoryRoot,
+    runtimeRoot: selftestRuntimeRoot,
     mode: 'legacy-cleanup',
     limit: 1,
   });

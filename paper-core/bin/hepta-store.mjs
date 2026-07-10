@@ -87,10 +87,12 @@ UNION ALL SELECT 'submission_outbox',count(*) FROM submission_outbox
 UNION ALL SELECT 'submission_inbox',count(*) FROM submission_inbox;
 `, { json: true }) || '[]');
   const metadata = JSON.parse(runSql('SELECT key,value,updated_at FROM store_metadata ORDER BY key;', { json: true }) || '[]');
+  const evidenceClassifications = JSON.parse(runSql('SELECT environment,evidence_class,count(*) AS count FROM receipt_ledger GROUP BY environment,evidence_class ORDER BY environment,evidence_class;', { json: true }) || '[]');
+  const jobClassifications = JSON.parse(runSql('SELECT environment,evidence_class,status,count(*) AS count FROM jobs GROUP BY environment,evidence_class,status ORDER BY environment,evidence_class,status;', { json: true }) || '[]');
   const quickCheck = runSql('PRAGMA quick_check;').trim();
   const schemaVersion = Number(JSON.parse(runSql('SELECT coalesce(max(version),0) AS version FROM schema_migrations;', { json: true }) || '[]')[0]?.version || 0);
   return {
-    version: 2,
+    version: 3,
     kind: 'HeptaNativeStoreStatus',
     status: quickCheck === 'ok' ? 'hepta_native_store_ready' : 'hepta_native_store_blocked',
     dbPath,
@@ -98,6 +100,8 @@ UNION ALL SELECT 'submission_inbox',count(*) FROM submission_inbox;
     quickCheck,
     tables: Object.fromEntries(rows.map((row) => [row.name, Number(row.count)])),
     metadata,
+    evidenceClassifications,
+    jobClassifications,
     legacyDefaultDependency: false,
   };
 }
@@ -120,7 +124,7 @@ function backup() {
     createdAt: new Date().toISOString(),
   };
   fs.writeFileSync(`${backupPath}.receipt.json`, `${JSON.stringify(receipt, null, 2)}\n`);
-  const ledgerReceipt = receiptLedger.record(receipt, { stream: 'store-admin' });
+  const ledgerReceipt = receiptLedger.record(receipt, { stream: 'store-admin', environment: 'administrative', evidenceClass: 'backup' });
   return { ...receipt, ledgerReceipt };
 }
 
@@ -145,7 +149,7 @@ function restoreDrill() {
     performedAt: new Date().toISOString(),
     productionStoreMutated: false,
   };
-  const ledgerReceipt = receiptLedger.record(receipt, { stream: 'store-admin' });
+  const ledgerReceipt = receiptLedger.record(receipt, { stream: 'store-admin', environment: 'administrative', evidenceClass: 'restore_drill' });
   return { ...receipt, ledgerReceipt };
 }
 

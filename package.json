@@ -1,6 +1,6 @@
 {
   "name": "hepta-paper-workspace",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "description": "Fail-closed paper workflow system around an accepted vendored design-production-core baseline.",
@@ -8,7 +8,7 @@
     "paper-production-core": "./paper-core/bin/paper-production-core.mjs"
   },
   "scripts": {
-    "test": "npm run selftest",
+    "test": "node paper-core/bin/run-isolated-verification.mjs test",
     "core:baseline": "node paper-core/bin/core-integrity.mjs --write-baseline",
     "core:integrity": "node paper-core/bin/core-integrity.mjs",
     "core:selftest": "npm --prefix core run selftest",
@@ -47,8 +47,10 @@
     "test:contract-conformance": "npm run paper:architecture-selftest",
     "test:migration-differential": "node migration/tests/p0-production-core-differential.mjs && node migration/tests/p1-referee-revision-differential.mjs",
     "coverage:architecture": "node --experimental-test-coverage --test --test-coverage-lines=65 --test-coverage-include=paper-core/src/execution-context.mjs --test-coverage-include=paper-core/src/mode-registry.mjs --test-coverage-include=paper-core/src/workflow-engine.mjs --test-coverage-include=paper-adapters/artifacts/filesystem-artifact-repository.mjs --test-coverage-include=paper-adapters/persistence/sqlite-store.mjs --test-coverage-include=paper-domain/research/*.mjs --test-coverage-include=paper-domain/submission/*.mjs paper-core/tests/architecture-conformance.test.mjs",
-    "ci:selftest": "npm run core:integrity && npm run core:selftest && npm run core:runtime-dry-run && npm run paper:capability-conformance && npm run paper:architecture-selftest && npm run migration:capability-matrix-v3",
-    "release:verify": "npm test && npm run coverage:architecture && npm run test:migration-differential && npm run workspace:verify-decoupled && npm run store:status && npm run store:restore-drill",
+    "ci:selftest": "node paper-core/bin/run-isolated-verification.mjs ci",
+    "ci:inner": "npm run core:integrity && npm run core:selftest && npm run core:runtime-dry-run && npm run paper:capability-conformance && npm run paper:architecture-selftest && npm run migration:capability-matrix-v3",
+    "release:verify": "node paper-core/bin/run-isolated-verification.mjs release",
+    "release:inner": "npm run test:inner && npm run provider:sandbox-selftest && npm run coverage:architecture && npm run test:migration-differential && npm run workspace:verify-decoupled && npm run store:status && npm run store:restore-drill",
     "audit:local-accepts": "node paper-core/bin/reassess-local-accepts.mjs",
     "store:init": "node paper-core/bin/hepta-store.mjs init",
     "store:migrate": "node paper-core/bin/hepta-store.mjs migrate",
@@ -59,6 +61,15 @@
     "workspace:status": "node paper-core/bin/workspace-status.mjs",
     "workspace:verify-decoupled": "node paper-core/bin/workspace-status.mjs --require-decoupled",
     "authority:status": "node paper-core/bin/authority-status.mjs --json",
-    "selftest": "npm run core:integrity && npm run core:selftest && npm run core:runtime-dry-run && npm run paper:selftest && npm run paper:remediation-selftest && npm run paper:authority-selftest && npm run paper:capability-conformance && npm run paper:architecture-selftest && npm run migration:matrix-integrity && npm run migration:capability-matrix-v3"
+    "reports:quarantine-stale": "node paper-core/bin/quarantine-stale-latest.mjs",
+    "release:attest": "node paper-core/bin/release-evidence.mjs",
+    "legacy:archive-read-only": "node paper-core/bin/retire-legacy-archive.mjs --execute",
+    "legacy:deletion-drill": "node paper-core/bin/legacy-deletion-drill.mjs",
+    "runtime:hygiene": "node paper-core/bin/runtime-hygiene.mjs --execute",
+    "external:intake": "node paper-core/bin/generate-external-intake.mjs",
+    "provider:sandbox-selftest": "node --test paper-core/tests/provider-sandbox-integration.test.mjs",
+    "paper:real-provider-sandbox": "node paper-core/bin/run-real-paper-provider-sandbox.mjs",
+    "selftest": "node paper-core/bin/run-isolated-verification.mjs test",
+    "test:inner": "npm run core:integrity && npm run core:selftest && npm run core:runtime-dry-run && npm run paper:selftest && npm run paper:remediation-selftest && npm run paper:authority-selftest && npm run paper:capability-conformance && npm run paper:architecture-selftest && npm run migration:matrix-integrity && npm run migration:capability-matrix-v3"
   }
 }

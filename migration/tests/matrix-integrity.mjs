@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import { runLegacyCleanupAdapter } from '../../paper-adapters/legacy-cleanup/index.mjs';
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
+import { defaultLegacyPaperFactoryRoot, defaultPaperRuntimeRoot } from '../../paper-core/src/workspace-layout.mjs';
 
-const root = '/data/home-data/paper_factory';
+const root = defaultLegacyPaperFactoryRoot();
 const report = await runLegacyCleanupAdapter({
   root,
+  runtimeRoot: defaultPaperRuntimeRoot(),
   execute: false,
-  store: createDefaultPaperStore({ root }),
+  store: createDefaultPaperStore({ root, runtimeRoot: defaultPaperRuntimeRoot() }),
 });
 const audit = report.retirementPlan.migrationMatrixAudit;
 

@@ -23,7 +23,16 @@ export function capabilityEvidencePath(runtimeRoot) {
 export function validateCapabilityOperationalEvidence({ runtimeRoot, evidence = null } = {}) {
   let manifest = evidence;
   if (!manifest && runtimeRoot) {
-    try { manifest = JSON.parse(fs.readFileSync(capabilityEvidencePath(runtimeRoot), 'utf8')); } catch { manifest = null; }
+    const candidates = [
+      path.join(path.resolve(runtimeRoot), 'release-evidence', 'current', 'CAPABILITY_VERIFICATION_MANIFEST.json'),
+      capabilityEvidencePath(runtimeRoot),
+    ];
+    for (const candidate of candidates) {
+      try {
+        manifest = JSON.parse(fs.readFileSync(candidate, 'utf8'));
+        if (manifest?.kind === 'CapabilityVerificationManifest') break;
+      } catch { manifest = null; }
+    }
   }
   const receipts = new Map();
   if (manifest?.kind !== 'CapabilityVerificationManifest') return receipts;

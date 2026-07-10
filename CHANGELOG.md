@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.5.0 - 2026-07-10
+
+- Isolated test/CI/release verification into disposable SQLite, CAS and ledger
+  roots, with a hard assertion that the production database hash is unchanged.
+- Added schema v3 evidence classification for verification, administrative,
+  pilot, operational and owner evidence; legacy records are reclassified but
+  never promoted automatically.
+- Replaced mutable, stale `latest` reports with commit/version/hash/expiry-bound
+  pointers and added a quarantine pass for unbound or expired legacy reports.
+- Added signed release-integrity evidence bundles and external authority/owner
+  intake packets; local signing is explicitly non-authoritative for academic,
+  owner, operator or executor decisions.
+- Added an external, no-network provider sandbox that exercises durable
+  outbox/inbox, duplicate response, receipt validation, reconciliation and
+  release without performing a live external action.
+- Snapshotted the legacy control plane as a hash-bound cold reference archive,
+  made active control files POSIX read-only, and added a deletion/restore drill
+  that preserves the archive while owner and operational gates remain open.
+
+This release remains production `No-Go`: owner acceptance is 0/249,
+`operationally_proven` is 0/161, four real trust roles remain unprovisioned, and
+external actions remain zero.
+
 ## 0.4.0 - 2026-07-10
 
 - Replaced file-presence capability completion with executed, ledger-backed

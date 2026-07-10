@@ -1,8 +1,11 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { defaultLegacyPaperFactoryRoot } from '../../paper-core/src/workspace-layout.mjs';
+import {
+  defaultLegacyPaperFactoryRoot,
+} from '../../paper-core/src/workspace-layout.mjs';
 import {
   runLatexBuildAdapter,
   runPackageAdapter,
@@ -23,7 +26,8 @@ import { enterArtifactWriteContext } from '../../paper-adapters/artifacts/artifa
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const root = defaultLegacyPaperFactoryRoot();
-const runtimeRoot = path.join(workspaceRoot, 'runtime');
+const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-plugin-boundary-'));
+process.on('exit', () => fs.rmSync(runtimeRoot, { recursive: true, force: true }));
 const pluginRoot = path.join(root, 'plugins', 'core');
 const executionContext = bootstrapPaperExecutionContext({ root, runtimeRoot, mode: 'migration-plugin-boundary-test' });
 enterArtifactWriteContext(executionContext.services);

@@ -3,6 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateCapabilityOperationalEvidence } from './capability-operational-evidence.mjs';
+import { verifyAuthoritySignatures } from '../paper-core/src/authority-signatures.mjs';
+import { hashRecord } from '../workflow-kernel/record-hash.mjs';
 
 const migrationRoot = path.dirname(fileURLToPath(import.meta.url));
 const workspaceRoot = path.resolve(migrationRoot, '..');
@@ -126,6 +128,30 @@ function capabilityTargets(capabilityIds) {
   });
 }
 
+function ownerAcceptanceMap(runtimeRoot) {
+  if (!runtimeRoot) return new Map();
+  try {
+    const document = JSON.parse(fs.readFileSync(path.join(runtimeRoot, 'owner-acceptance', 'CAPABILITY_OWNER_ACCEPTANCE.json'), 'utf8'));
+    const trustStore = JSON.parse(fs.readFileSync(path.join(runtimeRoot, 'owner-acceptance', 'OWNER_TRUST_STORE.json'), 'utf8'));
+    if (document?.kind !== 'CapabilityOwnerAcceptance' || document?.version !== 1) return new Map();
+    const verification = verifyAuthoritySignatures({
+      document,
+      trustStore,
+      requiredRoles: ['capability_owner'],
+      minSignatures: 1,
+    });
+    if (!verification.cryptographicSignaturesVerified) return new Map();
+    const evidenceHash = hashRecord('CapabilityOwnerAcceptance', document);
+    return new Map((document.acceptedEntries || []).map((entry) => [entry.legacyMatrixEntryId, {
+      ...entry,
+      evidenceHash,
+      subjectId: verification.verifiedSubjectIds[0] || null,
+    }]));
+  } catch {
+    return new Map();
+  }
+}
+
 function coverageTests(entry, decision, capabilityIds) {
   const legacyTests = (entry.behaviorTests || []).map((test) => ({
     ...test,
@@ -155,6 +181,7 @@ export function buildLegacyCapabilityMatrixV3({ matrixV2 = null, operationalEvid
     runtimeRoot: runtimeRoot || path.join(workspaceRoot, 'runtime'),
     evidence: operationalEvidence,
   });
+  const acceptedById = ownerAcceptanceMap(runtimeRoot || path.join(workspaceRoot, 'runtime'));
   const retiredEntries = source.entries.filter((entry) => entry.verificationClass === 'explicit_retirement');
   const entries = retiredEntries.map((entry) => {
     const businessDecision = decisionFor(entry);
@@ -169,6 +196,10 @@ export function buildLegacyCapabilityMatrixV3({ matrixV2 = null, operationalEvid
       && Array.isArray(receipt.operationalReceiptHashes)
       && receipt.operationalReceiptHashes.length > 0
     ));
+    const ownerAcceptance = acceptedById.get(entry.id) || null;
+    const ownerAccepted = Boolean(ownerAcceptance
+      && ownerAcceptance.businessDecision === businessDecision
+      && ownerAcceptance.sourceSha256 === entry.source.sha256);
     return {
       id: `v3-${entry.id}`,
       legacyMatrixEntryId: entry.id,
@@ -218,11 +249,11 @@ export function buildLegacyCapabilityMatrixV3({ matrixV2 = null, operationalEvid
       },
       owner_accepted: {
         required: true,
-        satisfied: false,
-        status: 'pending_owner_acceptance',
-        subjectId: null,
-        acceptedAt: null,
-        evidenceHash: null,
+        satisfied: ownerAccepted,
+        status: ownerAccepted ? 'cryptographically_verified_owner_acceptance' : 'pending_owner_acceptance',
+        subjectId: ownerAccepted ? ownerAcceptance.subjectId : null,
+        acceptedAt: ownerAccepted ? ownerAcceptance.acceptedAt : null,
+        evidenceHash: ownerAccepted ? ownerAcceptance.evidenceHash : null,
       },
       coverageRequirements: coverageRequirements(businessDecision, capabilityIds),
       coverageTests: coverageTests(entry, businessDecision, capabilityIds),

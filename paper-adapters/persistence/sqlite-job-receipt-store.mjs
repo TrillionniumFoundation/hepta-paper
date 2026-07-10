@@ -15,7 +15,9 @@ export function createSqliteJobReceiptStore({ store, receiptLedger, clock } = {}
     createJob(spec = {}) {
       if (!spec.jobId || !spec.deduplicationKey || !spec.kind) throw new Error('jobId, deduplicationKey and kind are required');
       const now = clock.nowIso();
-      const result = store.execute(`INSERT OR IGNORE INTO jobs(job_id,deduplication_key,paper_id,kind,status,priority,spec_json,created_at,updated_at) VALUES(${sqlText(spec.jobId)},${sqlText(spec.deduplicationKey)},${spec.paperId ? sqlText(spec.paperId) : 'NULL'},${sqlText(spec.kind)},'queued',${Number(spec.priority || 100)},${sqlJson(spec)},${sqlText(now)},${sqlText(now)});`);
+      const environment = spec.environment || process.env.HEPTA_EVIDENCE_ENVIRONMENT || 'production';
+      const evidenceClass = spec.evidenceClass || process.env.HEPTA_EVIDENCE_CLASS || 'runtime_unclassified';
+      const result = store.execute(`INSERT OR IGNORE INTO jobs(job_id,deduplication_key,paper_id,kind,status,priority,spec_json,created_at,updated_at,environment,evidence_class) VALUES(${sqlText(spec.jobId)},${sqlText(spec.deduplicationKey)},${spec.paperId ? sqlText(spec.paperId) : 'NULL'},${sqlText(spec.kind)},'queued',${Number(spec.priority || 100)},${sqlJson(spec)},${sqlText(now)},${sqlText(now)},${sqlText(environment)},${sqlText(evidenceClass)});`);
       if (!result.ok) throw new Error(result.error || result.stderr || 'job_create_failed');
       return api.get(spec.jobId) || api.list({ deduplicationKey: spec.deduplicationKey, limit: 1 })[0];
     },
@@ -33,7 +35,7 @@ export function createSqliteJobReceiptStore({ store, receiptLedger, clock } = {}
       const number = job.attemptCount + 1;
       const startedAt = clock.nowIso();
       const attemptId = `${jobId}:attempt:${number}`;
-      const result = store.execute(`BEGIN IMMEDIATE; INSERT INTO job_attempts(attempt_id,job_id,attempt_number,worker_id,status,started_at) VALUES(${sqlText(attemptId)},${sqlText(jobId)},${number},${sqlText(workerId)},${sqlText(status)},${sqlText(startedAt)}); UPDATE jobs SET attempt_count=${number},status='running',updated_at=${sqlText(startedAt)} WHERE job_id=${sqlText(jobId)}; COMMIT;`);
+      const result = store.execute(`BEGIN IMMEDIATE; INSERT INTO job_attempts(attempt_id,job_id,attempt_number,worker_id,status,started_at,environment,evidence_class) VALUES(${sqlText(attemptId)},${sqlText(jobId)},${number},${sqlText(workerId)},${sqlText(status)},${sqlText(startedAt)},${sqlText(job.environment || 'legacy_unclassified')},${sqlText(job.evidence_class || 'legacy_unclassified')}); UPDATE jobs SET attempt_count=${number},status='running',updated_at=${sqlText(startedAt)} WHERE job_id=${sqlText(jobId)}; COMMIT;`);
       if (!result.ok) throw new Error(result.error || result.stderr || 'job_attempt_write_failed');
       return { attemptId, attemptNumber: number, startedAt };
     },

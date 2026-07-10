@@ -1,5 +1,11 @@
 # Paper Production Risk Register And Next Plan
 
+> Historical snapshot: the counts and closed-risk statements below predate the
+> signed authority gates and architecture v3 refactor. Current production status
+> is in `remediation-status-2026-07-10.md`; the target design is in
+> `architecture-v3.md`. In particular, legacy catalog references are not native
+> worker execution and local diagnostic review is not academic acceptance.
+
 Generated after Phase 10-13 overlay hardening.
 
 ## Current Batch State

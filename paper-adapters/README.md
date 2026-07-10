@@ -30,8 +30,8 @@ Current overlay adapters:
   `--stage-inventory` writes a runtime-only `PaperProposalStagingRecord` that
   inventory can read as `inventory_source=proposal_staging` without updating
   production registry files.
-- `journal-manage/`: journal/conference system manager. Proposal and
-  referee-autopilot use it to bind each paper to a target journal/conference,
+- `journal-manage/`: journal/conference system manager. Proposal and the local
+  diagnostic review loop use it to bind each paper to a target journal/conference,
   select primary and backup targets from a curated top journal/conference
   registry, emit venue rubrics, build fresh referee pools, enforce venue
   evidence gates, and preserve the local-only lifecycle boundary before any live
@@ -53,8 +53,9 @@ Current overlay adapters:
   output under `hepta-paper-workspace/runtime/`. Execute mode can write
   `BUILD_ARTIFACT_ACCEPTANCE.json` next to the compiled PDF; the acceptance is
   local-package only and does not authorize live submission.
-- `research-verify/`: read-only typed claim/proof/evidence/reproducibility
-  contracts, worker bridge receipts, and verify receipt. For proposal-staged
+- `research-verify/`: typed claim/proof/evidence/reproducibility contracts,
+  explicit legacy catalog references, native worker plans/receipts, and a
+  verify receipt. For proposal-staged
   papers it reports `proposal_seed_present` until real evidence replaces the
   seed material. It also scans runtime empirical-analysis artifacts when present,
   so a paper can advance to `evidence_present` only after real local run
@@ -77,7 +78,7 @@ Current overlay adapters:
   workspace, and applies a marker-based idempotent TeX block. It never accesses
   the network, calls a model, performs external actions, or authorizes live
   submission.
-  `referee-autopilot --execute` can invoke it when venue evidence is missing,
+  `local-review-loop --execute` can invoke it when venue evidence is missing,
   then rerun `research-verify` before asking a fresh referee.
 - `referee-review/`: deterministic local agent referee review intake. It reads
   the current `main.tex`, builds `RefereeReviewIntake` and
@@ -103,16 +104,15 @@ Current overlay adapters:
   referee issues resolved in SQLite, records the agent patch bundle as an
   applied `patch_queue` row, and releases the paper back to reviewed-submit
   dry-run readiness without performing external actions.
-- `referee-autopilot`: batch-run orchestration mode, not a separate adapter. It
+- `local-review-loop`: diagnostic batch-run orchestration mode, not a separate adapter. It
   repeatedly runs `referee-review` -> `referee-revise` -> local
   build/package/research recheck -> reviewed-submit handoff, then asks a fresh
-  journal-targeted referee from the `FreshRefereePool` for an accept/revise
-  verdict. It stops only on a fresh `accept` verdict after the
-  `VenueEvidenceGate` and `VenueLifecyclePolicy` are ready, or fail-closes at
-  the max round limit. It writes
-  `runtime/referee-autopilot/<paper>/AUTOPILOT_ROUNDS.json` and
-  `AUTOPILOT_ACCEPTANCE_RECEIPT.json`, and still never performs live external
-  submission.
+  journal-targeted diagnostic reviewer from the `FreshRefereePool` for a local
+  pass/revise result. A local pass is not academic acceptance and grants no
+  submission authority. It fail-closes at the max round limit and writes
+  `runtime/local-review-loop/<paper>/LOCAL_DIAGNOSTIC_REVIEW_ROUNDS.json` and
+  `LOCAL_DIAGNOSTIC_REVIEW_RECEIPT.json`. The old `referee-autopilot` CLI name
+  remains a deprecated compatibility alias only.
 - `venue-resolve/`: read-only venue decision packets for papers that need
   manual venue selection, including submit-ready package prerequisite plans and
   registry-add plan templates.
@@ -124,7 +124,10 @@ Current overlay adapters:
   `SubmissionApprovalPacket`, emits a hash-bound
   `ReviewedSubmitPreflightPacket`, and records a
   `ControlledExternalExecutorReceipt` boundary without performing a live
-  external submission.
+  external submission. The native delivery runtime also models dispatch
+  authorization, executor response intake, retry/redrive, reconciliation, and
+  release locking. `SubmissionExecutorPort` has no provider implementation in
+  this repository.
 - `legacy-cleanup/`: read-only retirement audit classifying old
   `paper_factory` files into adapter candidates, data assets, quarantine-only
   reports/capstones/matrices, LLM/manual chains to retire, and blocked primary
@@ -151,12 +154,14 @@ Blocked from direct migration:
 - duplicated gate/matrix modules
 - temporary source/evidence closure report helpers
 
-Worker bridge policy:
+Legacy catalog and native worker policy:
 
-- adapters may discover old `paperctl_modules/research_compute_*` workers by
-  path/hash
+- adapters may discover old `paperctl_modules/research_compute_*` workers only
+  as `legacyCatalogReference` path/hash evidence
 - adapters must not import old workers as workflow control plane
 - capstone, matrix, submission, portal, executor, patch/apply/merge workers are
   excluded from direct bridge receipts
+- native workers use the WorkerRunner/FormalVerifier ports, bounded inputs,
+  allowlisted execution, atomic artifact receipts, and no source-apply authority
 - any future execute mode must live behind an explicit adapter contract and
   rollback/receipt boundary

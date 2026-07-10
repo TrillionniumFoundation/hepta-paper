@@ -665,7 +665,7 @@ export function buildPaperResearchVerifyReceipt({
   proofObligationContract,
   evidenceMatrixContract,
   reproducibilityContract,
-  workerReceipts = [],
+  legacyCatalogReferences = [],
   evidenceRefs = [],
   blockers = [],
   warnings = [],
@@ -684,7 +684,7 @@ export function buildPaperResearchVerifyReceipt({
     proofObligationContractHash: proofObligationContract?.proofObligationContractHash || null,
     evidenceMatrixContractHash: evidenceMatrixContract?.evidenceMatrixContractHash || null,
     reproducibilityContractHash: reproducibilityContract?.reproducibilityContractHash || null,
-    workerReceiptHashes: (workerReceipts || [])
+    legacyCatalogReferenceHashes: (legacyCatalogReferences || [])
       .map((receipt) => receipt.paperResearchWorkerBridgeReceiptHash)
       .filter(Boolean),
   };

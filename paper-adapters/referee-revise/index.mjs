@@ -15,8 +15,8 @@ import {
   pathWithin,
   relativePath,
   uniqueStrings,
-  writeJsonFile,
 } from '../../paper-core/src/utils.mjs';
+import { writeJsonFile } from '../artifacts/write-artifact.mjs';
 import {
   buildRefereeRevisionDryRunReceipt,
   buildRefereeRevisionIssueQueue,

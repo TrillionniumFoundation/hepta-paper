@@ -156,9 +156,9 @@ assert.equal(report.safety.externalActionPerformed, false);
 assert.equal(report.academicEvidenceEligible, false);
 assert.equal(report.executedResearchWorkerCount, 0);
 assert.equal(report.semanticMigrationVerifiedWorkerCount, 0);
-assert.ok(report.researchWorkerCount > 0);
-assert.ok(report.workerReceiptCount > 0);
-for (const receipt of report.typedContracts.workerReceipts) {
+assert.ok(report.legacyCatalogReferenceCount > 0);
+assert.ok(report.legacyCatalogReferenceReceiptCount > 0);
+for (const receipt of report.typedContracts.legacyCatalogReferences) {
   assert.equal(receipt.capabilityEvidenceClass, 'legacy_worker_catalog_reference_only');
   assert.equal(receipt.legacyWorkerExecutionPerformed, false);
   assert.equal(receipt.semanticMigrationVerified, false);

@@ -18,6 +18,12 @@ import {
 } from '../../paper-core/src/paper-contracts.mjs';
 import { verifyAcademicEvidenceAttestation } from './academic-evidence.mjs';
 import { runNativeResearchWorkers } from './worker-runtime.mjs';
+import { buildClaimRegistry } from '../../paper-domain/research/claim-registry.mjs';
+import { buildEvidenceIntake } from '../../paper-domain/research/evidence-ingestor.mjs';
+import { buildEvidenceQualityGate } from '../../paper-domain/research/evidence-quality-gate.mjs';
+import { buildExperimentRegistry } from '../../paper-domain/research/experiment-registry.mjs';
+import { buildResearchChangeProposal } from '../../paper-domain/research/change-proposal.mjs';
+import { buildResearchGapPlan } from '../../paper-application/research/gap-planner.mjs';
 
 function repoPath(root, value) {
   const text = normalizeText(value);
@@ -114,7 +120,7 @@ function refsForRole(evidenceRefs, role) {
   return matched.length ? matched : (evidenceRefs || []).slice(0, 8);
 }
 
-function buildResearchWorkerReceipts({ paperTask, workers, contracts, evidenceRefs }) {
+function buildLegacyCatalogReferences({ paperTask, workers, contracts, evidenceRefs }) {
   const contractHashes = {
     claimScopeContractHash: contracts.claimScopeContract?.claimScopeContractHash || null,
     proofObligationContractHash: contracts.proofObligationContract?.proofObligationContractHash || null,
@@ -319,7 +325,7 @@ export async function runResearchVerifyAdapter({
     evidenceRefs: evidenceRefs.filter((ref) => /reproduc|result|seed|checksum|sha256|command|run/i.test(ref)),
   });
   const researchWorkers = await discoverResearchWorkerBridges(root);
-  const workerReceipts = buildResearchWorkerReceipts({
+  const legacyCatalogReferences = buildLegacyCatalogReferences({
     paperTask: row.task,
     workers: researchWorkers,
     contracts: {
@@ -330,13 +336,36 @@ export async function runResearchVerifyAdapter({
     },
     evidenceRefs,
   });
+  const claimRegistry = buildClaimRegistry({ paperTask: row.task, claims: structured.claims });
+  const evidenceIntake = buildEvidenceIntake({
+    paperTask: row.task,
+    evidenceItems: structured.evidenceItems.map((item) => ({
+      ...item,
+      claimIds: item.claimIds || item.claim_ids || [],
+      path: item.sourceLocator || item.evidenceRefs?.[0]?.ref || null,
+      hash: item.evidenceRefs?.find((ref) => ref.hash)?.hash || null,
+    })),
+  });
+  const evidenceQualityGate = buildEvidenceQualityGate({
+    paperTask: row.task,
+    claimRegistry,
+    evidenceIntake,
+    nativeWorkerReceipts: nativeResearchWorkerExecution.workerReceipts,
+  });
+  const researchGapPlan = buildResearchGapPlan({ paperTask: row.task, claimRegistry, evidenceQualityGate });
+  const experimentRegistry = buildExperimentRegistry({ paperTask: row.task, artifacts: evidenceRecords });
+  const researchChangeProposal = buildResearchChangeProposal({
+    paperTask: row.task,
+    patches: [],
+    evidenceQualityGate,
+  });
   const verifyReceipt = buildPaperResearchVerifyReceipt({
     paperTask: row.task,
     claimScopeContract,
     proofObligationContract,
     evidenceMatrixContract,
     reproducibilityContract,
-    workerReceipts,
+    legacyCatalogReferences,
     evidenceRefs,
     blockers,
     warnings,
@@ -362,8 +391,8 @@ export async function runResearchVerifyAdapter({
     proofObligationCount: proofObligationContract.proofObligationCount,
     evidenceItemCount: evidenceMatrixContract.evidenceItemCount,
     reproducibilityItemCount: reproducibilityContract.reproducibilityItemCount,
-    researchWorkerCount: researchWorkers.length,
-    workerReceiptCount: workerReceipts.length,
+    legacyCatalogReferenceCount: researchWorkers.length,
+    legacyCatalogReferenceReceiptCount: legacyCatalogReferences.length,
     nativeResearchWorkerPlanStatus: nativeResearchWorkerExecution.status,
     nativeResearchWorkerCount: nativeResearchWorkerExecution.plannedResearchWorkerCount,
     executedResearchWorkerCount: nativeResearchWorkerExecution.executedResearchWorkerCount,
@@ -377,13 +406,21 @@ export async function runResearchVerifyAdapter({
     },
     academicEvidenceAttestation,
     nativeResearchWorkerExecution,
+    capabilities: {
+      claimRegistry,
+      evidenceIntake,
+      evidenceQualityGate,
+      researchGapPlan,
+      experimentRegistry,
+      researchChangeProposal,
+    },
     evidenceRefs,
     typedContracts: {
       claimScopeContract,
       proofObligationContract,
       evidenceMatrixContract,
       reproducibilityContract,
-      workerReceipts,
+      legacyCatalogReferences,
       verifyReceipt,
     },
     blockers,

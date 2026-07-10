@@ -1,0 +1,58 @@
+name: hepta-paper-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  portable-contract-gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install system test dependency
+        run: sudo apt-get update && sudo apt-get install -y sqlite3
+      - name: Install package metadata
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Run portable integrity and contract gates
+        run: npm run ci:selftest
+      - name: Enforce architecture coverage
+        run: npm run coverage:architecture
+
+  legacy-differential-policy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify differential tests remain hash-bound in the migration matrix
+        run: |
+          node --input-type=module - <<'NODE'
+          import crypto from 'node:crypto';
+          import fs from 'node:fs';
+          const matrix = JSON.parse(fs.readFileSync('migration/legacy-semantic-migration-matrix.json', 'utf8'));
+          const required = new Set([
+            'migration/tests/p0-production-core-differential.mjs',
+            'migration/tests/p1-referee-revision-differential.mjs',
+          ]);
+          const bound = new Map();
+          for (const row of matrix.entries) {
+            for (const test of row.behaviorTests || []) {
+              if (required.has(test.path)) bound.set(test.path, test.sha256);
+            }
+          }
+          for (const file of required) {
+            if (!bound.has(file)) throw new Error(`Missing matrix binding for ${file}`);
+            const actual = crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+            if (actual !== bound.get(file)) throw new Error(`Differential test hash drift: ${file}`);
+          }
+          NODE

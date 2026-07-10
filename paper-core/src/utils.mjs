@@ -90,16 +90,6 @@ export async function ensureDir(candidate) {
   return candidate;
 }
 
-export async function writeJsonFile(candidate, value) {
-  await ensureDir(path.dirname(candidate));
-  await fsp.writeFile(candidate, JSON.stringify(value, null, 2) + '\n', 'utf8');
-}
-
-export async function writeTextFile(candidate, value) {
-  await ensureDir(path.dirname(candidate));
-  await fsp.writeFile(candidate, String(value), 'utf8');
-}
-
 export function safeJsonParse(value, fallback = null) {
   try {
     return JSON.parse(String(value ?? ''));

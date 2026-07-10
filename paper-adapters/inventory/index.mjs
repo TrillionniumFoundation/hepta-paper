@@ -1,5 +1,4 @@
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import {
   dirExists,
   fileExists,
@@ -26,6 +25,7 @@ import {
   nextActionForState,
 } from '../../paper-core/src/paper-contracts.mjs';
 import { heptaStorePath, legacyStorePath } from '../../paper-core/src/hepta-store.mjs';
+import { createSqliteStore } from '../persistence/sqlite-store.mjs';
 
 const TEX_IGNORE_RE = /(\.bak|\.backup|\.orig|\.old|\.tmp|\.synctex|supplementary|appendix-only)/i;
 const QUARANTINE_SLUG_RE = /(^rust_patch_queue_shadow|_fixture_|fixture_|test_fixture|shadow_review_|review_flow_(applied|rolled)_back_patch_queue)/i;
@@ -54,21 +54,11 @@ async function readRegistry(root) {
   };
 }
 
-function sqliteAvailable() {
-  const result = spawnSync('bash', ['-lc', 'command -v sqlite3'], { encoding: 'utf8' });
-  return result.status === 0;
-}
-
 function sqliteJson(dbPath, sql) {
-  if (!sqliteAvailable()) return { ok: false, rows: [], error: 'sqlite3_not_found' };
-  const result = spawnSync('sqlite3', ['-json', dbPath, sql], {
-    encoding: 'utf8',
-    maxBuffer: 1024 * 1024 * 16,
-  });
-  if (result.status !== 0) {
-    return { ok: false, rows: [], error: normalizeText(result.stderr || result.stdout || 'sqlite_query_failed') };
-  }
-  return { ok: true, rows: safeJsonParse(result.stdout || '[]', []), error: null };
+  const store = createSqliteStore({ dbPath, maxBuffer: 16 * 1024 * 1024 });
+  if (!store.available()) return { ok: false, rows: [], error: 'sqlite3_not_found' };
+  const result = store.query(sql);
+  return { ok: result.ok, rows: result.rows, error: result.error };
 }
 
 function normalizeSqlitePaper(row = {}, inventorySource = 'hepta_sqlite') {

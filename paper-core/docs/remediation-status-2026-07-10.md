@@ -158,6 +158,38 @@ unbounded-file blocker.
   plane is disposition-ready for archive-only retirement, while functional
   parity remains explicitly false because 249 rows were retired, not ported.
 
+## Architecture v3 refactor
+
+- Capability matrix v3 maps every one of the 249 explicit-retirement rows to a
+  business decision, capability IDs, coverage requirements, and owner
+  acceptance. Counts are 88 permanent retirements, 40 superseded-with-coverage
+  surfaces, and 121 capability-reimplementation sources. All 249 owner
+  acceptances remain pending rather than being inferred from tests.
+- `paper-batch-runner` now delegates ordered execution to an immutable
+  `PaperExecutionContext`, declarative mode registry, and workflow engine with
+  per-stage receipts. The legacy `referee-autopilot` spelling is only an alias
+  for `local-review-loop`.
+- Production SQLite calls use `StorePort`; production artifact writes use the
+  scoped, atomic `ArtifactRepository` and receive hash-bound write receipts.
+- Research is split into ClaimRegistry, ResearchGapPlanner, EvidenceIngestor,
+  EvidenceQualityGate, ExperimentRegistry, FormalVerifier, and
+  ResearchChangeProposal bounded contexts. Workers have no direct source-apply
+  authority.
+- Submission now has explicit dispatch authorization, executor-response
+  intake, redrive, reconciliation, and release-lock contracts. The
+  `SubmissionExecutorPort` still has no provider implementation.
+- Journal profiles are a versioned data module with schema validation; all 97
+  profiles validate.
+- Ambiguous counters were removed. Legacy worker observations are
+  `legacyCatalogReference`; research readiness is split into contract,
+  evidence-candidate, native-execution, and verified academic-evidence states.
+- Portable CI and an architecture coverage gate are present. The architecture
+  conformance suite currently covers stage ordering, ports, delivery safety,
+  bounded workers, research contracts, journal schema, and forbidden legacy
+  acceptance/SQLite bypass patterns. The release verification run reports
+  94.70% line coverage for the selected architecture modules; all 56 production
+  MJS modules remain within the 64 KiB budget.
+
 ## Verification
 
 ```bash
@@ -172,7 +204,11 @@ npm run migration:p1-build-package-selftest
 npm run migration:p1-submission-selftest
 npm run migration:p1-research-selftest
 npm run migration:matrix-integrity
+npm run migration:capability-matrix-v3
 npm run paper:authority-selftest
+npm run paper:architecture-selftest
+npm run coverage:architecture
+npm run test:migration-differential
 npm run authority:status
 npm test
 ```

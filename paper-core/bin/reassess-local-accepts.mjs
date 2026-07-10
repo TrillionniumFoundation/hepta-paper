@@ -2,6 +2,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { writeJsonFile } from '../../paper-adapters/artifacts/write-artifact.mjs';
 import { fileURLToPath } from 'node:url';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -136,8 +137,10 @@ const report = {
   },
 };
 report.reportHash = `sha256:${crypto.createHash('sha256').update(JSON.stringify(report)).digest('hex')}`;
-const outputDir = path.join(runtimeRoot, 'audits');
-fs.mkdirSync(outputDir, { recursive: true });
-const outputPath = path.join(outputDir, 'LOCAL_ACCEPT_REASSESSMENT.json');
-fs.writeFileSync(outputPath, `${JSON.stringify(report, null, 2)}\n`);
+const outputPath = path.join(runtimeRoot, 'audits', 'LOCAL_ACCEPT_REASSESSMENT.json');
+await writeJsonFile(outputPath, report, {
+  scopeRoot: runtimeRoot,
+  role: 'local_accept_reassessment',
+  atomic: true,
+});
 process.stdout.write(`${JSON.stringify({ ...report.summary, status: report.status, outputPath }, null, 2)}\n`);

@@ -1,7 +1,7 @@
 # hepta-paper-workspace
 
-Clean integration workspace for rebuilding `paper_factory` around the
-the vendored `design-production-core` workflow.
+Fail-closed integration workspace for replacing selected `paper_factory`
+capabilities around an accepted vendored `design-production-core` baseline.
 
 ## Layout
 
@@ -9,13 +9,20 @@ the vendored `design-production-core` workflow.
   `core/CORE_BASELINE.json`. It records historical upstream commit
   `3f90aa277a9a1bde6898dc6ddd9d25d49fa94f30`, but does **not** claim byte
   identity with that now-unavailable snapshot.
-- `paper-adapters/` is reserved for thin paper-domain adapters extracted from
-  the current dirty `paper_factory` tree.
+- `paper-domain/` contains pure paper and submission contracts.
+- `paper-application/` contains use cases and bounded planning.
+- `paper-ports/` contains Store, Artifact, Worker, FormalVerifier, and
+  SubmissionExecutor boundaries.
+- `paper-adapters/` contains native paper-domain and infrastructure adapters.
+- `paper-core/` contains the CLI, declarative mode registry, workflow engine,
+  execution context, summaries, and compatibility facades.
 
 ## Migration Rule
 
-The hepta core owns workflow state, runner handoff, action manifests, dispatch,
-receipts, audit archive, replay guard, reconciliation, and settlement gates.
+The paper workflow engine owns ordered stage execution and receipts. Generic
+dispatch, replay, receipt, reconciliation, and settlement concepts are exposed
+through native contracts and ports. The full vendored core is hash-bound but is
+not claimed to be the active runtime implementation of every paper capability.
 
 The old `paper_factory` tree may only contribute paper-domain adapters:
 
@@ -58,6 +65,8 @@ npm run core:integrity
 npm test
 npm run paper:selftest
 npm run paper:authority-selftest
+npm run paper:architecture-selftest
+npm run coverage:architecture
 npm run authority:status
 node paper-core/bin/paper-production-core.mjs proposal --idea "distributionally robust reinforcement learning for stochastic control" --discipline "machine learning" --venue NeurIPS --write-report
 node paper-core/bin/paper-production-core.mjs proposal --idea "distributionally robust reinforcement learning for stochastic control" --discipline "machine learning" --venue NeurIPS --approved --materialize-source --write-report
@@ -70,6 +79,7 @@ node paper-core/bin/paper-production-core.mjs batch-run --mode inventory
 node paper-core/bin/paper-production-core.mjs batch-run --mode research-verify --paper distributionally_robust_rl_for_stochastic_control --execute
 node paper-core/bin/paper-production-core.mjs batch-run --mode local-dry-run --write-report
 node paper-core/bin/paper-production-core.mjs batch-run --mode reviewed-submit
+node paper-core/bin/paper-production-core.mjs batch-run --mode local-review-loop --paper distributionally_robust_rl_for_stochastic_control
 ```
 
 The proposal staging path writes only `runtime/proposal-staging/*.json`, a
@@ -86,6 +96,12 @@ Academic evidence requires a version-2, Ed25519-signed, hash-bound
 verified native worker receipts. Deterministic local referee personas have no
 academic acceptance authority. The complete authority protocol is documented
 in `paper-core/docs/authority-pipeline.md`.
+
+Legacy capability decisions and the target layering are documented in
+`paper-core/docs/architecture-v3.md`. The 249 retired legacy source files are
+not treated as 249 business capabilities: 88 are permanent retirements, 40
+need native coverage proof, and 121 are compressed into bounded native
+capabilities. Owner acceptance is still pending for all 249 decisions.
 
 The proposal build path may execute a local LaTeX build under
 `runtime/builds/<paper_id>/` and write `BUILD_ARTIFACT_ACCEPTANCE.json` for the

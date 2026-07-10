@@ -418,12 +418,16 @@ async function main() {
   assert.equal(report.rows.length, 3);
   assert.ok(report.markdownTable.includes('| paper_id |'));
   assert.ok(Number.isFinite(report.summary.researchTypedContracts));
-  assert.ok(Number.isFinite(report.summary.researchWorkerReceipts));
-  assert.ok(Number.isFinite(report.summary.researchWorkerCatalogSize));
+  assert.ok(Number.isFinite(report.summary.legacyCatalogReferenceReceipts));
+  assert.ok(Number.isFinite(report.summary.legacyCatalogReferenceCount));
+  assert.ok(Number.isFinite(report.summary.researchContractReady));
+  assert.ok(Number.isFinite(report.summary.researchEvidenceCandidatePresent));
+  assert.ok(Number.isFinite(report.summary.researchNativeExecutionReady));
+  assert.ok(Number.isFinite(report.summary.researchAcademicEvidenceReady));
   assert.ok(Number.isFinite(report.summary.lifecycleOutboxItems));
   assert.ok(report.summary.submissionPreflight && Number.isFinite(report.summary.submissionPreflight.externalActionsPerformed));
   assert.ok(report.results.some((result) => result.lifecycle?.replayGuard?.kind === 'SubmissionReplayGuard'));
-  assert.ok(report.results.some((result) => result.researchReport?.typedContracts?.workerReceipts?.length));
+  assert.ok(report.results.some((result) => result.researchReport?.typedContracts?.legacyCatalogReferences?.length));
 
   const journalManageReport = await runPaperBatch({
     root: paperFactoryRoot,
@@ -627,73 +631,66 @@ async function main() {
     result.refereeRevision?.repairReconciliation?.safety?.advancesSubmissionReadiness === false
   )) || refereeReport.results.every((result) => !result.refereeRevision?.openIssueCount));
 
-  const refereeAutopilotReport = await runPaperBatch({
+  const localReviewLoopReport = await runPaperBatch({
     root: paperFactoryRoot,
-    mode: 'referee-autopilot',
+    mode: 'local-review-loop',
     limit: 1,
     maxRounds: 2,
     targetOverride: 'JMLR',
   });
-  assert.equal(refereeAutopilotReport.safety.externalActionPerformed, false);
-  assert.equal(refereeAutopilotReport.requestedTargetOverride, 'JMLR');
-  assert.ok(Number.isFinite(refereeAutopilotReport.summary.refereeAutopilotRuns));
-  assert.ok(Number.isFinite(refereeAutopilotReport.summary.refereeAutopilotAccepted));
-  assert.ok(Number.isFinite(refereeAutopilotReport.summary.refereeAutopilotBlocked));
-  assert.ok(Number.isFinite(refereeAutopilotReport.summary.refereeAutopilotRounds));
-  assert.ok(Number.isFinite(refereeAutopilotReport.summary.refereeAutopilotFinalOpenIssues));
-  assert.ok(Number.isFinite(refereeAutopilotReport.summary.refereeAutopilotSourceMutations));
-  assert.ok(Number.isFinite(refereeAutopilotReport.summary.refereeAutopilotSqliteWrites));
-  assert.ok(Number.isFinite(refereeAutopilotReport.summary.refereeAutopilotAcceptanceReceipts));
-  assert.ok(Number.isFinite(refereeAutopilotReport.summary.refereeAutopilotAcceptanceRecorded));
-  assert.ok(Number.isFinite(refereeAutopilotReport.summary.refereeAutopilotExternalActions));
-  assert.ok(Number.isFinite(refereeAutopilotReport.summary.journalConferenceRegistries));
-  assert.ok(Number.isFinite(refereeAutopilotReport.summary.targetSelectionPolicies));
-  assert.ok(Number.isFinite(refereeAutopilotReport.summary.journalTargetProfiles));
-  assert.ok(Number.isFinite(refereeAutopilotReport.summary.journalRubricPackets));
-  assert.ok(Number.isFinite(refereeAutopilotReport.summary.venueRubricManagers));
-  assert.ok(Number.isFinite(refereeAutopilotReport.summary.freshRefereePools));
-  assert.ok(Number.isFinite(refereeAutopilotReport.summary.venueEvidenceGates));
-  assert.ok(Number.isFinite(refereeAutopilotReport.summary.venueEvidenceGateReady));
-  assert.ok(Number.isFinite(refereeAutopilotReport.summary.venueLifecyclePolicies));
-  assert.ok(Number.isFinite(refereeAutopilotReport.summary.journalConferenceSystemPackets));
-  assert.ok(Number.isFinite(refereeAutopilotReport.summary.freshRefereeVerdicts));
-  assert.ok(Number.isFinite(refereeAutopilotReport.summary.freshRefereeAccepts));
-  assert.ok(Number.isFinite(refereeAutopilotReport.summary.freshRefereeRevisions));
-  assert.ok(refereeAutopilotReport.results.some((result) => (
-    result.refereeAutopilot?.kind === 'RefereeAutopilotReport'
+  assert.equal(localReviewLoopReport.safety.externalActionPerformed, false);
+  assert.equal(localReviewLoopReport.requestedTargetOverride, 'JMLR');
+  for (const metric of [
+    'localDiagnosticReviewLoopRuns',
+    'localDiagnosticReviewLoopPassed',
+    'localDiagnosticReviewLoopBlocked',
+    'localDiagnosticReviewLoopRounds',
+    'localDiagnosticReviewLoopFinalOpenIssues',
+    'localDiagnosticReviewLoopSourceMutations',
+    'localDiagnosticReviewLoopSqliteWrites',
+    'localDiagnosticReviewLoopReceipts',
+    'localDiagnosticReviewLoopPassRecorded',
+    'localDiagnosticReviewLoopExternalActions',
+    'localHeuristicVerdicts',
+    'localDiagnosticPasses',
+    'localDiagnosticRevisions',
+  ]) assert.ok(Number.isFinite(localReviewLoopReport.summary[metric]), metric);
+  assert.ok(localReviewLoopReport.results.some((result) => (
+    result.localDiagnosticReviewLoop?.kind === 'LocalDiagnosticReviewLoopReport'
   )));
-  assert.ok(refereeAutopilotReport.results.every((result) => (
-    result.refereeAutopilot?.targetSelectionPolicy?.kind === 'TargetSelectionPolicy'
+  assert.ok(localReviewLoopReport.results.every((result) => (
+    result.localDiagnosticReviewLoop?.targetSelectionPolicy?.kind === 'TargetSelectionPolicy'
   )));
-  assert.ok(refereeAutopilotReport.results.every((result) => (
-    result.refereeAutopilot?.targetJournalProfile?.kind === 'JournalTargetProfile'
+  assert.ok(localReviewLoopReport.results.every((result) => (
+    result.localDiagnosticReviewLoop?.targetJournalProfile?.kind === 'JournalTargetProfile'
   )));
-  assert.ok(refereeAutopilotReport.results.every((result) => (
-    result.refereeAutopilot?.targetJournalProfile?.profile?.id === 'jmlr'
+  assert.ok(localReviewLoopReport.results.every((result) => (
+    result.localDiagnosticReviewLoop?.targetJournalProfile?.profile?.id === 'jmlr'
   )));
-  assert.ok(refereeAutopilotReport.results.every((result) => (
-    result.refereeAutopilot?.targetOverrideApplied === true
+  assert.ok(localReviewLoopReport.results.every((result) => (
+    result.localDiagnosticReviewLoop?.targetOverrideApplied === true
   )));
-  assert.ok(refereeAutopilotReport.results.every((result) => (
-    result.refereeAutopilot?.safety?.targetOverrideRuntimeOnly === true
+  assert.ok(localReviewLoopReport.results.every((result) => (
+    result.localDiagnosticReviewLoop?.safety?.targetOverrideRuntimeOnly === true
   )));
-  assert.ok(refereeAutopilotReport.results.every((result) => (
-    result.refereeAutopilot?.safety?.writesLegacyRegistry === false
+  assert.ok(localReviewLoopReport.results.every((result) => (
+    result.localDiagnosticReviewLoop?.safety?.writesLegacyRegistry === false
   )));
-  assert.ok(refereeAutopilotReport.results.every((result) => (
-    result.refereeAutopilot?.finalVenueEvidenceGate?.kind === 'VenueEvidenceGate'
+  assert.ok(localReviewLoopReport.results.every((result) => (
+    result.localDiagnosticReviewLoop?.finalVenueEvidenceGate?.kind === 'VenueEvidenceGate'
   )));
-  assert.ok(refereeAutopilotReport.results.every((result) => (
-    result.refereeAutopilot?.finalVenueLifecyclePolicy?.kind === 'VenueLifecyclePolicy'
+  assert.ok(localReviewLoopReport.results.every((result) => (
+    result.localDiagnosticReviewLoop?.finalVenueLifecyclePolicy?.kind === 'VenueLifecyclePolicy'
   )));
-  assert.ok(refereeAutopilotReport.results.every((result) => (
-    result.refereeAutopilot?.finalFreshRefereeVerdict?.kind === 'FreshRefereeVerdict'
+  assert.ok(localReviewLoopReport.results.every((result) => (
+    result.localDiagnosticReviewLoop?.finalFreshRefereeVerdict?.kind === 'FreshRefereeVerdict'
   )));
-  assert.ok(refereeAutopilotReport.results.every((result) => (
-    result.refereeAutopilot?.acceptanceReceipt?.kind === 'RefereeAutopilotAcceptanceReceipt'
+  assert.ok(localReviewLoopReport.results.every((result) => (
+    result.localDiagnosticReviewLoop?.diagnosticReceipt?.kind === 'LocalDiagnosticReviewLoopReceipt'
+    && result.localDiagnosticReviewLoop?.academicAcceptanceGranted === false
   )));
-  assert.ok(refereeAutopilotReport.results.every((result) => (
-    result.refereeAutopilot?.safety?.externalActionPerformed === false
+  assert.ok(localReviewLoopReport.results.every((result) => (
+    result.localDiagnosticReviewLoop?.safety?.externalActionPerformed === false
   )));
 
   const venueReport = await runPaperBatch({

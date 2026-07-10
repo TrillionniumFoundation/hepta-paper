@@ -15,12 +15,19 @@ paper-production-core batch-run --mode legacy-cleanup --write-report --json
 > claims complete. That inference was invalid. Only the hash- and behavior-test
 > bound matrix under `migration/` may now create a verified claim.
 
+> Architecture v3 status: the matrix now records 14 behavioral replacements
+> and 249 explicit retirements. The 249 are further classified as 88 permanent
+> retirements, 40 native-coverage obligations, and 121 capability concepts to
+> reimplement. Owner acceptance remains pending for all 249 decisions. The
+> numeric snapshot below is retained as historical planning context and is not
+> the current release status.
+
 Latest audit report:
 
 - `runtime/reports/paper-batch-legacy-cleanup-latest.json`
 - `runtime/reports/paper-batch-legacy-cleanup-latest.md`
 
-## Current Audit Snapshot
+## Historical pre-remediation audit snapshot
 
 Latest scan:
 

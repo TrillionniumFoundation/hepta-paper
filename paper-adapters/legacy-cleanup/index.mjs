@@ -1,16 +1,16 @@
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import {
   fileRecord,
   normalizeText,
   relativePath,
   uniqueStrings,
   walkFiles,
-  writeJsonFile,
 } from '../../paper-core/src/utils.mjs';
+import { writeJsonFile } from '../artifacts/write-artifact.mjs';
 import { hashPaperRecord } from '../../paper-core/src/paper-contracts.mjs';
 import { buildMigrationMatrixAudit } from './migration-matrix.mjs';
 import { heptaStorePath } from '../../paper-core/src/hepta-store.mjs';
+import { createSqliteStore } from '../persistence/sqlite-store.mjs';
 
 const RETIREMENT_WAVES = [
   {
@@ -833,12 +833,12 @@ async function collectDataStoreRecords(root) {
 
 function nativeStoreMigrationStatus(root) {
   const dbPath = heptaStorePath(root);
-  const result = spawnSync('sqlite3', ['-json', dbPath, [
-    "select value from store_metadata where key='store_role' and value='hepta-paper-native';",
-    'pragma quick_check;',
-  ].join(' ')], { encoding: 'utf8' });
+  const store = createSqliteStore({ dbPath });
+  const role = store.query("select value from store_metadata where key='store_role' and value='hepta-paper-native';");
+  const quickCheck = store.execute('pragma quick_check;');
   return {
-    ready: result.status === 0 && /hepta-paper-native/.test(result.stdout || '') && /ok/.test(result.stdout || ''),
+    ready: role.ok && role.rows.some((row) => row.value === 'hepta-paper-native')
+      && quickCheck.ok && /ok/.test(quickCheck.stdout || ''),
     path: dbPath,
   };
 }

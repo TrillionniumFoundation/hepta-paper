@@ -34,7 +34,7 @@ export function summarizeRows(rows, mode) {
     total: rows.length,
     sourceReady: rows.filter((row) => row.draft_status === 'source_tex_present').length,
     buildReady: rows.filter((row) => ['compiled_pdf_present', 'build_ready', 'build_passed'].includes(row.compile_status)).length,
-    researchReady: rows.filter((row) => ['verified', 'evidence_present', 'proposal_seed_present', 'manual_review_only'].includes(row.research_verify_status)).length,
+    researchContractStatusObserved: rows.filter((row) => ['verified', 'evidence_present', 'proposal_seed_present', 'manual_review_only'].includes(row.research_verify_status)).length,
     packageReady: rows.filter((row) => ['package_present', 'package_ready'].includes(row.package_status)).length,
     localDryRunReady: rows.filter((row) => row.readiness_status === 'ready_for_local_dry_run').length,
     dryRunReceipts: rows.filter((row) => row.runner_status === 'dry_run_receipt_recorded').length,
@@ -67,11 +67,11 @@ export function summarizeResults(results, legacyCleanupAudit = null) {
   const researchTypedContracts = results.reduce((count, result) => (
     count + (result.researchReport?.typedContracts ? 1 : 0)
   ), 0);
-  const researchWorkerReceipts = results.reduce((count, result) => (
-    count + Number(result.researchReport?.workerReceiptCount || 0)
+  const legacyCatalogReferenceReceipts = results.reduce((count, result) => (
+    count + Number(result.researchReport?.legacyCatalogReferenceReceiptCount || 0)
   ), 0);
-  const researchWorkerCatalogSize = Math.max(0, ...results.map((result) => (
-    Number(result.researchReport?.researchWorkerCount || 0)
+  const legacyCatalogReferenceCount = Math.max(0, ...results.map((result) => (
+    Number(result.researchReport?.legacyCatalogReferenceCount || 0)
   )));
   const nativeResearchWorkerPlans = results.filter((result) => (
     result.researchReport?.nativeResearchWorkerExecution?.planHash
@@ -83,177 +83,189 @@ export function summarizeResults(results, legacyCleanupAudit = null) {
     result.researchReport?.academicEvidenceStatus === 'academic_evidence_verified'
     && result.researchReport?.academicEvidenceEligible === true
   )).length;
+  const researchContractReady = results.filter((result) => (
+    result.researchReport?.typedContracts?.claimScopeContract?.kind === 'ClaimScopeContract'
+    && result.researchReport?.typedContracts?.evidenceMatrixContract?.kind === 'EvidenceMatrixContract'
+  )).length;
+  const researchEvidenceCandidatePresent = results.filter((result) => (
+    Number(result.researchReport?.sourceEvidenceCount || 0) > 0
+    || Number(result.researchReport?.logEvidenceCount || 0) > 0
+  )).length;
+  const researchNativeExecutionReady = results.filter((result) => (
+    result.researchReport?.nativeResearchWorkerExecution?.status === 'native_research_workers_verified'
+    && Number(result.researchReport?.verifiedNativeResearchWorkerCount || 0) > 0
+  )).length;
   const journalManageReports = results.filter((result) => (
     result.journalManagement?.kind === 'JournalManageAdapterReport'
   )).length;
   const journalConferenceRegistries = results.filter((result) => (
     result.journalManagement?.registry?.kind === 'JournalConferenceRegistry'
-    || result.refereeAutopilot?.journalConferenceRegistry?.kind === 'JournalConferenceRegistry'
+    || result.localDiagnosticReviewLoop?.journalConferenceRegistry?.kind === 'JournalConferenceRegistry'
   )).length;
   const targetSelectionPolicies = results.filter((result) => (
     result.journalManagement?.targetSelectionPolicy?.kind === 'TargetSelectionPolicy'
-    || result.refereeAutopilot?.targetSelectionPolicy?.kind === 'TargetSelectionPolicy'
+    || result.localDiagnosticReviewLoop?.targetSelectionPolicy?.kind === 'TargetSelectionPolicy'
   )).length;
   const journalTargetProfiles = results.filter((result) => (
     result.journalManagement?.targetProfile?.kind === 'JournalTargetProfile'
-    || result.refereeAutopilot?.targetJournalProfile?.kind === 'JournalTargetProfile'
+    || result.localDiagnosticReviewLoop?.targetJournalProfile?.kind === 'JournalTargetProfile'
   )).length;
   const journalTargetProfileReady = results.filter((result) => (
     result.journalManagement?.targetProfile?.status === 'journal_target_profile_ready'
-    || result.refereeAutopilot?.targetJournalProfile?.status === 'journal_target_profile_ready'
+    || result.localDiagnosticReviewLoop?.targetJournalProfile?.status === 'journal_target_profile_ready'
   )).length;
   const journalRubricPackets = results.filter((result) => (
     result.journalManagement?.rubricPacket?.kind === 'JournalRubricPacket'
-    || result.refereeAutopilot?.finalJournalRubricPacket?.kind === 'JournalRubricPacket'
+    || result.localDiagnosticReviewLoop?.finalJournalRubricPacket?.kind === 'JournalRubricPacket'
   )).length;
   const journalRubricReady = results.filter((result) => (
     result.journalManagement?.rubricPacket?.status === 'journal_rubric_packet_ready'
-    || result.refereeAutopilot?.finalJournalRubricPacket?.status === 'journal_rubric_packet_ready'
+    || result.localDiagnosticReviewLoop?.finalJournalRubricPacket?.status === 'journal_rubric_packet_ready'
   )).length;
   const venueRubricManagers = results.filter((result) => (
     result.journalManagement?.venueRubricManager?.kind === 'VenueRubricManager'
-    || result.refereeAutopilot?.finalVenueRubricManager?.kind === 'VenueRubricManager'
+    || result.localDiagnosticReviewLoop?.finalVenueRubricManager?.kind === 'VenueRubricManager'
   )).length;
   const freshRefereePools = results.filter((result) => (
     result.journalManagement?.freshRefereePool?.kind === 'FreshRefereePool'
-    || result.refereeAutopilot?.finalFreshRefereePool?.kind === 'FreshRefereePool'
+    || result.localDiagnosticReviewLoop?.finalFreshRefereePool?.kind === 'FreshRefereePool'
   )).length;
   const venueEvidenceGates = results.filter((result) => (
     result.journalManagement?.evidenceGate?.kind === 'VenueEvidenceGate'
-    || result.refereeAutopilot?.finalVenueEvidenceGate?.kind === 'VenueEvidenceGate'
+    || result.localDiagnosticReviewLoop?.finalVenueEvidenceGate?.kind === 'VenueEvidenceGate'
   )).length;
   const venueEvidenceGateReady = results.filter((result) => (
     result.journalManagement?.evidenceGate?.status === 'venue_evidence_gate_ready'
-    || result.refereeAutopilot?.finalVenueEvidenceGate?.status === 'venue_evidence_gate_ready'
+    || result.localDiagnosticReviewLoop?.finalVenueEvidenceGate?.status === 'venue_evidence_gate_ready'
   )).length;
   const venueLifecyclePolicies = results.filter((result) => (
     result.journalManagement?.lifecyclePolicy?.kind === 'VenueLifecyclePolicy'
-    || result.refereeAutopilot?.finalVenueLifecyclePolicy?.kind === 'VenueLifecyclePolicy'
+    || result.localDiagnosticReviewLoop?.finalVenueLifecyclePolicy?.kind === 'VenueLifecyclePolicy'
   )).length;
   const journalConferenceSystemPackets = results.filter((result) => (
     result.journalManagement?.systemPacket?.kind === 'JournalConferenceSystemPacket'
-    || result.refereeAutopilot?.journalConferenceSystemPacket?.kind === 'JournalConferenceSystemPacket'
+    || result.localDiagnosticReviewLoop?.journalConferenceSystemPacket?.kind === 'JournalConferenceSystemPacket'
   )).length;
   const empiricalAnalysisReports = results.filter((result) => (
     result.empiricalAnalysis?.kind === 'EmpiricalAnalysisAdapterReport'
-    || result.refereeAutopilot?.finalEmpiricalAnalysis?.kind === 'EmpiricalAnalysisAdapterReport'
+    || result.localDiagnosticReviewLoop?.finalEmpiricalAnalysis?.kind === 'EmpiricalAnalysisAdapterReport'
   )).length;
   const empiricalAnalysisEvidenceReady = results.filter((result) => (
     result.empiricalAnalysis?.status === 'empirical_analysis_evidence_ready'
-    || result.refereeAutopilot?.finalEmpiricalAnalysis?.status === 'empirical_analysis_evidence_ready'
+    || result.localDiagnosticReviewLoop?.finalEmpiricalAnalysis?.status === 'empirical_analysis_evidence_ready'
   )).length;
   const empiricalBenchmarkRegistries = results.filter((result) => (
     result.empiricalAnalysis?.empiricalBenchmarkRegistry?.kind === 'EmpiricalBenchmarkRegistry'
-    || result.refereeAutopilot?.finalEmpiricalAnalysis?.empiricalBenchmarkRegistry?.kind === 'EmpiricalBenchmarkRegistry'
+    || result.localDiagnosticReviewLoop?.finalEmpiricalAnalysis?.empiricalBenchmarkRegistry?.kind === 'EmpiricalBenchmarkRegistry'
   )).length;
   const empiricalBenchmarkRegistriesReady = results.filter((result) => (
     result.empiricalAnalysis?.empiricalBenchmarkRegistry?.status === 'empirical_benchmark_registry_ready'
-    || result.refereeAutopilot?.finalEmpiricalAnalysis?.empiricalBenchmarkRegistry?.status === 'empirical_benchmark_registry_ready'
+    || result.localDiagnosticReviewLoop?.finalEmpiricalAnalysis?.empiricalBenchmarkRegistry?.status === 'empirical_benchmark_registry_ready'
   )).length;
   const benchmarkSuiteSelectionPolicies = results.filter((result) => (
     result.empiricalAnalysis?.benchmarkSuiteSelectionPolicy?.kind === 'BenchmarkSuiteSelectionPolicy'
-    || result.refereeAutopilot?.finalEmpiricalAnalysis?.benchmarkSuiteSelectionPolicy?.kind === 'BenchmarkSuiteSelectionPolicy'
+    || result.localDiagnosticReviewLoop?.finalEmpiricalAnalysis?.benchmarkSuiteSelectionPolicy?.kind === 'BenchmarkSuiteSelectionPolicy'
   )).length;
   const benchmarkSuiteSelectionReady = results.filter((result) => (
     result.empiricalAnalysis?.benchmarkSuiteSelectionPolicy?.status === 'benchmark_suite_selection_ready'
-    || result.refereeAutopilot?.finalEmpiricalAnalysis?.benchmarkSuiteSelectionPolicy?.status === 'benchmark_suite_selection_ready'
+    || result.localDiagnosticReviewLoop?.finalEmpiricalAnalysis?.benchmarkSuiteSelectionPolicy?.status === 'benchmark_suite_selection_ready'
   )).length;
   const empiricalLocalBenchmarkRegistries = results.filter((result) => (
     result.empiricalAnalysis?.localBenchmarkRegistry?.kind === 'LocalBenchmarkRegistry'
-    || result.refereeAutopilot?.finalEmpiricalAnalysis?.localBenchmarkRegistry?.kind === 'LocalBenchmarkRegistry'
+    || result.localDiagnosticReviewLoop?.finalEmpiricalAnalysis?.localBenchmarkRegistry?.kind === 'LocalBenchmarkRegistry'
   )).length;
   const empiricalLocalBenchmarkRegistryReady = results.filter((result) => (
     result.empiricalAnalysis?.localBenchmarkRegistry?.status === 'local_benchmark_registry_ready'
-    || result.refereeAutopilot?.finalEmpiricalAnalysis?.localBenchmarkRegistry?.status === 'local_benchmark_registry_ready'
+    || result.localDiagnosticReviewLoop?.finalEmpiricalAnalysis?.localBenchmarkRegistry?.status === 'local_benchmark_registry_ready'
   )).length;
   const empiricalAuthorizedLocalDatasets = results.filter((result) => (
     result.empiricalAnalysis?.datasetAccessContract?.datasetMode === 'authorized_local_dataset'
-    || result.refereeAutopilot?.finalEmpiricalAnalysis?.datasetAccessContract?.datasetMode === 'authorized_local_dataset'
+    || result.localDiagnosticReviewLoop?.finalEmpiricalAnalysis?.datasetAccessContract?.datasetMode === 'authorized_local_dataset'
   )).length;
   const datasetLicenseProvenanceGates = results.filter((result) => (
     result.empiricalAnalysis?.datasetLicenseProvenanceGate?.kind === 'DatasetLicenseProvenanceGate'
-    || result.refereeAutopilot?.finalEmpiricalAnalysis?.datasetLicenseProvenanceGate?.kind === 'DatasetLicenseProvenanceGate'
+    || result.localDiagnosticReviewLoop?.finalEmpiricalAnalysis?.datasetLicenseProvenanceGate?.kind === 'DatasetLicenseProvenanceGate'
   )).length;
   const datasetLicenseProvenanceGateReady = results.filter((result) => (
     result.empiricalAnalysis?.datasetLicenseProvenanceGate?.status === 'dataset_license_provenance_gate_ready'
-    || result.refereeAutopilot?.finalEmpiricalAnalysis?.datasetLicenseProvenanceGate?.status === 'dataset_license_provenance_gate_ready'
+    || result.localDiagnosticReviewLoop?.finalEmpiricalAnalysis?.datasetLicenseProvenanceGate?.status === 'dataset_license_provenance_gate_ready'
   )).length;
   const tableFigureSpecs = results.filter((result) => (
     result.empiricalAnalysis?.tableFigureSpec?.kind === 'TableFigureSpec'
-    || result.refereeAutopilot?.finalEmpiricalAnalysis?.tableFigureSpec?.kind === 'TableFigureSpec'
+    || result.localDiagnosticReviewLoop?.finalEmpiricalAnalysis?.tableFigureSpec?.kind === 'TableFigureSpec'
   )).length;
   const tableFigureSpecReady = results.filter((result) => (
     result.empiricalAnalysis?.tableFigureSpec?.status === 'table_figure_spec_ready'
-    || result.refereeAutopilot?.finalEmpiricalAnalysis?.tableFigureSpec?.status === 'table_figure_spec_ready'
+    || result.localDiagnosticReviewLoop?.finalEmpiricalAnalysis?.tableFigureSpec?.status === 'table_figure_spec_ready'
   )).length;
   const empiricalExperimentRunReceipts = results.filter((result) => (
     result.empiricalAnalysis?.experimentRunReceipt?.kind === 'ExperimentRunReceipt'
-    || result.refereeAutopilot?.finalEmpiricalAnalysis?.experimentRunReceipt?.kind === 'ExperimentRunReceipt'
+    || result.localDiagnosticReviewLoop?.finalEmpiricalAnalysis?.experimentRunReceipt?.kind === 'ExperimentRunReceipt'
   )).length;
   const empiricalExperimentRunRecorded = results.filter((result) => (
     result.empiricalAnalysis?.experimentRunReceipt?.status === 'experiment_run_receipt_recorded'
-    || result.refereeAutopilot?.finalEmpiricalAnalysis?.experimentRunReceipt?.status === 'experiment_run_receipt_recorded'
+    || result.localDiagnosticReviewLoop?.finalEmpiricalAnalysis?.experimentRunReceipt?.status === 'experiment_run_receipt_recorded'
   )).length;
   const empiricalResultArtifactPackages = results.filter((result) => (
     result.empiricalAnalysis?.resultArtifactPackage?.kind === 'ResultArtifactPackage'
-    || result.refereeAutopilot?.finalEmpiricalAnalysis?.resultArtifactPackage?.kind === 'ResultArtifactPackage'
+    || result.localDiagnosticReviewLoop?.finalEmpiricalAnalysis?.resultArtifactPackage?.kind === 'ResultArtifactPackage'
   )).length;
   const empiricalEvidenceGates = results.filter((result) => (
     result.empiricalAnalysis?.empiricalEvidenceGate?.kind === 'EmpiricalEvidenceGate'
-    || result.refereeAutopilot?.finalEmpiricalAnalysis?.empiricalEvidenceGate?.kind === 'EmpiricalEvidenceGate'
+    || result.localDiagnosticReviewLoop?.finalEmpiricalAnalysis?.empiricalEvidenceGate?.kind === 'EmpiricalEvidenceGate'
   )).length;
   const empiricalEvidenceGateReady = results.filter((result) => (
     result.empiricalAnalysis?.empiricalEvidenceGate?.status === 'empirical_evidence_gate_ready'
-    || result.refereeAutopilot?.finalEmpiricalAnalysis?.empiricalEvidenceGate?.status === 'empirical_evidence_gate_ready'
+    || result.localDiagnosticReviewLoop?.finalEmpiricalAnalysis?.empiricalEvidenceGate?.status === 'empirical_evidence_gate_ready'
   )).length;
   const empiricalManuscriptPatches = results.filter((result) => (
     result.empiricalAnalysis?.manuscriptEmpiricalPatch?.kind === 'ManuscriptEmpiricalPatch'
-    || result.refereeAutopilot?.finalEmpiricalAnalysis?.manuscriptEmpiricalPatch?.kind === 'ManuscriptEmpiricalPatch'
+    || result.localDiagnosticReviewLoop?.finalEmpiricalAnalysis?.manuscriptEmpiricalPatch?.kind === 'ManuscriptEmpiricalPatch'
   )).length;
   const empiricalManuscriptPatchReady = results.filter((result) => (
     result.empiricalAnalysis?.manuscriptEmpiricalPatch?.status === 'manuscript_empirical_patch_ready'
-    || result.refereeAutopilot?.finalEmpiricalAnalysis?.manuscriptEmpiricalPatch?.status === 'manuscript_empirical_patch_ready'
+    || result.localDiagnosticReviewLoop?.finalEmpiricalAnalysis?.manuscriptEmpiricalPatch?.status === 'manuscript_empirical_patch_ready'
   )).length;
   const empiricalManuscriptApplyApprovalPackets = results.filter((result) => (
     result.empiricalAnalysis?.manuscriptEmpiricalApplyApprovalPacket?.kind === 'ManuscriptEmpiricalApplyApprovalPacket'
-    || result.refereeAutopilot?.finalEmpiricalAnalysis?.manuscriptEmpiricalApplyApprovalPacket?.kind === 'ManuscriptEmpiricalApplyApprovalPacket'
+    || result.localDiagnosticReviewLoop?.finalEmpiricalAnalysis?.manuscriptEmpiricalApplyApprovalPacket?.kind === 'ManuscriptEmpiricalApplyApprovalPacket'
   )).length;
   const empiricalManuscriptApplyApprovalReady = results.filter((result) => (
     result.empiricalAnalysis?.manuscriptEmpiricalApplyApprovalPacket?.status === 'manuscript_empirical_apply_approval_ready'
-    || result.refereeAutopilot?.finalEmpiricalAnalysis?.manuscriptEmpiricalApplyApprovalPacket?.status === 'manuscript_empirical_apply_approval_ready'
+    || result.localDiagnosticReviewLoop?.finalEmpiricalAnalysis?.manuscriptEmpiricalApplyApprovalPacket?.status === 'manuscript_empirical_apply_approval_ready'
   )).length;
   const empiricalManuscriptApplyPlans = results.filter((result) => (
     result.empiricalAnalysis?.manuscriptEmpiricalApplyPlan?.kind === 'ManuscriptEmpiricalApplyPlan'
-    || result.refereeAutopilot?.finalEmpiricalAnalysis?.manuscriptEmpiricalApplyPlan?.kind === 'ManuscriptEmpiricalApplyPlan'
+    || result.localDiagnosticReviewLoop?.finalEmpiricalAnalysis?.manuscriptEmpiricalApplyPlan?.kind === 'ManuscriptEmpiricalApplyPlan'
   )).length;
   const empiricalManuscriptApplyPlanReady = results.filter((result) => (
     result.empiricalAnalysis?.manuscriptEmpiricalApplyPlan?.status === 'manuscript_empirical_apply_plan_ready'
-    || result.refereeAutopilot?.finalEmpiricalAnalysis?.manuscriptEmpiricalApplyPlan?.status === 'manuscript_empirical_apply_plan_ready'
+    || result.localDiagnosticReviewLoop?.finalEmpiricalAnalysis?.manuscriptEmpiricalApplyPlan?.status === 'manuscript_empirical_apply_plan_ready'
   )).length;
   const empiricalManuscriptApplyReceipts = results.filter((result) => (
     result.empiricalAnalysis?.manuscriptEmpiricalApplyReceipt?.kind === 'ManuscriptEmpiricalApplyReceipt'
-    || result.refereeAutopilot?.finalEmpiricalAnalysis?.manuscriptEmpiricalApplyReceipt?.kind === 'ManuscriptEmpiricalApplyReceipt'
+    || result.localDiagnosticReviewLoop?.finalEmpiricalAnalysis?.manuscriptEmpiricalApplyReceipt?.kind === 'ManuscriptEmpiricalApplyReceipt'
   )).length;
   const empiricalManuscriptApplyApplied = results.filter((result) => (
     result.empiricalAnalysis?.manuscriptEmpiricalApplyReceipt?.status === 'manuscript_empirical_apply_applied'
-    || result.refereeAutopilot?.finalEmpiricalAnalysis?.manuscriptEmpiricalApplyReceipt?.status === 'manuscript_empirical_apply_applied'
+    || result.localDiagnosticReviewLoop?.finalEmpiricalAnalysis?.manuscriptEmpiricalApplyReceipt?.status === 'manuscript_empirical_apply_applied'
   )).length;
   const empiricalExternalActions = results.filter((result) => (
     result.empiricalAnalysis?.safety?.externalActionPerformed === true
-    || result.refereeAutopilot?.finalEmpiricalAnalysis?.safety?.externalActionPerformed === true
+    || result.localDiagnosticReviewLoop?.finalEmpiricalAnalysis?.safety?.externalActionPerformed === true
   )).length;
   const empiricalSourceMutations = results.filter((result) => (
     result.empiricalAnalysis?.safety?.sourceMutation === true
-    || result.refereeAutopilot?.finalEmpiricalAnalysis?.safety?.sourceMutation === true
+    || result.localDiagnosticReviewLoop?.finalEmpiricalAnalysis?.safety?.sourceMutation === true
   )).length;
-  const freshRefereeVerdicts = results.reduce((sum, result) => (
-    sum + Number(result.refereeAutopilot?.freshRefereeVerdictCount || 0)
+  const localHeuristicVerdicts = results.reduce((sum, result) => (
+    sum + Number(result.localDiagnosticReviewLoop?.freshRefereeVerdictCount || 0)
   ), 0);
-  const freshRefereeAccepts = results.reduce((sum, result) => (
-    sum + Number(result.refereeAutopilot?.freshRefereeAcceptCount || 0)
+  const localDiagnosticPasses = results.reduce((sum, result) => (
+    sum + Number(result.localDiagnosticReviewLoop?.diagnosticPassCount || 0)
   ), 0);
-  const freshRefereeRevisions = results.reduce((sum, result) => (
-    sum + Number(result.refereeAutopilot?.freshRefereeReviseCount || 0)
+  const localDiagnosticRevisions = results.reduce((sum, result) => (
+    sum + Number(result.localDiagnosticReviewLoop?.freshRefereeReviseCount || 0)
   ), 0);
   const refereeOpenIssues = results.reduce((count, result) => (
     count + Number(result.refereeRevision?.openIssueCount || 0)
@@ -605,35 +617,35 @@ export function summarizeResults(results, legacyCleanupAudit = null) {
       lifecycle.receipt?.externalActionPerformed || lifecycle.safety?.externalActionPerformed
     )).length,
   };
-  const refereeAutopilotRuns = results.filter((result) => (
-    result.refereeAutopilot?.kind === 'RefereeAutopilotReport'
+  const localDiagnosticReviewLoopRuns = results.filter((result) => (
+    result.localDiagnosticReviewLoop?.kind === 'LocalDiagnosticReviewLoopReport'
   )).length;
-  const refereeAutopilotAccepted = results.filter((result) => (
-    result.refereeAutopilot?.accepted === true
+  const localDiagnosticReviewLoopPassed = results.filter((result) => (
+    result.localDiagnosticReviewLoop?.diagnosticClosureReached === true
   )).length;
-  const refereeAutopilotBlocked = results.filter((result) => (
-    result.refereeAutopilot?.status === 'referee_autopilot_blocked'
+  const localDiagnosticReviewLoopBlocked = results.filter((result) => (
+    result.localDiagnosticReviewLoop?.status === 'local_diagnostic_review_blocked'
   )).length;
-  const refereeAutopilotRounds = results.reduce((sum, result) => (
-    sum + Number(result.refereeAutopilot?.roundsCompleted || 0)
+  const localDiagnosticReviewLoopRounds = results.reduce((sum, result) => (
+    sum + Number(result.localDiagnosticReviewLoop?.roundsCompleted || 0)
   ), 0);
-  const refereeAutopilotFinalOpenIssues = results.reduce((sum, result) => (
-    sum + Number(result.refereeAutopilot?.finalOpenIssueCount || 0)
+  const localDiagnosticReviewLoopFinalOpenIssues = results.reduce((sum, result) => (
+    sum + Number(result.localDiagnosticReviewLoop?.finalOpenIssueCount || 0)
   ), 0);
-  const refereeAutopilotSourceMutations = results.reduce((sum, result) => (
-    sum + Number(result.refereeAutopilot?.sourceMutationCount || 0)
+  const localDiagnosticReviewLoopSourceMutations = results.reduce((sum, result) => (
+    sum + Number(result.localDiagnosticReviewLoop?.sourceMutationCount || 0)
   ), 0);
-  const refereeAutopilotSqliteWrites = results.reduce((sum, result) => (
-    sum + Number(result.refereeAutopilot?.sqliteWriteCount || 0)
+  const localDiagnosticReviewLoopSqliteWrites = results.reduce((sum, result) => (
+    sum + Number(result.localDiagnosticReviewLoop?.sqliteWriteCount || 0)
   ), 0);
-  const refereeAutopilotAcceptanceReceipts = results.filter((result) => (
-    result.refereeAutopilot?.acceptanceReceipt?.kind === 'RefereeAutopilotAcceptanceReceipt'
+  const localDiagnosticReviewLoopReceipts = results.filter((result) => (
+    result.localDiagnosticReviewLoop?.diagnosticReceipt?.kind === 'LocalDiagnosticReviewLoopReceipt'
   )).length;
-  const refereeAutopilotAcceptanceRecorded = results.filter((result) => (
-    result.refereeAutopilot?.acceptanceReceipt?.status === 'referee_autopilot_accept_recorded'
+  const localDiagnosticReviewLoopPassRecorded = results.filter((result) => (
+    result.localDiagnosticReviewLoop?.diagnosticReceipt?.status === 'local_diagnostic_review_pass_recorded'
   )).length;
-  const refereeAutopilotExternalActions = results.filter((result) => (
-    result.refereeAutopilot?.safety?.externalActionPerformed === true
+  const localDiagnosticReviewLoopExternalActions = results.filter((result) => (
+    result.localDiagnosticReviewLoop?.safety?.externalActionPerformed === true
   )).length;
   const venueResolution = {
     required: results.filter((result) => result.venueResolution?.venueResolutionRequired).length,
@@ -708,8 +720,12 @@ export function summarizeResults(results, legacyCleanupAudit = null) {
     proposalStaging,
     buildArtifactAcceptance,
     researchTypedContracts,
-    researchWorkerReceipts,
-    researchWorkerCatalogSize,
+    legacyCatalogReferenceReceipts,
+    legacyCatalogReferenceCount,
+    researchContractReady,
+    researchEvidenceCandidatePresent,
+    researchNativeExecutionReady,
+    researchAcademicEvidenceReady: academicEvidenceVerified,
     nativeResearchWorkerPlans,
     nativeResearchWorkersExecuted,
     academicEvidenceVerified,
@@ -754,9 +770,9 @@ export function summarizeResults(results, legacyCleanupAudit = null) {
     empiricalManuscriptApplyApplied,
     empiricalExternalActions,
     empiricalSourceMutations,
-    freshRefereeVerdicts,
-    freshRefereeAccepts,
-    freshRefereeRevisions,
+    localHeuristicVerdicts,
+    localDiagnosticPasses,
+    localDiagnosticRevisions,
     refereeReviewReports,
     refereeReviewReady,
     refereeReviewBlocked,
@@ -828,16 +844,16 @@ export function summarizeResults(results, legacyCleanupAudit = null) {
     refereeSqliteWrites,
     refereeRepairReconciliationProofGateBlocked,
     refereeApplyApprovalRequired,
-    refereeAutopilotRuns,
-    refereeAutopilotAccepted,
-    refereeAutopilotBlocked,
-    refereeAutopilotRounds,
-    refereeAutopilotFinalOpenIssues,
-    refereeAutopilotSourceMutations,
-    refereeAutopilotSqliteWrites,
-    refereeAutopilotAcceptanceReceipts,
-    refereeAutopilotAcceptanceRecorded,
-    refereeAutopilotExternalActions,
+    localDiagnosticReviewLoopRuns,
+    localDiagnosticReviewLoopPassed,
+    localDiagnosticReviewLoopBlocked,
+    localDiagnosticReviewLoopRounds,
+    localDiagnosticReviewLoopFinalOpenIssues,
+    localDiagnosticReviewLoopSourceMutations,
+    localDiagnosticReviewLoopSqliteWrites,
+    localDiagnosticReviewLoopReceipts,
+    localDiagnosticReviewLoopPassRecorded,
+    localDiagnosticReviewLoopExternalActions,
     lifecycleOutboxItems,
     lifecycleReconciled,
     submissionPreflight,

@@ -2,25 +2,25 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { heptaStorePath, legacyStorePath } from '../src/hepta-store.mjs';
+import { createSqliteStore } from '../../paper-adapters/persistence/sqlite-store.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const root = path.resolve(workspaceRoot, '..');
 const dbPath = heptaStorePath(root);
 const legacyPath = legacyStorePath(root);
 const migrationPath = path.join(workspaceRoot, 'store', 'migrations', '001_initial.sql');
+const store = createSqliteStore({ dbPath });
 
 function sqlQuote(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
 }
 
 function runSql(sql, { json = false } = {}) {
-  const args = json ? ['-json', dbPath] : [dbPath];
-  const result = spawnSync('sqlite3', args, { input: sql, encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
-  if (result.status !== 0) throw new Error(result.stderr || result.stdout || 'sqlite3 failed');
-  return result.stdout || '';
+  const result = json ? store.query(sql) : store.execute(sql);
+  if (!result.ok) throw new Error(result.stderr || result.stdout || result.error || 'sqlite3 failed');
+  return json ? JSON.stringify(result.rows) : result.stdout;
 }
 
 function fileSha256(file) {
@@ -28,7 +28,6 @@ function fileSha256(file) {
 }
 
 function initialize() {
-  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   const sql = fs.readFileSync(migrationPath, 'utf8');
   runSql(`${sql}\nINSERT OR IGNORE INTO schema_migrations(version,name,migration_sha256) VALUES(1,'001_initial',${sqlQuote(`sha256:${fileSha256(migrationPath)}`)});`);
 }

@@ -1,5 +1,12 @@
 # Paper Production Migration Master Plan
 
+> Superseded implementation note (2026-07-10): this master plan records the
+> original overlay sequence. Current layering, migration decisions, local
+> diagnostic review semantics, Store/Artifact ports, and submission delivery
+> boundary are defined by `architecture-v3.md`. `core/` is an accepted vendored
+> fork, not a byte-identical upstream snapshot and not the active implementation
+> of every paper runtime capability.
+
 ## Decision Summary
 
 Use the copied design-production-core as a clean production kernel reference,
@@ -8,7 +15,8 @@ not as a place to paste paper-specific code. The active paper system lives in
 
 Default rule:
 
-- `core/` stays byte-for-byte comparable with the hepta source snapshot.
+- `core/` stays hash-bound to its accepted vendored baseline; historical
+  upstream byte identity is not claimed.
 - `paper-core/` owns paper contracts, state, manifests, receipts, reports, and
   the batch CLI.
 - `paper-adapters/` owns domain capabilities extracted from `paper_factory`.

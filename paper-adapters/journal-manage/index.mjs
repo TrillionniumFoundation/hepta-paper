@@ -5,8 +5,8 @@ import {
   nowIso,
   relativePath,
   uniqueStrings,
-  writeJsonFile,
 } from '../../paper-core/src/utils.mjs';
+import { writeJsonFile } from '../artifacts/write-artifact.mjs';
 import { hashPaperRecord } from '../../paper-core/src/paper-contracts.mjs';
 import {
   academicEvidenceReady,

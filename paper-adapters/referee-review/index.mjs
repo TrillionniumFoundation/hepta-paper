@@ -8,8 +8,8 @@ import {
   relativePath,
   sha256Text,
   uniqueStrings,
-  writeJsonFile,
 } from '../../paper-core/src/utils.mjs';
+import { writeJsonFile } from '../artifacts/write-artifact.mjs';
 import {
   buildAgentRefereeReviewReport,
   buildRefereeIssueQueueMaterialization,

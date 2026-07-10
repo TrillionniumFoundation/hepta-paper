@@ -1,40 +1,22 @@
-import { spawnSync } from 'node:child_process';
 import { safeJsonParse } from '../paper-core/src/utils.mjs';
+import { createSqliteStore } from './persistence/sqlite-store.mjs';
+import { sqlEscape as escapeSqlText, sqlJson, sqlText } from '../paper-ports/store-port.mjs';
 
 export function sqliteJson(dbPath, sql) {
-  const result = spawnSync('sqlite3', ['-json', dbPath, sql], {
-    encoding: 'utf8',
-    maxBuffer: 16 * 1024 * 1024,
-  });
-  if (result.status !== 0) return [];
-  return safeJsonParse(result.stdout || '[]', []);
+  return createSqliteStore({ dbPath }).query(sql).rows;
 }
 
 export function sqliteExec(dbPath, sql) {
-  const result = spawnSync('sqlite3', [dbPath], {
-    input: sql,
-    encoding: 'utf8',
-    maxBuffer: 16 * 1024 * 1024,
-  });
+  const result = createSqliteStore({ dbPath }).execute(sql);
   return {
-    ok: result.status === 0,
-    stdout: result.stdout || '',
-    stderr: result.stderr || '',
+    ok: result.ok,
+    stdout: result.stdout,
+    stderr: result.stderr,
     status: result.status,
   };
 }
 
-export function escapeSqlText(value) {
-  return String(value ?? '').replace(/'/g, "''");
-}
-
-export function sqlText(value) {
-  return `'${escapeSqlText(value)}'`;
-}
-
-export function sqlJson(value) {
-  return sqlText(JSON.stringify(value ?? null));
-}
+export { escapeSqlText, sqlJson, sqlText };
 
 export function normalizePatch(row = {}) {
   return {

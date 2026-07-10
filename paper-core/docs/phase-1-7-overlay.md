@@ -1,5 +1,10 @@
 # Paper Overlay Phase 1-7
 
+> Historical phase record. Current architecture is documented in
+> `architecture-v3.md`. Native SQLite is now the default Store adapter, legacy
+> worker scans are catalog references only, and the preferred deterministic
+> review mode is `local-review-loop` with no academic acceptance authority.
+
 This overlay keeps `core/` as a hash-locked vendored hepta design-production-core
 snapshot. Paper production lives in `paper-core/` and `paper-adapters/`.
 

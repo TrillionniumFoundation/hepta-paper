@@ -13,9 +13,8 @@ import {
   sha256Text,
   uniqueStrings,
   walkFiles,
-  writeJsonFile,
-  writeTextFile,
 } from '../../paper-core/src/utils.mjs';
+import { writeJsonFile, writeTextFile } from '../artifacts/write-artifact.mjs';
 import { hashPaperRecord } from '../../paper-core/src/paper-contracts.mjs';
 import { buildEmpiricalEvidenceGate } from './evidence-policy.mjs';
 

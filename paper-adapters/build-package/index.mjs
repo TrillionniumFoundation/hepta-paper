@@ -6,17 +6,17 @@ import {
   fileRecord,
   normalizeText,
   relativePath,
-  safeJsonParse,
   sha256Text,
   walkFiles,
-  writeJsonFile,
-  writeTextFile,
 } from '../../paper-core/src/utils.mjs';
+import { writeJsonFile, writeTextFile } from '../artifacts/write-artifact.mjs';
 import {
   createPaperBuildArtifactAcceptance,
   createPaperArtifactPackage,
 } from '../../paper-core/src/paper-contracts.mjs';
 import { heptaStorePath } from '../../paper-core/src/hepta-store.mjs';
+import { sqlEscape } from '../../paper-ports/store-port.mjs';
+import { createSqliteStore } from '../persistence/sqlite-store.mjs';
 
 function repoPath(root, value) {
   const text = normalizeText(value);
@@ -30,16 +30,7 @@ function commandExists(command) {
 }
 
 function sqliteJson(dbPath, sql) {
-  const result = spawnSync('sqlite3', ['-json', dbPath, sql], {
-    encoding: 'utf8',
-    maxBuffer: 16 * 1024 * 1024,
-  });
-  if (result.status !== 0) return [];
-  return safeJsonParse(result.stdout || '[]', []);
-}
-
-function escapeSqlText(value) {
-  return String(value ?? '').replace(/'/g, "''");
+  return createSqliteStore({ dbPath, maxBuffer: 16 * 1024 * 1024 }).query(sql).rows;
 }
 
 async function fileRecordFromRepoPath(root, value, role) {
@@ -50,7 +41,7 @@ async function fileRecordFromRepoPath(root, value, role) {
 
 async function sqlitePackageArtifacts(root, paperId) {
   const dbPath = heptaStorePath(root);
-  const slug = escapeSqlText(paperId);
+  const slug = sqlEscape(paperId);
   const submissionRows = sqliteJson(dbPath, [
     'select package_dir,pdf_path,source_zip_path,created_at',
     `from submissions where slug='${slug}' and status='local_package'`,

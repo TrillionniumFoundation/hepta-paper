@@ -19,9 +19,8 @@ import {
   nowIso,
   relativePath,
   uniqueStrings,
-  writeJsonFile,
-  writeTextFile,
 } from '../../paper-core/src/utils.mjs';
+import { writeJsonFile, writeTextFile } from '../artifacts/write-artifact.mjs';
 import {
   buildJournalConferenceRegistry,
   buildJournalRubricPacket,

@@ -21,7 +21,7 @@ try {
   acceptedFromGitCommit = null;
 }
 
-if (write) writeCoreBaseline({ workspaceRoot, acceptedFromGitCommit });
+if (write) await writeCoreBaseline({ workspaceRoot, acceptedFromGitCommit });
 const report = buildCoreIntegrityReport({ workspaceRoot });
 const output = fullJson ? report : {
   status: report.status,

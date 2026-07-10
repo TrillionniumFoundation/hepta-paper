@@ -10,9 +10,8 @@ import {
   sha256File,
   sha256Text,
   uniqueStrings,
-  writeJsonFile,
-  writeTextFile,
 } from '../../paper-core/src/utils.mjs';
+import { writeJsonFile, writeTextFile } from '../artifacts/write-artifact.mjs';
 
 function shaDigest(value) {
   return normalizeText(value).toLowerCase().replace(/^sha256:/, '');
@@ -471,4 +470,3 @@ export async function validateAndMaybeApplyPatches({
     warnings: uniqueStrings(warnings, 32),
   };
 }
-

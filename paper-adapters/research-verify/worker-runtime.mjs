@@ -1,5 +1,4 @@
 import fs from 'node:fs/promises';
-import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -9,25 +8,17 @@ import {
   sha256File,
 } from '../../paper-core/src/utils.mjs';
 import { hashPaperRecord } from '../../paper-core/src/paper-contracts.mjs';
+import { createFilesystemArtifactRepository } from '../artifacts/filesystem-artifact-repository.mjs';
+import { createLeanFormalVerifier } from './formal-verifier.mjs';
 
 export const NATIVE_RESEARCH_WORKER_TYPES = Object.freeze([
   'artifact_integrity',
   'csv_descriptive_statistics',
   'json_assertions',
+  'formal_verifier_lean',
 ]);
 
 const WORKER_TYPE_SET = new Set(NATIVE_RESEARCH_WORKER_TYPES);
-
-async function writeJsonAtomic(file, value) {
-  await fs.mkdir(path.dirname(file), { recursive: true });
-  const temporary = `${file}.${process.pid}.${crypto.randomUUID()}.tmp`;
-  try {
-    await fs.writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
-    await fs.rename(temporary, file);
-  } finally {
-    await fs.rm(temporary, { force: true });
-  }
-}
 
 function safeWorkerId(value) {
   const id = String(value || '');
@@ -104,7 +95,7 @@ function assertionPassed(actual, assertion) {
   }
 }
 
-async function executeWorker(worker, inputRecords) {
+async function executeWorker(worker, inputRecords, { sourceRoot } = {}) {
   if (worker.type === 'artifact_integrity') {
     return {
       status: 'native_research_worker_passed',
@@ -175,6 +166,13 @@ async function executeWorker(worker, inputRecords) {
       assertions: results,
       blockers,
     };
+  }
+  if (worker.type === 'formal_verifier_lean') {
+    const verifier = createLeanFormalVerifier({
+      sourceRoot,
+      executable: String(worker.parameters?.executable || 'lean'),
+    });
+    return verifier.verify({ inputRecords, parameters: worker.parameters || {} });
   }
   return { status: 'native_research_worker_blocked', blockers: ['native_research_worker_type_not_allowed'] };
 }
@@ -269,12 +267,22 @@ export async function runNativeResearchWorkers({
   if (workerIds.some((id) => !id)) reportBlockers.push('research_worker_id_invalid');
   if (new Set(workerIds.filter(Boolean)).size !== workerIds.filter(Boolean).length) reportBlockers.push('research_worker_id_duplicate');
   const planRecord = planPath && plan ? await fileRecord(root, planPath, 'native_research_worker_plan') : null;
-  const engineFile = fileURLToPath(import.meta.url);
-  const engineHash = await sha256File(engineFile);
+  const engineFiles = [
+    fileURLToPath(import.meta.url),
+    fileURLToPath(new URL('./formal-verifier.mjs', import.meta.url)),
+    fileURLToPath(new URL('../runtime/sandboxed-command-runner.mjs', import.meta.url)),
+  ];
+  const engineHash = hashPaperRecord('NativeResearchWorkerEngine', {
+    files: await Promise.all(engineFiles.map(async (file) => ({ file: path.basename(file), hash: await sha256File(file) }))),
+    workerTypes: NATIVE_RESEARCH_WORKER_TYPES,
+  });
   const outputDir = runtimeRoot && paperTask?.paperId
     ? path.join(runtimeRoot, 'research-workers', paperTask.paperId)
     : null;
   if (!outputDir || !pathWithin(runtimeRoot, outputDir)) reportBlockers.push('research_worker_runtime_output_invalid');
+  const artifactRepository = outputDir
+    ? createFilesystemArtifactRepository({ scopeRoot: outputDir, repositoryId: 'native-research-worker-receipts' })
+    : null;
   const receipts = [];
   for (const worker of workers) {
     const blockers = [];
@@ -289,7 +297,7 @@ export async function runNativeResearchWorkers({
     blockers.push(...inputValidation.blockers);
     const result = blockers.length
       ? { status: 'native_research_worker_blocked', blockers }
-      : await executeWorker(worker, inputValidation.records);
+      : await executeWorker(worker, inputValidation.records, { sourceRoot });
     blockers.push(...(result.blockers || []));
     const workerDefinitionHash = hashPaperRecord(
       'NativeResearchWorkerDefinition',
@@ -319,7 +327,8 @@ export async function runNativeResearchWorkers({
         boundedNativeWorker: true,
         allowlistedWorkerType: WORKER_TYPE_SET.has(worker.type),
         networkAccess: false,
-        subprocessExecution: false,
+        subprocessExecution: worker.type === 'formal_verifier_lean',
+        subprocessBoundedByWorkerRunnerPort: worker.type === 'formal_verifier_lean',
         sourceMutation: false,
         writesRuntimeOnly: Boolean(execute),
         externalActionPerformed: false,
@@ -331,7 +340,11 @@ export async function runNativeResearchWorkers({
         ...baseReceipt,
         nativeResearchWorkerExecutionReceiptHash: receiptHash(baseReceipt),
       };
-      if (outputDir && id) await writeJsonAtomic(path.join(outputDir, `${id}.receipt.json`), receipt);
+      if (artifactRepository && id) {
+        await artifactRepository.writeJson(path.join(outputDir, `${id}.receipt.json`), receipt, {
+          role: 'native_research_worker_execution_receipt',
+        });
+      }
       receipts.push(receipt);
     } else {
       const persisted = outputDir && id
@@ -381,7 +394,8 @@ export async function runNativeResearchWorkers({
     safety: {
       allowlistedWorkerTypes: [...NATIVE_RESEARCH_WORKER_TYPES],
       networkAccess: false,
-      subprocessExecution: false,
+      subprocessExecution: workers.some((worker) => worker.type === 'formal_verifier_lean'),
+      subprocessBoundedByWorkerRunnerPort: true,
       sourceMutation: false,
       writesRuntimeOnly: Boolean(execute),
       externalActionPerformed: false,
@@ -392,7 +406,9 @@ export async function runNativeResearchWorkers({
     nativeResearchWorkerExecutionReportHash: hashPaperRecord('NativeResearchWorkerExecutionReport', report),
   };
   if (execute && outputDir) {
-    await writeJsonAtomic(path.join(outputDir, 'RESEARCH_WORKER_EXECUTION_REPORT.json'), hashed);
+    await artifactRepository.writeJson(path.join(outputDir, 'RESEARCH_WORKER_EXECUTION_REPORT.json'), hashed, {
+      role: 'native_research_worker_execution_report',
+    });
   }
   return hashed;
 }

@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { writeJsonFile } from '../../paper-adapters/artifacts/write-artifact.mjs';
 import { fileURLToPath } from 'node:url';
 
 export const CORE_BASELINE_VERSION = 1;
@@ -165,14 +166,18 @@ export function buildCoreBaseline({
   };
 }
 
-export function writeCoreBaseline({
+export async function writeCoreBaseline({
   workspaceRoot = defaultWorkspaceRoot,
   acceptedFromGitCommit = null,
 } = {}) {
   const baseline = buildCoreBaseline({ workspaceRoot, acceptedFromGitCommit });
   const manifestPath = path.join(workspaceRoot, 'core', 'CORE_BASELINE.json');
-  fs.writeFileSync(manifestPath, `${JSON.stringify(baseline, null, 2)}\n`);
-  return { baseline, manifestPath };
+  const writeReceipt = await writeJsonFile(manifestPath, baseline, {
+    scopeRoot: path.join(workspaceRoot, 'core'),
+    role: 'accepted_core_baseline',
+    atomic: true,
+  });
+  return { baseline, manifestPath, writeReceipt };
 }
 
 export function buildCoreIntegrityReport({ workspaceRoot = defaultWorkspaceRoot } = {}) {

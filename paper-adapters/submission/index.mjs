@@ -17,6 +17,7 @@ import {
   hashPaperRecord,
 } from '../../paper-core/src/paper-contracts.mjs';
 import { normalizeText } from '../../paper-core/src/utils.mjs';
+import { buildSubmissionDeliveryRuntime } from '../../paper-domain/submission/delivery-runtime.mjs';
 import { verifyIndependentRefereeAuthority } from '../referee-review/independent-authority.mjs';
 import { verifyLiveSubmissionAuthorization } from './live-authorization.mjs';
 
@@ -209,6 +210,15 @@ export function buildSubmissionLifecycle({
     venueStateProof,
     auditArchive: hashedArchive,
   });
+  const deliveryRuntime = buildSubmissionDeliveryRuntime({
+    paperTask: row.task,
+    outbox,
+    replayGuard,
+    reviewedSubmitPreflightPacket,
+    controlledExecutorReceipt,
+    liveAuthorizationReceipt,
+    reconciliation,
+  });
   return {
     version: 1,
     kind: 'PaperSubmissionLifecycle',
@@ -231,6 +241,7 @@ export function buildSubmissionLifecycle({
     venueStateProof,
     auditArchive: hashedArchive,
     reconciliation,
+    deliveryRuntime,
     safety: {
       dryRunOnly: true,
       externalActionPerformed: false,

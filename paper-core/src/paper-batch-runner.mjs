@@ -1,13 +1,10 @@
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import {
   ensureDir,
   nowIso,
   normalizeText,
-  safeJsonParse,
-  writeJsonFile,
-  writeTextFile,
 } from './utils.mjs';
+import { writeJsonFile, writeTextFile } from '../../paper-adapters/artifacts/write-artifact.mjs';
 import {
   PAPER_ACTIONS,
   createPaperWorkflowState,
@@ -19,6 +16,11 @@ import {
 } from './paper-contracts.mjs';
 import { buildCoreIntegrityReport } from './core-integrity.mjs';
 import { heptaStorePath } from './hepta-store.mjs';
+import { createExecutionContext } from './execution-context.mjs';
+import { PAPER_BATCH_MODES, assertPaperMode } from './mode-registry.mjs';
+import { runWorkflowStages } from './workflow-engine.mjs';
+import { createSqliteStore } from '../../paper-adapters/persistence/sqlite-store.mjs';
+import { sqlEscape } from '../../paper-ports/store-port.mjs';
 import { discoverInventory } from '../../paper-adapters/inventory/index.mjs';
 import {
   runLatexBuildAdapter,
@@ -49,24 +51,7 @@ import {
   runJournalManageAdapter,
 } from '../../paper-adapters/journal-manage/index.mjs';
 
-export const PAPER_BATCH_MODES = Object.freeze({
-  INVENTORY: 'inventory',
-  LOCAL_BUILD: 'local-build',
-  LOCAL_PACKAGE: 'local-package',
-  REFEREE_REVIEW: 'referee-review',
-  REFEREE_REVISE: 'referee-revise',
-  REFEREE_AUTOPILOT: 'referee-autopilot',
-  EMPIRICAL_ANALYSIS: 'empirical-analysis',
-  RESEARCH_VERIFY: 'research-verify',
-  JOURNAL_MANAGE: 'journal-manage',
-  VENUE_RESOLVE: 'venue-resolve',
-  SOURCE_ADAPT: 'source-adapt',
-  LOCAL_DRY_RUN: 'local-dry-run',
-  REVIEWED_SUBMIT: 'reviewed-submit',
-  LEGACY_CLEANUP: 'legacy-cleanup',
-});
-
-const MODE_SET = new Set(Object.values(PAPER_BATCH_MODES));
+export { PAPER_BATCH_MODES } from './mode-registry.mjs';
 
 function defaultRoot() {
   return path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..', '..');
@@ -76,92 +61,15 @@ function defaultRuntimeRoot(root) {
   return path.join(root, 'hepta-paper-workspace', 'runtime');
 }
 
-function sqliteJson(dbPath, sql) {
-  const result = spawnSync('sqlite3', ['-json', dbPath, sql], {
-    encoding: 'utf8',
-    maxBuffer: 16 * 1024 * 1024,
-  });
-  if (result.status !== 0) return [];
-  return safeJsonParse(result.stdout || '[]', []);
-}
-
-function escapeSqlText(value) {
-  return String(value ?? '').replace(/'/g, "''");
-}
-
-function openRefereeIssueCount(root, paperId) {
-  const dbPath = heptaStorePath(root);
-  const rows = sqliteJson(
-    dbPath,
+function openRefereeIssueCount(store, paperId) {
+  const rows = store.query(
     [
       'select count(*) as count from referee_revision_requests',
-      `where slug='${escapeSqlText(paperId)}'`,
+      `where slug='${sqlEscape(paperId)}'`,
       "and status not in ('resolved','closed');",
     ].join(' '),
-  );
+  ).rows;
   return Number(rows[0]?.count || 0);
-}
-
-function modeNeedsBuild(mode) {
-  return [
-    PAPER_BATCH_MODES.LOCAL_BUILD,
-    PAPER_BATCH_MODES.LOCAL_PACKAGE,
-    PAPER_BATCH_MODES.VENUE_RESOLVE,
-    PAPER_BATCH_MODES.LOCAL_DRY_RUN,
-    PAPER_BATCH_MODES.REVIEWED_SUBMIT,
-  ].includes(mode);
-}
-
-function modeNeedsPackage(mode) {
-  return [
-    PAPER_BATCH_MODES.LOCAL_PACKAGE,
-    PAPER_BATCH_MODES.VENUE_RESOLVE,
-    PAPER_BATCH_MODES.LOCAL_DRY_RUN,
-    PAPER_BATCH_MODES.REVIEWED_SUBMIT,
-  ].includes(mode);
-}
-
-function modeNeedsResearch(mode) {
-  return [
-    PAPER_BATCH_MODES.RESEARCH_VERIFY,
-    PAPER_BATCH_MODES.LOCAL_DRY_RUN,
-    PAPER_BATCH_MODES.REVIEWED_SUBMIT,
-  ].includes(mode);
-}
-
-function modeNeedsRefereeRevise(mode) {
-  return mode === PAPER_BATCH_MODES.REFEREE_REVISE;
-}
-
-function modeNeedsRefereeReview(mode) {
-  return mode === PAPER_BATCH_MODES.REFEREE_REVIEW;
-}
-
-function modeNeedsRefereeAutopilot(mode) {
-  return mode === PAPER_BATCH_MODES.REFEREE_AUTOPILOT;
-}
-
-function modeNeedsJournalManage(mode) {
-  return mode === PAPER_BATCH_MODES.JOURNAL_MANAGE;
-}
-
-function modeNeedsEmpiricalAnalysis(mode) {
-  return mode === PAPER_BATCH_MODES.EMPIRICAL_ANALYSIS;
-}
-
-function modeNeedsVenueResolve(mode) {
-  return mode === PAPER_BATCH_MODES.VENUE_RESOLVE;
-}
-
-function modeNeedsSourceAdapt(mode) {
-  return mode === PAPER_BATCH_MODES.SOURCE_ADAPT;
-}
-
-function modeNeedsSubmission(mode) {
-  return [
-    PAPER_BATCH_MODES.LOCAL_DRY_RUN,
-    PAPER_BATCH_MODES.REVIEWED_SUBMIT,
-  ].includes(mode);
 }
 
 function stateWithAdapterResults(row, { buildResult, packageResult, researchReport, refereeRevision, lifecycle } = {}) {
@@ -269,9 +177,10 @@ import {
   summarizeResults,
   summarizeRows,
 } from './batch-summary.mjs';
-async function runRefereeAutopilot({
+async function runLocalDiagnosticReviewLoop({
   root,
   runtimeRoot,
+  store,
   row,
   venues = [],
   execute = false,
@@ -301,7 +210,7 @@ async function runRefereeAutopilot({
     hints: [row.task.title, row.task.paperType, row.task.paperId],
   });
   const rounds = [];
-  let accepted = false;
+  let diagnosticClosureReached = false;
   let finalBuildResult = null;
   let finalPackageResult = null;
   let finalResearchReport = null;
@@ -319,11 +228,11 @@ async function runRefereeAutopilot({
   let journalConferenceSystemPacket = null;
   let sourceMutationCount = 0;
   let sqliteWriteCount = 0;
-  let freshRefereeAcceptCount = 0;
+  let diagnosticPassCount = 0;
   let freshRefereeReviseCount = 0;
 
   for (let roundIndex = 1; roundIndex <= roundLimit; roundIndex += 1) {
-    const openBefore = openRefereeIssueCount(root, row.task.paperId);
+    const openBefore = openRefereeIssueCount(store, row.task.paperId);
     const roundStartedAt = nowIso();
     const refereeReview = await runRefereeReviewAdapter({
       root,
@@ -405,7 +314,7 @@ async function runRefereeAutopilot({
         submissionAuthorities.independentReviewAuthorityReceipt,
       liveAuthorizationReceipt: submissionAuthorities.liveAuthorizationReceipt,
     });
-    const openAfter = openRefereeIssueCount(root, row.task.paperId);
+    const openAfter = openRefereeIssueCount(store, row.task.paperId);
     const freshRefereePool = buildFreshRefereePool({
       paperTask: row.task,
       targetProfile: targetJournalProfile,
@@ -473,24 +382,24 @@ async function runRefereeAutopilot({
     const sqliteWrite = refereeRevision?.repairStateMutationReceipt?.status === 'repair_state_mutation_recorded';
     sourceMutationCount += sourceMutation ? 1 : 0;
     sqliteWriteCount += sqliteWrite ? 1 : 0;
-    freshRefereeAcceptCount += freshRefereeVerdict.verdict === 'accept' ? 1 : 0;
+    diagnosticPassCount += freshRefereeVerdict.verdict === 'accept' ? 1 : 0;
     freshRefereeReviseCount += freshRefereeVerdict.verdict === 'revise' ? 1 : 0;
-    const acceptanceReady = freshRefereeVerdict.verdict === 'accept'
+    const diagnosticClosureReady = freshRefereeVerdict.verdict === 'accept'
       && roundIndex >= minimumFreshRefereeRounds;
-    const roundStatus = acceptanceReady
-      ? 'referee_autopilot_round_accept_ready'
+    const roundStatus = diagnosticClosureReady
+      ? 'local_diagnostic_review_round_passed'
       : freshRefereeVerdict.verdict === 'revise'
-        ? 'referee_autopilot_round_fresh_referee_revise'
+        ? 'local_diagnostic_review_round_revise'
         : currentReviewFindingCount > 0
-          ? 'referee_autopilot_round_reviewer_findings_remaining'
+          ? 'local_diagnostic_review_round_findings_remaining'
           : openAfter > 0
-            ? 'referee_autopilot_round_revise_again_open_issues'
+            ? 'local_diagnostic_review_round_open_issues'
             : newIssueRows > 0
-              ? 'referee_autopilot_round_recheck_required_after_new_issues'
-              : 'referee_autopilot_round_blocked';
+              ? 'local_diagnostic_review_round_recheck_required'
+              : 'local_diagnostic_review_round_blocked';
 
     rounds.push({
-      kind: 'RefereeAutopilotRoundReceipt',
+      kind: 'LocalDiagnosticReviewRoundReceipt',
       paperId: row.task.paperId,
       taskKey: row.task.taskKey,
       roundIndex,
@@ -508,7 +417,9 @@ async function runRefereeAutopilot({
       venueEvidenceGateHash: venueEvidenceGate.venueEvidenceGateHash,
       venueLifecyclePolicyHash: venueLifecyclePolicy.venueLifecyclePolicyHash,
       freshRefereeId: freshRefereeVerdict.refereeId,
-      freshRefereeVerdict: freshRefereeVerdict.verdict,
+      localHeuristicVerdict: freshRefereeVerdict.verdict,
+      diagnosticVerdict: freshRefereeVerdict.verdict === 'accept' ? 'pass' : 'revise',
+      academicAcceptanceGranted: false,
       freshRefereeVerdictStatus: freshRefereeVerdict.status,
       freshRefereeVerdictHash: freshRefereeVerdict.freshRefereeVerdictHash,
       startedAt: roundStartedAt,
@@ -552,13 +463,13 @@ async function runRefereeAutopilot({
     finalFreshRefereePool = freshRefereePool;
     finalVenueEvidenceGate = venueEvidenceGate;
     finalVenueLifecyclePolicy = venueLifecyclePolicy;
-    if (acceptanceReady) {
-      accepted = true;
+    if (diagnosticClosureReady) {
+      diagnosticClosureReached = true;
       break;
     }
   }
 
-  const finalOpenIssueCount = openRefereeIssueCount(root, row.task.paperId);
+  const finalOpenIssueCount = openRefereeIssueCount(store, row.task.paperId);
   journalConferenceSystemPacket = buildJournalConferenceSystemPacket({
     paperTask: row.task,
     registry: journalConferenceRegistry,
@@ -571,21 +482,22 @@ async function runRefereeAutopilot({
     lifecyclePolicy: finalVenueLifecyclePolicy,
   });
   const blockers = [];
-  if (!accepted) {
+  if (!diagnosticClosureReached) {
     blockers.push(finalOpenIssueCount > 0
-      ? 'referee_autopilot_open_issues_after_max_rounds'
-      : 'referee_autopilot_acceptance_not_reached_before_max_rounds');
+      ? 'local_diagnostic_review_open_issues_after_max_rounds'
+      : 'local_diagnostic_review_pass_not_reached_before_max_rounds');
     for (const blocker of finalFreshRefereeVerdict?.blockers || []) {
       blockers.push(blocker);
     }
   }
-  const acceptanceReceipt = {
-    kind: 'RefereeAutopilotAcceptanceReceipt',
+  const diagnosticReceipt = {
+    kind: 'LocalDiagnosticReviewLoopReceipt',
     paperId: row.task.paperId,
     taskKey: row.task.taskKey,
-    status: accepted ? 'referee_autopilot_accept_recorded' : 'referee_autopilot_accept_blocked',
-    accepted,
-    acceptanceActor: 'openclaw-agent-referee-autopilot',
+    status: diagnosticClosureReached ? 'local_diagnostic_review_pass_recorded' : 'local_diagnostic_review_blocked',
+    diagnosticClosureReached,
+    academicAcceptanceGranted: false,
+    diagnosticActor: 'local-deterministic-review-loop',
     roundsCompleted: rounds.length,
     maxRounds: roundLimit,
     minimumFreshRefereeRounds,
@@ -623,26 +535,27 @@ async function runRefereeAutopilot({
       writesLegacyRegistry: false,
     },
   };
-  const acceptanceReceiptWithHash = {
-    ...acceptanceReceipt,
-    refereeAutopilotAcceptanceReceiptHash: hashPaperRecord(
-      'RefereeAutopilotAcceptanceReceipt',
-      acceptanceReceipt,
+  const diagnosticReceiptWithHash = {
+    ...diagnosticReceipt,
+    localDiagnosticReviewLoopReceiptHash: hashPaperRecord(
+      'LocalDiagnosticReviewLoopReceipt',
+      diagnosticReceipt,
     ),
   };
   if (runtimeRoot && (execute || rounds.length)) {
-    const autopilotDir = path.join(runtimeRoot, 'referee-autopilot', row.task.paperId);
-    await ensureDir(autopilotDir);
-    await writeJsonFile(path.join(autopilotDir, 'AUTOPILOT_ROUNDS.json'), rounds);
-    await writeJsonFile(path.join(autopilotDir, 'AUTOPILOT_ACCEPTANCE_RECEIPT.json'), acceptanceReceiptWithHash);
+    const loopDir = path.join(runtimeRoot, 'local-review-loop', row.task.paperId);
+    await ensureDir(loopDir);
+    await writeJsonFile(path.join(loopDir, 'LOCAL_DIAGNOSTIC_REVIEW_ROUNDS.json'), rounds, { scopeRoot: loopDir });
+    await writeJsonFile(path.join(loopDir, 'LOCAL_DIAGNOSTIC_REVIEW_RECEIPT.json'), diagnosticReceiptWithHash, { scopeRoot: loopDir });
   }
   const report = {
     version: 1,
-    kind: 'RefereeAutopilotReport',
+    kind: 'LocalDiagnosticReviewLoopReport',
     paperId: row.task.paperId,
     taskKey: row.task.taskKey,
-    status: accepted ? 'referee_autopilot_accepted' : 'referee_autopilot_blocked',
-    accepted,
+    status: diagnosticClosureReached ? 'local_diagnostic_review_passed' : 'local_diagnostic_review_blocked',
+    diagnosticClosureReached,
+    academicAcceptanceGranted: false,
     roundsCompleted: rounds.length,
     maxRounds: roundLimit,
     minimumFreshRefereeRounds,
@@ -663,7 +576,7 @@ async function runRefereeAutopilot({
     finalFreshRefereeReview,
     finalFreshRefereeVerdict,
     freshRefereeVerdictCount: rounds.length,
-    freshRefereeAcceptCount,
+    diagnosticPassCount,
     freshRefereeReviseCount,
     sourceMutationCount,
     sqliteWriteCount,
@@ -675,7 +588,7 @@ async function runRefereeAutopilot({
     finalResearchReport,
     finalEmpiricalAnalysis,
     finalLifecycle,
-    acceptanceReceipt: acceptanceReceiptWithHash,
+    diagnosticReceipt: diagnosticReceiptWithHash,
     blockers,
     safety: {
       sourceMutation: sourceMutationCount > 0,
@@ -689,7 +602,7 @@ async function runRefereeAutopilot({
   };
   return {
     ...report,
-    refereeAutopilotReportHash: hashPaperRecord('RefereeAutopilotReport', report),
+    localDiagnosticReviewLoopReportHash: hashPaperRecord('LocalDiagnosticReviewLoopReport', report),
   };
 }
 
@@ -710,9 +623,25 @@ export async function runPaperBatch({
   benchmarkId = null,
   applyManuscript = false,
 } = {}) {
-  if (!MODE_SET.has(mode)) throw new Error(`Unknown paper batch mode: ${mode}`);
+  const workflowDefinition = assertPaperMode(mode);
   const resolvedRoot = path.resolve(root);
   const resolvedRuntimeRoot = runtimeRoot ? path.resolve(runtimeRoot) : defaultRuntimeRoot(resolvedRoot);
+  const store = createSqliteStore({ dbPath: heptaStorePath(resolvedRoot) });
+  const executionContext = createExecutionContext({
+    root: resolvedRoot,
+    runtimeRoot: resolvedRuntimeRoot,
+    mode,
+    execute,
+    writeReport,
+    options: {
+      maxRounds,
+      targetOverride,
+      datasetRoot,
+      benchmarkId,
+      applyManuscript,
+    },
+    services: { store },
+  });
   const coreIntegrity = buildCoreIntegrityReport({
     workspaceRoot: path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..'),
   });
@@ -736,176 +665,186 @@ export async function runPaperBatch({
     : null;
   const results = [];
   for (const row of scan.rows) {
-    let buildResult = null;
-    let packageResult = null;
-    let researchReport = null;
-    let refereeReview = null;
-    let refereeRevision = null;
-    let refereeAutopilot = null;
-    let journalManagement = null;
-    let empiricalAnalysis = null;
-    let venueResolution = null;
-    let sourceAdaptation = null;
-    let lifecycle = null;
-    if (modeNeedsRefereeAutopilot(mode)) {
-      journalManagement = await runJournalManageAdapter({
-        root: resolvedRoot,
-        runtimeRoot: resolvedRuntimeRoot,
-        row,
-        target: targetOverride,
-        execute: execute && mode === PAPER_BATCH_MODES.REFEREE_AUTOPILOT,
-      });
-      refereeAutopilot = await runRefereeAutopilot({
-        root: resolvedRoot,
-        runtimeRoot: resolvedRuntimeRoot,
-        row,
-        venues: scan.venues,
-        execute: execute && mode === PAPER_BATCH_MODES.REFEREE_AUTOPILOT,
-        maxRounds,
-        targetOverride,
-        datasetRoot,
-        benchmarkId,
-        applyManuscript,
-      });
-      buildResult = refereeAutopilot.finalBuildResult;
-      packageResult = refereeAutopilot.finalPackageResult;
-      researchReport = refereeAutopilot.finalResearchReport;
-      empiricalAnalysis = refereeAutopilot.finalEmpiricalAnalysis;
-      lifecycle = refereeAutopilot.finalLifecycle;
-      refereeReview = refereeAutopilot.finalRefereeReview;
-      refereeRevision = refereeAutopilot.finalRefereeRevision;
-    }
-    if (modeNeedsJournalManage(mode)) {
-      journalManagement = await runJournalManageAdapter({
-        root: resolvedRoot,
-        runtimeRoot: resolvedRuntimeRoot,
-        row,
-        target: targetOverride,
-        execute: execute && mode === PAPER_BATCH_MODES.JOURNAL_MANAGE,
-      });
-    }
-    if (modeNeedsEmpiricalAnalysis(mode)) {
-      journalManagement = await runJournalManageAdapter({
-        root: resolvedRoot,
-        runtimeRoot: resolvedRuntimeRoot,
-        row,
-        target: targetOverride,
-        execute: execute && mode === PAPER_BATCH_MODES.EMPIRICAL_ANALYSIS,
-      });
-      empiricalAnalysis = await runEmpiricalAnalysisAdapter({
-        root: resolvedRoot,
-        runtimeRoot: resolvedRuntimeRoot,
-        row,
-        targetProfile: journalManagement?.targetProfile || null,
-        targetSelectionPolicy: journalManagement?.targetSelectionPolicy || null,
-        datasetRoot,
-        benchmarkId,
-        applyManuscript,
-        execute: execute && mode === PAPER_BATCH_MODES.EMPIRICAL_ANALYSIS,
-      });
-      if (empiricalAnalysis?.manuscriptEmpiricalApplyReceipt?.status === 'manuscript_empirical_apply_applied') {
-        buildResult = await runLatexBuildAdapter({
+    const initialStageState = {
+      buildResult: null,
+      packageResult: null,
+      researchReport: null,
+      refereeReview: null,
+      refereeRevision: null,
+      localDiagnosticReviewLoop: null,
+      journalManagement: null,
+      empiricalAnalysis: null,
+      venueResolution: null,
+      sourceAdaptation: null,
+      lifecycle: null,
+    };
+    const handlers = {
+      'local-review-loop': async () => {
+        const localReviewLoopMode = [PAPER_BATCH_MODES.LOCAL_REVIEW_LOOP, PAPER_BATCH_MODES.REFEREE_AUTOPILOT].includes(mode);
+        const journalManagement = await runJournalManageAdapter({
+          root: resolvedRoot,
+          runtimeRoot: resolvedRuntimeRoot,
+          row,
+          target: targetOverride,
+          execute: execute && localReviewLoopMode,
+        });
+        const localDiagnosticReviewLoop = await runLocalDiagnosticReviewLoop({
+          root: resolvedRoot,
+          runtimeRoot: resolvedRuntimeRoot,
+          store: executionContext.services.store,
+          row,
+          venues: scan.venues,
+          execute: execute && localReviewLoopMode,
+          maxRounds,
+          targetOverride,
+          datasetRoot,
+          benchmarkId,
+          applyManuscript,
+        });
+        return {
+          journalManagement,
+          localDiagnosticReviewLoop,
+          buildResult: localDiagnosticReviewLoop.finalBuildResult,
+          packageResult: localDiagnosticReviewLoop.finalPackageResult,
+          researchReport: localDiagnosticReviewLoop.finalResearchReport,
+          empiricalAnalysis: localDiagnosticReviewLoop.finalEmpiricalAnalysis,
+          lifecycle: localDiagnosticReviewLoop.finalLifecycle,
+          refereeReview: localDiagnosticReviewLoop.finalRefereeReview,
+          refereeRevision: localDiagnosticReviewLoop.finalRefereeRevision,
+        };
+      },
+      'journal-manage': async () => ({
+        journalManagement: await runJournalManageAdapter({
+          root: resolvedRoot,
+          runtimeRoot: resolvedRuntimeRoot,
+          row,
+          target: targetOverride,
+          execute: execute && mode === PAPER_BATCH_MODES.JOURNAL_MANAGE,
+        }),
+      }),
+      'empirical-analysis': async () => {
+        const journalManagement = await runJournalManageAdapter({
+          root: resolvedRoot,
+          runtimeRoot: resolvedRuntimeRoot,
+          row,
+          target: targetOverride,
+          execute: execute && mode === PAPER_BATCH_MODES.EMPIRICAL_ANALYSIS,
+        });
+        const empiricalAnalysis = await runEmpiricalAnalysisAdapter({
+          root: resolvedRoot,
+          runtimeRoot: resolvedRuntimeRoot,
+          row,
+          targetProfile: journalManagement?.targetProfile || null,
+          targetSelectionPolicy: journalManagement?.targetSelectionPolicy || null,
+          datasetRoot,
+          benchmarkId,
+          applyManuscript,
+          execute: execute && mode === PAPER_BATCH_MODES.EMPIRICAL_ANALYSIS,
+        });
+        let buildResult = null;
+        let packageResult = null;
+        if (empiricalAnalysis?.manuscriptEmpiricalApplyReceipt?.status === 'manuscript_empirical_apply_applied') {
+          buildResult = await runLatexBuildAdapter({ root: resolvedRoot, row, runtimeRoot: resolvedRuntimeRoot, execute });
+          packageResult = await runPackageAdapter({ root: resolvedRoot, row, buildResult, runtimeRoot: resolvedRuntimeRoot, execute });
+        }
+        const researchReport = await runResearchVerifyAdapter({ root: resolvedRoot, row, runtimeRoot: resolvedRuntimeRoot });
+        return { journalManagement, empiricalAnalysis, buildResult, packageResult, researchReport };
+      },
+      build: async () => ({
+        buildResult: await runLatexBuildAdapter({
           root: resolvedRoot,
           row,
           runtimeRoot: resolvedRuntimeRoot,
-          execute: execute && mode === PAPER_BATCH_MODES.EMPIRICAL_ANALYSIS,
-        });
-        packageResult = await runPackageAdapter({
+          execute: execute && mode === PAPER_BATCH_MODES.LOCAL_BUILD,
+        }),
+      }),
+      package: async ({ state: stageState }) => ({
+        packageResult: await runPackageAdapter({
           root: resolvedRoot,
           row,
-          buildResult,
+          buildResult: stageState.buildResult,
           runtimeRoot: resolvedRuntimeRoot,
-          execute: execute && mode === PAPER_BATCH_MODES.EMPIRICAL_ANALYSIS,
-        });
-      }
-      researchReport = await runResearchVerifyAdapter({
-        root: resolvedRoot,
-        row,
-        runtimeRoot: resolvedRuntimeRoot,
-      });
-    }
-    if (modeNeedsBuild(mode)) {
-      buildResult = await runLatexBuildAdapter({
-        root: resolvedRoot,
-        row,
-        runtimeRoot: resolvedRuntimeRoot,
-        execute: execute && mode === PAPER_BATCH_MODES.LOCAL_BUILD,
-      });
-    }
-    if (modeNeedsPackage(mode)) {
-      packageResult = await runPackageAdapter({
-        root: resolvedRoot,
-        row,
-        buildResult,
-        runtimeRoot: resolvedRuntimeRoot,
-        execute: execute && mode === PAPER_BATCH_MODES.LOCAL_PACKAGE,
-      });
-    }
-    if (modeNeedsResearch(mode)) {
-      researchReport = await runResearchVerifyAdapter({
-        root: resolvedRoot,
-        row,
-        runtimeRoot: resolvedRuntimeRoot,
-        executeResearchWorkers: execute && mode === PAPER_BATCH_MODES.RESEARCH_VERIFY,
-        requireNativeWorkers: mode === PAPER_BATCH_MODES.RESEARCH_VERIFY,
-      });
-    }
-    if (modeNeedsRefereeReview(mode)) {
-      refereeReview = await runRefereeReviewAdapter({
-        root: resolvedRoot,
-        runtimeRoot: resolvedRuntimeRoot,
-        row,
-        execute: execute && mode === PAPER_BATCH_MODES.REFEREE_REVIEW,
-      });
-    }
-    if (modeNeedsRefereeRevise(mode)) {
-      refereeRevision = await runRefereeReviseAdapter({
-        root: resolvedRoot,
-        runtimeRoot: resolvedRuntimeRoot,
-        row,
-        mode: 'dry-run',
-        execute: execute && mode === PAPER_BATCH_MODES.REFEREE_REVISE,
-      });
-    }
-    if (modeNeedsVenueResolve(mode)) {
-      venueResolution = await runVenueResolveAdapter({
-        row,
-        venues: scan.venues,
-        packageResult,
-      });
-    }
-    if (modeNeedsSourceAdapt(mode)) {
-      sourceAdaptation = await runSourceAdaptAdapter({
-        root: resolvedRoot,
-        row,
-      });
-    }
-    if (modeNeedsSubmission(mode)) {
-      const submissionIntent = row.submissionIntent || row.task.registry?.submissionIntent;
-      if (!submissionIntent || submissionIntent.status === 'submission_candidate') {
+          execute: execute && mode === PAPER_BATCH_MODES.LOCAL_PACKAGE,
+        }),
+      }),
+      'research-verify': async () => ({
+        researchReport: await runResearchVerifyAdapter({
+          root: resolvedRoot,
+          row,
+          runtimeRoot: resolvedRuntimeRoot,
+          executeResearchWorkers: execute && mode === PAPER_BATCH_MODES.RESEARCH_VERIFY,
+          requireNativeWorkers: mode === PAPER_BATCH_MODES.RESEARCH_VERIFY,
+        }),
+      }),
+      'referee-review': async () => ({
+        refereeReview: await runRefereeReviewAdapter({
+          root: resolvedRoot,
+          runtimeRoot: resolvedRuntimeRoot,
+          row,
+          execute: execute && mode === PAPER_BATCH_MODES.REFEREE_REVIEW,
+        }),
+      }),
+      'referee-revise': async () => ({
+        refereeRevision: await runRefereeReviseAdapter({
+          root: resolvedRoot,
+          runtimeRoot: resolvedRuntimeRoot,
+          row,
+          mode: 'dry-run',
+          execute: execute && mode === PAPER_BATCH_MODES.REFEREE_REVISE,
+        }),
+      }),
+      'venue-resolve': async ({ state: stageState }) => ({
+        venueResolution: await runVenueResolveAdapter({ row, venues: scan.venues, packageResult: stageState.packageResult }),
+      }),
+      'source-adapt': async () => ({
+        sourceAdaptation: await runSourceAdaptAdapter({ root: resolvedRoot, row }),
+      }),
+      submission: async ({ state: stageState }) => {
+        const submissionIntent = row.submissionIntent || row.task.registry?.submissionIntent;
+        if (submissionIntent && submissionIntent.status !== 'submission_candidate') return { lifecycle: null };
         const submissionAuthorities = await prepareSubmissionAuthorities({
           root: resolvedRoot,
           runtimeRoot: resolvedRuntimeRoot,
           row,
           venues: scan.venues,
-          artifactPackage: packageResult?.artifactPackage || null,
-          researchReport,
+          artifactPackage: stageState.packageResult?.artifactPackage || null,
+          researchReport: stageState.researchReport,
           mode,
         });
-        lifecycle = buildSubmissionLifecycle({
-          row,
-          venues: scan.venues,
-          artifactPackage: packageResult?.artifactPackage || null,
-          researchReport,
-          mode,
-          reviewedSubmit: mode === PAPER_BATCH_MODES.REVIEWED_SUBMIT,
-          venuePlanOverride: submissionAuthorities.venuePlan,
-          independentReviewAuthorityReceipt:
-            submissionAuthorities.independentReviewAuthorityReceipt,
-          liveAuthorizationReceipt: submissionAuthorities.liveAuthorizationReceipt,
-        });
-      }
-    }
+        return {
+          lifecycle: buildSubmissionLifecycle({
+            row,
+            venues: scan.venues,
+            artifactPackage: stageState.packageResult?.artifactPackage || null,
+            researchReport: stageState.researchReport,
+            mode,
+            reviewedSubmit: mode === PAPER_BATCH_MODES.REVIEWED_SUBMIT,
+            venuePlanOverride: submissionAuthorities.venuePlan,
+            independentReviewAuthorityReceipt: submissionAuthorities.independentReviewAuthorityReceipt,
+            liveAuthorizationReceipt: submissionAuthorities.liveAuthorizationReceipt,
+          }),
+        };
+      },
+    };
+    const workflowExecution = await runWorkflowStages({
+      definition: workflowDefinition,
+      context: executionContext,
+      initialState: initialStageState,
+      handlers,
+    });
+    const {
+      buildResult,
+      packageResult,
+      researchReport,
+      refereeReview,
+      refereeRevision,
+      localDiagnosticReviewLoop,
+      journalManagement,
+      empiricalAnalysis,
+      venueResolution,
+      sourceAdaptation,
+      lifecycle,
+    } = workflowExecution.state;
     const state = stateWithAdapterResults(row, {
       buildResult,
       packageResult,
@@ -915,6 +854,7 @@ export async function runPaperBatch({
       venueResolution,
       sourceAdaptation,
       lifecycle,
+      workflowReceipt: workflowExecution.workflowReceipt,
     });
     results.push({
       paperId: row.task.paperId,
@@ -926,7 +866,7 @@ export async function runPaperBatch({
       researchReport,
       refereeReview,
       refereeRevision,
-      refereeAutopilot,
+      localDiagnosticReviewLoop,
       journalManagement,
       empiricalAnalysis,
       venueResolution,

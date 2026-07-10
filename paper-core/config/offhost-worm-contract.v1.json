@@ -1,8 +1,8 @@
 {
   "version": 1,
   "kind": "OffhostWormSnapshotContract",
-  "contractId": "hepta-paper-offhost-worm-v1",
-  "targetMountRoot": "/media/qian-qi/HEPTA_WORM",
+  "contractId": "hepta-paper-offhost-worm-toshiba-clean3-v1",
+  "targetMountRoot": "/media/qian-qi/TOSHIBA_CLEAN3",
   "requireDistinctFilesystemDevice": true,
   "requireFilesystemImmutableObjects": true,
   "availabilityPolicy": "fail_closed_until_external_mount_is_verified"

@@ -1,6 +1,6 @@
 # Release process
 
-Version 0.7.0 is an isolation, archive-independent-audit and external-recovery checkpoint,
+Version 0.8.0 is an external-WORM, coverage and reporting-boundary checkpoint,
 not a live-submission release.
 
 Run `npm run release:verify` from a clean commit. Verification uses disposable
@@ -20,8 +20,11 @@ only; it is not owner, academic, referee, operator, or executor authority.
 
 A release tag may be created only from a clean worktree after that gate passes.
 The cold-volume CAS and off-host WORM contracts are recorded in the signed
-bundle; missing external media remains an explicit blocker rather than a
-locally inferred success.
+bundle. The WORM target is the distinct ext4 device mounted at
+`/media/qian-qi/TOSHIBA_CLEAN3`; qualifying snapshots require inode-immutable
+objects and a hash/immutability restore drill. The unrelated cold-data volume
+remains an explicit blocker until its 15 entries and signed sentinel are
+actually present.
 
 The repository remains fail-closed. A tag does not authorize external actions,
 academic acceptance, destructive deletion, or functional-parity retirement of

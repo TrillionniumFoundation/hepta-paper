@@ -8,6 +8,13 @@ function sha256File(file) {
   return `sha256:${crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')}`;
 }
 
+function filesystemImmutable(file) {
+  const probe = spawnSync('lsattr', ['-d', file], { encoding: 'utf8' });
+  if (probe.status !== 0) return false;
+  const attributes = String(probe.stdout || '').trim().split(/\s+/, 1)[0] || '';
+  return attributes.includes('i');
+}
+
 export function verifyOffhostWormTarget({ workspaceRoot, contract, mountAvailableOverride = null, distinctDeviceOverride = null } = {}) {
   if (contract?.kind !== 'OffhostWormSnapshotContract' || contract?.version !== 1) throw new Error('v1 offhost WORM contract required');
   const targetMountRoot = path.resolve(process.env.HEPTA_OFFHOST_WORM_ROOT || contract.targetMountRoot);
@@ -70,14 +77,34 @@ export function createOffhostWormSnapshot({ workspaceRoot, contract, sources = [
   for (const source of sourceRows) {
     const token = source.sha256.replace(/^sha256:/, '');
     const destination = path.join(objectRoot, token);
-    if (!fs.existsSync(destination)) fs.copyFileSync(source.path, destination);
-    fs.chmodSync(destination, 0o444);
-    const immutable = immutableOverride === null
-      ? spawnSync('chattr', ['+i', destination], { encoding: 'utf8' }).status === 0
-      : Boolean(immutableOverride);
-    objects.push({ role: source.role, sourceHash: source.sha256, objectPath: destination, objectHash: sha256File(destination), immutable });
+    if (!fs.existsSync(destination)) {
+      fs.copyFileSync(source.path, destination);
+      fs.chmodSync(destination, 0o444);
+    }
+    const objectHash = sha256File(destination);
+    if (objectHash !== source.sha256) blockers.push(`offhost_worm_object_hash_mismatch:${source.role}`);
+    let immutable = Boolean(immutableOverride);
+    if (immutableOverride === null) {
+      if (!filesystemImmutable(destination)) spawnSync('chattr', ['+i', destination], { encoding: 'utf8' });
+      immutable = filesystemImmutable(destination);
+    }
+    objects.push({ role: source.role, sourceHash: source.sha256, objectPath: destination, objectHash, immutable });
   }
   if (contract.requireFilesystemImmutableObjects && objects.some((object) => !object.immutable)) blockers.push('offhost_worm_objects_not_filesystem_immutable');
+  if (blockers.length) {
+    return Object.freeze({
+      version: 1,
+      kind: 'OffhostWormSnapshotReceipt',
+      status: 'offhost_worm_snapshot_blocked',
+      execute: true,
+      target,
+      sources: sourceRows,
+      objects,
+      copiedObjectCount: objects.length,
+      immutableObjectCount: objects.filter((object) => object.immutable).length,
+      blockers: [...new Set(blockers)],
+    });
+  }
   const payload = {
     version: 1,
     kind: 'OffhostWormSnapshotManifest',
@@ -91,7 +118,7 @@ export function createOffhostWormSnapshot({ workspaceRoot, contract, sources = [
   return Object.freeze({
     version: 1,
     kind: 'OffhostWormSnapshotReceipt',
-    status: blockers.length ? 'offhost_worm_snapshot_blocked' : 'offhost_worm_snapshot_recorded',
+    status: 'offhost_worm_snapshot_recorded',
     execute: true,
     target,
     snapshotRoot,
@@ -99,28 +126,39 @@ export function createOffhostWormSnapshot({ workspaceRoot, contract, sources = [
     manifestHash: manifest.manifestHash,
     copiedObjectCount: objects.length,
     immutableObjectCount: objects.filter((object) => object.immutable).length,
-    blockers,
+    blockers: [],
   });
 }
 
-export function drillOffhostWormRestore({ manifestPath } = {}) {
+export function drillOffhostWormRestore({ manifestPath, immutableOverride = null } = {}) {
   if (!manifestPath || !fs.existsSync(manifestPath)) {
     return Object.freeze({ version: 1, kind: 'OffhostWormRestoreDrillReceipt', status: 'offhost_worm_restore_drill_blocked', blockers: ['offhost_worm_manifest_missing'] });
   }
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   const payload = Object.fromEntries(Object.entries(manifest).filter(([key]) => key !== 'manifestHash'));
   const blockers = [];
+  const invalidRoles = new Set();
   if (hashRecord('OffhostWormSnapshotManifest', payload) !== manifest.manifestHash) blockers.push('offhost_worm_manifest_hash_invalid');
   for (const object of manifest.objects || []) {
-    if (!fs.existsSync(object.objectPath)) blockers.push(`offhost_worm_object_missing:${object.role}`);
-    else if (sha256File(object.objectPath) !== object.sourceHash) blockers.push(`offhost_worm_object_hash_mismatch:${object.role}`);
+    if (!fs.existsSync(object.objectPath)) {
+      blockers.push(`offhost_worm_object_missing:${object.role}`);
+      invalidRoles.add(object.role);
+    } else if (sha256File(object.objectPath) !== object.sourceHash) {
+      blockers.push(`offhost_worm_object_hash_mismatch:${object.role}`);
+      invalidRoles.add(object.role);
+    }
+    const immutable = immutableOverride === null ? filesystemImmutable(object.objectPath) : Boolean(immutableOverride);
+    if (object.immutable !== true || !immutable) {
+      blockers.push(`offhost_worm_object_not_immutable:${object.role}`);
+      invalidRoles.add(object.role);
+    }
   }
   return Object.freeze({
     version: 1,
     kind: 'OffhostWormRestoreDrillReceipt',
     status: blockers.length ? 'offhost_worm_restore_drill_blocked' : 'offhost_worm_restore_drill_passed',
     manifestHash: manifest.manifestHash || null,
-    verifiedObjectCount: (manifest.objects || []).length - blockers.length,
+    verifiedObjectCount: (manifest.objects || []).length - invalidRoles.size,
     blockers,
   });
 }

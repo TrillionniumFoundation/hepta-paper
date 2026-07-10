@@ -1,6 +1,6 @@
 {
   "name": "hepta-paper-workspace",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "private": true,
   "type": "module",
   "description": "Fail-closed paper workflow system around an accepted vendored design-production-core baseline.",
@@ -52,7 +52,7 @@
     "coverage:architecture": "node paper-core/bin/run-isolated-command.mjs npm run coverage:architecture-inner",
     "coverage:architecture-inner": "node --experimental-test-coverage --test --test-coverage-lines=65 --test-coverage-include=paper-core/src/execution-context.mjs --test-coverage-include=paper-core/src/mode-registry.mjs --test-coverage-include=paper-core/src/workflow-engine.mjs --test-coverage-include=paper-adapters/artifacts/filesystem-artifact-repository.mjs --test-coverage-include=paper-adapters/persistence/sqlite-store.mjs --test-coverage-include=paper-domain/research/*.mjs --test-coverage-include=paper-domain/submission/*.mjs paper-core/tests/architecture-conformance.test.mjs",
     "coverage:repository": "node paper-core/bin/run-isolated-command.mjs npm run coverage:repository-inner",
-    "coverage:repository-inner": "node --experimental-test-coverage --test --test-coverage-lines=25 --test-coverage-branches=50 --test-coverage-functions=30 --test-coverage-include='paper-domain/**/*.mjs' --test-coverage-include='paper-ports/**/*.mjs' --test-coverage-include='workflow-kernel/**/*.mjs' --test-coverage-include='paper-adapters/**/*.mjs' --test-coverage-include='paper-application/**/*.mjs' --test-coverage-include='paper-core/src/**/*.mjs' paper-core/tests/*.test.mjs migration/tests/capabilities/*.test.mjs migration/tests/*.test.mjs",
+    "coverage:repository-inner": "node --experimental-test-coverage --test --test-coverage-lines=30 --test-coverage-branches=54 --test-coverage-functions=50 --test-coverage-include='paper-domain/**/*.mjs' --test-coverage-include='paper-ports/**/*.mjs' --test-coverage-include='workflow-kernel/**/*.mjs' --test-coverage-include='paper-adapters/**/*.mjs' --test-coverage-include='paper-application/**/*.mjs' --test-coverage-include='paper-core/src/**/*.mjs' paper-core/tests/*.test.mjs migration/tests/capabilities/*.test.mjs migration/tests/*.test.mjs",
     "ci:selftest": "node paper-core/bin/run-isolated-verification.mjs ci",
     "ci:inner": "npm run core:integrity && npm run core:selftest && npm run core:runtime-dry-run && npm run paper:capability-conformance && npm run paper:architecture-selftest && npm run paper:governance-contracts && npm run migration:capability-matrix-v3 && npm run assets:cold-volume-status && npm run assets:cold-volume-cas-status && npm run legacy:fixture-verify && npm run legacy:matrix-reference-status",
     "release:verify": "node paper-core/bin/run-isolated-verification.mjs release",

@@ -148,10 +148,14 @@ state change. The 263-row legacy audit selectively restores its sources from
 the immutable archive; it no longer reads the live legacy working directory.
 
 Off-host WORM onboarding is governed by
-`paper-core/config/offhost-worm-contract.v1.json`. A snapshot can qualify only
-on a distinct mounted filesystem with immutable objects and a successful
-restore drill. Local packets and signatures cannot satisfy that external-media
-requirement.
+`paper-core/config/offhost-worm-contract.v1.json`. The current external target
+is the ext4 volume mounted at `/media/qian-qi/TOSHIBA_CLEAN3` (the operator's
+renamed external disk). A snapshot can qualify only on a distinct mounted
+filesystem with immutable objects and a successful restore drill. Local
+packets and signatures cannot satisfy that external-media requirement. This
+WORM target is independent of the `THUNDERO_EXT4` cold-data contract: the
+TOSHIBA volume must not be treated as a cold-data recovery source unless all 15
+declared entries and their hash-bound sentinel are actually present.
 
 The proposal build path may execute a local LaTeX build under
 `runtime/builds/<paper_id>/` and write `BUILD_ARTIFACT_ACCEPTANCE.json` for the

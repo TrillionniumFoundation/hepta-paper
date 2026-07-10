@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.8.0 - 2026-07-11
+
+- Bound off-host WORM storage to the renamed, physically distinct ext4 volume
+  `TOSHIBA_CLEAN3` and completed a real six-object snapshot plus restore drill.
+  All objects and the manifest are inode-immutable; the cold-data volume is
+  still treated separately and remains unavailable.
+- Hardened WORM idempotency and integrity: already-immutable objects are now
+  detected correctly, pre-existing hash conflicts fail closed, and restore
+  drills verify both content hashes and current filesystem immutability.
+- Raised whole-repository coverage gates from 25/50/30 to 30/54/50 for
+  lines/branches/functions. Added regression coverage for empty and sparse
+  batch summaries and canonical table rendering.
+- Reduced `batch-summary.mjs` from 866 lines to a 38-line compatibility facade;
+  result aggregation now lives in a bounded reporting module.
+- Regenerated final-commit-bound external intake for four authority roles, 13
+  owner families, 14 operational proofs, and the
+  `A_Theory_of__Expectations` production chain. No acceptance or authority is
+  inferred from those requests.
+
+This release remains production `No-Go`: the 15-entry cold-data source and its
+sentinel are absent, externally controlled trust/owner signatures have not
+been supplied, production operational proof remains pending, and no live
+provider action is authorized.
+
 ## 0.7.0 - 2026-07-10
 
 - Made every test, status and governance workflow either disposable-runtime or

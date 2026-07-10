@@ -20,11 +20,19 @@ assert.deepEqual(matrix.summary.byDecision, {
 });
 assert.equal(matrix.summary.uniqueCapabilityCount, 14);
 assert.equal(matrix.summary.ownerAcceptancePending, 249);
+assert.equal(matrix.summary.decisionMapped, 249);
+assert.equal(matrix.summary.contractsDefined, 249);
+assert.equal(matrix.summary.implementationVerified, 161);
+assert.equal(matrix.summary.implementationNotApplicable, 88);
+assert.equal(matrix.summary.ownerAccepted, 0);
 for (const entry of matrix.entries) {
   assert.ok(entry.source.path);
   assert.ok(entry.source.sha256);
   assert.ok(entry.source.symbols.length > 0);
-  assert.equal(entry.ownerAcceptance.status, 'pending_owner_acceptance');
+  assert.equal(Object.hasOwn(entry, 'coverageStatus'), false);
+  assert.equal(entry.decision_mapped.satisfied, true);
+  assert.equal(entry.contract_defined.satisfied, true);
+  assert.equal(entry.owner_accepted.status, 'pending_owner_acceptance');
   assert.ok(entry.coverageTests.length > 0, entry.source.path);
   for (const coverageTest of entry.coverageTests) {
     assert.equal(coverageTest.sha256, sha256File(path.join(workspaceRoot, coverageTest.path)));
@@ -33,11 +41,19 @@ for (const entry of matrix.entries) {
     assert.deepEqual(entry.capabilityIds, []);
   } else {
     assert.ok(entry.capabilityIds.length > 0, entry.source.path);
-    assert.ok(entry.coverageTests.some((test) => test.coverageClass === 'native_capability_contract_and_negative_boundaries'));
+    assert.equal(entry.implementation_verified.satisfied, true);
+    assert.ok(entry.coverageTests.some((test) => test.coverageClass.startsWith('capability_specific_')));
+    for (const capabilityId of entry.capabilityIds) {
+      assert.ok(entry.coverageTests.some((test) => test.capabilityId === capabilityId), `${entry.source.path}:${capabilityId}`);
+    }
     for (const target of entry.capabilityTargets) {
       assert.ok(target.sha256, target.target);
       assert.equal(target.sha256, sha256File(path.join(workspaceRoot, target.target)));
     }
+  }
+  if (entry.businessDecision === CAPABILITY_DECISIONS.SUPERSEDED_WITH_COVERAGE) {
+    assert.ok(entry.coverageTests.some((test) => test.coverageClass === 'capability_specific_gap_or_differential'));
+    assert.ok(entry.coverageTests.some((test) => test.coverageClass === 'legacy_disposition_or_differential'));
   }
 }
 

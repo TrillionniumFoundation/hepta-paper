@@ -22,6 +22,26 @@ paper-production-core batch-run --mode legacy-cleanup --write-report --json
 > numeric snapshot below is retained as historical planning context and is not
 > the current release status.
 
+## Executed retirement status
+
+The non-destructive control-plane retirement run has completed:
+
+- all 7 retirement-wave execution receipts are recorded;
+- `LegacyEntrypointFreezeReceipt` is recorded and both `bin/paperctl` and
+  `paperctl_modules/paper_production_core.py` are non-executable;
+- `PaperFactoryQuarantineIsolationReceipt` is recorded;
+- `OldPaperFactoryControlPlaneRemovalReceipt` is recorded for removal of the
+  active execution route;
+- the hepta repository, paper assets and native runtime/store are physically
+  outside the frozen legacy root;
+- destructive legacy source deletion was not performed;
+- the resulting state is `paper_factory_control_plane_archive_ready`, not
+  functional parity or owner-approved physical deletion.
+
+All 249 business dispositions still require owner acceptance. A real
+worker→evidence→independent-referee→dual-authorization pilot and any separately
+implemented provider executor remain outside this retirement receipt.
+
 Latest audit report:
 
 - `runtime/reports/paper-batch-legacy-cleanup-latest.json`
@@ -314,21 +334,25 @@ retirement plan:
 - `OldPaperFactoryControlPlaneRemovalReceipt`
 - `PaperFactoryRetirementReadinessGate`
 
-These packets do not delete files, rewrite legacy entrypoints, write legacy
-SQLite, or perform external actions. Execute mode writes only hepta runtime
-receipts under `runtime/legacy-retirement/`.
+These packets do not delete legacy source, rewrite entrypoint bytes, write
+legacy SQLite, or perform external actions. Execute mode persists hepta runtime
+receipts and may remove executable permission bits from the two declared
+legacy entrypoints. That permission change is recorded with pre/post hashes and
+does not change file content.
 
 ## Current Retention Constraints And Blockers
 
-- `paper_factory.sqlite` remains retained as an active registry/state source,
-  with export evidence recorded in hepta runtime receipts.
+- `paper_factory.sqlite` remains retained as immutable import/audit evidence;
+  it is no longer the default or an active runtime registry/state source.
 - Live external venue submission is explicitly outside old `paper_factory`
   retirement. Hepta may record local `ControlledExternalExecutorReceipt`
   boundaries, but live venue submission requires a separate future hepta adapter,
   dedicated receipt, and reconciliation.
-- Raw P0/P1 migration backlog is preserved for audit, but active P0/P1
-  blockers are drained into hepta semantic migration claims.
-- There are no active runtime retirement blockers after the local policy receipt.
+- Raw P0/P1 migration backlog is preserved for audit. Verified dispositions
+  are 14 behavioral replacements and 249 explicit retirements; only the 14
+  replacements are semantic migration claims.
+- There are no active control-plane archive blockers. Physical deletion and
+  functional-parity claims remain disallowed.
 
 ## Next Implementation Steps
 
@@ -336,5 +360,5 @@ receipts under `runtime/legacy-retirement/`.
    normal production route.
 2. Add a destructive-removal executor only if a separate removal policy is
    accepted; current receipts intentionally do not delete files.
-3. Keep `paper_factory.sqlite` retained as data evidence until a separate
-   hepta-native state-store cutover is accepted.
+3. Keep `paper_factory.sqlite` retained as immutable data evidence while the
+   schema-v2 hepta-native store remains the sole production default.

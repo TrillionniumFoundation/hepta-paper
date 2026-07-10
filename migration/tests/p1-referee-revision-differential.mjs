@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { defaultLegacyPaperFactoryRoot } from '../../paper-core/src/workspace-layout.mjs';
 import {
   evidenceResyncConsumingSelection,
   evidenceResyncDecisionPlan,
@@ -14,7 +15,7 @@ import {
 } from '../../paper-adapters/referee-revise/decision-routing.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const root = path.resolve(workspaceRoot, '..');
+const root = defaultLegacyPaperFactoryRoot();
 
 const blockedRequests = [
   {

@@ -4,8 +4,8 @@ import {
   fileRecord,
   pathWithin,
   readJsonIfExists,
-} from '../../paper-core/src/utils.mjs';
-import { hashPaperRecord } from '../../paper-core/src/paper-contracts.mjs';
+} from '../../paper-core/src/runtime/file-utils.mjs';
+import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
 import {
   loadAuthorityTrustStore,
   verifyAuthoritySignatures,

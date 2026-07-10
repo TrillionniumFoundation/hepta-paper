@@ -47,14 +47,15 @@ Current overlay adapters:
   window, selection routes to a same-field journal fallback and records the
   pre-deadline conference candidate; explicit venue requests are preserved and
   only record deadline risk.
-- `inventory/`: read-only scan from registry, drafts, submission, workspaces,
-  paperctl logs, and approved proposal staging records.
+- `inventory/`: read-only scan from the injected native store, standalone
+  paper assets, and approved proposal staging records. Legacy SQLite and the
+  old worker catalog are not runtime inventory sources.
 - `build-package/`: local LaTeX build/package planning with optional runtime
-  output under `hepta-paper-workspace/runtime/`. Execute mode can write
+  output under the standalone hepta runtime. Execute mode can write
   `BUILD_ARTIFACT_ACCEPTANCE.json` next to the compiled PDF; the acceptance is
   local-package only and does not authorize live submission.
 - `research-verify/`: typed claim/proof/evidence/reproducibility contracts,
-  explicit legacy catalog references, native worker plans/receipts, and a
+  native worker plans/receipts, and a
   verify receipt. For proposal-staged
   papers it reports `proposal_seed_present` until real evidence replaces the
   seed material. It also scans runtime empirical-analysis artifacts when present,
@@ -128,7 +129,7 @@ Current overlay adapters:
   authorization, executor response intake, retry/redrive, reconciliation, and
   release locking. `SubmissionExecutorPort` has no provider implementation in
   this repository.
-- `legacy-cleanup/`: read-only retirement audit classifying old
+- `legacy-cleanup/`: retirement audit classifying old
   `paper_factory` files into adapter candidates, data assets, quarantine-only
   reports/capstones/matrices, LLM/manual chains to retire, and blocked primary
   entrypoints. It also assigns target hepta adapters, migration actions,
@@ -137,8 +138,10 @@ Current overlay adapters:
   `LegacyEntrypointDeprecationPacket`, `HeptaDataAssetExportPlan`,
   `PaperFactoryMigrationBacklogPacket`, `PaperFactoryQuarantineManifest`, seven
   `PaperFactoryRetirementWavePacket` records, and a final
-  `PaperFactoryRetirementReadinessGate`. In execute mode it writes only hepta
-  runtime receipts under `runtime/legacy-retirement/`, including entrypoint
+  `PaperFactoryRetirementReadinessGate`. In execute mode it writes hepta
+  runtime receipts under `runtime/legacy-retirement/` and removes executable
+  bits from the two frozen legacy entrypoints without changing their bytes. It records
+  entrypoint
   freeze, data asset export, P0/P1 semantic migration drain, migration
   coverage, live external executor policy, quarantine isolation, wave execution,
   and old-control-plane removal receipts. The live executor policy is local-only:
@@ -156,8 +159,8 @@ Blocked from direct migration:
 
 Legacy catalog and native worker policy:
 
-- adapters may discover old `paperctl_modules/research_compute_*` workers only
-  as `legacyCatalogReference` path/hash evidence
+- adapters must not scan old `paperctl_modules/research_compute_*` workers at
+  runtime; their path/hash inventory exists only in frozen migration evidence
 - adapters must not import old workers as workflow control plane
 - capstone, matrix, submission, portal, executor, patch/apply/merge workers are
   excluded from direct bridge receipts

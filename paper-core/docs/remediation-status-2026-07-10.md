@@ -5,6 +5,43 @@
 `No-Go` for real external submission. Local inventory, build/package smoke, and
 dry-run orchestration remain available.
 
+## Final P0/P1/P2 architecture pass
+
+- Capability v3 now reports four separate state axes: `decision_mapped=249`,
+  `contract_defined=249`, `implementation_verified=161`,
+  `implementation_not_applicable=88`, and `owner_accepted=0`. The old mixed
+  `coverageStatus` field is not used.
+- Fourteen capability families have their own conformance suite. It currently
+  runs 15 tests, including the 40 capability-level coverage obligations and a
+  real OS-sandbox execution when a local kernel backend is available.
+- Batch stage handlers and the complete local diagnostic review loop are in
+  `paper-application/use-cases/`; the batch application retains composition,
+  inventory iteration and summary assembly.
+- Store, artifact repository, clock, hasher, authority verifier, receipt
+  ledger, job store and submission delivery store are injected through one
+  `ExecutionContext`. Non-persistence adapters no longer construct SQLite
+  stores.
+- Schema v2 persists receipt ledger, idempotent jobs, leases, attempts,
+  classified failures, submission outbox/inbox, redrive/dead-letter state and
+  release locks. Backup and restore-drill receipts also enter the ledger.
+- ClaimGraph validation, byte/hash/provenance evidence verification, formal
+  experiment aggregation and Lake certificate/replay checks are implemented.
+- The old research worker catalog is no longer scanned at runtime.
+- Paper production now uses the small `workflow-kernel`; the full vendored
+  core is explicitly a reference fork.
+- The repo, paper assets, native runtime/store and frozen legacy archive are
+  physically decoupled at `/data/home-data/hepta-paper`,
+  `/data/home-data/hepta-paper-assets`, `/data/home-data/hepta-paper/runtime`
+  and `/data/home-data/paper_factory` respectively.
+- Both legacy entrypoints are non-executable. All seven retirement-wave
+  receipts plus freeze, quarantine-isolation and active-control-plane removal
+  receipts are recorded. No legacy source file was destructively deleted.
+
+These results make the old executable control plane archive-ready, not
+functionally equivalent. Owner acceptance remains 0/249, the provider executor
+remains outside this repository and unimplemented, and real trust/evidence/
+referee/live-authorization inventory remains empty.
+
 ## P0 results
 
 - Independent Git history exists; the import baseline is commit `a1df01c`.
@@ -63,7 +100,7 @@ dry-run orchestration remain available.
   - generated empirical experiment code is isolated in experiment-runner.
   - patch creation/validation/application is isolated in repair-executor.
 - A 64 KiB production-module budget is now enforced by remediation selftest
-  across all 46 MJS modules under paper-core and paper-adapters.
+  across all production MJS modules under paper-core and paper-adapters.
 - Added deterministic vendored-core selftest distinct from the cross-repository
   workspace integration test.
 - Added failure-closed migration and referee-authority tests, SQLite rollback
@@ -148,7 +185,8 @@ unbounded-file blocker.
 - The 155 research-assigned sources comprise 120 pure plan/report surfaces and
   35 local execution surfaces (32 writers, 21 subprocess callers, 33
   subprocess importers, and zero network-capable sources). All are explicitly
-  retired from native execution authority. They are not re-enabled. A separate
+  retired from native execution authority. They are not re-enabled or scanned
+  by production runtime. A separate
   hepta-native allowlisted worker engine now exists; current managed papers
   still have executed native-worker count 0 and academic-evidence eligibility
   false until each supplies a valid plan, receipts, and signed attestation.
@@ -167,7 +205,8 @@ unbounded-file blocker.
   acceptances remain pending rather than being inferred from tests.
 - `paper-batch-runner` now delegates ordered execution to an immutable
   `PaperExecutionContext`, declarative mode registry, and workflow engine with
-  per-stage receipts. The legacy `referee-autopilot` spelling is only an alias
+  per-stage receipts. All handlers and the diagnostic loop are application use
+  cases rather than batch-runner branches. The legacy `referee-autopilot` spelling is only an alias
   for `local-review-loop`.
 - Production SQLite calls use `StorePort`; production artifact writes use the
   scoped, atomic `ArtifactRepository` and receive hash-bound write receipts.
@@ -187,8 +226,8 @@ unbounded-file blocker.
   conformance suite currently covers stage ordering, ports, delivery safety,
   bounded workers, research contracts, journal schema, and forbidden legacy
   acceptance/SQLite bypass patterns. The release verification run reports
-  94.70% line coverage for the selected architecture modules; all 56 production
-  MJS modules remain within the 64 KiB budget.
+  90.94% line coverage for the selected architecture modules; all 73 checked
+  production MJS modules remain within the 64 KiB budget.
 
 ## Verification
 

@@ -2,20 +2,19 @@ import path from 'node:path';
 import {
   ensureDir,
   fileRecord,
-  normalizeText,
   pathWithin,
   readTextIfExists,
   relativePath,
   sha256Text,
-  uniqueStrings,
-} from '../../paper-core/src/utils.mjs';
+} from '../../paper-core/src/runtime/file-utils.mjs';
+import { normalizeText, uniqueStrings } from '../../paper-core/src/runtime/text-utils.mjs';
 import { writeJsonFile } from '../artifacts/write-artifact.mjs';
 import {
   buildAgentRefereeReviewReport,
   buildRefereeIssueQueueMaterialization,
   buildRefereeReviewIntake,
-  hashPaperRecord,
-} from '../../paper-core/src/paper-contracts.mjs';
+} from '../../paper-core/src/contracts/referee-planning.mjs';
+import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
 import { heptaStorePath } from '../../paper-core/src/hepta-store.mjs';
 import {
   sqliteExec,
@@ -208,6 +207,7 @@ function agentReviewFindings({ row, mainTexRel, mainTexText }) {
 
 async function materializeFindings({
   dbPath,
+  store = null,
   row,
   reviewReport,
   runtimeRoot,
@@ -224,7 +224,7 @@ async function materializeFindings({
   const statements = ['begin immediate;'];
   for (const item of findings) {
     const existing = sqliteJson(
-      dbPath,
+      store,
       [
         'select request_id,request_key,status from referee_revision_requests',
         `where slug=${sqlText(row.task.paperId)}`,
@@ -286,14 +286,14 @@ async function materializeFindings({
   }
   statements.push('commit;');
   if (materializedIssueRows.length) {
-    const result = sqliteExec(dbPath, statements.join('\n'));
+    const result = sqliteExec(store, statements.join('\n'));
     if (!result.ok) {
       errors.push(...stderrLines(result.stderr, 8));
       materializedIssueRows.length = 0;
     } else {
       for (const rowItem of materializedIssueRows) {
         const refreshed = sqliteJson(
-          dbPath,
+          store,
           [
             'select request_id,status from referee_revision_requests',
             `where slug=${sqlText(row.task.paperId)}`,
@@ -320,8 +320,10 @@ export async function runRefereeReviewAdapter({
   execute = false,
   reviewerId = 'openclaw-agent-referee-reviewer',
   reviewScope = 'agent_referee_review',
+  store = null,
 } = {}) {
-  const dbPath = heptaStorePath(root);
+  if (!store) throw new Error('Referee review requires StorePort injection');
+  const dbPath = heptaStorePath(root, runtimeRoot);
   const mainTexRel = normalizeText(row.task.mainTex || '');
   const mainTexAbs = mainTexRel ? path.join(root, mainTexRel) : null;
   const blockers = [];
@@ -354,6 +356,7 @@ export async function runRefereeReviewAdapter({
   if (execute && reviewReport.status === 'agent_referee_review_ready') {
     materializationInputs = await materializeFindings({
       dbPath,
+      store,
       row,
       reviewReport,
       runtimeRoot,

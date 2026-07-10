@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { defaultLegacyPaperFactoryRoot } from '../../paper-core/src/workspace-layout.mjs';
 import { runResearchVerifyAdapter } from '../../paper-adapters/research-verify/index.mjs';
 import {
   RESEARCH_VERIFY_EXPLICIT_RETIREMENTS,
@@ -10,7 +11,7 @@ import {
 } from '../research-verify-retirements.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const root = path.resolve(workspaceRoot, '..');
+const root = defaultLegacyPaperFactoryRoot();
 
 function filesUnder(directory) {
   return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -156,13 +157,10 @@ assert.equal(report.safety.externalActionPerformed, false);
 assert.equal(report.academicEvidenceEligible, false);
 assert.equal(report.executedResearchWorkerCount, 0);
 assert.equal(report.semanticMigrationVerifiedWorkerCount, 0);
-assert.ok(report.legacyCatalogReferenceCount > 0);
-assert.ok(report.legacyCatalogReferenceReceiptCount > 0);
-for (const receipt of report.typedContracts.legacyCatalogReferences) {
-  assert.equal(receipt.capabilityEvidenceClass, 'legacy_worker_catalog_reference_only');
-  assert.equal(receipt.legacyWorkerExecutionPerformed, false);
-  assert.equal(receipt.semanticMigrationVerified, false);
-}
+assert.equal(report.legacyCatalogReferenceCount, 0);
+assert.equal(report.legacyCatalogReferenceReceiptCount, 0);
+assert.deepEqual(report.typedContracts.legacyCatalogReferences, []);
+assert.equal(report.safety.legacyWorkerCatalogScanned, false);
 
 const byDisposition = Object.fromEntries(
   [...new Set(RESEARCH_VERIFY_EXPLICIT_RETIREMENTS.map((entry) => entry.disposition))]

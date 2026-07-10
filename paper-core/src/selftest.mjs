@@ -22,9 +22,14 @@ import {
   buildJournalConferenceRegistry,
   buildTargetSelectionPolicy,
 } from '../../paper-adapters/journal-manage/index.mjs';
+import {
+  defaultLegacyPaperFactoryRoot,
+  defaultPaperAssetRoot,
+} from './workspace-layout.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
-const paperFactoryRoot = path.resolve(workspaceRoot, '..');
+const paperFactoryRoot = defaultPaperAssetRoot();
+const legacyPaperFactoryRoot = defaultLegacyPaperFactoryRoot();
 
 async function sourceText(file) {
   return fs.readFile(path.join(workspaceRoot, file), 'utf8');
@@ -427,7 +432,10 @@ async function main() {
   assert.ok(Number.isFinite(report.summary.lifecycleOutboxItems));
   assert.ok(report.summary.submissionPreflight && Number.isFinite(report.summary.submissionPreflight.externalActionsPerformed));
   assert.ok(report.results.some((result) => result.lifecycle?.replayGuard?.kind === 'SubmissionReplayGuard'));
-  assert.ok(report.results.some((result) => result.researchReport?.typedContracts?.legacyCatalogReferences?.length));
+  assert.ok(report.results.every((result) => (
+    result.researchReport?.typedContracts?.legacyCatalogReferences?.length === 0
+    && result.researchReport?.safety?.legacyWorkerCatalogScanned === false
+  )));
 
   const journalManageReport = await runPaperBatch({
     root: paperFactoryRoot,
@@ -720,7 +728,7 @@ async function main() {
     || sourceAdaptReport.summary.sourceAdaptation.required === 0);
 
   const legacyReport = await runPaperBatch({
-    root: paperFactoryRoot,
+    root: legacyPaperFactoryRoot,
     mode: 'legacy-cleanup',
     limit: 1,
   });

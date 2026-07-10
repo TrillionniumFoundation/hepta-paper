@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { defaultLegacyPaperFactoryRoot } from '../../paper-core/src/workspace-layout.mjs';
 import { buildSubmissionLifecycle } from '../../paper-adapters/submission/index.mjs';
 import {
   SUBMISSION_EXPLICIT_RETIREMENTS,
@@ -10,7 +11,7 @@ import {
 } from '../submission-retirements.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const root = path.resolve(workspaceRoot, '..');
+const root = defaultLegacyPaperFactoryRoot();
 const localBundleWriter = 'paperctl_modules/external_submission_handoff_bundle.py';
 const directMutationExecutor = 'paperctl_modules/paper_production_repair_executor.py';
 

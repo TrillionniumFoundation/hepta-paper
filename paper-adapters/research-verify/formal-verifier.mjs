@@ -1,16 +1,16 @@
 import path from 'node:path';
 import { assertFormalVerifierPort } from '../../paper-ports/formal-verifier-port.mjs';
-import { createSandboxedCommandRunner } from '../runtime/sandboxed-command-runner.mjs';
+import { createOsSandboxedWorkerRunner } from '../runtime/os-sandboxed-worker-runner.mjs';
 
 export function createLeanFormalVerifier({ sourceRoot, executable = 'lean', commandRunner = null } = {}) {
-  const runner = commandRunner || createSandboxedCommandRunner({
+  const runner = commandRunner || createOsSandboxedWorkerRunner({
     allowedExecutables: [executable],
     allowedRoots: [sourceRoot],
   });
   return assertFormalVerifierPort({
     version: 1,
     kind: 'LeanFormalVerifierAdapter',
-    verifierId: 'lean-local-check-v1',
+    verifierId: 'lean-os-sandbox-check-v2',
     verify({ inputRecords = [], parameters = {} } = {}) {
       const blockers = [];
       if (inputRecords.length !== 1) blockers.push('lean_verifier_requires_exactly_one_input');
@@ -22,18 +22,21 @@ export function createLeanFormalVerifier({ sourceRoot, executable = 'lean', comm
         args: ['--error=warning', input.absolutePath],
         cwd: sourceRoot,
         timeoutMs: Math.min(Number(parameters.timeoutMs || 60000), 120000),
+        env: {
+          ELAN_HOME: process.env.ELAN_HOME || `${process.env.HOME || ''}/.elan`,
+          ELAN_TOOLCHAIN: process.env.ELAN_TOOLCHAIN || 'leanprover/lean4:v4.30.0',
+        },
       });
       return {
         status: execution.ok ? 'formal_verifier_passed' : 'formal_verifier_blocked',
-        verifierId: 'lean-local-check-v1',
+        verifierId: 'lean-os-sandbox-check-v2',
         input: { path: input.path, hash: input.hash },
         exitCode: execution.exitCode,
         stdout: execution.stdout,
         stderr: execution.stderr,
         blockers: execution.ok ? [] : [...(execution.blockers || []), 'lean_verification_failed'],
-        safety: execution.safety || null,
+        safety: execution.isolation || execution.safety || null,
       };
     },
   });
 }
-

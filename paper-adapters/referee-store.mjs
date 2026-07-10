@@ -1,13 +1,17 @@
-import { safeJsonParse } from '../paper-core/src/utils.mjs';
-import { createSqliteStore } from './persistence/sqlite-store.mjs';
-import { sqlEscape as escapeSqlText, sqlJson, sqlText } from '../paper-ports/store-port.mjs';
+import { safeJsonParse } from '../paper-core/src/runtime/data-utils.mjs';
+import {
+  assertStorePort,
+  sqlEscape as escapeSqlText,
+  sqlJson,
+  sqlText,
+} from '../paper-ports/store-port.mjs';
 
-export function sqliteJson(dbPath, sql) {
-  return createSqliteStore({ dbPath }).query(sql).rows;
+export function sqliteJson(store, sql) {
+  return assertStorePort(store).query(sql).rows;
 }
 
-export function sqliteExec(dbPath, sql) {
-  const result = createSqliteStore({ dbPath }).execute(sql);
+export function sqliteExec(store, sql) {
+  const result = assertStorePort(store).execute(sql);
   return {
     ok: result.ok,
     stdout: result.stdout,

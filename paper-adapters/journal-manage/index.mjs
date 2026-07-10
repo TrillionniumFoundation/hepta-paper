@@ -1,13 +1,12 @@
 import path from 'node:path';
 import {
   ensureDir,
-  normalizeText,
-  nowIso,
   relativePath,
-  uniqueStrings,
-} from '../../paper-core/src/utils.mjs';
+} from '../../paper-core/src/runtime/file-utils.mjs';
+import { normalizeText, uniqueStrings } from '../../paper-core/src/runtime/text-utils.mjs';
+import { nowIso } from '../../paper-core/src/runtime/time-utils.mjs';
 import { writeJsonFile } from '../artifacts/write-artifact.mjs';
-import { hashPaperRecord } from '../../paper-core/src/paper-contracts.mjs';
+import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
 import {
   academicEvidenceReady,
   reviewAuthorityBlockers,

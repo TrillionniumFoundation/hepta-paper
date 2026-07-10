@@ -4,19 +4,19 @@ import {
   ensureDir,
   dirExists,
   fileRecord,
-  normalizeText,
-  nowIso,
   pathWithin,
   readJsonIfExists,
   readTextIfExists,
   relativePath,
   sha256Text,
-  uniqueStrings,
   walkFiles,
-} from '../../paper-core/src/utils.mjs';
+} from '../../paper-core/src/runtime/file-utils.mjs';
+import { normalizeText, uniqueStrings } from '../../paper-core/src/runtime/text-utils.mjs';
+import { nowIso } from '../../paper-core/src/runtime/time-utils.mjs';
 import { writeJsonFile, writeTextFile } from '../artifacts/write-artifact.mjs';
-import { hashPaperRecord } from '../../paper-core/src/paper-contracts.mjs';
+import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
 import { buildEmpiricalEvidenceGate } from './evidence-policy.mjs';
+import { defaultPaperRuntimeRoot } from '../../paper-core/src/workspace-layout.mjs';
 
 function repoPath(root, value) {
   const text = normalizeText(value);
@@ -1178,7 +1178,7 @@ export async function runEmpiricalAnalysisAdapter({
   const resolvedRoot = path.resolve(root);
   const resolvedRuntimeRoot = runtimeRoot
     ? path.resolve(runtimeRoot)
-    : path.join(resolvedRoot, 'hepta-paper-workspace', 'runtime');
+    : defaultPaperRuntimeRoot();
   const runDir = path.join(resolvedRuntimeRoot, 'empirical-analysis', row.task.paperId);
   if (!pathWithin(resolvedRuntimeRoot, runDir)) {
     throw new Error(`Empirical run dir escapes runtime root: ${runDir}`);

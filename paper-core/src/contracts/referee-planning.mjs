@@ -1,4 +1,5 @@
-import { normalizeText, nowIso, uniqueStrings } from '../utils.mjs';
+import { normalizeText, uniqueStrings } from '../runtime/text-utils.mjs';
+import { nowIso } from '../runtime/time-utils.mjs';
 import { PAPER_CORE_VERSION, hashPaperRecord, normalizedId, normalizeRefs } from '../paper-contract-primitives.mjs';
 
 export function buildRefereeReviewIntake({
@@ -638,4 +639,3 @@ export function buildRefereeRevisionExecuteDesignPacket({
     refereeRevisionExecuteDesignPacketHash: hashPaperRecord('RefereeRevisionExecuteDesignPacket', packet),
   };
 }
-

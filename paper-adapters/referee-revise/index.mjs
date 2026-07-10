@@ -11,11 +11,10 @@ export {
 } from './decision-routing.mjs';
 import {
   fileRecord,
-  normalizeText,
   pathWithin,
   relativePath,
-  uniqueStrings,
-} from '../../paper-core/src/utils.mjs';
+} from '../../paper-core/src/runtime/file-utils.mjs';
+import { normalizeText, uniqueStrings } from '../../paper-core/src/runtime/text-utils.mjs';
 import { writeJsonFile } from '../artifacts/write-artifact.mjs';
 import {
   buildRefereeRevisionDryRunReceipt,
@@ -27,16 +26,20 @@ import {
   buildRefereeRevisionApplyModeContract,
   buildRefereeRevisionExecuteDesignPacket,
   buildRefereeRevisionRollbackLedgerDraft,
+} from '../../paper-core/src/contracts/referee-planning.mjs';
+import {
   buildRefereeApplyApprovalPacket,
   buildRefereePatchApplyExecution,
   buildRefereePatchApplyInvocation,
   buildRefereeAppliedPatchReceipt,
+} from '../../paper-core/src/contracts/referee-application.mjs';
+import {
   buildPostRepairBuildPackage,
   buildRefereeIssueResolutionProof,
   buildRepairReconciliation,
   buildRepairStateMutationReceipt,
-  hashPaperRecord,
-} from '../../paper-core/src/paper-contracts.mjs';
+} from '../../paper-core/src/contracts/referee-closure.mjs';
+import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
 import { heptaStorePath } from '../../paper-core/src/hepta-store.mjs';
 import {
   runLatexBuildAdapter,
@@ -81,6 +84,7 @@ async function runPostRepairRechecks({
   root,
   runtimeRoot,
   row,
+  store,
   agentRepairPatchBundle = null,
   appliedPatchReceipt = null,
   execute = false,
@@ -143,6 +147,7 @@ async function runPostRepairRechecks({
       buildResult,
       runtimeRoot,
       execute: true,
+      store,
     });
     const packageBlockers = [
       ...(packageResult.blockers || []),
@@ -466,6 +471,7 @@ function patchQueueMetadata(patchInput, context) {
 
 async function runRepairStateMutationExecutor({
   dbPath,
+  store = null,
   runtimeRoot,
   row,
   requests,
@@ -556,7 +562,7 @@ async function runRepairStateMutationExecutor({
         continue;
       }
       const existing = sqliteJson(
-        dbPath,
+        store,
         [
           'select patch_id,status,metadata_json from patch_queue',
           `where slug=${sqlText(row.task.paperId)}`,
@@ -608,7 +614,7 @@ async function runRepairStateMutationExecutor({
       }
     }
     statements.push('commit;');
-    const execResult = sqliteExec(dbPath, statements.join('\n'));
+    const execResult = sqliteExec(store, statements.join('\n'));
     if (!execResult.ok) {
       errors.push(...stderrLines(execResult.stderr, 8));
       sqliteWritePerformed = false;
@@ -617,7 +623,7 @@ async function runRepairStateMutationExecutor({
       const refreshedPatchRows = [];
       for (const patchRow of patchRows) {
         const refreshed = sqliteJson(
-          dbPath,
+          store,
           [
             'select patch_id,status,patch_path,patch_sha256 from patch_queue',
             `where slug=${sqlText(row.task.paperId)}`,
@@ -634,7 +640,7 @@ async function runRepairStateMutationExecutor({
 
   if (execute && sqliteWritePerformed) {
     const remaining = sqliteJson(
-      dbPath,
+      store,
       [
         'select count(*) as n from referee_revision_requests',
         `where slug=${sqlText(row.task.paperId)}`,
@@ -687,15 +693,17 @@ export async function runRefereeReviseAdapter({
   mode = 'dry-run',
   execute = false,
   limit = 64,
+  store = null,
 } = {}) {
-  const dbPath = heptaStorePath(root);
+  if (!store) throw new Error('Referee revision requires StorePort injection');
+  const dbPath = heptaStorePath(root, runtimeRoot);
   const slug = escapeSqlText(row.task.paperId);
   const requests = sqliteJson(
-    dbPath,
+    store,
     `select * from referee_revision_requests where slug='${slug}' order by status!='requested', cluster_rank desc, matrix_rank asc, request_id asc limit ${Number(limit) || 64};`,
   ).map(normalizeRequest);
   const patches = sqliteJson(
-    dbPath,
+    store,
     `select * from patch_queue where slug='${slug}' order by updated_at desc, patch_id desc limit ${Number(limit) || 64};`,
   ).map(normalizePatch);
   const baseIssueQueue = buildRefereeRevisionIssueQueue({
@@ -855,6 +863,7 @@ export async function runRefereeReviseAdapter({
       root,
       runtimeRoot,
       row,
+      store,
       agentRepairPatchBundle,
       appliedPatchReceipt,
       execute: Boolean(execute),
@@ -901,6 +910,7 @@ export async function runRefereeReviseAdapter({
   });
   const repairStateMutationReceipt = await runRepairStateMutationExecutor({
     dbPath,
+    store,
     runtimeRoot,
     row,
     requests,

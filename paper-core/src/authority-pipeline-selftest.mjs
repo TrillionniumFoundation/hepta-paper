@@ -7,9 +7,10 @@ import {
   createPaperTask,
   hashPaperRecord,
 } from './paper-contracts.mjs';
-import { sha256File } from './utils.mjs';
+import { sha256File } from './runtime/file-utils.mjs';
 import { signAuthorityDocument } from './authority-signatures.mjs';
 import { runResearchVerifyAdapter } from '../../paper-adapters/research-verify/index.mjs';
+import { createFilesystemArtifactRepository } from '../../paper-adapters/artifacts/filesystem-artifact-repository.mjs';
 import { verifyIndependentRefereeAuthority } from '../../paper-adapters/referee-review/independent-authority.mjs';
 import {
   buildSubmissionLifecycle,
@@ -127,18 +128,21 @@ try {
     ],
   });
   const sourceHashBeforeWorkers = await sha256File(path.join(sourceRoot, 'main.tex'));
+  const artifactRepositoryFactory = (scopeRoot) => createFilesystemArtifactRepository({ scopeRoot });
   await Promise.all([
     runResearchVerifyAdapter({
       root,
       runtimeRoot,
       row,
       executeResearchWorkers: true,
+      artifactRepositoryFactory,
     }),
     runResearchVerifyAdapter({
       root,
       runtimeRoot,
       row,
       executeResearchWorkers: true,
+      artifactRepositoryFactory,
     }),
   ]);
   const sourceHashAfterWorkers = await sha256File(path.join(sourceRoot, 'main.tex'));

@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 import path from 'node:path';
-import { listDirSafe, readJsonIfExists } from '../src/utils.mjs';
+import { listDirSafe, readJsonIfExists } from '../src/runtime/file-utils.mjs';
+import {
+  defaultPaperAssetRoot,
+  defaultPaperRuntimeRoot,
+} from '../src/workspace-layout.mjs';
 
 function parseArgs(argv) {
   const args = {};
@@ -17,9 +21,8 @@ function parseArgs(argv) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
-  const root = args.root ? path.resolve(args.root) : path.resolve(workspaceRoot, '..');
-  const runtimeRoot = path.join(root, 'hepta-paper-workspace', 'runtime');
+  const root = args.root ? path.resolve(args.root) : defaultPaperAssetRoot();
+  const runtimeRoot = defaultPaperRuntimeRoot();
   const trustStorePath = path.join(runtimeRoot, 'trust', 'AUTHORITY_TRUST_STORE.json');
   const trustStore = await readJsonIfExists(trustStorePath);
   const keys = Array.isArray(trustStore?.keys) ? trustStore.keys : [];

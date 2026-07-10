@@ -1,9 +1,13 @@
 #!/usr/bin/env node
 import path from 'node:path';
 import { runPaperBatch, renderBatchConsole, PAPER_BATCH_MODES } from '../src/paper-batch-runner.mjs';
-import { ensureDir } from '../src/utils.mjs';
+import { ensureDir } from '../src/runtime/file-utils.mjs';
 import { writeJsonFile, writeTextFile } from '../../paper-adapters/artifacts/write-artifact.mjs';
 import { runPaperProposalAdapter } from '../../paper-adapters/proposal/index.mjs';
+import {
+  defaultPaperAssetRoot,
+  defaultPaperRuntimeRoot,
+} from '../src/workspace-layout.mjs';
 
 function usage() {
   return `Usage:
@@ -60,8 +64,7 @@ function renderProposalConsole(report) {
   ].join('\n');
 }
 
-async function writeProposalReport({ root, report }) {
-  const runtimeRoot = path.join(root, 'hepta-paper-workspace', 'runtime');
+async function writeProposalReport({ root, runtimeRoot = defaultPaperRuntimeRoot(), report }) {
   await ensureDir(path.join(runtimeRoot, 'reports'));
   const stamp = report.generatedAt.replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
   const paperId = report.summary.paperId || 'paper_proposal';
@@ -106,10 +109,10 @@ async function main() {
     return;
   }
   if (command === 'proposal') {
-    const root = args.root ? path.resolve(args.root) : path.resolve(process.cwd(), '..');
+    const root = args.root ? path.resolve(args.root) : defaultPaperAssetRoot();
     const report = await runPaperProposalAdapter({
       root,
-      runtimeRoot: path.join(root, 'hepta-paper-workspace', 'runtime'),
+      runtimeRoot: args['runtime-root'] ? path.resolve(args['runtime-root']) : defaultPaperRuntimeRoot(),
       idea: args.idea,
       paperId: (args.paper || [])[0] || null,
       title: args.title || null,
@@ -123,7 +126,11 @@ async function main() {
       materializeSource: Boolean(args['materialize-source']),
       stageInventory: Boolean(args['stage-inventory']),
     });
-    if (args['write-report']) await writeProposalReport({ root, report });
+    if (args['write-report']) await writeProposalReport({
+      root,
+      runtimeRoot: args['runtime-root'] ? path.resolve(args['runtime-root']) : defaultPaperRuntimeRoot(),
+      report,
+    });
     process.stdout.write(args.json ? JSON.stringify(report, null, 2) + '\n' : renderProposalConsole(report));
     return;
   }
@@ -131,9 +138,10 @@ async function main() {
     throw new Error(`Unknown command: ${command}`);
   }
   const mode = args.mode || PAPER_BATCH_MODES.INVENTORY;
-  const root = args.root ? path.resolve(args.root) : path.resolve(process.cwd(), '..');
+  const root = args.root ? path.resolve(args.root) : defaultPaperAssetRoot();
   const report = await runPaperBatch({
     root,
+    runtimeRoot: args['runtime-root'] ? path.resolve(args['runtime-root']) : defaultPaperRuntimeRoot(),
     mode,
     limit: args.limit ? Number(args.limit) : null,
     paperIds: args.paper || [],

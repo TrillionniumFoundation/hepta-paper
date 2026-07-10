@@ -138,7 +138,7 @@ test('research bounded contexts require claim, artifact, and native receipt cove
   const claimRegistry = buildClaimRegistry({ paperTask, claims: [{ id: 'claim-1', text: 'claim' }] });
   const evidenceIntake = buildEvidenceIntake({
     paperTask,
-    evidenceItems: [{ id: 'evidence-1', claimIds: ['claim-1'], path: 'artifact.json', hash: 'sha256:artifact' }],
+    evidenceItems: [{ id: 'evidence-1', claimIds: ['claim-1'], path: 'artifact.json', hash: 'sha256:artifact', verifiedHash: 'sha256:artifact', verificationStatus: 'evidence_artifact_verified', provenanceReceiptHash: 'sha256:provenance' }],
   });
   const blocked = buildEvidenceQualityGate({ paperTask, claimRegistry, evidenceIntake, nativeWorkerReceipts: [] });
   assert.equal(blocked.status, 'evidence_quality_blocked');
@@ -147,7 +147,7 @@ test('research bounded contexts require claim, artifact, and native receipt cove
     paperTask,
     claimRegistry,
     evidenceIntake,
-    nativeWorkerReceipts: [{ academicEvidenceEligible: true, claimIds: ['claim-1'] }],
+    nativeWorkerReceipts: [{ status: 'native_research_worker_receipt_verified', receiptHash: 'sha256:receipt', sourceSnapshotHash: 'sha256:source', claimIds: ['claim-1'] }],
   });
   assert.equal(ready.status, 'evidence_quality_ready');
 });
@@ -160,6 +160,8 @@ test('capability and journal datasets are versioned and schema-valid', () => {
     capability_reimplementation: 121,
   });
   assert.equal(LEGACY_CAPABILITY_MATRIX_V3.summary.ownerAcceptancePending, 249);
+  assert.equal(LEGACY_CAPABILITY_MATRIX_V3.summary.decisionMapped, 249);
+  assert.equal(LEGACY_CAPABILITY_MATRIX_V3.summary.implementationVerified, 161);
   assert.equal(JOURNAL_PROFILE_DATASET.version, 1);
   assert.equal(JOURNAL_PROFILE_DATASET.profiles.length, 97);
   assert.equal(JOURNAL_PROFILE_DATASET.validation.status, 'journal_profile_dataset_valid');
@@ -167,18 +169,36 @@ test('capability and journal datasets are versioned and schema-valid', () => {
 
 test('production modules do not bypass StorePort or restore autopilot acceptance', () => {
   const productionFiles = [
-    ...fs.readdirSync(path.join(workspaceRoot, 'paper-core', 'src'), { recursive: true })
-      .filter((entry) => typeof entry === 'string' && entry.endsWith('.mjs'))
-      .map((entry) => path.join(workspaceRoot, 'paper-core', 'src', entry)),
-    ...fs.readdirSync(path.join(workspaceRoot, 'paper-adapters'), { recursive: true })
-      .filter((entry) => typeof entry === 'string' && entry.endsWith('.mjs'))
-      .map((entry) => path.join(workspaceRoot, 'paper-adapters', entry)),
-  ].filter((file) => !file.endsWith('selftest.mjs'));
+    'paper-core/src',
+    'paper-application',
+    'paper-adapters',
+    'paper-domain',
+    'paper-ports',
+    'workflow-kernel',
+  ].flatMap((root) => fs.readdirSync(path.join(workspaceRoot, root), { recursive: true })
+    .filter((entry) => typeof entry === 'string' && entry.endsWith('.mjs'))
+    .map((entry) => path.join(workspaceRoot, root, entry)))
+    .filter((file) => !file.endsWith('selftest.mjs') && !file.includes(`${path.sep}tests${path.sep}`));
   const source = productionFiles.map((file) => fs.readFileSync(file, 'utf8')).join('\n');
   assert.equal(/spawnSync\(['"]sqlite3['"]|spawn\(['"]sqlite3['"]/.test(source), false);
   assert.equal(source.includes('RefereeAutopilotAcceptanceReceipt'), false);
   assert.equal(source.includes('AUTOPILOT_ACCEPTANCE_RECEIPT'), false);
   assert.equal(source.includes('researchReady'), false);
+  assert.equal(source.includes("../../core/src/hash-utils.mjs"), false);
+  const researchRuntime = fs.readFileSync(path.join(workspaceRoot, 'paper-adapters', 'research-verify', 'index.mjs'), 'utf8');
+  assert.equal(researchRuntime.includes("path.join(root, 'paperctl_modules')"), false);
+  assert.equal(source.includes("from './utils.mjs'"), false);
+  const batchApplication = fs.readFileSync(path.join(workspaceRoot, 'paper-application', 'batch', 'paper-batch-application.mjs'), 'utf8');
+  assert.equal(/run(?:LatexBuild|Package|ResearchVerify|RefereeReview|RefereeRevise|EmpiricalAnalysis)Adapter/.test(batchApplication), false);
+  const nonPersistenceAdapters = productionFiles
+    .filter((file) => file.includes(`${path.sep}paper-adapters${path.sep}`))
+    .filter((file) => !file.includes(`${path.sep}paper-adapters${path.sep}persistence${path.sep}`));
+  for (const file of nonPersistenceAdapters) {
+    const text = fs.readFileSync(file, 'utf8');
+    assert.equal(text.includes('createDefaultPaperStore('), false, file);
+    assert.equal(text.includes('createSqliteStore('), false, file);
+    assert.equal(text.includes('resolvePaperStore('), false, file);
+  }
   for (const file of productionFiles) {
     if (file.endsWith('filesystem-artifact-repository.mjs')) continue;
     const text = fs.readFileSync(file, 'utf8');

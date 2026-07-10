@@ -2,15 +2,14 @@ import path from 'node:path';
 import {
   buildSourceAdaptationPacket,
   buildSourceAdaptationOperatorPacket,
-  hashPaperRecord,
-} from '../../paper-core/src/paper-contracts.mjs';
+} from '../../paper-core/src/contracts/intake-resolution.mjs';
+import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
 import {
   fileRecord,
-  normalizeText,
   relativePath,
-  uniqueStrings,
   walkFiles,
-} from '../../paper-core/src/utils.mjs';
+} from '../../paper-core/src/runtime/file-utils.mjs';
+import { normalizeText, uniqueStrings } from '../../paper-core/src/runtime/text-utils.mjs';
 
 function repoPath(root, value) {
   const text = normalizeText(value);

@@ -1,5 +1,5 @@
 import { PAPER_ACTIONS } from './paper-contracts.mjs';
-import { normalizeText } from './utils.mjs';
+import { normalizeText } from './runtime/text-utils.mjs';
 
 export function makeMarkdownTable(rows) {
   const headers = [

@@ -22,11 +22,18 @@ import {
 import { JOURNAL_PROFILES as journalProfilesDirect } from '../../paper-adapters/journal-manage/journal-registry.mjs';
 import { makeExperimentCode } from '../../paper-adapters/empirical-analysis/experiment-runner.mjs';
 import { validateAndMaybeApplyPatches } from '../../paper-adapters/referee-revise/repair-executor.mjs';
+import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
+import {
+  defaultLegacyPaperFactoryRoot,
+  defaultPaperAssetRoot,
+  defaultPaperRuntimeRoot,
+} from './workspace-layout.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const root = path.resolve(workspaceRoot, '..');
-const nativeDb = heptaStorePath(root);
-const legacyDb = legacyStorePath(root);
+const root = defaultPaperAssetRoot();
+const nativeDb = heptaStorePath(root, defaultPaperRuntimeRoot());
+const legacyDb = legacyStorePath(defaultLegacyPaperFactoryRoot());
+const nativeStore = createDefaultPaperStore({ root, runtimeRoot: defaultPaperRuntimeRoot() });
 
 function hashFile(file) {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
@@ -141,7 +148,7 @@ const driftProbe = compareCoreFileRows(
 assert.equal(driftProbe.ok, false);
 assert.equal(driftProbe.changed.length, 1);
 
-const inventory = await discoverInventory({ root, limit: 1 });
+const inventory = await discoverInventory({ root, store: nativeStore, limit: 1 });
 assert.equal(inventory.inventorySource, 'hepta_sqlite');
 assert.ok(inventory.rows.length > 0);
 

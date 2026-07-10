@@ -2,7 +2,7 @@
 
 > Historical phase record. Current architecture is documented in
 > `architecture-v3.md`. Native SQLite is now the default Store adapter, legacy
-> worker scans are catalog references only, and the preferred deterministic
+> worker catalog scans have been removed, and the preferred deterministic
 > review mode is `local-review-loop` with no academic acceptance authority.
 
 This overlay keeps `core/` as a hash-locked vendored hepta design-production-core

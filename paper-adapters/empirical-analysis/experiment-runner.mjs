@@ -1,4 +1,4 @@
-import { nowIso } from '../../paper-core/src/utils.mjs';
+import { nowIso } from '../../paper-core/src/runtime/time-utils.mjs';
 
 export function experimentConfig({
   paperTask,

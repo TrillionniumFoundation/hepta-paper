@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { defaultLegacyPaperFactoryRoot } from '../../paper-core/src/workspace-layout.mjs';
 import {
   runLatexBuildAdapter,
   runPackageAdapter,
@@ -19,7 +20,7 @@ import {
 } from '../../paper-core/src/paper-batch-runner.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const root = path.resolve(workspaceRoot, '..');
+const root = defaultLegacyPaperFactoryRoot();
 const runtimeRoot = path.join(workspaceRoot, 'runtime');
 const pluginRoot = path.join(root, 'plugins', 'core');
 

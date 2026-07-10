@@ -15,11 +15,11 @@ import {
 import {
   ensureDir,
   fileRecord,
-  normalizeText,
-  nowIso,
   relativePath,
-  uniqueStrings,
-} from '../../paper-core/src/utils.mjs';
+} from '../../paper-core/src/runtime/file-utils.mjs';
+import { normalizeText, uniqueStrings } from '../../paper-core/src/runtime/text-utils.mjs';
+import { nowIso } from '../../paper-core/src/runtime/time-utils.mjs';
+import { defaultPaperRuntimeRoot } from '../../paper-core/src/workspace-layout.mjs';
 import { writeJsonFile, writeTextFile } from '../artifacts/write-artifact.mjs';
 import {
   buildJournalConferenceRegistry,
@@ -336,7 +336,7 @@ async function materializeApprovedProposal({
   if (reviewGate?.status !== 'proposal_approved_for_production_plan') blockers.push('proposal_review_gate_not_approved');
   if (productionPlanEnvelope?.status !== 'production_plan_ready') blockers.push('production_plan_not_ready');
   const paperId = proposalEnvelope?.paperId || 'paper_proposal';
-  const resolvedRuntimeRoot = runtimeRoot || (root ? path.join(root, 'hepta-paper-workspace', 'runtime') : null);
+  const resolvedRuntimeRoot = runtimeRoot || (root ? defaultPaperRuntimeRoot() : null);
   const sourceDir = resolvedRuntimeRoot ? path.join(resolvedRuntimeRoot, 'proposals', paperId, 'source') : null;
   const mainTexPath = sourceDir ? path.join(sourceDir, 'main.tex') : null;
   const recordPath = sourceDir ? path.join(sourceDir, 'PROPOSAL_SOURCE_RECORD.json') : null;
@@ -719,7 +719,7 @@ export async function runPaperProposalAdapter({
   const inventoryStaging = stageInventory
     ? await stageApprovedProposalForInventory({
       root,
-      runtimeRoot: runtimeRoot || (root ? path.join(root, 'hepta-paper-workspace', 'runtime') : null),
+      runtimeRoot: runtimeRoot || (root ? defaultPaperRuntimeRoot() : null),
       proposalEnvelope,
       productionPlanEnvelope,
       materialization,

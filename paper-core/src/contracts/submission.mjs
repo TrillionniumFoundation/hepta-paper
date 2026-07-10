@@ -1,4 +1,5 @@
-import { normalizeText, nowIso, uniqueStrings } from '../utils.mjs';
+import { normalizeText, uniqueStrings } from '../runtime/text-utils.mjs';
+import { nowIso } from '../runtime/time-utils.mjs';
 import {
   PAPER_CORE_VERSION,
   PAPER_MANIFEST_STATUS,

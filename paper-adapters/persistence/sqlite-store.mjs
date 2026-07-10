@@ -1,7 +1,8 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { normalizeText, safeJsonParse } from '../../paper-core/src/utils.mjs';
+import { normalizeText } from '../../paper-core/src/runtime/text-utils.mjs';
+import { safeJsonParse } from '../../paper-core/src/runtime/data-utils.mjs';
 import { assertStorePort } from '../../paper-ports/store-port.mjs';
 
 export function createSqliteStore({ dbPath, sqliteBinary = 'sqlite3', maxBuffer = 32 * 1024 * 1024 } = {}) {

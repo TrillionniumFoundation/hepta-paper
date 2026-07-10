@@ -7,7 +7,7 @@ function sha256(value) {
   return `sha256:${crypto.createHash('sha256').update(value).digest('hex')}`;
 }
 
-export function createFilesystemArtifactRepository({ scopeRoot, repositoryId = 'filesystem-artifacts' } = {}) {
+export function createFilesystemArtifactRepository({ scopeRoot, repositoryId = 'filesystem-artifacts', receiptLedger = null, clock = null } = {}) {
   const declaredRoot = path.resolve(scopeRoot || '.');
   const write = async ({ target, payload, role = 'artifact', contentType = 'text/plain', atomic = true }) => {
     const { candidate } = assertArtifactTarget({ scopeRoot: declaredRoot, target });
@@ -24,7 +24,7 @@ export function createFilesystemArtifactRepository({ scopeRoot, repositoryId = '
     } else {
       await fsp.writeFile(candidate, bytes);
     }
-    return Object.freeze({
+    const receipt = Object.freeze({
       version: 1,
       kind: 'ArtifactWriteReceipt',
       repositoryId,
@@ -37,6 +37,8 @@ export function createFilesystemArtifactRepository({ scopeRoot, repositoryId = '
       scopeRoot: declaredRoot,
       externalActionPerformed: false,
     });
+    if (receiptLedger) receiptLedger.record(receipt, { stream: 'artifact-writes' });
+    return receipt;
   };
   return assertArtifactRepository({
     version: 1,

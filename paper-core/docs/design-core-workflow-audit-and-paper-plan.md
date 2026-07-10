@@ -2,8 +2,8 @@
 
 > Architecture v3 correction (2026-07-10): this document is a design audit,
 > not proof that all vendored core modules are the active paper runtime. The
-> accepted fork remains hash-bound; the paper overlay now uses its own small
-> workflow engine, mode registry, execution context, and explicit ports. See
+> accepted fork remains hash-bound; the paper overlay now uses the small shared
+> `workflow-kernel`, mode registry, execution context, and explicit ports. See
 > `architecture-v3.md` for the current implementation.
 
 ## Audit Scope

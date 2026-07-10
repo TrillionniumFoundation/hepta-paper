@@ -16,7 +16,7 @@ import {
   createPaperActionManifest,
   hashPaperRecord,
 } from '../../paper-core/src/paper-contracts.mjs';
-import { normalizeText } from '../../paper-core/src/utils.mjs';
+import { normalizeText } from '../../paper-core/src/runtime/text-utils.mjs';
 import { buildSubmissionDeliveryRuntime } from '../../paper-domain/submission/delivery-runtime.mjs';
 import { verifyIndependentRefereeAuthority } from '../referee-review/independent-authority.mjs';
 import { verifyLiveSubmissionAuthorization } from './live-authorization.mjs';
@@ -56,6 +56,7 @@ export async function prepareSubmissionAuthorities({
   mode = 'reviewed-submit',
   trustStoreOverride = null,
   now = new Date(),
+  authorityVerifier = null,
 } = {}) {
   const venuePlan = buildSubmissionVenuePlan({ row, venues, artifactPackage, mode });
   const sourceRoot = row?.task?.sourceWorkspace
@@ -63,7 +64,9 @@ export async function prepareSubmissionAuthorities({
       ? row.task.sourceWorkspace
       : path.join(root, row.task.sourceWorkspace))
     : null;
-  const independentReviewAuthorityReceipt = await verifyIndependentRefereeAuthority({
+  const verifyIndependent = authorityVerifier?.verifyIndependentReferee || verifyIndependentRefereeAuthority;
+  const verifyLive = authorityVerifier?.verifyLiveAuthorization || verifyLiveSubmissionAuthorization;
+  const independentReviewAuthorityReceipt = await verifyIndependent({
     root,
     runtimeRoot,
     sourceRoot,
@@ -74,7 +77,7 @@ export async function prepareSubmissionAuthorities({
     trustStoreOverride,
     now,
   });
-  const liveAuthorizationReceipt = await verifyLiveSubmissionAuthorization({
+  const liveAuthorizationReceipt = await verifyLive({
     root,
     runtimeRoot,
     paperTask: row.task,
@@ -102,6 +105,7 @@ export function buildSubmissionLifecycle({
   venuePlanOverride = null,
   independentReviewAuthorityReceipt = null,
   liveAuthorizationReceipt = null,
+  deliveryStore = null,
 } = {}) {
   const venuePlan = venuePlanOverride || buildSubmissionVenuePlan({ row, venues, artifactPackage, mode });
   const liveAuthorized = liveAuthorizationReceipt?.status === 'live_submission_authorization_verified'
@@ -219,6 +223,31 @@ export function buildSubmissionLifecycle({
     liveAuthorizationReceipt,
     reconciliation,
   });
+  let deliveryPersistence = {
+    status: 'submission_delivery_persistence_blocked',
+    messageId: null,
+    releaseLockStatus: null,
+    blockers: ['dispatch_authorization_not_ready'],
+  };
+  if (deliveryStore && deliveryRuntime.dispatchAuthorization.status === 'submission_dispatch_authorization_ready') {
+    const message = deliveryStore.enqueue({
+      paperId: row.task.paperId,
+      dispatchAuthorization: deliveryRuntime.dispatchAuthorization,
+      payload: { outbox, reviewedSubmitPreflightPacket, controlledExecutorReceipt },
+    });
+    const lock = deliveryStore.acquireReleaseLock({
+      paperId: row.task.paperId,
+      messageId: message.message_id,
+      lockToken: deliveryRuntime.dispatchAuthorization.submissionDispatchAuthorizationHash,
+    });
+    deliveryPersistence = {
+      status: 'submission_delivery_persisted',
+      messageId: message.message_id,
+      outboxStatus: message.status,
+      releaseLockStatus: lock?.status || null,
+      blockers: [],
+    };
+  }
   return {
     version: 1,
     kind: 'PaperSubmissionLifecycle',
@@ -242,6 +271,7 @@ export function buildSubmissionLifecycle({
     auditArchive: hashedArchive,
     reconciliation,
     deliveryRuntime,
+    deliveryPersistence,
     safety: {
       dryRunOnly: true,
       externalActionPerformed: false,

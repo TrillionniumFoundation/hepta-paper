@@ -1,5 +1,5 @@
-import { digest } from '../../core/src/hash-utils.mjs';
-import { normalizeText } from './utils.mjs';
+import { digest } from '../../workflow-kernel/record-hash.mjs';
+import { normalizeText } from './runtime/text-utils.mjs';
 
 export const PAPER_CORE_VERSION = 1;
 

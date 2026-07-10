@@ -1,15 +1,13 @@
 import path from 'node:path';
 import {
   fileRecord,
-  normalizeText,
   readJsonIfExists,
   relativePath,
-  uniqueStrings,
   walkFiles,
-} from '../../paper-core/src/utils.mjs';
+} from '../../paper-core/src/runtime/file-utils.mjs';
+import { normalizeText, uniqueStrings } from '../../paper-core/src/runtime/text-utils.mjs';
 import {
   buildPaperResearchVerifyReceipt,
-  buildPaperResearchWorkerBridgeReceipt,
   createClaimScopeContract,
   createEvidenceMatrixContract,
   createProofObligationContract,
@@ -24,6 +22,8 @@ import { buildEvidenceQualityGate } from '../../paper-domain/research/evidence-q
 import { buildExperimentRegistry } from '../../paper-domain/research/experiment-registry.mjs';
 import { buildResearchChangeProposal } from '../../paper-domain/research/change-proposal.mjs';
 import { buildResearchGapPlan } from '../../paper-application/research/gap-planner.mjs';
+import { verifyEvidenceBatch } from './evidence-verifier.mjs';
+import { defaultPaperRuntimeRoot } from '../../paper-core/src/workspace-layout.mjs';
 
 function repoPath(root, value) {
   const text = normalizeText(value);
@@ -56,98 +56,6 @@ function classifyEvidenceRecord(record) {
   if (/reproduc|result|seed|checksum|sha256|command|run|experiment|dataset|benchmark/.test(text)) roles.push('reproducibility');
   if (/referee|review|revision/.test(text)) roles.push('referee');
   return roles.length ? roles : ['evidence'];
-}
-
-function excludedWorkerName(name) {
-  return /(capstone|matrix|roadmap|external_submission|portal|executor|submission|patch_queue|candidate_patch|apply|merge|mutation|accepted_decision|manual_review_decision|source_landing|lifecycle_orchestrator|record_only_fixture|fixture_harness|idle_loop)/i
-    .test(name);
-}
-
-function workerRoleForName(name) {
-  const lower = normalizeText(name).toLowerCase();
-  if (excludedWorkerName(lower)) return null;
-  if (/formal_verifier|proof|lean|coq|isabelle|theorem|semantic_definition|statement_extraction/.test(lower)) return 'proof';
-  if (/claim/.test(lower)) return 'claim';
-  if (/reproduc|experiment|registry|execution_harness/.test(lower)) return 'reproducibility';
-  if (/evidence/.test(lower)) return 'evidence';
-  return null;
-}
-
-const researchWorkerBridgeCache = new Map();
-
-async function discoverResearchWorkerBridges(root) {
-  const cacheKey = path.resolve(root);
-  if (researchWorkerBridgeCache.has(cacheKey)) return researchWorkerBridgeCache.get(cacheKey);
-  const workerRoot = path.join(root, 'paperctl_modules');
-  const files = await walkFiles(workerRoot, {
-    maxDepth: 1,
-    maxFiles: 1000,
-    match: (_full, name) => /^research_compute_.*\.py$/i.test(name),
-  });
-  const workers = [];
-  for (const file of files) {
-    const filename = path.basename(file);
-    const role = workerRoleForName(filename);
-    if (!role) continue;
-    const record = await fileRecord(root, file, `research_worker_${role}`);
-    if (!record) continue;
-    workers.push({
-      id: filename.replace(/\.py$/i, ''),
-      role,
-      path: record.path,
-      filename: record.filename,
-      hash: record.hash,
-      sizeBytes: record.sizeBytes,
-    });
-  }
-  const sorted = workers.sort((left, right) => (
-    left.role.localeCompare(right.role)
-    || left.filename.length - right.filename.length
-    || left.filename.localeCompare(right.filename)
-  ));
-  researchWorkerBridgeCache.set(cacheKey, sorted);
-  return sorted;
-}
-
-function refsForRole(evidenceRefs, role) {
-  const roleRe = {
-    claim: /claim|statement/i,
-    proof: /proof|formal|lean|coq|isabelle|theorem/i,
-    evidence: /evidence|matrix|audit|manifest|verdict|status/i,
-    reproducibility: /reproduc|result|seed|checksum|sha256|command|run/i,
-  }[role] || /evidence/i;
-  const matched = (evidenceRefs || []).filter((ref) => roleRe.test(ref));
-  return matched.length ? matched : (evidenceRefs || []).slice(0, 8);
-}
-
-function buildLegacyCatalogReferences({ paperTask, workers, contracts, evidenceRefs }) {
-  const contractHashes = {
-    claimScopeContractHash: contracts.claimScopeContract?.claimScopeContractHash || null,
-    proofObligationContractHash: contracts.proofObligationContract?.proofObligationContractHash || null,
-    evidenceMatrixContractHash: contracts.evidenceMatrixContract?.evidenceMatrixContractHash || null,
-    reproducibilityContractHash: contracts.reproducibilityContract?.reproducibilityContractHash || null,
-  };
-  const receipts = [];
-  const roles = ['claim', 'proof', 'evidence', 'reproducibility'];
-  for (const role of roles) {
-    const roleWorkers = workers.filter((worker) => worker.role === role).slice(0, 3);
-    for (const worker of roleWorkers) {
-      const receipt = buildPaperResearchWorkerBridgeReceipt({
-        paperTask,
-        worker,
-        role,
-        contractHashes,
-        evidenceRefs: refsForRole(evidenceRefs, role),
-      });
-      receipts.push({
-        ...receipt,
-        capabilityEvidenceClass: 'legacy_worker_catalog_reference_only',
-        legacyWorkerExecutionPerformed: false,
-        semanticMigrationVerified: false,
-      });
-    }
-  }
-  return receipts;
 }
 
 function asContractItem(record, role, index) {
@@ -260,11 +168,14 @@ export async function runResearchVerifyAdapter({
   requireNativeWorkers = false,
   trustStoreOverride = null,
   now = new Date(),
+  authorityVerifier = null,
+  jobReceiptStore = null,
+  artifactRepositoryFactory = null,
 } = {}) {
   const sourceRoot = repoPath(root, row.task.sourceWorkspace);
   const resolvedRuntimeRoot = runtimeRoot
     ? path.resolve(runtimeRoot)
-    : path.join(root, 'hepta-paper-workspace', 'runtime');
+    : defaultPaperRuntimeRoot();
   const logRoot = path.join(root, 'logs', 'paperctl', row.task.paperId);
   const empiricalRoot = path.join(resolvedRuntimeRoot, 'empirical-analysis', row.task.paperId);
   const sourceEvidence = await scanEvidenceRoot(root, sourceRoot, 'source');
@@ -281,6 +192,8 @@ export async function runResearchVerifyAdapter({
     runtimeRoot: resolvedRuntimeRoot,
     paperTask: row.task,
     execute: Boolean(executeResearchWorkers),
+    jobReceiptStore,
+    artifactRepositoryFactory,
   });
   const academicEvidenceAttestation = await verifyAcademicEvidenceAttestation({
     root,
@@ -324,19 +237,20 @@ export async function runResearchVerifyAdapter({
     artifacts: structured.reproducibilityItems,
     evidenceRefs: evidenceRefs.filter((ref) => /reproduc|result|seed|checksum|sha256|command|run/i.test(ref)),
   });
-  const researchWorkers = await discoverResearchWorkerBridges(root);
-  const legacyCatalogReferences = buildLegacyCatalogReferences({
-    paperTask: row.task,
-    workers: researchWorkers,
-    contracts: {
-      claimScopeContract,
-      proofObligationContract,
-      evidenceMatrixContract,
-      reproducibilityContract,
-    },
-    evidenceRefs,
-  });
+  const researchWorkers = [];
+  const legacyCatalogReferences = [];
   const claimRegistry = buildClaimRegistry({ paperTask: row.task, claims: structured.claims });
+  const evidenceVerificationReceipts = await verifyEvidenceBatch({
+    sourceRoot: root,
+    evidenceItems: structured.evidenceItems.map((item) => ({
+      id: item.id,
+      path: item.sourceLocator || item.evidenceRefs?.[0]?.ref || null,
+      hash: item.evidenceRefs?.find((ref) => ref.hash)?.hash || null,
+      provenance: item.kind || 'observed_evidence',
+    })).filter((item) => item.path && item.hash),
+    authorityVerifier,
+  });
+  const verificationById = new Map(evidenceVerificationReceipts.map((receipt) => [receipt.evidenceId, receipt]));
   const evidenceIntake = buildEvidenceIntake({
     paperTask: row.task,
     evidenceItems: structured.evidenceItems.map((item) => ({
@@ -344,6 +258,9 @@ export async function runResearchVerifyAdapter({
       claimIds: item.claimIds || item.claim_ids || [],
       path: item.sourceLocator || item.evidenceRefs?.[0]?.ref || null,
       hash: item.evidenceRefs?.find((ref) => ref.hash)?.hash || null,
+      verificationStatus: verificationById.get(item.id)?.status || 'unverified',
+      verifiedHash: verificationById.get(item.id)?.verifiedHash || null,
+      provenanceReceiptHash: verificationById.get(item.id)?.provenanceReceiptHash || null,
     })),
   });
   const evidenceQualityGate = buildEvidenceQualityGate({
@@ -413,6 +330,7 @@ export async function runResearchVerifyAdapter({
       researchGapPlan,
       experimentRegistry,
       researchChangeProposal,
+      evidenceVerificationReceipts,
     },
     evidenceRefs,
     typedContracts: {
@@ -438,6 +356,7 @@ export async function runResearchVerifyAdapter({
       writesRuntimeOnly: Boolean(executeResearchWorkers),
       sourceMutation: false,
       externalActionPerformed: false,
+      legacyWorkerCatalogScanned: false,
     },
   };
   return { ...report, researchReportHash: hashPaperRecord('PaperResearchVerifyReport', report) };

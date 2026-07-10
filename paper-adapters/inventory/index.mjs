@@ -4,18 +4,19 @@ import {
   fileExists,
   fileRecord,
   listDirSafe,
-  normalizeText,
-  parseSimpleYamlList,
-  parseSimpleYamlMap,
   pathStat,
   readJsonIfExists,
   readTextIfExists,
   relativePath,
-  safeJsonParse,
-  sortByMtimeDesc,
-  uniqueStrings,
   walkFiles,
-} from '../../paper-core/src/utils.mjs';
+} from '../../paper-core/src/runtime/file-utils.mjs';
+import { normalizeText, uniqueStrings } from '../../paper-core/src/runtime/text-utils.mjs';
+import { sortByMtimeDesc } from '../../paper-core/src/runtime/time-utils.mjs';
+import {
+  parseSimpleYamlList,
+  parseSimpleYamlMap,
+  safeJsonParse,
+} from '../../paper-core/src/runtime/data-utils.mjs';
 import {
   PAPER_ACTIONS,
   createPaperTask,
@@ -24,8 +25,6 @@ import {
   inferPaperStage,
   nextActionForState,
 } from '../../paper-core/src/paper-contracts.mjs';
-import { heptaStorePath, legacyStorePath } from '../../paper-core/src/hepta-store.mjs';
-import { createSqliteStore } from '../persistence/sqlite-store.mjs';
 
 const TEX_IGNORE_RE = /(\.bak|\.backup|\.orig|\.old|\.tmp|\.synctex|supplementary|appendix-only)/i;
 const QUARANTINE_SLUG_RE = /(^rust_patch_queue_shadow|_fixture_|fixture_|test_fixture|shadow_review_|review_flow_(applied|rolled)_back_patch_queue)/i;
@@ -54,9 +53,8 @@ async function readRegistry(root) {
   };
 }
 
-function sqliteJson(dbPath, sql) {
-  const store = createSqliteStore({ dbPath, maxBuffer: 16 * 1024 * 1024 });
-  if (!store.available()) return { ok: false, rows: [], error: 'sqlite3_not_found' };
+function sqliteJson(store, sql) {
+  if (typeof store.available === 'function' && !store.available()) return { ok: false, rows: [], error: 'sqlite3_not_found' };
   const result = store.query(sql);
   return { ok: result.ok, rows: result.rows, error: result.error };
 }
@@ -84,14 +82,22 @@ function normalizeSqlitePaper(row = {}, inventorySource = 'hepta_sqlite') {
   };
 }
 
-function readSqliteRegistry(root, { legacy = false } = {}) {
-  const dbPath = legacy ? legacyStorePath(root) : heptaStorePath(root);
-  const papersResult = sqliteJson(dbPath, [
+function readSqliteRegistry(root, { legacy = false, store = null } = {}) {
+  if (legacy || !store) {
+    return {
+      ok: false,
+      papers: [],
+      venues: [],
+      error: legacy ? 'legacy_inventory_runtime_disabled' : 'native_store_not_injected',
+      refs: { papers: null, venues: null },
+    };
+  }
+  const papersResult = sqliteJson(store, [
     'select p.slug,p.title,p.status,p.venue_target,p.paper_type,p.canonical_dir,p.source_dir,p.current_pdf,p.current_source_zip,p.current_verdict,p.next_action,p.updated_at,p.metadata_json,',
     'l.lifecycle_stage as ledger_lifecycle_stage,l.submission_state as ledger_submission_state,l.next_action as ledger_next_action,l.evidence_json as ledger_evidence_json',
     'from papers p left join submission_ledger l on p.slug=l.slug order by p.slug',
   ].join(' '));
-  const venuesResult = sqliteJson(dbPath, [
+  const venuesResult = sqliteJson(store, [
     'select venue_id,name,kind,cycle,deadline,metadata_json',
     'from venues order by venue_id',
   ].join(' '));
@@ -119,7 +125,7 @@ function readSqliteRegistry(root, { legacy = false } = {}) {
   };
 }
 
-async function readInventorySources(root, source = 'auto') {
+async function readInventorySources(root, source = 'auto', store = null) {
   const yaml = await readRegistry(root);
   if (source === 'yaml') {
     return {
@@ -130,7 +136,7 @@ async function readInventorySources(root, source = 'auto') {
     };
   }
   const legacyRequested = source === 'legacy-sqlite';
-  const sqlite = readSqliteRegistry(root, { legacy: legacyRequested });
+  const sqlite = readSqliteRegistry(root, { legacy: legacyRequested, store });
   if (['sqlite', 'hepta', 'legacy-sqlite'].includes(source)
     || (source === 'auto' && sqlite.ok && sqlite.papers.length)) {
     return {
@@ -530,6 +536,7 @@ function venueMatchesTarget(venues, target) {
 
 export async function discoverInventory({
   root,
+  store = null,
   includeLooseDrafts = true,
   includeRetired = false,
   includeQuarantined = false,
@@ -540,7 +547,7 @@ export async function discoverInventory({
   limit = null,
 } = {}) {
   if (!root) throw new Error('discoverInventory requires root');
-  const registry = await readInventorySources(root, inventorySource);
+  const registry = await readInventorySources(root, inventorySource, store);
   const requested = new Set((paperIds || []).map(normalizeText).filter(Boolean));
   const knownSlugs = new Set(registry.papers.map((paper) => normalizeText(paper.slug)).filter(Boolean));
   const loose = includeLooseDrafts ? await discoverLooseDrafts(root, knownSlugs) : [];

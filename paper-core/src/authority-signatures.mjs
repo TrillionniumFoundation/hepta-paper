@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
-import { readJsonIfExists } from './utils.mjs';
+import { readJsonIfExists } from './runtime/file-utils.mjs';
 
 function canonicalValue(value) {
   if (Array.isArray(value)) return value.map((item) => canonicalValue(item));

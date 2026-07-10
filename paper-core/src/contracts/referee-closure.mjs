@@ -1,4 +1,5 @@
-import { normalizeText, nowIso, uniqueStrings } from '../utils.mjs';
+import { normalizeText, uniqueStrings } from '../runtime/text-utils.mjs';
+import { nowIso } from '../runtime/time-utils.mjs';
 import { PAPER_CORE_VERSION, hashPaperRecord, normalizedId } from '../paper-contract-primitives.mjs';
 
 export function buildPostRepairBuildPackage({
@@ -422,4 +423,3 @@ export function buildRepairStateMutationReceipt({
     repairStateMutationReceiptHash: hashPaperRecord('RepairStateMutationReceipt', receipt),
   };
 }
-

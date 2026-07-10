@@ -6,7 +6,6 @@ import { fileURLToPath } from 'node:url';
 const migrationRoot = path.dirname(fileURLToPath(import.meta.url));
 const workspaceRoot = path.resolve(migrationRoot, '..');
 const matrixV2Path = path.join(migrationRoot, 'legacy-semantic-migration-matrix.json');
-const architectureTestPath = 'paper-core/tests/architecture-conformance.test.mjs';
 
 function sha256File(file) {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
@@ -36,7 +35,7 @@ const SUPERSEDED_ACTIONS = new Set([
   'retired_legacy_research_source_mutation_or_patch_queue_control_plane',
 ]);
 
-const CAPABILITY_CATALOG = Object.freeze({
+export const CAPABILITY_CATALOG = Object.freeze({
   'research.claim-registry': { boundedContext: 'research', target: 'paper-domain/research/claim-registry.mjs' },
   'research.gap-planner': { boundedContext: 'research', target: 'paper-application/research/gap-planner.mjs' },
   'research.evidence-ingestor': { boundedContext: 'research', target: 'paper-domain/research/evidence-ingestor.mjs' },
@@ -52,6 +51,10 @@ const CAPABILITY_CATALOG = Object.freeze({
   'submission.release-lock': { boundedContext: 'submission', target: 'paper-domain/submission/release-lock.mjs' },
   'repair.safe-apply': { boundedContext: 'repair', target: 'paper-adapters/referee-revise/repair-executor.mjs' },
 });
+
+function conformanceTestPath(capabilityId) {
+  return `migration/tests/capabilities/${capabilityId}.test.mjs`;
+}
 
 function capabilityIdsFor(entry, decision) {
   const sourcePath = entry.source.path;
@@ -122,21 +125,26 @@ function capabilityTargets(capabilityIds) {
   });
 }
 
-function coverageTests(entry, decision) {
+function coverageTests(entry, decision, capabilityIds) {
   const legacyTests = (entry.behaviorTests || []).map((test) => ({
     ...test,
     coverageClass: 'legacy_disposition_or_differential',
   }));
   if (decision === CAPABILITY_DECISIONS.PERMANENT_RETIREMENT) return legacyTests;
-  const architectureTest = path.join(workspaceRoot, architectureTestPath);
   return [
     ...legacyTests,
-    {
-      id: 'architecture-v3-capability-contracts',
-      path: architectureTestPath,
-      sha256: sha256File(architectureTest),
-      coverageClass: 'native_capability_contract_and_negative_boundaries',
-    },
+    ...capabilityIds.map((capabilityId) => {
+      const testPath = conformanceTestPath(capabilityId);
+      return {
+        id: `conformance:${capabilityId}`,
+        capabilityId,
+        path: testPath,
+        sha256: sha256File(path.join(workspaceRoot, testPath)),
+        coverageClass: decision === CAPABILITY_DECISIONS.SUPERSEDED_WITH_COVERAGE
+          ? 'capability_specific_gap_or_differential'
+          : 'capability_specific_conformance',
+      };
+    }),
   ];
 }
 
@@ -154,18 +162,37 @@ export function buildLegacyCapabilityMatrixV3({ matrixV2 = null } = {}) {
       businessDecision,
       capabilityIds,
       capabilityTargets: capabilityTargets(capabilityIds),
-      ownerAcceptance: {
+      decision_mapped: {
+        satisfied: true,
+        status: 'decision_mapped',
+        decision: businessDecision,
+      },
+      contract_defined: {
+        satisfied: businessDecision === CAPABILITY_DECISIONS.PERMANENT_RETIREMENT
+          || capabilityIds.every((id) => fs.existsSync(path.join(workspaceRoot, CAPABILITY_CATALOG[id].target))),
+        status: businessDecision === CAPABILITY_DECISIONS.PERMANENT_RETIREMENT
+          ? 'retirement_contract_defined'
+          : 'capability_contract_defined',
+      },
+      implementation_verified: {
+        applicable: businessDecision !== CAPABILITY_DECISIONS.PERMANENT_RETIREMENT,
+        satisfied: businessDecision === CAPABILITY_DECISIONS.PERMANENT_RETIREMENT
+          ? false
+          : capabilityIds.every((id) => fs.existsSync(path.join(workspaceRoot, conformanceTestPath(id)))),
+        status: businessDecision === CAPABILITY_DECISIONS.PERMANENT_RETIREMENT
+          ? 'not_applicable_permanent_retirement'
+          : 'capability_conformance_bound',
+      },
+      owner_accepted: {
         required: true,
+        satisfied: false,
         status: 'pending_owner_acceptance',
         subjectId: null,
         acceptedAt: null,
         evidenceHash: null,
       },
       coverageRequirements: coverageRequirements(businessDecision, capabilityIds),
-      coverageTests: coverageTests(entry, businessDecision),
-      coverageStatus: businessDecision === CAPABILITY_DECISIONS.PERMANENT_RETIREMENT
-        ? 'retirement_evidence_present_owner_acceptance_pending'
-        : 'capability_implementation_or_coverage_pending',
+      coverageTests: coverageTests(entry, businessDecision, capabilityIds),
     };
   });
   const byDecision = Object.fromEntries(Object.values(CAPABILITY_DECISIONS).map((decision) => [
@@ -187,7 +214,12 @@ export function buildLegacyCapabilityMatrixV3({ matrixV2 = null } = {}) {
     summary: {
       entryCount: entries.length,
       byDecision,
-      ownerAcceptancePending: entries.filter((entry) => entry.ownerAcceptance.status !== 'accepted').length,
+      decisionMapped: entries.filter((entry) => entry.decision_mapped.satisfied).length,
+      contractsDefined: entries.filter((entry) => entry.contract_defined.satisfied).length,
+      implementationVerified: entries.filter((entry) => entry.implementation_verified.satisfied).length,
+      implementationNotApplicable: entries.filter((entry) => !entry.implementation_verified.applicable).length,
+      ownerAccepted: entries.filter((entry) => entry.owner_accepted.satisfied).length,
+      ownerAcceptancePending: entries.filter((entry) => !entry.owner_accepted.satisfied).length,
       uniqueCapabilityCount: new Set(entries.flatMap((entry) => entry.capabilityIds)).size,
     },
     entries,

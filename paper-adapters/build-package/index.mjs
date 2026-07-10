@@ -4,19 +4,17 @@ import {
   ensureDir,
   fileExists,
   fileRecord,
-  normalizeText,
   relativePath,
   sha256Text,
   walkFiles,
-} from '../../paper-core/src/utils.mjs';
+} from '../../paper-core/src/runtime/file-utils.mjs';
+import { normalizeText } from '../../paper-core/src/runtime/text-utils.mjs';
 import { writeJsonFile, writeTextFile } from '../artifacts/write-artifact.mjs';
 import {
   createPaperBuildArtifactAcceptance,
   createPaperArtifactPackage,
 } from '../../paper-core/src/paper-contracts.mjs';
-import { heptaStorePath } from '../../paper-core/src/hepta-store.mjs';
 import { sqlEscape } from '../../paper-ports/store-port.mjs';
-import { createSqliteStore } from '../persistence/sqlite-store.mjs';
 
 function repoPath(root, value) {
   const text = normalizeText(value);
@@ -29,8 +27,8 @@ function commandExists(command) {
   return result.status === 0 ? normalizeText(result.stdout) : null;
 }
 
-function sqliteJson(dbPath, sql) {
-  return createSqliteStore({ dbPath, maxBuffer: 16 * 1024 * 1024 }).query(sql).rows;
+function sqliteJson(store, sql) {
+  return store.query(sql).rows;
 }
 
 async function fileRecordFromRepoPath(root, value, role) {
@@ -39,15 +37,15 @@ async function fileRecordFromRepoPath(root, value, role) {
   return fileRecord(root, candidate, role);
 }
 
-async function sqlitePackageArtifacts(root, paperId) {
-  const dbPath = heptaStorePath(root);
+async function sqlitePackageArtifacts(root, paperId, store) {
+  if (!store) return [];
   const slug = sqlEscape(paperId);
-  const submissionRows = sqliteJson(dbPath, [
+  const submissionRows = sqliteJson(store, [
     'select package_dir,pdf_path,source_zip_path,created_at',
     `from submissions where slug='${slug}' and status='local_package'`,
     'order by created_at desc limit 6',
   ].join(' '));
-  const artifactRows = sqliteJson(dbPath, [
+  const artifactRows = sqliteJson(store, [
     'select kind,path,sha256,bytes,created_at',
     `from artifacts where slug='${slug}'`,
     "and (kind like '%pdf%' or kind like '%zip%' or kind like '%package%')",
@@ -241,7 +239,7 @@ async function writePackageRecords({ root, packageDir, row, artifactPackage, exe
   };
 }
 
-export async function runPackageAdapter({ root, row, buildResult = null, runtimeRoot, execute = false } = {}) {
+export async function runPackageAdapter({ root, row, buildResult = null, runtimeRoot, execute = false, store = null } = {}) {
   const sourceDir = repoPath(root, row.task.sourceWorkspace);
   const blockers = [];
   const warnings = [];
@@ -249,7 +247,7 @@ export async function runPackageAdapter({ root, row, buildResult = null, runtime
   const artifacts = uniqueArtifactRecords([
     ...(row.artifacts?.pdfs || []),
     ...(row.artifacts?.zips || []),
-    ...(await sqlitePackageArtifacts(root, row.task.paperId)),
+    ...(await sqlitePackageArtifacts(root, row.task.paperId, store)),
     ...(await runtimeBuildArtifacts(root, runtimeRoot, row.task.paperId)),
     ...(await sourceFileArtifacts(root, sourceDir)),
   ]);

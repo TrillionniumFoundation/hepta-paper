@@ -4,13 +4,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { defaultLegacyPaperFactoryRoot } from '../../paper-core/src/workspace-layout.mjs';
 import {
   BUILD_PACKAGE_EXPLICIT_RETIREMENTS,
   buildPackageRetirementDisposition,
 } from '../build-package-retirements.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const root = path.resolve(workspaceRoot, '..');
+const root = defaultLegacyPaperFactoryRoot();
 const localWriterPath = 'paperctl_modules/paper_production_runner_execution_contract_artifact_queue.py';
 
 function filesUnder(directory) {

@@ -1,5 +1,5 @@
-import { uniqueStrings } from '../../paper-core/src/utils.mjs';
-import { hashPaperRecord } from '../../paper-core/src/paper-contracts.mjs';
+import { uniqueStrings } from '../../paper-core/src/runtime/text-utils.mjs';
+import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
 
 export function buildEmpiricalEvidenceGate({
   paperTask,

@@ -3,9 +3,9 @@ import {
   buildVenueResolutionOperatorPacket,
   buildVenueRegistryAddPlan,
   buildVenueResolutionPacket,
-  hashPaperRecord,
-} from '../../paper-core/src/paper-contracts.mjs';
-import { normalizeText, uniqueStrings } from '../../paper-core/src/utils.mjs';
+} from '../../paper-core/src/contracts/intake-resolution.mjs';
+import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
+import { normalizeText, uniqueStrings } from '../../paper-core/src/runtime/text-utils.mjs';
 
 function tokenSet(value) {
   return new Set(normalizeText(value).toLowerCase().split(/[^a-z0-9]+/).filter((token) => token.length >= 3));

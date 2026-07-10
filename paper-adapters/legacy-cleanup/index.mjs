@@ -1,16 +1,16 @@
 import path from 'node:path';
+import fsp from 'node:fs/promises';
 import {
   fileRecord,
-  normalizeText,
   relativePath,
-  uniqueStrings,
   walkFiles,
-} from '../../paper-core/src/utils.mjs';
+} from '../../paper-core/src/runtime/file-utils.mjs';
+import { normalizeText, uniqueStrings } from '../../paper-core/src/runtime/text-utils.mjs';
 import { writeJsonFile } from '../artifacts/write-artifact.mjs';
-import { hashPaperRecord } from '../../paper-core/src/paper-contracts.mjs';
+import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
 import { buildMigrationMatrixAudit } from './migration-matrix.mjs';
 import { heptaStorePath } from '../../paper-core/src/hepta-store.mjs';
-import { createSqliteStore } from '../persistence/sqlite-store.mjs';
+import { resolveWorkspaceLayout } from '../../paper-core/src/workspace-layout.mjs';
 
 const RETIREMENT_WAVES = [
   {
@@ -788,19 +788,41 @@ function buildRetirementReadinessGate({
   return hashBound('PaperFactoryRetirementReadinessGate', record, 'retirementReadinessGateHash');
 }
 
-function buildLegacyEntrypointFreezeReceipt({ legacyEntrypointDeprecationPacket, execute }) {
+async function buildLegacyEntrypointFreezeReceipt({ root, legacyEntrypointDeprecationPacket, execute }) {
   const blocked = legacyEntrypointDeprecationPacket.status !== 'legacy_entrypoint_deprecation_ready';
+  const frozenEntrypoints = [];
+  if (execute && !blocked) {
+    for (const entry of legacyEntrypointDeprecationPacket.targetEntrypoints || []) {
+      const absolutePath = path.resolve(root, entry.path);
+      let executableBitsRemoved = false;
+      try {
+        const stat = await fsp.stat(absolutePath);
+        if ((stat.mode & 0o111) !== 0) await fsp.chmod(absolutePath, stat.mode & ~0o111);
+        const after = await fsp.stat(absolutePath);
+        executableBitsRemoved = (after.mode & 0o111) === 0;
+      } catch {
+        executableBitsRemoved = false;
+      }
+      frozenEntrypoints.push({ ...entry, executableBitsRemoved });
+    }
+  }
+  const freezeBlockers = execute && !blocked
+    ? frozenEntrypoints.filter((entry) => !entry.executableBitsRemoved).map((entry) => `legacy_entrypoint_not_frozen:${entry.path}`)
+    : [];
   const record = {
     kind: 'LegacyEntrypointFreezeReceipt',
-    status: blocked
+    status: blocked || freezeBlockers.length
       ? 'legacy_entrypoint_freeze_blocked'
       : execute
         ? 'legacy_entrypoint_freeze_recorded'
         : 'legacy_entrypoint_freeze_planned',
     consumedPacketHash: legacyEntrypointDeprecationPacket.legacyEntrypointDeprecationPacketHash,
     replacementCommand: legacyEntrypointDeprecationPacket.replacementCommand,
-    frozenLegacyEntrypoints: legacyEntrypointDeprecationPacket.targetEntrypoints,
-    blockers: blocked ? legacyEntrypointDeprecationPacket.blockers : [],
+    frozenLegacyEntrypoints: execute ? frozenEntrypoints : legacyEntrypointDeprecationPacket.targetEntrypoints,
+    blockers: uniqueStrings([
+      ...(blocked ? legacyEntrypointDeprecationPacket.blockers : []),
+      ...freezeBlockers,
+    ], 16),
     policy: {
       normalProductionEntrypoint: 'paper-production-core batch-run',
       oldEntrypointsAllowedOnlyForArchiveInspection: true,
@@ -808,7 +830,8 @@ function buildLegacyEntrypointFreezeReceipt({ legacyEntrypointDeprecationPacket,
     },
     safety: {
       writesRuntime: Boolean(execute && !blocked),
-      writesLegacyEntrypoints: false,
+      writesLegacyEntrypoints: Boolean(execute && !blocked),
+      contentMutation: false,
       removesFiles: false,
       externalActionPerformed: false,
     },
@@ -831,9 +854,10 @@ async function collectDataStoreRecords(root) {
   return records;
 }
 
-function nativeStoreMigrationStatus(root) {
+function nativeStoreMigrationStatus(root, injectedStore = null) {
   const dbPath = heptaStorePath(root);
-  const store = createSqliteStore({ dbPath });
+  if (!injectedStore) return { ready: false, path: dbPath, blocker: 'native_store_not_injected' };
+  const store = injectedStore;
   const role = store.query("select value from store_metadata where key='store_role' and value='hepta-paper-native';");
   const quickCheck = store.execute('pragma quick_check;');
   return {
@@ -848,9 +872,10 @@ async function buildHeptaDataAssetExportReceipt({
   entries,
   dataAssetExportPlan,
   execute,
+  store = null,
 }) {
   const dataStoreRecords = await collectDataStoreRecords(root);
-  const nativeStore = nativeStoreMigrationStatus(root);
+  const nativeStore = nativeStoreMigrationStatus(root, store);
   const assets = entriesForWaveFamily(entries, 'wave_1_promote_registry_schema_templates_docs');
   const blockers = [
     ...(nativeStore.ready ? [] : ['hepta_native_store_migration_missing']),
@@ -911,12 +936,15 @@ function buildMigrationCoverageReceipt({ waveId, entries, migrationBacklogPacket
 }
 
 function buildQuarantineIsolationReceipt({ quarantineManifest, execute }) {
+  const layout = resolveWorkspaceLayout();
   const record = {
     kind: 'PaperFactoryQuarantineIsolationReceipt',
     waveId: 'wave_5_quarantine_reports_matrices_capstones_llm_manual_chains',
     status: execute ? 'quarantine_isolation_receipt_recorded' : 'quarantine_isolation_receipt_planned',
     consumedManifestHash: quarantineManifest.quarantineManifestHash,
     quarantineCount: quarantineManifest.quarantineCount,
+    workspacePhysicallyDecoupled: layout.physicallyDecoupled,
+    legacyCatalogRuntimeScanAllowed: layout.legacyCatalogRuntimeScanAllowed,
     retentionPolicy: quarantineManifest.retentionPolicy,
     destructiveQuarantinePerformed: false,
     safety: {
@@ -974,8 +1002,10 @@ function buildOldControlPlaneRemovalReceipt({
   dataAssetExportReceipt,
   p0P1BacklogDrainReceipt = null,
   liveExternalExecutorPolicyReceipt = null,
+  legacyEntrypointFreezeReceipt = null,
   execute,
 }) {
+  const layout = resolveWorkspaceLayout();
   const p0P1Drained = p0P1BacklogDrained(p0P1BacklogDrainReceipt);
   const livePolicyFinalized = liveExternalExecutorPolicyFinalized(liveExternalExecutorPolicyReceipt);
   const blockers = [
@@ -989,6 +1019,10 @@ function buildOldControlPlaneRemovalReceipt({
       ? ['p1_migration_backlog_not_empty']
       : []),
     ...(livePolicyFinalized ? [] : ['live_external_executor_policy_not_finalized']),
+    ...(legacyEntrypointFreezeReceipt?.status === 'legacy_entrypoint_freeze_recorded'
+      ? []
+      : ['legacy_entrypoint_freeze_not_recorded']),
+    ...(layout.physicallyDecoupled ? [] : ['hepta_workspace_not_physically_decoupled']),
   ];
   const record = {
     kind: 'OldPaperFactoryControlPlaneRemovalReceipt',
@@ -1002,6 +1036,8 @@ function buildOldControlPlaneRemovalReceipt({
     canRemoveOldControlPlane: blockers.length === 0,
     p0P1BacklogDrained: p0P1Drained,
     liveExternalExecutorPolicyStatus: liveExternalExecutorPolicyReceipt?.status || 'missing',
+    legacyEntrypointFreezeStatus: legacyEntrypointFreezeReceipt?.status || 'missing',
+    workspacePhysicallyDecoupled: layout.physicallyDecoupled,
     destructiveRemovalPerformed: false,
     safety: {
       writesRuntime: Boolean(execute),
@@ -1075,7 +1111,7 @@ function buildRetirementWaveExecutionReceipts({
       blockers: uniqueStrings(blockers, 16),
       safety: {
         writesRuntime: Boolean(execute),
-        writesLegacyControlPlane: false,
+        writesLegacyControlPlane: Boolean(consumedReceipt?.safety?.writesLegacyEntrypoints),
         removesFiles: false,
         sourceMutation: false,
         externalActionPerformed: false,
@@ -1144,6 +1180,7 @@ export async function runLegacyCleanupAdapter({
   root,
   runtimeRoot = path.join(root, 'hepta-paper-workspace', 'runtime'),
   execute = false,
+  store = null,
 } = {}) {
   const candidateRoots = [
     path.join(root, 'bin'),
@@ -1191,9 +1228,11 @@ export async function runLegacyCleanupAdapter({
     migrationBacklogPacket,
     migrationMatrixAudit,
     execute,
+    store,
   });
   const quarantineManifest = buildQuarantineManifest(entries);
-  const legacyEntrypointFreezeReceipt = buildLegacyEntrypointFreezeReceipt({
+  const legacyEntrypointFreezeReceipt = await buildLegacyEntrypointFreezeReceipt({
+    root,
     legacyEntrypointDeprecationPacket,
     execute,
   });
@@ -1202,6 +1241,7 @@ export async function runLegacyCleanupAdapter({
     entries,
     dataAssetExportPlan: heptaDataAssetExportPlan,
     execute,
+    store,
   });
   const researchSourcePackageCoverageReceipt = buildMigrationCoverageReceipt({
     waveId: 'wave_2_migrate_research_source_package_semantics',
@@ -1233,6 +1273,7 @@ export async function runLegacyCleanupAdapter({
     dataAssetExportReceipt,
     p0P1BacklogDrainReceipt,
     liveExternalExecutorPolicyReceipt,
+    legacyEntrypointFreezeReceipt,
     execute,
   });
   const retirementWavePackets = buildRetirementWavePackets(entries, heptaCapabilities, {

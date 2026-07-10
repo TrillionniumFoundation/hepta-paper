@@ -3,14 +3,13 @@ import { spawnSync } from 'node:child_process';
 import {
   ensureDir,
   fileRecord,
-  normalizeText,
   pathWithin,
   readTextIfExists,
   relativePath,
   sha256File,
   sha256Text,
-  uniqueStrings,
-} from '../../paper-core/src/utils.mjs';
+} from '../../paper-core/src/runtime/file-utils.mjs';
+import { normalizeText, uniqueStrings } from '../../paper-core/src/runtime/text-utils.mjs';
 import { writeJsonFile, writeTextFile } from '../artifacts/write-artifact.mjs';
 
 function shaDigest(value) {

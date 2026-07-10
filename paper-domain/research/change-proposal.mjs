@@ -1,4 +1,4 @@
-import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
+import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 export function buildResearchChangeProposal({ paperTask, patches = [], evidenceQualityGate } = {}) {
   const blockers = [];
@@ -14,6 +14,5 @@ export function buildResearchChangeProposal({ paperTask, patches = [], evidenceQ
     applyAuthority: 'repair_service_only',
     blockers: [...new Set(blockers)],
   };
-  return { ...record, researchChangeProposalHash: hashPaperRecord('ResearchChangeProposal', record) };
+  return { ...record, researchChangeProposalHash: hashRecord('ResearchChangeProposal', record) };
 }
-

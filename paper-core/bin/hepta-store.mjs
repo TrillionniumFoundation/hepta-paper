@@ -2,16 +2,20 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { heptaStorePath, legacyStorePath } from '../src/hepta-store.mjs';
 import { createSqliteStore } from '../../paper-adapters/persistence/sqlite-store.mjs';
+import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
+import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqlite-receipt-ledger.mjs';
+import { createSystemClock } from '../../paper-adapters/runtime/system-clock.mjs';
+import { resolveWorkspaceLayout } from '../src/workspace-layout.mjs';
 
-const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const root = path.resolve(workspaceRoot, '..');
-const dbPath = heptaStorePath(root);
-const legacyPath = legacyStorePath(root);
-const migrationPath = path.join(workspaceRoot, 'store', 'migrations', '001_initial.sql');
-const store = createSqliteStore({ dbPath });
+const layout = resolveWorkspaceLayout();
+const root = layout.assetRoot;
+const dbPath = heptaStorePath(root, layout.runtimeRoot);
+const legacyPath = legacyStorePath(layout.legacyRoot);
+const store = createDefaultPaperStore({ root, runtimeRoot: layout.runtimeRoot, dbPath });
+const clock = createSystemClock();
+const receiptLedger = createSqliteReceiptLedger({ store, clock });
 
 function sqlQuote(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
@@ -28,8 +32,7 @@ function fileSha256(file) {
 }
 
 function initialize() {
-  const sql = fs.readFileSync(migrationPath, 'utf8');
-  runSql(`${sql}\nINSERT OR IGNORE INTO schema_migrations(version,name,migration_sha256) VALUES(1,'001_initial',${sqlQuote(`sha256:${fileSha256(migrationPath)}`)});`);
+  return status();
 }
 
 function migrateLegacy() {
@@ -69,7 +72,6 @@ PRAGMA foreign_keys=ON;
 }
 
 function status() {
-  initialize();
   const rows = JSON.parse(runSql(`
 SELECT 'papers' AS name,count(*) AS count FROM papers
 UNION ALL SELECT 'venues',count(*) FROM venues
@@ -77,16 +79,22 @@ UNION ALL SELECT 'submission_ledger',count(*) FROM submission_ledger
 UNION ALL SELECT 'submissions',count(*) FROM submissions
 UNION ALL SELECT 'artifacts',count(*) FROM artifacts
 UNION ALL SELECT 'referee_revision_requests',count(*) FROM referee_revision_requests
-UNION ALL SELECT 'patch_queue',count(*) FROM patch_queue;
+UNION ALL SELECT 'patch_queue',count(*) FROM patch_queue
+UNION ALL SELECT 'receipt_ledger',count(*) FROM receipt_ledger
+UNION ALL SELECT 'jobs',count(*) FROM jobs
+UNION ALL SELECT 'job_attempts',count(*) FROM job_attempts
+UNION ALL SELECT 'submission_outbox',count(*) FROM submission_outbox
+UNION ALL SELECT 'submission_inbox',count(*) FROM submission_inbox;
 `, { json: true }) || '[]');
   const metadata = JSON.parse(runSql('SELECT key,value,updated_at FROM store_metadata ORDER BY key;', { json: true }) || '[]');
   const quickCheck = runSql('PRAGMA quick_check;').trim();
+  const schemaVersion = Number(JSON.parse(runSql('SELECT coalesce(max(version),0) AS version FROM schema_migrations;', { json: true }) || '[]')[0]?.version || 0);
   return {
-    version: 1,
+    version: 2,
     kind: 'HeptaNativeStoreStatus',
     status: quickCheck === 'ok' ? 'hepta_native_store_ready' : 'hepta_native_store_blocked',
     dbPath,
-    schemaVersion: 1,
+    schemaVersion,
     quickCheck,
     tables: Object.fromEntries(rows.map((row) => [row.name, Number(row.count)])),
     metadata,
@@ -94,8 +102,59 @@ UNION ALL SELECT 'patch_queue',count(*) FROM patch_queue;
   };
 }
 
+function backup() {
+  const backupRoot = path.join(layout.runtimeRoot, 'backups');
+  fs.mkdirSync(backupRoot, { recursive: true });
+  const stamp = new Date().toISOString().replace(/[-:.]/g, '');
+  const backupPath = path.join(backupRoot, `hepta-paper-${stamp}-${process.pid}.sqlite`);
+  const result = store.execute(`VACUUM INTO ${sqlQuote(backupPath)};`);
+  if (!result.ok) throw new Error(result.error || result.stderr || 'backup_failed');
+  const receipt = {
+    version: 1,
+    kind: 'HeptaStoreBackupReceipt',
+    status: 'hepta_store_backup_recorded',
+    sourcePath: dbPath,
+    backupPath,
+    backupSha256: `sha256:${fileSha256(backupPath)}`,
+    bytes: fs.statSync(backupPath).size,
+    createdAt: new Date().toISOString(),
+  };
+  fs.writeFileSync(`${backupPath}.receipt.json`, `${JSON.stringify(receipt, null, 2)}\n`);
+  const ledgerReceipt = receiptLedger.record(receipt, { stream: 'store-admin' });
+  return { ...receipt, ledgerReceipt };
+}
+
+function restoreDrill() {
+  const backupReceipt = backup();
+  const drillPath = `${backupReceipt.backupPath}.restore-drill.sqlite`;
+  fs.copyFileSync(backupReceipt.backupPath, drillPath);
+  const drillStore = createSqliteStore({ dbPath: drillPath });
+  const quick = drillStore.execute('PRAGMA quick_check; PRAGMA foreign_key_check;');
+  const hashMatches = `sha256:${fileSha256(drillPath)}` === backupReceipt.backupSha256;
+  fs.rmSync(drillPath, { force: true });
+  const receipt = {
+    version: 1,
+    kind: 'HeptaStoreRestoreDrillReceipt',
+    status: quick.ok && /ok/.test(quick.stdout || '') && hashMatches
+      ? 'hepta_store_restore_drill_passed'
+      : 'hepta_store_restore_drill_blocked',
+    backupPath: backupReceipt.backupPath,
+    backupSha256: backupReceipt.backupSha256,
+    hashMatches,
+    quickCheck: String(quick.stdout || '').trim(),
+    performedAt: new Date().toISOString(),
+    productionStoreMutated: false,
+  };
+  const ledgerReceipt = receiptLedger.record(receipt, { stream: 'store-admin' });
+  return { ...receipt, ledgerReceipt };
+}
+
 const command = process.argv[2] || 'status';
-if (command === 'init') initialize();
+let output = null;
+if (command === 'init' || command === 'migrate') output = initialize();
 else if (command === 'migrate-legacy') migrateLegacy();
-else if (command !== 'status') throw new Error(`Unknown hepta-store command: ${command}`);
-process.stdout.write(`${JSON.stringify(status(), null, 2)}\n`);
+else if (command === 'backup') output = backup();
+else if (command === 'restore-drill') output = restoreDrill();
+else if (command === 'status') output = status();
+else throw new Error(`Unknown hepta-store command: ${command}`);
+process.stdout.write(`${JSON.stringify(output || status(), null, 2)}\n`);

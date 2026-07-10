@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict';
 import { runLegacyCleanupAdapter } from '../../paper-adapters/legacy-cleanup/index.mjs';
+import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 
 const root = '/data/home-data/paper_factory';
-const report = await runLegacyCleanupAdapter({ root, execute: false });
+const report = await runLegacyCleanupAdapter({
+  root,
+  execute: false,
+  store: createDefaultPaperStore({ root }),
+});
 const audit = report.retirementPlan.migrationMatrixAudit;
 
 assert.equal(audit.backlogCount, 263);

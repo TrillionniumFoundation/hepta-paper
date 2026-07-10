@@ -16,6 +16,14 @@ capabilities around an accepted vendored `design-production-core` baseline.
 - `paper-adapters/` contains native paper-domain and infrastructure adapters.
 - `paper-core/` contains the CLI, declarative mode registry, workflow engine,
   execution context, summaries, and compatibility facades.
+- `workflow-kernel/` is the small active, domain-neutral transition/hash
+  kernel. The full vendored core remains a reference fork.
+
+Production defaults are physically separated: repository
+`/data/home-data/hepta-paper`, assets `/data/home-data/hepta-paper-assets`,
+runtime/store `/data/home-data/hepta-paper/runtime`, and frozen legacy archive
+`/data/home-data/paper_factory`. Compatibility symlinks are not production
+control-plane dependencies.
 
 ## Migration Rule
 
@@ -61,6 +69,8 @@ Run:
 ```bash
 npm run store:migrate-legacy
 npm run store:status
+npm run workspace:verify-decoupled
+npm run store:restore-drill
 npm run core:integrity
 npm test
 npm run paper:selftest

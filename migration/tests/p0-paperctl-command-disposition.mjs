@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { defaultLegacyPaperFactoryRoot } from '../../paper-core/src/workspace-layout.mjs';
 import { PAPER_BATCH_MODES } from '../../paper-core/src/paper-batch-runner.mjs';
 import {
   buildLegacyCommandDispositionManifest,
@@ -9,7 +10,7 @@ import {
 } from '../legacy-command-disposition.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const root = path.resolve(workspaceRoot, '..');
+const root = defaultLegacyPaperFactoryRoot();
 const sourcePath = path.join(root, 'bin', 'paperctl');
 const manifestPath = path.join(workspaceRoot, 'migration', 'P0_PAPERCTL_COMMAND_DISPOSITION.json');
 const sourceText = fs.readFileSync(sourcePath, 'utf8');

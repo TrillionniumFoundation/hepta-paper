@@ -84,6 +84,15 @@ const signature = signReleasePayload(receipt, runtimeRoot);
 const outputRoot = path.join(runtimeRoot, 'legacy-retirement', 'deletion-drills');
 fs.mkdirSync(outputRoot, { recursive: true });
 fs.writeFileSync(path.join(outputRoot, `LEGACY_DELETION_DRILL_${Date.now()}.json`), `${JSON.stringify({ ...receipt, signature }, null, 2)}\n`);
+function makeExtractedTreeRemovable(candidate) {
+  const stat = fs.lstatSync(candidate);
+  if (stat.isSymbolicLink()) return;
+  if (stat.isDirectory()) {
+    fs.chmodSync(candidate, 0o700);
+    for (const name of fs.readdirSync(candidate)) makeExtractedTreeRemovable(path.join(candidate, name));
+  } else if (stat.isFile()) fs.chmodSync(candidate, 0o600);
+}
+makeExtractedTreeRemovable(drillRoot);
 fs.rmSync(drillRoot, { recursive: true, force: true });
 process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`);
 if (!receipt.status.startsWith('legacy_reference_restore_drill_passed')) process.exitCode = 1;

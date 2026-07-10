@@ -9046,7 +9046,7 @@
         {
           "id": "p1-plugin-wrapper-boundaries",
           "path": "migration/tests/p1-plugin-wrapper-boundaries.mjs",
-          "sha256": "50817817ec035e24d7ef93f0ce2d9273c5501232ada792a3982149702d35860a"
+          "sha256": "175d53aa7c795c517b5e70b878ad0af4280f72e52599d43a0d5fe37bf279792b"
         }
       ]
     },
@@ -9089,7 +9089,7 @@
         {
           "id": "p1-plugin-wrapper-boundaries",
           "path": "migration/tests/p1-plugin-wrapper-boundaries.mjs",
-          "sha256": "50817817ec035e24d7ef93f0ce2d9273c5501232ada792a3982149702d35860a"
+          "sha256": "175d53aa7c795c517b5e70b878ad0af4280f72e52599d43a0d5fe37bf279792b"
         }
       ]
     },
@@ -9132,7 +9132,7 @@
         {
           "id": "p1-plugin-wrapper-boundaries",
           "path": "migration/tests/p1-plugin-wrapper-boundaries.mjs",
-          "sha256": "50817817ec035e24d7ef93f0ce2d9273c5501232ada792a3982149702d35860a"
+          "sha256": "175d53aa7c795c517b5e70b878ad0af4280f72e52599d43a0d5fe37bf279792b"
         }
       ]
     },
@@ -9176,7 +9176,7 @@
         {
           "id": "p1-plugin-wrapper-boundaries",
           "path": "migration/tests/p1-plugin-wrapper-boundaries.mjs",
-          "sha256": "50817817ec035e24d7ef93f0ce2d9273c5501232ada792a3982149702d35860a"
+          "sha256": "175d53aa7c795c517b5e70b878ad0af4280f72e52599d43a0d5fe37bf279792b"
         }
       ]
     },
@@ -9219,7 +9219,7 @@
         {
           "id": "p1-plugin-wrapper-boundaries",
           "path": "migration/tests/p1-plugin-wrapper-boundaries.mjs",
-          "sha256": "50817817ec035e24d7ef93f0ce2d9273c5501232ada792a3982149702d35860a"
+          "sha256": "175d53aa7c795c517b5e70b878ad0af4280f72e52599d43a0d5fe37bf279792b"
         }
       ]
     },
@@ -9229,17 +9229,14 @@
       "capabilityFamily": "paper-adapters/referee-review",
       "migrationAction": "extract_review_heuristics_into_referee_review",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "legacy Python plugin runner explicitly retired and absent from hepta production references",
+          "native adapter export and local-only execution boundary",
+          "legacy external/write semantics explicitly blocked or retired",
+          "unbound model calls and direct manuscript mutation explicitly retired"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "plugins/core/referee-revision-patch/run.py",
@@ -9269,7 +9266,13 @@
           "runRefereeReviewAdapter"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-plugin-wrapper-boundaries",
+          "path": "migration/tests/p1-plugin-wrapper-boundaries.mjs",
+          "sha256": "175d53aa7c795c517b5e70b878ad0af4280f72e52599d43a0d5fe37bf279792b"
+        }
+      ]
     },
     {
       "id": "p1-plugins-core-referee-revision-planner-plugin-yaml-3e1b6f900506",
@@ -9310,7 +9313,7 @@
         {
           "id": "p1-plugin-wrapper-boundaries",
           "path": "migration/tests/p1-plugin-wrapper-boundaries.mjs",
-          "sha256": "50817817ec035e24d7ef93f0ce2d9273c5501232ada792a3982149702d35860a"
+          "sha256": "175d53aa7c795c517b5e70b878ad0af4280f72e52599d43a0d5fe37bf279792b"
         }
       ]
     },
@@ -9320,17 +9323,14 @@
       "capabilityFamily": "paper-adapters/referee-review",
       "migrationAction": "extract_review_heuristics_into_referee_review",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "legacy Python plugin runner explicitly retired and absent from hepta production references",
+          "native adapter export and local-only execution boundary",
+          "legacy external/write semantics explicitly blocked or retired",
+          "unbound model calls and direct manuscript mutation explicitly retired"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "plugins/core/referee-revision-planner/run.py",
@@ -9359,7 +9359,13 @@
           "runRefereeReviewAdapter"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-plugin-wrapper-boundaries",
+          "path": "migration/tests/p1-plugin-wrapper-boundaries.mjs",
+          "sha256": "175d53aa7c795c517b5e70b878ad0af4280f72e52599d43a0d5fe37bf279792b"
+        }
+      ]
     },
     {
       "id": "p1-plugins-core-referee-plugin-yaml-4d48ea9febbc",
@@ -9400,7 +9406,7 @@
         {
           "id": "p1-plugin-wrapper-boundaries",
           "path": "migration/tests/p1-plugin-wrapper-boundaries.mjs",
-          "sha256": "50817817ec035e24d7ef93f0ce2d9273c5501232ada792a3982149702d35860a"
+          "sha256": "175d53aa7c795c517b5e70b878ad0af4280f72e52599d43a0d5fe37bf279792b"
         }
       ]
     },
@@ -9410,17 +9416,14 @@
       "capabilityFamily": "paper-adapters/referee-review",
       "migrationAction": "extract_review_heuristics_into_referee_review",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "legacy Python plugin runner explicitly retired and absent from hepta production references",
+          "native adapter export and local-only execution boundary",
+          "legacy external/write semantics explicitly blocked or retired",
+          "unbound model calls and direct manuscript mutation explicitly retired"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "plugins/core/referee/run.py",
@@ -9443,7 +9446,13 @@
           "runRefereeReviewAdapter"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-plugin-wrapper-boundaries",
+          "path": "migration/tests/p1-plugin-wrapper-boundaries.mjs",
+          "sha256": "175d53aa7c795c517b5e70b878ad0af4280f72e52599d43a0d5fe37bf279792b"
+        }
+      ]
     },
     {
       "id": "p1-plugins-core-report-plugin-yaml-6e2618881098",
@@ -9485,7 +9494,7 @@
         {
           "id": "p1-plugin-wrapper-boundaries",
           "path": "migration/tests/p1-plugin-wrapper-boundaries.mjs",
-          "sha256": "50817817ec035e24d7ef93f0ce2d9273c5501232ada792a3982149702d35860a"
+          "sha256": "175d53aa7c795c517b5e70b878ad0af4280f72e52599d43a0d5fe37bf279792b"
         }
       ]
     },
@@ -9528,7 +9537,7 @@
         {
           "id": "p1-plugin-wrapper-boundaries",
           "path": "migration/tests/p1-plugin-wrapper-boundaries.mjs",
-          "sha256": "50817817ec035e24d7ef93f0ce2d9273c5501232ada792a3982149702d35860a"
+          "sha256": "175d53aa7c795c517b5e70b878ad0af4280f72e52599d43a0d5fe37bf279792b"
         }
       ]
     },
@@ -9571,7 +9580,7 @@
         {
           "id": "p1-plugin-wrapper-boundaries",
           "path": "migration/tests/p1-plugin-wrapper-boundaries.mjs",
-          "sha256": "50817817ec035e24d7ef93f0ce2d9273c5501232ada792a3982149702d35860a"
+          "sha256": "175d53aa7c795c517b5e70b878ad0af4280f72e52599d43a0d5fe37bf279792b"
         }
       ]
     },
@@ -9581,17 +9590,14 @@
       "capabilityFamily": "paper-adapters/referee-review/referee-revise",
       "migrationAction": "replace_plugin_wrapper_with_native_paper_adapter",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "legacy Python plugin runner explicitly retired and absent from hepta production references",
+          "native adapter export and local-only execution boundary",
+          "legacy external/write semantics explicitly blocked or retired",
+          "unbound model calls and direct manuscript mutation explicitly retired"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "plugins/core/substantive-referee/run.py",
@@ -9622,7 +9628,13 @@
           "runRefereeReviewAdapter"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-plugin-wrapper-boundaries",
+          "path": "migration/tests/p1-plugin-wrapper-boundaries.mjs",
+          "sha256": "175d53aa7c795c517b5e70b878ad0af4280f72e52599d43a0d5fe37bf279792b"
+        }
+      ]
     },
     {
       "id": "p1-plugins-core-venue-plugin-yaml-90a034ac8b2b",
@@ -9663,7 +9675,7 @@
         {
           "id": "p1-plugin-wrapper-boundaries",
           "path": "migration/tests/p1-plugin-wrapper-boundaries.mjs",
-          "sha256": "50817817ec035e24d7ef93f0ce2d9273c5501232ada792a3982149702d35860a"
+          "sha256": "175d53aa7c795c517b5e70b878ad0af4280f72e52599d43a0d5fe37bf279792b"
         }
       ]
     }

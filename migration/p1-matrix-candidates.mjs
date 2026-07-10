@@ -16,6 +16,13 @@ const COMPLETE_PLUGIN_DESCRIPTORS = new Set([
   'plugins/core/venue/plugin.yaml',
 ]);
 
+const RETIRED_PLUGIN_RUNNERS = new Set([
+  'plugins/core/referee/run.py',
+  'plugins/core/referee-revision-patch/run.py',
+  'plugins/core/referee-revision-planner/run.py',
+  'plugins/core/substantive-referee/run.py',
+]);
+
 const TARGETS = Object.freeze({
   'paper-adapters/venue-resolve': {
     path: 'hepta-paper-workspace/paper-adapters/venue-resolve/index.mjs',
@@ -129,16 +136,20 @@ export function buildP1MatrixCandidates({
       const target = targetFor(entry);
       const targetFile = path.resolve(root, target.path);
       const completePluginDescriptor = COMPLETE_PLUGIN_DESCRIPTORS.has(entry.path);
+      const retiredPluginRunner = RETIRED_PLUGIN_RUNNERS.has(entry.path);
+      const completePluginReplacement = completePluginDescriptor || retiredPluginRunner;
       return {
         id: candidateId(entry),
         priority: 'P1',
         capabilityFamily: entry.targetAdapter,
         migrationAction: entry.migrationAction,
-        semanticScope: completePluginDescriptor
+        semanticScope: completePluginReplacement
           ? {
             status: 'complete',
             covered: [
-              'legacy plugin descriptor identity and execution policy',
+              completePluginDescriptor
+                ? 'legacy plugin descriptor identity and execution policy'
+                : 'legacy Python plugin runner explicitly retired and absent from hepta production references',
               'native adapter export and local-only execution boundary',
               'legacy external/write semantics explicitly blocked or retired',
               'unbound model calls and direct manuscript mutation explicitly retired',
@@ -168,7 +179,7 @@ export function buildP1MatrixCandidates({
           sha256: sha256File(targetFile),
           symbols: target.symbols,
         },
-        behaviorTests: completePluginDescriptor
+        behaviorTests: completePluginReplacement
           ? [{
             id: 'p1-plugin-wrapper-boundaries',
             path: 'migration/tests/p1-plugin-wrapper-boundaries.mjs',

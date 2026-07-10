@@ -45,6 +45,14 @@ function readPlugin(directory) {
   return { text, descriptor };
 }
 
+function mjsFiles(directory) {
+  return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const absolute = path.join(directory, entry.name);
+    if (entry.isDirectory()) return mjsFiles(absolute);
+    return entry.isFile() && entry.name.endsWith('.mjs') ? [absolute] : [];
+  });
+}
+
 const expected = {
   compile: { id: 'core.compile', type: 'compiler', readOnly: true, external: false },
   'evidence-check': { id: 'core.evidence-check', type: 'evidence', readOnly: false, external: false },
@@ -64,6 +72,21 @@ for (const [directory, contract] of Object.entries(expected)) {
   assert.equal(descriptor.type, contract.type);
   assert.equal(descriptor.read_only, contract.readOnly);
   assert.equal(descriptor.writes_external_state, contract.external);
+}
+
+const retiredRunnerPaths = [
+  'plugins/core/referee/run.py',
+  'plugins/core/referee-revision-patch/run.py',
+  'plugins/core/referee-revision-planner/run.py',
+  'plugins/core/substantive-referee/run.py',
+];
+const productionText = [
+  ...mjsFiles(path.join(workspaceRoot, 'paper-core')),
+  ...mjsFiles(path.join(workspaceRoot, 'paper-adapters')),
+].map((file) => fs.readFileSync(file, 'utf8')).join('\n');
+for (const runnerPath of retiredRunnerPaths) {
+  assert.ok(fs.existsSync(path.join(root, runnerPath)), runnerPath);
+  assert.doesNotMatch(productionText, new RegExp(runnerPath.replace(/[.*+?^$()|[\]{}\\]/g, '\\$&')));
 }
 
 assert.equal(typeof runLatexBuildAdapter, 'function');
@@ -190,6 +213,7 @@ process.stdout.write(JSON.stringify({
   ok: true,
   kind: 'P1PluginWrapperBoundaryTest',
   verifiedPluginDescriptorCount: Object.keys(expected).length,
+  retiredPluginRunnerCount: retiredRunnerPaths.length,
   buildExternalAction: build.safety?.externalActionPerformed,
   packageExternalAction: packageReport.safety?.externalActionPerformed,
   researchExternalAction: research.safety?.externalActionPerformed,

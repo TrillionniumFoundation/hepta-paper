@@ -15,7 +15,7 @@ dry-run orchestration remain available.
   match and 362 differ. No report claims historical byte identity.
 - The former automatic 263 semantic migration claims are withdrawn. The
   migration matrix now has an explicit row for all 263 P0/P1 source paths.
-  Both P0 rows are complete and verified; 250 P1 rows remain partial, so
+  Both P0 rows are complete and verified; 246 P1 rows remain partial, so
   paper_factory retirement is still blocked.
 - The primary-entrypoint P0 row exhaustively binds all 760 legacy argparse
   commands to all 760 dispatch branches and gives each command a native,
@@ -77,8 +77,9 @@ unbounded-file blocker.
 - Matrix version 2 contains 263/263 explicit source rows. Every row binds the
   exact legacy hash, a top-level source-symbol inventory, an assigned native
   capability family, the exact target hash, and target symbols.
-- Verified: 13 total = 2 P0 plus 11 plugin-descriptor replacements.
-- Remaining: 250 P1 partial/invalid rows. They have structural mappings but
+- Verified: 17 total = 2 P0 plus 11 plugin-descriptor replacements and 4
+  explicitly retired legacy referee Python runners.
+- Remaining: 246 P1 partial/invalid rows. They have structural mappings but
   intentionally lack a complete behavioral/retirement proof, so they continue
   to count as blockers.
 - The 11 verified plugin descriptors cover compile, package, evidence, external
@@ -86,9 +87,12 @@ unbounded-file blocker.
   referee, revision planning, and patch-request routing. Model calls,
   independent acceptance authority, direct manuscript mutation, and external
   actions are explicitly not inherited from the legacy wrappers.
+- The four retired referee runners have zero references from paper-core or
+  paper-adapters. Their unbound model-call and draft-writing execution paths
+  are not part of the hepta control plane.
 - Shared hash-bound behavior tests execute once per audit and are reused across
   rows, preventing a 263-row matrix from repeatedly running identical suites.
-- Current blocker counts: P0 = 0, P1 = 250. Retirement and old-control-plane
+- Current blocker counts: P0 = 0, P1 = 246. Retirement and old-control-plane
   removal remain blocked.
 
 ## Verification
@@ -103,6 +107,6 @@ npm run migration:matrix-integrity
 npm test
 ```
 
-The external submission executor must remain absent until the remaining 250
+The external submission executor must remain absent until the remaining 246
 P1 matrix rows, attested research evidence, and independent referee route are
 all closed and reviewed.

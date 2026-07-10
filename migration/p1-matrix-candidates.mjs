@@ -1,6 +1,10 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import {
+  BUILD_PACKAGE_EXPLICIT_RETIREMENTS,
+  buildPackageRetirementDisposition,
+} from './build-package-retirements.mjs';
 
 const COMPLETE_PLUGIN_DESCRIPTORS = new Set([
   'plugins/core/compile/plugin.yaml',
@@ -54,6 +58,10 @@ const REFEREE_REVISE_EXPLICIT_RETIREMENTS = new Set([
 ]);
 
 const REFEREE_REVISION_DIFFERENTIAL_SOURCE = 'paperctl_modules/referee_revision.py';
+
+const BUILD_PACKAGE_RETIREMENT_PATHS = new Set(
+  BUILD_PACKAGE_EXPLICIT_RETIREMENTS.map((entry) => entry.sourcePath),
+);
 
 const TARGETS = Object.freeze({
   'paper-adapters/venue-resolve': {
@@ -117,6 +125,12 @@ function sourceSymbols(file, relative) {
 }
 
 function targetFor(entry) {
+  if (BUILD_PACKAGE_RETIREMENT_PATHS.has(entry.path)) {
+    return {
+      path: 'hepta-paper-workspace/migration/build-package-retirements.mjs',
+      symbols: ['BUILD_PACKAGE_EXPLICIT_RETIREMENTS', 'buildPackageRetirementDisposition'],
+    };
+  }
   if (VENUE_RESOLVE_EXPLICIT_RETIREMENTS.has(entry.path)) {
     return {
       path: 'hepta-paper-workspace/migration/venue-resolve-retirements.mjs',
@@ -188,6 +202,7 @@ export function buildP1MatrixCandidates({
   venueRetirementTestHash,
   refereeRevisionDifferentialTestHash,
   refereeRetirementTestHash,
+  buildPackageRetirementTestHash,
 } = {}) {
   return entries
     .filter((entry) => entry.priority === 'P1')
@@ -203,10 +218,12 @@ export function buildP1MatrixCandidates({
       const retiredVenueResolveSurface = VENUE_RESOLVE_EXPLICIT_RETIREMENTS.has(entry.path);
       const retiredRefereeReviseSurface = REFEREE_REVISE_EXPLICIT_RETIREMENTS.has(entry.path);
       const differentialRefereeRevision = entry.path === REFEREE_REVISION_DIFFERENTIAL_SOURCE;
+      const retiredBuildPackageSurface = BUILD_PACKAGE_RETIREMENT_PATHS.has(entry.path);
       const completeReplacement = completePluginReplacement
         || retiredVenueResolveSurface
         || retiredRefereeReviseSurface
-        || differentialRefereeRevision;
+        || differentialRefereeRevision
+        || retiredBuildPackageSurface;
       return {
         id: candidateId(entry),
         priority: 'P1',
@@ -217,7 +234,9 @@ export function buildP1MatrixCandidates({
             ? 'retire_generated_referee_control_evidence_surface'
             : differentialRefereeRevision
               ? 'port_referee_revision_decision_selectors_with_exact_differential_parity'
-          : entry.migrationAction,
+              : retiredBuildPackageSurface
+                ? buildPackageRetirementDisposition(entry.path).disposition
+                : entry.migrationAction,
         semanticScope: completeReplacement
           ? {
             status: 'complete',
@@ -242,7 +261,14 @@ export function buildP1MatrixCandidates({
                     'plan-only mutation, external-action, unsafe-command, and human-review guards preserved',
                     'deterministic fallback and selected-route behavior preserved',
                   ]
-              : [
+                  : retiredBuildPackageSurface
+                    ? [
+                      'all public legacy source symbols inventoried',
+                      'misclassified report/verifier/intake/queue surface explicitly retired outside build/package',
+                      'no process launches, network imports, or external actions',
+                      'legacy local writer constrained to runner-contract artifacts and absent from hepta production references',
+                    ]
+                    : [
                 completePluginDescriptor
                   ? 'legacy plugin descriptor identity and execution policy'
                   : 'legacy Python plugin runner explicitly retired and absent from hepta production references',
@@ -299,7 +325,13 @@ export function buildP1MatrixCandidates({
                   path: 'migration/tests/p1-referee-revision-differential.mjs',
                   sha256: refereeRevisionDifferentialTestHash,
                 }]
-            : [],
+                : retiredBuildPackageSurface
+                  ? [{
+                    id: 'p1-build-package-explicit-retirements',
+                    path: 'migration/tests/p1-build-package-retirements.mjs',
+                    sha256: buildPackageRetirementTestHash,
+                  }]
+                  : [],
       };
     });
 }

@@ -213,19 +213,16 @@
       "id": "p1-paperctl-modules-paper-production-artifact-maturity-queue-py-427df38e9576",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_artifact_maturity_queue.py",
@@ -236,14 +233,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-external-auth-boundary-py-0b6e83d6d7ec",
@@ -850,19 +853,16 @@
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-authoring-requirement-template-verifier-capstone-py-dfa764ba2fe0",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_operator_real_source_authoring_requirement_template_verifier_capstone.py",
@@ -874,32 +874,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-evidence-lint-hash-receipt-auth-quarantine-capstone-py-7853ea0f34ba",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_operator_real_source_evidence_lint_hash_receipt_auth_quarantine_capstone.py",
@@ -911,32 +914,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-human-authored-value-path-source-reference-receipt-marker-verifier-capstone-py-e30ed43197ac",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_operator_real_source_human_authored_value_path_source_reference_receipt_marker_verifier_capstone.py",
@@ -947,32 +953,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-human-authored-value-source-reference-receipt-approval-verifier-capstone-py-ce4346e31785",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_operator_real_source_human_authored_value_source_reference_receipt_approval_verifier_capstone.py",
@@ -983,14 +992,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-human-input-artifact-completeness-value-lint-handoff-intake-signature-marker-verifier-capstone-py-e81010156d2a",
@@ -1066,19 +1081,16 @@
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-human-input-artifact-source-path-value-provenance-checksum-signature-identity-verifier-capstone-py-842f59b44d93",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_operator_real_source_human_input_artifact_source_path_value_provenance_checksum_signature_identity_verifier_capstone.py",
@@ -1089,14 +1101,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-human-input-artifact-source-value-packet-handoff-receipt-identity-verifier-capstone-py-482eab02e487",
@@ -1137,19 +1155,16 @@
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-human-input-artifact-source-value-payload-certificate-chain-materialization-verifier-capstone-py-4dd2b5ca4f25",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_operator_real_source_human_input_artifact_source_value_payload_certificate_chain_materialization_verifier_capstone.py",
@@ -1160,32 +1175,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-human-input-artifact-source-value-payload-certificate-transparency-clock-hash-verifier-capstone-py-4fbc68fc7a54",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_operator_real_source_human_input_artifact_source_value_payload_certificate_transparency_clock_hash_verifier_capstone.py",
@@ -1196,32 +1214,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-human-input-artifact-source-value-payload-checkpoint-clock-signature-chain-verifier-capstone-py-d193e8b1d333",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_operator_real_source_human_input_artifact_source_value_payload_checkpoint_clock_signature_chain_verifier_capstone.py",
@@ -1232,32 +1253,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-human-input-artifact-source-value-payload-digest-chain-verifier-capstone-py-1cf5f6dceb4d",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_operator_real_source_human_input_artifact_source_value_payload_digest_chain_verifier_capstone.py",
@@ -1268,32 +1292,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-human-input-artifact-source-value-payload-hash-signature-binding-verifier-capstone-py-300a420d58cc",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_operator_real_source_human_input_artifact_source_value_payload_hash_signature_binding_verifier_capstone.py",
@@ -1304,32 +1331,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-human-input-artifact-source-value-payload-identity-signature-chain-verifier-capstone-py-3f18a1d69de5",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_operator_real_source_human_input_artifact_source_value_payload_identity_signature_chain_verifier_capstone.py",
@@ -1340,32 +1370,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-human-input-artifact-source-value-payload-inclusion-root-freshness-signature-sequence-verifier-capstone-py-80e8805252d1",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_operator_real_source_human_input_artifact_source_value_payload_inclusion_root_freshness_signature_sequence_verifier_capstone.py",
@@ -1376,32 +1409,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-human-input-artifact-source-value-payload-marker-verifier-capstone-py-363d1f2d2374",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_operator_real_source_human_input_artifact_source_value_payload_marker_verifier_capstone.py",
@@ -1412,32 +1448,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-human-input-artifact-source-value-payload-merkle-freshness-ledger-verifier-capstone-py-6dab6e1158fa",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_operator_real_source_human_input_artifact_source_value_payload_merkle_freshness_ledger_verifier_capstone.py",
@@ -1448,32 +1487,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-human-input-artifact-source-value-payload-root-clock-canonicalization-hash-chain-verifier-capstone-py-ce3ea736fdb6",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_operator_real_source_human_input_artifact_source_value_payload_root_clock_canonicalization_hash_chain_verifier_capstone.py",
@@ -1484,32 +1526,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-human-input-artifact-source-value-payload-signed-root-transparency-freshness-sequence-verifier-capstone-py-710d9e2b727d",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_operator_real_source_human_input_artifact_source_value_payload_signed_root_transparency_freshness_sequence_verifier_capstone.py",
@@ -1520,32 +1565,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-human-input-artifact-source-value-payload-signed-tree-head-expiry-signature-verifier-capstone-py-908d26f22ce3",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_operator_real_source_human_input_artifact_source_value_payload_signed_tree_head_expiry_signature_verifier_capstone.py",
@@ -1556,32 +1604,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-human-input-artifact-source-value-payload-transparency-revocation-replay-verifier-capstone-py-ded022639eca",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_operator_real_source_human_input_artifact_source_value_payload_transparency_revocation_replay_verifier_capstone.py",
@@ -1592,32 +1643,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-human-input-artifact-source-value-payload-trust-root-attestation-verifier-capstone-py-b7801a90de8f",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_operator_real_source_human_input_artifact_source_value_payload_trust_root_attestation_verifier_capstone.py",
@@ -1628,14 +1682,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-human-input-manifest-field-completeness-payload-checksum-handoff-signature-binding-verifier-capstone-py-d32c0d222b1a",
@@ -1676,19 +1736,16 @@
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-human-intake-provenance-auth-quarantine-capstone-py-5d34e79c5f76",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_operator_real_source_human_intake_provenance_auth_quarantine_capstone.py",
@@ -1699,32 +1756,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-intake-acceptance-preflight-capstone-py-7a6143eeba6e",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_operator_real_source_intake_acceptance_preflight_capstone.py",
@@ -1735,32 +1795,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-intake-checklist-verifier-capstone-py-a24c6d28f1a7",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_operator_real_source_intake_checklist_verifier_capstone.py",
@@ -1772,32 +1835,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-operator-real-source-intake-packet-template-spec-verifier-capstone-py-d9951eaafa1f",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_operator_real_source_intake_packet_template_spec_verifier_capstone.py",
@@ -1808,14 +1874,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-promotion-evidence-release-separation-ledger-capstone-py-9d892948f564",
@@ -2018,19 +2090,16 @@
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-real-source-provenance-intake-verifier-capstone-py-ac1f2b97ca6d",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_real_source_provenance_intake_verifier_capstone.py",
@@ -2041,14 +2110,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-repair-evidence-release-request-envelope-nonclosure-preflight-capstone-py-a3c2fd8aaf00",
@@ -2095,19 +2170,16 @@
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-repair-material-source-rejudge-input-index-verifier-capstone-py-ffbce3dbe119",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_repair_material_source_rejudge_input_index_verifier_capstone.py",
@@ -2118,14 +2190,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-skeleton-inventory-currentness-capstone-py-0da89f5351a8",
@@ -2170,19 +2248,16 @@
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-source-authoring-prerequisite-template-verifier-capstone-py-2d9e22f39a92",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_source_authoring_prerequisite_template_verifier_capstone.py",
@@ -2193,32 +2268,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-source-lint-capstone-py-f26a8c0980dd",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_source_lint_capstone.py",
@@ -2229,32 +2307,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-source-manifest-inbox-capstone-py-1857f338c819",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_source_manifest_inbox_capstone.py",
@@ -2265,32 +2346,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-source-slot-authoring-manifest-capstone-py-51eb0c1c2bf6",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_source_slot_authoring_manifest_capstone.py",
@@ -2301,32 +2385,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-source-slot-authoring-redrive-ledger-capstone-py-e97bf16b49b7",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_source_slot_authoring_redrive_ledger_capstone.py",
@@ -2337,32 +2424,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-source-slot-fulfillment-intake-capstone-py-993ef2e842a9",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_source_slot_fulfillment_intake_capstone.py",
@@ -2374,14 +2464,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-request-packet-contract-lint-capstone-py-71052afa6c8e",
@@ -2465,19 +2561,16 @@
       "id": "p1-paperctl-modules-paper-production-referee-repair-source-artifact-intake-queue-py-0701bd44bb04",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_source_artifact_intake_queue.py",
@@ -2488,14 +2581,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-source-artifact-quarantine-handoff-workflow-matrix-py-462bafb4107d",
@@ -2536,19 +2635,16 @@
       "id": "p1-paperctl-modules-paper-production-referee-repair-source-authoring-surface-matrix-py-29a05b69d6dc",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_source_authoring_surface_matrix.py",
@@ -2559,32 +2655,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-source-materialization-actionability-matrix-py-07379c3a3733",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_generated_build_misclassified_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_source_materialization_actionability_matrix.py",
@@ -2595,14 +2694,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-typed-evidence-contract-matrix-py-4b381ff8cbf3",
@@ -2883,19 +2988,16 @@
       "id": "p1-paperctl-modules-paper-production-runner-execution-contract-artifact-queue-py-7825b10b0230",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/build-package",
-      "migrationAction": "extract_source_package_rules_into_build_package_adapter",
+      "migrationAction": "retired_legacy_local_runner_contract_materializer",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "misclassified report/verifier/intake/queue surface explicitly retired outside build/package",
+          "no process launches, network imports, or external actions",
+          "legacy local writer constrained to runner-contract artifacts and absent from hepta production references"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_runner_execution_contract_artifact_queue.py",
@@ -2906,14 +3008,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "215b0e8f1f3fc3371a134d2c5a266d786efb7b65a7c18a1541cba74769922258",
+        "path": "hepta-paper-workspace/migration/build-package-retirements.mjs",
+        "sha256": "242e0402ad8fb984835f2a854a8782050997cbb31afbc8996f7fd1540d22bd74",
         "symbols": [
-          "runLatexBuildAdapter",
-          "runPackageAdapter"
+          "BUILD_PACKAGE_EXPLICIT_RETIREMENTS",
+          "buildPackageRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-build-package-explicit-retirements",
+          "path": "migration/tests/p1-build-package-retirements.mjs",
+          "sha256": "34e7c3f0587a97df47bfbe121be9f406d0aa8a446a93b4d02e7ec11e575ba5e0"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-runner-readiness-gate-py-c28cfb6bfded",

@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "kind": "ColdVolumeMountContract",
+  "contractId": "ndu-nature-work-thundero-ext4-v1",
+  "mountRoot": "/media/qian-qi/THUNDERO_EXT4",
+  "contentRoot": "paper_factory_cold/drafts/NDU_Nature_work",
+  "sentinelRelativePath": "paper_factory_cold/HEPTA_COLD_VOLUME_MANIFEST.json",
+  "availabilityPolicy": "fail_closed_for_operational_replay",
+  "contentManifestRequiredWhenMounted": true,
+  "entries": [
+    "CNP_derivatives",
+    "CNP_derivatives_bartonly_batch5_after_cleanpilot",
+    "CNP_derivatives_bartonly_batch6_after_batch5",
+    "CNP_derivatives_bartonly_batch7_after_batch6",
+    "CNP_fmriprep_work",
+    "CNP_fmriprep_work_bartonly_batch5_after_cleanpilot",
+    "CNP_fmriprep_work_bartonly_batch6_after_batch5",
+    "CNP_fmriprep_work_bartonly_batch7_after_batch6",
+    "CNP_taskswitch_secondlevel_group_20260323_primary",
+    "derivatives",
+    "ds004323_probe/dump",
+    "ds004323_probe/fmriprep_ds004323_pilot_sub03_run01",
+    "fmriprep_work",
+    "fmriprep_work_fullsample",
+    "ndu_empirical_tests_20260326"
+  ]
+}

@@ -7,11 +7,14 @@ import { withArtifactWriteContext } from '../../paper-adapters/artifacts/artifac
 import { currentCodeProvenance } from '../src/code-provenance.mjs';
 import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { capabilityTargetBindings } from '../../migration/operational-proof-intake.mjs';
+import { fileURLToPath } from 'node:url';
 
 process.env.HEPTA_EVIDENCE_ENVIRONMENT = 'administrative';
 process.env.HEPTA_EVIDENCE_CLASS = 'external_intake';
 const runtimeRoot = defaultPaperRuntimeRoot();
 const root = defaultPaperAssetRoot();
+const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const matrix = buildLegacyCapabilityMatrixV3({ runtimeRoot });
 const provenance = currentCodeProvenance();
 const context = bootstrapPaperExecutionContext({ root, runtimeRoot, mode: 'external-intake-generation', execute: false, writeReport: true });
@@ -19,21 +22,26 @@ await withArtifactWriteContext(context.services, async () => {
   const outputRoot = path.join(runtimeRoot, 'external-intake');
   const repository = context.services.artifactRepositoryFactory(outputRoot);
   const ownerPayload = {
-    version: 1,
+    version: 2,
     kind: 'CapabilityOwnerAcceptanceRequest',
-    status: 'owner_signature_required',
+    status: 'capability_family_owner_signature_required',
     codeProvenance: provenance,
     entryCount: matrix.entries.length,
-    acceptedEntriesTemplate: matrix.entries.map((entry) => ({
-      legacyMatrixEntryId: entry.legacyMatrixEntryId,
-      sourceSha256: entry.source.sha256,
-      businessDecision: entry.businessDecision,
-      capabilityIds: entry.capabilityIds,
+    familyCount: matrix.ownerAcceptanceFamilyManifest.families.length,
+    familyManifestHash: matrix.ownerAcceptanceFamilyManifest.familyManifestHash,
+    acceptedFamiliesTemplate: matrix.ownerAcceptanceFamilyManifest.families.map((family) => ({
+      familyId: family.familyId,
+      familyHash: family.familyHash,
+      businessDecision: family.businessDecision,
+      capabilityIds: family.capabilityIds,
+      legacyEntryCount: family.legacyEntries.length,
       acceptedAt: null,
     })),
     requiredOutput: 'runtime/owner-acceptance/CAPABILITY_OWNER_ACCEPTANCE.json',
     requiredTrustStore: 'runtime/owner-acceptance/OWNER_TRUST_STORE.json',
     requiredRole: 'capability_owner',
+    allEntriesCoveredExactlyOnce: matrix.ownerAcceptanceFamilyManifest.families
+      .flatMap((family) => family.legacyEntries).length === matrix.entries.length,
     automaticAcceptanceForbidden: true,
   };
   const authorityPayload = {
@@ -48,6 +56,7 @@ await withArtifactWriteContext(context.services, async () => {
     requiredDocuments: ['ACADEMIC_EVIDENCE_ATTESTATION.json', 'INDEPENDENT_REFEREE_VERDICT.json', 'LIVE_SUBMISSION_AUTHORIZATION.json'],
     separationOfDutiesRequired: true,
   };
+  const targetBindings = capabilityTargetBindings(workspaceRoot, matrix.capabilityCatalog);
   const operationalPayload = {
     version: 1,
     kind: 'CapabilityOperationalProofPlan',
@@ -58,7 +67,9 @@ await withArtifactWriteContext(context.services, async () => {
     capabilities: Object.keys(matrix.capabilityCatalog).sort().map((capabilityId) => ({
       capabilityId,
       legacyEntryCount: matrix.entries.filter((entry) => entry.capabilityIds.includes(capabilityId)).length,
-      requiredEvidence: ['production_input_hashes', 'production_execution_receipt', 'result_hash', 'replay_result', 'release_commit'],
+      targetHashes: targetBindings[capabilityId],
+      requiredEvidence: ['production_subject', 'production_input_hashes', 'production_execution_receipt', 'result_hash', 'replay_receipt_hash', 'replay_matched', 'release_commit', 'capability_owner_signature'],
+      requiredOutputDirectory: `runtime/operational-proof/capabilities/${capabilityId}`,
     })),
     conformanceReceiptsCannotQualify: true,
   };

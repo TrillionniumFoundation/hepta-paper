@@ -27,6 +27,9 @@ assert.equal(matrix.summary.implementationNotApplicable, 88);
 assert.equal(matrix.summary.operationallyProven, 0);
 assert.equal(matrix.summary.operationallyNotProven, 161);
 assert.equal(matrix.summary.ownerAccepted, 0);
+assert.equal(matrix.summary.ownerAcceptanceFamilyCount, 13);
+assert.equal(matrix.ownerAcceptanceFamilyManifest.families.flatMap((family) => family.legacyEntries).length, 249);
+assert.equal(new Set(matrix.ownerAcceptanceFamilyManifest.families.flatMap((family) => family.legacyEntries.map((entry) => entry.legacyMatrixEntryId))).size, 249);
 for (const entry of matrix.entries) {
   assert.ok(entry.source.path);
   assert.ok(entry.source.sha256);

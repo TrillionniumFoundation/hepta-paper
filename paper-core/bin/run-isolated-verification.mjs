@@ -24,6 +24,11 @@ function sha(file) {
 
 const productionHashBefore = sha(productionDb);
 if (fs.existsSync(productionDb)) fs.copyFileSync(productionDb, isolatedDb);
+for (const relative of ['owner-acceptance', 'operational-proof', 'trust', 'authority-inbox']) {
+  const source = path.join(productionRuntimeRoot, relative);
+  const target = path.join(isolatedRuntimeRoot, relative);
+  if (fs.existsSync(source)) fs.cpSync(source, target, { recursive: true, dereference: false });
+}
 const store = createDefaultPaperStore({ root: defaultPaperAssetRoot(), runtimeRoot: isolatedRuntimeRoot, dbPath: isolatedDb });
 if (!fs.existsSync(productionDb)) {
   store.execute("INSERT OR IGNORE INTO papers(slug,title,canonical_dir,source_dir,status) VALUES('verification_fixture','Verification fixture','verification_fixture','','draft');");

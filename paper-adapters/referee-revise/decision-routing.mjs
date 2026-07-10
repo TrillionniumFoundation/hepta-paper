@@ -1,3 +1,5 @@
+import { buildSafeApplyPlanContract } from '../../paper-domain/repair/command-contract.mjs';
+
 // Exact local compatibility implementation of legacy referee_revision.py decision routing.
 const EXTERNAL_OPERATION_NAMES = new Set(['delete', 'email', 'publish', 'sendmail', 'submit', 'upload', 'withdraw']);
 const OPERATION_FIELD_NAMES = new Set([
@@ -427,8 +429,7 @@ export function evidenceResyncConsumingSelection(resyncItems, decisionPlan = nul
 }
 
 function readyMergeCommand(item) {
-  const id = patchId(item);
-  return id ? `./bin/paperctl merge-queue --patch-id ${id} --json` : '';
+  return buildSafeApplyPlanContract(patchId(item));
 }
 
 function isReadyMergeCandidate(item) {

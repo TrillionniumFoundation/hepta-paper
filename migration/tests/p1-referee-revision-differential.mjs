@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { defaultLegacyPaperFactoryRoot } from '../../paper-core/src/workspace-layout.mjs';
+import { materializeLegacyDifferentialReference } from '../legacy-reference-fixture.mjs';
 import {
   evidenceResyncConsumingSelection,
   evidenceResyncDecisionPlan,
@@ -13,9 +13,12 @@ import {
   refereeRevisionRequestConsumingSelection,
   refereeRevisionRequestDecisionPlan,
 } from '../../paper-adapters/referee-revise/decision-routing.mjs';
+import { buildSafeApplyPlanContract } from '../../paper-domain/repair/command-contract.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const root = defaultLegacyPaperFactoryRoot();
+const fixture = materializeLegacyDifferentialReference();
+const root = fixture.root;
+process.on('exit', fixture.cleanup);
 
 const blockedRequests = [
   {
@@ -208,6 +211,16 @@ const implementations = {
   post_apply_final_gate_consuming_selection: postApplyFinalGateConsumingSelection,
 };
 
+function migrateReadyMergeCommand(value) {
+  if (Array.isArray(value)) return value.map(migrateReadyMergeCommand);
+  if (value && typeof value === 'object') return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [key, migrateReadyMergeCommand(item)]),
+  );
+  if (typeof value !== 'string') return value;
+  const match = /^\.\/bin\/paperctl merge-queue --patch-id (\d+) --json$/.exec(value);
+  return match ? buildSafeApplyPlanContract(match[1]) : value;
+}
+
 const runner = String.raw`
 import json, pathlib, sys
 root = pathlib.Path(sys.argv[1])
@@ -228,10 +241,12 @@ const reference = spawnSync('python3', ['-c', runner, root], {
 });
 assert.equal(reference.status, 0, reference.stderr);
 const expected = JSON.parse(reference.stdout);
-const actual = cases.map((testCase) => implementations[testCase.name](...testCase.args));
+const normalizedExpected = expected.map(migrateReadyMergeCommand);
+const nativeCases = cases.map(migrateReadyMergeCommand);
+const actual = nativeCases.map((testCase) => implementations[testCase.name](...testCase.args));
 assert.equal(actual.length, expected.length);
 for (let index = 0; index < cases.length; index += 1) {
-  assert.deepEqual(actual[index], expected[index], `${index}:${cases[index].name}`);
+  assert.deepEqual(actual[index], normalizedExpected[index], `${index}:${cases[index].name}`);
 }
 
 const planStates = uniqueStates(actual, 'consumption_state');
@@ -250,7 +265,11 @@ process.stdout.write(JSON.stringify({
   ok: true,
   kind: 'P1RefereeRevisionDifferentialTest',
   exactParityCaseCount: cases.length,
+  commandContractMigration: 'legacy_merge_queue_to_hepta_safe_apply_plan',
+  semanticParityAfterCommandContractMigration: true,
+  rawCommandStringParity: false,
   publicFunctionCount: Object.keys(implementations).length,
   planStates,
   selectionStates,
 }) + '\n');
+fixture.cleanup();

@@ -2,6 +2,9 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { currentCodeProvenance } from '../src/code-provenance.mjs';
+import { defaultPaperAssetRoot } from '../src/workspace-layout.mjs';
+import { verifyColdVolumeContract } from '../src/cold-volume-contract.mjs';
+import { verifyLegacyDifferentialReference } from '../../migration/legacy-reference-fixture.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 export function sha256File(file) {
@@ -94,6 +97,11 @@ export function buildReleaseEvidenceBundle({ runtimeRoot, legacyRoot } = {}) {
   const archiveRoot = path.join(path.dirname(legacyRoot), 'hepta-paper-legacy-reference', codeProvenance.packageVersion);
   const archivePath = path.join(archiveRoot, 'paper-factory-control-plane-reference.tar.gz');
   const archiveReceiptPath = path.join(archiveRoot, 'LEGACY_ARCHIVE_READ_ONLY_RECEIPT.json');
+  const immutableReceiptFiles = fs.existsSync(archiveRoot)
+    ? fs.readdirSync(archiveRoot).filter((name) => name.startsWith('IMMUTABLE_SNAPSHOT_RECEIPT_') && name.endsWith('.json')).sort()
+    : [];
+  const immutableReceiptPath = immutableReceiptFiles.length ? path.join(archiveRoot, immutableReceiptFiles.at(-1)) : null;
+  const immutableReceipt = immutableReceiptPath ? JSON.parse(fs.readFileSync(immutableReceiptPath, 'utf8')) : null;
   const deletionDrillRoot = path.join(runtimeRoot, 'legacy-retirement', 'deletion-drills');
   const deletionDrillFiles = fs.existsSync(deletionDrillRoot)
     ? fs.readdirSync(deletionDrillRoot).filter((name) => name.endsWith('.json')).sort()
@@ -102,6 +110,15 @@ export function buildReleaseEvidenceBundle({ runtimeRoot, legacyRoot } = {}) {
   const deletionDrill = deletionDrillPath ? JSON.parse(fs.readFileSync(deletionDrillPath, 'utf8')) : null;
   const trustStorePath = path.join(runtimeRoot, 'trust', 'AUTHORITY_TRUST_STORE.json');
   const matrixPath = path.join(path.dirname(new URL(import.meta.url).pathname), '..', '..', 'migration', 'legacy-semantic-migration-matrix.json');
+  const workspaceRoot = path.join(path.dirname(new URL(import.meta.url).pathname), '..', '..');
+  const coldVolumeContractPath = path.join(workspaceRoot, 'paper-core', 'config', 'cold-volume-contract.v1.json');
+  const coldVolumeContract = JSON.parse(fs.readFileSync(coldVolumeContractPath, 'utf8'));
+  const coldVolumeStatus = verifyColdVolumeContract({
+    assetRoot: defaultPaperAssetRoot(),
+    contract: coldVolumeContract,
+    contractPath: coldVolumeContractPath,
+  });
+  const minimalDifferentialFixture = verifyLegacyDifferentialReference();
   const payload = {
     version: 1,
     kind: 'ReleaseEvidenceBundle',
@@ -109,6 +126,9 @@ export function buildReleaseEvidenceBundle({ runtimeRoot, legacyRoot } = {}) {
       && verificationReceipt?.status === 'isolated_verification_passed'
       && fs.existsSync(archivePath)
       && deletionDrill?.status === 'legacy_reference_restore_drill_passed_deletion_blocked'
+      && immutableReceipt?.status === 'legacy_reference_ext4_inode_immutable'
+      && coldVolumeStatus.contractValid
+      && minimalDifferentialFixture.status === 'legacy_differential_reference_verified'
       ? 'release_evidence_bundle_ready'
       : 'release_evidence_bundle_blocked',
     codeProvenance,
@@ -124,6 +144,9 @@ export function buildReleaseEvidenceBundle({ runtimeRoot, legacyRoot } = {}) {
       legacyReferenceArchiveHash: fs.existsSync(archivePath) ? sha256File(archivePath) : null,
       legacyReadOnlyReceiptHash: fs.existsSync(archiveReceiptPath) ? sha256File(archiveReceiptPath) : null,
       deletionRestoreDrillReceiptHash: deletionDrillPath ? sha256File(deletionDrillPath) : null,
+      legacyImmutableSnapshotReceiptHash: immutableReceiptPath ? sha256File(immutableReceiptPath) : null,
+      minimalLegacyDifferentialFixtureHash: minimalDifferentialFixture.archiveSha256,
+      coldVolumeContractHash: coldVolumeStatus.contractHash,
       runtimeHygieneExportHash: (() => {
         const file = path.join(runtimeRoot, 'quarantine', 'pre-v0.5-runtime-evidence', 'CONTAMINATED_RECEIPTS.json');
         return fs.existsSync(file) ? sha256File(file) : null;
@@ -138,7 +161,11 @@ export function buildReleaseEvidenceBundle({ runtimeRoot, legacyRoot } = {}) {
       restoreDrillStatus: deletionDrill?.status || 'missing',
       physicalDeletionAllowed: Boolean(deletionDrill?.physicalDeletionAllowed),
       destructiveDeletionPerformed: false,
+      immutableSnapshotStatus: immutableReceipt?.status || 'missing',
+      immutableContentObjectClaimed: immutableReceipt?.immutableContentObjectClaimed === true,
     },
+    assetRecoveryStatus: coldVolumeStatus,
+    minimalDifferentialFixture,
     evidenceClasses: {
       technical: 'isolated verification only',
       operational: 'requires production-bound receipts and is not inferred here',

@@ -8,6 +8,7 @@ import { currentCodeProvenance } from '../src/code-provenance.mjs';
 import { sha256File, signReleasePayload } from './release-evidence-lib.mjs';
 import { defaultLegacyPaperFactoryRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { verifyLegacyDifferentialReference } from '../../migration/legacy-reference-fixture.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
 const runtimeRoot = defaultPaperRuntimeRoot();
@@ -43,10 +44,16 @@ const checks = [
   run(['migration/tests/p1-referee-revision-differential.mjs']),
 ];
 const sqlite = spawnSync('sqlite3', ['-readonly', path.join(drillRoot, 'paper_factory.sqlite'), 'PRAGMA quick_check;'], { encoding: 'utf8' });
+const fixtureVerification = verifyLegacyDifferentialReference();
+const immutableAttribute = spawnSync('lsattr', ['-d', archivePath], { encoding: 'utf8' });
+const archiveImmutable = immutableAttribute.status === 0
+  && /^.{0,20}i/.test(String(immutableAttribute.stdout || '').split(/\s+/)[0] || '');
 const matrix = buildLegacyCapabilityMatrixV3({ runtimeRoot });
 const blockers = [];
 if (checks.some((check) => check.exitCode !== 0)) blockers.push('legacy_reference_differential_replay_failed');
 if (String(sqlite.stdout || '').trim() !== 'ok') blockers.push('legacy_database_restore_quick_check_failed');
+if (fixtureVerification.status !== 'legacy_differential_reference_verified') blockers.push('minimal_legacy_differential_fixture_invalid');
+if (!archiveImmutable) blockers.push('legacy_reference_archive_not_filesystem_immutable');
 if (matrix.summary.ownerAccepted !== matrix.summary.entryCount) blockers.push('owner_acceptance_incomplete');
 if (matrix.summary.operationallyProven !== matrix.summary.operationallyNotProven + matrix.summary.operationallyProven) blockers.push('operational_proof_incomplete');
 const payload = {
@@ -60,6 +67,8 @@ const payload = {
   archiveHash: sha256File(archivePath),
   checks,
   sqliteQuickCheck: String(sqlite.stdout || '').trim(),
+  minimalDifferentialFixture: fixtureVerification,
+  archiveImmutable,
   ownerAccepted: matrix.summary.ownerAccepted,
   ownerAcceptanceRequired: matrix.summary.entryCount,
   operationallyProven: matrix.summary.operationallyProven,

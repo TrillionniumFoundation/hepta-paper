@@ -77,7 +77,12 @@ npm run paper:selftest
 npm run paper:authority-selftest
 npm run paper:architecture-selftest
 npm run coverage:architecture
+npm run coverage:repository
 npm run authority:status
+npm run owner:status
+npm run operational:status
+npm run assets:cold-volume-status
+npm run legacy:fixture-verify
 node paper-core/bin/paper-production-core.mjs proposal --idea "distributionally robust reinforcement learning for stochastic control" --discipline "machine learning" --venue NeurIPS --write-report
 node paper-core/bin/paper-production-core.mjs proposal --idea "distributionally robust reinforcement learning for stochastic control" --discipline "machine learning" --venue NeurIPS --approved --materialize-source --write-report
 node paper-core/bin/paper-production-core.mjs proposal --paper distributionally_robust_rl_for_stochastic_control --idea "distributionally robust reinforcement learning for stochastic control" --discipline "machine learning" --venue NeurIPS --title "Distributionally Robust RL for Stochastic Control" --approved --materialize-source --stage-inventory --write-report
@@ -112,6 +117,20 @@ Legacy capability decisions and the target layering are documented in
 not treated as 249 business capabilities: 88 are permanent retirements, 40
 need native coverage proof, and 121 are compressed into bounded native
 capabilities. Owner acceptance is still pending for all 249 decisions.
+
+Owner acceptance is requested as 13 hash-bound capability families, each of
+which expands to an exact, non-overlapping set of legacy matrix entries only
+after an external `capability_owner` signature verifies. Production-bound
+operational proof is separately ingested per native capability and must bind
+real input/result/replay hashes, the current release commit and current target
+hashes. Conformance receipts cannot qualify.
+
+The 15 unavailable `NDU_Nature_work` cold-data links are governed by
+`paper-core/config/cold-volume-contract.v1.json`. Contract verification is a
+release gate; operational replay stays fail-closed until the declared
+`THUNDERO_EXT4` mount and its hash-bound content manifest are present. The
+repository-wide coverage gate imports every production module and enforces a
+whole-repository baseline in addition to the stricter architecture-module gate.
 
 The proposal build path may execute a local LaTeX build under
 `runtime/builds/<paper_id>/` and write `BUILD_ARTIFACT_ACCEPTANCE.json` for the

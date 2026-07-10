@@ -24,8 +24,8 @@ jobs:
         run: npm install --ignore-scripts --no-audit --no-fund
       - name: Run portable integrity and contract gates
         run: npm run ci:selftest
-      - name: Enforce architecture coverage
-        run: npm run coverage:architecture
+      - name: Enforce architecture and repository-wide coverage
+        run: npm run coverage:architecture && npm run coverage:repository
 
   legacy-differential-policy:
     runs-on: ubuntu-latest
@@ -56,3 +56,5 @@ jobs:
             if (actual !== bound.get(file)) throw new Error(`Differential test hash drift: ${file}`);
           }
           NODE
+      - name: Replay Python to JavaScript differentials from the immutable minimal fixture
+        run: npm run legacy:fixture-verify && npm run test:migration-differential

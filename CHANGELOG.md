@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.6.0 - 2026-07-10
+
+- Added a verified cold-volume mount contract for all 15 unavailable
+  `NDU_Nature_work` data links. Code verification accepts the exact contract;
+  operational replay remains blocked until the declared volume and content
+  manifest are mounted.
+- Replaced 249 per-file owner placeholders with 13 hash-bound capability-family
+  acceptance packets. Expansion to matrix rows requires an external
+  `capability_owner` signature over the exact family manifest.
+- Added signed, production-bound operational-proof intake for all 14 native
+  capabilities. Proof must bind real inputs, execution/result/replay hashes,
+  the release commit and current target hashes; technical conformance cannot be
+  promoted automatically.
+- Replaced the remaining production `paperctl merge-queue` string with a
+  hepta-native, plan-only safe-apply command contract. The 58-case differential
+  now proves semantic parity across the explicit command-contract migration.
+- Added a repository-wide coverage inventory/gate while retaining the stricter
+  architecture coverage gate.
+- Extracted the only three Python files required by the two differentials into
+  a hash-bound minimal immutable fixture so differential replay no longer reads
+  the full legacy working tree.
+- Added an ext4 inode-immutable legacy reference snapshot receipt and made
+  immutable archive state part of deletion/restore and signed-release evidence.
+
+This release remains production `No-Go`: owner acceptance is 0/249,
+`operationally_proven` is 0/161, the cold volume is not mounted, four real trust
+roles remain unprovisioned, and external actions remain zero.
+
 ## 0.5.0 - 2026-07-10
 
 - Isolated test/CI/release verification into disposable SQLite, CAS and ledger

@@ -5,6 +5,8 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { hashRecord } from '../workflow-kernel/record-hash.mjs';
+import { currentCodeProvenance } from '../paper-core/src/code-provenance.mjs';
+import { loadCapabilityOperationalProofs } from './operational-proof-intake.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -55,6 +57,12 @@ export async function executeCapabilityVerification({ runtimeRoot, receiptLedger
   if (!runtimeRoot || !receiptLedger || !artifactRepositoryFactory || !clock || !capabilityCatalog) {
     throw new Error('Capability verification requires runtimeRoot, receiptLedger, artifactRepositoryFactory, clock and capabilityCatalog');
   }
+  const operationalProofs = loadCapabilityOperationalProofs({
+    runtimeRoot,
+    workspaceRoot,
+    capabilityCatalog,
+    releaseCommit: currentCodeProvenance().commit,
+  });
   const receipts = [];
   for (const capabilityId of Object.keys(capabilityCatalog).sort()) {
     const catalog = capabilityCatalog[capabilityId];
@@ -67,6 +75,7 @@ export async function executeCapabilityVerification({ runtimeRoot, receiptLedger
       timeout: 180000,
       env: { ...process.env, HEPTA_CAPABILITY_VERIFICATION: '1' },
     });
+    const operational = operationalProofs.get(capabilityId);
     const payload = {
       version: 1,
       kind: 'CapabilityVerificationReceipt',
@@ -85,8 +94,8 @@ export async function executeCapabilityVerification({ runtimeRoot, receiptLedger
       },
       targets: [{ path: catalog.target, sha256: hashFile(targetFile) }],
       executionClass: 'release_capability_conformance',
-      operationalProof: false,
-      operationalReceiptHashes: [],
+      operationalProof: Boolean(operational?.operationalReceiptHashes?.length),
+      operationalReceiptHashes: operational?.operationalReceiptHashes || [],
       externalActionPerformed: false,
     };
     const capabilityVerificationReceiptHash = hashRecord('CapabilityVerificationReceipt', payload);

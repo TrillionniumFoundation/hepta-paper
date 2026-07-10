@@ -193,6 +193,8 @@ test('production modules do not bypass StorePort or restore autopilot acceptance
   assert.equal(source.includes('RefereeAutopilotAcceptanceReceipt'), false);
   assert.equal(source.includes('AUTOPILOT_ACCEPTANCE_RECEIPT'), false);
   assert.equal(source.includes('researchReady'), false);
+  assert.equal(source.includes('./bin/paperctl merge-queue'), false);
+  assert.equal(source.includes('hepta-paper://repair.safe-apply/v1'), true);
   assert.equal(source.includes("../../core/src/hash-utils.mjs"), false);
   const researchRuntime = fs.readFileSync(path.join(workspaceRoot, 'paper-adapters', 'research-verify', 'index.mjs'), 'utf8');
   assert.equal(researchRuntime.includes("path.join(root, 'paperctl_modules')"), false);

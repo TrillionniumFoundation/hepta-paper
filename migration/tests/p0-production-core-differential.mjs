@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { defaultLegacyPaperFactoryRoot } from '../../paper-core/src/workspace-layout.mjs';
+import { materializeLegacyDifferentialReference } from '../legacy-reference-fixture.mjs';
 import {
   buildLegacyProductionAudit,
   evaluateLegacyProductionSnapshot,
@@ -13,7 +13,9 @@ import {
 } from '../../paper-core/src/production-state-compat.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const root = defaultLegacyPaperFactoryRoot();
+const fixture = materializeLegacyDifferentialReference();
+const root = fixture.root;
+process.on('exit', fixture.cleanup);
 const sourceModule = path.join(root, 'paperctl_modules', 'paper_production_core.py');
 const createdAt = '2026-07-10 03:30:00';
 
@@ -238,3 +240,4 @@ process.stdout.write(JSON.stringify({
   exactDifferentialParity: true,
   externalActionPerformed: false,
 }) + '\n');
+fixture.cleanup();

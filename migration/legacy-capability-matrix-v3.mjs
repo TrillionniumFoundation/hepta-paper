@@ -3,8 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateCapabilityOperationalEvidence } from './capability-operational-evidence.mjs';
-import { verifyAuthoritySignatures } from '../paper-core/src/authority-signatures.mjs';
-import { hashRecord } from '../workflow-kernel/record-hash.mjs';
+import { buildOwnerAcceptanceFamilies, loadOwnerAcceptance } from './owner-acceptance.mjs';
 
 const migrationRoot = path.dirname(fileURLToPath(import.meta.url));
 const workspaceRoot = path.resolve(migrationRoot, '..');
@@ -128,30 +127,6 @@ function capabilityTargets(capabilityIds) {
   });
 }
 
-function ownerAcceptanceMap(runtimeRoot) {
-  if (!runtimeRoot) return new Map();
-  try {
-    const document = JSON.parse(fs.readFileSync(path.join(runtimeRoot, 'owner-acceptance', 'CAPABILITY_OWNER_ACCEPTANCE.json'), 'utf8'));
-    const trustStore = JSON.parse(fs.readFileSync(path.join(runtimeRoot, 'owner-acceptance', 'OWNER_TRUST_STORE.json'), 'utf8'));
-    if (document?.kind !== 'CapabilityOwnerAcceptance' || document?.version !== 1) return new Map();
-    const verification = verifyAuthoritySignatures({
-      document,
-      trustStore,
-      requiredRoles: ['capability_owner'],
-      minSignatures: 1,
-    });
-    if (!verification.cryptographicSignaturesVerified) return new Map();
-    const evidenceHash = hashRecord('CapabilityOwnerAcceptance', document);
-    return new Map((document.acceptedEntries || []).map((entry) => [entry.legacyMatrixEntryId, {
-      ...entry,
-      evidenceHash,
-      subjectId: verification.verifiedSubjectIds[0] || null,
-    }]));
-  } catch {
-    return new Map();
-  }
-}
-
 function coverageTests(entry, decision, capabilityIds) {
   const legacyTests = (entry.behaviorTests || []).map((test) => ({
     ...test,
@@ -181,11 +156,19 @@ export function buildLegacyCapabilityMatrixV3({ matrixV2 = null, operationalEvid
     runtimeRoot: runtimeRoot || path.join(workspaceRoot, 'runtime'),
     evidence: operationalEvidence,
   });
-  const acceptedById = ownerAcceptanceMap(runtimeRoot || path.join(workspaceRoot, 'runtime'));
   const retiredEntries = source.entries.filter((entry) => entry.verificationClass === 'explicit_retirement');
-  const entries = retiredEntries.map((entry) => {
+  const entryPlans = retiredEntries.map((entry) => {
     const businessDecision = decisionFor(entry);
     const capabilityIds = capabilityIdsFor(entry, businessDecision);
+    return { ...entry, businessDecision, capabilityIds };
+  });
+  const ownerAcceptanceFamilyManifest = buildOwnerAcceptanceFamilies(entryPlans);
+  const acceptedById = loadOwnerAcceptance({
+    runtimeRoot: runtimeRoot || path.join(workspaceRoot, 'runtime'),
+    familyManifest: ownerAcceptanceFamilyManifest,
+  });
+  const entries = entryPlans.map((entry) => {
+    const { businessDecision, capabilityIds } = entry;
     const implementationReceipts = capabilityIds
       .map((id) => verificationReceipts.get(id))
       .filter(Boolean);
@@ -254,6 +237,8 @@ export function buildLegacyCapabilityMatrixV3({ matrixV2 = null, operationalEvid
         subjectId: ownerAccepted ? ownerAcceptance.subjectId : null,
         acceptedAt: ownerAccepted ? ownerAcceptance.acceptedAt : null,
         evidenceHash: ownerAccepted ? ownerAcceptance.evidenceHash : null,
+        familyId: ownerAccepted ? ownerAcceptance.familyId || null : null,
+        familyHash: ownerAccepted ? ownerAcceptance.familyHash || null : null,
       },
       coverageRequirements: coverageRequirements(businessDecision, capabilityIds),
       coverageTests: coverageTests(entry, businessDecision, capabilityIds),
@@ -277,6 +262,7 @@ export function buildLegacyCapabilityMatrixV3({ matrixV2 = null, operationalEvid
       operationalProofCannotBeInferredFromConformance: true,
     },
     capabilityCatalog: CAPABILITY_CATALOG,
+    ownerAcceptanceFamilyManifest,
     summary: {
       entryCount: entries.length,
       byDecision,
@@ -289,6 +275,7 @@ export function buildLegacyCapabilityMatrixV3({ matrixV2 = null, operationalEvid
       ownerAccepted: entries.filter((entry) => entry.owner_accepted.satisfied).length,
       ownerAcceptancePending: entries.filter((entry) => !entry.owner_accepted.satisfied).length,
       uniqueCapabilityCount: new Set(entries.flatMap((entry) => entry.capabilityIds)).size,
+      ownerAcceptanceFamilyCount: ownerAcceptanceFamilyManifest.families.length,
     },
     entries,
   };

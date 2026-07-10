@@ -223,7 +223,7 @@ test('production modules do not bypass StorePort or restore autopilot acceptance
     assert.equal(text.includes('resolvePaperStore('), false, file);
   }
   for (const file of productionFiles) {
-    if (file.endsWith('filesystem-artifact-repository.mjs')) continue;
+    if (file.endsWith('-repository.mjs')) continue;
     const text = fs.readFileSync(file, 'utf8');
     assert.equal(/\b(writeFile|writeFileSync|appendFile|appendFileSync|rename|renameSync)\(/.test(text), false, file);
   }

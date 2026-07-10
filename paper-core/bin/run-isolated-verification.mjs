@@ -5,10 +5,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
+import { createDefaultPaperStore, createReadOnlyPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 import { currentCodeProvenance } from '../src/code-provenance.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { buildSqliteLogicalIntegrityReport } from '../src/sqlite-logical-integrity.mjs';
+import { prepareImmutableLegacyMatrixReference } from '../../migration/legacy-matrix-reference.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const mode = process.argv[2] || 'test';
@@ -23,6 +25,10 @@ function sha(file) {
 }
 
 const productionHashBefore = sha(productionDb);
+const legacyReference = prepareImmutableLegacyMatrixReference();
+const productionLogicalBefore = fs.existsSync(productionDb)
+  ? buildSqliteLogicalIntegrityReport({ dbPath: productionDb, store: createReadOnlyPaperStore({ dbPath: productionDb }) })
+  : null;
 if (fs.existsSync(productionDb)) fs.copyFileSync(productionDb, isolatedDb);
 for (const relative of ['owner-acceptance', 'operational-proof', 'trust', 'authority-inbox']) {
   const source = path.join(productionRuntimeRoot, relative);
@@ -41,9 +47,14 @@ const provenance = {
 const env = {
   ...process.env,
   HEPTA_PAPER_RUNTIME_ROOT: isolatedRuntimeRoot,
+  HEPTA_PAPER_RUNTIME_ISOLATED: '1',
+  HEPTA_PRODUCTION_RUNTIME_ROOT: productionRuntimeRoot,
   HEPTA_EVIDENCE_ENVIRONMENT: 'verification',
   HEPTA_EVIDENCE_CLASS: 'technical_conformance',
   HEPTA_RELEASE_COMMIT: provenance.commit || '',
+  HEPTA_LEGACY_REFERENCE_PREPARED: '1',
+  HEPTA_LEGACY_REFERENCE_ARCHIVE: legacyReference.archivePath,
+  PAPER_FACTORY_LEGACY_ROOT: legacyReference.root,
 };
 const startedAt = new Date().toISOString();
 const result = spawnSync('npm', ['run', `${mode}:inner`], {
@@ -53,10 +64,21 @@ const result = spawnSync('npm', ['run', `${mode}:inner`], {
   stdio: ['inherit', 'inherit', 'inherit'],
 });
 const productionHashAfter = sha(productionDb);
+const productionLogicalAfter = fs.existsSync(productionDb)
+  ? buildSqliteLogicalIntegrityReport({ dbPath: productionDb, store: createReadOnlyPaperStore({ dbPath: productionDb }) })
+  : null;
+const productionLogicalMutated = productionLogicalBefore?.logicalDatabaseHash
+  !== productionLogicalAfter?.logicalDatabaseHash;
+const productionLogicalBlocked = Boolean(
+  productionLogicalBefore?.blockers?.length || productionLogicalAfter?.blockers?.length,
+);
 const payload = {
   version: 1,
   kind: 'IsolatedVerificationReceipt',
-  status: result.status === 0 && productionHashBefore === productionHashAfter
+  status: result.status === 0
+    && productionHashBefore === productionHashAfter
+    && !productionLogicalMutated
+    && !productionLogicalBlocked
     ? 'isolated_verification_passed'
     : 'isolated_verification_blocked',
   mode,
@@ -69,6 +91,11 @@ const payload = {
   productionStoreHashBefore: productionHashBefore,
   productionStoreHashAfter: productionHashAfter,
   productionStoreMutated: productionHashBefore !== productionHashAfter,
+  productionLogicalHashBefore: productionLogicalBefore?.logicalDatabaseHash || null,
+  productionLogicalHashAfter: productionLogicalAfter?.logicalDatabaseHash || null,
+  productionLogicalStoreMutated: productionLogicalMutated,
+  productionLogicalIntegrityStatusBefore: productionLogicalBefore?.status || null,
+  productionLogicalIntegrityStatusAfter: productionLogicalAfter?.status || null,
   evidenceEnvironment: 'verification',
   evidenceClass: 'technical_conformance',
 };
@@ -89,6 +116,9 @@ if (mode === 'release') {
   }
 }
 process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`);
+legacyReference.cleanup();
 if (receipt.status === 'isolated_verification_passed') fs.rmSync(isolatedRuntimeRoot, { recursive: true, force: true });
 else process.stderr.write(`Isolated verification runtime retained: ${isolatedRuntimeRoot}\n`);
-if (result.status !== 0 || receipt.productionStoreMutated) process.exitCode = result.status || 1;
+if (result.status !== 0 || receipt.productionStoreMutated || receipt.productionLogicalStoreMutated || productionLogicalBlocked) {
+  process.exitCode = result.status || 1;
+}

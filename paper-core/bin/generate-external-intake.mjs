@@ -9,6 +9,7 @@ import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { capabilityTargetBindings } from '../../migration/operational-proof-intake.mjs';
 import { fileURLToPath } from 'node:url';
+import crypto from 'node:crypto';
 
 process.env.HEPTA_EVIDENCE_ENVIRONMENT = 'administrative';
 process.env.HEPTA_EVIDENCE_CLASS = 'external_intake';
@@ -18,6 +19,18 @@ const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)),
 const matrix = buildLegacyCapabilityMatrixV3({ runtimeRoot });
 const provenance = currentCodeProvenance();
 const context = bootstrapPaperExecutionContext({ root, runtimeRoot, mode: 'external-intake-generation', execute: false, writeReport: true });
+
+function sha256File(file) {
+  return fs.existsSync(file)
+    ? `sha256:${crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')}`
+    : null;
+}
+
+function boundRuntimeDocument(relative) {
+  const file = path.join(runtimeRoot, relative);
+  return { relative, present: fs.existsSync(file), sha256: sha256File(file) };
+}
+
 await withArtifactWriteContext(context.services, async () => {
   const outputRoot = path.join(runtimeRoot, 'external-intake');
   const repository = context.services.artifactRepositoryFactory(outputRoot);
@@ -73,11 +86,57 @@ await withArtifactWriteContext(context.services, async () => {
     })),
     conformanceReceiptsCannotQualify: true,
   };
+  const paperId = 'A_Theory_of__Expectations';
+  const mainTex = path.join(root, 'submission', 'AoM', paperId, 'main.tex');
+  const productionChainPayload = {
+    version: 1,
+    kind: 'RealPaperProductionChainRequest',
+    status: 'external_authorities_and_evidence_required',
+    codeProvenance: provenance,
+    paperId,
+    subject: {
+      mainTex: path.relative(root, mainTex),
+      mainTexPresent: fs.existsSync(mainTex),
+      mainTexHash: sha256File(mainTex),
+      nativeWorkerPilot: boundRuntimeDocument(`pilots/${paperId}/REAL_PAPER_END_TO_END_PILOT_RECEIPT.json`),
+      providerSandboxPilot: boundRuntimeDocument(`pilots/${paperId}/REAL_PAPER_PROVIDER_SANDBOX_RECEIPT.json`),
+    },
+    requiredSequence: [
+      'production_bound_academic_evidence_attestation',
+      'independent_referee_verdict',
+      'submission_operator_authorization',
+      'live_executor_authorization',
+      'external_provider_receipt',
+      'provider_reconciliation_and_release',
+    ],
+    requiredRoles: ['academic_evidence_authority', 'independent_referee', 'submission_operator', 'live_executor_authorizer'],
+    separationOfDutiesRequired: true,
+    privateKeysForbiddenInRepository: true,
+    syntheticOrInternalSignaturesForbidden: true,
+    productionExecutorRequiredOutsideRepository: true,
+    externalActionAuthorizedByThisPacket: false,
+    requiredOutputDirectory: `runtime/authority-inbox/${paperId}`,
+  };
+  const offhostWormContractPath = path.join(workspaceRoot, 'paper-core', 'config', 'offhost-worm-contract.v1.json');
+  const offhostWormPayload = {
+    version: 1,
+    kind: 'OffhostWormOnboardingPacket',
+    status: 'external_distinct_device_and_operator_required',
+    codeProvenance: provenance,
+    contractPath: path.relative(workspaceRoot, offhostWormContractPath),
+    contractHash: sha256File(offhostWormContractPath),
+    requiredProperties: ['distinct_filesystem_device', 'filesystem_immutable_objects', 'restore_drill'],
+    requiredCommandSequence: ['npm run offhost:worm-status', 'npm run offhost:worm-snapshot -- --execute', 'npm run offhost:worm-restore-drill -- --manifest <path>'],
+    internalFallbackForbidden: true,
+    completionInferredFromPacket: false,
+  };
   const outputs = [];
   for (const [name, payload, role] of [
     ['OWNER_ACCEPTANCE_REQUEST.json', ownerPayload, 'owner_acceptance_request'],
     ['AUTHORITY_ONBOARDING_PACKET.json', authorityPayload, 'authority_onboarding_packet'],
     ['OPERATIONAL_PROOF_PLAN.json', operationalPayload, 'operational_proof_plan'],
+    ['REAL_PAPER_PRODUCTION_CHAIN_REQUEST.json', productionChainPayload, 'real_paper_production_chain_request'],
+    ['OFFHOST_WORM_ONBOARDING_PACKET.json', offhostWormPayload, 'offhost_worm_onboarding_packet'],
   ]) {
     const bound = { ...payload, documentHash: hashRecord(payload.kind, payload) };
     outputs.push(await repository.writeJson(path.join(outputRoot, name), bound, { role }));

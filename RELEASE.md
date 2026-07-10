@@ -1,21 +1,27 @@
 # Release process
 
-Version 0.6.0 is a recoverability, governance-intake and immutable-reference checkpoint,
+Version 0.7.0 is an isolation, archive-independent-audit and external-recovery checkpoint,
 not a live-submission release.
 
-Run `npm run release:verify` in the workspace with the frozen legacy source
-available for the read-only retirement audit. The two Python-to-JavaScript
-differentials themselves replay from the tracked minimal immutable fixture.
+Run `npm run release:verify` from a clean commit. Verification uses disposable
+SQLite/CAS/ledger state, proves that production database byte and logical hashes
+are unchanged, and restores the 263-row source audit from the ext4-immutable
+archive. Neither the matrix audit nor the two Python-to-JavaScript differentials
+require the live legacy working directory.
 The gate requires the full local selftest, architecture and repository-wide
 coverage, the cold-volume contract, both differentials, physical workspace
-separation, native-store health, an isolated verification runtime, a
-backup/restore drill, the immutable archive and a deletion/restore drill. The
+separation, read-only native-store health and logical integrity, an isolated
+verification runtime, a backup/restore drill, the immutable archive and a
+deletion/restore drill. The
 release evidence bundle binds the
 commit, verification receipt, capability manifest, migration matrix, legacy
 tree and database hashes. Its local signature proves build/archive integrity
 only; it is not owner, academic, referee, operator, or executor authority.
 
 A release tag may be created only from a clean worktree after that gate passes.
+The cold-volume CAS and off-host WORM contracts are recorded in the signed
+bundle; missing external media remains an explicit blocker rather than a
+locally inferred success.
 
 The repository remains fail-closed. A tag does not authorize external actions,
 academic acceptance, destructive deletion, or functional-parity retirement of

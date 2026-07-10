@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.7.0 - 2026-07-10
+
+- Made every test, status and governance workflow either disposable-runtime or
+  read-only by default. Standalone selftests now reject a production runtime,
+  and release verification binds both the SQLite byte hash and a canonical
+  logical database hash.
+- Added a one-time, auditable repair for the duplicate historical pilot receipt
+  that had an invalid ledger key; no historical evidence is promoted by the
+  repair.
+- Replaced the 263-row migration audit's live `paper_factory` dependency with
+  selective restoration from the ext4-immutable archive and a tracked
+  hash/symbol manifest.
+- Added fail-closed cold-volume CAS import/restore and off-host WORM
+  snapshot/restore contracts. Neither is reported complete while the external
+  cold volume and distinct WORM device are absent.
+- Raised the whole-repository coverage gate to 25% lines and 30% functions,
+  while retaining the 50% branch and stricter architecture gates. Split the
+  paper-contract facade into bounded proposal, research, workflow, venue and
+  product modules and extracted blocker-family reporting from batch summary.
+- Added final-commit-bound packets for four externally separated authority
+  roles, 13 owner families, 14 operational proofs, one real-paper production
+  chain, and off-host WORM onboarding. Internal key generation and inferred
+  acceptance remain forbidden.
+
+This release remains production `No-Go`: external trust roles, owner
+acceptance and operational proof are still absent; the cold volume and off-host
+WORM target are not mounted; no live provider action is authorized.
+
 ## 0.6.0 - 2026-07-10
 
 - Added a verified cold-volume mount contract for all 15 unavailable

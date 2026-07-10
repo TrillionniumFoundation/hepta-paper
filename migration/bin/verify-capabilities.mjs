@@ -7,6 +7,9 @@ import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqli
 import { createFilesystemArtifactRepository } from '../../paper-adapters/artifacts/filesystem-artifact-repository.mjs';
 import { createSystemClock } from '../../paper-adapters/runtime/system-clock.mjs';
 import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../../paper-core/src/workspace-layout.mjs';
+import { assertIsolatedVerificationRuntime } from '../../paper-core/src/verification-runtime.mjs';
+
+assertIsolatedVerificationRuntime('capability conformance verification');
 
 const root = defaultPaperAssetRoot();
 const runtimeRoot = defaultPaperRuntimeRoot();

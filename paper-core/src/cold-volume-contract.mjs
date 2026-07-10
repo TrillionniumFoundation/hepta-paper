@@ -47,6 +47,7 @@ export function verifyColdVolumeContract({ assetRoot, contract, contractPath = n
   const mountAvailable = mountAvailableOverride === null
     ? mountProbe.status === 0
     : Boolean(mountAvailableOverride);
+  if (!mountAvailable) blockers.push('cold_volume_unavailable');
   const sentinelPath = path.join(mountRoot, contract.sentinelRelativePath);
   let sentinel = null;
   if (mountAvailable && contract.contentManifestRequiredWhenMounted) {

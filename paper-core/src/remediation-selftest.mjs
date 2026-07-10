@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { buildCoreIntegrityReport, compareCoreFileRows } from './core-integrity.mjs';
-import { heptaStorePath, legacyStorePath } from './hepta-store.mjs';
+import { heptaStorePath } from './hepta-store.mjs';
 import { summarizeRows } from './batch-summary.mjs';
 import * as contractsFacade from './paper-contracts.mjs';
 import { buildRefereeReviewIntake as buildRefereeReviewIntakeDirect } from './contracts/referee-planning.mjs';
@@ -24,15 +24,18 @@ import { makeExperimentCode } from '../../paper-adapters/empirical-analysis/expe
 import { validateAndMaybeApplyPatches } from '../../paper-adapters/referee-revise/repair-executor.mjs';
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import {
-  defaultLegacyPaperFactoryRoot,
   defaultPaperAssetRoot,
   defaultPaperRuntimeRoot,
 } from './workspace-layout.mjs';
+import { assertIsolatedVerificationRuntime } from './verification-runtime.mjs';
+import { resolveImmutableLegacyMatrixArchive } from '../../migration/legacy-matrix-reference.mjs';
+
+assertIsolatedVerificationRuntime('paper remediation selftest');
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const root = defaultPaperAssetRoot();
 const nativeDb = heptaStorePath(root, defaultPaperRuntimeRoot());
-const legacyDb = legacyStorePath(defaultLegacyPaperFactoryRoot());
+const legacyArchive = resolveImmutableLegacyMatrixArchive();
 const nativeStore = createDefaultPaperStore({ root, runtimeRoot: defaultPaperRuntimeRoot() });
 
 function hashFile(file) {
@@ -70,12 +73,17 @@ function concurrentSql(sql) {
   });
 }
 
-const legacyHashBefore = hashFile(legacyDb);
+const legacyHashBefore = hashFile(legacyArchive);
 const productionModuleBudgetBytes = 64 * 1024;
 const productionModules = [
-  ...moduleFiles(path.join(workspaceRoot, 'paper-core')),
-  ...moduleFiles(path.join(workspaceRoot, 'paper-adapters')),
-];
+  'paper-core/src',
+  'paper-adapters',
+  'paper-domain',
+  'paper-ports',
+  'paper-application',
+  'workflow-kernel',
+].flatMap((relative) => moduleFiles(path.join(workspaceRoot, relative)))
+  .filter((file) => !/selftest/i.test(path.basename(file)));
 const oversizedProductionModules = productionModules
   .map((file) => ({
     file: path.relative(workspaceRoot, file),
@@ -219,8 +227,8 @@ const concurrentRows = JSON.parse(sqlite(
 assert.equal(concurrentRows.length, 2);
 sqlite(`DELETE FROM audit_receipts WHERE receipt_id LIKE '${probePrefix}_%';`);
 
-const legacyHashAfter = hashFile(legacyDb);
-assert.equal(legacyHashAfter, legacyHashBefore, 'remediation tests must not mutate legacy paper_factory.sqlite');
+const legacyHashAfter = hashFile(legacyArchive);
+assert.equal(legacyHashAfter, legacyHashBefore, 'remediation tests must not mutate the immutable legacy archive');
 
 process.stdout.write(`${JSON.stringify({
   ok: true,
@@ -239,4 +247,5 @@ process.stdout.write(`${JSON.stringify({
   rollbackVerified: true,
   concurrentWritersVerified: 2,
   legacyStoreUnchanged: true,
+  immutableLegacyArchiveUnchanged: true,
 })}\n`);

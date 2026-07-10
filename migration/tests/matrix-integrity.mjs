@@ -2,8 +2,16 @@ import assert from 'node:assert/strict';
 import { runLegacyCleanupAdapter } from '../../paper-adapters/legacy-cleanup/index.mjs';
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { defaultLegacyPaperFactoryRoot, defaultPaperRuntimeRoot } from '../../paper-core/src/workspace-layout.mjs';
+import { assertIsolatedVerificationRuntime } from '../../paper-core/src/verification-runtime.mjs';
+import { immutableLegacyMatrixReferenceStatus, prepareImmutableLegacyMatrixReference } from '../legacy-matrix-reference.mjs';
 
-const root = defaultLegacyPaperFactoryRoot();
+assertIsolatedVerificationRuntime('legacy migration matrix integrity');
+const preparedByParent = process.env.HEPTA_LEGACY_REFERENCE_PREPARED === '1';
+const reference = preparedByParent ? null : prepareImmutableLegacyMatrixReference();
+if (reference) process.on('exit', reference.cleanup);
+const referenceStatus = immutableLegacyMatrixReferenceStatus();
+const root = reference?.root || defaultLegacyPaperFactoryRoot();
+if (reference) process.env.PAPER_FACTORY_LEGACY_ROOT = root;
 const report = await runLegacyCleanupAdapter({
   root,
   runtimeRoot: defaultPaperRuntimeRoot(),
@@ -57,4 +65,8 @@ process.stdout.write(JSON.stringify({
   p0Blockers: report.summary.activeP0MigrationBlockerCount,
   p1Blockers: report.summary.activeP1MigrationBlockerCount,
   uniqueBehaviorTestExecutionCount: audit.uniqueBehaviorTestExecutionCount,
+  legacyReferenceArchiveHash: referenceStatus.archiveSha256,
+  legacyReferenceMatrixHash: referenceStatus.matrixSha256,
+  liveLegacyRootRequired: false,
 }) + '\n');
+reference?.cleanup();

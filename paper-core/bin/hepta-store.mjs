@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { heptaStorePath, legacyStorePath } from '../src/hepta-store.mjs';
 import { createSqliteStore } from '../../paper-adapters/persistence/sqlite-store.mjs';
-import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
+import { createDefaultPaperStore, createReadOnlyPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqlite-receipt-ledger.mjs';
 import { createSystemClock } from '../../paper-adapters/runtime/system-clock.mjs';
 import { resolveWorkspaceLayout } from '../src/workspace-layout.mjs';
@@ -13,15 +13,25 @@ const layout = resolveWorkspaceLayout();
 const root = layout.assetRoot;
 const dbPath = heptaStorePath(root, layout.runtimeRoot);
 const legacyPath = legacyStorePath(layout.legacyRoot);
-const store = createDefaultPaperStore({ root, runtimeRoot: layout.runtimeRoot, dbPath });
 const clock = createSystemClock();
-const receiptLedger = createSqliteReceiptLedger({ store, clock });
+let mutableStore = null;
+let mutableReceiptLedger = null;
+
+function writableStore() {
+  if (!mutableStore) mutableStore = createDefaultPaperStore({ root, runtimeRoot: layout.runtimeRoot, dbPath });
+  return mutableStore;
+}
+
+function receiptLedger() {
+  if (!mutableReceiptLedger) mutableReceiptLedger = createSqliteReceiptLedger({ store: writableStore(), clock });
+  return mutableReceiptLedger;
+}
 
 function sqlQuote(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
 }
 
-function runSql(sql, { json = false } = {}) {
+function runSql(store, sql, { json = false } = {}) {
   const result = json ? store.query(sql) : store.execute(sql);
   if (!result.ok) throw new Error(result.stderr || result.stdout || result.error || 'sqlite3 failed');
   return json ? JSON.stringify(result.rows) : result.stdout;
@@ -32,6 +42,7 @@ function fileSha256(file) {
 }
 
 function initialize() {
+  writableStore();
   return status();
 }
 
@@ -39,7 +50,7 @@ function migrateLegacy() {
   initialize();
   if (!fs.existsSync(legacyPath)) throw new Error(`Legacy store missing: ${legacyPath}`);
   const sourceHash = `sha256:${fileSha256(legacyPath)}`;
-  runSql(`
+  runSql(writableStore(), `
 PRAGMA foreign_keys=OFF;
 ATTACH DATABASE ${sqlQuote(legacyPath)} AS legacy;
 BEGIN IMMEDIATE;
@@ -72,7 +83,8 @@ PRAGMA foreign_keys=ON;
 }
 
 function status() {
-  const rows = JSON.parse(runSql(`
+  const store = createReadOnlyPaperStore({ root, runtimeRoot: layout.runtimeRoot, dbPath });
+  const rows = JSON.parse(runSql(store, `
 SELECT 'papers' AS name,count(*) AS count FROM papers
 UNION ALL SELECT 'venues',count(*) FROM venues
 UNION ALL SELECT 'submission_ledger',count(*) FROM submission_ledger
@@ -86,11 +98,12 @@ UNION ALL SELECT 'job_attempts',count(*) FROM job_attempts
 UNION ALL SELECT 'submission_outbox',count(*) FROM submission_outbox
 UNION ALL SELECT 'submission_inbox',count(*) FROM submission_inbox;
 `, { json: true }) || '[]');
-  const metadata = JSON.parse(runSql('SELECT key,value,updated_at FROM store_metadata ORDER BY key;', { json: true }) || '[]');
-  const evidenceClassifications = JSON.parse(runSql('SELECT environment,evidence_class,count(*) AS count FROM receipt_ledger GROUP BY environment,evidence_class ORDER BY environment,evidence_class;', { json: true }) || '[]');
-  const jobClassifications = JSON.parse(runSql('SELECT environment,evidence_class,status,count(*) AS count FROM jobs GROUP BY environment,evidence_class,status ORDER BY environment,evidence_class,status;', { json: true }) || '[]');
-  const quickCheck = runSql('PRAGMA quick_check;').trim();
-  const schemaVersion = Number(JSON.parse(runSql('SELECT coalesce(max(version),0) AS version FROM schema_migrations;', { json: true }) || '[]')[0]?.version || 0);
+  const metadata = JSON.parse(runSql(store, 'SELECT key,value,updated_at FROM store_metadata ORDER BY key;', { json: true }) || '[]');
+  const evidenceClassifications = JSON.parse(runSql(store, 'SELECT environment,evidence_class,count(*) AS count FROM receipt_ledger GROUP BY environment,evidence_class ORDER BY environment,evidence_class;', { json: true }) || '[]');
+  const jobClassifications = JSON.parse(runSql(store, 'SELECT environment,evidence_class,status,count(*) AS count FROM jobs GROUP BY environment,evidence_class,status ORDER BY environment,evidence_class,status;', { json: true }) || '[]');
+  const quickRows = JSON.parse(runSql(store, 'PRAGMA quick_check;', { json: true }) || '[]');
+  const quickCheck = String(quickRows[0]?.quick_check || quickRows[0]?.integrity_check || 'unknown');
+  const schemaVersion = Number(JSON.parse(runSql(store, 'SELECT coalesce(max(version),0) AS version FROM schema_migrations;', { json: true }) || '[]')[0]?.version || 0);
   return {
     version: 3,
     kind: 'HeptaNativeStoreStatus',
@@ -111,7 +124,7 @@ function backup() {
   fs.mkdirSync(backupRoot, { recursive: true });
   const stamp = new Date().toISOString().replace(/[-:.]/g, '');
   const backupPath = path.join(backupRoot, `hepta-paper-${stamp}-${process.pid}.sqlite`);
-  const result = store.execute(`VACUUM INTO ${sqlQuote(backupPath)};`);
+  const result = writableStore().execute(`VACUUM INTO ${sqlQuote(backupPath)};`);
   if (!result.ok) throw new Error(result.error || result.stderr || 'backup_failed');
   const receipt = {
     version: 1,
@@ -124,7 +137,7 @@ function backup() {
     createdAt: new Date().toISOString(),
   };
   fs.writeFileSync(`${backupPath}.receipt.json`, `${JSON.stringify(receipt, null, 2)}\n`);
-  const ledgerReceipt = receiptLedger.record(receipt, { stream: 'store-admin', environment: 'administrative', evidenceClass: 'backup' });
+  const ledgerReceipt = receiptLedger().record(receipt, { stream: 'store-admin', environment: 'administrative', evidenceClass: 'backup' });
   return { ...receipt, ledgerReceipt };
 }
 
@@ -149,7 +162,7 @@ function restoreDrill() {
     performedAt: new Date().toISOString(),
     productionStoreMutated: false,
   };
-  const ledgerReceipt = receiptLedger.record(receipt, { stream: 'store-admin', environment: 'administrative', evidenceClass: 'restore_drill' });
+  const ledgerReceipt = receiptLedger().record(receipt, { stream: 'store-admin', environment: 'administrative', evidenceClass: 'restore_drill' });
   return { ...receipt, ledgerReceipt };
 }
 

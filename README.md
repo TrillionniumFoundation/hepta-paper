@@ -69,6 +69,7 @@ Run:
 ```bash
 npm run store:migrate-legacy
 npm run store:status
+npm run store:logical-integrity
 npm run workspace:verify-decoupled
 npm run store:restore-drill
 npm run core:integrity
@@ -82,7 +83,10 @@ npm run authority:status
 npm run owner:status
 npm run operational:status
 npm run assets:cold-volume-status
+npm run assets:cold-volume-cas-status
 npm run legacy:fixture-verify
+npm run legacy:matrix-reference-status
+npm run offhost:worm-status
 node paper-core/bin/paper-production-core.mjs proposal --idea "distributionally robust reinforcement learning for stochastic control" --discipline "machine learning" --venue NeurIPS --write-report
 node paper-core/bin/paper-production-core.mjs proposal --idea "distributionally robust reinforcement learning for stochastic control" --discipline "machine learning" --venue NeurIPS --approved --materialize-source --write-report
 node paper-core/bin/paper-production-core.mjs proposal --paper distributionally_robust_rl_for_stochastic_control --idea "distributionally robust reinforcement learning for stochastic control" --discipline "machine learning" --venue NeurIPS --title "Distributionally Robust RL for Stochastic Control" --approved --materialize-source --stage-inventory --write-report
@@ -131,6 +135,23 @@ release gate; operational replay stays fail-closed until the declared
 `THUNDERO_EXT4` mount and its hash-bound content manifest are present. The
 repository-wide coverage gate imports every production module and enforces a
 whole-repository baseline in addition to the stricter architecture-module gate.
+When that volume becomes available, its declared content can be imported into
+a content-addressed recovery store and independently restore-drilled. Release
+verification never treats a missing volume or absent CAS manifest as
+operational proof.
+
+All selftests, capability checks, coverage commands and release verification
+run against disposable runtime state. Read-only status commands use a
+read-only StorePort. The signed release binds both SQLite bytes and a canonical
+logical database hash so page-layout churn cannot be confused with a logical
+state change. The 263-row legacy audit selectively restores its sources from
+the immutable archive; it no longer reads the live legacy working directory.
+
+Off-host WORM onboarding is governed by
+`paper-core/config/offhost-worm-contract.v1.json`. A snapshot can qualify only
+on a distinct mounted filesystem with immutable objects and a successful
+restore drill. Local packets and signatures cannot satisfy that external-media
+requirement.
 
 The proposal build path may execute a local LaTeX build under
 `runtime/builds/<paper_id>/` and write `BUILD_ARTIFACT_ACCEPTANCE.json` for the

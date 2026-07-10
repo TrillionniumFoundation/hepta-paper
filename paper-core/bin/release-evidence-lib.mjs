@@ -6,6 +6,11 @@ import { defaultPaperAssetRoot } from '../src/workspace-layout.mjs';
 import { verifyColdVolumeContract } from '../src/cold-volume-contract.mjs';
 import { verifyLegacyDifferentialReference } from '../../migration/legacy-reference-fixture.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { buildSqliteLogicalIntegrityReport } from '../src/sqlite-logical-integrity.mjs';
+import { coldVolumeCasStatus } from '../src/cold-volume-cas-repository.mjs';
+import { verifyOffhostWormTarget } from '../src/offhost-worm-repository.mjs';
+import { immutableLegacyMatrixReferenceStatus, resolveImmutableLegacyMatrixArchive } from '../../migration/legacy-matrix-reference.mjs';
+import { createReadOnlyPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 
 export function sha256File(file) {
   return `sha256:${crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')}`;
@@ -94,8 +99,8 @@ export function buildReleaseEvidenceBundle({ runtimeRoot, legacyRoot } = {}) {
     ? JSON.parse(fs.readFileSync(path.join(verificationRoot, verificationFiles.at(-1)), 'utf8'))
     : null;
   const legacyDb = path.join(legacyRoot, 'paper_factory.sqlite');
-  const archiveRoot = path.join(path.dirname(legacyRoot), 'hepta-paper-legacy-reference', codeProvenance.packageVersion);
-  const archivePath = path.join(archiveRoot, 'paper-factory-control-plane-reference.tar.gz');
+  const archivePath = resolveImmutableLegacyMatrixArchive();
+  const archiveRoot = path.dirname(archivePath);
   const archiveReceiptPath = path.join(archiveRoot, 'LEGACY_ARCHIVE_READ_ONLY_RECEIPT.json');
   const immutableReceiptFiles = fs.existsSync(archiveRoot)
     ? fs.readdirSync(archiveRoot).filter((name) => name.startsWith('IMMUTABLE_SNAPSHOT_RECEIPT_') && name.endsWith('.json')).sort()
@@ -119,6 +124,22 @@ export function buildReleaseEvidenceBundle({ runtimeRoot, legacyRoot } = {}) {
     contractPath: coldVolumeContractPath,
   });
   const minimalDifferentialFixture = verifyLegacyDifferentialReference();
+  const immutableMatrixReference = immutableLegacyMatrixReferenceStatus();
+  const productionDb = path.join(runtimeRoot, 'hepta-paper.sqlite');
+  const productionStoreLogicalIntegrity = fs.existsSync(productionDb)
+    ? buildSqliteLogicalIntegrityReport({
+      dbPath: productionDb,
+      store: createReadOnlyPaperStore({ dbPath: productionDb }),
+    })
+    : null;
+  const coldVolumeCas = coldVolumeCasStatus({
+    casRoot: path.resolve(process.env.HEPTA_COLD_OBJECT_STORE_ROOT || '/data/home-data/hepta-paper-cold-object-store'),
+  });
+  const offhostContractPath = path.join(workspaceRoot, 'paper-core', 'config', 'offhost-worm-contract.v1.json');
+  const offhostWormStatus = verifyOffhostWormTarget({
+    workspaceRoot,
+    contract: JSON.parse(fs.readFileSync(offhostContractPath, 'utf8')),
+  });
   const payload = {
     version: 1,
     kind: 'ReleaseEvidenceBundle',
@@ -129,6 +150,8 @@ export function buildReleaseEvidenceBundle({ runtimeRoot, legacyRoot } = {}) {
       && immutableReceipt?.status === 'legacy_reference_ext4_inode_immutable'
       && coldVolumeStatus.contractValid
       && minimalDifferentialFixture.status === 'legacy_differential_reference_verified'
+      && immutableMatrixReference.status === 'immutable_legacy_matrix_reference_ready'
+      && productionStoreLogicalIntegrity?.status === 'sqlite_logical_integrity_verified'
       ? 'release_evidence_bundle_ready'
       : 'release_evidence_bundle_blocked',
     codeProvenance,
@@ -147,6 +170,10 @@ export function buildReleaseEvidenceBundle({ runtimeRoot, legacyRoot } = {}) {
       legacyImmutableSnapshotReceiptHash: immutableReceiptPath ? sha256File(immutableReceiptPath) : null,
       minimalLegacyDifferentialFixtureHash: minimalDifferentialFixture.archiveSha256,
       coldVolumeContractHash: coldVolumeStatus.contractHash,
+      immutableLegacyMatrixReferenceHash: immutableMatrixReference.matrixSha256,
+      productionStoreLogicalHash: productionStoreLogicalIntegrity?.logicalDatabaseHash || null,
+      coldVolumeCasManifestHash: coldVolumeCas.manifestHash || null,
+      offhostWormContractHash: sha256File(offhostContractPath),
       runtimeHygieneExportHash: (() => {
         const file = path.join(runtimeRoot, 'quarantine', 'pre-v0.5-runtime-evidence', 'CONTAMINATED_RECEIPTS.json');
         return fs.existsSync(file) ? sha256File(file) : null;
@@ -164,8 +191,14 @@ export function buildReleaseEvidenceBundle({ runtimeRoot, legacyRoot } = {}) {
       immutableSnapshotStatus: immutableReceipt?.status || 'missing',
       immutableContentObjectClaimed: immutableReceipt?.immutableContentObjectClaimed === true,
     },
-    assetRecoveryStatus: coldVolumeStatus,
+    assetRecoveryStatus: {
+      coldVolume: coldVolumeStatus,
+      coldVolumeCas,
+      offhostWorm: offhostWormStatus,
+    },
     minimalDifferentialFixture,
+    immutableMatrixReference,
+    productionStoreLogicalIntegrity,
     evidenceClasses: {
       technical: 'isolated verification only',
       operational: 'requires production-bound receipts and is not inferred here',

@@ -9,12 +9,12 @@ import { sha256File, signReleasePayload } from './release-evidence-lib.mjs';
 import { defaultLegacyPaperFactoryRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { verifyLegacyDifferentialReference } from '../../migration/legacy-reference-fixture.mjs';
+import { resolveImmutableLegacyMatrixArchive } from '../../migration/legacy-matrix-reference.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
 const runtimeRoot = defaultPaperRuntimeRoot();
 const legacyRoot = defaultLegacyPaperFactoryRoot();
-const version = currentCodeProvenance().packageVersion;
-const archivePath = path.join(path.dirname(legacyRoot), 'hepta-paper-legacy-reference', version, 'paper-factory-control-plane-reference.tar.gz');
+const archivePath = resolveImmutableLegacyMatrixArchive();
 if (!fs.existsSync(archivePath)) throw new Error(`Legacy reference archive missing: ${archivePath}`);
 const drillRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-legacy-deletion-drill-'));
 const extract = spawnSync('tar', ['-xzf', archivePath, '-C', drillRoot], { encoding: 'utf8' });
@@ -33,7 +33,12 @@ function run(args) {
   const result = spawnSync(process.execPath, args, {
     cwd: workspaceRoot,
     encoding: 'utf8',
-    env: { ...process.env, PAPER_FACTORY_LEGACY_ROOT: drillRoot, HEPTA_PAPER_RUNTIME_ROOT: verificationRuntimeRoot },
+    env: {
+      ...process.env,
+      PAPER_FACTORY_LEGACY_ROOT: drillRoot,
+      HEPTA_PAPER_RUNTIME_ROOT: verificationRuntimeRoot,
+      HEPTA_PAPER_RUNTIME_ISOLATED: '1',
+    },
     timeout: 240000,
   });
   return { args, exitCode: result.status, stdoutHash: hashRecord('CommandStdout', String(result.stdout || '')), stderr: String(result.stderr || '').slice(0, 500) };

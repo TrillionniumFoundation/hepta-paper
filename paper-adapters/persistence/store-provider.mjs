@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { heptaStorePath } from '../../paper-core/src/hepta-store.mjs';
-import { createSqliteStore } from './sqlite-store.mjs';
+import { createReadOnlySqliteStore, createSqliteStore } from './sqlite-store.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const migrations = [
@@ -42,4 +42,10 @@ export function applyStoreMigrations(store) {
 export function createDefaultPaperStore({ root, runtimeRoot = null, dbPath = null, maxBuffer } = {}) {
   const resolved = dbPath || heptaStorePath(root, runtimeRoot);
   return applyStoreMigrations(createSqliteStore({ dbPath: resolved, maxBuffer }));
+}
+
+export function createReadOnlyPaperStore({ root, runtimeRoot = null, dbPath = null, maxBuffer } = {}) {
+  const resolved = dbPath || heptaStorePath(root, runtimeRoot);
+  if (!fs.existsSync(resolved)) throw new Error(`Read-only paper store missing: ${resolved}`);
+  return createReadOnlySqliteStore({ dbPath: resolved, maxBuffer });
 }

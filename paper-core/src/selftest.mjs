@@ -29,6 +29,9 @@ import {
 } from './workspace-layout.mjs';
 import { bootstrapPaperExecutionContext } from '../../paper-application/bootstrap/service-bootstrap.mjs';
 import { enterArtifactWriteContext } from '../../paper-adapters/artifacts/artifact-write-context.mjs';
+import { assertIsolatedVerificationRuntime } from './verification-runtime.mjs';
+
+assertIsolatedVerificationRuntime('paper selftest');
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
 const paperFactoryRoot = defaultPaperAssetRoot();

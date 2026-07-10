@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "kind": "OffhostWormSnapshotContract",
+  "contractId": "hepta-paper-offhost-worm-v1",
+  "targetMountRoot": "/media/qian-qi/HEPTA_WORM",
+  "requireDistinctFilesystemDevice": true,
+  "requireFilesystemImmutableObjects": true,
+  "availabilityPolicy": "fail_closed_until_external_mount_is_verified"
+}

@@ -127,19 +127,16 @@
       "id": "p1-paperctl-modules-decision-points-py-52927f9cb593",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/venue-resolve",
-      "migrationAction": "extract_decision_rules_into_venue_or_source_adapter",
+      "migrationAction": "retire_generated_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "generated report/control-evidence surface explicitly retired outside venue resolution",
+          "zero source writes, process launches, and network imports",
+          "zero exact source-path references from hepta production modules"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/decision_points.py",
@@ -154,13 +151,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/venue-resolve/index.mjs",
-        "sha256": "1726a56a3502c806413dddfc9b1e2fa71ae5205668f018a7d6c542349d0e46b2",
+        "path": "hepta-paper-workspace/migration/venue-resolve-retirements.mjs",
+        "sha256": "0d56743d65c4a18ae8c0afaa2e975bf924e8247b6ad43c99e626a9eb707770f8",
         "symbols": [
-          "runVenueResolveAdapter"
+          "VENUE_RESOLVE_EXPLICIT_RETIREMENTS",
+          "venueResolveRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-venue-resolve-explicit-retirements",
+          "path": "migration/tests/p1-venue-resolve-retirements.mjs",
+          "sha256": "f6241b470cc818d3128e52d8b65f84ce6b5757576e0a2eb958443fbf262a8c90"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-external-submission-handoff-bundle-py-c0fbdde67313",
@@ -384,19 +388,16 @@
       "id": "p1-paperctl-modules-paper-production-final-settlement-gate-py-2c97c07f4a96",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/venue-resolve",
-      "migrationAction": "extract_decision_rules_into_venue_or_source_adapter",
+      "migrationAction": "retire_generated_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "generated report/control-evidence surface explicitly retired outside venue resolution",
+          "zero source writes, process launches, and network imports",
+          "zero exact source-path references from hepta production modules"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_final_settlement_gate.py",
@@ -407,31 +408,35 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/venue-resolve/index.mjs",
-        "sha256": "1726a56a3502c806413dddfc9b1e2fa71ae5205668f018a7d6c542349d0e46b2",
+        "path": "hepta-paper-workspace/migration/venue-resolve-retirements.mjs",
+        "sha256": "0d56743d65c4a18ae8c0afaa2e975bf924e8247b6ad43c99e626a9eb707770f8",
         "symbols": [
-          "runVenueResolveAdapter"
+          "VENUE_RESOLVE_EXPLICIT_RETIREMENTS",
+          "venueResolveRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-venue-resolve-explicit-retirements",
+          "path": "migration/tests/p1-venue-resolve-retirements.mjs",
+          "sha256": "f6241b470cc818d3128e52d8b65f84ce6b5757576e0a2eb958443fbf262a8c90"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-operator-drop-intake-preflight-py-73b35b8da1e4",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/venue-resolve",
-      "migrationAction": "extract_decision_rules_into_venue_or_source_adapter",
+      "migrationAction": "retire_generated_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "generated report/control-evidence surface explicitly retired outside venue resolution",
+          "zero source writes, process launches, and network imports",
+          "zero exact source-path references from hepta production modules"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_operator_drop_intake_preflight.py",
@@ -444,13 +449,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/venue-resolve/index.mjs",
-        "sha256": "1726a56a3502c806413dddfc9b1e2fa71ae5205668f018a7d6c542349d0e46b2",
+        "path": "hepta-paper-workspace/migration/venue-resolve-retirements.mjs",
+        "sha256": "0d56743d65c4a18ae8c0afaa2e975bf924e8247b6ad43c99e626a9eb707770f8",
         "symbols": [
-          "runVenueResolveAdapter"
+          "VENUE_RESOLVE_EXPLICIT_RETIREMENTS",
+          "venueResolveRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-venue-resolve-explicit-retirements",
+          "path": "migration/tests/p1-venue-resolve-retirements.mjs",
+          "sha256": "f6241b470cc818d3128e52d8b65f84ce6b5757576e0a2eb958443fbf262a8c90"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-post-action-runtime-chain-regression-py-3a28b1e72471",
@@ -666,19 +678,16 @@
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-material-inbox-readiness-capstone-py-5afb36257f44",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/venue-resolve",
-      "migrationAction": "extract_decision_rules_into_venue_or_source_adapter",
+      "migrationAction": "retire_generated_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "generated report/control-evidence surface explicitly retired outside venue resolution",
+          "zero source writes, process launches, and network imports",
+          "zero exact source-path references from hepta production modules"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_material_inbox_readiness_capstone.py",
@@ -689,13 +698,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/venue-resolve/index.mjs",
-        "sha256": "1726a56a3502c806413dddfc9b1e2fa71ae5205668f018a7d6c542349d0e46b2",
+        "path": "hepta-paper-workspace/migration/venue-resolve-retirements.mjs",
+        "sha256": "0d56743d65c4a18ae8c0afaa2e975bf924e8247b6ad43c99e626a9eb707770f8",
         "symbols": [
-          "runVenueResolveAdapter"
+          "VENUE_RESOLVE_EXPLICIT_RETIREMENTS",
+          "venueResolveRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-venue-resolve-explicit-retirements",
+          "path": "migration/tests/p1-venue-resolve-retirements.mjs",
+          "sha256": "f6241b470cc818d3128e52d8b65f84ce6b5757576e0a2eb958443fbf262a8c90"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-material-promotion-quarantine-capstone-py-e2b59d1bebf1",
@@ -1919,19 +1935,16 @@
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-readiness-capstone-py-363c1cd51c61",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/venue-resolve",
-      "migrationAction": "extract_decision_rules_into_venue_or_source_adapter",
+      "migrationAction": "retire_generated_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "generated report/control-evidence surface explicitly retired outside venue resolution",
+          "zero source writes, process launches, and network imports",
+          "zero exact source-path references from hepta production modules"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_referee_repair_packet_readiness_capstone.py",
@@ -1942,13 +1955,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/venue-resolve/index.mjs",
-        "sha256": "1726a56a3502c806413dddfc9b1e2fa71ae5205668f018a7d6c542349d0e46b2",
+        "path": "hepta-paper-workspace/migration/venue-resolve-retirements.mjs",
+        "sha256": "0d56743d65c4a18ae8c0afaa2e975bf924e8247b6ad43c99e626a9eb707770f8",
         "symbols": [
-          "runVenueResolveAdapter"
+          "VENUE_RESOLVE_EXPLICIT_RETIREMENTS",
+          "venueResolveRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-venue-resolve-explicit-retirements",
+          "path": "migration/tests/p1-venue-resolve-retirements.mjs",
+          "sha256": "f6241b470cc818d3128e52d8b65f84ce6b5757576e0a2eb958443fbf262a8c90"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-referee-repair-packet-real-source-provenance-intake-verifier-capstone-py-ac1f2b97ca6d",
@@ -2827,19 +2847,16 @@
       "id": "p1-paperctl-modules-paper-production-runner-readiness-gate-py-c28cfb6bfded",
       "priority": "P1",
       "capabilityFamily": "paper-adapters/venue-resolve",
-      "migrationAction": "extract_decision_rules_into_venue_or_source_adapter",
+      "migrationAction": "retire_generated_control_evidence_surface",
       "semanticScope": {
-        "status": "partial",
+        "status": "complete",
         "covered": [
-          "exact legacy source hash",
-          "legacy top-level symbol inventory",
-          "assigned native capability family",
-          "exact current target hash and exported target symbols"
+          "all public legacy source symbols inventoried",
+          "generated report/control-evidence surface explicitly retired outside venue resolution",
+          "zero source writes, process launches, and network imports",
+          "zero exact source-path references from hepta production modules"
         ],
-        "open": [
-          "hash-bound behavioral equivalence or explicit retirement test",
-          "complete symbol-to-symbol semantic coverage review"
-        ]
+        "open": []
       },
       "source": {
         "path": "paperctl_modules/paper_production_runner_readiness_gate.py",
@@ -2851,13 +2868,20 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-adapters/venue-resolve/index.mjs",
-        "sha256": "1726a56a3502c806413dddfc9b1e2fa71ae5205668f018a7d6c542349d0e46b2",
+        "path": "hepta-paper-workspace/migration/venue-resolve-retirements.mjs",
+        "sha256": "0d56743d65c4a18ae8c0afaa2e975bf924e8247b6ad43c99e626a9eb707770f8",
         "symbols": [
-          "runVenueResolveAdapter"
+          "VENUE_RESOLVE_EXPLICIT_RETIREMENTS",
+          "venueResolveRetirementDisposition"
         ]
       },
-      "behaviorTests": []
+      "behaviorTests": [
+        {
+          "id": "p1-venue-resolve-explicit-retirements",
+          "path": "migration/tests/p1-venue-resolve-retirements.mjs",
+          "sha256": "f6241b470cc818d3128e52d8b65f84ce6b5757576e0a2eb958443fbf262a8c90"
+        }
+      ]
     },
     {
       "id": "p1-paperctl-modules-paper-production-runtime-dry-run-harness-py-07dace58c53f",

@@ -23,6 +23,15 @@ const RETIRED_PLUGIN_RUNNERS = new Set([
   'plugins/core/substantive-referee/run.py',
 ]);
 
+const VENUE_RESOLVE_EXPLICIT_RETIREMENTS = new Set([
+  'paperctl_modules/decision_points.py',
+  'paperctl_modules/paper_production_final_settlement_gate.py',
+  'paperctl_modules/paper_production_operator_drop_intake_preflight.py',
+  'paperctl_modules/paper_production_referee_repair_packet_material_inbox_readiness_capstone.py',
+  'paperctl_modules/paper_production_referee_repair_packet_readiness_capstone.py',
+  'paperctl_modules/paper_production_runner_readiness_gate.py',
+]);
+
 const TARGETS = Object.freeze({
   'paper-adapters/venue-resolve': {
     path: 'hepta-paper-workspace/paper-adapters/venue-resolve/index.mjs',
@@ -85,6 +94,12 @@ function sourceSymbols(file, relative) {
 }
 
 function targetFor(entry) {
+  if (VENUE_RESOLVE_EXPLICIT_RETIREMENTS.has(entry.path)) {
+    return {
+      path: 'hepta-paper-workspace/migration/venue-resolve-retirements.mjs',
+      symbols: ['VENUE_RESOLVE_EXPLICIT_RETIREMENTS', 'venueResolveRetirementDisposition'],
+    };
+  }
   if (entry.path === 'plugins/core/report/plugin.yaml') {
     return {
       path: 'hepta-paper-workspace/paper-core/src/paper-batch-runner.mjs',
@@ -126,6 +141,7 @@ export function buildP1MatrixCandidates({
   root,
   entries,
   pluginBoundaryTestHash,
+  venueRetirementTestHash,
 } = {}) {
   return entries
     .filter((entry) => entry.priority === 'P1')
@@ -138,22 +154,33 @@ export function buildP1MatrixCandidates({
       const completePluginDescriptor = COMPLETE_PLUGIN_DESCRIPTORS.has(entry.path);
       const retiredPluginRunner = RETIRED_PLUGIN_RUNNERS.has(entry.path);
       const completePluginReplacement = completePluginDescriptor || retiredPluginRunner;
+      const retiredVenueResolveSurface = VENUE_RESOLVE_EXPLICIT_RETIREMENTS.has(entry.path);
+      const completeReplacement = completePluginReplacement || retiredVenueResolveSurface;
       return {
         id: candidateId(entry),
         priority: 'P1',
         capabilityFamily: entry.targetAdapter,
-        migrationAction: entry.migrationAction,
-        semanticScope: completePluginReplacement
+        migrationAction: retiredVenueResolveSurface
+          ? 'retire_generated_control_evidence_surface'
+          : entry.migrationAction,
+        semanticScope: completeReplacement
           ? {
             status: 'complete',
-            covered: [
-              completePluginDescriptor
-                ? 'legacy plugin descriptor identity and execution policy'
-                : 'legacy Python plugin runner explicitly retired and absent from hepta production references',
-              'native adapter export and local-only execution boundary',
-              'legacy external/write semantics explicitly blocked or retired',
-              'unbound model calls and direct manuscript mutation explicitly retired',
-            ],
+            covered: retiredVenueResolveSurface
+              ? [
+                'all public legacy source symbols inventoried',
+                'generated report/control-evidence surface explicitly retired outside venue resolution',
+                'zero source writes, process launches, and network imports',
+                'zero exact source-path references from hepta production modules',
+              ]
+              : [
+                completePluginDescriptor
+                  ? 'legacy plugin descriptor identity and execution policy'
+                  : 'legacy Python plugin runner explicitly retired and absent from hepta production references',
+                'native adapter export and local-only execution boundary',
+                'legacy external/write semantics explicitly blocked or retired',
+                'unbound model calls and direct manuscript mutation explicitly retired',
+              ],
             open: [],
           }
           : {
@@ -185,7 +212,13 @@ export function buildP1MatrixCandidates({
             path: 'migration/tests/p1-plugin-wrapper-boundaries.mjs',
             sha256: pluginBoundaryTestHash,
           }]
-          : [],
+          : retiredVenueResolveSurface
+            ? [{
+              id: 'p1-venue-resolve-explicit-retirements',
+              path: 'migration/tests/p1-venue-resolve-retirements.mjs',
+              sha256: venueRetirementTestHash,
+            }]
+            : [],
       };
     });
 }

@@ -28,9 +28,9 @@ function probeBubblewrap(bubblewrap) {
 function probeDocker({ docker, image, refresh = false }) {
   const cacheKey = `docker:${docker}:${image}`;
   if (!refresh && PROBE_CACHE.has(cacheKey)) return PROBE_CACHE.get(cacheKey);
-  const imageCheck = spawnSync(docker, ['image', 'inspect', image], { encoding: 'utf8', timeout: 5000 });
+  const imageCheck = spawnSync(docker, ['image', 'inspect', image], { encoding: 'utf8', timeout: 15000 });
   if (imageCheck.status !== 0) return { available: false, backend: 'docker', status: 'os_sandbox_unavailable', detail: 'sandbox_image_not_present_locally', image };
-  const result = spawnSync(docker, ['run', '--pull', 'never', '--rm', '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--pids-limit', '32', image, '/bin/true'], { encoding: 'utf8', timeout: 15000 });
+  const result = spawnSync(docker, ['run', '--pull', 'never', '--rm', '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--pids-limit', '32', image, '/bin/true'], { encoding: 'utf8', timeout: 60000 });
   const probe = Object.freeze({ available: result.status === 0, backend: 'docker', status: result.status === 0 ? 'os_sandbox_available' : 'os_sandbox_unavailable', detail: String(result.stderr || result.error?.message || '').trim(), image });
   if (probe.available) PROBE_CACHE.set(cacheKey, probe);
   return probe;

@@ -40,9 +40,11 @@ const OUTPUT_SCHEMA = Object.freeze({
   additionalProperties: false,
 });
 
-async function runOllama({ ollamaHost, model, prompt, timeoutMs, maximumOutputTokens, fetchImpl }) {
+async function runOllama({ ollamaHost, model, prompt, timeoutMs, maximumOutputTokens, fetchImpl, signal = null }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const abort = () => controller.abort();
+  signal?.addEventListener('abort', abort, { once: true });
   try {
     const response = await fetchImpl(`${ollamaHost.replace(/\/$/, '')}/api/generate`, {
       method: 'POST',
@@ -70,6 +72,7 @@ async function runOllama({ ollamaHost, model, prompt, timeoutMs, maximumOutputTo
     return { exitCode: null, stdout: '', stderr: String(error?.message || error), error, doneReason: null, evalCount: 0 };
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener('abort', abort);
   }
 }
 
@@ -86,7 +89,7 @@ export function createOllamaStructuredAgentExecutor({
     version: 1,
     kind: 'OllamaStructuredAgentExecutor',
     executorId: 'ollama-structured-agent-v1',
-    async execute({ role, workspacePath, instructions, context = {}, requiredChecks = [], sandbox = 'workspace-write', outputTokenBudget = null } = {}) {
+    async execute({ role, workspacePath, instructions, context = {}, requiredChecks = [], sandbox = 'workspace-write', outputTokenBudget = null, timeoutMs: requestedTimeout = null, signal = null } = {}) {
       const workspace = path.resolve(workspacePath || '');
       if (!role || !instructions || !fs.existsSync(workspace)) throw new Error('role, instructions and workspacePath are required');
       const files = sourceFiles(workspace);
@@ -112,7 +115,7 @@ export function createOllamaStructuredAgentExecutor({
         `Files: ${JSON.stringify(sources)}`,
       ].join('\n\n');
       const startedAt = new Date().toISOString();
-      const result = await runOllama({ ollamaHost, model, prompt, timeoutMs, maximumOutputTokens: effectiveOutputTokens, fetchImpl });
+      const result = await runOllama({ ollamaHost, model, prompt, timeoutMs: Math.min(Number(requestedTimeout || timeoutMs), timeoutMs), maximumOutputTokens: effectiveOutputTokens, fetchImpl, signal });
       let response = null;
       try { response = JSON.parse(result.stdout); } catch { /* handled below */ }
       const blockers = [];

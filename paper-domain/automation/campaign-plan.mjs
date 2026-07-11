@@ -23,6 +23,8 @@ export function buildPaperCampaignPlan({
   campaignId = null,
   requiresGpu = false,
   budgets = {},
+  datasetMounts = [],
+  minimumRevisionRounds = 1,
 } = {}) {
   if (!paperId || !sourceWorkspace) throw new Error('paperId and sourceWorkspace are required');
   const rounds = Math.max(1, Math.min(10, Number(maxRounds) || 3));
@@ -48,19 +50,24 @@ export function buildPaperCampaignPlan({
     const verifyCode = node(id, 'revalidate-code', [revise.nodeId], { roundIndex, priority: 80, language: languages[0] || 'python' });
     const verifyEmpirical = node(id, 'revalidate-empirical', [revise.nodeId], { roundIndex, priority: 80, language: languages[0] || 'python' });
     const verifyCompile = node(id, 'revalidate-compile', [revise.nodeId], { roundIndex, priority: 80, language: 'latex' });
+    const verifyCitations = node(id, 'revalidate-citations', [revise.nodeId], { roundIndex, priority: 80, language: 'latex' });
+    const verifyArtifacts = node(id, 'revalidate-artifacts', [revise.nodeId], { roundIndex, priority: 80 });
+    const revisionRefereeNodes = Array.from({ length: reviewers }, (_, index) => node(
+      id,
+      `revision-referee-${index + 1}`,
+      [verifyCode.nodeId, verifyEmpirical.nodeId, verifyCompile.nodeId, verifyCitations.nodeId, verifyArtifacts.nodeId],
+      { roundIndex, priority: 85, role: `revision-referee-${index + 1}` },
+    ));
     const convergence = node(id, 'convergence', [
-      ...refereeNodes.map((item) => item.nodeId),
-      verifyCode.nodeId,
-      verifyEmpirical.nodeId,
-      verifyCompile.nodeId,
+      ...revisionRefereeNodes.map((item) => item.nodeId),
     ], { roundIndex, priority: 90 });
-    nodes.push(...refereeNodes, revise, verifyCode, verifyEmpirical, verifyCompile, convergence);
+    nodes.push(...refereeNodes, revise, verifyCode, verifyEmpirical, verifyCompile, verifyCitations, verifyArtifacts, ...revisionRefereeNodes, convergence);
     previous = convergence.nodeId;
   }
   const packageNode = node(id, 'package', [previous], { roundIndex: rounds + 1, priority: 100, language: 'latex' });
   nodes.push(packageNode);
   const payload = {
-    version: 1,
+    version: 2,
     kind: 'PaperCampaignPlan',
     campaignId: id,
     paperId,
@@ -69,11 +76,21 @@ export function buildPaperCampaignPlan({
     refereeCount: reviewers,
     languages: [...new Set(languages.map(String))],
     requiresGpu: Boolean(requiresGpu),
+    convergenceThresholds: { minimumRoundIndex: Math.max(1, Math.min(rounds, Number(minimumRevisionRounds || 1))) },
+    datasetMounts: datasetMounts.map((mount) => Object.freeze({
+      name: String(mount.name || 'dataset'),
+      source: String(mount.source || ''),
+      readOnly: true,
+      manifestHash: mount.manifestHash || null,
+    })),
     budgets: {
       maxWallTimeMs: Number(budgets.maxWallTimeMs || 6 * 60 * 60 * 1000),
       maxAgentCalls: Number(budgets.maxAgentCalls || 30),
-      maxCpuJobs: Number(budgets.maxCpuJobs || 8),
-      maxGpuJobs: Number(budgets.maxGpuJobs || 1),
+      maxCpuJobs: Number(budgets.maxCpuJobs || 32),
+      maxGpuJobs: Number(budgets.maxGpuJobs || 8),
+      maxTokenCount: Number(budgets.maxTokenCount || 500000),
+      maxCostUsd: Number(budgets.maxCostUsd || 100),
+      maxMemoryMiB: Number(budgets.maxMemoryMiB || 8192),
     },
     nodes,
     externalSubmissionEnabled: false,

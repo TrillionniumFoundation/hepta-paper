@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,6 +9,7 @@ import { createOllamaStructuredAgentExecutor } from '../../paper-adapters/automa
 import { createCampaignNodeExecutor } from '../../paper-adapters/automation/campaign-node-executor.mjs';
 import { sanitizeGeneratedLatex } from '../../paper-adapters/automation/generated-latex-sanitizer.mjs';
 import { createMultiLanguageEmpiricalExecutor } from '../../paper-adapters/automation/multi-language-empirical-executor.mjs';
+import { createFilesystemEmpiricalCacheRepository } from '../../paper-adapters/automation/empirical-cache-repository.mjs';
 import { createOsSandboxedWorkerRunner } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
 
 test('Codex agent adapter executes a real process and records workspace changes', async (t) => {
@@ -38,6 +40,39 @@ test('multi-language empirical executor runs Python in kernel sandbox and persis
   assert.equal(receipt.isolation.kernelNetworkIsolationVerified, true);
   assert.equal(receipt.artifacts.length, 1);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(output, 'results.json'), 'utf8')), { metric: 0.91 });
+});
+
+test('empirical cache is source-bound and verifies artifact hashes before replay', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-empirical-cache-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const source = path.join(root, 'source');
+  const output = path.join(root, 'output');
+  fs.mkdirSync(source);
+  fs.writeFileSync(path.join(source, 'run.py'), 'print("fixture")\n');
+  let runs = 0;
+  const workerRunner = {
+    availability: { available: true },
+    run(spec) {
+      runs += 1;
+      fs.mkdirSync(spec.outputDirectory, { recursive: true });
+      const content = '{"metric":1}\n';
+      fs.writeFileSync(path.join(spec.outputDirectory, 'results.json'), content);
+      return { ok: true, receiptHash: 'sha256:runner', artifacts: [{ path: 'results.json', sha256: `sha256:${crypto.createHash('sha256').update(content).digest('hex')}`, bytes: Buffer.byteLength(content) }], isolation: { kernelNetworkIsolationVerified: true }, datasetMounts: [], exitCode: 0 };
+    },
+  };
+  const executor = createMultiLanguageEmpiricalExecutor({ workerRunner, cache: createFilesystemEmpiricalCacheRepository({ root: path.join(root, 'cache') }) });
+  const spec = { language: 'python', entrypoint: 'run.py', cwd: source, sourceRoot: source, outputDirectory: output, outputPaths: ['results.json'] };
+  assert.equal(executor.execute(spec).cacheHit, false);
+  fs.rmSync(output, { recursive: true, force: true });
+  const replay = executor.execute(spec);
+  assert.equal(replay.cacheHit, true);
+  assert.equal(runs, 1);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(output, 'results.json'), 'utf8')).metric, 1);
+  const cacheArtifact = fs.readdirSync(path.join(root, 'cache')).map((entry) => path.join(root, 'cache', entry, 'artifacts', 'results.json')).find((candidate) => fs.existsSync(candidate));
+  fs.writeFileSync(cacheArtifact, '{"metric":999}\n');
+  fs.rmSync(output, { recursive: true, force: true });
+  assert.equal(executor.execute(spec).cacheHit, false);
+  assert.equal(runs, 2);
 });
 
 test('structured Ollama adapter enforces schema and per-node output budgets', async (t) => {

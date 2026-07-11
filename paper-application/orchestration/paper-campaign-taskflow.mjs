@@ -47,7 +47,39 @@ export function advancePaperCampaignTaskFlow({ taskFlow, currentFlow, snapshot }
     if (!failed?.applied) throw new Error(failed?.code || 'campaign TaskFlow fail failed');
     return Object.freeze({ status: 'campaign_taskflow_failed', flow: failed.flow });
   }
+  if (snapshot.status === 'stopped') {
+    const failed = taskFlow.fail({ flowId: resumed.flow.flowId, expectedRevision: resumed.flow.revision, stateJson: coordinationState(snapshot), error: 'native_campaign_stopped' });
+    if (!failed?.applied) throw new Error(failed?.code || 'campaign TaskFlow stop reflection failed');
+    return Object.freeze({ status: 'campaign_taskflow_stopped', flow: failed.flow });
+  }
+  if (snapshot.status === 'cancelled') {
+    const cancelled = taskFlow.cancel({ flowId: resumed.flow.flowId, expectedRevision: resumed.flow.revision, stateJson: coordinationState(snapshot), reason: 'native_campaign_cancelled' });
+    if (!cancelled?.applied) throw new Error(cancelled?.code || 'campaign TaskFlow cancel reflection failed');
+    return Object.freeze({ status: 'campaign_taskflow_cancelled', flow: cancelled.flow });
+  }
   const waiting = taskFlow.setWaiting({ flowId: resumed.flow.flowId, expectedRevision: resumed.flow.revision, currentStep: 'await_native_campaign_checkpoint', stateJson: coordinationState(snapshot), waitJson: { kind: 'native_campaign_checkpoint', campaignId: snapshot.campaignId } });
   if (!waiting?.applied) throw new Error(waiting?.code || 'campaign TaskFlow waiting failed');
   return Object.freeze({ status: 'campaign_taskflow_waiting', flow: waiting.flow });
+}
+
+export function linkPaperCampaignChildSessions({ taskFlow, flowId, nodes = [], now = Date.now() } = {}) {
+  assertTaskFlowPort(taskFlow);
+  if (!flowId) throw new Error('flowId is required');
+  const linked = [];
+  for (const node of nodes) {
+    const childSessionKey = node?.result?.sessionKey || node?.result?.childSessionKey || null;
+    if (!childSessionKey) continue;
+    const result = taskFlow.runTask({
+      flowId,
+      runtime: 'cli',
+      childSessionKey,
+      runId: node.result.openClawRunId || node.node_id,
+      task: `campaign node ${node.kind}`,
+      status: node.status === 'completed' ? 'completed' : 'running',
+      startedAt: now,
+      lastEventAt: now,
+    });
+    if (result?.created || result?.reason === 'task_already_exists') linked.push({ nodeId: node.node_id, childSessionKey });
+  }
+  return Object.freeze({ status: 'campaign_child_sessions_linked', linkedCount: linked.length, linked });
 }

@@ -26,16 +26,18 @@ function changedPaths(before, after) {
   return [...new Set([...left.keys(), ...right.keys()])].filter((key) => left.get(key) !== right.get(key)).sort();
 }
 
-function runProcess(spawnImpl, executable, args, options, prompt, timeoutMs) {
+function runProcess(spawnImpl, executable, args, options, prompt, timeoutMs, signal = null) {
   return new Promise((resolve) => {
     const child = spawnImpl(executable, args, { ...options, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => child.kill('SIGTERM'), timeoutMs);
+    const abort = () => child.kill('SIGTERM');
+    signal?.addEventListener('abort', abort, { once: true });
     child.stdout?.on('data', (chunk) => { stdout += String(chunk); });
     child.stderr?.on('data', (chunk) => { stderr += String(chunk); });
-    child.on('error', (error) => { clearTimeout(timer); resolve({ exitCode: null, signal: null, stdout, stderr, error }); });
-    child.on('close', (exitCode, signal) => { clearTimeout(timer); resolve({ exitCode, signal, stdout, stderr, error: null }); });
+    child.on('error', (error) => { clearTimeout(timer); signal?.removeEventListener('abort', abort); resolve({ exitCode: null, signal: null, stdout, stderr, error }); });
+    child.on('close', (exitCode, childSignal) => { clearTimeout(timer); signal?.removeEventListener('abort', abort); resolve({ exitCode, signal: childSignal, stdout, stderr, error: null }); });
     child.stdin?.end(prompt);
   });
 }
@@ -52,7 +54,7 @@ export function createCodexAgentExecutor({
     version: 1,
     kind: 'CodexAgentExecutor',
     executorId: 'codex-agent-executor-v1',
-    async execute({ role, workspacePath, instructions, context = {}, requiredChecks = [], sandbox = 'workspace-write' } = {}) {
+    async execute({ role, workspacePath, instructions, context = {}, requiredChecks = [], sandbox = 'workspace-write', outputTokenBudget = null, timeoutMs: requestedTimeout = null, signal = null } = {}) {
       const workspace = path.resolve(workspacePath || '');
       if (!role || !instructions || !fs.existsSync(workspace) || !fs.statSync(workspace).isDirectory()) {
         throw new Error('agent role, existing workspacePath and instructions are required');
@@ -64,7 +66,8 @@ export function createCodexAgentExecutor({
         String(instructions),
         `Structured context: ${JSON.stringify(context)}`,
         requiredChecks.length ? `Before finishing run these checks when applicable: ${requiredChecks.join(' ; ')}` : '',
-        'Finish with a compact JSON object containing status, summary, checksRun, and blockers.',
+        outputTokenBudget ? `Keep the final response within ${Math.max(128, Number(outputTokenBudget))} output tokens. Prefer editing files with tools over returning file bodies.` : '',
+        'Finish with one compact JSON object containing status, summary, checksRun, and blockers. Include every role-specific JSON field explicitly requested by the task in that same object.',
       ].filter(Boolean).join('\n\n');
       if (!['read-only', 'workspace-write'].includes(sandbox)) throw new Error('agent sandbox must be read-only or workspace-write');
       const args = ['exec'];
@@ -72,7 +75,7 @@ export function createCodexAgentExecutor({
       if (model) args.push('--model', model);
       args.push('--ephemeral', '--color', 'never', '--sandbox', sandbox, '--skip-git-repo-check', '--cd', workspace, '-');
       const startedAt = new Date().toISOString();
-      const processResult = await runProcess(spawnImpl, codexBinary, args, { cwd: workspace, env: { ...process.env, HEPTA_AUTOMATION_ROLE: role } }, prompt, timeoutMs);
+      const processResult = await runProcess(spawnImpl, codexBinary, args, { cwd: workspace, env: { ...process.env, HEPTA_AUTOMATION_ROLE: role } }, prompt, Math.min(Number(requestedTimeout || timeoutMs), timeoutMs), signal);
       const completedAt = new Date().toISOString();
       const after = treeManifest(workspace);
       const changes = changedPaths(before, after);
@@ -82,6 +85,7 @@ export function createCodexAgentExecutor({
         executorId: 'codex-agent-executor-v1',
         providerMode: oss ? `local:${localProvider}` : 'openai',
         model,
+        maximumOutputTokens: outputTokenBudget ? Math.max(128, Number(outputTokenBudget)) : null,
         role,
         status: processResult.exitCode === 0 && !processResult.error ? 'agent_execution_completed' : 'agent_execution_failed',
         exitCode: processResult.exitCode,

@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.15.0 - 2026-07-11
+
+- Added `OpenClawAgentExecutor` and a dedicated unbound
+  `hepta-paper-worker`. Every writer, coder, referee and reviser receives a
+  separate child session; session/run identifiers and token usage return to the
+  native campaign ledger. OpenClaw is the default backend, structured Ollama is
+  the circuit-breaker fallback, and authenticated Codex CLI remains optional.
+- Added reflink/copy-on-write node workspaces with conflict-detecting merge.
+  Successful workspaces are removed after their changed paths are merged;
+  failed workspaces are retained for diagnosis. Three independent referees no
+  longer share model context or a mutable source tree.
+- Added a process-wide resource governor and per-campaign limits for agent,
+  CPU, GPU and memory slots. Wall-time, agent-call, CPU-job, GPU-job, token and
+  cost budgets are persisted and
+  enforced, running leases receive heartbeats, and pause, cooperative cancel,
+  resume and failed-node retry are exposed through `paper:campaign` actions.
+- Upgraded the campaign plan so revision acceptance is based only on
+  independent reviews bound to the revised manuscript hash. Revision now
+  triggers impact-selected code, empirical, compile, citation and table/figure
+  checks before a second referee wave. Exhausting the final round without
+  convergence stops the campaign and never manufactures a package.
+- Added locked Python/R runtime image definitions, read-only named dataset
+  mounts, deterministic seed and kernel resource contracts, result artifact
+  materialization, a source/runtime/data-bound empirical cache with verified
+  artifact replay, a native CUDA worker smoke and an actual legacy R helper
+  reproduction smoke. R lock restoration retries transient archive downloads
+  without relaxing any pinned version. Julia remains explicitly on demand.
+- Added campaign dashboard, status/event/log surfaces, persisted usage and stop
+  reasons, TaskFlow child-session linking, a shared-governor ten-campaign chaos
+  gate, a three-real-paper OpenClaw smoke, and a minimum-two-round strict
+  re-review smoke that operate only on filtered copies of real paper sources.
+
+This release defines local automated research readiness independently from the
+optional submission/archive plane. Public keys, owner signatures and WORM
+custody do not block writing, coding, empirical execution, review or revision.
+
 ## 0.11.0 - 2026-07-11
 
 - Reoriented the product around a signature-free Automation Plane. Persistent

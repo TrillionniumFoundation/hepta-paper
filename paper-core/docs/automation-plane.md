@@ -11,25 +11,36 @@ mutation is requested.
 
 ## Campaign DAG
 
-Each paper campaign persists a dependency DAG in schema v4. The initial plan
+Each paper campaign persists a dependency DAG in schema v5. The initial plan
 runs research planning, then writer and coder nodes in parallel, followed by
 empirical execution, manuscript integration and LaTeX compilation. Each review
-round runs multiple independent referees, revision, then code, empirical and
-compile revalidation in parallel before evaluating convergence. Campaigns may
+round runs multiple independent referees, revision, impact-selected code,
+empirical, compile, citation and table/figure validation, then a fresh set of
+independent referees bound to the revised manuscript hash before convergence.
+Campaigns may
 run concurrently and use leases, bounded attempts, idempotent completion,
-event records and expired-lease recovery.
+event records and expired-lease recovery. A final non-converged round stops
+without packaging.
 
 ## Executors
 
-- `AgentExecutorPort` supports authenticated Codex and structured local Ollama
-  adapters. Local model output is constrained by a JSON Schema, per-role token
-  budgets, workspace containment and atomic full-file replacements.
+- `AgentExecutorPort` defaults to an unbound OpenClaw worker and a unique child
+  session per node. Every mutable node works in a reflink/copy-on-write tree;
+  changed paths merge only if their source preimages still match. Structured
+  local Ollama is the offline circuit-breaker fallback and authenticated Codex
+  CLI is optional.
 - `EmpiricalExecutorPort` maps Python, Node, R, Julia, Lean and LaTeX to the OS
   sandbox runner. Availability is reported honestly per installed runtime.
 - Generated Python and LaTeX are executed, not trusted. A failed command may
   invoke one bounded diagnostic repair step and must pass a fresh isolated run.
 - LaTeX has a deterministic sanitizer for common model serialization defects
   before an agent repair is attempted.
+- A global resource governor limits agent, CPU, GPU and memory slots across all
+  papers. Campaign wall-time, agent-call, CPU/GPU-job, token and cost budgets,
+  usage and stop reasons are persisted. Named datasets mount read-only with a
+  manifest hash. Successful empirical outputs may enter a source/runtime/data-
+  bound cache; every replay rechecks artifact hashes. Executed outputs are
+  materialized under `automation-results/` before a writer may consume them.
 
 ## TaskFlow boundary
 
@@ -37,6 +48,16 @@ TaskFlow is optional outer coordination for cross-session waiting, resume,
 cancel and child-task links. It stores only campaign identity, checkpoints,
 receipt hashes and blocker codes. It does not decide DAG readiness, referee
 convergence, evidence validity or submission authorization.
+
+## Operations
+
+`paper:campaign -- --action list|status|events|pause|resume|cancel|cancel-node|retry`
+provides native operations. `automation:dashboard` reports node states,
+latest events, stop reasons and time/token/model-resource usage. Cancel is
+immediate for child agents and cooperative/bounded for synchronous empirical
+workers. Cancelling one node recursively skips only its dependency subtree;
+if that subtree contains the required package path, the campaign stops with an
+explicit operator-cancellation reason.
 
 ## Readiness
 

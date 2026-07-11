@@ -15,6 +15,47 @@ function filesystemImmutable(file) {
   return attributes.includes('i');
 }
 
+function semverParts(value) {
+  const match = String(value || '').match(/^(\d+)\.(\d+)\.(\d+)(?:-|$)/);
+  return match ? match.slice(1).map(Number) : null;
+}
+
+function compareSemver(left, right) {
+  const a = semverParts(left);
+  const b = semverParts(right);
+  if (!a && !b) return 0;
+  if (!a) return -1;
+  if (!b) return 1;
+  for (let index = 0; index < 3; index += 1) {
+    if (a[index] !== b[index]) return a[index] - b[index];
+  }
+  return 0;
+}
+
+export function resolveLatestReleaseEvidencePointer(runtimeRoot) {
+  const evidenceRoot = path.join(runtimeRoot, 'release-evidence');
+  if (!fs.existsSync(evidenceRoot)) return null;
+  const candidates = [];
+  for (const version of fs.readdirSync(evidenceRoot)) {
+    if (!semverParts(version)) continue;
+    const versionRoot = path.join(evidenceRoot, version);
+    if (!fs.statSync(versionRoot).isDirectory()) continue;
+    for (const commit of fs.readdirSync(versionRoot)) {
+      const pointerPath = path.join(versionRoot, commit, 'CURRENT_RELEASE_EVIDENCE.json');
+      if (!fs.existsSync(pointerPath)) continue;
+      try {
+        const pointer = JSON.parse(fs.readFileSync(pointerPath, 'utf8'));
+        if (pointer?.kind !== 'CurrentReleaseEvidencePointer' || pointer.packageVersion !== version) continue;
+        candidates.push({ pointerPath, version, generatedAt: String(pointer.generatedAt || ''), commit });
+      } catch { /* Ignore corrupt candidates; source validation will still fail closed. */ }
+    }
+  }
+  candidates.sort((left, right) => compareSemver(left.version, right.version)
+    || left.generatedAt.localeCompare(right.generatedAt)
+    || left.commit.localeCompare(right.commit));
+  return candidates.at(-1)?.pointerPath || null;
+}
+
 export function verifyOffhostWormTarget({ workspaceRoot, contract, mountAvailableOverride = null, distinctDeviceOverride = null } = {}) {
   if (contract?.kind !== 'OffhostWormSnapshotContract' || contract?.version !== 1) throw new Error('v1 offhost WORM contract required');
   const targetMountRoot = path.resolve(process.env.HEPTA_OFFHOST_WORM_ROOT || contract.targetMountRoot);

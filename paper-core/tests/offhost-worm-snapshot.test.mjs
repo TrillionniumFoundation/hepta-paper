@@ -3,7 +3,28 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { createOffhostWormSnapshot, drillOffhostWormRestore } from '../src/offhost-worm-repository.mjs';
+import {
+  createOffhostWormSnapshot,
+  drillOffhostWormRestore,
+  resolveLatestReleaseEvidencePointer,
+} from '../src/offhost-worm-repository.mjs';
+
+test('release evidence selection orders semantic versions numerically', (t) => {
+  const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-release-pointer-'));
+  t.after(() => fs.rmSync(runtimeRoot, { recursive: true, force: true }));
+  for (const version of ['0.9.0', '0.10.0']) {
+    const root = path.join(runtimeRoot, 'release-evidence', version, `commit-${version}`);
+    fs.mkdirSync(root, { recursive: true });
+    fs.writeFileSync(path.join(root, 'CURRENT_RELEASE_EVIDENCE.json'), JSON.stringify({
+      version: 1,
+      kind: 'CurrentReleaseEvidencePointer',
+      packageVersion: version,
+      commit: `commit-${version}`,
+      generatedAt: '2026-07-11T00:00:00.000Z',
+    }));
+  }
+  assert.match(resolveLatestReleaseEvidencePointer(runtimeRoot), /0\.10\.0/);
+});
 
 test('offhost WORM snapshot binds immutable objects and supports restore verification', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-offhost-worm-'));

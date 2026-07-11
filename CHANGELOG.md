@@ -21,6 +21,9 @@
 - Rebound the 263-row legacy matrix reference to the refactored proposal
   target. Its classification remains 14 behavioral replacements and 249
   explicit retirements, with no unmapped or partial entry.
+- Fixed WORM release selection to order semantic versions numerically, so
+  `0.10.0` cannot be mistaken as older than `0.9.0`; a regression test now
+  protects the final evidence snapshot boundary.
 
 This release remains production `No-Go`: TaskFlow only improves coordination.
 No external keys or signatures have been supplied, owner acceptance is 0/249,

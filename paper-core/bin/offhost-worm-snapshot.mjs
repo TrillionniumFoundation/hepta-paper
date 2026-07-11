@@ -3,7 +3,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveImmutableLegacyMatrixArchive } from '../../migration/legacy-matrix-reference.mjs';
-import { createOffhostWormSnapshot, drillOffhostWormRestore, verifyOffhostWormTarget } from '../src/offhost-worm-repository.mjs';
+import {
+  createOffhostWormSnapshot,
+  drillOffhostWormRestore,
+  resolveLatestReleaseEvidencePointer,
+  verifyOffhostWormTarget,
+} from '../src/offhost-worm-repository.mjs';
 import { defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -12,14 +17,7 @@ const contractPath = path.join(workspaceRoot, 'paper-core', 'config', 'offhost-w
 const contract = JSON.parse(fs.readFileSync(contractPath, 'utf8'));
 const command = process.argv[2] || 'status';
 const execute = process.argv.includes('--execute');
-const pointerPath = (() => {
-  const root = path.join(runtimeRoot, 'release-evidence');
-  const rows = fs.existsSync(root) ? fs.readdirSync(root).filter((name) => /^\d/.test(name)).sort() : [];
-  const versionRoot = rows.length ? path.join(root, rows.at(-1)) : null;
-  if (!versionRoot) return null;
-  const commits = fs.readdirSync(versionRoot).sort();
-  return commits.length ? path.join(versionRoot, commits.at(-1), 'CURRENT_RELEASE_EVIDENCE.json') : null;
-})();
+const pointerPath = resolveLatestReleaseEvidencePointer(runtimeRoot);
 let result;
 if (command === 'status') result = verifyOffhostWormTarget({ workspaceRoot, contract });
 else if (command === 'snapshot') {

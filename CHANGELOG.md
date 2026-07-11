@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.11.0 - 2026-07-11
+
+- Reoriented the product around a signature-free Automation Plane. Persistent
+  `PaperCampaign` DAGs now coordinate research planning, parallel writer/coder
+  work, isolated empirical execution, manuscript integration, compilation,
+  multi-referee review, automatic revision, affected-artifact revalidation and
+  convergence. Live submission remains a separate optional plane.
+- Added schema v4 campaign, node and event storage with dependency-ready
+  claims, leases, bounded retries, crash recovery, idempotent completion and
+  concurrent execution across papers. A ten-campaign fault benchmark covers
+  injected failures, replay, early convergence and expired-lease recovery.
+- Added real agent adapters for authenticated Codex and local Ollama. Ollama
+  output is constrained by a JSON Schema, per-role output budgets, workspace
+  containment and atomic edits; model execution never performs external
+  submission actions.
+- Added kernel-isolated empirical workers for Python, Node, R, Julia, Lean and
+  LaTeX with honest runtime discovery, network isolation, resource limits,
+  declared outputs and optional GPU access. Generated code and LaTeX failures
+  feed real diagnostics into bounded repair and fresh execution.
+- Added deterministic generated-LaTeX sanitation for common serialization
+  defects, multiple independent referee scores, automatic revise rounds and
+  mandatory parallel code/experiment/compile revalidation.
+- Added an optional TaskFlow campaign mirror for cross-session coordination.
+  Native SQLite campaign state remains the DAG source of truth and TaskFlow
+  does not own research, referee, execution or submission decisions.
+- Added `automation:status`, disposable real-agent and end-to-end campaign
+  smokes, `paper:campaign`, and an Automation Plane guide. Automation readiness
+  is now reported independently from live-submission readiness.
+
+This release does not claim that every optional language runtime is installed
+or that live submission is enabled. Those are reported separately and do not
+block unrelated local campaigns.
+
 ## 0.10.0 - 2026-07-11
 
 - Split proposal generation/materialization and referee repair planning from

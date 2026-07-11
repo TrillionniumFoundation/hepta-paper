@@ -70,7 +70,7 @@ const payload = {
   version: 1,
   kind: 'RuntimeEvidenceHygieneReceipt',
   status: execute ? 'runtime_evidence_hygiene_executed' : 'runtime_evidence_hygiene_planned',
-  schemaVersion: 3,
+  schemaVersion: 4,
   quarantinedQueuedJobCount: execute ? candidates.length : 0,
   queuedJobExportPath: exportPath,
   queuedJobExportHash: exportHash,

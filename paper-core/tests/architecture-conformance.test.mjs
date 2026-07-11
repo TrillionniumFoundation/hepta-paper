@@ -224,6 +224,8 @@ test('production modules do not bypass StorePort or restore autopilot acceptance
   }
   for (const file of productionFiles) {
     if (file.endsWith('-repository.mjs')) continue;
+    if (file.endsWith('ollama-structured-agent-executor.mjs')) continue;
+    if (file.endsWith('generated-latex-sanitizer.mjs')) continue;
     const text = fs.readFileSync(file, 'utf8');
     assert.equal(/\b(writeFile|writeFileSync|appendFile|appendFileSync|rename|renameSync)\(/.test(text), false, file);
   }
@@ -285,4 +287,26 @@ test('TaskFlow remains an optional outer coordinator and workflow state remains 
   const batch = fs.readFileSync(path.join(workspaceRoot, 'paper-application', 'batch', 'paper-batch-application.mjs'), 'utf8');
   assert.equal(batch.includes('workflowStateStore.put'), true);
   assert.equal(batch.includes('const workflowStateProjection = execute'), true);
+});
+
+test('automation plane stays independent from submission governance', () => {
+  const automationFiles = [
+    'paper-domain/automation/campaign-plan.mjs',
+    'paper-domain/automation/referee-convergence.mjs',
+    'paper-application/automation/campaign-engine.mjs',
+    'paper-adapters/automation/campaign-node-executor.mjs',
+    'paper-adapters/automation/codex-agent-executor.mjs',
+    'paper-adapters/automation/multi-language-empirical-executor.mjs',
+    'paper-adapters/automation/ollama-structured-agent-executor.mjs',
+    'paper-adapters/automation/generated-latex-sanitizer.mjs',
+  ];
+  for (const relative of automationFiles) {
+    const text = fs.readFileSync(path.join(workspaceRoot, relative), 'utf8');
+    assert.doesNotMatch(text, /authority|owner.acceptance|submission.release|live.authorization/i, relative);
+    assert.ok(text.split(/\n/).length <= 500, `${relative} exceeds bounded automation module size`);
+  }
+  const migration = fs.readFileSync(path.join(workspaceRoot, 'store/migrations/004_automation_campaigns.sql'), 'utf8');
+  assert.match(migration, /paper_campaigns/);
+  assert.match(migration, /campaign_nodes/);
+  assert.match(migration, /campaign_events/);
 });

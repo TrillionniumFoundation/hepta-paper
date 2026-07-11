@@ -1,7 +1,41 @@
 # hepta-paper-workspace
 
-Fail-closed integration workspace for replacing selected `paper_factory`
-capabilities around an accepted vendored `design-production-core` baseline.
+Automation-first research and paper production workspace. Its primary runtime
+runs concurrent paper campaigns that plan research, write manuscripts and
+code, execute empirical work, compile LaTeX, obtain independent referee
+reviews, revise, and revalidate affected artifacts. Live submission is a
+separate optional plane and is disabled by default.
+
+## Automation Plane
+
+The automation plane does not require owner signatures, academic authority
+keys, legacy acceptance, cold-volume availability, or a live submission
+provider. One paper is one persistent `PaperCampaign` DAG; several campaigns
+and their dependency-ready nodes may run concurrently. SQLite leases,
+idempotent node results, bounded retries and expired-lease recovery provide
+crash-safe execution.
+
+Agent work can use authenticated Codex or a local structured Ollama model.
+Empirical workers support Python, Node, R, Julia, Lean and LaTeX when their
+host runtimes are installed, with network isolation, timeouts, CPU/memory/PID
+limits, optional GPU access and declared artifact export. Code and LaTeX
+failures feed their real diagnostics into bounded repair steps before being
+re-executed. Referee convergence requires multiple reviews and is always a
+local automation decision, never an academic acceptance or submission grant.
+
+```bash
+npm run store:migrate
+npm run automation:status
+npm run automation:selftest
+HEPTA_AGENT_LOCAL_PROVIDER=ollama \
+  HEPTA_AGENT_MODEL=<local-model> npm run automation:agent-smoke
+HEPTA_AGENT_MODEL=<local-model> npm run automation:campaign-smoke
+npm run paper:campaign -- --help
+```
+
+The optional TaskFlow integration mirrors long-lived campaign checkpoints and
+waits; the native campaign store remains the DAG source of truth. Details are
+in `paper-core/docs/automation-plane.md`.
 
 ## Layout
 

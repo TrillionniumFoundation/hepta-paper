@@ -96,7 +96,10 @@ UNION ALL SELECT 'receipt_ledger',count(*) FROM receipt_ledger
 UNION ALL SELECT 'jobs',count(*) FROM jobs
 UNION ALL SELECT 'job_attempts',count(*) FROM job_attempts
 UNION ALL SELECT 'submission_outbox',count(*) FROM submission_outbox
-UNION ALL SELECT 'submission_inbox',count(*) FROM submission_inbox;
+UNION ALL SELECT 'submission_inbox',count(*) FROM submission_inbox
+UNION ALL SELECT 'paper_campaigns',count(*) FROM paper_campaigns
+UNION ALL SELECT 'campaign_nodes',count(*) FROM campaign_nodes
+UNION ALL SELECT 'campaign_events',count(*) FROM campaign_events;
 `, { json: true }) || '[]');
   const metadata = JSON.parse(runSql(store, 'SELECT key,value,updated_at FROM store_metadata ORDER BY key;', { json: true }) || '[]');
   const evidenceClassifications = JSON.parse(runSql(store, 'SELECT environment,evidence_class,count(*) AS count FROM receipt_ledger GROUP BY environment,evidence_class ORDER BY environment,evidence_class;', { json: true }) || '[]');

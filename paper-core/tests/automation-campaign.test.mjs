@@ -44,6 +44,38 @@ test('referee consensus requires score, ratio, variance and no critical findings
   assert.deepEqual(requiredRevalidationForChanges(['experiments/run.py', 'main.tex']).required, ['revalidate-code', 'revalidate-empirical', 'revalidate-compile', 'revalidate-citations', 'revalidate-artifacts']);
 });
 
+test('campaign plans and execution preserve explicit zero budgets', async (t) => {
+  const { root, campaignStore } = fixture(t);
+  const plan = buildPaperCampaignPlan({
+    paperId: 'zero-budget-paper',
+    sourceWorkspace: root,
+    campaignId: 'zero-budget-campaign',
+    maxRounds: 1,
+    budgets: { maxAgentCalls: 0, maxCpuJobs: 0, maxGpuJobs: 0, maxTokenCount: 0, maxCostUsd: 0 },
+  });
+  assert.deepEqual(plan.budgets, {
+    maxWallTimeMs: 6 * 60 * 60 * 1000,
+    maxAgentCalls: 0,
+    maxCpuJobs: 0,
+    maxGpuJobs: 0,
+    maxTokenCount: 0,
+    maxCostUsd: 0,
+    maxMemoryMiB: 8192,
+  });
+  campaignStore.createCampaign(plan);
+  let executionCount = 0;
+  const result = await runPaperCampaign({
+    campaignId: plan.campaignId,
+    campaignStore,
+    concurrency: 1,
+    pollMs: 1,
+    executor: { execute: async () => { executionCount += 1; return { status: 'unexpected' }; } },
+  });
+  assert.equal(executionCount, 0);
+  assert.equal(result.campaign.status, 'stopped');
+  assert.equal(result.campaign.stop_reason, 'campaign_agent_call_budget_exhausted');
+});
+
 test('ten campaigns run concurrently, retry, converge, skip later rounds and replay idempotently', async (t) => {
   const { root, campaignStore } = fixture(t);
   const plans = Array.from({ length: 10 }, (_, index) => buildPaperCampaignPlan({ paperId: `paper-${index}`, sourceWorkspace: root, campaignId: `campaign-${index}`, maxRounds: 2, refereeCount: 3 }));

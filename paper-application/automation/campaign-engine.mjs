@@ -29,20 +29,20 @@ function usageDelta(campaign, node, result = null) {
 function budgetBlocker(campaign, node, nowMs) {
   const budgets = campaign.spec?.budgets || {};
   const request = resourcesForCampaignNode(campaign, node);
-  if (elapsedRunMs(campaign, nowMs) >= Number(budgets.maxWallTimeMs || Infinity)) return 'campaign_wall_time_budget_exhausted';
-  if (request.agent && campaign.agentCallCount >= Number(budgets.maxAgentCalls || Infinity)) return 'campaign_agent_call_budget_exhausted';
-  if (request.cpu && campaign.cpuJobCount >= Number(budgets.maxCpuJobs || Infinity)) return 'campaign_cpu_job_budget_exhausted';
-  if (request.gpu && campaign.gpuJobCount >= Number(budgets.maxGpuJobs || Infinity)) return 'campaign_gpu_job_budget_exhausted';
-  if (campaign.tokenCount >= Number(budgets.maxTokenCount || Infinity)) return 'campaign_token_budget_exhausted';
-  if (request.agent && Number(budgets.maxTokenCount || Infinity) - campaign.tokenCount < 128) return 'campaign_token_budget_exhausted';
-  if (campaign.costUsd >= Number(budgets.maxCostUsd || Infinity)) return 'campaign_cost_budget_exhausted';
+  if (elapsedRunMs(campaign, nowMs) >= Number(budgets.maxWallTimeMs ?? Infinity)) return 'campaign_wall_time_budget_exhausted';
+  if (request.agent && campaign.agentCallCount >= Number(budgets.maxAgentCalls ?? Infinity)) return 'campaign_agent_call_budget_exhausted';
+  if (request.cpu && campaign.cpuJobCount >= Number(budgets.maxCpuJobs ?? Infinity)) return 'campaign_cpu_job_budget_exhausted';
+  if (request.gpu && campaign.gpuJobCount >= Number(budgets.maxGpuJobs ?? Infinity)) return 'campaign_gpu_job_budget_exhausted';
+  if (campaign.tokenCount >= Number(budgets.maxTokenCount ?? Infinity)) return 'campaign_token_budget_exhausted';
+  if (request.agent && Number(budgets.maxTokenCount ?? Infinity) - campaign.tokenCount < 128) return 'campaign_token_budget_exhausted';
+  if (campaign.costUsd >= Number(budgets.maxCostUsd ?? Infinity)) return 'campaign_cost_budget_exhausted';
   return null;
 }
 
 function postExecutionBudgetBlocker(campaign) {
   const budgets = campaign.spec?.budgets || {};
-  if (campaign.tokenCount > Number(budgets.maxTokenCount || Infinity)) return 'campaign_token_budget_exhausted';
-  if (campaign.costUsd > Number(budgets.maxCostUsd || Infinity)) return 'campaign_cost_budget_exhausted';
+  if (campaign.tokenCount > Number(budgets.maxTokenCount ?? Infinity)) return 'campaign_token_budget_exhausted';
+  if (campaign.costUsd > Number(budgets.maxCostUsd ?? Infinity)) return 'campaign_cost_budget_exhausted';
   return null;
 }
 
@@ -87,9 +87,9 @@ export async function runPaperCampaign({
   const initialCampaign = campaignStore.getCampaign(campaignId);
   const localGovernor = createResourceGovernor({
     agent: workerCount,
-    cpu: Number(initialCampaign?.spec?.budgets?.maxCpuJobs || workerCount),
-    gpu: Number(initialCampaign?.spec?.budgets?.maxGpuJobs || 1),
-    memoryMiB: Number(initialCampaign?.spec?.budgets?.maxMemoryMiB || Math.max(2048, workerCount * 2048)),
+    cpu: Number(initialCampaign?.spec?.budgets?.maxCpuJobs ?? workerCount),
+    gpu: Number(initialCampaign?.spec?.budgets?.maxGpuJobs ?? 1),
+    memoryMiB: Number(initialCampaign?.spec?.budgets?.maxMemoryMiB ?? Math.max(2048, workerCount * 2048)),
   });
 
   while (true) {
@@ -181,7 +181,7 @@ export async function runPaperCampaign({
       active += 1;
       maximumObservedConcurrency = Math.max(maximumObservedConcurrency, active);
       try {
-        const remainingWallTimeMs = Math.max(1, Number(currentCampaign.spec?.budgets?.maxWallTimeMs || 6 * 60 * 60 * 1000) - elapsedRunMs(currentCampaign, nowMs));
+        const remainingWallTimeMs = Math.max(1, Number(currentCampaign.spec?.budgets?.maxWallTimeMs ?? 6 * 60 * 60 * 1000) - elapsedRunMs(currentCampaign, nowMs));
         const runNestedAgent = async (operation) => {
           const nestedRequest = { agent: 1, cpu: 0, gpu: 0, memoryMiB: 0 };
           const releaseNestedGlobal = await governor.acquire(nestedRequest);
@@ -194,20 +194,20 @@ export async function runPaperCampaign({
               error.retryable = false;
               throw error;
             }
-            if (latest.agentCallCount >= Number(latest.spec?.budgets?.maxAgentCalls || Infinity)) {
+            if (latest.agentCallCount >= Number(latest.spec?.budgets?.maxAgentCalls ?? Infinity)) {
               campaignStore.stopCampaign(campaignId, 'campaign_agent_call_budget_exhausted');
               const error = new Error('campaign_agent_call_budget_exhausted');
               error.retryable = false;
               throw error;
             }
-            if (Number(latest.spec?.budgets?.maxTokenCount || Infinity) - latest.tokenCount < 128) {
+            if (Number(latest.spec?.budgets?.maxTokenCount ?? Infinity) - latest.tokenCount < 128) {
               campaignStore.stopCampaign(campaignId, 'campaign_token_budget_exhausted');
               const error = new Error('campaign_token_budget_exhausted');
               error.retryable = false;
               throw error;
             }
             campaignStore.recordUsage(campaignId, { agentCalls: 1 });
-            const nestedResult = await operation({ remainingTokenCount: Math.max(128, Number(latest.spec?.budgets?.maxTokenCount || Infinity) - latest.tokenCount) });
+            const nestedResult = await operation({ remainingTokenCount: Math.max(128, Number(latest.spec?.budgets?.maxTokenCount ?? Infinity) - latest.tokenCount) });
             const nestedUsage = nestedResult?.usage || {};
             campaignStore.recordUsage(campaignId, { tokens: Number(nestedResult?.outputTokenCount || nestedUsage.totalTokens || nestedUsage.total_tokens || nestedUsage.total || 0), costUsd: Number(nestedUsage.costUsd || nestedUsage.cost_usd || 0) });
             return nestedResult;
@@ -216,7 +216,7 @@ export async function runPaperCampaign({
             releaseNestedGlobal();
           }
         };
-        const remainingTokenCount = Math.max(0, Number(currentCampaign.spec?.budgets?.maxTokenCount || Infinity) - currentCampaign.tokenCount);
+        const remainingTokenCount = Math.max(0, Number(currentCampaign.spec?.budgets?.maxTokenCount ?? Infinity) - currentCampaign.tokenCount);
         let result = await executor.execute({ campaign: currentCampaign, node, allNodes: campaignStore.listNodes(campaignId), workerIndex: index, executionBudget: { remainingWallTimeMs, remainingTokenCount }, executionSignal: controller.signal, executionResources: { runNestedAgent } });
         if (node.kind === 'convergence') {
           const nodes = campaignStore.listNodes(campaignId);

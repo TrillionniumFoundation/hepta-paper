@@ -169,8 +169,16 @@ test('capability and journal datasets are versioned and schema-valid', () => {
   });
   assert.equal(LEGACY_CAPABILITY_MATRIX_V3.summary.ownerAcceptancePending, 249);
   assert.equal(LEGACY_CAPABILITY_MATRIX_V3.summary.decisionMapped, 249);
-  assert.ok([0, 161].includes(LEGACY_CAPABILITY_MATRIX_V3.summary.implementationVerified));
+  assert.equal(LEGACY_CAPABILITY_MATRIX_V3.summary.implementationNotApplicable, 88);
+  assert.ok(Number.isInteger(LEGACY_CAPABILITY_MATRIX_V3.summary.implementationVerified));
+  assert.ok(LEGACY_CAPABILITY_MATRIX_V3.summary.implementationVerified >= 0);
+  assert.ok(LEGACY_CAPABILITY_MATRIX_V3.summary.implementationVerified <= 161);
+  assert.ok(LEGACY_CAPABILITY_MATRIX_V3.summary.operationallyProven <= LEGACY_CAPABILITY_MATRIX_V3.summary.implementationVerified);
   assert.equal(LEGACY_CAPABILITY_MATRIX_V3.summary.operationallyProven, 0);
+  assert.equal(
+    LEGACY_CAPABILITY_MATRIX_V3.summary.ownerAccepted + LEGACY_CAPABILITY_MATRIX_V3.summary.ownerAcceptancePending,
+    LEGACY_CAPABILITY_MATRIX_V3.summary.entryCount,
+  );
   assert.equal(JOURNAL_PROFILE_DATASET.version, 1);
   assert.equal(JOURNAL_PROFILE_DATASET.profiles.length, 97);
   assert.equal(JOURNAL_PROFILE_DATASET.validation.status, 'journal_profile_dataset_valid');

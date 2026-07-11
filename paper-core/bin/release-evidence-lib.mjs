@@ -89,15 +89,30 @@ export function verifyReleaseIntegritySignature(payload, signature) {
   return crypto.verify(null, canonical, signature.publicKeyPem, Buffer.from(signature.signature, 'base64'));
 }
 
+export function selectCurrentReleaseVerificationReceipt({ verificationRoot, codeProvenance }) {
+  if (!fs.existsSync(verificationRoot)) return null;
+  const receipts = [];
+  for (const name of fs.readdirSync(verificationRoot).filter((candidate) => candidate.endsWith('.json'))) {
+    try {
+      const receipt = JSON.parse(fs.readFileSync(path.join(verificationRoot, name), 'utf8'));
+      if (receipt?.kind !== 'IsolatedVerificationReceipt'
+        || receipt?.mode !== 'release'
+        || receipt?.status !== 'isolated_verification_passed'
+        || receipt?.codeProvenance?.packageVersion !== codeProvenance.packageVersion
+        || receipt?.codeProvenance?.commit !== codeProvenance.commit
+        || receipt?.codeProvenance?.treeDirty === true) continue;
+      receipts.push({ receipt, name });
+    } catch { /* Ignore malformed historical receipts; absence remains fail-closed. */ }
+  }
+  receipts.sort((left, right) => String(left.receipt.completedAt || '').localeCompare(String(right.receipt.completedAt || ''))
+    || left.name.localeCompare(right.name));
+  return receipts.at(-1)?.receipt || null;
+}
+
 export function buildReleaseEvidenceBundle({ runtimeRoot, legacyRoot } = {}) {
   const codeProvenance = currentCodeProvenance();
   const verificationRoot = path.join(runtimeRoot, 'release-evidence', 'verification-receipts');
-  const verificationFiles = fs.existsSync(verificationRoot)
-    ? fs.readdirSync(verificationRoot).filter((name) => name.endsWith('.json')).sort()
-    : [];
-  const verificationReceipt = verificationFiles.length
-    ? JSON.parse(fs.readFileSync(path.join(verificationRoot, verificationFiles.at(-1)), 'utf8'))
-    : null;
+  const verificationReceipt = selectCurrentReleaseVerificationReceipt({ verificationRoot, codeProvenance });
   const legacyDb = path.join(legacyRoot, 'paper_factory.sqlite');
   const archivePath = resolveImmutableLegacyMatrixArchive();
   const archiveRoot = path.dirname(archivePath);

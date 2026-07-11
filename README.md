@@ -77,6 +77,7 @@ npm test
 npm run paper:selftest
 npm run paper:authority-selftest
 npm run paper:architecture-selftest
+npm run taskflow:pilot-selftest
 npm run coverage:architecture
 npm run coverage:repository
 npm run coverage:system
@@ -148,6 +149,14 @@ read-only StorePort. The signed release binds both SQLite bytes and a canonical
 logical database hash so page-layout churn cannot be confused with a logical
 state change. The 263-row legacy audit selectively restores its sources from
 the immutable archive; it no longer reads the live legacy working directory.
+
+Executed workflows may also write a hash-bound native `workflow_states`
+projection through `WorkflowStatePort`; its matching ledger receipt remains
+the audit anchor. Planning and status commands do not write this projection.
+The optional OpenClaw TaskFlow pilot is documented in
+`paper-core/docs/taskflow-pilot.md`. It is disabled by default and coordinates
+external waits for one allowlisted reviewed-submission attempt without owning
+business gates, evidence validation, credentials, release locks, or authority.
 
 External-disk WORM onboarding is governed by
 `paper-core/config/offhost-worm-contract.v1.json`. The current external target

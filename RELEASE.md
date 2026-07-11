@@ -1,7 +1,7 @@
 # Release process
 
-Version 0.9.0 is a bounded-adapter, external-intake and full-system-coverage checkpoint,
-not a live-submission release.
+Version 0.10.0 is a targeted-refactor, native-workflow-projection and optional
+TaskFlow-coordination checkpoint, not a live-submission release.
 
 Run `npm run release:verify` from a clean commit. Verification uses disposable
 SQLite/CAS/ledger state, proves that production database byte and logical hashes
@@ -32,3 +32,10 @@ actually present.
 The repository remains fail-closed. A tag does not authorize external actions,
 academic acceptance, destructive deletion, or functional-parity retirement of
 the frozen legacy archive.
+
+The feature-flagged TaskFlow pilot is an outer OpenClaw coordination layer. It
+stores only minimal identifiers, hashes, blocker codes, revisions and child
+task links. Hepta SQLite plus verified receipts remain the sole business source
+of truth; every resume must reread them and recompute the native gate. TaskFlow
+cannot validate evidence, infer acceptance, unlock submission, hold provider
+credentials, or turn a local release signature into external authority.

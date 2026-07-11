@@ -7,6 +7,7 @@ import { createSha256Hasher } from '../../paper-adapters/runtime/sha256-hasher.m
 import { createAuthorityVerifier } from '../../paper-adapters/authority/authority-verifier.mjs';
 import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqlite-receipt-ledger.mjs';
 import { createSqliteJobReceiptStore } from '../../paper-adapters/persistence/sqlite-job-receipt-store.mjs';
+import { createSqliteWorkflowStateStore } from '../../paper-adapters/persistence/sqlite-workflow-state-store.mjs';
 import { createSqliteSubmissionDeliveryStore } from '../../paper-adapters/submission/sqlite-delivery-store.mjs';
 
 export function bootstrapPaperExecutionContext({
@@ -37,6 +38,7 @@ export function bootstrapPaperExecutionContext({
     authorityVerifier: serviceOverrides.authorityVerifier || createAuthorityVerifier(),
     receiptLedger,
     jobReceiptStore: serviceOverrides.jobReceiptStore || createSqliteJobReceiptStore({ store, receiptLedger, clock }),
+    workflowStateStore: serviceOverrides.workflowStateStore || createSqliteWorkflowStateStore({ store, clock, receiptLedger }),
     submissionDeliveryStore: serviceOverrides.submissionDeliveryStore || createSqliteSubmissionDeliveryStore({ store, receiptLedger, clock }),
   };
   const context = createExecutionContext({ root, runtimeRoot, mode, execute, writeReport, options, services });

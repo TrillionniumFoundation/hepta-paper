@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.10.0 - 2026-07-11
+
+- Split proposal generation/materialization and referee repair planning from
+  their orchestration entry points. The proposal entry is now 237 lines and
+  the referee-revise entry is 272 lines; the extracted bounded services remain
+  covered by the existing size and import architecture gates.
+- Activated the previously unused `workflow_states` schema through a native,
+  hash-bound `WorkflowStatePort`. Executed batch workflows may persist a
+  derived projection and its ledger receipt; read-only planning never writes,
+  and receipt/state hash mismatch fails closed.
+- Added a feature-flagged OpenClaw TaskFlow pilot for the
+  `A_Theory_of__Expectations` reviewed-submission attempt. It keeps only
+  coordination state and hashes, revalidates hepta-native state on every
+  resume, and cannot grant authority, unlock a release, validate evidence, or
+  own provider credentials. The pilot is disabled by default.
+- Added revision-conflict, child-task failure, state-tamper and unregistered
+  paper tests. Architecture checks prevent the TaskFlow adapter from entering
+  the domain core or becoming a second business source of truth.
+- Rebound the 263-row legacy matrix reference to the refactored proposal
+  target. Its classification remains 14 behavioral replacements and 249
+  explicit retirements, with no unmapped or partial entry.
+
+This release remains production `No-Go`: TaskFlow only improves coordination.
+No external keys or signatures have been supplied, owner acceptance is 0/249,
+operational proof is 0/14 native capabilities (covering 161 legacy
+requirements), the 15 cold-data entries and sentinel are absent, and no live
+provider executor is installed or authorized.
+
 ## 0.9.0 - 2026-07-11
 
 - Split the empirical, journal, legacy-cleanup, referee-revision and batch

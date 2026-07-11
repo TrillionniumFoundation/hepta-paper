@@ -10728,7 +10728,7 @@
       },
       "target": {
         "path": "hepta-paper-workspace/paper-adapters/proposal/index.mjs",
-        "sha256": "c529c81272d387629d88a548f6f4a1a804a711b11ded3a56f4f2056246c252a2",
+        "sha256": "ba5db67cb360fea9b22383149c9634c9adc7875f6b529e88f1ffb6a97d8d1826",
         "symbols": [
           "runPaperProposalAdapter"
         ]

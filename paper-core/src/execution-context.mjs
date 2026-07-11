@@ -31,7 +31,7 @@ export function createExecutionContext({
 }
 
 export function assertExecutionServices(context) {
-  const required = ['store', 'artifactRepositoryFactory', 'clock', 'hasher', 'authorityVerifier', 'receiptLedger', 'jobReceiptStore', 'submissionDeliveryStore'];
+  const required = ['store', 'artifactRepositoryFactory', 'clock', 'hasher', 'authorityVerifier', 'receiptLedger', 'jobReceiptStore', 'workflowStateStore', 'submissionDeliveryStore'];
   const missing = required.filter((name) => !context?.services?.[name]);
   if (missing.length) throw new Error(`ExecutionContext services missing: ${missing.join(',')}`);
   return context.services;

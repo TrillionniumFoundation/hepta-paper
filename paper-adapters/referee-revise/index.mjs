@@ -9,26 +9,9 @@ export {
   refereeRevisionRequestConsumingSelection,
   refereeRevisionRequestDecisionPlan,
 } from './decision-routing.mjs';
-import {
-  fileRecord,
-  pathWithin,
-  relativePath,
-} from '../../paper-core/src/runtime/file-utils.mjs';
-import { normalizeText, uniqueStrings } from '../../paper-core/src/runtime/text-utils.mjs';
+import { uniqueStrings } from '../../paper-core/src/runtime/text-utils.mjs';
 import { writeJsonFile } from '../artifacts/write-artifact.mjs';
 import {
-  buildRefereeRevisionDryRunReceipt,
-  buildRefereeRevisionIssueQueue,
-  buildRefereeRevisionPatchPlan,
-  buildRefereeRevisionPatchExecutionPreflight,
-  buildRefereeRevisionPreimageSnapshotLedger,
-  buildRefereeRevisionExecutePlan,
-  buildRefereeRevisionApplyModeContract,
-  buildRefereeRevisionExecuteDesignPacket,
-  buildRefereeRevisionRollbackLedgerDraft,
-} from '../../paper-core/src/contracts/referee-planning.mjs';
-import {
-  buildRefereeApplyApprovalPacket,
   buildRefereePatchApplyExecution,
   buildRefereePatchApplyInvocation,
   buildRefereeAppliedPatchReceipt,
@@ -42,28 +25,16 @@ import {
 import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
 import { heptaStorePath } from '../../paper-core/src/hepta-store.mjs';
 import {
-  runLatexBuildAdapter,
-  runPackageAdapter,
-} from '../build-package/index.mjs';
-import { runResearchVerifyAdapter } from '../research-verify/index.mjs';
-import {
   escapeSqlText,
   normalizePatch,
   normalizeRequest,
-  sqliteExec,
   sqliteJson,
-  sqlJson,
-  sqlText,
 } from '../referee-store.mjs';
 
-import {
-  buildAgentRepairPatchBundle,
-  issueIsOpen,
-  stderrLines,
-  validateAndMaybeApplyPatches,
-} from './repair-executor.mjs';
-import { withRecordHash, repairMainTexRow, runPostRepairRechecks } from './post-repair.mjs';
-import { repairedArtifactRefs, buildIssueResolutionEvidence, buildRepairReconciliationInputs, mergeRefereeRepairMetadata, patchQueueMetadata, runRepairStateMutationExecutor, targetPreimageRecords } from './reconciliation.mjs';
+import { validateAndMaybeApplyPatches } from './repair-executor.mjs';
+import { runPostRepairRechecks } from './post-repair.mjs';
+import { buildIssueResolutionEvidence, buildRepairReconciliationInputs, runRepairStateMutationExecutor } from './reconciliation.mjs';
+import { buildRefereeRevisionPlanningContext } from './planning-service.mjs';
 
 export async function runRefereeReviseAdapter({
   root,
@@ -85,104 +56,21 @@ export async function runRefereeReviseAdapter({
     store,
     `select * from patch_queue where slug='${slug}' order by updated_at desc, patch_id desc limit ${Number(limit) || 64};`,
   ).map(normalizePatch);
-  const baseIssueQueue = buildRefereeRevisionIssueQueue({
-    paperTask: row.task,
-    requests,
-    patchQueue: patches,
-  });
-  const agentRepairPatchBundle = execute && Number(baseIssueQueue.openIssueCount || 0) > 0
-    ? await buildAgentRepairPatchBundle({
-      root,
-      runtimeRoot,
-      row,
-      issueQueue: baseIssueQueue,
-    })
-    : null;
-  const agentPatchBundleSelected = [
-    'agent_repair_patch_bundle_ready',
-    'agent_repair_patch_already_present',
-  ].includes(agentRepairPatchBundle?.status);
-  const effectivePatchQueue = agentPatchBundleSelected
-    ? agentRepairPatchBundle.generatedPatchInputs
-    : patches;
-  const issueQueue = buildRefereeRevisionIssueQueue({
-    paperTask: row.task,
-    requests,
-    patchQueue: effectivePatchQueue,
-  });
-  const patchPlan = buildRefereeRevisionPatchPlan({
-    paperTask: row.task,
-    issueQueue,
-    mode,
-  });
-  const patchExecutionPreflight = buildRefereeRevisionPatchExecutionPreflight({
-    paperTask: row.task,
-    issueQueue,
-    patchPlan,
-    sourceWorkspace: row.task.sourceWorkspace,
-    mode,
-  });
-  const rollbackLedgerDraft = buildRefereeRevisionRollbackLedgerDraft({
-    paperTask: row.task,
-    issueQueue,
-    patchPlan,
-    patchExecutionPreflight,
-    mode,
-  });
-  const targetRecords = await targetPreimageRecords(root, patchExecutionPreflight.targetPaths || []);
-  const preimageSnapshotLedger = buildRefereeRevisionPreimageSnapshotLedger({
-    paperTask: row.task,
-    patchExecutionPreflight,
-    targetRecords,
-  });
-  const executePlan = buildRefereeRevisionExecutePlan({
-    paperTask: row.task,
-    issueQueue,
-    patchPlan,
-    patchExecutionPreflight,
-    preimageSnapshotLedger,
-    mode: 'execute-plan',
-  });
-  const applyModeContract = buildRefereeRevisionApplyModeContract({
-    paperTask: row.task,
-    executePlan,
-    approved: true,
-    approver: 'openclaw-agent',
-    approvalActor: 'agent',
-  });
-  const dryRunReceipt = buildRefereeRevisionDryRunReceipt({
-    paperTask: row.task,
+  const {
+    agentRepairPatchBundle,
+    agentPatchBundleSelected,
     issueQueue,
     patchPlan,
     patchExecutionPreflight,
     rollbackLedgerDraft,
-    preimageSnapshotLedger,
-    executePlan,
-    applyModeContract,
-  });
-  const executeDesignPacket = buildRefereeRevisionExecuteDesignPacket({
-    paperTask: row.task,
-    issueQueue,
-    patchPlan,
-    patchExecutionPreflight,
     preimageSnapshotLedger,
     executePlan,
     applyModeContract,
     dryRunReceipt,
-  });
-  const applyApprovalPacket = buildRefereeApplyApprovalPacket({
-    paperTask: row.task,
-    issueQueue,
-    patchPlan,
-    patchExecutionPreflight,
-    rollbackLedgerDraft,
-    preimageSnapshotLedger,
-    executePlan,
-    applyModeContract,
     executeDesignPacket,
-    approved: true,
-    approver: 'openclaw-agent',
-    approvalActor: 'agent',
+    applyApprovalPacket,
+  } = await buildRefereeRevisionPlanningContext({
+    root, runtimeRoot, row, mode, execute, requests, patches,
   });
   const patchApplyExecution = buildRefereePatchApplyExecution({
     paperTask: row.task,

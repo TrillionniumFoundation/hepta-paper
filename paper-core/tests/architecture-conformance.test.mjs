@@ -242,8 +242,12 @@ test('high-risk adapters remain split into bounded modules', () => {
     'paper-adapters/journal-manage/selection.mjs',
     'paper-adapters/journal-manage/contracts.mjs',
     'paper-adapters/referee-revise/index.mjs',
+    'paper-adapters/referee-revise/planning-service.mjs',
     'paper-adapters/referee-revise/post-repair.mjs',
     'paper-adapters/referee-revise/reconciliation.mjs',
+    'paper-adapters/proposal/index.mjs',
+    'paper-adapters/proposal/proposal-generation.mjs',
+    'paper-adapters/proposal/proposal-materialization.mjs',
     'paper-core/src/reporting/batch-result-summary.mjs',
     'paper-core/src/reporting/workflow-result-summary.mjs',
   ];
@@ -257,7 +261,28 @@ test('high-risk adapters remain split into bounded modules', () => {
     'paper-adapters/legacy-cleanup/index.mjs',
     'paper-adapters/journal-manage/index.mjs',
     'paper-adapters/referee-revise/index.mjs',
+    'paper-adapters/proposal/index.mjs',
   ]) {
     assert.equal(rows.find((row) => row.relative === relative).lines <= 400, true, relative);
   }
+});
+
+test('TaskFlow remains an optional outer coordinator and workflow state remains native', () => {
+  const controller = fs.readFileSync(path.join(workspaceRoot, 'paper-application', 'orchestration', 'reviewed-submit-taskflow.mjs'), 'utf8');
+  const adapter = fs.readFileSync(path.join(workspaceRoot, 'paper-adapters', 'orchestration', 'openclaw-taskflow-adapter.mjs'), 'utf8');
+  const domainSource = fs.readdirSync(path.join(workspaceRoot, 'paper-domain'), { recursive: true })
+    .filter((entry) => typeof entry === 'string' && entry.endsWith('.mjs'))
+    .map((entry) => fs.readFileSync(path.join(workspaceRoot, 'paper-domain', entry), 'utf8'))
+    .join('\n');
+  assert.equal(domainSource.includes('TaskFlow'), false);
+  assert.equal(controller.includes('paper-domain/submission'), false);
+  assert.equal(controller.includes('paper-adapters/persistence'), false);
+  assert.equal(controller.includes('privateKeyPem'), false);
+  assert.equal(controller.includes('providerCredential'), false);
+  assert.equal(controller.includes('api.runtime.tasks.flow'), false);
+  assert.equal(adapter.includes('api?.runtime?.tasks?.flow'), true);
+  assert.equal(adapter.includes('grantsSubmissionAuthority: false'), true);
+  const batch = fs.readFileSync(path.join(workspaceRoot, 'paper-application', 'batch', 'paper-batch-application.mjs'), 'utf8');
+  assert.equal(batch.includes('workflowStateStore.put'), true);
+  assert.equal(batch.includes('const workflowStateProjection = execute'), true);
 });

@@ -38,7 +38,8 @@ technical test cannot manufacture business acceptance.
 - `paper-application/`: batch composition plus stage use cases. Stage handlers
   and the local diagnostic review loop no longer live in the batch runner.
 - `paper-ports/`: Store, ArtifactRepository, WorkerRunner, FormalVerifier,
-  JobReceiptStore, and SubmissionExecutor boundaries.
+  JobReceiptStore, WorkflowState, SubmissionExecutor, and optional outer
+  TaskFlow boundaries.
 - `paper-adapters/`: SQLite, filesystem, LaTeX, Lean, research, referee,
   journal, and submission implementations.
 - `paper-core/bin/`: CLI argument parsing and application invocation.
@@ -55,6 +56,18 @@ are atomic by default, and return a hash-bound receipt. Write, workflow, job,
 submission, backup and restore-drill receipts are persisted in the native
 receipt ledger. Direct sqlite3 subprocess use outside the SQLite adapter is
 reserved for failure/concurrency tests.
+
+`WorkflowStatePort` materializes a hash-bound projection only for executed
+workflows. It is derived state, not an independent authority; its ledger
+receipt and hepta-native records remain the audit basis. Read-only planning
+must not write it, and a stored hash mismatch fails closed.
+
+OpenClaw TaskFlow may coordinate long-lived waits only through the optional
+outer adapter. It may own a flow revision, current step, minimal hash-only
+state, wait metadata and child-task links. It may not own submission branching,
+verify academic or owner evidence, hold keys or provider credentials, unlock a
+release, or supersede SQLite and verified receipts. Every resume rebuilds the
+domain snapshot and recomputes native gates. See `taskflow-pilot.md`.
 
 Native research execution is plugin-based. The initial worker types are
 artifact integrity, CSV descriptive statistics, JSON assertions, and bounded
@@ -115,6 +128,7 @@ readiness is not functional parity and does not replace owner acceptance.
 ## Verification
 
 - `npm run paper:architecture-selftest`
+- `npm run taskflow:pilot-selftest`
 - `npm run coverage:architecture`
 - `npm run test:migration-differential` when the frozen legacy source is
   available beside this workspace

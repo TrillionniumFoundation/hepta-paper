@@ -138,10 +138,19 @@ export async function runPaperBatch({
       lifecycle,
       workflowReceipt: workflowExecution.workflowReceipt,
     });
+    const workflowStateProjection = execute
+      ? executionContext.services.workflowStateStore.put({
+        paperId: row.task.paperId,
+        mode,
+        state,
+        workflowReceiptHash: workflowExecution.workflowReceipt.workflowReceiptHash,
+      })
+      : null;
     results.push({
       paperId: row.task.paperId,
       task: row.task,
       state,
+      workflowStateProjection,
       workflowRow: paperWorkflowRow(state),
       buildResult,
       packageResult,

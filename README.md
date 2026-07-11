@@ -79,9 +79,11 @@ npm run paper:authority-selftest
 npm run paper:architecture-selftest
 npm run coverage:architecture
 npm run coverage:repository
+npm run coverage:system
 npm run authority:status
 npm run owner:status
 npm run operational:status
+npm run external:intake-verify -- --staging /path/to/external/staging
 npm run assets:cold-volume-status
 npm run assets:cold-volume-cas-status
 npm run legacy:fixture-verify
@@ -147,12 +149,16 @@ logical database hash so page-layout churn cannot be confused with a logical
 state change. The 263-row legacy audit selectively restores its sources from
 the immutable archive; it no longer reads the live legacy working directory.
 
-Off-host WORM onboarding is governed by
+External-disk WORM onboarding is governed by
 `paper-core/config/offhost-worm-contract.v1.json`. The current external target
 is the ext4 volume mounted at `/media/qian-qi/TOSHIBA_CLEAN3` (the operator's
 renamed external disk). A snapshot can qualify only on a distinct mounted
 filesystem with immutable objects and a successful restore drill. Local
 packets and signatures cannot satisfy that external-media requirement. This
+is currently a same-host external-disk protection level, not an off-host or
+offsite custody claim. Off-host/offsite qualification additionally requires an
+offline-detachment or object-storage Object Lock receipt and independent
+custody attestation. This
 WORM target is independent of the `THUNDERO_EXT4` cold-data contract: the
 TOSHIBA volume must not be treated as a cold-data recovery source unless all 15
 declared entries and their hash-bound sentinel are actually present.

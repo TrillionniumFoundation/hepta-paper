@@ -228,3 +228,36 @@ test('production modules do not bypass StorePort or restore autopilot acceptance
     assert.equal(/\b(writeFile|writeFileSync|appendFile|appendFileSync|rename|renameSync)\(/.test(text), false, file);
   }
 });
+
+test('high-risk adapters remain split into bounded modules', () => {
+  const boundedModules = [
+    'paper-adapters/empirical-analysis/index.mjs',
+    'paper-adapters/empirical-analysis/benchmark-contracts.mjs',
+    'paper-adapters/empirical-analysis/execution-contracts.mjs',
+    'paper-adapters/legacy-cleanup/index.mjs',
+    'paper-adapters/legacy-cleanup/classification.mjs',
+    'paper-adapters/legacy-cleanup/retirement-planning.mjs',
+    'paper-adapters/legacy-cleanup/retirement-execution.mjs',
+    'paper-adapters/journal-manage/index.mjs',
+    'paper-adapters/journal-manage/selection.mjs',
+    'paper-adapters/journal-manage/contracts.mjs',
+    'paper-adapters/referee-revise/index.mjs',
+    'paper-adapters/referee-revise/post-repair.mjs',
+    'paper-adapters/referee-revise/reconciliation.mjs',
+    'paper-core/src/reporting/batch-result-summary.mjs',
+    'paper-core/src/reporting/workflow-result-summary.mjs',
+  ];
+  const rows = boundedModules.map((relative) => ({
+    relative,
+    lines: fs.readFileSync(path.join(workspaceRoot, relative), 'utf8').split(/\n/).length - 1,
+  }));
+  assert.equal(Math.max(...rows.map((row) => row.lines)) <= 700, true, JSON.stringify(rows));
+  for (const relative of [
+    'paper-adapters/empirical-analysis/index.mjs',
+    'paper-adapters/legacy-cleanup/index.mjs',
+    'paper-adapters/journal-manage/index.mjs',
+    'paper-adapters/referee-revise/index.mjs',
+  ]) {
+    assert.equal(rows.find((row) => row.relative === relative).lines <= 400, true, relative);
+  }
+});

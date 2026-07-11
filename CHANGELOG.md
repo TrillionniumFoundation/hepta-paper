@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.9.0 - 2026-07-11
+
+- Split the empirical, journal, legacy-cleanup, referee-revision and batch
+  reporting adapters into bounded modules. Every high-risk split module is now
+  limited to 700 lines and its orchestration entry point to 400 lines by an
+  architecture test; this is a real responsibility split rather than a facade
+  rename.
+- Added a full-system coverage gate that executes the end-to-end selftest and
+  enforces 80/50/80 for lines/branches/functions. The measured result is
+  88.25/53.90/84.38; the faster repository gate remains separately enforced.
+- Added fillable public-key-only templates for four separated authority roles,
+  the owner trust store, all 13 owner families and all 14 production-bound
+  operational receipts. A read-only staging verifier now checks Ed25519 role
+  separation, owner-family hashes, current-commit target bindings and authority
+  document envelopes without installing evidence or authorizing any action.
+- Corrected the WORM custody claim: `TOSHIBA_CLEAN3` is a distinct ext4 external
+  disk on the same host. Snapshots remain hash-bound and inode-immutable, but
+  off-host/offsite custody stays explicitly blocked until an offline-detachment
+  or Object Lock receipt and independent custody attestation exist.
+
+This release remains production `No-Go`: no external keys or signatures have
+been supplied, owner acceptance is 0/249, operational proof is 0/14 native
+capabilities (covering 161 legacy requirements), the 15 cold-data entries and
+sentinel are absent, and no live provider action is authorized.
+
 ## 0.8.0 - 2026-07-11
 
 - Bound off-host WORM storage to the renamed, physically distinct ext4 volume

@@ -15,6 +15,8 @@ test('offhost WORM snapshot binds immutable objects and supports restore verific
   const contract = { version: 1, kind: 'OffhostWormSnapshotContract', contractId: 'fixture', targetMountRoot: target, requireDistinctFilesystemDevice: true, requireFilesystemImmutableObjects: true };
   const snapshot = createOffhostWormSnapshot({ workspaceRoot: root, contract, sources: [{ role: 'fixture', path: source }], execute: true, mountAvailableOverride: true, distinctDeviceOverride: true, immutableOverride: true });
   assert.equal(snapshot.status, 'offhost_worm_snapshot_recorded');
+  assert.equal(snapshot.target.offHostOrOffsiteCustodyQualified, false);
+  assert.equal(snapshot.target.custodyStatus, 'offhost_or_offsite_custody_blocked');
   const drill = drillOffhostWormRestore({ manifestPath: snapshot.manifestPath, immutableOverride: true });
   assert.equal(drill.status, 'offhost_worm_restore_drill_passed');
   assert.equal(drill.verifiedObjectCount, 1);

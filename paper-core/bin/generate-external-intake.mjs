@@ -69,6 +69,43 @@ await withArtifactWriteContext(context.services, async () => {
     requiredDocuments: ['ACADEMIC_EVIDENCE_ATTESTATION.json', 'INDEPENDENT_REFEREE_VERDICT.json', 'LIVE_SUBMISSION_AUTHORIZATION.json'],
     separationOfDutiesRequired: true,
   };
+  const authorityTrustStoreTemplate = {
+    version: 1,
+    kind: 'AuthorityTrustStore',
+    keys: authorityPayload.requiredRoles.map((role) => ({
+      keyId: null,
+      subjectId: null,
+      organization: null,
+      algorithm: 'ed25519',
+      publicKeyPem: null,
+      roles: [role],
+      status: 'active',
+    })),
+    privateKeysForbidden: true,
+    distinctSubjectsRequired: true,
+  };
+  const ownerTrustStoreTemplate = {
+    version: 1,
+    kind: 'AuthorityTrustStore',
+    keys: [{
+      keyId: null,
+      subjectId: null,
+      organization: null,
+      algorithm: 'ed25519',
+      publicKeyPem: null,
+      roles: ['capability_owner'],
+      status: 'active',
+    }],
+    privateKeysForbidden: true,
+  };
+  const ownerAcceptanceTemplate = {
+    version: 2,
+    kind: 'CapabilityOwnerAcceptance',
+    familyManifestHash: matrix.ownerAcceptanceFamilyManifest.familyManifestHash,
+    acceptedFamilies: ownerPayload.acceptedFamiliesTemplate,
+    acceptedAt: null,
+    signatures: [],
+  };
   const targetBindings = capabilityTargetBindings(workspaceRoot, matrix.capabilityCatalog);
   const operationalPayload = {
     version: 1,
@@ -85,6 +122,30 @@ await withArtifactWriteContext(context.services, async () => {
       requiredOutputDirectory: `runtime/operational-proof/capabilities/${capabilityId}`,
     })),
     conformanceReceiptsCannotQualify: true,
+  };
+  const operationalReceiptTemplates = {
+    version: 1,
+    kind: 'CapabilityOperationalReceiptTemplateSet',
+    releaseCommit: provenance.commit,
+    templates: operationalPayload.capabilities.map((capability) => ({
+      version: 1,
+      kind: 'CapabilityOperationalReceipt',
+      capabilityId: capability.capabilityId,
+      status: 'production_capability_replay_verified',
+      evidenceEnvironment: 'production',
+      evidenceClass: 'operational',
+      productionEligible: true,
+      productionSubject: { paperId: null, subjectId: null },
+      inputHashes: [],
+      executionReceiptHash: null,
+      resultHash: null,
+      replayReceiptHash: null,
+      replayMatched: true,
+      releaseCommit: provenance.commit,
+      targetHashes: capability.targetHashes,
+      signatures: [],
+    })),
+    syntheticOrConformanceEvidenceForbidden: true,
   };
   const paperId = 'A_Theory_of__Expectations';
   const mainTex = path.join(root, 'submission', 'AoM', paperId, 'main.tex');
@@ -125,16 +186,29 @@ await withArtifactWriteContext(context.services, async () => {
     codeProvenance: provenance,
     contractPath: path.relative(workspaceRoot, offhostWormContractPath),
     contractHash: sha256File(offhostWormContractPath),
-    requiredProperties: ['distinct_filesystem_device', 'filesystem_immutable_objects', 'restore_drill'],
+    currentProtectionLevel: 'same_host_external_disk',
+    offHostOrOffsiteCustodyQualified: false,
+    requiredProperties: [
+      'distinct_filesystem_device',
+      'filesystem_immutable_objects',
+      'restore_drill',
+      'offline_detachment_or_object_lock_receipt',
+      'independent_custody_attestation',
+    ],
     requiredCommandSequence: ['npm run offhost:worm-status', 'npm run offhost:worm-snapshot -- --execute', 'npm run offhost:worm-restore-drill -- --manifest <path>'],
     internalFallbackForbidden: true,
+    connectedSameHostDiskInsufficientForOffsiteQualification: true,
     completionInferredFromPacket: false,
   };
   const outputs = [];
   for (const [name, payload, role] of [
     ['OWNER_ACCEPTANCE_REQUEST.json', ownerPayload, 'owner_acceptance_request'],
     ['AUTHORITY_ONBOARDING_PACKET.json', authorityPayload, 'authority_onboarding_packet'],
+    ['AUTHORITY_TRUST_STORE_TEMPLATE.json', authorityTrustStoreTemplate, 'authority_trust_store_template'],
+    ['OWNER_TRUST_STORE_TEMPLATE.json', ownerTrustStoreTemplate, 'owner_trust_store_template'],
+    ['CAPABILITY_OWNER_ACCEPTANCE_TEMPLATE.json', ownerAcceptanceTemplate, 'owner_acceptance_template'],
     ['OPERATIONAL_PROOF_PLAN.json', operationalPayload, 'operational_proof_plan'],
+    ['OPERATIONAL_RECEIPT_TEMPLATES.json', operationalReceiptTemplates, 'operational_receipt_templates'],
     ['REAL_PAPER_PRODUCTION_CHAIN_REQUEST.json', productionChainPayload, 'real_paper_production_chain_request'],
     ['OFFHOST_WORM_ONBOARDING_PACKET.json', offhostWormPayload, 'offhost_worm_onboarding_packet'],
   ]) {

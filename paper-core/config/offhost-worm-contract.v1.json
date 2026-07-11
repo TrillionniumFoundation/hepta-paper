@@ -5,5 +5,9 @@
   "targetMountRoot": "/media/qian-qi/TOSHIBA_CLEAN3",
   "requireDistinctFilesystemDevice": true,
   "requireFilesystemImmutableObjects": true,
+  "currentProtectionLevel": "same_host_external_disk",
+  "offHostOrOffsiteCustodyQualified": false,
+  "offlineDetachmentOrObjectLockReceiptRequired": true,
+  "independentCustodyAttestationRequired": true,
   "availabilityPolicy": "fail_closed_until_external_mount_is_verified"
 }

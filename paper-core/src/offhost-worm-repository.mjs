@@ -40,6 +40,17 @@ export function verifyOffhostWormTarget({ workspaceRoot, contract, mountAvailabl
     mountAvailable,
     mountIdentity: mountAvailable ? String(mountProbe.stdout || '').trim() || 'test_override' : null,
     distinctDevice,
+    currentProtectionLevel: contract.currentProtectionLevel || 'external_disk_unspecified_custody',
+    offHostOrOffsiteCustodyQualified: contract.offHostOrOffsiteCustodyQualified === true,
+    custodyStatus: contract.offHostOrOffsiteCustodyQualified === true
+      ? 'offhost_or_offsite_custody_qualified'
+      : 'offhost_or_offsite_custody_blocked',
+    custodyBlockers: contract.offHostOrOffsiteCustodyQualified === true
+      ? []
+      : [
+        ...(contract.offlineDetachmentOrObjectLockReceiptRequired ? ['offline_detachment_or_object_lock_receipt_missing'] : []),
+        ...(contract.independentCustodyAttestationRequired ? ['independent_custody_attestation_missing'] : []),
+      ],
     blockers,
   });
 }
@@ -110,6 +121,8 @@ export function createOffhostWormSnapshot({ workspaceRoot, contract, sources = [
     kind: 'OffhostWormSnapshotManifest',
     contractId: contract.contractId,
     snapshotId,
+    protectionLevel: target.currentProtectionLevel,
+    offHostOrOffsiteCustodyQualified: target.offHostOrOffsiteCustodyQualified,
     objects,
   };
   const manifest = { ...payload, manifestHash: hashRecord('OffhostWormSnapshotManifest', payload) };

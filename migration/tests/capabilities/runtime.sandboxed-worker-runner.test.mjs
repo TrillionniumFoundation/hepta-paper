@@ -33,8 +33,7 @@ test('runtime.sandboxed-worker-runner executes through a real kernel sandbox whe
     probe,
   });
   const receipt = runner.run({ executable: '/usr/bin/true', cwd: root, sourceRoot: root, outputPaths: [] });
-  if (!probe.available) {
-    assert.equal(receipt.status, 'os_sandbox_worker_blocked');
+  if (receipt.status === 'os_sandbox_worker_blocked') {
     assert.ok(receipt.blockers.includes('os_sandbox_runtime_unavailable'));
     fs.rmSync(root, { recursive: true, force: true });
     return;

@@ -59,6 +59,7 @@ async function main() {
       '  --max-cost-usd <n>        per-campaign model-cost budget',
       '  --action <name>           list|status|events|pause|resume|cancel|cancel-node|retry',
       '  --campaign-id <id>        campaign for an operational action',
+      '  --run-id <id>             suffix new campaign ids so a paper can be rerun',
       '  --node-id <id>            failed node for retry',
       '  --rounds <n>              maximum referee/revise rounds (default 3)',
       '  --referees <n>            independent referees per round (default 3)',
@@ -74,6 +75,9 @@ async function main() {
   }
   const root = path.resolve(options.root || defaultPaperAssetRoot());
   const runtimeRoot = path.resolve(options['runtime-root'] || defaultPaperRuntimeRoot());
+  if (options['campaign-id'] && options['run-id']) throw new Error('--campaign-id and --run-id cannot be combined');
+  const runId = options['run-id'] ? String(options['run-id']).replace(/[^A-Za-z0-9_.-]/g, '_') : null;
+  if (options['run-id'] && !runId) throw new Error('--run-id must contain at least one safe character');
   const context = bootstrapPaperExecutionContext({ root, runtimeRoot, mode: 'paper-campaign', execute: Boolean(options.execute) });
   const campaignStore = createSqliteCampaignStore({ store: context.services.store, clock: context.services.clock });
   if (options.action) {
@@ -124,7 +128,9 @@ async function main() {
         maxMemoryMiB: Number(options['memory-mib'] || 8192),
       },
       datasetMounts,
-      campaignId: options.paper.length === 1 && options['campaign-id'] ? options['campaign-id'] : null,
+      campaignId: options.paper.length === 1 && options['campaign-id']
+        ? options['campaign-id']
+        : runId ? `paper-campaign:${row.task.paperId}:${runId}` : null,
     });
   });
   if (!options.execute) {

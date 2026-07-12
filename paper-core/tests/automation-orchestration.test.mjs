@@ -121,6 +121,78 @@ test('campaign operations persist pause resume retry cancel and usage', (t) => {
   assert.equal(campaigns.cancelCampaign('campaign').status, 'cancelled');
 });
 
+test('budget-stopped campaigns require an explicit increase and reopen only budget-skipped nodes', (t) => {
+  const root = temporary(t, 'hepta-campaign-budget-resume-');
+  let milliseconds = Date.parse('2026-07-11T00:00:00Z');
+  const clock = { now: () => new Date(milliseconds), nowIso: () => new Date(milliseconds += 1).toISOString() };
+  const store = createDefaultPaperStore({ root, runtimeRoot: root });
+  const campaigns = createSqliteCampaignStore({ store, clock });
+  const plan = buildPaperCampaignPlan({
+    paperId: 'paper',
+    sourceWorkspace: root,
+    campaignId: 'budget-resume-campaign',
+    maxRounds: 1,
+    budgets: { maxCpuJobs: 0 },
+  });
+  campaigns.createCampaign(plan);
+  campaigns.stopCampaign(plan.campaignId, 'campaign_cpu_job_budget_exhausted');
+  assert.throws(
+    () => campaigns.resumeCampaign(plan.campaignId),
+    /campaign_budget_extension_required:maxCpuJobs/,
+  );
+  assert.throws(
+    () => campaigns.resumeCampaign(plan.campaignId, { budgetOverrides: { maxCpuJobs: 0 } }),
+    /campaign_budget_extension_required:maxCpuJobs/,
+  );
+  const resumed = campaigns.resumeCampaign(plan.campaignId, { budgetOverrides: { maxCpuJobs: 2, maxTokenCount: 750000 } });
+  assert.equal(resumed.status, 'running');
+  assert.equal(resumed.spec.budgets.maxCpuJobs, 2);
+  assert.equal(resumed.spec.budgets.maxTokenCount, 750000);
+  assert.notEqual(resumed.spec.campaignPlanHash, plan.campaignPlanHash);
+  assert.ok(campaigns.listNodes(plan.campaignId).every((node) => node.status === 'queued'));
+  assert.ok(campaigns.listNodes(plan.campaignId).every((node) => node.failure_class === null));
+  assert.equal(campaigns.listEvents(plan.campaignId).at(-1).event.kind, 'campaign_resumed');
+});
+
+test('non-budget stopped campaigns cannot be resumed', (t) => {
+  const root = temporary(t, 'hepta-campaign-terminal-stop-');
+  let milliseconds = Date.parse('2026-07-11T00:00:00Z');
+  const clock = { now: () => new Date(milliseconds), nowIso: () => new Date(milliseconds += 1).toISOString() };
+  const store = createDefaultPaperStore({ root, runtimeRoot: root });
+  const campaigns = createSqliteCampaignStore({ store, clock });
+  const plan = buildPaperCampaignPlan({ paperId: 'paper', sourceWorkspace: root, campaignId: 'terminal-stop-campaign', maxRounds: 1 });
+  campaigns.createCampaign(plan);
+  campaigns.stopCampaign(plan.campaignId, 'referee_convergence_not_reached_within_budget');
+  assert.throws(() => campaigns.resumeCampaign(plan.campaignId), /campaign_not_resumable/);
+});
+
+test('nonconverged campaigns append a review round without replaying completed work', (t) => {
+  const root = temporary(t, 'hepta-campaign-round-extension-');
+  let milliseconds = Date.parse('2026-07-11T00:00:00Z');
+  const clock = { now: () => new Date(milliseconds), nowIso: () => new Date(milliseconds += 1).toISOString() };
+  const store = createDefaultPaperStore({ root, runtimeRoot: root });
+  const campaigns = createSqliteCampaignStore({ store, clock });
+  const first = buildPaperCampaignPlan({ paperId: 'paper', sourceWorkspace: root, campaignId: 'extended-campaign', maxRounds: 1 });
+  campaigns.createCampaign(first);
+  campaigns.stopCampaign(first.campaignId, 'referee_convergence_not_reached_within_budget');
+  const second = buildPaperCampaignPlan({
+    paperId: 'paper',
+    sourceWorkspace: root,
+    campaignId: first.campaignId,
+    maxRounds: 2,
+    budgets: { ...first.budgets, maxAgentCalls: first.budgets.maxAgentCalls + 4 },
+  });
+  const extended = campaigns.extendCampaign(second);
+  assert.equal(extended.status, 'running');
+  assert.equal(extended.maxRounds, 2);
+  assert.equal(extended.spec.campaignPlanHash, second.campaignPlanHash);
+  const nodes = campaigns.listNodes(first.campaignId);
+  assert.equal(nodes.find((node) => node.kind === 'package' && node.roundIndex === 2).failure_class, 'campaign_round_extension_superseded');
+  assert.equal(nodes.find((node) => node.kind === 'referee-1' && node.roundIndex === 2).status, 'queued');
+  assert.equal(nodes.find((node) => node.kind === 'package' && node.roundIndex === 3).status, 'queued');
+  assert.equal(campaigns.listEvents(first.campaignId).at(-1).event.kind, 'campaign_extended');
+});
+
 test('manuscript citation and artifact checks are deterministic and fail closed', (t) => {
   const root = temporary(t, 'hepta-quality-check-');
   fs.writeFileSync(path.join(root, 'main.tex'), '\\cite{known}\\includegraphics{figure}\\begin{table}ok\\end{table}\n% HEPTA_RESULT results.json#metric=1\n');

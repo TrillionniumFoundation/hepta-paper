@@ -1,9 +1,11 @@
 # Release process
 
-Version 0.15.0 is an automation-first research-production release. It adds
-OpenClaw child-session execution, copy-on-write integration, global resource
-governance, empirical runtime images, revised-manuscript referee convergence
-and multi-campaign operations. It is not a live-submission release.
+Version 0.16.0 is an automation-first research-production release. It retains
+the OpenClaw child-session execution, copy-on-write integration, global
+resource governance, empirical runtime images and revised-manuscript referee
+convergence introduced in 0.15, and adds safe in-place recovery after budget
+stops plus append-only referee-round extension after honest non-convergence.
+It is not a live-submission release.
 
 Run `npm run release:verify` from a clean commit. Verification uses disposable
 SQLite/CAS/ledger state, proves that production database byte and logical hashes
@@ -66,3 +68,14 @@ That run rejected round one at mean score 0.793 with three remaining critical
 findings, then accepted round two at mean score 0.927 with zero critical
 findings. Both re-review waves were bound to one revised manuscript hash per
 round; the source asset tree remained unchanged and no external action ran.
+
+The v0.16 production acceptance preserved and completed three recovery
+campaigns in the native production store instead of replaying them from
+scratch. `DQL_Exploration_Convergence` converged in round one at mean score
+0.917; `DQL_Replay_Convergence` converged in round two at 0.910; and
+`DQL_Stochastic_Optimization` moved from four critical findings in round one
+to one in round two and zero in an appended round three, with final mean score
+0.933 and 100% acceptance. The final Stochastic package is a 17-page PDF with
+SHA-256 `a385ce47437f1af3027eb49b280412405d2e64051a5ab8cdc92d129254dc2ba8`.
+All runs used the OpenClaw backend, remained inside the declared global slots,
+and performed no external submission action.

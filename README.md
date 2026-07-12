@@ -15,7 +15,9 @@ and their dependency-ready nodes may run concurrently. SQLite leases,
 idempotent node results, bounded retries and expired-lease recovery provide
 crash-safe execution.
 
-Agent work can use authenticated Codex or a local structured Ollama model.
+Agent work uses isolated OpenClaw child sessions by default, with a local
+structured Ollama model as the offline fallback and authenticated Codex as an
+optional backend.
 Empirical workers support Python, Node, R, Julia, Lean and LaTeX when their
 host runtimes are installed, with network isolation, timeouts, CPU/memory/PID
 limits, optional GPU access and declared artifact export. Code and LaTeX
@@ -32,6 +34,22 @@ HEPTA_AGENT_LOCAL_PROVIDER=ollama \
 HEPTA_AGENT_MODEL=<local-model> npm run automation:campaign-smoke
 npm run paper:campaign -- --help
 ```
+
+Budget-stopped campaigns can be continued in place only after an explicit
+budget increase. If strict referee convergence exhausts the configured rounds,
+an operator can append another review/revise/revalidation round without
+replaying completed nodes:
+
+```bash
+npm run paper:campaign -- --action resume --campaign-id <id> --max-cpu-jobs 20 --max-tokens 1800000
+npm run paper:campaign -- --action extend --campaign-id <id> --rounds 3 --max-agent-calls 30 --max-cpu-jobs 28 --max-tokens 2500000
+npm run paper:campaign -- --execute --paper <paper-id> --campaign-id <id> --rounds 3
+```
+
+Each amendment is persisted as a campaign event, recomputes the campaign plan
+hash, preserves completed results, and reopens or appends only the required
+nodes. Non-budget operational stops cannot be resumed, and non-convergence
+cannot be bypassed by packaging.
 
 The optional TaskFlow integration mirrors long-lived campaign checkpoints and
 waits; the native campaign store remains the DAG source of truth. Details are

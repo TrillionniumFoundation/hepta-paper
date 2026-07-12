@@ -3,6 +3,23 @@ import { sqlJson, sqlText } from '../../paper-ports/store-port.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 const DONE = new Set(['completed', 'skipped']);
+const BUDGET_KEYS = Object.freeze([
+  'maxWallTimeMs',
+  'maxAgentCalls',
+  'maxCpuJobs',
+  'maxGpuJobs',
+  'maxTokenCount',
+  'maxCostUsd',
+  'maxMemoryMiB',
+]);
+const EXHAUSTED_BUDGET = Object.freeze({
+  campaign_wall_time_budget_exhausted: ['maxWallTimeMs', 'accumulatedRunMs'],
+  campaign_agent_call_budget_exhausted: ['maxAgentCalls', 'agentCallCount'],
+  campaign_cpu_job_budget_exhausted: ['maxCpuJobs', 'cpuJobCount'],
+  campaign_gpu_job_budget_exhausted: ['maxGpuJobs', 'gpuJobCount'],
+  campaign_token_budget_exhausted: ['maxTokenCount', 'tokenCount'],
+  campaign_cost_budget_exhausted: ['maxCostUsd', 'costUsd'],
+});
 
 function parseNode(row) {
   if (!row) return null;
@@ -175,15 +192,99 @@ export function createSqliteCampaignStore({ store, clock } = {}) {
       event(campaignId, null, 'campaign_paused', { reason });
       return api.getCampaign(campaignId);
     },
-    resumeCampaign(campaignId) {
+    resumeCampaign(campaignId, { budgetOverrides = {} } = {}) {
       const campaign = api.getCampaign(campaignId);
       if (!campaign) throw new Error(`campaign not found: ${campaignId}`);
-      if (campaign.status !== 'paused') return campaign;
+      if (!['paused', 'stopped'].includes(campaign.status)) return campaign;
+      const stoppedForBudget = campaign.status === 'stopped' && EXHAUSTED_BUDGET[campaign.stop_reason];
+      if (campaign.status === 'stopped' && !stoppedForBudget) {
+        throw new Error(`campaign_not_resumable:${campaign.stop_reason || 'stopped'}`);
+      }
+      const previousBudgets = campaign.spec?.budgets || {};
+      const overrides = Object.fromEntries(Object.entries(budgetOverrides || {}).filter(([, value]) => value !== undefined));
+      for (const key of Object.keys(overrides)) {
+        if (!BUDGET_KEYS.includes(key)) throw new Error(`unsupported_campaign_budget:${key}`);
+        const value = Number(overrides[key]);
+        if (!Number.isFinite(value) || value < 0) throw new Error(`invalid_campaign_budget:${key}`);
+        if (value < Number(previousBudgets[key] ?? 0)) throw new Error(`campaign_budget_cannot_decrease:${key}`);
+        overrides[key] = value;
+      }
+      if (stoppedForBudget) {
+        const [requiredKey, usageKey] = EXHAUSTED_BUDGET[campaign.stop_reason];
+        if (!(requiredKey in overrides) || Number(overrides[requiredKey]) <= Number(campaign[usageKey] || 0)) {
+          throw new Error(`campaign_budget_extension_required:${requiredKey}`);
+        }
+      }
+      const { campaignPlanHash: previousCampaignPlanHash = null, ...campaignPayload } = campaign.spec;
+      const nextPayload = Object.freeze({
+        ...campaignPayload,
+        budgets: Object.freeze({ ...previousBudgets, ...overrides }),
+      });
+      const nextSpec = Object.freeze({
+        ...nextPayload,
+        campaignPlanHash: hashRecord('PaperCampaignPlan', nextPayload),
+      });
       const now = clock.nowIso();
-      const write = store.execute(`UPDATE paper_campaigns SET status='running',stop_reason=NULL,last_resumed_at=${sqlText(now)},revision=revision+1,updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(campaignId)} AND status='paused';`);
+      const reopenSql = stoppedForBudget
+        ? ` UPDATE campaign_nodes SET status='queued',failure_class=NULL,failure_json=NULL,failure_sha256=NULL,lease_owner=NULL,lease_expires_at=NULL,updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(campaignId)} AND status='skipped' AND failure_class=${sqlText(campaign.stop_reason)};`
+        : '';
+      const write = store.execute(`BEGIN IMMEDIATE; UPDATE paper_campaigns SET status='running',stop_reason=NULL,last_resumed_at=${sqlText(now)},spec_json=${sqlJson(nextSpec)},revision=revision+1,updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(campaignId)} AND status=${sqlText(campaign.status)};${reopenSql} COMMIT;`);
       if (!write.ok) throw new Error(write.error || 'campaign_resume_failed');
-      event(campaignId, null, 'campaign_resumed', {});
+      event(campaignId, null, 'campaign_resumed', {
+        previousStatus: campaign.status,
+        budgetOverrides: overrides,
+        reopenedBudgetStoppedNodes: Boolean(stoppedForBudget),
+        previousCampaignPlanHash,
+        campaignPlanHash: nextSpec.campaignPlanHash,
+      });
       return api.getCampaign(campaignId);
+    },
+    extendCampaign(spec = {}) {
+      const campaign = api.getCampaign(spec.campaignId);
+      if (!campaign) throw new Error(`campaign not found: ${spec.campaignId}`);
+      if (campaign.status !== 'stopped' || campaign.stop_reason !== 'referee_convergence_not_reached_within_budget') {
+        throw new Error(`campaign_not_extendable:${campaign.stop_reason || campaign.status}`);
+      }
+      if (spec.paperId !== campaign.paper_id) throw new Error('campaign_extension_paper_mismatch');
+      if (Number(spec.maxRounds || 0) <= campaign.maxRounds) throw new Error('campaign_extension_requires_additional_round');
+      if (!Array.isArray(spec.nodes) || !spec.nodes.length) throw new Error('campaign_extension_nodes_required');
+      for (const key of BUDGET_KEYS) {
+        const previous = Number(campaign.spec?.budgets?.[key] ?? 0);
+        const next = Number(spec.budgets?.[key] ?? 0);
+        if (!Number.isFinite(next) || next < previous) throw new Error(`campaign_budget_cannot_decrease:${key}`);
+      }
+      const existingNodes = api.listNodes(spec.campaignId);
+      const existingById = new Map(existingNodes.map((item) => [item.node_id, item]));
+      for (const nodeSpec of spec.nodes) {
+        const existing = existingById.get(nodeSpec.nodeId);
+        if (!existing) continue;
+        if (existing.kind !== nodeSpec.kind || existing.roundIndex !== Number(nodeSpec.roundIndex || 0)) {
+          throw new Error(`campaign_extension_node_mismatch:${nodeSpec.nodeId}`);
+        }
+      }
+      const additions = spec.nodes.filter((item) => !existingById.has(item.nodeId));
+      if (!additions.some((item) => item.kind === 'package') || !additions.some((item) => item.roundIndex > campaign.maxRounds)) {
+        throw new Error('campaign_extension_incomplete');
+      }
+      const now = clock.nowIso();
+      const statements = [
+        'BEGIN IMMEDIATE;',
+        `UPDATE campaign_nodes SET failure_class='campaign_round_extension_superseded',updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(spec.campaignId)} AND kind='package' AND status='skipped' AND failure_class='referee_convergence_not_reached_within_budget';`,
+      ];
+      for (const item of additions) {
+        statements.push(`INSERT INTO campaign_nodes(node_id,campaign_id,kind,round_index,status,priority,dependencies_json,spec_json,max_attempts,created_at,updated_at) VALUES(${sqlText(item.nodeId)},${sqlText(spec.campaignId)},${sqlText(item.kind)},${Number(item.roundIndex || 0)},'queued',${Number(item.priority || 100)},${sqlJson(item.dependencies || [])},${sqlJson(item)},${Math.max(1, Number(item.maxAttempts || 3))},${sqlText(now)},${sqlText(now)});`);
+      }
+      statements.push(`UPDATE paper_campaigns SET status='running',stop_reason=NULL,max_rounds=${Number(spec.maxRounds)},spec_json=${sqlJson(spec)},last_resumed_at=${sqlText(now)},revision=revision+1,updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(spec.campaignId)};`, 'COMMIT;');
+      const write = store.execute(statements.join(' '));
+      if (!write.ok) throw new Error(write.error || 'campaign_extension_failed');
+      event(spec.campaignId, null, 'campaign_extended', {
+        previousMaxRounds: campaign.maxRounds,
+        maxRounds: Number(spec.maxRounds),
+        addedNodeIds: additions.map((item) => item.nodeId).sort(),
+        previousCampaignPlanHash: campaign.spec?.campaignPlanHash || null,
+        campaignPlanHash: spec.campaignPlanHash || null,
+      });
+      return api.getCampaign(spec.campaignId);
     },
     cancelCampaign(campaignId, reason = 'operator_cancelled') {
       const campaign = api.getCampaign(campaignId);

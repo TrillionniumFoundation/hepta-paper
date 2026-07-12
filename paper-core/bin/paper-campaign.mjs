@@ -34,6 +34,18 @@ function args(argv) {
   return out;
 }
 
+function selectedBudgetOverrides(options = {}) {
+  return Object.fromEntries([
+    ['maxWallTimeMs', 'max-wall-ms'],
+    ['maxAgentCalls', 'max-agent-calls'],
+    ['maxCpuJobs', 'max-cpu-jobs'],
+    ['maxGpuJobs', 'max-gpu-jobs'],
+    ['maxTokenCount', 'max-tokens'],
+    ['maxCostUsd', 'max-cost-usd'],
+    ['maxMemoryMiB', 'memory-mib'],
+  ].filter(([, option]) => options[option] !== undefined).map(([budget, option]) => [budget, Number(options[option])]));
+}
+
 async function main() {
   const options = args(process.argv.slice(2));
   if (options.help) {
@@ -57,7 +69,7 @@ async function main() {
       '  --max-gpu-jobs <n>        per-campaign GPU-job budget',
       '  --max-tokens <n>          per-campaign model-token budget',
       '  --max-cost-usd <n>        per-campaign model-cost budget',
-      '  --action <name>           list|status|events|pause|resume|cancel|cancel-node|retry',
+      '  --action <name>           list|status|events|pause|resume|extend|cancel|cancel-node|retry',
       '  --campaign-id <id>        campaign for an operational action',
       '  --run-id <id>             suffix new campaign ids so a paper can be rerun',
       '  --node-id <id>            failed node for retry',
@@ -88,7 +100,25 @@ async function main() {
     else if (action === 'status') result = { campaign: campaignStore.getCampaign(campaignId), nodes: campaignStore.listNodes(campaignId) };
     else if (action === 'events') result = campaignStore.listEvents(campaignId);
     else if (action === 'pause') result = campaignStore.pauseCampaign(campaignId, options.reason || 'operator_paused');
-    else if (action === 'resume') result = campaignStore.resumeCampaign(campaignId);
+    else if (action === 'resume') result = campaignStore.resumeCampaign(campaignId, { budgetOverrides: selectedBudgetOverrides(options) });
+    else if (action === 'extend') {
+      const existing = campaignStore.getCampaign(campaignId);
+      if (!existing) throw new Error(`campaign not found: ${campaignId}`);
+      const nextRounds = Number(options.rounds || existing.maxRounds + 1);
+      const nextPlan = buildPaperCampaignPlan({
+        paperId: existing.paper_id,
+        sourceWorkspace: existing.spec.sourceWorkspace,
+        campaignId,
+        maxRounds: nextRounds,
+        refereeCount: existing.spec.refereeCount,
+        minimumRevisionRounds: existing.spec.convergenceThresholds?.minimumRoundIndex || 1,
+        languages: existing.spec.languages,
+        requiresGpu: existing.spec.requiresGpu,
+        datasetMounts: existing.spec.datasetMounts,
+        budgets: { ...existing.spec.budgets, ...selectedBudgetOverrides(options) },
+      });
+      result = campaignStore.extendCampaign(nextPlan);
+    }
     else if (action === 'cancel') result = campaignStore.cancelCampaign(campaignId, options.reason || 'operator_cancelled');
     else if (action === 'cancel-node') result = campaignStore.cancelNode(options['node-id'], options.reason || 'operator_node_cancelled');
     else if (action === 'retry') result = campaignStore.retryNode(options['node-id']);

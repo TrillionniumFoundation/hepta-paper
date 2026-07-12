@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.16.0 - 2026-07-12
+
+- Added explicit budget amendments for stopped campaigns. Resume now requires
+  the exhausted budget to be raised above recorded usage, preserves completed
+  nodes, reopens only nodes skipped by that budget stop, recomputes the plan
+  hash and records the amendment in the campaign event stream.
+- Added in-place referee-round extension for campaigns that correctly stop
+  without convergence. The operation preserves prior review and execution
+  evidence, supersedes the blocked package, appends only a new
+  review/revise/revalidation/re-review round and keeps packaging fail-closed.
+- Completed three real production-store recovery campaigns. Replay converged
+  in round two at mean score 0.910 with zero critical findings; Stochastic
+  Optimization required the new third round and converged at mean score 0.933,
+  100% acceptance and zero critical findings. All three campaigns now have a
+  completed package and no external action was performed.
+
 ## 0.15.0 - 2026-07-11
 
 - Added `OpenClawAgentExecutor` and a dedicated unbound

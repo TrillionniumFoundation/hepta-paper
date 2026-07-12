@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { heptaStorePath, legacyStorePath } from '../src/hepta-store.mjs';
-import { createSqliteStore } from '../../paper-adapters/persistence/sqlite-store.mjs';
+import { createReadOnlySqliteStore } from '../../paper-adapters/persistence/sqlite-store.mjs';
 import { createDefaultPaperStore, createReadOnlyPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqlite-receipt-ledger.mjs';
 import { createSystemClock } from '../../paper-adapters/runtime/system-clock.mjs';
@@ -148,20 +148,23 @@ function restoreDrill() {
   const backupReceipt = backup();
   const drillPath = `${backupReceipt.backupPath}.restore-drill.sqlite`;
   fs.copyFileSync(backupReceipt.backupPath, drillPath);
-  const drillStore = createSqliteStore({ dbPath: drillPath });
-  const quick = drillStore.execute('PRAGMA quick_check; PRAGMA foreign_key_check;');
+  const drillStore = createReadOnlySqliteStore({ dbPath: drillPath });
+  const quick = drillStore.query('PRAGMA quick_check;');
+  const foreignKeys = drillStore.query('PRAGMA foreign_key_check;');
   const hashMatches = `sha256:${fileSha256(drillPath)}` === backupReceipt.backupSha256;
+  drillStore.close();
   fs.rmSync(drillPath, { force: true });
   const receipt = {
     version: 1,
     kind: 'HeptaStoreRestoreDrillReceipt',
-    status: quick.ok && /ok/.test(quick.stdout || '') && hashMatches
+    status: quick.ok && quick.rows?.[0]?.quick_check === 'ok' && foreignKeys.ok && foreignKeys.rows.length === 0 && hashMatches
       ? 'hepta_store_restore_drill_passed'
       : 'hepta_store_restore_drill_blocked',
     backupPath: backupReceipt.backupPath,
     backupSha256: backupReceipt.backupSha256,
     hashMatches,
-    quickCheck: String(quick.stdout || '').trim(),
+    quickCheck: quick.rows?.[0]?.quick_check || 'unknown',
+    foreignKeyViolationCount: foreignKeys.rows?.length ?? null,
     performedAt: new Date().toISOString(),
     productionStoreMutated: false,
   };

@@ -25,11 +25,15 @@ export function buildPaperCampaignPlan({
   budgets = {},
   datasetMounts = [],
   minimumRevisionRounds = 1,
+  parentCampaignId = null,
+  supersedesCampaignId = null,
+  recoveryOfCampaignId = null,
 } = {}) {
   if (!paperId || !sourceWorkspace) throw new Error('paperId and sourceWorkspace are required');
   const rounds = Math.max(1, Math.min(10, Number(maxRounds) || 3));
   const reviewers = Math.max(2, Math.min(7, Number(refereeCount) || 3));
   const id = campaignId || `paper-campaign:${paperId}`;
+  const inferredRecovery = id.includes(':recovery-') ? id.slice(0, id.indexOf(':recovery-')) : null;
   const nodes = [];
   const research = node(id, 'research-plan', [], { priority: 10 });
   const writer = node(id, 'writer', [research.nodeId], { priority: 20, role: 'writer' });
@@ -70,6 +74,9 @@ export function buildPaperCampaignPlan({
     version: 2,
     kind: 'PaperCampaignPlan',
     campaignId: id,
+    parentCampaignId: parentCampaignId || inferredRecovery,
+    supersedesCampaignId: supersedesCampaignId || inferredRecovery,
+    recoveryOfCampaignId: recoveryOfCampaignId || inferredRecovery,
     paperId,
     sourceWorkspace,
     maxRounds: rounds,

@@ -1,10 +1,11 @@
 # Release process
 
-Version 0.16.0 is an automation-first research-production release. It retains
-the OpenClaw child-session execution, copy-on-write integration, global
-resource governance, empirical runtime images and revised-manuscript referee
-convergence introduced in 0.15, and adds safe in-place recovery after budget
-stops plus append-only referee-round extension after honest non-convergence.
+Version 0.17.0 is an automation-first research-production release. It upgrades
+the campaign plane from single-process coordination to native WAL SQLite,
+database-backed global resource leases, a persistent dispatcher/worker split,
+strict reviewer identity evidence, explicit campaign lineage and honest
+unknown-cost accounting. It retains safe in-place recovery and append-only
+referee-round extension from 0.16.
 It is not a live-submission release.
 
 Run `npm run release:verify` from a clean commit. Verification uses disposable

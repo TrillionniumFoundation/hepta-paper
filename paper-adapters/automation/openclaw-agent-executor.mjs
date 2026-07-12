@@ -124,6 +124,7 @@ export function createOpenClawAgentExecutor({
         outputTokenBudget ? `Keep the final response within ${Math.max(128, Number(outputTokenBudget))} output tokens. Prefer editing files with tools over returning file bodies.` : '',
         'Finish with one compact JSON object containing status, summary, checksRun, and blockers. If the task instructions request role-specific JSON fields (for example verdict, score, criticalFindingCount, and findings), include those fields in the same final object.',
       ].filter(Boolean).join('\n\n');
+      const promptHash = `sha256:${crypto.createHash('sha256').update(prompt).digest('hex')}`;
       const args = ['agent', '--agent', agentId, '--session-key', sessionKey, '--message', prompt, '--json', '--thinking', thinking, '--timeout', String(Math.max(1, Math.ceil(Math.min(Number(requestedTimeout || timeoutMs), timeoutMs) / 1000)))];
       if (model) args.push('--model', model);
       const startedAt = new Date().toISOString();
@@ -133,6 +134,11 @@ export function createOpenClawAgentExecutor({
       const finalOutput = responseText(parsed, processResult.stdout);
       const structuredOutput = parseAgentOutput(finalOutput);
       const childSessionId = parsed?.sessionId || parsed?.session_id || parsed?.result?.sessionId || parsed?.result?.meta?.agentMeta?.sessionId || null;
+      const resolvedModel = parsed?.result?.meta?.agentMeta?.model
+        || parsed?.result?.meta?.agentMeta?.modelId
+        || parsed?.model
+        || model
+        || null;
       const changedPaths = changes(before, manifest(workspace));
       const blockers = [];
       if (processResult.timedOut) blockers.push('openclaw_agent_timeout');
@@ -146,6 +152,8 @@ export function createOpenClawAgentExecutor({
         providerMode: 'openclaw:detached-child-session',
         agentId,
         model,
+        resolvedModel,
+        promptHash,
         maximumOutputTokens: outputTokenBudget ? Math.max(128, Number(outputTokenBudget)) : null,
         role,
         sessionKey,

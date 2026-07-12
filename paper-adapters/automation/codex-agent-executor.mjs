@@ -69,6 +69,8 @@ export function createCodexAgentExecutor({
         outputTokenBudget ? `Keep the final response within ${Math.max(128, Number(outputTokenBudget))} output tokens. Prefer editing files with tools over returning file bodies.` : '',
         'Finish with one compact JSON object containing status, summary, checksRun, and blockers. Include every role-specific JSON field explicitly requested by the task in that same object.',
       ].filter(Boolean).join('\n\n');
+      const promptHash = `sha256:${crypto.createHash('sha256').update(prompt).digest('hex')}`;
+      const sessionId = `codex-exec:${crypto.randomUUID()}`;
       if (!['read-only', 'workspace-write'].includes(sandbox)) throw new Error('agent sandbox must be read-only or workspace-write');
       const args = ['exec'];
       if (oss) args.push('--oss', '--local-provider', localProvider);
@@ -85,6 +87,10 @@ export function createCodexAgentExecutor({
         executorId: 'codex-agent-executor-v1',
         providerMode: oss ? `local:${localProvider}` : 'openai',
         model,
+        resolvedModel: model,
+        promptHash,
+        sessionId,
+        childSessionId: sessionId,
         maximumOutputTokens: outputTokenBudget ? Math.max(128, Number(outputTokenBudget)) : null,
         role,
         status: processResult.exitCode === 0 && !processResult.error ? 'agent_execution_completed' : 'agent_execution_failed',

@@ -28,6 +28,12 @@ function parseNode(row) {
     roundIndex: Number(row.round_index || 0),
     attemptCount: Number(row.attempt_count || 0),
     maxAttempts: Number(row.max_attempts || 3),
+    role: row.role || null,
+    reviewerId: row.reviewer_id || null,
+    childSessionId: row.child_session_id || null,
+    reviewHash: row.review_hash || null,
+    promptHash: row.prompt_hash || null,
+    resolvedModel: row.resolved_model || null,
     dependencies: JSON.parse(row.dependencies_json || '[]'),
     spec: JSON.parse(row.spec_json || '{}'),
     result: row.result_json ? JSON.parse(row.result_json) : null,
@@ -40,14 +46,22 @@ function parseCampaign(row) {
   return Object.freeze({
     ...row,
     revision: Number(row.revision || 1),
-    currentRound: Number(row.current_round || 0),
+    currentRound: Number(row.current_review_round ?? row.current_round ?? 0),
+    currentReviewRound: Number(row.current_review_round ?? row.current_round ?? 0),
+    currentPhase: row.current_phase || row.status || 'queued',
     maxRounds: Number(row.max_rounds || 1),
     accumulatedRunMs: Number(row.accumulated_run_ms || 0),
     agentCallCount: Number(row.agent_call_count || 0),
     cpuJobCount: Number(row.cpu_job_count || 0),
     gpuJobCount: Number(row.gpu_job_count || 0),
     tokenCount: Number(row.token_count || 0),
-    costUsd: Number(row.cost_usd || 0),
+    pricedAgentCallCount: Number(row.priced_agent_call_count || 0),
+    costKnown: Number(row.agent_call_count || 0) === Number(row.priced_agent_call_count || 0),
+    costUsd: Number(row.agent_call_count || 0) === Number(row.priced_agent_call_count || 0) ? Number(row.cost_usd || 0) : null,
+    parentCampaignId: row.parent_campaign_id || null,
+    supersedesCampaignId: row.supersedes_campaign_id || null,
+    recoveryOfCampaignId: row.recovery_of_campaign_id || null,
+    effectiveStatus: row.effective_status || row.status,
     spec: JSON.parse(row.spec_json || '{}'),
   });
 }
@@ -72,13 +86,15 @@ export function createSqliteCampaignStore({ store, clock } = {}) {
     const terminalFailure = rows.some((node) => node.status === 'failed_terminal');
     const complete = rows.length > 0 && rows.every((node) => DONE.has(node.status));
     const status = terminalFailure ? 'failed' : complete ? 'completed' : 'running';
-    const currentRound = Math.max(0, ...rows.filter((node) => DONE.has(node.status)).map((node) => node.roundIndex));
+    const currentReviewRound = Math.max(0, ...rows.filter((node) => DONE.has(node.status) && node.kind !== 'package').map((node) => node.roundIndex));
+    const nextNode = rows.find((node) => !DONE.has(node.status) && !['failed_terminal'].includes(node.status));
+    const currentPhase = status === 'completed' ? 'completed' : status === 'failed' ? 'failed' : (nextNode?.kind || status);
     const now = clock.nowIso();
     const terminal = ['failed', 'completed'].includes(status);
     const elapsedSql = terminal && existing?.last_resumed_at
       ? `accumulated_run_ms=accumulated_run_ms+max(0,CAST((julianday(${sqlText(now)})-julianday(last_resumed_at))*86400000 AS INTEGER)),last_resumed_at=NULL,`
       : '';
-    const result = store.execute(`UPDATE paper_campaigns SET ${elapsedSql}status=${sqlText(status)},current_round=${currentRound},revision=revision+1,updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(campaignId)};`);
+    const result = store.execute(`UPDATE paper_campaigns SET ${elapsedSql}status=${sqlText(status)},current_round=${currentReviewRound},current_review_round=${currentReviewRound},current_phase=${sqlText(currentPhase)},revision=revision+1,updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(campaignId)};`);
     if (!result.ok) throw new Error(result.error || 'campaign_refresh_failed');
     return api.getCampaign(campaignId);
   }
@@ -94,22 +110,25 @@ export function createSqliteCampaignStore({ store, clock } = {}) {
       const existingCampaign = api.getCampaign(spec.campaignId);
       if (existingCampaign) return existingCampaign;
       const now = clock.nowIso();
-      const campaign = store.execute(`INSERT OR IGNORE INTO paper_campaigns(campaign_id,paper_id,status,max_rounds,spec_json,created_at,updated_at,last_resumed_at) VALUES(${sqlText(spec.campaignId)},${sqlText(spec.paperId)},'queued',${Math.max(1, Number(spec.maxRounds || 1))},${sqlJson(spec)},${sqlText(now)},${sqlText(now)},${sqlText(now)});`);
+      const campaign = store.execute(`INSERT OR IGNORE INTO paper_campaigns(campaign_id,paper_id,status,max_rounds,spec_json,created_at,updated_at,last_resumed_at,parent_campaign_id,supersedes_campaign_id,recovery_of_campaign_id,current_phase) VALUES(${sqlText(spec.campaignId)},${sqlText(spec.paperId)},'queued',${Math.max(1, Number(spec.maxRounds || 1))},${sqlJson(spec)},${sqlText(now)},${sqlText(now)},${sqlText(now)},${spec.parentCampaignId ? sqlText(spec.parentCampaignId) : 'NULL'},${spec.supersedesCampaignId ? sqlText(spec.supersedesCampaignId) : 'NULL'},${spec.recoveryOfCampaignId ? sqlText(spec.recoveryOfCampaignId) : 'NULL'},'queued');`);
       if (!campaign.ok) throw new Error(campaign.error || 'campaign_create_failed');
       for (const node of spec.nodes) {
-        const result = store.execute(`INSERT OR IGNORE INTO campaign_nodes(node_id,campaign_id,kind,round_index,status,priority,dependencies_json,spec_json,max_attempts,created_at,updated_at) VALUES(${sqlText(node.nodeId)},${sqlText(spec.campaignId)},${sqlText(node.kind)},${Number(node.roundIndex || 0)},'queued',${Number(node.priority || 100)},${sqlJson(node.dependencies || [])},${sqlJson(node)},${Math.max(1, Number(node.maxAttempts || 3))},${sqlText(now)},${sqlText(now)});`);
+        const result = store.execute(`INSERT OR IGNORE INTO campaign_nodes(node_id,campaign_id,kind,round_index,status,priority,dependencies_json,spec_json,max_attempts,created_at,updated_at,role) VALUES(${sqlText(node.nodeId)},${sqlText(spec.campaignId)},${sqlText(node.kind)},${Number(node.roundIndex || 0)},'queued',${Number(node.priority || 100)},${sqlJson(node.dependencies || [])},${sqlJson(node)},${Math.max(1, Number(node.maxAttempts || 3))},${sqlText(now)},${sqlText(now)},${node.role ? sqlText(node.role) : 'NULL'});`);
         if (!result.ok) throw new Error(result.error || 'campaign_node_create_failed');
       }
-      store.execute(`UPDATE paper_campaigns SET status='running',updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(spec.campaignId)} AND status='queued';`);
+      store.execute(`UPDATE paper_campaigns SET status='running',current_phase='dispatching',updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(spec.campaignId)} AND status='queued';`);
       event(spec.campaignId, null, 'campaign_created', { nodeCount: spec.nodes.length });
       return api.getCampaign(spec.campaignId);
     },
     getCampaign(campaignId) {
       return parseCampaign(store.query(`SELECT * FROM paper_campaigns WHERE campaign_id=${sqlText(campaignId)} LIMIT 1;`).rows[0]);
     },
-    listCampaigns({ status = null, limit = 100 } = {}) {
-      const where = status ? ` WHERE status=${sqlText(status)}` : '';
-      return store.query(`SELECT * FROM paper_campaigns${where} ORDER BY updated_at DESC,campaign_id LIMIT ${Math.max(1, Math.min(1000, Number(limit || 100)))};`).rows.map(parseCampaign);
+    listCampaigns({ status = null, limit = 100, effectiveOnly = false } = {}) {
+      const where = status ? ` WHERE c.status=${sqlText(status)}` : '';
+      const rows = store.query(`SELECT c.*,
+        CASE WHEN EXISTS(SELECT 1 FROM paper_campaigns n WHERE n.paper_id=c.paper_id AND (n.recovery_of_campaign_id=c.campaign_id OR n.supersedes_campaign_id=c.campaign_id)) THEN 'superseded' ELSE c.status END AS effective_status
+        FROM paper_campaigns c${where} ORDER BY c.updated_at DESC,c.campaign_id LIMIT ${Math.max(1, Math.min(1000, Number(limit || 100)))};`).rows.map(parseCampaign);
+      return effectiveOnly ? rows.filter((campaign) => campaign.effectiveStatus !== 'superseded') : rows;
     },
     listNodes(campaignId) {
       return store.query(`SELECT * FROM campaign_nodes WHERE campaign_id=${sqlText(campaignId)} ORDER BY priority,created_at,node_id;`).rows.map(parseNode);
@@ -156,7 +175,13 @@ export function createSqliteCampaignStore({ store, clock } = {}) {
       if (!node || node.status !== 'running' || node.lease_owner !== workerId) throw new Error('active campaign node lease required');
       const now = clock.nowIso();
       const resultHash = hashRecord('PaperCampaignNodeResult', result);
-      const write = store.execute(`UPDATE campaign_nodes SET status='completed',result_json=${sqlJson(result)},result_sha256=${sqlText(resultHash)},lease_owner=NULL,lease_expires_at=NULL,failure_class=NULL,updated_at=${sqlText(now)} WHERE node_id=${sqlText(nodeId)};`);
+      const reviewerId = result.reviewerId || null;
+      const role = result.role || node.role || node.spec?.role || null;
+      const childSessionId = result.childSessionId || result.sessionKey || null;
+      const reviewHash = result.reviewHash || null;
+      const promptHash = result.promptHash || null;
+      const resolvedModel = result.resolvedModel || null;
+      const write = store.execute(`UPDATE campaign_nodes SET status='completed',result_json=${sqlJson(result)},result_sha256=${sqlText(resultHash)},lease_owner=NULL,lease_expires_at=NULL,failure_class=NULL,updated_at=${sqlText(now)},role=${role ? sqlText(role) : 'role'},reviewer_id=${reviewerId ? sqlText(reviewerId) : 'NULL'},child_session_id=${childSessionId ? sqlText(childSessionId) : 'NULL'},review_hash=${reviewHash ? sqlText(reviewHash) : 'NULL'},prompt_hash=${promptHash ? sqlText(promptHash) : 'NULL'},resolved_model=${resolvedModel ? sqlText(resolvedModel) : 'NULL'} WHERE node_id=${sqlText(nodeId)};`);
       if (!write.ok) throw new Error(write.error || 'campaign_node_complete_failed');
       event(node.campaign_id, nodeId, 'campaign_node_completed', { resultHash });
       refreshCampaign(node.campaign_id);
@@ -336,15 +361,17 @@ export function createSqliteCampaignStore({ store, clock } = {}) {
       return parseNode(store.query(`SELECT * FROM campaign_nodes WHERE node_id=${sqlText(nodeId)} LIMIT 1;`).rows[0]);
     },
     recordUsage(campaignId, delta = {}) {
+      const costProvided = Object.prototype.hasOwnProperty.call(delta, 'costUsd') && Number.isFinite(Number(delta.costUsd));
       const values = {
         agent: Math.max(0, Number(delta.agentCalls || 0)),
         cpu: Math.max(0, Number(delta.cpuJobs || 0)),
         gpu: Math.max(0, Number(delta.gpuJobs || 0)),
         tokens: Math.max(0, Number(delta.tokens || 0)),
-        cost: Math.max(0, Number(delta.costUsd || 0)),
+        cost: costProvided ? Math.max(0, Number(delta.costUsd)) : 0,
+        pricedCalls: costProvided ? Math.max(0, Number(delta.pricedAgentCalls ?? 1)) : 0,
       };
       const now = clock.nowIso();
-      const write = store.execute(`UPDATE paper_campaigns SET agent_call_count=agent_call_count+${values.agent},cpu_job_count=cpu_job_count+${values.cpu},gpu_job_count=gpu_job_count+${values.gpu},token_count=token_count+${values.tokens},cost_usd=cost_usd+${values.cost},updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(campaignId)};`);
+      const write = store.execute(`UPDATE paper_campaigns SET agent_call_count=agent_call_count+${values.agent},cpu_job_count=cpu_job_count+${values.cpu},gpu_job_count=gpu_job_count+${values.gpu},token_count=token_count+${values.tokens},cost_usd=cost_usd+${values.cost},priced_agent_call_count=priced_agent_call_count+${values.pricedCalls},cost_known=CASE WHEN agent_call_count+${values.agent}=priced_agent_call_count+${values.pricedCalls} THEN 1 ELSE 0 END,updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(campaignId)};`);
       if (!write.ok) throw new Error(write.error || 'campaign_usage_write_failed');
       return api.getCampaign(campaignId);
     },

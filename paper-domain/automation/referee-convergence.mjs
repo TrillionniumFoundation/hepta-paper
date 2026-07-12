@@ -22,6 +22,9 @@ export function evaluateRefereeConvergence({
     criticalFindingCount: Math.max(0, Number(review.criticalFindingCount || 0)),
     reviewHash: review.reviewHash || null,
     manuscriptHash: review.manuscriptHash || null,
+    childSessionId: review.childSessionId || review.sessionKey || null,
+    promptHash: review.promptHash || null,
+    resolvedModel: review.resolvedModel || null,
   }));
   const scores = normalized.map((review) => review.score);
   const meanScore = scores.reduce((sum, score) => sum + score, 0) / Math.max(1, scores.length);
@@ -31,13 +34,19 @@ export function evaluateRefereeConvergence({
   const criticalFindingCount = normalized.reduce((sum, review) => sum + review.criticalFindingCount, 0);
   const manuscriptHashBound = Boolean(expectedManuscriptHash)
     && normalized.every((review) => review.manuscriptHash === expectedManuscriptHash);
+  const uniqueNonEmpty = (values) => values.every(Boolean) && new Set(values).size === values.length;
+  const reviewerIdentityUnique = uniqueNonEmpty(normalized.map((review) => review.reviewerId === 'unknown' ? null : review.reviewerId));
+  const reviewerSessionUnique = uniqueNonEmpty(normalized.map((review) => review.childSessionId));
+  const reviewHashUnique = uniqueNonEmpty(normalized.map((review) => review.reviewHash));
+  const evidenceIdentityBound = reviewerIdentityUnique && reviewerSessionUnique && reviewHashUnique;
   const accepted = normalized.length >= minimumReviewers
     && Number(roundIndex || 1) >= Math.max(1, Number(minimumRoundIndex || 1))
     && meanScore >= minimumMeanScore
     && acceptRatio >= minimumAcceptRatio
     && scoreVariance <= maximumVariance
     && criticalFindingCount === 0
-    && manuscriptHashBound;
+    && manuscriptHashBound
+    && evidenceIdentityBound;
   const payload = {
     version: 1,
     kind: 'RefereeConvergenceDecision',
@@ -53,6 +62,10 @@ export function evaluateRefereeConvergence({
     criticalFindingCount,
     expectedManuscriptHash,
     manuscriptHashBound,
+    reviewerIdentityUnique,
+    reviewerSessionUnique,
+    reviewHashUnique,
+    evidenceIdentityBound,
     reviews: normalized,
     thresholds: { minimumReviewers, minimumMeanScore, minimumAcceptRatio, maximumVariance, minimumRoundIndex: Math.max(1, Number(minimumRoundIndex || 1)) },
     academicAcceptanceGranted: false,

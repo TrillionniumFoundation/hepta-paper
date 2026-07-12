@@ -19,27 +19,41 @@ function fixture(t) {
   return { root, clock, campaignStore: createSqliteCampaignStore({ store, clock }) };
 }
 
+function reviewEvidence(reviewerId, detail = {}) {
+  return {
+    reviewerId,
+    childSessionId: `session:${reviewerId}`,
+    reviewHash: `sha256:review:${reviewerId}`,
+    ...detail,
+  };
+}
+
 test('referee consensus requires score, ratio, variance and no critical findings', () => {
   const accepted = evaluateRefereeConvergence({ paperId: 'p', roundIndex: 1, expectedManuscriptHash: 'sha256:revised', reviews: [
-    { reviewerId: 'a', verdict: 'accept', score: 0.9, manuscriptHash: 'sha256:revised' },
-    { reviewerId: 'b', verdict: 'accept', score: 0.86, manuscriptHash: 'sha256:revised' },
-    { reviewerId: 'c', verdict: 'accept', score: 0.88, manuscriptHash: 'sha256:revised' },
+    reviewEvidence('a', { verdict: 'accept', score: 0.9, manuscriptHash: 'sha256:revised' }),
+    reviewEvidence('b', { verdict: 'accept', score: 0.86, manuscriptHash: 'sha256:revised' }),
+    reviewEvidence('c', { verdict: 'accept', score: 0.88, manuscriptHash: 'sha256:revised' }),
   ] });
   assert.equal(accepted.accepted, true);
   assert.equal(evaluateRefereeConvergence({ paperId: 'p', roundIndex: 1, minimumRoundIndex: 2, expectedManuscriptHash: 'sha256:revised', reviews: [
-    { reviewerId: 'a', verdict: 'accept', score: 0.9, manuscriptHash: 'sha256:revised' },
-    { reviewerId: 'b', verdict: 'accept', score: 0.9, manuscriptHash: 'sha256:revised' },
-    { reviewerId: 'c', verdict: 'accept', score: 0.9, manuscriptHash: 'sha256:revised' },
+    reviewEvidence('a', { verdict: 'accept', score: 0.9, manuscriptHash: 'sha256:revised' }),
+    reviewEvidence('b', { verdict: 'accept', score: 0.9, manuscriptHash: 'sha256:revised' }),
+    reviewEvidence('c', { verdict: 'accept', score: 0.9, manuscriptHash: 'sha256:revised' }),
   ] }).accepted, false);
   assert.equal(evaluateRefereeConvergence({ paperId: 'p', roundIndex: 1, expectedManuscriptHash: 'sha256:new', reviews: [
-    { reviewerId: 'a', verdict: 'accept', score: 0.9, manuscriptHash: 'sha256:old' },
-    { reviewerId: 'b', verdict: 'accept', score: 0.9, manuscriptHash: 'sha256:old' },
-    { reviewerId: 'c', verdict: 'accept', score: 0.9, manuscriptHash: 'sha256:old' },
+    reviewEvidence('a', { verdict: 'accept', score: 0.9, manuscriptHash: 'sha256:old' }),
+    reviewEvidence('b', { verdict: 'accept', score: 0.9, manuscriptHash: 'sha256:old' }),
+    reviewEvidence('c', { verdict: 'accept', score: 0.9, manuscriptHash: 'sha256:old' }),
   ] }).accepted, false);
   assert.equal(evaluateRefereeConvergence({ paperId: 'p', roundIndex: 1, reviews: [
-    { reviewerId: 'a', verdict: 'accept', score: 0.95 },
-    { reviewerId: 'b', verdict: 'revise', score: 0.3, criticalFindingCount: 1 },
-    { reviewerId: 'c', verdict: 'accept', score: 0.9 },
+    reviewEvidence('a', { verdict: 'accept', score: 0.95 }),
+    reviewEvidence('b', { verdict: 'revise', score: 0.3, criticalFindingCount: 1 }),
+    reviewEvidence('c', { verdict: 'accept', score: 0.9 }),
+  ] }).accepted, false);
+  assert.equal(evaluateRefereeConvergence({ paperId: 'p', roundIndex: 1, expectedManuscriptHash: 'sha256:revised', reviews: [
+    reviewEvidence('a', { verdict: 'accept', score: 0.9, manuscriptHash: 'sha256:revised' }),
+    reviewEvidence('b', { verdict: 'accept', score: 0.9, manuscriptHash: 'sha256:revised', childSessionId: 'session:a' }),
+    reviewEvidence('c', { verdict: 'accept', score: 0.9, manuscriptHash: 'sha256:revised' }),
   ] }).accepted, false);
   assert.deepEqual(requiredRevalidationForChanges(['experiments/run.py', 'main.tex']).required, ['revalidate-code', 'revalidate-empirical', 'revalidate-compile', 'revalidate-citations', 'revalidate-artifacts']);
 });
@@ -90,7 +104,7 @@ test('ten campaigns run concurrently, retry, converge, skip later rounds and rep
         error.retryable = true;
         throw error;
       }
-      if (/^(?:revision-)?referee-\d+$/.test(node.kind)) return { reviewerId: node.kind, verdict: 'accept', score: 0.9, criticalFindingCount: 0, reviewHash: `hash-${node.node_id}`, manuscriptHash: 'sha256:revised' };
+      if (/^(?:revision-)?referee-\d+$/.test(node.kind)) return reviewEvidence(node.kind, { verdict: 'accept', score: 0.9, criticalFindingCount: 0, reviewHash: `hash-${node.node_id}`, childSessionId: `session-${node.node_id}`, manuscriptHash: 'sha256:revised' });
       return { status: 'completed', nodeKind: node.kind };
     },
   };
@@ -119,7 +133,7 @@ test('expired running lease is recovered after a simulated crash', async (t) => 
   const result = await runPaperCampaign({
     campaignId: plan.campaignId,
     campaignStore,
-    executor: { execute: async ({ node }) => /^(?:revision-)?referee-\d+$/.test(node.kind) ? { reviewerId: node.kind, verdict: 'accept', score: 0.9, manuscriptHash: 'sha256:revised' } : { status: 'completed' } },
+    executor: { execute: async ({ node }) => /^(?:revision-)?referee-\d+$/.test(node.kind) ? reviewEvidence(node.kind, { verdict: 'accept', score: 0.9, reviewHash: `hash-${node.node_id}`, childSessionId: `session-${node.node_id}`, manuscriptHash: 'sha256:revised' }) : { status: 'completed' } },
     concurrency: 3,
     pollMs: 1,
   });
@@ -234,7 +248,7 @@ test('campaign stops without packaging when final revised manuscript does not co
     concurrency: 3,
     pollMs: 1,
     executor: { execute: async ({ node }) => /^(?:revision-)?referee-\d+$/.test(node.kind)
-      ? { reviewerId: node.kind, verdict: 'revise', score: 0.4, criticalFindingCount: 1, manuscriptHash: 'sha256:revised' }
+      ? reviewEvidence(node.kind, { verdict: 'revise', score: 0.4, criticalFindingCount: 1, reviewHash: `hash-${node.node_id}`, childSessionId: `session-${node.node_id}`, manuscriptHash: 'sha256:revised' })
       : { status: 'completed' } },
   });
   assert.equal(result.campaign.status, 'stopped');

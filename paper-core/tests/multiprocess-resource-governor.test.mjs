@@ -1,0 +1,79 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
+import test from 'node:test';
+import { createSqliteResourceGovernor } from '../../paper-adapters/automation/sqlite-resource-governor.mjs';
+import { createSqliteStore } from '../../paper-adapters/persistence/sqlite-store.mjs';
+import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
+
+test('SQLite resource leases enforce one global quota across independent connections', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-db-governor-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const firstStore = createDefaultPaperStore({ root, runtimeRoot: root });
+  const configured = firstStore.execute("UPDATE automation_resource_limits SET agent_limit=1,cpu_limit=1,gpu_limit=1,memory_mib_limit=1024 WHERE scope='global';");
+  assert.equal(configured.ok, true);
+  const secondStore = createSqliteStore({ dbPath: firstStore.dbPath });
+  t.after(() => { firstStore.close(); secondStore.close(); });
+  const limits = { agent: 1, cpu: 1, gpu: 1, memoryMiB: 1024 };
+  const first = createSqliteResourceGovernor({ store: firstStore, limits, ownerId: 'process-a', pollMs: 5 });
+  const second = createSqliteResourceGovernor({ store: secondStore, limits, ownerId: 'process-b', pollMs: 5 });
+
+  const releaseFirst = await first.acquire({ agent: 1, memoryMiB: 512 }, { campaignId: 'a', nodeId: 'a:writer' });
+  let secondAcquired = false;
+  const waiting = second.acquire({ agent: 1, memoryMiB: 512 }, { campaignId: 'b', nodeId: 'b:writer' }).then((release) => {
+    secondAcquired = true;
+    return release;
+  });
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal(secondAcquired, false);
+  assert.equal(first.snapshot().used.agent, 1);
+  assert.equal(first.snapshot().activeLeases, 1);
+
+  releaseFirst();
+  const releaseSecond = await waiting;
+  assert.equal(secondAcquired, true);
+  assert.equal(second.snapshot().used.agent, 1);
+  assert.equal(second.snapshot().peak.agent, 1);
+  releaseSecond();
+  assert.equal(first.snapshot().used.agent, 0);
+  assert.equal(first.snapshot().activeLeases, 0);
+});
+
+function runProcess(dbPath, ownerId, holdMs = 120, mode = 'release') {
+  const fixture = path.resolve(path.dirname(new URL(import.meta.url).pathname), 'fixtures', 'resource-governor-process.mjs');
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [fixture, dbPath, ownerId, String(holdMs), mode], { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += String(chunk); });
+    child.stderr.on('data', (chunk) => { stderr += String(chunk); });
+    child.once('error', reject);
+    child.once('close', (code) => {
+      if (code !== 0) reject(new Error(stderr || `resource governor child exited ${code}`));
+      else resolve(stdout.trim().split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line)));
+    });
+  });
+}
+
+test('three OS processes serialize one shared agent slot and recover a crashed lease', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-db-governor-process-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const store = createDefaultPaperStore({ root, runtimeRoot: root });
+  assert.equal(store.execute("UPDATE automation_resource_limits SET agent_limit=1,cpu_limit=1,gpu_limit=1,memory_mib_limit=1024 WHERE scope='global';").ok, true);
+  const dbPath = store.dbPath;
+  store.close();
+
+  const waves = await Promise.all(['process-1', 'process-2', 'process-3'].map((owner) => runProcess(dbPath, owner)));
+  const intervals = waves.map((events) => ({ start: events.find((event) => event.event === 'acquired').at, end: events.find((event) => event.event === 'released').at })).sort((left, right) => left.start - right.start);
+  for (let index = 1; index < intervals.length; index += 1) assert.ok(intervals[index].start >= intervals[index - 1].end);
+
+  const crashed = await runProcess(dbPath, 'crashed-process', 0, 'crash');
+  assert.equal(crashed[0].event, 'acquired');
+  const recoveryStarted = Date.now();
+  const recovered = await runProcess(dbPath, 'recovery-process', 10, 'release');
+  assert.equal(recovered[0].event, 'acquired');
+  assert.ok(recovered[0].at - recoveryStarted >= 500);
+  assert.ok(recovered[0].at - recoveryStarted < 3000);
+});

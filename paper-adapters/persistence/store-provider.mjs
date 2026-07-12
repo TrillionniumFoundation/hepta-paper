@@ -12,6 +12,7 @@ const migrations = [
   { version: 3, name: '003_evidence_isolation', path: path.join(workspaceRoot, 'store', 'migrations', '003_evidence_isolation.sql') },
   { version: 4, name: '004_automation_campaigns', path: path.join(workspaceRoot, 'store', 'migrations', '004_automation_campaigns.sql') },
   { version: 5, name: '005_automation_operations', path: path.join(workspaceRoot, 'store', 'migrations', '005_automation_operations.sql') },
+  { version: 6, name: '006_multiprocess_automation', path: path.join(workspaceRoot, 'store', 'migrations', '006_multiprocess_automation.sql') },
 ];
 
 function sqlQuote(value) {
@@ -38,6 +39,8 @@ export function applyStoreMigrations(store) {
     if (!result.ok) throw new Error(result.error || result.stderr || `store migration ${migration.version} failed`);
     applied.set(migration.version, { version: migration.version, name: migration.name, migration_sha256: hash });
   }
+  const checkpoint = store.checkpoint?.({ mode: 'TRUNCATE' });
+  if (checkpoint && !checkpoint.ok) throw new Error(checkpoint.error || 'store migration checkpoint failed');
   return store;
 }
 

@@ -15,7 +15,7 @@ import { createOsSandboxedWorkerRunner, directoryMerkleHash } from '../../paper-
 import { runtimeImagesForCampaign } from '../../paper-adapters/automation/runtime-image-registry.mjs';
 import { bootstrapPaperExecutionContext } from '../../paper-application/bootstrap/service-bootstrap.mjs';
 import { runPaperCampaign } from '../../paper-application/automation/campaign-engine.mjs';
-import { createResourceGovernor } from '../../paper-application/automation/resource-governor.mjs';
+import { createSqliteResourceGovernor } from '../../paper-adapters/automation/sqlite-resource-governor.mjs';
 import { buildPaperCampaignPlan } from '../../paper-domain/automation/campaign-plan.mjs';
 import { discoverInventory } from '../../paper-adapters/inventory/index.mjs';
 import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
@@ -24,7 +24,7 @@ function args(argv) {
   const out = { paper: [], dataset: [] };
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
-    if (token === '--execute' || token === '--json' || token === '--help' || token === '--gpu') out[token.slice(2)] = true;
+    if (token === '--execute' || token === '--inline' || token === '--json' || token === '--help' || token === '--gpu' || token === '--effective') out[token.slice(2)] = true;
     else if (token.startsWith('--')) {
       const key = token.slice(2);
       const value = argv[++index];
@@ -53,7 +53,8 @@ async function main() {
       'Usage: npm run paper:campaign -- [options]',
       '',
       '  --paper <id>              select a paper; repeat for several papers',
-      '  --execute                 persist and execute campaigns (default is plan-only)',
+      '  --execute                 persist campaigns for a worker (default is plan-only)',
+      '  --inline                  execute in the submitting process; otherwise --execute only submits',
       '  --agent-provider <name>   auto|openclaw|ollama|codex (default auto)',
       '  --openclaw-agent <id>     OpenClaw agent id (default hepta-paper-worker)',
       '  --model <name>            primary agent model override',
@@ -69,7 +70,7 @@ async function main() {
       '  --max-gpu-jobs <n>        per-campaign GPU-job budget',
       '  --max-tokens <n>          per-campaign model-token budget',
       '  --max-cost-usd <n>        per-campaign model-cost budget',
-      '  --action <name>           list|status|events|pause|resume|extend|cancel|cancel-node|retry',
+      '  --action <name>           list|status|events|pause|resume|extend|cancel|cancel-node|retry|work',
       '  --campaign-id <id>        campaign for an operational action',
       '  --run-id <id>             suffix new campaign ids so a paper can be rerun',
       '  --node-id <id>            failed node for retry',
@@ -92,11 +93,12 @@ async function main() {
   if (options['run-id'] && !runId) throw new Error('--run-id must contain at least one safe character');
   const context = bootstrapPaperExecutionContext({ root, runtimeRoot, mode: 'paper-campaign', execute: Boolean(options.execute) });
   const campaignStore = createSqliteCampaignStore({ store: context.services.store, clock: context.services.clock });
-  if (options.action) {
+  const workAction = options.action === 'work';
+  if (options.action && !workAction) {
     const action = String(options.action);
     const campaignId = options['campaign-id'];
     let result;
-    if (action === 'list') result = campaignStore.listCampaigns({ status: options.status || null, limit: options.limit || 100 });
+    if (action === 'list') result = campaignStore.listCampaigns({ status: options.status || null, limit: options.limit || 100, effectiveOnly: Boolean(options.effective) });
     else if (action === 'status') result = { campaign: campaignStore.getCampaign(campaignId), nodes: campaignStore.listNodes(campaignId) };
     else if (action === 'events') result = campaignStore.listEvents(campaignId);
     else if (action === 'pause') result = campaignStore.pauseCampaign(campaignId, options.reason || 'operator_paused');
@@ -126,8 +128,23 @@ async function main() {
     process.stdout.write(`${JSON.stringify({ status: `paper_campaign_${action}`, result }, null, 2)}\n`);
     return;
   }
-  const inventory = await discoverInventory({ root, store: context.services.store, paperIds: options.paper, inventorySource: 'auto', proposalStagingRoot: path.join(runtimeRoot, 'proposal-staging') });
-  const datasetMounts = options.dataset.map((value, index) => {
+  let datasetMounts;
+  let plans;
+  if (workAction) {
+    const campaigns = options['campaign-id']
+      ? [campaignStore.getCampaign(options['campaign-id'])].filter(Boolean)
+      : campaignStore.listCampaigns({ status: 'running', limit: Number(options.limit || 100), effectiveOnly: true });
+    plans = campaigns.map((campaign) => campaign.spec);
+    const seenDatasets = new Set();
+    datasetMounts = campaigns.flatMap((campaign) => campaign.spec?.datasetMounts || []).filter((mount) => {
+      const key = `${mount.name}:${mount.source}:${mount.manifestHash || ''}`;
+      if (seenDatasets.has(key)) return false;
+      seenDatasets.add(key);
+      return true;
+    });
+  } else {
+    const inventory = await discoverInventory({ root, store: context.services.store, paperIds: options.paper, inventorySource: 'auto', proposalStagingRoot: path.join(runtimeRoot, 'proposal-staging') });
+    datasetMounts = options.dataset.map((value, index) => {
     const separator = String(value).indexOf('=');
     const name = separator >= 0 ? String(value).slice(0, separator) : `dataset-${index + 1}`;
     const source = path.resolve(separator >= 0 ? String(value).slice(separator + 1) : String(value));
@@ -136,8 +153,8 @@ async function main() {
       ? directoryMerkleHash(source)
       : `sha256:${crypto.createHash('sha256').update(fs.readFileSync(source)).digest('hex')}`;
     return { name, source, readOnly: true, manifestHash };
-  });
-  const plans = inventory.rows.map((row) => {
+    });
+    plans = inventory.rows.map((row) => {
     const mainTex = path.resolve(root, row.task.mainTex || '');
     const sourceWorkspace = fs.existsSync(mainTex) ? path.dirname(mainTex) : path.resolve(root, row.task.sourceWorkspace || '.');
     return buildPaperCampaignPlan({
@@ -161,21 +178,30 @@ async function main() {
       campaignId: options.paper.length === 1 && options['campaign-id']
         ? options['campaign-id']
         : runId ? `paper-campaign:${row.task.paperId}:${runId}` : null,
+      parentCampaignId: options['parent-campaign-id'] || null,
+      supersedesCampaignId: options['supersedes-campaign-id'] || null,
+      recoveryOfCampaignId: options['recovery-of-campaign-id'] || null,
     });
-  });
-  if (!options.execute) {
+    });
+  }
+  if (!workAction && !options.execute) {
     process.stdout.write(`${JSON.stringify({ status: 'paper_campaigns_planned', execute: false, plans }, null, 2)}\n`);
     return;
   }
   const executables = ['python3', process.execPath, 'Rscript', 'julia', 'lake', 'latexmk'];
-  const runtimeImages = runtimeImagesForCampaign({ gpu: Boolean(options.gpu) });
+  if (!plans.length) {
+    process.stdout.write(`${JSON.stringify({ status: 'paper_campaign_worker_idle', campaignCount: 0 }, null, 2)}\n`);
+    return;
+  }
+  const requiresGpu = Boolean(options.gpu) || plans.some((plan) => plan.requiresGpu);
+  const runtimeImages = runtimeImagesForCampaign({ gpu: requiresGpu });
   const workerRunner = createOsSandboxedWorkerRunner({
     allowedExecutables: executables,
     allowedRoots: plans.map((plan) => plan.sourceWorkspace),
     allowedOutputRoots: [path.join(runtimeRoot, 'automation-artifacts')],
     allowedDatasetRoots: datasetMounts.map((mount) => mount.source),
     allowedContainerImages: Object.values(runtimeImages).map((item) => item.image),
-    allowGpu: Boolean(options.gpu),
+    allowGpu: requiresGpu,
     maximumTimeoutMs: Number(options['max-wall-ms'] || 6 * 60 * 60 * 1000),
     maximumMemoryBytes: Number(options['worker-memory-mib'] || 4096) * 1024 * 1024,
     maximumCpuSeconds: Number(options['worker-cpu-seconds'] || 3600),
@@ -198,11 +224,19 @@ async function main() {
   if (!selected) throw new Error(`agent provider unavailable: ${provider}`);
   const agentExecutor = createIsolatedAgentExecutor({ delegate: selected, isolationRoot: path.join(runtimeRoot, 'automation-workspaces'), keepWorkspaces: false, keepFailedWorkspaces: true });
   const nodeExecutor = createCampaignNodeExecutor({ agentExecutor, empiricalExecutor, runtimeRoot });
-  for (const plan of plans) campaignStore.createCampaign(plan);
+  if (!workAction) for (const plan of plans) campaignStore.createCampaign(plan);
+  if (!workAction && !options.inline) {
+    process.stdout.write(`${JSON.stringify({ status: 'paper_campaigns_submitted', execute: false, campaignCount: plans.length, campaignIds: plans.map((plan) => plan.campaignId) }, null, 2)}\n`);
+    return;
+  }
   const totalConcurrency = Math.max(1, Number(options.concurrency || 8));
-  const governor = createResourceGovernor({ agent: Number(options['agent-slots'] || 4), cpu: Number(options['cpu-slots'] || 4), gpu: Number(options['gpu-slots'] || 1), memoryMiB: Number(options['memory-mib'] || 8192) });
+  const governor = createSqliteResourceGovernor({
+    store: context.services.store,
+    clock: context.services.clock,
+    limits: { agent: Number(options['agent-slots'] || 4), cpu: Number(options['cpu-slots'] || 4), gpu: Number(options['gpu-slots'] || 1), memoryMiB: Number(options['memory-mib'] || 8192) },
+  });
   const results = await Promise.all(plans.map((plan) => runPaperCampaign({ campaignId: plan.campaignId, campaignStore, executor: nodeExecutor, concurrency: totalConcurrency, resourceGovernor: governor })));
-  process.stdout.write(`${JSON.stringify({ status: 'paper_campaigns_completed', execute: true, campaignCount: results.length, results }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({ status: workAction ? 'paper_campaign_worker_batch_completed' : 'paper_campaigns_completed', execute: true, campaignCount: results.length, results }, null, 2)}\n`);
 }
 
 main().catch((error) => { process.stderr.write(`${error?.stack || error}\n`); process.exitCode = 1; });

@@ -10,6 +10,7 @@ import { defaultLegacyPaperFactoryRoot, defaultPaperRuntimeRoot } from '../src/w
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { verifyLegacyDifferentialReference } from '../../migration/legacy-reference-fixture.mjs';
 import { resolveImmutableLegacyMatrixArchive } from '../../migration/legacy-matrix-reference.mjs';
+import { copySqliteDatabase } from '../../paper-adapters/persistence/sqlite-consistent-copy.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
 const runtimeRoot = defaultPaperRuntimeRoot();
@@ -23,7 +24,7 @@ const verificationRuntimeRoot = path.join(drillRoot, 'verification-runtime');
 fs.mkdirSync(verificationRuntimeRoot, { recursive: true });
 const productionStorePath = path.join(runtimeRoot, 'hepta-paper.sqlite');
 if (fs.existsSync(productionStorePath)) {
-  fs.copyFileSync(productionStorePath, path.join(verificationRuntimeRoot, 'hepta-paper.sqlite'));
+  await copySqliteDatabase({ sourcePath: productionStorePath, destinationPath: path.join(verificationRuntimeRoot, 'hepta-paper.sqlite') });
 }
 const retirementEvidenceRoot = path.join(runtimeRoot, 'legacy-retirement');
 if (fs.existsSync(retirementEvidenceRoot)) {

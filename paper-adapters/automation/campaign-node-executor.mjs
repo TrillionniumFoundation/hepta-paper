@@ -101,7 +101,8 @@ export function createCampaignNodeExecutor({ agentExecutor, empiricalExecutor, r
           const parsed = receipt.structuredOutput || extractJson(receipt.finalOutput) || {};
           const manuscriptHash = `sha256:${crypto.createHash('sha256').update(fs.readFileSync(path.join(workspace, manuscript))).digest('hex')}`;
           return Object.freeze({
-            reviewerId: node.role,
+            reviewerId: node.spec?.role || node.role || node.kind,
+            role: node.spec?.role || node.role || node.kind,
             verdict: parsed.verdict === 'accept' ? 'accept' : 'revise',
             score: Number(parsed.score || 0),
             criticalFindingCount: Number(parsed.criticalFindingCount || 0),
@@ -113,6 +114,8 @@ export function createCampaignNodeExecutor({ agentExecutor, empiricalExecutor, r
             sessionKey: receipt.sessionKey || null,
             openClawRunId: receipt.openClawRunId || null,
             usage: receipt.usage || null,
+            promptHash: receipt.promptHash || null,
+            resolvedModel: receipt.resolvedModel || receipt.model || null,
             selectedExecutorId: receipt.selectedExecutorId || receipt.executorId || null,
           });
         }

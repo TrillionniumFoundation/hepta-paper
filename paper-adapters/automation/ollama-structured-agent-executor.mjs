@@ -114,6 +114,8 @@ export function createOllamaStructuredAgentExecutor({
         `Context: ${JSON.stringify(context)}`,
         `Files: ${JSON.stringify(sources)}`,
       ].join('\n\n');
+      const promptHash = `sha256:${crypto.createHash('sha256').update(prompt).digest('hex')}`;
+      const sessionId = `ollama-exec:${crypto.randomUUID()}`;
       const startedAt = new Date().toISOString();
       const result = await runOllama({ ollamaHost, model, prompt, timeoutMs: Math.min(Number(requestedTimeout || timeoutMs), timeoutMs), maximumOutputTokens: effectiveOutputTokens, fetchImpl, signal });
       let response = null;
@@ -150,6 +152,10 @@ export function createOllamaStructuredAgentExecutor({
         executorId: 'ollama-structured-agent-v1',
         providerMode: 'local:ollama',
         model,
+        resolvedModel: model,
+        promptHash,
+        sessionId,
+        childSessionId: sessionId,
         maximumOutputTokens: effectiveOutputTokens,
         outputTokenCount: result.evalCount,
         outputDoneReason: result.doneReason,

@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.17.0 - 2026-07-12
+
+- Replaced per-query `sqlite3` subprocesses with long-lived native SQLite
+  connections using WAL, foreign-key enforcement, a 10-second busy timeout
+  and deterministic release checkpoints.
+- Added DB-backed agent/CPU/GPU/RAM leases shared by every OS process. Leases
+  heartbeat, expire after worker death and preserve global peak evidence; a
+  three-process acceptance proves the declared agent limit cannot be exceeded.
+- Split campaign submission from execution. `paper:campaign --execute` now
+  submits durable work, `--inline` is explicit, and the new
+  `paper:campaign-worker` dispatcher drains the SQLite queue and survives idle
+  periods or failed batches.
+- Persisted reviewer role, identity, child session, review hash, prompt hash
+  and resolved model in first-class columns. Revised-manuscript convergence
+  now rejects missing or duplicate reviewer, session or review-hash evidence.
+- Added parent/supersedes/recovery lineage, effective campaign status,
+  review-round/phase separation, and backfilled the three v0.16 recovery runs.
+  Agent cost remains `unknown` until every recorded agent call has pricing
+  evidence instead of silently appearing as zero.
+
 ## 0.16.0 - 2026-07-12
 
 - Added explicit budget amendments for stopped campaigns. Resume now requires

@@ -86,10 +86,10 @@ function nativeStoreMigrationStatus(root, injectedStore = null) {
   if (!injectedStore) return { ready: false, path: dbPath, blocker: 'native_store_not_injected' };
   const store = injectedStore;
   const role = store.query("select value from store_metadata where key='store_role' and value='hepta-paper-native';");
-  const quickCheck = store.execute('pragma quick_check;');
+  const quickCheck = store.query('pragma quick_check;');
   return {
     ready: role.ok && role.rows.some((row) => row.value === 'hepta-paper-native')
-      && quickCheck.ok && /ok/.test(quickCheck.stdout || ''),
+      && quickCheck.ok && quickCheck.rows?.[0]?.quick_check === 'ok',
     path: dbPath,
   };
 }

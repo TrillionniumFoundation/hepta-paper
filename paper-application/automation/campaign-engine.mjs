@@ -22,8 +22,20 @@ function usageDelta(campaign, node, result = null) {
     cpuJobs: resources.cpu,
     gpuJobs: resources.gpu,
     tokens: Number(result?.outputTokenCount || result?.usage?.totalTokens || 0),
-    costUsd: Number(result?.usage?.costUsd || 0),
+    ...(result?.usage && (Object.prototype.hasOwnProperty.call(result.usage, 'costUsd') || Object.prototype.hasOwnProperty.call(result.usage, 'cost_usd'))
+      ? { costUsd: Number(result.usage.costUsd ?? result.usage.cost_usd), pricedAgentCalls: resources.agent ? 1 : 0 }
+      : {}),
   };
+}
+
+function meteredResultUsage(result, { agentCall = false } = {}) {
+  const usage = result?.usage || {};
+  const delta = { tokens: Number(result?.outputTokenCount || usage.totalTokens || usage.total_tokens || usage.total || 0) };
+  if (Object.prototype.hasOwnProperty.call(usage, 'costUsd') || Object.prototype.hasOwnProperty.call(usage, 'cost_usd')) {
+    delta.costUsd = Number(usage.costUsd ?? usage.cost_usd);
+    delta.pricedAgentCalls = agentCall ? 1 : 0;
+  }
+  return delta;
 }
 
 function budgetBlocker(campaign, node, nowMs) {
@@ -35,14 +47,14 @@ function budgetBlocker(campaign, node, nowMs) {
   if (request.gpu && campaign.gpuJobCount >= Number(budgets.maxGpuJobs ?? Infinity)) return 'campaign_gpu_job_budget_exhausted';
   if (campaign.tokenCount >= Number(budgets.maxTokenCount ?? Infinity)) return 'campaign_token_budget_exhausted';
   if (request.agent && Number(budgets.maxTokenCount ?? Infinity) - campaign.tokenCount < 128) return 'campaign_token_budget_exhausted';
-  if (campaign.costUsd >= Number(budgets.maxCostUsd ?? Infinity)) return 'campaign_cost_budget_exhausted';
+  if (campaign.costKnown && Number(campaign.costUsd || 0) >= Number(budgets.maxCostUsd ?? Infinity)) return 'campaign_cost_budget_exhausted';
   return null;
 }
 
 function postExecutionBudgetBlocker(campaign) {
   const budgets = campaign.spec?.budgets || {};
   if (campaign.tokenCount > Number(budgets.maxTokenCount ?? Infinity)) return 'campaign_token_budget_exhausted';
-  if (campaign.costUsd > Number(budgets.maxCostUsd ?? Infinity)) return 'campaign_cost_budget_exhausted';
+  if (campaign.costKnown && Number(campaign.costUsd || 0) > Number(budgets.maxCostUsd ?? Infinity)) return 'campaign_cost_budget_exhausted';
   return null;
 }
 
@@ -135,7 +147,7 @@ export async function runPaperCampaign({
         return;
       }
       const requestedResources = resourcesForCampaignNode(currentCampaign, claimedNode);
-      const releaseResources = await governor.acquire(requestedResources);
+      const releaseResources = await governor.acquire(requestedResources, { campaignId, nodeId: claimedNode.node_id });
       let releaseLocalResources;
       try {
         releaseLocalResources = await localGovernor.acquire(requestedResources);
@@ -184,7 +196,7 @@ export async function runPaperCampaign({
         const remainingWallTimeMs = Math.max(1, Number(currentCampaign.spec?.budgets?.maxWallTimeMs ?? 6 * 60 * 60 * 1000) - elapsedRunMs(currentCampaign, nowMs));
         const runNestedAgent = async (operation) => {
           const nestedRequest = { agent: 1, cpu: 0, gpu: 0, memoryMiB: 0 };
-          const releaseNestedGlobal = await governor.acquire(nestedRequest);
+          const releaseNestedGlobal = await governor.acquire(nestedRequest, { campaignId, nodeId: `${node.node_id}:nested-agent` });
           let releaseNestedLocal;
           try {
             releaseNestedLocal = await localGovernor.acquire(nestedRequest);
@@ -208,8 +220,7 @@ export async function runPaperCampaign({
             }
             campaignStore.recordUsage(campaignId, { agentCalls: 1 });
             const nestedResult = await operation({ remainingTokenCount: Math.max(128, Number(latest.spec?.budgets?.maxTokenCount ?? Infinity) - latest.tokenCount) });
-            const nestedUsage = nestedResult?.usage || {};
-            campaignStore.recordUsage(campaignId, { tokens: Number(nestedResult?.outputTokenCount || nestedUsage.totalTokens || nestedUsage.total_tokens || nestedUsage.total || 0), costUsd: Number(nestedUsage.costUsd || nestedUsage.cost_usd || 0) });
+            campaignStore.recordUsage(campaignId, meteredResultUsage(nestedResult, { agentCall: true }));
             return nestedResult;
           } finally {
             releaseNestedLocal?.();
@@ -223,8 +234,7 @@ export async function runPaperCampaign({
           const revisedReview = nodes.find((item) => item.roundIndex === node.roundIndex && item.kind === 'revision-referee-1')?.result;
           result = evaluateRefereeConvergence({ paperId: currentCampaign.paper_id, roundIndex: node.roundIndex, expectedManuscriptHash: revisedReview?.manuscriptHash || null, reviews: refereeResults(nodes, node.roundIndex), ...(result?.thresholds || {}) });
         }
-        const usage = result?.usage || {};
-        campaignStore.recordUsage(campaignId, { tokens: Number(result?.outputTokenCount || usage.totalTokens || usage.total_tokens || usage.total || 0), costUsd: Number(usage.costUsd || usage.cost_usd || 0) });
+        campaignStore.recordUsage(campaignId, meteredResultUsage(result, { agentCall: requestedResources.agent > 0 }));
         const postBlocker = postExecutionBudgetBlocker(campaignStore.getCampaign(campaignId));
         if (postBlocker) campaignStore.stopCampaign(campaignId, postBlocker);
         campaignStore.completeNode({ nodeId: node.node_id, workerId, result });
@@ -237,7 +247,7 @@ export async function runPaperCampaign({
       } catch (error) {
         const latestNode = campaignStore.listNodes(campaignId).find((item) => item.node_id === node.node_id);
         if (latestNode?.status === 'skipped') return;
-        campaignStore.recordUsage(campaignId, { tokens: Number(error?.receipt?.outputTokenCount || error?.receipt?.usage?.totalTokens || error?.receipt?.usage?.total_tokens || error?.receipt?.usage?.total || 0), costUsd: Number(error?.receipt?.usage?.costUsd || error?.receipt?.usage?.cost_usd || 0) });
+        campaignStore.recordUsage(campaignId, meteredResultUsage(error?.receipt, { agentCall: requestedResources.agent > 0 }));
         const campaignStatus = campaignStore.getCampaign(campaignId)?.status;
         const failed = campaignStore.failNode({ nodeId: node.node_id, workerId, failureClass: error?.code || error?.message || 'campaign_executor_failed', failureDetail: boundedFailureDetail(error), retryable: !['cancelled', 'failed', 'stopped'].includes(campaignStatus) && error?.retryable !== false });
         if (failed.status === 'queued') retryCount += 1;

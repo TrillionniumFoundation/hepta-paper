@@ -6,6 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createDefaultPaperStore, createReadOnlyPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
+import { copySqliteDatabase } from '../../paper-adapters/persistence/sqlite-consistent-copy.mjs';
 import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 import { currentCodeProvenance } from '../src/code-provenance.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
@@ -29,7 +30,7 @@ const legacyReference = prepareImmutableLegacyMatrixReference();
 const productionLogicalBefore = fs.existsSync(productionDb)
   ? buildSqliteLogicalIntegrityReport({ dbPath: productionDb, store: createReadOnlyPaperStore({ dbPath: productionDb }) })
   : null;
-if (fs.existsSync(productionDb)) fs.copyFileSync(productionDb, isolatedDb);
+if (fs.existsSync(productionDb)) await copySqliteDatabase({ sourcePath: productionDb, destinationPath: isolatedDb });
 for (const relative of ['owner-acceptance', 'operational-proof', 'trust', 'authority-inbox']) {
   const source = path.join(productionRuntimeRoot, relative);
   const target = path.join(isolatedRuntimeRoot, relative);

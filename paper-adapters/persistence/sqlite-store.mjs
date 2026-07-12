@@ -1,95 +1,93 @@
-import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { normalizeText } from '../../paper-core/src/runtime/text-utils.mjs';
-import { safeJsonParse } from '../../paper-core/src/runtime/data-utils.mjs';
 import { assertStorePort } from '../../paper-ports/store-port.mjs';
 
-export function createSqliteStore({ dbPath, sqliteBinary = 'sqlite3', maxBuffer = 32 * 1024 * 1024 } = {}) {
-  if (!dbPath) throw new Error('SQLite store dbPath is required');
-  const run = (sql, { json = false } = {}) => {
-    fs.mkdirSync(path.dirname(path.resolve(dbPath)), { recursive: true });
-    const args = json ? ['-json', dbPath] : [dbPath];
-    const result = spawnSync(sqliteBinary, args, {
-      input: String(sql || ''),
-      encoding: 'utf8',
-      maxBuffer,
-    });
-    const stdout = result.stdout || '';
-    const stderr = result.stderr || '';
-    return {
-      ok: result.status === 0,
-      status: result.status,
-      stdout,
-      stderr,
-      error: result.status === 0 ? null : normalizeText(stderr || stdout || 'sqlite_query_failed'),
-    };
+function failure(error, fallback) {
+  return {
+    ok: false,
+    status: 1,
+    stdout: '',
+    stderr: String(error?.message || fallback),
+    error: normalizeText(error?.message || fallback),
   };
-  const port = {
-    version: 1,
-    kind: 'SqliteStoreAdapter',
-    dbPath,
-    query(sql) {
-      const result = run(sql, { json: true });
-      return { ...result, rows: result.ok ? safeJsonParse(result.stdout || '[]', []) : [] };
-    },
-    execute(sql) {
-      return run(sql);
-    },
-    available() {
-      const result = spawnSync(sqliteBinary, ['-version'], { encoding: 'utf8' });
-      return result.status === 0;
-    },
-  };
-  return assertStorePort(port);
 }
 
-export function createReadOnlySqliteStore({ dbPath, sqliteBinary = 'sqlite3', maxBuffer = 32 * 1024 * 1024 } = {}) {
+function openDatabase({ dbPath, readOnly = false, busyTimeoutMs = 10_000 } = {}) {
+  const resolved = path.resolve(dbPath);
+  if (!readOnly) fs.mkdirSync(path.dirname(resolved), { recursive: true });
+  const database = new DatabaseSync(resolved, { readOnly });
+  database.exec(`PRAGMA busy_timeout=${Math.max(1, Number(busyTimeoutMs || 10_000))};`);
+  database.exec('PRAGMA foreign_keys=ON;');
+  if (!readOnly) {
+    database.exec('PRAGMA journal_mode=WAL;');
+    database.exec('PRAGMA synchronous=NORMAL;');
+  }
+  return database;
+}
+
+function createPort({ dbPath, readOnly = false, busyTimeoutMs = 10_000 } = {}) {
   if (!dbPath) throw new Error('SQLite store dbPath is required');
-  const query = (sql) => {
-    if (!fs.existsSync(dbPath)) {
-      return {
-        ok: false,
-        status: 1,
-        stdout: '',
-        stderr: '',
-        error: 'sqlite_readonly_database_missing',
-        rows: [],
-      };
-    }
-    const result = spawnSync(sqliteBinary, ['-readonly', '-json', dbPath], {
-      input: String(sql || ''),
-      encoding: 'utf8',
-      maxBuffer,
-    });
-    const stdout = result.stdout || '';
-    const stderr = result.stderr || '';
-    return {
-      ok: result.status === 0,
-      status: result.status,
-      stdout,
-      stderr,
-      error: result.status === 0 ? null : normalizeText(stderr || stdout || 'sqlite_readonly_query_failed'),
-      rows: result.status === 0 ? safeJsonParse(stdout || '[]', []) : [],
-    };
-  };
+  if (readOnly && !fs.existsSync(dbPath)) throw new Error('sqlite_readonly_database_missing');
+  const database = openDatabase({ dbPath, readOnly, busyTimeoutMs });
+  let closed = false;
   return assertStorePort({
-    version: 1,
-    kind: 'ReadOnlySqliteStoreAdapter',
+    version: 2,
+    kind: readOnly ? 'ReadOnlySqliteStoreAdapter' : 'SqliteStoreAdapter',
     dbPath,
-    query,
-    execute() {
-      return {
-        ok: false,
-        status: 1,
-        stdout: '',
-        stderr: '',
-        error: 'sqlite_readonly_store_execute_forbidden',
-      };
+    query(sql) {
+      try {
+        const rows = database.prepare(String(sql || '')).all().map((row) => ({ ...row }));
+        return { ok: true, status: 0, stdout: JSON.stringify(rows), stderr: '', error: null, rows };
+      } catch (error) {
+        return { ...failure(error, 'sqlite_query_failed'), rows: [] };
+      }
+    },
+    execute(sql) {
+      if (readOnly) return failure(new Error('sqlite_readonly_store_execute_forbidden'), 'sqlite_readonly_store_execute_forbidden');
+      try {
+        database.exec(String(sql || ''));
+        return { ok: true, status: 0, stdout: '', stderr: '', error: null };
+      } catch (error) {
+        if (database.isTransaction) {
+          try { database.exec('ROLLBACK;'); } catch { /* preserve the original SQLite error */ }
+        }
+        return failure(error, 'sqlite_execute_failed');
+      }
     },
     available() {
-      const result = spawnSync(sqliteBinary, ['-version'], { encoding: 'utf8' });
-      return result.status === 0 && fs.existsSync(dbPath);
+      try {
+        database.prepare('SELECT 1 AS available').get();
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    checkpoint({ mode = 'PASSIVE' } = {}) {
+      if (readOnly) return { ok: true, status: 0, stdout: '', stderr: '', error: null };
+      try {
+        const normalized = String(mode || 'PASSIVE').toUpperCase();
+        if (!['PASSIVE', 'FULL', 'RESTART', 'TRUNCATE'].includes(normalized)) {
+          throw new Error('sqlite_checkpoint_mode_invalid');
+        }
+        const row = database.prepare(`PRAGMA wal_checkpoint(${normalized})`).get();
+        return { ok: true, status: 0, stdout: JSON.stringify(row || {}), stderr: '', error: null, row: row ? { ...row } : null };
+      } catch (error) {
+        return failure(error, 'sqlite_checkpoint_failed');
+      }
+    },
+    close() {
+      if (!closed) database.close();
+      closed = true;
     },
   });
+}
+
+export function createSqliteStore({ dbPath, busyTimeoutMs = 10_000 } = {}) {
+  return createPort({ dbPath, busyTimeoutMs, readOnly: false });
+}
+
+export function createReadOnlySqliteStore({ dbPath, busyTimeoutMs = 10_000 } = {}) {
+  return createPort({ dbPath, busyTimeoutMs, readOnly: true });
 }

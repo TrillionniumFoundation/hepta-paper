@@ -18,7 +18,7 @@ test('read-only StorePort rejects writes and preserves database bytes', (t) => {
   createDefaultPaperStore({ root, runtimeRoot: root, dbPath });
   const before = sha(dbPath);
   const store = createReadOnlyPaperStore({ root, runtimeRoot: root, dbPath });
-  assert.equal(store.query('SELECT count(*) AS count FROM schema_migrations;').rows[0].count, 6);
+  assert.equal(store.query('SELECT count(*) AS count FROM schema_migrations;').rows[0].count, 8);
   assert.equal(store.execute("DELETE FROM schema_migrations;").ok, false);
   assert.equal(store.execute("DELETE FROM schema_migrations;").error, 'sqlite_readonly_store_execute_forbidden');
   assert.equal(sha(dbPath), before);
@@ -28,7 +28,7 @@ test('native SQLite adapter rolls back a failed multi-statement transaction', (t
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-sqlite-rollback-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const store = createDefaultPaperStore({ root, runtimeRoot: root });
-  const failed = store.execute("BEGIN IMMEDIATE; INSERT INTO schema_migrations(version,name,migration_sha256) VALUES(6,'duplicate','duplicate'); COMMIT;");
+  const failed = store.execute("BEGIN IMMEDIATE; INSERT INTO schema_migrations(version,name,migration_sha256) VALUES(8,'duplicate','duplicate'); COMMIT;");
   assert.equal(failed.ok, false);
   assert.match(failed.error, /UNIQUE constraint failed/);
   const recovered = store.execute("BEGIN IMMEDIATE; INSERT INTO store_metadata(key,value,updated_at) VALUES('rollback_probe','ok',datetime('now')); COMMIT;");

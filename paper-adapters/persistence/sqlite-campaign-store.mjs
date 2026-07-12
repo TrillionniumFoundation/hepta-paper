@@ -86,7 +86,7 @@ export function createSqliteCampaignStore({ store, clock } = {}) {
     const terminalFailure = rows.some((node) => node.status === 'failed_terminal');
     const complete = rows.length > 0 && rows.every((node) => DONE.has(node.status));
     const status = terminalFailure ? 'failed' : complete ? 'completed' : 'running';
-    const currentReviewRound = Math.max(0, ...rows.filter((node) => DONE.has(node.status) && node.kind !== 'package').map((node) => node.roundIndex));
+    const currentReviewRound = Math.max(0, ...rows.filter((node) => node.status === 'completed' && node.kind !== 'package').map((node) => node.roundIndex));
     const nextNode = rows.find((node) => !DONE.has(node.status) && !['failed_terminal'].includes(node.status));
     const currentPhase = status === 'completed' ? 'completed' : status === 'failed' ? 'failed' : (nextNode?.kind || status);
     const now = clock.nowIso();

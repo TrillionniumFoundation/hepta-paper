@@ -13,6 +13,8 @@ const migrations = [
   { version: 4, name: '004_automation_campaigns', path: path.join(workspaceRoot, 'store', 'migrations', '004_automation_campaigns.sql') },
   { version: 5, name: '005_automation_operations', path: path.join(workspaceRoot, 'store', 'migrations', '005_automation_operations.sql') },
   { version: 6, name: '006_multiprocess_automation', path: path.join(workspaceRoot, 'store', 'migrations', '006_multiprocess_automation.sql') },
+  { version: 7, name: '007_campaign_lineage_backfill', path: path.join(workspaceRoot, 'store', 'migrations', '007_campaign_lineage_backfill.sql') },
+  { version: 8, name: '008_reviewer_identity_backfill', path: path.join(workspaceRoot, 'store', 'migrations', '008_reviewer_identity_backfill.sql') },
 ];
 
 function sqlQuote(value) {

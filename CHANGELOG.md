@@ -19,6 +19,9 @@
   review-round/phase separation, and backfilled the three v0.16 recovery runs.
   Agent cost remains `unknown` until every recorded agent call has pricing
   evidence instead of silently appearing as zero.
+- Added a replayable historical backfill that derives the actual completed
+  review round independently from the package phase and promotes available
+  reviewer/session/hash fields from legacy JSON receipts into indexed columns.
 
 ## 0.16.0 - 2026-07-12
 

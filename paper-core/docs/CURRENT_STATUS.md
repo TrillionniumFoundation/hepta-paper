@@ -1,6 +1,6 @@
 # hepta-paper current status
 
-This is the normative status for the `v0.20.0` architecture release. Older remediation,
+This is the normative status for the `v0.20.1` architecture release. Older remediation,
 phase and retirement documents are historical records and do not override it.
 
 ## Architecture
@@ -27,6 +27,9 @@ Trusted ledger writers are minted by the private issuer-policy registry. A
 caller cannot become trusted by supplying a boolean or its own kind/stream
 allowlist. Original receipt rows are append-only; corrections use replacement
 receipts and qualification/supersession records.
+Runtime hygiene is idempotent for already-qualified receipts, and store status
+reports raw historical classifications separately from unresolved current
+classification debt.
 
 - Local-admin-delegated owner acceptance: 249/249 across 19 families.
 - Independent external-owner acceptance: 0/249.

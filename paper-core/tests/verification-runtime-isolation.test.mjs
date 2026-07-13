@@ -37,6 +37,31 @@ test('native SQLite adapter rolls back a failed multi-statement transaction', (t
   store.close();
 });
 
+test('runtime evidence hygiene qualifies each immutable receipt at most once', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-runtime-hygiene-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const store = createDefaultPaperStore({ root, runtimeRoot: root });
+  const inserted = store.execute(`INSERT INTO receipt_ledger(
+    receipt_id,stream,kind,status,receipt_json,receipt_sha256,created_at,
+    environment,evidence_class,writer_trusted,issuer_assurance
+  ) VALUES(
+    'runtime-unclassified-fixture','fixture','FixtureReceipt','complete','{}','sha256:fixture',
+    '2026-07-13T00:00:00.000Z','production','runtime_unclassified',0,'legacy_unclassified'
+  );`);
+  assert.equal(inserted.ok, true);
+  store.close();
+  const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
+  const run = () => spawnSync(process.execPath, ['paper-core/bin/runtime-hygiene.mjs', '--execute'], {
+    cwd: workspaceRoot,
+    env: { ...process.env, HEPTA_PAPER_RUNTIME_ROOT: root, HEPTA_PAPER_ASSET_ROOT: root },
+    encoding: 'utf8',
+  });
+  assert.equal(run().status, 0);
+  assert.equal(run().status, 0);
+  const verified = createReadOnlyPaperStore({ root, runtimeRoot: root });
+  assert.equal(verified.query("SELECT count(*) AS count FROM receipt_ledger_qualifications WHERE receipt_id='runtime-unclassified-fixture';").rows[0].count, 1);
+});
+
 test('remediation selftest refuses a non-isolated runtime before touching its store', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-selftest-guard-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

@@ -23,9 +23,16 @@ const qualifications = execute ? createSqliteReceiptLedgerQualificationStore({ s
 const quarantineRoot = path.join(runtimeRoot, 'quarantine', 'pre-v0.5-runtime-evidence');
 const candidates = store.query("SELECT * FROM jobs WHERE environment='legacy_unclassified' AND status='queued' AND attempt_count=0 ORDER BY created_at;").rows;
 const contaminatedReceipts = store.query(`
-  SELECT * FROM receipt_ledger
-  WHERE (environment='verification' AND evidence_class='technical_conformance')
-     OR (environment='production' AND evidence_class='runtime_unclassified')
+  SELECT * FROM receipt_ledger AS receipt
+  WHERE (
+    (environment='verification' AND evidence_class='technical_conformance')
+    OR (environment='production' AND evidence_class='runtime_unclassified')
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM receipt_ledger_qualifications AS qualification
+    WHERE qualification.receipt_id=receipt.receipt_id
+      AND qualification.disposition IN ('administrative_exported','invalid','superseded','retention_tombstone')
+  )
   ORDER BY created_at, receipt_id;
 `).rows;
 const exportPayload = { version: 1, kind: 'LegacyUnclassifiedQueuedJobExport', rows: candidates };

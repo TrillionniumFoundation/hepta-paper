@@ -66,6 +66,23 @@ UNION ALL SELECT 'campaign_events',count(*) FROM campaign_events;
 `, { json: true }) || '[]');
   const metadata = JSON.parse(runSql(store, 'SELECT key,value,updated_at FROM store_metadata ORDER BY key;', { json: true }) || '[]');
   const evidenceClassifications = JSON.parse(runSql(store, 'SELECT environment,evidence_class,count(*) AS count FROM receipt_ledger GROUP BY environment,evidence_class ORDER BY environment,evidence_class;', { json: true }) || '[]');
+  const receiptQualificationRows = JSON.parse(runSql(store, `
+SELECT count(*) AS row_count,count(DISTINCT receipt_id) AS qualified_receipt_count
+FROM receipt_ledger_qualifications;
+`, { json: true }) || '[]');
+  const unresolvedContaminatedReceiptCount = Number(JSON.parse(runSql(store, `
+SELECT count(*) AS count
+FROM receipt_ledger AS receipt
+WHERE (
+  (environment='verification' AND evidence_class='technical_conformance')
+  OR (environment='production' AND evidence_class='runtime_unclassified')
+)
+AND NOT EXISTS (
+  SELECT 1 FROM receipt_ledger_qualifications AS qualification
+  WHERE qualification.receipt_id=receipt.receipt_id
+    AND qualification.disposition IN ('administrative_exported','invalid','superseded','retention_tombstone')
+);
+`, { json: true }) || '[]')[0]?.count || 0);
   const jobClassifications = JSON.parse(runSql(store, 'SELECT environment,evidence_class,status,count(*) AS count FROM jobs GROUP BY environment,evidence_class,status ORDER BY environment,evidence_class,status;', { json: true }) || '[]');
   const quickRows = JSON.parse(runSql(store, 'PRAGMA quick_check;', { json: true }) || '[]');
   const quickCheck = String(quickRows[0]?.quick_check || quickRows[0]?.integrity_check || 'unknown');
@@ -80,6 +97,12 @@ UNION ALL SELECT 'campaign_events',count(*) FROM campaign_events;
     tables: Object.fromEntries(rows.map((row) => [row.name, Number(row.count)])),
     metadata,
     evidenceClassifications,
+    receiptQualifications: {
+      rowCount: Number(receiptQualificationRows[0]?.row_count || 0),
+      qualifiedReceiptCount: Number(receiptQualificationRows[0]?.qualified_receipt_count || 0),
+      unresolvedContaminatedReceiptCount,
+      rawEvidenceClassificationsPreserved: true,
+    },
     jobClassifications,
     legacyDefaultDependency: false,
   };

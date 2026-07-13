@@ -1,11 +1,12 @@
 import path from 'node:path';
 import {
   fileRecord,
+  pathWithin,
   readJsonIfExists,
   relativePath,
   walkFiles,
-} from '../../paper-core/src/runtime/file-utils.mjs';
-import { normalizeText, uniqueStrings } from '../../paper-core/src/runtime/text-utils.mjs';
+} from '../../workflow-kernel/runtime/file-utils.mjs';
+import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
 import {
   buildPaperResearchVerifyReceipt,
   createClaimScopeContract,
@@ -21,9 +22,11 @@ import { buildEvidenceIntake } from '../../paper-domain/research/evidence-ingest
 import { buildEvidenceQualityGate } from '../../paper-domain/research/evidence-quality-gate.mjs';
 import { buildExperimentRegistry } from '../../paper-domain/research/experiment-registry.mjs';
 import { buildResearchChangeProposal } from '../../paper-domain/research/change-proposal.mjs';
-import { bindResearchGapPlan, buildResearchGapPlan } from '../../paper-application/research/gap-planner.mjs';
+import { bindResearchGapPlan, buildResearchGapPlan } from '../../paper-domain/research/gap-planner.mjs';
 import { verifyEvidenceBatch } from './evidence-verifier.mjs';
 import { defaultPaperRuntimeRoot } from '../../paper-core/src/workspace-layout.mjs';
+import { buildPromotionInputSnapshot, buildResearchGapClosureReceipt } from '../../paper-domain/quality/promotion-input-snapshot.mjs';
+import { verifyArtifactWriteReceiptSource } from '../artifacts/artifact-write-receipt-verifier.mjs';
 
 function repoPath(root, value) {
   const text = normalizeText(value);
@@ -41,8 +44,8 @@ async function scanEvidenceRoot(root, sourceRoot, rolePrefix) {
   });
   const records = [];
   for (const file of files.slice(0, 128)) {
-    const record = await fileRecord(root, file, `${rolePrefix}_evidence`);
-    if (record) records.push(record);
+    const record = await fileRecord(sourceRoot, file, `${rolePrefix}_evidence`);
+    if (record) records.push({ ...record, path: relativePath(root, file) });
   }
   return records;
 }
@@ -74,26 +77,31 @@ async function extractStructuredItems(root, records) {
   const obligations = [];
   const evidenceItems = [];
   const reproducibilityItems = [];
+  const experiments = [];
   for (const record of records.slice(0, 96)) {
     const absolute = repoPath(root, record.path);
     const json = /\.json$/i.test(record.filename || '') ? await readJsonIfExists(absolute) : null;
     const roles = classifyEvidenceRecord(record);
-    if (roles.includes('claim')) claims.push(asContractItem(record, 'claim', claims.length));
+    const jsonClaims = json && typeof json === 'object' ? [
+      ...(Array.isArray(json.claims) ? json.claims : []),
+      ...(Array.isArray(json.claim_packets) ? json.claim_packets : []),
+      ...(Array.isArray(json.claims_matrix) ? json.claims_matrix : []),
+    ] : [];
+    if (roles.includes('claim') && !jsonClaims.length) claims.push(asContractItem(record, 'claim', claims.length));
     if (roles.includes('proof')) obligations.push(asContractItem(record, 'proof', obligations.length));
     if (roles.includes('evidence')) evidenceItems.push(asContractItem(record, 'evidence', evidenceItems.length));
     if (roles.includes('reproducibility')) reproducibilityItems.push(asContractItem(record, 'reproducibility', reproducibilityItems.length));
     if (!json || typeof json !== 'object') continue;
-    const jsonClaims = [
-      ...(Array.isArray(json.claims) ? json.claims : []),
-      ...(Array.isArray(json.claim_packets) ? json.claim_packets : []),
-      ...(Array.isArray(json.claims_matrix) ? json.claims_matrix : []),
-    ];
     for (const claim of jsonClaims.slice(0, 24)) {
       claims.push({
         id: claim.claim_id || claim.id || claim.key || `json_claim:${claims.length + 1}`,
         text: claim.claim_text || claim.text || claim.claim || claim.statement || `claim from ${record.path}`,
         status: claim.status || claim.verdict || 'observed',
-        kind: claim.kind || 'claim',
+        kind: claim.claim_kind || claim.claimKind || claim.kind || 'claim',
+        riskClass: claim.risk_class || claim.riskClass || '',
+        proofObligations: claim.proof_obligations || claim.proofObligations || [],
+        verificationPlan: claim.verification_plan || claim.verificationPlan || null,
+        negativeResultPolicy: claim.negative_result_policy || claim.negativeResultPolicy || null,
         sourceLocator: claim.source_locator || claim.locator || record.path,
         evidenceRefs: [{ kind: 'path', ref: record.path, hash: record.hash }],
       });
@@ -123,6 +131,13 @@ async function extractStructuredItems(root, records) {
         text: evidence.text || evidence.summary || evidence.path || `evidence from ${record.path}`,
         status: evidence.status || evidence.verdict || 'observed',
         kind: evidence.kind || 'evidence',
+        claimIds: evidence.claim_ids || evidence.claimIds || (evidence.claim_id ? [evidence.claim_id] : []),
+        requiredOutputs: evidence.required_outputs || evidence.requiredOutputs || [],
+        availableOutputs: evidence.available_outputs || evidence.availableOutputs || evidence.outputs || [],
+        resultClass: evidence.result_class || evidence.resultClass || null,
+        acceptedResultClasses: evidence.accepted_result_classes || evidence.acceptedResultClasses || undefined,
+        forbiddenSideEffects: evidence.forbidden_side_effects || evidence.forbiddenSideEffects || [],
+        observedSideEffects: evidence.observed_side_effects || evidence.observedSideEffects || [],
         sourceLocator: evidence.source_locator || evidence.path || record.path,
         evidenceRefs: [{ kind: 'path', ref: evidence.path || record.path, hash: evidence.sha256 || record.hash }],
       });
@@ -156,8 +171,21 @@ async function extractStructuredItems(root, records) {
         evidenceRefs: [{ kind: 'path', ref: record.path, hash: record.hash }],
       });
     }
+    const jsonExperiments = [
+      ...(Array.isArray(json.experiments) ? json.experiments : []),
+      ...(json.experiment && typeof json.experiment === 'object' ? [json.experiment] : []),
+      ...(json.experiment_manifest && typeof json.experiment_manifest === 'object' ? [json.experiment_manifest] : []),
+    ];
+    for (const experiment of jsonExperiments.slice(0, 24)) {
+      experiments.push({
+        ...experiment,
+        experimentId: experiment.experimentId || experiment.experiment_id || experiment.id || `json_experiment:${experiments.length + 1}`,
+        resultPath: experiment.resultPath || experiment.result_path || record.path,
+        resultHash: experiment.resultHash || experiment.result_hash || record.hash,
+      });
+    }
   }
-  return { claims, obligations, evidenceItems, reproducibilityItems };
+  return { claims, obligations, evidenceItems, reproducibilityItems, experiments };
 }
 
 export async function runResearchVerifyAdapter({
@@ -173,6 +201,7 @@ export async function runResearchVerifyAdapter({
   artifactRepositoryFactory = null,
   receiptLedger = null,
   clock = null,
+  store = null,
 } = {}) {
   const sourceRoot = repoPath(root, row.task.sourceWorkspace);
   const resolvedRuntimeRoot = runtimeRoot
@@ -241,29 +270,55 @@ export async function runResearchVerifyAdapter({
   });
   const researchWorkers = [];
   const legacyCatalogReferences = [];
-  const claimRegistry = buildClaimRegistry({ paperTask: row.task, claims: structured.claims });
+  const claimRegistry = buildClaimRegistry({
+    paperTask: row.task,
+    claims: structured.claims,
+  });
   const evidenceVerificationReceipts = await verifyEvidenceBatch({
-    sourceRoot: root,
+    sourceRoot,
     evidenceItems: structured.evidenceItems.map((item) => ({
       id: item.id,
-      path: item.sourceLocator || item.evidenceRefs?.[0]?.ref || null,
+      path: repoPath(root, item.sourceLocator || item.evidenceRefs?.[0]?.ref || null),
       hash: item.evidenceRefs?.find((ref) => ref.hash)?.hash || null,
       provenance: item.kind || 'observed_evidence',
-    })).filter((item) => item.path && item.hash),
+    })).filter((item) => item.path && item.hash && sourceRoot && pathWithin(sourceRoot, item.path)),
     authorityVerifier,
   });
   const verificationById = new Map(evidenceVerificationReceipts.map((receipt) => [receipt.evidenceId, receipt]));
+  const attestedEvidenceItems = academicEvidenceAttestation.academicEvidenceEligible
+    ? (academicEvidenceAttestation.verifiedArtifacts || []).filter((item) => item.verified === true).map((item, index) => ({
+      id: `attested:${index + 1}:${item.path}`,
+      kind: item.kind || 'attested_academic_evidence',
+      claimIds: item.claimIds || [],
+      path: `${item.scope || 'source'}:${item.path}`,
+      hash: item.currentHash,
+      verificationStatus: 'evidence_artifact_verified',
+      verifiedHash: item.currentHash,
+      provenanceReceiptHash: academicEvidenceAttestation.academicEvidenceAttestationVerificationHash,
+      createdAt: now.toISOString(),
+      verificationReceipt: {
+        kind: 'EvidenceArtifactVerificationReceipt',
+        status: 'evidence_artifact_verified',
+        hash: academicEvidenceAttestation.academicEvidenceAttestationVerificationHash,
+        createdAt: now.toISOString(),
+        claimIds: item.claimIds || [],
+        path: `${item.scope || 'source'}:${item.path}`,
+      },
+    })) : [];
+  const candidateEvidenceItems = structured.evidenceItems.map((item) => ({
+    ...item,
+    claimIds: item.claimIds || item.claim_ids || [],
+    path: item.sourceLocator || item.evidenceRefs?.[0]?.ref || null,
+    hash: item.evidenceRefs?.find((ref) => ref.hash)?.hash || null,
+    verificationStatus: verificationById.get(item.id)?.status || 'unverified',
+    verifiedHash: verificationById.get(item.id)?.verifiedHash || null,
+    provenanceReceiptHash: verificationById.get(item.id)?.provenanceReceiptHash || null,
+    createdAt: verificationById.get(item.id)?.createdAt || null,
+    verificationReceipt: verificationById.get(item.id) || null,
+  }));
   const evidenceIntake = buildEvidenceIntake({
     paperTask: row.task,
-    evidenceItems: structured.evidenceItems.map((item) => ({
-      ...item,
-      claimIds: item.claimIds || item.claim_ids || [],
-      path: item.sourceLocator || item.evidenceRefs?.[0]?.ref || null,
-      hash: item.evidenceRefs?.find((ref) => ref.hash)?.hash || null,
-      verificationStatus: verificationById.get(item.id)?.status || 'unverified',
-      verifiedHash: verificationById.get(item.id)?.verifiedHash || null,
-      provenanceReceiptHash: verificationById.get(item.id)?.provenanceReceiptHash || null,
-    })),
+    evidenceItems: attestedEvidenceItems.length ? attestedEvidenceItems : candidateEvidenceItems,
   });
   const evidenceQualityGate = buildEvidenceQualityGate({
     paperTask: row.task,
@@ -271,7 +326,20 @@ export async function runResearchVerifyAdapter({
     evidenceIntake,
     nativeWorkerReceipts: nativeResearchWorkerExecution.workerReceipts,
   });
-  const researchGapPlan = buildResearchGapPlan({ paperTask: row.task, claimRegistry, evidenceQualityGate });
+  const escapedPaperId = String(row.task.paperId || '').replace(/'/g, "''");
+  const revisionRequests = store?.query
+    ? (store.query(`SELECT * FROM referee_revision_requests WHERE slug='${escapedPaperId}' ORDER BY matrix_rank,request_id;`).rows || [])
+    : [];
+  const researchGapPlan = buildResearchGapPlan({ paperTask: row.task, claimRegistry, evidenceQualityGate, revisionRequests });
+  const promotionInputSnapshot = buildPromotionInputSnapshot({
+    paperTask: row.task,
+    claimRegistry,
+    evidenceQualityGate,
+    researchGapPlan,
+    revisionRequests,
+    createdAt: now.toISOString(),
+  });
+  const researchGapClosureReceipt = buildResearchGapClosureReceipt({ promotionInputSnapshot, researchGapPlan });
   const researchGapPlanBinding = jobReceiptStore && receiptLedger && clock
     ? bindResearchGapPlan({
       plan: researchGapPlan,
@@ -281,7 +349,16 @@ export async function runResearchVerifyAdapter({
       workerId: executeResearchWorkers ? 'research-gap-planner' : null,
     })
     : null;
-  const experimentRegistry = buildExperimentRegistry({ paperTask: row.task, artifacts: evidenceRecords });
+  const experimentRegistry = buildExperimentRegistry({ paperTask: row.task, artifacts: structured.experiments, receiptLedger, artifactVerifier: verifyArtifactWriteReceiptSource });
+  const formalWorkerReceipts = (nativeResearchWorkerExecution.workerReceipts || [])
+    .filter((receipt) => ['formal_verifier_lake', 'formal_verifier_lean'].includes(receipt.workerType));
+  const promotionBlockers = [
+    ...(evidenceQualityGate.status === 'evidence_quality_ready' ? [] : ['evidence_quality_gate_not_ready', ...(evidenceQualityGate.blockers || []).map((item) => `evidence_quality:${item}`)]),
+    ...(experimentRegistry.experiments.length === 0 || experimentRegistry.status === 'experiment_registry_ready'
+      ? [] : ['experiment_registry_not_ready', ...(experimentRegistry.incompleteExperimentIds || []).map((item) => `experiment_not_accepted:${item}`)]),
+    ...formalWorkerReceipts.filter((receipt) => receipt.result?.status !== 'formal_claim_verified')
+      .map((receipt) => `formal_claim_verification_required:${receipt.workerId || receipt.workerType}`),
+  ];
   const researchChangeProposal = buildResearchChangeProposal({
     paperTask: row.task,
     patches: [],
@@ -298,8 +375,7 @@ export async function runResearchVerifyAdapter({
     blockers,
     warnings,
   });
-  const reportStatus = verifyReceipt.status === 'evidence_present'
-    && proposalSeedEvidence.length > 0
+  const reportStatus = proposalSeedEvidence.length > 0
     && proposalSeedEvidence.length === evidenceRecords.length
     ? 'proposal_seed_present'
     : verifyReceipt.status;
@@ -339,10 +415,16 @@ export async function runResearchVerifyAdapter({
       evidenceIntake,
       evidenceQualityGate,
       researchGapPlan,
+      promotionInputSnapshot,
+      researchGapClosureReceipt,
       researchGapPlanBinding,
       experimentRegistry,
       researchChangeProposal,
       evidenceVerificationReceipts,
+    },
+    promotionEligibility: {
+      status: promotionBlockers.length ? 'research_promotion_blocked' : 'research_promotion_ready',
+      blockers: promotionBlockers,
     },
     evidenceRefs,
     typedContracts: {

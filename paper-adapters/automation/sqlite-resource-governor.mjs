@@ -12,12 +12,22 @@ function normalizedResources(value = {}) {
 
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 
+function ownerProcessId(ownerId) {
+  const match = String(ownerId || '').match(/^resource-owner:(\d+):/);
+  return match ? Number(match[1]) : null;
+}
+
+function processAlive(pid) {
+  if (!pid) return true;
+  try { process.kill(pid, 0); return true; } catch (error) { return error?.code !== 'ESRCH'; }
+}
+
 export function createSqliteResourceGovernor({
   store,
   limits = { agent: 4, cpu: 4, gpu: 1, memoryMiB: 8192 },
   scope = 'global',
   ownerId = `resource-owner:${process.pid}:${crypto.randomUUID()}`,
-  leaseSeconds = 120,
+  leaseSeconds = 1800,
   pollMs = 50,
   clock = { now: () => new Date(), nowIso: () => new Date().toISOString() },
 } = {}) {
@@ -40,7 +50,21 @@ COMMIT;`);
     }
   }
 
+  const reapDeadOwners = () => {
+    const now = clock.nowIso();
+    const rows = store.query(`SELECT DISTINCT owner_id FROM automation_resource_leases WHERE scope=${sqlText(scope)} AND expires_at>${sqlText(now)} UNION SELECT DISTINCT owner_id FROM automation_resource_waiters WHERE scope=${sqlText(scope)} AND expires_at>${sqlText(now)};`).rows;
+    const dead = rows.map((row) => row.owner_id).filter((value) => {
+      const pid = ownerProcessId(value);
+      return pid && pid !== process.pid && !processAlive(pid);
+    });
+    if (!dead.length) return 0;
+    const removed = store.execute(`BEGIN IMMEDIATE; DELETE FROM automation_resource_leases WHERE scope=${sqlText(scope)} AND owner_id IN (${dead.map(sqlText).join(',')}); DELETE FROM automation_resource_waiters WHERE scope=${sqlText(scope)} AND owner_id IN (${dead.map(sqlText).join(',')}); COMMIT;`);
+    if (!removed.ok) throw new Error(removed.error || 'resource_dead_owner_reap_failed');
+    return dead.length;
+  };
+
   const snapshot = () => {
+    reapDeadOwners();
     const now = clock.nowIso();
     const row = store.query(`SELECT
       l.agent_limit,l.cpu_limit,l.gpu_limit,l.memory_mib_limit,
@@ -55,6 +79,7 @@ COMMIT;`);
     LEFT JOIN automation_resource_leases r ON r.scope=l.scope
     LEFT JOIN automation_resource_peaks p ON p.scope=l.scope
     WHERE l.scope=${sqlText(scope)} GROUP BY l.scope;`).rows[0] || {};
+    const waiting = store.query(`SELECT count(*) AS waiting FROM automation_resource_waiters WHERE scope=${sqlText(scope)} AND expires_at>${sqlText(now)};`).rows[0];
     return Object.freeze({
       scope,
       ownerId,
@@ -62,6 +87,7 @@ COMMIT;`);
       used: { agent: Number(row.agent_used || 0), cpu: Number(row.cpu_used || 0), gpu: Number(row.gpu_used || 0), memoryMiB: Number(row.memory_mib_used || 0) },
       peak: { agent: Number(row.agent_peak || 0), cpu: Number(row.cpu_peak || 0), gpu: Number(row.gpu_peak || 0), memoryMiB: Number(row.memory_mib_peak || 0) },
       activeLeases: Number(row.active_leases || 0),
+      waiting: Number(waiting?.waiting || 0),
       persistence: 'sqlite',
     });
   };
@@ -75,19 +101,36 @@ COMMIT;`);
       const resources = normalizedResources(request);
       for (const key of KEYS) if (resources[key] > maximum[key]) throw new Error(`resource_request_exceeds_limit:${key}`);
       const leaseId = `${ownerId}:${crypto.randomUUID()}`;
+      const waiterId = `resource-waiter:${process.pid}:${crypto.randomUUID()}`;
+      const requestedAt = clock.nowIso();
+      let contentionCount = 0;
+      const waiterExpiry = new Date(clock.now().getTime() + 30_000).toISOString();
+      const queued = store.execute(`INSERT INTO automation_resource_waiters(waiter_id,scope,owner_id,campaign_id,node_id,agent,cpu,gpu,memory_mib,requested_at,renewed_at,expires_at) VALUES(${sqlText(waiterId)},${sqlText(scope)},${sqlText(ownerId)},${context.campaignId ? sqlText(context.campaignId) : 'NULL'},${context.nodeId ? sqlText(context.nodeId) : 'NULL'},${resources.agent},${resources.cpu},${resources.gpu},${resources.memoryMiB},${sqlText(requestedAt)},${sqlText(requestedAt)},${sqlText(waiterExpiry)});`);
+      if (!queued.ok) throw new Error(queued.error || 'resource_waiter_enqueue_failed');
       while (true) {
+        reapDeadOwners();
         const now = clock.now();
         const nowIso = now.toISOString();
         const expiresAt = new Date(now.getTime() + Math.max(1, Number(leaseSeconds)) * 1000).toISOString();
         const insert = store.execute(`BEGIN IMMEDIATE;
 DELETE FROM automation_resource_leases WHERE scope=${sqlText(scope)} AND expires_at<=${sqlText(nowIso)};
+DELETE FROM automation_resource_waiters WHERE scope=${sqlText(scope)} AND expires_at<=${sqlText(nowIso)};
+INSERT OR IGNORE INTO automation_resource_waiters(waiter_id,scope,owner_id,campaign_id,node_id,agent,cpu,gpu,memory_mib,requested_at,renewed_at,expires_at) VALUES(${sqlText(waiterId)},${sqlText(scope)},${sqlText(ownerId)},${context.campaignId ? sqlText(context.campaignId) : 'NULL'},${context.nodeId ? sqlText(context.nodeId) : 'NULL'},${resources.agent},${resources.cpu},${resources.gpu},${resources.memoryMiB},${sqlText(requestedAt)},${sqlText(nowIso)},${sqlText(new Date(now.getTime() + 30_000).toISOString())});
+UPDATE automation_resource_waiters SET renewed_at=${sqlText(nowIso)},expires_at=${sqlText(new Date(now.getTime() + 30_000).toISOString())} WHERE waiter_id=${sqlText(waiterId)} AND owner_id=${sqlText(ownerId)};
 INSERT INTO automation_resource_leases(lease_id,scope,owner_id,campaign_id,node_id,agent,cpu,gpu,memory_mib,acquired_at,renewed_at,expires_at)
 SELECT ${sqlText(leaseId)},${sqlText(scope)},${sqlText(ownerId)},${context.campaignId ? sqlText(context.campaignId) : 'NULL'},${context.nodeId ? sqlText(context.nodeId) : 'NULL'},
   ${resources.agent},${resources.cpu},${resources.gpu},${resources.memoryMiB},${sqlText(nowIso)},${sqlText(nowIso)},${sqlText(expiresAt)}
 WHERE ${resources.agent} <= (SELECT agent_limit-coalesce(sum(agent),0) FROM automation_resource_limits l LEFT JOIN automation_resource_leases r ON r.scope=l.scope AND r.expires_at>${sqlText(nowIso)} WHERE l.scope=${sqlText(scope)})
   AND ${resources.cpu} <= (SELECT cpu_limit-coalesce(sum(cpu),0) FROM automation_resource_limits l LEFT JOIN automation_resource_leases r ON r.scope=l.scope AND r.expires_at>${sqlText(nowIso)} WHERE l.scope=${sqlText(scope)})
   AND ${resources.gpu} <= (SELECT gpu_limit-coalesce(sum(gpu),0) FROM automation_resource_limits l LEFT JOIN automation_resource_leases r ON r.scope=l.scope AND r.expires_at>${sqlText(nowIso)} WHERE l.scope=${sqlText(scope)})
-  AND ${resources.memoryMiB} <= (SELECT memory_mib_limit-coalesce(sum(memory_mib),0) FROM automation_resource_limits l LEFT JOIN automation_resource_leases r ON r.scope=l.scope AND r.expires_at>${sqlText(nowIso)} WHERE l.scope=${sqlText(scope)});
+  AND ${resources.memoryMiB} <= (SELECT memory_mib_limit-coalesce(sum(memory_mib),0) FROM automation_resource_limits l LEFT JOIN automation_resource_leases r ON r.scope=l.scope AND r.expires_at>${sqlText(nowIso)} WHERE l.scope=${sqlText(scope)})
+  AND ${sqlText(waiterId)} = (SELECT w.waiter_id FROM automation_resource_waiters w WHERE w.scope=${sqlText(scope)} AND w.expires_at>${sqlText(nowIso)}
+    AND w.agent <= (SELECT agent_limit-coalesce(sum(agent),0) FROM automation_resource_limits l LEFT JOIN automation_resource_leases r ON r.scope=l.scope AND r.expires_at>${sqlText(nowIso)} WHERE l.scope=${sqlText(scope)})
+    AND w.cpu <= (SELECT cpu_limit-coalesce(sum(cpu),0) FROM automation_resource_limits l LEFT JOIN automation_resource_leases r ON r.scope=l.scope AND r.expires_at>${sqlText(nowIso)} WHERE l.scope=${sqlText(scope)})
+    AND w.gpu <= (SELECT gpu_limit-coalesce(sum(gpu),0) FROM automation_resource_limits l LEFT JOIN automation_resource_leases r ON r.scope=l.scope AND r.expires_at>${sqlText(nowIso)} WHERE l.scope=${sqlText(scope)})
+    AND w.memory_mib <= (SELECT memory_mib_limit-coalesce(sum(memory_mib),0) FROM automation_resource_limits l LEFT JOIN automation_resource_leases r ON r.scope=l.scope AND r.expires_at>${sqlText(nowIso)} WHERE l.scope=${sqlText(scope)})
+    ORDER BY w.requested_at,w.waiter_id LIMIT 1);
+DELETE FROM automation_resource_waiters WHERE waiter_id=${sqlText(waiterId)} AND EXISTS(SELECT 1 FROM automation_resource_leases WHERE lease_id=${sqlText(leaseId)});
 UPDATE automation_resource_peaks SET
   agent_peak=max(agent_peak,(SELECT coalesce(sum(agent),0) FROM automation_resource_leases WHERE scope=${sqlText(scope)} AND expires_at>${sqlText(nowIso)})),
   cpu_peak=max(cpu_peak,(SELECT coalesce(sum(cpu),0) FROM automation_resource_leases WHERE scope=${sqlText(scope)} AND expires_at>${sqlText(nowIso)})),
@@ -98,6 +141,7 @@ COMMIT;`);
         if (!insert.ok) throw new Error(insert.error || 'resource_lease_acquire_failed');
         const acquired = store.query(`SELECT lease_id FROM automation_resource_leases WHERE lease_id=${sqlText(leaseId)} LIMIT 1;`).rows.length === 1;
         if (acquired) {
+          const acquiredAt = nowIso;
           let released = false;
           const heartbeat = setInterval(() => {
             if (released) return;
@@ -106,14 +150,17 @@ COMMIT;`);
             store.execute(`UPDATE automation_resource_leases SET renewed_at=${sqlText(renewedAt.toISOString())},expires_at=${sqlText(renewedExpiry)} WHERE lease_id=${sqlText(leaseId)} AND owner_id=${sqlText(ownerId)};`);
           }, Math.max(250, Math.floor(Math.max(1, Number(leaseSeconds)) * 1000 / 3)));
           heartbeat.unref();
-          return () => {
+          const release = () => {
             if (released) return;
             released = true;
             clearInterval(heartbeat);
             const removed = store.execute(`DELETE FROM automation_resource_leases WHERE lease_id=${sqlText(leaseId)} AND owner_id=${sqlText(ownerId)};`);
             if (!removed.ok) throw new Error(removed.error || 'resource_lease_release_failed');
           };
+          release.telemetry = Object.freeze({ requestedAt, acquiredAt, lockWaitMs: Math.max(0, Date.parse(acquiredAt) - Date.parse(requestedAt)), queueContentionCount: contentionCount });
+          return release;
         }
+        contentionCount += 1;
         await sleep(Math.max(5, Number(pollMs || 50)));
       }
     },

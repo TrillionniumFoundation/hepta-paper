@@ -10,9 +10,10 @@ import {
   relativePath,
   sha256Text,
   walkFiles,
-} from '../../paper-core/src/runtime/file-utils.mjs';
-import { normalizeText, uniqueStrings } from '../../paper-core/src/runtime/text-utils.mjs';
-import { nowIso } from '../../paper-core/src/runtime/time-utils.mjs';
+} from '../../workflow-kernel/runtime/file-utils.mjs';
+import { inspectScopedPathSync, readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
+import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
+import { nowIso } from '../../workflow-kernel/runtime/time-utils.mjs';
 import { writeJsonFile, writeTextFile } from '../artifacts/write-artifact.mjs';
 import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
 import { buildEmpiricalEvidenceGate } from './evidence-policy.mjs';
@@ -404,7 +405,14 @@ async function buildLocalBenchmarkRegistry({
       blockers.push('dataset_root_outside_hepta_workspace');
     }
     if (!blockers.length) {
-      registryManifest = await readJsonIfExists(path.join(resolvedDatasetRoot, 'BENCHMARK_REGISTRY.json'));
+      const allowedDatasetScope = pathWithin(root, resolvedDatasetRoot) ? root : runtimeRoot;
+      const datasetIdentity = inspectScopedPathSync({ scopeRoot: allowedDatasetScope, candidate: resolvedDatasetRoot, expect: 'directory', forbidHardlinks: false });
+      if (datasetIdentity.status !== 'scoped_file_identity_verified') blockers.push('dataset_root_identity_not_verified', ...datasetIdentity.blockers);
+      const manifestRead = readScopedFileSync({ scopeRoot: resolvedDatasetRoot, candidate: path.join(resolvedDatasetRoot, 'BENCHMARK_REGISTRY.json'), maximumBytes: 1024 * 1024 });
+      if (manifestRead.status === 'scoped_file_read_verified') {
+        try { registryManifest = JSON.parse(manifestRead.content.toString('utf8')); }
+        catch { blockers.push('benchmark_registry_manifest_invalid'); }
+      }
       const files = await walkFiles(resolvedDatasetRoot, {
         maxDepth: 4,
         maxFiles: 256,
@@ -414,8 +422,8 @@ async function buildLocalBenchmarkRegistry({
           && !/credential|secret|token|cookie/i.test(name),
       });
       for (const file of files.slice(0, 128)) {
-        const record = await fileRecord(root, file, 'authorized_local_dataset');
-        if (record) records.push(record);
+        const record = await fileRecord(resolvedDatasetRoot, file, 'authorized_local_dataset');
+        if (record) records.push({ ...record, path: relativePath(root, file) });
       }
       if (!records.length) blockers.push('authorized_dataset_files_missing');
     }

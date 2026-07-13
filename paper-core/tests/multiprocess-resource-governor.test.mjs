@@ -30,13 +30,26 @@ test('SQLite resource leases enforce one global quota across independent connect
   assert.equal(secondAcquired, false);
   assert.equal(first.snapshot().used.agent, 1);
   assert.equal(first.snapshot().activeLeases, 1);
+  assert.equal(firstStore.execute("DELETE FROM automation_resource_waiters WHERE scope='global';").ok, true);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(firstStore.query("SELECT count(*) AS count FROM automation_resource_waiters WHERE scope='global';").rows[0].count, 1);
 
+  let firstReacquired = false;
+  const reacquiring = first.acquire({ agent: 1, memoryMiB: 512 }, { campaignId: 'a', nodeId: 'a:next-writer' }).then((release) => {
+    firstReacquired = true;
+    return release;
+  });
   releaseFirst();
   const releaseSecond = await waiting;
   assert.equal(secondAcquired, true);
   assert.equal(second.snapshot().used.agent, 1);
   assert.equal(second.snapshot().peak.agent, 1);
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal(firstReacquired, false);
   releaseSecond();
+  const releaseReacquired = await reacquiring;
+  assert.equal(firstReacquired, true);
+  releaseReacquired();
   assert.equal(first.snapshot().used.agent, 0);
   assert.equal(first.snapshot().activeLeases, 0);
 });

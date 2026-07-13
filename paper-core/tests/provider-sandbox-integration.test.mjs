@@ -24,13 +24,10 @@ fs.writeFileSync(requestPath, JSON.stringify({ environment: 'provider_sandbox', 
 const result = spawnSync(process.execPath, [path.join(externalRoot, 'provider-sandbox.mjs'), requestPath, responsePath], { encoding: 'utf8' });
 assert.equal(result.status, 0, result.stderr);
 const response = JSON.parse(fs.readFileSync(responsePath, 'utf8'));
-delivery.recordResponse({ messageId: outbox.message_id, response });
-const lock = delivery.acquireReleaseLock({ paperId: dispatchAuthorization.paperId, messageId: outbox.message_id, lockToken: `lock-${process.pid}` });
-assert.ok(lock);
-const reconciliation = { version: 1, kind: 'SubmissionReconciliation', status: 'submission_reconciled', providerReceiptHash: response.providerReceiptHash };
-const released = delivery.release({ paperId: dispatchAuthorization.paperId, lockToken: lock.lock_token, releaseLock: { status: 'submission_release_unlocked', reconciliationHash: hashRecord('SubmissionReconciliation', reconciliation) } });
-assert.equal(released.status, 'released');
+assert.throws(() => delivery.recordResponse({ messageId: outbox.message_id, response }), /executor response rejected/);
+assert.equal(delivery.listQuarantine({ messageId: outbox.message_id }).length, 1);
+assert.equal(delivery.acquireReleaseLock({ paperId: dispatchAuthorization.paperId, messageId: outbox.message_id, lockToken: `lock-${process.pid}` })?.status, 'locked');
 assert.equal(response.providerReceipt.sandbox, true);
 assert.equal(response.externalActionPerformed, false);
 fs.rmSync(runtimeRoot, { recursive: true, force: true });
-process.stdout.write(`${JSON.stringify({ ok: true, status: 'provider_sandbox_full_lifecycle_passed', outbox: 1, inbox: 1, reconciliation: 1, externalActionPerformed: false })}\n`);
+process.stdout.write(`${JSON.stringify({ ok: true, status: 'provider_sandbox_incomplete_response_quarantined', outbox: 1, inbox: 0, quarantine: 1, reconciliation: 0, externalActionPerformed: false })}\n`);

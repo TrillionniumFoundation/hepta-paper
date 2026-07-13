@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { normalizeText } from '../../paper-core/src/runtime/text-utils.mjs';
+import { normalizeText } from '../../workflow-kernel/runtime/text-utils.mjs';
 import { assertStorePort } from '../../paper-ports/store-port.mjs';
 
 function failure(error, fallback) {

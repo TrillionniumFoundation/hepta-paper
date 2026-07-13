@@ -10,9 +10,9 @@ import {
   relativePath,
   sha256Text,
   walkFiles,
-} from '../../paper-core/src/runtime/file-utils.mjs';
-import { normalizeText, uniqueStrings } from '../../paper-core/src/runtime/text-utils.mjs';
-import { nowIso } from '../../paper-core/src/runtime/time-utils.mjs';
+} from '../../workflow-kernel/runtime/file-utils.mjs';
+import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
+import { nowIso } from '../../workflow-kernel/runtime/time-utils.mjs';
 import { writeJsonFile, writeTextFile } from '../artifacts/write-artifact.mjs';
 import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
 import { buildEmpiricalEvidenceGate } from './evidence-policy.mjs';
@@ -163,11 +163,11 @@ function buildExperimentRunReceipt({
   };
 }
 
-async function recordArtifacts(root, files) {
+async function recordArtifacts(scopeRoot, files, { logicalRoot = scopeRoot } = {}) {
   const records = [];
   for (const [file, role] of files) {
-    const record = await fileRecord(root, file, role);
-    if (record) records.push(record);
+    const record = await fileRecord(scopeRoot, file, role);
+    if (record) records.push({ ...record, path: relativePath(logicalRoot, file) });
   }
   return records;
 }

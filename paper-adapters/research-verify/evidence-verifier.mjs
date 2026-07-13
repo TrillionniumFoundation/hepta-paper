@@ -1,29 +1,21 @@
-import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
-
-function inside(root, candidate) {
-  const resolvedRoot = path.resolve(root);
-  const resolved = path.resolve(candidate);
-  return resolved === resolvedRoot || resolved.startsWith(resolvedRoot + path.sep);
-}
+import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
 
 export async function verifyEvidenceArtifact({
   sourceRoot,
   evidence,
   authorityVerifier = null,
   expectedSourceSnapshotHash = null,
+  clock = { nowIso: () => new Date().toISOString() },
 } = {}) {
   const blockers = [];
   const absolutePath = path.resolve(sourceRoot || '.', evidence?.path || '');
-  if (!sourceRoot || !inside(sourceRoot, absolutePath)) blockers.push('evidence_path_outside_source_root');
-  let bytes = null;
-  try {
-    if (!blockers.length) bytes = await fsp.readFile(absolutePath);
-  } catch {
-    blockers.push('evidence_artifact_unreadable');
+  const scopedRead = sourceRoot ? readScopedFileSync({ scopeRoot: sourceRoot, candidate: absolutePath }) : null;
+  if (!scopedRead || scopedRead.status !== 'scoped_file_read_verified') {
+    blockers.push('evidence_path_outside_or_unsafe_source_root', ...(scopedRead?.blockers || []));
   }
-  const verifiedHash = bytes ? hashBytes(bytes) : null;
+  const verifiedHash = scopedRead?.hash || null;
   if (evidence?.hash && verifiedHash !== evidence.hash) blockers.push('evidence_artifact_hash_mismatch');
   if (!evidence?.provenance) blockers.push('evidence_provenance_missing');
   if (expectedSourceSnapshotHash && evidence?.sourceSnapshotHash !== expectedSourceSnapshotHash) {
@@ -44,11 +36,13 @@ export async function verifyEvidenceArtifact({
     path: evidence?.path || null,
     expectedHash: evidence?.hash || null,
     verifiedHash,
+    scopedFileReadReceiptHash: scopedRead?.scopedFileReadReceiptHash || null,
     sourceSnapshotHash: evidence?.sourceSnapshotHash || null,
     provenance: evidence?.provenance || null,
     authorityReceiptHash: authorityReceipt?.academicEvidenceAttestationHash || null,
     status: blockers.length ? 'evidence_artifact_blocked' : 'evidence_artifact_verified',
     blockers,
+    createdAt: clock.nowIso(),
     externalActionPerformed: false,
   };
   return { ...record, provenanceReceiptHash: hashRecord('EvidenceArtifactVerificationReceipt', record) };

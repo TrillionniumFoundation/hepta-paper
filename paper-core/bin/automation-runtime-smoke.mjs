@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createMultiLanguageEmpiricalExecutor } from '../../paper-adapters/automation/multi-language-empirical-executor.mjs';
 import { AUTOMATION_RUNTIME_IMAGES } from '../../paper-adapters/automation/runtime-image-registry.mjs';
-import { createOsSandboxedWorkerRunner } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
+import { createOsSandboxedWorkerRunner, directoryMerkleHash } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-runtime-smoke-'));
 const source = path.join(root, 'source');
@@ -73,7 +73,7 @@ write.csv(data.frame(function_result=value), 'results.csv', row.names=FALSE)
   const specs = [
     { name: 'pythonCpu', language: 'python', entrypoint: 'cpu.py', image: AUTOMATION_RUNTIME_IMAGES.python },
     { name: 'pythonGpu', language: 'python', entrypoint: 'gpu.py', image: AUTOMATION_RUNTIME_IMAGES.pythonGpu, requiresGpu: true },
-    { name: 'rActualAsset', language: 'r', entrypoint: 'actual_asset.R', image: AUTOMATION_RUNTIME_IMAGES.r, datasetMounts: [{ name: 'ndu', source: rAssetRoot, readOnly: true }] },
+    { name: 'rActualAsset', language: 'r', entrypoint: 'actual_asset.R', image: AUTOMATION_RUNTIME_IMAGES.r, datasetMounts: [{ name: 'ndu', source: rAssetRoot, readOnly: true, manifestHash: directoryMerkleHash(rAssetRoot), licenseId: 'LicenseRef-Internal-Research' }] },
   ];
   const receipts = {};
   const reproducible = {};

@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
-import crypto from 'node:crypto';
 import path from 'node:path';
 import { createSqliteCampaignStore } from '../../paper-adapters/persistence/sqlite-campaign-store.mjs';
 import { createCodexAgentExecutor } from '../../paper-adapters/automation/codex-agent-executor.mjs';
@@ -9,26 +8,31 @@ import { createOpenClawAgentExecutor } from '../../paper-adapters/automation/ope
 import { createAgentBackendRouter } from '../../paper-adapters/automation/agent-backend-router.mjs';
 import { createIsolatedAgentExecutor } from '../../paper-adapters/automation/isolated-agent-executor.mjs';
 import { createCampaignNodeExecutor } from '../../paper-adapters/automation/campaign-node-executor.mjs';
+import { createTheoremQualityRevisionSink } from '../../paper-adapters/automation/theorem-quality-revision-sink.mjs';
 import { createMultiLanguageEmpiricalExecutor } from '../../paper-adapters/automation/multi-language-empirical-executor.mjs';
 import { createFilesystemEmpiricalCacheRepository } from '../../paper-adapters/automation/empirical-cache-repository.mjs';
-import { createOsSandboxedWorkerRunner, directoryMerkleHash } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
+import { createOsSandboxedWorkerRunner, directoryMerkleHash, fileSha256Hash } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
+import { buildRuntimeRetentionPlan, executeRuntimeRetentionPlan } from '../../paper-adapters/automation/runtime-retention.mjs';
 import { runtimeImagesForCampaign } from '../../paper-adapters/automation/runtime-image-registry.mjs';
 import { bootstrapPaperExecutionContext } from '../../paper-application/bootstrap/service-bootstrap.mjs';
 import { runPaperCampaign } from '../../paper-application/automation/campaign-engine.mjs';
+import { presentCampaignStatus, presentNodeLog, summarizeCampaign, summarizeEvent, summarizeNode, summarizePlan, summarizeRun } from '../../paper-application/automation/campaign-query-presenter.mjs';
 import { createSqliteResourceGovernor } from '../../paper-adapters/automation/sqlite-resource-governor.mjs';
+import { createWorkspaceRegistry } from '../../paper-adapters/automation/workspace-registry.mjs';
 import { buildPaperCampaignPlan } from '../../paper-domain/automation/campaign-plan.mjs';
+import { buildCampaignSloReport } from '../../paper-domain/automation/campaign-slo.mjs';
 import { discoverInventory } from '../../paper-adapters/inventory/index.mjs';
 import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 
 function args(argv) {
-  const out = { paper: [], dataset: [] };
+  const out = { paper: [], dataset: [], 'dataset-license': [] };
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
-    if (token === '--execute' || token === '--inline' || token === '--json' || token === '--help' || token === '--gpu' || token === '--effective') out[token.slice(2)] = true;
+    if (token === '--execute' || token === '--inline' || token === '--json' || token === '--help' || token === '--gpu' || token === '--effective' || token === '--details' || token === '--retain-failed-workspaces' || token === '--apply') out[token.slice(2)] = true;
     else if (token.startsWith('--')) {
       const key = token.slice(2);
       const value = argv[++index];
-      if (key === 'paper') out.paper.push(value); else if (key === 'dataset') out.dataset.push(value); else out[key] = value;
+      if (key === 'paper') out.paper.push(value); else if (key === 'dataset' || key === 'dataset-license') out[key].push(value); else out[key] = value;
     }
   }
   return out;
@@ -70,16 +74,22 @@ async function main() {
       '  --max-gpu-jobs <n>        per-campaign GPU-job budget',
       '  --max-tokens <n>          per-campaign model-token budget',
       '  --max-cost-usd <n>        per-campaign model-cost budget',
-      '  --action <name>           list|status|events|pause|resume|extend|cancel|cancel-node|retry|work',
+      '  --action <name>           list|status|events|logs|pause|resume|extend|cancel|cancel-node|retry|work|gc|slo',
       '  --campaign-id <id>        campaign for an operational action',
       '  --run-id <id>             suffix new campaign ids so a paper can be rerun',
       '  --node-id <id>            failed node for retry',
       '  --rounds <n>              maximum referee/revise rounds (default 3)',
       '  --referees <n>            independent referees per round (default 3)',
       '  --minimum-revision-rounds <n>  require this many revise/re-review rounds before convergence',
+      '  --quality-profile <name>   explicit paper quality profile (for example theorem_or_proof)',
       '  --languages <csv>         empirical languages (default python,latex)',
       '  --gpu                     allow and require GPU access for empirical nodes',
       '  --dataset <name=path>     add a read-only dataset mount; repeat as needed',
+      '  --dataset-license <name=SPDX>  required license id for each dataset mount',
+      '  --metric-schema <path>    JSON metric paths and numeric tolerances',
+      '  --details                 include full specs, nodes and receipts (default is concise)',
+      '  --retain-failed-workspaces  keep failed COW trees (default; retained unless explicitly exported/eligible)',
+      '  --apply                   apply a GC plan (GC is dry-run by default)',
       '  --root <path>             paper asset root',
       '  --runtime-root <path>     runtime and campaign store root',
       '',
@@ -91,16 +101,42 @@ async function main() {
   if (options['campaign-id'] && options['run-id']) throw new Error('--campaign-id and --run-id cannot be combined');
   const runId = options['run-id'] ? String(options['run-id']).replace(/[^A-Za-z0-9_.-]/g, '_') : null;
   if (options['run-id'] && !runId) throw new Error('--run-id must contain at least one safe character');
-  const context = bootstrapPaperExecutionContext({ root, runtimeRoot, mode: 'paper-campaign', execute: Boolean(options.execute) });
+  const readOnlyAction = ['slo', 'gc'].includes(String(options.action || '')) && !options.apply;
+  const context = bootstrapPaperExecutionContext({ root, runtimeRoot, mode: 'paper-campaign', execute: Boolean(options.execute), readOnly: readOnlyAction });
   const campaignStore = createSqliteCampaignStore({ store: context.services.store, clock: context.services.clock });
+  const workspaceRegistry = createWorkspaceRegistry({ store: context.services.store, clock: context.services.clock });
   const workAction = options.action === 'work';
   if (options.action && !workAction) {
     const action = String(options.action);
     const campaignId = options['campaign-id'];
     let result;
-    if (action === 'list') result = campaignStore.listCampaigns({ status: options.status || null, limit: options.limit || 100, effectiveOnly: Boolean(options.effective) });
-    else if (action === 'status') result = { campaign: campaignStore.getCampaign(campaignId), nodes: campaignStore.listNodes(campaignId) };
-    else if (action === 'events') result = campaignStore.listEvents(campaignId);
+    if (action === 'slo') {
+      const campaigns = campaignStore.listCampaigns({ limit: Number(options.limit || 1000) });
+      const nodes = campaigns.flatMap((campaign) => campaignStore.listNodes(campaign.campaign_id));
+      const events = campaigns.flatMap((campaign) => campaignStore.listEvents(campaign.campaign_id));
+      const telemetrySamples = campaigns.flatMap((campaign) => campaignStore.listTelemetry?.(campaign.campaign_id) || []);
+      const retention = buildRuntimeRetentionPlan({ runtimeRoot, activeNodeIds: nodes.filter((node) => ['leased', 'running'].includes(node.status)).map((node) => node.node_id), workspaceRecords: workspaceRegistry?.retentionRecords() || [] });
+      result = buildCampaignSloReport({ campaigns, nodes, events, telemetrySamples, runtimeBytes: retention.categories.reduce((total, category) => total + category.bytesBefore, 0) });
+    }
+    else if (action === 'gc') {
+      const activeNodeIds = campaignStore.listCampaigns({ status: 'running', limit: 1000 }).flatMap((campaign) => campaignStore.listNodes(campaign.campaign_id)).filter((node) => ['leased', 'running'].includes(node.status)).map((node) => node.node_id);
+      const plan = buildRuntimeRetentionPlan({ runtimeRoot, activeNodeIds, workspaceRecords: workspaceRegistry?.retentionRecords() || [] });
+      result = { plan, receipt: executeRuntimeRetentionPlan(plan, { apply: Boolean(options.apply) }) };
+    }
+    else if (action === 'list') {
+      const campaigns = campaignStore.listCampaigns({ status: options.status || null, limit: options.limit || 100, effectiveOnly: Boolean(options.effective) });
+      result = options.details ? campaigns : campaigns.map(summarizeCampaign);
+    }
+    else if (action === 'status') result = presentCampaignStatus(campaignStore.getCampaign(campaignId), campaignStore.listNodes(campaignId), { details: Boolean(options.details) });
+    else if (action === 'events') {
+      const events = campaignStore.listEvents(campaignId, { limit: Number(options.limit || 50), before: options.before || null });
+      result = options.details ? events : events.map(summarizeEvent);
+    }
+    else if (action === 'logs') {
+      const node = campaignStore.listNodes(campaignId).find((item) => item.node_id === options['node-id'] || item.kind === options.kind);
+      if (!node) throw new Error('campaign node not found for log query');
+      result = presentNodeLog(node, { details: Boolean(options.details) });
+    }
     else if (action === 'pause') result = campaignStore.pauseCampaign(campaignId, options.reason || 'operator_paused');
     else if (action === 'resume') result = campaignStore.resumeCampaign(campaignId, { budgetOverrides: selectedBudgetOverrides(options) });
     else if (action === 'extend') {
@@ -117,7 +153,12 @@ async function main() {
         languages: existing.spec.languages,
         requiresGpu: existing.spec.requiresGpu,
         datasetMounts: existing.spec.datasetMounts,
+        metricSchema: existing.spec.metricSchema,
+        paperQualityProfile: existing.spec.paperQualityProfile || null,
         budgets: { ...existing.spec.budgets, ...selectedBudgetOverrides(options) },
+        parentCampaignId: existing.parentCampaignId || existing.parent_campaign_id || existing.spec.parentCampaignId || null,
+        supersedesCampaignId: existing.supersedesCampaignId || existing.supersedes_campaign_id || existing.spec.supersedesCampaignId || null,
+        recoveryOfCampaignId: existing.recoveryOfCampaignId || existing.recovery_of_campaign_id || existing.spec.recoveryOfCampaignId || null,
       });
       result = campaignStore.extendCampaign(nextPlan);
     }
@@ -125,7 +166,14 @@ async function main() {
     else if (action === 'cancel-node') result = campaignStore.cancelNode(options['node-id'], options.reason || 'operator_node_cancelled');
     else if (action === 'retry') result = campaignStore.retryNode(options['node-id']);
     else throw new Error(`unsupported campaign action: ${action}`);
-    process.stdout.write(`${JSON.stringify({ status: `paper_campaign_${action}`, result }, null, 2)}\n`);
+    const presented = options.details
+      ? result
+      : result?.campaign_id && result?.paper_id
+        ? summarizeCampaign(result)
+        : result?.node_id
+          ? summarizeNode(result)
+          : result;
+    process.stdout.write(`${JSON.stringify({ status: `paper_campaign_${action}`, result: presented }, null, 2)}\n`);
     return;
   }
   let datasetMounts;
@@ -144,6 +192,11 @@ async function main() {
     });
   } else {
     const inventory = await discoverInventory({ root, store: context.services.store, paperIds: options.paper, inventorySource: 'auto', proposalStagingRoot: path.join(runtimeRoot, 'proposal-staging') });
+    const datasetLicenses = new Map(options['dataset-license'].map((value) => {
+      const separator = String(value).indexOf('=');
+      if (separator < 1) throw new Error('--dataset-license must use name=SPDX syntax');
+      return [String(value).slice(0, separator), String(value).slice(separator + 1)];
+    }));
     datasetMounts = options.dataset.map((value, index) => {
     const separator = String(value).indexOf('=');
     const name = separator >= 0 ? String(value).slice(0, separator) : `dataset-${index + 1}`;
@@ -151,12 +204,17 @@ async function main() {
     if (!fs.existsSync(source)) throw new Error(`dataset path does not exist: ${source}`);
     const manifestHash = fs.statSync(source).isDirectory()
       ? directoryMerkleHash(source)
-      : `sha256:${crypto.createHash('sha256').update(fs.readFileSync(source)).digest('hex')}`;
-    return { name, source, readOnly: true, manifestHash };
+      : fileSha256Hash(source);
+    return { name, source, readOnly: true, manifestHash, licenseId: datasetLicenses.get(name) || null };
     });
+    const metricSchema = options['metric-schema']
+      ? JSON.parse(fs.readFileSync(path.resolve(options['metric-schema']), 'utf8'))
+      : {};
     plans = inventory.rows.map((row) => {
-    const mainTex = path.resolve(root, row.task.mainTex || '');
-    const sourceWorkspace = fs.existsSync(mainTex) ? path.dirname(mainTex) : path.resolve(root, row.task.sourceWorkspace || '.');
+    const mainTex = row.task.mainTex ? path.resolve(root, row.task.mainTex) : null;
+    const sourceWorkspace = mainTex && fs.existsSync(mainTex) && fs.statSync(mainTex).isFile()
+      ? path.dirname(mainTex)
+      : path.resolve(root, row.task.sourceWorkspace || '.');
     return buildPaperCampaignPlan({
       paperId: row.task.paperId,
       sourceWorkspace,
@@ -175,6 +233,8 @@ async function main() {
         maxMemoryMiB: Number(options['memory-mib'] || 8192),
       },
       datasetMounts,
+      metricSchema,
+      paperQualityProfile: options['quality-profile'] || row.task.paperQualityProfile || null,
       campaignId: options.paper.length === 1 && options['campaign-id']
         ? options['campaign-id']
         : runId ? `paper-campaign:${row.task.paperId}:${runId}` : null,
@@ -185,7 +245,7 @@ async function main() {
     });
   }
   if (!workAction && !options.execute) {
-    process.stdout.write(`${JSON.stringify({ status: 'paper_campaigns_planned', execute: false, plans }, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ status: 'paper_campaigns_planned', execute: false, plans: options.details ? plans : plans.map(summarizePlan) }, null, 2)}\n`);
     return;
   }
   const executables = ['python3', process.execPath, 'Rscript', 'julia', 'lake', 'latexmk'];
@@ -222,8 +282,8 @@ async function main() {
       : provider === 'codex' ? codex
         : createAgentBackendRouter({ primary: openclaw, fallbacks: [ollama] });
   if (!selected) throw new Error(`agent provider unavailable: ${provider}`);
-  const agentExecutor = createIsolatedAgentExecutor({ delegate: selected, isolationRoot: path.join(runtimeRoot, 'automation-workspaces'), keepWorkspaces: false, keepFailedWorkspaces: true });
-  const nodeExecutor = createCampaignNodeExecutor({ agentExecutor, empiricalExecutor, runtimeRoot });
+  const agentExecutor = createIsolatedAgentExecutor({ delegate: selected, isolationRoot: path.join(runtimeRoot, 'automation-workspaces'), keepWorkspaces: false, keepFailedWorkspaces: true, workspaceRegistry });
+  const nodeExecutor = createCampaignNodeExecutor({ agentExecutor, empiricalExecutor, runtimeRoot, theoremQualityRevisionSink: createTheoremQualityRevisionSink({ store: context.services.store, clock: context.services.clock }) });
   if (!workAction) for (const plan of plans) campaignStore.createCampaign(plan);
   if (!workAction && !options.inline) {
     process.stdout.write(`${JSON.stringify({ status: 'paper_campaigns_submitted', execute: false, campaignCount: plans.length, campaignIds: plans.map((plan) => plan.campaignId) }, null, 2)}\n`);
@@ -236,7 +296,7 @@ async function main() {
     limits: { agent: Number(options['agent-slots'] || 4), cpu: Number(options['cpu-slots'] || 4), gpu: Number(options['gpu-slots'] || 1), memoryMiB: Number(options['memory-mib'] || 8192) },
   });
   const results = await Promise.all(plans.map((plan) => runPaperCampaign({ campaignId: plan.campaignId, campaignStore, executor: nodeExecutor, concurrency: totalConcurrency, resourceGovernor: governor })));
-  process.stdout.write(`${JSON.stringify({ status: workAction ? 'paper_campaign_worker_batch_completed' : 'paper_campaigns_completed', execute: true, campaignCount: results.length, results }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({ status: workAction ? 'paper_campaign_worker_batch_completed' : 'paper_campaigns_completed', execute: true, campaignCount: results.length, results: options.details ? results : results.map(summarizeRun) }, null, 2)}\n`);
 }
 
 main().catch((error) => { process.stderr.write(`${error?.stack || error}\n`); process.exitCode = 1; });

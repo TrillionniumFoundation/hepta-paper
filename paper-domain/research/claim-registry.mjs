@@ -39,6 +39,11 @@ export function buildClaimRegistry({ paperTask, claims = [] } = {}) {
     status: claim.status || 'candidate',
     version: Math.max(1, Number(claim.version || 1)),
     dependencyIds: Array.isArray(claim.dependencyIds) ? [...claim.dependencyIds].map(String).sort() : [],
+    claimKind: claim.claimKind || claim.kind || 'research_claim',
+    riskClass: claim.riskClass || claim.risk_class || '',
+    proofObligations: Array.isArray(claim.proofObligations || claim.proof_obligations) ? [...(claim.proofObligations || claim.proof_obligations)].map(String).sort() : [],
+    verificationPlan: claim.verificationPlan || claim.verification_plan || null,
+    negativeResultPolicy: claim.negativeResultPolicy || claim.negative_result_policy || 'preserve_and_do_not_promote_without_explicit_acceptance',
   }));
   const ids = records.map((claim) => claim.claimId);
   const idSet = new Set(ids);
@@ -48,6 +53,7 @@ export function buildClaimRegistry({ paperTask, claims = [] } = {}) {
     .map((dependencyId) => ({ claimId: claim.claimId, dependencyId })));
   const cycle = duplicateIds.length || missingDependencies.length ? null : cycleFor(records);
   const blockers = [
+    ...(!records.length ? ['claim_registry_empty'] : []),
     ...[...new Set(duplicateIds)].map((id) => `duplicate_claim_id:${id}`),
     ...missingDependencies.map(({ claimId, dependencyId }) => `missing_claim_dependency:${claimId}:${dependencyId}`),
     ...(cycle ? [`claim_dependency_cycle:${cycle.join('>')}`] : []),

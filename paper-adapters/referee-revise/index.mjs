@@ -9,7 +9,7 @@ export {
   refereeRevisionRequestConsumingSelection,
   refereeRevisionRequestDecisionPlan,
 } from './decision-routing.mjs';
-import { uniqueStrings } from '../../paper-core/src/runtime/text-utils.mjs';
+import { uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
 import { writeJsonFile } from '../artifacts/write-artifact.mjs';
 import {
   buildRefereePatchApplyExecution,

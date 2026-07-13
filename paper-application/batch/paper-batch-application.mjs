@@ -17,6 +17,8 @@ import { runLegacyCleanupAdapter } from '../../paper-adapters/legacy-cleanup/ind
 import { runLocalDiagnosticReviewLoop } from '../use-cases/local-diagnostic-review-loop.mjs';
 import { projectWorkflowState } from '../projections/workflow-state-projector.mjs';
 import { buildBatchReport, persistBatchReport, renderBatchConsole } from '../reporting/batch-report-writer.mjs';
+import { buildTargetScopeReceipt } from '../../paper-domain/automation/target-scope-policy.mjs';
+import { bindPaperTaskQualityProfile } from '../../paper-core/src/contracts/workflow-contracts.mjs';
 
 export { PAPER_BATCH_MODES } from '../../paper-core/src/mode-registry.mjs';
 
@@ -44,6 +46,7 @@ export async function runPaperBatch({
   datasetRoot = null,
   benchmarkId = null,
   applyManuscript = false,
+  qualityProfile = null,
 } = {}) {
   const workflowDefinition = assertPaperMode(mode);
   const resolvedRoot = path.resolve(root);
@@ -60,6 +63,7 @@ export async function runPaperBatch({
       datasetRoot,
       benchmarkId,
       applyManuscript,
+      qualityProfile,
     },
   });
   enterArtifactWriteContext(executionContext.services);
@@ -79,6 +83,25 @@ export async function runPaperBatch({
     inventorySource,
     proposalStagingRoot: path.join(resolvedRuntimeRoot, 'proposal-staging'),
   });
+  const selectedRows = scan.rows.map((row) => qualityProfile
+    ? { ...row, task: bindPaperTaskQualityProfile(row.task, qualityProfile) }
+    : row);
+  const targetScopeReceipt = buildTargetScopeReceipt({
+    mode,
+    execute,
+    requestedPaperIds: paperIds,
+    selectedTasks: selectedRows.map((row) => row.task),
+    inventorySource: scan.inventorySource,
+    inventoryFallback: scan.inventoryFallback,
+    limit,
+    requireExplicitScope: Boolean(execute && ![
+      PAPER_BATCH_MODES.INVENTORY,
+      PAPER_BATCH_MODES.LEGACY_CLEANUP,
+    ].includes(mode)),
+  });
+  if (execute && targetScopeReceipt.status !== 'target_scope_verified') {
+    throw new Error(`Target scope gate blocked execution: ${targetScopeReceipt.blockers.join(',')}`);
+  }
   const legacyCleanupAudit = mode === PAPER_BATCH_MODES.LEGACY_CLEANUP
     ? await runLegacyCleanupAdapter({
       root: resolvedRoot,
@@ -88,7 +111,7 @@ export async function runPaperBatch({
     })
     : null;
   const results = [];
-  for (const row of scan.rows) {
+  for (const row of selectedRows) {
     const initialStageState = {
       buildResult: null,
       packageResult: null,
@@ -107,6 +130,7 @@ export async function runPaperBatch({
       row,
       venues: scan.venues,
       runLocalDiagnosticReviewLoop,
+      targetScopeReceipt,
     });
     const workflowExecution = await runWorkflowStages({
       definition: workflowDefinition,
@@ -165,7 +189,7 @@ export async function runPaperBatch({
       lifecycle,
     });
   }
-  const report = buildBatchReport({ root: resolvedRoot, runtimeRoot: resolvedRuntimeRoot, mode, execute, targetOverride, datasetRoot, benchmarkId, applyManuscript, scan, results, legacyCleanupAudit, coreIntegrity });
+  const report = buildBatchReport({ root: resolvedRoot, runtimeRoot: resolvedRuntimeRoot, mode, execute, targetOverride, datasetRoot, benchmarkId, applyManuscript, scan: { ...scan, rows: selectedRows }, results, legacyCleanupAudit, coreIntegrity, targetScopeReceipt });
   if (writeReport) await persistBatchReport(report);
   return report;
 }

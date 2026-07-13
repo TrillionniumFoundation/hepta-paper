@@ -14,6 +14,7 @@ export function evaluateRefereeConvergence({
   maximumVariance = 0.04,
   expectedManuscriptHash = null,
   minimumRoundIndex = 1,
+  qualityGates = [],
 } = {}) {
   const normalized = reviews.map((review) => ({
     reviewerId: String(review.reviewerId || 'unknown'),
@@ -39,6 +40,15 @@ export function evaluateRefereeConvergence({
   const reviewerSessionUnique = uniqueNonEmpty(normalized.map((review) => review.childSessionId));
   const reviewHashUnique = uniqueNonEmpty(normalized.map((review) => review.reviewHash));
   const evidenceIdentityBound = reviewerIdentityUnique && reviewerSessionUnique && reviewHashUnique;
+  const normalizedQualityGates = (Array.isArray(qualityGates) ? qualityGates : []).map((gate) => ({
+    kind: gate?.kind || 'UnknownQualityGate',
+    status: gate?.status || null,
+    passed: gate?.passed === true,
+    blockers: Array.isArray(gate?.blockers) ? gate.blockers.map(String) : [],
+    receiptHash: gate?.theoremManuscriptReadinessPolicyHash || gate?.paperQualityPolicyHash || gate?.manuscriptPromotionGateHash || gate?.receiptHash || null,
+  }));
+  const qualityGatesPassed = normalizedQualityGates.every((gate) => gate.passed);
+  const qualityGateBlockers = normalizedQualityGates.flatMap((gate) => gate.blockers);
   const accepted = normalized.length >= minimumReviewers
     && Number(roundIndex || 1) >= Math.max(1, Number(minimumRoundIndex || 1))
     && meanScore >= minimumMeanScore
@@ -46,7 +56,8 @@ export function evaluateRefereeConvergence({
     && scoreVariance <= maximumVariance
     && criticalFindingCount === 0
     && manuscriptHashBound
-    && evidenceIdentityBound;
+    && evidenceIdentityBound
+    && qualityGatesPassed;
   const payload = {
     version: 1,
     kind: 'RefereeConvergenceDecision',
@@ -66,6 +77,9 @@ export function evaluateRefereeConvergence({
     reviewerSessionUnique,
     reviewHashUnique,
     evidenceIdentityBound,
+    qualityGatesPassed,
+    qualityGateBlockers,
+    qualityGates: normalizedQualityGates,
     reviews: normalized,
     thresholds: { minimumReviewers, minimumMeanScore, minimumAcceptRatio, maximumVariance, minimumRoundIndex: Math.max(1, Number(minimumRoundIndex || 1)) },
     academicAcceptanceGranted: false,

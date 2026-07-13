@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { selectCurrentReleaseVerificationReceipt } from '../bin/release-evidence-lib.mjs';
 
-test('release evidence selects the latest passed receipt for the exact current commit', (t) => {
+test('release evidence invalidates a stale pass when the latest exact-identity receipt is blocked', (t) => {
   const verificationRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-release-receipt-'));
   t.after(() => fs.rmSync(verificationRoot, { recursive: true, force: true }));
   const codeProvenance = { packageVersion: '0.15.0', commit: 'current-commit' };
@@ -25,8 +25,7 @@ test('release evidence selects the latest passed receipt for the exact current c
   write('current-blocked.json', { status: 'isolated_verification_blocked', completedAt: '2026-07-11T03:00:00.000Z' });
   fs.writeFileSync(path.join(verificationRoot, 'malformed.json'), '{');
   const selected = selectCurrentReleaseVerificationReceipt({ verificationRoot, codeProvenance });
-  assert.equal(selected.marker, 'current-latest.json');
-  assert.equal(selected.codeProvenance.commit, 'current-commit');
+  assert.equal(selected, null);
 });
 
 test('release evidence selection fails closed without an exact current receipt', (t) => {

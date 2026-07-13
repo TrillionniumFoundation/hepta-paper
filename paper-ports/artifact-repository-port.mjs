@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 export function assertArtifactRepository(repository) {
-  for (const method of ['writeText', 'writeJson', 'readManifest', 'garbageCollect']) {
+  for (const method of ['writeBytes', 'writeText', 'writeJson', 'readManifest', 'garbageCollect']) {
     if (typeof repository?.[method] !== 'function') {
       throw new Error(`ArtifactRepository.${method} is required`);
     }

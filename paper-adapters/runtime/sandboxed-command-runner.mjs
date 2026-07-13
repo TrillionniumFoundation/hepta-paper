@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { assertWorkerRunnerPort } from '../../paper-ports/worker-runner-port.mjs';
+import { buildExecutorCapabilities } from '../../paper-ports/executor-capabilities.mjs';
 
 export function createSandboxedCommandRunner({
   runnerId = 'local-bounded-command-runner',
@@ -11,10 +12,20 @@ export function createSandboxedCommandRunner({
 } = {}) {
   const executableSet = new Set(allowedExecutables.map(String));
   const roots = allowedRoots.map((root) => path.resolve(root));
+  const capabilities = buildExecutorCapabilities({
+    executorId: runnerId,
+    sandboxModes: ['process-bounded'],
+    networkPolicy: 'sandbox-restricted',
+    workspaceIsolation: false,
+    maximumTimeoutMs,
+    receiptKinds: ['SandboxedCommandReceipt'],
+    provider: 'local-process',
+  });
   return assertWorkerRunnerPort({
     version: 1,
     kind: 'SandboxedCommandRunnerAdapter',
     runnerId,
+    capabilities: () => capabilities,
     run({ executable, args = [], cwd, timeoutMs = 30000, env = {} } = {}) {
       const resolvedCwd = path.resolve(cwd || '.');
       const blockers = [];

@@ -3,7 +3,7 @@ import path from 'node:path';
 import { assertEmpiricalExecutorPort } from '../../paper-ports/empirical-executor-port.mjs';
 import { assertEmpiricalCachePort } from '../../paper-ports/empirical-cache-port.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
-import { directoryMerkleHash } from '../runtime/os-sandboxed-worker-runner.mjs';
+import { directoryMerkleHash, sourceTreeExcludedNames } from '../runtime/os-sandboxed-worker-runner.mjs';
 
 const LANGUAGE_COMMANDS = Object.freeze({
   python: { executable: 'python3', args: (spec) => [spec.entrypoint, ...(spec.args || [])] },
@@ -36,11 +36,11 @@ function cacheKey(spec, runtimeImage) {
     language: String(spec.language || '').toLowerCase(),
     entrypoint: spec.entrypoint,
     args: spec.args || [],
-    sourceMerkleHash: directoryMerkleHash(sourceRoot),
+    sourceMerkleHash: directoryMerkleHash(sourceRoot, { excludeRoots: (spec.datasetMounts || []).map((mount) => mount.source).filter(Boolean), excludeNames: sourceTreeExcludedNames(sourceRoot) }),
     runtimeImage: imageIdentity(runtimeImage?.image),
     requiresGpu: Boolean(spec.requiresGpu),
     env: Object.fromEntries(Object.entries(spec.env || {}).sort(([left], [right]) => left.localeCompare(right))),
-    datasetMounts: (spec.datasetMounts || []).map((mount) => ({ name: mount.name, manifestHash: mount.manifestHash || null, readOnly: mount.readOnly !== false })),
+    datasetMounts: (spec.datasetMounts || []).map((mount) => ({ name: mount.name, manifestHash: mount.manifestHash || null, licenseId: mount.licenseId || null, readOnly: mount.readOnly === true })),
     outputPaths: [...(spec.outputPaths || [])].map(String).sort(),
   };
   return hashRecord('EmpiricalExecutionCacheKey', payload);

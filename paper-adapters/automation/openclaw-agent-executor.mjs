@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { assertAgentExecutorPort } from '../../paper-ports/agent-executor-port.mjs';
+import { buildExecutorCapabilities, capabilityRequestFromExecution, evaluateExecutorCapabilityRequest } from '../../paper-ports/executor-capabilities.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 function manifest(root) {
@@ -100,11 +101,26 @@ export function createOpenClawAgentExecutor({
   spawnImpl = spawn,
   timeoutMs = 45 * 60 * 1000,
 } = {}) {
+  const executorId = 'openclaw-agent-executor-v1';
+  const capabilities = buildExecutorCapabilities({
+    executorId,
+    sandboxModes: ['read-only', 'workspace-write'],
+    networkPolicy: 'provider-controlled',
+    workspaceIsolation: false,
+    maximumTimeoutMs: timeoutMs,
+    maximumOutputTokens: null,
+    receiptKinds: ['AgentExecutionReceipt'],
+    provider: 'openclaw',
+  });
   return assertAgentExecutorPort({
     version: 1,
     kind: 'OpenClawAgentExecutor',
-    executorId: 'openclaw-agent-executor-v1',
-    async execute({ role, workspacePath, instructions, context = {}, requiredChecks = [], sandbox = 'workspace-write', outputTokenBudget = null, timeoutMs: requestedTimeout = null, signal = null } = {}) {
+    executorId,
+    capabilities: () => capabilities,
+    async execute(input = {}) {
+      const { role, workspacePath, instructions, context = {}, requiredChecks = [], sandbox = 'workspace-write', outputTokenBudget = null, timeoutMs: requestedTimeout = null, signal = null } = input;
+      const preflight = evaluateExecutorCapabilityRequest({ capabilities, request: capabilityRequestFromExecution({ ...input, sandbox, outputTokenBudget, timeoutMs: requestedTimeout }) });
+      if (preflight.blockers.length) throw new Error(preflight.blockers.join(','));
       const workspace = path.resolve(workspacePath || '');
       if (!role || !instructions || !fs.existsSync(workspace) || !fs.statSync(workspace).isDirectory()) {
         throw new Error('agent role, existing workspacePath and instructions are required');
@@ -148,7 +164,7 @@ export function createOpenClawAgentExecutor({
       const payload = {
         version: 1,
         kind: 'AgentExecutionReceipt',
-        executorId: 'openclaw-agent-executor-v1',
+        executorId,
         providerMode: 'openclaw:detached-child-session',
         agentId,
         model,

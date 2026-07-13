@@ -16,6 +16,7 @@ export function createPaperTask({
   source = null,
   evidenceRefs = [],
   createdAt = null,
+  paperQualityProfile = null,
 } = {}) {
   const id = normalizeText(paperId);
   if (!id) throw new Error('PaperTask requires paperId');
@@ -37,9 +38,17 @@ export function createPaperTask({
     registry: registry || null,
     source: source || null,
     evidenceRefs: normalizeRefs(evidenceRefs),
+    paperQualityProfile: normalizeText(paperQualityProfile || '') || null,
     createdAt: createdAt || nowIso(),
   };
   return { ...task, taskHash: hashPaperRecord('PaperTask', task) };
+}
+
+export function bindPaperTaskQualityProfile(paperTask, paperQualityProfile) {
+  if (!paperTask?.taskKey) throw new Error('PaperTask required for quality profile binding');
+  const { taskHash: _taskHash, ...subject } = paperTask;
+  const task = { ...subject, paperQualityProfile: normalizeText(paperQualityProfile || '') || null };
+  return Object.freeze({ ...task, taskHash: hashPaperRecord('PaperTask', task) });
 }
 
 export function createPaperBuildArtifactAcceptance({
@@ -113,6 +122,12 @@ export function createPaperArtifactPackage({
   submitReady = false,
   provenance = null,
   evidenceRefs = [],
+  candidateArtifactPackageHash = null,
+  packageVerificationReceipt = null,
+  sourceSnapshotHash = null,
+  sourceTreeManifestHash = null,
+  sourcePackageContractHash = null,
+  promotionGate = null,
   createdAt = null,
 } = {}) {
   if (!paperTask?.taskKey) throw new Error('PaperArtifactPackage requires paperTask');
@@ -141,6 +156,16 @@ export function createPaperArtifactPackage({
     artifactCount: normalizedArtifacts.length,
     artifacts: normalizedArtifacts,
     submitReady: Boolean(submitReady),
+    candidateArtifactPackageHash: normalizeText(candidateArtifactPackageHash || '') || null,
+    packageVerificationStatus: packageVerificationReceipt?.status || null,
+    packageVerificationReceiptHash: packageVerificationReceipt?.packageVerificationReceiptHash || null,
+    artifactSettlementStatus: packageVerificationReceipt?.artifactSettlement?.status || null,
+    artifactSettlementHash: packageVerificationReceipt?.artifactSettlement?.artifactSettlementHash || null,
+    sourceSnapshotHash: normalizeText(sourceSnapshotHash || '') || null,
+    sourceTreeManifestHash: normalizeText(sourceTreeManifestHash || '') || null,
+    sourcePackageContractHash: normalizeText(sourcePackageContractHash || '') || null,
+    manuscriptPromotionStatus: promotionGate?.status || null,
+    manuscriptPromotionGateHash: promotionGate?.manuscriptPromotionGateHash || null,
     provenance: provenance || {
       generatedByPaperCore: true,
       sourceMutation: false,
@@ -284,6 +309,8 @@ export function createPaperActionManifest({
   venueEvidenceBundle = null,
   dryRun = true,
   approvalPacket = null,
+  promotionGate = null,
+  semanticPromotionLock = null,
   extraBlockers = [],
   evidenceRefs = [],
   createdAt = null,
@@ -295,6 +322,8 @@ export function createPaperActionManifest({
   if (!Object.values(PAPER_ACTIONS).includes(normalizedAction)) blockers.push('unknown_paper_action');
   if (normalizedAction === PAPER_ACTIONS.REVIEWED_SUBMIT) {
     if (!approvalPacket?.approved) blockers.push('explicit_reviewed_submit_approval_required');
+    if (promotionGate?.status !== 'manuscript_promotion_ready') blockers.push('manuscript_promotion_gate_not_ready');
+    if (semanticPromotionLock?.status !== 'semantic_promotion_unlocked') blockers.push('semantic_promotion_lock_not_ready');
   }
   if (normalizedAction !== PAPER_ACTIONS.INVENTORY_SCAN && !paperTask.sourceWorkspace) {
     blockers.push('source_workspace_required');
@@ -335,6 +364,8 @@ export function createPaperActionManifest({
       venueSubmissionPlanHash: venuePlan?.venueSubmissionPlanHash || null,
       freshVenueEvidenceBundleHash: venueEvidenceBundle?.freshVenueEvidenceBundleHash || null,
       approvalHash: approvalPacket?.approvalHash || null,
+      manuscriptPromotionGateHash: promotionGate?.manuscriptPromotionGateHash || null,
+      semanticPromotionLockHash: semanticPromotionLock?.semanticPromotionLockHash || null,
       independentRefereeAuthorityReceiptHash:
         approvalPacket?.independentRefereeAuthorityReceiptHash || null,
       liveSubmissionAuthorizationReceiptHash:
@@ -413,5 +444,3 @@ export function buildPaperAdapterRunReceipt({ envelope, manifest, createdAt = nu
   };
   return { ...receipt, receiptHash: hashPaperRecord('PaperAdapterRunReceipt', receipt) };
 }
-
-

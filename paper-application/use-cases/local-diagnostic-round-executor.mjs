@@ -45,13 +45,20 @@ export async function executeLocalDiagnosticRound({
       researchReport = await verifyResearch();
     }
   }
-  const submissionAuthorities = await prepareSubmissionAuthorities({ root, runtimeRoot, row, venues, artifactPackage: packageResult?.artifactPackage || null, researchReport, mode: PAPER_BATCH_MODES.REVIEWED_SUBMIT, authorityVerifier: services.authorityVerifier });
+  const executorDescriptor = services.submissionExecutorDescriptor || null;
+  const venuePreflightObservation = row.venuePreflightObservation || row.task.registry?.venuePreflightObservation || null;
+  const signedVenueObservation = row.signedVenueObservation || row.task.registry?.signedVenueObservation || null;
+  const submissionAuthorities = await prepareSubmissionAuthorities({ root, runtimeRoot, row, venues, artifactPackage: packageResult?.artifactPackage || null, researchReport, mode: PAPER_BATCH_MODES.REVIEWED_SUBMIT, authorityVerifier: services.authorityVerifier, executorDescriptor, submissionMetadata: row.submissionMetadata || row.task.registry?.submissionMetadata || null, submissionMetadataReview: row.submissionMetadataReview || row.task.registry?.submissionMetadataReview || null, venuePreflightObservation, signedVenueObservation, receiptLedger: services.receiptLedger });
   const lifecycle = buildSubmissionLifecycle({
     row, venues, artifactPackage: packageResult?.artifactPackage || null, researchReport,
     mode: PAPER_BATCH_MODES.REVIEWED_SUBMIT, reviewedSubmit: true,
     venuePlanOverride: submissionAuthorities.venuePlan,
     independentReviewAuthorityReceipt: submissionAuthorities.independentReviewAuthorityReceipt,
     liveAuthorizationReceipt: submissionAuthorities.liveAuthorizationReceipt,
+    submissionDecisionPacket: submissionAuthorities.submissionDecisionPacket,
+    executorDescriptor,
+    venuePreflightObservation,
+    reviewedVenueEvidenceOverride: submissionAuthorities.reviewedVenueEvidence,
     deliveryStore: services.submissionDeliveryStore,
   });
   const openAfter = openRefereeIssueCount(services.store, row.task.paperId);

@@ -1,9 +1,5 @@
 import path from 'node:path';
-import {
-  fileRecord,
-  pathWithin,
-  readJsonIfExists,
-} from '../../paper-core/src/runtime/file-utils.mjs';
+import { readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
 import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
 import {
   loadAuthorityTrustStore,
@@ -51,13 +47,18 @@ export async function verifyIndependentRefereeAuthority({
   researchReport = null,
   artifactPackage = null,
   venuePlan = null,
+  semanticPromotionLock = null,
   trustStoreOverride = null,
   now = new Date(),
 } = {}) {
   const inbox = authorityInbox(runtimeRoot, paperTask?.paperId);
   const verdictFile = inbox ? path.join(inbox, 'INDEPENDENT_REFEREE_VERDICT.json') : null;
   const verdictPath = verdictFile ? path.relative(root, verdictFile).replace(/\\/g, '/') : null;
-  const verdictDocument = verdictFile ? await readJsonIfExists(verdictFile) : null;
+  const verdictRead = verdictFile && inbox ? readScopedFileSync({ scopeRoot: inbox, candidate: verdictFile }) : null;
+  let verdictDocument = null;
+  if (verdictRead?.status === 'scoped_file_read_verified') {
+    try { verdictDocument = JSON.parse(verdictRead.content.toString('utf8')); } catch { /* blocked below */ }
+  }
   if (!verdictDocument) {
     return blockedReceipt({
       paperTask,
@@ -101,12 +102,9 @@ export async function verifyIndependentRefereeAuthority({
   const sourcePath = sourceRoot && paperTask?.mainTex
     ? path.resolve(root, paperTask.mainTex)
     : null;
-  if (!sourcePath || !sourceRoot || !pathWithin(sourceRoot, sourcePath)) {
-    blockers.push('independent_referee_source_path_invalid');
-  }
-  const sourceRecord = sourcePath && sourceRoot && pathWithin(sourceRoot, sourcePath)
-    ? await fileRecord(root, sourcePath, 'independent_referee_source_snapshot')
-    : null;
+  const sourceRead = sourcePath && sourceRoot ? readScopedFileSync({ scopeRoot: sourceRoot, candidate: sourcePath }) : null;
+  if (!sourceRead || sourceRead.status !== 'scoped_file_read_verified') blockers.push('independent_referee_source_path_invalid', ...(sourceRead?.blockers || []));
+  const sourceRecord = sourceRead?.status === 'scoped_file_read_verified' ? { hash: sourceRead.hash, scopedFileReadReceiptHash: sourceRead.scopedFileReadReceiptHash } : null;
   const scope = verdictDocument.reviewScope || {};
   if (!sourceRecord) blockers.push('independent_referee_source_snapshot_missing');
   if (sourceRecord && scope.sourceSha256 !== sourceRecord.hash) blockers.push('independent_referee_source_hash_mismatch');
@@ -123,13 +121,18 @@ export async function verifyIndependentRefereeAuthority({
     || scope.venueSubmissionPlanHash !== venuePlan.venueSubmissionPlanHash) {
     blockers.push('independent_referee_venue_plan_hash_mismatch');
   }
+  if (semanticPromotionLock?.status !== 'semantic_promotion_unlocked'
+    || scope.semanticPromotionLockHash !== semanticPromotionLock?.semanticPromotionLockHash) {
+    blockers.push('independent_referee_semantic_promotion_lock_mismatch');
+  }
   const reviewArtifact = verdictDocument.reviewArtifact || {};
   const reviewArtifactPath = inbox ? path.resolve(inbox, String(reviewArtifact.path || '')) : null;
-  if (!reviewArtifact.path || !reviewArtifactPath || !inbox || !pathWithin(inbox, reviewArtifactPath)) {
-    blockers.push('independent_referee_review_artifact_path_invalid');
-  }
-  const reviewArtifactRecord = reviewArtifactPath && inbox && pathWithin(inbox, reviewArtifactPath)
-    ? await fileRecord(root, reviewArtifactPath, 'independent_referee_review_artifact')
+  const reviewArtifactRead = reviewArtifact.path && reviewArtifactPath && inbox
+    ? readScopedFileSync({ scopeRoot: inbox, candidate: reviewArtifactPath })
+    : null;
+  if (!reviewArtifactRead || reviewArtifactRead.status !== 'scoped_file_read_verified') blockers.push('independent_referee_review_artifact_path_invalid', ...(reviewArtifactRead?.blockers || []));
+  const reviewArtifactRecord = reviewArtifactRead?.status === 'scoped_file_read_verified'
+    ? { hash: reviewArtifactRead.hash, scopedFileReadReceiptHash: reviewArtifactRead.scopedFileReadReceiptHash }
     : null;
   if (!reviewArtifactRecord) blockers.push('independent_referee_review_artifact_missing');
   if (reviewArtifactRecord && reviewArtifact.sha256 !== reviewArtifactRecord.hash) {
@@ -153,12 +156,13 @@ export async function verifyIndependentRefereeAuthority({
     acceptanceAuthorityReady,
     cryptographicSignaturesVerified: signatureVerification.cryptographicSignaturesVerified,
     verdictPath,
-    verdictDocumentHash: (await fileRecord(root, verdictFile, 'independent_referee_verdict'))?.hash || null,
+    verdictDocumentHash: verdictRead?.hash || null,
     reviewerSubjectIds,
     sourceSnapshotHash: sourceRecord?.hash || null,
     academicEvidenceVerificationHash: evidenceVerificationHash,
     artifactPackageHash: artifactPackage?.artifactPackageHash || null,
     venueSubmissionPlanHash: venuePlan?.venueSubmissionPlanHash || null,
+    semanticPromotionLockHash: semanticPromotionLock?.semanticPromotionLockHash || null,
     reviewArtifact: {
       path: reviewArtifact.path || null,
       expectedHash: reviewArtifact.sha256 || null,

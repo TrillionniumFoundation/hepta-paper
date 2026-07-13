@@ -10,9 +10,10 @@ function normalize(request = {}) {
 }
 
 export function resourcesForCampaignNode(campaign, node) {
-  const agent = ['research-plan', 'writer', 'coder', 'manuscript-integrate', 'revise'].includes(node.kind) || /^(?:revision-)?referee-\d+$/.test(node.kind);
-  const empirical = ['empirical', 'compile', 'package', 'revalidate-code', 'revalidate-empirical', 'revalidate-compile', 'revalidate-citations', 'revalidate-artifacts'].includes(node.kind);
-  const gpu = Boolean(campaign?.spec?.requiresGpu && ['empirical', 'revalidate-empirical'].includes(node.kind));
+  const agent = ['research-plan', 'writer', 'manuscript-integrate', 'revise'].includes(node.kind) || /^coder(?:-|$)/.test(node.kind) || /^(?:revision-)?referee-\d+$/.test(node.kind);
+  const empirical = /^(?:empirical(?:-reproduce)?(?:-|$)|compile$|package$|revalidate-(?:code|empirical)(?:-|$)|revalidate-(?:compile|citations|artifacts)$)/.test(node.kind);
+  const gpuExecution = /^(?:empirical(?:-reproduce)?(?:-|$)|revalidate-empirical(?:-|$))/.test(node.kind);
+  const gpu = gpuExecution && Boolean(node.spec?.requiresGpu || node.requiresGpu || campaign?.spec?.requiresGpu);
   return normalize({ agent: agent ? 1 : 0, cpu: empirical ? 1 : 0, gpu: gpu ? 1 : 0, memoryMiB: agent ? 2048 : empirical ? 1024 : 128 });
 }
 

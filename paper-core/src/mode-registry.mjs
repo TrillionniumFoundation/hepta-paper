@@ -19,7 +19,7 @@ export const PAPER_BATCH_MODES = Object.freeze({
 const definitions = [
   { mode: PAPER_BATCH_MODES.INVENTORY, stages: [] },
   { mode: PAPER_BATCH_MODES.LOCAL_BUILD, stages: ['build'] },
-  { mode: PAPER_BATCH_MODES.LOCAL_PACKAGE, stages: ['build', 'package'] },
+  { mode: PAPER_BATCH_MODES.LOCAL_PACKAGE, stages: ['build', 'research-verify', 'package'] },
   { mode: PAPER_BATCH_MODES.REFEREE_REVIEW, stages: ['referee-review'] },
   { mode: PAPER_BATCH_MODES.REFEREE_REVISE, stages: ['referee-revise'] },
   { mode: PAPER_BATCH_MODES.LOCAL_REVIEW_LOOP, stages: ['local-review-loop'] },
@@ -29,8 +29,8 @@ const definitions = [
   { mode: PAPER_BATCH_MODES.JOURNAL_MANAGE, stages: ['journal-manage'] },
   { mode: PAPER_BATCH_MODES.VENUE_RESOLVE, stages: ['build', 'package', 'venue-resolve'] },
   { mode: PAPER_BATCH_MODES.SOURCE_ADAPT, stages: ['source-adapt'] },
-  { mode: PAPER_BATCH_MODES.LOCAL_DRY_RUN, stages: ['build', 'package', 'research-verify', 'submission'] },
-  { mode: PAPER_BATCH_MODES.REVIEWED_SUBMIT, stages: ['build', 'package', 'research-verify', 'submission'] },
+  { mode: PAPER_BATCH_MODES.LOCAL_DRY_RUN, stages: ['build', 'research-verify', 'package', 'submission'] },
+  { mode: PAPER_BATCH_MODES.REVIEWED_SUBMIT, stages: ['build', 'research-verify', 'package', 'submission'] },
   { mode: PAPER_BATCH_MODES.LEGACY_CLEANUP, stages: [] },
 ];
 
@@ -48,4 +48,3 @@ export function assertPaperMode(mode) {
   if (!definition) throw new Error(`Unknown paper batch mode: ${mode}`);
   return definition;
 }
-

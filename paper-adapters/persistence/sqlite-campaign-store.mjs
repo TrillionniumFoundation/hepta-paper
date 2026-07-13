@@ -1,25 +1,9 @@
 import { assertCampaignStorePort } from '../../paper-ports/campaign-store-port.mjs';
 import { sqlJson, sqlText } from '../../paper-ports/store-port.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { evolveCampaignForResume, validateCampaignRoundExtension } from '../../paper-domain/automation/campaign-evolution-policy.mjs';
 
 const DONE = new Set(['completed', 'skipped']);
-const BUDGET_KEYS = Object.freeze([
-  'maxWallTimeMs',
-  'maxAgentCalls',
-  'maxCpuJobs',
-  'maxGpuJobs',
-  'maxTokenCount',
-  'maxCostUsd',
-  'maxMemoryMiB',
-]);
-const EXHAUSTED_BUDGET = Object.freeze({
-  campaign_wall_time_budget_exhausted: ['maxWallTimeMs', 'accumulatedRunMs'],
-  campaign_agent_call_budget_exhausted: ['maxAgentCalls', 'agentCallCount'],
-  campaign_cpu_job_budget_exhausted: ['maxCpuJobs', 'cpuJobCount'],
-  campaign_gpu_job_budget_exhausted: ['maxGpuJobs', 'gpuJobCount'],
-  campaign_token_budget_exhausted: ['maxTokenCount', 'tokenCount'],
-  campaign_cost_budget_exhausted: ['maxCostUsd', 'costUsd'],
-});
 
 function parseNode(row) {
   if (!row) return null;
@@ -86,8 +70,13 @@ export function createSqliteCampaignStore({ store, clock } = {}) {
     const terminalFailure = rows.some((node) => node.status === 'failed_terminal');
     const complete = rows.length > 0 && rows.every((node) => DONE.has(node.status));
     const status = terminalFailure ? 'failed' : complete ? 'completed' : 'running';
-    const currentReviewRound = Math.max(0, ...rows.filter((node) => node.status === 'completed' && node.kind !== 'package').map((node) => node.roundIndex));
-    const nextNode = rows.find((node) => !DONE.has(node.status) && !['failed_terminal'].includes(node.status));
+    const currentReviewRound = Math.max(0, ...rows
+      .filter((node) => node.roundIndex > 0 && node.kind !== 'package' && ['leased', 'running', 'completed', 'failed_terminal'].includes(node.status))
+      .map((node) => node.roundIndex));
+    const byId = new Map(rows.map((node) => [node.node_id, node]));
+    const activeNode = rows.find((node) => ['running', 'leased'].includes(node.status));
+    const dependencyReadyNode = rows.find((node) => node.status === 'queued' && node.dependencies.every((dependency) => DONE.has(byId.get(dependency)?.status)));
+    const nextNode = activeNode || dependencyReadyNode || rows.find((node) => !DONE.has(node.status) && node.status !== 'failed_terminal');
     const currentPhase = status === 'completed' ? 'completed' : status === 'failed' ? 'failed' : (nextNode?.kind || status);
     const now = clock.nowIso();
     const terminal = ['failed', 'completed'].includes(status);
@@ -135,9 +124,20 @@ export function createSqliteCampaignStore({ store, clock } = {}) {
     },
     recoverExpiredLeases(campaignId) {
       const now = clock.nowIso();
-      const result = store.execute(`UPDATE campaign_nodes SET status='queued',lease_owner=NULL,lease_expires_at=NULL,failure_class='lease_expired_recovered',updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(campaignId)} AND status IN ('leased','running') AND lease_expires_at<${sqlText(now)};`);
+      const candidates = api.listNodes(campaignId).filter((node) => {
+        if (!['leased', 'running'].includes(node.status)) return false;
+        if (node.lease_expires_at && node.lease_expires_at < now) return true;
+        const match = String(node.lease_owner || '').match(/^paper-campaign-worker:(\d+):/);
+        if (!match || Number(match[1]) === process.pid) return false;
+        try { process.kill(Number(match[1]), 0); return false; } catch (error) { return error?.code === 'ESRCH'; }
+      });
+      if (!candidates.length) return [];
+      const ids = candidates.map((node) => sqlText(node.node_id)).join(',');
+      const result = store.execute(`UPDATE campaign_nodes SET status='queued',lease_owner=NULL,lease_expires_at=NULL,failure_class='lease_expired_recovered',updated_at=${sqlText(now)} WHERE node_id IN (${ids}) AND status IN ('leased','running');`);
       if (!result.ok) throw new Error(result.error || 'campaign_lease_recovery_failed');
-      return api.listNodes(campaignId).filter((node) => node.failure_class === 'lease_expired_recovered' && node.updated_at === now);
+      const recovered = api.listNodes(campaignId).filter((node) => node.failure_class === 'lease_expired_recovered' && node.updated_at === now);
+      for (const node of recovered) event(campaignId, node.node_id, 'campaign_node_lease_recovered', { previousLeaseOwner: candidates.find((candidate) => candidate.node_id === node.node_id)?.lease_owner || null });
+      return recovered;
     },
     renewNodeLease({ nodeId, workerId, leaseSeconds = 120 } = {}) {
       const now = clock.nowIso();
@@ -167,6 +167,8 @@ export function createSqliteCampaignStore({ store, clock } = {}) {
       if (!result.ok) throw new Error(result.error || 'campaign_node_start_failed');
       const node = parseNode(store.query(`SELECT * FROM campaign_nodes WHERE node_id=${sqlText(nodeId)} LIMIT 1;`).rows[0]);
       if (node?.status !== 'running' || node.lease_owner !== workerId) throw new Error('active campaign node lease required');
+      const campaignWrite = store.execute(`UPDATE paper_campaigns SET current_phase=${sqlText(node.kind)},current_review_round=max(current_review_round,${Math.max(0, Number(node.roundIndex || 0))}),revision=revision+1,updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(node.campaign_id)} AND status='running';`);
+      if (!campaignWrite.ok) throw new Error(campaignWrite.error || 'campaign_node_phase_update_failed');
       event(node.campaign_id, nodeId, 'campaign_node_started', { attempt: node.attemptCount, workerId });
       return node;
     },
@@ -221,34 +223,7 @@ export function createSqliteCampaignStore({ store, clock } = {}) {
       const campaign = api.getCampaign(campaignId);
       if (!campaign) throw new Error(`campaign not found: ${campaignId}`);
       if (!['paused', 'stopped'].includes(campaign.status)) return campaign;
-      const stoppedForBudget = campaign.status === 'stopped' && EXHAUSTED_BUDGET[campaign.stop_reason];
-      if (campaign.status === 'stopped' && !stoppedForBudget) {
-        throw new Error(`campaign_not_resumable:${campaign.stop_reason || 'stopped'}`);
-      }
-      const previousBudgets = campaign.spec?.budgets || {};
-      const overrides = Object.fromEntries(Object.entries(budgetOverrides || {}).filter(([, value]) => value !== undefined));
-      for (const key of Object.keys(overrides)) {
-        if (!BUDGET_KEYS.includes(key)) throw new Error(`unsupported_campaign_budget:${key}`);
-        const value = Number(overrides[key]);
-        if (!Number.isFinite(value) || value < 0) throw new Error(`invalid_campaign_budget:${key}`);
-        if (value < Number(previousBudgets[key] ?? 0)) throw new Error(`campaign_budget_cannot_decrease:${key}`);
-        overrides[key] = value;
-      }
-      if (stoppedForBudget) {
-        const [requiredKey, usageKey] = EXHAUSTED_BUDGET[campaign.stop_reason];
-        if (!(requiredKey in overrides) || Number(overrides[requiredKey]) <= Number(campaign[usageKey] || 0)) {
-          throw new Error(`campaign_budget_extension_required:${requiredKey}`);
-        }
-      }
-      const { campaignPlanHash: previousCampaignPlanHash = null, ...campaignPayload } = campaign.spec;
-      const nextPayload = Object.freeze({
-        ...campaignPayload,
-        budgets: Object.freeze({ ...previousBudgets, ...overrides }),
-      });
-      const nextSpec = Object.freeze({
-        ...nextPayload,
-        campaignPlanHash: hashRecord('PaperCampaignPlan', nextPayload),
-      });
+      const { nextSpec, overrides, stoppedForBudget, previousCampaignPlanHash } = evolveCampaignForResume({ campaign, budgetOverrides });
       const now = clock.nowIso();
       const reopenSql = stoppedForBudget
         ? ` UPDATE campaign_nodes SET status='queued',failure_class=NULL,failure_json=NULL,failure_sha256=NULL,lease_owner=NULL,lease_expires_at=NULL,updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(campaignId)} AND status='skipped' AND failure_class=${sqlText(campaign.stop_reason)};`
@@ -267,30 +242,8 @@ export function createSqliteCampaignStore({ store, clock } = {}) {
     extendCampaign(spec = {}) {
       const campaign = api.getCampaign(spec.campaignId);
       if (!campaign) throw new Error(`campaign not found: ${spec.campaignId}`);
-      if (campaign.status !== 'stopped' || campaign.stop_reason !== 'referee_convergence_not_reached_within_budget') {
-        throw new Error(`campaign_not_extendable:${campaign.stop_reason || campaign.status}`);
-      }
-      if (spec.paperId !== campaign.paper_id) throw new Error('campaign_extension_paper_mismatch');
-      if (Number(spec.maxRounds || 0) <= campaign.maxRounds) throw new Error('campaign_extension_requires_additional_round');
-      if (!Array.isArray(spec.nodes) || !spec.nodes.length) throw new Error('campaign_extension_nodes_required');
-      for (const key of BUDGET_KEYS) {
-        const previous = Number(campaign.spec?.budgets?.[key] ?? 0);
-        const next = Number(spec.budgets?.[key] ?? 0);
-        if (!Number.isFinite(next) || next < previous) throw new Error(`campaign_budget_cannot_decrease:${key}`);
-      }
       const existingNodes = api.listNodes(spec.campaignId);
-      const existingById = new Map(existingNodes.map((item) => [item.node_id, item]));
-      for (const nodeSpec of spec.nodes) {
-        const existing = existingById.get(nodeSpec.nodeId);
-        if (!existing) continue;
-        if (existing.kind !== nodeSpec.kind || existing.roundIndex !== Number(nodeSpec.roundIndex || 0)) {
-          throw new Error(`campaign_extension_node_mismatch:${nodeSpec.nodeId}`);
-        }
-      }
-      const additions = spec.nodes.filter((item) => !existingById.has(item.nodeId));
-      if (!additions.some((item) => item.kind === 'package') || !additions.some((item) => item.roundIndex > campaign.maxRounds)) {
-        throw new Error('campaign_extension_incomplete');
-      }
+      const { additions } = validateCampaignRoundExtension({ campaign, spec, existingNodes });
       const now = clock.nowIso();
       const statements = [
         'BEGIN IMMEDIATE;',
@@ -355,7 +308,7 @@ export function createSqliteCampaignStore({ store, clock } = {}) {
       if (!node) throw new Error(`campaign node not found: ${nodeId}`);
       if (node.status !== 'failed_terminal') return node;
       const now = clock.nowIso();
-      const write = store.execute(`UPDATE campaign_nodes SET status='queued',attempt_count=0,failure_class=NULL,failure_json=NULL,failure_sha256=NULL,updated_at=${sqlText(now)} WHERE node_id=${sqlText(nodeId)} AND status='failed_terminal'; UPDATE paper_campaigns SET status='running',stop_reason=NULL,last_resumed_at=coalesce(last_resumed_at,${sqlText(now)}),updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(node.campaign_id)};`);
+      const write = store.execute(`BEGIN IMMEDIATE; UPDATE campaign_nodes SET status='queued',attempt_count=0,failure_class=NULL,failure_json=NULL,failure_sha256=NULL,updated_at=${sqlText(now)} WHERE node_id=${sqlText(nodeId)} AND status='failed_terminal'; UPDATE paper_campaigns SET status='running',current_phase=${sqlText(node.kind)},current_review_round=max(current_review_round,${Math.max(0, Number(node.roundIndex || 0))}),stop_reason=NULL,last_resumed_at=coalesce(last_resumed_at,${sqlText(now)}),revision=revision+1,updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(node.campaign_id)}; COMMIT;`);
       if (!write.ok) throw new Error(write.error || 'campaign_node_retry_failed');
       event(node.campaign_id, nodeId, 'campaign_node_manually_retried', {});
       return parseNode(store.query(`SELECT * FROM campaign_nodes WHERE node_id=${sqlText(nodeId)} LIMIT 1;`).rows[0]);
@@ -397,8 +350,27 @@ export function createSqliteCampaignStore({ store, clock } = {}) {
       event(campaignId, null, 'campaign_stopped', { reason });
       return api.getCampaign(campaignId);
     },
-    listEvents(campaignId) {
-      return store.query(`SELECT * FROM campaign_events WHERE campaign_id=${sqlText(campaignId)} ORDER BY created_at,event_id;`).rows.map((row) => ({ ...row, event: JSON.parse(row.event_json) }));
+    listEvents(campaignId, { limit = null, before = null } = {}) {
+      const boundedLimit = limit === null ? null : Math.max(1, Math.min(1000, Number(limit || 50)));
+      const beforeSql = before ? ` AND created_at<${sqlText(before)}` : '';
+      const order = boundedLimit === null && !before ? 'ASC' : 'DESC';
+      const limitSql = boundedLimit === null ? '' : ` LIMIT ${boundedLimit}`;
+      return store.query(`SELECT * FROM campaign_events WHERE campaign_id=${sqlText(campaignId)}${beforeSql} ORDER BY created_at ${order},event_id ${order}${limitSql};`).rows.map((row) => ({ ...row, event: JSON.parse(row.event_json) }));
+    },
+    recordTelemetry(sample = {}) {
+      const phases = sample.phases || {};
+      const write = store.execute(`INSERT INTO campaign_telemetry_samples(campaign_id,node_id,sample_kind,phases_json,lock_wait_ms,queue_contention_count,requested_at,acquired_at,released_at,created_at) VALUES(${sqlText(sample.campaignId)},${sample.nodeId ? sqlText(sample.nodeId) : 'NULL'},${sqlText(sample.sampleKind || 'campaign_node_execution')},${sqlJson(phases)},${Math.max(0, Math.round(Number(sample.lockWaitMs || 0)))},${Math.max(0, Math.round(Number(sample.queueContentionCount || 0)))},${sample.requestedAt ? sqlText(sample.requestedAt) : 'NULL'},${sample.acquiredAt ? sqlText(sample.acquiredAt) : 'NULL'},${sample.releasedAt ? sqlText(sample.releasedAt) : 'NULL'},${sqlText(sample.createdAt || clock.nowIso())});`);
+      if (!write.ok) throw new Error(write.error || 'campaign_telemetry_write_failed');
+      return sample;
+    },
+    listTelemetry(campaignId = null) {
+      const where = campaignId ? ` WHERE campaign_id=${sqlText(campaignId)}` : '';
+      return store.query(`SELECT * FROM campaign_telemetry_samples${where} ORDER BY telemetry_id;`).rows.map((row) => ({
+        ...row,
+        phases: JSON.parse(row.phases_json || '{}'),
+        lockWaitMs: Number(row.lock_wait_ms || 0),
+        queueContentionCount: Number(row.queue_contention_count || 0),
+      }));
     },
   };
   return assertCampaignStorePort(api);

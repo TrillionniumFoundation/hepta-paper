@@ -1,6 +1,6 @@
 {
   "name": "hepta-paper-workspace",
-  "version": "0.17.0",
+  "version": "0.20.0-dev.0",
   "private": true,
   "type": "module",
   "description": "Concurrent automation-first research, empirical, writing, referee and revision campaign system.",
@@ -57,6 +57,10 @@
     "migration:p1-research-selftest": "node paper-core/bin/run-isolated-command.mjs node migration/tests/p1-research-verify-retirements.mjs",
     "migration:matrix-integrity": "node paper-core/bin/run-isolated-command.mjs node migration/tests/matrix-integrity.mjs",
     "migration:capability-matrix-v3": "node paper-core/bin/run-isolated-command.mjs node migration/tests/capability-matrix-v3.mjs",
+    "migration:salvage-manifest": "node migration/bin/build-legacy-salvage-manifest.mjs --write",
+    "migration:salvage-selftest": "node paper-core/bin/run-isolated-command.mjs sh -lc 'node --test migration/tests/legacy-salvage-manifest.test.mjs && node migration/bin/verify-legacy-salvage-replacements.mjs'",
+    "migration:salvage-verification-receipt": "node migration/bin/verify-legacy-salvage-replacements.mjs --write",
+    "paper:salvage-hardening-selftest": "node paper-core/bin/run-isolated-command.mjs node --test paper-core/tests/workspace-registry.test.mjs paper-core/tests/workspace-snapshot-exporter.test.mjs paper-core/tests/package-verifier.test.mjs paper-core/tests/manuscript-promotion-boundaries.test.mjs paper-core/tests/formal-claim-binding-policy.test.mjs paper-core/tests/lean-source-formal-verifier.test.mjs paper-core/tests/paper-quality-policy.test.mjs paper-core/tests/theorem-manuscript-readiness-policy.test.mjs paper-core/tests/evidence-reference-validity.test.mjs paper-core/tests/evidence-consumption-policy.test.mjs paper-core/tests/dependency-freshness-policy.test.mjs paper-core/tests/legacy-history-snapshot.test.mjs paper-core/tests/campaign-slo.test.mjs paper-core/tests/campaign-telemetry-persistence.test.mjs paper-core/tests/typed-research-gap-plan.test.mjs paper-core/tests/experiment-acceptance-policy.test.mjs paper-core/tests/manuscript-surface-analyzer.test.mjs paper-core/tests/submission-live-delivery.test.mjs paper-core/tests/submission-handoff-bundle.test.mjs paper-core/tests/legacy-salvage-boundary-hardening.test.mjs paper-core/tests/legacy-provenance-delivery-hardening.test.mjs",
     "test:contract-conformance": "npm run paper:architecture-selftest",
     "test:migration-differential": "node migration/tests/p0-production-core-differential.mjs && node migration/tests/p1-referee-revision-differential.mjs",
     "coverage:architecture": "node paper-core/bin/run-isolated-command.mjs npm run coverage:architecture-inner",
@@ -66,7 +70,7 @@
     "coverage:system": "node paper-core/bin/run-isolated-command.mjs npm run coverage:system-inner",
     "coverage:system-inner": "node --experimental-test-coverage --test --test-concurrency=1 --test-coverage-lines=80 --test-coverage-branches=50 --test-coverage-functions=80 --test-coverage-include='paper-domain/**/*.mjs' --test-coverage-include='paper-ports/**/*.mjs' --test-coverage-include='workflow-kernel/**/*.mjs' --test-coverage-include='paper-adapters/**/*.mjs' --test-coverage-include='paper-application/**/*.mjs' --test-coverage-include='paper-core/src/**/*.mjs' paper-core/tests/*.test.mjs migration/tests/capabilities/*.test.mjs migration/tests/*.test.mjs paper-core/src/selftest.mjs",
     "ci:selftest": "node paper-core/bin/run-isolated-verification.mjs ci",
-    "ci:inner": "npm run core:integrity && npm run core:selftest && npm run core:runtime-dry-run && npm run paper:capability-conformance && npm run paper:architecture-selftest && npm run paper:governance-contracts && npm run migration:capability-matrix-v3 && npm run assets:cold-volume-status && npm run assets:cold-volume-cas-status && npm run legacy:fixture-verify && npm run legacy:matrix-reference-status",
+    "ci:inner": "npm run core:integrity && npm run core:selftest && npm run core:runtime-dry-run && npm run paper:capability-conformance && npm run paper:architecture-selftest && npm run paper:governance-contracts && npm run migration:capability-matrix-v3 && npm run migration:salvage-selftest && npm run paper:salvage-hardening-selftest && npm run assets:cold-volume-status && npm run assets:cold-volume-cas-status && npm run legacy:fixture-verify && npm run legacy:matrix-reference-status",
     "release:verify": "node paper-core/bin/run-isolated-verification.mjs release",
     "release:inner": "npm run test:inner && npm run provider:sandbox-selftest && npm run coverage:architecture && npm run coverage:repository && npm run coverage:system && npm run test:migration-differential && npm run assets:cold-volume-status && npm run assets:cold-volume-cas-status && npm run legacy:fixture-verify && npm run legacy:matrix-reference-status && npm run workspace:verify-decoupled && npm run store:status && npm run store:logical-integrity && npm run store:restore-drill",
     "audit:local-accepts": "node paper-core/bin/run-isolated-command.mjs node paper-core/bin/reassess-local-accepts.mjs",
@@ -75,6 +79,7 @@
     "store:backup": "node paper-core/bin/hepta-store.mjs backup",
     "store:restore-drill": "node paper-core/bin/run-isolated-command.mjs node paper-core/bin/hepta-store.mjs restore-drill",
     "store:migrate-legacy": "node paper-core/bin/hepta-store.mjs migrate-legacy",
+    "store:snapshot-legacy-history": "node paper-core/bin/hepta-store.mjs snapshot-legacy-history",
     "store:status": "node paper-core/bin/hepta-store.mjs status",
     "store:logical-integrity": "node paper-core/bin/hepta-store-logical-integrity.mjs",
     "store:repair-ledger-integrity": "node paper-core/bin/repair-receipt-ledger-integrity.mjs",
@@ -101,10 +106,10 @@
     "external:intake": "node paper-core/bin/generate-external-intake.mjs",
     "external:intake-verify": "node paper-core/bin/verify-external-intake.mjs",
     "taskflow:pilot-selftest": "node --test paper-core/tests/taskflow-reviewed-submit.test.mjs paper-core/tests/workflow-state-store.test.mjs",
-    "automation:selftest": "node --test --test-concurrency=1 paper-core/tests/automation-campaign.test.mjs paper-core/tests/automation-taskflow.test.mjs paper-core/tests/automation-executors.test.mjs paper-core/tests/automation-orchestration.test.mjs paper-core/tests/multiprocess-resource-governor.test.mjs",
+    "automation:selftest": "node --test --test-concurrency=1 paper-core/tests/automation-campaign.test.mjs paper-core/tests/automation-taskflow.test.mjs paper-core/tests/automation-executors.test.mjs paper-core/tests/automation-orchestration.test.mjs paper-core/tests/executor-capabilities.test.mjs paper-core/tests/empirical-contract.test.mjs paper-core/tests/campaign-evolution-policy.test.mjs paper-core/tests/campaign-query-presenter.test.mjs paper-core/tests/runtime-retention.test.mjs paper-core/tests/campaign-slo.test.mjs paper-core/tests/campaign-telemetry-persistence.test.mjs paper-core/tests/multiprocess-resource-governor.test.mjs",
     "provider:sandbox-selftest": "node --test paper-core/tests/provider-sandbox-integration.test.mjs",
     "paper:real-provider-sandbox": "node paper-core/bin/run-real-paper-provider-sandbox.mjs",
     "selftest": "node paper-core/bin/run-isolated-verification.mjs test",
-    "test:inner": "npm run core:integrity && npm run core:selftest && npm run core:runtime-dry-run && npm run automation:selftest && npm run paper:selftest && npm run paper:remediation-selftest && npm run paper:authority-selftest && npm run paper:capability-conformance && npm run paper:architecture-selftest && npm run paper:governance-contracts && npm run migration:matrix-integrity && npm run migration:capability-matrix-v3"
+    "test:inner": "npm run core:integrity && npm run core:selftest && npm run core:runtime-dry-run && npm run automation:selftest && npm run paper:salvage-hardening-selftest && npm run paper:selftest && npm run paper:remediation-selftest && npm run paper:authority-selftest && npm run paper:capability-conformance && npm run paper:architecture-selftest && npm run paper:governance-contracts && npm run migration:matrix-integrity && npm run migration:capability-matrix-v3 && npm run migration:salvage-selftest"
   }
 }

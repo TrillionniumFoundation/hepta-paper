@@ -4,6 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateCapabilityOperationalEvidence } from './capability-operational-evidence.mjs';
 import { buildOwnerAcceptanceFamilies, loadOwnerAcceptance } from './owner-acceptance.mjs';
+import { defaultPaperRuntimeRoot } from '../paper-core/src/workspace-layout.mjs';
 
 const migrationRoot = path.dirname(fileURLToPath(import.meta.url));
 const workspaceRoot = path.resolve(migrationRoot, '..');
@@ -98,7 +99,10 @@ function decisionFor(entry) {
   if (SUPERSEDED_ACTIONS.has(entry.migrationAction)) {
     return CAPABILITY_DECISIONS.SUPERSEDED_WITH_COVERAGE;
   }
-  return CAPABILITY_DECISIONS.CAPABILITY_REIMPLEMENTATION;
+  // V2 migration actions are retirement decisions unless a bounded semantic
+  // replacement is explicitly allow-listed above.  Defaulting a retirement
+  // action to reimplementation made "mapped" look like "absorbed".
+  return CAPABILITY_DECISIONS.PERMANENT_RETIREMENT;
 }
 
 function coverageRequirements(decision, capabilityIds) {
@@ -152,8 +156,9 @@ function coverageTests(entry, decision, capabilityIds) {
 
 export function buildLegacyCapabilityMatrixV3({ matrixV2 = null, operationalEvidence = null, runtimeRoot = null } = {}) {
   const source = matrixV2 || JSON.parse(fs.readFileSync(matrixV2Path, 'utf8'));
+  const resolvedRuntimeRoot = runtimeRoot || defaultPaperRuntimeRoot();
   const verificationReceipts = validateCapabilityOperationalEvidence({
-    runtimeRoot: runtimeRoot || path.join(workspaceRoot, 'runtime'),
+    runtimeRoot: resolvedRuntimeRoot,
     evidence: operationalEvidence,
   });
   const retiredEntries = source.entries.filter((entry) => entry.verificationClass === 'explicit_retirement');
@@ -164,7 +169,7 @@ export function buildLegacyCapabilityMatrixV3({ matrixV2 = null, operationalEvid
   });
   const ownerAcceptanceFamilyManifest = buildOwnerAcceptanceFamilies(entryPlans);
   const acceptedById = loadOwnerAcceptance({
-    runtimeRoot: runtimeRoot || path.join(workspaceRoot, 'runtime'),
+    runtimeRoot: resolvedRuntimeRoot,
     familyManifest: ownerAcceptanceFamilyManifest,
   });
   const entries = entryPlans.map((entry) => {

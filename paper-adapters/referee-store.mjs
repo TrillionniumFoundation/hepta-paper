@@ -1,4 +1,4 @@
-import { safeJsonParse } from '../paper-core/src/runtime/data-utils.mjs';
+import { safeJsonParse } from '../workflow-kernel/runtime/data-utils.mjs';
 import {
   assertStorePort,
   sqlEscape as escapeSqlText,

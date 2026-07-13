@@ -80,7 +80,7 @@ export async function runPaperCampaign({
   executor,
   concurrency = 4,
   workerPrefix = 'paper-campaign-worker',
-  leaseSeconds = 300,
+  leaseSeconds = 1800,
   pollMs = 5,
   maximumIdlePolls = 20,
   resourceGovernor = null,
@@ -94,7 +94,7 @@ export async function runPaperCampaign({
   let active = 0;
   let executedNodeCount = 0;
   let retryCount = 0;
-  const dispatcherId = `${workerPrefix}:${crypto.randomUUID()}`;
+  const dispatcherId = `${workerPrefix}:${process.pid}:${crypto.randomUUID()}`;
   const governor = resourceGovernor || createResourceGovernor({ agent: workerCount, cpu: workerCount, gpu: 1, memoryMiB: Math.max(2048, workerCount * 2048) });
   const initialCampaign = campaignStore.getCampaign(campaignId);
   const localGovernor = createResourceGovernor({
@@ -138,6 +138,7 @@ export async function runPaperCampaign({
     }
     idlePolls = 0;
     await Promise.all(claimed.map(async (claimedNode, index) => {
+      const dispatchStartedMs = Date.now();
       const workerId = dispatcherId;
       const currentCampaign = campaignStore.getCampaign(campaignId);
       const nowMs = typeof campaignStore.nowEpochMs === 'function' ? campaignStore.nowEpochMs() : Date.now();
@@ -191,6 +192,7 @@ export async function runPaperCampaign({
       }, 500);
       controlMonitor.unref();
       active += 1;
+      const commandStartedMs = Date.now();
       maximumObservedConcurrency = Math.max(maximumObservedConcurrency, active);
       try {
         const remainingWallTimeMs = Math.max(1, Number(currentCampaign.spec?.budgets?.maxWallTimeMs ?? 6 * 60 * 60 * 1000) - elapsedRunMs(currentCampaign, nowMs));
@@ -232,7 +234,7 @@ export async function runPaperCampaign({
         if (node.kind === 'convergence') {
           const nodes = campaignStore.listNodes(campaignId);
           const revisedReview = nodes.find((item) => item.roundIndex === node.roundIndex && item.kind === 'revision-referee-1')?.result;
-          result = evaluateRefereeConvergence({ paperId: currentCampaign.paper_id, roundIndex: node.roundIndex, expectedManuscriptHash: revisedReview?.manuscriptHash || null, reviews: refereeResults(nodes, node.roundIndex), ...(result?.thresholds || {}) });
+          result = evaluateRefereeConvergence({ paperId: currentCampaign.paper_id, roundIndex: node.roundIndex, expectedManuscriptHash: revisedReview?.manuscriptHash || null, reviews: refereeResults(nodes, node.roundIndex), qualityGates: result?.qualityGates || [], ...(result?.thresholds || {}) });
         }
         campaignStore.recordUsage(campaignId, meteredResultUsage(result, { agentCall: requestedResources.agent > 0 }));
         const postBlocker = postExecutionBudgetBlocker(campaignStore.getCampaign(campaignId));
@@ -252,11 +254,31 @@ export async function runPaperCampaign({
         const failed = campaignStore.failNode({ nodeId: node.node_id, workerId, failureClass: error?.code || error?.message || 'campaign_executor_failed', failureDetail: boundedFailureDetail(error), retryable: !['cancelled', 'failed', 'stopped'].includes(campaignStatus) && error?.retryable !== false });
         if (failed.status === 'queued') retryCount += 1;
       } finally {
+        const commandEndedMs = Date.now();
         if (heartbeat) clearInterval(heartbeat);
         clearInterval(controlMonitor);
         active -= 1;
+        const releaseStartedMs = Date.now();
         releaseResources();
         releaseLocalResources();
+        const releasedMs = Date.now();
+        const resourceTelemetry = releaseResources.telemetry || {};
+        campaignStore.recordTelemetry?.({
+          campaignId,
+          nodeId: claimedNode.node_id,
+          phases: {
+            dispatch: Math.max(0, commandStartedMs - dispatchStartedMs - Number(resourceTelemetry.lockWaitMs || 0)),
+            lockAcquire: Number(resourceTelemetry.lockWaitMs || Math.max(0, commandStartedMs - dispatchStartedMs)),
+            command: Math.max(0, commandEndedMs - commandStartedMs),
+            lockRelease: Math.max(0, releasedMs - releaseStartedMs),
+            total: Math.max(0, releasedMs - dispatchStartedMs),
+          },
+          lockWaitMs: Number(resourceTelemetry.lockWaitMs || 0),
+          queueContentionCount: Number(resourceTelemetry.queueContentionCount || 0),
+          requestedAt: resourceTelemetry.requestedAt || new Date(dispatchStartedMs).toISOString(),
+          acquiredAt: resourceTelemetry.acquiredAt || new Date(commandStartedMs).toISOString(),
+          releasedAt: new Date(releasedMs).toISOString(),
+        });
       }
     }));
   }

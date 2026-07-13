@@ -1,5 +1,5 @@
-import { normalizeText, uniqueStrings } from '../../paper-core/src/runtime/text-utils.mjs';
-import { nowIso } from '../../paper-core/src/runtime/time-utils.mjs';
+import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
+import { nowIso } from '../../workflow-kernel/runtime/time-utils.mjs';
 import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
 import { COMPUTER_SCIENCE_CONFERENCE_DEADLINE_ROUTING, DEFAULT_CONFERENCE_DEADLINE_THRESHOLD_DAYS, JOURNAL_PROFILES, PROFILE_POLICY_DEFAULTS } from './journal-registry.mjs';
 

@@ -9,14 +9,15 @@ import {
   readTextIfExists,
   relativePath,
   walkFiles,
-} from '../../paper-core/src/runtime/file-utils.mjs';
-import { normalizeText, uniqueStrings } from '../../paper-core/src/runtime/text-utils.mjs';
-import { sortByMtimeDesc } from '../../paper-core/src/runtime/time-utils.mjs';
+} from '../../workflow-kernel/runtime/file-utils.mjs';
+import { inspectScopedPathSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
+import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
+import { sortByMtimeDesc } from '../../workflow-kernel/runtime/time-utils.mjs';
 import {
   parseSimpleYamlList,
   parseSimpleYamlMap,
   safeJsonParse,
-} from '../../paper-core/src/runtime/data-utils.mjs';
+} from '../../workflow-kernel/runtime/data-utils.mjs';
 import {
   PAPER_ACTIONS,
   createPaperTask,
@@ -222,7 +223,12 @@ async function findMainTex(sourceDir) {
   return ranked[0]?.file || null;
 }
 
-async function discoverArtifacts(root, sourceDir) {
+async function scopedLogicalFileRecord(scopeRoot, logicalRoot, candidate, role) {
+  const record = await fileRecord(scopeRoot, candidate, role);
+  return record ? { ...record, path: relativePath(logicalRoot, candidate) } : null;
+}
+
+async function discoverArtifacts(root, sourceDir, recordScopeRoot = root) {
   if (!sourceDir) return { pdfs: [], zips: [], evidence: [] };
   const files = await walkFiles(sourceDir, {
     maxDepth: 3,
@@ -235,18 +241,18 @@ async function discoverArtifacts(root, sourceDir) {
   for (const file of files) {
     const lower = path.basename(file).toLowerCase();
     if (lower.endsWith('.pdf')) {
-      const record = await fileRecord(root, file, 'compiled_pdf');
+      const record = await scopedLogicalFileRecord(recordScopeRoot, root, file, 'compiled_pdf');
       if (record) pdfs.push(record);
     } else if (lower.endsWith('.zip')) {
       const role = /source|workspace|submission|package|arxiv|camera|resubmission/i.test(lower)
         ? 'source_or_submission_zip'
         : 'zip_candidate';
-      const record = await fileRecord(root, file, role);
+      const record = await scopedLogicalFileRecord(recordScopeRoot, root, file, role);
       if (record) zips.push(record);
     } else if (
       /proof|evidence|referee|review|verdict|manifest|production_plan|semantic|readiness|status/i.test(lower)
     ) {
-      const record = await fileRecord(root, file, 'research_evidence');
+      const record = await scopedLogicalFileRecord(recordScopeRoot, root, file, 'research_evidence');
       if (record) evidence.push(record);
     }
   }
@@ -342,11 +348,13 @@ async function discoverPaper(root, paper) {
   const sourceDirs = await candidateSourceDirs(root, paper);
   const sourceDir = sourceDirs[0] || null;
   const mainTex = await findMainTex(sourceDir);
-  const artifacts = await discoverArtifacts(root, sourceDir);
+  const proposalStaging = normalizeText(paper.inventory_source) === 'proposal_staging';
+  const recordScopeRoot = proposalStaging && sourceDir ? sourceDir : root;
+  const artifacts = await discoverArtifacts(root, sourceDir, recordScopeRoot);
   const directArtifacts = await directArtifactRecords(root, paper);
   artifacts.pdfs = sortByMtimeDesc([...directArtifacts.pdfs, ...artifacts.pdfs]);
   artifacts.zips = sortByMtimeDesc([...directArtifacts.zips, ...artifacts.zips]);
-  const mainTexRecord = mainTex ? await fileRecord(root, mainTex, 'main_tex') : null;
+  const mainTexRecord = mainTex ? await scopedLogicalFileRecord(recordScopeRoot, root, mainTex, 'main_tex') : null;
   const sourceStat = sourceDir ? await pathStat(sourceDir) : null;
   const submissionIntent = buildSubmissionIntent(paper, { sourceDir, mainTex });
   const evidenceRefs = [
@@ -467,19 +475,25 @@ async function discoverLooseDrafts(root, knownSlugs) {
   return rows;
 }
 
-function proposalStagingPaperRow(root, record, recordPath) {
+function proposalStagingPaperRow(root, stagingRoot, record, recordPath) {
   if (record?.kind !== 'PaperProposalStagingRecord') return null;
   if (record.status !== 'proposal_staged_for_inventory') return null;
   const slug = normalizeText(record.paperId);
   if (!slug) return null;
+  const sourceWorkspace = repoPath(root, record.sourceWorkspace);
+  const proposalRoot = path.join(path.dirname(stagingRoot), 'proposals');
+  const sourceIdentity = sourceWorkspace
+    ? inspectScopedPathSync({ scopeRoot: proposalRoot, candidate: sourceWorkspace, expect: 'directory', forbidHardlinks: false })
+    : null;
+  if (sourceIdentity?.status !== 'scoped_file_identity_verified') return null;
   return {
     slug,
     title: normalizeText(record.title) || slug.replace(/_/g, ' '),
     status: 'proposal_staged',
     venue_target: normalizeText(record.venueTarget),
     paper_type: normalizeText(record.paperType) || 'proposal_generated',
-    canonical_dir: normalizeText(record.sourceWorkspace),
-    source_dir: normalizeText(record.sourceWorkspace),
+    canonical_dir: relativePath(root, sourceWorkspace),
+    source_dir: relativePath(root, sourceWorkspace),
     current_pdf: '',
     current_source_zip: '',
     current_verdict: '',
@@ -514,7 +528,7 @@ async function discoverProposalStaging(root, knownSlugs, proposalStagingRoot = n
   for (const entry of entries) {
     const recordPath = path.join(stagingRoot, entry.name);
     const record = await readJsonIfExists(recordPath);
-    const row = proposalStagingPaperRow(root, record, recordPath);
+    const row = proposalStagingPaperRow(root, stagingRoot, record, recordPath);
     if (!row) continue;
     if (knownSlugs.has(normalizeText(row.slug))) continue;
     knownSlugs.add(normalizeText(row.slug));

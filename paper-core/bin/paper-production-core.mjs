@@ -16,7 +16,7 @@ import {
 
 function usage() {
   return `Usage:
-  paper-production-core batch-run --mode <inventory|local-build|local-package|research-verify|journal-manage|empirical-analysis|venue-resolve|source-adapt|referee-review|referee-revise|local-review-loop|local-dry-run|reviewed-submit|legacy-cleanup> [--limit N] [--paper SLUG] [--target VENUE] [--dataset-root PATH] [--benchmark-id ID] [--apply-manuscript] [--inventory-source auto|hepta|yaml|legacy-sqlite] [--max-rounds N] [--json] [--write-report] [--execute]
+  paper-production-core batch-run --mode <inventory|local-build|local-package|research-verify|journal-manage|empirical-analysis|venue-resolve|source-adapt|referee-review|referee-revise|local-review-loop|local-dry-run|reviewed-submit|legacy-cleanup> [--limit N] [--paper SLUG] [--target VENUE] [--quality-profile PROFILE] [--dataset-root PATH] [--benchmark-id ID] [--apply-manuscript] [--inventory-source auto|hepta|yaml|legacy-sqlite] [--max-rounds N] [--json] [--write-report] [--execute]
 
   Compatibility alias: --mode referee-autopilot maps to local-review-loop and has no academic acceptance authority.
   paper-production-core proposal --idea TEXT [--discipline NAME] [--venue NAME] [--title TEXT] [--paper SLUG] [--paper-type TYPE] [--material TEXT] [--constraint TEXT] [--approved] [--materialize-source] [--stage-inventory] [--json] [--write-report]
@@ -176,6 +176,7 @@ async function main() {
     datasetRoot: args['dataset-root'] || args.dataset || null,
     benchmarkId: args['benchmark-id'] || args.benchmark || null,
     applyManuscript: Boolean(args['apply-manuscript']),
+    qualityProfile: args['quality-profile'] || null,
   });
   process.stdout.write(args.json ? JSON.stringify(report, null, 2) + '\n' : renderBatchConsole(report));
 }

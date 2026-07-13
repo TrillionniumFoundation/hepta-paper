@@ -1,0 +1,25 @@
+{
+  "claims": [
+    {
+      "claimId": "legacy-profile-equivalence-unconditional",
+      "theoremName": "profileEquivalenceTransfersDirectScoreLimit",
+      "expectedTypeHash": "sha256:legacy-source-backed-contract",
+      "unconditional": true
+    }
+  ],
+  "declarations": [
+    {
+      "name": "profileEquivalenceTransfersDirectScoreLimit",
+      "typeHash": "sha256:legacy-source-backed-contract",
+      "buildVerified": true,
+      "conditional": true,
+      "conclusionAssumedAsPremise": true,
+      "axioms": []
+    }
+  ],
+  "allowedAxioms": [],
+  "source": {
+    "root": "PaperFactoryFormalVerifier/SourceBacked",
+    "purpose": "adversarial_fixture_build_success_is_not_claim_proof"
+  }
+}

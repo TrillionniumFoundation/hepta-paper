@@ -1,4 +1,5 @@
 import { assertAgentExecutorPort } from '../../paper-ports/agent-executor-port.mjs';
+import { buildExecutorCapabilities, capabilityRequestFromExecution, evaluateExecutorCapabilityRequest } from '../../paper-ports/executor-capabilities.mjs';
 
 export function createAgentBackendRouter({ primary, fallbacks = [], health = () => ({}), failureThreshold = 3, cooldownMs = 60000, now = () => Date.now() } = {}) {
   const executors = [primary, ...fallbacks].filter(Boolean);
@@ -6,6 +7,23 @@ export function createAgentBackendRouter({ primary, fallbacks = [], health = () 
   executors.forEach(assertAgentExecutorPort);
   const failuresByExecutor = new Map();
   const unavailableUntil = new Map();
+  const backendCapabilities = executors.map((executor) => executor.capabilities());
+  const capabilities = buildExecutorCapabilities({
+    executorId: 'agent-backend-router-v1',
+    sandboxModes: [...new Set(backendCapabilities.flatMap((item) => item.sandboxModes))],
+    networkPolicy: 'provider-controlled',
+    workspaceIsolation: backendCapabilities.every((item) => item.workspaceIsolation),
+    languages: [...new Set(backendCapabilities.flatMap((item) => item.languages))],
+    gpu: backendCapabilities.some((item) => item.gpu),
+    maximumTimeoutMs: backendCapabilities.every((item) => item.maximumTimeoutMs !== null)
+      ? Math.max(...backendCapabilities.map((item) => item.maximumTimeoutMs))
+      : null,
+    maximumOutputTokens: backendCapabilities.every((item) => item.maximumOutputTokens !== null)
+      ? Math.max(...backendCapabilities.map((item) => item.maximumOutputTokens))
+      : null,
+    receiptKinds: [...new Set(backendCapabilities.flatMap((item) => item.receiptKinds))],
+    provider: 'routed',
+  });
   const backendStatus = () => Object.freeze(Object.fromEntries(executors.map((executor) => [executor.executorId, {
     failureCount: Number(failuresByExecutor.get(executor.executorId) || 0),
     unavailableUntil: unavailableUntil.get(executor.executorId) || null,
@@ -15,11 +33,18 @@ export function createAgentBackendRouter({ primary, fallbacks = [], health = () 
     version: 1,
     kind: 'AgentBackendRouter',
     executorId: 'agent-backend-router-v1',
+    capabilities: () => capabilities,
+    backendCapabilities: () => backendCapabilities,
     backendStatus,
     async execute(input = {}) {
       const failures = [];
       const snapshot = health();
       for (const executor of executors) {
+        const preflight = evaluateExecutorCapabilityRequest({ capabilities: executor.capabilities(), request: capabilityRequestFromExecution(input) });
+        if (preflight.blockers.length) {
+          failures.push({ executorId: executor.executorId, message: 'backend_capability_mismatch', blockers: preflight.blockers, receiptHash: null });
+          continue;
+        }
         if (snapshot[executor.executorId] === false) {
           failures.push({ executorId: executor.executorId, message: 'backend_health_probe_unavailable', receiptHash: null });
           continue;

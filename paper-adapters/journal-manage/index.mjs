@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { ensureDir, relativePath } from '../../paper-core/src/runtime/file-utils.mjs';
+import { ensureDir, relativePath } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { writeJsonFile } from '../artifacts/write-artifact.mjs';
 import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
 import { buildJournalConferenceRegistry, buildTargetSelectionPolicy, buildJournalTargetProfile, buildJournalRubricPacket, buildVenueRubricManager, buildFreshRefereePool, buildVenueEvidenceGate, buildVenueLifecyclePolicy, buildJournalConferenceSystemPacket, buildFreshRefereeVerdict } from './contracts.mjs';

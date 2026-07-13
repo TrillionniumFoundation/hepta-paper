@@ -1,10 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import {
-  fileRecord,
-  pathWithin,
-  readJsonIfExists,
-} from '../../paper-core/src/runtime/file-utils.mjs';
+import { readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
 import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
 import {
   loadAuthorityTrustStore,
@@ -53,8 +49,14 @@ export async function verifyAcademicEvidenceAttestation({
 } = {}) {
   const attestationPath = sourceRoot ? path.join(sourceRoot, 'ACADEMIC_EVIDENCE_ATTESTATION.json') : null;
   if (!attestationPath || !fs.existsSync(attestationPath)) return missingReport({ root, sourceRoot });
-  const attestation = await readJsonIfExists(attestationPath);
   const blockers = [];
+  const attestationRead = readScopedFileSync({ scopeRoot: sourceRoot, candidate: attestationPath });
+  let attestation = null;
+  if (attestationRead.status !== 'scoped_file_read_verified') blockers.push('academic_evidence_attestation_path_unsafe', ...attestationRead.blockers);
+  else {
+    try { attestation = JSON.parse(attestationRead.content.toString('utf8')); }
+    catch { /* handled below */ }
+  }
   if (!attestation) blockers.push('academic_evidence_attestation_invalid_json');
   if (attestation?.version !== 2 || attestation?.kind !== 'AcademicEvidenceAttestation') {
     blockers.push('academic_evidence_attestation_version_or_kind_unsupported');
@@ -82,11 +84,12 @@ export async function verifyAcademicEvidenceAttestation({
   blockers.push(...timeWindow.blockers);
   const sourceSnapshot = attestation?.sourceSnapshot || {};
   const sourceSnapshotPath = path.resolve(sourceRoot || root, String(sourceSnapshot.path || ''));
-  if (!sourceSnapshot.path || !sourceRoot || !pathWithin(sourceRoot, sourceSnapshotPath)) {
-    blockers.push('academic_evidence_source_snapshot_path_invalid');
-  }
-  const sourceSnapshotRecord = sourceRoot && pathWithin(sourceRoot, sourceSnapshotPath)
-    ? await fileRecord(root, sourceSnapshotPath, 'academic_evidence_source_snapshot')
+  const sourceSnapshotRead = sourceSnapshot.path && sourceRoot
+    ? readScopedFileSync({ scopeRoot: sourceRoot, candidate: sourceSnapshotPath })
+    : null;
+  if (!sourceSnapshotRead || sourceSnapshotRead.status !== 'scoped_file_read_verified') blockers.push('academic_evidence_source_snapshot_path_invalid', ...(sourceSnapshotRead?.blockers || []));
+  const sourceSnapshotRecord = sourceSnapshotRead?.status === 'scoped_file_read_verified'
+    ? { hash: sourceSnapshotRead.hash, sizeBytes: sourceSnapshotRead.bytes, scopedFileReadReceiptHash: sourceSnapshotRead.scopedFileReadReceiptHash }
     : null;
   if (!sourceSnapshotRecord) blockers.push('academic_evidence_source_snapshot_missing');
   if (sourceSnapshotRecord && sourceSnapshot.sha256 !== sourceSnapshotRecord.hash) {
@@ -101,16 +104,15 @@ export async function verifyAcademicEvidenceAttestation({
     const relativeArtifact = String(artifact?.path || '');
     const absoluteArtifact = base ? path.resolve(base, relativeArtifact) : null;
     const artifactBlockers = [];
-    if (!base || !relativeArtifact || !absoluteArtifact || !pathWithin(base, absoluteArtifact)) {
-      artifactBlockers.push('artifact_path_outside_allowed_evidence_root');
-    }
+    const artifactRead = base && relativeArtifact && absoluteArtifact
+      ? readScopedFileSync({ scopeRoot: base, candidate: absoluteArtifact })
+      : null;
+    if (!artifactRead || artifactRead.status !== 'scoped_file_read_verified') artifactBlockers.push('artifact_path_outside_allowed_evidence_root', ...(artifactRead?.blockers || []));
     if (!artifact?.kind || /smoke|synthetic|fixture/i.test(String(artifact.kind))) {
       artifactBlockers.push('artifact_kind_missing_or_ineligible');
     }
     if (!Array.isArray(artifact?.claimIds) || !artifact.claimIds.length) artifactBlockers.push('artifact_claim_ids_missing');
-    const record = artifactBlockers.length
-      ? null
-      : await fileRecord(root, absoluteArtifact, 'attested_academic_evidence');
+    const record = artifactBlockers.length ? null : { hash: artifactRead.hash, sizeBytes: artifactRead.bytes, scopedFileReadReceiptHash: artifactRead.scopedFileReadReceiptHash };
     if (!record) artifactBlockers.push('artifact_file_missing');
     if (record && artifact.sha256 !== record.hash) artifactBlockers.push('artifact_hash_mismatch');
     blockers.push(...artifactBlockers.map((blocker) => `${relativeArtifact || 'unknown'}:${blocker}`));
@@ -155,7 +157,7 @@ export async function verifyAcademicEvidenceAttestation({
     academicEvidenceEligible: blockers.length === 0,
     cryptographicSignaturesVerified: signatureVerification.cryptographicSignaturesVerified,
     attestationPath: path.relative(root, attestationPath).replace(/\\/g, '/'),
-    attestationHash: (await fileRecord(root, attestationPath, 'academic_evidence_attestation'))?.hash || null,
+    attestationHash: attestationRead.hash || null,
     paperId: paperTask?.paperId || null,
     taskKey: paperTask?.taskKey || null,
     sourceSnapshot: {

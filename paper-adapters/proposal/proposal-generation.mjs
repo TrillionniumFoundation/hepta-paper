@@ -1,4 +1,4 @@
-import { normalizeText, uniqueStrings } from '../../paper-core/src/runtime/text-utils.mjs';
+import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
 
 export const DISCIPLINE_PROFILES = Object.freeze([
   {

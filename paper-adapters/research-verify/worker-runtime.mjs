@@ -6,10 +6,12 @@ import {
   pathWithin,
   readJsonIfExists,
   sha256File,
-} from '../../paper-core/src/runtime/file-utils.mjs';
+} from '../../workflow-kernel/runtime/file-utils.mjs';
+import { inspectScopedPathSync, inspectScopedWriteTargetSync, readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
 import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
 import { createLeanFormalVerifier } from './formal-verifier.mjs';
 import { createLakeFormalVerifier } from './lake-formal-verifier.mjs';
+import { SYSTEM_ALLOWED_FORMAL_AXIOMS, formalAxiomPolicyBlockers } from '../../paper-domain/research/formal-verifier-policy.mjs';
 import { createOsSandboxedWorkerRunner, directoryMerkleHash } from '../runtime/os-sandboxed-worker-runner.mjs';
 
 export const NATIVE_RESEARCH_WORKER_TYPES = Object.freeze([
@@ -179,7 +181,8 @@ async function executeWorker(worker, inputRecords, { sourceRoot } = {}) {
   if (worker.type === 'formal_verifier_lake') {
     const relativeProjectRoot = String(worker.parameters?.projectRoot || '.');
     const projectRoot = path.resolve(sourceRoot, relativeProjectRoot);
-    if (!pathWithin(sourceRoot, projectRoot)) {
+    const projectIdentity = inspectScopedPathSync({ scopeRoot: sourceRoot, candidate: projectRoot, expect: 'directory', forbidHardlinks: false });
+    if (projectIdentity.status !== 'scoped_file_identity_verified') {
       return { status: 'formal_verifier_blocked', blockers: ['formal_project_root_outside_source_workspace'] };
     }
     const executable = String(worker.parameters?.executable || 'lake');
@@ -198,6 +201,8 @@ async function executeWorker(worker, inputRecords, { sourceRoot } = {}) {
     return verifier.verify({
       expectedInputs,
       timeoutMs: Math.min(Number(worker.parameters?.timeoutMs || 120000), 120000),
+      claimBindings: Array.isArray(worker.parameters?.claimBindings) ? worker.parameters.claimBindings : [],
+      allowedAxioms: SYSTEM_ALLOWED_FORMAL_AXIOMS,
     });
   }
   return { status: 'native_research_worker_blocked', blockers: ['native_research_worker_type_not_allowed'] };
@@ -213,7 +218,11 @@ async function validateInputs({ root, sourceRoot, worker }) {
     const absolutePath = path.resolve(sourceRoot, relative);
     const inputBlockers = [];
     if (!relative || !pathWithin(sourceRoot, absolutePath)) inputBlockers.push('research_worker_input_outside_source_workspace');
-    const record = inputBlockers.length ? null : await fileRecord(root, absolutePath, input?.role || 'research_worker_input');
+    const scopedRead = inputBlockers.length ? null : readScopedFileSync({ scopeRoot: sourceRoot, candidate: absolutePath });
+    if (scopedRead && scopedRead.status !== 'scoped_file_read_verified') inputBlockers.push(...scopedRead.blockers);
+    const record = scopedRead?.status === 'scoped_file_read_verified'
+      ? { path: relative, hash: scopedRead.hash, sizeBytes: scopedRead.bytes, scopedFileReadReceiptHash: scopedRead.scopedFileReadReceiptHash }
+      : null;
     if (!record) inputBlockers.push('research_worker_input_missing');
     if (!input?.sha256) inputBlockers.push('research_worker_input_hash_missing');
     if (record && record.hash !== input.sha256) inputBlockers.push('research_worker_input_hash_mismatch');
@@ -245,6 +254,22 @@ function normalizedWorkerDefinition(worker) {
     })),
     parameters: worker.parameters || {},
   };
+}
+
+export function formalAcademicPromotionBlockers(worker = {}, result = {}) {
+  if (worker.type !== 'formal_verifier_lake') return [];
+  const blockers = [];
+  const claimBindings = Array.isArray(worker.parameters?.claimBindings) ? worker.parameters.claimBindings : [];
+  blockers.push(...formalAxiomPolicyBlockers(worker.parameters?.allowedAxioms));
+  if (!claimBindings.length) blockers.push('formal_claim_bindings_required_for_academic_evidence');
+  if (result.status !== 'formal_claim_verified') blockers.push(`formal_claim_verification_required:${result.status || 'missing'}`);
+  const declaredClaimIds = new Set((worker.claimIds || []).map(String));
+  for (const binding of claimBindings) {
+    if (!binding?.claimId || !declaredClaimIds.has(String(binding.claimId))) {
+      blockers.push(`formal_claim_binding_worker_claim_mismatch:${binding?.claimId || 'missing'}`);
+    }
+  }
+  return [...new Set(blockers)];
 }
 
 function receiptHash(receipt) {
@@ -310,7 +335,17 @@ export async function runNativeResearchWorkers({
     : null;
   if (!outputDir || !pathWithin(runtimeRoot, outputDir)) reportBlockers.push('research_worker_runtime_output_invalid');
   if (execute && !artifactRepositoryFactory) reportBlockers.push('artifact_repository_factory_not_injected');
-  const artifactRepository = outputDir && artifactRepositoryFactory
+  if (execute && outputDir) {
+    const prospective = inspectScopedWriteTargetSync({ scopeRoot: runtimeRoot, candidate: path.join(outputDir, '.scope-check') });
+    if (prospective.status !== 'scoped_write_target_verified') {
+      reportBlockers.push('research_worker_runtime_output_unsafe', ...prospective.blockers);
+    } else {
+      await fs.mkdir(outputDir, { recursive: true });
+      const outputIdentity = inspectScopedPathSync({ scopeRoot: runtimeRoot, candidate: outputDir, expect: 'directory', forbidHardlinks: false });
+      if (outputIdentity.status !== 'scoped_file_identity_verified') reportBlockers.push('research_worker_runtime_output_unsafe', ...outputIdentity.blockers);
+    }
+  }
+  const artifactRepository = outputDir && artifactRepositoryFactory && !reportBlockers.includes('research_worker_runtime_output_unsafe')
     ? artifactRepositoryFactory(outputDir)
     : null;
   const receipts = [];
@@ -348,6 +383,7 @@ export async function runNativeResearchWorkers({
     const sourceMutationDetected = sourceMerkleHashBefore !== sourceMerkleHashAfter;
     if (sourceMutationDetected) blockers.push('native_research_worker_source_mutation_detected');
     blockers.push(...(result.blockers || []));
+    blockers.push(...formalAcademicPromotionBlockers(worker, result));
     const workerDefinitionHash = hashPaperRecord(
       'NativeResearchWorkerDefinition',
       normalizedWorkerDefinition(worker),
@@ -465,7 +501,7 @@ export async function runNativeResearchWorkers({
     ...report,
     nativeResearchWorkerExecutionReportHash: hashPaperRecord('NativeResearchWorkerExecutionReport', report),
   };
-  if (execute && outputDir) {
+  if (execute && outputDir && artifactRepository) {
     await artifactRepository.writeJson(path.join(outputDir, 'RESEARCH_WORKER_EXECUTION_REPORT.json'), hashed, {
       role: 'native_research_worker_execution_report',
     });

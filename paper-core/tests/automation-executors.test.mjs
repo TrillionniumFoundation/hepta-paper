@@ -7,10 +7,12 @@ import test from 'node:test';
 import { createCodexAgentExecutor } from '../../paper-adapters/automation/codex-agent-executor.mjs';
 import { createOllamaStructuredAgentExecutor } from '../../paper-adapters/automation/ollama-structured-agent-executor.mjs';
 import { createCampaignNodeExecutor } from '../../paper-adapters/automation/campaign-node-executor.mjs';
+import { createIsolatedAgentExecutor } from '../../paper-adapters/automation/isolated-agent-executor.mjs';
 import { sanitizeGeneratedLatex } from '../../paper-adapters/automation/generated-latex-sanitizer.mjs';
 import { createMultiLanguageEmpiricalExecutor } from '../../paper-adapters/automation/multi-language-empirical-executor.mjs';
 import { createFilesystemEmpiricalCacheRepository } from '../../paper-adapters/automation/empirical-cache-repository.mjs';
-import { createOsSandboxedWorkerRunner } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
+import { createOsSandboxedWorkerRunner, fileSha256Hash } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
+import { buildExecutorCapabilities } from '../../paper-ports/executor-capabilities.mjs';
 
 test('Codex agent adapter executes a real process and records workspace changes', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-agent-executor-'));
@@ -25,6 +27,38 @@ test('Codex agent adapter executes a real process and records workspace changes'
   assert.equal(receipt.externalActionPerformed, false);
 });
 
+test('isolated agent workspace excludes research-data binaries and oversized files', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-agent-content-policy-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const source = path.join(root, 'source');
+  fs.mkdirSync(source);
+  fs.writeFileSync(path.join(source, 'main.tex'), 'before\n');
+  fs.writeFileSync(path.join(source, 'scan.nii.gz'), Buffer.alloc(1024, 1));
+  fs.writeFileSync(path.join(source, 'large.csv'), Buffer.alloc(8 * 1024 * 1024 + 1, 2));
+  const derived = path.join(source, 'derived-data');
+  fs.mkdirSync(derived);
+  fs.writeFileSync(path.join(derived, 'part-a.bin'), Buffer.alloc(33 * 1024 * 1024, 3));
+  fs.writeFileSync(path.join(derived, 'part-b.bin'), Buffer.alloc(33 * 1024 * 1024, 4));
+  const delegate = {
+    version: 1,
+    kind: 'FixtureAgentExecutor',
+    executorId: 'fixture-agent',
+    capabilities: () => buildExecutorCapabilities({ executorId: 'fixture-agent', sandboxModes: ['read-only', 'workspace-write'], networkPolicy: 'none', receiptKinds: ['AgentExecutionReceipt'] }),
+    async execute(input) {
+      assert.equal(fs.existsSync(path.join(input.workspacePath, 'scan.nii.gz')), false);
+      assert.equal(fs.existsSync(path.join(input.workspacePath, 'large.csv')), false);
+      assert.equal(fs.existsSync(path.join(input.workspacePath, 'derived-data')), false);
+      fs.writeFileSync(path.join(input.workspacePath, 'main.tex'), 'after\n');
+      return { status: 'agent_execution_completed', agentExecutionReceiptHash: 'sha256:fixture' };
+    },
+  };
+  const executor = createIsolatedAgentExecutor({ delegate, isolationRoot: path.join(root, 'isolated'), keepFailedWorkspaces: false });
+  const receipt = await executor.execute({ workspacePath: source, role: 'writer' });
+  assert.equal(fs.readFileSync(path.join(source, 'main.tex'), 'utf8'), 'after\n');
+  assert.equal(receipt.workspaceContentPolicy.researchDataBinaryExcluded, true);
+  assert.deepEqual(receipt.workspaceContentPolicy.oversizedTopLevelDirectories, ['derived-data']);
+});
+
 test('multi-language empirical executor runs Python in kernel sandbox and persists declared outputs', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-empirical-executor-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -35,11 +69,43 @@ test('multi-language empirical executor runs Python in kernel sandbox and persis
   fs.writeFileSync(path.join(source, 'run.py'), 'import json\njson.dump({"metric": 0.91}, open("results.json", "w"))\n');
   const runner = createOsSandboxedWorkerRunner({ allowedExecutables: ['python3'], allowedRoots: [source], allowedOutputRoots: [output] });
   const executor = createMultiLanguageEmpiricalExecutor({ workerRunner: runner });
-  const receipt = executor.execute({ language: 'python', entrypoint: 'run.py', cwd: source, sourceRoot: source, outputDirectory: output, outputPaths: ['results.json'], timeoutMs: 10000 });
+  const receipt = executor.execute({ language: 'python', entrypoint: 'run.py', cwd: source, sourceRoot: source, outputDirectory: output, outputPaths: ['results.json'], timeoutMs: 30000 });
   assert.equal(receipt.status, 'empirical_execution_completed');
   assert.equal(receipt.isolation.kernelNetworkIsolationVerified, true);
   assert.equal(receipt.artifacts.length, 1);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(output, 'results.json'), 'utf8')), { metric: 0.91 });
+});
+
+test('sandbox injects only declared dataset environment paths and read-only mounts', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-dataset-environment-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const source = path.join(root, 'source');
+  const dataset = path.join(root, 'trial.csv');
+  fs.mkdirSync(source);
+  fs.writeFileSync(path.join(source, 'run.py'), 'print(1)\n');
+  fs.writeFileSync(dataset, 'subject,value\n1,2\n');
+  let command = [];
+  const runner = createOsSandboxedWorkerRunner({
+    allowedExecutables: ['python3'],
+    allowedRoots: [source],
+    allowedDatasetRoots: [root],
+    probe: { available: true, backend: 'bubblewrap', status: 'os_sandbox_available' },
+    executor(_launcher, args) { command = args; return { status: 0, stdout: '', stderr: '' }; },
+  });
+  const receipt = runner.run({
+    executable: 'python3',
+    args: ['run.py'],
+    cwd: source,
+    sourceRoot: source,
+    env: { HEPTA_DATASET_TRIAL: '/datasets/trial', UNDECLARED_SECRET: 'must-not-pass' },
+    datasetMounts: [{ name: 'trial', source: dataset, readOnly: true, manifestHash: fileSha256Hash(dataset), licenseId: 'CC-BY-4.0' }],
+  });
+  assert.equal(receipt.ok, true);
+  assert.ok(command.includes('HEPTA_DATASET_TRIAL'));
+  assert.ok(command.includes('/datasets/trial'));
+  assert.equal(command.some((value) => String(value).includes('UNDECLARED_SECRET')), false);
+  assert.equal(receipt.datasetMounts[0].sourceType, 'file');
+  assert.equal(receipt.datasetMounts[0].fileName, 'trial.csv');
 });
 
 test('empirical cache is source-bound and verifies artifact hashes before replay', (t) => {
@@ -99,33 +165,85 @@ test('campaign executor repairs a failed empirical command before completing the
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-empirical-repair-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.writeFileSync(path.join(root, 'main.tex'), 'fixture');
-  fs.writeFileSync(path.join(root, 'run.py'), 'raise RuntimeError("fixture")\n');
+  fs.writeFileSync(path.join(root, 'run.py'), 'import os\nfixture = os.environ["HEPTA_DATASET_FIXTURE"]\nraise RuntimeError("fixture")\n');
   let empiricalCalls = 0;
   const executor = createCampaignNodeExecutor({
     runtimeRoot: path.join(root, 'runtime'),
     empiricalExecutor: {
-      execute() {
+      execute(spec) {
         empiricalCalls += 1;
-        return empiricalCalls === 1
-          ? { status: 'empirical_execution_failed', blockers: ['os_sandbox_command_failed'], stderrTail: 'RuntimeError: fixture' }
-          : { status: 'empirical_execution_completed', multiLanguageEmpiricalReceiptHash: 'sha256:empirical' };
+        assert.equal(spec.env.HEPTA_OUTPUT_DIR, '/output');
+        if (empiricalCalls === 1) return { status: 'empirical_execution_failed', blockers: ['os_sandbox_command_failed'], stderrTail: 'RuntimeError: fixture' };
+        fs.mkdirSync(spec.outputDirectory, { recursive: true });
+        fs.writeFileSync(path.join(spec.outputDirectory, 'results.json'), JSON.stringify({ score: 1 }));
+        fs.writeFileSync(path.join(spec.outputDirectory, 'results.csv'), 'score\n1\n');
+        return {
+          status: 'empirical_execution_completed',
+          multiLanguageEmpiricalReceiptHash: 'sha256:empirical',
+          runnerReceiptHash: 'sha256:runner',
+          artifacts: [],
+          isolation: { gpuDeviceIsolationVerified: true },
+          containerImage: 'fixture:locked',
+          datasetMounts: [{ name: 'fixture', manifestHash: 'sha256:data', licenseId: 'MIT', readOnly: true }],
+        };
       },
     },
     agentExecutor: {
       async execute(input) {
         assert.equal(input.role, 'empirical-code-repair');
         assert.match(input.instructions, /RuntimeError: fixture/);
+        assert.deepEqual(input.isolationExcludes, ['/datasets/fixture']);
+        assert.equal(input.isolationPolicy.skipSourceSymlinks, true);
         return { agentExecutionReceiptHash: 'sha256:repair' };
       },
     },
   });
   const receipt = await executor.execute({
-    campaign: { campaign_id: 'campaign', paper_id: 'paper', spec: { sourceWorkspace: root, languages: ['python'] } },
+    campaign: { campaign_id: 'campaign', paper_id: 'paper', spec: { sourceWorkspace: root, languages: ['python'], datasetMounts: [{ name: 'fixture', source: '/datasets/fixture', readOnly: true, manifestHash: `sha256:${'a'.repeat(64)}`, licenseId: 'MIT' }] } },
     node: { node_id: 'node', kind: 'empirical', roundIndex: 0 },
     allNodes: [],
   });
   assert.equal(empiricalCalls, 2);
   assert.equal(receipt.status, 'automation_repair_execution_completed');
+  assert.equal(receipt.runnerReceiptHash, 'sha256:runner');
+  assert.equal(receipt.containerImage, 'fixture:locked');
+  assert.equal(receipt.isolation.gpuDeviceIsolationVerified, true);
+  assert.equal(receipt.datasetMounts[0].manifestHash, 'sha256:data');
+});
+
+test('campaign executor repairs successful commands that violate the metric artifact contract', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-empirical-artifact-repair-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, 'main.tex'), 'fixture');
+  fs.writeFileSync(path.join(root, 'run.R'), 'quit(status=0)\n');
+  let calls = 0;
+  let repaired = false;
+  const executor = createCampaignNodeExecutor({
+    runtimeRoot: path.join(root, 'runtime'),
+    empiricalExecutor: { execute(spec) {
+      calls += 1;
+      if (repaired) {
+        fs.mkdirSync(spec.outputDirectory, { recursive: true });
+        fs.writeFileSync(path.join(spec.outputDirectory, 'results.json'), '{"metric":1}\n');
+        fs.writeFileSync(path.join(spec.outputDirectory, 'results.csv'), 'metric\n1\n');
+      }
+      return { status: 'empirical_execution_completed', multiLanguageEmpiricalReceiptHash: `sha256:run-${calls}`, artifacts: [] };
+    } },
+    agentExecutor: { async execute(input) {
+      assert.equal(input.role, 'empirical-artifact-contract-repair');
+      assert.match(input.instructions, /HEPTA_OUTPUT_DIR/);
+      repaired = true;
+      return { agentExecutionReceiptHash: 'sha256:artifact-repair' };
+    } },
+  });
+  const receipt = await executor.execute({
+    campaign: { campaign_id: 'campaign', paper_id: 'paper', spec: { sourceWorkspace: root, languages: ['r'], metricSchema: { minimumMetricCount: 1 } } },
+    node: { node_id: 'node', kind: 'empirical', roundIndex: 0, spec: { language: 'r' } },
+    allNodes: [],
+  });
+  assert.equal(calls, 2);
+  assert.equal(receipt.status, 'automation_repair_execution_completed');
+  assert.equal(receipt.empiricalResultContractStatus, 'empirical_result_schema_verified');
 });
 
 test('generated LaTeX sanitizer converts model newline tokens and table row endings', (t) => {

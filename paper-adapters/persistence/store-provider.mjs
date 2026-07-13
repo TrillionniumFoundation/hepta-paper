@@ -15,6 +15,15 @@ const migrations = [
   { version: 6, name: '006_multiprocess_automation', path: path.join(workspaceRoot, 'store', 'migrations', '006_multiprocess_automation.sql') },
   { version: 7, name: '007_campaign_lineage_backfill', path: path.join(workspaceRoot, 'store', 'migrations', '007_campaign_lineage_backfill.sql') },
   { version: 8, name: '008_reviewer_identity_backfill', path: path.join(workspaceRoot, 'store', 'migrations', '008_reviewer_identity_backfill.sql') },
+  { version: 9, name: '009_resource_admission_queue', path: path.join(workspaceRoot, 'store', 'migrations', '009_resource_admission_queue.sql') },
+  { version: 10, name: '010_resource_admission_metadata', path: path.join(workspaceRoot, 'store', 'migrations', '010_resource_admission_metadata.sql') },
+  { version: 11, name: '011_workspace_lineage', path: path.join(workspaceRoot, 'store', 'migrations', '011_workspace_lineage.sql') },
+  { version: 12, name: '012_schema_metadata_consistency', path: path.join(workspaceRoot, 'store', 'migrations', '012_schema_metadata_consistency.sql') },
+  { version: 13, name: '013_campaign_telemetry', path: path.join(workspaceRoot, 'store', 'migrations', '013_campaign_telemetry.sql') },
+  { version: 14, name: '014_legacy_native_lineage', path: path.join(workspaceRoot, 'store', 'migrations', '014_legacy_native_lineage.sql') },
+  { version: 15, name: '015_submission_boundary_hardening', path: path.join(workspaceRoot, 'store', 'migrations', '015_submission_boundary_hardening.sql') },
+  { version: 16, name: '016_submission_delivery_leases', path: path.join(workspaceRoot, 'store', 'migrations', '016_submission_delivery_leases.sql') },
+  { version: 17, name: '017_trusted_evidence_and_response_consumption', path: path.join(workspaceRoot, 'store', 'migrations', '017_trusted_evidence_and_response_consumption.sql') },
 ];
 
 function sqlQuote(value) {

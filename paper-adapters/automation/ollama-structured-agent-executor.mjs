@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { assertAgentExecutorPort } from '../../paper-ports/agent-executor-port.mjs';
+import { buildExecutorCapabilities, capabilityRequestFromExecution, evaluateExecutorCapabilityRequest } from '../../paper-ports/executor-capabilities.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 function within(root, candidate) { return candidate === root || candidate.startsWith(`${root}${path.sep}`); }
@@ -85,11 +86,26 @@ export function createOllamaStructuredAgentExecutor({
   maximumOutputTokens = 4096,
 } = {}) {
   if (!model) throw new Error('Ollama model is required');
+  const executorId = 'ollama-structured-agent-v1';
+  const capabilities = buildExecutorCapabilities({
+    executorId,
+    sandboxModes: ['read-only', 'workspace-write'],
+    networkPolicy: 'local-provider-only',
+    workspaceIsolation: false,
+    maximumTimeoutMs: timeoutMs,
+    maximumOutputTokens: Math.min(8192, maximumOutputTokens),
+    receiptKinds: ['AgentExecutionReceipt'],
+    provider: 'ollama',
+  });
   return assertAgentExecutorPort({
     version: 1,
     kind: 'OllamaStructuredAgentExecutor',
-    executorId: 'ollama-structured-agent-v1',
-    async execute({ role, workspacePath, instructions, context = {}, requiredChecks = [], sandbox = 'workspace-write', outputTokenBudget = null, timeoutMs: requestedTimeout = null, signal = null } = {}) {
+    executorId,
+    capabilities: () => capabilities,
+    async execute(input = {}) {
+      const { role, workspacePath, instructions, context = {}, requiredChecks = [], sandbox = 'workspace-write', outputTokenBudget = null, timeoutMs: requestedTimeout = null, signal = null } = input;
+      const preflight = evaluateExecutorCapabilityRequest({ capabilities, request: capabilityRequestFromExecution({ ...input, sandbox, outputTokenBudget, timeoutMs: requestedTimeout }) });
+      if (preflight.blockers.length) throw new Error(preflight.blockers.join(','));
       const workspace = path.resolve(workspacePath || '');
       if (!role || !instructions || !fs.existsSync(workspace)) throw new Error('role, instructions and workspacePath are required');
       const files = sourceFiles(workspace);
@@ -149,7 +165,7 @@ export function createOllamaStructuredAgentExecutor({
       const payload = {
         version: 1,
         kind: 'AgentExecutionReceipt',
-        executorId: 'ollama-structured-agent-v1',
+        executorId,
         providerMode: 'local:ollama',
         model,
         resolvedModel: model,

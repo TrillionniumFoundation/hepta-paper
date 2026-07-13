@@ -4,7 +4,7 @@
   "archiveBasename": "paper-factory-control-plane-reference.tar.gz",
   "archiveSha256": "sha256:e431c4c7a51a15d64866b17a07c09dd17c15c32c8dddaccf1a769b1a5942cb9d",
   "matrixPath": "migration/legacy-semantic-migration-matrix.json",
-  "matrixSha256": "sha256:ea0fab8e3b3c7e71fb62c13e3f91898dcc929a0cb184897e20ed1c28bb8adb27",
+  "matrixSha256": "sha256:605e2e0a8764069f018c2d5b6de637f3c1b3797b8703f96c9299a941aaa0bb76",
   "sourceFileCount": 263,
   "sourceOfTruth": "immutable_archive_plus_hash_bound_matrix",
   "liveLegacyRootRequired": false

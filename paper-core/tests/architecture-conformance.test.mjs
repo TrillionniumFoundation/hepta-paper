@@ -18,9 +18,11 @@ import { buildClaimRegistry } from '../../paper-domain/research/claim-registry.m
 import { buildEvidenceIntake } from '../../paper-domain/research/evidence-ingestor.mjs';
 import { buildEvidenceQualityGate } from '../../paper-domain/research/evidence-quality-gate.mjs';
 import {
+  buildExecutorResponseIntake,
   buildSubmissionDeliveryRuntime,
   buildSubmissionDispatchAuthorization,
 } from '../../paper-domain/submission/delivery-runtime.mjs';
+import { createPaperArtifactPackage } from '../src/contracts/workflow-contracts.mjs';
 import { LEGACY_CAPABILITY_MATRIX_V3 } from '../../migration/legacy-capability-matrix-v3.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
@@ -38,10 +40,11 @@ test('workflow registry executes ordered stages and propagates action facts', as
     context,
     handlers: {
       build: async () => ({ build: { status: 'ready', externalActionPerformed: false } }),
+      'research-verify': async ({ state }) => ({ research: { status: state.build.status, externalActionPerformed: false } }),
       package: async ({ state }) => ({ package: { status: state.build.status, externalActionPerformed: false } }),
     },
   });
-  assert.deepEqual(execution.workflowReceipt.stages.map((stage) => stage.stage), ['build', 'package']);
+  assert.deepEqual(execution.workflowReceipt.stages.map((stage) => stage.stage), ['build', 'research-verify', 'package']);
   assert.equal(execution.workflowReceipt.externalActionPerformed, false);
   const actionExecution = await runWorkflowStages({
     definition: { mode: 'test-action', stages: ['action'] },
@@ -80,17 +83,25 @@ test('SQLite adapter implements StorePort without leaking the process primitive'
 
 test('submission delivery runtime remains fail-closed and has no executor implementation', () => {
   const paperTask = { paperId: 'paper-1', taskKey: 'paper:paper-1' };
+  const artifactPackage = createPaperArtifactPackage({ paperTask, artifacts: [{ path: 'paper.pdf', hash: `sha256:${'a'.repeat(64)}` }], submitReady: true });
+  const reviewedVenueEvidence = { status: 'reviewed_venue_evidence_verified', reviewedVenueEvidenceHash: `sha256:${'1'.repeat(64)}`, sourceVerificationReceiptHash: `sha256:${'2'.repeat(64)}`, observationSubjectHash: `sha256:${'4'.repeat(64)}`, reviewedBy: 'venue-observer', purpose: 'submission_preflight', portalRoute: '/submit' };
+  const providerCapabilityVerificationReceipt = { status: 'provider_capability_verified', portalRoute: '/submit', providerCapabilityVerificationReceiptHash: `sha256:${'3'.repeat(64)}` };
   const inputs = {
     paperTask,
+    artifactPackage,
     outbox: { status: 'queued_for_dry_run_executor', externalExecutorHandoffOutboxHash: 'outbox-hash' },
-    replayGuard: { status: 'dry_run_replay_allowed', submissionReplayGuardHash: 'replay-hash' },
+    replayGuard: { status: 'dry_run_replay_allowed', submissionReplayGuardHash: 'replay-hash', replayKey: `sha256:${'c'.repeat(64)}` },
     reviewedSubmitPreflightPacket: {
       status: 'reviewed_submit_preflight_ready_for_external_executor',
       reviewedSubmitPreflightPacketHash: 'preflight-hash',
+      artifactPackageHash: artifactPackage.artifactPackageHash,
     },
     controlledExecutorReceipt: {
       status: 'controlled_external_executor_receipt_recorded',
       controlledExternalExecutorReceiptHash: 'controlled-hash',
+      executorId: 'contract-executor',
+      executorDescriptorHash: `sha256:${'d'.repeat(64)}`,
+      executorCapabilitiesHash: `sha256:${'e'.repeat(64)}`,
     },
     liveAuthorizationReceipt: {
       status: 'live_submission_authorization_verified',
@@ -98,26 +109,53 @@ test('submission delivery runtime remains fail-closed and has no executor implem
       provider: 'contract-test-provider',
       accountId: 'contract-test-account',
       nonce: 'contract-test-nonce',
+      authorizationSubject: { artifactPackageHash: artifactPackage.artifactPackageHash, executorDescriptorHash: `sha256:${'d'.repeat(64)}`, reviewedSubmissionDecisionPacketHash: `sha256:${'f'.repeat(64)}`, reviewedVenueEvidenceHash: reviewedVenueEvidence.reviewedVenueEvidenceHash, venueObservationSourceVerificationReceiptHash: reviewedVenueEvidence.sourceVerificationReceiptHash, venueTarget: 'Contract Venue', portalRoute: '/submit', providerCapabilityVerificationReceiptHash: providerCapabilityVerificationReceipt.providerCapabilityVerificationReceiptHash },
+      responseDueAt: '2026-07-13T02:00:00.000Z',
     },
-    reconciliation: { status: 'live_submission_reconciled', submissionReconciliationHash: 'reconcile-hash' },
+    submissionDecisionPacket: { status: 'reviewed_submission_decision_verified', reviewedSubmissionDecisionPacketHash: `sha256:${'f'.repeat(64)}` },
+    reviewedVenueEvidence,
+    providerCapabilityVerificationReceipt,
   };
   const dispatch = buildSubmissionDispatchAuthorization(inputs);
   assert.equal(dispatch.status, 'submission_dispatch_authorization_ready');
-  const providerReceipt = { provider: 'contract-test-provider', submissionId: 'submission-1' };
+  const providerReceipt = { provider: 'contract-test-provider', accountId: 'contract-test-account', submissionId: 'submission-1', dispatchAuthorizationHash: dispatch.submissionDispatchAuthorizationHash, uploadedArtifactHashes: dispatch.expectedArtifactHashes };
+  const executorResponse = {
+    responseId: 'response-1',
+    outcome: 'submitted',
+    dispatchAuthorizationHash: dispatch.submissionDispatchAuthorizationHash,
+    provider: 'contract-test-provider',
+    accountId: 'contract-test-account',
+    submissionId: 'submission-1',
+    providerReceipt,
+    providerReceiptHash: hashRecord('ProviderSubmissionReceipt', providerReceipt),
+    uploadedArtifactHashes: dispatch.expectedArtifactHashes,
+    performedAt: '2026-07-13T00:00:00.000Z',
+    attempt: 1,
+    executorId: dispatch.executorId,
+    executorDescriptorHash: dispatch.executorDescriptorHash,
+    capabilitiesHash: dispatch.executorCapabilitiesHash,
+  };
+  const executorResponseVerificationReceipt = { version: 1, kind: 'ExecutorResponseVerificationReceipt', status: 'executor_response_signature_verified', responseId: executorResponse.responseId, dispatchAuthorizationHash: dispatch.submissionDispatchAuthorizationHash, executorId: dispatch.executorId, executorDescriptorHash: dispatch.executorDescriptorHash, capabilitiesHash: dispatch.executorCapabilitiesHash, cryptographicSignaturesVerified: true, executorResponseVerificationReceiptHash: `sha256:${'9'.repeat(64)}` };
+  const responseIntake = buildExecutorResponseIntake({ dispatchAuthorization: dispatch, response: executorResponse, responseVerificationReceipt: executorResponseVerificationReceipt });
   const runtime = buildSubmissionDeliveryRuntime({
     ...inputs,
-    executorResponse: {
-      responseId: 'response-1',
-      outcome: 'submitted',
+    executorResponse,
+    executorResponseVerificationReceipt,
+    venueObservation: {
       dispatchAuthorizationHash: dispatch.submissionDispatchAuthorizationHash,
-      providerReceipt,
-      providerReceiptHash: hashRecord('ProviderSubmissionReceipt', providerReceipt),
-      attempt: 1,
+      executorResponseIntakeHash: responseIntake.executorResponseIntakeHash,
+      provider: 'contract-test-provider',
+      accountId: 'contract-test-account',
+      submissionId: 'submission-1',
+      providerReceiptHash: executorResponse.providerReceiptHash,
+      observedState: 'received',
+      observedAt: '2026-07-13T00:01:00.000Z',
+      evidenceHashes: [`sha256:${'b'.repeat(64)}`],
     },
   });
   assert.equal(runtime.status, 'submission_delivery_complete');
   assert.equal(runtime.executorImplementationPresent, false);
-  assert.equal(runtime.externalActionPerformed, false);
+  assert.equal(runtime.externalActionPerformed, true);
   assert.equal(buildSubmissionDeliveryRuntime({ paperTask }).status, 'submission_delivery_blocked');
 });
 
@@ -141,12 +179,19 @@ test('sandbox and formal verifier ports reject unbounded execution', async (t) =
   }).status, 'formal_verifier_passed');
 });
 
-test('research bounded contexts require claim, artifact, and native receipt coverage', () => {
+test('research bounded contexts apply typed worker requirements to formal claims', () => {
   const paperTask = { paperId: 'paper-1' };
-  const claimRegistry = buildClaimRegistry({ paperTask, claims: [{ id: 'claim-1', text: 'claim' }] });
+  const claimRegistry = buildClaimRegistry({ paperTask, claims: [{
+    id: 'claim-1',
+    text: 'claim',
+    sourceLocator: 'main.tex#claim-1',
+    claimKind: 'formal',
+    proofObligations: ['obligation-1'],
+    verificationPlan: { kind: 'formal' },
+  }] });
   const evidenceIntake = buildEvidenceIntake({
     paperTask,
-    evidenceItems: [{ id: 'evidence-1', claimIds: ['claim-1'], path: 'artifact.json', hash: 'sha256:artifact', verifiedHash: 'sha256:artifact', verificationStatus: 'evidence_artifact_verified', provenanceReceiptHash: 'sha256:provenance' }],
+    evidenceItems: [{ id: 'evidence-1', claimIds: ['claim-1'], path: 'artifact.json', hash: 'sha256:artifact', verifiedHash: 'sha256:artifact', verificationStatus: 'evidence_artifact_verified', provenanceReceiptHash: 'sha256:provenance', createdAt: new Date().toISOString() }],
   });
   const blocked = buildEvidenceQualityGate({ paperTask, claimRegistry, evidenceIntake, nativeWorkerReceipts: [] });
   assert.equal(blocked.status, 'evidence_quality_blocked');
@@ -163,18 +208,20 @@ test('research bounded contexts require claim, artifact, and native receipt cove
 test('capability and journal datasets are versioned and schema-valid', () => {
   assert.equal(LEGACY_CAPABILITY_MATRIX_V3.summary.entryCount, 249);
   assert.deepEqual(LEGACY_CAPABILITY_MATRIX_V3.summary.byDecision, {
-    permanent_retirement: 88,
+    permanent_retirement: 209,
     superseded_with_coverage: 40,
-    capability_reimplementation: 121,
+    capability_reimplementation: 0,
   });
-  assert.equal(LEGACY_CAPABILITY_MATRIX_V3.summary.ownerAcceptancePending, 249);
   assert.equal(LEGACY_CAPABILITY_MATRIX_V3.summary.decisionMapped, 249);
-  assert.equal(LEGACY_CAPABILITY_MATRIX_V3.summary.implementationNotApplicable, 88);
+  assert.equal(LEGACY_CAPABILITY_MATRIX_V3.summary.implementationNotApplicable, 209);
   assert.ok(Number.isInteger(LEGACY_CAPABILITY_MATRIX_V3.summary.implementationVerified));
   assert.ok(LEGACY_CAPABILITY_MATRIX_V3.summary.implementationVerified >= 0);
-  assert.ok(LEGACY_CAPABILITY_MATRIX_V3.summary.implementationVerified <= 161);
+  assert.ok(LEGACY_CAPABILITY_MATRIX_V3.summary.implementationVerified <= 40);
   assert.ok(LEGACY_CAPABILITY_MATRIX_V3.summary.operationallyProven <= LEGACY_CAPABILITY_MATRIX_V3.summary.implementationVerified);
-  assert.equal(LEGACY_CAPABILITY_MATRIX_V3.summary.operationallyProven, 0);
+  assert.equal(
+    LEGACY_CAPABILITY_MATRIX_V3.summary.operationallyProven + LEGACY_CAPABILITY_MATRIX_V3.summary.operationallyNotProven,
+    40,
+  );
   assert.equal(
     LEGACY_CAPABILITY_MATRIX_V3.summary.ownerAccepted + LEGACY_CAPABILITY_MATRIX_V3.summary.ownerAcceptancePending,
     LEGACY_CAPABILITY_MATRIX_V3.summary.entryCount,
@@ -218,6 +265,9 @@ test('production modules do not bypass StorePort or restore autopilot acceptance
   assert.equal(/run(?:LatexBuild|Package|ResearchVerify|RefereeReview|RefereeRevise)Adapter/.test(localLoop), false);
   const domainSource = productionFiles.filter((file) => file.includes(`${path.sep}paper-domain${path.sep}`)).map((file) => fs.readFileSync(file, 'utf8')).join('\n');
   assert.equal(domainSource.includes('paper-core/'), false);
+  const adapterSource = productionFiles.filter((file) => file.includes(`${path.sep}paper-adapters${path.sep}`)).map((file) => fs.readFileSync(file, 'utf8')).join('\n');
+  assert.equal(adapterSource.includes('paper-application/'), false);
+  assert.equal(adapterSource.includes('paper-core/src/runtime/'), false);
   const writeFacade = fs.readFileSync(path.join(workspaceRoot, 'paper-adapters', 'artifacts', 'write-artifact.mjs'), 'utf8');
   assert.equal(writeFacade.includes('createFilesystemArtifactRepository'), false);
   assert.equal(writeFacade.includes('requires an ExecutionContext-backed persistent ledger'), true);
@@ -234,6 +284,8 @@ test('production modules do not bypass StorePort or restore autopilot acceptance
     if (file.endsWith('-repository.mjs')) continue;
     if (file.endsWith('ollama-structured-agent-executor.mjs')) continue;
     if (file.endsWith('generated-latex-sanitizer.mjs')) continue;
+    if (file.endsWith('runtime-retention.mjs')) continue;
+    if (file.endsWith('workspace-snapshot-exporter.mjs')) continue;
     const text = fs.readFileSync(file, 'utf8');
     assert.equal(/\b(writeFile|writeFileSync|appendFile|appendFileSync|rename|renameSync)\(/.test(text), false, file);
   }

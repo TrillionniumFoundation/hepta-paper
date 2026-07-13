@@ -11,6 +11,17 @@ import { createResourceGovernor } from '../../paper-application/automation/resou
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { createSqliteCampaignStore } from '../../paper-adapters/persistence/sqlite-campaign-store.mjs';
 import { buildPaperCampaignPlan } from '../../paper-domain/automation/campaign-plan.mjs';
+import { buildExecutorCapabilities } from '../../paper-ports/executor-capabilities.mjs';
+
+function fixtureCapabilities(executorId, overrides = {}) {
+  return () => buildExecutorCapabilities({
+    executorId,
+    sandboxModes: ['read-only', 'workspace-write'],
+    networkPolicy: 'none',
+    receiptKinds: ['AgentExecutionReceipt'],
+    ...overrides,
+  });
+}
 
 function temporary(t, prefix) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -43,8 +54,8 @@ test('isolated executor merges non-conflicting changes and backend router falls 
   const paper = path.join(root, 'paper');
   fs.mkdirSync(paper);
   fs.writeFileSync(path.join(paper, 'main.tex'), 'before\n');
-  const fallback = { executorId: 'fallback', async execute(input) { fs.writeFileSync(path.join(input.workspacePath, 'main.tex'), 'after\n'); fs.writeFileSync(path.join(input.workspacePath, 'NEW.md'), 'new\n'); fs.mkdirSync(path.join(input.workspacePath, '__pycache__')); fs.writeFileSync(path.join(input.workspacePath, '__pycache__', 'generated.pyc'), 'cache'); return { status: 'agent_execution_completed', changedPaths: ['main.tex', 'NEW.md', '__pycache__/generated.pyc'], agentExecutionReceiptHash: 'sha256:fallback' }; } };
-  const router = createAgentBackendRouter({ primary: { executorId: 'primary', async execute() { const error = new Error('offline'); error.retryable = true; throw error; } }, fallbacks: [fallback] });
+  const fallback = { executorId: 'fallback', capabilities: fixtureCapabilities('fallback'), async execute(input) { fs.writeFileSync(path.join(input.workspacePath, 'main.tex'), 'after\n'); fs.writeFileSync(path.join(input.workspacePath, 'NEW.md'), 'new\n'); fs.mkdirSync(path.join(input.workspacePath, '__pycache__')); fs.writeFileSync(path.join(input.workspacePath, '__pycache__', 'generated.pyc'), 'cache'); return { status: 'agent_execution_completed', changedPaths: ['main.tex', 'NEW.md', '__pycache__/generated.pyc'], agentExecutionReceiptHash: 'sha256:fallback' }; } };
+  const router = createAgentBackendRouter({ primary: { executorId: 'primary', capabilities: fixtureCapabilities('primary'), async execute() { const error = new Error('offline'); error.retryable = true; throw error; } }, fallbacks: [fallback] });
   const executor = createIsolatedAgentExecutor({ delegate: router, isolationRoot: isolation, keepWorkspaces: false });
   const receipt = await executor.execute({ role: 'writer', workspacePath: paper, instructions: 'edit', context: { campaignId: 'c', nodeId: 'n' } });
   assert.equal(receipt.selectedExecutorId, 'fallback');
@@ -63,7 +74,7 @@ test('OpenClaw timeout is eligible for fallback while isolated workspaces reject
   fs.writeFileSync(slow, '#!/bin/sh\nsleep 30\n');
   fs.chmodSync(slow, 0o755);
   const primary = createOpenClawAgentExecutor({ openclawBinary: slow, agentId: 'fixture', timeoutMs: 25 });
-  const fallback = { executorId: 'fallback-after-timeout', async execute() { return { status: 'agent_execution_completed', changedPaths: [], agentExecutionReceiptHash: 'sha256:fallback-timeout' }; } };
+  const fallback = { executorId: 'fallback-after-timeout', capabilities: fixtureCapabilities('fallback-after-timeout'), async execute() { return { status: 'agent_execution_completed', changedPaths: [], agentExecutionReceiptHash: 'sha256:fallback-timeout' }; } };
   const receipt = await createAgentBackendRouter({ primary, fallbacks: [fallback] }).execute({ role: 'writer', workspacePath: paper, instructions: 'probe', context: { campaignId: 'c', nodeId: 'n' } });
   assert.equal(receipt.selectedExecutorId, 'fallback-after-timeout');
   fs.symlinkSync('/tmp', path.join(paper, 'unsafe-link'));
@@ -76,7 +87,7 @@ test('isolated merge conflicts retain delegate usage receipts for hard budgets',
   const paper = path.join(root, 'paper');
   fs.mkdirSync(paper);
   fs.writeFileSync(path.join(paper, 'main.tex'), 'before\n');
-  const delegate = { executorId: 'conflicting-delegate', async execute(input) {
+  const delegate = { executorId: 'conflicting-delegate', capabilities: fixtureCapabilities('conflicting-delegate'), async execute(input) {
     fs.writeFileSync(path.join(input.workspacePath, 'main.tex'), 'agent\n');
     fs.writeFileSync(path.join(input.context.sourceWorkspace, 'main.tex'), 'concurrent\n');
     return { status: 'agent_execution_completed', agentExecutionReceiptHash: 'sha256:conflict', usage: { total: 7 } };
@@ -116,8 +127,10 @@ test('campaign operations persist pause resume retry cancel and usage', (t) => {
   assert.equal(campaigns.recordUsage('campaign', { agentCalls: 2, cpuJobs: 1, tokens: 42 }).agentCallCount, 2);
   const [leased] = campaigns.claimReady({ campaignId: 'campaign', workerId: 'worker' });
   campaigns.startNode({ nodeId: leased.node_id, workerId: 'worker' });
+  assert.equal(campaigns.getCampaign('campaign').currentPhase, leased.kind);
   campaigns.failNode({ nodeId: leased.node_id, workerId: 'worker', retryable: false });
   assert.equal(campaigns.retryNode(leased.node_id).status, 'queued');
+  assert.equal(campaigns.getCampaign('campaign').currentPhase, leased.kind);
   assert.equal(campaigns.cancelCampaign('campaign').status, 'cancelled');
 });
 
@@ -212,4 +225,8 @@ test('manuscript citation and artifact checks are deterministic and fail closed'
   assert.equal(runManuscriptQualityChecks({ workspacePath: root }).passed, true);
   fs.writeFileSync(path.join(root, 'main.tex'), '\\begin{table}observed metric: 1\\end{table}\n');
   assert.ok(runManuscriptQualityChecks({ workspacePath: root }).blockers.includes('empirical_claim_provenance_missing'));
+  fs.rmSync(path.join(root, 'results.json'));
+  fs.writeFileSync(path.join(root, 'main.tex'), '\\begin{table}theorem cases\\end{table}\n');
+  assert.equal(runManuscriptQualityChecks({ workspacePath: root }).passed, true);
+  assert.ok(runManuscriptQualityChecks({ workspacePath: root, requiresEmpiricalArtifacts: true }).blockers.includes('table_or_figure_without_empirical_artifact'));
 });

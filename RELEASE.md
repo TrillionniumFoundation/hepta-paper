@@ -1,12 +1,46 @@
 # Release process
 
-Version 0.17.0 is an automation-first research-production release. It upgrades
-the campaign plane from single-process coordination to native WAL SQLite,
-database-backed global resource leases, a persistent dispatcher/worker split,
-strict reviewer identity evidence, explicit campaign lineage and honest
-unknown-cost accounting. It retains safe in-place recovery and append-only
-referee-round extension from 0.16.
-It is not a live-submission release.
+Version 0.20.0 is an unreleased automation-first research-production candidate. It combines
+the native WAL/dispatcher and evidence hardening from 0.17 with explicit
+multi-language empirical DAGs, licensed content-addressed datasets, repeated
+metric/artifact verification, persistent fair resource admission, bounded
+runtime retention, operational SLOs and tighter domain/application/adapter
+boundaries. It retains safe in-place recovery, append-only referee-round
+extension, strict reviewer identity and honest unknown-cost accounting.
+It is not a live-submission release and must not be tagged while the worktree,
+sandbox soak, workspace recovery, SLO or exact-commit release evidence is incomplete.
+
+The candidate includes a post-action submission evidence and redrive contract,
+but still contains no in-process live provider executor. A submitted outcome is
+releasable only after an atomically consumed single-use authorization, a
+provider-scoped receipt, exact uploaded-artifact hashes, an identity-bound
+signed executor response and a live venue-state proof reconcile. Missing or
+ambiguous responses remain in a wait/review state until their deadline and a
+reviewed venue-side non-submission proof; retrying then requires a new
+authorization and dispatch cycle. Invalid boundary payloads are stored only as
+hashes and failure codes in quarantine. The bundled sandbox's incomplete
+"submitted" fixture is therefore quarantined rather than promoted to a fake
+full-lifecycle receipt.
+
+The live authorization subject additionally binds a signed, ledger/CAS-backed
+venue observation, its observer and purpose, the exact portal route/provider
+capability receipt and any redrive decision/prior dispatch cycle. Evidence
+receipts are accepted only from their expected trusted issuer class, and CAS
+verification re-reads stable regular manifest/object/materialized bytes rather
+than trusting ledger membership alone. A future provider executor must present
+a signed provider/account/route capability attestation before atomically
+claiming an expiring outbox lease. Migration 017 atomically couples response
+state with its ledger receipt and adds an anchor-scoped, gap-free monotonic
+response-consumption cursor.
+
+Experiment promotion additionally requires a registered immutable profile and
+a ledger-verified execution contract across experiment/run identity,
+dataset/code/result, fixed output paths and roles, named CAS artifacts, worker
+output manifest and reproducibility receipt. Coq and Isabelle entries describe
+fail-closed adapter and certificate contracts only; their trusted execution
+receipt binds command, toolchain, runner, exit code, output hashes, certificate
+receipt, source manifest and claim/obligation manifest. Executable presence
+does not claim operational support.
 
 Run `npm run release:verify` from a clean commit. Verification uses disposable
 SQLite/CAS/ledger state, proves that production database byte and logical hashes

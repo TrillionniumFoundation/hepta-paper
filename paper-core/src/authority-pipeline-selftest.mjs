@@ -20,6 +20,14 @@ import {
   buildLiveSubmissionAuthorizationSubject,
   verifyLiveSubmissionAuthorization,
 } from '../../paper-adapters/submission/live-authorization.mjs';
+import { buildTargetScopeReceipt } from '../../paper-domain/automation/target-scope-policy.mjs';
+import { buildSemanticPromotionLock } from '../../paper-domain/submission/semantic-promotion-lock.mjs';
+import { evaluatePromotionDependencyClosure } from '../../paper-domain/quality/promotion-dependency-closure.mjs';
+import { buildExecutorCapabilities } from '../../paper-ports/executor-capabilities.mjs';
+import { submissionExecutorDescriptor } from '../../paper-ports/submission-executor-port.mjs';
+import { buildReviewedSubmissionDecisionPacket } from '../../paper-domain/submission/reviewed-submission-decision.mjs';
+import { buildReviewedVenueEvidence } from '../../paper-domain/submission/reviewed-venue-evidence.mjs';
+import { buildVenueObservationSubject, verifyReviewedVenueObservationSource } from '../../paper-adapters/submission/venue-observation-verification.mjs';
 
 function keyMaterial(keyId, subjectId, roles) {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
@@ -62,6 +70,15 @@ try {
   await fs.writeFile(path.join(sourceRoot, 'main.tex'), mainTex, 'utf8');
   await fs.writeFile(path.join(sourceRoot, 'observations.csv'), csv, 'utf8');
   await writeJson(path.join(sourceRoot, 'results.json'), resultJson);
+  await writeJson(path.join(sourceRoot, 'CLAIMS.json'), {
+    claims: [{
+      id: 'claim-1',
+      text: 'The bounded observed fixture satisfies its declared checks.',
+      source_locator: 'main.tex#bounded-observed-fixture',
+      claim_kind: 'empirical_claim',
+      verification_plan: { kind: 'artifact_integrity', worker_ids: ['artifact_integrity', 'descriptive_statistics', 'result_assertions'] },
+    }],
+  });
   const mainHash = await sha256File(path.join(sourceRoot, 'main.tex'));
   const csvHash = await sha256File(path.join(sourceRoot, 'observations.csv'));
   const resultHash = await sha256File(path.join(sourceRoot, 'results.json'));
@@ -129,11 +146,22 @@ try {
   });
   const sourceHashBeforeWorkers = await sha256File(path.join(sourceRoot, 'main.tex'));
   let artifactLedgerCounter = 0;
+  const artifactLedgerRows = new Map();
+  const artifactReceiptLedger = {
+    record(receipt) {
+      const receiptId = `authority-selftest:${++artifactLedgerCounter}`;
+      const receiptHash = receipt.writeReceiptHash || receipt.receiptHash || hashPaperRecord(receipt.kind || 'Receipt', receipt);
+      artifactLedgerRows.set(receiptId, { receipt_id: receiptId, receipt_sha256: receiptHash, receipt_json: JSON.stringify(receipt), stream: receipt.kind === 'ArtifactWriteReceipt' ? 'artifact-writes' : 'authority-selftest', writer_id: 'authority-selftest', writer_kind: receipt.kind === 'ArtifactWriteReceipt' ? 'content-addressed-repository' : 'isolated-selftest', writer_trusted: 1 });
+      return { receiptId, receiptHash };
+    },
+    get(receiptId) { return artifactLedgerRows.get(receiptId) || null; },
+    list() { return [...artifactLedgerRows.values()]; },
+  };
   const artifactRepositoryFactory = (scopeRoot) => createFilesystemArtifactRepository({
     scopeRoot,
     casRoot: path.join(runtimeRoot, 'artifact-cas'),
     clock: { nowIso: () => new Date().toISOString() },
-    receiptLedger: { record: () => ({ receiptId: `authority-selftest:${++artifactLedgerCounter}` }) },
+    receiptLedger: artifactReceiptLedger,
   });
   await Promise.all([
     runResearchVerifyAdapter({
@@ -184,10 +212,15 @@ try {
     'live-executor-authorizer-subject',
     ['live_executor_authorizer'],
   );
+  const venueObserver = keyMaterial(
+    'venue-observer-key',
+    'venue-observer-subject',
+    ['venue_observer'],
+  );
   const trustStore = {
     version: 1,
     kind: 'AuthorityTrustStore',
-    keys: [evidenceAuthority, refereeAuthority, submissionOperator, liveExecutorAuthorizer]
+    keys: [evidenceAuthority, refereeAuthority, submissionOperator, liveExecutorAuthorizer, venueObserver]
       .map(({ privateKeyPem: _privateKeyPem, ...key }) => ({
         ...key,
         algorithm: 'ed25519',
@@ -251,6 +284,11 @@ try {
     paperId: paperTask.paperId,
     artifactCount: 2,
     submitReady: true,
+    packageVerificationStatus: 'package_verification_passed',
+    packageVerificationReceiptHash: hashPaperRecord('FixturePackageVerification', {}),
+    artifactSettlementStatus: 'artifact_settlement_verified',
+    artifactSettlementHash: hashPaperRecord('FixtureArtifactSettlement', {}),
+    sourceSnapshotHash: mainHash,
     evidenceRefs: [],
     artifacts: [
       { role: 'compiled_pdf', path: 'package/paper.pdf', hash: hashPaperRecord('FixturePdf', {}) },
@@ -266,6 +304,28 @@ try {
     mode: 'reviewed-submit',
   });
   assert.equal(venuePlan.status, 'local_dry_run_ready');
+  const packageVerificationReceipt = {
+    status: 'package_verification_passed',
+    packageVerificationReceiptHash: artifactPackage.packageVerificationReceiptHash,
+    artifactSettlement: { status: 'artifact_settlement_verified', artifactSettlementHash: artifactPackage.artifactSettlementHash },
+  };
+  const promotionGate = {
+    status: 'manuscript_promotion_ready',
+    manuscriptPromotionGateHash: hashPaperRecord('FixtureManuscriptPromotionGate', {}),
+    promotionDependencyClosure: evaluatePromotionDependencyClosure({ researchReport }),
+    promotionInputSnapshotHash: researchReport.capabilities.promotionInputSnapshot.promotionInputSnapshotHash,
+  };
+  assert.equal(promotionGate.promotionDependencyClosure.status, 'promotion_dependency_closure_ready', JSON.stringify(promotionGate.promotionDependencyClosure));
+  const packageResult = { artifactPackage, packageVerificationReceipt, manuscriptPromotionGate: promotionGate };
+  const targetScopeReceipt = buildTargetScopeReceipt({
+    mode: 'reviewed-submit', execute: true, requestedPaperIds: [paperTask.paperId],
+    selectedTasks: [paperTask], inventorySource: 'fixture', requireExplicitScope: true,
+  });
+  const semanticPromotionLock = buildSemanticPromotionLock({
+    paperTask, targetScopeReceipt, artifactPackage, packageVerificationReceipt,
+    researchReport, promotionGate, venuePlan,
+  });
+  assert.equal(semanticPromotionLock.status, 'semantic_promotion_unlocked');
   const reviewText = [
     '# Independent Referee Report',
     '',
@@ -293,6 +353,7 @@ try {
         researchReport.academicEvidenceAttestation.academicEvidenceAttestationVerificationHash,
       artifactPackageHash: artifactPackage.artifactPackageHash,
       venueSubmissionPlanHash: venuePlan.venueSubmissionPlanHash,
+      semanticPromotionLockHash: semanticPromotionLock.semanticPromotionLockHash,
     },
     reviewArtifact: { path: 'review.md', sha256: reviewHash },
     signedAt: '2026-07-10T05:05:00.000Z',
@@ -313,6 +374,7 @@ try {
     researchReport,
     artifactPackage,
     venuePlan,
+    semanticPromotionLock,
     trustStoreOverride: trustStore,
     now: fixedNow,
   });
@@ -341,6 +403,7 @@ try {
     researchReport,
     artifactPackage,
     venuePlan,
+    semanticPromotionLock,
     trustStoreOverride: trustStore,
     now: fixedNow,
   });
@@ -350,6 +413,23 @@ try {
   ));
   await writeJson(path.join(inbox, 'INDEPENDENT_REFEREE_VERDICT.json'), independentVerdict);
 
+  const executorCapabilities = buildExecutorCapabilities({ executorId: 'fixture-submission-executor', sandboxModes: ['external-workspace'], networkPolicy: 'provider-scoped', externalActions: true, workspaceIsolation: true, receiptKinds: ['signed-response'] });
+  const executorDescriptor = submissionExecutorDescriptor({ executorId: 'fixture-submission-executor', provider: 'fixture-portal', accountId: 'fixture-account', workspaceRoot: '/external/fixture', externalWorkspace: true, capabilities: () => executorCapabilities, dispatch() {} });
+  const providerCapabilityPayload = { version: 1, kind: 'ProviderCapabilityVerificationReceipt', status: 'provider_capability_verified', provider: 'fixture-portal', accountId: 'fixture-account', portalRoute: '/submit/manuscript', executorDescriptorHash: executorDescriptor.submissionExecutorDescriptorHash, capabilitiesHash: executorDescriptor.capabilitiesHash, attestationHash: hashPaperRecord('FixtureProviderCapabilityAttestation', { provider: 'fixture-portal', accountId: 'fixture-account', portalRoute: '/submit/manuscript' }), verifiedSubjectIds: ['fixture-provider-capability-operator'], cryptographicSignaturesVerified: true, validFrom: '2026-07-10T05:00:00.000Z', expiresAt: '2026-07-10T06:00:00.000Z', blockers: [] };
+  const providerCapabilityVerificationReceipt = { ...providerCapabilityPayload, providerCapabilityVerificationReceiptHash: hashPaperRecord('ProviderCapabilityVerificationReceipt', providerCapabilityPayload) };
+  const submissionMetadata = { title: 'Authority fixture', abstract: 'Authority pipeline fixture abstract.', authors: [{ name: 'Fixture Author' }], track: 'main', anonymity: 'double_blind', keywords: ['verification'], subjectAreas: ['systems'], conflicts: [], supplements: [], checklist: { ethics: true }, coverLetter: 'Please consider this fixture.' };
+  const submissionDecisionPacket = buildReviewedSubmissionDecisionPacket({ paperTask, venuePlan, metadata: submissionMetadata, review: { reviewedBy: 'fixture-human-operator', reviewedAt: '2026-07-10T05:20:00.000Z', reviewActorType: 'human', humanConfirmedFields: ['title', 'abstract', 'authors', 'track', 'anonymity', 'keywords', 'subjectAreas', 'conflicts', 'supplements', 'checklist', 'coverLetter'] } });
+  assert.equal(submissionDecisionPacket.status, 'reviewed_submission_decision_verified');
+  const venueRepository = artifactRepositoryFactory(inbox);
+  const venueWriteReceipt = await venueRepository.writeJson(path.join(inbox, 'venue-observation.json'), { portalState: 'accepting_submissions', route: '/submit/manuscript' }, { role: 'venue-observation' });
+  const { ledgerReceiptId: venueLedgerReceiptId, ...storedVenueWriteReceipt } = venueWriteReceipt;
+  const venuePreflightObservation = { provider: 'fixture-portal', portalRoute: '/submit/manuscript', venueTarget: venuePlan.venue?.name || venuePlan.target || paperTask.venueTarget, track: 'main', deadlineState: 'open', observedState: 'accepting_submissions', observedAt: '2026-07-10T05:20:00.000Z', expiresAt: '2026-07-10T05:55:00.000Z', reviewedBy: venueObserver.subjectId, evidenceHashes: [venueWriteReceipt.hash], evidenceRefs: [{ path: venueWriteReceipt.path, hash: venueWriteReceipt.hash, artifactWriteReceipt: storedVenueWriteReceipt, ledgerReceiptId: venueLedgerReceiptId }], fetchedPortalState: true };
+  const venueSubject = buildVenueObservationSubject({ paperTask, venuePlan, observation: venuePreflightObservation });
+  const signedVenueObservation = signAuthorityDocument({ version: 1, kind: 'ReviewedVenueObservationAuthorization', observationSubjectHash: venueSubject.reviewedVenueObservationSubjectHash, signedAt: '2026-07-10T05:20:00.000Z', validFrom: '2026-07-10T05:20:00.000Z', expiresAt: '2026-07-10T05:55:00.000Z' }, { privateKeyPem: venueObserver.privateKeyPem, keyId: venueObserver.keyId, role: 'venue_observer' });
+  const venueSourceVerificationReceipt = verifyReviewedVenueObservationSource({ paperTask, venuePlan, observation: venuePreflightObservation, signedObservation: signedVenueObservation, receiptLedger: artifactReceiptLedger, trustStore, now: fixedNow });
+  assert.equal(venueSourceVerificationReceipt.status, 'reviewed_venue_observation_source_verified');
+  const reviewedVenueEvidence = buildReviewedVenueEvidence({ paperTask, venuePlan, observation: venuePreflightObservation, sourceVerificationReceipt: venueSourceVerificationReceipt, now: fixedNow });
+  assert.equal(reviewedVenueEvidence.status, 'reviewed_venue_evidence_verified');
   const liveSubject = buildLiveSubmissionAuthorizationSubject({
     paperTask,
     artifactPackage,
@@ -358,6 +438,12 @@ try {
     venuePlan,
     provider: 'fixture-portal',
     accountId: 'fixture-account',
+    semanticPromotionLock,
+    executorDescriptor,
+    submissionDecisionPacket,
+    reviewedVenueEvidence,
+    venueObservationSourceVerificationReceipt: venueSourceVerificationReceipt,
+    providerCapabilityVerificationReceipt,
   });
   let liveAuthorization = {
     version: 1,
@@ -375,6 +461,7 @@ try {
     signedAt: '2026-07-10T05:10:00.000Z',
     validFrom: '2026-07-10T05:10:00.000Z',
     expiresAt: '2026-07-10T06:10:00.000Z',
+    responseDueAt: '2026-07-10T05:50:00.000Z',
   };
   liveAuthorization = signAuthorityDocument(liveAuthorization, {
     privateKeyPem: submissionOperator.privateKeyPem,
@@ -395,8 +482,14 @@ try {
     researchReport,
     independentReviewAuthorityReceipt,
     venuePlan,
+    semanticPromotionLock,
     trustStoreOverride: trustStore,
     now: fixedNow,
+    executorDescriptor,
+    submissionDecisionPacket,
+    reviewedVenueEvidence,
+    venueObservationSourceVerificationReceipt: venueSourceVerificationReceipt,
+    providerCapabilityVerificationReceipt,
   });
   assert.equal(liveAuthorizationReceipt.status, 'live_submission_authorization_verified');
   assert.equal(liveAuthorizationReceipt.liveExternalActionAuthorized, true);
@@ -413,8 +506,14 @@ try {
     researchReport,
     independentReviewAuthorityReceipt,
     venuePlan,
+    semanticPromotionLock,
     trustStoreOverride: trustStore,
     now: fixedNow,
+    executorDescriptor,
+    submissionDecisionPacket,
+    reviewedVenueEvidence,
+    venueObservationSourceVerificationReceipt: venueSourceVerificationReceipt,
+    providerCapabilityVerificationReceipt,
   });
   assert.equal(tamperedLiveAuthorization.status, 'live_submission_authorization_blocked');
   assert.ok(tamperedLiveAuthorization.blockers.some((blocker) => (
@@ -426,12 +525,21 @@ try {
     row,
     venues,
     artifactPackage,
+    packageResult,
     researchReport,
+    targetScopeReceipt,
     mode: 'reviewed-submit',
     reviewedSubmit: true,
     venuePlanOverride: venuePlan,
     independentReviewAuthorityReceipt,
     liveAuthorizationReceipt,
+    semanticPromotionLock,
+    submissionDecisionPacket,
+    executorDescriptor,
+    venueEvidenceNow: fixedNow,
+    venuePreflightObservation,
+    reviewedVenueEvidenceOverride: reviewedVenueEvidence,
+    providerCapabilityVerificationReceipt,
   });
   assert.equal(lifecycle.approvalPacket.status, 'approved_for_external_executor_handoff');
   assert.equal(lifecycle.approvalPacket.agentApproved, false);
@@ -451,8 +559,14 @@ try {
     researchReport,
     independentReviewAuthorityReceipt,
     venuePlan,
+    semanticPromotionLock,
     trustStoreOverride: trustStore,
     now: new Date('2026-07-10T06:11:00.000Z'),
+    executorDescriptor,
+    submissionDecisionPacket,
+    reviewedVenueEvidence,
+    venueObservationSourceVerificationReceipt: venueSourceVerificationReceipt,
+    providerCapabilityVerificationReceipt,
   });
   assert.equal(expiredAuthorizationReceipt.status, 'live_submission_authorization_blocked');
   assert.ok(expiredAuthorizationReceipt.blockers.includes('authority_expired'));

@@ -14,20 +14,18 @@ assert.equal(matrix.version, 3);
 assert.equal(matrix.entries.length, 249);
 assert.equal(new Set(matrix.entries.map((entry) => entry.legacyMatrixEntryId)).size, 249);
 assert.deepEqual(matrix.summary.byDecision, {
-  [CAPABILITY_DECISIONS.PERMANENT_RETIREMENT]: 88,
+  [CAPABILITY_DECISIONS.PERMANENT_RETIREMENT]: 209,
   [CAPABILITY_DECISIONS.SUPERSEDED_WITH_COVERAGE]: 40,
-  [CAPABILITY_DECISIONS.CAPABILITY_REIMPLEMENTATION]: 121,
+  [CAPABILITY_DECISIONS.CAPABILITY_REIMPLEMENTATION]: 0,
 });
-assert.equal(matrix.summary.uniqueCapabilityCount, 14);
-assert.equal(matrix.summary.ownerAcceptancePending, 249);
+assert.equal(matrix.summary.uniqueCapabilityCount, 5);
 assert.equal(matrix.summary.decisionMapped, 249);
 assert.equal(matrix.summary.contractsDefined, 249);
-assert.equal(matrix.summary.implementationVerified, 161);
-assert.equal(matrix.summary.implementationNotApplicable, 88);
-assert.equal(matrix.summary.operationallyProven, 0);
-assert.equal(matrix.summary.operationallyNotProven, 161);
-assert.equal(matrix.summary.ownerAccepted, 0);
-assert.equal(matrix.summary.ownerAcceptanceFamilyCount, 13);
+assert.ok(matrix.summary.implementationVerified >= 0 && matrix.summary.implementationVerified <= 40);
+assert.equal(matrix.summary.implementationNotApplicable, 209);
+assert.equal(matrix.summary.operationallyProven + matrix.summary.operationallyNotProven, 40);
+assert.equal(matrix.summary.ownerAccepted + matrix.summary.ownerAcceptancePending, 249);
+assert.equal(matrix.summary.ownerAcceptanceFamilyCount, 3);
 assert.equal(matrix.ownerAcceptanceFamilyManifest.families.flatMap((family) => family.legacyEntries).length, 249);
 assert.equal(new Set(matrix.ownerAcceptanceFamilyManifest.families.flatMap((family) => family.legacyEntries.map((entry) => entry.legacyMatrixEntryId))).size, 249);
 for (const entry of matrix.entries) {
@@ -37,7 +35,12 @@ for (const entry of matrix.entries) {
   assert.equal(Object.hasOwn(entry, 'coverageStatus'), false);
   assert.equal(entry.decision_mapped.satisfied, true);
   assert.equal(entry.contract_defined.satisfied, true);
-  assert.equal(entry.owner_accepted.status, 'pending_owner_acceptance');
+  assert.equal(
+    entry.owner_accepted.status,
+    entry.owner_accepted.satisfied
+      ? 'cryptographically_verified_owner_acceptance'
+      : 'pending_owner_acceptance',
+  );
   assert.ok(entry.coverageTests.length > 0, entry.source.path);
   for (const coverageTest of entry.coverageTests) {
     assert.equal(coverageTest.sha256, sha256File(path.join(workspaceRoot, coverageTest.path)));
@@ -46,11 +49,21 @@ for (const entry of matrix.entries) {
     assert.deepEqual(entry.capabilityIds, []);
   } else {
     assert.ok(entry.capabilityIds.length > 0, entry.source.path);
-    assert.equal(entry.implementation_verified.satisfied, true);
-    assert.equal(entry.implementation_verified.capabilityReceiptHashes.length, entry.capabilityIds.length);
-    assert.equal(entry.implementation_verified.testResults.length, entry.capabilityIds.length);
-    assert.equal(entry.operationally_proven.satisfied, false);
-    assert.equal(entry.operationally_proven.status, 'production_bound_operational_receipts_pending');
+    if (entry.implementation_verified.satisfied) {
+      assert.equal(entry.implementation_verified.capabilityReceiptHashes.length, entry.capabilityIds.length);
+      assert.equal(entry.implementation_verified.testResults.length, entry.capabilityIds.length);
+    } else {
+      assert.equal(entry.implementation_verified.status, 'executed_capability_receipts_missing_or_invalid');
+    }
+    assert.equal(
+      entry.operationally_proven.status,
+      entry.operationally_proven.satisfied
+        ? 'production_bound_operational_receipts_verified'
+        : 'production_bound_operational_receipts_pending',
+    );
+    if (entry.operationally_proven.satisfied) {
+      assert.equal(entry.operationally_proven.operationalReceiptHashes.length, entry.capabilityIds.length);
+    }
     assert.ok(entry.coverageTests.some((test) => test.coverageClass.startsWith('capability_specific_')));
     for (const capabilityId of entry.capabilityIds) {
       assert.ok(entry.coverageTests.some((test) => test.capabilityId === capabilityId), `${entry.source.path}:${capabilityId}`);

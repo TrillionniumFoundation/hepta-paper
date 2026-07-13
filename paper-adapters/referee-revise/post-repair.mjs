@@ -13,8 +13,8 @@ import {
   fileRecord,
   pathWithin,
   relativePath,
-} from '../../paper-core/src/runtime/file-utils.mjs';
-import { normalizeText, uniqueStrings } from '../../paper-core/src/runtime/text-utils.mjs';
+} from '../../workflow-kernel/runtime/file-utils.mjs';
+import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
 import { writeJsonFile } from '../artifacts/write-artifact.mjs';
 import {
   buildRefereeRevisionDryRunReceipt,

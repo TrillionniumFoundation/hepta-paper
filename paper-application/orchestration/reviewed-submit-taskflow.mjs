@@ -5,6 +5,7 @@ export const REVIEWED_SUBMIT_TASKFLOW_PILOT_PAPER = 'A_Theory_of__Expectations';
 export const REVIEWED_SUBMIT_TASKFLOW_CONTROLLER = 'hepta-paper/reviewed-submit';
 
 const CHECKPOINTS = Object.freeze([
+  ['semanticPromotionStatus', 'semantic_promotion_unlocked', 'await_semantic_promotion_lock', 'semantic_promotion_lock'],
   ['academicEvidenceStatus', 'academic_evidence_verified', 'await_academic_evidence', 'academic_evidence'],
   ['independentRefereeStatus', 'independent_referee_acceptance_verified', 'await_independent_referee', 'independent_referee'],
   ['liveAuthorizationStatus', 'live_submission_authorization_verified', 'await_dual_live_authorization', 'dual_live_authorization'],
@@ -23,6 +24,7 @@ export function buildReviewedSubmitDomainSnapshot({
   paperTask,
   releaseCommit,
   artifactPackage,
+  semanticPromotionLock = null,
   academicEvidenceReceipt = null,
   independentRefereeReceipt = null,
   liveAuthorizationReceipt = null,
@@ -36,6 +38,7 @@ export function buildReviewedSubmitDomainSnapshot({
     throw new Error('paperTask, releaseCommit and artifactPackageHash are required');
   }
   const records = [
+    semanticPromotionLock,
     academicEvidenceReceipt,
     independentRefereeReceipt,
     liveAuthorizationReceipt,
@@ -51,6 +54,8 @@ export function buildReviewedSubmitDomainSnapshot({
     paperId: paperTask.paperId,
     releaseCommit,
     packageHash: artifactPackage.artifactPackageHash,
+    semanticPromotionStatus: semanticPromotionLock?.status || null,
+    semanticPromotionLockHash: semanticPromotionLock?.semanticPromotionLockHash || null,
     academicEvidenceStatus: academicEvidenceReceipt?.status || null,
     independentRefereeStatus: independentRefereeReceipt?.status || null,
     liveAuthorizationStatus: liveAuthorizationReceipt?.status || null,
@@ -70,8 +75,8 @@ function assertDomainSnapshot(snapshot) {
   if (snapshot?.kind !== 'ReviewedSubmitDomainSnapshot' || snapshot?.version !== 1) {
     throw new Error('ReviewedSubmitDomainSnapshot v1 is required');
   }
-  if (!snapshot.paperId || !snapshot.releaseCommit || !snapshot.packageHash) {
-    throw new Error('paperId, releaseCommit and packageHash are required');
+  if (!snapshot.paperId || !snapshot.releaseCommit || !snapshot.packageHash || !snapshot.semanticPromotionLockHash) {
+    throw new Error('paperId, releaseCommit, packageHash and semanticPromotionLockHash are required');
   }
   if (snapshot.domainSource !== 'hepta_sqlite_and_verified_receipts') {
     throw new Error('TaskFlow may only consume a hepta verified domain snapshot');
@@ -83,7 +88,8 @@ function assertFlowIdentity(currentFlow, snapshot) {
   const state = currentFlow?.stateJson;
   if (!state || state.paperId !== snapshot.paperId
     || state.releaseCommit !== snapshot.releaseCommit
-    || state.packageHash !== snapshot.packageHash) {
+    || state.packageHash !== snapshot.packageHash
+    || state.semanticPromotionLockHash !== snapshot.semanticPromotionLockHash) {
     throw new Error('TaskFlow paper, release commit and package identity must remain fixed');
   }
 }
@@ -96,6 +102,7 @@ export function buildReviewedSubmitCoordinationPlan(snapshot) {
     paperId: snapshot.paperId,
     releaseCommit: snapshot.releaseCommit,
     packageHash: snapshot.packageHash,
+    semanticPromotionLockHash: snapshot.semanticPromotionLockHash || null,
     domainSnapshotHash,
     receiptHashes: [...new Set((snapshot.receiptHashes || []).filter(Boolean).map(String))].sort(),
     blockerCodes: [...new Set((snapshot.blockerCodes || []).filter(Boolean).map(String))].sort(),

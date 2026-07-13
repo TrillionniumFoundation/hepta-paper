@@ -3,6 +3,7 @@ import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { assertArtifactRepository, assertArtifactTarget } from '../../paper-ports/artifact-repository-port.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { inspectScopedWriteTargetSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
 
 function sha256(value) {
   return `sha256:${crypto.createHash('sha256').update(value).digest('hex')}`;
@@ -71,12 +72,20 @@ export function createFilesystemArtifactRepository({
     if (!role) throw new Error('Artifact write role is required');
     if (!atomic) throw new Error('ArtifactRepository only permits atomic materialization');
     const { candidate } = assertArtifactTarget({ scopeRoot: declaredRoot, target });
+    const beforeTarget = inspectScopedWriteTargetSync({ scopeRoot: declaredRoot, candidate });
+    if (beforeTarget.status !== 'scoped_write_target_verified') {
+      throw new Error(`Artifact target is unsafe: ${beforeTarget.blockers.join(',')}`);
+    }
     const bytes = Buffer.isBuffer(payload) ? payload : Buffer.from(String(payload), 'utf8');
     const contentHash = sha256(bytes);
     const digest = digestPart(contentHash);
     const objectPath = path.join(objectsRoot, digest.slice(0, 2), digest.slice(2));
     const objectCreated = await writeImmutable(objectPath, bytes);
     await atomicMaterialize(candidate, objectPath);
+    const afterTarget = inspectScopedWriteTargetSync({ scopeRoot: declaredRoot, candidate });
+    if (afterTarget.status !== 'scoped_write_target_verified') {
+      throw new Error(`Artifact target became unsafe: ${afterTarget.blockers.join(',')}`);
+    }
     const manifestPayload = {
       version: 1,
       kind: 'ImmutableArtifactManifest',
@@ -109,6 +118,7 @@ export function createFilesystemArtifactRepository({
       atomic: true,
       scopeRoot: declaredRoot,
       casRoot: declaredCasRoot,
+      scopedWriteTargetIdentityHash: afterTarget.scopedWriteTargetIdentityHash,
       createdAt: manifestPayload.createdAt,
       externalActionPerformed: false,
     });
@@ -124,6 +134,10 @@ export function createFilesystemArtifactRepository({
     scopeRoot: declaredRoot,
     casRoot: declaredCasRoot,
     retentionPolicy: policy,
+    writeBytes(target, value, options = {}) {
+      if (!Buffer.isBuffer(value) && !(value instanceof Uint8Array)) throw new Error('ArtifactRepository.writeBytes requires bytes');
+      return write({ target, payload: Buffer.from(value), contentType: 'application/octet-stream', ...options });
+    },
     writeText(target, value, options = {}) {
       return write({ target, payload: value, contentType: 'text/plain', ...options });
     },

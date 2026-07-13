@@ -1,12 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { readJsonIfExists } from '../../paper-core/src/runtime/file-utils.mjs';
+import { readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
 import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
 import {
   loadAuthorityTrustStore,
   verifyAuthoritySignatures,
   verifyAuthorityTimeWindow,
 } from '../../paper-core/src/authority-signatures.mjs';
+import { validateBoundaryRecord } from '../../paper-ports/boundary-schema-catalog.mjs';
 
 export function buildLiveSubmissionAuthorizationSubject({
   paperTask,
@@ -16,6 +17,13 @@ export function buildLiveSubmissionAuthorizationSubject({
   venuePlan,
   provider,
   accountId,
+  semanticPromotionLock,
+  executorDescriptor = null,
+  submissionDecisionPacket = null,
+  reviewedVenueEvidence = null,
+  redrivePlan = null,
+  redriveDecision = null,
+  providerCapabilityVerificationReceipt = null,
 } = {}) {
   const subject = {
     version: 1,
@@ -32,6 +40,21 @@ export function buildLiveSubmissionAuthorizationSubject({
     venueTarget: venuePlan?.venue?.name || venuePlan?.target || paperTask?.venueTarget || null,
     provider: provider || null,
     accountId: accountId || null,
+    portalRoute: reviewedVenueEvidence?.portalRoute || null,
+    providerCapabilityVerificationReceiptHash: providerCapabilityVerificationReceipt?.providerCapabilityVerificationReceiptHash || null,
+    semanticPromotionLockHash: semanticPromotionLock?.semanticPromotionLockHash || null,
+    executorDescriptorHash: executorDescriptor?.submissionExecutorDescriptorHash || null,
+    executorCapabilitiesHash: executorDescriptor?.capabilitiesHash || null,
+    reviewedSubmissionDecisionPacketHash: submissionDecisionPacket?.reviewedSubmissionDecisionPacketHash || null,
+    reviewedVenueEvidenceHash: reviewedVenueEvidence?.reviewedVenueEvidenceHash || null,
+    venueObservationSourceVerificationReceiptHash: reviewedVenueEvidence?.sourceVerificationReceiptHash || null,
+    venueObservationSubjectHash: reviewedVenueEvidence?.observationSubjectHash || null,
+    venueObserverId: reviewedVenueEvidence?.reviewedBy || null,
+    venueObservationPurpose: reviewedVenueEvidence?.purpose || null,
+    redrivePlanHash: redrivePlan?.submissionRedrivePlanHash || null,
+    redriveDecisionHash: redriveDecision?.submissionRedriveDecisionHash || null,
+    priorDispatchAuthorizationHash: redrivePlan?.dispatchAuthorizationHash || null,
+    priorDispatchCycleHash: redrivePlan?.priorDispatchCycleHash || null,
   };
   return {
     ...subject,
@@ -72,6 +95,14 @@ export async function verifyLiveSubmissionAuthorization({
   researchReport = null,
   independentReviewAuthorityReceipt = null,
   venuePlan = null,
+  semanticPromotionLock = null,
+  executorDescriptor = null,
+  submissionDecisionPacket = null,
+  reviewedVenueEvidence = null,
+  redrivePlan = null,
+  redriveDecision = null,
+  venueObservationSourceVerificationReceipt = null,
+  providerCapabilityVerificationReceipt = null,
   trustStoreOverride = null,
   now = new Date(),
 } = {}) {
@@ -82,7 +113,13 @@ export async function verifyLiveSubmissionAuthorization({
   const authorizationPath = authorizationFile
     ? path.relative(root, authorizationFile).replace(/\\/g, '/')
     : null;
-  const document = authorizationFile ? await readJsonIfExists(authorizationFile) : null;
+  const authorizationRead = authorizationFile && inbox
+    ? readScopedFileSync({ scopeRoot: inbox, candidate: authorizationFile })
+    : null;
+  let document = null;
+  if (authorizationRead?.status === 'scoped_file_read_verified') {
+    try { document = JSON.parse(authorizationRead.content.toString('utf8')); } catch { /* blocked below */ }
+  }
   if (!document) {
     return blockedReceipt({
       paperTask,
@@ -112,11 +149,48 @@ export async function verifyLiveSubmissionAuthorization({
     venuePlan,
     provider: document.provider,
     accountId: document.accountId,
+    semanticPromotionLock,
+    executorDescriptor,
+    submissionDecisionPacket,
+    reviewedVenueEvidence,
+    redrivePlan,
+    redriveDecision,
+    providerCapabilityVerificationReceipt,
   });
+  blockers.push(...validateBoundaryRecord(expectedSubject).blockers);
+  if (submissionDecisionPacket?.status !== 'reviewed_submission_decision_verified') blockers.push('reviewed_submission_decision_required');
+  if (reviewedVenueEvidence?.status !== 'reviewed_venue_evidence_verified'
+    || !reviewedVenueEvidence?.sourceVerificationReceiptHash) blockers.push('reviewed_venue_source_verified_evidence_required');
+  if (venueObservationSourceVerificationReceipt?.status !== 'reviewed_venue_observation_source_verified'
+    || venueObservationSourceVerificationReceipt?.cryptographicSignaturesVerified !== true
+    || venueObservationSourceVerificationReceipt?.ledgerReceiptsVerified !== true
+    || venueObservationSourceVerificationReceipt?.artifactSourcesVerified !== true
+    || venueObservationSourceVerificationReceipt?.reviewedVenueObservationSourceVerificationReceiptHash !== reviewedVenueEvidence?.sourceVerificationReceiptHash
+    || venueObservationSourceVerificationReceipt?.observationSubjectHash !== reviewedVenueEvidence?.observationSubjectHash
+    || venueObservationSourceVerificationReceipt?.reviewedBy !== reviewedVenueEvidence?.reviewedBy
+    || venueObservationSourceVerificationReceipt?.purpose !== reviewedVenueEvidence?.purpose
+    || venueObservationSourceVerificationReceipt?.portalRoute !== reviewedVenueEvidence?.portalRoute) {
+    blockers.push('reviewed_venue_source_verification_receipt_invalid');
+  }
+  if (providerCapabilityVerificationReceipt?.status !== 'provider_capability_verified'
+    || providerCapabilityVerificationReceipt?.cryptographicSignaturesVerified !== true
+    || providerCapabilityVerificationReceipt?.provider !== document.provider
+    || providerCapabilityVerificationReceipt?.accountId !== document.accountId
+    || providerCapabilityVerificationReceipt?.executorDescriptorHash !== executorDescriptor?.submissionExecutorDescriptorHash
+    || providerCapabilityVerificationReceipt?.capabilitiesHash !== executorDescriptor?.capabilitiesHash
+    || providerCapabilityVerificationReceipt?.portalRoute !== reviewedVenueEvidence?.portalRoute) {
+    blockers.push('provider_capability_not_bound_to_live_authorization');
+  }
+  if (redrivePlan) {
+    if (redrivePlan?.status !== 'submission_redrive_reauthorization_required') blockers.push('redrive_plan_not_ready');
+    if (redriveDecision?.status !== 'submission_redrive_reauthorization_approved') blockers.push('redrive_decision_not_approved');
+    if (redrivePlan?.redriveDecisionHash !== redriveDecision?.submissionRedriveDecisionHash) blockers.push('redrive_decision_plan_mismatch');
+  }
   if (document.authorizationSubjectHash !== expectedSubject.liveSubmissionAuthorizationSubjectHash) {
     blockers.push('live_submission_authorization_subject_hash_mismatch');
   }
   if (!artifactPackage?.artifactPackageHash) blockers.push('live_submission_artifact_package_missing');
+  if (semanticPromotionLock?.status !== 'semantic_promotion_unlocked') blockers.push('live_submission_semantic_promotion_lock_not_ready');
   if (researchReport?.academicEvidenceEligible !== true) blockers.push('live_submission_academic_evidence_not_verified');
   if (independentReviewAuthorityReceipt?.acceptanceAuthorityReady !== true) {
     blockers.push('live_submission_independent_referee_acceptance_missing');
@@ -145,6 +219,11 @@ export async function verifyLiveSubmissionAuthorization({
     maximumLifetimeMs: 24 * 60 * 60 * 1000,
   });
   blockers.push(...timeWindow.blockers);
+  const responseDueMs = Date.parse(String(document.responseDueAt || ''));
+  if (!Number.isFinite(responseDueMs)) blockers.push('live_submission_response_due_at_invalid');
+  if (Number.isFinite(responseDueMs) && responseDueMs <= now.getTime()) blockers.push('live_submission_response_due_at_not_future');
+  if (Number.isFinite(responseDueMs) && Number.isFinite(Date.parse(String(document.expiresAt || '')))
+    && responseDueMs > Date.parse(String(document.expiresAt))) blockers.push('live_submission_response_due_after_authorization_expiry');
   const consumedPath = runtimeRoot && document.nonce
     ? path.join(runtimeRoot, 'submission-authorization-consumed', paperTask.paperId, `${document.nonce}.json`)
     : null;
@@ -164,6 +243,7 @@ export async function verifyLiveSubmissionAuthorization({
     authorizationSubjectHash: expectedSubject.liveSubmissionAuthorizationSubjectHash,
     provider: document.provider || null,
     accountId: document.accountId || null,
+    semanticPromotionLockHash: semanticPromotionLock?.semanticPromotionLockHash || null,
     portalAction: document.portalAction || null,
     environment: document.environment || null,
     nonce: document.nonce || null,
@@ -172,6 +252,16 @@ export async function verifyLiveSubmissionAuthorization({
     signatureVerification,
     timeWindow,
     consumed: Boolean(consumedPath && fs.existsSync(consumedPath)),
+    responseDueAt: Number.isFinite(responseDueMs) ? new Date(responseDueMs).toISOString() : null,
+    reviewedVenueEvidenceHash: reviewedVenueEvidence?.reviewedVenueEvidenceHash || null,
+    venueObservationSourceVerificationReceiptHash: reviewedVenueEvidence?.sourceVerificationReceiptHash || null,
+    venueObservationSubjectHash: reviewedVenueEvidence?.observationSubjectHash || null,
+    venueObserverId: reviewedVenueEvidence?.reviewedBy || null,
+    venueObservationPurpose: reviewedVenueEvidence?.purpose || null,
+    portalRoute: reviewedVenueEvidence?.portalRoute || null,
+    providerCapabilityVerificationReceiptHash: providerCapabilityVerificationReceipt?.providerCapabilityVerificationReceiptHash || null,
+    redrivePlanHash: redrivePlan?.submissionRedrivePlanHash || null,
+    redriveDecisionHash: redriveDecision?.submissionRedriveDecisionHash || null,
     blockers: [...new Set(blockers)],
     safety: {
       dualControlRequired: true,

@@ -405,7 +405,8 @@ async function main() {
       runtimeRoot: stagedRuntimeRoot,
     });
     const stagedPackageRoles = stagedPackageResult.artifactPackage.artifacts.map((artifact) => artifact.role);
-    assert.equal(stagedPackageResult.artifactPackage.submitReady, true);
+    assert.equal(stagedPackageResult.artifactPackage.submitReady, false);
+    assert.equal(stagedPackageResult.packageVerificationReceipt, null);
     assert.ok(stagedPackageRoles.includes('compiled_pdf'));
     assert.ok(stagedPackageRoles.includes('build_artifact_acceptance'));
     assert.equal(stagedPackageResult.safety.externalActionPerformed, false);

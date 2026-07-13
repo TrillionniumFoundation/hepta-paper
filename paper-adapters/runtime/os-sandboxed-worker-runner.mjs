@@ -4,9 +4,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { assertWorkerRunnerPort } from '../../paper-ports/worker-runner-port.mjs';
+import { buildExecutorCapabilities, evaluateExecutorCapabilityRequest } from '../../paper-ports/executor-capabilities.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 const PROBE_CACHE = new Map();
+const SOURCE_EXCLUDED_NAMES = new Set(['.git', 'node_modules', 'runtime', 'automation-results', '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache']);
+
+function sourceExcludedName(name) {
+  return SOURCE_EXCLUDED_NAMES.has(name) || /^\.venv(?:-|$)/.test(name) || name === 'venv';
+}
+
+export function sourceTreeExcludedNames(root) {
+  if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) return [...SOURCE_EXCLUDED_NAMES];
+  return [...new Set([...SOURCE_EXCLUDED_NAMES, ...fs.readdirSync(root, { withFileTypes: true }).filter((entry) => sourceExcludedName(entry.name)).map((entry) => entry.name)])];
+}
 
 function resolveExecutable(executable) {
   const value = String(executable || '');
@@ -30,8 +41,8 @@ function probeDocker({ docker, image, refresh = false }) {
   if (!refresh && PROBE_CACHE.has(cacheKey)) return PROBE_CACHE.get(cacheKey);
   const imageCheck = spawnSync(docker, ['image', 'inspect', image], { encoding: 'utf8', timeout: 15000 });
   if (imageCheck.status !== 0) return { available: false, backend: 'docker', status: 'os_sandbox_unavailable', detail: 'sandbox_image_not_present_locally', image };
-  const result = spawnSync(docker, ['run', '--pull', 'never', '--rm', '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--pids-limit', '32', image, '/bin/true'], { encoding: 'utf8', timeout: 60000 });
-  const probe = Object.freeze({ available: result.status === 0, backend: 'docker', status: result.status === 0 ? 'os_sandbox_available' : 'os_sandbox_unavailable', detail: String(result.stderr || result.error?.message || '').trim(), image });
+  const result = spawnSync(docker, ['info', '--format', '{{.ServerVersion}}'], { encoding: 'utf8', timeout: 15000 });
+  const probe = Object.freeze({ available: result.status === 0, backend: 'docker', status: result.status === 0 ? 'os_sandbox_available' : 'os_sandbox_unavailable', detail: String(result.stderr || result.error?.message || '').trim(), image, readinessCheck: 'image_inspect_and_daemon_info' });
   if (probe.available) PROBE_CACHE.set(cacheKey, probe);
   return probe;
 }
@@ -49,19 +60,45 @@ function within(root, candidate) {
   return candidate === root || candidate.startsWith(root + path.sep);
 }
 
-export function directoryMerkleHash(root) {
+export function directoryMerkleHash(root, { excludeRoots = [], excludeNames = [] } = {}) {
+  const excluded = excludeRoots.map((candidate) => path.resolve(candidate));
+  const names = new Set(excludeNames);
   const records = [];
   const walk = (current) => {
     for (const entry of fs.readdirSync(current, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      if (names.has(entry.name)) continue;
       const candidate = path.join(current, entry.name);
+      if (excluded.some((blocked) => candidate === blocked || candidate.startsWith(`${blocked}${path.sep}`))) continue;
       const relative = path.relative(root, candidate).replace(/\\/g, '/');
       if (entry.isDirectory()) walk(candidate);
-      else if (entry.isFile()) records.push(`${relative}\0${crypto.createHash('sha256').update(fs.readFileSync(candidate)).digest('hex')}`);
+      else if (entry.isFile()) records.push(`${relative}\0${fileSha256Hash(candidate).slice('sha256:'.length)}`);
       else if (entry.isSymbolicLink()) records.push(`${relative}\0link:${fs.readlinkSync(candidate)}`);
     }
   };
   walk(root);
   return `sha256:${crypto.createHash('sha256').update(records.join('\n')).digest('hex')}`;
+}
+
+export function fileSha256Hash(candidate) {
+  const descriptor = fs.openSync(candidate, 'r');
+  const digest = crypto.createHash('sha256');
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  try {
+    let bytesRead;
+    do {
+      bytesRead = fs.readSync(descriptor, buffer, 0, buffer.length, null);
+      if (bytesRead) digest.update(buffer.subarray(0, bytesRead));
+    } while (bytesRead);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  return `sha256:${digest.digest('hex')}`;
+}
+
+function datasetManifestHash(source) {
+  if (!fs.existsSync(source)) return null;
+  if (fs.statSync(source).isDirectory()) return directoryMerkleHash(source);
+  return fileSha256Hash(source);
 }
 
 function mapWorkArgument(argument, sourceRoot) {
@@ -97,14 +134,32 @@ export function createOsSandboxedWorkerRunner({
   const containerImages = new Set(allowedContainerImages.map(String));
   const availability = probe || probeOsSandbox({ bubblewrap, docker, dockerImage });
   const backend = availability.backend || 'bubblewrap';
+  const runnerId = `${backend}-kernel-isolation-worker-v3`;
+  const capabilities = buildExecutorCapabilities({
+    executorId: runnerId,
+    sandboxModes: ['kernel-isolated'],
+    networkPolicy: 'none',
+    workspaceIsolation: true,
+    languages: ['*'],
+    gpu: allowGpu,
+    maximumTimeoutMs,
+    receiptKinds: ['OsSandboxWorkerReceipt'],
+    provider: backend,
+  });
 
   return assertWorkerRunnerPort({
     version: 3,
     kind: 'OsSandboxedWorkerRunner',
-    runnerId: `${backend}-kernel-isolation-worker-v3`,
+    runnerId,
+    capabilities: () => capabilities,
     availability,
     isolation: Object.freeze({ backend, sourceReadOnly: true, ephemeralWorkRoot: true, separateOutputRoot: true, hostEtcMounted: false, userNamespace: backend === 'bubblewrap', mountNamespace: true, pidNamespace: true, networkNamespace: true, readOnlyRuntime: true, memoryLimit: true, cpuLimit: true, processLimit: true }),
     run({ executable, args = [], cwd, sourceRoot = null, timeoutMs = 30000, outputPaths = [], outputDirectory = null, requiresGpu = false, env = {}, containerImage = null, containerExecutable = null, datasetMounts = [], memoryBytes = null, cpuSeconds = null, maximumProcesses = null } = {}) {
+      const capabilityPreflight = evaluateExecutorCapabilityRequest({
+        capabilities,
+        request: { sandbox: 'kernel-isolated', requiresGpu, requiresWorkspaceIsolation: true, requiresNetworkIsolation: true, timeoutMs },
+      });
+      if (capabilityPreflight.blockers.length) return { ok: false, status: 'os_sandbox_worker_blocked', blockers: capabilityPreflight.blockers, availability, isolation: { kernelNetworkIsolationVerified: false, filesystemNamespaceVerified: false, sourceReadOnlyVerified: false, resourceLimitsVerified: false } };
       const selectedImage = containerImage ? String(containerImage) : dockerImage;
       const executionAvailability = containerImage ? probeDocker({ docker, image: selectedImage }) : (availability.available ? availability : probeOsSandbox({ bubblewrap, docker, dockerImage, refresh: true }));
       const executionBackend = containerImage ? 'docker' : (executionAvailability.backend || backend);
@@ -128,22 +183,44 @@ export function createOsSandboxedWorkerRunner({
       const normalizedDatasets = datasetMounts.map((mount, index) => {
         const source = path.resolve(String(mount?.source || ''));
         const name = String(mount?.name || `dataset-${index + 1}`).replace(/[^A-Za-z0-9_.-]/g, '_');
-        return { source, target: `/datasets/${name}`, name, readOnly: mount?.readOnly !== false, manifestHash: mount?.manifestHash || null };
+        return { source, target: `/datasets/${name}`, name, readOnly: mount?.readOnly === true, manifestHash: mount?.manifestHash || null, licenseId: mount?.licenseId || null };
       });
       if (normalizedDatasets.some((mount) => !fs.existsSync(mount.source) || !datasetRoots.some((root) => within(root, mount.source)) || !mount.readOnly)) blockers.push('worker_dataset_mount_invalid_or_not_read_only');
+      if (normalizedDatasets.some((mount) => !mount.licenseId)) blockers.push('worker_dataset_license_missing');
+      if (normalizedDatasets.some((mount) => !mount.manifestHash || datasetManifestHash(mount.source) !== mount.manifestHash)) blockers.push('worker_dataset_manifest_hash_mismatch');
       if (blockers.length) return { ok: false, status: 'os_sandbox_worker_blocked', blockers, availability: executionAvailability, isolation: { kernelNetworkIsolationVerified: false, filesystemNamespaceVerified: false, sourceReadOnlyVerified: false, resourceLimitsVerified: false } };
 
-      const sourceMerkleHashBefore = directoryMerkleHash(resolvedSourceRoot);
+      const sourceDatasetRoots = normalizedDatasets.map((mount) => mount.source).filter((source) => source !== resolvedSourceRoot && within(resolvedSourceRoot, source));
+      const sourceExcludedNames = sourceTreeExcludedNames(resolvedSourceRoot);
+      const sourceMerkleHashBefore = directoryMerkleHash(resolvedSourceRoot, { excludeRoots: sourceDatasetRoots, excludeNames: sourceExcludedNames });
       const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-os-sandbox-'));
       const workRoot = path.join(sandboxRoot, 'work');
       const outputRoot = path.join(sandboxRoot, 'output');
-      fs.cpSync(resolvedSourceRoot, workRoot, { recursive: true, dereference: false });
+      const mountedDatasets = normalizedDatasets.map((mount) => {
+        if (!fs.statSync(mount.source).isFile()) return { ...mount, bindSource: mount.source, sourceType: 'directory', fileName: null };
+        const bindSource = path.join(sandboxRoot, 'datasets', mount.name);
+        const fileName = path.basename(mount.source);
+        fs.mkdirSync(bindSource, { recursive: true });
+        fs.copyFileSync(mount.source, path.join(bindSource, fileName), fs.constants.COPYFILE_FICLONE);
+        return { ...mount, bindSource, sourceType: 'file', fileName };
+      });
+      fs.cpSync(resolvedSourceRoot, workRoot, {
+        recursive: true,
+        dereference: false,
+        filter: (candidate) => {
+          if (sourceDatasetRoots.some((blocked) => candidate === blocked || candidate.startsWith(`${blocked}${path.sep}`))) return false;
+          const relative = path.relative(resolvedSourceRoot, candidate);
+          const first = relative.split(path.sep)[0];
+          return !sourceExcludedNames.includes(first);
+        },
+      });
       fs.mkdirSync(outputRoot, { recursive: true });
       const relativeCwd = path.relative(resolvedSourceRoot, resolvedCwd);
       const boundedTimeout = Math.max(1, Math.min(Number(timeoutMs || 30000), maximumTimeoutMs));
       const boundedMemory = Math.max(64 * 1024 * 1024, Math.min(Number(memoryBytes || maximumMemoryBytes), maximumMemoryBytes));
       const boundedCpu = Math.max(1, Math.min(Number(cpuSeconds || maximumCpuSeconds), maximumCpuSeconds));
       const boundedPids = Math.max(8, Math.min(Number(maximumProcesses || maximumPids), maximumPids));
+      const permittedEnvironment = Object.entries(env).filter(([key]) => ['ELAN_HOME', 'ELAN_TOOLCHAIN', 'LEAN_PATH', 'LAKE_HOME', 'HEPTA_SEED', 'HEPTA_OUTPUT_DIR', 'PYTHONHASHSEED', 'OMP_NUM_THREADS', 'CUDA_VISIBLE_DEVICES', 'R_ENVIRON_USER', 'RENV_PATHS_CACHE'].includes(key) || key.startsWith('HEPTA_DATASET_'));
       let launcher = prlimit;
       let command = [
         `--as=${boundedMemory}`, `--cpu=${boundedCpu}`, bubblewrap,
@@ -152,9 +229,9 @@ export function createOsSandboxedWorkerRunner({
         ...(fs.existsSync('/var/lib/texmf') ? ['--ro-bind', '/var/lib/texmf', '/var/lib/texmf'] : []),
         ...(fs.existsSync('/etc/texmf') ? ['--ro-bind', '/etc/texmf', '/etc/texmf'] : []),
         '--ro-bind', resolvedSourceRoot, '/source', '--bind', workRoot, '/work', '--bind', outputRoot, '/output', '--chdir', `/work${relativeCwd ? `/${relativeCwd}` : ''}`,
-        ...normalizedDatasets.flatMap((mount) => ['--ro-bind', mount.source, mount.target]),
+        ...mountedDatasets.flatMap((mount) => ['--ro-bind', mount.bindSource, mount.target]),
         ...(requiresGpu ? gpuDevices.flatMap((device) => ['--dev-bind', device, device]) : []),
-        '--setenv', 'HOME', '/tmp', '--setenv', 'PATH', '/usr/local/bin:/usr/bin:/bin', resolvedExecutable, ...args.map((argument) => mapWorkArgument(argument, resolvedSourceRoot)),
+        '--setenv', 'HOME', '/tmp', '--setenv', 'PATH', '/usr/local/bin:/usr/bin:/bin', ...permittedEnvironment.flatMap(([key, value]) => ['--setenv', key, String(value)]), resolvedExecutable, ...args.map((argument) => mapWorkArgument(argument, resolvedSourceRoot)),
       ];
       if (executionBackend === 'docker') {
         launcher = docker;
@@ -167,10 +244,10 @@ export function createOsSandboxedWorkerRunner({
           'run', '--pull', 'never', '--rm', '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
           '--memory', String(boundedMemory), '--cpus', '1', '--pids-limit', String(boundedPids), '--ulimit', `cpu=${boundedCpu}`,
           '--tmpfs', '/tmp:rw,noexec,nosuid,size=64m', '--user', `${uid}:${gid}`, '--env', 'HOME=/tmp', '--env', 'PATH=/usr/local/bin:/usr/bin:/bin',
-          ...Object.entries(env).filter(([key]) => ['ELAN_HOME', 'ELAN_TOOLCHAIN', 'LEAN_PATH', 'LAKE_HOME', 'HEPTA_SEED', 'PYTHONHASHSEED', 'OMP_NUM_THREADS', 'CUDA_VISIBLE_DEVICES', 'R_ENVIRON_USER', 'RENV_PATHS_CACHE'].includes(key)).flatMap(([key, value]) => ['--env', `${key}=${String(value)}`]),
+          ...permittedEnvironment.flatMap(([key, value]) => ['--env', `${key}=${String(value)}`]),
           ...(requiresGpu ? ['--runtime', 'nvidia', '--env', 'NVIDIA_VISIBLE_DEVICES=all', '--env', 'NVIDIA_DRIVER_CAPABILITIES=compute,utility'] : []), ...(containerImage ? [] : dockerSystemMounts(resolvedExecutable)),
           '--volume', `${resolvedSourceRoot}:/source:ro`, '--volume', `${workRoot}:/work:rw`, '--volume', `${outputRoot}:/output:rw`,
-          ...normalizedDatasets.flatMap((mount) => ['--volume', `${mount.source}:${mount.target}:ro`]),
+          ...mountedDatasets.flatMap((mount) => ['--volume', `${mount.bindSource}:${mount.target}:ro`]),
           '--workdir', `/work${relativeCwd ? `/${relativeCwd}` : ''}`, selectedImage, dockerExecutable,
           ...args.map((argument) => mapWorkArgument(argument, resolvedSourceRoot)),
         ];
@@ -182,7 +259,7 @@ export function createOsSandboxedWorkerRunner({
       } finally {
         // Hash the immutable source while the ephemeral work/output roots still exist.
       }
-      const sourceMerkleHashAfter = directoryMerkleHash(resolvedSourceRoot);
+      const sourceMerkleHashAfter = directoryMerkleHash(resolvedSourceRoot, { excludeRoots: sourceDatasetRoots, excludeNames: sourceExcludedNames });
       const sourceMutationDetected = sourceMerkleHashAfter !== sourceMerkleHashBefore;
       const commandPassed = result.status === 0 && !result.error;
       const passed = commandPassed && !sourceMutationDetected;
@@ -214,7 +291,7 @@ export function createOsSandboxedWorkerRunner({
         declaredOutputPaths: outputPaths.map(String),
         limits: { timeoutMs: boundedTimeout, memoryBytes: boundedMemory, cpuSeconds: boundedCpu, maximumPids: boundedPids },
         containerImage: containerImage ? selectedImage : null,
-        datasetMounts: normalizedDatasets.map((mount) => ({ name: mount.name, target: mount.target, readOnly: true, manifestHash: mount.manifestHash })),
+        datasetMounts: mountedDatasets.map((mount) => ({ name: mount.name, target: mount.target, sourceType: mount.sourceType, fileName: mount.fileName, readOnly: true, manifestHash: mount.manifestHash, licenseId: mount.licenseId })),
         isolation: { kernelNetworkIsolationVerified: true, filesystemNamespaceVerified: true, sourceReadOnlyVerified: !sourceMutationDetected, sourceReadOnlyMount: true, ephemeralWorkRootVerified: true, separateOutputRootVerified: true, hostEtcMounted: false, readOnlyRuntimeVerified: true, resourceLimitsVerified: true, gpuAccessRequested: Boolean(requiresGpu), gpuDeviceIsolationVerified: !requiresGpu || gpuDevices.length > 0 },
         externalActionPerformed: false,
       };

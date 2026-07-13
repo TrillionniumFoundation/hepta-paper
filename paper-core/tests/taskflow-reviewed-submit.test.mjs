@@ -16,6 +16,8 @@ function snapshot(overrides = {}) {
     paperId: 'A_Theory_of__Expectations',
     releaseCommit: 'release-commit',
     packageHash: `sha256:${'1'.repeat(64)}`,
+    semanticPromotionStatus: 'semantic_promotion_unlocked',
+    semanticPromotionLockHash: `sha256:${'3'.repeat(64)}`,
     academicEvidenceStatus: 'academic_evidence_attestation_missing',
     independentRefereeStatus: 'independent_referee_authority_blocked',
     liveAuthorizationStatus: 'live_submission_authorization_blocked',
@@ -55,6 +57,7 @@ function currentFlow(revision = 2, overrides = {}) {
       paperId: 'A_Theory_of__Expectations',
       releaseCommit: 'release-commit',
       packageHash: `sha256:${'1'.repeat(64)}`,
+      semanticPromotionLockHash: `sha256:${'3'.repeat(64)}`,
       ...overrides,
     },
   };
@@ -75,6 +78,7 @@ test('domain snapshot is rebuilt from native receipt statuses and hashes', () =>
     paperTask: { paperId: 'A_Theory_of__Expectations' },
     releaseCommit: 'release-commit',
     artifactPackage: { artifactPackageHash: `sha256:${'1'.repeat(64)}` },
+    semanticPromotionLock: { status: 'semantic_promotion_unlocked', semanticPromotionLockHash: `sha256:${'3'.repeat(64)}`, blockers: [] },
     academicEvidenceReceipt: {
       status: 'academic_evidence_verified',
       academicEvidenceAttestationVerificationHash: `sha256:${'2'.repeat(64)}`,
@@ -83,7 +87,7 @@ test('domain snapshot is rebuilt from native receipt statuses and hashes', () =>
     independentRefereeReceipt: { status: 'independent_referee_authority_blocked', blockers: ['independent_referee_required'] },
   });
   assert.equal(built.domainSource, 'hepta_sqlite_and_verified_receipts');
-  assert.deepEqual(built.receiptHashes, [`sha256:${'2'.repeat(64)}`]);
+  assert.deepEqual(built.receiptHashes, [`sha256:${'3'.repeat(64)}`, `sha256:${'2'.repeat(64)}`]);
   assert.deepEqual(built.blockerCodes, ['independent_referee_required']);
   assert.equal(buildReviewedSubmitCoordinationPlan(built).currentStep, 'await_independent_referee');
 });
@@ -95,7 +99,7 @@ test('managed pilot stores only minimal hashes and waits on hepta-verified check
   assert.equal(result.plan.currentStep, 'await_academic_evidence');
   assert.equal(JSON.stringify(result.plan.stateJson).includes('PRIVATE KEY'), false);
   assert.equal(JSON.stringify(result.plan.stateJson).includes('must-never-enter'), false);
-  assert.deepEqual(Object.keys(result.plan.stateJson).sort(), ['blockerCodes', 'domainSnapshotHash', 'packageHash', 'paperId', 'receiptHashes', 'releaseCommit']);
+  assert.deepEqual(Object.keys(result.plan.stateJson).sort(), ['blockerCodes', 'domainSnapshotHash', 'packageHash', 'paperId', 'receiptHashes', 'releaseCommit', 'semanticPromotionLockHash']);
   assert.equal(taskFlow.calls[0][0], 'createManaged');
   assert.equal(taskFlow.calls[1][0], 'setWaiting');
   assert.equal(taskFlow.calls[1][1].expectedRevision, 1);

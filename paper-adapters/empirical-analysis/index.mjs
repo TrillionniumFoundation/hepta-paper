@@ -1,8 +1,8 @@
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { ensureDir, fileRecord, pathWithin, relativePath } from '../../paper-core/src/runtime/file-utils.mjs';
-import { uniqueStrings } from '../../paper-core/src/runtime/text-utils.mjs';
-import { nowIso } from '../../paper-core/src/runtime/time-utils.mjs';
+import { ensureDir, fileRecord, pathWithin, relativePath } from '../../workflow-kernel/runtime/file-utils.mjs';
+import { uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
+import { nowIso } from '../../workflow-kernel/runtime/time-utils.mjs';
 import { writeJsonFile, writeTextFile } from '../artifacts/write-artifact.mjs';
 import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
 import { buildEmpiricalEvidenceGate } from './evidence-policy.mjs';
@@ -95,10 +95,14 @@ export async function runEmpiricalAnalysisAdapter({
   let stderrRecord = null;
   let startedAt = null;
   let completedAt = null;
+  const runtimeFileRecord = async (candidate, role) => {
+    const record = await fileRecord(resolvedRuntimeRoot, candidate, role);
+    return record ? { ...record, path: relativePath(resolvedRoot, candidate) } : null;
+  };
   if (execute && !plan.blockers.length && !datasetContract.blockers.length) {
     await ensureDir(path.dirname(codePath));
     await writeTextFile(codePath, codeText);
-    codeRecord = await fileRecord(resolvedRoot, codePath, 'experiment_code');
+    codeRecord = await runtimeFileRecord(codePath, 'experiment_code');
   }
   const codeBundle = buildExperimentCodePatchBundle({
     paperTask: row.task,
@@ -142,8 +146,8 @@ export async function runEmpiricalAnalysisAdapter({
     const stderrPath = path.join(runDir, 'logs', 'stderr.txt');
     await writeTextFile(stdoutPath, result.stdout || '');
     await writeTextFile(stderrPath, result.stderr || '');
-    stdoutRecord = await fileRecord(resolvedRoot, stdoutPath, 'experiment_stdout');
-    stderrRecord = await fileRecord(resolvedRoot, stderrPath, 'experiment_stderr');
+    stdoutRecord = await runtimeFileRecord(stdoutPath, 'experiment_stdout');
+    stderrRecord = await runtimeFileRecord(stderrPath, 'experiment_stderr');
   }
   const runReceipt = buildExperimentRunReceipt({
     paperTask: row.task,
@@ -154,7 +158,7 @@ export async function runEmpiricalAnalysisAdapter({
     startedAt,
     completedAt,
   });
-  const artifacts = await recordArtifacts(resolvedRoot, [
+  const artifacts = await recordArtifacts(resolvedRuntimeRoot, [
     [path.join(runDir, 'data', 'generated_dataset_manifest.json'), 'generated_dataset_manifest'],
     [path.join(runDir, 'data', 'authorized_dataset_manifest.json'), 'authorized_dataset_manifest'],
     [path.join(runDir, 'experiments', 'run_empirical_analysis.mjs'), 'experiment_code'],
@@ -166,7 +170,7 @@ export async function runEmpiricalAnalysisAdapter({
     [path.join(runDir, 'figures', 'figure_spec.json'), 'empirical_figure_spec_json'],
     [path.join(runDir, 'logs', 'stdout.txt'), 'experiment_stdout'],
     [path.join(runDir, 'logs', 'stderr.txt'), 'experiment_stderr'],
-  ]);
+  ], { logicalRoot: resolvedRoot });
   const resultPackage = buildResultArtifactPackage({
     paperTask: row.task,
     plan,
@@ -196,7 +200,7 @@ export async function runEmpiricalAnalysisAdapter({
       plan,
       resultPackage,
     }));
-    patchRecord = await fileRecord(resolvedRoot, patchPath, 'manuscript_empirical_patch_draft');
+    patchRecord = await runtimeFileRecord(patchPath, 'manuscript_empirical_patch_draft');
   }
   const manuscriptEmpiricalPatch = buildManuscriptEmpiricalPatch({
     paperTask: row.task,
@@ -294,6 +298,7 @@ export async function runEmpiricalAnalysisAdapter({
     empiricalAnalysisAdapterReportHash: hashPaperRecord('EmpiricalAnalysisAdapterReport', report),
   };
   if (execute) {
+    await ensureDir(runDir);
     await writeJsonFile(path.join(runDir, 'EMPIRICAL_BENCHMARK_REGISTRY.json'), empiricalBenchmarkRegistry);
     await writeJsonFile(path.join(runDir, 'BENCHMARK_SUITE_SELECTION_POLICY.json'), benchmarkSuiteSelectionPolicy);
     await writeJsonFile(path.join(runDir, 'EMPIRICAL_ANALYSIS_PLAN.json'), plan);

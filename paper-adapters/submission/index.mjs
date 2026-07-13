@@ -16,10 +16,24 @@ import {
   createPaperActionManifest,
   hashPaperRecord,
 } from '../../paper-core/src/paper-contracts.mjs';
-import { normalizeText } from '../../paper-core/src/runtime/text-utils.mjs';
+import { normalizeText } from '../../workflow-kernel/runtime/text-utils.mjs';
 import { buildSubmissionDeliveryRuntime } from '../../paper-domain/submission/delivery-runtime.mjs';
+import { buildSemanticPromotionLock } from '../../paper-domain/submission/semantic-promotion-lock.mjs';
+import { buildReviewedVenueEvidence } from '../../paper-domain/submission/reviewed-venue-evidence.mjs';
+import { buildReviewedSubmissionDecisionPacket } from '../../paper-domain/submission/reviewed-submission-decision.mjs';
 import { verifyIndependentRefereeAuthority } from '../referee-review/independent-authority.mjs';
 import { verifyLiveSubmissionAuthorization } from './live-authorization.mjs';
+import { verifyReviewedVenueObservationSource } from './venue-observation-verification.mjs';
+import { loadAuthorityTrustStore } from '../../paper-core/src/authority-signatures.mjs';
+
+export { exportSubmissionHandoffBundle } from './handoff-bundle-exporter.mjs';
+export { verifySignedExecutorResponse } from './executor-response-verification.mjs';
+export { buildReviewedVenueEvidence } from '../../paper-domain/submission/reviewed-venue-evidence.mjs';
+export { buildSubmissionRedriveDecision } from '../../paper-domain/submission/redrive-decision.mjs';
+export { buildReviewedSubmissionDecisionPacket } from '../../paper-domain/submission/reviewed-submission-decision.mjs';
+export { buildVenueObservationSubject, verifyReviewedVenueObservationSource } from './venue-observation-verification.mjs';
+export { verifySignedAmbiguousRedriveReview } from './redrive-review-verification.mjs';
+export { buildProviderCapabilitySubject, verifyProviderCapabilityAttestation } from './provider-capability-verification.mjs';
 
 function matchVenue(venues = [], target = '') {
   const normalized = normalizeText(target).toLowerCase();
@@ -52,13 +66,34 @@ export async function prepareSubmissionAuthorities({
   row,
   venues = [],
   artifactPackage = null,
+  packageResult = null,
   researchReport = null,
+  targetScopeReceipt = null,
   mode = 'reviewed-submit',
   trustStoreOverride = null,
   now = new Date(),
   authorityVerifier = null,
+  executorDescriptor = null,
+  submissionMetadata = null,
+  submissionMetadataReview = null,
+  venuePreflightObservation = null,
+  signedVenueObservation = null,
+  receiptLedger = null,
+  redrivePlan = null,
+  redriveDecision = null,
+  providerCapabilityVerificationReceipt = null,
 } = {}) {
   const venuePlan = buildSubmissionVenuePlan({ row, venues, artifactPackage, mode });
+  const promotionGate = packageResult?.manuscriptPromotionGate || null;
+  const semanticPromotionLock = buildSemanticPromotionLock({
+    paperTask: row.task,
+    targetScopeReceipt,
+    artifactPackage,
+    packageVerificationReceipt: packageResult?.packageVerificationReceipt || null,
+    researchReport,
+    promotionGate,
+    venuePlan,
+  });
   const sourceRoot = row?.task?.sourceWorkspace
     ? (path.isAbsolute(row.task.sourceWorkspace)
       ? row.task.sourceWorkspace
@@ -74,8 +109,32 @@ export async function prepareSubmissionAuthorities({
     researchReport,
     artifactPackage,
     venuePlan,
+    semanticPromotionLock,
     trustStoreOverride,
     now,
+  });
+  const submissionDecisionPacket = buildReviewedSubmissionDecisionPacket({
+    paperTask: row.task,
+    venuePlan,
+    metadata: submissionMetadata,
+    review: submissionMetadataReview,
+  });
+  const trustStore = await loadAuthorityTrustStore({ runtimeRoot, trustStoreOverride });
+  const venueObservationSourceVerificationReceipt = verifyReviewedVenueObservationSource({
+    paperTask: row.task,
+    venuePlan,
+    observation: venuePreflightObservation,
+    signedObservation: signedVenueObservation,
+    receiptLedger,
+    trustStore,
+    now,
+  });
+  const reviewedVenueEvidence = buildReviewedVenueEvidence({
+    paperTask: row.task,
+    venuePlan,
+    observation: venuePreflightObservation,
+    now,
+    sourceVerificationReceipt: venueObservationSourceVerificationReceipt,
   });
   const liveAuthorizationReceipt = await verifyLive({
     root,
@@ -85,13 +144,26 @@ export async function prepareSubmissionAuthorities({
     researchReport,
     independentReviewAuthorityReceipt,
     venuePlan,
+    semanticPromotionLock,
     trustStoreOverride,
     now,
+    executorDescriptor,
+    submissionDecisionPacket,
+    reviewedVenueEvidence,
+    redrivePlan,
+    redriveDecision,
+    venueObservationSourceVerificationReceipt,
+    providerCapabilityVerificationReceipt,
   });
   return {
     venuePlan,
+    promotionGate,
+    semanticPromotionLock,
     independentReviewAuthorityReceipt,
     liveAuthorizationReceipt,
+    submissionDecisionPacket,
+    venueObservationSourceVerificationReceipt,
+    reviewedVenueEvidence,
   };
 }
 
@@ -99,15 +171,38 @@ export function buildSubmissionLifecycle({
   row,
   venues = [],
   artifactPackage = null,
+  packageResult = null,
   researchReport = null,
+  targetScopeReceipt = null,
   mode = 'local-dry-run',
   reviewedSubmit = false,
   venuePlanOverride = null,
   independentReviewAuthorityReceipt = null,
   liveAuthorizationReceipt = null,
+  semanticPromotionLock = null,
   deliveryStore = null,
+  executorResponse = null,
+  venueObservation = null,
+  venuePreflightObservation = null,
+  venueEvidenceNow = new Date(),
+  priorRedriveAttempts = [],
+  executorDescriptor = null,
+  executorResponseVerificationReceipt = null,
+  submissionDecisionPacket = null,
+  reviewedVenueEvidenceOverride = null,
+  providerCapabilityVerificationReceipt = null,
 } = {}) {
   const venuePlan = venuePlanOverride || buildSubmissionVenuePlan({ row, venues, artifactPackage, mode });
+  const promotionGate = packageResult?.manuscriptPromotionGate || null;
+  const effectiveSemanticPromotionLock = semanticPromotionLock || buildSemanticPromotionLock({
+    paperTask: row.task,
+    targetScopeReceipt,
+    artifactPackage,
+    packageVerificationReceipt: packageResult?.packageVerificationReceipt || null,
+    researchReport,
+    promotionGate,
+    venuePlan,
+  });
   const liveAuthorized = liveAuthorizationReceipt?.status === 'live_submission_authorization_verified'
     && liveAuthorizationReceipt?.liveExternalActionAuthorized === true;
   const approvalPacket = buildSubmissionApprovalPacket({
@@ -121,14 +216,22 @@ export function buildSubmissionLifecycle({
     researchReport,
     independentReviewAuthorityReceipt,
     liveAuthorizationReceipt,
+    promotionGate,
+    semanticPromotionLock: effectiveSemanticPromotionLock,
   });
+  const reviewedVenueEvidence = reviewedSubmit
+    ? (reviewedVenueEvidenceOverride || buildReviewedVenueEvidence({ paperTask: row.task, venuePlan, observation: venuePreflightObservation, now: venueEvidenceNow }))
+    : null;
   const freshVenueEvidenceBundle = buildFreshVenueEvidenceBundle({
     paperTask: row.task,
     venuePlan,
     artifactPackage,
     researchReport,
     independentReviewAuthorityReceipt,
+    promotionGate,
+    semanticPromotionLock: effectiveSemanticPromotionLock,
     requireAcademicEvidence: Boolean(reviewedSubmit),
+    reviewedVenueEvidence,
   });
   const action = reviewedSubmit ? PAPER_ACTIONS.REVIEWED_SUBMIT : PAPER_ACTIONS.VENUE_DRY_RUN;
   const manifest = createPaperActionManifest({
@@ -141,6 +244,8 @@ export function buildSubmissionLifecycle({
     venueEvidenceBundle: freshVenueEvidenceBundle,
     dryRun: true,
     approvalPacket: reviewedSubmit ? approvalPacket : null,
+    promotionGate,
+    semanticPromotionLock: effectiveSemanticPromotionLock,
     extraBlockers: [
       ...(row.state?.blockers || []),
     ],
@@ -161,6 +266,9 @@ export function buildSubmissionLifecycle({
       venuePlan,
       independentReviewAuthorityReceipt,
       liveAuthorizationReceipt,
+      promotionGate,
+      semanticPromotionLock: effectiveSemanticPromotionLock,
+      submissionDecisionPacket,
     })
     : null;
   const controlledExecutorReceipt = reviewedSubmit
@@ -173,6 +281,9 @@ export function buildSubmissionLifecycle({
       replayGuard,
       independentReviewAuthorityReceipt,
       liveAuthorizationReceipt,
+      executorDescriptor,
+      executorId: executorDescriptor?.executorId || 'openclaw-agent-controlled-reviewed-submit-executor',
+      submissionDecisionPacket,
     })
     : null;
   const receipt = buildExternalSubmissionReceipt({ manifest, outbox, venuePlan, reviewedSubmit });
@@ -192,6 +303,8 @@ export function buildSubmissionLifecycle({
       independentReviewAuthorityReceipt?.independentRefereeAuthorityReceiptHash || null,
     liveSubmissionAuthorizationReceiptHash:
       liveAuthorizationReceipt?.liveSubmissionAuthorizationReceiptHash || null,
+    manuscriptPromotionGateHash: promotionGate?.manuscriptPromotionGateHash || null,
+    semanticPromotionLockHash: effectiveSemanticPromotionLock?.semanticPromotionLockHash || null,
     manifestHash: manifest.manifestHash,
     replayGuardHash: replayGuard.submissionReplayGuardHash,
     envelopeHash: handoff.envelopeHash,
@@ -222,6 +335,15 @@ export function buildSubmissionLifecycle({
     controlledExecutorReceipt,
     liveAuthorizationReceipt,
     reconciliation,
+    artifactPackage,
+    executorResponse,
+    executorResponseVerificationReceipt,
+    venueObservation,
+    priorRedriveAttempts,
+    responseDueAt: liveAuthorizationReceipt?.responseDueAt || null,
+    submissionDecisionPacket,
+    reviewedVenueEvidence,
+    providerCapabilityVerificationReceipt,
   });
   let deliveryPersistence = {
     status: 'submission_delivery_persistence_blocked',
@@ -230,21 +352,28 @@ export function buildSubmissionLifecycle({
     blockers: ['dispatch_authorization_not_ready'],
   };
   if (deliveryStore && deliveryRuntime.dispatchAuthorization.status === 'submission_dispatch_authorization_ready') {
-    const message = deliveryStore.enqueue({
+    const message = deliveryStore.enqueueAuthorized({
       paperId: row.task.paperId,
       dispatchAuthorization: deliveryRuntime.dispatchAuthorization,
       payload: { outbox, reviewedSubmitPreflightPacket, controlledExecutorReceipt },
     });
-    const lock = deliveryStore.acquireReleaseLock({
-      paperId: row.task.paperId,
-      messageId: message.message_id,
-      lockToken: deliveryRuntime.dispatchAuthorization.submissionDispatchAuthorizationHash,
-    });
+    const lock = message._releaseLock;
+    const responsePersistenceReceipt = executorResponse
+      ? deliveryStore.recordResponse({ messageId: message.message_id, response: executorResponse, responseVerificationReceipt: executorResponseVerificationReceipt })
+      : null;
+    const released = executorResponse && deliveryRuntime.releaseLock.status === 'submission_release_unlocked'
+      ? deliveryStore.release({ paperId: row.task.paperId, lockToken: lock?.lock_token, releaseLock: deliveryRuntime.releaseLock })
+      : null;
     deliveryPersistence = {
-      status: 'submission_delivery_persisted',
+      status: released
+        ? 'submission_delivery_released'
+        : responsePersistenceReceipt
+          ? 'submission_response_persisted'
+          : 'submission_delivery_persisted',
       messageId: message.message_id,
       outboxStatus: message.status,
-      releaseLockStatus: lock?.status || null,
+      responsePersistenceReceipt,
+      releaseLockStatus: released?.status || lock?.status || null,
       blockers: [],
     };
   }
@@ -259,6 +388,8 @@ export function buildSubmissionLifecycle({
     liveAuthorizationReceipt,
     approvalPacket,
     freshVenueEvidenceBundle,
+    reviewedVenueEvidence,
+    submissionDecisionPacket,
     reviewedSubmitPreflightPacket,
     controlledExecutorReceipt,
     manifest,
@@ -270,11 +401,16 @@ export function buildSubmissionLifecycle({
     venueStateProof,
     auditArchive: hashedArchive,
     reconciliation,
+    postActionReconciliation: deliveryRuntime.reconciliation,
     deliveryRuntime,
     deliveryPersistence,
+    targetScopeReceipt,
+    promotionGate,
+    semanticPromotionLock: effectiveSemanticPromotionLock,
     safety: {
-      dryRunOnly: true,
-      externalActionPerformed: false,
+      dryRunOnly: !executorResponse,
+      postActionEvidenceIngested: Boolean(executorResponse),
+      externalActionPerformed: deliveryRuntime.externalActionPerformed,
       controlledExecutorReceiptRecorded: controlledExecutorReceipt?.status === 'controlled_external_executor_receipt_recorded',
       liveSubmitRequiresSeparateAuthorization: true,
       independentRefereeAuthorityVerified:

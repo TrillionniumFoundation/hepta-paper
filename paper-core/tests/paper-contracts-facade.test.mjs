@@ -8,7 +8,7 @@ import * as workflow from '../src/contracts/workflow-contracts.mjs';
 import * as venue from '../src/contracts/venue-contracts.mjs';
 
 test('paper-contracts remains a thin compatibility facade over bounded modules', () => {
-  assert.equal(Object.keys(facade).length, 73);
+  assert.equal(Object.keys(facade).length, 74);
   for (const module of [product, proposal, research, workflow, venue]) {
     for (const [name, value] of Object.entries(module)) assert.equal(facade[name], value, name);
   }

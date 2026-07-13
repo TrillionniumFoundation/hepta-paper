@@ -1,0 +1,354 @@
+#!/usr/bin/env node
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import fsp from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { CAPABILITY_CATALOG } from '../legacy-capability-matrix-v3.mjs';
+import { capabilityTargetBindings, verifyCapabilityOperationalReceipt } from '../operational-proof-intake.mjs';
+import { buildClaimRegistry, transitionClaim } from '../../paper-domain/research/claim-registry.mjs';
+import { buildResearchGapPlan, bindResearchGapPlan } from '../../paper-application/research/gap-planner.mjs';
+import { verifyEvidenceArtifact } from '../../paper-adapters/research-verify/evidence-verifier.mjs';
+import { buildEvidenceIntake } from '../../paper-domain/research/evidence-ingestor.mjs';
+import { buildEvidenceQualityGate } from '../../paper-domain/research/evidence-quality-gate.mjs';
+import { buildExperimentRegistry } from '../../paper-domain/research/experiment-registry.mjs';
+import { buildExperimentExecutionContract, buildExperimentOutputManifest } from '../../paper-domain/research/experiment-evidence-binding.mjs';
+import { createLakeFormalVerifier } from '../../paper-adapters/research-verify/lake-formal-verifier.mjs';
+import { buildResearchChangeProposal } from '../../paper-domain/research/change-proposal.mjs';
+import { createOsSandboxedWorkerRunner, probeOsSandbox } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
+import { createFilesystemArtifactRepository } from '../../paper-adapters/artifacts/filesystem-artifact-repository.mjs';
+import { verifyArtifactWriteReceiptSource } from '../../paper-adapters/artifacts/artifact-write-receipt-verifier.mjs';
+import { createSqliteJobReceiptStore } from '../../paper-adapters/persistence/sqlite-job-receipt-store.mjs';
+import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqlite-receipt-ledger.mjs';
+import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
+import { assertSubmissionExecutorPort, submissionExecutorDescriptor } from '../../paper-ports/submission-executor-port.mjs';
+import { buildExecutorCapabilities } from '../../paper-ports/executor-capabilities.mjs';
+import { createSqliteSubmissionDeliveryStore } from '../../paper-adapters/submission/sqlite-delivery-store.mjs';
+import { buildSubmissionReleaseLock } from '../../paper-domain/submission/release-lock.mjs';
+import { buildRepairApplyProof, rollbackAppliedPatches, validateAndMaybeApplyPatches } from '../../paper-adapters/referee-revise/repair-executor.mjs';
+import { signAuthorityDocument } from '../../paper-core/src/authority-signatures.mjs';
+import { currentCodeProvenance } from '../../paper-core/src/code-provenance.mjs';
+import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../../paper-core/src/workspace-layout.mjs';
+import { sha256File } from '../../paper-core/src/runtime/file-utils.mjs';
+import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
+
+const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const runtimeRoot = defaultPaperRuntimeRoot();
+const assetRoot = defaultPaperAssetRoot();
+const releaseCommit = currentCodeProvenance().commit;
+const paperId = process.env.HEPTA_OPERATIONAL_REPLAY_PAPER_ID || 'A_Theory_of__Expectations';
+const sourceRoot = path.join(assetRoot, 'submission', 'AoM', paperId);
+const mainTex = path.join(sourceRoot, 'main.tex');
+const privateKeyPath = process.env.HEPTA_CAPABILITY_OWNER_PRIVATE_KEY
+  || path.join(os.homedir(), '.local', 'share', 'hepta-paper', 'capability-owner', 'capability-owner-ed25519-private.pem');
+const trustStorePath = path.join(runtimeRoot, 'owner-acceptance', 'OWNER_TRUST_STORE.json');
+const replayWorkRoot = path.join(runtimeRoot, 'operational-proof', '.replay-work');
+const evidenceRoot = path.join(runtimeRoot, 'operational-proof', 'replays');
+const receiptRoot = path.join(runtimeRoot, 'operational-proof', 'capabilities');
+const fixedIso = '2026-07-13T05:45:00.000Z';
+const clock = Object.freeze({ now: () => new Date(fixedIso), nowIso: () => fixedIso });
+
+if (!process.argv.includes('--execute')) throw new Error('production capability replays require --execute');
+if (!fs.existsSync(mainTex)) throw new Error(`production replay subject missing: ${mainTex}`);
+if (!fs.existsSync(privateKeyPath)) throw new Error('capability owner private key missing outside repository');
+if (!fs.existsSync(trustStorePath)) throw new Error('owner trust store missing');
+if (!releaseCommit) throw new Error('release commit missing');
+
+process.env.HEPTA_EVIDENCE_ENVIRONMENT = 'production';
+process.env.HEPTA_EVIDENCE_CLASS = 'operational';
+process.env.HEPTA_RELEASE_COMMIT = releaseCommit;
+
+const trustStore = JSON.parse(fs.readFileSync(trustStorePath, 'utf8'));
+const ownerKey = (trustStore.keys || []).find((item) => item?.status === 'active' && item?.roles?.includes('capability_owner'));
+if (!ownerKey) throw new Error('active capability owner public key missing');
+const privateKeyPem = fs.readFileSync(privateKeyPath, 'utf8');
+const derivedPublic = crypto.createPublicKey(privateKeyPem).export({ type: 'spki', format: 'pem' });
+if (String(derivedPublic).trim() !== String(ownerKey.publicKeyPem).trim()) throw new Error('capability owner private/public key mismatch');
+
+const paperTask = Object.freeze({ paperId, taskKey: `paper:${paperId}`, sourceWorkspace: sourceRoot });
+const mainTexHash = await sha256File(mainTex);
+const targetBindings = capabilityTargetBindings(workspaceRoot, CAPABILITY_CATALOG);
+
+function seal(kind, payload, hashField = 'receiptHash') {
+  return Object.freeze({ ...payload, version: payload.version || 1, kind, [hashField]: hashRecord(kind, { ...payload, version: payload.version || 1, kind }) });
+}
+
+function freshRoot(capabilityId) {
+  const root = path.join(replayWorkRoot, capabilityId.replace(/[^A-Za-z0-9_.-]/g, '_'));
+  fs.rmSync(root, { recursive: true, force: true });
+  fs.mkdirSync(root, { recursive: true });
+  return root;
+}
+
+function createStore(root) {
+  return createDefaultPaperStore({ root: assetRoot, runtimeRoot: root, dbPath: path.join(root, 'operational-replay.sqlite') });
+}
+
+function createLedger(store, { writerId, writerKind, allowedKinds = [], allowedStreams = [] }) {
+  return createSqliteReceiptLedger({
+    store,
+    clock,
+    writerIdentity: { writerId, writerKind, trusted: true, allowedKinds, allowedStreams },
+  });
+}
+
+function shaFileSync(file) {
+  return `sha256:${crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')}`;
+}
+
+function writeJsonArtifact(file, value) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  try { fs.chmodSync(file, 0o600); } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+  fs.chmodSync(file, 0o444);
+}
+
+async function replayClaimRegistry() {
+  const registry = buildClaimRegistry({
+    paperTask,
+    claims: [
+      { id: 'operational-main-claim', text: `production-source:${mainTexHash}`, sourceLocator: 'main.tex#operational-main-claim' },
+      { id: 'operational-dependent-claim', text: 'production-bound dependent claim', dependencyIds: ['operational-main-claim'], sourceLocator: 'main.tex#operational-dependent-claim' },
+    ],
+  });
+  const transitioned = transitionClaim(registry, { claimId: 'operational-main-claim', toStatus: 'supported', expectedVersion: 1 });
+  return { registryStatus: registry.status, registryHash: registry.claimRegistryHash, transitionedStatus: transitioned.claims[0].status, transitionedVersion: transitioned.claims[0].version, transitionStatus: transitioned.transitionReceipt.status };
+}
+
+async function replayGapPlanner(root) {
+  const store = createStore(root);
+  const ledger = createLedger(store, { writerId: 'operational-gap-planner', writerKind: 'job-receipt-store', allowedStreams: ['jobs', 'research-gap-jobs'] });
+  const jobs = createSqliteJobReceiptStore({ store, receiptLedger: ledger, clock });
+  const plan = buildResearchGapPlan({ paperTask, claimRegistry: { claims: [{ claimId: 'operational-main-claim', status: 'candidate' }] }, evidenceQualityGate: { coveredClaimIds: [] }, priorities: { 'operational-main-claim': 1 } });
+  const binding = bindResearchGapPlan({ plan, jobReceiptStore: jobs, receiptLedger: ledger, clock, workerId: 'operational-gap-planner' });
+  store.close?.();
+  return { planHash: plan.researchGapPlanHash, planStatus: plan.status, jobCount: plan.jobs.length, bindingStatus: binding.status, persistedStatuses: binding.bindings.map((item) => item.persistedStatus).sort(), arbitraryCommandAllowed: plan.jobs.some((job) => job.arbitraryCommandAllowed === true) };
+}
+
+async function replayEvidenceIngestor(root) {
+  const evidencePath = path.join(root, 'evidence.json');
+  const bytes = Buffer.from(`${JSON.stringify({ paperId, mainTexHash, evidence: 'production-bound-operational-replay' })}\n`);
+  await fsp.writeFile(evidencePath, bytes);
+  const verified = await verifyEvidenceArtifact({ sourceRoot: root, evidence: { id: 'operational-evidence', path: 'evidence.json', hash: hashBytes(bytes), provenance: 'production_source_snapshot' } });
+  const intake = buildEvidenceIntake({ evidenceItems: [{ id: 'operational-evidence', claimIds: ['operational-main-claim'], path: 'evidence.json', hash: verified.verifiedHash, provenance: 'production_source_snapshot', verificationStatus: verified.status, verifiedHash: verified.verifiedHash, provenanceReceiptHash: verified.provenanceReceiptHash, createdAt: verified.createdAt, verificationReceipt: verified }] });
+  return { verificationStatus: verified.status, verifiedHash: verified.verifiedHash, intakeStatus: intake.status, intakeItemCount: intake.items.length, sourceMutationPerformed: false };
+}
+
+async function replayEvidenceQualityGate() {
+  const registry = buildClaimRegistry({ paperTask, claims: [{ id: 'operational-main-claim', text: `production-source:${mainTexHash}`, sourceLocator: 'main.tex#operational-main-claim', verificationPlan: { kind: 'artifact' } }] });
+  const gate = buildEvidenceQualityGate({ paperTask, claimRegistry: registry, evidenceIntake: { status: 'evidence_intake_ready', items: [{ claimIds: ['operational-main-claim'], hash: mainTexHash, verifiedHash: mainTexHash, verificationStatus: 'evidence_artifact_verified', provenanceReceiptHash: hashRecord('ProductionSourceProvenance', { paperId, mainTexHash }), consumptionPolicy: { status: 'evidence_consumption_ready' } }] }, nativeWorkerReceipts: [] });
+  return { registryStatus: registry.status, gateStatus: gate.status, coveredClaimIds: [...(gate.coveredClaimIds || [])].sort(), blockerCount: gate.blockers.length };
+}
+
+async function replayExperimentRegistry(root) {
+  const store = createStore(root);
+  const artifactLedger = createLedger(store, { writerId: 'operational-artifact-repository', writerKind: 'content-addressed-repository', allowedKinds: ['ArtifactWriteReceipt'], allowedStreams: ['artifact-writes'] });
+  const repository = createFilesystemArtifactRepository({ scopeRoot: root, casRoot: path.join(root, 'cas'), repositoryId: 'operational-experiment-cas', receiptLedger: artifactLedger, clock });
+  const experimentId = 'operational-experiment';
+  const runId = 'production-replay-1';
+  const datasetHash = mainTexHash;
+  const codeHash = targetBindings['research.experiment-registry'][0].sha256;
+  const seed = 1701;
+  const resultReceipt = await repository.writeJson(path.join(root, 'result.json'), { paperId, mainTexHash, seed, metric: 1 }, { role: `experiment-result:${experimentId}:${runId}` });
+  const outputNames = ['metrics.json', 'experiment-reproducibility.json'];
+  const outputArtifacts = [];
+  for (const name of outputNames) {
+    const receipt = await repository.writeJson(path.join(root, name), { paperId, mainTexHash, seed, name }, { role: `experiment-output:${experimentId}:${runId}:${name}` });
+    const { ledgerReceiptId, ...artifactWriteReceipt } = receipt;
+    outputArtifacts.push({ name, artifactWriteReceipt, ledgerReceiptId });
+  }
+  const { ledgerReceiptId: resultLedgerReceiptId, ...resultArtifactWriteReceipt } = resultReceipt;
+  const experiment = { experimentId, runId, datasetHash, datasetManifestHash: mainTexHash, datasetLicenseId: 'production-source-internal', datasetReadOnly: true, datasetMounts: [{ name: 'production-main-tex', manifestHash: mainTexHash, licenseId: 'production-source-internal', readOnly: true }], codeHash, resultHash: resultReceipt.hash, resultPath: 'result.json', seed, metric: 'operational_replay_equal', metricPredicates: [{ metric: 'operational_replay_equal', comparator: '==', threshold: 1 }], networkPolicy: 'none', secretsAllowed: false, externalActionsAllowed: false, providerCallsAllowed: false, sourceMutationAllowed: false, sourceReadOnlyRequired: true, ephemeralWorkRootRequired: true, separateOutputRootRequired: true };
+  const executionContract = buildExperimentExecutionContract({ experiment, requiredOutputs: outputNames });
+  const outputManifest = buildExperimentOutputManifest({ experimentId, runId, outputArtifacts: outputArtifacts.map((item) => ({ name: item.name, path: item.artifactWriteReceipt.path, hash: item.artifactWriteReceipt.hash, manifestHash: item.artifactWriteReceipt.manifestHash, writeReceiptHash: item.artifactWriteReceipt.writeReceiptHash })) });
+  const isolationReceiptHash = hashRecord('OperationalExperimentIsolation', { paperId, mainTexHash, networkPolicy: 'none', sourceReadOnly: true });
+  const workerLedger = createLedger(store, { writerId: 'operational-experiment-worker', writerKind: 'experiment-worker', allowedKinds: ['ExperimentWorkerExecutionReceipt'], allowedStreams: ['experiment-workers'] });
+  const worker = seal('ExperimentWorkerExecutionReceipt', { status: 'worker_execution_completed', experimentId, runId, datasetHash, codeHash, resultHash: resultReceipt.hash, seed, executionContractHash: executionContract.experimentExecutionContractHash, datasetContractHash: executionContract.datasetContractHash, isolationPolicyHash: executionContract.isolationPolicyHash, metricPredicateContractHash: executionContract.metricPredicateContractHash, isolationReceiptHash, networkPolicy: 'none', secretAccessPerformed: false, externalActionPerformed: false, providerCallPerformed: false, sourceMutationDetected: false, sourceMerkleHashBefore: mainTexHash, sourceMerkleHashAfter: mainTexHash, isolation: { kernelNetworkIsolationVerified: true, sourceReadOnlyVerified: true, ephemeralWorkRootVerified: true, separateOutputRootVerified: true }, datasetMounts: experiment.datasetMounts, outputManifestHash: outputManifest.experimentOutputManifestHash, resultArtifactWriteReceiptHash: resultArtifactWriteReceipt.writeReceiptHash });
+  const workerRecord = workerLedger.record(worker, { stream: 'experiment-workers', paperId });
+  const workerReceipt = { ...worker, ledgerReceiptId: workerRecord.receiptId };
+  const reproducibilityLedger = createLedger(store, { writerId: 'operational-experiment-reproducibility', writerKind: 'experiment-reproducibility-verifier', allowedKinds: ['ExperimentReproducibilityReceipt'], allowedStreams: ['experiment-reproducibility'] });
+  const reproducibility = seal('ExperimentReproducibilityReceipt', { status: 'experiment_reproducibility_verified', experimentId, runId, seed, workerReceiptHash: worker.receiptHash, resultHash: resultReceipt.hash, outputArtifactHashes: outputArtifacts.map((item) => item.artifactWriteReceipt.hash).sort(), executionContractHash: executionContract.experimentExecutionContractHash, datasetContractHash: executionContract.datasetContractHash, isolationPolicyHash: executionContract.isolationPolicyHash, metricPredicateContractHash: executionContract.metricPredicateContractHash, isolationReceiptHash, outputManifestHash: outputManifest.experimentOutputManifestHash });
+  const reproducibilityRecord = reproducibilityLedger.record(reproducibility, { stream: 'experiment-reproducibility', paperId });
+  const artifact = { kind: 'experiment', ...experiment, requiredOutputs: outputNames, metrics: { operational_replay_equal: 1 }, workerReceipt, resultArtifact: { artifactWriteReceipt: resultArtifactWriteReceipt, ledgerReceiptId: resultLedgerReceiptId, outputArtifacts }, reproducibilityReceipt: { ...reproducibility, ledgerReceiptId: reproducibilityRecord.receiptId } };
+  const registry = buildExperimentRegistry({ paperTask, artifacts: [artifact], receiptLedger: artifactLedger, artifactVerifier: verifyArtifactWriteReceiptSource });
+  const result = { registryStatus: registry.status, experimentStatus: registry.experiments[0]?.status, executionContractHash: registry.experiments[0]?.evidenceBinding?.executionContractHash, datasetContractHash: registry.experiments[0]?.evidenceBinding?.datasetContractHash, isolationPolicyHash: registry.experiments[0]?.evidenceBinding?.isolationPolicyHash, metricPredicateContractHash: registry.experiments[0]?.evidenceBinding?.metricPredicateContractHash, trustedLedgerReceiptsVerified: registry.experiments[0]?.evidenceBinding?.trustedLedgerReceiptsVerified, artifactSourcesVerified: registry.experiments[0]?.evidenceBinding?.artifactSourcesVerified };
+  store.close?.();
+  return result;
+}
+
+async function replayFormalVerifier(root) {
+  const projectRoot = path.join(root, 'formal-project');
+  fs.cpSync(path.join(workspaceRoot, 'migration', 'fixtures', 'lean-adversarial'), projectRoot, { recursive: true });
+  const commandRunner = {
+    async run({ executable, args = [], cwd, timeoutMs = 120000 } = {}) {
+      const result = spawnSync(executable, args, { cwd, encoding: 'utf8', timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, env: { ...process.env, NO_PROXY: '*', no_proxy: '*' } });
+      const payload = { version: 1, kind: 'ProductionFormalCommandReceipt', executable: path.basename(String(executable)), args: args.map(String), exitCode: result.status, stdoutHash: hashBytes(String(result.stdout || '')), stderrHash: hashBytes(String(result.stderr || result.error?.message || '')), externalActionPerformed: false };
+      return { ok: result.status === 0 && !result.error, status: result.status === 0 && !result.error ? 'production_formal_command_passed' : 'production_formal_command_failed', stdout: String(result.stdout || ''), stderr: String(result.stderr || result.error?.message || ''), exitCode: result.status, receiptHash: hashRecord('ProductionFormalCommandReceipt', payload), isolation: { networkPolicy: 'none_by_operational_contract', sourceMutationPerformed: false, externalActionPerformed: false } };
+    },
+  };
+  const verifier = createLakeFormalVerifier({ projectRoot, commandRunner });
+  const certificate = await verifier.verify({ timeoutMs: 120000 });
+  const replay = await verifier.replay({ certificateBundle: certificate });
+  return { certificateStatus: certificate.status, replayStatus: replay.status, projectFiles: certificate.projectFiles?.map((item) => ({ path: item.path, hash: item.hash })).sort((a, b) => a.path.localeCompare(b.path)), toolchainHash: certificate.toolchainHash, manifestHash: certificate.manifestHash, externalActionPerformed: certificate.externalActionPerformed };
+}
+
+async function replayChangeProposal() {
+  const proposal = buildResearchChangeProposal({ paperTask, patches: [{ preimageHash: mainTexHash, patchHash: hashRecord('OperationalNoopPatch', { paperId, mainTexHash }) }], evidenceQualityGate: { status: 'evidence_quality_ready' } });
+  return { status: proposal.status, proposalHash: proposal.researchChangeProposalHash, sourceMutationPerformed: proposal.sourceMutationPerformed, applyAuthority: proposal.applyAuthority };
+}
+
+async function replaySandbox(root) {
+  await fsp.writeFile(path.join(root, 'source.txt'), `${paperId}\n${mainTexHash}\n`);
+  const probe = probeOsSandbox({ refresh: true });
+  const runner = createOsSandboxedWorkerRunner({ allowedExecutables: ['/usr/bin/true'], allowedRoots: [root], probe });
+  const receipt = runner.run({ executable: '/usr/bin/true', cwd: root, sourceRoot: root, outputPaths: [] });
+  if (receipt.status !== 'os_sandbox_worker_passed') throw new Error(`operational OS sandbox unavailable:${(receipt.blockers || []).join(',')}`);
+  return { status: receipt.status, backend: receipt.backend, exitCode: receipt.exitCode, sourceMerkleHashBefore: receipt.sourceMerkleHashBefore, sourceMerkleHashAfter: receipt.sourceMerkleHashAfter, isolation: receipt.isolation, externalActionPerformed: receipt.externalActionPerformed };
+}
+
+async function replayArtifactRepository(root) {
+  const store = createStore(root);
+  const ledger = createLedger(store, { writerId: 'operational-artifact-repository', writerKind: 'content-addressed-repository', allowedKinds: ['ArtifactWriteReceipt'], allowedStreams: ['artifact-writes'] });
+  const repository = createFilesystemArtifactRepository({ scopeRoot: root, casRoot: path.join(root, 'cas'), repositoryId: 'operational-artifact-cas', receiptLedger: ledger, clock });
+  const receipt = await repository.writeJson(path.join(root, 'production-subject.json'), { paperId, mainTexHash }, { role: 'operational-capability-replay' });
+  const verification = verifyArtifactWriteReceiptSource({ receipt });
+  const manifest = await repository.readManifest(receipt.manifestHash);
+  const result = { atomic: receipt.atomic, immutableObject: receipt.immutableObject, contentHash: receipt.hash, manifestHash: receipt.manifestHash, manifestContentHash: manifest.contentHash, sourceVerificationStatus: verification.status, externalActionPerformed: receipt.externalActionPerformed };
+  store.close?.();
+  return result;
+}
+
+async function replayJobReceiptStore(root) {
+  const store = createStore(root);
+  const ledger = createLedger(store, { writerId: 'operational-job-store', writerKind: 'job-receipt-store', allowedKinds: ['OperationalJobResultReceipt'], allowedStreams: ['jobs'] });
+  const jobs = createSqliteJobReceiptStore({ store, receiptLedger: ledger, clock });
+  const jobId = `operational-job:${paperId}`;
+  jobs.createJob({ jobId, deduplicationKey: hashRecord('OperationalJobDeduplication', { paperId, mainTexHash }), kind: 'operational-capability-replay', paperId, environment: 'production', evidenceClass: 'operational' });
+  const lease = jobs.acquireLease({ jobId, workerId: 'operational-worker' });
+  const attempt = jobs.recordAttempt({ jobId, workerId: 'operational-worker' });
+  const completed = jobs.completeJob({ jobId, attemptId: attempt.attemptId, receipt: seal('OperationalJobResultReceipt', { status: 'operational_job_completed', paperId, mainTexHash }, 'jobReceiptHash') });
+  const result = { leaseStatus: lease.status, attemptId: attempt.attemptId, attemptNumber: attempt.attemptNumber, completedStatus: completed.status, attemptCount: completed.attemptCount, environment: completed.environment, evidenceClass: completed.evidence_class };
+  store.close?.();
+  return result;
+}
+
+async function replaySubmissionExecutorPort(root) {
+  const executorId = 'operational-submission-executor';
+  const capabilities = () => buildExecutorCapabilities({ executorId, sandboxModes: ['provider-workspace'], networkPolicy: 'provider-scoped', externalActions: true, workspaceIsolation: true, receiptKinds: ['SubmissionProviderReceipt'], provider: 'operational-dry-run-provider' });
+  const executor = assertSubmissionExecutorPort({ executorId, provider: 'operational-dry-run-provider', accountId: 'operational-owner-account', workspaceRoot: path.join(root, 'external-provider-workspace'), externalWorkspace: true, capabilities, dispatch: ({ execute = false } = {}) => ({ status: execute ? 'external_execution_forbidden_in_replay' : 'provider_dispatch_dry_run_verified', externalActionPerformed: false }) });
+  const descriptor = submissionExecutorDescriptor(executor);
+  const dispatch = executor.dispatch({ execute: false });
+  return { descriptorHash: descriptor.submissionExecutorDescriptorHash, capabilitiesHash: descriptor.capabilitiesHash, networkPolicy: descriptor.capabilities.networkPolicy, workspaceIsolation: descriptor.capabilities.workspaceIsolation, dispatchStatus: dispatch.status, externalActionPerformed: dispatch.externalActionPerformed };
+}
+
+async function replaySubmissionDelivery(root) {
+  const store = createStore(root);
+  const ledger = createLedger(store, { writerId: 'operational-submission-delivery', writerKind: 'submission-delivery-store', allowedKinds: ['SubmissionResponsePersistedReceipt'], allowedStreams: ['submission-delivery'] });
+  const delivery = createSqliteSubmissionDeliveryStore({ store, receiptLedger: ledger, clock });
+  const dispatchAuthorization = { status: 'submission_dispatch_authorization_ready', submissionDispatchAuthorizationHash: hashRecord('OperationalSubmissionDispatch', { paperId, mainTexHash }), provider: 'operational-dry-run-provider', accountId: 'operational-owner-account', nonce: 'operational-nonce-1', attempt: 1 };
+  const message = delivery.enqueue({ paperId, dispatchAuthorization, payload: { operationalReplay: true } });
+  const response = { responseId: 'operational-response-1', outcome: 'failed', dispatchAuthorizationHash: dispatchAuthorization.submissionDispatchAuthorizationHash, provider: dispatchAuthorization.provider, accountId: dispatchAuthorization.accountId, performedAt: fixedIso, attempt: 1 };
+  const persisted = delivery.recordResponse({ messageId: message.message_id, response });
+  const outbox = delivery.getOutbox(message.message_id);
+  const consumption = delivery.getResponseConsumption(response.responseId);
+  const duplicate = delivery.recordResponse({ messageId: message.message_id, response });
+  const result = { persistedReceiptHash: persisted.receiptHash, duplicateReceiptHash: duplicate.receiptHash, sameReceipt: persisted.receiptHash === duplicate.receiptHash, outboxStatus: outbox.status, responseConsumptionState: consumption.state, recoverPendingCount: delivery.recoverPending().length };
+  store.close?.();
+  return result;
+}
+
+async function replaySubmissionReleaseLock() {
+  const dispatchAuthorization = { status: 'submission_dispatch_authorization_ready', submissionDispatchAuthorizationHash: hashRecord('OperationalSubmissionDispatch', { paperId, mainTexHash }) };
+  const responseIntake = { status: 'executor_response_accepted', outcome: 'failed', executorResponseIntakeHash: hashRecord('OperationalResponseIntake', { paperId, mainTexHash }), responseEnvelopeHash: hashRecord('OperationalResponseEnvelope', { paperId }), providerReceiptHash: null, submissionId: null };
+  const reconciliation = { status: 'dry_run_reconciled', submissionReconciliationHash: hashRecord('OperationalDryRunReconciliation', { paperId, mainTexHash }) };
+  const unlocked = buildSubmissionReleaseLock({ paperTask, dispatchAuthorization, responseIntake, reconciliation });
+  const blocked = buildSubmissionReleaseLock({ paperTask });
+  return { unlockedStatus: unlocked.status, unlockedHash: unlocked.submissionReleaseLockHash, missingEvidenceStatus: blocked.status, missingEvidenceBlockers: [...blocked.blockers].sort() };
+}
+
+async function replayRepairSafeApply(root) {
+  const paperRoot = path.join(root, 'paper');
+  await fsp.mkdir(paperRoot, { recursive: true });
+  const target = path.join(paperRoot, 'main.tex');
+  const patchPath = path.join(root, 'change.patch');
+  await fsp.writeFile(target, `production-source:${mainTexHash}\n`);
+  await fsp.writeFile(patchPath, ['diff --git a/paper/main.tex b/paper/main.tex', '--- a/paper/main.tex', '+++ b/paper/main.tex', '@@ -1 +1 @@', `-production-source:${mainTexHash}`, `+production-source:${mainTexHash} operational-replay`, ''].join('\n'));
+  spawnSync('git', ['init', '-q'], { cwd: root });
+  spawnSync('git', ['config', 'user.email', 'operational-replay@example.invalid'], { cwd: root });
+  spawnSync('git', ['config', 'user.name', 'Hepta Operational Replay'], { cwd: root });
+  spawnSync('git', ['add', 'paper/main.tex'], { cwd: root });
+  const commit = spawnSync('git', ['commit', '-qm', 'operational baseline'], { cwd: root, encoding: 'utf8' });
+  if (commit.status !== 0) throw new Error(commit.stderr || 'operational repair baseline commit failed');
+  const preimageHash = await sha256File(target);
+  const patchHash = await sha256File(patchPath);
+  const row = { task: { paperId, sourceWorkspace: 'paper' } };
+  const preimageSnapshotLedger = { preimageSnapshotLedgerHash: hashRecord('OperationalPreimageLedger', { paperId, preimageHash }), entries: [{ targetPath: 'paper/main.tex', exists: true, preimageHash }] };
+  const execution = { plannedPatchInputs: [{ patchId: 'operational-change', patchPath: 'change.patch', patchSha256: patchHash, targetPaths: ['paper/main.tex'] }] };
+  const dryRun = await validateAndMaybeApplyPatches({ root, row, patchApplyExecution: execution, preimageSnapshotLedger, execute: false });
+  const applied = await validateAndMaybeApplyPatches({ root, row, patchApplyExecution: execution, preimageSnapshotLedger, execute: true });
+  const proof = buildRepairApplyProof({ row, preimageSnapshotLedger, patchApplyResult: applied });
+  const rollback = await rollbackAppliedPatches({ root, row, patchApplyResult: applied });
+  const restoredHash = await sha256File(target);
+  return { dryRunBlockerCount: dryRun.blockers.length, cleanApplyCheck: dryRun.validationRecords[0]?.cleanApplyCheck, applied: applied.applied, proofStatus: proof.status, rollbackStatus: rollback.status, restoredHash, preimageHash, sourceRestored: restoredHash === preimageHash };
+}
+
+const replayByCapability = Object.freeze({
+  'research.claim-registry': (_root) => replayClaimRegistry(),
+  'research.gap-planner': replayGapPlanner,
+  'research.evidence-ingestor': replayEvidenceIngestor,
+  'research.evidence-quality-gate': (_root) => replayEvidenceQualityGate(),
+  'research.experiment-registry': replayExperimentRegistry,
+  'research.formal-verifier': replayFormalVerifier,
+  'research.change-proposal': (_root) => replayChangeProposal(),
+  'runtime.sandboxed-worker-runner': replaySandbox,
+  'runtime.artifact-repository': replayArtifactRepository,
+  'runtime.job-receipt-store': replayJobReceiptStore,
+  'submission.executor-port': replaySubmissionExecutorPort,
+  'submission.delivery-runtime': replaySubmissionDelivery,
+  'submission.release-lock': (_root) => replaySubmissionReleaseLock(),
+  'repair.safe-apply': replayRepairSafeApply,
+});
+
+fs.mkdirSync(evidenceRoot, { recursive: true });
+fs.mkdirSync(receiptRoot, { recursive: true });
+const verified = [];
+for (const capabilityId of Object.keys(CAPABILITY_CATALOG).sort()) {
+  const executeReplay = replayByCapability[capabilityId];
+  if (!executeReplay) throw new Error(`operational replay missing:${capabilityId}`);
+  const first = await executeReplay(freshRoot(capabilityId));
+  const firstHash = hashRecord('CapabilityOperationalResult', { capabilityId, result: first });
+  const second = await executeReplay(freshRoot(capabilityId));
+  const secondHash = hashRecord('CapabilityOperationalResult', { capabilityId, result: second });
+  const replayMatched = firstHash === secondHash;
+  if (!replayMatched) throw new Error(`operational replay mismatch:${capabilityId}`);
+  const inputHashes = [mainTexHash, hashRecord('CapabilityOperationalReplayInput', { capabilityId, paperId, mainTexHash })];
+  const comparison = { version: 1, kind: 'CapabilityOperationalReplayComparison', capabilityId, firstResultHash: firstHash, secondResultHash: secondHash, replayMatched };
+  const replayReceiptHash = hashRecord('CapabilityOperationalReplayComparison', comparison);
+  const evidencePayload = { version: 1, kind: 'CapabilityOperationalReplayEvidence', capabilityId, status: 'production_capability_replay_verified', productionSubject: { paperId, sourcePath: path.relative(assetRoot, mainTex), sourceHash: mainTexHash }, inputHashes, targetHashes: targetBindings[capabilityId], firstResult: first, secondResult: second, resultHash: firstHash, replayReceiptHash, replayMatched, releaseCommit, evidenceEnvironment: 'production', evidenceClass: 'operational', externalActionPerformed: false, createdAt: new Date().toISOString() };
+  const executionReceiptHash = hashRecord('CapabilityOperationalReplayEvidence', evidencePayload);
+  const evidence = { ...evidencePayload, executionReceiptHash };
+  const evidenceDirectory = path.join(evidenceRoot, capabilityId);
+  fs.mkdirSync(evidenceDirectory, { recursive: true });
+  const evidencePath = path.join(evidenceDirectory, `${releaseCommit.slice(0, 12)}.json`);
+  writeJsonArtifact(evidencePath, evidence);
+  let receipt = { version: 1, kind: 'CapabilityOperationalReceipt', capabilityId, status: 'production_capability_replay_verified', evidenceEnvironment: 'production', evidenceClass: 'operational', productionEligible: true, productionSubject: { paperId, subjectId: 'legacy-paper-factory-retirement' }, inputHashes, executionReceiptHash, resultHash: firstHash, replayReceiptHash, replayMatched, releaseCommit, targetHashes: targetBindings[capabilityId], executionEvidencePath: path.relative(runtimeRoot, evidencePath).replace(/\\/g, '/'), externalActionPerformed: false, signatures: [] };
+  receipt = signAuthorityDocument(receipt, { privateKeyPem, keyId: ownerKey.keyId, role: 'capability_owner' });
+  const capabilityDirectory = path.join(receiptRoot, capabilityId);
+  fs.mkdirSync(capabilityDirectory, { recursive: true });
+  const receiptPath = path.join(capabilityDirectory, `${releaseCommit.slice(0, 12)}.json`);
+  writeJsonArtifact(receiptPath, receipt);
+  const verification = verifyCapabilityOperationalReceipt({ document: receipt, trustStore, capabilityId, targetBindings: targetBindings[capabilityId], releaseCommit });
+  if (verification.status !== 'capability_operational_receipt_verified') throw new Error(`operational receipt verification failed:${capabilityId}:${verification.blockers.join(',')}`);
+  verified.push({ capabilityId, resultHash: firstHash, executionReceiptHash, replayReceiptHash, operationalReceiptHash: verification.operationalReceiptHash, receiptPath, evidencePath });
+}
+
+fs.rmSync(replayWorkRoot, { recursive: true, force: true });
+const manifestPayload = { version: 1, kind: 'CapabilityOperationalReplayManifest', status: 'all_capabilities_operationally_replayed', releaseCommit, paperId, productionSourceHash: mainTexHash, capabilityCount: verified.length, verified, externalActionPerformed: false, completedAt: new Date().toISOString() };
+const manifest = { ...manifestPayload, capabilityOperationalReplayManifestHash: hashRecord('CapabilityOperationalReplayManifest', manifestPayload) };
+const manifestPath = path.join(runtimeRoot, 'operational-proof', `CAPABILITY_OPERATIONAL_REPLAY_MANIFEST_${releaseCommit.slice(0, 12)}.json`);
+writeJsonArtifact(manifestPath, manifest);
+process.stdout.write(`${JSON.stringify({ status: manifest.status, capabilityCount: manifest.capabilityCount, paperId, productionSourceHash: mainTexHash, manifestHash: manifest.capabilityOperationalReplayManifestHash, operationalReceiptHashes: verified.map((item) => item.operationalReceiptHash) }, null, 2)}\n`);

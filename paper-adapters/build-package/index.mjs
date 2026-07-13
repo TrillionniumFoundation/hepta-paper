@@ -1,25 +1,59 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   ensureDir,
   fileExists,
   fileRecord,
+  pathWithin,
   relativePath,
   sha256Text,
   walkFiles,
-} from '../../paper-core/src/runtime/file-utils.mjs';
-import { normalizeText } from '../../paper-core/src/runtime/text-utils.mjs';
+} from '../../workflow-kernel/runtime/file-utils.mjs';
+import { normalizeText } from '../../workflow-kernel/runtime/text-utils.mjs';
 import { writeJsonFile, writeTextFile } from '../artifacts/write-artifact.mjs';
 import {
   createPaperBuildArtifactAcceptance,
   createPaperArtifactPackage,
 } from '../../paper-core/src/paper-contracts.mjs';
 import { sqlEscape } from '../../paper-ports/store-port.mjs';
+import { verifyPackageBundle } from './package-verifier.mjs';
+import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { inspectScopedPathSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
+import { runTheoremManuscriptReadinessCheck } from '../automation/theorem-manuscript-readiness-check.mjs';
+import { evaluateManuscriptPromotion, explicitPaperQualityProfile } from '../../paper-domain/quality/manuscript-promotion-gate.mjs';
+import { buildSourcePackageManifest, resolveSourcePackageContract } from '../../paper-domain/quality/source-package-contract.mjs';
 
 function repoPath(root, value) {
   const text = normalizeText(value);
   if (!text) return null;
   return path.isAbsolute(text) ? text : path.join(root, text);
+}
+
+function sourceWorkspaceAuthority({ root, runtimeRoot, row, sourceDir, mainTex }) {
+  if (!sourceDir) return { scopeRoot: null, blockers: ['source_workspace_missing'] };
+  const proposalRoot = path.join(runtimeRoot, 'proposals');
+  const proposalStaging = row?.task?.registry?.inventorySource === 'proposal_staging';
+  const scopeRoot = pathWithin(root, sourceDir)
+    ? root
+    : proposalStaging && pathWithin(proposalRoot, sourceDir)
+      ? proposalRoot
+      : null;
+  if (!scopeRoot) return { scopeRoot: null, blockers: ['source_workspace_outside_authorized_scope'] };
+  const sourceIdentity = inspectScopedPathSync({ scopeRoot, candidate: sourceDir, expect: 'directory', forbidHardlinks: false });
+  const mainIdentity = mainTex
+    ? inspectScopedPathSync({ scopeRoot: sourceDir, candidate: mainTex, expect: 'file' })
+    : null;
+  const blockers = [
+    ...(sourceIdentity.status === 'scoped_file_identity_verified' ? [] : sourceIdentity.blockers.map((item) => `source_workspace:${item}`)),
+    ...(mainIdentity && mainIdentity.status !== 'scoped_file_identity_verified' ? mainIdentity.blockers.map((item) => `main_tex:${item}`) : []),
+  ];
+  return { scopeRoot, blockers };
+}
+
+async function scopedLogicalFileRecord(scopeRoot, logicalRoot, candidate, role, extra = {}) {
+  const record = await fileRecord(scopeRoot, candidate, role);
+  return record ? { ...record, path: relativePath(logicalRoot, candidate), ...extra } : null;
 }
 
 function commandExists(command) {
@@ -81,6 +115,8 @@ export async function runLatexBuildAdapter({ root, row, runtimeRoot, execute = f
   const warnings = [];
   if (!sourceDir) blockers.push('source_workspace_missing');
   if (!mainTex || !(await fileExists(mainTex))) blockers.push('main_tex_missing');
+  const sourceAuthority = sourceWorkspaceAuthority({ root, runtimeRoot, row, sourceDir, mainTex });
+  blockers.push(...sourceAuthority.blockers);
   const latexmk = commandExists('latexmk');
   const pdflatex = commandExists('pdflatex');
   const xelatex = commandExists('xelatex');
@@ -108,7 +144,7 @@ export async function runLatexBuildAdapter({ root, row, runtimeRoot, execute = f
     };
     if (result.status !== 0) blockers.push('latex_build_failed');
     const expectedPdf = path.join(buildDir, path.basename(mainTex, '.tex') + '.pdf');
-    if (await fileExists(expectedPdf)) builtPdf = await fileRecord(root, expectedPdf, 'compiled_pdf');
+    if (await fileExists(expectedPdf)) builtPdf = await scopedLogicalFileRecord(runtimeRoot, root, expectedPdf, 'compiled_pdf');
   }
   const buildArtifactAcceptance = createPaperBuildArtifactAcceptance({
     paperTask: row.task,
@@ -126,7 +162,7 @@ export async function runLatexBuildAdapter({ root, row, runtimeRoot, execute = f
   if (execute && buildArtifactAcceptance.accepted) {
     const acceptancePath = path.join(buildDir, 'BUILD_ARTIFACT_ACCEPTANCE.json');
     await writeJsonFile(acceptancePath, buildArtifactAcceptance);
-    buildArtifactAcceptanceRecord = await fileRecord(root, acceptancePath, 'build_artifact_acceptance');
+    buildArtifactAcceptanceRecord = await scopedLogicalFileRecord(runtimeRoot, root, acceptancePath, 'build_artifact_acceptance');
   }
   return {
     version: 1,
@@ -152,22 +188,18 @@ export async function runLatexBuildAdapter({ root, row, runtimeRoot, execute = f
   };
 }
 
-async function sourceFileArtifacts(root, sourceDir) {
+async function sourceFileArtifacts(root, sourceDir, sourceTreeManifest = null) {
   if (!sourceDir) return [];
-  const files = await walkFiles(sourceDir, {
-    maxDepth: 3,
-    maxFiles: 4000,
-    match: (_full, name) => /\.(tex|bib|bst|cls|sty|pdf|png|jpg|jpeg|csv|json|md)$/i.test(name)
-      && !/(\.aux|\.log|\.fdb_latexmk|\.fls|\.synctex|\.out)$/i.test(name),
-  });
+  const files = (sourceTreeManifest?.rows || []).map((item) => ({ ...item, absolute: path.join(sourceDir, item.path) }));
   const artifacts = [];
-  for (const file of files.slice(0, 256)) {
+  for (const item of files) {
+    const file = item.absolute;
     const lower = path.basename(file).toLowerCase();
-    let role = 'source_file';
+    let role = item.role || 'source_file';
     if (lower.endsWith('.pdf')) role = 'compiled_pdf';
     if (lower.endsWith('.tex')) role = lower === 'main.tex' ? 'main_tex' : 'tex_source';
     if (lower.endsWith('.bib')) role = 'bibliography';
-    const record = await fileRecord(root, file, role);
+    const record = await scopedLogicalFileRecord(sourceDir, root, file, role);
     if (record) artifacts.push(record);
   }
   return artifacts;
@@ -185,8 +217,8 @@ async function runtimeBuildArtifacts(root, runtimeRoot, paperId) {
     const role = path.basename(file) === 'BUILD_ARTIFACT_ACCEPTANCE.json'
       ? 'build_artifact_acceptance'
       : 'compiled_pdf';
-    const record = await fileRecord(root, file, role);
-    if (record) artifacts.push({ ...record, source: 'runtime_build' });
+    const record = await scopedLogicalFileRecord(runtimeRoot, root, file, role, { source: 'runtime_build' });
+    if (record) artifacts.push(record);
   }
   return artifacts;
 }
@@ -210,7 +242,7 @@ function sha256SumsText(artifacts = []) {
     .join('\n') + '\n';
 }
 
-async function writePackageRecords({ root, packageDir, row, artifactPackage, execute }) {
+async function writePackageRecords({ root, runtimeRoot, packageDir, row, artifactPackage, verificationArtifacts = [], sourceTreeManifest = null, sourcePackageContract = null, execute }) {
   await ensureDir(packageDir);
   const packageRecord = {
     version: 1,
@@ -225,6 +257,9 @@ async function writePackageRecords({ root, packageDir, row, artifactPackage, exe
     sourceMutation: false,
     externalActionPerformed: false,
     artifactPackageHash: artifactPackage.artifactPackageHash,
+    sourceTreeManifestHash: sourceTreeManifest?.sourceTreeManifestHash || null,
+    sourcePackageContractHash: sourcePackageContract?.sourcePackageContractHash || null,
+    sourceTreeManifest,
     artifactCount: artifactPackage.artifactCount,
     artifacts: artifactPackage.artifacts,
   };
@@ -232,36 +267,56 @@ async function writePackageRecords({ root, packageDir, row, artifactPackage, exe
   const recordPath = path.join(packageDir, 'PACKAGE_RECORD.json');
   const sumsPath = path.join(packageDir, 'SHA256SUMS.txt');
   await writeJsonFile(recordPath, packageRecord);
-  await writeTextFile(sumsPath, sha256SumsText(artifactPackage.artifacts));
+  await writeTextFile(sumsPath, sha256SumsText(verificationArtifacts));
   return {
-    packageRecord: await fileRecord(root, recordPath, 'package_record'),
-    sha256Sums: await fileRecord(root, sumsPath, 'sha256sums'),
+    packageRecord: await scopedLogicalFileRecord(runtimeRoot, root, recordPath, 'package_record'),
+    sha256Sums: await scopedLogicalFileRecord(runtimeRoot, root, sumsPath, 'sha256sums'),
   };
 }
 
-export async function runPackageAdapter({ root, row, buildResult = null, runtimeRoot, execute = false, store = null } = {}) {
+export async function runPackageAdapter({ root, row, buildResult = null, researchReport = null, runtimeRoot, execute = false, store = null } = {}) {
   const sourceDir = repoPath(root, row.task.sourceWorkspace);
+  const packageMainTex = repoPath(root, row.task.mainTex);
   const blockers = [];
   const warnings = [];
   if (!sourceDir) blockers.push('source_workspace_missing');
+  if (!packageMainTex || !(await fileExists(packageMainTex))) blockers.push('main_tex_missing');
+  const sourceAuthority = sourceWorkspaceAuthority({ root, runtimeRoot, row, sourceDir, mainTex: packageMainTex });
+  blockers.push(...sourceAuthority.blockers);
+  const sourcePackageContract = sourceDir
+    ? resolveSourcePackageContract({ sourceRoot: sourceDir, paperTask: row.task })
+    : null;
+  const sourceTreeManifest = sourceDir
+    ? buildSourcePackageManifest({ sourceRoot: sourceDir, sourcePackageContract })
+    : null;
+  if (sourceTreeManifest?.status !== 'scoped_source_tree_verified') {
+    blockers.push(...(sourceTreeManifest?.blockers || ['source_tree_manifest_required']).map((item) => `source_tree:${item}`));
+  }
+  const runtimeArtifacts = await runtimeBuildArtifacts(root, runtimeRoot, row.task.paperId);
+  const persistedArtifacts = await sqlitePackageArtifacts(root, row.task.paperId, store);
+  const sourceArtifacts = await sourceFileArtifacts(root, sourceDir, sourceTreeManifest);
+  const authoritativePdf = buildResult?.builtPdf
+    || runtimeArtifacts.find((artifact) => artifact.role === 'compiled_pdf')
+    || (row.artifacts?.pdfs || [])[0]
+    || persistedArtifacts.find((artifact) => artifact.role === 'compiled_pdf')
+    || null;
   const artifacts = uniqueArtifactRecords([
-    ...(row.artifacts?.pdfs || []),
-    ...(row.artifacts?.zips || []),
-    ...(await sqlitePackageArtifacts(root, row.task.paperId, store)),
-    ...(await runtimeBuildArtifacts(root, runtimeRoot, row.task.paperId)),
-    ...(await sourceFileArtifacts(root, sourceDir)),
+    ...sourceArtifacts,
+    ...(authoritativePdf ? [authoritativePdf] : []),
+    ...runtimeArtifacts.filter((artifact) => artifact.role === 'build_artifact_acceptance'),
   ]);
-  if (buildResult?.builtPdf) artifacts.unshift(buildResult.builtPdf);
   const hasPdf = artifacts.some((artifact) => artifact.role === 'compiled_pdf');
   const hasSource = artifacts.some((artifact) => ['main_tex', 'tex_source', 'source_file'].includes(artifact.role));
   if (!hasPdf) warnings.push('compiled_pdf_missing');
   if (!hasSource) blockers.push('source_files_missing');
   const packageDir = path.join(runtimeRoot, 'packages', row.task.paperId);
   let sourceZip = null;
+  let sourceZipVerification = null;
   if (!blockers.length && execute) {
     await ensureDir(packageDir);
     const zipPath = path.join(packageDir, `${row.task.paperId}-source-workspace.zip`);
-    const result = spawnSync('zip', ['-qr', zipPath, '.'], {
+    fs.rmSync(zipPath, { force: true });
+    const result = spawnSync('zip', ['-q', '-X', zipPath, '--', ...sourceTreeManifest.rows.map((item) => item.path)], {
       cwd: sourceDir,
       encoding: 'utf8',
       timeout: 120000,
@@ -269,39 +324,112 @@ export async function runPackageAdapter({ root, row, buildResult = null, runtime
     });
     if (result.status !== 0) blockers.push('source_zip_failed');
     if (await fileExists(zipPath)) {
-      sourceZip = await fileRecord(root, zipPath, 'generated_source_zip');
+      sourceZip = await scopedLogicalFileRecord(runtimeRoot, root, zipPath, 'generated_source_zip');
+      sourceZipVerification = await fileRecord(runtimeRoot, zipPath, 'generated_source_zip');
       artifacts.unshift(sourceZip);
     }
   }
   const packageStatus = blockers.length
     ? 'package_blocked'
     : (artifacts.some((artifact) => /zip/i.test(artifact.role)) || sourceZip) ? 'package_present' : 'package_ready';
+  const sourceSnapshotHash = sourceTreeManifest?.sourceTreeManifestHash || null;
+  const candidateArtifactPackage = createPaperArtifactPackage({
+    paperTask: row.task,
+    mode: execute ? 'local-package' : 'local-package-dry-run',
+    artifacts,
+    packageStatus,
+    buildStatus: buildResult?.status || row.state.compileStatus,
+    submitReady: false,
+    evidenceRefs: artifacts.slice(0, 32),
+    sourceSnapshotHash,
+    sourceTreeManifestHash: sourceTreeManifest?.sourceTreeManifestHash || null,
+    sourcePackageContractHash: sourcePackageContract?.sourcePackageContractHash || null,
+  });
+  const packageRecords = await writePackageRecords({
+    root,
+    runtimeRoot,
+    packageDir,
+    row,
+    artifactPackage: candidateArtifactPackage,
+    verificationArtifacts: sourceZipVerification ? [sourceZipVerification] : [],
+    sourceTreeManifest,
+    sourcePackageContract,
+    execute,
+  });
+  const packageVerificationReceipt = execute
+    ? verifyPackageBundle({
+      scopeRoot: runtimeRoot,
+      packageDir,
+      expectedArtifactPackageHash: candidateArtifactPackage.artifactPackageHash,
+      expectedArtifacts: sourceZipVerification ? [sourceZipVerification] : [],
+      expectedArchivePath: sourceZipVerification?.path || null,
+      expectedArchiveManifest: sourceTreeManifest,
+      artifactBaseRoot: root,
+      artifactScopeRoots: [root, runtimeRoot],
+    })
+    : null;
+  if (packageVerificationReceipt && packageVerificationReceipt.status !== 'package_verification_passed') {
+    blockers.push(...packageVerificationReceipt.blockers.map((blocker) => `package_verification:${blocker}`));
+  }
+  const sourceRelativeMain = sourceDir && packageMainTex
+    ? path.relative(sourceDir, packageMainTex).replace(/\\/g, '/')
+    : 'main.tex';
+  const theoremReadiness = sourceDir && packageMainTex && await fileExists(packageMainTex)
+    ? runTheoremManuscriptReadinessCheck({
+      workspacePath: sourceDir,
+      manuscriptPath: sourceRelativeMain,
+      paperId: row.task.paperId,
+      profile: explicitPaperQualityProfile(row.task),
+    })
+    : null;
+  const manuscriptPromotionGate = evaluateManuscriptPromotion({
+    paperTask: row.task,
+    theoremReadiness,
+    researchReport,
+    packageVerificationReceipt,
+    buildResult,
+    requirePackageVerification: Boolean(execute),
+    requireResearchQuality: Boolean(researchReport),
+    requirePaperQuality: Boolean(execute),
+    boundary: 'package',
+  });
+  if (manuscriptPromotionGate.status !== 'manuscript_promotion_ready') {
+    blockers.push(...manuscriptPromotionGate.blockers.map((blocker) => `promotion:${blocker}`));
+  }
   const artifactPackage = createPaperArtifactPackage({
     paperTask: row.task,
     mode: execute ? 'local-package' : 'local-package-dry-run',
     artifacts,
     packageStatus,
     buildStatus: buildResult?.status || row.state.compileStatus,
-    submitReady: !blockers.length && hasPdf && hasSource,
+    submitReady: blockers.length === 0
+      && hasPdf && hasSource
+      && packageVerificationReceipt?.status === 'package_verification_passed'
+      && manuscriptPromotionGate.status === 'manuscript_promotion_ready',
     evidenceRefs: artifacts.slice(0, 32),
-  });
-  const packageRecords = await writePackageRecords({
-    root,
-    packageDir,
-    row,
-    artifactPackage,
-    execute,
+    candidateArtifactPackageHash: candidateArtifactPackage.artifactPackageHash,
+    packageVerificationReceipt,
+    sourceSnapshotHash,
+    sourceTreeManifestHash: sourceTreeManifest?.sourceTreeManifestHash || null,
+    sourcePackageContractHash: sourcePackageContract?.sourcePackageContractHash || null,
+    promotionGate: manuscriptPromotionGate,
   });
   return {
     version: 1,
     kind: 'PaperPackageAdapterResult',
     paperId: row.task.paperId,
     status: blockers.length ? 'blocked' : 'package_ready',
+    submitReady: artifactPackage.submitReady,
     execute: Boolean(execute),
     packageDir: relativePath(root, packageDir),
     sourceZip,
+    sourceTreeManifest,
     packageRecord: packageRecords.packageRecord,
     sha256Sums: packageRecords.sha256Sums,
+    packageVerificationReceipt,
+    theoremReadiness,
+    manuscriptPromotionGate,
+    candidateArtifactPackageHash: candidateArtifactPackage.artifactPackageHash,
     artifactPackage,
     blockers,
     warnings,

@@ -97,7 +97,6 @@ export function selectCurrentReleaseVerificationReceipt({ verificationRoot, code
       const receipt = JSON.parse(fs.readFileSync(path.join(verificationRoot, name), 'utf8'));
       if (receipt?.kind !== 'IsolatedVerificationReceipt'
         || receipt?.mode !== 'release'
-        || receipt?.status !== 'isolated_verification_passed'
         || receipt?.codeProvenance?.packageVersion !== codeProvenance.packageVersion
         || receipt?.codeProvenance?.commit !== codeProvenance.commit
         || receipt?.codeProvenance?.treeDirty === true) continue;
@@ -106,7 +105,8 @@ export function selectCurrentReleaseVerificationReceipt({ verificationRoot, code
   }
   receipts.sort((left, right) => String(left.receipt.completedAt || '').localeCompare(String(right.receipt.completedAt || ''))
     || left.name.localeCompare(right.name));
-  return receipts.at(-1)?.receipt || null;
+  const latest = receipts.at(-1)?.receipt || null;
+  return latest?.status === 'isolated_verification_passed' ? latest : null;
 }
 
 export function buildReleaseEvidenceBundle({ runtimeRoot, legacyRoot } = {}) {

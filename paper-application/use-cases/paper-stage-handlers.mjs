@@ -14,6 +14,7 @@ export function createPaperStageHandlers({
   row,
   venues = [],
   runLocalDiagnosticReviewLoop,
+  targetScopeReceipt = null,
 } = {}) {
   const { root, runtimeRoot, mode, execute, options, services } = context;
   const { maxRounds, targetOverride, datasetRoot, benchmarkId, applyManuscript } = options;
@@ -53,9 +54,9 @@ export function createPaperStageHandlers({
       const researchReport = await runResearchVerifyAdapter({ root, row, runtimeRoot, authorityVerifier: services.authorityVerifier });
       return { journalManagement, empiricalAnalysis, buildResult, packageResult, researchReport };
     },
-    build: async () => ({ buildResult: await runLatexBuildAdapter({ root, row, runtimeRoot, execute: execute && mode === PAPER_BATCH_MODES.LOCAL_BUILD }) }),
-    package: async ({ state }) => ({ packageResult: await runPackageAdapter({ root, row, buildResult: state.buildResult, runtimeRoot, execute: execute && mode === PAPER_BATCH_MODES.LOCAL_PACKAGE, store: services.store }) }),
-    'research-verify': async () => ({ researchReport: await runResearchVerifyAdapter({ root, row, runtimeRoot, executeResearchWorkers: execute && mode === PAPER_BATCH_MODES.RESEARCH_VERIFY, requireNativeWorkers: mode === PAPER_BATCH_MODES.RESEARCH_VERIFY, authorityVerifier: services.authorityVerifier, jobReceiptStore: services.jobReceiptStore, artifactRepositoryFactory: services.artifactRepositoryFactory, receiptLedger: services.receiptLedger, clock: services.clock }) }),
+    build: async () => ({ buildResult: await runLatexBuildAdapter({ root, row, runtimeRoot, execute: execute && [PAPER_BATCH_MODES.LOCAL_BUILD, PAPER_BATCH_MODES.REVIEWED_SUBMIT].includes(mode) }) }),
+    package: async ({ state }) => ({ packageResult: await runPackageAdapter({ root, row, buildResult: state.buildResult, researchReport: state.researchReport, runtimeRoot, execute: execute && [PAPER_BATCH_MODES.LOCAL_PACKAGE, PAPER_BATCH_MODES.REVIEWED_SUBMIT].includes(mode), store: services.store }) }),
+    'research-verify': async () => ({ researchReport: await runResearchVerifyAdapter({ root, row, runtimeRoot, executeResearchWorkers: execute && mode === PAPER_BATCH_MODES.RESEARCH_VERIFY, requireNativeWorkers: mode === PAPER_BATCH_MODES.RESEARCH_VERIFY, authorityVerifier: services.authorityVerifier, jobReceiptStore: services.jobReceiptStore, artifactRepositoryFactory: services.artifactRepositoryFactory, receiptLedger: services.receiptLedger, clock: services.clock, store: services.store }) }),
     'referee-review': async () => ({ refereeReview: await runRefereeReviewAdapter({ root, runtimeRoot, row, execute: execute && mode === PAPER_BATCH_MODES.REFEREE_REVIEW, store: services.store }) }),
     'referee-revise': async () => ({ refereeRevision: await runRefereeReviseAdapter({ root, runtimeRoot, row, mode: 'dry-run', execute: execute && mode === PAPER_BATCH_MODES.REFEREE_REVISE, store: services.store }) }),
     'venue-resolve': async ({ state }) => ({ venueResolution: await runVenueResolveAdapter({ row, venues, packageResult: state.packageResult }) }),
@@ -63,8 +64,13 @@ export function createPaperStageHandlers({
     submission: async ({ state }) => {
       const submissionIntent = row.submissionIntent || row.task.registry?.submissionIntent;
       if (submissionIntent && submissionIntent.status !== 'submission_candidate') return { lifecycle: null };
-      const authorities = await prepareSubmissionAuthorities({ root, runtimeRoot, row, venues, artifactPackage: state.packageResult?.artifactPackage || null, researchReport: state.researchReport, mode, authorityVerifier: services.authorityVerifier });
-      return { lifecycle: buildSubmissionLifecycle({ row, venues, artifactPackage: state.packageResult?.artifactPackage || null, researchReport: state.researchReport, mode, reviewedSubmit: mode === PAPER_BATCH_MODES.REVIEWED_SUBMIT, venuePlanOverride: authorities.venuePlan, independentReviewAuthorityReceipt: authorities.independentReviewAuthorityReceipt, liveAuthorizationReceipt: authorities.liveAuthorizationReceipt, deliveryStore: services.submissionDeliveryStore }) };
+      const executorDescriptor = services.submissionExecutorDescriptor || null;
+      const submissionMetadata = row.submissionMetadata || row.task.registry?.submissionMetadata || null;
+      const submissionMetadataReview = row.submissionMetadataReview || row.task.registry?.submissionMetadataReview || null;
+      const venuePreflightObservation = row.venuePreflightObservation || row.task.registry?.venuePreflightObservation || null;
+      const signedVenueObservation = row.signedVenueObservation || row.task.registry?.signedVenueObservation || null;
+      const authorities = await prepareSubmissionAuthorities({ root, runtimeRoot, row, venues, artifactPackage: state.packageResult?.artifactPackage || null, packageResult: state.packageResult, researchReport: state.researchReport, targetScopeReceipt, mode, authorityVerifier: services.authorityVerifier, executorDescriptor, submissionMetadata, submissionMetadataReview, venuePreflightObservation, signedVenueObservation, receiptLedger: services.receiptLedger });
+      return { lifecycle: buildSubmissionLifecycle({ row, venues, artifactPackage: state.packageResult?.artifactPackage || null, packageResult: state.packageResult, researchReport: state.researchReport, targetScopeReceipt, mode, reviewedSubmit: mode === PAPER_BATCH_MODES.REVIEWED_SUBMIT, venuePlanOverride: authorities.venuePlan, independentReviewAuthorityReceipt: authorities.independentReviewAuthorityReceipt, liveAuthorizationReceipt: authorities.liveAuthorizationReceipt, semanticPromotionLock: authorities.semanticPromotionLock, submissionDecisionPacket: authorities.submissionDecisionPacket, executorDescriptor, venuePreflightObservation, reviewedVenueEvidenceOverride: authorities.reviewedVenueEvidence, deliveryStore: services.submissionDeliveryStore }) };
     },
   });
 }

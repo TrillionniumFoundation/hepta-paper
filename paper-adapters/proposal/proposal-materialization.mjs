@@ -6,9 +6,9 @@ import {
   createPaperTask,
   hashPaperRecord,
 } from '../../paper-core/src/paper-contracts.mjs';
-import { ensureDir, fileRecord, relativePath } from '../../paper-core/src/runtime/file-utils.mjs';
-import { normalizeText } from '../../paper-core/src/runtime/text-utils.mjs';
-import { nowIso } from '../../paper-core/src/runtime/time-utils.mjs';
+import { ensureDir, fileRecord, relativePath } from '../../workflow-kernel/runtime/file-utils.mjs';
+import { normalizeText } from '../../workflow-kernel/runtime/text-utils.mjs';
+import { nowIso } from '../../workflow-kernel/runtime/time-utils.mjs';
 import { defaultPaperRuntimeRoot } from '../../paper-core/src/workspace-layout.mjs';
 import { writeJsonFile, writeTextFile } from '../artifacts/write-artifact.mjs';
 
@@ -155,6 +155,10 @@ export async function materializeApprovedProposal({
   let records = [];
   let seedContractBundle = null;
   let seedContractRecord = null;
+  const materializedFileRecord = async (candidate, role) => {
+    const record = await fileRecord(resolvedRuntimeRoot, candidate, role);
+    return record ? { ...record, path: relativePath(root, candidate) } : null;
+  };
   if (!blockers.length) {
     await ensureDir(sourceDir);
     await writeTextFile(mainTexPath, latexSkeleton({ proposalEnvelope }));
@@ -200,14 +204,14 @@ export async function materializeApprovedProposal({
       await writeJsonFile(venueRubricPath, venueRubricManager);
     }
     records = (await Promise.all([
-      fileRecord(root, mainTexPath, 'main_tex'),
-      fileRecord(root, readmePath, 'proposal_readme'),
-      fileRecord(root, recordPath, 'proposal_source_record'),
-      journalConferenceRegistry?.kind ? fileRecord(root, journalRegistryPath, 'journal_conference_registry') : null,
-      targetSelectionPolicy?.kind ? fileRecord(root, targetSelectionPath, 'target_selection_policy') : null,
-      targetJournalProfile?.kind ? fileRecord(root, journalProfilePath, 'journal_target_profile') : null,
-      journalRubricPacket?.kind ? fileRecord(root, journalRubricPath, 'journal_rubric_packet') : null,
-      venueRubricManager?.kind ? fileRecord(root, venueRubricPath, 'venue_rubric_manager') : null,
+      materializedFileRecord(mainTexPath, 'main_tex'),
+      materializedFileRecord(readmePath, 'proposal_readme'),
+      materializedFileRecord(recordPath, 'proposal_source_record'),
+      journalConferenceRegistry?.kind ? materializedFileRecord(journalRegistryPath, 'journal_conference_registry') : null,
+      targetSelectionPolicy?.kind ? materializedFileRecord(targetSelectionPath, 'target_selection_policy') : null,
+      targetJournalProfile?.kind ? materializedFileRecord(journalProfilePath, 'journal_target_profile') : null,
+      journalRubricPacket?.kind ? materializedFileRecord(journalRubricPath, 'journal_rubric_packet') : null,
+      venueRubricManager?.kind ? materializedFileRecord(venueRubricPath, 'venue_rubric_manager') : null,
     ])).filter(Boolean);
   }
   let manuscriptSourceContract = createManuscriptSourceContract({
@@ -255,7 +259,7 @@ export async function materializeApprovedProposal({
       reviewGate,
     });
     await writeJsonFile(seedContractsPath, seedContractBundle);
-    seedContractRecord = await fileRecord(root, seedContractsPath, 'proposal_seed_contracts');
+    seedContractRecord = await materializedFileRecord(seedContractsPath, 'proposal_seed_contracts');
     if (seedContractRecord) {
       records = [...records, seedContractRecord];
       manuscriptSourceContract = createManuscriptSourceContract({
@@ -358,6 +362,7 @@ export async function stageApprovedProposalForInventory({
     blockers,
   });
   if (!stagingRecord.blockers.length && stagingPath) {
+    await ensureDir(stagingDir);
     await writeJsonFile(stagingPath, stagingRecord);
   }
   return {
@@ -377,4 +382,3 @@ export async function stageApprovedProposalForInventory({
     },
   };
 }
-

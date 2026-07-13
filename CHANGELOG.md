@@ -1,5 +1,81 @@
 # Changelog
 
+## Unreleased (0.20.0 development)
+
+- Expanded each campaign plan into explicit per-runtime Python, R, GPU and
+  LaTeX execution/revalidation nodes. Dataset-bound work now requires a
+  licensed, content-addressed, read-only mount; single-file datasets are
+  normalized to a mounted directory without weakening their declared hash.
+- Added fail-closed empirical result contracts for seeds, metric schemas,
+  generated artifacts and repeated-run equivalence. Models cannot substitute
+  narrative values for worker-produced measurements, tables or figures.
+- Upgraded the database resource governor with a persistent, expiring,
+  resource-aware admission queue. It preserves FIFO fairness among compatible
+  requests, reaps dead owners and prevents independent campaign processes from
+  exceeding shared agent, CPU, GPU or RAM limits.
+- Added compact campaign summaries, paginated events/logs, effective lineage
+  status, rolling SLO reports and bounded retention/GC for reports, backups,
+  caches and isolated workspaces. Unknown model pricing remains explicitly
+  unauditable instead of being coerced to zero.
+- Moved shared runtime/hash/path primitives into `workflow-kernel`, moved
+  budget/round/lineage/SLO/empirical policy into domain services, eliminated
+  the adapter-to-application dependency and added conformance tests that keep
+  these boundaries from regressing.
+- Hardened multi-paper operation with dead-worker lease recovery, reviewer
+  identity uniqueness, phase-aware campaign presentation, deterministic
+  retry/extension semantics and source-tree content policies that exclude
+  oversized research assets from agent context while retaining provenance.
+- Added a fail-closed live-submission post-action contract: every successful
+  response binds the dispatch, provider receipt, submission ID, uploaded
+  artifact hashes and fresh venue observation. Redrive now requires a new
+  single-use authorization and dispatch cycle, and portable handoff bundles
+  copy only hash-verified artifacts through the content-addressed repository.
+- Added explicit executor capability descriptors and preflight routing for
+  agent, worker and submission executors, plus fixed multi-metric acceptance
+  profiles for generic, DQL, FBSDE, dynamic-contracting and robust-control
+  experiments.
+- Closed the remaining legacy submission-boundary gaps with atomically
+  consumed authorization nonces/replay keys, one active action scope, explicit
+  ambiguous-result wait/review decisions, reviewed and expiring portal-state
+  evidence, executor descriptor identity binding, Ed25519 response verification
+  and hash-only invalid-intake quarantine. A reviewed human metadata packet is
+  now part of both authorization and portable handoff identity.
+- Bound experiment registration and promotion to worker, result-artifact and
+  reproducibility receipts; registered profile promotion classes can only be
+  tightened, never weakened by caller overrides. Added a fail-closed
+  Lean/Coq/Isabelle descriptor registry, generic source/claim/certificate
+  intake, and a compact runtime schema catalog for high-risk boundaries.
+- Closed provenance gaps that shape-only hashes could not address. Reviewed
+  venue observations now require a signed observer plus ledger-backed CAS
+  artifact receipts and are included in the dual-control authorization subject;
+  redrive authorization also binds its decision and prior dispatch cycle.
+  Experiment and generic formal-verifier receipts must resolve to canonical
+  ledger entries and CAS write receipts before they can become evidence.
+- Narrowed trusted evidence to explicit issuer classes and stable regular-file
+  CAS rereads, including symlink/realpath and read-drift rejection. The dual
+  authorization subject now carries provider capability, portal route,
+  observation subject, observer identity and purpose as explicit fields.
+- Added trusted execution manifests for experiment/run identity, fixed output
+  roles and paths, worker output sets and result receipts. Generic formal
+  execution now binds its adapter, command, toolchain, runner, exit code,
+  stdout/stderr, certificate receipt, source manifest and claim obligations.
+- Added provider/account capability attestations and atomically claimed
+  submission delivery leases with heartbeats, expiry recovery and response
+  cursors. Conflict, unknown-message, verifier-error and schema failures now
+  all enter hash-only quarantine. These protocols remain dormant because no
+  live provider executor is bundled.
+- Added migration 017: failed responses cannot re-enter the normal claim path,
+  response state and ledger receipt commit in one transaction, and the
+  anchor-scoped consumption machine enforces UNCONSUMED/IN_PROGRESS/terminal
+  transitions with a non-skipping monotonic cursor.
+- Added a hash-bound 955-file legacy salvage inventory, workspace lineage and
+  snapshot contracts, fail-closed package verification, formal claim binding,
+  profile-specific paper quality/evidence validity policies and phase-aware
+  telemetry. Twelve legacy sources are now recorded honestly as partial semantic
+  replacements rather than executable dependencies or full parity claims.
+  These changes remain unreleased until the clean release gate and
+  environment-bound sandbox soak both pass.
+
 ## 0.17.0 - 2026-07-12
 
 - Replaced per-query `sqlite3` subprocesses with long-lived native SQLite

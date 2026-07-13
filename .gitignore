@@ -1,6 +1,7 @@
 /runtime/
 node_modules/
 **/node_modules/
+**/.lake/
 *.log
 *.sqlite
 *.sqlite-shm

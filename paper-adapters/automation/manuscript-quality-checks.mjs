@@ -94,7 +94,7 @@ function resolveGraphic(workspace, reference) {
   return ['.pdf', '.png', '.jpg', '.jpeg', '.eps'].map((suffix) => `${exact}${suffix}`).find(fs.existsSync) || null;
 }
 
-export function runManuscriptQualityChecks({ workspacePath, manuscriptPath = 'main.tex', mode = 'all' } = {}) {
+export function runManuscriptQualityChecks({ workspacePath, manuscriptPath = 'main.tex', mode = 'all', requiresEmpiricalArtifacts = false } = {}) {
   const workspace = path.resolve(workspacePath || '');
   const manuscript = path.resolve(workspace, manuscriptPath);
   if (!manuscript.startsWith(`${workspace}${path.sep}`) || !fs.existsSync(manuscript)) throw new Error('existing manuscript inside workspace is required');
@@ -130,12 +130,13 @@ export function runManuscriptQualityChecks({ workspacePath, manuscriptPath = 'ma
     if (details.invalidResultProvenance.length) blockers.push('claim_result_provenance_mismatch');
     if (empiricalFiles.length && provenance.length === 0) blockers.push('empirical_claim_provenance_missing');
     if (details.unresolvedMarkers.length) blockers.push('unresolved_manuscript_markers');
-    if (/\\begin\{(?:table|figure)\}/.test(source) && empiricalFiles.length === 0) blockers.push('table_or_figure_without_empirical_artifact');
+    if (requiresEmpiricalArtifacts && /\\begin\{(?:table|figure)\}/.test(source) && empiricalFiles.length === 0) blockers.push('table_or_figure_without_empirical_artifact');
   }
   const payload = {
     version: 1,
     kind: 'ManuscriptQualityCheckReceipt',
     mode,
+    requiresEmpiricalArtifacts: Boolean(requiresEmpiricalArtifacts),
     manuscriptPath,
     manuscriptHash: `sha256:${crypto.createHash('sha256').update(source).digest('hex')}`,
     passed: blockers.length === 0,

@@ -44,7 +44,7 @@
       },
       "target": {
         "path": "hepta-paper-workspace/paper-core/bin/paper-production-core.mjs",
-      "sha256": "57e96a41dd87a18c08c065f570a7b87f15093c693f35fce4a046a5463442ce63",
+        "sha256": "220c1d2753fdedb1bc7dae6847058d7f8a2ee74f37ac5aacc6dd9de081d71995",
         "symbols": [
           "main",
           "runPaperBatch",
@@ -10225,7 +10225,7 @@
       },
       "target": {
         "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "a8aadac7aa664bb4813a88e0771597a753f586497af90e05970452652467f58f",
+        "sha256": "4c8007e67a353946be98a3dd74ecc320201f3418c74e17bc031444ff894d87cd",
         "symbols": [
           "runLatexBuildAdapter",
           "runPackageAdapter"
@@ -10270,7 +10270,7 @@
       },
       "target": {
         "path": "hepta-paper-workspace/paper-adapters/research-verify/index.mjs",
-      "sha256": "c2d70fc1336ab284178458aed24b14a35ca83229098da74856c1539392272a0c",
+        "sha256": "2259eb44b3600cad6238908ad2a04d22a61e230d1f0a57b8060ad4fb6564c71e",
         "symbols": [
           "runResearchVerifyAdapter"
         ]
@@ -10314,7 +10314,7 @@
       },
       "target": {
         "path": "hepta-paper-workspace/paper-adapters/submission/index.mjs",
-        "sha256": "280f285d1d4c71b81cb2a38c752bb9f03566d3621f5aaa939183a90cf1feed00",
+        "sha256": "076469602156ef5094ab285e84605b608d46fdcafa705769141d55cda6c05399",
         "symbols": [
           "buildSubmissionLifecycle"
         ]
@@ -10358,7 +10358,7 @@
       },
       "target": {
         "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "a8aadac7aa664bb4813a88e0771597a753f586497af90e05970452652467f58f",
+        "sha256": "4c8007e67a353946be98a3dd74ecc320201f3418c74e17bc031444ff894d87cd",
         "symbols": [
           "runLatexBuildAdapter",
           "runPackageAdapter"
@@ -10403,7 +10403,7 @@
       },
       "target": {
         "path": "hepta-paper-workspace/paper-adapters/referee-review/index.mjs",
-        "sha256": "fb893308e7227d94f524f37f320463de1fbdc59d76a966be71f38920654a7842",
+        "sha256": "64922cb8e83405c9fe1a2415af74b7bc31851db35dd75cbf0583fa45f11892d2",
         "symbols": [
           "runRefereeReviewAdapter"
         ]
@@ -10455,7 +10455,7 @@
       },
       "target": {
         "path": "hepta-paper-workspace/paper-adapters/referee-review/index.mjs",
-        "sha256": "fb893308e7227d94f524f37f320463de1fbdc59d76a966be71f38920654a7842",
+        "sha256": "64922cb8e83405c9fe1a2415af74b7bc31851db35dd75cbf0583fa45f11892d2",
         "symbols": [
           "runRefereeReviewAdapter"
         ]
@@ -10499,7 +10499,7 @@
       },
       "target": {
         "path": "hepta-paper-workspace/paper-adapters/referee-review/index.mjs",
-        "sha256": "fb893308e7227d94f524f37f320463de1fbdc59d76a966be71f38920654a7842",
+        "sha256": "64922cb8e83405c9fe1a2415af74b7bc31851db35dd75cbf0583fa45f11892d2",
         "symbols": [
           "runRefereeReviewAdapter"
         ]
@@ -10550,7 +10550,7 @@
       },
       "target": {
         "path": "hepta-paper-workspace/paper-adapters/referee-review/index.mjs",
-        "sha256": "fb893308e7227d94f524f37f320463de1fbdc59d76a966be71f38920654a7842",
+        "sha256": "64922cb8e83405c9fe1a2415af74b7bc31851db35dd75cbf0583fa45f11892d2",
         "symbols": [
           "runRefereeReviewAdapter"
         ]
@@ -10594,7 +10594,7 @@
       },
       "target": {
         "path": "hepta-paper-workspace/paper-adapters/referee-review/index.mjs",
-        "sha256": "fb893308e7227d94f524f37f320463de1fbdc59d76a966be71f38920654a7842",
+        "sha256": "64922cb8e83405c9fe1a2415af74b7bc31851db35dd75cbf0583fa45f11892d2",
         "symbols": [
           "runRefereeReviewAdapter"
         ]
@@ -10639,7 +10639,7 @@
       },
       "target": {
         "path": "hepta-paper-workspace/paper-adapters/referee-review/index.mjs",
-        "sha256": "fb893308e7227d94f524f37f320463de1fbdc59d76a966be71f38920654a7842",
+        "sha256": "64922cb8e83405c9fe1a2415af74b7bc31851db35dd75cbf0583fa45f11892d2",
         "symbols": [
           "runRefereeReviewAdapter"
         ]
@@ -10728,7 +10728,7 @@
       },
       "target": {
         "path": "hepta-paper-workspace/paper-adapters/proposal/index.mjs",
-        "sha256": "ba5db67cb360fea9b22383149c9634c9adc7875f6b529e88f1ffb6a97d8d1826",
+        "sha256": "443ae7572ba0b7152c5dd59462b578e17ab41bba636bbb272dcc4b07ef6475d0",
         "symbols": [
           "runPaperProposalAdapter"
         ]
@@ -10772,7 +10772,7 @@
       },
       "target": {
         "path": "hepta-paper-workspace/paper-adapters/referee-review/index.mjs",
-        "sha256": "fb893308e7227d94f524f37f320463de1fbdc59d76a966be71f38920654a7842",
+        "sha256": "64922cb8e83405c9fe1a2415af74b7bc31851db35dd75cbf0583fa45f11892d2",
         "symbols": [
           "runRefereeReviewAdapter"
         ]
@@ -10825,7 +10825,7 @@
       },
       "target": {
         "path": "hepta-paper-workspace/paper-adapters/referee-review/index.mjs",
-        "sha256": "fb893308e7227d94f524f37f320463de1fbdc59d76a966be71f38920654a7842",
+        "sha256": "64922cb8e83405c9fe1a2415af74b7bc31851db35dd75cbf0583fa45f11892d2",
         "symbols": [
           "runRefereeReviewAdapter"
         ]
@@ -10869,7 +10869,7 @@
       },
       "target": {
         "path": "hepta-paper-workspace/paper-adapters/venue-resolve/index.mjs",
-        "sha256": "6077c1171d7cc6fa434976c2e2dba2a64b471a4f5f8ea7974d03ed89d7040e5e",
+        "sha256": "cb60928d79aaed1d4548899aeb6a289da74b310fbaf8fde3a3877399da12552f",
         "symbols": [
           "runVenueResolveAdapter"
         ]

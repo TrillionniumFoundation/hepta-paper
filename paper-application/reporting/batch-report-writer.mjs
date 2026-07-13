@@ -14,7 +14,7 @@ function markdown(report, includeSummaryHeading = false) {
   ].join('\n');
 }
 
-export function buildBatchReport({ root, runtimeRoot, mode, execute, targetOverride, datasetRoot, benchmarkId, applyManuscript, scan, results, legacyCleanupAudit, coreIntegrity } = {}) {
+export function buildBatchReport({ root, runtimeRoot, mode, execute, targetOverride, datasetRoot, benchmarkId, applyManuscript, scan, results, legacyCleanupAudit, coreIntegrity, targetScopeReceipt } = {}) {
   const rows = results.map((item) => item.workflowRow);
   const blockerFamilies = blockerFamilySummary(results);
   const report = {
@@ -25,6 +25,7 @@ export function buildBatchReport({ root, runtimeRoot, mode, execute, targetOverr
     requestedBenchmarkId: String(benchmarkId || '').trim() || null,
     requestedApplyManuscript: Boolean(applyManuscript),
     registryRefs: scan.registryRefs,
+    targetScopeReceipt,
     inventory: { source: scan.inventorySource, fallback: scan.inventoryFallback, quarantinedCount: scan.quarantined?.length || 0, quarantined: scan.quarantined || [] },
     summary: { ...summarizeRows(rows, mode), ...summarizeResults(results, legacyCleanupAudit), blockerFamilies },
     rows, results, legacyCleanupAudit, coreIntegrity,

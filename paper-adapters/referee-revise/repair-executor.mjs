@@ -8,8 +8,9 @@ import {
   relativePath,
   sha256File,
   sha256Text,
-} from '../../paper-core/src/runtime/file-utils.mjs';
-import { normalizeText, uniqueStrings } from '../../paper-core/src/runtime/text-utils.mjs';
+} from '../../workflow-kernel/runtime/file-utils.mjs';
+import { inspectScopedPathSync, readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
+import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
 import { writeJsonFile, writeTextFile } from '../artifacts/write-artifact.mjs';
 
 function shaDigest(value) {
@@ -306,6 +307,10 @@ export async function validateAndMaybeApplyPatches({
     const checkBlockers = [];
     if (!pathWithin(root, targetAbs)) checkBlockers.push('target_path_outside_repo_root');
     if (!pathWithin(sourceRoot, targetAbs)) checkBlockers.push('target_path_outside_source_workspace');
+    const targetIdentity = expected?.exists
+      ? inspectScopedPathSync({ scopeRoot: sourceRoot, candidate: targetAbs, expect: 'file' })
+      : inspectScopedPathSync({ scopeRoot: sourceRoot, candidate: path.dirname(targetAbs), expect: 'directory', forbidHardlinks: false });
+    if (targetIdentity.status !== 'scoped_file_identity_verified') checkBlockers.push(...targetIdentity.blockers.map((item) => `target_identity:${item}`));
     const actual = pathWithin(root, targetAbs) ? await fileRecord(root, targetAbs, 'referee_apply_preimage_check') : null;
     if (expected?.preimageHash && actual?.hash && shaDigest(expected.preimageHash) !== shaDigest(actual.hash)) {
       checkBlockers.push('target_preimage_hash_mismatch');
@@ -333,11 +338,9 @@ export async function validateAndMaybeApplyPatches({
     if (!patchPath) recordBlockers.push('patch_path_missing');
     if (patchPath && !pathWithin(root, patchAbs)) recordBlockers.push('patch_path_outside_repo_root');
     if (patchPath && pathWithin(root, patchAbs)) {
-      try {
-        actualHash = await sha256File(patchAbs);
-      } catch {
-        recordBlockers.push('patch_file_missing');
-      }
+      const patchRead = readScopedFileSync({ scopeRoot: root, candidate: patchAbs, maximumBytes: 16 * 1024 * 1024 });
+      if (patchRead.status === 'scoped_file_read_verified') actualHash = patchRead.hash;
+      else recordBlockers.push('patch_file_missing_or_unsafe', ...patchRead.blockers);
     }
     if (patch.patchSha256 && actualHash && shaDigest(patch.patchSha256) !== shaDigest(actualHash)) {
       recordBlockers.push('patch_hash_mismatch');
@@ -346,6 +349,8 @@ export async function validateAndMaybeApplyPatches({
       const targetAbs = path.isAbsolute(targetPath) ? targetPath : path.join(root, targetPath);
       if (!pathWithin(root, targetAbs)) recordBlockers.push('patch_target_outside_repo_root');
       if (!pathWithin(sourceRoot, targetAbs)) recordBlockers.push('patch_target_outside_source_workspace');
+      const parentIdentity = inspectScopedPathSync({ scopeRoot: sourceRoot, candidate: path.dirname(targetAbs), expect: 'directory', forbidHardlinks: false });
+      if (parentIdentity.status !== 'scoped_file_identity_verified') recordBlockers.push(...parentIdentity.blockers.map((item) => `patch_target_identity:${item}`));
     }
     if (!recordBlockers.length) {
       const check = spawnSync('git', ['apply', '--check', '--whitespace=nowarn', patchAbs], {

@@ -8,8 +8,8 @@ import {
   fileRecord,
   relativePath,
   walkFiles,
-} from '../../paper-core/src/runtime/file-utils.mjs';
-import { normalizeText, uniqueStrings } from '../../paper-core/src/runtime/text-utils.mjs';
+} from '../../workflow-kernel/runtime/file-utils.mjs';
+import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
 
 function repoPath(root, value) {
   const text = normalizeText(value);

@@ -34,6 +34,7 @@ const POLICIES = Object.freeze({
       'ExperimentReproducibilityReceipt',
       'OperationalJobResultReceipt',
       'ResearchGapPlanBindingReceipt',
+      'ResearchGapPlanningReceipt',
       'SubmissionResponsePersistedReceipt',
     ],
     allowedStreams: [
@@ -51,6 +52,13 @@ const POLICIES = Object.freeze({
     assurance: 'in_process_registered_administrator',
     allowedKinds: ['ReceiptLedgerIntegrityRepairReceipt', 'RuntimeEvidenceHygieneReceipt'],
     allowedStreams: ['store-integrity', 'runtime-hygiene'],
+  }),
+  'automation-reconciler': Object.freeze({
+    writerId: 'automation-runtime-reconciler',
+    writerKind: 'automation-state-reconciler',
+    assurance: 'in_process_registered_administrator',
+    allowedKinds: ['AutomationRuntimeReconciliationReceipt'],
+    allowedStreams: ['automation-reconciliation'],
   }),
   'test-artifact-repository': Object.freeze({
     writerId: 'test-artifact-repository',

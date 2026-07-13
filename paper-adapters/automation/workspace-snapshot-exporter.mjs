@@ -4,7 +4,19 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
-function fileHash(candidate) { return `sha256:${crypto.createHash('sha256').update(fs.readFileSync(candidate)).digest('hex')}`; }
+function fileHash(candidate) {
+  const hash = crypto.createHash('sha256');
+  const descriptor = fs.openSync(candidate, 'r');
+  const buffer = Buffer.allocUnsafe(4 * 1024 * 1024);
+  try {
+    let bytesRead = 0;
+    do {
+      bytesRead = fs.readSync(descriptor, buffer, 0, buffer.length, null);
+      if (bytesRead) hash.update(buffer.subarray(0, bytesRead));
+    } while (bytesRead);
+  } finally { fs.closeSync(descriptor); }
+  return `sha256:${hash.digest('hex')}`;
+}
 function safeRelative(value) { return Boolean(value && !path.isAbsolute(value) && !String(value).replace(/\\/g, '/').split('/').some((part) => part === '..' || !part)); }
 
 function manifestFor(root) {
@@ -23,11 +35,17 @@ function manifestFor(root) {
   return entries.sort((left, right) => left.path.localeCompare(right.path));
 }
 
-export function exportWorkspaceSnapshot({ registry, workspaceId, workspacePath, exportRoot } = {}) {
+export function exportWorkspaceSnapshot({ registry, workspaceId, workspacePath, exportRoot, externalContentBindings = {} } = {}) {
   if (!registry || !workspaceId || !workspacePath || !exportRoot) throw new Error('registry, workspaceId, workspacePath and exportRoot are required');
   const source = path.resolve(workspacePath);
   if (!fs.existsSync(source) || !fs.statSync(source).isDirectory()) throw new Error('workspace snapshot source directory missing');
-  const entries = manifestFor(source);
+  const entries = manifestFor(source).map((entry) => {
+    const externalPath = externalContentBindings[entry.path] ? path.resolve(externalContentBindings[entry.path]) : null;
+    if (!externalPath) return entry;
+    if (!fs.existsSync(externalPath) || !fs.statSync(externalPath).isFile()) throw new Error(`workspace_snapshot_external_content_missing:${entry.path}`);
+    if (fs.statSync(externalPath).size !== entry.bytes || fileHash(externalPath) !== entry.hash) throw new Error(`workspace_snapshot_external_content_mismatch:${entry.path}`);
+    return { ...entry, externalContent: { path: externalPath, hash: entry.hash, bytes: entry.bytes } };
+  });
   const manifestPayload = { version: 1, kind: 'WorkspaceExportManifest', workspaceId, entries };
   const manifestHash = hashRecord('WorkspaceExportManifest', manifestPayload);
   const destination = path.resolve(exportRoot);
@@ -36,7 +54,8 @@ export function exportWorkspaceSnapshot({ registry, workspaceId, workspacePath, 
   const archivePath = path.join(destination, `${stem}.tar.gz`);
   const manifestPath = path.join(destination, `${stem}.manifest.json`);
   const temporary = `${archivePath}.tmp-${process.pid}`;
-  const archive = spawnSync('tar', ['-czf', temporary, '-C', source, '--', '.'], { encoding: 'utf8', timeout: 120_000, maxBuffer: 4 * 1024 * 1024 });
+  const excludes = entries.filter((entry) => entry.externalContent).flatMap((entry) => ['--exclude', `./${entry.path}`]);
+  const archive = spawnSync('tar', ['-czf', temporary, '-C', source, ...excludes, '--', '.'], { encoding: 'utf8', timeout: 120_000, maxBuffer: 4 * 1024 * 1024 });
   if (archive.status !== 0) throw new Error(archive.stderr || 'workspace_snapshot_archive_failed');
   fs.renameSync(temporary, archivePath);
   const archiveHash = fileHash(archivePath);
@@ -60,8 +79,17 @@ export function restoreWorkspaceSnapshot({ receipt, restoreRoot } = {}) {
   fs.mkdirSync(destination, { recursive: true });
   const extract = spawnSync('tar', ['-xzf', receipt.archivePath, '-C', destination, '--no-same-owner', '--no-same-permissions'], { encoding: 'utf8', timeout: 120_000, maxBuffer: 4 * 1024 * 1024 });
   if (extract.status !== 0) throw new Error(extract.stderr || 'workspace_snapshot_restore_failed');
+  for (const entry of receipt.entries.filter((item) => item.externalContent)) {
+    const external = entry.externalContent;
+    if (!fs.existsSync(external.path) || fs.statSync(external.path).size !== external.bytes || fileHash(external.path) !== external.hash) {
+      throw new Error(`workspace_snapshot_external_content_restore_blocked:${entry.path}`);
+    }
+    const target = path.join(destination, entry.path);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(external.path, target, fs.constants.COPYFILE_FICLONE);
+  }
   const restored = manifestFor(destination);
-  const expected = JSON.stringify(receipt.entries);
+  const expected = JSON.stringify(receipt.entries.map(({ externalContent: _externalContent, ...entry }) => entry));
   const actual = JSON.stringify(restored);
   const blockers = expected === actual ? [] : ['workspace_snapshot_restore_manifest_mismatch'];
   const payload = { version: 1, kind: 'WorkspaceSnapshotRestoreReceipt', status: blockers.length ? 'workspace_snapshot_restore_blocked' : 'workspace_snapshot_restore_verified', manifestHash: receipt.manifestHash, archiveHash: receipt.archiveHash, restoredEntryCount: restored.length, blockers };

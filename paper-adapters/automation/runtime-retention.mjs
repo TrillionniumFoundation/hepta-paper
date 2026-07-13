@@ -94,10 +94,13 @@ export function executeRuntimeRetentionPlan(plan, { apply = false } = {}) {
     createdAt: new Date().toISOString(),
   };
   const receipt = Object.freeze({ ...payload, runtimeRetentionReceiptHash: hashRecord('RuntimeRetentionReceipt', payload) });
-  const receiptRoot = path.join(plan.runtimeRoot, 'retention');
-  fs.mkdirSync(receiptRoot, { recursive: true });
-  const stamp = receipt.createdAt.replace(/[:.]/g, '-');
-  const receiptPath = path.join(receiptRoot, `runtime-retention-${stamp}-${crypto.randomUUID()}.json`);
-  fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600 });
+  let receiptPath = null;
+  if (apply) {
+    const receiptRoot = path.join(plan.runtimeRoot, 'retention');
+    fs.mkdirSync(receiptRoot, { recursive: true });
+    const stamp = receipt.createdAt.replace(/[:.]/g, '-');
+    receiptPath = path.join(receiptRoot, `runtime-retention-${stamp}-${crypto.randomUUID()}.json`);
+    fs.writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600 });
+  }
   return Object.freeze({ ...receipt, receiptPath });
 }

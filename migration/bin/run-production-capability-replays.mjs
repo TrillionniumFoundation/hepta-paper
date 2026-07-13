@@ -7,7 +7,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { CAPABILITY_CATALOG } from '../legacy-capability-matrix-v3.mjs';
-import { capabilityTargetBindings, verifyCapabilityOperationalReceipt } from '../operational-proof-intake.mjs';
+import { capabilityTargetBindings, verifyCapabilityConformanceReceipt } from '../operational-proof-intake.mjs';
 import { buildClaimRegistry, transitionClaim } from '../../paper-domain/research/claim-registry.mjs';
 import { buildResearchGapPlan, bindResearchGapPlan } from '../../paper-application/research/gap-planner.mjs';
 import { verifyEvidenceArtifact } from '../../paper-adapters/research-verify/evidence-verifier.mjs';
@@ -22,6 +22,7 @@ import { createFilesystemArtifactRepository } from '../../paper-adapters/artifac
 import { verifyArtifactWriteReceiptSource } from '../../paper-adapters/artifacts/artifact-write-receipt-verifier.mjs';
 import { createSqliteJobReceiptStore } from '../../paper-adapters/persistence/sqlite-job-receipt-store.mjs';
 import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqlite-receipt-ledger.mjs';
+import { issueReceiptWriterCapability } from '../../paper-adapters/persistence/receipt-issuer-policy.mjs';
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { assertSubmissionExecutorPort, submissionExecutorDescriptor } from '../../paper-ports/submission-executor-port.mjs';
 import { buildExecutorCapabilities } from '../../paper-ports/executor-capabilities.mjs';
@@ -44,20 +45,20 @@ const mainTex = path.join(sourceRoot, 'main.tex');
 const privateKeyPath = process.env.HEPTA_CAPABILITY_OWNER_PRIVATE_KEY
   || path.join(os.homedir(), '.local', 'share', 'hepta-paper', 'capability-owner', 'capability-owner-ed25519-private.pem');
 const trustStorePath = path.join(runtimeRoot, 'owner-acceptance', 'OWNER_TRUST_STORE.json');
-const replayWorkRoot = path.join(runtimeRoot, 'operational-proof', '.replay-work');
-const evidenceRoot = path.join(runtimeRoot, 'operational-proof', 'replays');
-const receiptRoot = path.join(runtimeRoot, 'operational-proof', 'capabilities');
+const replayWorkRoot = path.join(runtimeRoot, 'conformance-proof', '.replay-work');
+const evidenceRoot = path.join(runtimeRoot, 'conformance-proof', 'replays');
+const receiptRoot = path.join(runtimeRoot, 'conformance-proof', 'capabilities');
 const fixedIso = '2026-07-13T05:45:00.000Z';
 const clock = Object.freeze({ now: () => new Date(fixedIso), nowIso: () => fixedIso });
 
-if (!process.argv.includes('--execute')) throw new Error('production capability replays require --execute');
+if (!process.argv.includes('--execute')) throw new Error('production-source conformance replays require --execute');
 if (!fs.existsSync(mainTex)) throw new Error(`production replay subject missing: ${mainTex}`);
 if (!fs.existsSync(privateKeyPath)) throw new Error('capability owner private key missing outside repository');
 if (!fs.existsSync(trustStorePath)) throw new Error('owner trust store missing');
 if (!releaseCommit) throw new Error('release commit missing');
 
-process.env.HEPTA_EVIDENCE_ENVIRONMENT = 'production';
-process.env.HEPTA_EVIDENCE_CLASS = 'operational';
+process.env.HEPTA_EVIDENCE_ENVIRONMENT = 'production_source_bound';
+process.env.HEPTA_EVIDENCE_CLASS = 'conformance';
 process.env.HEPTA_RELEASE_COMMIT = releaseCommit;
 
 const trustStore = JSON.parse(fs.readFileSync(trustStorePath, 'utf8'));
@@ -90,7 +91,7 @@ function createLedger(store, { writerId, writerKind, allowedKinds = [], allowedS
   return createSqliteReceiptLedger({
     store,
     clock,
-    writerIdentity: { writerId, writerKind, trusted: true, allowedKinds, allowedStreams },
+    issuerCapability: issueReceiptWriterCapability('conformance-replay'),
   });
 }
 
@@ -328,27 +329,27 @@ for (const capabilityId of Object.keys(CAPABILITY_CATALOG).sort()) {
   const inputHashes = [mainTexHash, hashRecord('CapabilityOperationalReplayInput', { capabilityId, paperId, mainTexHash })];
   const comparison = { version: 1, kind: 'CapabilityOperationalReplayComparison', capabilityId, firstResultHash: firstHash, secondResultHash: secondHash, replayMatched };
   const replayReceiptHash = hashRecord('CapabilityOperationalReplayComparison', comparison);
-  const evidencePayload = { version: 1, kind: 'CapabilityOperationalReplayEvidence', capabilityId, status: 'production_capability_replay_verified', productionSubject: { paperId, sourcePath: path.relative(assetRoot, mainTex), sourceHash: mainTexHash }, inputHashes, targetHashes: targetBindings[capabilityId], firstResult: first, secondResult: second, resultHash: firstHash, replayReceiptHash, replayMatched, releaseCommit, evidenceEnvironment: 'production', evidenceClass: 'operational', externalActionPerformed: false, createdAt: new Date().toISOString() };
-  const executionReceiptHash = hashRecord('CapabilityOperationalReplayEvidence', evidencePayload);
+  const evidencePayload = { version: 1, kind: 'CapabilityConformanceReplayEvidence', capabilityId, status: 'production_source_bound_conformance_replay_verified', executionClass: 'production_source_bound_conformance', productionSubject: { paperId, sourcePath: path.relative(assetRoot, mainTex), sourceHash: mainTexHash }, inputHashes, targetHashes: targetBindings[capabilityId], firstResult: first, secondResult: second, resultHash: firstHash, replayReceiptHash, replayMatched, releaseCommit, evidenceEnvironment: 'production_source_bound', evidenceClass: 'conformance', externalActionPerformed: false, createdAt: new Date().toISOString() };
+  const executionReceiptHash = hashRecord('CapabilityConformanceReplayEvidence', evidencePayload);
   const evidence = { ...evidencePayload, executionReceiptHash };
   const evidenceDirectory = path.join(evidenceRoot, capabilityId);
   fs.mkdirSync(evidenceDirectory, { recursive: true });
   const evidencePath = path.join(evidenceDirectory, `${releaseCommit.slice(0, 12)}.json`);
   writeJsonArtifact(evidencePath, evidence);
-  let receipt = { version: 1, kind: 'CapabilityOperationalReceipt', capabilityId, status: 'production_capability_replay_verified', evidenceEnvironment: 'production', evidenceClass: 'operational', productionEligible: true, productionSubject: { paperId, subjectId: 'legacy-paper-factory-retirement' }, inputHashes, executionReceiptHash, resultHash: firstHash, replayReceiptHash, replayMatched, releaseCommit, targetHashes: targetBindings[capabilityId], executionEvidencePath: path.relative(runtimeRoot, evidencePath).replace(/\\/g, '/'), externalActionPerformed: false, signatures: [] };
+  let receipt = { version: 1, kind: 'CapabilityConformanceReceipt', capabilityId, status: 'production_source_bound_conformance_replay_verified', executionClass: 'production_source_bound_conformance', evidenceEnvironment: 'production_source_bound', evidenceClass: 'conformance', productionEligible: false, issuerAssurance: 'local_admin_delegated', productionSubject: { paperId, subjectId: 'legacy-paper-factory-retirement' }, inputHashes, executionReceiptHash, resultHash: firstHash, replayReceiptHash, replayMatched, releaseCommit, targetHashes: targetBindings[capabilityId], executionEvidencePath: path.relative(runtimeRoot, evidencePath).replace(/\\/g, '/'), externalActionPerformed: false, signatures: [] };
   receipt = signAuthorityDocument(receipt, { privateKeyPem, keyId: ownerKey.keyId, role: 'capability_owner' });
   const capabilityDirectory = path.join(receiptRoot, capabilityId);
   fs.mkdirSync(capabilityDirectory, { recursive: true });
   const receiptPath = path.join(capabilityDirectory, `${releaseCommit.slice(0, 12)}.json`);
   writeJsonArtifact(receiptPath, receipt);
-  const verification = verifyCapabilityOperationalReceipt({ document: receipt, trustStore, capabilityId, targetBindings: targetBindings[capabilityId], releaseCommit });
-  if (verification.status !== 'capability_operational_receipt_verified') throw new Error(`operational receipt verification failed:${capabilityId}:${verification.blockers.join(',')}`);
-  verified.push({ capabilityId, resultHash: firstHash, executionReceiptHash, replayReceiptHash, operationalReceiptHash: verification.operationalReceiptHash, receiptPath, evidencePath });
+  const verification = verifyCapabilityConformanceReceipt({ document: receipt, trustStore, capabilityId, targetBindings: targetBindings[capabilityId], releaseCommit });
+  if (verification.status !== 'capability_conformance_receipt_verified') throw new Error(`conformance receipt verification failed:${capabilityId}:${verification.blockers.join(',')}`);
+  verified.push({ capabilityId, resultHash: firstHash, executionReceiptHash, replayReceiptHash, conformanceReceiptHash: verification.conformanceReceiptHash, receiptPath, evidencePath });
 }
 
 fs.rmSync(replayWorkRoot, { recursive: true, force: true });
-const manifestPayload = { version: 1, kind: 'CapabilityOperationalReplayManifest', status: 'all_capabilities_operationally_replayed', releaseCommit, paperId, productionSourceHash: mainTexHash, capabilityCount: verified.length, verified, externalActionPerformed: false, completedAt: new Date().toISOString() };
-const manifest = { ...manifestPayload, capabilityOperationalReplayManifestHash: hashRecord('CapabilityOperationalReplayManifest', manifestPayload) };
-const manifestPath = path.join(runtimeRoot, 'operational-proof', `CAPABILITY_OPERATIONAL_REPLAY_MANIFEST_${releaseCommit.slice(0, 12)}.json`);
+const manifestPayload = { version: 1, kind: 'CapabilityConformanceReplayManifest', status: 'all_capabilities_conformance_replayed', releaseCommit, paperId, productionSourceHash: mainTexHash, capabilityCount: verified.length, issuerAssurance: 'local_admin_delegated', productionEligible: false, verified, externalActionPerformed: false, completedAt: new Date().toISOString() };
+const manifest = { ...manifestPayload, capabilityConformanceReplayManifestHash: hashRecord('CapabilityConformanceReplayManifest', manifestPayload) };
+const manifestPath = path.join(runtimeRoot, 'conformance-proof', `CAPABILITY_CONFORMANCE_REPLAY_MANIFEST_${releaseCommit.slice(0, 12)}.json`);
 writeJsonArtifact(manifestPath, manifest);
-process.stdout.write(`${JSON.stringify({ status: manifest.status, capabilityCount: manifest.capabilityCount, paperId, productionSourceHash: mainTexHash, manifestHash: manifest.capabilityOperationalReplayManifestHash, operationalReceiptHashes: verified.map((item) => item.operationalReceiptHash) }, null, 2)}\n`);
+process.stdout.write(`${JSON.stringify({ status: manifest.status, capabilityCount: manifest.capabilityCount, paperId, productionSourceHash: mainTexHash, manifestHash: manifest.capabilityConformanceReplayManifestHash, conformanceReceiptHashes: verified.map((item) => item.conformanceReceiptHash), productionEligible: false }, null, 2)}\n`);

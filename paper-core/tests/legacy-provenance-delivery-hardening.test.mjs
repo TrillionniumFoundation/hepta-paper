@@ -9,6 +9,7 @@ import { buildProviderCapabilitySubject, verifyProviderCapabilityAttestation } f
 import { verifySignedAmbiguousRedriveReview } from '../../paper-adapters/submission/redrive-review-verification.mjs';
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqlite-receipt-ledger.mjs';
+import { issueReceiptWriterCapability } from '../../paper-adapters/persistence/receipt-issuer-policy.mjs';
 import { createFilesystemArtifactRepository } from '../../paper-adapters/artifacts/filesystem-artifact-repository.mjs';
 import { verifyArtifactWriteReceiptSource } from '../../paper-adapters/artifacts/artifact-write-receipt-verifier.mjs';
 import { verifyTrustedLedgerReceipt } from '../../paper-domain/evidence/trusted-ledger-receipt.mjs';
@@ -67,7 +68,7 @@ test('trusted ledger metadata and actual CAS bytes are both required', async (t)
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const store = createDefaultPaperStore({ root, runtimeRoot: root }); t.after(() => store.close());
   const clock = { now: () => new Date('2026-07-13T00:00:00Z'), nowIso: () => '2026-07-13T00:00:00.000Z' };
-  const ledger = createSqliteReceiptLedger({ store, clock, writerIdentity: { writerId: 'artifact-repository', writerKind: 'content-addressed-repository', trusted: true, allowedKinds: ['ArtifactWriteReceipt'], allowedStreams: ['artifact-writes'] } });
+  const ledger = createSqliteReceiptLedger({ store, clock, issuerCapability: issueReceiptWriterCapability('test-artifact-repository') });
   const repository = createFilesystemArtifactRepository({ scopeRoot: root, casRoot: path.join(root, 'cas'), receiptLedger: ledger, clock });
   const written = await repository.writeJson(path.join(root, 'evidence.json'), { verified: true }, { role: 'venue-observation' });
   assert.equal(verifyArtifactWriteReceiptSource({ receipt: written }).status, 'artifact_write_receipt_source_verified');

@@ -7,7 +7,15 @@ import { classifyLegacyFile } from '../../paper-adapters/legacy-cleanup/classifi
 import { LEGACY_CAPABILITY_MATRIX_V3 } from '../legacy-capability-matrix-v3.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const legacyRoot = path.resolve(process.env.HEPTA_LEGACY_ROOT || '/data/home-data/paper_factory');
+const sourceRootIndex = process.argv.indexOf('--source-root');
+const requestedSourceRoot = sourceRootIndex >= 0 ? process.argv[sourceRootIndex + 1] : null;
+if (!process.argv.includes('--historical-regeneration') || !requestedSourceRoot) {
+  throw new Error('historical_salvage_regeneration_requires_explicit_source_root');
+}
+const legacyRoot = path.resolve(requestedSourceRoot);
+if (!fs.existsSync(legacyRoot) || !fs.statSync(legacyRoot).isDirectory()) {
+  throw new Error(`historical_salvage_source_root_missing:${legacyRoot}`);
+}
 const outputPath = path.join(workspaceRoot, 'migration', 'legacy-salvage-manifest.v1.json');
 const allowedExtensions = new Set(['.py', '.rs', '.lean', '.sql', '.md', '.json', '.yaml', '.yml', '.toml']);
 const roots = ['paperctl_modules', 'rust', 'PaperFactoryFormalVerifier', 'schema', 'docs', 'tests'];
@@ -123,13 +131,15 @@ const files = roots.flatMap((relativeRoot) => walk(path.join(legacyRoot, relativ
     legacyMatrixEntryId: semanticByPath.get(relative)?.id || null,
   };
 }).sort((left, right) => left.path.localeCompare(right.path));
+if (!files.length) throw new Error('historical_salvage_source_is_empty');
 
 const payload = {
   version: 1,
   kind: 'LegacySalvageManifest',
   sourceIdentity: 'paper_factory_immutable_reference',
   runtimeDependencyAllowed: false,
-  generatedFromLiveLegacy: true,
+  generatedFromLiveLegacy: false,
+  generatedFromExplicitHistoricalSource: true,
   summary: {
     fileCount: files.length,
     pythonModuleCount: files.filter((item) => item.path.startsWith('paperctl_modules/') && item.language === 'py').length,
@@ -140,5 +150,7 @@ const payload = {
   files,
 };
 const manifest = { ...payload, manifestHash: digest(Buffer.from(JSON.stringify(payload))) };
-if (process.argv.includes('--write')) fs.writeFileSync(outputPath, `${JSON.stringify(manifest, null, 2)}\n`);
-else process.stdout.write(`${JSON.stringify(manifest, null, 2)}\n`);
+if (process.argv.includes('--write')) {
+  throw new Error('frozen_salvage_manifest_write_forbidden');
+}
+process.stdout.write(`${JSON.stringify(manifest, null, 2)}\n`);

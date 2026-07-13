@@ -5,6 +5,7 @@ import { CAPABILITY_CATALOG } from '../legacy-capability-matrix-v3.mjs';
 import { executeCapabilityVerification } from '../capability-operational-evidence.mjs';
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqlite-receipt-ledger.mjs';
+import { issueReceiptWriterCapability } from '../../paper-adapters/persistence/receipt-issuer-policy.mjs';
 import { createFilesystemArtifactRepository } from '../../paper-adapters/artifacts/filesystem-artifact-repository.mjs';
 import { createSystemClock } from '../../paper-adapters/runtime/system-clock.mjs';
 import { currentCodeProvenance } from '../../paper-core/src/code-provenance.mjs';
@@ -28,24 +29,12 @@ const store = createDefaultPaperStore({ root, runtimeRoot });
 const capabilityLedger = createSqliteReceiptLedger({
   store,
   clock,
-  writerIdentity: {
-    writerId: 'production-capability-verifier',
-    writerKind: 'capability-verifier',
-    trusted: true,
-    allowedKinds: ['CapabilityVerificationReceipt'],
-    allowedStreams: ['capability-verification'],
-  },
+  issuerCapability: issueReceiptWriterCapability('production-capability-verifier'),
 });
 const artifactLedger = createSqliteReceiptLedger({
   store,
   clock,
-  writerIdentity: {
-    writerId: 'production-capability-artifact-repository',
-    writerKind: 'content-addressed-repository',
-    trusted: true,
-    allowedKinds: ['ArtifactWriteReceipt'],
-    allowedStreams: ['artifact-writes'],
-  },
+  issuerCapability: issueReceiptWriterCapability('production-capability-artifact-repository'),
 });
 const repositoryFactory = (scopeRoot) => createFilesystemArtifactRepository({
   scopeRoot,
@@ -65,10 +54,6 @@ const result = await executeCapabilityVerification({
 if (result.manifest.status !== 'capability_verification_complete') {
   throw new Error(`capability verification refresh blocked:${result.manifest.status}`);
 }
-if (!(result.manifest.receipts || []).every((receipt) => receipt.operationalProof === true && receipt.operationalReceiptHashes?.length > 0)) {
-  throw new Error('capability verification refresh lacks operational proof bindings');
-}
-
 const releaseCurrent = path.join(runtimeRoot, 'release-evidence', 'current');
 fs.mkdirSync(releaseCurrent, { recursive: true });
 const mirrorRepository = repositoryFactory(releaseCurrent);
@@ -82,7 +67,9 @@ store.close?.();
 process.stdout.write(`${JSON.stringify({
   status: result.manifest.status,
   capabilityCount: result.manifest.capabilityCount,
+  conformanceBoundCount: result.manifest.receipts.filter((receipt) => receipt.conformanceProof).length,
   operationallyBoundCount: result.manifest.receipts.filter((receipt) => receipt.operationalProof).length,
+  operationalProofPending: result.manifest.receipts.filter((receipt) => !receipt.operationalProof).map((receipt) => receipt.capabilityId),
   manifestHash: result.manifest.capabilityVerificationManifestHash,
   auditWriteReceiptHash: result.writeReceipt.writeReceiptHash,
   releaseCurrentWriteReceiptHash: mirrorReceipt.writeReceiptHash,

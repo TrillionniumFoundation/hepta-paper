@@ -3,9 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createDefaultPaperStore, createReadOnlyPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqlite-receipt-ledger.mjs';
+import { createSqliteReceiptLedgerQualificationStore } from '../../paper-adapters/persistence/sqlite-receipt-ledger-qualification.mjs';
+import { issueReceiptWriterCapability } from '../../paper-adapters/persistence/receipt-issuer-policy.mjs';
 import { createSystemClock } from '../../paper-adapters/runtime/system-clock.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
-import { sqlJson, sqlText } from '../../paper-ports/store-port.mjs';
+import { sqlText } from '../../paper-ports/store-port.mjs';
 import { currentCodeProvenance } from '../src/code-provenance.mjs';
 import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 
@@ -38,8 +40,13 @@ const blockers = [
   ...invalid.filter((row) => !row.expected || !row.expectedId).map((row) => `unrepairable_receipt:${row.receipt_id}`),
 ];
 const repaired = [];
+readStore.close?.();
 if (execute && !blockers.length) {
   const store = createDefaultPaperStore({ root, runtimeRoot });
+  const clock = createSystemClock();
+  const administratorCapability = issueReceiptWriterCapability('ledger-administrator');
+  const qualifications = createSqliteReceiptLedgerQualificationStore({ store, clock, issuerCapability: administratorCapability });
+  const replacementLedger = createSqliteReceiptLedger({ store, clock });
   for (const row of invalid) {
     const conflict = store.query(`SELECT receipt_id,receipt_sha256 FROM receipt_ledger WHERE receipt_id=${sqlText(row.expectedId)} AND receipt_id<>${sqlText(row.receipt_id)} LIMIT 1;`).rows[0];
     if (conflict) {
@@ -47,26 +54,35 @@ if (execute && !blockers.length) {
         blockers.push(`receipt_id_conflict:${row.expectedId}`);
         continue;
       }
-      const deduplicate = store.execute(`BEGIN IMMEDIATE;
-UPDATE jobs SET result_receipt_id=${sqlText(row.expectedId)} WHERE result_receipt_id=${sqlText(row.receipt_id)};
-UPDATE job_attempts SET receipt_id=${sqlText(row.expectedId)} WHERE receipt_id=${sqlText(row.receipt_id)};
-DELETE FROM receipt_ledger WHERE receipt_id=${sqlText(row.receipt_id)};
-COMMIT;`);
-      if (!deduplicate.ok) blockers.push(`receipt_deduplication_failed:${row.receipt_id}`);
-      else repaired.push({ priorReceiptId: row.receipt_id, receiptId: row.expectedId, receiptHash: row.expected, disposition: 'deduplicated_invalid_historical_row' });
+      const qualification = qualifications.qualify({
+        receiptId: row.receipt_id,
+        disposition: 'superseded',
+        reason: 'invalid historical ledger row superseded by an existing valid receipt',
+        replacementReceiptId: row.expectedId,
+      });
+      repaired.push({ priorReceiptId: row.receipt_id, receiptId: row.expectedId, receiptHash: row.expected, disposition: 'qualified_duplicate_invalid_historical_row', qualificationHash: qualification.qualificationHash });
       continue;
     }
-    const patchedReceipt = { ...row.receipt, receiptHash: row.expected };
-    const result = store.execute(`BEGIN IMMEDIATE;
-UPDATE jobs SET result_receipt_id=${sqlText(row.expectedId)} WHERE result_receipt_id=${sqlText(row.receipt_id)};
-UPDATE job_attempts SET receipt_id=${sqlText(row.expectedId)} WHERE receipt_id=${sqlText(row.receipt_id)};
-UPDATE receipt_ledger SET receipt_id=${sqlText(row.expectedId)},receipt_json=${sqlJson(patchedReceipt)},receipt_sha256=${sqlText(row.expected)} WHERE receipt_id=${sqlText(row.receipt_id)};
-COMMIT;`);
-    if (!result.ok) blockers.push(`receipt_repair_failed:${row.receipt_id}`);
-    else repaired.push({ priorReceiptId: row.receipt_id, receiptId: row.expectedId, receiptHash: row.expected });
+    const canReissueOriginal = row.expectedId !== row.receipt_id;
+    const replacement = canReissueOriginal
+      ? replacementLedger.record({ ...row.receipt, receiptHash: row.expected }, { stream: row.stream, strictInsert: true, environment: 'administrative', evidenceClass: 'integrity_repair_replacement' })
+      : replacementLedger.record({
+          version: 1,
+          kind: 'ReceiptLedgerRepairReplacementReceipt',
+          status: 'invalid_historical_receipt_payload_preserved',
+          priorReceiptId: row.receipt_id,
+          expectedReceiptHash: row.expected,
+          preservedReceipt: row.receipt,
+        }, { stream: 'store-integrity-replacements', strictInsert: true, environment: 'administrative', evidenceClass: 'integrity_repair_replacement' });
+    const qualification = qualifications.qualify({
+      receiptId: row.receipt_id,
+      disposition: 'superseded',
+      reason: 'invalid historical ledger row superseded by an append-only replacement',
+      replacementReceiptId: replacement.receiptId,
+    });
+    repaired.push({ priorReceiptId: row.receipt_id, receiptId: replacement.receiptId, receiptHash: replacement.receiptHash, qualificationHash: qualification.qualificationHash });
   }
-  const clock = createSystemClock();
-  const ledger = createSqliteReceiptLedger({ store, clock });
+  const ledger = createSqliteReceiptLedger({ store, clock, issuerCapability: administratorCapability });
   const payload = {
     version: 1,
     kind: 'ReceiptLedgerIntegrityRepairReceipt',

@@ -79,12 +79,15 @@ test('external intake preflight accepts complete fixture signatures without auth
     fixtureAuthority('executor-key', 'executor-subject', ['live_executor_authorizer']),
   ];
   const owner = fixtureAuthority('owner-key', 'owner-subject', ['capability_owner']);
+  const observer = fixtureAuthority('observer-key', 'observer-subject', ['operational_observer']);
+  owner.publicRecord.assurance = 'external_independent';
+  observer.publicRecord.assurance = 'external_independent';
   writeJson(path.join(stagingRoot, 'AUTHORITY_TRUST_STORE.json'), {
     version: 1,
     kind: 'AuthorityTrustStore',
     keys: authorities.map((item) => item.publicRecord),
   });
-  const ownerTrustStore = { version: 1, kind: 'AuthorityTrustStore', keys: [owner.publicRecord] };
+  const ownerTrustStore = { version: 1, kind: 'AuthorityTrustStore', keys: [owner.publicRecord, observer.publicRecord] };
   writeJson(path.join(stagingRoot, 'OWNER_TRUST_STORE.json'), ownerTrustStore);
 
   const matrix = buildLegacyCapabilityMatrixV3({ runtimeRoot });
@@ -110,10 +113,11 @@ test('external intake preflight accepts complete fixture signatures without auth
   const bindings = capabilityTargetBindings(workspaceRoot, CAPABILITY_CATALOG);
   for (const capabilityId of Object.keys(CAPABILITY_CATALOG)) {
     let receipt = {
-      version: 1,
+      version: 2,
       kind: 'CapabilityOperationalReceipt',
       capabilityId,
-      status: 'production_capability_replay_verified',
+      status: 'production_runtime_observation_verified',
+      executionClass: 'production_runtime_observation',
       evidenceEnvironment: 'production',
       evidenceClass: 'operational',
       productionEligible: true,
@@ -131,6 +135,11 @@ test('external intake preflight accepts complete fixture signatures without auth
       privateKeyPem: owner.privateKeyPem,
       keyId: owner.keyId,
       role: 'capability_owner',
+    });
+    receipt = signAuthorityDocument(receipt, {
+      privateKeyPem: observer.privateKeyPem,
+      keyId: observer.keyId,
+      role: 'operational_observer',
     });
     writeJson(path.join(stagingRoot, 'operational-proof', 'capabilities', capabilityId, 'fixture.json'), receipt);
   }

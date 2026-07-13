@@ -1,6 +1,7 @@
 import { assertReceiptLedgerPort } from '../../paper-ports/receipt-ledger-port.mjs';
 import { sqlText, sqlJson } from '../../paper-ports/store-port.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { resolveReceiptWriterCapability } from './receipt-issuer-policy.mjs';
 
 export function receiptHash(receipt) {
   return receipt.receiptHash
@@ -10,15 +11,30 @@ export function receiptHash(receipt) {
     || hashRecord(receipt.kind || 'Receipt', receipt);
 }
 
-export function createSqliteReceiptLedger({ store, clock, writerIdentity = null } = {}) {
+export function createSqliteReceiptLedger({ store, clock, writerIdentity = null, issuerCapability = null } = {}) {
   if (!store) throw new Error('Receipt ledger store is required');
   if (!clock) throw new Error('Receipt ledger clock is required');
-  const writer = Object.freeze({
+  if (writerIdentity?.trusted === true) throw new Error('raw_trusted_writer_identity_forbidden');
+  const issued = resolveReceiptWriterCapability(issuerCapability);
+  if (issuerCapability && !issued) throw new Error('receipt_issuer_capability_invalid');
+  const writer = Object.freeze(issued ? {
+    writerId: issued.writerId,
+    writerKind: issued.writerKind,
+    trusted: true,
+    allowedKinds: issued.allowedKinds,
+    allowedStreams: issued.allowedStreams,
+    issuerPolicyId: issued.policyId,
+    issuerPolicyHash: issued.issuerPolicyHash,
+    issuerAssurance: issued.assurance,
+  } : {
     writerId: writerIdentity?.writerId || 'untrusted-caller',
     writerKind: writerIdentity?.writerKind || 'untrusted',
-    trusted: writerIdentity?.trusted === true,
+    trusted: false,
     allowedKinds: Object.freeze([...(writerIdentity?.allowedKinds || [])].map(String)),
     allowedStreams: Object.freeze([...(writerIdentity?.allowedStreams || [])].map(String)),
+    issuerPolicyId: null,
+    issuerPolicyHash: null,
+    issuerAssurance: 'untrusted',
   });
   const prepare = (receipt, {
     stream = 'default',
@@ -38,8 +54,8 @@ export function createSqliteReceiptLedger({ store, clock, writerIdentity = null 
     const hash = receiptHash(receipt);
     const id = `${stream}:${hash}`;
     const createdAt = receipt.createdAt || clock.nowIso();
-    const sql = `INSERT${strictInsert ? '' : ' OR IGNORE'} INTO receipt_ledger(receipt_id,stream,paper_id,kind,status,receipt_json,receipt_sha256,created_at,environment,evidence_class,release_commit,writer_id,writer_kind,writer_trusted) VALUES(${sqlText(id)},${sqlText(stream)},${paperId ? sqlText(paperId) : 'NULL'},${sqlText(receipt.kind)},${sqlText(receipt.status || 'recorded')},${sqlJson(receipt)},${sqlText(hash)},${sqlText(createdAt)},${sqlText(environment)},${sqlText(evidenceClass)},${releaseCommit ? sqlText(releaseCommit) : 'NULL'},${sqlText(writer.writerId)},${sqlText(writer.writerKind)},${writer.trusted ? 1 : 0});`;
-    return Object.freeze({ receiptId: id, receiptHash: hash, stream, paperId, createdAt, environment, evidenceClass, releaseCommit, writerId: writer.writerId, writerKind: writer.writerKind, writerTrusted: writer.trusted, sql });
+    const sql = `INSERT${strictInsert ? '' : ' OR IGNORE'} INTO receipt_ledger(receipt_id,stream,paper_id,kind,status,receipt_json,receipt_sha256,created_at,environment,evidence_class,release_commit,writer_id,writer_kind,writer_trusted,issuer_policy_id,issuer_policy_hash,issuer_assurance) VALUES(${sqlText(id)},${sqlText(stream)},${paperId ? sqlText(paperId) : 'NULL'},${sqlText(receipt.kind)},${sqlText(receipt.status || 'recorded')},${sqlJson(receipt)},${sqlText(hash)},${sqlText(createdAt)},${sqlText(environment)},${sqlText(evidenceClass)},${releaseCommit ? sqlText(releaseCommit) : 'NULL'},${sqlText(writer.writerId)},${sqlText(writer.writerKind)},${writer.trusted ? 1 : 0},${writer.issuerPolicyId ? sqlText(writer.issuerPolicyId) : 'NULL'},${writer.issuerPolicyHash ? sqlText(writer.issuerPolicyHash) : 'NULL'},${sqlText(writer.issuerAssurance)});`;
+    return Object.freeze({ receiptId: id, receiptHash: hash, stream, paperId, createdAt, environment, evidenceClass, releaseCommit, writerId: writer.writerId, writerKind: writer.writerKind, writerTrusted: writer.trusted, issuerPolicyId: writer.issuerPolicyId, issuerPolicyHash: writer.issuerPolicyHash, issuerAssurance: writer.issuerAssurance, sql });
   };
   return assertReceiptLedgerPort({
     version: 1,

@@ -151,7 +151,7 @@ try {
     record(receipt) {
       const receiptId = `authority-selftest:${++artifactLedgerCounter}`;
       const receiptHash = receipt.writeReceiptHash || receipt.receiptHash || hashPaperRecord(receipt.kind || 'Receipt', receipt);
-      artifactLedgerRows.set(receiptId, { receipt_id: receiptId, receipt_sha256: receiptHash, receipt_json: JSON.stringify(receipt), stream: receipt.kind === 'ArtifactWriteReceipt' ? 'artifact-writes' : 'authority-selftest', writer_id: 'authority-selftest', writer_kind: receipt.kind === 'ArtifactWriteReceipt' ? 'content-addressed-repository' : 'isolated-selftest', writer_trusted: 1 });
+      artifactLedgerRows.set(receiptId, { receipt_id: receiptId, receipt_sha256: receiptHash, receipt_json: JSON.stringify(receipt), stream: receipt.kind === 'ArtifactWriteReceipt' ? 'artifact-writes' : 'authority-selftest', writer_id: 'authority-selftest', writer_kind: receipt.kind === 'ArtifactWriteReceipt' ? 'content-addressed-repository' : 'isolated-selftest', writer_trusted: 1, issuer_policy_id: 'authority-selftest-fixture', issuer_policy_hash: `sha256:${'f'.repeat(64)}`, issuer_assurance: 'test_only' });
       return { receiptId, receiptHash };
     },
     get(receiptId) { return artifactLedgerRows.get(receiptId) || null; },

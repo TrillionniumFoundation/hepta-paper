@@ -87,16 +87,19 @@ await withArtifactWriteContext(context.services, async () => {
   const ownerTrustStoreTemplate = {
     version: 1,
     kind: 'AuthorityTrustStore',
-    keys: [{
+    keys: ['capability_owner', 'operational_observer'].map((role) => ({
       keyId: null,
       subjectId: null,
       organization: null,
+      assurance: 'external_independent',
+      independentExternalAuthority: true,
       algorithm: 'ed25519',
       publicKeyPem: null,
-      roles: ['capability_owner'],
+      roles: [role],
       status: 'active',
-    }],
+    })),
     privateKeysForbidden: true,
+    distinctSubjectsRequired: true,
   };
   const ownerAcceptanceTemplate = {
     version: 2,
@@ -118,7 +121,7 @@ await withArtifactWriteContext(context.services, async () => {
       capabilityId,
       legacyEntryCount: matrix.entries.filter((entry) => entry.capabilityIds.includes(capabilityId)).length,
       targetHashes: targetBindings[capabilityId],
-      requiredEvidence: ['production_subject', 'production_input_hashes', 'production_execution_receipt', 'result_hash', 'replay_receipt_hash', 'replay_matched', 'release_commit', 'capability_owner_signature'],
+      requiredEvidence: ['production_subject', 'production_input_hashes', 'production_execution_receipt', 'result_hash', 'replay_receipt_hash', 'replay_matched', 'release_commit', 'capability_owner_signature', 'independent_operational_observer_signature'],
       requiredOutputDirectory: `runtime/operational-proof/capabilities/${capabilityId}`,
     })),
     conformanceReceiptsCannotQualify: true,
@@ -128,10 +131,11 @@ await withArtifactWriteContext(context.services, async () => {
     kind: 'CapabilityOperationalReceiptTemplateSet',
     releaseCommit: provenance.commit,
     templates: operationalPayload.capabilities.map((capability) => ({
-      version: 1,
+      version: 2,
       kind: 'CapabilityOperationalReceipt',
       capabilityId: capability.capabilityId,
-      status: 'production_capability_replay_verified',
+      status: 'production_runtime_observation_verified',
+      executionClass: 'production_runtime_observation',
       evidenceEnvironment: 'production',
       evidenceClass: 'operational',
       productionEligible: true,

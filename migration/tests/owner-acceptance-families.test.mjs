@@ -53,3 +53,25 @@ test('owner acceptance expands only an exact externally signed capability family
   tampered.acceptedFamilies[0].familyHash = 'sha256:tampered';
   assert.equal(verifyOwnerAcceptanceDocument({ document: tampered, trustStore, familyManifest }).size, 0);
 });
+
+test('permanent retirements are grouped by their migration action, never an undefined family', () => {
+  const manifest = buildOwnerAcceptanceFamilies([{
+    id: 'legacy-retire-1',
+    source: { sha256: 'sha256:source-retire-1' },
+    migrationAction: 'retire_obsolete_report',
+    businessDecision: 'permanent_retirement',
+    capabilityIds: [],
+  }, {
+    id: 'legacy-retire-2',
+    source: { sha256: 'sha256:source-retire-2' },
+    migrationAction: 'retire_obsolete_command',
+    businessDecision: 'permanent_retirement',
+    capabilityIds: [],
+  }]);
+  assert.equal(manifest.families.length, 2);
+  assert.ok(manifest.families.every((family) => !family.familyId.includes('undefined')));
+  assert.deepEqual(manifest.families.map((family) => family.migrationAction).sort(), [
+    'retire_obsolete_command',
+    'retire_obsolete_report',
+  ]);
+});

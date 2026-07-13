@@ -42,6 +42,8 @@ export function verifyTrustedLedgerReceipt({
   if (expectedStreams.length && !expectedStreams.includes(row?.stream)) blockers.push('trusted_receipt_stream_invalid');
   if (requireTrustedWriter && Number(row?.writer_trusted || 0) !== 1) blockers.push('trusted_receipt_writer_untrusted');
   if (requireTrustedWriter && (!row?.writer_id || !row?.writer_kind)) blockers.push('trusted_receipt_writer_identity_missing');
+  if (requireTrustedWriter && (!row?.issuer_policy_id || !row?.issuer_policy_hash)) blockers.push('trusted_receipt_issuer_capability_missing');
+  if (requireTrustedWriter && ['untrusted', 'legacy_unclassified'].includes(row?.issuer_assurance)) blockers.push('trusted_receipt_issuer_assurance_invalid');
   if (expectedWriterIds.length && !expectedWriterIds.includes(row?.writer_id)) blockers.push('trusted_receipt_writer_id_invalid');
   if (expectedWriterKinds.length && !expectedWriterKinds.includes(row?.writer_kind)) blockers.push('trusted_receipt_writer_kind_invalid');
   const hashField = selfHashField(receipt || {});
@@ -63,6 +65,9 @@ export function verifyTrustedLedgerReceipt({
     writerId: row?.writer_id || null,
     writerKind: row?.writer_kind || null,
     writerTrusted: Number(row?.writer_trusted || 0) === 1,
+    issuerPolicyId: row?.issuer_policy_id || null,
+    issuerPolicyHash: row?.issuer_policy_hash || null,
+    issuerAssurance: row?.issuer_assurance || null,
     blockers: [...new Set(blockers)],
   });
 }

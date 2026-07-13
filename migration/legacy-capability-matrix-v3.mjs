@@ -238,7 +238,8 @@ export function buildLegacyCapabilityMatrixV3({ matrixV2 = null, operationalEvid
       owner_accepted: {
         required: true,
         satisfied: ownerAccepted,
-        status: ownerAccepted ? 'cryptographically_verified_owner_acceptance' : 'pending_owner_acceptance',
+        status: ownerAccepted ? ownerAcceptance.acceptanceClass : 'pending_owner_acceptance',
+        issuerAssurance: ownerAccepted ? ownerAcceptance.issuerAssurance : null,
         subjectId: ownerAccepted ? ownerAcceptance.subjectId : null,
         acceptedAt: ownerAccepted ? ownerAcceptance.acceptedAt : null,
         evidenceHash: ownerAccepted ? ownerAcceptance.evidenceHash : null,
@@ -278,6 +279,8 @@ export function buildLegacyCapabilityMatrixV3({ matrixV2 = null, operationalEvid
       operationallyProven: entries.filter((entry) => entry.operationally_proven.satisfied).length,
       operationallyNotProven: entries.filter((entry) => entry.operationally_proven.applicable && !entry.operationally_proven.satisfied).length,
       ownerAccepted: entries.filter((entry) => entry.owner_accepted.satisfied).length,
+      externallyOwnerAccepted: entries.filter((entry) => entry.owner_accepted.issuerAssurance === 'external_independent').length,
+      localAdminOwnerAccepted: entries.filter((entry) => entry.owner_accepted.issuerAssurance === 'local_admin_delegated').length,
       ownerAcceptancePending: entries.filter((entry) => !entry.owner_accepted.satisfied).length,
       uniqueCapabilityCount: new Set(entries.flatMap((entry) => entry.capabilityIds)).size,
       ownerAcceptanceFamilyCount: ownerAcceptanceFamilyManifest.families.length,

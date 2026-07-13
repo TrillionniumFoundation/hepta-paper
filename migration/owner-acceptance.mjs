@@ -8,7 +8,11 @@ function safeId(value) {
 }
 
 function familyKey(entry) {
-  if (!entry.capabilityIds?.length) return `retirement:${entry.priorDisposition}`;
+  if (!entry.capabilityIds?.length) {
+    const retirementDisposition = entry.migrationAction || entry.priorDisposition;
+    if (!retirementDisposition) throw new Error(`owner acceptance retirement disposition missing:${entry.id || 'unknown'}`);
+    return `retirement:${retirementDisposition}`;
+  }
   return `${entry.businessDecision}:${[...entry.capabilityIds].sort().join('+')}`;
 }
 
@@ -26,6 +30,7 @@ export function buildOwnerAcceptanceFamilies(entryPlans = []) {
       kind: 'CapabilityOwnerAcceptanceFamily',
       familyId: `family:${safeId(key)}`,
       businessDecision: ordered[0].businessDecision,
+      migrationAction: ordered[0].migrationAction || ordered[0].priorDisposition || null,
       capabilityIds: [...new Set(ordered.flatMap((entry) => entry.capabilityIds || []))].sort(),
       legacyEntries: ordered.map((entry) => ({
         legacyMatrixEntryId: entry.id,
@@ -58,6 +63,14 @@ export function verifyOwnerAcceptanceDocument({ document, trustStore, familyMani
   if (!verification.cryptographicSignaturesVerified) return accepted;
   const evidenceHash = hashRecord('CapabilityOwnerAcceptance', document);
   const subjectId = verification.verifiedSubjectIds[0] || null;
+  const verifiedKeyId = verification.verifiedSignatures?.[0]?.keyId || null;
+  const trustedKey = (trustStore?.keys || []).find((key) => key.keyId === verifiedKeyId) || null;
+  const issuerAssurance = trustedKey?.assurance || 'unspecified';
+  const acceptanceClass = issuerAssurance === 'external_independent'
+    ? 'external_independent_owner_acceptance'
+    : issuerAssurance === 'local_admin_delegated'
+      ? 'local_admin_delegated_owner_acceptance'
+      : 'unclassified_owner_acceptance';
   if (document.version === 2) {
     if (document.familyManifestHash !== familyManifest?.familyManifestHash) return accepted;
     const acceptedFamilies = new Map((document.acceptedFamilies || []).map((item) => [item.familyId, item]));
@@ -72,6 +85,8 @@ export function verifyOwnerAcceptanceDocument({ document, trustStore, familyMani
         acceptedAt: acceptance.acceptedAt || document.acceptedAt || null,
         evidenceHash,
         subjectId,
+        issuerAssurance,
+        acceptanceClass,
       });
     }
     return accepted;
@@ -80,6 +95,8 @@ export function verifyOwnerAcceptanceDocument({ document, trustStore, familyMani
     ...entry,
     evidenceHash,
     subjectId,
+    issuerAssurance,
+    acceptanceClass,
   });
   return accepted;
 }

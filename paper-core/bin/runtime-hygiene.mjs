@@ -2,8 +2,10 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
+import { createDefaultPaperStore, createReadOnlyPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqlite-receipt-ledger.mjs';
+import { createSqliteReceiptLedgerQualificationStore } from '../../paper-adapters/persistence/sqlite-receipt-ledger-qualification.mjs';
+import { issueReceiptWriterCapability } from '../../paper-adapters/persistence/receipt-issuer-policy.mjs';
 import { createSystemClock } from '../../paper-adapters/runtime/system-clock.mjs';
 import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
@@ -11,11 +13,14 @@ import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 const execute = process.argv.includes('--execute');
 const runtimeRoot = defaultPaperRuntimeRoot();
 const dbPath = path.join(runtimeRoot, 'hepta-paper.sqlite');
-const store = createDefaultPaperStore({ root: defaultPaperAssetRoot(), runtimeRoot, dbPath });
+const store = execute
+  ? createDefaultPaperStore({ root: defaultPaperAssetRoot(), runtimeRoot, dbPath })
+  : createReadOnlyPaperStore({ root: defaultPaperAssetRoot(), runtimeRoot, dbPath });
 const clock = createSystemClock();
-const ledger = createSqliteReceiptLedger({ store, clock });
+const administratorCapability = execute ? issueReceiptWriterCapability('ledger-administrator') : null;
+const ledger = execute ? createSqliteReceiptLedger({ store, clock, issuerCapability: administratorCapability }) : null;
+const qualifications = execute ? createSqliteReceiptLedgerQualificationStore({ store, clock, issuerCapability: administratorCapability }) : null;
 const quarantineRoot = path.join(runtimeRoot, 'quarantine', 'pre-v0.5-runtime-evidence');
-fs.mkdirSync(quarantineRoot, { recursive: true });
 const candidates = store.query("SELECT * FROM jobs WHERE environment='legacy_unclassified' AND status='queued' AND attempt_count=0 ORDER BY created_at;").rows;
 const contaminatedReceipts = store.query(`
   SELECT * FROM receipt_ledger
@@ -25,8 +30,7 @@ const contaminatedReceipts = store.query(`
 `).rows;
 const exportPayload = { version: 1, kind: 'LegacyUnclassifiedQueuedJobExport', rows: candidates };
 const exportHash = `sha256:${crypto.createHash('sha256').update(JSON.stringify(exportPayload)).digest('hex')}`;
-const exportPath = path.join(quarantineRoot, 'QUEUED_JOBS.json');
-fs.writeFileSync(exportPath, `${JSON.stringify({ ...exportPayload, exportHash }, null, 2)}\n`);
+const exportPath = execute ? path.join(quarantineRoot, 'QUEUED_JOBS.json') : null;
 const receiptExportPayload = {
   version: 1,
   kind: 'ContaminatedProductionReceiptExport',
@@ -37,20 +41,23 @@ const receiptExportPayload = {
   rows: contaminatedReceipts,
 };
 const receiptExportHash = `sha256:${crypto.createHash('sha256').update(JSON.stringify(receiptExportPayload)).digest('hex')}`;
-const receiptExportPath = path.join(quarantineRoot, 'CONTAMINATED_RECEIPTS.json');
-fs.writeFileSync(receiptExportPath, `${JSON.stringify({ ...receiptExportPayload, receiptExportHash }, null, 2)}\n`);
+const receiptExportPath = execute ? path.join(quarantineRoot, 'CONTAMINATED_RECEIPTS.json') : null;
+if (execute) {
+  fs.mkdirSync(quarantineRoot, { recursive: true });
+  fs.writeFileSync(exportPath, `${JSON.stringify({ ...exportPayload, exportHash }, null, 2)}\n`);
+  fs.writeFileSync(receiptExportPath, `${JSON.stringify({ ...receiptExportPayload, receiptExportHash }, null, 2)}\n`);
+}
 if (execute && candidates.length) {
   const ids = candidates.map((row) => `'${String(row.job_id).replace(/'/g, "''")}'`).join(',');
   const result = store.execute(`DELETE FROM jobs WHERE job_id IN (${ids}) AND status='queued' AND attempt_count=0;`);
   if (!result.ok) throw new Error(result.error || result.stderr || 'queued_job_quarantine_failed');
 }
 if (execute && contaminatedReceipts.length) {
-  const result = store.execute(`
-    DELETE FROM receipt_ledger
-    WHERE (environment='verification' AND evidence_class='technical_conformance')
-       OR (environment='production' AND evidence_class='runtime_unclassified');
-  `);
-  if (!result.ok) throw new Error(result.error || result.stderr || 'contaminated_receipt_quarantine_failed');
+  for (const receipt of contaminatedReceipts) qualifications.qualify({
+    receiptId: receipt.receipt_id,
+    disposition: 'administrative_exported',
+    reason: 'receipt evidence classification cannot qualify for production evidence',
+  });
 }
 const contaminatedRuntimeRoots = [
   path.join(runtimeRoot, 'selftest'),
@@ -79,7 +86,9 @@ const payload = {
   contaminatedReceiptExportPath: receiptExportPath,
   contaminatedReceiptExportHash: receiptExportHash,
   movedRuntimeRoots,
-  testReceiptsDeletedFromProductionLedger: execute && contaminatedReceipts.length > 0,
+  testReceiptsDeletedFromProductionLedger: false,
+  originalLedgerRowsPreserved: true,
+  receiptQualificationCount: execute ? contaminatedReceipts.length : 0,
   quarantinedReceiptPayloadsPreserved: true,
   legacyReceiptsReclassifiedNotPromoted: true,
   createdAt: clock.nowIso(),

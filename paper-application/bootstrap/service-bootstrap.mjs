@@ -6,6 +6,7 @@ import { createSystemClock } from '../../paper-adapters/runtime/system-clock.mjs
 import { createSha256Hasher } from '../../paper-adapters/runtime/sha256-hasher.mjs';
 import { createAuthorityVerifier } from '../../paper-adapters/authority/authority-verifier.mjs';
 import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqlite-receipt-ledger.mjs';
+import { issueReceiptWriterCapability } from '../../paper-adapters/persistence/receipt-issuer-policy.mjs';
 import { createSqliteJobReceiptStore } from '../../paper-adapters/persistence/sqlite-job-receipt-store.mjs';
 import { createSqliteWorkflowStateStore } from '../../paper-adapters/persistence/sqlite-workflow-state-store.mjs';
 import { createSqliteSubmissionDeliveryStore } from '../../paper-adapters/submission/sqlite-delivery-store.mjs';
@@ -22,19 +23,17 @@ export function bootstrapPaperExecutionContext({
 } = {}) {
   const store = serviceOverrides.store || (readOnly ? createReadOnlyPaperStore({ root, runtimeRoot }) : createDefaultPaperStore({ root, runtimeRoot }));
   const clock = serviceOverrides.clock || createSystemClock();
-  const receiptLedger = serviceOverrides.receiptLedger || createSqliteReceiptLedger({ store, clock, writerIdentity: { writerId: 'hepta-paper-bootstrap', writerKind: 'in-process-service', trusted: true } });
+  const receiptLedger = serviceOverrides.receiptLedger || createSqliteReceiptLedger({
+    store,
+    clock,
+    writerIdentity: { writerId: 'hepta-paper-bootstrap', writerKind: 'in-process-service' },
+  });
   const artifactReceiptLedger = serviceOverrides.artifactReceiptLedger || (serviceOverrides.receiptLedger
     ? receiptLedger
     : createSqliteReceiptLedger({
         store,
         clock,
-        writerIdentity: {
-          writerId: 'filesystem-artifact-repository',
-          writerKind: 'content-addressed-repository',
-          trusted: true,
-          allowedKinds: ['ArtifactWriteReceipt', 'ArtifactGarbageCollectionReceipt'],
-          allowedStreams: ['artifact-writes', 'artifact-retention'],
-        },
+        issuerCapability: issueReceiptWriterCapability('artifact-repository'),
       }));
   const artifactRepositoryFactory = serviceOverrides.artifactRepositoryFactory || ((scopeRoot) => (
     createFilesystemArtifactRepository({

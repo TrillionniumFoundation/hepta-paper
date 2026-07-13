@@ -57,7 +57,11 @@ export function verifyExternalIntake({ stagingRoot, workspaceRoot, runtimeRoot, 
     requiredRoles: ['academic_evidence_authority', 'independent_referee', 'submission_operator', 'live_executor_authorizer'],
     requireDistinctSubjects: true,
   });
-  const ownerTrust = validatePublicTrustStore({ trustStore: ownerTrustStore, requiredRoles: ['capability_owner'] });
+  const ownerTrust = validatePublicTrustStore({
+    trustStore: ownerTrustStore,
+    requiredRoles: ['capability_owner', 'operational_observer'],
+    requireDistinctSubjects: true,
+  });
   const matrix = buildLegacyCapabilityMatrixV3({ runtimeRoot });
   const ownerDocument = readJson(path.join(stagingRoot, 'CAPABILITY_OWNER_ACCEPTANCE.json'));
   const accepted = verifyOwnerAcceptanceDocument({

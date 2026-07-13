@@ -31,7 +31,7 @@ export function createMemoryReceiptLedger() {
     add(receipt) {
       const ledgerReceiptId = `test-ledger:${++counter}:${receipt.kind}`;
       const receiptHash = receipt.writeReceiptHash || receipt.receiptHash || receipt.jobReceiptHash;
-      rows.set(ledgerReceiptId, { receipt_id: ledgerReceiptId, receipt_sha256: receiptHash, receipt_json: JSON.stringify(receipt), stream: STREAM_BY_KIND[receipt.kind] || 'test', writer_id: `trusted-test-${receipt.kind}`, writer_kind: WRITER_KIND_BY_KIND[receipt.kind] || 'test-fixture', writer_trusted: 1 });
+      rows.set(ledgerReceiptId, { receipt_id: ledgerReceiptId, receipt_sha256: receiptHash, receipt_json: JSON.stringify(receipt), stream: STREAM_BY_KIND[receipt.kind] || 'test', writer_id: `trusted-test-${receipt.kind}`, writer_kind: WRITER_KIND_BY_KIND[receipt.kind] || 'test-fixture', writer_trusted: 1, issuer_policy_id: 'trusted-test-fixture', issuer_policy_hash: `sha256:${'f'.repeat(64)}`, issuer_assurance: 'test_only' });
       return { ...receipt, ledgerReceiptId };
     },
     get(id) { return rows.get(id) || null; },

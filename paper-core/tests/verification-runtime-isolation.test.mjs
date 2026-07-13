@@ -18,7 +18,7 @@ test('read-only StorePort rejects writes and preserves database bytes', (t) => {
   createDefaultPaperStore({ root, runtimeRoot: root, dbPath });
   const before = sha(dbPath);
   const store = createReadOnlyPaperStore({ root, runtimeRoot: root, dbPath });
-  assert.equal(store.query('SELECT count(*) AS count FROM schema_migrations;').rows[0].count, 19);
+  assert.equal(store.query('SELECT count(*) AS count FROM schema_migrations;').rows[0].count, 20);
   assert.equal(store.execute("DELETE FROM schema_migrations;").ok, false);
   assert.equal(store.execute("DELETE FROM schema_migrations;").error, 'sqlite_readonly_store_execute_forbidden');
   assert.equal(sha(dbPath), before);

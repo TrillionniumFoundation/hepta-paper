@@ -1,0 +1,26 @@
+#!/usr/bin/env node
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { CAPABILITY_CATALOG } from '../../migration/legacy-capability-matrix-v3.mjs';
+import { validateCapabilityOperationalEvidence } from '../../migration/capability-operational-evidence.mjs';
+import { loadCapabilityConformanceProofs, loadCapabilityOperationalProofs } from '../../migration/operational-proof-intake.mjs';
+import { currentCodeProvenance } from '../src/code-provenance.mjs';
+import { defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
+import { buildReleaseTrustLayerGate } from '../../paper-domain/governance/release-trust-layer-gate.mjs';
+
+const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const runtimeRoot = defaultPaperRuntimeRoot();
+const releaseCommit = currentCodeProvenance().commit;
+const capabilityCount = Object.keys(CAPABILITY_CATALOG).length;
+const implementation = validateCapabilityOperationalEvidence({ runtimeRoot });
+const conformance = loadCapabilityConformanceProofs({ runtimeRoot, workspaceRoot, capabilityCatalog: CAPABILITY_CATALOG, releaseCommit });
+const operational = loadCapabilityOperationalProofs({ runtimeRoot, workspaceRoot, capabilityCatalog: CAPABILITY_CATALOG, releaseCommit });
+const payload = buildReleaseTrustLayerGate({
+  releaseCommit,
+  capabilityCount,
+  implementationVerified: implementation.size,
+  releaseBoundConformanceVerified: conformance.size,
+  independentProductionOperationalVerified: operational.size,
+});
+process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
+if (payload.status !== 'code_release_trust_layers_ready') process.exitCode = 1;

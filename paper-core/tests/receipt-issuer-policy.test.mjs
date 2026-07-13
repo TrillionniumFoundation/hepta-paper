@@ -46,7 +46,7 @@ test('trusted writer cannot be self-declared and registered issuer is least-priv
   }
 });
 
-test('receipt ledger rows cannot be updated or deleted after schema 19', () => {
+test('receipt ledger rows cannot be updated or deleted after schema 20', () => {
   const { root, store, clock } = fixture();
   try {
     const ledger = createSqliteReceiptLedger({ store, clock });
@@ -119,6 +119,28 @@ test('superseded receipts resolve only through a hash-bound replacement lineage'
     const staleVerification = verifyTrustedLedgerReceipt({ receipt: oldReceipt, ledgerReceiptId: oldRecorded.receiptId, receiptLedger: ledger });
     assert.equal(staleVerification.status, 'trusted_ledger_receipt_blocked');
     assert.equal(staleVerification.blockers.includes('trusted_receipt_ledger_payload_mismatch'), true);
+  } finally {
+    store.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('receipt qualification is irreversible and supersession preserves issuer identity', () => {
+  const { root, store, clock } = fixture();
+  try {
+    const trusted = createSqliteReceiptLedger({ store, clock, issuerCapability: issueTestArtifactRepositoryWriter() });
+    const untrusted = createSqliteReceiptLedger({ store, clock });
+    const firstPayload = { version: 1, kind: 'ArtifactWriteReceipt', status: 'written', path: 'first' };
+    const secondPayload = { version: 1, kind: 'ArtifactWriteReceipt', status: 'written', path: 'second' };
+    const first = trusted.record({ ...firstPayload, writeReceiptHash: hashRecord('ArtifactWriteReceipt', firstPayload) }, { stream: 'artifact-writes' });
+    const second = trusted.record({ ...secondPayload, writeReceiptHash: hashRecord('ArtifactWriteReceipt', secondPayload) }, { stream: 'artifact-writes' });
+    const foreignPayload = { version: 1, kind: 'ArtifactWriteReceipt', status: 'written', path: 'foreign' };
+    const foreign = untrusted.record({ ...foreignPayload, writeReceiptHash: hashRecord('ArtifactWriteReceipt', foreignPayload) }, { stream: 'artifact-writes' });
+    const qualifications = createSqliteReceiptLedgerQualificationStore({ store, clock, issuerCapability: issueLedgerAdministratorWriter() });
+    qualifications.qualify({ receiptId: first.receiptId, disposition: 'invalid', reason: 'terminal decision' });
+    assert.throws(() => qualifications.qualify({ receiptId: first.receiptId, disposition: 'superseded', reason: 'attempted reversal', replacementReceiptId: second.receiptId }), /receipt_qualification_is_monotonic/);
+    assert.throws(() => qualifications.qualify({ receiptId: second.receiptId, disposition: 'superseded', reason: 'issuer mismatch', replacementReceiptId: foreign.receiptId }), /receipt_supersession_identity_mismatch/);
+    assert.equal(store.execute(`INSERT INTO receipt_ledger_qualifications(qualification_id,receipt_id,disposition,reason,replacement_receipt_id,qualification_json,qualification_sha256,issuer_policy_id,created_at) VALUES('manual-reversal','${first.receiptId}','superseded','manual','${second.receiptId}','{}','sha256:manual','ledger-administrator','2026-07-13T00:00:01.000Z');`).ok, false);
   } finally {
     store.close();
     fs.rmSync(root, { recursive: true, force: true });

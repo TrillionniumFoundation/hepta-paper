@@ -1,4 +1,5 @@
 import { PAPER_BATCH_MODES } from '../../paper-domain/workflow/mode-registry.mjs';
+import { createTypedStagePipeline } from '../workflow/typed-stage-pipeline.mjs';
 
 export function createPaperStageHandlers({
   context,
@@ -22,6 +23,7 @@ export function createPaperStageHandlers({
     runSourceAdaptAdapter,
     runVenueResolveAdapter,
   } = services.paperStageAdapters || {};
+  const stagePipeline = createTypedStagePipeline({ root, runtimeRoot, row, services });
   if (!runLatexBuildAdapter || !runResearchVerifyAdapter || !buildSubmissionLifecycle) {
     throw new Error('Paper stage handlers require composed paperStageAdapters');
   }
@@ -51,19 +53,18 @@ export function createPaperStageHandlers({
     }),
     'empirical-analysis': async () => {
       const journalManagement = await runJournalManageAdapter({ root, runtimeRoot, row, target: targetOverride, execute: execute && mode === PAPER_BATCH_MODES.EMPIRICAL_ANALYSIS });
-      const empiricalAnalysis = await runEmpiricalAnalysisAdapter({ root, runtimeRoot, row, targetProfile: journalManagement?.targetProfile || null, targetSelectionPolicy: journalManagement?.targetSelectionPolicy || null, datasetRoot, benchmarkId, applyManuscript, execute: execute && mode === PAPER_BATCH_MODES.EMPIRICAL_ANALYSIS });
+      const empiricalAnalysis = await stagePipeline.empirical({ targetProfile: journalManagement?.targetProfile || null, targetSelectionPolicy: journalManagement?.targetSelectionPolicy || null, datasetRoot, benchmarkId, applyManuscript, execute: execute && mode === PAPER_BATCH_MODES.EMPIRICAL_ANALYSIS });
       let buildResult = null;
       let packageResult = null;
       if (empiricalAnalysis?.manuscriptEmpiricalApplyReceipt?.status === 'manuscript_empirical_apply_applied') {
-        buildResult = await runLatexBuildAdapter({ root, row, runtimeRoot, execute });
-        packageResult = await runPackageAdapter({ root, row, buildResult, runtimeRoot, execute, store: services.store });
+        ({ buildResult, packageResult } = await stagePipeline.buildAndPackage({ executeBuild: execute, executePackage: execute }));
       }
-      const researchReport = await runResearchVerifyAdapter({ root, row, runtimeRoot, authorityVerifier: services.authorityVerifier });
+      const researchReport = await stagePipeline.research();
       return { journalManagement, empiricalAnalysis, buildResult, packageResult, researchReport };
     },
-    build: async () => ({ buildResult: await runLatexBuildAdapter({ root, row, runtimeRoot, execute: execute && [PAPER_BATCH_MODES.LOCAL_BUILD, PAPER_BATCH_MODES.REVIEWED_SUBMIT].includes(mode) }) }),
-    package: async ({ state }) => ({ packageResult: await runPackageAdapter({ root, row, buildResult: state.buildResult, researchReport: state.researchReport, runtimeRoot, execute: execute && [PAPER_BATCH_MODES.LOCAL_PACKAGE, PAPER_BATCH_MODES.REVIEWED_SUBMIT].includes(mode), store: services.store }) }),
-    'research-verify': async () => ({ researchReport: await runResearchVerifyAdapter({ root, row, runtimeRoot, executeResearchWorkers: execute && mode === PAPER_BATCH_MODES.RESEARCH_VERIFY, requireNativeWorkers: mode === PAPER_BATCH_MODES.RESEARCH_VERIFY, authorityVerifier: services.authorityVerifier, jobReceiptStore: services.jobReceiptStore, artifactRepositoryFactory: services.artifactRepositoryFactory, receiptLedger: services.receiptLedger, clock: services.clock, store: services.store }) }),
+    build: async () => ({ buildResult: await stagePipeline.build({ execute: execute && [PAPER_BATCH_MODES.LOCAL_BUILD, PAPER_BATCH_MODES.REVIEWED_SUBMIT].includes(mode) }) }),
+    package: async ({ state }) => ({ packageResult: await stagePipeline.package({ buildResult: state.buildResult, researchReport: state.researchReport, execute: execute && [PAPER_BATCH_MODES.LOCAL_PACKAGE, PAPER_BATCH_MODES.REVIEWED_SUBMIT].includes(mode) }) }),
+    'research-verify': async () => ({ researchReport: await stagePipeline.research({ executeWorkers: execute && mode === PAPER_BATCH_MODES.RESEARCH_VERIFY, requireNativeWorkers: mode === PAPER_BATCH_MODES.RESEARCH_VERIFY }) }),
     'referee-review': async () => ({ refereeReview: await runRefereeReviewAdapter({ root, runtimeRoot, row, execute: execute && mode === PAPER_BATCH_MODES.REFEREE_REVIEW, store: services.store }) }),
     'referee-revise': async () => ({ refereeRevision: await runRefereeReviseAdapter({ root, runtimeRoot, row, mode: 'dry-run', execute: execute && mode === PAPER_BATCH_MODES.REFEREE_REVISE, store: services.store }) }),
     'venue-resolve': async ({ state }) => ({ venueResolution: await runVenueResolveAdapter({ row, venues, packageResult: state.packageResult }) }),

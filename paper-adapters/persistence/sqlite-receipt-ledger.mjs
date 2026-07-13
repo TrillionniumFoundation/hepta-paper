@@ -93,7 +93,7 @@ export function createSqliteReceiptLedger({ store, clock, writerIdentity = null,
         const row = store.query(`SELECT * FROM effective_receipt_ledger WHERE receipt_id=${sqlText(currentReceiptId)} LIMIT 1;`).rows[0] || null;
         if (!row) return Object.freeze({ status: 'effective_receipt_resolution_blocked', receiptRow: null, lineage, blockers: ['trusted_receipt_ledger_row_missing'] });
         if (Number(row.effective_receipt_usable ?? 1) === 1) return Object.freeze({ status: 'effective_receipt_resolved', receiptRow: row, lineage, blockers: [] });
-        const qualification = store.query(`SELECT * FROM receipt_ledger_qualifications WHERE receipt_id=${sqlText(currentReceiptId)} ORDER BY sequence DESC LIMIT 1;`).rows[0] || null;
+        const qualification = store.query(`SELECT * FROM receipt_ledger_qualifications WHERE receipt_id=${sqlText(currentReceiptId)} LIMIT 1;`).rows[0] || null;
         if (!qualification) return Object.freeze({ status: 'effective_receipt_resolution_blocked', receiptRow: row, lineage, blockers: ['trusted_receipt_qualification_missing'] });
         let payload = null;
         try { payload = JSON.parse(qualification.qualification_json); } catch { /* fail closed below */ }

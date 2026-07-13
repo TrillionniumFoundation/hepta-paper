@@ -44,7 +44,7 @@
       },
       "target": {
         "path": "hepta-paper-workspace/paper-core/bin/paper-production-core.mjs",
-        "sha256": "4f3ae4cbd7c5ada3c6eadfadb5d48cf83a3af44a4bccefc2e06b275a153b9549",
+        "sha256": "00edb0b922f0f8e147a29987b499cf6861a7ad837b5f84a48aafcef6804a5df2",
         "symbols": [
           "main",
           "runPaperBatch",
@@ -107,8 +107,8 @@
         ]
       },
       "target": {
-        "path": "hepta-paper-workspace/paper-core/src/production-state-compat.mjs",
-        "sha256": "06313fe7a865c9cb3d21317e8e931c39d04310a71204ef691bb73e065fce072f",
+        "path": "hepta-paper-workspace/migration/retirement/production-state-compat.mjs",
+        "sha256": "c34d079299ffc376b9cf949d7777d596cd41d6b8b0594ca0d4c3f5306c4c92de",
         "symbols": [
           "evaluateLegacyProductionSnapshot",
           "summarizeLegacyProductionEvaluations",
@@ -122,7 +122,7 @@
         {
           "id": "p0-production-core-differential",
           "path": "migration/tests/p0-production-core-differential.mjs",
-          "sha256": "4165398d85007fb203803b73353560e22ea6fda1cd6ab40a43cffdd972a04b59"
+          "sha256": "14aa13af6d4b138c21733b6c637f6b0d2019d12f361fad14a01d3367dd1a2751"
         }
       ],
       "verificationClass": "behavioral_replacement"
@@ -10235,7 +10235,7 @@
         {
           "id": "p1-plugin-wrapper-boundaries",
           "path": "migration/tests/p1-plugin-wrapper-boundaries.mjs",
-          "sha256": "09321de5751fcf5f3c7be73c15e961c9d1e841761d4d9e4e61221d258317b843"
+          "sha256": "a96bc8d74b345aabc12c02128e9348cbf82090a49e6b60a70dc62c5267afb777"
         }
       ],
       "verificationClass": "behavioral_replacement"
@@ -10270,7 +10270,7 @@
       },
       "target": {
         "path": "hepta-paper-workspace/paper-adapters/research-verify/index.mjs",
-        "sha256": "f2bf63f0526acf83b7449864444b966f255ef9cc00c5fa23617afdf708f3991e",
+        "sha256": "9dc9be9c1c8b7519eb48c7cfcec6efcff114a3d1cae6bc70c49f22903e70ac18",
         "symbols": [
           "runResearchVerifyAdapter"
         ]
@@ -10279,7 +10279,7 @@
         {
           "id": "p1-plugin-wrapper-boundaries",
           "path": "migration/tests/p1-plugin-wrapper-boundaries.mjs",
-          "sha256": "09321de5751fcf5f3c7be73c15e961c9d1e841761d4d9e4e61221d258317b843"
+          "sha256": "a96bc8d74b345aabc12c02128e9348cbf82090a49e6b60a70dc62c5267afb777"
         }
       ],
       "verificationClass": "behavioral_replacement"
@@ -10323,7 +10323,7 @@
         {
           "id": "p1-plugin-wrapper-boundaries",
           "path": "migration/tests/p1-plugin-wrapper-boundaries.mjs",
-          "sha256": "09321de5751fcf5f3c7be73c15e961c9d1e841761d4d9e4e61221d258317b843"
+          "sha256": "a96bc8d74b345aabc12c02128e9348cbf82090a49e6b60a70dc62c5267afb777"
         }
       ],
       "verificationClass": "behavioral_replacement"
@@ -10368,7 +10368,7 @@
         {
           "id": "p1-plugin-wrapper-boundaries",
           "path": "migration/tests/p1-plugin-wrapper-boundaries.mjs",
-          "sha256": "09321de5751fcf5f3c7be73c15e961c9d1e841761d4d9e4e61221d258317b843"
+          "sha256": "a96bc8d74b345aabc12c02128e9348cbf82090a49e6b60a70dc62c5267afb777"
         }
       ],
       "verificationClass": "behavioral_replacement"
@@ -10412,7 +10412,7 @@
         {
           "id": "p1-plugin-wrapper-boundaries",
           "path": "migration/tests/p1-plugin-wrapper-boundaries.mjs",
-          "sha256": "09321de5751fcf5f3c7be73c15e961c9d1e841761d4d9e4e61221d258317b843"
+          "sha256": "a96bc8d74b345aabc12c02128e9348cbf82090a49e6b60a70dc62c5267afb777"
         }
       ],
       "verificationClass": "behavioral_replacement"
@@ -10464,7 +10464,7 @@
         {
           "id": "p1-plugin-wrapper-boundaries",
           "path": "migration/tests/p1-plugin-wrapper-boundaries.mjs",
-          "sha256": "09321de5751fcf5f3c7be73c15e961c9d1e841761d4d9e4e61221d258317b843"
+          "sha256": "a96bc8d74b345aabc12c02128e9348cbf82090a49e6b60a70dc62c5267afb777"
         }
       ],
       "verificationClass": "explicit_retirement"
@@ -10508,7 +10508,7 @@
         {
           "id": "p1-plugin-wrapper-boundaries",
           "path": "migration/tests/p1-plugin-wrapper-boundaries.mjs",
-          "sha256": "09321de5751fcf5f3c7be73c15e961c9d1e841761d4d9e4e61221d258317b843"
+          "sha256": "a96bc8d74b345aabc12c02128e9348cbf82090a49e6b60a70dc62c5267afb777"
         }
       ],
       "verificationClass": "behavioral_replacement"
@@ -10559,7 +10559,7 @@
         {
           "id": "p1-plugin-wrapper-boundaries",
           "path": "migration/tests/p1-plugin-wrapper-boundaries.mjs",
-          "sha256": "09321de5751fcf5f3c7be73c15e961c9d1e841761d4d9e4e61221d258317b843"
+          "sha256": "a96bc8d74b345aabc12c02128e9348cbf82090a49e6b60a70dc62c5267afb777"
         }
       ],
       "verificationClass": "explicit_retirement"
@@ -10603,7 +10603,7 @@
         {
           "id": "p1-plugin-wrapper-boundaries",
           "path": "migration/tests/p1-plugin-wrapper-boundaries.mjs",
-          "sha256": "09321de5751fcf5f3c7be73c15e961c9d1e841761d4d9e4e61221d258317b843"
+          "sha256": "a96bc8d74b345aabc12c02128e9348cbf82090a49e6b60a70dc62c5267afb777"
         }
       ],
       "verificationClass": "behavioral_replacement"
@@ -10648,7 +10648,7 @@
         {
           "id": "p1-plugin-wrapper-boundaries",
           "path": "migration/tests/p1-plugin-wrapper-boundaries.mjs",
-          "sha256": "09321de5751fcf5f3c7be73c15e961c9d1e841761d4d9e4e61221d258317b843"
+          "sha256": "a96bc8d74b345aabc12c02128e9348cbf82090a49e6b60a70dc62c5267afb777"
         }
       ],
       "verificationClass": "explicit_retirement"
@@ -10683,7 +10683,7 @@
       },
       "target": {
         "path": "hepta-paper-workspace/paper-core/src/paper-batch-runner.mjs",
-        "sha256": "f2200389f80e6d69ebcfb67c47e3ee73723570bb4eed4b2cdebeb7fff604f6a5",
+        "sha256": "668da16ac64bbeac3be278f4171d6e4cae0e609dfe58d02b16c7a71c8bb4ed60",
         "symbols": [
           "runPaperBatch",
           "PAPER_BATCH_MODES"
@@ -10693,7 +10693,7 @@
         {
           "id": "p1-plugin-wrapper-boundaries",
           "path": "migration/tests/p1-plugin-wrapper-boundaries.mjs",
-          "sha256": "09321de5751fcf5f3c7be73c15e961c9d1e841761d4d9e4e61221d258317b843"
+          "sha256": "a96bc8d74b345aabc12c02128e9348cbf82090a49e6b60a70dc62c5267afb777"
         }
       ],
       "verificationClass": "behavioral_replacement"
@@ -10737,7 +10737,7 @@
         {
           "id": "p1-plugin-wrapper-boundaries",
           "path": "migration/tests/p1-plugin-wrapper-boundaries.mjs",
-          "sha256": "09321de5751fcf5f3c7be73c15e961c9d1e841761d4d9e4e61221d258317b843"
+          "sha256": "a96bc8d74b345aabc12c02128e9348cbf82090a49e6b60a70dc62c5267afb777"
         }
       ],
       "verificationClass": "behavioral_replacement"
@@ -10781,7 +10781,7 @@
         {
           "id": "p1-plugin-wrapper-boundaries",
           "path": "migration/tests/p1-plugin-wrapper-boundaries.mjs",
-          "sha256": "09321de5751fcf5f3c7be73c15e961c9d1e841761d4d9e4e61221d258317b843"
+          "sha256": "a96bc8d74b345aabc12c02128e9348cbf82090a49e6b60a70dc62c5267afb777"
         }
       ],
       "verificationClass": "behavioral_replacement"
@@ -10834,7 +10834,7 @@
         {
           "id": "p1-plugin-wrapper-boundaries",
           "path": "migration/tests/p1-plugin-wrapper-boundaries.mjs",
-          "sha256": "09321de5751fcf5f3c7be73c15e961c9d1e841761d4d9e4e61221d258317b843"
+          "sha256": "a96bc8d74b345aabc12c02128e9348cbf82090a49e6b60a70dc62c5267afb777"
         }
       ],
       "verificationClass": "explicit_retirement"
@@ -10878,7 +10878,7 @@
         {
           "id": "p1-plugin-wrapper-boundaries",
           "path": "migration/tests/p1-plugin-wrapper-boundaries.mjs",
-          "sha256": "09321de5751fcf5f3c7be73c15e961c9d1e841761d4d9e4e61221d258317b843"
+          "sha256": "a96bc8d74b345aabc12c02128e9348cbf82090a49e6b60a70dc62c5267afb777"
         }
       ],
       "verificationClass": "behavioral_replacement"

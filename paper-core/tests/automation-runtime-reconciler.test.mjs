@@ -17,6 +17,8 @@ test('startup reconciliation atomically requeues expired nodes and removes only 
     const campaigns = createSqliteCampaignStore({ store, clock });
     campaigns.createCampaign({ campaignId: 'campaign-1', paperId: 'paper-1', nodes: [{ nodeId: 'node-1', kind: 'agent', dependencies: [] }] });
     campaigns.createCampaign({ campaignId: 'campaign-2', paperId: 'paper-2', nodes: [{ nodeId: 'node-2', kind: 'agent', dependencies: [] }] });
+    campaigns.createCampaign({ campaignId: 'campaign-3', paperId: 'paper-3', nodes: [{ nodeId: 'node-3', kind: 'agent', dependencies: [] }] });
+    assert.equal(store.execute("UPDATE paper_campaigns SET status='failed',stop_reason='historical_failure' WHERE campaign_id='campaign-3';").ok, true);
     assert.equal(store.execute("UPDATE paper_campaigns SET updated_at='2026-07-13T06:00:00.000Z' WHERE campaign_id='campaign-2';").ok, true);
     assert.equal(store.execute("UPDATE campaign_nodes SET status='running',lease_owner='dead-worker',lease_expires_at='2026-07-13T07:00:00.000Z' WHERE node_id='node-1';").ok, true);
     assert.equal(store.execute("INSERT OR IGNORE INTO automation_resource_limits(scope,agent_limit,cpu_limit,gpu_limit,memory_mib_limit,created_at,updated_at) VALUES('global',4,4,1,8192,'2026-07-13T00:00:00.000Z','2026-07-13T00:00:00.000Z');").ok, true);
@@ -25,13 +27,17 @@ test('startup reconciliation atomically requeues expired nodes and removes only 
     const plan = planAutomationRuntimeReconciliation({ store, clock });
     assert.equal(plan.expiredNodes.length, 1);
     assert.deepEqual(plan.noProgressCampaigns.map((campaign) => campaign.campaign_id), ['campaign-2']);
+    assert.deepEqual(plan.terminalCampaignQueuedNodes.map((node) => node.node_id), ['node-3']);
     const receiptLedger = createSqliteReceiptLedger({ store, clock, issuerCapability: issueAutomationReconcilerWriter() });
     const receipt = executeAutomationRuntimeReconciliation({ store, clock, receiptLedger });
     assert.equal(receipt.recoveredNodeCount, 1);
     assert.equal(receipt.pausedNoProgressCampaignCount, 1);
+    assert.equal(receipt.closedTerminalCampaignQueuedNodeCount, 1);
     assert.equal(store.query("SELECT status FROM campaign_nodes WHERE node_id='node-1'").rows[0].status, 'queued');
     assert.equal(store.query("SELECT status FROM paper_campaigns WHERE campaign_id='campaign-2'").rows[0].status, 'paused');
     assert.equal(store.query("SELECT status FROM campaign_nodes WHERE node_id='node-2'").rows[0].status, 'queued');
+    assert.equal(store.query("SELECT status FROM campaign_nodes WHERE node_id='node-3'").rows[0].status, 'skipped');
+    assert.equal(store.query("SELECT count(*) count FROM campaign_events WHERE node_id='node-3' AND kind='campaign_terminal_child_closed'").rows[0].count, 1);
     assert.equal(store.query("SELECT count(*) count FROM campaign_events WHERE campaign_id='campaign-2' AND kind='campaign_no_progress_paused'").rows[0].count, 1);
     assert.equal(store.query('SELECT count(*) count FROM automation_resource_leases').rows[0].count, 1);
     assert.equal(store.query('SELECT count(*) count FROM automation_resource_waiters').rows[0].count, 1);

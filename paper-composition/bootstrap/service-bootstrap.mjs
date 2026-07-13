@@ -1,19 +1,12 @@
 import path from 'node:path';
-import { createExecutionContext, assertExecutionServices } from '../execution-context.mjs';
+import { createExecutionContext, assertExecutionServices } from '../../paper-application/execution-context.mjs';
 import { createDefaultPaperStore, createReadOnlyPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { createFilesystemArtifactRepository } from '../../paper-adapters/artifacts/filesystem-artifact-repository.mjs';
 import { createSystemClock } from '../../paper-adapters/runtime/system-clock.mjs';
 import { createSha256Hasher } from '../../paper-adapters/runtime/sha256-hasher.mjs';
 import { createAuthorityVerifier } from '../../paper-adapters/authority/authority-verifier.mjs';
 import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqlite-receipt-ledger.mjs';
-import {
-  issueArtifactRepositoryWriter,
-  issueExperimentReproducibilityWriter,
-  issueExperimentWorkerWriter,
-  issueFormalAdapterWriter,
-  issueFormalVerifierWriter,
-  issueNativeResearchWorkerWriter,
-} from '../../paper-adapters/persistence/receipt-writer-broker.mjs';
+import { composeTrustedReceiptLedgers } from './receipt-ledger-composition.mjs';
 import { createSqliteJobReceiptStore } from '../../paper-adapters/persistence/sqlite-job-receipt-store.mjs';
 import { createSqliteWorkflowStateStore } from '../../paper-adapters/persistence/sqlite-workflow-state-store.mjs';
 import { createSqliteSubmissionDeliveryStore } from '../../paper-adapters/submission/sqlite-delivery-store.mjs';
@@ -36,24 +29,9 @@ export function bootstrapPaperExecutionContext({
     clock,
     writerIdentity: { writerId: 'hepta-paper-bootstrap', writerKind: 'in-process-service' },
   });
-  const artifactReceiptLedger = serviceOverrides.artifactReceiptLedger || (serviceOverrides.receiptLedger
-    ? receiptLedger
-    : createSqliteReceiptLedger({
-        store,
-        clock,
-        issuerCapability: issueArtifactRepositoryWriter(),
-      }));
-  const nativeResearchWorkerReceiptLedger = serviceOverrides.nativeResearchWorkerReceiptLedger || createSqliteReceiptLedger({
-    store,
-    clock,
-    issuerCapability: issueNativeResearchWorkerWriter(),
-  });
-  const trustedResearchReceiptWriters = Object.freeze({
-    experimentWorker: serviceOverrides.experimentWorkerReceiptLedger || createSqliteReceiptLedger({ store, clock, issuerCapability: issueExperimentWorkerWriter() }),
-    experimentReproducibility: serviceOverrides.experimentReproducibilityReceiptLedger || createSqliteReceiptLedger({ store, clock, issuerCapability: issueExperimentReproducibilityWriter() }),
-    formalAdapter: serviceOverrides.formalAdapterReceiptLedger || createSqliteReceiptLedger({ store, clock, issuerCapability: issueFormalAdapterWriter() }),
-    formalExecution: serviceOverrides.formalExecutionReceiptLedger || createSqliteReceiptLedger({ store, clock, issuerCapability: issueFormalVerifierWriter() }),
-  });
+  const trustedLedgers = composeTrustedReceiptLedgers({ store, clock, overrides: serviceOverrides });
+  const artifactReceiptLedger = serviceOverrides.receiptLedger ? receiptLedger : trustedLedgers.artifact;
+  const nativeResearchWorkerReceiptLedger = trustedLedgers.nativeResearchWorker;
   const artifactRepositoryFactory = serviceOverrides.artifactRepositoryFactory || ((scopeRoot) => (
     createFilesystemArtifactRepository({
       scopeRoot,
@@ -70,7 +48,7 @@ export function bootstrapPaperExecutionContext({
     authorityVerifier: serviceOverrides.authorityVerifier || createAuthorityVerifier(),
     receiptLedger,
     paperStageAdapters: serviceOverrides.paperStageAdapters || createPaperStageAdapterRegistry(),
-    trustedResearchReceiptWriters,
+    trustedResearchReceiptWriters: trustedLedgers.research,
     jobReceiptStore: serviceOverrides.jobReceiptStore || createSqliteJobReceiptStore({
       store,
       receiptLedger,

@@ -12,4 +12,4 @@ process.stdout.write(`${JSON.stringify({
   publicKeyFingerprint: result.signature.publicKeyFingerprint,
   outputRoot: result.root,
 }, null, 2)}\n`);
-if (result.bundle.status !== 'release_evidence_bundle_ready') process.exitCode = 1;
+if (result.bundle.status !== 'code_release_evidence_ready') process.exitCode = 1;

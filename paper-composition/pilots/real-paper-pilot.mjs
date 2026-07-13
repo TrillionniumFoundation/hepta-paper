@@ -1,3 +1,4 @@
+// Concrete pilot composition; domain authority remains in the injected services.
 import path from 'node:path';
 import { runPaperBatch } from '../batch/paper-batch-application.mjs';
 import { bootstrapPaperExecutionContext } from '../bootstrap/service-bootstrap.mjs';

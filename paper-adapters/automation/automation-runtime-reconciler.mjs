@@ -15,10 +15,14 @@ export function planAutomationRuntimeReconciliation({ store, clock, noProgressSe
       AND NOT EXISTS(SELECT 1 FROM campaign_nodes active WHERE active.campaign_id=c.campaign_id AND active.status IN ('leased','running'))
     GROUP BY c.campaign_id,c.paper_id,c.updated_at,c.current_phase
     ORDER BY c.updated_at,c.campaign_id;`).rows;
+  const terminalCampaignQueuedNodes = store.query(`SELECT n.node_id,n.campaign_id,c.status AS campaign_status,c.stop_reason
+    FROM campaign_nodes n JOIN paper_campaigns c ON c.campaign_id=n.campaign_id
+    WHERE n.status='queued' AND c.status IN ('failed','cancelled','stopped','completed')
+    ORDER BY n.campaign_id,n.node_id;`).rows;
   const payload = {
     version: 2,
     kind: 'AutomationRuntimeReconciliationPlan',
-    status: expiredNodes.length || expiredResourceLeases.length || expiredWaiters.length || noProgressCampaigns.length
+    status: expiredNodes.length || expiredResourceLeases.length || expiredWaiters.length || noProgressCampaigns.length || terminalCampaignQueuedNodes.length
       ? 'automation_runtime_reconciliation_required'
       : 'automation_runtime_reconciliation_clean',
     plannedAt: now,
@@ -27,6 +31,7 @@ export function planAutomationRuntimeReconciliation({ store, clock, noProgressSe
     expiredWaiters,
     noProgressCutoff,
     noProgressCampaigns,
+    terminalCampaignQueuedNodes,
   };
   return Object.freeze({ ...payload, reconciliationPlanHash: hashRecord('AutomationRuntimeReconciliationPlan', payload) });
 }
@@ -44,8 +49,10 @@ export function executeAutomationRuntimeReconciliation({ store, clock, receiptLe
     removedResourceLeaseCount: plan.expiredResourceLeases.length,
     removedWaiterCount: plan.expiredWaiters.length,
     pausedNoProgressCampaignCount: plan.noProgressCampaigns.length,
+    closedTerminalCampaignQueuedNodeCount: plan.terminalCampaignQueuedNodes.length,
     recoveredNodeIds: plan.expiredNodes.map((row) => row.node_id),
     pausedNoProgressCampaignIds: plan.noProgressCampaigns.map((row) => row.campaign_id),
+    closedTerminalCampaignQueuedNodeIds: plan.terminalCampaignQueuedNodes.map((row) => row.node_id),
     reconciledAt,
     workersStarted: false,
     externalActionPerformed: false,
@@ -90,11 +97,26 @@ export function executeAutomationRuntimeReconciliation({ store, clock, receiptLe
     const eventId = `${campaign.campaign_id}:${reconciledAt}:${eventHash.slice(-16)}`;
     return `INSERT OR IGNORE INTO campaign_events(event_id,campaign_id,node_id,kind,event_json,event_sha256,created_at) VALUES(${sqlText(eventId)},${sqlText(campaign.campaign_id)},NULL,'campaign_no_progress_paused',${sqlJson(eventPayload)},${sqlText(eventHash)},${sqlText(reconciledAt)});`;
   }).join('\n');
+  const terminalNodeEventSql = plan.terminalCampaignQueuedNodes.map((node) => {
+    const eventPayload = {
+      version: 1,
+      kind: 'campaign_terminal_child_closed',
+      campaignId: node.campaign_id,
+      nodeId: node.node_id,
+      detail: { campaignStatus: node.campaign_status, campaignStopReason: node.stop_reason || null, reconciliationPlanHash: plan.reconciliationPlanHash },
+      createdAt: reconciledAt,
+    };
+    const eventHash = hashRecord('PaperCampaignEvent', eventPayload);
+    const eventId = `${node.campaign_id}:${reconciledAt}:${eventHash.slice(-16)}`;
+    return `INSERT OR IGNORE INTO campaign_events(event_id,campaign_id,node_id,kind,event_json,event_sha256,created_at) VALUES(${sqlText(eventId)},${sqlText(node.campaign_id)},${sqlText(node.node_id)},'campaign_terminal_child_closed',${sqlJson(eventPayload)},${sqlText(eventHash)},${sqlText(reconciledAt)});`;
+  }).join('\n');
   const result = store.execute(`BEGIN IMMEDIATE;
 ${plan.expiredNodes.length ? `UPDATE campaign_nodes SET status='queued',lease_owner=NULL,lease_expires_at=NULL,failure_class='lease_expired_recovered',updated_at=${sqlText(reconciledAt)} WHERE node_id IN (${plan.expiredNodes.map((node) => sqlText(node.node_id)).join(',')}) AND status IN ('leased','running') AND lease_expires_at<=${sqlText(reconciledAt)};` : ''}
 ${eventSql}
 ${plan.noProgressCampaigns.length ? `UPDATE paper_campaigns SET status='paused',current_phase='paused',stop_reason='reconciliation_no_progress_timeout',accumulated_run_ms=accumulated_run_ms+CASE WHEN last_resumed_at IS NULL THEN 0 ELSE max(0,CAST((julianday(${sqlText(reconciledAt)})-julianday(last_resumed_at))*86400000 AS INTEGER)) END,last_resumed_at=NULL,revision=revision+1,updated_at=${sqlText(reconciledAt)} WHERE campaign_id IN (${plan.noProgressCampaigns.map((campaign) => sqlText(campaign.campaign_id)).join(',')}) AND status='running';` : ''}
 ${campaignEventSql}
+${plan.terminalCampaignQueuedNodes.length ? `UPDATE campaign_nodes SET status='skipped',failure_class='terminal_campaign_reconciled',failure_json=NULL,failure_sha256=NULL,lease_owner=NULL,lease_expires_at=NULL,updated_at=${sqlText(reconciledAt)} WHERE node_id IN (${plan.terminalCampaignQueuedNodes.map((node) => sqlText(node.node_id)).join(',')}) AND status='queued' AND EXISTS(SELECT 1 FROM paper_campaigns c WHERE c.campaign_id=campaign_nodes.campaign_id AND c.status IN ('failed','cancelled','stopped','completed'));` : ''}
+${terminalNodeEventSql}
 DELETE FROM automation_resource_leases WHERE expires_at<=${sqlText(reconciledAt)};
 DELETE FROM automation_resource_waiters WHERE expires_at IS NOT NULL AND expires_at<=${sqlText(reconciledAt)};
 ${prepared.sql}

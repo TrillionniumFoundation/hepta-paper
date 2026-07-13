@@ -14,7 +14,7 @@ import { createFilesystemEmpiricalCacheRepository } from '../../paper-adapters/a
 import { createOsSandboxedWorkerRunner, directoryMerkleHash, fileSha256Hash } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
 import { buildRuntimeRetentionPlan, executeRuntimeRetentionPlan } from '../../paper-adapters/automation/runtime-retention.mjs';
 import { runtimeImagesForCampaign } from '../../paper-adapters/automation/runtime-image-registry.mjs';
-import { bootstrapPaperExecutionContext } from '../../paper-application/bootstrap/service-bootstrap.mjs';
+import { bootstrapPaperExecutionContext } from '../../paper-composition/bootstrap/service-bootstrap.mjs';
 import { runPaperCampaign } from '../../paper-application/automation/campaign-engine.mjs';
 import { presentCampaignStatus, presentNodeLog, summarizeCampaign, summarizeEvent, summarizeNode, summarizePlan, summarizeRun } from '../../paper-application/automation/campaign-query-presenter.mjs';
 import { createSqliteResourceGovernor } from '../../paper-adapters/automation/sqlite-resource-governor.mjs';

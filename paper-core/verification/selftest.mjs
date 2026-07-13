@@ -26,7 +26,7 @@ import {
   defaultPaperAssetRoot,
   defaultPaperRuntimeRoot,
 } from '../src/workspace-layout.mjs';
-import { bootstrapPaperExecutionContext } from '../../paper-application/bootstrap/service-bootstrap.mjs';
+import { bootstrapPaperExecutionContext } from '../../paper-composition/bootstrap/service-bootstrap.mjs';
 import { enterArtifactWriteContext } from '../../paper-adapters/artifacts/artifact-write-context.mjs';
 import { assertIsolatedVerificationRuntime } from '../src/verification-runtime.mjs';
 

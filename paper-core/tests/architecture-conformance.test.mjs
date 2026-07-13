@@ -236,6 +236,7 @@ test('production modules do not bypass StorePort or restore autopilot acceptance
   const productionFiles = [
     'paper-core/src',
     'paper-application',
+    'paper-composition',
     'paper-adapters',
     'paper-domain',
     'paper-ports',
@@ -255,7 +256,7 @@ test('production modules do not bypass StorePort or restore autopilot acceptance
   const researchRuntime = fs.readFileSync(path.join(workspaceRoot, 'paper-adapters', 'research-verify', 'index.mjs'), 'utf8');
   assert.equal(researchRuntime.includes("path.join(root, 'paperctl_modules')"), false);
   assert.equal(source.includes("from './utils.mjs'"), false);
-  const batchApplication = fs.readFileSync(path.join(workspaceRoot, 'paper-application', 'batch', 'paper-batch-application.mjs'), 'utf8');
+  const batchApplication = fs.readFileSync(path.join(workspaceRoot, 'paper-composition', 'batch', 'paper-batch-application.mjs'), 'utf8');
   assert.equal(/run(?:LatexBuild|Package|ResearchVerify|RefereeReview|RefereeRevise|EmpiricalAnalysis)Adapter/.test(batchApplication), false);
   assert.equal(batchApplication.includes('createDefaultPaperStore('), false);
   assert.equal(batchApplication.includes('function stateWithAdapterResults'), false);
@@ -271,14 +272,45 @@ test('production modules do not bypass StorePort or restore autopilot acceptance
   assert.equal(/from ['"][^'"]*paper-core\/src\//.test(adapterSource), false);
   const applicationSource = productionFiles.filter((file) => file.includes(`${path.sep}paper-application${path.sep}`)).map((file) => fs.readFileSync(file, 'utf8')).join('\n');
   assert.equal(/from ['"][^'"]*paper-core\/src\//.test(applicationSource), false);
-  const applicationUseCaseFiles = productionFiles.filter((file) => file.includes(`${path.sep}paper-application${path.sep}use-cases${path.sep}`));
-  const directUseCaseAdapterImports = applicationUseCaseFiles.filter((file) => /from ['"][^'"]*paper-adapters\//.test(fs.readFileSync(file, 'utf8')));
-  assert.deepEqual(directUseCaseAdapterImports, []);
+  const applicationFiles = productionFiles.filter((file) => file.includes(`${path.sep}paper-application${path.sep}`));
+  const directApplicationAdapterImports = applicationFiles.filter((file) => /from ['"][^'"]*paper-adapters\//.test(fs.readFileSync(file, 'utf8')));
+  assert.deepEqual(directApplicationAdapterImports, []);
   const directIssuerMintConsumers = productionFiles.filter((file) => {
     if (file.endsWith(`${path.sep}receipt-writer-broker.mjs`) || file.endsWith(`${path.sep}receipt-issuer-policy.mjs`)) return false;
     return fs.readFileSync(file, 'utf8').includes('issueReceiptWriterCapability');
   });
   assert.deepEqual(directIssuerMintConsumers, []);
+  const brokerImporters = productionFiles
+    .filter((file) => /from ['"][^'"]*receipt-writer-broker\.mjs['"]/.test(fs.readFileSync(file, 'utf8')))
+    .map((file) => path.relative(workspaceRoot, file));
+  assert.deepEqual(brokerImporters, ['paper-composition/bootstrap/receipt-ledger-composition.mjs']);
+  const compositionSource = fs.readFileSync(path.join(workspaceRoot, brokerImporters[0]), 'utf8');
+  assert.equal(compositionSource.includes('issuerCapability: issue()'), true);
+  assert.equal(compositionSource.includes('issuerCapability:'), true);
+  const trustedCompositionRoots = [
+    'paper-core/bin',
+    'paper-application',
+    'paper-composition',
+    'paper-adapters',
+    'paper-domain',
+    'paper-ports',
+    'workflow-kernel',
+    'migration/bin',
+  ].flatMap((root) => fs.readdirSync(path.join(workspaceRoot, root), { recursive: true })
+    .filter((entry) => typeof entry === 'string' && entry.endsWith('.mjs'))
+    .map((entry) => path.join(workspaceRoot, root, entry)));
+  const repositoryBrokerImporters = trustedCompositionRoots
+    .filter((file) => /from ['"][^'"]*receipt-writer-broker\.mjs['"]/.test(fs.readFileSync(file, 'utf8')))
+    .map((file) => path.relative(workspaceRoot, file))
+    .sort();
+  assert.deepEqual(repositoryBrokerImporters, [
+    'migration/bin/refresh-production-capability-verification.mjs',
+    'migration/bin/run-production-capability-replays.mjs',
+    'paper-composition/bootstrap/receipt-ledger-composition.mjs',
+    'paper-core/bin/automation-reconcile.mjs',
+    'paper-core/bin/repair-receipt-ledger-integrity.mjs',
+    'paper-core/bin/runtime-hygiene.mjs',
+  ]);
   const writeFacade = fs.readFileSync(path.join(workspaceRoot, 'paper-adapters', 'artifacts', 'write-artifact.mjs'), 'utf8');
   assert.equal(writeFacade.includes('createFilesystemArtifactRepository'), false);
   assert.equal(writeFacade.includes('requires an ExecutionContext-backed persistent ledger'), true);
@@ -297,6 +329,9 @@ test('production modules do not bypass StorePort or restore autopilot acceptance
     if (file.endsWith('generated-latex-sanitizer.mjs')) continue;
     if (file.endsWith('runtime-retention.mjs')) continue;
     if (file.endsWith('workspace-snapshot-exporter.mjs')) continue;
+    // This module emits code that can write only inside the kernel-isolated
+    // ephemeral work root; host materialization still goes through CAS.
+    if (file.endsWith('empirical-analysis/experiment-runner.mjs')) continue;
     const text = fs.readFileSync(file, 'utf8');
     assert.equal(/\b(writeFile|writeFileSync|appendFile|appendFileSync|rename|renameSync)\(/.test(text), false, file);
   }
@@ -338,7 +373,7 @@ test('high-risk adapters remain split into bounded modules', () => {
 test('legacy cleanup is retired from the production adapter and mode surfaces', () => {
   assert.equal(fs.existsSync(path.join(workspaceRoot, 'paper-adapters', 'legacy-cleanup')), false);
   const modeRegistry = fs.readFileSync(path.join(workspaceRoot, 'paper-core', 'src', 'mode-registry.mjs'), 'utf8');
-  const batchApplication = fs.readFileSync(path.join(workspaceRoot, 'paper-application', 'batch', 'paper-batch-application.mjs'), 'utf8');
+  const batchApplication = fs.readFileSync(path.join(workspaceRoot, 'paper-composition', 'batch', 'paper-batch-application.mjs'), 'utf8');
   assert.equal(modeRegistry.includes('legacy-cleanup'), false);
   assert.equal(batchApplication.includes('runLegacyCleanupAdapter'), false);
   assert.equal(fs.existsSync(path.join(workspaceRoot, 'migration', 'retirement', 'audit.mjs')), true);
@@ -355,7 +390,7 @@ test('contract implementations have one domain owner and the receipt ledger is i
     assert.match(source, /^export \* from ['"][^'"]*paper-domain\/contracts\//, relative);
     assert.equal(source.split(/\r?\n/).length, 1, relative);
   }
-  const immutableLedgerSources = ['paper-adapters', 'paper-application', 'paper-core/bin']
+  const immutableLedgerSources = ['paper-adapters', 'paper-application', 'paper-composition', 'paper-core/bin']
     .flatMap((root) => fs.readdirSync(path.join(workspaceRoot, root), { recursive: true })
       .filter((entry) => typeof entry === 'string' && entry.endsWith('.mjs'))
       .map((entry) => path.join(workspaceRoot, root, entry)));
@@ -378,7 +413,7 @@ test('TaskFlow remains an optional outer coordinator and workflow state remains 
   assert.equal(controller.includes('api.runtime.tasks.flow'), false);
   assert.equal(adapter.includes('api?.runtime?.tasks?.flow'), true);
   assert.equal(adapter.includes('grantsSubmissionAuthority: false'), true);
-  const batch = fs.readFileSync(path.join(workspaceRoot, 'paper-application', 'batch', 'paper-batch-application.mjs'), 'utf8');
+  const batch = fs.readFileSync(path.join(workspaceRoot, 'paper-composition', 'batch', 'paper-batch-application.mjs'), 'utf8');
   assert.equal(batch.includes('workflowStateStore.put'), true);
   assert.equal(batch.includes('const workflowStateProjection = execute'), true);
 });

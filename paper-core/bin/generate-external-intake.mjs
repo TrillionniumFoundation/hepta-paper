@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { buildLegacyCapabilityMatrixV3 } from '../../migration/legacy-capability-matrix-v3.mjs';
-import { bootstrapPaperExecutionContext } from '../../paper-application/bootstrap/service-bootstrap.mjs';
+import { bootstrapPaperExecutionContext } from '../../paper-composition/bootstrap/service-bootstrap.mjs';
 import { withArtifactWriteContext } from '../../paper-adapters/artifacts/artifact-write-context.mjs';
 import { currentCodeProvenance } from '../src/code-provenance.mjs';
 import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';

@@ -82,12 +82,14 @@ const expiredWaitersResult = store.query(`SELECT count(*) AS count FROM automati
 const stalledCampaignsResult = store.query(`SELECT count(DISTINCT campaign_id) AS count FROM campaign_nodes WHERE status IN ('leased','running') AND lease_expires_at IS NOT NULL AND lease_expires_at<='${now}';`);
 const noProgressCutoff = new Date(Date.now() - 1800 * 1000).toISOString();
 const noProgressCampaignsResult = store.query(`SELECT count(*) AS count FROM paper_campaigns c WHERE c.status='running' AND c.updated_at<='${noProgressCutoff}' AND EXISTS(SELECT 1 FROM campaign_nodes queued WHERE queued.campaign_id=c.campaign_id AND queued.status='queued') AND NOT EXISTS(SELECT 1 FROM campaign_nodes active WHERE active.campaign_id=c.campaign_id AND active.status IN ('leased','running'));`);
+const terminalCampaignQueuedNodesResult = store.query(`SELECT count(*) AS count FROM campaign_nodes n JOIN paper_campaigns c ON c.campaign_id=n.campaign_id WHERE n.status='queued' AND c.status IN ('failed','cancelled','stopped','completed');`);
 const operationalIntegrity = {
   expiredActiveNodeCount: Number(expiredNodesResult.rows?.[0]?.count || 0),
   expiredResourceLeaseCount: Number(expiredResourceLeasesResult.rows?.[0]?.count || 0),
   expiredWaiterCount: Number(expiredWaitersResult.rows?.[0]?.count || 0),
   stalledRecoverableCampaignCount: Number(stalledCampaignsResult.rows?.[0]?.count || 0),
   noProgressRunningCampaignCount: Number(noProgressCampaignsResult.rows?.[0]?.count || 0),
+  terminalCampaignQueuedNodeCount: Number(terminalCampaignQueuedNodesResult.rows?.[0]?.count || 0),
 };
 operationalIntegrity.degraded = Object.values(operationalIntegrity).some((value) => typeof value === 'number' && value > 0);
 const report = {

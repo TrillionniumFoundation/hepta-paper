@@ -29,10 +29,8 @@ export function experimentConfig({
 
 export function makeExperimentCode(config) {
   const configJson = JSON.stringify(config, null, 2);
-  const artifactRepositoryModuleUrl = new URL('../artifacts/filesystem-artifact-repository.mjs', import.meta.url).href;
   return `import fs from 'node:fs';
 import path from 'node:path';
-import { createFilesystemArtifactRepository } from ${JSON.stringify(artifactRepositoryModuleUrl)};
 
 const config = ${configJson};
 const root = process.cwd();
@@ -40,19 +38,8 @@ const dataDir = path.join(root, 'data');
 const resultDir = path.join(root, 'results');
 const tableDir = path.join(root, 'tables');
 const figureDir = path.join(root, 'figures');
-const sandboxArtifactReceipts = [];
-const artifactRepository = createFilesystemArtifactRepository({
-  scopeRoot: root,
-  casRoot: path.join(root, '.artifact-cas'),
-  repositoryId: 'empirical-run-artifacts',
-  clock: { nowIso: () => new Date().toISOString() },
-  receiptLedger: {
-    record(receipt) {
-      sandboxArtifactReceipts.push(receipt);
-      return { receiptId: 'sandbox-artifact:' + sandboxArtifactReceipts.length };
-    }
-  }
-});
+const writeText = (candidate, value) => { fs.mkdirSync(path.dirname(candidate), { recursive: true }); fs.writeFileSync(candidate, String(value)); };
+const writeJson = (candidate, value) => writeText(candidate, JSON.stringify(value, null, 2) + '\\n');
 
 function mulberry32(seed) {
   let state = seed >>> 0;
@@ -238,9 +225,9 @@ const summary = {
 
 const headers = Object.keys(rows[0]);
 const csv = [headers.join(','), ...rows.map((row) => headers.map((header) => JSON.stringify(row[header] ?? '')).join(','))].join('\\n') + '\\n';
-await artifactRepository.writeText(path.join(resultDir, 'empirical_results.csv'), csv, { role: 'empirical_results_csv', atomic: true });
-await artifactRepository.writeJson(path.join(resultDir, 'empirical_summary.json'), summary, { role: 'empirical_summary', atomic: true });
-await artifactRepository.writeJson(path.join(dataDir, 'generated_dataset_manifest.json'), {
+writeText(path.join(resultDir, 'empirical_results.csv'), csv);
+writeJson(path.join(resultDir, 'empirical_summary.json'), summary);
+writeJson(path.join(dataDir, 'generated_dataset_manifest.json'), {
   datasetMode: config.datasetMode,
   experimentFamily: config.experimentFamily,
   seeds: config.seeds,
@@ -248,18 +235,18 @@ await artifactRepository.writeJson(path.join(dataDir, 'generated_dataset_manifes
   authorizedDatasetRows: authorizedDataset.rows.length,
   authorizedDatasetSource: authorizedDataset.source,
   externalDataAccess: false
-}, { role: 'generated_dataset_manifest', atomic: true });
+});
 if (config.datasetMode === 'authorized_local_dataset') {
-  await artifactRepository.writeJson(path.join(dataDir, 'authorized_dataset_manifest.json'), {
+  writeJson(path.join(dataDir, 'authorized_dataset_manifest.json'), {
     datasetMode: config.datasetMode,
     primaryDataset: config.primaryDataset,
     primaryDatasetPath: config.primaryDatasetAbsolutePath,
     rowsRead: authorizedDataset.rows.length,
     numericValueCount: authorizedDataset.numericValues.length,
     externalDataAccess: false
-  }, { role: 'authorized_dataset_manifest', atomic: true });
+  });
 }
-await artifactRepository.writeJson(path.join(resultDir, 'EMPIRICAL_EVIDENCE_MANIFEST.json'), {
+writeJson(path.join(resultDir, 'EMPIRICAL_EVIDENCE_MANIFEST.json'), {
   kind: 'EmpiricalEvidenceManifest',
   paperId: config.paperId,
   experimentFamily: config.experimentFamily,
@@ -289,8 +276,8 @@ await artifactRepository.writeJson(path.join(resultDir, 'EMPIRICAL_EVIDENCE_MANI
     'must be cited as local empirical support'
   ],
   externalActionPerformed: false
-}, { role: 'empirical_evidence_manifest', atomic: true });
-await artifactRepository.writeJson(path.join(figureDir, 'figure_spec.json'), {
+});
+writeJson(path.join(figureDir, 'figure_spec.json'), {
   kind: 'EmpiricalFigureSpec',
   benchmarkSuiteId: config.benchmarkSuiteId,
   figureSpec: config.figureSpec,
@@ -301,7 +288,7 @@ await artifactRepository.writeJson(path.join(figureDir, 'figure_spec.json'), {
     violationReductionVsNominal: summary.violationReductionVsNominal
   },
   externalActionPerformed: false
-}, { role: 'empirical_figure_spec', atomic: true });
+});
 const tableLines = [
   '\\\\begin{tabular}{lrrrr}',
   'Policy & Mean return & Tail return & Violation rate & Std. error \\\\\\\\',
@@ -315,8 +302,8 @@ const tableLines = [
   ].join(' & ') + ' \\\\\\\\'),
   '\\\\end{tabular}'
 ];
-await artifactRepository.writeText(path.join(tableDir, 'table_empirical_summary.tex'), tableLines.join('\\n') + '\\n', { role: 'empirical_table', atomic: true });
-await artifactRepository.writeText(path.join(resultDir, 'REPRODUCIBILITY_STATUS.md'), [
+writeText(path.join(tableDir, 'table_empirical_summary.tex'), tableLines.join('\\n') + '\\n');
+writeText(path.join(resultDir, 'REPRODUCIBILITY_STATUS.md'), [
   '# Reproducibility Status',
   '',
   '- command: node experiments/run_empirical_analysis.mjs',
@@ -328,7 +315,7 @@ await artifactRepository.writeText(path.join(resultDir, 'REPRODUCIBILITY_STATUS.
   '- external_data_access: false',
   '- external_action_performed: false',
   ''
-].join('\\n'), { role: 'reproducibility_status', atomic: true });
+].join('\\n'));
 console.log(JSON.stringify({
   ok: true,
   paperId: config.paperId,

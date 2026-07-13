@@ -21,6 +21,11 @@ const isolatedRuntimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), `hepta-paper-$
 const isolatedDb = path.join(isolatedRuntimeRoot, 'hepta-paper.sqlite');
 const productionDb = path.join(productionRuntimeRoot, 'hepta-paper.sqlite');
 
+if (mode === 'release' && fs.existsSync(productionDb)) {
+  const preflight = spawnSync(process.execPath, ['paper-core/bin/hepta-store.mjs', 'status', '--require-trust-clean'], { cwd: workspaceRoot, env: process.env, encoding: 'utf8' });
+  if (preflight.status !== 0) throw new Error(`production_store_trust_preflight_blocked:${String(preflight.stdout || preflight.stderr || '').slice(-2000)}`);
+}
+
 function sha(file) {
   return fs.existsSync(file) ? `sha256:${crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')}` : null;
 }
@@ -31,7 +36,7 @@ const productionLogicalBefore = fs.existsSync(productionDb)
   ? buildSqliteLogicalIntegrityReport({ dbPath: productionDb, store: createReadOnlyPaperStore({ dbPath: productionDb }) })
   : null;
 if (fs.existsSync(productionDb)) await copySqliteDatabase({ sourcePath: productionDb, destinationPath: isolatedDb });
-for (const relative of ['owner-acceptance', 'operational-proof', 'trust', 'authority-inbox']) {
+for (const relative of ['owner-acceptance', 'operational-proof', 'conformance-proof', 'trust', 'authority-inbox']) {
   const source = path.join(productionRuntimeRoot, relative);
   const target = path.join(isolatedRuntimeRoot, relative);
   if (fs.existsSync(source)) fs.cpSync(source, target, { recursive: true, dereference: false });

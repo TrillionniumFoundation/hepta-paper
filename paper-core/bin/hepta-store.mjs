@@ -45,7 +45,7 @@ function initialize() {
   return status();
 }
 
-function status() {
+function status({ allowIsolatedVerificationEvidence = false } = {}) {
   const store = createReadOnlyPaperStore({ root, runtimeRoot: layout.runtimeRoot, dbPath });
   const rows = JSON.parse(runSql(store, `
 SELECT 'papers' AS name,count(*) AS count FROM papers
@@ -74,8 +74,8 @@ FROM receipt_ledger_qualifications;
 SELECT count(*) AS count
 FROM receipt_ledger AS receipt
 WHERE (
-  (environment='verification' AND evidence_class='technical_conformance')
-  OR (environment='production' AND evidence_class='runtime_unclassified')
+  ${allowIsolatedVerificationEvidence ? '' : "(environment='verification' AND evidence_class='technical_conformance') OR"}
+  (environment='production' AND evidence_class='runtime_unclassified')
   OR (environment='production' AND evidence_class='release_conformance_with_operational_binding')
 )
 AND NOT EXISTS (
@@ -91,7 +91,7 @@ AND NOT EXISTS (
   return {
     version: 3,
     kind: 'HeptaNativeStoreStatus',
-    status: quickCheck === 'ok' ? 'hepta_native_store_ready' : 'hepta_native_store_blocked',
+    status: quickCheck === 'ok' && unresolvedContaminatedReceiptCount === 0 ? 'hepta_native_store_ready' : 'hepta_native_store_blocked',
     dbPath,
     schemaVersion,
     quickCheck,
@@ -164,6 +164,7 @@ let output = null;
 if (command === 'init' || command === 'migrate') output = initialize();
 else if (command === 'backup') output = backup();
 else if (command === 'restore-drill') output = restoreDrill();
-else if (command === 'status') output = status();
+else if (command === 'status') output = status({ allowIsolatedVerificationEvidence: process.argv.includes('--allow-isolated-verification-evidence') });
 else throw new Error(`Unknown hepta-store command: ${command}`);
 process.stdout.write(`${JSON.stringify(output || status(), null, 2)}\n`);
+if (command === 'status' && process.argv.includes('--require-trust-clean') && output?.status !== 'hepta_native_store_ready') process.exitCode = 1;

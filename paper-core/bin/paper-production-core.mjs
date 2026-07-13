@@ -5,7 +5,7 @@ import { runPaperBatch, renderBatchConsole, PAPER_BATCH_MODES } from '../src/pap
 import { ensureDir } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { writeJsonFile, writeTextFile } from '../../paper-adapters/artifacts/write-artifact.mjs';
 import { runPaperProposalAdapter } from '../../paper-adapters/proposal/index.mjs';
-import { bootstrapPaperExecutionContext } from '../../paper-application/bootstrap/service-bootstrap.mjs';
+import { bootstrapPaperExecutionContext } from '../../paper-composition/bootstrap/service-bootstrap.mjs';
 import { withArtifactWriteContext } from '../../paper-adapters/artifacts/artifact-write-context.mjs';
 import { currentCodeProvenance } from '../src/code-provenance.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';

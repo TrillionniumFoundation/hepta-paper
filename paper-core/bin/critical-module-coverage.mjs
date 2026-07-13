@@ -13,6 +13,8 @@ const tests = [
   'paper-core/tests/automation-executors.test.mjs',
   'paper-core/tests/automation-runtime-reconciler.test.mjs',
   'paper-core/tests/receipt-issuer-policy.test.mjs',
+  'paper-core/tests/trusted-research-producers.test.mjs',
+  'paper-core/tests/release-trust-layer-gate.test.mjs',
   'paper-core/tests/release-evidence-selection.test.mjs',
   'paper-core/tests/formal-claim-binding-policy.test.mjs',
   'paper-core/tests/manuscript-promotion-boundaries.test.mjs',
@@ -32,13 +34,29 @@ const targets = [
   'paper-adapters/persistence/receipt-issuer-policy.mjs',
   'paper-adapters/persistence/receipt-writer-broker.mjs',
   'paper-adapters/persistence/sqlite-receipt-ledger.mjs',
+  'paper-adapters/persistence/sqlite-receipt-ledger-qualification.mjs',
+  'paper-composition/bootstrap/receipt-ledger-composition.mjs',
+  'paper-adapters/empirical-analysis/trusted-experiment-producer.mjs',
+  'paper-adapters/research-verify/trusted-formal-producer.mjs',
   'paper-domain/evidence/trusted-ledger-receipt.mjs',
+  'paper-domain/governance/release-trust-layer-gate.mjs',
   'paper-domain/research/evidence-quality-gate.mjs',
   'paper-domain/research/experiment-evidence-binding.mjs',
   'paper-domain/research/formal-certificate-intake.mjs',
   'paper-adapters/referee-revise/planning-service.mjs',
   'paper-adapters/submission/live-authorization.mjs',
 ];
+const TRUST_TARGETS = new Set([
+  'paper-adapters/persistence/receipt-issuer-policy.mjs',
+  'paper-adapters/persistence/receipt-writer-broker.mjs',
+  'paper-adapters/persistence/sqlite-receipt-ledger.mjs',
+  'paper-adapters/persistence/sqlite-receipt-ledger-qualification.mjs',
+  'paper-composition/bootstrap/receipt-ledger-composition.mjs',
+  'paper-adapters/empirical-analysis/trusted-experiment-producer.mjs',
+  'paper-adapters/research-verify/trusted-formal-producer.mjs',
+  'paper-domain/evidence/trusted-ledger-receipt.mjs',
+  'paper-domain/governance/release-trust-layer-gate.mjs',
+]);
 
 function coverageEntries() {
   return fs.readdirSync(coverageRoot)
@@ -67,7 +85,7 @@ function moduleCoverage(relative, entries) {
   const absolute = path.join(workspaceRoot, relative);
   const url = pathToFileURL(absolute).href;
   const matching = entries.filter((entry) => entry.url === url);
-  if (!matching.length) return { relative, lines: 0, functions: 0, missing: true };
+  if (!matching.length) return { relative, lines: 0, functions: 0, uncoveredBranchBlocks: Number.POSITIVE_INFINITY, missing: true };
   const source = fs.readFileSync(absolute, 'utf8');
   let offset = 0;
   let executable = 0;
@@ -81,20 +99,27 @@ function moduleCoverage(relative, entries) {
     offset += line.length + 1;
   }
   const functions = new Map();
+  const branchBlocks = new Map();
   for (const entry of matching) {
     for (const fn of entry.functions || []) {
       const first = fn.ranges?.[0];
       if (!first || (!fn.functionName && first.startOffset === 0 && first.endOffset >= source.length)) continue;
       const key = `${fn.functionName}:${first.startOffset}:${first.endOffset}`;
       functions.set(key, Math.max(functions.get(key) || 0, first.count || 0));
+      for (const range of (fn.ranges || []).slice(1)) {
+        const blockKey = `${range.startOffset}:${range.endOffset}`;
+        branchBlocks.set(blockKey, Math.max(branchBlocks.get(blockKey) || 0, range.count || 0));
+      }
     }
   }
   const functionTotal = functions.size;
   const functionCovered = [...functions.values()].filter((count) => count > 0).length;
+  const uncoveredBranchBlocks = [...branchBlocks.values()].filter((count) => count === 0).length;
   return {
     relative,
     lines: executable ? Number((covered * 100 / executable).toFixed(2)) : 100,
     functions: functionTotal ? Number((functionCovered * 100 / functionTotal).toFixed(2)) : 100,
+    uncoveredBranchBlocks,
     coveredLines: covered,
     executableLines: executable,
     coveredFunctions: functionCovered,
@@ -123,11 +148,14 @@ try {
   } else {
     const entries = coverageEntries();
     const report = targets.map((target) => moduleCoverage(target, entries));
-    const failures = report.filter((row) => row.missing || row.lines < 40 || row.functions < 25);
+    const failures = report.filter((row) => {
+      const threshold = TRUST_TARGETS.has(row.relative) ? { lines: 55, functions: 40, maxUncoveredBranchBlocks: 48 } : { lines: 40, functions: 25, maxUncoveredBranchBlocks: 180 };
+      return row.missing || row.lines < threshold.lines || row.functions < threshold.functions || row.uncoveredBranchBlocks > threshold.maxUncoveredBranchBlocks;
+    });
     process.stdout.write(`${JSON.stringify({
       ok: failures.length === 0,
       kind: 'CriticalModuleCoverageReport',
-      thresholds: { lines: 40, functions: 25 },
+      thresholds: { default: { lines: 40, functions: 25, maxUncoveredBranchBlocks: 180 }, trustBoundary: { lines: 55, functions: 40, maxUncoveredBranchBlocks: 48 } },
       modules: report,
       failures: failures.map((row) => row.relative),
     }, null, 2)}\n`);

@@ -1,13 +1,15 @@
 # hepta-paper current status
 
-This is the normative status for the `v0.20.3` architecture release. Older remediation,
+This is the normative status for the `v0.20.4` architecture release. Older remediation,
 phase and retirement documents are historical records and do not override it.
 
 ## Architecture
 
 - `paper-domain` owns contracts and workflow vocabulary.
 - `paper-application` owns execution context, workflow orchestration, use cases
-  and reports.
+  and pure report projections; it does not import concrete adapters.
+- `paper-composition` owns concrete bootstrap, batch, report-persistence and
+  pilot wiring.
 - `paper-ports` owns infrastructure boundaries.
 - `paper-adapters` owns persistence, providers, automation executors and other
   infrastructure implementations.
@@ -16,11 +18,13 @@ phase and retirement documents are historical records and do not override it.
 - `paper-core` owns CLI composition, verification entrypoints and compatibility
   re-exports. Adapter and application production modules may not import it.
 
-The preferred command surface is `npm run hepta-paper -- <operator|verify|retirement> <command>`.
-The older npm scripts remain compatibility aliases for automation and historical receipts.
+The supported command surface is `npm run hepta-paper -- <operator|verify|retirement> <command>`.
+Remaining npm scripts are internal verification/release plumbing rather than a
+second operator API.
 
-Contract implementations live only in `paper-domain/contracts`. The former
-`paper-core/src/contracts` files are one-line compatibility re-exports.
+Contract implementations live only in `paper-domain/contracts`. One hash-bound
+`paper-core/src/contracts/workflow-contracts.mjs` retirement facade remains for
+the frozen migration manifest; the other obsolete contract re-exports are gone.
 Historical legacy-cleanup code lives only in the read-only
 `migration/retirement` namespace; it is not a production batch mode.
 
@@ -47,6 +51,11 @@ classification debt.
   owner and observer signatures are ingested.
 
 Local conformance is intentionally not labeled production operational history.
+The code-release gate has three explicit layers: implementation verification
+and release-bound conformance are blocking; independent production operational
+proof is reported separately and cannot be synthesized by, or substituted
+with, a local replay. Disaster-recovery readiness and external trust readiness
+are likewise separate from `code_release_evidence_ready`.
 
 ## Legacy retirement
 
@@ -59,7 +68,7 @@ entrypoints are retired.
 
 ## Runtime
 
-The native store is `runtime/hepta-paper.sqlite` at schema 19. Receipt rows and
+The native store is `runtime/hepta-paper.sqlite` at schema 20. Receipt rows and
 qualification rows are protected by update/delete-deny triggers. Startup
 reconciliation is explicit, idempotent and transactional. Workspace retention
 requires registered lineage, a hash-bound snapshot and a successful restore
@@ -73,8 +82,13 @@ The 2026-07-13 reconciliation requeued 12 expired nodes, removed 4 expired
 resource leases and 8 expired waiters. Workspace backfill registered 11
 workspaces, restore-verified 7 snapshots, protected 4 incomplete workspaces and
 released about 1.64 GB through the receipt-backed retention path.
-The schema-19 liveness reconciliation additionally paused 6 no-progress
-campaigns without starting workers or discarding their 61 queued nodes.
+The schema-20 liveness reconciliation additionally pauses no-progress campaigns
+and transactionally closes queued children of terminal campaigns without
+starting workers or discarding recoverable workspace state.
+Batch reports store a bounded summary plus a content-hash-bound detail object,
+instead of embedding full results repeatedly. SQLite backup databases and their
+receipt companions are retained and removed as one verified unit; protected
+latest artifacts are never selected by the size/age retention policy.
 
 ## Verification surface
 
@@ -95,5 +109,6 @@ npm run store:logical-integrity
 ```
 
 The critical-module coverage gate reports and enforces line/function coverage
-for each contracts, issuer/ledger, recovery and executor-boundary module rather
-than relying only on a repository-wide aggregate.
+plus a bounded uncovered-branch-block budget for each contracts, issuer/ledger,
+recovery and executor-boundary module rather than relying only on a
+repository-wide aggregate.

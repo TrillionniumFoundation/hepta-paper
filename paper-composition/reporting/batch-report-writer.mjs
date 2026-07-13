@@ -2,7 +2,7 @@ import path from 'node:path';
 import { ensureDir } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { nowIso } from '../../workflow-kernel/runtime/time-utils.mjs';
 import { writeJsonFile, writeTextFile } from '../../paper-adapters/artifacts/write-artifact.mjs';
-import { blockerFamilySummary, makeBlockerFamilyMarkdown, makeMarkdownTable, summarizeResults, summarizeRows } from './batch-summary.mjs';
+import { blockerFamilySummary, makeBlockerFamilyMarkdown, makeMarkdownTable, summarizeResults, summarizeRows } from '../../paper-application/reporting/batch-summary.mjs';
 import { currentCodeProvenance } from '../../paper-adapters/runtime/code-provenance.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
@@ -40,15 +40,26 @@ export async function persistBatchReport(report) {
   await ensureDir(reportRoot);
   const stamp = report.generatedAt.replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
   const base = path.join(reportRoot, `paper-batch-${report.mode}-${stamp}`);
-  await writeJsonFile(`${base}.json`, report, { scopeRoot: reportRoot, role: 'paper_batch_report' });
-  await writeTextFile(`${base}.md`, markdown(report), { scopeRoot: reportRoot, role: 'paper_batch_report_markdown' });
+  const detailPayload = { version: 1, kind: 'PaperBatchResultDetail', mode: report.mode, rows: report.rows, results: report.results, coreIntegrity: report.coreIntegrity };
+  const detailHash = hashRecord('PaperBatchResultDetail', detailPayload);
+  const detailPath = path.join(reportRoot, 'details', `${detailHash.replace(/^sha256:/, '')}.json`);
+  const detailReceipt = await writeJsonFile(detailPath, detailPayload, { scopeRoot: reportRoot, role: 'paper_batch_result_detail' });
+  const { results: _results, coreIntegrity: _coreIntegrity, reportHash: _reportHash, ...bounded } = report;
+  const persistedPayload = {
+    ...bounded,
+    version: 2,
+    resultDetail: { path: path.relative(reportRoot, detailPath).replace(/\\/g, '/'), detailHash, contentHash: detailReceipt.hash, manifestHash: detailReceipt.manifestHash, writeReceiptHash: detailReceipt.writeReceiptHash, ledgerReceiptId: detailReceipt.ledgerReceiptId },
+  };
+  const persistedReport = { ...persistedPayload, reportHash: hashRecord('PaperBatchRunReport', persistedPayload) };
+  await writeJsonFile(`${base}.json`, persistedReport, { scopeRoot: reportRoot, role: 'paper_batch_report' });
+  await writeTextFile(`${base}.md`, markdown(persistedReport), { scopeRoot: reportRoot, role: 'paper_batch_report_markdown' });
   const pointer = {
     version: 1,
     kind: 'CurrentReportPointer',
     status: 'current_report_pointer',
     mode: report.mode,
     reportPath: path.basename(`${base}.json`),
-    reportHash: report.reportHash,
+    reportHash: persistedReport.reportHash,
     generatedAt: report.generatedAt,
     validUntil: new Date(Date.parse(report.generatedAt) + 24 * 60 * 60 * 1000).toISOString(),
     codeProvenance: report.codeProvenance,

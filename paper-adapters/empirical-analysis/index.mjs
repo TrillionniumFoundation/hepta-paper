@@ -1,5 +1,4 @@
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { ensureDir, fileRecord, pathWithin, relativePath } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
 import { nowIso } from '../../workflow-kernel/runtime/time-utils.mjs';
@@ -10,6 +9,19 @@ import { defaultPaperRuntimeRoot } from '../../paper-adapters/runtime/workspace-
 import { experimentConfig, makeExperimentCode } from './experiment-runner.mjs';
 import { repoPath, escapeTexText, readSourceText, countSignals, buildEmpiricalBenchmarkRegistry, selectBenchmarkSuite, judgeEmpiricalDesign, buildEmpiricalAnalysisPlan, unsafeDatasetPath, buildLocalBenchmarkRegistry, buildDatasetAccessContract, buildDatasetLicenseProvenanceGate, buildTableFigureSpec } from './benchmark-contracts.mjs';
 import { buildExperimentCodePatchBundle, buildSandboxExecutionPlan, buildExperimentRunReceipt, recordArtifacts, buildResultArtifactPackage, manuscriptPatchText, empiricalLatexBlock, replaceEmpiricalBlock, buildManuscriptEmpiricalApplyApprovalPacket, buildManuscriptEmpiricalApplyPlan, applyManuscriptEmpiricalPatch, buildManuscriptEmpiricalPatch } from './execution-contracts.mjs';
+import { createOsSandboxedWorkerRunner } from '../runtime/os-sandboxed-worker-runner.mjs';
+import { produceTrustedExperimentEvidence } from './trusted-experiment-producer.mjs';
+
+const SANDBOX_OUTPUTS = Object.freeze([
+  'data/generated_dataset_manifest.json',
+  'data/authorized_dataset_manifest.json',
+  'results/empirical_results.csv',
+  'results/empirical_summary.json',
+  'results/EMPIRICAL_EVIDENCE_MANIFEST.json',
+  'results/REPRODUCIBILITY_STATUS.md',
+  'tables/table_empirical_summary.tex',
+  'figures/figure_spec.json',
+]);
 
 export async function runEmpiricalAnalysisAdapter({
   root = null,
@@ -21,6 +33,10 @@ export async function runEmpiricalAnalysisAdapter({
   benchmarkId = null,
   applyManuscript = false,
   execute = false,
+  workerRunner = null,
+  artifactRepositoryFactory = null,
+  trustedResearchReceiptWriters = null,
+  clock = null,
 } = {}) {
   if (!root || !row?.task?.paperId) throw new Error('runEmpiricalAnalysisAdapter requires root and row');
   const resolvedRoot = path.resolve(root);
@@ -80,13 +96,16 @@ export async function runEmpiricalAnalysisAdapter({
     datasetContract,
     createdAt,
   });
-  const config = experimentConfig({
+  const rawConfig = experimentConfig({
     paperTask: row.task,
     plan,
     datasetContract,
     suiteSelectionPolicy: benchmarkSuiteSelectionPolicy,
     tableFigureSpec,
   });
+  const config = datasetContract.datasetMode === 'authorized_local_dataset'
+    ? { ...rawConfig, primaryDatasetAbsolutePath: `/datasets/primary/${path.basename(datasetContract.primaryDatasetAbsolutePath)}` }
+    : rawConfig;
   const codeText = makeExperimentCode(config);
   const codePath = path.join(runDir, 'experiments', 'run_empirical_analysis.mjs');
   let codeRecord = null;
@@ -95,6 +114,8 @@ export async function runEmpiricalAnalysisAdapter({
   let stderrRecord = null;
   let startedAt = null;
   let completedAt = null;
+  let kernelSandboxReceipt = null;
+  let trustedExperimentEvidence = null;
   const runtimeFileRecord = async (candidate, role) => {
     const record = await fileRecord(resolvedRuntimeRoot, candidate, role);
     return record ? { ...record, path: relativePath(resolvedRoot, candidate) } : null;
@@ -131,16 +152,37 @@ export async function runEmpiricalAnalysisAdapter({
   if (sandboxPlan.status === 'sandbox_execution_plan_ready') {
     await ensureDir(path.join(runDir, 'logs'));
     startedAt = nowIso();
-    result = spawnSync(process.execPath, [codePath], {
-      cwd: runDir,
-      encoding: 'utf8',
-      timeout: sandboxPlan.timeoutMs,
-      env: {
-        ...process.env,
-        HEPTA_EMPIRICAL_SANDBOX: '1',
-        NO_NETWORK: '1',
-      },
+    const datasetMounts = datasetContract.datasetMode === 'authorized_local_dataset' ? [{
+      name: 'primary',
+      source: datasetContract.primaryDatasetAbsolutePath,
+      manifestHash: datasetContract.primaryDataset.hash,
+      licenseId: 'operator_authorized_local_data',
+      readOnly: true,
+    }] : [];
+    const runner = workerRunner || createOsSandboxedWorkerRunner({
+      allowedExecutables: [process.execPath],
+      allowedRoots: [runDir],
+      allowedOutputRoots: [runDir],
+      allowedDatasetRoots: datasetMounts.map((mount) => path.dirname(mount.source)),
     });
+    kernelSandboxReceipt = runner.run({
+      executable: process.execPath,
+      args: [path.relative(runDir, codePath)],
+      cwd: runDir,
+      sourceRoot: runDir,
+      timeoutMs: sandboxPlan.timeoutMs,
+      outputPaths: SANDBOX_OUTPUTS,
+      outputDirectory: runDir,
+      datasetMounts,
+      env: { HEPTA_SEED: String(config.seeds?.[0] ?? 0) },
+    });
+    result = {
+      status: kernelSandboxReceipt.exitCode,
+      signal: kernelSandboxReceipt.signal,
+      stdout: kernelSandboxReceipt.stdout,
+      stderr: kernelSandboxReceipt.stderr,
+      error: kernelSandboxReceipt.ok ? null : new Error((kernelSandboxReceipt.blockers || []).join(',')),
+    };
     completedAt = nowIso();
     const stdoutPath = path.join(runDir, 'logs', 'stdout.txt');
     const stderrPath = path.join(runDir, 'logs', 'stderr.txt');
@@ -148,6 +190,19 @@ export async function runEmpiricalAnalysisAdapter({
     await writeTextFile(stderrPath, result.stderr || '');
     stdoutRecord = await runtimeFileRecord(stdoutPath, 'experiment_stdout');
     stderrRecord = await runtimeFileRecord(stderrPath, 'experiment_stderr');
+    if (kernelSandboxReceipt.ok && artifactRepositoryFactory && trustedResearchReceiptWriters && clock) {
+      trustedExperimentEvidence = await produceTrustedExperimentEvidence({
+        paperTask: row.task,
+        runDir,
+        codeHash: codeRecord.hash,
+        datasetContract,
+        sandboxReceipt: kernelSandboxReceipt,
+        artifactRepository: artifactRepositoryFactory(runDir),
+        receiptWriters: trustedResearchReceiptWriters,
+        seed: config.seeds?.[0] ?? 0,
+        clock,
+      });
+    }
   }
   const runReceipt = buildExperimentRunReceipt({
     paperTask: row.task,
@@ -253,6 +308,8 @@ export async function runEmpiricalAnalysisAdapter({
     tableFigureSpec,
     experimentCodePatchBundle: codeBundle,
     sandboxExecutionPlan: sandboxPlan,
+    kernelSandboxReceipt,
+    trustedExperimentEvidence,
     experimentRunReceipt: runReceipt,
     resultArtifactPackage: resultPackage,
     empiricalEvidenceGate,
@@ -272,6 +329,8 @@ export async function runEmpiricalAnalysisAdapter({
       ...(codeBundle.blockers || []),
       ...(sandboxPlan.blockers || []),
       ...(runReceipt.blockers || []),
+      ...(kernelSandboxReceipt?.blockers || []),
+      ...(trustedExperimentEvidence?.blockers || []),
       ...(resultPackage.blockers || []),
       ...(empiricalEvidenceGate.blockers || []),
       ...(manuscriptEmpiricalPatch.blockers || []),

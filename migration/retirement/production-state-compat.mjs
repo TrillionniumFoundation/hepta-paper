@@ -1,3 +1,4 @@
+// Archive-only compatibility model used by the migration differential harness.
 export const LEGACY_PRODUCTION_CORE_COMMAND = 'paper-production-core-audit';
 export const LEGACY_PRODUCTION_CORE_SCHEMA_ID = 'paper_factory.paper_production.core_audit.v1';
 export const LEGACY_REPAIR_LOOP_COMMAND = 'paper-production-repair-loop';

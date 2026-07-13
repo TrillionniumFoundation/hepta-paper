@@ -8,15 +8,24 @@ const commands = Object.freeze({
   operator: Object.freeze({
     workspace: ['node', 'paper-core/bin/workspace-status.mjs'],
     store: ['node', 'paper-core/bin/hepta-store.mjs', 'status'],
+    'store-migrate': ['node', 'paper-core/bin/hepta-store.mjs', 'migrate'],
+    'store-backup': ['node', 'paper-core/bin/hepta-store.mjs', 'backup'],
     automation: ['node', 'paper-core/bin/automation-status.mjs'],
     reconcile: ['node', 'paper-core/bin/automation-reconcile.mjs'],
+    'reconcile-apply': ['node', 'paper-core/bin/automation-reconcile.mjs', '--execute'],
     campaign: ['node', 'paper-core/bin/paper-campaign.mjs'],
+    batch: ['node', 'paper-core/bin/paper-production-core.mjs', 'batch-run'],
+    gc: ['node', 'paper-core/bin/paper-campaign.mjs', '--action', 'gc'],
+    'gc-apply': ['node', 'paper-core/bin/paper-campaign.mjs', '--action', 'gc', '--apply'],
   }),
   verify: Object.freeze({
     architecture: ['node', '--test', 'paper-core/tests/architecture-conformance.test.mjs'],
     critical: ['npm', 'run', 'coverage:critical-modules'],
     store: ['node', 'paper-core/bin/hepta-store-logical-integrity.mjs'],
     release: ['npm', 'run', 'release:verify'],
+    trust: ['node', 'paper-core/bin/release-trust-gate.mjs'],
+    operational: ['node', 'paper-core/bin/operational-proof-status.mjs'],
+    owner: ['node', 'paper-core/bin/owner-acceptance-status.mjs'],
     full: ['npm', 'test'],
   }),
   retirement: Object.freeze({
@@ -33,7 +42,7 @@ function usage() {
     kind: 'HeptaPaperCommandSurface',
     usage: 'hepta-paper <operator|verify|retirement> <command> [-- command-args]',
     groups: Object.fromEntries(Object.entries(commands).map(([group, entries]) => [group, Object.keys(entries)])),
-    compatibility: 'npm scripts remain compatibility aliases; this CLI is the preferred operator surface',
+    compatibility: 'this CLI is the supported operator surface; npm scripts are internal build and release plumbing',
   };
 }
 

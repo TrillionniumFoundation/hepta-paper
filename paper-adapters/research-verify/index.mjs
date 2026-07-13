@@ -29,6 +29,7 @@ import { verifyEvidenceBatch } from './evidence-verifier.mjs';
 import { defaultPaperRuntimeRoot } from '../../paper-adapters/runtime/workspace-layout.mjs';
 import { buildPromotionInputSnapshot, buildResearchGapClosureReceipt } from '../../paper-domain/quality/promotion-input-snapshot.mjs';
 import { verifyArtifactWriteReceiptSource } from '../artifacts/artifact-write-receipt-verifier.mjs';
+import { produceTrustedFormalEvidence } from './trusted-formal-producer.mjs';
 
 function repoPath(root, value) {
   const text = normalizeText(value);
@@ -216,6 +217,7 @@ export async function runResearchVerifyAdapter({
   jobReceiptStore = null,
   artifactRepositoryFactory = null,
   receiptLedger = null,
+  trustedResearchReceiptWriters = null,
   clock = null,
   store = null,
 } = {}) {
@@ -233,6 +235,12 @@ export async function runResearchVerifyAdapter({
     /proposal.*seed.*contract|claim.*proof.*evidence.*repro.*seed/i.test(`${record.filename} ${record.path}`)
   ));
   const structured = await extractStructuredItems(root, evidenceRecords);
+  const trustedFormalEvidence = [];
+  if (executeResearchWorkers && artifactRepositoryFactory && trustedResearchReceiptWriters && clock) {
+    for (const request of structured.formalCertificateRequests) {
+      trustedFormalEvidence.push(await produceTrustedFormalEvidence({ root, runtimeRoot: resolvedRuntimeRoot, paperTask: row.task, request, artifactRepositoryFactory, receiptWriters: trustedResearchReceiptWriters, clock }));
+    }
+  }
   const nativeResearchWorkerExecution = await runNativeResearchWorkers({
     root,
     sourceRoot,
@@ -337,8 +345,10 @@ export async function runResearchVerifyAdapter({
     evidenceItems: attestedEvidenceItems.length ? attestedEvidenceItems : candidateEvidenceItems,
   });
   const experimentRegistry = buildExperimentRegistry({ paperTask: row.task, artifacts: structured.experiments, receiptLedger, artifactVerifier: verifyArtifactWriteReceiptSource });
-  const formalVerifierRegistry = buildFormalVerifierRegistry({ adapterReceipts: structured.formalAdapterReceipts, receiptLedger });
-  const formalCertificateIntakes = structured.formalCertificateRequests.map((request) => buildGenericFormalCertificateIntake({
+  const producedAdapterReceipts = trustedFormalEvidence.filter((item) => item.status === 'trusted_formal_evidence_recorded').map((item) => item.adapterReceipt);
+  const producedCertificateRequests = trustedFormalEvidence.filter((item) => item.status === 'trusted_formal_evidence_recorded').map((item) => item.certificateRequest);
+  const formalVerifierRegistry = buildFormalVerifierRegistry({ adapterReceipts: [...structured.formalAdapterReceipts, ...producedAdapterReceipts], receiptLedger });
+  const formalCertificateIntakes = [...structured.formalCertificateRequests, ...producedCertificateRequests].map((request) => buildGenericFormalCertificateIntake({
     verifierKind: request.verifierKind || request.verifier_kind,
     certificate: request.certificate,
     sourceRecords: request.sourceRecords || request.source_records || [],
@@ -451,6 +461,7 @@ export async function runResearchVerifyAdapter({
       experimentRegistry,
       formalVerifierRegistry,
       formalCertificateIntakes,
+      trustedFormalEvidence,
       researchChangeProposal,
       evidenceVerificationReceipts,
     },

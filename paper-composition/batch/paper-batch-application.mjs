@@ -4,17 +4,17 @@ import {
 } from '../../paper-domain/contracts/index.mjs';
 import { buildCoreIntegrityReport } from '../../paper-adapters/runtime/core-integrity.mjs';
 import { PAPER_BATCH_MODES, assertPaperMode } from '../../paper-domain/workflow/mode-registry.mjs';
-import { runWorkflowStages } from '../workflow/workflow-engine.mjs';
+import { runWorkflowStages } from '../../paper-application/workflow/workflow-engine.mjs';
 import {
   defaultPaperAssetRoot,
   defaultPaperRuntimeRoot,
 } from '../../paper-adapters/runtime/workspace-layout.mjs';
 import { enterArtifactWriteContext } from '../../paper-adapters/artifacts/artifact-write-context.mjs';
 import { bootstrapPaperExecutionContext } from '../bootstrap/service-bootstrap.mjs';
-import { createPaperStageHandlers } from '../use-cases/paper-stage-handlers.mjs';
+import { createPaperStageHandlers } from '../../paper-application/use-cases/paper-stage-handlers.mjs';
 import { discoverInventory } from '../../paper-adapters/inventory/index.mjs';
-import { runLocalDiagnosticReviewLoop } from '../use-cases/local-diagnostic-review-loop.mjs';
-import { projectWorkflowState } from '../projections/workflow-state-projector.mjs';
+import { runLocalDiagnosticReviewLoop } from '../../paper-application/use-cases/local-diagnostic-review-loop.mjs';
+import { projectWorkflowState } from '../../paper-application/projections/workflow-state-projector.mjs';
 import { buildBatchReport, persistBatchReport, renderBatchConsole } from '../reporting/batch-report-writer.mjs';
 import { buildTargetScopeReceipt } from '../../paper-domain/automation/target-scope-policy.mjs';
 import { bindPaperTaskQualityProfile } from '../../paper-domain/contracts/workflow-contracts.mjs';

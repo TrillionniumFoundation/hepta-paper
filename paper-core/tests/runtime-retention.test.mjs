@@ -61,3 +61,27 @@ test('runtime retention protects unregistered and unresolved workspaces by defau
   assert.equal(plan.removals.some((entry) => entry.path === unregistered), false);
   assert.equal(plan.categories.find((entry) => entry.category === 'automation-workspaces').unregisteredProtectedCount, 1);
 });
+
+test('runtime retention rotates a SQLite backup and its receipt as one hashed unit', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-retention-backup-pair-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const backups = path.join(root, 'backups');
+  fs.mkdirSync(backups, { recursive: true });
+  const databasePath = path.join(backups, 'hepta-paper-old.sqlite');
+  const receiptPath = `${databasePath}.receipt.json`;
+  fs.writeFileSync(databasePath, 'sqlite-backup');
+  fs.writeFileSync(receiptPath, '{"kind":"BackupReceipt"}\n');
+  const plan = buildRuntimeRetentionPlan({
+    runtimeRoot: root,
+    policies: { backups: { maxBytes: 1, maxAgeMs: Number.MAX_SAFE_INTEGER, keepNewest: 0 } },
+  });
+  const removal = plan.removals.find((entry) => entry.path === databasePath);
+  assert.ok(removal);
+  assert.deepEqual(removal.companionPaths, [receiptPath]);
+  assert.match(removal.contentHash, /^sha256:/);
+  assert.equal(plan.categories.find((entry) => entry.category === 'backups').entryCount, 1);
+  const applied = executeRuntimeRetentionPlan(plan, { apply: true });
+  assert.equal(fs.existsSync(databasePath), false);
+  assert.equal(fs.existsSync(receiptPath), false);
+  assert.deepEqual(applied.removed[0].companionPaths, [receiptPath]);
+});

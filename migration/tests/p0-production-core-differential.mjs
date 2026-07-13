@@ -10,7 +10,7 @@ import {
   legacyRepairLoopFrontierSlugShard,
   resolveLegacyArtifactLabel,
   summarizeLegacyProductionEvaluations,
-} from '../../paper-core/src/production-state-compat.mjs';
+} from '../retirement/production-state-compat.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const fixture = materializeLegacyDifferentialReference();

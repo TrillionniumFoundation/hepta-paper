@@ -2,6 +2,7 @@ import { nowIso } from '../../workflow-kernel/runtime/time-utils.mjs';
 import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
 import { sqlEscape } from '../../paper-ports/store-port.mjs';
 import { PAPER_BATCH_MODES } from '../../paper-domain/workflow/mode-registry.mjs';
+import { createTypedStagePipeline } from '../workflow/typed-stage-pipeline.mjs';
 
 function openRefereeIssueCount(store, paperId) {
   return Number(store.query(`select count(*) as count from referee_revision_requests where slug='${sqlEscape(paperId)}' and status not in ('resolved','closed');`).rows[0]?.count || 0);
@@ -31,25 +32,20 @@ export async function executeLocalDiagnosticRound({
   if (!runRefereeReviewAdapter || !runResearchVerifyAdapter || !buildFreshRefereeVerdict) {
     throw new Error('Local diagnostic round requires composed paperStageAdapters');
   }
+  const stagePipeline = createTypedStagePipeline({ root, runtimeRoot, row, services });
   const roundStartedAt = nowIso();
   const openBefore = openRefereeIssueCount(services.store, row.task.paperId);
   const refereeReview = await runRefereeReviewAdapter({ root, runtimeRoot, row, execute: Boolean(execute), store: services.store });
   const refereeRevision = await runRefereeReviseAdapter({ root, runtimeRoot, row, mode: 'dry-run', execute: Boolean(execute), store: services.store });
-  let buildResult = await runLatexBuildAdapter({ root, row, runtimeRoot, execute: false });
-  let packageResult = await runPackageAdapter({ root, row, buildResult, runtimeRoot, execute: Boolean(execute), store: services.store });
-  const verifyResearch = () => runResearchVerifyAdapter({
-    root, row, runtimeRoot, authorityVerifier: services.authorityVerifier,
-    jobReceiptStore: services.jobReceiptStore, artifactRepositoryFactory: services.artifactRepositoryFactory,
-    receiptLedger: services.receiptLedger, clock: services.clock,
-  });
+  let { buildResult, packageResult } = await stagePipeline.buildAndPackage({ executeBuild: false, executePackage: Boolean(execute) });
+  const verifyResearch = () => stagePipeline.research();
   let researchReport = await verifyResearch();
   let empiricalAnalysis = null;
   if (execute && researchReport?.status !== 'evidence_present') {
-    empiricalAnalysis = await runEmpiricalAnalysisAdapter({ root, runtimeRoot, row, targetProfile: targetJournalProfile, targetSelectionPolicy, datasetRoot, benchmarkId, applyManuscript, execute: true });
+    empiricalAnalysis = await stagePipeline.empirical({ targetProfile: targetJournalProfile, targetSelectionPolicy, datasetRoot, benchmarkId, applyManuscript, execute: true });
     if (empiricalAnalysis?.empiricalEvidenceGate?.status === 'empirical_evidence_gate_ready') {
       if (empiricalAnalysis?.manuscriptEmpiricalApplyReceipt?.status === 'manuscript_empirical_apply_applied') {
-        buildResult = await runLatexBuildAdapter({ root, row, runtimeRoot, execute: true });
-        packageResult = await runPackageAdapter({ root, row, buildResult, runtimeRoot, execute: true, store: services.store });
+        ({ buildResult, packageResult } = await stagePipeline.buildAndPackage({ executeBuild: true, executePackage: true }));
       }
       researchReport = await verifyResearch();
     }

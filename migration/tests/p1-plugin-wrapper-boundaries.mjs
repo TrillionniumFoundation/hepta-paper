@@ -21,7 +21,7 @@ import {
   PAPER_BATCH_MODES,
   runPaperBatch,
 } from '../../paper-core/src/paper-batch-runner.mjs';
-import { bootstrapPaperExecutionContext } from '../../paper-application/bootstrap/service-bootstrap.mjs';
+import { bootstrapPaperExecutionContext } from '../../paper-composition/bootstrap/service-bootstrap.mjs';
 import { enterArtifactWriteContext } from '../../paper-adapters/artifacts/artifact-write-context.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');

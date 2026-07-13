@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { writeJsonFile } from '../../paper-adapters/artifacts/write-artifact.mjs';
 import { fileURLToPath } from 'node:url';
-import { bootstrapPaperExecutionContext } from '../../paper-application/bootstrap/service-bootstrap.mjs';
+import { bootstrapPaperExecutionContext } from '../../paper-composition/bootstrap/service-bootstrap.mjs';
 import { withArtifactWriteContext } from '../../paper-adapters/artifacts/artifact-write-context.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');

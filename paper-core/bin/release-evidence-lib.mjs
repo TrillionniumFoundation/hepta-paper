@@ -11,6 +11,10 @@ import { coldVolumeCasStatus } from '../src/cold-volume-cas-repository.mjs';
 import { verifyOffhostWormTarget } from '../src/offhost-worm-repository.mjs';
 import { immutableLegacyMatrixReferenceStatus, resolveImmutableLegacyMatrixArchive } from '../../migration/legacy-matrix-reference.mjs';
 import { createReadOnlyPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
+import { CAPABILITY_CATALOG } from '../../migration/legacy-capability-matrix-v3.mjs';
+import { validateCapabilityOperationalEvidence } from '../../migration/capability-operational-evidence.mjs';
+import { loadCapabilityConformanceProofs, loadCapabilityOperationalProofs } from '../../migration/operational-proof-intake.mjs';
+import { buildReleaseTrustLayerGate } from '../../paper-domain/governance/release-trust-layer-gate.mjs';
 
 export function sha256File(file) {
   return `sha256:${crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')}`;
@@ -159,6 +163,12 @@ export function buildReleaseEvidenceBundle({ runtimeRoot, legacyRoot } = {}) {
   const trustStorePath = path.join(runtimeRoot, 'trust', 'AUTHORITY_TRUST_STORE.json');
   const matrixPath = path.join(path.dirname(new URL(import.meta.url).pathname), '..', '..', 'migration', 'legacy-semantic-migration-matrix.json');
   const workspaceRoot = path.join(path.dirname(new URL(import.meta.url).pathname), '..', '..');
+  const capabilityCount = Object.keys(CAPABILITY_CATALOG).length;
+  const implementationProofs = validateCapabilityOperationalEvidence({ runtimeRoot });
+  const conformanceProofs = loadCapabilityConformanceProofs({ runtimeRoot, workspaceRoot, capabilityCatalog: CAPABILITY_CATALOG, releaseCommit: codeProvenance.commit });
+  const operationalProofs = loadCapabilityOperationalProofs({ runtimeRoot, workspaceRoot, capabilityCatalog: CAPABILITY_CATALOG, releaseCommit: codeProvenance.commit });
+  const trustLayerGate = buildReleaseTrustLayerGate({ releaseCommit: codeProvenance.commit, capabilityCount, implementationVerified: implementationProofs.size, releaseBoundConformanceVerified: conformanceProofs.size, independentProductionOperationalVerified: operationalProofs.size });
+  const codeTrustLayersReady = trustLayerGate.status === 'code_release_trust_layers_ready';
   const coldVolumeContractPath = path.join(workspaceRoot, 'paper-core', 'config', 'cold-volume-contract.v1.json');
   const coldVolumeContract = JSON.parse(fs.readFileSync(coldVolumeContractPath, 'utf8'));
   const coldVolumeStatus = verifyColdVolumeContract({
@@ -195,8 +205,10 @@ export function buildReleaseEvidenceBundle({ runtimeRoot, legacyRoot } = {}) {
       && minimalDifferentialFixture.status === 'legacy_differential_reference_verified'
       && immutableMatrixReference.status === 'immutable_legacy_matrix_reference_ready'
       && productionStoreLogicalIntegrity?.status === 'sqlite_logical_integrity_verified'
-      ? 'release_evidence_bundle_ready'
-      : 'release_evidence_bundle_blocked',
+      && codeTrustLayersReady
+      ? 'code_release_evidence_ready'
+      : 'code_release_evidence_blocked',
+    releaseProfile: 'code_release',
     codeProvenance,
     generatedAt: new Date().toISOString(),
     verificationReceipt,
@@ -237,6 +249,7 @@ export function buildReleaseEvidenceBundle({ runtimeRoot, legacyRoot } = {}) {
       && offhostWormStatus.offHostOrOffsiteCustodyQualified === true
       ? 'disaster_recovery_ready'
       : 'disaster_recovery_blocked',
+    trustLayers: trustLayerGate,
     minimalDifferentialFixture,
     immutableMatrixReference,
     productionStoreLogicalIntegrity,

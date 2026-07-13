@@ -22,7 +22,7 @@ import {
   buildSubmissionDeliveryRuntime,
   buildSubmissionDispatchAuthorization,
 } from '../../paper-domain/submission/delivery-runtime.mjs';
-import { createPaperArtifactPackage } from '../src/contracts/workflow-contracts.mjs';
+import { createPaperArtifactPackage } from '../../paper-domain/contracts/workflow-contracts.mjs';
 import { LEGACY_CAPABILITY_MATRIX_V3 } from '../../migration/legacy-capability-matrix-v3.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
@@ -267,7 +267,9 @@ test('production modules do not bypass StorePort or restore autopilot acceptance
   assert.equal(domainSource.includes('paper-core/'), false);
   const adapterSource = productionFiles.filter((file) => file.includes(`${path.sep}paper-adapters${path.sep}`)).map((file) => fs.readFileSync(file, 'utf8')).join('\n');
   assert.equal(adapterSource.includes('paper-application/'), false);
-  assert.equal(adapterSource.includes('paper-core/src/runtime/'), false);
+  assert.equal(/from ['"][^'"]*paper-core\/src\//.test(adapterSource), false);
+  const applicationSource = productionFiles.filter((file) => file.includes(`${path.sep}paper-application${path.sep}`)).map((file) => fs.readFileSync(file, 'utf8')).join('\n');
+  assert.equal(/from ['"][^'"]*paper-core\/src\//.test(applicationSource), false);
   const writeFacade = fs.readFileSync(path.join(workspaceRoot, 'paper-adapters', 'artifacts', 'write-artifact.mjs'), 'utf8');
   assert.equal(writeFacade.includes('createFilesystemArtifactRepository'), false);
   assert.equal(writeFacade.includes('requires an ExecutionContext-backed persistent ledger'), true);
@@ -296,10 +298,6 @@ test('high-risk adapters remain split into bounded modules', () => {
     'paper-adapters/empirical-analysis/index.mjs',
     'paper-adapters/empirical-analysis/benchmark-contracts.mjs',
     'paper-adapters/empirical-analysis/execution-contracts.mjs',
-    'paper-adapters/legacy-cleanup/index.mjs',
-    'paper-adapters/legacy-cleanup/classification.mjs',
-    'paper-adapters/legacy-cleanup/retirement-planning.mjs',
-    'paper-adapters/legacy-cleanup/retirement-execution.mjs',
     'paper-adapters/journal-manage/index.mjs',
     'paper-adapters/journal-manage/selection.mjs',
     'paper-adapters/journal-manage/contracts.mjs',
@@ -310,8 +308,8 @@ test('high-risk adapters remain split into bounded modules', () => {
     'paper-adapters/proposal/index.mjs',
     'paper-adapters/proposal/proposal-generation.mjs',
     'paper-adapters/proposal/proposal-materialization.mjs',
-    'paper-core/src/reporting/batch-result-summary.mjs',
-    'paper-core/src/reporting/workflow-result-summary.mjs',
+    'paper-application/reporting/batch-result-summary.mjs',
+    'paper-application/reporting/workflow-result-summary.mjs',
   ];
   const rows = boundedModules.map((relative) => ({
     relative,
@@ -320,13 +318,40 @@ test('high-risk adapters remain split into bounded modules', () => {
   assert.equal(Math.max(...rows.map((row) => row.lines)) <= 700, true, JSON.stringify(rows));
   for (const relative of [
     'paper-adapters/empirical-analysis/index.mjs',
-    'paper-adapters/legacy-cleanup/index.mjs',
     'paper-adapters/journal-manage/index.mjs',
     'paper-adapters/referee-revise/index.mjs',
     'paper-adapters/proposal/index.mjs',
   ]) {
     assert.equal(rows.find((row) => row.relative === relative).lines <= 400, true, relative);
   }
+});
+
+test('legacy cleanup is retired from the production adapter and mode surfaces', () => {
+  assert.equal(fs.existsSync(path.join(workspaceRoot, 'paper-adapters', 'legacy-cleanup')), false);
+  const modeRegistry = fs.readFileSync(path.join(workspaceRoot, 'paper-core', 'src', 'mode-registry.mjs'), 'utf8');
+  const batchApplication = fs.readFileSync(path.join(workspaceRoot, 'paper-application', 'batch', 'paper-batch-application.mjs'), 'utf8');
+  assert.equal(modeRegistry.includes('legacy-cleanup'), false);
+  assert.equal(batchApplication.includes('runLegacyCleanupAdapter'), false);
+  assert.equal(fs.existsSync(path.join(workspaceRoot, 'migration', 'retirement', 'audit.mjs')), true);
+});
+
+test('contract implementations have one domain owner and the receipt ledger is immutable', () => {
+  const compatibilityFiles = [
+    'paper-core/src/paper-contracts.mjs',
+    'paper-core/src/paper-contract-primitives.mjs',
+    ...fs.readdirSync(path.join(workspaceRoot, 'paper-core', 'src', 'contracts')).map((name) => `paper-core/src/contracts/${name}`),
+  ];
+  for (const relative of compatibilityFiles) {
+    const source = fs.readFileSync(path.join(workspaceRoot, relative), 'utf8').trim();
+    assert.match(source, /^export \* from ['"][^'"]*paper-domain\/contracts\//, relative);
+    assert.equal(source.split(/\r?\n/).length, 1, relative);
+  }
+  const immutableLedgerSources = ['paper-adapters', 'paper-application', 'paper-core/bin']
+    .flatMap((root) => fs.readdirSync(path.join(workspaceRoot, root), { recursive: true })
+      .filter((entry) => typeof entry === 'string' && entry.endsWith('.mjs'))
+      .map((entry) => path.join(workspaceRoot, root, entry)));
+  const source = immutableLedgerSources.map((file) => fs.readFileSync(file, 'utf8')).join('\n');
+  assert.equal(/(?:UPDATE|DELETE\s+FROM)\s+receipt_ledger\b/i.test(source), false);
 });
 
 test('TaskFlow remains an optional outer coordinator and workflow state remains native', () => {

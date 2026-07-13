@@ -25,7 +25,7 @@ assert.ok(matrix.summary.implementationVerified >= 0 && matrix.summary.implement
 assert.equal(matrix.summary.implementationNotApplicable, 209);
 assert.equal(matrix.summary.operationallyProven + matrix.summary.operationallyNotProven, 40);
 assert.equal(matrix.summary.ownerAccepted + matrix.summary.ownerAcceptancePending, 249);
-assert.equal(matrix.summary.ownerAcceptanceFamilyCount, 3);
+assert.equal(matrix.summary.ownerAcceptanceFamilyCount, 19);
 assert.equal(matrix.ownerAcceptanceFamilyManifest.families.flatMap((family) => family.legacyEntries).length, 249);
 assert.equal(new Set(matrix.ownerAcceptanceFamilyManifest.families.flatMap((family) => family.legacyEntries.map((entry) => entry.legacyMatrixEntryId))).size, 249);
 for (const entry of matrix.entries) {
@@ -38,7 +38,7 @@ for (const entry of matrix.entries) {
   assert.equal(
     entry.owner_accepted.status,
     entry.owner_accepted.satisfied
-      ? 'cryptographically_verified_owner_acceptance'
+      ? 'local_admin_delegated_owner_acceptance'
       : 'pending_owner_acceptance',
   );
   assert.ok(entry.coverageTests.length > 0, entry.source.path);

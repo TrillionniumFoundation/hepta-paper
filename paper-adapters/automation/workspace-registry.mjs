@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import { sqlText } from '../../paper-ports/store-port.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
@@ -65,6 +66,14 @@ export function createWorkspaceRegistry({ store, clock } = {}) {
     retentionRecords() {
       const result = store.query('SELECT workspace_id,campaign_id,node_id,workspace_path,status,retention_state,retention_reason,export_receipt_sha256 FROM campaign_workspaces ORDER BY workspace_path;');
       return result.ok ? result.rows.map(parse) : [];
+    },
+    reconcileMissingEligible() {
+      const missing = this.retentionRecords().filter((record) => record.retentionState === 'eligible' && !fs.existsSync(record.workspacePath));
+      return missing.map((record) => this.transition(record.workspaceId, {
+        status: 'removed',
+        retentionState: 'eligible',
+        retentionReason: 'retention_applied_after_verified_export',
+      }));
     },
   });
 }

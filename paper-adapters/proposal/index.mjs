@@ -6,9 +6,9 @@ import {
   createPaperProposalEnvelope,
   createPaperProposalGenerationManifest,
   hashPaperRecord,
-} from '../../paper-core/src/paper-contracts.mjs';
+} from '../../paper-domain/contracts/index.mjs';
 import { nowIso } from '../../workflow-kernel/runtime/time-utils.mjs';
-import { defaultPaperRuntimeRoot } from '../../paper-core/src/workspace-layout.mjs';
+import { defaultPaperRuntimeRoot } from '../../paper-adapters/runtime/workspace-layout.mjs';
 import {
   buildJournalConferenceRegistry,
   buildJournalRubricPacket,

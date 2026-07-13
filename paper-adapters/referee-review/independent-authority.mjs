@@ -1,11 +1,11 @@
 import path from 'node:path';
 import { readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
-import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
+import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
 import {
   loadAuthorityTrustStore,
   verifyAuthoritySignatures,
   verifyAuthorityTimeWindow,
-} from '../../paper-core/src/authority-signatures.mjs';
+} from '../../paper-adapters/authority/authority-signatures.mjs';
 
 function authorityInbox(runtimeRoot, paperId) {
   return runtimeRoot && paperId

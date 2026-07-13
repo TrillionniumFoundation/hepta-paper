@@ -31,11 +31,13 @@ test('runtime retention enforces quotas without deleting active COW workspaces',
   const dryRun = executeRuntimeRetentionPlan(plan);
   assert.equal(dryRun.applied, false);
   assert.equal(fs.existsSync(stale), true);
-  const applied = executeRuntimeRetentionPlan(plan, { apply: true });
+  const reconciled = [];
+  const applied = executeRuntimeRetentionPlan(plan, { apply: true, workspaceRegistry: { reconcileMissingEligible() { reconciled.push('called'); } } });
   assert.equal(applied.applied, true);
   assert.equal(fs.existsSync(stale), false);
   assert.equal(fs.existsSync(active), true);
   assert.equal(fs.existsSync(applied.receiptPath), true);
+  assert.deepEqual(reconciled, ['called']);
 });
 
 test('runtime retention protects unregistered and unresolved workspaces by default', (t) => {

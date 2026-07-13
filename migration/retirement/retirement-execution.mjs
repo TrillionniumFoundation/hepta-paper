@@ -1,3 +1,4 @@
+// Historical receipt builder retained outside the production adapter graph.
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import {
@@ -6,11 +7,11 @@ import {
   walkFiles,
 } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
-import { writeJsonFile } from '../artifacts/write-artifact.mjs';
-import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
+import { writeJsonFile } from '../../paper-adapters/artifacts/write-artifact.mjs';
+import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
 import { buildMigrationMatrixAudit } from './migration-matrix.mjs';
-import { heptaStorePath } from '../../paper-core/src/hepta-store.mjs';
-import { resolveWorkspaceLayout } from '../../paper-core/src/workspace-layout.mjs';
+import { heptaStorePath } from '../../paper-adapters/persistence/store-paths.mjs';
+import { resolveWorkspaceLayout } from '../../paper-adapters/runtime/workspace-layout.mjs';
 
 import { RETIREMENT_WAVES, classifyLegacyFile, migrationTargetFor, migrationActionFor, retirementWaveFor, retirementWaveFamilyFor, priorityFor, enrichLegacyEntry } from './classification.mjs';
 import { detectHeptaCapabilities, countBy, sampleEntries, hashBound, entriesForWaveFamily, buildLegacyEntrypointDeprecationPacket, buildDataAssetExportPlan, buildMigrationBacklogPacket, migrationContractFamilyFor, verifiedDispositionForEntry, buildP0P1BacklogDrainReceipt, buildQuarantineManifest, liveExternalExecutorPolicyFinalized, dataAssetExportRecorded, p0P1BacklogDrained, waveBlockersFor, buildRetirementWavePackets, buildRetirementReadinessGate, buildRetirementPlan } from './retirement-planning.mjs';

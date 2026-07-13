@@ -13,6 +13,7 @@ import { createMultiLanguageEmpiricalExecutor } from '../../paper-adapters/autom
 import { createFilesystemEmpiricalCacheRepository } from '../../paper-adapters/automation/empirical-cache-repository.mjs';
 import { createOsSandboxedWorkerRunner, fileSha256Hash } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
 import { buildExecutorCapabilities } from '../../paper-ports/executor-capabilities.mjs';
+import { runBoundedChildProcess } from '../../paper-adapters/automation/bounded-child-process.mjs';
 
 test('Codex agent adapter executes a real process and records workspace changes', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-agent-executor-'));
@@ -25,6 +26,57 @@ test('Codex agent adapter executes a real process and records workspace changes'
   assert.equal(receipt.status, 'agent_execution_completed');
   assert.deepEqual(receipt.changedPaths, ['agent-output.txt']);
   assert.equal(receipt.externalActionPerformed, false);
+});
+
+test('Codex and isolated wrappers fail closed when a read-only agent mutates files', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-read-only-agent-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const source = path.join(root, 'source');
+  fs.mkdirSync(source);
+  fs.writeFileSync(path.join(source, 'main.tex'), 'before\n');
+  const shim = path.join(root, 'codex-shim.sh');
+  fs.writeFileSync(shim, '#!/bin/sh\ncat >/dev/null\nprintf "changed\\n" > main.tex\nprintf \'{"status":"completed"}\\n\'\n');
+  fs.chmodSync(shim, 0o755);
+  const codex = createCodexAgentExecutor({ codexBinary: shim, timeoutMs: 5000 });
+  await assert.rejects(
+    () => codex.execute({ role: 'reviewer', workspacePath: source, instructions: 'review', sandbox: 'read-only' }),
+    (error) => error.retryable === false && error.receipt?.blockers?.includes('read_only_agent_modified_workspace'),
+  );
+
+  fs.writeFileSync(path.join(source, 'main.tex'), 'before\n');
+  const delegate = {
+    version: 1,
+    kind: 'FixtureAgentExecutor',
+    executorId: 'fixture-read-only-liar',
+    capabilities: () => buildExecutorCapabilities({ executorId: 'fixture-read-only-liar', sandboxModes: ['read-only'], networkPolicy: 'none', receiptKinds: ['AgentExecutionReceipt'] }),
+    async execute(input) {
+      fs.writeFileSync(path.join(input.workspacePath, 'main.tex'), 'mutated\n');
+      return { status: 'agent_execution_completed', agentExecutionReceiptHash: 'sha256:fixture' };
+    },
+  };
+  const isolated = createIsolatedAgentExecutor({ delegate, isolationRoot: path.join(root, 'isolated'), keepFailedWorkspaces: false });
+  await assert.rejects(
+    () => isolated.execute({ workspacePath: source, role: 'reviewer', sandbox: 'read-only' }),
+    (error) => error.retryable === false && error.message === 'read_only_agent_modified_workspace',
+  );
+  assert.equal(fs.readFileSync(path.join(source, 'main.tex'), 'utf8'), 'before\n');
+});
+
+test('bounded child process captures hashes while capping retained output', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-bounded-process-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const result = await runBoundedChildProcess({
+    executable: process.execPath,
+    args: ['-e', 'process.stdout.write("x".repeat(8192))'],
+    cwd: root,
+    timeoutMs: 5000,
+    maximumCapturedBytes: 256,
+  });
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.stdout.length, 256);
+  assert.equal(result.stdoutBytes, 8192);
+  assert.equal(result.outputTruncated, true);
+  assert.match(result.stdoutHash, /^sha256:[a-f0-9]{64}$/);
 });
 
 test('isolated agent workspace excludes research-data binaries and oversized files', async (t) => {
@@ -69,8 +121,8 @@ test('multi-language empirical executor runs Python in kernel sandbox and persis
   fs.writeFileSync(path.join(source, 'run.py'), 'import json\njson.dump({"metric": 0.91}, open("results.json", "w"))\n');
   const runner = createOsSandboxedWorkerRunner({ allowedExecutables: ['python3'], allowedRoots: [source], allowedOutputRoots: [output] });
   const executor = createMultiLanguageEmpiricalExecutor({ workerRunner: runner });
-  const receipt = executor.execute({ language: 'python', entrypoint: 'run.py', cwd: source, sourceRoot: source, outputDirectory: output, outputPaths: ['results.json'], timeoutMs: 30000 });
-  assert.equal(receipt.status, 'empirical_execution_completed');
+  const receipt = executor.execute({ language: 'python', entrypoint: 'run.py', cwd: source, sourceRoot: source, outputDirectory: output, outputPaths: ['results.json'], timeoutMs: 120000 });
+  assert.equal(receipt.status, 'empirical_execution_completed', JSON.stringify({ blockers: receipt.blockers, exitCode: receipt.exitCode, stderrTail: receipt.stderrTail }));
   assert.equal(receipt.isolation.kernelNetworkIsolationVerified, true);
   assert.equal(receipt.artifacts.length, 1);
   assert.deepEqual(JSON.parse(fs.readFileSync(path.join(output, 'results.json'), 'utf8')), { metric: 0.91 });

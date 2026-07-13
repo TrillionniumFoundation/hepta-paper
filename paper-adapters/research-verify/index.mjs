@@ -14,7 +14,7 @@ import {
   createProofObligationContract,
   createReproducibilityContract,
   hashPaperRecord,
-} from '../../paper-core/src/paper-contracts.mjs';
+} from '../../paper-domain/contracts/index.mjs';
 import { verifyAcademicEvidenceAttestation } from './academic-evidence.mjs';
 import { runNativeResearchWorkers } from './worker-runtime.mjs';
 import { buildClaimRegistry } from '../../paper-domain/research/claim-registry.mjs';
@@ -24,7 +24,7 @@ import { buildExperimentRegistry } from '../../paper-domain/research/experiment-
 import { buildResearchChangeProposal } from '../../paper-domain/research/change-proposal.mjs';
 import { bindResearchGapPlan, buildResearchGapPlan } from '../../paper-domain/research/gap-planner.mjs';
 import { verifyEvidenceBatch } from './evidence-verifier.mjs';
-import { defaultPaperRuntimeRoot } from '../../paper-core/src/workspace-layout.mjs';
+import { defaultPaperRuntimeRoot } from '../../paper-adapters/runtime/workspace-layout.mjs';
 import { buildPromotionInputSnapshot, buildResearchGapClosureReceipt } from '../../paper-domain/quality/promotion-input-snapshot.mjs';
 import { verifyArtifactWriteReceiptSource } from '../artifacts/artifact-write-receipt-verifier.mjs';
 

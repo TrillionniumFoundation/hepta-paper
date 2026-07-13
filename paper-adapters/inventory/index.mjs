@@ -25,7 +25,7 @@ import {
   autoLevelForState,
   inferPaperStage,
   nextActionForState,
-} from '../../paper-core/src/paper-contracts.mjs';
+} from '../../paper-domain/contracts/index.mjs';
 
 const TEX_IGNORE_RE = /(\.bak|\.backup|\.orig|\.old|\.tmp|\.synctex|supplementary|appendix-only)/i;
 const QUARANTINE_SLUG_RE = /(^rust_patch_queue_shadow|_fixture_|fixture_|test_fixture|shadow_review_|review_flow_(applied|rolled)_back_patch_queue)/i;

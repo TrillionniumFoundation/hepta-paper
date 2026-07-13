@@ -1,5 +1,5 @@
 import { uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
-import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
+import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
 
 export function buildEmpiricalEvidenceGate({
   paperTask,

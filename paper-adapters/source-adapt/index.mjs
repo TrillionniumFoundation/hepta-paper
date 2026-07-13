@@ -2,8 +2,8 @@ import path from 'node:path';
 import {
   buildSourceAdaptationPacket,
   buildSourceAdaptationOperatorPacket,
-} from '../../paper-core/src/contracts/intake-resolution.mjs';
-import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
+} from '../../paper-domain/contracts/intake-resolution.mjs';
+import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
 import {
   fileRecord,
   relativePath,

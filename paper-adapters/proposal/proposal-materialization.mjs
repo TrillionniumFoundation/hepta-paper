@@ -5,11 +5,11 @@ import {
   createPaperProposalStagingRecord,
   createPaperTask,
   hashPaperRecord,
-} from '../../paper-core/src/paper-contracts.mjs';
+} from '../../paper-domain/contracts/index.mjs';
 import { ensureDir, fileRecord, relativePath } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { normalizeText } from '../../workflow-kernel/runtime/text-utils.mjs';
 import { nowIso } from '../../workflow-kernel/runtime/time-utils.mjs';
-import { defaultPaperRuntimeRoot } from '../../paper-core/src/workspace-layout.mjs';
+import { defaultPaperRuntimeRoot } from '../../paper-adapters/runtime/workspace-layout.mjs';
 import { writeJsonFile, writeTextFile } from '../artifacts/write-artifact.mjs';
 
 function texEscape(value) {

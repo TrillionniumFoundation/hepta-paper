@@ -129,25 +129,10 @@ Current overlay adapters:
   authorization, executor response intake, retry/redrive, reconciliation, and
   release locking. `SubmissionExecutorPort` has no provider implementation in
   this repository.
-- `legacy-cleanup/`: retirement audit classifying old
-  `paper_factory` files into adapter candidates, data assets, quarantine-only
-  reports/capstones/matrices, LLM/manual chains to retire, and blocked primary
-  entrypoints. It also assigns target hepta adapters, migration actions,
-  retirement waves, and an immediate P0/P1 backlog for full `paper_factory`
-  retirement planning. The report now emits hash-bound retirement artifacts:
-  `LegacyEntrypointDeprecationPacket`, `HeptaDataAssetExportPlan`,
-  `PaperFactoryMigrationBacklogPacket`, `PaperFactoryQuarantineManifest`, seven
-  `PaperFactoryRetirementWavePacket` records, and a final
-  `PaperFactoryRetirementReadinessGate`. In execute mode it writes hepta
-  runtime receipts under `runtime/legacy-retirement/` and removes executable
-  bits from the two frozen legacy entrypoints without changing their bytes. It records
-  entrypoint
-  freeze, data asset export, P0/P1 semantic migration drain, migration
-  coverage, live external executor policy, quarantine isolation, wave execution,
-  and old-control-plane removal receipts. The live executor policy is local-only:
-  old `paper_factory` cannot perform live venue submission, and any future live
-  executor must be a separate hepta adapter with its own receipt and
-  reconciliation.
+
+The former `legacy-cleanup/` adapter is retired. Its read-only classification
+and matrix audit live under `migration/retirement/`; no production mode can
+scan, mutate or execute the removed `paper_factory` tree.
 
 Blocked from direct migration:
 

@@ -3,8 +3,8 @@ import {
   buildVenueResolutionOperatorPacket,
   buildVenueRegistryAddPlan,
   buildVenueResolutionPacket,
-} from '../../paper-core/src/contracts/intake-resolution.mjs';
-import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
+} from '../../paper-domain/contracts/intake-resolution.mjs';
+import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
 import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
 
 function tokenSet(value) {

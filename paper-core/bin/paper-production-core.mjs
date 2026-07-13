@@ -2,7 +2,7 @@
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { runPaperBatch, renderBatchConsole, PAPER_BATCH_MODES } from '../src/paper-batch-runner.mjs';
-import { ensureDir } from '../src/runtime/file-utils.mjs';
+import { ensureDir } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { writeJsonFile, writeTextFile } from '../../paper-adapters/artifacts/write-artifact.mjs';
 import { runPaperProposalAdapter } from '../../paper-adapters/proposal/index.mjs';
 import { bootstrapPaperExecutionContext } from '../../paper-application/bootstrap/service-bootstrap.mjs';
@@ -16,7 +16,7 @@ import {
 
 function usage() {
   return `Usage:
-  paper-production-core batch-run --mode <inventory|local-build|local-package|research-verify|journal-manage|empirical-analysis|venue-resolve|source-adapt|referee-review|referee-revise|local-review-loop|local-dry-run|reviewed-submit|legacy-cleanup> [--limit N] [--paper SLUG] [--target VENUE] [--quality-profile PROFILE] [--dataset-root PATH] [--benchmark-id ID] [--apply-manuscript] [--inventory-source auto|hepta|yaml|legacy-sqlite] [--max-rounds N] [--json] [--write-report] [--execute]
+  paper-production-core batch-run --mode <inventory|local-build|local-package|research-verify|journal-manage|empirical-analysis|venue-resolve|source-adapt|referee-review|referee-revise|local-review-loop|local-dry-run|reviewed-submit> [--limit N] [--paper SLUG] [--target VENUE] [--quality-profile PROFILE] [--dataset-root PATH] [--benchmark-id ID] [--apply-manuscript] [--inventory-source auto|hepta|yaml|legacy-sqlite] [--max-rounds N] [--json] [--write-report] [--execute]
 
   Compatibility alias: --mode referee-autopilot maps to local-review-loop and has no academic acceptance authority.
   paper-production-core proposal --idea TEXT [--discipline NAME] [--venue NAME] [--title TEXT] [--paper SLUG] [--paper-type TYPE] [--material TEXT] [--constraint TEXT] [--approved] [--materialize-source] [--stage-inventory] [--json] [--write-report]

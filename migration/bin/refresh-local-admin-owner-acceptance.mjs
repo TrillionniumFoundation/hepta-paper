@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { buildLegacyCapabilityMatrixV3 } from '../legacy-capability-matrix-v3.mjs';
-import { signAuthorityDocument } from '../../paper-core/src/authority-signatures.mjs';
-import { defaultPaperRuntimeRoot } from '../../paper-core/src/workspace-layout.mjs';
+import { signAuthorityDocument } from '../../paper-adapters/authority/authority-signatures.mjs';
+import { defaultPaperRuntimeRoot } from '../../paper-adapters/runtime/workspace-layout.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 if (!process.argv.includes('--execute')) throw new Error('local admin owner acceptance refresh requires --execute');

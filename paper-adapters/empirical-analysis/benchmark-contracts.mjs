@@ -15,9 +15,9 @@ import { inspectScopedPathSync, readScopedFileSync } from '../../workflow-kernel
 import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
 import { nowIso } from '../../workflow-kernel/runtime/time-utils.mjs';
 import { writeJsonFile, writeTextFile } from '../artifacts/write-artifact.mjs';
-import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
+import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
 import { buildEmpiricalEvidenceGate } from './evidence-policy.mjs';
-import { defaultPaperRuntimeRoot } from '../../paper-core/src/workspace-layout.mjs';
+import { defaultPaperRuntimeRoot } from '../../paper-adapters/runtime/workspace-layout.mjs';
 
 function repoPath(root, value) {
   const text = normalizeText(value);

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import path from 'node:path';
-import { listDirSafe, readJsonIfExists } from '../src/runtime/file-utils.mjs';
+import { listDirSafe, readJsonIfExists } from '../../workflow-kernel/runtime/file-utils.mjs';
 import {
   defaultPaperAssetRoot,
   defaultPaperRuntimeRoot,

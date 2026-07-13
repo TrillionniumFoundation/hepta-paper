@@ -13,9 +13,9 @@ import {
   buildAgentRefereeReviewReport,
   buildRefereeIssueQueueMaterialization,
   buildRefereeReviewIntake,
-} from '../../paper-core/src/contracts/referee-planning.mjs';
-import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
-import { heptaStorePath } from '../../paper-core/src/hepta-store.mjs';
+} from '../../paper-domain/contracts/referee-planning.mjs';
+import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
+import { heptaStorePath } from '../../paper-adapters/persistence/store-paths.mjs';
 import {
   sqliteExec,
   sqliteJson,

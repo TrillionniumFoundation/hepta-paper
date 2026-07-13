@@ -1,7 +1,7 @@
 import path from 'node:path';
-import { ensureDir } from '../../paper-core/src/runtime/file-utils.mjs';
-import { normalizeText } from '../../paper-core/src/runtime/text-utils.mjs';
-import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
+import { ensureDir } from '../../workflow-kernel/runtime/file-utils.mjs';
+import { normalizeText } from '../../workflow-kernel/runtime/text-utils.mjs';
+import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
 import { writeJsonFile } from '../../paper-adapters/artifacts/write-artifact.mjs';
 import {
   buildJournalConferenceRegistry, buildJournalConferenceSystemPacket, buildJournalTargetProfile, buildTargetSelectionPolicy,

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { createReadOnlyPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
-import { safeJsonParse } from '../src/runtime/data-utils.mjs';
+import { safeJsonParse } from '../../workflow-kernel/runtime/data-utils.mjs';
 import { sqlText } from '../../paper-ports/store-port.mjs';
 
 function parseArgs(argv) {

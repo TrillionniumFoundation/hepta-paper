@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import * as facade from '../src/paper-contracts.mjs';
-import * as product from '../src/contracts/product-profile.mjs';
-import * as proposal from '../src/contracts/proposal-contracts.mjs';
-import * as research from '../src/contracts/research-contracts.mjs';
-import * as workflow from '../src/contracts/workflow-contracts.mjs';
-import * as venue from '../src/contracts/venue-contracts.mjs';
+import * as facade from '../../paper-domain/contracts/index.mjs';
+import * as product from '../../paper-domain/contracts/product-profile.mjs';
+import * as proposal from '../../paper-domain/contracts/proposal-contracts.mjs';
+import * as research from '../../paper-domain/contracts/research-contracts.mjs';
+import * as workflow from '../../paper-domain/contracts/workflow-contracts.mjs';
+import * as venue from '../../paper-domain/contracts/venue-contracts.mjs';
 
 test('paper-contracts remains a thin compatibility facade over bounded modules', () => {
   assert.equal(Object.keys(facade).length, 74);

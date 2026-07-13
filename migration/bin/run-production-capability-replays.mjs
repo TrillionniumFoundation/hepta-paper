@@ -29,10 +29,10 @@ import { buildExecutorCapabilities } from '../../paper-ports/executor-capabiliti
 import { createSqliteSubmissionDeliveryStore } from '../../paper-adapters/submission/sqlite-delivery-store.mjs';
 import { buildSubmissionReleaseLock } from '../../paper-domain/submission/release-lock.mjs';
 import { buildRepairApplyProof, rollbackAppliedPatches, validateAndMaybeApplyPatches } from '../../paper-adapters/referee-revise/repair-executor.mjs';
-import { signAuthorityDocument } from '../../paper-core/src/authority-signatures.mjs';
-import { currentCodeProvenance } from '../../paper-core/src/code-provenance.mjs';
-import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../../paper-core/src/workspace-layout.mjs';
-import { sha256File } from '../../paper-core/src/runtime/file-utils.mjs';
+import { signAuthorityDocument } from '../../paper-adapters/authority/authority-signatures.mjs';
+import { currentCodeProvenance } from '../../paper-adapters/runtime/code-provenance.mjs';
+import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../../paper-adapters/runtime/workspace-layout.mjs';
+import { sha256File } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');

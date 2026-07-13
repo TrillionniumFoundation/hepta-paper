@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createPaperArtifactPackage } from '../src/contracts/workflow-contracts.mjs';
+import { createPaperArtifactPackage } from '../../paper-domain/contracts/workflow-contracts.mjs';
 import {
   buildExecutorResponseIntake,
   buildSubmissionDeliveryRuntime,

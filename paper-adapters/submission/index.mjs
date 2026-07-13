@@ -15,7 +15,7 @@ import {
   buildVenueSubmissionPlan,
   createPaperActionManifest,
   hashPaperRecord,
-} from '../../paper-core/src/paper-contracts.mjs';
+} from '../../paper-domain/contracts/index.mjs';
 import { normalizeText } from '../../workflow-kernel/runtime/text-utils.mjs';
 import { buildSubmissionDeliveryRuntime } from '../../paper-domain/submission/delivery-runtime.mjs';
 import { buildSemanticPromotionLock } from '../../paper-domain/submission/semantic-promotion-lock.mjs';
@@ -24,7 +24,7 @@ import { buildReviewedSubmissionDecisionPacket } from '../../paper-domain/submis
 import { verifyIndependentRefereeAuthority } from '../referee-review/independent-authority.mjs';
 import { verifyLiveSubmissionAuthorization } from './live-authorization.mjs';
 import { verifyReviewedVenueObservationSource } from './venue-observation-verification.mjs';
-import { loadAuthorityTrustStore } from '../../paper-core/src/authority-signatures.mjs';
+import { loadAuthorityTrustStore } from '../../paper-adapters/authority/authority-signatures.mjs';
 
 export { exportSubmissionHandoffBundle } from './handoff-bundle-exporter.mjs';
 export { verifySignedExecutorResponse } from './executor-response-verification.mjs';

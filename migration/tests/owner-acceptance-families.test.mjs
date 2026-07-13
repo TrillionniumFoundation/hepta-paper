@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import test from 'node:test';
-import { signAuthorityDocument } from '../../paper-core/src/authority-signatures.mjs';
+import { signAuthorityDocument } from '../../paper-adapters/authority/authority-signatures.mjs';
 import { buildOwnerAcceptanceFamilies, verifyOwnerAcceptanceDocument } from '../owner-acceptance.mjs';
 
 test('owner acceptance expands only an exact externally signed capability family', () => {

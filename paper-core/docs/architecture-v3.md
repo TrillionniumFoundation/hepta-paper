@@ -1,5 +1,8 @@
 # hepta-paper architecture v3
 
+> Historical architecture rationale. For normative current counts, paths and
+> release state, see `CURRENT_STATUS.md`.
+
 ## Status
 
 Architecture v3 is a strangler refactor of the existing overlay. It is not a
@@ -18,10 +21,10 @@ and are classified by the capability matrix v3:
 
 Matrix state is deliberately split into four independent axes. All 249
 decisions are mapped and all 249 contracts are defined; implementation is
-verified for the 161 coverage/reimplementation rows and explicitly not
-applicable for the 88 permanent retirements. All 249 owner-acceptance records
-remain pending until a named owner explicitly accepts the decision. A green
-technical test cannot manufacture business acceptance.
+verified for the coverage/reimplementation rows and explicitly not applicable
+for permanent retirements. Current local-admin versus independent-external
+owner status is reported separately in `CURRENT_STATUS.md`; a green technical
+test cannot manufacture independent business acceptance.
 
 ## Layers
 
@@ -29,14 +32,10 @@ technical test cannot manufacture business acceptance.
   stage execution and receipts. It is the small shared runtime kernel; the
   588-file vendored core is an accepted reference fork, not a second active
   paper runtime.
-- `paper-core/src/workflow-engine.mjs`: paper-facing workflow-kernel adapter.
-- `paper-core/src/mode-registry.mjs`: declarative paper mode and stage graph.
-- `paper-core/src/execution-context.mjs`: immutable execution options and
-  injected services.
-- `paper-domain/`: pure claim, evidence, experiment, research change, and
-  submission delivery contracts.
-- `paper-application/`: batch composition plus stage use cases. Stage handlers
-  and the local diagnostic review loop no longer live in the batch runner.
+- `paper-domain/`: pure claim, evidence, experiment, research change and
+  submission delivery contracts, plus the declarative paper mode graph.
+- `paper-application/`: immutable execution context, paper-facing workflow
+  adapter, batch composition, reports and stage use cases.
 - `paper-ports/`: Store, ArtifactRepository, WorkerRunner, FormalVerifier,
   JobReceiptStore, WorkflowState, SubmissionExecutor, and optional outer
   TaskFlow boundaries.
@@ -116,20 +115,19 @@ are physically separate:
 - repository: `/data/home-data/hepta-paper`;
 - paper assets: `/data/home-data/hepta-paper-assets`;
 - native runtime/store: `/data/home-data/hepta-paper/runtime`;
-- frozen legacy archive: `/data/home-data/paper_factory`.
+- immutable legacy reference: `/data/home-data/hepta-paper-legacy-reference`.
 
-Compatibility symlinks preserve old asset paths for non-control-plane tools,
-but production defaults resolve to the standalone roots. Both legacy
-entrypoints have executable bits removed, all seven wave receipts are
-recorded, and freeze, quarantine-isolation and active-control-plane removal
-receipts are recorded. No destructive source deletion was performed. Archive
-readiness is not functional parity and does not replace owner acceptance.
+Production defaults resolve to the standalone roots. The online legacy tree
+has been physically removed; the immutable reference is retained for audit and
+restore. The retirement audit is read-only and no longer appears as a
+production batch mode.
 
 ## Verification
 
 - `npm run paper:architecture-selftest`
 - `npm run taskflow:pilot-selftest`
 - `npm run coverage:architecture`
+- `npm run coverage:critical-modules`
 - `npm run test:migration-differential` when the frozen legacy source is
   available beside this workspace
 - `npm run release:verify` for the complete local release gate

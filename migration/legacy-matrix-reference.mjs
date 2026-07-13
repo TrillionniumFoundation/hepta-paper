@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { defaultLegacyPaperFactoryRoot } from '../paper-core/src/workspace-layout.mjs';
+import { defaultLegacyPaperFactoryRoot } from '../paper-adapters/runtime/workspace-layout.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const manifestPath = path.join(workspaceRoot, 'migration', 'fixtures', 'legacy-matrix-reference-v1.json');

@@ -7,7 +7,7 @@ import {
   createPaperActionManifest,
   buildPaperHandoffEnvelope,
   buildPaperAdapterRunReceipt,
-} from './paper-contracts.mjs';
+} from '../../paper-domain/contracts/index.mjs';
 import { discoverInventory } from '../../paper-adapters/inventory/index.mjs';
 import { runPaperBatch } from './paper-batch-runner.mjs';
 import { runPaperProposalAdapter } from '../../paper-adapters/proposal/index.mjs';
@@ -23,7 +23,6 @@ import {
   buildTargetSelectionPolicy,
 } from '../../paper-adapters/journal-manage/index.mjs';
 import {
-  defaultLegacyPaperFactoryRoot,
   defaultPaperAssetRoot,
   defaultPaperRuntimeRoot,
 } from './workspace-layout.mjs';
@@ -35,7 +34,6 @@ assertIsolatedVerificationRuntime('paper selftest');
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
 const paperFactoryRoot = defaultPaperAssetRoot();
-const legacyPaperFactoryRoot = defaultLegacyPaperFactoryRoot();
 const selftestRuntimeRoot = path.join(defaultPaperRuntimeRoot(), 'selftest');
 
 async function sourceText(file) {
@@ -54,7 +52,6 @@ async function assertNoOldControlPlaneImports() {
     'paper-adapters/venue-resolve/index.mjs',
     'paper-adapters/source-adapt/index.mjs',
     'paper-adapters/submission/index.mjs',
-    'paper-adapters/legacy-cleanup/index.mjs',
     'paper-adapters/proposal/index.mjs',
     'paper-adapters/journal-manage/index.mjs',
   ];
@@ -754,105 +751,6 @@ async function main() {
   assert.ok(Number.isFinite(sourceAdaptReport.summary.sourceAdaptation.operatorPacketsBlocked));
   assert.ok(sourceAdaptReport.results.some((result) => result.sourceAdaptation?.sourceAdaptationOperatorPacket?.kind === 'SourceAdaptationOperatorPacket')
     || sourceAdaptReport.summary.sourceAdaptation.required === 0);
-
-  const legacyReport = await runPaperBatch({
-    root: legacyPaperFactoryRoot,
-    runtimeRoot: selftestRuntimeRoot,
-    mode: 'legacy-cleanup',
-    limit: 1,
-  });
-  assert.ok(legacyReport.legacyCleanupAudit?.kind === 'LegacyPaperFactoryCleanupAudit');
-  assert.equal(legacyReport.legacyCleanupAudit.status, 'read_only_retirement_audit');
-  assert.ok(Number.isFinite(legacyReport.legacyCleanupAudit.summary.migrationBacklogCount));
-  assert.ok(Number.isFinite(legacyReport.legacyCleanupAudit.summary.heptaAdapterCount));
-  assert.ok(legacyReport.legacyCleanupAudit.summary.byRetirementWave);
-  assert.ok(Array.isArray(legacyReport.legacyCleanupAudit.retirementPlan?.waves));
-  assert.ok(Array.isArray(legacyReport.legacyCleanupAudit.retirementPlan?.immediateBacklog));
-  assert.equal(legacyReport.legacyCleanupAudit.summary.retirementWavePacketCount, 7);
-  assert.ok(legacyReport.legacyCleanupAudit.summary.byRetirementWaveFamily);
-  assert.equal(
-    legacyReport.legacyCleanupAudit.retirementPlan?.legacyEntrypointDeprecationPacket?.kind,
-    'LegacyEntrypointDeprecationPacket',
-  );
-  assert.equal(
-    legacyReport.legacyCleanupAudit.retirementPlan?.heptaDataAssetExportPlan?.kind,
-    'HeptaDataAssetExportPlan',
-  );
-  assert.equal(
-    legacyReport.legacyCleanupAudit.retirementPlan?.migrationBacklogPacket?.kind,
-    'PaperFactoryMigrationBacklogPacket',
-  );
-  assert.equal(
-    legacyReport.legacyCleanupAudit.retirementPlan?.p0P1BacklogDrainReceipt?.kind,
-    'PaperFactoryP0P1BacklogDrainReceipt',
-  );
-  assert.equal(
-    legacyReport.legacyCleanupAudit.retirementPlan?.quarantineManifest?.kind,
-    'PaperFactoryQuarantineManifest',
-  );
-  assert.equal(
-    legacyReport.legacyCleanupAudit.retirementPlan?.retirementReadinessGate?.kind,
-    'PaperFactoryRetirementReadinessGate',
-  );
-  assert.equal(
-    legacyReport.legacyCleanupAudit.retirementPlan?.retirementReadinessGate?.status,
-    legacyReport.legacyCleanupAudit.summary.retirementReadinessStatus,
-  );
-  assert.ok(Array.isArray(legacyReport.legacyCleanupAudit.retirementPlan?.retirementWavePackets));
-  assert.equal(legacyReport.legacyCleanupAudit.retirementPlan.retirementWavePackets.length, 7);
-  assert.ok(Array.isArray(legacyReport.legacyCleanupAudit.retirementPlan?.retirementWaveExecutionReceipts));
-  assert.equal(legacyReport.legacyCleanupAudit.retirementPlan.retirementWaveExecutionReceipts.length, 7);
-  assert.equal(
-    legacyReport.legacyCleanupAudit.retirementPlan?.legacyEntrypointFreezeReceipt?.kind,
-    'LegacyEntrypointFreezeReceipt',
-  );
-  assert.equal(
-    legacyReport.legacyCleanupAudit.retirementPlan?.dataAssetExportReceipt?.kind,
-    'HeptaDataAssetExportReceipt',
-  );
-  assert.equal(
-    legacyReport.legacyCleanupAudit.retirementPlan?.researchSourcePackageCoverageReceipt?.kind,
-    'PaperFactoryMigrationCoverageReceipt',
-  );
-  assert.equal(
-    legacyReport.legacyCleanupAudit.retirementPlan?.refereeReviewRepairCoverageReceipt?.kind,
-    'PaperFactoryMigrationCoverageReceipt',
-  );
-  assert.equal(
-    legacyReport.legacyCleanupAudit.retirementPlan?.submissionVenueSourceCoverageReceipt?.kind,
-    'PaperFactoryMigrationCoverageReceipt',
-  );
-  assert.equal(
-    legacyReport.legacyCleanupAudit.retirementPlan?.liveExternalExecutorPolicyReceipt?.kind,
-    'PaperFactoryLiveExternalExecutorPolicyReceipt',
-  );
-  assert.equal(
-    legacyReport.legacyCleanupAudit.retirementPlan?.quarantineIsolationReceipt?.kind,
-    'PaperFactoryQuarantineIsolationReceipt',
-  );
-  assert.equal(
-    legacyReport.legacyCleanupAudit.retirementPlan?.oldControlPlaneRemovalReceipt?.kind,
-    'OldPaperFactoryControlPlaneRemovalReceipt',
-  );
-  assert.ok(Number.isFinite(legacyReport.legacyCleanupAudit.summary.retirementWaveExecutionReceiptCount));
-  assert.equal(legacyReport.legacyCleanupAudit.summary.verifiedDispositionCount, 263);
-  assert.equal(legacyReport.legacyCleanupAudit.summary.verifiedBehavioralReplacementCount, 14);
-  assert.equal(legacyReport.legacyCleanupAudit.summary.verifiedExplicitRetirementCount, 249);
-  assert.equal(legacyReport.legacyCleanupAudit.summary.semanticMigrationClaimCount, 14);
-  assert.equal(legacyReport.legacyCleanupAudit.summary.functionalParityClaimAllowed, false);
-  assert.equal(
-    legacyReport.legacyCleanupAudit.summary.explicitRetirementIsNotBehavioralMigration,
-    true,
-  );
-  assert.equal(
-    legacyReport.legacyCleanupAudit.retirementPlan?.retirementReadinessGate
-      ?.retirementReadinessDoesNotMeanFunctionalParity,
-    true,
-  );
-  assert.ok(Number.isFinite(legacyReport.legacyCleanupAudit.summary.activeP0MigrationBlockerCount));
-  assert.ok(Number.isFinite(legacyReport.legacyCleanupAudit.summary.activeP1MigrationBlockerCount));
-  assert.equal(legacyReport.legacyCleanupAudit.summary.liveExternalActionAllowed, false);
-  assert.equal(legacyReport.legacyCleanupAudit.safety.sourceMutation, false);
 
   process.stdout.write(JSON.stringify({
     ok: true,

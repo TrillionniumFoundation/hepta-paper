@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { defaultLegacyPaperFactoryRoot } from '../../paper-core/src/workspace-layout.mjs';
+import { defaultLegacyPaperFactoryRoot } from '../../paper-adapters/runtime/workspace-layout.mjs';
 import { runResearchVerifyAdapter } from '../../paper-adapters/research-verify/index.mjs';
 import {
   RESEARCH_VERIFY_EXPLICIT_RETIREMENTS,

@@ -119,9 +119,10 @@ async function main() {
       result = buildCampaignSloReport({ campaigns, nodes, events, telemetrySamples, runtimeBytes: retention.categories.reduce((total, category) => total + category.bytesBefore, 0) });
     }
     else if (action === 'gc') {
+      if (options.apply) workspaceRegistry?.reconcileMissingEligible?.();
       const activeNodeIds = campaignStore.listCampaigns({ status: 'running', limit: 1000 }).flatMap((campaign) => campaignStore.listNodes(campaign.campaign_id)).filter((node) => ['leased', 'running'].includes(node.status)).map((node) => node.node_id);
       const plan = buildRuntimeRetentionPlan({ runtimeRoot, activeNodeIds, workspaceRecords: workspaceRegistry?.retentionRecords() || [] });
-      result = { plan, receipt: executeRuntimeRetentionPlan(plan, { apply: Boolean(options.apply) }) };
+      result = { plan, receipt: executeRuntimeRetentionPlan(plan, { apply: Boolean(options.apply), workspaceRegistry }) };
     }
     else if (action === 'list') {
       const campaigns = campaignStore.listCampaigns({ status: options.status || null, limit: options.limit || 100, effectiveOnly: Boolean(options.effective) });

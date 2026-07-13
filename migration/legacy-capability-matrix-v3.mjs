@@ -4,7 +4,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateCapabilityOperationalEvidence } from './capability-operational-evidence.mjs';
 import { buildOwnerAcceptanceFamilies, loadOwnerAcceptance } from './owner-acceptance.mjs';
-import { defaultPaperRuntimeRoot } from '../paper-core/src/workspace-layout.mjs';
+import { defaultPaperRuntimeRoot } from '../paper-adapters/runtime/workspace-layout.mjs';
+import { currentCodeProvenance } from '../paper-adapters/runtime/code-provenance.mjs';
+import { loadCapabilityOperationalProofs } from './operational-proof-intake.mjs';
 
 const migrationRoot = path.dirname(fileURLToPath(import.meta.url));
 const workspaceRoot = path.resolve(migrationRoot, '..');
@@ -154,12 +156,18 @@ function coverageTests(entry, decision, capabilityIds) {
   ];
 }
 
-export function buildLegacyCapabilityMatrixV3({ matrixV2 = null, operationalEvidence = null, runtimeRoot = null } = {}) {
+export function buildLegacyCapabilityMatrixV3({ matrixV2 = null, operationalEvidence = null, operationalProofs = null, runtimeRoot = null } = {}) {
   const source = matrixV2 || JSON.parse(fs.readFileSync(matrixV2Path, 'utf8'));
   const resolvedRuntimeRoot = runtimeRoot || defaultPaperRuntimeRoot();
   const verificationReceipts = validateCapabilityOperationalEvidence({
     runtimeRoot: resolvedRuntimeRoot,
     evidence: operationalEvidence,
+  });
+  const verifiedOperationalProofs = operationalProofs || loadCapabilityOperationalProofs({
+    runtimeRoot: resolvedRuntimeRoot,
+    workspaceRoot,
+    capabilityCatalog: CAPABILITY_CATALOG,
+    releaseCommit: currentCodeProvenance({ workspaceRoot }).commit,
   });
   const retiredEntries = source.entries.filter((entry) => entry.verificationClass === 'explicit_retirement');
   const entryPlans = retiredEntries.map((entry) => {
@@ -179,11 +187,9 @@ export function buildLegacyCapabilityMatrixV3({ matrixV2 = null, operationalEvid
       .filter(Boolean);
     const implementationVerified = businessDecision !== CAPABILITY_DECISIONS.PERMANENT_RETIREMENT
       && implementationReceipts.length === capabilityIds.length;
-    const operationallyProven = implementationVerified && implementationReceipts.every((receipt) => (
-      receipt.operationalProof === true
-      && Array.isArray(receipt.operationalReceiptHashes)
-      && receipt.operationalReceiptHashes.length > 0
-    ));
+    const operationalReceipts = capabilityIds.map((id) => verifiedOperationalProofs.get(id)).filter(Boolean);
+    const operationallyProven = implementationVerified
+      && operationalReceipts.length === capabilityIds.length;
     const ownerAcceptance = acceptedById.get(entry.id) || null;
     const ownerAccepted = Boolean(ownerAcceptance
       && ownerAcceptance.businessDecision === businessDecision
@@ -233,7 +239,7 @@ export function buildLegacyCapabilityMatrixV3({ matrixV2 = null, operationalEvid
           : operationallyProven
             ? 'production_bound_operational_receipts_verified'
             : 'production_bound_operational_receipts_pending',
-        operationalReceiptHashes: implementationReceipts.flatMap((receipt) => receipt.operationalReceiptHashes || []),
+        operationalReceiptHashes: operationalReceipts.flatMap((receipt) => receipt.operationalReceiptHashes || []),
       },
       owner_accepted: {
         required: true,

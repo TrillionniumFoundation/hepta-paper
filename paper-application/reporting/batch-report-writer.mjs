@@ -1,9 +1,9 @@
 import path from 'node:path';
-import { ensureDir } from '../../paper-core/src/runtime/file-utils.mjs';
-import { nowIso } from '../../paper-core/src/runtime/time-utils.mjs';
+import { ensureDir } from '../../workflow-kernel/runtime/file-utils.mjs';
+import { nowIso } from '../../workflow-kernel/runtime/time-utils.mjs';
 import { writeJsonFile, writeTextFile } from '../../paper-adapters/artifacts/write-artifact.mjs';
-import { blockerFamilySummary, makeBlockerFamilyMarkdown, makeMarkdownTable, summarizeResults, summarizeRows } from '../../paper-core/src/batch-summary.mjs';
-import { currentCodeProvenance } from '../../paper-core/src/code-provenance.mjs';
+import { blockerFamilySummary, makeBlockerFamilyMarkdown, makeMarkdownTable, summarizeResults, summarizeRows } from './batch-summary.mjs';
+import { currentCodeProvenance } from '../../paper-adapters/runtime/code-provenance.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 function markdown(report, includeSummaryHeading = false) {
@@ -14,7 +14,7 @@ function markdown(report, includeSummaryHeading = false) {
   ].join('\n');
 }
 
-export function buildBatchReport({ root, runtimeRoot, mode, execute, targetOverride, datasetRoot, benchmarkId, applyManuscript, scan, results, legacyCleanupAudit, coreIntegrity, targetScopeReceipt } = {}) {
+export function buildBatchReport({ root, runtimeRoot, mode, execute, targetOverride, datasetRoot, benchmarkId, applyManuscript, scan, results, coreIntegrity, targetScopeReceipt } = {}) {
   const rows = results.map((item) => item.workflowRow);
   const blockerFamilies = blockerFamilySummary(results);
   const report = {
@@ -27,8 +27,8 @@ export function buildBatchReport({ root, runtimeRoot, mode, execute, targetOverr
     registryRefs: scan.registryRefs,
     targetScopeReceipt,
     inventory: { source: scan.inventorySource, fallback: scan.inventoryFallback, quarantinedCount: scan.quarantined?.length || 0, quarantined: scan.quarantined || [] },
-    summary: { ...summarizeRows(rows, mode), ...summarizeResults(results, legacyCleanupAudit), blockerFamilies },
-    rows, results, legacyCleanupAudit, coreIntegrity,
+    summary: { ...summarizeRows(rows, mode), ...summarizeResults(results), blockerFamilies },
+    rows, results, coreIntegrity,
     markdownTable: makeMarkdownTable(rows), blockerFamilyTable: makeBlockerFamilyMarkdown(blockerFamilies),
     safety: { coreSnapshotModified: coreIntegrity.coreSnapshotModified, coreIntegrityStatus: coreIntegrity.status, upstreamCoreSnapshotExactMatch: coreIntegrity.upstream.exactMatch, importsOldPaperFactoryControlPlane: false, externalActionPerformed: false, reviewedSubmitBlockedByDefault: true },
   };

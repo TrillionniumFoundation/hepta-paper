@@ -2,10 +2,8 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { heptaStorePath, legacyStorePath } from '../src/hepta-store.mjs';
+import { heptaStorePath } from '../src/hepta-store.mjs';
 import { createReadOnlySqliteStore } from '../../paper-adapters/persistence/sqlite-store.mjs';
-import { exportLegacyHistorySnapshot, verifyLegacyHistorySnapshot } from '../../paper-adapters/persistence/legacy-history-snapshot-repository.mjs';
-import { persistLegacyNativeTranslations, translateLegacyHistorySnapshot, verifyLegacyNativeTranslation } from '../../paper-adapters/persistence/legacy-history-translator-repository.mjs';
 import { createDefaultPaperStore, createReadOnlyPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqlite-receipt-ledger.mjs';
 import { createSystemClock } from '../../paper-adapters/runtime/system-clock.mjs';
@@ -14,7 +12,6 @@ import { resolveWorkspaceLayout } from '../src/workspace-layout.mjs';
 const layout = resolveWorkspaceLayout();
 const root = layout.assetRoot;
 const dbPath = heptaStorePath(root, layout.runtimeRoot);
-const legacyPath = legacyStorePath(layout.legacyRoot);
 const clock = createSystemClock();
 let mutableStore = null;
 let mutableReceiptLedger = null;
@@ -46,98 +43,6 @@ function fileSha256(file) {
 function initialize() {
   writableStore();
   return status();
-}
-
-function snapshotLegacyHistory({ ledger = null } = {}) {
-  if (!fs.existsSync(legacyPath)) throw new Error(`Legacy store missing: ${legacyPath}`);
-  const snapshot = exportLegacyHistorySnapshot({
-    legacyDbPath: legacyPath,
-    outputRoot: path.join(layout.runtimeRoot, 'legacy-history'),
-    receiptLedger: ledger,
-    clock,
-  });
-  const verification = verifyLegacyHistorySnapshot({ manifestPath: snapshot.manifestPath });
-  if (snapshot.status !== 'legacy_history_snapshot_verified' || verification.status !== 'legacy_history_snapshot_verified') {
-    throw new Error(`legacy_history_snapshot_blocked:${[...snapshot.blockers, ...verification.blockers].join(',')}`);
-  }
-  const nativeTranslations = translateLegacyHistorySnapshot({ manifestPath: snapshot.manifestPath, receiptLedger: ledger, clock });
-  const nativeTranslationVerification = verifyLegacyNativeTranslation({ bundle: nativeTranslations });
-  if (nativeTranslationVerification.status !== 'legacy_native_translation_verified') {
-    throw new Error(`legacy_native_translation_blocked:${nativeTranslationVerification.blockers.join(',')}`);
-  }
-  return { ...snapshot, verification, nativeTranslations, nativeTranslationVerification };
-}
-
-function migrateLegacy() {
-  initialize();
-  if (!fs.existsSync(legacyPath)) throw new Error(`Legacy store missing: ${legacyPath}`);
-  const sourceHash = `sha256:${fileSha256(legacyPath)}`;
-  const historySnapshot = snapshotLegacyHistory();
-  const store = writableStore();
-  runSql(store, `
-PRAGMA foreign_keys=OFF;
-ATTACH DATABASE ${sqlQuote(legacyPath)} AS legacy;
-BEGIN IMMEDIATE;
-DELETE FROM audit_receipts;
-DELETE FROM workflow_states;
-DELETE FROM patch_queue;
-DELETE FROM referee_revision_requests;
-DELETE FROM artifacts;
-DELETE FROM submissions;
-DELETE FROM submission_ledger;
-DELETE FROM venues;
-DELETE FROM papers;
-INSERT INTO papers SELECT * FROM legacy.papers;
-INSERT INTO venues SELECT * FROM legacy.venues;
-INSERT INTO submission_ledger SELECT l.* FROM legacy.submission_ledger l JOIN papers p ON p.slug=l.slug;
-INSERT INTO submissions SELECT s.* FROM legacy.submissions s JOIN papers p ON p.slug=s.slug;
-INSERT INTO artifacts SELECT a.* FROM legacy.artifacts a JOIN papers p ON p.slug=a.slug;
-INSERT INTO referee_revision_requests SELECT r.* FROM legacy.referee_revision_requests r JOIN papers p ON p.slug=r.slug;
-INSERT INTO patch_queue SELECT q.* FROM legacy.patch_queue q JOIN papers p ON p.slug=q.slug;
-INSERT INTO store_metadata(key,value,updated_at) VALUES
-  ('store_role','hepta-paper-native',datetime('now')),
-  ('legacy_import_source',${sqlQuote(legacyPath)},datetime('now')),
-  ('legacy_import_sha256',${sqlQuote(sourceHash)},datetime('now')),
-  ('legacy_history_manifest_hash',${sqlQuote(historySnapshot.manifestHash)},datetime('now')),
-  ('legacy_history_manifest_path',${sqlQuote(historySnapshot.manifestPath)},datetime('now')),
-  ('legacy_history_row_count',${sqlQuote(historySnapshot.rowCount)},datetime('now')),
-  ('legacy_history_lineage_receipt_hash',${sqlQuote(historySnapshot.lineageReceiptHash)},datetime('now')),
-  ('legacy_native_translation_bundle_hash',${sqlQuote(historySnapshot.nativeTranslations.legacyNativeTranslationBundleHash)},datetime('now')),
-  ('legacy_native_translation_file_hash',${sqlQuote(historySnapshot.nativeTranslations.translationsHash)},datetime('now'))
-ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at;
-`);
-  let nativeLineagePersistence = null;
-  try {
-    nativeLineagePersistence = persistLegacyNativeTranslations({
-      store,
-      bundle: historySnapshot.nativeTranslations,
-      receiptLedger: receiptLedger(),
-      clock,
-      withinTransaction: true,
-    });
-    runSql(store, `INSERT INTO store_metadata(key,value,updated_at) VALUES
-      ('legacy_native_lineage_persistence_receipt_hash',${sqlQuote(nativeLineagePersistence.receiptHash)},datetime('now')),
-      ('legacy_native_lineage_inserted_count',${sqlQuote(nativeLineagePersistence.insertedCount)},datetime('now')),
-      ('legacy_native_lineage_existing_count',${sqlQuote(nativeLineagePersistence.existingCount)},datetime('now')),
-      ('legacy_imported_at',datetime('now'),datetime('now'))
-      ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at;
-      COMMIT;
-      DETACH DATABASE legacy;
-      PRAGMA foreign_keys=ON;`);
-  } catch (error) {
-    store.execute('ROLLBACK;');
-    store.execute('DETACH DATABASE legacy;PRAGMA foreign_keys=ON;');
-    throw error;
-  }
-  return {
-    version: 1,
-    kind: 'HeptaLegacyMigrationResult',
-    status: 'legacy_current_state_imported_with_verified_history_snapshot',
-    sourceHash,
-    historySnapshot,
-    nativeLineagePersistence,
-    store: status(),
-  };
 }
 
 function status() {
@@ -233,8 +138,6 @@ function restoreDrill() {
 const command = process.argv[2] || 'status';
 let output = null;
 if (command === 'init' || command === 'migrate') output = initialize();
-else if (command === 'snapshot-legacy-history') output = snapshotLegacyHistory();
-else if (command === 'migrate-legacy') output = migrateLegacy();
 else if (command === 'backup') output = backup();
 else if (command === 'restore-drill') output = restoreDrill();
 else if (command === 'status') output = status();

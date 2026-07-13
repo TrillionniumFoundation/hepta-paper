@@ -1,4 +1,4 @@
-import { verifyAuthoritySignatures, verifyAuthorityTimeWindow } from '../../paper-core/src/authority-signatures.mjs';
+import { verifyAuthoritySignatures, verifyAuthorityTimeWindow } from '../../paper-adapters/authority/authority-signatures.mjs';
 import { verifyTrustedLedgerReceipt } from '../../paper-domain/evidence/trusted-ledger-receipt.mjs';
 import { verifyArtifactWriteReceiptSource } from '../artifacts/artifact-write-receipt-verifier.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';

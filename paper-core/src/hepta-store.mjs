@@ -1,12 +1,1 @@
-import path from 'node:path';
-
-export function heptaStorePath(root, runtimeRoot = null) {
-  return path.join(
-    runtimeRoot ? path.resolve(runtimeRoot) : path.join(path.resolve(root), 'hepta-paper-workspace', 'runtime'),
-    'hepta-paper.sqlite',
-  );
-}
-
-export function legacyStorePath(root) {
-  return path.join(path.resolve(root), 'paper_factory.sqlite');
-}
+export * from '../../paper-adapters/persistence/store-paths.mjs';

@@ -2,7 +2,7 @@ import path from 'node:path';
 import { runPaperBatch } from '../batch/paper-batch-application.mjs';
 import { bootstrapPaperExecutionContext } from '../bootstrap/service-bootstrap.mjs';
 import { withArtifactWriteContext } from '../../paper-adapters/artifacts/artifact-write-context.mjs';
-import { sha256File } from '../../paper-core/src/runtime/file-utils.mjs';
+import { sha256File } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 export async function runRealPaperPilot({ root, runtimeRoot, paperId = null } = {}) {

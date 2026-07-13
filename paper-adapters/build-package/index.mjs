@@ -15,7 +15,7 @@ import { writeJsonFile, writeTextFile } from '../artifacts/write-artifact.mjs';
 import {
   createPaperBuildArtifactAcceptance,
   createPaperArtifactPackage,
-} from '../../paper-core/src/paper-contracts.mjs';
+} from '../../paper-domain/contracts/index.mjs';
 import { sqlEscape } from '../../paper-ports/store-port.mjs';
 import { verifyPackageBundle } from './package-verifier.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';

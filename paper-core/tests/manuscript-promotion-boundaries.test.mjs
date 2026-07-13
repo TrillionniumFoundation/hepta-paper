@@ -9,7 +9,7 @@ import { evaluateManuscriptPromotion } from '../../paper-domain/quality/manuscri
 import { buildTargetScopeReceipt } from '../../paper-domain/automation/target-scope-policy.mjs';
 import { buildSemanticPromotionLock } from '../../paper-domain/submission/semantic-promotion-lock.mjs';
 import { formalAcademicPromotionBlockers } from '../../paper-adapters/research-verify/worker-runtime.mjs';
-import { bindPaperTaskQualityProfile, createPaperActionManifest, createPaperTask, PAPER_ACTIONS } from '../src/paper-contracts.mjs';
+import { bindPaperTaskQualityProfile, createPaperActionManifest, createPaperTask, PAPER_ACTIONS } from '../../paper-domain/contracts/index.mjs';
 
 function services() {
   return { artifactRepositoryFactory: () => ({

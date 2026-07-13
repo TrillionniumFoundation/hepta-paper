@@ -1,7 +1,7 @@
-import { nowIso } from '../../paper-core/src/runtime/time-utils.mjs';
-import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
+import { nowIso } from '../../workflow-kernel/runtime/time-utils.mjs';
+import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
 import { sqlEscape } from '../../paper-ports/store-port.mjs';
-import { PAPER_BATCH_MODES } from '../../paper-core/src/mode-registry.mjs';
+import { PAPER_BATCH_MODES } from '../../paper-domain/workflow/mode-registry.mjs';
 import { runLatexBuildAdapter, runPackageAdapter } from '../../paper-adapters/build-package/index.mjs';
 import { runEmpiricalAnalysisAdapter } from '../../paper-adapters/empirical-analysis/index.mjs';
 import { runResearchVerifyAdapter } from '../../paper-adapters/research-verify/index.mjs';

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { defaultLegacyPaperFactoryRoot } from '../../paper-core/src/workspace-layout.mjs';
+import { defaultLegacyPaperFactoryRoot } from '../../paper-adapters/runtime/workspace-layout.mjs';
 import { PAPER_BATCH_MODES } from '../../paper-core/src/paper-batch-runner.mjs';
 import {
   buildLegacyCommandDispositionManifest,

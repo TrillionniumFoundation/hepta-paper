@@ -3,7 +3,7 @@ import {
   autoLevelForState,
   inferPaperStage,
   nextActionForState,
-} from '../../paper-core/src/paper-contracts.mjs';
+} from '../../paper-domain/contracts/index.mjs';
 
 export function projectWorkflowState(row, { buildResult, packageResult, researchReport, refereeRevision, lifecycle } = {}) {
   const artifactPackage = packageResult?.artifactPackage || null;

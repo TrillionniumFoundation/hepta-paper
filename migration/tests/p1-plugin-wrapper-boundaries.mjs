@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   defaultLegacyPaperFactoryRoot,
-} from '../../paper-core/src/workspace-layout.mjs';
+} from '../../paper-adapters/runtime/workspace-layout.mjs';
 import {
   runLatexBuildAdapter,
   runPackageAdapter,

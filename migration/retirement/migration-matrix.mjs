@@ -1,8 +1,9 @@
+// Read-only audit of the frozen semantic migration matrix.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { HEPTA_WORKSPACE_ROOT } from '../../paper-core/src/workspace-layout.mjs';
+import { HEPTA_WORKSPACE_ROOT } from '../../paper-adapters/runtime/workspace-layout.mjs';
 
 function sha256File(file) {
   return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');

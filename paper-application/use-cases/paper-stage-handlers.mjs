@@ -7,7 +7,7 @@ import { runResearchVerifyAdapter } from '../../paper-adapters/research-verify/i
 import { runSourceAdaptAdapter } from '../../paper-adapters/source-adapt/index.mjs';
 import { buildSubmissionLifecycle, prepareSubmissionAuthorities } from '../../paper-adapters/submission/index.mjs';
 import { runVenueResolveAdapter } from '../../paper-adapters/venue-resolve/index.mjs';
-import { PAPER_BATCH_MODES } from '../../paper-core/src/mode-registry.mjs';
+import { PAPER_BATCH_MODES } from '../../paper-domain/workflow/mode-registry.mjs';
 
 export function createPaperStageHandlers({
   context,

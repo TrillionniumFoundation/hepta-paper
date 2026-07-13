@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { classifyLegacyFile } from '../../paper-adapters/legacy-cleanup/classification.mjs';
+import { classifyLegacyFile } from '../retirement/classification.mjs';
 import { LEGACY_CAPABILITY_MATRIX_V3 } from '../legacy-capability-matrix-v3.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');

@@ -4,6 +4,7 @@ import path from 'node:path';
 import { assertAgentExecutorPort } from '../../paper-ports/agent-executor-port.mjs';
 import { buildExecutorCapabilities, capabilityRequestFromExecution, evaluateExecutorCapabilityRequest } from '../../paper-ports/executor-capabilities.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { changedWorkspacePaths, readOnlyMutationBlockers, sha256FileSync } from './workspace-change-tracker.mjs';
 
 const EXCLUDED = new Set(['.git', 'node_modules', 'runtime', '.artifact-cas', '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache']);
 const MAX_AGENT_WORKSPACE_FILE_BYTES = 8 * 1024 * 1024;
@@ -55,11 +56,6 @@ function oversizedTopLevelDirectories(root, excludedRoots) {
     .map(({ candidate }) => candidate);
 }
 
-function fileHash(candidate) {
-  if (!fs.existsSync(candidate) || !fs.statSync(candidate).isFile()) return null;
-  return crypto.createHash('sha256').update(fs.readFileSync(candidate)).digest('hex');
-}
-
 function cloneTree(source, destination, sourceRoot = source, excludedRoots = [], skipSourceSymlinks = false) {
   fs.mkdirSync(destination, { recursive: true });
   for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
@@ -88,7 +84,7 @@ function baseline(root, excludedRoots = []) {
       if (underExcludedRoot(absolute, excludedRoots)) continue;
       const relative = path.relative(root, absolute).replace(/\\/g, '/');
       if (entry.isDirectory()) walk(absolute);
-      else if (entry.isFile()) rows.set(relative, fileHash(absolute));
+      else if (entry.isFile()) rows.set(relative, sha256FileSync(absolute));
     }
   };
   walk(root);
@@ -97,7 +93,7 @@ function baseline(root, excludedRoots = []) {
 
 function delta(before, root) {
   const after = baseline(root);
-  return [...new Set([...before.keys(), ...after.keys()])].filter((key) => before.get(key) !== after.get(key)).sort();
+  return changedWorkspacePaths(before, after);
 }
 
 export function createIsolatedAgentExecutor({ delegate, isolationRoot, keepWorkspaces = false, keepFailedWorkspaces = true, workspaceRegistry = null } = {}) {
@@ -153,7 +149,14 @@ export function createIsolatedAgentExecutor({ delegate, isolationRoot, keepWorks
           context: { ...context, sourceWorkspace: source, isolatedWorkspace: isolated },
         });
         const changedPaths = delta(isolatedBaseline, isolated);
-        const conflicts = changedPaths.filter((relative) => fileHash(path.join(source, relative)) !== (sourceBaseline.get(relative) ?? null));
+        const readOnlyBlockers = readOnlyMutationBlockers({ sandbox: input.sandbox, changedPaths });
+        if (readOnlyBlockers.length) {
+          const error = new Error(readOnlyBlockers.join(','));
+          error.retryable = false;
+          error.receipt = receipt;
+          throw error;
+        }
+        const conflicts = changedPaths.filter((relative) => sha256FileSync(path.join(source, relative)) !== (sourceBaseline.get(relative) ?? null));
         if (conflicts.length) {
           const error = new Error(`isolated_workspace_merge_conflict:${conflicts.join(',')}`);
           error.retryable = true;

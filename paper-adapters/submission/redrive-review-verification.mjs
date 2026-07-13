@@ -1,4 +1,4 @@
-import { verifyAuthoritySignatures, verifyAuthorityTimeWindow } from '../../paper-core/src/authority-signatures.mjs';
+import { verifyAuthoritySignatures, verifyAuthorityTimeWindow } from '../../paper-adapters/authority/authority-signatures.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 export function verifySignedAmbiguousRedriveReview({ dispatchAuthorization, humanReview, trustStore, now = new Date() } = {}) {

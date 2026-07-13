@@ -6,8 +6,8 @@ import path from 'node:path';
 import {
   createPaperTask,
   hashPaperRecord,
-} from './paper-contracts.mjs';
-import { sha256File } from './runtime/file-utils.mjs';
+} from '../../paper-domain/contracts/index.mjs';
+import { sha256File } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { signAuthorityDocument } from './authority-signatures.mjs';
 import { runResearchVerifyAdapter } from '../../paper-adapters/research-verify/index.mjs';
 import { createFilesystemArtifactRepository } from '../../paper-adapters/artifacts/filesystem-artifact-repository.mjs';

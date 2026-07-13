@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import test from 'node:test';
-import { signAuthorityDocument } from '../../paper-core/src/authority-signatures.mjs';
+import { signAuthorityDocument } from '../../paper-adapters/authority/authority-signatures.mjs';
 import { verifyCapabilityConformanceReceipt, verifyCapabilityOperationalReceipt } from '../operational-proof-intake.mjs';
 
 function signer(keyId, subjectId, role, assurance = 'external_independent') {

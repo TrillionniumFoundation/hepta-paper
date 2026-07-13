@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { runLegacyCleanupAdapter } from '../../paper-adapters/legacy-cleanup/index.mjs';
+import { runRetirementAudit } from '../retirement/audit.mjs';
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
-import { defaultLegacyPaperFactoryRoot, defaultPaperRuntimeRoot } from '../../paper-core/src/workspace-layout.mjs';
+import { defaultLegacyPaperFactoryRoot, defaultPaperRuntimeRoot } from '../../paper-adapters/runtime/workspace-layout.mjs';
 import { assertIsolatedVerificationRuntime } from '../../paper-core/src/verification-runtime.mjs';
 import { immutableLegacyMatrixReferenceStatus, prepareImmutableLegacyMatrixReference } from '../legacy-matrix-reference.mjs';
 
@@ -12,7 +12,7 @@ if (reference) process.on('exit', reference.cleanup);
 const referenceStatus = immutableLegacyMatrixReferenceStatus();
 const root = reference?.root || defaultLegacyPaperFactoryRoot();
 if (reference) process.env.PAPER_FACTORY_LEGACY_ROOT = root;
-const report = await runLegacyCleanupAdapter({
+const report = await runRetirementAudit({
   root,
   runtimeRoot: defaultPaperRuntimeRoot(),
   execute: false,
@@ -46,8 +46,10 @@ assert.equal(report.summary.functionalParityClaimAllowed, false);
 assert.equal(report.summary.explicitRetirementIsNotBehavioralMigration, true);
 assert.equal(
   report.summary.retirementReadinessStatus,
-  'paper_factory_control_plane_archive_ready',
+  'paper_factory_retirement_blocked',
 );
+assert.equal(report.retirementPlan.retirementReadinessGate.canRemoveOldControlPlane, false);
+assert.ok(report.retirementPlan.retirementReadinessGate.blockers.includes('legacy_entrypoint_deprecation_not_ready'));
 assert.equal(
   report.retirementPlan.retirementReadinessGate.retirementReadinessDoesNotMeanFunctionalParity,
   true,

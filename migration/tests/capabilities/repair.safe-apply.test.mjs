@@ -8,7 +8,7 @@ import {
   rollbackAppliedPatches,
   validateAndMaybeApplyPatches,
 } from '../../../paper-adapters/referee-revise/repair-executor.mjs';
-import { sha256File } from '../../../paper-core/src/runtime/file-utils.mjs';
+import { sha256File } from '../../../workflow-kernel/runtime/file-utils.mjs';
 import { temporaryDirectory } from './test-support.mjs';
 
 test('repair.safe-apply proves preimage, apply-check, postimage, reconciliation and rollback', async (t) => {

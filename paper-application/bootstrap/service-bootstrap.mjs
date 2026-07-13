@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { createExecutionContext, assertExecutionServices } from '../../paper-core/src/execution-context.mjs';
+import { createExecutionContext, assertExecutionServices } from '../execution-context.mjs';
 import { createDefaultPaperStore, createReadOnlyPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { createFilesystemArtifactRepository } from '../../paper-adapters/artifacts/filesystem-artifact-repository.mjs';
 import { createSystemClock } from '../../paper-adapters/runtime/system-clock.mjs';

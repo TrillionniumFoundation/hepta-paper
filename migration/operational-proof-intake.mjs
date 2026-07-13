@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { verifyAuthoritySignatures } from '../paper-core/src/authority-signatures.mjs';
+import { verifyAuthoritySignatures } from '../paper-adapters/authority/authority-signatures.mjs';
 import { hashRecord } from '../workflow-kernel/record-hash.mjs';
 
 const SHA256_RE = /^sha256:[a-f0-9]{64}$/;

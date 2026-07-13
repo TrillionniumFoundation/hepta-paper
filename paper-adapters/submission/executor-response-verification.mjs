@@ -1,4 +1,4 @@
-import { verifyAuthoritySignatures } from '../../paper-core/src/authority-signatures.mjs';
+import { verifyAuthoritySignatures } from '../../paper-adapters/authority/authority-signatures.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 export function verifySignedExecutorResponse({ dispatchAuthorization, response, trustStore } = {}) {

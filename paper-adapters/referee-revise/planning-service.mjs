@@ -8,8 +8,8 @@ import {
   buildRefereeRevisionApplyModeContract,
   buildRefereeRevisionExecuteDesignPacket,
   buildRefereeRevisionRollbackLedgerDraft,
-} from '../../paper-core/src/contracts/referee-planning.mjs';
-import { buildRefereeApplyApprovalPacket } from '../../paper-core/src/contracts/referee-application.mjs';
+} from '../../paper-domain/contracts/referee-planning.mjs';
+import { buildRefereeApplyApprovalPacket } from '../../paper-domain/contracts/referee-application.mjs';
 import { buildAgentRepairPatchBundle } from './repair-executor.mjs';
 import { targetPreimageRecords } from './reconciliation.mjs';
 

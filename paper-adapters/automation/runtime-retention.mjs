@@ -76,12 +76,13 @@ export function buildRuntimeRetentionPlan({ runtimeRoot, activeNodeIds = [], wor
   return Object.freeze({ ...payload, runtimeRetentionPlanHash: hashRecord('RuntimeRetentionPlan', payload) });
 }
 
-export function executeRuntimeRetentionPlan(plan, { apply = false } = {}) {
+export function executeRuntimeRetentionPlan(plan, { apply = false, workspaceRegistry = null } = {}) {
   const removed = [];
   for (const entry of plan.removals || []) {
     if (apply && fs.existsSync(entry.path)) fs.rmSync(entry.path, { recursive: true, force: true });
     removed.push({ category: entry.category, path: entry.path, bytes: entry.bytes, reason: entry.reason, removed: Boolean(apply) });
   }
+  if (apply) workspaceRegistry?.reconcileMissingEligible?.();
   const payload = {
     version: 1,
     kind: 'RuntimeRetentionReceipt',

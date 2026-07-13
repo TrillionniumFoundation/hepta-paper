@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { heptaStorePath } from '../../paper-core/src/hepta-store.mjs';
+import { heptaStorePath } from '../../paper-adapters/persistence/store-paths.mjs';
 import { createReadOnlySqliteStore, createSqliteStore } from './sqlite-store.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');

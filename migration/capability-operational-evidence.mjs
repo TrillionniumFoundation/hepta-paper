@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { hashRecord } from '../workflow-kernel/record-hash.mjs';
-import { currentCodeProvenance } from '../paper-core/src/code-provenance.mjs';
+import { currentCodeProvenance } from '../paper-adapters/runtime/code-provenance.mjs';
 import { loadCapabilityConformanceProofs, loadCapabilityOperationalProofs } from './operational-proof-intake.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');

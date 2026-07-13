@@ -5,43 +5,8 @@ import { spawn } from 'node:child_process';
 import { assertAgentExecutorPort } from '../../paper-ports/agent-executor-port.mjs';
 import { buildExecutorCapabilities, capabilityRequestFromExecution, evaluateExecutorCapabilityRequest } from '../../paper-ports/executor-capabilities.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
-
-function treeManifest(root) {
-  const rows = [];
-  const walk = (current) => {
-    for (const entry of fs.readdirSync(current, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-      if (['.git', 'node_modules', 'runtime', '.artifact-cas'].includes(entry.name)) continue;
-      const absolute = path.join(current, entry.name);
-      const relative = path.relative(root, absolute).replace(/\\/g, '/');
-      if (entry.isDirectory()) walk(absolute);
-      else if (entry.isFile()) rows.push([relative, crypto.createHash('sha256').update(fs.readFileSync(absolute)).digest('hex')]);
-    }
-  };
-  walk(root);
-  return rows;
-}
-
-function changedPaths(before, after) {
-  const left = new Map(before);
-  const right = new Map(after);
-  return [...new Set([...left.keys(), ...right.keys()])].filter((key) => left.get(key) !== right.get(key)).sort();
-}
-
-function runProcess(spawnImpl, executable, args, options, prompt, timeoutMs, signal = null) {
-  return new Promise((resolve) => {
-    const child = spawnImpl(executable, args, { ...options, stdio: ['pipe', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    const timer = setTimeout(() => child.kill('SIGTERM'), timeoutMs);
-    const abort = () => child.kill('SIGTERM');
-    signal?.addEventListener('abort', abort, { once: true });
-    child.stdout?.on('data', (chunk) => { stdout += String(chunk); });
-    child.stderr?.on('data', (chunk) => { stderr += String(chunk); });
-    child.on('error', (error) => { clearTimeout(timer); signal?.removeEventListener('abort', abort); resolve({ exitCode: null, signal: null, stdout, stderr, error }); });
-    child.on('close', (exitCode, childSignal) => { clearTimeout(timer); signal?.removeEventListener('abort', abort); resolve({ exitCode, signal: childSignal, stdout, stderr, error: null }); });
-    child.stdin?.end(prompt);
-  });
-}
+import { runBoundedChildProcess } from './bounded-child-process.mjs';
+import { changedWorkspacePaths, createWorkspaceManifest, readOnlyMutationBlockers } from './workspace-change-tracker.mjs';
 
 export function createCodexAgentExecutor({
   codexBinary = 'codex',
@@ -75,7 +40,7 @@ export function createCodexAgentExecutor({
       if (!role || !instructions || !fs.existsSync(workspace) || !fs.statSync(workspace).isDirectory()) {
         throw new Error('agent role, existing workspacePath and instructions are required');
       }
-      const before = treeManifest(workspace);
+      const before = createWorkspaceManifest(workspace);
       const prompt = [
         `You are the ${role} for an automated paper campaign.`,
         'Work only inside the provided workspace. Do not submit externally, send messages, or access credentials.',
@@ -93,10 +58,23 @@ export function createCodexAgentExecutor({
       if (model) args.push('--model', model);
       args.push('--ephemeral', '--color', 'never', '--sandbox', sandbox, '--skip-git-repo-check', '--cd', workspace, '-');
       const startedAt = new Date().toISOString();
-      const processResult = await runProcess(spawnImpl, codexBinary, args, { cwd: workspace, env: { ...process.env, HEPTA_AUTOMATION_ROLE: role } }, prompt, Math.min(Number(requestedTimeout || timeoutMs), timeoutMs), signal);
+      const processResult = await runBoundedChildProcess({
+        spawnImpl,
+        executable: codexBinary,
+        args,
+        cwd: workspace,
+        env: { ...process.env, HEPTA_AUTOMATION_ROLE: role },
+        stdin: prompt,
+        timeoutMs: Math.min(Number(requestedTimeout || timeoutMs), timeoutMs),
+        signal,
+      });
       const completedAt = new Date().toISOString();
-      const after = treeManifest(workspace);
-      const changes = changedPaths(before, after);
+      const changes = changedWorkspacePaths(before, createWorkspaceManifest(workspace));
+      const blockers = [];
+      if (processResult.timedOut) blockers.push('codex_agent_timeout');
+      if (processResult.aborted) blockers.push('codex_agent_cancelled');
+      if (processResult.exitCode !== 0 || processResult.error) blockers.push('codex_agent_process_failed');
+      blockers.push(...readOnlyMutationBlockers({ sandbox, changedPaths: changes }));
       const payload = {
         version: 1,
         kind: 'AgentExecutionReceipt',
@@ -109,12 +87,14 @@ export function createCodexAgentExecutor({
         childSessionId: sessionId,
         maximumOutputTokens: outputTokenBudget ? Math.max(128, Number(outputTokenBudget)) : null,
         role,
-        status: processResult.exitCode === 0 && !processResult.error ? 'agent_execution_completed' : 'agent_execution_failed',
+        status: blockers.length ? 'agent_execution_failed' : 'agent_execution_completed',
         exitCode: processResult.exitCode,
         signal: processResult.signal,
         changedPaths: changes,
-        stdoutHash: `sha256:${crypto.createHash('sha256').update(processResult.stdout).digest('hex')}`,
-        stderrHash: `sha256:${crypto.createHash('sha256').update(processResult.stderr).digest('hex')}`,
+        blockers,
+        stdoutHash: processResult.stdoutHash,
+        stderrHash: processResult.stderrHash,
+        outputTruncated: processResult.outputTruncated,
         finalOutput: processResult.stdout.slice(-12000),
         stderrTail: processResult.stderr.slice(-12000),
         error: processResult.error?.message || null,
@@ -124,8 +104,8 @@ export function createCodexAgentExecutor({
       };
       const receipt = Object.freeze({ ...payload, agentExecutionReceiptHash: hashRecord('AgentExecutionReceipt', payload) });
       if (payload.status !== 'agent_execution_completed') {
-        const error = new Error(payload.error || `agent exited ${payload.exitCode}`);
-        error.retryable = true;
+        const error = new Error(blockers.join(',') || payload.error || `agent exited ${payload.exitCode}`);
+        error.retryable = !processResult.aborted && !blockers.includes('read_only_agent_modified_workspace');
         error.receipt = receipt;
         throw error;
       }

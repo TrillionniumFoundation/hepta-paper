@@ -10,7 +10,7 @@ test('batch summary handles an empty batch without manufacturing readiness', () 
   const summary = summarizeResults([]);
   assert.equal(summary.academicEvidenceVerified, 0);
   assert.equal(summary.submissionPreflight.externalActionsPerformed, 0);
-  assert.equal(summary.legacyCleanup, null);
+  assert.equal('legacyCleanup' in summary, false);
 });
 
 test('batch summary counts a sparse production result defensively', () => {
@@ -27,10 +27,10 @@ test('batch summary counts a sparse production result defensively', () => {
     localDiagnosticReviewLoop: {},
     venueResolution: {},
     sourceAdaptation: {},
-  }], { summary: { status: 'retired' } });
+  }]);
   assert.equal(summary.proposalStaging.staged, 1);
   assert.equal(summary.submissionPreflight.reviewedSubmitItems, 1);
-  assert.deepEqual(summary.legacyCleanup, { status: 'retired' });
+  assert.equal('legacyCleanup' in summary, false);
 });
 
 test('row and markdown summaries preserve the canonical paper columns', () => {

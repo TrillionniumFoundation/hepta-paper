@@ -6,22 +6,23 @@ import {
   walkFiles,
 } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
-import { writeJsonFile } from '../artifacts/write-artifact.mjs';
-import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
+import { writeJsonFile } from '../../paper-adapters/artifacts/write-artifact.mjs';
+import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
 import { buildMigrationMatrixAudit } from './migration-matrix.mjs';
-import { heptaStorePath } from '../../paper-core/src/hepta-store.mjs';
-import { resolveWorkspaceLayout } from '../../paper-core/src/workspace-layout.mjs';
+import { heptaStorePath } from '../../paper-adapters/persistence/store-paths.mjs';
+import { resolveWorkspaceLayout } from '../../paper-adapters/runtime/workspace-layout.mjs';
 
 import { RETIREMENT_WAVES, classifyLegacyFile, migrationTargetFor, migrationActionFor, retirementWaveFor, retirementWaveFamilyFor, priorityFor, enrichLegacyEntry } from './classification.mjs';
 import { detectHeptaCapabilities, countBy, sampleEntries, hashBound, entriesForWaveFamily, buildLegacyEntrypointDeprecationPacket, buildDataAssetExportPlan, buildMigrationBacklogPacket, migrationContractFamilyFor, verifiedDispositionForEntry, buildP0P1BacklogDrainReceipt, buildQuarantineManifest, liveExternalExecutorPolicyFinalized, dataAssetExportRecorded, p0P1BacklogDrained, waveBlockersFor, buildRetirementWavePackets, buildRetirementReadinessGate, buildRetirementPlan } from './retirement-planning.mjs';
 import { buildLegacyEntrypointFreezeReceipt, collectDataStoreRecords, nativeStoreMigrationStatus, buildHeptaDataAssetExportReceipt, buildMigrationCoverageReceipt, buildQuarantineIsolationReceipt, buildLiveExternalExecutorPolicyReceipt, buildOldControlPlaneRemovalReceipt, buildRetirementWaveExecutionReceipts, writeRetirementRuntimeReceipts } from './retirement-execution.mjs';
 
-export async function runLegacyCleanupAdapter({
+export async function runRetirementAudit({
   root,
   runtimeRoot = path.join(root, 'hepta-paper-workspace', 'runtime'),
   execute = false,
   store = null,
 } = {}) {
+  if (execute) throw new Error('historical_retirement_audit_is_read_only');
   const candidateRoots = [
     path.join(root, 'bin'),
     path.join(root, 'paperctl_modules'),

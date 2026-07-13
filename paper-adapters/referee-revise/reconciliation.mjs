@@ -26,21 +26,21 @@ import {
   buildRefereeRevisionApplyModeContract,
   buildRefereeRevisionExecuteDesignPacket,
   buildRefereeRevisionRollbackLedgerDraft,
-} from '../../paper-core/src/contracts/referee-planning.mjs';
+} from '../../paper-domain/contracts/referee-planning.mjs';
 import {
   buildRefereeApplyApprovalPacket,
   buildRefereePatchApplyExecution,
   buildRefereePatchApplyInvocation,
   buildRefereeAppliedPatchReceipt,
-} from '../../paper-core/src/contracts/referee-application.mjs';
+} from '../../paper-domain/contracts/referee-application.mjs';
 import {
   buildPostRepairBuildPackage,
   buildRefereeIssueResolutionProof,
   buildRepairReconciliation,
   buildRepairStateMutationReceipt,
-} from '../../paper-core/src/contracts/referee-closure.mjs';
-import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
-import { heptaStorePath } from '../../paper-core/src/hepta-store.mjs';
+} from '../../paper-domain/contracts/referee-closure.mjs';
+import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
+import { heptaStorePath } from '../../paper-adapters/persistence/store-paths.mjs';
 import {
   runLatexBuildAdapter,
   runPackageAdapter,

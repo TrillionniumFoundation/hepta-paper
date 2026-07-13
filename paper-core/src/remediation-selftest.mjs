@@ -8,13 +8,13 @@ import { buildCoreIntegrityReport, compareCoreFileRows } from './core-integrity.
 import { heptaStorePath } from './hepta-store.mjs';
 import { summarizeRows } from './batch-summary.mjs';
 import * as contractsFacade from './paper-contracts.mjs';
-import { buildRefereeReviewIntake as buildRefereeReviewIntakeDirect } from './contracts/referee-planning.mjs';
-import { buildRefereeApplyApprovalPacket as buildRefereeApplyApprovalPacketDirect } from './contracts/referee-application.mjs';
-import { buildRepairReconciliation as buildRepairReconciliationDirect } from './contracts/referee-closure.mjs';
-import { buildSubmissionApprovalPacket as buildSubmissionApprovalPacketDirect } from './contracts/submission.mjs';
-import { buildVenueResolutionPacket as buildVenueResolutionPacketDirect } from './contracts/intake-resolution.mjs';
+import { buildRefereeReviewIntake as buildRefereeReviewIntakeDirect } from '../../paper-domain/contracts/referee-planning.mjs';
+import { buildRefereeApplyApprovalPacket as buildRefereeApplyApprovalPacketDirect } from '../../paper-domain/contracts/referee-application.mjs';
+import { buildRepairReconciliation as buildRepairReconciliationDirect } from '../../paper-domain/contracts/referee-closure.mjs';
+import { buildSubmissionApprovalPacket as buildSubmissionApprovalPacketDirect } from '../../paper-domain/contracts/submission.mjs';
+import { buildVenueResolutionPacket as buildVenueResolutionPacketDirect } from '../../paper-domain/contracts/intake-resolution.mjs';
 import { discoverInventory } from '../../paper-adapters/inventory/index.mjs';
-import { buildMigrationMatrixAudit } from '../../paper-adapters/legacy-cleanup/migration-matrix.mjs';
+import { buildMigrationMatrixAudit } from '../../migration/retirement/migration-matrix.mjs';
 import {
   buildFreshRefereeVerdict,
   JOURNAL_PROFILES as journalProfilesFacade,

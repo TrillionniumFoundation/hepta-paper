@@ -1,26 +1,25 @@
 import path from 'node:path';
 import {
   paperWorkflowRow,
-} from '../../paper-core/src/paper-contracts.mjs';
-import { buildCoreIntegrityReport } from '../../paper-core/src/core-integrity.mjs';
-import { PAPER_BATCH_MODES, assertPaperMode } from '../../paper-core/src/mode-registry.mjs';
-import { runWorkflowStages } from '../../paper-core/src/workflow-engine.mjs';
+} from '../../paper-domain/contracts/index.mjs';
+import { buildCoreIntegrityReport } from '../../paper-adapters/runtime/core-integrity.mjs';
+import { PAPER_BATCH_MODES, assertPaperMode } from '../../paper-domain/workflow/mode-registry.mjs';
+import { runWorkflowStages } from '../workflow/workflow-engine.mjs';
 import {
   defaultPaperAssetRoot,
   defaultPaperRuntimeRoot,
-} from '../../paper-core/src/workspace-layout.mjs';
+} from '../../paper-adapters/runtime/workspace-layout.mjs';
 import { enterArtifactWriteContext } from '../../paper-adapters/artifacts/artifact-write-context.mjs';
 import { bootstrapPaperExecutionContext } from '../bootstrap/service-bootstrap.mjs';
 import { createPaperStageHandlers } from '../use-cases/paper-stage-handlers.mjs';
 import { discoverInventory } from '../../paper-adapters/inventory/index.mjs';
-import { runLegacyCleanupAdapter } from '../../paper-adapters/legacy-cleanup/index.mjs';
 import { runLocalDiagnosticReviewLoop } from '../use-cases/local-diagnostic-review-loop.mjs';
 import { projectWorkflowState } from '../projections/workflow-state-projector.mjs';
 import { buildBatchReport, persistBatchReport, renderBatchConsole } from '../reporting/batch-report-writer.mjs';
 import { buildTargetScopeReceipt } from '../../paper-domain/automation/target-scope-policy.mjs';
-import { bindPaperTaskQualityProfile } from '../../paper-core/src/contracts/workflow-contracts.mjs';
+import { bindPaperTaskQualityProfile } from '../../paper-domain/contracts/workflow-contracts.mjs';
 
-export { PAPER_BATCH_MODES } from '../../paper-core/src/mode-registry.mjs';
+export { PAPER_BATCH_MODES } from '../../paper-domain/workflow/mode-registry.mjs';
 
 function defaultRoot() {
   return defaultPaperAssetRoot();
@@ -94,22 +93,11 @@ export async function runPaperBatch({
     inventorySource: scan.inventorySource,
     inventoryFallback: scan.inventoryFallback,
     limit,
-    requireExplicitScope: Boolean(execute && ![
-      PAPER_BATCH_MODES.INVENTORY,
-      PAPER_BATCH_MODES.LEGACY_CLEANUP,
-    ].includes(mode)),
+    requireExplicitScope: Boolean(execute && mode !== PAPER_BATCH_MODES.INVENTORY),
   });
   if (execute && targetScopeReceipt.status !== 'target_scope_verified') {
     throw new Error(`Target scope gate blocked execution: ${targetScopeReceipt.blockers.join(',')}`);
   }
-  const legacyCleanupAudit = mode === PAPER_BATCH_MODES.LEGACY_CLEANUP
-    ? await runLegacyCleanupAdapter({
-      root: resolvedRoot,
-      runtimeRoot: resolvedRuntimeRoot,
-      execute,
-      store: executionContext.services.store,
-    })
-    : null;
   const results = [];
   for (const row of selectedRows) {
     const initialStageState = {
@@ -189,7 +177,7 @@ export async function runPaperBatch({
       lifecycle,
     });
   }
-  const report = buildBatchReport({ root: resolvedRoot, runtimeRoot: resolvedRuntimeRoot, mode, execute, targetOverride, datasetRoot, benchmarkId, applyManuscript, scan: { ...scan, rows: selectedRows }, results, legacyCleanupAudit, coreIntegrity, targetScopeReceipt });
+  const report = buildBatchReport({ root: resolvedRoot, runtimeRoot: resolvedRuntimeRoot, mode, execute, targetOverride, datasetRoot, benchmarkId, applyManuscript, scan: { ...scan, rows: selectedRows }, results, coreIntegrity, targetScopeReceipt });
   if (writeReport) await persistBatchReport(report);
   return report;
 }

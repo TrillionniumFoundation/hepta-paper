@@ -1,6 +1,6 @@
 import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
 import { nowIso } from '../../workflow-kernel/runtime/time-utils.mjs';
-import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
+import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
 import { academicEvidenceReady, reviewAuthorityBlockers } from './review-authority.mjs';
 import { JOURNAL_PROFILES } from './journal-registry.mjs';
 import { tokenText, profileScore, resolveJournalProfile, defaultJournalFallbackIds, withConferenceDeadlineRouting, profilePolicy, enrichProfile, normalizeAsOfDate, deadlineDate, nextMonthlyDeadline, nextAnnualDeadline, daysUntilDeadline, deadlineAssessmentForProfile, rankedItemForProfile, chooseJournalFallback, buildAgentDeadlineRoutingDecision, rankProfiles } from './selection.mjs';

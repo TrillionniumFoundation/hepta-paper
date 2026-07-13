@@ -8,8 +8,8 @@ import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqli
 import { issueReceiptWriterCapability } from '../../paper-adapters/persistence/receipt-issuer-policy.mjs';
 import { createFilesystemArtifactRepository } from '../../paper-adapters/artifacts/filesystem-artifact-repository.mjs';
 import { createSystemClock } from '../../paper-adapters/runtime/system-clock.mjs';
-import { currentCodeProvenance } from '../../paper-core/src/code-provenance.mjs';
-import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../../paper-core/src/workspace-layout.mjs';
+import { currentCodeProvenance } from '../../paper-adapters/runtime/code-provenance.mjs';
+import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../../paper-adapters/runtime/workspace-layout.mjs';
 
 if (!process.argv.includes('--execute')) {
   throw new Error('production capability verification refresh requires --execute');

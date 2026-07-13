@@ -1,3 +1,4 @@
+// Historical paper_factory retirement classification. This module is not part of the live adapter surface.
 import path from 'node:path';
 import fsp from 'node:fs/promises';
 import {
@@ -6,11 +7,11 @@ import {
   walkFiles,
 } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
-import { writeJsonFile } from '../artifacts/write-artifact.mjs';
-import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
+import { writeJsonFile } from '../../paper-adapters/artifacts/write-artifact.mjs';
+import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
 import { buildMigrationMatrixAudit } from './migration-matrix.mjs';
-import { heptaStorePath } from '../../paper-core/src/hepta-store.mjs';
-import { resolveWorkspaceLayout } from '../../paper-core/src/workspace-layout.mjs';
+import { heptaStorePath } from '../../paper-adapters/persistence/store-paths.mjs';
+import { resolveWorkspaceLayout } from '../../paper-adapters/runtime/workspace-layout.mjs';
 
 const RETIREMENT_WAVES = [
   {
@@ -171,7 +172,7 @@ function migrationTargetFor(relative, disposition) {
   if (disposition === 'retire_llm_or_manual_control_plane') return 'retired: old llm/manual control plane';
   if (disposition === 'retire_legacy_orchestration_control_plane') return 'retired: old orchestration control plane';
   if (disposition === 'quarantine_control_plane_report') return 'retired: report/capstone/matrix quarantine';
-  return 'paper-adapters/legacy-cleanup review queue';
+  return 'migration/retirement review queue';
 }
 
 function migrationActionFor(relative, disposition) {

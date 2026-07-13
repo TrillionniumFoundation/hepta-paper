@@ -6,7 +6,7 @@ import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-
 import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqlite-receipt-ledger.mjs';
 import { createFilesystemArtifactRepository } from '../../paper-adapters/artifacts/filesystem-artifact-repository.mjs';
 import { createSystemClock } from '../../paper-adapters/runtime/system-clock.mjs';
-import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../../paper-core/src/workspace-layout.mjs';
+import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../../paper-adapters/runtime/workspace-layout.mjs';
 import { assertIsolatedVerificationRuntime } from '../../paper-core/src/verification-runtime.mjs';
 
 assertIsolatedVerificationRuntime('capability conformance verification');

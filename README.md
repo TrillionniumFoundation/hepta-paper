@@ -6,6 +6,9 @@ code, execute empirical work, compile LaTeX, obtain independent referee
 reviews, revise, and revalidate affected artifacts. Live submission is a
 separate optional plane and is disabled by default.
 
+The single current architecture/runtime status is maintained in
+[`paper-core/docs/CURRENT_STATUS.md`](paper-core/docs/CURRENT_STATUS.md).
+
 ## Automation Plane
 
 The automation plane does not require owner signatures, academic authority
@@ -61,21 +64,23 @@ in `paper-core/docs/automation-plane.md`.
   `core/CORE_BASELINE.json`. It records historical upstream commit
   `3f90aa277a9a1bde6898dc6ddd9d25d49fa94f30`, but does **not** claim byte
   identity with that now-unavailable snapshot.
-- `paper-domain/` contains pure paper and submission contracts.
-- `paper-application/` contains use cases and bounded planning.
+- `paper-domain/` contains pure paper/submission contracts and the workflow
+  mode vocabulary.
+- `paper-application/` contains execution context, workflow orchestration, use
+  cases, bounded planning and reporting.
 - `paper-ports/` contains Store, Artifact, Worker, FormalVerifier, and
   SubmissionExecutor boundaries.
 - `paper-adapters/` contains native paper-domain and infrastructure adapters.
-- `paper-core/` contains the CLI, declarative mode registry, workflow engine,
-  execution context, summaries, and compatibility facades.
+- `paper-core/` contains CLI composition, selftests and compatibility facades;
+  it is not a second contract or runtime-utility owner.
 - `workflow-kernel/` is the small active, domain-neutral transition/hash
   kernel. The full vendored core remains a reference fork.
 
 Production defaults are physically separated: repository
 `/data/home-data/hepta-paper`, assets `/data/home-data/hepta-paper-assets`,
-runtime/store `/data/home-data/hepta-paper/runtime`, and frozen legacy archive
-`/data/home-data/paper_factory`. Compatibility symlinks are not production
-control-plane dependencies.
+runtime/store `/data/home-data/hepta-paper/runtime`, and immutable retirement
+references `/data/home-data/hepta-paper-legacy-reference`. The live
+`/data/home-data/paper_factory` tree has been retired and physically removed.
 
 ## Migration Rule
 
@@ -84,7 +89,11 @@ dispatch, replay, receipt, reconciliation, and settlement concepts are exposed
 through native contracts and ports. The full vendored core is hash-bound but is
 not claimed to be the active runtime implementation of every paper capability.
 
-The old `paper_factory` tree may only contribute paper-domain adapters:
+The old `paper_factory` tree no longer participates in runtime or development.
+Historical semantics can be inspected only through the immutable retirement
+snapshot and the read-only `migration/retirement/` audit. Any future feature
+must be reimplemented against the current contracts and ports, not copied from
+the legacy control plane. The retained behavioral replacements cover:
 
 - paper inventory and venue metadata
 - draft/source workspace discovery
@@ -109,17 +118,18 @@ submission_status, next_action, auto_level`.
 
 The clean overlay now lives outside the hepta snapshot:
 
-- `paper-core/` owns paper contracts, canonical state, CLI, batch runner, and
+- `paper-domain/` owns paper contracts; `paper-application/` owns the batch
+  workflow; `paper-core/` owns CLI composition, compatibility facades and
   selftests.
 - `paper-adapters/` owns plugin-style paper domain adapters.
 - `runtime/` is ignored output for local build/package/report dry runs.
 - `store/migrations/` owns the hepta-native SQLite schema. The runtime database
-  is `runtime/hepta-paper.sqlite`; legacy `paper_factory.sqlite` is import-only.
+  is `runtime/hepta-paper.sqlite`; no root-level legacy SQLite placeholder is
+  retained.
 
 Run:
 
 ```bash
-npm run store:migrate-legacy
 npm run store:status
 npm run store:logical-integrity
 npm run workspace:verify-decoupled
@@ -131,6 +141,7 @@ npm run paper:authority-selftest
 npm run paper:architecture-selftest
 npm run taskflow:pilot-selftest
 npm run coverage:architecture
+npm run coverage:critical-modules
 npm run coverage:repository
 npm run coverage:system
 npm run authority:status
@@ -141,6 +152,7 @@ npm run assets:cold-volume-status
 npm run assets:cold-volume-cas-status
 npm run legacy:fixture-verify
 npm run legacy:matrix-reference-status
+npm run migration:retirement-status
 npm run offhost:worm-status
 node paper-core/bin/paper-production-core.mjs proposal --idea "distributionally robust reinforcement learning for stochastic control" --discipline "machine learning" --venue NeurIPS --write-report
 node paper-core/bin/paper-production-core.mjs proposal --idea "distributionally robust reinforcement learning for stochastic control" --discipline "machine learning" --venue NeurIPS --approved --materialize-source --write-report
@@ -160,7 +172,7 @@ The proposal staging path writes only `runtime/proposal-staging/*.json`, a
 runtime source skeleton, and proposal-derived seed contracts. It lets inventory
 see an approved proposal as a staged `PaperTask` with
 `research_verify_status=proposal_seed_present`, without mutating
-the hepta-native store, legacy `paper_factory.sqlite`, YAML registry files, or
+the hepta-native store, retired legacy data, YAML registry files, or
 external venues.
 
 The deterministic empirical runner is pipeline smoke only. Its simulator
@@ -172,17 +184,13 @@ academic acceptance authority. The complete authority protocol is documented
 in `paper-core/docs/authority-pipeline.md`.
 
 Legacy capability decisions and the target layering are documented in
-`paper-core/docs/architecture-v3.md`. The 249 retired legacy source files are
-not treated as 249 business capabilities: 88 are permanent retirements, 40
-need native coverage proof, and 121 are compressed into bounded native
-capabilities. Owner acceptance is still pending for all 249 decisions.
-
-Owner acceptance is requested as 13 hash-bound capability families, each of
-which expands to an exact, non-overlapping set of legacy matrix entries only
-after an external `capability_owner` signature verifies. Production-bound
-operational proof is separately ingested per native capability and must bind
-real input/result/replay hashes, the current release commit and current target
-hashes. Conformance receipts cannot qualify.
+`paper-core/docs/architecture-v3.md`. The 249 retired legacy source decisions
+are grouped into 19 hash-bound families. All 249 currently have
+`local_admin_delegated` acceptance; none is represented as independent
+external-owner acceptance. Fourteen production-source-bound conformance
+replays are separate from production operational proof. Operational proof
+requires distinct externally trusted capability-owner and operational-observer
+signatures and remains 0/14 until such evidence is ingested.
 
 The 15 unavailable `NDU_Nature_work` cold-data links are governed by
 `paper-core/config/cold-volume-contract.v1.json`. Contract verification is a

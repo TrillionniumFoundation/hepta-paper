@@ -8,7 +8,7 @@ import {
   sha256File,
 } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { inspectScopedPathSync, inspectScopedWriteTargetSync, readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
-import { hashPaperRecord } from '../../paper-core/src/paper-contract-primitives.mjs';
+import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
 import { createLeanFormalVerifier } from './formal-verifier.mjs';
 import { createLakeFormalVerifier } from './lake-formal-verifier.mjs';
 import { SYSTEM_ALLOWED_FORMAL_AXIOMS, formalAxiomPolicyBlockers } from '../../paper-domain/research/formal-verifier-policy.mjs';

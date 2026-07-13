@@ -1,6 +1,6 @@
 # hepta-paper current status
 
-This is the normative status for the `v0.20.1` architecture release. Older remediation,
+This is the normative status for the `v0.20.2` architecture release. Older remediation,
 phase and retirement documents are historical records and do not override it.
 
 ## Architecture

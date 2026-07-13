@@ -3,7 +3,20 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { selectCurrentReleaseVerificationReceipt } from '../bin/release-evidence-lib.mjs';
+import { releaseAttestationCodeProvenance, selectCurrentReleaseVerificationReceipt } from '../bin/release-evidence-lib.mjs';
+
+test('release attestation is administrative evidence rather than production runtime evidence', () => {
+  const provenance = releaseAttestationCodeProvenance({
+    packageVersion: '0.20.2',
+    commit: 'current-commit',
+    treeDirty: false,
+    evidenceEnvironment: 'production',
+    evidenceClass: 'runtime_unclassified',
+  });
+  assert.equal(provenance.evidenceEnvironment, 'administrative');
+  assert.equal(provenance.evidenceClass, 'release_attestation');
+  assert.equal(provenance.commit, 'current-commit');
+});
 
 test('release evidence invalidates a stale pass when the latest exact-identity receipt is blocked', (t) => {
   const verificationRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-release-receipt-'));

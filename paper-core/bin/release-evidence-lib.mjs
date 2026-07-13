@@ -109,8 +109,16 @@ export function selectCurrentReleaseVerificationReceipt({ verificationRoot, code
   return latest?.status === 'isolated_verification_passed' ? latest : null;
 }
 
+export function releaseAttestationCodeProvenance(provenance = currentCodeProvenance()) {
+  return Object.freeze({
+    ...provenance,
+    evidenceEnvironment: 'administrative',
+    evidenceClass: 'release_attestation',
+  });
+}
+
 export function buildReleaseEvidenceBundle({ runtimeRoot, legacyRoot } = {}) {
-  const codeProvenance = currentCodeProvenance();
+  const codeProvenance = releaseAttestationCodeProvenance();
   const verificationRoot = path.join(runtimeRoot, 'release-evidence', 'verification-receipts');
   const verificationReceipt = selectCurrentReleaseVerificationReceipt({ verificationRoot, codeProvenance });
   const legacyDb = path.join(legacyRoot, 'paper_factory.sqlite');

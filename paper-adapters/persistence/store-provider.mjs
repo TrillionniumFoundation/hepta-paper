@@ -25,6 +25,7 @@ const migrations = [
   { version: 16, name: '016_submission_delivery_leases', path: path.join(workspaceRoot, 'store', 'migrations', '016_submission_delivery_leases.sql') },
   { version: 17, name: '017_trusted_evidence_and_response_consumption', path: path.join(workspaceRoot, 'store', 'migrations', '017_trusted_evidence_and_response_consumption.sql') },
   { version: 18, name: '018_append_only_receipt_ledger', path: path.join(workspaceRoot, 'store', 'migrations', '018_append_only_receipt_ledger.sql') },
+  { version: 19, name: '019_effective_receipt_ledger', path: path.join(workspaceRoot, 'store', 'migrations', '019_effective_receipt_ledger.sql') },
 ];
 
 function sqlQuote(value) {

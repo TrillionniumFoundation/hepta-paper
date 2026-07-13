@@ -2,10 +2,6 @@ import path from 'node:path';
 import { ensureDir } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { normalizeText } from '../../workflow-kernel/runtime/text-utils.mjs';
 import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
-import { writeJsonFile } from '../../paper-adapters/artifacts/write-artifact.mjs';
-import {
-  buildJournalConferenceRegistry, buildJournalConferenceSystemPacket, buildJournalTargetProfile, buildTargetSelectionPolicy,
-} from '../../paper-adapters/journal-manage/index.mjs';
 import { executeLocalDiagnosticRound } from './local-diagnostic-round-executor.mjs';
 
 export async function runLocalDiagnosticReviewLoop({
@@ -13,6 +9,16 @@ export async function runLocalDiagnosticReviewLoop({
   targetOverride = null, datasetRoot = null, benchmarkId = null, applyManuscript = false,
 } = {}) {
   if (!services?.store || !services?.receiptLedger) throw new Error('Local diagnostic loop requires ExecutionContext services');
+  const {
+    buildJournalConferenceRegistry,
+    buildJournalConferenceSystemPacket,
+    buildJournalTargetProfile,
+    buildTargetSelectionPolicy,
+    writeJsonFile,
+  } = services.paperStageAdapters || {};
+  if (!buildJournalConferenceRegistry || !writeJsonFile) {
+    throw new Error('Local diagnostic loop requires composed paperStageAdapters');
+  }
   const roundLimit = Math.max(1, Math.min(20, Number(maxRounds) || 6));
   const minimumFreshRefereeRounds = 1;
   const normalizedTargetOverride = normalizeText(targetOverride || '');

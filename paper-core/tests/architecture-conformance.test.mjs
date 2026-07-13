@@ -196,13 +196,14 @@ test('research bounded contexts apply typed worker requirements to formal claims
   const blocked = buildEvidenceQualityGate({ paperTask, claimRegistry, evidenceIntake, nativeWorkerReceipts: [] });
   assert.equal(blocked.status, 'evidence_quality_blocked');
   assert.equal(buildResearchGapPlan({ paperTask, claimRegistry, evidenceQualityGate: blocked }).jobs.length, 1);
-  const ready = buildEvidenceQualityGate({
+  const forgedWorker = buildEvidenceQualityGate({
     paperTask,
     claimRegistry,
     evidenceIntake,
     nativeWorkerReceipts: [{ status: 'native_research_worker_receipt_verified', receiptHash: 'sha256:receipt', sourceSnapshotHash: 'sha256:source', claimIds: ['claim-1'] }],
   });
-  assert.equal(ready.status, 'evidence_quality_ready');
+  assert.equal(forgedWorker.status, 'evidence_quality_blocked');
+  assert.equal(forgedWorker.workerLedgerVerifications[0].status, 'trusted_ledger_receipt_blocked');
 });
 
 test('capability and journal datasets are versioned and schema-valid', () => {
@@ -270,6 +271,14 @@ test('production modules do not bypass StorePort or restore autopilot acceptance
   assert.equal(/from ['"][^'"]*paper-core\/src\//.test(adapterSource), false);
   const applicationSource = productionFiles.filter((file) => file.includes(`${path.sep}paper-application${path.sep}`)).map((file) => fs.readFileSync(file, 'utf8')).join('\n');
   assert.equal(/from ['"][^'"]*paper-core\/src\//.test(applicationSource), false);
+  const applicationUseCaseFiles = productionFiles.filter((file) => file.includes(`${path.sep}paper-application${path.sep}use-cases${path.sep}`));
+  const directUseCaseAdapterImports = applicationUseCaseFiles.filter((file) => /from ['"][^'"]*paper-adapters\//.test(fs.readFileSync(file, 'utf8')));
+  assert.deepEqual(directUseCaseAdapterImports, []);
+  const directIssuerMintConsumers = productionFiles.filter((file) => {
+    if (file.endsWith(`${path.sep}receipt-writer-broker.mjs`) || file.endsWith(`${path.sep}receipt-issuer-policy.mjs`)) return false;
+    return fs.readFileSync(file, 'utf8').includes('issueReceiptWriterCapability');
+  });
+  assert.deepEqual(directIssuerMintConsumers, []);
   const writeFacade = fs.readFileSync(path.join(workspaceRoot, 'paper-adapters', 'artifacts', 'write-artifact.mjs'), 'utf8');
   assert.equal(writeFacade.includes('createFilesystemArtifactRepository'), false);
   assert.equal(writeFacade.includes('requires an ExecutionContext-backed persistent ledger'), true);

@@ -21,7 +21,9 @@ assert.deepEqual(matrix.summary.byDecision, {
 assert.equal(matrix.summary.uniqueCapabilityCount, 5);
 assert.equal(matrix.summary.decisionMapped, 249);
 assert.equal(matrix.summary.contractsDefined, 249);
-assert.ok(matrix.summary.implementationVerified >= 0 && matrix.summary.implementationVerified <= 40);
+const releaseProfile = process.argv.includes('--release-profile');
+if (releaseProfile) assert.equal(matrix.summary.implementationVerified, 40);
+else assert.ok(matrix.summary.implementationVerified >= 0 && matrix.summary.implementationVerified <= 40);
 assert.equal(matrix.summary.implementationNotApplicable, 209);
 assert.equal(matrix.summary.operationallyProven + matrix.summary.operationallyNotProven, 40);
 assert.equal(matrix.summary.ownerAccepted + matrix.summary.ownerAcceptancePending, 249);
@@ -82,5 +84,6 @@ for (const entry of matrix.entries) {
 process.stdout.write(JSON.stringify({
   ok: true,
   kind: 'LegacyCapabilityMigrationMatrixV3Test',
+  releaseProfile,
   ...matrix.summary,
 }) + '\n');

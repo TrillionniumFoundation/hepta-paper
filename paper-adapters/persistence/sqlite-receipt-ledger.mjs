@@ -68,10 +68,10 @@ export function createSqliteReceiptLedger({ store, clock, writerIdentity = null,
       const { sql: _sql, ...recorded } = prepared;
       return Object.freeze(recorded);
     },
-    get(receiptId) {
+    getRawForAudit(receiptId) {
       return store.query(`SELECT * FROM receipt_ledger WHERE receipt_id=${sqlText(receiptId)} LIMIT 1;`).rows[0] || null;
     },
-    list({ stream = null, paperId = null, environment = null, evidenceClass = null, limit = 100 } = {}) {
+    listRawForAudit({ stream = null, paperId = null, environment = null, evidenceClass = null, limit = 100 } = {}) {
       const filters = [
         ...(stream ? [`stream=${sqlText(stream)}`] : []),
         ...(paperId ? [`paper_id=${sqlText(paperId)}`] : []),
@@ -79,6 +79,46 @@ export function createSqliteReceiptLedger({ store, clock, writerIdentity = null,
         ...(evidenceClass ? [`evidence_class=${sqlText(evidenceClass)}`] : []),
       ];
       return store.query(`SELECT * FROM receipt_ledger${filters.length ? ` WHERE ${filters.join(' AND ')}` : ''} ORDER BY created_at DESC LIMIT ${Math.max(1, Math.min(1000, Number(limit) || 100))};`).rows;
+    },
+    get(receiptId) {
+      return store.query(`SELECT * FROM effective_receipt_ledger WHERE receipt_id=${sqlText(receiptId)} LIMIT 1;`).rows[0] || null;
+    },
+    resolveEffective(receiptId, { maxDepth = 16 } = {}) {
+      const visited = new Set();
+      const lineage = [];
+      let currentReceiptId = receiptId;
+      for (let depth = 0; depth < Math.max(1, Math.min(64, Number(maxDepth) || 16)); depth += 1) {
+        if (visited.has(currentReceiptId)) return Object.freeze({ status: 'effective_receipt_resolution_blocked', receiptRow: null, lineage, blockers: ['trusted_receipt_replacement_cycle'] });
+        visited.add(currentReceiptId);
+        const row = store.query(`SELECT * FROM effective_receipt_ledger WHERE receipt_id=${sqlText(currentReceiptId)} LIMIT 1;`).rows[0] || null;
+        if (!row) return Object.freeze({ status: 'effective_receipt_resolution_blocked', receiptRow: null, lineage, blockers: ['trusted_receipt_ledger_row_missing'] });
+        if (Number(row.effective_receipt_usable ?? 1) === 1) return Object.freeze({ status: 'effective_receipt_resolved', receiptRow: row, lineage, blockers: [] });
+        const qualification = store.query(`SELECT * FROM receipt_ledger_qualifications WHERE receipt_id=${sqlText(currentReceiptId)} ORDER BY sequence DESC LIMIT 1;`).rows[0] || null;
+        if (!qualification) return Object.freeze({ status: 'effective_receipt_resolution_blocked', receiptRow: row, lineage, blockers: ['trusted_receipt_qualification_missing'] });
+        let payload = null;
+        try { payload = JSON.parse(qualification.qualification_json); } catch { /* fail closed below */ }
+        const qualificationHashValid = Boolean(payload)
+          && hashRecord('ReceiptLedgerQualification', payload) === qualification.qualification_sha256
+          && payload.receiptId === currentReceiptId
+          && (payload.replacementReceiptId || null) === (qualification.replacement_receipt_id || null);
+        if (!qualificationHashValid) return Object.freeze({ status: 'effective_receipt_resolution_blocked', receiptRow: row, lineage, blockers: ['trusted_receipt_qualification_hash_invalid'] });
+        lineage.push(Object.freeze({ receiptId: currentReceiptId, disposition: qualification.disposition, replacementReceiptId: qualification.replacement_receipt_id || null, qualificationHash: qualification.qualification_sha256 }));
+        if (qualification.disposition !== 'superseded' || !qualification.replacement_receipt_id) {
+          return Object.freeze({ status: 'effective_receipt_resolution_blocked', receiptRow: row, lineage, blockers: [`trusted_receipt_qualified_${qualification.disposition || 'unusable'}`] });
+        }
+        currentReceiptId = qualification.replacement_receipt_id;
+      }
+      return Object.freeze({ status: 'effective_receipt_resolution_blocked', receiptRow: null, lineage, blockers: ['trusted_receipt_replacement_depth_exceeded'] });
+    },
+    list({ stream = null, paperId = null, environment = null, evidenceClass = null, includeQualified = false, limit = 100 } = {}) {
+      const filters = [
+        ...(stream ? [`stream=${sqlText(stream)}`] : []),
+        ...(paperId ? [`paper_id=${sqlText(paperId)}`] : []),
+        ...(environment ? [`environment=${sqlText(environment)}`] : []),
+        ...(evidenceClass ? [`evidence_class=${sqlText(evidenceClass)}`] : []),
+        ...(!includeQualified ? ['effective_receipt_usable=1'] : []),
+      ];
+      return store.query(`SELECT * FROM effective_receipt_ledger${filters.length ? ` WHERE ${filters.join(' AND ')}` : ''} ORDER BY created_at DESC LIMIT ${Math.max(1, Math.min(1000, Number(limit) || 100))};`).rows;
     },
   });
 }

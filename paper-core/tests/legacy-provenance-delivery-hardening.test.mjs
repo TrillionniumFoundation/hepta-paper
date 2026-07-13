@@ -9,7 +9,7 @@ import { buildProviderCapabilitySubject, verifyProviderCapabilityAttestation } f
 import { verifySignedAmbiguousRedriveReview } from '../../paper-adapters/submission/redrive-review-verification.mjs';
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqlite-receipt-ledger.mjs';
-import { issueReceiptWriterCapability } from '../../paper-adapters/persistence/receipt-issuer-policy.mjs';
+import { issueTestArtifactRepositoryWriter } from '../../paper-adapters/persistence/receipt-writer-broker.mjs';
 import { createFilesystemArtifactRepository } from '../../paper-adapters/artifacts/filesystem-artifact-repository.mjs';
 import { verifyArtifactWriteReceiptSource } from '../../paper-adapters/artifacts/artifact-write-receipt-verifier.mjs';
 import { verifyTrustedLedgerReceipt } from '../../paper-domain/evidence/trusted-ledger-receipt.mjs';
@@ -20,11 +20,61 @@ import { submissionExecutorDescriptor } from '../../paper-ports/submission-execu
 import { buildExperimentEvidenceBinding } from '../../paper-domain/research/experiment-evidence-binding.mjs';
 import { buildFormalVerifierRegistry } from '../../paper-domain/research/formal-verifier-registry.mjs';
 import { buildGenericFormalCertificateIntake } from '../../paper-domain/research/formal-certificate-intake.mjs';
+import { buildRefereeAppliedPatchReceipt } from '../../paper-domain/contracts/referee-application.mjs';
 import { buildReviewedVenueEvidence } from '../../paper-domain/submission/reviewed-venue-evidence.mjs';
 import { buildSubmissionRedriveDecision } from '../../paper-domain/submission/redrive-decision.mjs';
 import { signAuthorityDocument } from '../src/authority-signatures.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { h, trustedExperimentFixture, trustedFormalFixture, trustedVenueFixture } from './trusted-evidence-test-support.mjs';
+
+test('referee applied-patch receipt fails closed without a postimage and records complete lineage', () => {
+  const paperTask = { paperId: 'paper-referee-apply', taskKey: 'paper:paper-referee-apply' };
+  const issueQueue = {
+    kind: 'RefereeRevisionIssueQueue',
+    issueCount: 1,
+    openIssueCount: 1,
+    refereeRevisionIssueQueueHash: h('1'),
+  };
+  const patchPlan = {
+    kind: 'RefereeRevisionPatchPlan',
+    refereeRevisionPatchPlanHash: h('2'),
+  };
+  const patchApplyExecution = {
+    status: 'referee_patch_apply_ready_for_separate_executor',
+    refereePatchApplyExecutionHash: h('3'),
+    plannedPatchInputs: [{ patchId: 'patch-1', patchSha256: h('4') }],
+  };
+  const patchApplyInvocation = {
+    status: 'referee_patch_apply_invocation_applied',
+    refereePatchApplyInvocationHash: h('5'),
+    targetPreimageChecks: [{ targetPath: 'paper.tex', actualPreimageHash: h('6') }],
+  };
+  const base = {
+    paperTask,
+    issueQueue,
+    patchPlan,
+    patchApplyExecution,
+    patchApplyInvocation,
+    applied: true,
+    executorId: 'isolated-referee-patch-executor',
+    createdAt: '2026-07-13T00:00:00.000Z',
+  };
+
+  const missingPostimage = buildRefereeAppliedPatchReceipt(base);
+  assert.equal(missingPostimage.status, 'applied_patch_receipt_blocked');
+  assert.deepEqual(missingPostimage.blockers, ['postimage_snapshot_required']);
+  assert.equal(missingPostimage.sourceMutationPerformed, false);
+
+  const recorded = buildRefereeAppliedPatchReceipt({
+    ...base,
+    postimageRecords: [{ targetPath: 'paper.tex', postimageHash: h('7'), sizeBytes: 1024 }],
+  });
+  assert.equal(recorded.status, 'applied_patch_receipt_recorded');
+  assert.equal(recorded.appliedPatchPerformed, true);
+  assert.equal(recorded.postimageCount, 1);
+  assert.equal(recorded.hashChain.patchApplyInvocationHash, h('5'));
+  assert.equal(recorded.postimageRecords[0].postimageHash, h('7'));
+});
 
 test('venue evidence and redrive lineage are source verified and authorization bound', () => {
   const paperTask = { paperId: 'p', taskKey: 'paper:p', venueTarget: 'Journal X' };
@@ -68,7 +118,7 @@ test('trusted ledger metadata and actual CAS bytes are both required', async (t)
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const store = createDefaultPaperStore({ root, runtimeRoot: root }); t.after(() => store.close());
   const clock = { now: () => new Date('2026-07-13T00:00:00Z'), nowIso: () => '2026-07-13T00:00:00.000Z' };
-  const ledger = createSqliteReceiptLedger({ store, clock, issuerCapability: issueReceiptWriterCapability('test-artifact-repository') });
+  const ledger = createSqliteReceiptLedger({ store, clock, issuerCapability: issueTestArtifactRepositoryWriter() });
   const repository = createFilesystemArtifactRepository({ scopeRoot: root, casRoot: path.join(root, 'cas'), receiptLedger: ledger, clock });
   const written = await repository.writeJson(path.join(root, 'evidence.json'), { verified: true }, { role: 'venue-observation' });
   assert.equal(verifyArtifactWriteReceiptSource({ receipt: written }).status, 'artifact_write_receipt_source_verified');

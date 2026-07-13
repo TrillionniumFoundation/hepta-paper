@@ -5,7 +5,7 @@ import path from 'node:path';
 import { createDefaultPaperStore, createReadOnlyPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqlite-receipt-ledger.mjs';
 import { createSqliteReceiptLedgerQualificationStore } from '../../paper-adapters/persistence/sqlite-receipt-ledger-qualification.mjs';
-import { issueReceiptWriterCapability } from '../../paper-adapters/persistence/receipt-issuer-policy.mjs';
+import { issueLedgerAdministratorWriter } from '../../paper-adapters/persistence/receipt-writer-broker.mjs';
 import { createSystemClock } from '../../paper-adapters/runtime/system-clock.mjs';
 import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
@@ -17,7 +17,7 @@ const store = execute
   ? createDefaultPaperStore({ root: defaultPaperAssetRoot(), runtimeRoot, dbPath })
   : createReadOnlyPaperStore({ root: defaultPaperAssetRoot(), runtimeRoot, dbPath });
 const clock = createSystemClock();
-const administratorCapability = execute ? issueReceiptWriterCapability('ledger-administrator') : null;
+const administratorCapability = execute ? issueLedgerAdministratorWriter() : null;
 const ledger = execute ? createSqliteReceiptLedger({ store, clock, issuerCapability: administratorCapability }) : null;
 const qualifications = execute ? createSqliteReceiptLedgerQualificationStore({ store, clock, issuerCapability: administratorCapability }) : null;
 const quarantineRoot = path.join(runtimeRoot, 'quarantine', 'pre-v0.5-runtime-evidence');
@@ -27,6 +27,7 @@ const contaminatedReceipts = store.query(`
   WHERE (
     (environment='verification' AND evidence_class='technical_conformance')
     OR (environment='production' AND evidence_class='runtime_unclassified')
+    OR (environment='production' AND evidence_class='release_conformance_with_operational_binding')
   )
   AND NOT EXISTS (
     SELECT 1 FROM receipt_ledger_qualifications AS qualification
@@ -44,6 +45,7 @@ const receiptExportPayload = {
   selection: [
     'verification/technical_conformance receipts do not belong in the production ledger',
     'production/runtime_unclassified receipts were created after schema-v3 isolation and cannot qualify as evidence',
+    'production/release_conformance_with_operational_binding receipts are conformance evidence and cannot qualify as operational evidence',
   ],
   rows: contaminatedReceipts,
 };

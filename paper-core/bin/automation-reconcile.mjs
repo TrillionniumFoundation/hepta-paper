@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { planAutomationRuntimeReconciliation, executeAutomationRuntimeReconciliation } from '../../paper-adapters/automation/automation-runtime-reconciler.mjs';
-import { issueReceiptWriterCapability } from '../../paper-adapters/persistence/receipt-issuer-policy.mjs';
+import { issueAutomationReconcilerWriter } from '../../paper-adapters/persistence/receipt-writer-broker.mjs';
 import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqlite-receipt-ledger.mjs';
 import { createDefaultPaperStore, createReadOnlyPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { createSystemClock } from '../../paper-adapters/runtime/system-clock.mjs';
@@ -16,7 +16,7 @@ try {
     ? executeAutomationRuntimeReconciliation({
         store,
         clock,
-        receiptLedger: createSqliteReceiptLedger({ store, clock, issuerCapability: issueReceiptWriterCapability('automation-reconciler') }),
+        receiptLedger: createSqliteReceiptLedger({ store, clock, issuerCapability: issueAutomationReconcilerWriter() }),
       })
     : planAutomationRuntimeReconciliation({ store, clock });
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

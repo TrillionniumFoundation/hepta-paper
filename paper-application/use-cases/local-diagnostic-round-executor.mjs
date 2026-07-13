@@ -2,16 +2,6 @@ import { nowIso } from '../../workflow-kernel/runtime/time-utils.mjs';
 import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
 import { sqlEscape } from '../../paper-ports/store-port.mjs';
 import { PAPER_BATCH_MODES } from '../../paper-domain/workflow/mode-registry.mjs';
-import { runLatexBuildAdapter, runPackageAdapter } from '../../paper-adapters/build-package/index.mjs';
-import { runEmpiricalAnalysisAdapter } from '../../paper-adapters/empirical-analysis/index.mjs';
-import { runResearchVerifyAdapter } from '../../paper-adapters/research-verify/index.mjs';
-import { runRefereeReviewAdapter } from '../../paper-adapters/referee-review/index.mjs';
-import { runRefereeReviseAdapter } from '../../paper-adapters/referee-revise/index.mjs';
-import { buildSubmissionLifecycle, prepareSubmissionAuthorities } from '../../paper-adapters/submission/index.mjs';
-import {
-  buildFreshRefereeVerdict, buildFreshRefereePool, buildJournalRubricPacket,
-  buildVenueEvidenceGate, buildVenueLifecyclePolicy, buildVenueRubricManager,
-} from '../../paper-adapters/journal-manage/index.mjs';
 
 function openRefereeIssueCount(store, paperId) {
   return Number(store.query(`select count(*) as count from referee_revision_requests where slug='${sqlEscape(paperId)}' and status not in ('resolved','closed');`).rows[0]?.count || 0);
@@ -22,6 +12,25 @@ export async function executeLocalDiagnosticRound({
   normalizedTargetOverride, targetOverrideApplied, targetJournalProfile, targetSelectionPolicy,
   datasetRoot, benchmarkId, applyManuscript,
 } = {}) {
+  const {
+    buildFreshRefereePool,
+    buildFreshRefereeVerdict,
+    buildJournalRubricPacket,
+    buildSubmissionLifecycle,
+    buildVenueEvidenceGate,
+    buildVenueLifecyclePolicy,
+    buildVenueRubricManager,
+    prepareSubmissionAuthorities,
+    runEmpiricalAnalysisAdapter,
+    runLatexBuildAdapter,
+    runPackageAdapter,
+    runRefereeReviewAdapter,
+    runRefereeReviseAdapter,
+    runResearchVerifyAdapter,
+  } = services?.paperStageAdapters || {};
+  if (!runRefereeReviewAdapter || !runResearchVerifyAdapter || !buildFreshRefereeVerdict) {
+    throw new Error('Local diagnostic round requires composed paperStageAdapters');
+  }
   const roundStartedAt = nowIso();
   const openBefore = openRefereeIssueCount(services.store, row.task.paperId);
   const refereeReview = await runRefereeReviewAdapter({ root, runtimeRoot, row, execute: Boolean(execute), store: services.store });

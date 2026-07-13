@@ -16,6 +16,7 @@ export function buildExperimentRegistry({ paperTask, artifacts = [], receiptLedg
     const requiredOutputs = (contract.requiredOutputs?.length ? contract.requiredOutputs : artifact.requiredOutputs || []).map(String);
     const record = {
       experimentId: String(artifact.experimentId || artifact.experiment_id || artifact.id || `experiment-${index + 1}`),
+      claimIds: (Array.isArray(artifact.claimIds) ? artifact.claimIds : Array.isArray(artifact.claim_ids) ? artifact.claim_ids : []).map(String),
       runId: String(artifact.runId || artifact.run_id || ''),
       datasetHash: artifact.datasetHash || null,
       metric: artifact.metric || null,

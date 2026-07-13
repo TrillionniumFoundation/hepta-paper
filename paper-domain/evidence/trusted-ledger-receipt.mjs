@@ -6,6 +6,7 @@ function parseStoredReceipt(row) {
 
 function selfHashField(receipt = {}) {
   if (receipt.kind === 'ArtifactWriteReceipt') return 'writeReceiptHash';
+  if (receipt.kind === 'NativeResearchWorkerExecutionReceipt') return 'nativeResearchWorkerExecutionReceiptHash';
   if (receipt.receiptHash) return 'receiptHash';
   if (receipt.jobReceiptHash) return 'jobReceiptHash';
   return null;
@@ -33,13 +34,20 @@ export function verifyTrustedLedgerReceipt({
   if (!receiptLedger || typeof receiptLedger.get !== 'function') blockers.push('trusted_receipt_ledger_required');
   if (!receipt || typeof receipt !== 'object') blockers.push('trusted_receipt_missing');
   if (!ledgerReceiptId) blockers.push('trusted_receipt_ledger_id_missing');
-  const row = receiptLedger && ledgerReceiptId ? receiptLedger.get(ledgerReceiptId) : null;
+  const effectiveResolution = receiptLedger && ledgerReceiptId && typeof receiptLedger.resolveEffective === 'function'
+    ? receiptLedger.resolveEffective(ledgerReceiptId)
+    : null;
+  blockers.push(...(effectiveResolution?.blockers || []));
+  const row = effectiveResolution?.receiptRow || (receiptLedger && ledgerReceiptId ? receiptLedger.get(ledgerReceiptId) : null);
   if (!row) blockers.push('trusted_receipt_ledger_entry_missing');
   const stored = parseStoredReceipt(row);
   if (!stored) blockers.push('trusted_receipt_ledger_payload_invalid');
   if (expectedKinds.length && !expectedKinds.includes(receipt?.kind)) blockers.push('trusted_receipt_kind_invalid');
   if (expectedStatuses.length && !expectedStatuses.includes(receipt?.status)) blockers.push('trusted_receipt_status_invalid');
   if (expectedStreams.length && !expectedStreams.includes(row?.stream)) blockers.push('trusted_receipt_stream_invalid');
+  if (!effectiveResolution && row && Number(row.effective_receipt_usable ?? 1) !== 1) {
+    blockers.push(`trusted_receipt_qualified_${row.effective_disposition || 'unusable'}`);
+  }
   if (requireTrustedWriter && Number(row?.writer_trusted || 0) !== 1) blockers.push('trusted_receipt_writer_untrusted');
   if (requireTrustedWriter && (!row?.writer_id || !row?.writer_kind)) blockers.push('trusted_receipt_writer_identity_missing');
   if (requireTrustedWriter && (!row?.issuer_policy_id || !row?.issuer_policy_hash)) blockers.push('trusted_receipt_issuer_capability_missing');
@@ -50,7 +58,7 @@ export function verifyTrustedLedgerReceipt({
   const claimedHash = hashField ? receipt?.[hashField] : null;
   const recomputedHash = receipt ? recomputeReceiptHash(receipt) : null;
   if (!claimedHash || claimedHash !== recomputedHash) blockers.push('trusted_receipt_hash_invalid');
-  if (row && row.receipt_id !== ledgerReceiptId) blockers.push('trusted_receipt_ledger_identity_mismatch');
+  if (!effectiveResolution && row && row.receipt_id !== ledgerReceiptId) blockers.push('trusted_receipt_ledger_identity_mismatch');
   if (row && claimedHash !== row.receipt_sha256) blockers.push('trusted_receipt_ledger_hash_mismatch');
   const { ledgerReceiptId: _providedLedgerReceiptId, ...providedPayload } = receipt || {};
   if (stored && JSON.stringify(stored) !== JSON.stringify(providedPayload)) blockers.push('trusted_receipt_ledger_payload_mismatch');
@@ -68,6 +76,10 @@ export function verifyTrustedLedgerReceipt({
     issuerPolicyId: row?.issuer_policy_id || null,
     issuerPolicyHash: row?.issuer_policy_hash || null,
     issuerAssurance: row?.issuer_assurance || null,
+    effectiveDisposition: row?.effective_disposition || null,
+    effectiveReplacementReceiptId: row?.effective_replacement_receipt_id || null,
+    qualificationHash: row?.effective_qualification_sha256 || null,
+    effectiveLineage: effectiveResolution?.lineage || [],
     blockers: [...new Set(blockers)],
   });
 }

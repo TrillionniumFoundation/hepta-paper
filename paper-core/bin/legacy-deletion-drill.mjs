@@ -68,7 +68,7 @@ const payload = {
   version: 1,
   kind: 'LegacyPhysicalDeletionAndRestoreDrillReceipt',
   status: checks.every((check) => check.exitCode === 0) && String(sqlite.stdout || '').trim() === 'ok'
-    ? 'legacy_reference_restore_drill_passed_deletion_blocked'
+    ? (blockers.length ? 'legacy_reference_restore_drill_passed_deletion_blocked' : 'legacy_reference_restore_drill_passed_deletion_allowed')
     : 'legacy_reference_restore_drill_blocked',
   codeProvenance: currentCodeProvenance(),
   archivePath,
@@ -83,7 +83,8 @@ const payload = {
   operationalProofRequired: matrix.summary.operationallyProven + matrix.summary.operationallyNotProven,
   physicalDeletionAllowed: blockers.length === 0,
   blockers,
-  destructiveDeletionPerformed: false,
+  destructiveDeletionPerformed: !fs.existsSync(legacyRoot),
+  liveLegacyRootPresent: fs.existsSync(legacyRoot),
   restoredFromReferenceArchive: true,
   createdAt: new Date().toISOString(),
 };

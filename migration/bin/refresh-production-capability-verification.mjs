@@ -5,7 +5,10 @@ import { CAPABILITY_CATALOG } from '../legacy-capability-matrix-v3.mjs';
 import { executeCapabilityVerification } from '../capability-operational-evidence.mjs';
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqlite-receipt-ledger.mjs';
-import { issueReceiptWriterCapability } from '../../paper-adapters/persistence/receipt-issuer-policy.mjs';
+import {
+  issueProductionCapabilityArtifactWriter,
+  issueProductionCapabilityVerifierWriter,
+} from '../../paper-adapters/persistence/receipt-writer-broker.mjs';
 import { createFilesystemArtifactRepository } from '../../paper-adapters/artifacts/filesystem-artifact-repository.mjs';
 import { createSystemClock } from '../../paper-adapters/runtime/system-clock.mjs';
 import { currentCodeProvenance } from '../../paper-adapters/runtime/code-provenance.mjs';
@@ -20,8 +23,8 @@ const runtimeRoot = defaultPaperRuntimeRoot();
 const releaseCommit = currentCodeProvenance().commit;
 if (!releaseCommit) throw new Error('release commit missing');
 
-process.env.HEPTA_EVIDENCE_ENVIRONMENT = 'production';
-process.env.HEPTA_EVIDENCE_CLASS = 'release_conformance_with_operational_binding';
+process.env.HEPTA_EVIDENCE_ENVIRONMENT = 'production_source_bound';
+process.env.HEPTA_EVIDENCE_CLASS = 'release_conformance';
 process.env.HEPTA_RELEASE_COMMIT = releaseCommit;
 
 const clock = createSystemClock();
@@ -29,12 +32,12 @@ const store = createDefaultPaperStore({ root, runtimeRoot });
 const capabilityLedger = createSqliteReceiptLedger({
   store,
   clock,
-  issuerCapability: issueReceiptWriterCapability('production-capability-verifier'),
+  issuerCapability: issueProductionCapabilityVerifierWriter(),
 });
 const artifactLedger = createSqliteReceiptLedger({
   store,
   clock,
-  issuerCapability: issueReceiptWriterCapability('production-capability-artifact-repository'),
+  issuerCapability: issueProductionCapabilityArtifactWriter(),
 });
 const repositoryFactory = (scopeRoot) => createFilesystemArtifactRepository({
   scopeRoot,

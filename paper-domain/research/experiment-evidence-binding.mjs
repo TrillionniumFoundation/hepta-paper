@@ -63,6 +63,7 @@ export function buildExperimentExecutionContract({ experiment = {}, requiredOutp
     kind: 'ExperimentExecutionContract',
     experimentId: experiment.experimentId || null,
     runId: experiment.runId || null,
+    claimIds: (Array.isArray(experiment.claimIds) ? experiment.claimIds : []).map(String).sort(),
     datasetHash: experiment.datasetHash || null,
     codeHash: experiment.codeHash || null,
     resultHash: experiment.resultHash || null,

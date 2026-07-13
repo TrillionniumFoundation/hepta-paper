@@ -1,13 +1,42 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { evaluateClaimContractReadiness } from './claim-contract-readiness-policy.mjs';
+import { verifyTrustedLedgerReceipt } from '../evidence/trusted-ledger-receipt.mjs';
 
-export function buildEvidenceQualityGate({ paperTask, claimRegistry, evidenceIntake, nativeWorkerReceipts = [] } = {}) {
+export function buildEvidenceQualityGate({
+  paperTask,
+  claimRegistry,
+  evidenceIntake,
+  nativeWorkerReceipts = [],
+  receiptLedger = null,
+  experimentEvidenceBindings = [],
+  formalCertificateIntakes = [],
+} = {}) {
   const claimContractReadiness = evaluateClaimContractReadiness({ claimRegistry });
-  const verifiedWorkerClaims = new Set(nativeWorkerReceipts.filter((receipt) => (
+  const workerLedgerVerifications = nativeWorkerReceipts.map((receipt) => verifyTrustedLedgerReceipt({
+    receipt,
+    ledgerReceiptId: receipt?.ledgerReceiptId,
+    receiptLedger,
+    expectedKinds: ['NativeResearchWorkerExecutionReceipt'],
+    expectedStatuses: ['native_research_worker_execution_verified'],
+    expectedStreams: ['jobs'],
+    expectedWriterKinds: ['native-research-worker'],
+  }));
+  const verifiedWorkerClaims = new Set(nativeWorkerReceipts.filter((receipt, index) => (
     ['native_research_worker_receipt_verified', 'native_research_worker_execution_verified'].includes(receipt.status)
-    && Boolean(receipt.receiptHash || receipt.nativeResearchWorkerExecutionReceiptHash)
+    && Boolean(receipt.nativeResearchWorkerExecutionReceiptHash)
     && Boolean(receipt.sourceSnapshotHash)
+    && workerLedgerVerifications[index]?.status === 'trusted_ledger_receipt_verified'
   )).flatMap((receipt) => receipt.claimIds || []));
+  const verifiedExperimentClaims = new Set(experimentEvidenceBindings.filter((binding) => (
+    binding?.status === 'experiment_evidence_binding_verified'
+    && binding?.trustedLedgerReceiptsVerified === true
+    && binding?.artifactSourcesVerified === true
+  )).flatMap((binding) => binding.claimIds || []));
+  const verifiedFormalClaims = new Set(formalCertificateIntakes.filter((intake) => (
+    intake?.status === 'formal_certificate_intake_verified'
+    && intake?.trustedLedgerReceiptsVerified === true
+    && intake?.artifactSourcesVerified === true
+  )).flatMap((intake) => (intake.claimBindings || []).map((binding) => binding.claimId)));
   const evidenceClaims = new Set((evidenceIntake?.items || []).flatMap((item) => (
     item.verificationStatus === 'evidence_artifact_verified'
       && item.verifiedHash === item.hash
@@ -20,8 +49,12 @@ export function buildEvidenceQualityGate({ paperTask, claimRegistry, evidenceInt
     const planKind = String(claim?.verificationPlan?.kind || claim?.verificationPlan?.type || claim?.claimKind || claim?.riskClass || '').toLowerCase();
     const workerRequired = claim?.verificationPlan?.requiresWorker === true
       || /(?:formal|proof|theorem|experiment|empirical|reproduc)/.test(planKind);
+    const formalCertificateRequired = /(?:formal|proof|theorem)/.test(planKind);
+    const experimentBindingRequired = /(?:experiment|empirical|reproduc)/.test(planKind);
     const evidenceRequired = claim?.verificationPlan?.requiresEvidence !== false;
     const workerVerified = verifiedWorkerClaims.has(claim.claimId);
+    const formalCertificateVerified = verifiedFormalClaims.has(claim.claimId);
+    const experimentBindingVerified = verifiedExperimentClaims.has(claim.claimId);
     const evidenceVerified = evidenceClaims.has(claim.claimId);
     return {
       claimId: claim.claimId,
@@ -30,7 +63,14 @@ export function buildEvidenceQualityGate({ paperTask, claimRegistry, evidenceInt
       evidenceRequired,
       workerVerified,
       evidenceVerified,
-      covered: (!workerRequired || workerVerified) && (!evidenceRequired || evidenceVerified),
+      formalCertificateRequired,
+      experimentBindingRequired,
+      formalCertificateVerified,
+      experimentBindingVerified,
+      covered: (!workerRequired || workerVerified)
+        && (!formalCertificateRequired || formalCertificateVerified)
+        && (!experimentBindingRequired || experimentBindingVerified)
+        && (!evidenceRequired || evidenceVerified),
     };
   });
   const coveredClaimIds = claimCoverageResults.filter((item) => item.covered).map((item) => item.claimId);
@@ -46,6 +86,6 @@ export function buildEvidenceQualityGate({ paperTask, claimRegistry, evidenceInt
     ...unregisteredWorkerClaimIds.map((id) => `worker_claim_not_registered_in_manuscript:${id}`),
     ...unregisteredEvidenceClaimIds.map((id) => `evidence_claim_not_registered_in_manuscript:${id}`),
   ];
-  const record = { version: 4, kind: 'EvidenceQualityGate', paperId: paperTask?.paperId || null, status: blockers.length ? 'evidence_quality_blocked' : 'evidence_quality_ready', claimContractReadiness, claimCoverageResults, coveredClaimIds, missingClaimIds, unregisteredWorkerClaimIds, unregisteredEvidenceClaimIds, blockers: [...new Set(blockers)] };
+  const record = { version: 5, kind: 'EvidenceQualityGate', paperId: paperTask?.paperId || null, status: blockers.length ? 'evidence_quality_blocked' : 'evidence_quality_ready', claimContractReadiness, claimCoverageResults, coveredClaimIds, missingClaimIds, unregisteredWorkerClaimIds, unregisteredEvidenceClaimIds, workerLedgerVerifications, verifiedFormalClaimIds: [...verifiedFormalClaims].sort(), verifiedExperimentClaimIds: [...verifiedExperimentClaims].sort(), blockers: [...new Set(blockers)] };
   return { ...record, evidenceQualityGateHash: hashRecord('EvidenceQualityGate', record) };
 }

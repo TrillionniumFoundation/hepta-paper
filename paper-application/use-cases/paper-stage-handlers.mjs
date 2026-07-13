@@ -1,12 +1,3 @@
-import { runLatexBuildAdapter, runPackageAdapter } from '../../paper-adapters/build-package/index.mjs';
-import { runEmpiricalAnalysisAdapter } from '../../paper-adapters/empirical-analysis/index.mjs';
-import { runJournalManageAdapter } from '../../paper-adapters/journal-manage/index.mjs';
-import { runRefereeReviewAdapter } from '../../paper-adapters/referee-review/index.mjs';
-import { runRefereeReviseAdapter } from '../../paper-adapters/referee-revise/index.mjs';
-import { runResearchVerifyAdapter } from '../../paper-adapters/research-verify/index.mjs';
-import { runSourceAdaptAdapter } from '../../paper-adapters/source-adapt/index.mjs';
-import { buildSubmissionLifecycle, prepareSubmissionAuthorities } from '../../paper-adapters/submission/index.mjs';
-import { runVenueResolveAdapter } from '../../paper-adapters/venue-resolve/index.mjs';
 import { PAPER_BATCH_MODES } from '../../paper-domain/workflow/mode-registry.mjs';
 
 export function createPaperStageHandlers({
@@ -18,6 +9,22 @@ export function createPaperStageHandlers({
 } = {}) {
   const { root, runtimeRoot, mode, execute, options, services } = context;
   const { maxRounds, targetOverride, datasetRoot, benchmarkId, applyManuscript } = options;
+  const {
+    buildSubmissionLifecycle,
+    prepareSubmissionAuthorities,
+    runEmpiricalAnalysisAdapter,
+    runJournalManageAdapter,
+    runLatexBuildAdapter,
+    runPackageAdapter,
+    runRefereeReviewAdapter,
+    runRefereeReviseAdapter,
+    runResearchVerifyAdapter,
+    runSourceAdaptAdapter,
+    runVenueResolveAdapter,
+  } = services.paperStageAdapters || {};
+  if (!runLatexBuildAdapter || !runResearchVerifyAdapter || !buildSubmissionLifecycle) {
+    throw new Error('Paper stage handlers require composed paperStageAdapters');
+  }
   return Object.freeze({
     'local-review-loop': async () => {
       const localReviewLoopMode = [PAPER_BATCH_MODES.LOCAL_REVIEW_LOOP, PAPER_BATCH_MODES.REFEREE_AUTOPILOT].includes(mode);

@@ -12,12 +12,15 @@ const tests = [
   'paper-core/tests/architecture-conformance.test.mjs',
   'paper-core/tests/automation-executors.test.mjs',
   'paper-core/tests/automation-runtime-reconciler.test.mjs',
+  'paper-core/tests/receipt-issuer-policy.test.mjs',
+  'paper-core/tests/release-evidence-selection.test.mjs',
   'paper-core/tests/formal-claim-binding-policy.test.mjs',
   'paper-core/tests/manuscript-promotion-boundaries.test.mjs',
   'paper-core/tests/legacy-provenance-delivery-hardening.test.mjs',
   'paper-core/tests/submission-live-delivery.test.mjs',
   'paper-core/tests/typed-research-gap-plan.test.mjs',
   'migration/tests/operational-proof-intake.test.mjs',
+  'migration/tests/capabilities/research.evidence-quality-gate.test.mjs',
 ];
 const targets = [
   ...fs.readdirSync(path.join(workspaceRoot, 'paper-domain', 'contracts'))
@@ -27,7 +30,12 @@ const targets = [
   'paper-adapters/automation/bounded-child-process.mjs',
   'paper-adapters/automation/workspace-change-tracker.mjs',
   'paper-adapters/persistence/receipt-issuer-policy.mjs',
+  'paper-adapters/persistence/receipt-writer-broker.mjs',
   'paper-adapters/persistence/sqlite-receipt-ledger.mjs',
+  'paper-domain/evidence/trusted-ledger-receipt.mjs',
+  'paper-domain/research/evidence-quality-gate.mjs',
+  'paper-domain/research/experiment-evidence-binding.mjs',
+  'paper-domain/research/formal-certificate-intake.mjs',
   'paper-adapters/referee-revise/planning-service.mjs',
   'paper-adapters/submission/live-authorization.mjs',
 ];
@@ -98,8 +106,8 @@ function moduleCoverage(relative, entries) {
 try {
   const commands = [
     ['--test', '--test-concurrency=1', ...tests],
-    ['paper-core/src/selftest.mjs'],
-    ['paper-core/src/remediation-selftest.mjs'],
+    ['paper-core/verification/selftest.mjs'],
+    ['paper-core/verification/remediation-selftest.mjs'],
     ['migration/tests/p1-referee-revise-retirements.mjs'],
   ];
   const failed = commands.map((args) => spawnSync(process.execPath, args, {
@@ -115,11 +123,11 @@ try {
   } else {
     const entries = coverageEntries();
     const report = targets.map((target) => moduleCoverage(target, entries));
-    const failures = report.filter((row) => row.missing || row.lines < 35 || row.functions < 20);
+    const failures = report.filter((row) => row.missing || row.lines < 40 || row.functions < 25);
     process.stdout.write(`${JSON.stringify({
       ok: failures.length === 0,
       kind: 'CriticalModuleCoverageReport',
-      thresholds: { lines: 35, functions: 20 },
+      thresholds: { lines: 40, functions: 25 },
       modules: report,
       failures: failures.map((row) => row.relative),
     }, null, 2)}\n`);

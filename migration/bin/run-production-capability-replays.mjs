@@ -22,7 +22,7 @@ import { createFilesystemArtifactRepository } from '../../paper-adapters/artifac
 import { verifyArtifactWriteReceiptSource } from '../../paper-adapters/artifacts/artifact-write-receipt-verifier.mjs';
 import { createSqliteJobReceiptStore } from '../../paper-adapters/persistence/sqlite-job-receipt-store.mjs';
 import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqlite-receipt-ledger.mjs';
-import { issueReceiptWriterCapability } from '../../paper-adapters/persistence/receipt-issuer-policy.mjs';
+import { issueConformanceReplayWriter } from '../../paper-adapters/persistence/receipt-writer-broker.mjs';
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { assertSubmissionExecutorPort, submissionExecutorDescriptor } from '../../paper-ports/submission-executor-port.mjs';
 import { buildExecutorCapabilities } from '../../paper-ports/executor-capabilities.mjs';
@@ -87,11 +87,11 @@ function createStore(root) {
   return createDefaultPaperStore({ root: assetRoot, runtimeRoot: root, dbPath: path.join(root, 'operational-replay.sqlite') });
 }
 
-function createLedger(store, { writerId, writerKind, allowedKinds = [], allowedStreams = [] }) {
+function createLedger(store) {
   return createSqliteReceiptLedger({
     store,
     clock,
-    issuerCapability: issueReceiptWriterCapability('conformance-replay'),
+    issuerCapability: issueConformanceReplayWriter(),
   });
 }
 

@@ -39,7 +39,7 @@ if (process.env.HEPTA_PAPER_RUNTIME_ISOLATED === '1' && process.env.HEPTA_PAPER_
   const productionHashBefore = sha(productionDb);
   const legacyReference = prepareImmutableLegacyMatrixReference();
   if (fs.existsSync(productionDb)) await copySqliteDatabase({ sourcePath: productionDb, destinationPath: isolatedDb });
-  for (const relative of ['owner-acceptance', 'operational-proof', 'trust', 'authority-inbox', 'legacy-retirement']) {
+  for (const relative of ['owner-acceptance', 'operational-proof', 'trust', 'authority-inbox', 'legacy-retirement', path.join('release-evidence', 'current'), path.join('audits', 'capability-verification')]) {
     const source = path.join(productionRuntimeRoot, relative);
     const target = path.join(isolatedRuntimeRoot, relative);
     if (fs.existsSync(source)) fs.cpSync(source, target, { recursive: true, dereference: false });

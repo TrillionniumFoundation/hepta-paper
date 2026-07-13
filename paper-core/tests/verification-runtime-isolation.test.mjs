@@ -18,7 +18,7 @@ test('read-only StorePort rejects writes and preserves database bytes', (t) => {
   createDefaultPaperStore({ root, runtimeRoot: root, dbPath });
   const before = sha(dbPath);
   const store = createReadOnlyPaperStore({ root, runtimeRoot: root, dbPath });
-  assert.equal(store.query('SELECT count(*) AS count FROM schema_migrations;').rows[0].count, 18);
+  assert.equal(store.query('SELECT count(*) AS count FROM schema_migrations;').rows[0].count, 19);
   assert.equal(store.execute("DELETE FROM schema_migrations;").ok, false);
   assert.equal(store.execute("DELETE FROM schema_migrations;").error, 'sqlite_readonly_store_execute_forbidden');
   assert.equal(sha(dbPath), before);
@@ -68,7 +68,7 @@ test('remediation selftest refuses a non-isolated runtime before touching its st
   const dbPath = path.join(root, 'hepta-paper.sqlite');
   createDefaultPaperStore({ root, runtimeRoot: root, dbPath });
   const before = sha(dbPath);
-  const result = spawnSync(process.execPath, ['paper-core/src/remediation-selftest.mjs'], {
+  const result = spawnSync(process.execPath, ['paper-core/verification/remediation-selftest.mjs'], {
     cwd: path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..'),
     env: { ...process.env, HEPTA_PAPER_RUNTIME_ROOT: root, HEPTA_PAPER_RUNTIME_ISOLATED: '' },
     encoding: 'utf8',

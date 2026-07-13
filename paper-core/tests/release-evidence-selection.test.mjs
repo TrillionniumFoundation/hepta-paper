@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { releaseAttestationCodeProvenance, selectCurrentReleaseVerificationReceipt } from '../bin/release-evidence-lib.mjs';
+import { releaseAttestationCodeProvenance, retirementLifecycleStatus, selectCurrentReleaseVerificationReceipt } from '../bin/release-evidence-lib.mjs';
 
 test('release attestation is administrative evidence rather than production runtime evidence', () => {
   const provenance = releaseAttestationCodeProvenance({
@@ -16,6 +16,20 @@ test('release attestation is administrative evidence rather than production runt
   assert.equal(provenance.evidenceEnvironment, 'administrative');
   assert.equal(provenance.evidenceClass, 'release_attestation');
   assert.equal(provenance.commit, 'current-commit');
+});
+
+test('retirement lifecycle reports observed deletion instead of hard-coded non-deletion', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-retirement-lifecycle-'));
+  fs.rmSync(root, { recursive: true, force: true });
+  const status = retirementLifecycleStatus({
+    legacyRoot: root,
+    deletionDrill: { status: 'legacy_reference_restore_drill_passed_deletion_blocked', physicalDeletionAllowed: false },
+    immutableReceipt: { status: 'legacy_reference_ext4_inode_immutable', immutableContentObjectClaimed: true },
+  });
+  assert.equal(status.liveLegacyRootPresent, false);
+  assert.equal(status.physicalDeletionObserved, true);
+  assert.equal(status.destructiveDeletionPerformed, true);
+  assert.equal(status.deletionLifecycleStatus, 'legacy_root_deleted_under_prior_authorization_current_gate_blocked');
 });
 
 test('release evidence invalidates a stale pass when the latest exact-identity receipt is blocked', (t) => {

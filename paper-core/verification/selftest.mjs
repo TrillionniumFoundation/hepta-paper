@@ -9,7 +9,7 @@ import {
   buildPaperAdapterRunReceipt,
 } from '../../paper-domain/contracts/index.mjs';
 import { discoverInventory } from '../../paper-adapters/inventory/index.mjs';
-import { runPaperBatch } from './paper-batch-runner.mjs';
+import { runPaperBatch } from '../src/paper-batch-runner.mjs';
 import { runPaperProposalAdapter } from '../../paper-adapters/proposal/index.mjs';
 import { runEmpiricalAnalysisAdapter } from '../../paper-adapters/empirical-analysis/index.mjs';
 import { runResearchVerifyAdapter } from '../../paper-adapters/research-verify/index.mjs';
@@ -25,10 +25,10 @@ import {
 import {
   defaultPaperAssetRoot,
   defaultPaperRuntimeRoot,
-} from './workspace-layout.mjs';
+} from '../src/workspace-layout.mjs';
 import { bootstrapPaperExecutionContext } from '../../paper-application/bootstrap/service-bootstrap.mjs';
 import { enterArtifactWriteContext } from '../../paper-adapters/artifacts/artifact-write-context.mjs';
-import { assertIsolatedVerificationRuntime } from './verification-runtime.mjs';
+import { assertIsolatedVerificationRuntime } from '../src/verification-runtime.mjs';
 
 assertIsolatedVerificationRuntime('paper selftest');
 

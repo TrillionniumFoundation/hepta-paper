@@ -76,6 +76,7 @@ FROM receipt_ledger AS receipt
 WHERE (
   (environment='verification' AND evidence_class='technical_conformance')
   OR (environment='production' AND evidence_class='runtime_unclassified')
+  OR (environment='production' AND evidence_class='release_conformance_with_operational_binding')
 )
 AND NOT EXISTS (
   SELECT 1 FROM receipt_ledger_qualifications AS qualification

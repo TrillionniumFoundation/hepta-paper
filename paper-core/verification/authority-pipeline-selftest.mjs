@@ -8,7 +8,7 @@ import {
   hashPaperRecord,
 } from '../../paper-domain/contracts/index.mjs';
 import { sha256File } from '../../workflow-kernel/runtime/file-utils.mjs';
-import { signAuthorityDocument } from './authority-signatures.mjs';
+import { signAuthorityDocument } from '../src/authority-signatures.mjs';
 import { runResearchVerifyAdapter } from '../../paper-adapters/research-verify/index.mjs';
 import { createFilesystemArtifactRepository } from '../../paper-adapters/artifacts/filesystem-artifact-repository.mjs';
 import { verifyIndependentRefereeAuthority } from '../../paper-adapters/referee-review/independent-authority.mjs';

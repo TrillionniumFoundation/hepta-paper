@@ -117,6 +117,26 @@ export function releaseAttestationCodeProvenance(provenance = currentCodeProvena
   });
 }
 
+export function retirementLifecycleStatus({ legacyRoot, deletionDrill = null, immutableReceipt = null } = {}) {
+  const liveLegacyRootPresent = Boolean(legacyRoot && fs.existsSync(legacyRoot));
+  const immutableReferenceReady = immutableReceipt?.status === 'legacy_reference_ext4_inode_immutable';
+  const physicalDeletionObserved = !liveLegacyRootPresent && immutableReferenceReady;
+  const currentAuthorization = Boolean(deletionDrill?.physicalDeletionAllowed);
+  return Object.freeze({
+    restoreDrillStatus: deletionDrill?.status || 'missing',
+    currentPhysicalDeletionAuthorization: currentAuthorization,
+    physicalDeletionAllowed: currentAuthorization,
+    liveLegacyRootPresent,
+    physicalDeletionObserved,
+    destructiveDeletionPerformed: physicalDeletionObserved,
+    deletionLifecycleStatus: physicalDeletionObserved
+      ? (currentAuthorization ? 'legacy_root_deleted_with_current_authorization' : 'legacy_root_deleted_under_prior_authorization_current_gate_blocked')
+      : liveLegacyRootPresent ? 'legacy_root_present' : 'legacy_root_absence_unverified',
+    immutableSnapshotStatus: immutableReceipt?.status || 'missing',
+    immutableContentObjectClaimed: immutableReceipt?.immutableContentObjectClaimed === true,
+  });
+}
+
 export function buildReleaseEvidenceBundle({ runtimeRoot, legacyRoot } = {}) {
   const codeProvenance = releaseAttestationCodeProvenance();
   const verificationRoot = path.join(runtimeRoot, 'release-evidence', 'verification-receipts');
@@ -169,7 +189,7 @@ export function buildReleaseEvidenceBundle({ runtimeRoot, legacyRoot } = {}) {
     status: !codeProvenance.treeDirty
       && verificationReceipt?.status === 'isolated_verification_passed'
       && fs.existsSync(archivePath)
-      && deletionDrill?.status === 'legacy_reference_restore_drill_passed_deletion_blocked'
+      && deletionDrill?.status?.startsWith('legacy_reference_restore_drill_passed')
       && immutableReceipt?.status === 'legacy_reference_ext4_inode_immutable'
       && coldVolumeStatus.contractValid
       && minimalDifferentialFixture.status === 'legacy_differential_reference_verified'
@@ -207,18 +227,16 @@ export function buildReleaseEvidenceBundle({ runtimeRoot, legacyRoot } = {}) {
       requiredRoles: ['academic_evidence_authority', 'independent_referee', 'submission_operator', 'live_executor_authorizer'],
       authorityInferredFromReleaseSignature: false,
     },
-    retirementStatus: {
-      restoreDrillStatus: deletionDrill?.status || 'missing',
-      physicalDeletionAllowed: Boolean(deletionDrill?.physicalDeletionAllowed),
-      destructiveDeletionPerformed: false,
-      immutableSnapshotStatus: immutableReceipt?.status || 'missing',
-      immutableContentObjectClaimed: immutableReceipt?.immutableContentObjectClaimed === true,
-    },
+    retirementStatus: retirementLifecycleStatus({ legacyRoot, deletionDrill, immutableReceipt }),
     assetRecoveryStatus: {
       coldVolume: coldVolumeStatus,
       coldVolumeCas,
       offhostWorm: offhostWormStatus,
     },
+    disasterRecoveryStatus: coldVolumeCas.status === 'cold_volume_cas_ready'
+      && offhostWormStatus.offHostOrOffsiteCustodyQualified === true
+      ? 'disaster_recovery_ready'
+      : 'disaster_recovery_blocked',
     minimalDifferentialFixture,
     immutableMatrixReference,
     productionStoreLogicalIntegrity,

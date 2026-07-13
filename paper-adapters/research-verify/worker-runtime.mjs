@@ -425,21 +425,20 @@ export async function runNativeResearchWorkers({
       executedAt: execute ? new Date().toISOString() : null,
     };
     if (execute) {
-      const receipt = {
+      let receipt = {
         ...baseReceipt,
         nativeResearchWorkerExecutionReceiptHash: receiptHash(baseReceipt),
       };
+      if (jobReceiptStore && attempt) {
+        const completed = receipt.status === 'native_research_worker_execution_verified'
+          ? jobReceiptStore.completeJob({ jobId, attemptId: attempt.attemptId, receipt })
+          : jobReceiptStore.failJob({ jobId, attemptId: attempt.attemptId, failureClass: 'worker_verification_failed', retryable: false, receipt });
+        receipt = { ...receipt, ledgerReceiptId: completed.ledgerReceipt?.receiptId || completed.result_receipt_id || null };
+      }
       if (artifactRepository && id) {
         await artifactRepository.writeJson(path.join(outputDir, `${id}.receipt.json`), receipt, {
           role: 'native_research_worker_execution_receipt',
         });
-      }
-      if (jobReceiptStore && attempt) {
-        if (receipt.status === 'native_research_worker_execution_verified') {
-          jobReceiptStore.completeJob({ jobId, attemptId: attempt.attemptId, receipt: { ...receipt, receiptHash: receipt.nativeResearchWorkerExecutionReceiptHash } });
-        } else {
-          jobReceiptStore.failJob({ jobId, attemptId: attempt.attemptId, failureClass: 'worker_verification_failed', retryable: false, receipt: { ...receipt, receiptHash: receipt.nativeResearchWorkerExecutionReceiptHash } });
-        }
       }
       receipts.push(receipt);
     } else {

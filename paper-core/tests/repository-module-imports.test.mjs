@@ -7,9 +7,9 @@ import { pathToFileURL } from 'node:url';
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
 const productionRoots = ['workflow-kernel', 'paper-ports', 'paper-domain', 'paper-application', 'paper-adapters', 'paper-core/src'];
 const excluded = new Set([
-  'paper-core/src/authority-pipeline-selftest.mjs',
-  'paper-core/src/remediation-selftest.mjs',
-  'paper-core/src/selftest.mjs',
+  'paper-core/verification/authority-pipeline-selftest.mjs',
+  'paper-core/verification/remediation-selftest.mjs',
+  'paper-core/verification/selftest.mjs',
 ]);
 
 function modulesUnder(directory) {

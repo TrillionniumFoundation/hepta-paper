@@ -4,10 +4,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { buildCoreIntegrityReport, compareCoreFileRows } from './core-integrity.mjs';
-import { heptaStorePath } from './hepta-store.mjs';
-import { summarizeRows } from './batch-summary.mjs';
-import * as contractsFacade from './paper-contracts.mjs';
+import { buildCoreIntegrityReport, compareCoreFileRows } from '../src/core-integrity.mjs';
+import { heptaStorePath } from '../src/hepta-store.mjs';
+import { summarizeRows } from '../src/batch-summary.mjs';
+import * as contractsFacade from '../src/paper-contracts.mjs';
 import { buildRefereeReviewIntake as buildRefereeReviewIntakeDirect } from '../../paper-domain/contracts/referee-planning.mjs';
 import { buildRefereeApplyApprovalPacket as buildRefereeApplyApprovalPacketDirect } from '../../paper-domain/contracts/referee-application.mjs';
 import { buildRepairReconciliation as buildRepairReconciliationDirect } from '../../paper-domain/contracts/referee-closure.mjs';
@@ -26,8 +26,8 @@ import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-
 import {
   defaultPaperAssetRoot,
   defaultPaperRuntimeRoot,
-} from './workspace-layout.mjs';
-import { assertIsolatedVerificationRuntime } from './verification-runtime.mjs';
+} from '../src/workspace-layout.mjs';
+import { assertIsolatedVerificationRuntime } from '../src/verification-runtime.mjs';
 import { resolveImmutableLegacyMatrixArchive } from '../../migration/legacy-matrix-reference.mjs';
 
 assertIsolatedVerificationRuntime('paper remediation selftest');

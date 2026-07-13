@@ -21,6 +21,8 @@ import { buildClaimRegistry } from '../../paper-domain/research/claim-registry.m
 import { buildEvidenceIntake } from '../../paper-domain/research/evidence-ingestor.mjs';
 import { buildEvidenceQualityGate } from '../../paper-domain/research/evidence-quality-gate.mjs';
 import { buildExperimentRegistry } from '../../paper-domain/research/experiment-registry.mjs';
+import { buildFormalVerifierRegistry } from '../../paper-domain/research/formal-verifier-registry.mjs';
+import { buildGenericFormalCertificateIntake } from '../../paper-domain/research/formal-certificate-intake.mjs';
 import { buildResearchChangeProposal } from '../../paper-domain/research/change-proposal.mjs';
 import { bindResearchGapPlan, buildResearchGapPlan } from '../../paper-domain/research/gap-planner.mjs';
 import { verifyEvidenceBatch } from './evidence-verifier.mjs';
@@ -78,6 +80,8 @@ async function extractStructuredItems(root, records) {
   const evidenceItems = [];
   const reproducibilityItems = [];
   const experiments = [];
+  const formalAdapterReceipts = [];
+  const formalCertificateRequests = [];
   for (const record of records.slice(0, 96)) {
     const absolute = repoPath(root, record.path);
     const json = /\.json$/i.test(record.filename || '') ? await readJsonIfExists(absolute) : null;
@@ -184,8 +188,20 @@ async function extractStructuredItems(root, records) {
         resultHash: experiment.resultHash || experiment.result_hash || record.hash,
       });
     }
+    const jsonFormalAdapters = [
+      ...(Array.isArray(json.formalVerifierAdapters) ? json.formalVerifierAdapters : []),
+      ...(Array.isArray(json.formal_verifier_adapters) ? json.formal_verifier_adapters : []),
+    ];
+    formalAdapterReceipts.push(...jsonFormalAdapters.slice(0, 24));
+    const jsonFormalCertificates = [
+      ...(Array.isArray(json.formalCertificates) ? json.formalCertificates : []),
+      ...(Array.isArray(json.formal_certificates) ? json.formal_certificates : []),
+      ...(json.formalCertificateRequest && typeof json.formalCertificateRequest === 'object' ? [json.formalCertificateRequest] : []),
+      ...(json.formal_certificate_request && typeof json.formal_certificate_request === 'object' ? [json.formal_certificate_request] : []),
+    ];
+    formalCertificateRequests.push(...jsonFormalCertificates.slice(0, 24));
   }
-  return { claims, obligations, evidenceItems, reproducibilityItems, experiments };
+  return { claims, obligations, evidenceItems, reproducibilityItems, experiments, formalAdapterReceipts, formalCertificateRequests };
 }
 
 export async function runResearchVerifyAdapter({
@@ -320,11 +336,26 @@ export async function runResearchVerifyAdapter({
     paperTask: row.task,
     evidenceItems: attestedEvidenceItems.length ? attestedEvidenceItems : candidateEvidenceItems,
   });
+  const experimentRegistry = buildExperimentRegistry({ paperTask: row.task, artifacts: structured.experiments, receiptLedger, artifactVerifier: verifyArtifactWriteReceiptSource });
+  const formalVerifierRegistry = buildFormalVerifierRegistry({ adapterReceipts: structured.formalAdapterReceipts, receiptLedger });
+  const formalCertificateIntakes = structured.formalCertificateRequests.map((request) => buildGenericFormalCertificateIntake({
+    verifierKind: request.verifierKind || request.verifier_kind,
+    certificate: request.certificate,
+    sourceRecords: request.sourceRecords || request.source_records || [],
+    claimBindings: request.claimBindings || request.claim_bindings || [],
+    executionReceipt: request.executionReceipt || request.execution_receipt,
+    verifierRegistry: formalVerifierRegistry,
+    receiptLedger,
+    artifactVerifier: verifyArtifactWriteReceiptSource,
+  }));
   const evidenceQualityGate = buildEvidenceQualityGate({
     paperTask: row.task,
     claimRegistry,
     evidenceIntake,
     nativeWorkerReceipts: nativeResearchWorkerExecution.workerReceipts,
+    receiptLedger,
+    experimentEvidenceBindings: experimentRegistry.experiments.map((experiment) => experiment.evidenceBinding),
+    formalCertificateIntakes,
   });
   const escapedPaperId = String(row.task.paperId || '').replace(/'/g, "''");
   const revisionRequests = store?.query
@@ -349,7 +380,6 @@ export async function runResearchVerifyAdapter({
       workerId: executeResearchWorkers ? 'research-gap-planner' : null,
     })
     : null;
-  const experimentRegistry = buildExperimentRegistry({ paperTask: row.task, artifacts: structured.experiments, receiptLedger, artifactVerifier: verifyArtifactWriteReceiptSource });
   const formalWorkerReceipts = (nativeResearchWorkerExecution.workerReceipts || [])
     .filter((receipt) => ['formal_verifier_lake', 'formal_verifier_lean'].includes(receipt.workerType));
   const promotionBlockers = [
@@ -419,6 +449,8 @@ export async function runResearchVerifyAdapter({
       researchGapClosureReceipt,
       researchGapPlanBinding,
       experimentRegistry,
+      formalVerifierRegistry,
+      formalCertificateIntakes,
       researchChangeProposal,
       evidenceVerificationReceipts,
     },

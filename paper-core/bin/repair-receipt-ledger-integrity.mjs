@@ -4,7 +4,7 @@ import path from 'node:path';
 import { createDefaultPaperStore, createReadOnlyPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqlite-receipt-ledger.mjs';
 import { createSqliteReceiptLedgerQualificationStore } from '../../paper-adapters/persistence/sqlite-receipt-ledger-qualification.mjs';
-import { issueReceiptWriterCapability } from '../../paper-adapters/persistence/receipt-issuer-policy.mjs';
+import { issueLedgerAdministratorWriter } from '../../paper-adapters/persistence/receipt-writer-broker.mjs';
 import { createSystemClock } from '../../paper-adapters/runtime/system-clock.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { sqlText } from '../../paper-ports/store-port.mjs';
@@ -44,7 +44,7 @@ readStore.close?.();
 if (execute && !blockers.length) {
   const store = createDefaultPaperStore({ root, runtimeRoot });
   const clock = createSystemClock();
-  const administratorCapability = issueReceiptWriterCapability('ledger-administrator');
+  const administratorCapability = issueLedgerAdministratorWriter();
   const qualifications = createSqliteReceiptLedgerQualificationStore({ store, clock, issuerCapability: administratorCapability });
   const replacementLedger = createSqliteReceiptLedger({ store, clock });
   for (const row of invalid) {

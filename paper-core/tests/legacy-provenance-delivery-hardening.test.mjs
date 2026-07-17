@@ -9,7 +9,7 @@ import { buildProviderCapabilitySubject, verifyProviderCapabilityAttestation } f
 import { verifySignedAmbiguousRedriveReview } from '../../paper-adapters/submission/redrive-review-verification.mjs';
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqlite-receipt-ledger.mjs';
-import { issueTestArtifactRepositoryWriter } from '../../paper-adapters/persistence/receipt-writer-broker.mjs';
+import { issueArtifactRepositoryWriter } from '../../paper-adapters/persistence/receipt-writer-broker.mjs';
 import { createFilesystemArtifactRepository } from '../../paper-adapters/artifacts/filesystem-artifact-repository.mjs';
 import { verifyArtifactWriteReceiptSource } from '../../paper-adapters/artifacts/artifact-write-receipt-verifier.mjs';
 import { verifyTrustedLedgerReceipt } from '../../paper-domain/evidence/trusted-ledger-receipt.mjs';
@@ -23,9 +23,20 @@ import { buildGenericFormalCertificateIntake } from '../../paper-domain/research
 import { buildRefereeAppliedPatchReceipt } from '../../paper-domain/contracts/referee-application.mjs';
 import { buildReviewedVenueEvidence } from '../../paper-domain/submission/reviewed-venue-evidence.mjs';
 import { buildSubmissionRedriveDecision } from '../../paper-domain/submission/redrive-decision.mjs';
+import { buildExecutorResponseIntake } from '../../paper-domain/submission/delivery-runtime.mjs';
 import { signAuthorityDocument } from '../src/authority-signatures.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { h, trustedExperimentFixture, trustedFormalFixture, trustedVenueFixture } from './trusted-evidence-test-support.mjs';
+
+function failLedgerWrites(ledger) {
+  return Object.freeze({
+    ...ledger,
+    prepare(receipt, options) {
+      const prepared = ledger.prepare(receipt, options);
+      return Object.freeze({ ...prepared, sql: 'INSERT INTO simulated_missing_receipt_ledger_table(value) VALUES(1);' });
+    },
+  });
+}
 
 test('referee applied-patch receipt fails closed without a postimage and records complete lineage', () => {
   const paperTask = { paperId: 'paper-referee-apply', taskKey: 'paper:paper-referee-apply' };
@@ -96,7 +107,7 @@ test('venue evidence and redrive lineage are source verified and authorization b
   assert.notEqual(first.liveSubmissionAuthorizationSubjectHash, buildLiveSubmissionAuthorizationSubject({ ...base, providerCapabilityVerificationReceipt: { providerCapabilityVerificationReceiptHash: h('e') }, reviewedVenueEvidence: venueEvidence }).liveSubmissionAuthorizationSubjectHash);
 });
 
-test('fabricated experiment and formal receipts fail while ledger-backed CAS receipts pass', () => {
+test('fabricated receipts fail while trusted experiment evidence passes and unavailable formal tiers stay blocked', () => {
   const fakeExperiment = buildExperimentEvidenceBinding({ experiment: { datasetHash: h('1'), codeHash: h('2'), resultHash: h('3') }, workerReceipt: { status: 'worker_execution_completed', receiptHash: h('4'), datasetHash: h('1'), codeHash: h('2'), resultHash: h('3') }, resultArtifact: { hash: h('3'), outputArtifactHashes: [h('5')] }, reproducibilityReceipt: { status: 'experiment_reproducibility_verified', receiptHash: h('6'), workerReceiptHash: h('4'), resultHash: h('3'), outputArtifactHashes: [h('5')] } });
   assert.equal(fakeExperiment.status, 'experiment_evidence_binding_blocked');
   const trustedExperiment = trustedExperimentFixture({});
@@ -108,9 +119,11 @@ test('fabricated experiment and formal receipts fail while ledger-backed CAS rec
   const formal = trustedFormalFixture({});
   const registry = buildFormalVerifierRegistry({ adapterReceipts: [formal.adapterReceipt], receiptLedger: formal.ledger });
   const intake = buildGenericFormalCertificateIntake({ verifierKind: 'coq', verifierRegistry: registry, certificate: formal.certificate, sourceRecords: formal.sourceRecords, claimBindings: formal.claimBindings, executionReceipt: formal.executionReceipt, receiptLedger: formal.ledger, artifactVerifier: formal.artifactVerifier });
-  assert.equal(intake.status, 'formal_certificate_intake_verified');
+  assert.equal(intake.status, 'formal_certificate_intake_blocked');
+  assert.ok(intake.blockers.includes('formal_verifier_adapter_not_registered'));
   const changedToolchain = buildGenericFormalCertificateIntake({ verifierKind: 'coq', verifierRegistry: registry, certificate: { ...formal.certificate, toolchainHash: h('7') }, sourceRecords: formal.sourceRecords, claimBindings: formal.claimBindings, executionReceipt: formal.executionReceipt, receiptLedger: formal.ledger, artifactVerifier: formal.artifactVerifier });
   assert.equal(changedToolchain.status, 'formal_certificate_intake_blocked');
+  assert.ok(changedToolchain.blockers.includes('formal_verifier_adapter_not_registered'));
 });
 
 test('trusted ledger metadata and actual CAS bytes are both required', async (t) => {
@@ -118,7 +131,7 @@ test('trusted ledger metadata and actual CAS bytes are both required', async (t)
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const store = createDefaultPaperStore({ root, runtimeRoot: root }); t.after(() => store.close());
   const clock = { now: () => new Date('2026-07-13T00:00:00Z'), nowIso: () => '2026-07-13T00:00:00.000Z' };
-  const ledger = createSqliteReceiptLedger({ store, clock, issuerCapability: issueTestArtifactRepositoryWriter() });
+  const ledger = createSqliteReceiptLedger({ store, clock, issuerCapability: issueArtifactRepositoryWriter() });
   const repository = createFilesystemArtifactRepository({ scopeRoot: root, casRoot: path.join(root, 'cas'), receiptLedger: ledger, clock });
   const written = await repository.writeJson(path.join(root, 'evidence.json'), { verified: true }, { role: 'venue-observation' });
   assert.equal(verifyArtifactWriteReceiptSource({ receipt: written }).status, 'artifact_write_receipt_source_verified');
@@ -149,6 +162,82 @@ test('response state and persisted receipt are one atomic transaction', (t) => {
   assert.throws(() => delivery.recordResponse({ messageId: message.message_id, response }), /simulated-ledger-prepare-failure/);
   assert.equal(store.query("SELECT count(*) AS count FROM submission_inbox WHERE response_id='atomic-response';").rows[0].count, 0);
   assert.equal(delivery.getOutbox(message.message_id).status, 'pending');
+});
+
+test('redrive, dead-letter and quarantine state roll back when ledger persistence fails', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-delivery-ledger-rollback-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const store = createDefaultPaperStore({ root, runtimeRoot: root }); t.after(() => store.close());
+  const clock = { now: () => new Date('2026-07-13T00:00:00Z'), nowIso: () => '2026-07-13T00:00:00.000Z' };
+  const ledger = createSqliteReceiptLedger({ store, clock });
+  const delivery = createSqliteSubmissionDeliveryStore({ store, receiptLedger: ledger, clock });
+  const failing = createSqliteSubmissionDeliveryStore({ store, receiptLedger: failLedgerWrites(ledger), clock });
+
+  const retryAuthorization = { status: 'submission_dispatch_authorization_ready', submissionDispatchAuthorizationHash: 'atomic-redrive-dispatch', provider: 'p', accountId: 'a', nonce: 'atomic-redrive-nonce', attempt: 1 };
+  const retryMessage = delivery.enqueue({ paperId: 'redrive-paper', dispatchAuthorization: retryAuthorization, payload: { _delivery: { attempt: 1 } } });
+  assert.equal(store.execute(`UPDATE submission_outbox SET status='retryable_failure' WHERE message_id='${retryMessage.message_id}';`).ok, true);
+  const planPayload = { version: 1, kind: 'SubmissionRedrivePlan', status: 'submission_redrive_reauthorization_required', dispatchAuthorizationHash: retryMessage.dispatch_hash, nextAttempt: 2 };
+  const redrivePlan = { ...planPayload, submissionRedrivePlanHash: hashRecord('SubmissionRedrivePlan', planPayload) };
+  assert.throws(() => failing.scheduleRedrive({ messageId: retryMessage.message_id, redrivePlan }), /simulated_missing_receipt_ledger_table/);
+  assert.equal(delivery.getOutbox(retryMessage.message_id).status, 'retryable_failure');
+  assert.equal(store.query("SELECT count(*) AS count FROM receipt_ledger WHERE kind='SubmissionRedriveReauthorizationRequiredReceipt';").rows[0].count, 0);
+
+  const deadAuthorization = { ...retryAuthorization, submissionDispatchAuthorizationHash: 'atomic-dead-dispatch', nonce: 'atomic-dead-nonce' };
+  const deadMessage = delivery.enqueue({ paperId: 'dead-paper', dispatchAuthorization: deadAuthorization, payload: {} });
+  assert.throws(() => failing.deadLetter({ messageId: deadMessage.message_id, failureClass: 'fixture_failure' }), /simulated_missing_receipt_ledger_table/);
+  assert.equal(delivery.getOutbox(deadMessage.message_id).status, 'pending');
+  assert.equal(store.query(`SELECT count(*) AS count FROM submission_dead_letters WHERE message_id='${deadMessage.message_id}';`).rows[0].count, 0);
+
+  assert.throws(() => failing.quarantineInvalidIntake({ messageId: 'missing-message', payload: { secret: 'not-stored' }, failureCodes: ['fixture'] }), /simulated_missing_receipt_ledger_table/);
+  assert.equal(store.query("SELECT count(*) AS count FROM submission_intake_quarantine WHERE message_id='missing-message';").rows[0].count, 0);
+});
+
+test('release-lock state and its persisted receipt commit atomically', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-release-ledger-rollback-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const store = createDefaultPaperStore({ root, runtimeRoot: root }); t.after(() => store.close());
+  const clock = { now: () => new Date('2026-07-13T00:00:00Z'), nowIso: () => '2026-07-13T00:00:00.000Z' };
+  const ledger = createSqliteReceiptLedger({ store, clock });
+  const delivery = createSqliteSubmissionDeliveryStore({ store, receiptLedger: ledger, clock });
+  const dispatchAuthorization = {
+    status: 'submission_dispatch_authorization_ready',
+    submissionDispatchAuthorizationHash: h('1'),
+    provider: 'provider',
+    accountId: 'account',
+    nonce: 'release-nonce',
+    attempt: 1,
+    replayKey: h('2'),
+    actionScopeKey: h('3'),
+    dispatchCycleHash: h('4'),
+    liveAuthorizationHash: h('5'),
+    responseDueAt: '2026-07-13T01:00:00.000Z',
+    providerCapabilityVerificationReceiptHash: h('6'),
+    portalRoute: '/submit',
+  };
+  const message = delivery.enqueueAuthorized({ paperId: 'release-paper', dispatchAuthorization, payload: {} });
+  const response = {
+    responseId: 'release-response',
+    outcome: 'rejected',
+    dispatchAuthorizationHash: dispatchAuthorization.submissionDispatchAuthorizationHash,
+    provider: dispatchAuthorization.provider,
+    accountId: dispatchAuthorization.accountId,
+    performedAt: clock.nowIso(),
+    attempt: 1,
+  };
+  delivery.recordResponse({ messageId: message.message_id, response });
+  const responseIntake = buildExecutorResponseIntake({ dispatchAuthorization, response });
+  const releaseLock = {
+    status: 'submission_release_unlocked',
+    dispatchAuthorizationHash: dispatchAuthorization.submissionDispatchAuthorizationHash,
+    responseIntakeHash: responseIntake.executorResponseIntakeHash,
+    reconciliationHash: h('7'),
+  };
+  const failing = createSqliteSubmissionDeliveryStore({ store, receiptLedger: failLedgerWrites(ledger), clock });
+  assert.throws(() => failing.release({ paperId: 'release-paper', lockToken: dispatchAuthorization.submissionDispatchAuthorizationHash, releaseLock }), /simulated_missing_receipt_ledger_table/);
+  assert.equal(delivery.getReleaseLock('release-paper').status, 'locked');
+  assert.equal(store.query("SELECT count(*) AS count FROM receipt_ledger WHERE kind='SubmissionReleasePersistedReceipt';").rows[0].count, 0);
+  assert.equal(delivery.release({ paperId: 'release-paper', lockToken: dispatchAuthorization.submissionDispatchAuthorizationHash, releaseLock }).status, 'released');
+  assert.equal(store.query("SELECT count(*) AS count FROM receipt_ledger WHERE kind='SubmissionReleasePersistedReceipt';").rows[0].count, 1);
 });
 
 test('ambiguous human review requires a verified signature receipt', () => {
@@ -205,6 +294,9 @@ test('provider capability gates atomic claim lease heartbeat and response cursor
   const verifier = ({ attestation: value, executorDescriptor: selected }) => verifyProviderCapabilityAttestation({ attestation: value, executorDescriptor: selected, trustStore, now: clock.now() });
   const responseVerifier = ({ dispatchAuthorization, response }) => ({ version: 1, kind: 'ExecutorResponseVerificationReceipt', status: 'executor_response_signature_verified', responseId: response.responseId, dispatchAuthorizationHash: dispatchAuthorization.submissionDispatchAuthorizationHash, executorId: dispatchAuthorization.executorId, executorDescriptorHash: dispatchAuthorization.executorDescriptorHash, capabilitiesHash: dispatchAuthorization.executorCapabilitiesHash, cryptographicSignaturesVerified: true, executorResponseVerificationReceiptHash: h('f') });
   const delivery = createSqliteSubmissionDeliveryStore({ store, receiptLedger: ledger, clock, providerCapabilityVerifier: verifier, executorResponseVerifier: responseVerifier });
+  const failingDelivery = createSqliteSubmissionDeliveryStore({ store, receiptLedger: failLedgerWrites(ledger), clock, providerCapabilityVerifier: verifier, executorResponseVerifier: responseVerifier });
+  assert.throws(() => failingDelivery.registerProviderCapability({ attestation, executorDescriptor: descriptor }), /simulated_missing_receipt_ledger_table/);
+  assert.equal(store.query('SELECT count(*) AS count FROM submission_provider_capabilities;').rows[0].count, 0);
   const capabilityVerification = delivery.registerProviderCapability({ attestation, executorDescriptor: descriptor });
   assert.equal(capabilityVerification.status, 'provider_capability_verified');
   const replacementBase = { ...attestationBase, portalRoute: '/different-route' };
@@ -213,6 +305,11 @@ test('provider capability gates atomic claim lease heartbeat and response cursor
   assert.throws(() => delivery.registerProviderCapability({ attestation: replacement, executorDescriptor: descriptor }), /replacement requires a new executor descriptor/);
   const dispatch = { status: 'submission_dispatch_authorization_ready', submissionDispatchAuthorizationHash: h('1'), provider: descriptor.provider, accountId: descriptor.accountId, nonce: 'nonce-lease', attempt: 1, replayKey: h('2'), actionScopeKey: h('3'), dispatchCycleHash: h('4'), liveAuthorizationHash: h('5'), executorId: descriptor.executorId, executorDescriptorHash: descriptor.submissionExecutorDescriptorHash, executorCapabilitiesHash: descriptor.capabilitiesHash, responseDueAt: '2026-07-13T01:00:00Z', providerCapabilityVerificationReceiptHash: capabilityVerification.providerCapabilityVerificationReceiptHash, portalRoute: capabilityVerification.portalRoute };
   const message = delivery.enqueueAuthorized({ paperId: 'p', dispatchAuthorization: dispatch, payload: {} });
+  const prepareFailureDelivery = createSqliteSubmissionDeliveryStore({ store, receiptLedger: { ...ledger, prepare() { throw new Error('simulated-claim-prepare-failure'); } }, clock });
+  assert.throws(() => prepareFailureDelivery.claimPending({ workerId: 'prepare-failing-worker', provider: descriptor.provider, accountId: descriptor.accountId, executorDescriptorHash: descriptor.submissionExecutorDescriptorHash, leaseSeconds: 60 }), /simulated-claim-prepare-failure/);
+  assert.equal(delivery.getOutbox(message.message_id).status, 'pending');
+  assert.throws(() => failingDelivery.claimPending({ workerId: 'failing-worker', provider: descriptor.provider, accountId: descriptor.accountId, executorDescriptorHash: descriptor.submissionExecutorDescriptorHash, leaseSeconds: 60 }), /simulated_missing_receipt_ledger_table/);
+  assert.equal(delivery.getOutbox(message.message_id).status, 'pending');
   const claim = delivery.claimPending({ workerId: 'worker-1', provider: descriptor.provider, accountId: descriptor.accountId, executorDescriptorHash: descriptor.submissionExecutorDescriptorHash, leaseSeconds: 60 });
   assert.equal(claim.status, 'in_flight');
   assert.equal(delivery.claimPending({ workerId: 'worker-2', provider: descriptor.provider, accountId: descriptor.accountId, executorDescriptorHash: descriptor.submissionExecutorDescriptorHash }), null);

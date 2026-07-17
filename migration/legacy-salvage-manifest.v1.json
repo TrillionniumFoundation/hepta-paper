@@ -366,7 +366,7 @@
         },
         {
           "path": "paper-core/tests/legacy-salvage-boundary-hardening.test.mjs",
-          "hash": "sha256:dce900e96e110f6c064050f0f3dce46ee4d0bb5eb850e08fc927c94304f192bd"
+          "hash": "sha256:e0d2a0527ba972fd4a0be1e73605b37dfd124e682be2330b54a112937bdf29b9"
         }
       ],
       "replacementVerification": null,
@@ -2246,7 +2246,7 @@
         },
         {
           "path": "paper-core/tests/legacy-provenance-delivery-hardening.test.mjs",
-          "hash": "sha256:6f9578212785a89e5a662e1d341dd68004a828e4a86650be4b1ada9e27bbb4a9"
+          "hash": "sha256:753b1b994642abd1f6dda56ca6be5f2cf61f4bee03739904fefd3ed7de9b5796"
         }
       ],
       "replacementVerification": null,
@@ -3321,7 +3321,7 @@
       "evidence": [
         {
           "path": "paper-core/tests/legacy-salvage-boundary-hardening.test.mjs",
-          "hash": "sha256:dce900e96e110f6c064050f0f3dce46ee4d0bb5eb850e08fc927c94304f192bd"
+          "hash": "sha256:e0d2a0527ba972fd4a0be1e73605b37dfd124e682be2330b54a112937bdf29b9"
         }
       ],
       "replacementVerification": null,
@@ -3554,7 +3554,7 @@
       "evidence": [
         {
           "path": "paper-core/tests/legacy-salvage-boundary-hardening.test.mjs",
-          "hash": "sha256:dce900e96e110f6c064050f0f3dce46ee4d0bb5eb850e08fc927c94304f192bd"
+          "hash": "sha256:e0d2a0527ba972fd4a0be1e73605b37dfd124e682be2330b54a112937bdf29b9"
         },
         {
           "path": "paper-core/tests/submission-handoff-bundle.test.mjs",
@@ -3583,11 +3583,11 @@
       "evidence": [
         {
           "path": "paper-core/tests/legacy-salvage-boundary-hardening.test.mjs",
-          "hash": "sha256:dce900e96e110f6c064050f0f3dce46ee4d0bb5eb850e08fc927c94304f192bd"
+          "hash": "sha256:e0d2a0527ba972fd4a0be1e73605b37dfd124e682be2330b54a112937bdf29b9"
         },
         {
           "path": "paper-core/tests/legacy-provenance-delivery-hardening.test.mjs",
-          "hash": "sha256:6f9578212785a89e5a662e1d341dd68004a828e4a86650be4b1ada9e27bbb4a9"
+          "hash": "sha256:753b1b994642abd1f6dda56ca6be5f2cf61f4bee03739904fefd3ed7de9b5796"
         }
       ],
       "replacementVerification": null,
@@ -3616,7 +3616,7 @@
       "evidence": [
         {
           "path": "paper-core/tests/legacy-provenance-delivery-hardening.test.mjs",
-          "hash": "sha256:6f9578212785a89e5a662e1d341dd68004a828e4a86650be4b1ada9e27bbb4a9"
+          "hash": "sha256:753b1b994642abd1f6dda56ca6be5f2cf61f4bee03739904fefd3ed7de9b5796"
         }
       ],
       "replacementVerification": null,
@@ -3721,11 +3721,11 @@
         },
         {
           "path": "paper-core/tests/legacy-salvage-boundary-hardening.test.mjs",
-          "hash": "sha256:dce900e96e110f6c064050f0f3dce46ee4d0bb5eb850e08fc927c94304f192bd"
+          "hash": "sha256:e0d2a0527ba972fd4a0be1e73605b37dfd124e682be2330b54a112937bdf29b9"
         },
         {
           "path": "paper-core/tests/legacy-provenance-delivery-hardening.test.mjs",
-          "hash": "sha256:6f9578212785a89e5a662e1d341dd68004a828e4a86650be4b1ada9e27bbb4a9"
+          "hash": "sha256:753b1b994642abd1f6dda56ca6be5f2cf61f4bee03739904fefd3ed7de9b5796"
         }
       ],
       "replacementVerification": null,
@@ -4135,7 +4135,7 @@
       "evidence": [
         {
           "path": "paper-core/tests/legacy-salvage-boundary-hardening.test.mjs",
-          "hash": "sha256:dce900e96e110f6c064050f0f3dce46ee4d0bb5eb850e08fc927c94304f192bd"
+          "hash": "sha256:e0d2a0527ba972fd4a0be1e73605b37dfd124e682be2330b54a112937bdf29b9"
         }
       ],
       "replacementVerification": null,
@@ -4997,11 +4997,11 @@
         },
         {
           "path": "paper-core/tests/legacy-salvage-boundary-hardening.test.mjs",
-          "hash": "sha256:dce900e96e110f6c064050f0f3dce46ee4d0bb5eb850e08fc927c94304f192bd"
+          "hash": "sha256:e0d2a0527ba972fd4a0be1e73605b37dfd124e682be2330b54a112937bdf29b9"
         },
         {
           "path": "paper-core/tests/legacy-provenance-delivery-hardening.test.mjs",
-          "hash": "sha256:6f9578212785a89e5a662e1d341dd68004a828e4a86650be4b1ada9e27bbb4a9"
+          "hash": "sha256:753b1b994642abd1f6dda56ca6be5f2cf61f4bee03739904fefd3ed7de9b5796"
         },
         {
           "path": "paper-core/tests/automation-executors.test.mjs",
@@ -5010,7 +5010,7 @@
       ],
       "replacementVerification": {
         "status": "salvage_replacement_verification_bound",
-        "verificationReceiptHash": "sha256:42e393984d7e1ee670c3176f3254ec1ed6f7fc731919cd8920d8b028ae78c825",
+        "verificationReceiptHash": "sha256:c21097be510807ee2f874f70c97776bf9275242e5c8d4583dc827a500113a032",
         "legacySourceHash": "sha256:9aea72df661d2dade164561fc31fd4ee1a9f15c850f721f677ef11f2405c58f9",
         "targets": [
           {
@@ -5045,11 +5045,11 @@
           },
           {
             "path": "paper-core/tests/legacy-salvage-boundary-hardening.test.mjs",
-            "hash": "sha256:dce900e96e110f6c064050f0f3dce46ee4d0bb5eb850e08fc927c94304f192bd"
+            "hash": "sha256:e0d2a0527ba972fd4a0be1e73605b37dfd124e682be2330b54a112937bdf29b9"
           },
           {
             "path": "paper-core/tests/legacy-provenance-delivery-hardening.test.mjs",
-            "hash": "sha256:6f9578212785a89e5a662e1d341dd68004a828e4a86650be4b1ada9e27bbb4a9"
+            "hash": "sha256:753b1b994642abd1f6dda56ca6be5f2cf61f4bee03739904fefd3ed7de9b5796"
           },
           {
             "path": "paper-core/tests/automation-executors.test.mjs",
@@ -5091,7 +5091,7 @@
         },
         {
           "path": "paper-domain/research/formal-verifier-registry.mjs",
-          "hash": "sha256:91425527e8e155737d00851489c4b3d5094835e3c3df3e1c3f522375e56b4473"
+          "hash": "sha256:e882bd19b609aaa906073868919821c0241e46d731353ae6d85216126188eab7"
         },
         {
           "path": "paper-domain/research/formal-certificate-intake.mjs",
@@ -5117,16 +5117,16 @@
         },
         {
           "path": "paper-core/tests/legacy-salvage-boundary-hardening.test.mjs",
-          "hash": "sha256:dce900e96e110f6c064050f0f3dce46ee4d0bb5eb850e08fc927c94304f192bd"
+          "hash": "sha256:e0d2a0527ba972fd4a0be1e73605b37dfd124e682be2330b54a112937bdf29b9"
         },
         {
           "path": "paper-core/tests/legacy-provenance-delivery-hardening.test.mjs",
-          "hash": "sha256:6f9578212785a89e5a662e1d341dd68004a828e4a86650be4b1ada9e27bbb4a9"
+          "hash": "sha256:753b1b994642abd1f6dda56ca6be5f2cf61f4bee03739904fefd3ed7de9b5796"
         }
       ],
       "replacementVerification": {
         "status": "salvage_replacement_verification_bound",
-        "verificationReceiptHash": "sha256:633c3ad18c950e0b786b0836ea4b31faae6e95238c912ff42b869a12c6cfba4c",
+        "verificationReceiptHash": "sha256:5a5537544913ddbdaeadc69b3d9ff133fa873b9c67d675fd400aa52f04a51210",
         "legacySourceHash": "sha256:2fd5bce5c1d90bc98782f0c723a2ed845fd420c6f99001c93f0ddf3fb397c20d",
         "targets": [
           {
@@ -5143,7 +5143,7 @@
           },
           {
             "path": "paper-domain/research/formal-verifier-registry.mjs",
-            "hash": "sha256:91425527e8e155737d00851489c4b3d5094835e3c3df3e1c3f522375e56b4473"
+            "hash": "sha256:e882bd19b609aaa906073868919821c0241e46d731353ae6d85216126188eab7"
           },
           {
             "path": "paper-domain/research/formal-certificate-intake.mjs",
@@ -5169,11 +5169,11 @@
           },
           {
             "path": "paper-core/tests/legacy-salvage-boundary-hardening.test.mjs",
-            "hash": "sha256:dce900e96e110f6c064050f0f3dce46ee4d0bb5eb850e08fc927c94304f192bd"
+            "hash": "sha256:e0d2a0527ba972fd4a0be1e73605b37dfd124e682be2330b54a112937bdf29b9"
           },
           {
             "path": "paper-core/tests/legacy-provenance-delivery-hardening.test.mjs",
-            "hash": "sha256:6f9578212785a89e5a662e1d341dd68004a828e4a86650be4b1ada9e27bbb4a9"
+            "hash": "sha256:753b1b994642abd1f6dda56ca6be5f2cf61f4bee03739904fefd3ed7de9b5796"
           }
         ]
       },
@@ -5203,7 +5203,7 @@
         },
         {
           "path": "paper-domain/research/formal-verifier-registry.mjs",
-          "hash": "sha256:91425527e8e155737d00851489c4b3d5094835e3c3df3e1c3f522375e56b4473"
+          "hash": "sha256:e882bd19b609aaa906073868919821c0241e46d731353ae6d85216126188eab7"
         },
         {
           "path": "paper-domain/evidence/trusted-ledger-receipt.mjs",
@@ -5225,16 +5225,16 @@
         },
         {
           "path": "paper-core/tests/legacy-salvage-boundary-hardening.test.mjs",
-          "hash": "sha256:dce900e96e110f6c064050f0f3dce46ee4d0bb5eb850e08fc927c94304f192bd"
+          "hash": "sha256:e0d2a0527ba972fd4a0be1e73605b37dfd124e682be2330b54a112937bdf29b9"
         },
         {
           "path": "paper-core/tests/legacy-provenance-delivery-hardening.test.mjs",
-          "hash": "sha256:6f9578212785a89e5a662e1d341dd68004a828e4a86650be4b1ada9e27bbb4a9"
+          "hash": "sha256:753b1b994642abd1f6dda56ca6be5f2cf61f4bee03739904fefd3ed7de9b5796"
         }
       ],
       "replacementVerification": {
         "status": "salvage_replacement_verification_bound",
-        "verificationReceiptHash": "sha256:c5fcd65fcd3bba9902e53f39ac42312673e89ba5f6823febf0d7c854d0ebe120",
+        "verificationReceiptHash": "sha256:1bf7b7a7598ef279fad2ddc7939b16bbba80500254a660631ea43469761dd5e5",
         "legacySourceHash": "sha256:af347ddef6b23b20f0dcb2d0fa843a2b78d3ba860787808d1b40da541b2bae07",
         "targets": [
           {
@@ -5243,7 +5243,7 @@
           },
           {
             "path": "paper-domain/research/formal-verifier-registry.mjs",
-            "hash": "sha256:91425527e8e155737d00851489c4b3d5094835e3c3df3e1c3f522375e56b4473"
+            "hash": "sha256:e882bd19b609aaa906073868919821c0241e46d731353ae6d85216126188eab7"
           },
           {
             "path": "paper-domain/evidence/trusted-ledger-receipt.mjs",
@@ -5265,11 +5265,11 @@
           },
           {
             "path": "paper-core/tests/legacy-salvage-boundary-hardening.test.mjs",
-            "hash": "sha256:dce900e96e110f6c064050f0f3dce46ee4d0bb5eb850e08fc927c94304f192bd"
+            "hash": "sha256:e0d2a0527ba972fd4a0be1e73605b37dfd124e682be2330b54a112937bdf29b9"
           },
           {
             "path": "paper-core/tests/legacy-provenance-delivery-hardening.test.mjs",
-            "hash": "sha256:6f9578212785a89e5a662e1d341dd68004a828e4a86650be4b1ada9e27bbb4a9"
+            "hash": "sha256:753b1b994642abd1f6dda56ca6be5f2cf61f4bee03739904fefd3ed7de9b5796"
           }
         ]
       },
@@ -12294,5 +12294,5 @@
       "legacyMatrixEntryId": null
     }
   ],
-  "manifestHash": "sha256:d7a7283fffc64244dca25b908e6f12350a30f0d595545f4e55537922e9bfcd78"
+  "manifestHash": "sha256:f91d4d3de77035e91cbb8c6062c875e4d62590c75f044b162752d90690a7f6f8"
 }

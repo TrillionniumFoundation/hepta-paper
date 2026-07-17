@@ -1,0 +1,4258 @@
+{
+  "version": 2,
+  "kind": "ArchitectureP1P2ReviewGroupManifest",
+  "baseCommit": "4712472a9a6569fa476f1830fd76b110a435cf35",
+  "sourceStatusFileCount": 472,
+  "expectedStatusFileCount": 475,
+  "snapshotSha256": "sha256:d84c6007fcc741ea6a4c38e39ac10a764676c27c31e8a635112b4175b3bfae7c",
+  "productionStore": {
+    "path": "runtime/hepta-paper.sqlite",
+    "sha256": "sha256:e43668b36839fd59a3f97e83b63a71f408a5fea72df079b62c73b132597b4983"
+  },
+  "denylist": [
+    "runtime/**",
+    "node_modules/**",
+    "core/reports/**",
+    "**/.lake/**",
+    ".env",
+    ".env.*",
+    "**/*.sqlite",
+    "**/*.sqlite-wal",
+    "**/*.sqlite-shm",
+    "**/*.pem",
+    "**/*.key",
+    "**/*.log"
+  ],
+  "ignoredSentinels": [
+    "runtime/hepta-paper.sqlite",
+    "runtime/hepta-paper.sqlite-wal",
+    "runtime/hepta-paper.sqlite-shm"
+  ],
+  "groups": [
+    {
+      "id": "RG00",
+      "title": "Review metadata",
+      "dependsOn": [],
+      "expectedEntryCount": 3,
+      "checks": [
+        "node paper-core/verification/review-group-checkpoint.mjs"
+      ]
+    },
+    {
+      "id": "RG01",
+      "title": "Runtime primitives and receipt trust",
+      "dependsOn": [],
+      "expectedEntryCount": 48,
+      "checks": [
+        "focused runtime and receipt tests",
+        "npm run paper:capability-tests"
+      ]
+    },
+    {
+      "id": "RG02",
+      "title": "SQLite 21-23, fencing, retention, and release authority",
+      "dependsOn": [
+        "RG01"
+      ],
+      "expectedEntryCount": 51,
+      "checks": [
+        "npm run safety:p0",
+        "npm run safety:p1"
+      ]
+    },
+    {
+      "id": "RG03",
+      "title": "WorkerRunner v4, sandbox, executors, and runtime images",
+      "dependsOn": [
+        "RG01"
+      ],
+      "expectedEntryCount": 15,
+      "checks": [
+        "focused runner and executor tests",
+        "runtime image build in an approved environment"
+      ]
+    },
+    {
+      "id": "RG04",
+      "title": "Campaign modes, alias identity, batch, and reporting",
+      "dependsOn": [
+        "RG01",
+        "RG02",
+        "RG03"
+      ],
+      "expectedEntryCount": 22,
+      "checks": [
+        "npm run automation:selftest:deduplicated",
+        "focused batch and campaign tests"
+      ]
+    },
+    {
+      "id": "RG05",
+      "title": "Adapter decomposition and hash-bound semantic matrix",
+      "dependsOn": [
+        "RG01",
+        "RG02",
+        "RG04"
+      ],
+      "expectedEntryCount": 35,
+      "checks": [
+        "npm run migration:p1-plugin-selftest",
+        "npm run migration:matrix-integrity",
+        "npm run paper:salvage-hardening-selftest:deduplicated"
+      ]
+    },
+    {
+      "id": "RG06",
+      "title": "Governance ownership and capability verification",
+      "dependsOn": [
+        "RG01",
+        "RG02"
+      ],
+      "expectedEntryCount": 19,
+      "checks": [
+        "npm run paper:governance-contracts",
+        "npm run paper:capability-conformance",
+        "npm run migration:capability-matrix-v3"
+      ]
+    },
+    {
+      "id": "RG07",
+      "title": "Architecture, compatibility, command, and release toolchain",
+      "dependsOn": [
+        "RG03",
+        "RG04",
+        "RG05",
+        "RG06"
+      ],
+      "expectedEntryCount": 67,
+      "checks": [
+        "npm run static:check",
+        "npm run safety:p2",
+        "npm run scripts:surface"
+      ]
+    },
+    {
+      "id": "RG10",
+      "title": "Formal and empirical authority closure",
+      "dependsOn": [
+        "RG01",
+        "RG02",
+        "RG03",
+        "RG04",
+        "RG05",
+        "RG06",
+        "RG07"
+      ],
+      "checks": [
+        "npm run safety:all",
+        "npm run automation:selftest",
+        "npm run paper:salvage-hardening-selftest",
+        "real Lean campaign, replay, release, and handoff tests",
+        "raw CAS/ledger, benchmark harness, and ExperimentRegistry authority tests",
+        "npm run migration:matrix-integrity"
+      ],
+      "expectedEntryCount": 185
+    },
+    {
+      "id": "RG08",
+      "title": "Pinned CI integration",
+      "dependsOn": [
+        "RG07",
+        "RG10"
+      ],
+      "expectedEntryCount": 1,
+      "checks": [
+        "manual pinned-action and CI command parity review"
+      ]
+    },
+    {
+      "id": "RG09",
+      "title": "Active and historical documentation",
+      "dependsOn": [
+        "RG02",
+        "RG03",
+        "RG04",
+        "RG05",
+        "RG06",
+        "RG07",
+        "RG08",
+        "RG10"
+      ],
+      "expectedEntryCount": 29,
+      "checks": [
+        "git diff --check",
+        "active-document link and path review"
+      ]
+    }
+  ],
+  "atomicSets": [
+    {
+      "id": "schema-021-023-fencing-closure",
+      "sameGroup": true,
+      "paths": [
+        "store/migrations/021_job_lease_fencing.sql",
+        "store/migrations/022_campaign_attempt_fencing.sql",
+        "store/migrations/023_workspace_retention_qualification.sql",
+        "paper-adapters/persistence/scoped-schema-version-gate.mjs",
+        "paper-adapters/persistence/store-provider.mjs",
+        "paper-adapters/persistence/sqlite-job-receipt-store.mjs",
+        "paper-adapters/persistence/sqlite-campaign-store.mjs",
+        "paper-adapters/persistence/sqlite-campaign-lease-operations.mjs",
+        "paper-adapters/automation/runtime-retention.mjs",
+        "paper-adapters/automation/workspace-attempt-repository.mjs",
+        "migration/tests/capabilities/runtime.job-receipt-store.test.mjs",
+        "paper-core/tests/campaign-attempt-fencing.test.mjs",
+        "paper-core/tests/workspace-attempt-integration.test.mjs",
+        "paper-core/tests/runtime-retention.test.mjs"
+      ]
+    },
+    {
+      "id": "semantic-matrix-target-and-evidence-closure",
+      "sameGroup": true,
+      "paths": [
+        "migration/legacy-semantic-migration-matrix.json",
+        "migration/fixtures/legacy-matrix-reference-v1.json",
+        "migration/tests/p1-plugin-wrapper-boundaries.mjs",
+        "migration/tests/matrix-integrity.mjs",
+        "paper-core/bin/paper-production-core.mjs",
+        "paper-adapters/build-package/index.mjs",
+        "paper-adapters/research-verify/index.mjs",
+        "paper-adapters/submission/index.mjs",
+        "paper-adapters/referee-review/index.mjs",
+        "paper-adapters/proposal/index.mjs",
+        "paper-core/tests/research-verify-orchestrator.test.mjs",
+        "paper-core/tests/repair-orchestrator-split.test.mjs",
+        "paper-core/tests/orchestrator-facade-compatibility.test.mjs",
+        "paper-core/tests/submission-handoff-bundle.test.mjs",
+        "paper-core/verification/selftest.mjs",
+        "paper-core/verification/authority-pipeline-selftest.mjs"
+      ]
+    },
+    {
+      "id": "release-state-toolchain-closure",
+      "sameGroup": true,
+      "paths": [
+        "package.json",
+        "package-lock.json",
+        "eslint.config.mjs",
+        "CHANGELOG.md",
+        "RELEASE.md",
+        "paper-core/docs/CURRENT_STATUS.md",
+        "paper-core/src/release-state-contract.mjs",
+        "paper-core/bin/release-state-check.mjs",
+        "paper-core/tests/release-state-consistency.test.mjs"
+      ]
+    },
+    {
+      "id": "worker-runner-v4-closure",
+      "sameGroup": true,
+      "paths": [
+        "paper-ports/worker-runner-port.mjs",
+        "paper-adapters/runtime/os-sandboxed-worker-runner.mjs",
+        "paper-adapters/runtime/execution-snapshot.mjs",
+        "paper-adapters/runtime/sandbox-backend-probe.mjs",
+        "paper-core/tests/automation-executors.test.mjs",
+        "paper-core/tests/executor-capabilities.test.mjs",
+        "migration/tests/capabilities/runtime.sandboxed-worker-runner.test.mjs",
+        "runtime-images/python-scientific/Dockerfile",
+        "runtime-images/r-scientific/Dockerfile",
+        "runtime-images/r-scientific/restore-locked.R"
+      ]
+    },
+    {
+      "id": "query-only-submission-handoff-closure",
+      "sameGroup": true,
+      "paths": [
+        "paper-ports/campaign-release-query-port.mjs",
+        "paper-adapters/persistence/sqlite-campaign-release-query-repository.mjs",
+        "paper-adapters/submission/campaign-release-bundle-consumer.mjs",
+        "paper-composition/bootstrap/submission-handoff-context-bootstrap.mjs",
+        "paper-core/bin/paper-submission-handoff.mjs",
+        "paper-core/tests/campaign-release-handoff.test.mjs"
+      ]
+    }
+  ],
+  "movePairs": [
+    {
+      "id": "move-journal-profile",
+      "from": "paper-adapters/journal-manage/data/journal-profiles.v1.data.mjs",
+      "to": "paper-domain/journal/data/journal-profiles.v1.data.mjs",
+      "similarityPercent": 100,
+      "exactBytes": true
+    },
+    {
+      "id": "move-real-paper-pilot",
+      "from": "paper-core/bin/run-real-paper-pilot.mjs",
+      "to": "paper-core/experimental/run-real-paper-pilot.mjs",
+      "similarityPercent": 100,
+      "exactBytes": true
+    },
+    {
+      "id": "move-history-design-audit",
+      "from": "paper-core/docs/design-core-workflow-audit-and-paper-plan.md",
+      "to": "paper-core/docs/history/design-core-workflow-audit-and-paper-plan.md",
+      "similarityPercent": 100,
+      "exactBytes": true
+    },
+    {
+      "id": "move-history-production-master",
+      "from": "paper-core/docs/paper-production-migration-master-plan.md",
+      "to": "paper-core/docs/history/paper-production-migration-master-plan.md",
+      "similarityPercent": 100,
+      "exactBytes": true
+    },
+    {
+      "id": "move-history-risk-register",
+      "from": "paper-core/docs/paper-production-risk-register-and-next-plan.md",
+      "to": "paper-core/docs/history/paper-production-risk-register-and-next-plan.md",
+      "similarityPercent": 100,
+      "exactBytes": true
+    },
+    {
+      "id": "move-history-remediation-v05",
+      "from": "paper-core/docs/remediation-status-2026-07-10-v0.5.md",
+      "to": "paper-core/docs/history/remediation-status-2026-07-10-v0.5.md",
+      "similarityPercent": 100,
+      "exactBytes": true
+    },
+    {
+      "id": "move-history-remediation-v06",
+      "from": "paper-core/docs/remediation-status-2026-07-10-v0.6.md",
+      "to": "paper-core/docs/history/remediation-status-2026-07-10-v0.6.md",
+      "similarityPercent": 100,
+      "exactBytes": true
+    },
+    {
+      "id": "move-history-remediation-v07",
+      "from": "paper-core/docs/remediation-status-2026-07-10-v0.7.md",
+      "to": "paper-core/docs/history/remediation-status-2026-07-10-v0.7.md",
+      "similarityPercent": 100,
+      "exactBytes": true
+    },
+    {
+      "id": "move-taskflow-port",
+      "from": "paper-ports/task-flow-port.mjs",
+      "to": "paper-ports/experimental/task-flow-port.mjs",
+      "similarityPercent": 100,
+      "exactBytes": true
+    },
+    {
+      "id": "move-taskflow-adapter",
+      "from": "paper-adapters/orchestration/openclaw-taskflow-adapter.mjs",
+      "to": "paper-adapters/experimental/taskflow/openclaw-taskflow-adapter.mjs",
+      "similarityPercent": 81.4,
+      "exactBytes": false
+    },
+    {
+      "id": "move-reviewed-submit-taskflow",
+      "from": "paper-application/orchestration/reviewed-submit-taskflow.mjs",
+      "to": "paper-application/experimental/taskflow/reviewed-submit-taskflow.mjs",
+      "similarityPercent": 99.1,
+      "exactBytes": false
+    },
+    {
+      "id": "move-history-factory-plan",
+      "from": "paper-core/docs/paper-factory-retirement-migration-plan.md",
+      "to": "paper-core/docs/history/paper-factory-retirement-migration-plan.md",
+      "similarityPercent": 98,
+      "exactBytes": false
+    },
+    {
+      "id": "move-history-phase-overlay",
+      "from": "paper-core/docs/phase-1-7-overlay.md",
+      "to": "paper-core/docs/history/phase-1-7-overlay.md",
+      "similarityPercent": 96.8,
+      "exactBytes": false
+    },
+    {
+      "id": "move-history-remediation-base",
+      "from": "paper-core/docs/remediation-status-2026-07-10.md",
+      "to": "paper-core/docs/history/remediation-status-2026-07-10.md",
+      "similarityPercent": 99.6,
+      "exactBytes": false
+    },
+    {
+      "id": "move-taskflow-pilot-doc",
+      "from": "paper-core/docs/taskflow-pilot.md",
+      "to": "paper-core/docs/experimental-taskflow-pilot.md",
+      "similarityPercent": 86.3,
+      "exactBytes": false
+    },
+    {
+      "id": "move-cold-volume-repository",
+      "from": "paper-core/src/cold-volume-cas-repository.mjs",
+      "to": "paper-adapters/archives/cold-volume-cas-repository.mjs",
+      "similarityPercent": 97.2,
+      "exactBytes": false
+    },
+    {
+      "id": "move-cold-volume-contract",
+      "from": "paper-core/src/cold-volume-contract.mjs",
+      "to": "paper-adapters/archives/cold-volume-contract.mjs",
+      "similarityPercent": 94.1,
+      "exactBytes": false
+    },
+    {
+      "id": "move-external-intake-verifier",
+      "from": "paper-core/src/external-intake-verifier.mjs",
+      "to": "paper-adapters/governance/external-intake-verifier.mjs",
+      "similarityPercent": 91.6,
+      "exactBytes": false
+    },
+    {
+      "id": "move-offhost-worm-repository",
+      "from": "paper-core/src/offhost-worm-repository.mjs",
+      "to": "paper-adapters/archives/offhost-worm-repository.mjs",
+      "similarityPercent": 97.2,
+      "exactBytes": false
+    },
+    {
+      "id": "move-sqlite-logical-integrity",
+      "from": "paper-core/src/sqlite-logical-integrity.mjs",
+      "to": "paper-adapters/persistence/sqlite-logical-integrity.mjs",
+      "similarityPercent": 92.6,
+      "exactBytes": false
+    }
+  ],
+  "wholeFileIntegrationPaths": [
+    "migration/fixtures/legacy-matrix-reference-v1.json",
+    "migration/legacy-semantic-migration-matrix.json",
+    "package.json",
+    "paper-adapters/automation/campaign-empirical-result-authority.mjs",
+    "paper-adapters/automation/campaign-experiment-artifact-authority.mjs",
+    "paper-adapters/automation/campaign-node-executor.mjs",
+    "paper-adapters/automation/campaign-release-packager.mjs",
+    "paper-adapters/automation/system-benchmark-harness.mjs",
+    "paper-adapters/persistence/sqlite-campaign-prepared-integration-operations.mjs",
+    "paper-adapters/persistence/store-provider.mjs",
+    "paper-adapters/research-verify/canonical-claim-registry-reader.mjs",
+    "paper-adapters/research-verify/lake-formal-verifier.mjs",
+    "paper-adapters/research-verify/research-report-builder.mjs",
+    "paper-adapters/research-verify/worker-runtime.mjs",
+    "paper-adapters/runtime/os-sandboxed-worker-runner.mjs",
+    "paper-application/automation/campaign-engine.mjs",
+    "paper-application/execution-context.mjs",
+    "paper-composition/batch/paper-batch-application.mjs",
+    "paper-core/bin/hepta-store.mjs",
+    "paper-core/bin/paper-production-core.mjs",
+    "paper-core/src/command-registry.mjs",
+    "paper-core/tests/architecture-conformance.test.mjs",
+    "paper-core/tests/automation-executors.test.mjs",
+    "paper-core/tests/campaign-release-source-lineage.test.mjs",
+    "paper-core/tests/empirical-p1-authority.test.mjs",
+    "paper-core/tests/formal-campaign-release.test.mjs",
+    "paper-core/tests/repository-module-imports.test.mjs",
+    "paper-core/verification/authority-pipeline-selftest.mjs",
+    "paper-core/verification/selftest.mjs",
+    "paper-domain/automation/campaign-release-contracts.mjs",
+    "paper-domain/automation/experiment-run-contract.mjs",
+    "paper-domain/quality/manuscript-promotion-gate.mjs",
+    "paper-domain/research/claim-registry.mjs",
+    "paper-domain/research/experiment-registry-authority.mjs",
+    "paper-domain/research/experiment-registry-verifier.mjs",
+    "paper-domain/research/experiment-registry.mjs",
+    "paper-domain/research/formal-claim-contract.mjs"
+  ],
+  "entries": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "status": "M",
+      "contentHash": "sha256:098dd6569469238aa54b53da65742a7d865450f44e47fc72b3b4fcf1559f8481",
+      "group": "RG08",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "CHANGELOG.md",
+      "status": "M",
+      "contentHash": "sha256:9f986b1e7d3d5814ee98b7ca948b794db9c70e7bd9f7f5d07258b4975bba3ff8",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "eslint.config.mjs",
+      "status": "U",
+      "contentHash": "sha256:7bd2cb64fecff949ec790b45c42ce0b22a93fd336f67ef60f2e51881990a2c71",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "migration/bin/run-production-capability-replays.mjs",
+      "status": "M",
+      "contentHash": "sha256:a589be48cf5db88d0ec6f2ab01ccd37fb80ad3cda63f58e6a9b67271815a7e52",
+      "group": "RG06",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "migration/compatibility-support.v1.json",
+      "status": "U",
+      "contentHash": "sha256:766a4dbe72c477a3c398f9bdae5d083d2c9429a5dbbc953a49eda9e59989a394",
+      "group": "RG07",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "migration/fixtures/legacy-matrix-reference-v1.json",
+      "status": "M",
+      "contentHash": "sha256:1bd18022ac3b4ff9c80e73e015f478c583a860663e48ee9439fa6e7c4bd3eb04",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "migration/legacy-capability-matrix-v3.mjs",
+      "status": "M",
+      "contentHash": "sha256:7ca0844cbd97e98fd9444fd49b3097e9f2d8b7d97cd8bb81fb3bb3eb6d1bc5d3",
+      "group": "RG06",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "migration/legacy-salvage-manifest.v1.json",
+      "status": "M",
+      "contentHash": "sha256:5421263e84d1f267f2e2ef7282acc91d6afec79571b84de16eef687e5ada35ca",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "migration/legacy-salvage-verification-receipt.v1.json",
+      "status": "M",
+      "contentHash": "sha256:97485d9209b4a8695b113ba578b29ce724f6d432db4a392340d5a9a38d95d2ad",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "migration/legacy-semantic-migration-matrix.json",
+      "status": "M",
+      "contentHash": "sha256:ee98477a3edbab189d9271577f80fbf8039d4f24022ad5f0b0f9ecad9c889bc6",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "migration/operational-proof-intake.mjs",
+      "status": "M",
+      "contentHash": "sha256:3e724769ba661f098b8f0302e5c79889879d57226d673e09d2db4ba6a9eb9b7e",
+      "group": "RG06",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "migration/owner-acceptance.mjs",
+      "status": "M",
+      "contentHash": "sha256:89a4702d6471b1eaf58055d69a9fd9790279c457100648208ed5fbddd24b95b1",
+      "group": "RG06",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "migration/tests/capabilities/research.evidence-ingestor.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:16049e871a6cbb99aee5c58769f63a0f40181680e6f4fcf9d3732661b5152960",
+      "group": "RG01",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "migration/tests/capabilities/research.formal-verifier.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:e305cdbd03e40e5193fd52bf338ed4b5473575affab3af68d18ed0a69aec4997",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "migration/tests/capabilities/runtime.artifact-repository.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:7c7b1ba136c82724063222c78421d365e310edd78dfd58f6a85ebca4b7651800",
+      "group": "RG01",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "migration/tests/capabilities/runtime.job-receipt-store.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:3e424e1668288931bce416642463a7b8c86477da5c3988d542f761a29b324ffa",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "migration/tests/capabilities/runtime.sandboxed-worker-runner.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:a0d1f9c0eb5a54e55ce6eb8a16a9481a1cb1d88e99d5af504db72f7871874991",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "migration/tests/capability-matrix-v3.mjs",
+      "status": "M",
+      "contentHash": "sha256:00d849077c5245ed192c5eae0c6de215f90ca5a2d74bf0517eafdee907bea25a",
+      "group": "RG06",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "migration/tests/matrix-integrity.mjs",
+      "status": "M",
+      "contentHash": "sha256:f8873e79be106fdf320db8a5b4babd79395fe2768fb0b2659c37c690d57e1057",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "migration/tests/p1-plugin-wrapper-boundaries.mjs",
+      "status": "M",
+      "contentHash": "sha256:4071bb3c98d718d9c25db9e4f022c88d1177f6c1ccdd10b0ae3ba41d6544bad4",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "package-lock.json",
+      "status": "M",
+      "contentHash": "sha256:91963ec253f7c9a465c52145d4e7d36938c1e567cb0855cdab81b508c54de83b",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "package.json",
+      "status": "M",
+      "contentHash": "sha256:aaf1e9275dbbe76160ea05b1c0f281937678bdbfd56acdc34599a9e4c19ad180",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/archives/cold-volume-cas-repository.mjs",
+      "status": "U",
+      "contentHash": "sha256:3f9525304323ec72f322053f7fe10d6a3c42bbd9fd59e4ba8fbd9e43a6e469b2",
+      "group": "RG07",
+      "disposition": "move_to",
+      "pairId": "move-cold-volume-repository"
+    },
+    {
+      "path": "paper-adapters/archives/cold-volume-contract.mjs",
+      "status": "U",
+      "contentHash": "sha256:7e127448a4656c60761fa127040227c1adfbbe79cf530377977e2a5848924811",
+      "group": "RG07",
+      "disposition": "move_to",
+      "pairId": "move-cold-volume-contract"
+    },
+    {
+      "path": "paper-adapters/archives/offhost-worm-repository.mjs",
+      "status": "U",
+      "contentHash": "sha256:7c8b70337c63e22a3cc0f129987c7cebbfefa1bafcbd250771efcbbeb03b39d7",
+      "group": "RG07",
+      "disposition": "move_to",
+      "pairId": "move-offhost-worm-repository"
+    },
+    {
+      "path": "paper-adapters/artifacts/artifact-write-receipt-verifier.mjs",
+      "status": "M",
+      "contentHash": "sha256:37d05701cd51e66da6199cd322d8b500e3f58018dd1c8147edf528a58e589e53",
+      "group": "RG01",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/artifacts/filesystem-artifact-repository.mjs",
+      "status": "M",
+      "contentHash": "sha256:24d1d8a2a1b7f9140c48da7c34d62c683fd8d6e102ae839fab674c56a447315f",
+      "group": "RG01",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/artifacts/filesystem-report-receipt-ledger.mjs",
+      "status": "U",
+      "contentHash": "sha256:1cb9b03e84034f24a0c3b1d275e4fe8459640cb09ecdaa2c7aa08de2396e772d",
+      "group": "RG01",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/artifacts/filesystem-report-receipt-repository.mjs",
+      "status": "U",
+      "contentHash": "sha256:c597aa61cab96de38dbf3dfa66679aca1cfe116a64811fbdd0f3d6ad31c7660d",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/agent-executor-template.mjs",
+      "status": "U",
+      "contentHash": "sha256:a1c846cd3019ad12a9360427d155723e7dad7c2223e4ebf0666743e137841970",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/automation-runtime-reconciler.mjs",
+      "status": "M",
+      "contentHash": "sha256:3ab2430c746f2d5e606fd021b91d2a34ed05bc6cbd6d6b87ce6e338a1a14cb8c",
+      "group": "RG02",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/bounded-child-process.mjs",
+      "status": "M",
+      "contentHash": "sha256:c53ea969af0b9987e22a03c627d85753191e587d7c2f7fd19c4d9ab4fc0aeff2",
+      "group": "RG03",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/campaign-agent-policy.mjs",
+      "status": "U",
+      "contentHash": "sha256:7ea385e8de5c98f674f675b51660cd9483ab3ed28993d8a1cf426e46e8293e1e",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/campaign-empirical-result-authority.mjs",
+      "status": "U",
+      "contentHash": "sha256:f59a9ef936ed61c3b7bfb6f3f4f37b400cdd956670e02f44ac06c960f12bd08b",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/campaign-experiment-artifact-authority.mjs",
+      "status": "U",
+      "contentHash": "sha256:7d42e2afd92baa6da9d830a400a549c9b5db7d25056275d572d95ca3f32f4ce6",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/campaign-formal-review-envelope.mjs",
+      "status": "U",
+      "contentHash": "sha256:83dc380aa95438c9e53b53832ba16a3b4014957aee3e21b29cf36438f47696c0",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/campaign-node-executor.mjs",
+      "status": "M",
+      "contentHash": "sha256:fc1d56a79b65a8f3a0db5416ce41f66d72a52abbe714dc38a62f8b22f832e6fa",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/campaign-node-workspace-support.mjs",
+      "status": "U",
+      "contentHash": "sha256:1ae09f836769892bae18e9c7708156fce314c03cc58a782ef70fd01b6fb1e0e5",
+      "group": "RG03",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/campaign-release-packager.mjs",
+      "status": "U",
+      "contentHash": "sha256:c3e19fed57714d068b4e1c8df17bdc66e24207165031ca716e35de620fb2c5ad",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/campaign-release-repository.mjs",
+      "status": "U",
+      "contentHash": "sha256:e082b775e9e6f50e62fea5f64f9907e4652e1d54eadb7bd050b52a36660847f8",
+      "group": "RG02",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/campaign-research-verifier.mjs",
+      "status": "U",
+      "contentHash": "sha256:97a5d718eef34d022bfa5c0c581d8ab6fc3519e7621c45f998bfca51b817b7df",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/codex-agent-executor.mjs",
+      "status": "M",
+      "contentHash": "sha256:d87535e75463eeef0d97bf14bbf35a9deceec620065dd13c8a869ea7e739bf19",
+      "group": "RG03",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/empirical-cache-repository.mjs",
+      "status": "M",
+      "contentHash": "sha256:8d7fdf896b3b1f1a7747154f2fcbeeb4a219efbbabb396af467e77e91a1590d0",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/empirical-contract-reader.mjs",
+      "status": "U",
+      "contentHash": "sha256:1e33941565df8e0d7565dacfb8d6dfda9a53933c59dab72309c6eba6fc7ee5ef",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/generated-latex-sanitizer.mjs",
+      "status": "M",
+      "contentHash": "sha256:3c8e8e35d6aed0372e7990956c08fb3dab064dd78b1c4e6099ce7a2378aca630",
+      "group": "RG03",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/isolated-agent-executor.mjs",
+      "status": "M",
+      "contentHash": "sha256:df5cb3ef0915a9895636ee209230d5c97e89d61e502fe7726d41314db66ea4f3",
+      "group": "RG03",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/manuscript-quality-checks.mjs",
+      "status": "M",
+      "contentHash": "sha256:e5c4f7791cf92a0784ae9aa4724522041c4e4d0caf3b9539a7b3ebb3a02d6620",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/multi-language-empirical-executor.mjs",
+      "status": "M",
+      "contentHash": "sha256:cf3f776ea372325fbd7b34450811cad37a7cdf8912106def7259dd5e36b6c28f",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/ollama-structured-agent-executor.mjs",
+      "status": "M",
+      "contentHash": "sha256:27fb5aa0bc1b0413948ca9414301dcce0165e0365230b9ce32fa6945ef49dfb7",
+      "group": "RG03",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/openclaw-agent-configuration.mjs",
+      "status": "U",
+      "contentHash": "sha256:691f95de86e211ce255230103c99e890b6029004c5b7d0c3de4d48879633efbc",
+      "group": "RG03",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/openclaw-agent-executor.mjs",
+      "status": "M",
+      "contentHash": "sha256:345a627e65e415fb7af71830b748d03efb36ff3236fa1e4d2a9f7de121733159",
+      "group": "RG03",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/runtime-image-registry.mjs",
+      "status": "M",
+      "contentHash": "sha256:2f6a8d6a2b6aa453cdf8498679b86ded3a4570f33e59b1b26b1683dd90631bb7",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/runtime-retention-evidence-policy.mjs",
+      "status": "U",
+      "contentHash": "sha256:c7e673d2340af7c5943228b8d20b3480d4a1ebcae5af4e6adcc2c63f1c5edb32",
+      "group": "RG02",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/runtime-retention-intent-repository.mjs",
+      "status": "U",
+      "contentHash": "sha256:3d5de8b5dab66f52078cb4745f07e765b5917543e1622cf1a60c005596e17bd4",
+      "group": "RG02",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/runtime-retention-scope-repository.mjs",
+      "status": "U",
+      "contentHash": "sha256:7609d27f5a6b4fd5e87521c076f6a901d912dd71851ff6ecd5e3e97c332ff259",
+      "group": "RG02",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/runtime-retention.mjs",
+      "status": "M",
+      "contentHash": "sha256:e43140fc918961110806db77b1d708a05382b2f67827840e5984fc7ad6aa9124",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/sqlite-resource-governor.mjs",
+      "status": "M",
+      "contentHash": "sha256:24b5047b9ac886b527315c7b05d6b7690d83ae395f88f5be1831bb2a821d5b95",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/system-benchmark-arm-adapter-repository.mjs",
+      "status": "U",
+      "contentHash": "sha256:d64a311e250bc1f1ed39ba20e80c9b3a1e8c041868f3ea8cf6d183a0694c42cd",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/system-benchmark-empirical-execution.mjs",
+      "status": "U",
+      "contentHash": "sha256:40ea7cf0e2955a2164345151903175e7e4e3d5f6319c805d4f7e59db46526186",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/system-benchmark-harness.mjs",
+      "status": "U",
+      "contentHash": "sha256:434f50be444a20ce320ff65f7301458375802df2f75ad293e0e8422d7d0d0721",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/system-benchmark-result-repository.mjs",
+      "status": "U",
+      "contentHash": "sha256:1fba5f120be02b71006dfcf517f69ca1fb6f8682e8994978e67c2365d43edc2f",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/theorem-manuscript-readiness-check.mjs",
+      "status": "M",
+      "contentHash": "sha256:0a82d4f9c1b290ac1c94a96b725edefa67598f765baf6017a0523fcbe3bce9d0",
+      "group": "RG03",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/workspace-attempt-commit-journal-repository.mjs",
+      "status": "U",
+      "contentHash": "sha256:ccf7b8462c38158fdbad2422d0b0ceadc7ef3780be7a2a09400c8a07af8e41c1",
+      "group": "RG02",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/workspace-attempt-descriptor.mjs",
+      "status": "U",
+      "contentHash": "sha256:34ab9d9033d115a0b3981efab9b130ee56597f88b6577974c35414df8e6c8693",
+      "group": "RG02",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/workspace-attempt-errors.mjs",
+      "status": "U",
+      "contentHash": "sha256:2759d894706dbcfc0ee9cdeb3d517b332ef1ec998fb013c795c40309b6addfd4",
+      "group": "RG02",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/workspace-attempt-manifest.mjs",
+      "status": "U",
+      "contentHash": "sha256:f1c4dbea71833e2ce7c5f2beba992d69f098263d8eb0e6e74ff0e44bdd1b2a49",
+      "group": "RG02",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/workspace-attempt-repository.mjs",
+      "status": "U",
+      "contentHash": "sha256:2663eb228bfce93478b7ce1e4bd9389d1e03e5111d3b8d4d16acec6db455008e",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/workspace-attempt-root-snapshot.mjs",
+      "status": "U",
+      "contentHash": "sha256:e95cccbae1bdf64c929fd02d530e3ec63077b15dfd1e192489863166e73e7ff6",
+      "group": "RG02",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/workspace-change-tracker.mjs",
+      "status": "M",
+      "contentHash": "sha256:4acd146d0686349c2dd7fafb8ab80806c7483adca669d158565a09c08cb0b6ce",
+      "group": "RG03",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/workspace-lineage-backfill.mjs",
+      "status": "M",
+      "contentHash": "sha256:d172bdd3b5fe4b768044c2dee46e8257044653f19440ff9729ab00a8426bcc22",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/workspace-registry.mjs",
+      "status": "M",
+      "contentHash": "sha256:79ac551866451897181a790c3583fc0f717ff9a395e7de3d1144f2a78e4b2255",
+      "group": "RG02",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/workspace-retention-evidence.mjs",
+      "status": "U",
+      "contentHash": "sha256:5adbef9bf5904533d6d0b641b1b40fe7928fe2403dce7413a27c65a617b5738b",
+      "group": "RG02",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/workspace-snapshot-exporter.mjs",
+      "status": "M",
+      "contentHash": "sha256:701433eca65298db525f897ee08312c72e07916df98e72548f4b965334580af6",
+      "group": "RG02",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/workspace-snapshot-publication-repository.mjs",
+      "status": "U",
+      "contentHash": "sha256:a25ea403752930abc97d90c08508a81582dca2c4c7d1de4c0dc22ef903c63ed6",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/automation/workspace-snapshot-staging-repository.mjs",
+      "status": "U",
+      "contentHash": "sha256:e1bdabd89de12140eebaee0ae42f4a7afa28aa585f065e11d4df6342f4bbcdcb",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/build-package/index.mjs",
+      "status": "M",
+      "contentHash": "sha256:e41576323e8f8cc638b33db26c79c69842726020eae4c5cac7d1a3f2728e62f3",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/build-package/package-verifier.mjs",
+      "status": "M",
+      "contentHash": "sha256:56de7a3d6e334fd9f97d2d5d63db346a9c7e54081e54e9279f486cd28854059e",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/build-package/source-package-contract-reader.mjs",
+      "status": "U",
+      "contentHash": "sha256:e580fe6c74cd852468299726990f8d2d2a36ce74efd14a1e48087075132dda25",
+      "group": "RG05",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/empirical-analysis/benchmark-contracts.mjs",
+      "status": "M",
+      "contentHash": "sha256:b98de42a35db7590f82c0e41984f4944e14e2844390b13d0111b87de27197611",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/empirical-analysis/execution-contracts.mjs",
+      "status": "M",
+      "contentHash": "sha256:3c1a23a6314c511f11261908eaa48f8302dfd4affc095e55ccae3d5f6e900da5",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/empirical-analysis/index.mjs",
+      "status": "M",
+      "contentHash": "sha256:6e96bbf4956091520e1ed0d10c7d303ad58e8b30aa72ba926f10e8092b3f6ebc",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/experimental/taskflow/openclaw-taskflow-adapter.mjs",
+      "status": "U",
+      "contentHash": "sha256:8eb2f25e1a524e34e2c8d7424bc7555fcbc38f314e238a4f98796b7250cdb075",
+      "group": "RG07",
+      "disposition": "move_to",
+      "pairId": "move-taskflow-adapter"
+    },
+    {
+      "path": "paper-adapters/governance/capability-proof-verifier.mjs",
+      "status": "U",
+      "contentHash": "sha256:0823b9625563c2ff0b4a549f9f31dd1b7a0dc429dc1c822f8d6c5a1e19fc0466",
+      "group": "RG06",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/governance/external-intake-verifier.mjs",
+      "status": "U",
+      "contentHash": "sha256:96be02d16f8949afef0cae8d383bfade7970973c06cc44ee7efd1f3d9ff4821a",
+      "group": "RG06",
+      "disposition": "move_to",
+      "pairId": "move-external-intake-verifier"
+    },
+    {
+      "path": "paper-adapters/governance/legacy-owner-acceptance-contract.mjs",
+      "status": "U",
+      "contentHash": "sha256:f87752e6ffe2d9e5da3285b616fdac378fce06369c21a0092cca8d21cc25972d",
+      "group": "RG06",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/governance/owner-acceptance-verifier.mjs",
+      "status": "U",
+      "contentHash": "sha256:7a710a2a26ed507a17fcd958b7dfcc6e993e5ecfd977cb3b4d404a5afbd00e2e",
+      "group": "RG06",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/inventory/index.mjs",
+      "status": "M",
+      "contentHash": "sha256:1c1a44311eed8a9dac4e6339c7f050a6a0a226f5d19092ba698eb028db5e9dd3",
+      "group": "RG05",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/inventory/inventory-repository.mjs",
+      "status": "U",
+      "contentHash": "sha256:0658ebbad7482a62ff584167d38fda0909c5ada783ca1dc207b3a1c10dc69f64",
+      "group": "RG05",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/inventory/inventory-source-readers.mjs",
+      "status": "U",
+      "contentHash": "sha256:ef5cb530c05ba6ae26175cdd6294408ad0add974413f357bc5ac0d9a68725065",
+      "group": "RG05",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/journal-manage/contracts.mjs",
+      "status": "D",
+      "contentHash": "sha256:8cb827043607c7c971407414fad1226f2510465af01aa1b5b09dc6bc55b74976",
+      "group": "RG10",
+      "disposition": "retire",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/journal-manage/data/journal-profiles.v1.data.mjs",
+      "status": "D",
+      "contentHash": "sha256:4998b77329b02ca3952c5c0f20a7b1cb22748b945fe19288bd5b6c68c7d5fdf1",
+      "group": "RG05",
+      "disposition": "move_from",
+      "pairId": "move-journal-profile"
+    },
+    {
+      "path": "paper-adapters/journal-manage/index.mjs",
+      "status": "M",
+      "contentHash": "sha256:65c861ae659623b6b57bd08fefeebe64ee76f857b41bfbad0be440be5583b7c1",
+      "group": "RG05",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/journal-manage/journal-registry.mjs",
+      "status": "D",
+      "contentHash": "sha256:ff135ae73c3c9390281360302f0d7d176affca2a628526b6b89ac2fe8596622f",
+      "group": "RG10",
+      "disposition": "retire",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/journal-manage/review-authority.mjs",
+      "status": "D",
+      "contentHash": "sha256:0b3decc9e25fcb8fd57ef76b184dfd888fa3f3180b3ae26b5b7aedf697e2b973",
+      "group": "RG10",
+      "disposition": "retire",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/journal-manage/selection.mjs",
+      "status": "D",
+      "contentHash": "sha256:9e05b2168dcad957572ecfc717a1f6cafadd2dc2a2264cb3d568b60369af1ec5",
+      "group": "RG10",
+      "disposition": "retire",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/orchestration/openclaw-taskflow-adapter.mjs",
+      "status": "D",
+      "contentHash": "sha256:ec5a48949b55164409918f76511fdad41e3ccc5bcef8dae7e0e1d7bc3be02ab7",
+      "group": "RG07",
+      "disposition": "move_from",
+      "pairId": "move-taskflow-adapter"
+    },
+    {
+      "path": "paper-adapters/persistence/campaign-definition-codec.mjs",
+      "status": "U",
+      "contentHash": "sha256:39010ae2be39a6a913806fb570e8cf5f32c76aa91829786994073e734c2ecc19",
+      "group": "RG02",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/persistence/legacy-history-snapshot-repository.mjs",
+      "status": "M",
+      "contentHash": "sha256:ef526ca1037d4f9d5bb1e941f597af5f90fb8b88b7730db47393f4226f0e279a",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/persistence/legacy-history-translator-repository.mjs",
+      "status": "M",
+      "contentHash": "sha256:c4fa48f2d7b2cb1fb6b4b506a76c308a19368e4a7ab2642a60f0fa16ef2a390f",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/persistence/receipt-issuer-policy.mjs",
+      "status": "M",
+      "contentHash": "sha256:e4386189b55677adf3be24c2ca2e78a4f8e6b94dea13ee40dd016e6e67f0f935",
+      "group": "RG01",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/persistence/receipt-writer-broker.mjs",
+      "status": "M",
+      "contentHash": "sha256:a33310a21a77ec513f5266769cc8c80235dbeae478c3aea52dee6de094dfddfd",
+      "group": "RG01",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/persistence/scoped-schema-version-gate.mjs",
+      "status": "U",
+      "contentHash": "sha256:82cc290ab3839c4b38b2c0d12a111480cfee398bb48a670c9db5c333a4016008",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/persistence/sqlite-campaign-lease-operations.mjs",
+      "status": "U",
+      "contentHash": "sha256:5a33eda31fd60d90b101479acb5c55d27569eb67af8e90d7ee11517f859e6311",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/persistence/sqlite-campaign-lifecycle-operations.mjs",
+      "status": "U",
+      "contentHash": "sha256:7cac9b747774b6d56366551372974c2e4eea167eeb5345c061d4a9c732ea38e7",
+      "group": "RG02",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/persistence/sqlite-campaign-prepared-integration-operations.mjs",
+      "status": "U",
+      "contentHash": "sha256:13de3dff241c680679e5edbb3e918faab749b1beb00dcf2b0cac7b382e9bb81d",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/persistence/sqlite-campaign-projection.mjs",
+      "status": "U",
+      "contentHash": "sha256:cecfba29e8bdee3fe2a1fdbd0693decad74869610eb173c890712ae294d61aba",
+      "group": "RG02",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/persistence/sqlite-campaign-query-operations.mjs",
+      "status": "U",
+      "contentHash": "sha256:f28aa7201e7a9a8550b8f27cf1a3a15476ace086fedbb9188ce53e6cbd141823",
+      "group": "RG02",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/persistence/sqlite-campaign-release-authority-repository.mjs",
+      "status": "U",
+      "contentHash": "sha256:aecf46a1fdef604f0155853ae8d54f58b0aec8079947b230eb3d07fc697a8fea",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/persistence/sqlite-campaign-release-query-repository.mjs",
+      "status": "U",
+      "contentHash": "sha256:e8d32138290e5eb8d60e82e7ca5fbf5c502c85d13eb05f327cc25a9b9a15e7a0",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/persistence/sqlite-campaign-row-mappers.mjs",
+      "status": "U",
+      "contentHash": "sha256:6d78e53b3bfc27f54d5f222b31ebfeba90ce107cf1dc48ad66f1dd6df96735ea",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/persistence/sqlite-campaign-store.mjs",
+      "status": "M",
+      "contentHash": "sha256:6d25fa5a407f01167da4dae7e2d7a7ee328bcd66c5018551dd002da828bf2e51",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/persistence/sqlite-campaign-telemetry-operations.mjs",
+      "status": "U",
+      "contentHash": "sha256:34629532807491a9651fe33a575aa1f5682b96ee973ad5bfc6b91bcd5e41fa5e",
+      "group": "RG02",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/persistence/sqlite-job-receipt-store.mjs",
+      "status": "M",
+      "contentHash": "sha256:d2a72167db2023534a2378337f15b91515d00d8a3d9735228fc08050ff6bd7bb",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/persistence/sqlite-logical-integrity.mjs",
+      "status": "U",
+      "contentHash": "sha256:b61a0cd96453fc3a8376f158dd4df24685e7eeaa209b024e6b15fa36c9ce563b",
+      "group": "RG02",
+      "disposition": "move_to",
+      "pairId": "move-sqlite-logical-integrity"
+    },
+    {
+      "path": "paper-adapters/persistence/sqlite-receipt-ledger-qualification.mjs",
+      "status": "M",
+      "contentHash": "sha256:247c8b333c8ba8193a5726c6760faeb4e8dfa57164267f4a63e5fad6a0168848",
+      "group": "RG01",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/persistence/sqlite-receipt-ledger.mjs",
+      "status": "M",
+      "contentHash": "sha256:eabac2990f64f0f2e16f5079bec01f26059e84ea2aa53f4f1a8a449733a2a07a",
+      "group": "RG01",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/persistence/sqlite-referee-issue-query.mjs",
+      "status": "U",
+      "contentHash": "sha256:1e5fed1218acc4c57d4289363b21c70a97b1d35cb6bb57c5c4241e49314655c7",
+      "group": "RG02",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/persistence/sqlite-store.mjs",
+      "status": "M",
+      "contentHash": "sha256:1abfc3cbd99cc03ffcbaaf1e0eea53a65c5655024b4fe4c020a77c97fc5dd8e4",
+      "group": "RG02",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/persistence/sqlite-unit-of-work.mjs",
+      "status": "U",
+      "contentHash": "sha256:11f1e952cf3344d47730164dfaa0a720c76f9926253e4030094c2dd13d3177d0",
+      "group": "RG02",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/persistence/sqlite-workflow-state-store.mjs",
+      "status": "M",
+      "contentHash": "sha256:b9f5410d2273bc11846ed7649036e55da63ece2b1aa7bc398db1d9eddbb8eb41",
+      "group": "RG02",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/persistence/store-paths.mjs",
+      "status": "M",
+      "contentHash": "sha256:602ecb93c3af37a810fcf09360e618cf5108d1499e217edcc94a9e4c705c828a",
+      "group": "RG02",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/persistence/store-provider.mjs",
+      "status": "M",
+      "contentHash": "sha256:006632bf8c98e5724e18ce847e076f66802baae1aafa91335b0f19ba3abd2952",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/proposal/index.mjs",
+      "status": "M",
+      "contentHash": "sha256:f98437996804b212fde1f64b6f945bce165603189d17eb2cd2f7e34ef9cc2fc5",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/proposal/proposal-materialization.mjs",
+      "status": "M",
+      "contentHash": "sha256:9dbd658141516a293d45e01310c276ba7c2055f27df0515f90f147a85ee87422",
+      "group": "RG05",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/referee-review/index.mjs",
+      "status": "M",
+      "contentHash": "sha256:7f08b9ffe84cbb535264fa6ca7392b474c62d61bdced2122eb8e862096b97239",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/referee-revise/index.mjs",
+      "status": "M",
+      "contentHash": "sha256:f697cfab486f9a5c84a7d29151478d241da9ec0d55f28ceaefbf213bae86431e",
+      "group": "RG05",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/referee-revise/post-repair.mjs",
+      "status": "M",
+      "contentHash": "sha256:5602733ee215378244bafb6a13354ee890c5d4705bcf5b78728db483fea56de4",
+      "group": "RG05",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/referee-revise/reconciliation.mjs",
+      "status": "M",
+      "contentHash": "sha256:92276017f89c755f66e8b4ac662a2ebe14659e2a11e22f7f0a496b1d66402359",
+      "group": "RG05",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/referee-revise/repair-apply-executor.mjs",
+      "status": "U",
+      "contentHash": "sha256:c8f7949fdcccaababeee955734719e329a4b6b505da88073e6dfae2cd6c00c0f",
+      "group": "RG05",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/referee-revise/repair-executor.mjs",
+      "status": "M",
+      "contentHash": "sha256:a4b95f3e834133bc2db9e7bfdcaa2aef48517e99fb4bc28a67d385f8402a65c4",
+      "group": "RG05",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/referee-revise/repair-notes-builder.mjs",
+      "status": "U",
+      "contentHash": "sha256:076e24039c8e5f1ef680b357394f959920625bb90ec62ff8114bf14a2f056b57",
+      "group": "RG05",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/referee-revise/repair-patch-bundle.mjs",
+      "status": "U",
+      "contentHash": "sha256:dfe2f06ff778cdd2622cddca616b21fed932d3463d07cc825514cdf8d1a6f2be",
+      "group": "RG05",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/referee-revise/repair-proof-builder.mjs",
+      "status": "U",
+      "contentHash": "sha256:7923377fdd1fab3ec042db083d091be687660a9dabee03c234848a16e314d8f4",
+      "group": "RG05",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/referee-revise/repair-rollback-executor.mjs",
+      "status": "U",
+      "contentHash": "sha256:a5792684e45700105c5752b244edf469958115d7a6fd5ce30c8045618eeb1290",
+      "group": "RG05",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/referee-revise/repair-shared.mjs",
+      "status": "U",
+      "contentHash": "sha256:4537f4255871443deb3edf8804cc6badf5f93306e54c40aeae64e7ea01cb4920",
+      "group": "RG05",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/research-verify/canonical-claim-registry-reader.mjs",
+      "status": "U",
+      "contentHash": "sha256:de9f8595051fbedc4361986ee904518063cba375ce7387a02575f6bbced52f76",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/research-verify/formal-project-snapshot-repository.mjs",
+      "status": "U",
+      "contentHash": "sha256:2007c5192aee53201cf927eb978d3828ee99da6e41a28a114dc1d69fbd35cc5a",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/research-verify/formal-verifier.mjs",
+      "status": "M",
+      "contentHash": "sha256:46f9403bfc51690028e4b78f3b8c9102dc66f63ee918e764a3281ba3bb50838a",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/research-verify/index.mjs",
+      "status": "M",
+      "contentHash": "sha256:ab98bdf1d475db95f528ea9d20212e73499df152f93a0271c59e36a3329a6178",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/research-verify/lake-formal-verifier.mjs",
+      "status": "M",
+      "contentHash": "sha256:dec1ae8442b9b7a7a08c1aa78d10e2bff22c54161f0f5e6e22dda8bef963f756",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/research-verify/lake-formal-worker.mjs",
+      "status": "U",
+      "contentHash": "sha256:28ec6179696fe7524073734f311498ae58e20d48a854432e79f8b12afba74777",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/research-verify/lean-source-contracts.mjs",
+      "status": "M",
+      "contentHash": "sha256:a1e99e7be81376d835729397011df3837dd0c1d99c674fe21d3985c280fde67d",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/research-verify/native-research-worker-execution.mjs",
+      "status": "U",
+      "contentHash": "sha256:a4039ce4f35623901b40f1bdf3f71bbe240b068d945c954774961376fdc2c313",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/research-verify/pinned-lake-executable-resolver.mjs",
+      "status": "U",
+      "contentHash": "sha256:eb3717d3f56a8e19326926ccff25c72e5bdeef2186a0be0701353902ceb2f1f4",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/research-verify/research-evidence-reader.mjs",
+      "status": "U",
+      "contentHash": "sha256:94bb59630a33a6c37c53b7485f06daff918956bc47f6e8c1c293460ee4bc496b",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/research-verify/research-report-builder.mjs",
+      "status": "U",
+      "contentHash": "sha256:36a0111aba9f035de0cc56583226431229d09242168acf10a99cc0ab05afff08",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/research-verify/worker-runtime.mjs",
+      "status": "M",
+      "contentHash": "sha256:679abb3237aa8f85c8d72eb3fd391934481dbcb1a4c31fda1106287e3f4095c2",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/runtime/dataset-runtime-access-receipt.mjs",
+      "status": "U",
+      "contentHash": "sha256:2c5fbf40df0108425588ee48a81bf56eb50e8885f1c195c8ded11ffaef2d1dc6",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/runtime/durable-json-repository.mjs",
+      "status": "U",
+      "contentHash": "sha256:5c90a42f111d661db2f9fea66068557a6818e04a33cbb45b23c77191f8c4294b",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/runtime/execution-snapshot.mjs",
+      "status": "U",
+      "contentHash": "sha256:9250504c86218d63b73414f6f03ae2f24f69fcbd853bb6290204556603f4b943",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/runtime/immutable-file-repository.mjs",
+      "status": "U",
+      "contentHash": "sha256:07cc95dbcba1499a76c8de662c9ebc0ba04aac9c378a1455d85ca4b68d04f4d4",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/runtime/os-sandboxed-worker-runner.mjs",
+      "status": "M",
+      "contentHash": "sha256:8cc02bddd56dd3ef34dbe6a261978062015ed0683cd10e4efd2f290728958cf5",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/runtime/pinned-file-reader.mjs",
+      "status": "U",
+      "contentHash": "sha256:90cbfea61315f693209baba5e6e3f25a7486555309e3d0f76a27a2474bb139ce",
+      "group": "RG01",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/runtime/random-id-generator.mjs",
+      "status": "U",
+      "contentHash": "sha256:4ad7cd3ac25ba9306a5f5bc7d1ce8bbe50c8e68df22d34889b961389af62962f",
+      "group": "RG01",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/runtime/runtime-permission-repository.mjs",
+      "status": "U",
+      "contentHash": "sha256:2595b0ea0f561ed86bd70c3e217cf8ee0b509fb67398c7d9267958949fabe7bd",
+      "group": "RG01",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/runtime/runtime-resource-mounts.mjs",
+      "status": "U",
+      "contentHash": "sha256:f076c2c8d46ed56d3549311133b5bc508d6a8e27bdd28dde4849f5671530af95",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/runtime/sandbox-backend-probe.mjs",
+      "status": "U",
+      "contentHash": "sha256:60fdb2014099ad483a9c1f2dcb7f288dc19aac039dc4043366647c759c98df6d",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/runtime/sandboxed-command-runner.mjs",
+      "status": "D",
+      "contentHash": "sha256:00c2305177963d865aecbc89db1dfb0d698a1e0f0f27a43a610dd189a0d43de0",
+      "group": "RG03",
+      "disposition": "retire",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/runtime/scoped-file-materialization-operation-journal-repository.mjs",
+      "status": "U",
+      "contentHash": "sha256:836ec8c0dff3e0e8d391497ca7e57474dd7823d660aba08373bb71ee966bb26b",
+      "group": "RG01",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/runtime/scoped-file-materialization-path-io.mjs",
+      "status": "U",
+      "contentHash": "sha256:011174031ba37bf39b8f4bdb1743d0c5576e4619abfa7124f2de98ea93c7c8fb",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/runtime/scoped-file-materialization-prepared-recovery-repository.mjs",
+      "status": "U",
+      "contentHash": "sha256:67c71b5467d39c0755c1f92df0297d2e3b402f680c2cffe96f01594fa7c4cdbc",
+      "group": "RG01",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/runtime/scoped-file-materialization-recovery-entry-repository.mjs",
+      "status": "U",
+      "contentHash": "sha256:cdb30acf53a91600ea63bd928f43faa2a9459408eb5ca5b2b5950bdfe8317482",
+      "group": "RG01",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/runtime/scoped-file-materialization-recovery-record.mjs",
+      "status": "U",
+      "contentHash": "sha256:ead595ba6f84d32804bd2eb7e65e7c4b85e386169760d0ef69b90b94a3202bf1",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/runtime/scoped-file-materialization-recovery-vault.mjs",
+      "status": "U",
+      "contentHash": "sha256:f01ee0112c28badb3821aa685be62beea1d5e845b2c96f77bc47d1da9ba75876",
+      "group": "RG01",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/runtime/scoped-file-materialization-repository.mjs",
+      "status": "U",
+      "contentHash": "sha256:aae955a592bd91d0adfc0783be644f589b42b8769baab195b148d275bb9c63ea",
+      "group": "RG01",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/runtime/scoped-file-materialization-target-lock.mjs",
+      "status": "U",
+      "contentHash": "sha256:0aac758dd4b450a0002e926ba9544de3f427ea87331983c726ed27d63787ad9a",
+      "group": "RG01",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/runtime/sha256-hasher.mjs",
+      "status": "D",
+      "contentHash": "sha256:1690d8cef507c2f4d5a3828414fa577946210647b9dc047d2a4379e85b406cf6",
+      "group": "RG01",
+      "disposition": "retire",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/runtime/system-scheduler.mjs",
+      "status": "U",
+      "contentHash": "sha256:a8a537dff1d5e34d62e3903d117c887372f877b40d185303bf4b41c9a7b598d1",
+      "group": "RG01",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/runtime/worker-environment-policy.mjs",
+      "status": "U",
+      "contentHash": "sha256:e69b86c1931f467140ba89ea2a553bbcdfe81ca480e563e1e3d478fc7136774c",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/source-adapt/index.mjs",
+      "status": "M",
+      "contentHash": "sha256:cc946a474488ca83df2eaac680de978f911d73207941c6d730fbabdd3aa15003",
+      "group": "RG05",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/stages/paper-stage-adapter-registry.mjs",
+      "status": "M",
+      "contentHash": "sha256:672df926e37ebf5c4e6ca2ef80cfb19f76fdc25f364f25ab883f59a5a1fac245",
+      "group": "RG07",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/submission/campaign-release-bundle-consumer.mjs",
+      "status": "U",
+      "contentHash": "sha256:b7d4347fda611ba64369b5ae695b4fb5eaeb65b048b82e4f88aa1be7fce1fe2f",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/submission/handoff-bundle-exporter.mjs",
+      "status": "M",
+      "contentHash": "sha256:8148bdc061e552f6d3fd3c93747fdb6e3efe90685a475988445041e0ba55e7c4",
+      "group": "RG07",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/submission/index.mjs",
+      "status": "M",
+      "contentHash": "sha256:c188f905e8a07e88bc1c9760f98c9183473830fbdc94c2f2929ed34d86548895",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/submission/sqlite-delivery-consumption-operations.mjs",
+      "status": "U",
+      "contentHash": "sha256:490eb8fece0beb8979626e6ed5227b2d787a7678926ac81437b9a7d5be3da115",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/submission/sqlite-delivery-outbox-operations.mjs",
+      "status": "U",
+      "contentHash": "sha256:02731551b93f9bfe3c570695cb38544e1413229d138868186cb1b2470719e8e3",
+      "group": "RG07",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/submission/sqlite-delivery-persistence.mjs",
+      "status": "U",
+      "contentHash": "sha256:0bb70e2d8c92af00068129130d0da5aef6841bb219ce9a555152b03454ab0701",
+      "group": "RG07",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/submission/sqlite-delivery-redrive-operations.mjs",
+      "status": "U",
+      "contentHash": "sha256:9d872878485e733b4277b7dc04a304a7ec8df91359ab673d22abb9498a9af647",
+      "group": "RG07",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/submission/sqlite-delivery-response-operations.mjs",
+      "status": "U",
+      "contentHash": "sha256:661380a1015f8f9550af843e20a4d2a9aa29509cea488e51e8085d19486576de",
+      "group": "RG07",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/submission/sqlite-delivery-row-mappers.mjs",
+      "status": "U",
+      "contentHash": "sha256:086498d9f92da7ee89936abc17468ba7c2b6c65deaa3cf2aa7562b5aa7bb6e18",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/submission/sqlite-delivery-store.mjs",
+      "status": "M",
+      "contentHash": "sha256:de8b2e1e3b9acebe82b31e1e0fc8c94d12946084f180450ad0e0fd1be9ae66b0",
+      "group": "RG07",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/submission/submission-authority-orchestrator.mjs",
+      "status": "U",
+      "contentHash": "sha256:27d9c519753fa91c2364bbdd197e69ffa2630880724313842bb03c2f46797476",
+      "group": "RG07",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/submission/submission-lifecycle-orchestrator.mjs",
+      "status": "U",
+      "contentHash": "sha256:2d64dd11837c77b653a776cc96fb4d762e76447aab1157d4dc0cd58a1aa15f48",
+      "group": "RG07",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-adapters/submission/submission-venue-plan.mjs",
+      "status": "U",
+      "contentHash": "sha256:099800eb52a66285ee755bf0086fbb324bd9fa93f0bf98d9953afc9637c45c6e",
+      "group": "RG07",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-application/automation/batch-campaign-command.mjs",
+      "status": "U",
+      "contentHash": "sha256:46d76a48c77206b3e5b419ea302c3477209506d49c2efb11c8790f68f6cde869",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-application/automation/campaign-engine.mjs",
+      "status": "M",
+      "contentHash": "sha256:2105e21bb91e97df2e6e9e796526649c15922a39c7dd777eaa99d510303a79d6",
+      "group": "RG04",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-application/automation/campaign-query-presenter.mjs",
+      "status": "M",
+      "contentHash": "sha256:df22738aafc237e55eed750f453d6cdcc8bc3342c4d589fb8e2584fe7b85014e",
+      "group": "RG04",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-application/automation/resource-governor.mjs",
+      "status": "M",
+      "contentHash": "sha256:0769ff24cb3a31e4628e5af403ae29ab44ca7d451b457da95ea895df64944e50",
+      "group": "RG04",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-application/execution-context.mjs",
+      "status": "M",
+      "contentHash": "sha256:839459b495017259a7389862aac002fd2671fad80a1bc165159586fae93e8909",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-application/experimental/taskflow/reviewed-submit-taskflow.mjs",
+      "status": "U",
+      "contentHash": "sha256:dd0f66998ef9a0c180931132e4f3de8b8f56d0616fccd02a7a199d75b8e2a78c",
+      "group": "RG07",
+      "disposition": "move_to",
+      "pairId": "move-reviewed-submit-taskflow"
+    },
+    {
+      "path": "paper-application/orchestration/paper-campaign-taskflow.mjs",
+      "status": "D",
+      "contentHash": "sha256:87397f433364cc49ed515f74cbe0d843e8933e56d341880b9944eeae402cd6ed",
+      "group": "RG07",
+      "disposition": "retire",
+      "pairId": null
+    },
+    {
+      "path": "paper-application/orchestration/reviewed-submit-taskflow.mjs",
+      "status": "D",
+      "contentHash": "sha256:ee930090d51b446e052ebcb99028b96ce846e56cb80dae3da95027c5bc3a4bb8",
+      "group": "RG07",
+      "disposition": "move_from",
+      "pairId": "move-reviewed-submit-taskflow"
+    },
+    {
+      "path": "paper-application/projections/workflow-state-projector.mjs",
+      "status": "D",
+      "contentHash": "sha256:a619757190d40687548816d31106cb4a678e2830085b55aa6001d621e2b79c74",
+      "group": "RG07",
+      "disposition": "retire",
+      "pairId": null
+    },
+    {
+      "path": "paper-application/reporting/batch-result-summary.mjs",
+      "status": "M",
+      "contentHash": "sha256:9d282bb69d00358d4dec325faa9955efb5d19bb877e89bf651e6056f202c2205",
+      "group": "RG04",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-application/reporting/batch-summary.mjs",
+      "status": "M",
+      "contentHash": "sha256:b6efa0d8d6c6b72cd66c60d549ce7cd72386f73a3e4ff09df984c4f152fd8156",
+      "group": "RG04",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-application/reporting/campaign-result-summary.mjs",
+      "status": "U",
+      "contentHash": "sha256:3a29bf2b09045fd7585f75f196d852a5fc681a69a32af4fd1fce3d0b42742bb1",
+      "group": "RG04",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-application/reporting/metric-descriptor-collector.mjs",
+      "status": "U",
+      "contentHash": "sha256:b5b19f0a42336538fb478cc806f59686c54a61561cfb2c61f7990c53bc249dd2",
+      "group": "RG04",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-application/reporting/workflow-result-summary.mjs",
+      "status": "M",
+      "contentHash": "sha256:00ea9a03efcd82644a49221432abe6c819353545b17f6a50141a393dcd0a574d",
+      "group": "RG04",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-application/use-cases/local-diagnostic-review-loop.mjs",
+      "status": "D",
+      "contentHash": "sha256:b2d3b93fb9d0fd41c887c6d044308172e22d392947e76e95b9a7ed4fede62666",
+      "group": "RG07",
+      "disposition": "retire",
+      "pairId": null
+    },
+    {
+      "path": "paper-application/use-cases/local-diagnostic-round-executor.mjs",
+      "status": "D",
+      "contentHash": "sha256:2866d6388dc03f38970ad3d97c1cb8b04d13ce119e0933156738142159781c30",
+      "group": "RG07",
+      "disposition": "retire",
+      "pairId": null
+    },
+    {
+      "path": "paper-application/use-cases/paper-stage-handlers.mjs",
+      "status": "D",
+      "contentHash": "sha256:cc7eb95e4ffa89e2cfa76ace2aa775cb199b7a7b97e6ddc4f22e71420eeec17f",
+      "group": "RG07",
+      "disposition": "retire",
+      "pairId": null
+    },
+    {
+      "path": "paper-application/workflow/typed-stage-pipeline.mjs",
+      "status": "D",
+      "contentHash": "sha256:dfe026d95c37d8f798060cff9524738b72229512444c141ef1aebd4a4ae82892",
+      "group": "RG07",
+      "disposition": "retire",
+      "pairId": null
+    },
+    {
+      "path": "paper-application/workflow/workflow-engine.mjs",
+      "status": "D",
+      "contentHash": "sha256:a341440e8f33bc49cc7946051acea67380e4fd122d3879ebc83decbf122e01a7",
+      "group": "RG07",
+      "disposition": "retire",
+      "pairId": null
+    },
+    {
+      "path": "paper-composition/batch/paper-batch-application.mjs",
+      "status": "M",
+      "contentHash": "sha256:0e801e6c55cf58fde17622a2e4c2c6b2b9df55613d3596c55d8d4de29a95d530",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-composition/bootstrap/automation-context-bootstrap.mjs",
+      "status": "U",
+      "contentHash": "sha256:26844b9162c7384e02a66eadbcdb006ad0bb9b00b456efbe451d20e037980f88",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-composition/bootstrap/batch-inventory-context-bootstrap.mjs",
+      "status": "U",
+      "contentHash": "sha256:6d65cd2287a8a13c4ac1b7bb5cca38f2b0764c56e62e398eb6e4489dc3d12318",
+      "group": "RG05",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-composition/bootstrap/campaign-execution-context-bootstrap.mjs",
+      "status": "U",
+      "contentHash": "sha256:0fa49b862cf73c9ba5b2d441310c9b2cd77d1e7bce572178c3180d9fc8489726",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-composition/bootstrap/capability-scoped-bootstrap.mjs",
+      "status": "U",
+      "contentHash": "sha256:74ff63cbb52ca85fb6fb4cc06f5b315fab2cb5832d823d313b73b882f12a8b1c",
+      "group": "RG07",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-composition/bootstrap/context-foundation-composition.mjs",
+      "status": "U",
+      "contentHash": "sha256:f9bd8339d24bb6d4d23886062c0fa3a6bbc7acfd4ef6c5266c9013ffa0048d0f",
+      "group": "RG02",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-composition/bootstrap/formal-review-agent-bootstrap.mjs",
+      "status": "U",
+      "contentHash": "sha256:5b9a87dd906bf7bbd4b268dfe67b8bec4f5702fbd834c510cc4d667226e0c06d",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-composition/bootstrap/paper-stage-port-composition.mjs",
+      "status": "U",
+      "contentHash": "sha256:293f7e681fcd6b529e3164d50bccb04190c9c50946547d0955dd1e9fadf17756",
+      "group": "RG07",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-composition/bootstrap/receipt-ledger-composition.mjs",
+      "status": "M",
+      "contentHash": "sha256:c81dabaf9dee78cdb062220850cee45370019366f8081c89644c41549dd404c5",
+      "group": "RG01",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-composition/bootstrap/service-bootstrap.mjs",
+      "status": "D",
+      "contentHash": "sha256:d39baba184f1f5d354c0a9ed62c890841ea59f6777c744b98f9a7b7913968e1e",
+      "group": "RG07",
+      "disposition": "retire",
+      "pairId": null
+    },
+    {
+      "path": "paper-composition/bootstrap/submission-handoff-context-bootstrap.mjs",
+      "status": "U",
+      "contentHash": "sha256:33de495329b0d734535841a139764883f1c2ba87e266f293ec9d3afabfd80a28",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-composition/bootstrap/typed-persistence-composition.mjs",
+      "status": "U",
+      "contentHash": "sha256:ebfcb44a34bff721233560b34f676330341b8fecfbf3e969b1654561c32d19f6",
+      "group": "RG02",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-composition/compat/legacy-context-bootstrap.mjs",
+      "status": "U",
+      "contentHash": "sha256:d7e617b7fee58b01db05901aaa4b83b64f0beb628baf2910f350a02c62035e4e",
+      "group": "RG07",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-composition/compat/legacy-paper-batch-application.mjs",
+      "status": "U",
+      "contentHash": "sha256:ec2e80148dcc074d41ca89db6decba90e2f62a5c1f0f06c674cd5505a8870e20",
+      "group": "RG07",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-composition/compat/legacy-stage-port-composition.mjs",
+      "status": "U",
+      "contentHash": "sha256:a6acbd731097de221f0aafb05e3d982ebc7c122a537d521e70567e06cb058256",
+      "group": "RG07",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-composition/compat/legacy-workflow-state-projection.mjs",
+      "status": "U",
+      "contentHash": "sha256:58bc66a7672cd5cc7909a35675a6d7506220a5c7c6ed5f72f3dfb73df7fdd248",
+      "group": "RG07",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-composition/pilots/real-paper-pilot.mjs",
+      "status": "M",
+      "contentHash": "sha256:e0424152c9ea0c5014dce51a363de420c41ec2099712a472740bfee364b5a112",
+      "group": "RG07",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-composition/reporting/batch-report-writer.mjs",
+      "status": "M",
+      "contentHash": "sha256:f67522f25fe6e3da4338d6a8ab2f49cd534e2b49824d3ae9530473a2a1350406",
+      "group": "RG04",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/automation-campaign-smoke.mjs",
+      "status": "M",
+      "contentHash": "sha256:2626245216e4d2b479a4d5678369fe99fe6e924b7222443b89838985d2e3fe61",
+      "group": "RG04",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/automation-openclaw-multipaper-smoke.mjs",
+      "status": "M",
+      "contentHash": "sha256:7ac0ed53f1d13c43c165909faadd8042c938138359c17e287792dc8eb8c65fde",
+      "group": "RG04",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/automation-reconcile.mjs",
+      "status": "M",
+      "contentHash": "sha256:1d34da84bacdd7eeb56e7f24ecebbae2587d5446c257c651219c376f0a7eb0e7",
+      "group": "RG04",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/automation-runtime-smoke.mjs",
+      "status": "M",
+      "contentHash": "sha256:93f89de25194e4d0345030c624c1ca42758897a979021d2df552f49f059c8513",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/automation-status.mjs",
+      "status": "M",
+      "contentHash": "sha256:9e88d2ea430a22369ba8b0fca1315dd9ee622eb033fb3eaf5d40a82d6649e8ad",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/automation-strict-rereview-smoke.mjs",
+      "status": "M",
+      "contentHash": "sha256:bce7b9bc7d09840691dab452bd483225ec6453f6412b5ed311896b108b809f4e",
+      "group": "RG04",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/check-mjs-syntax.mjs",
+      "status": "U",
+      "contentHash": "sha256:1b0965d593559ad209cb188a142d3f3f042586d1ee5e743fb54da4f40a1394e4",
+      "group": "RG07",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/cold-volume-cas.mjs",
+      "status": "M",
+      "contentHash": "sha256:1f426eabcd7bd1ed96e75bf48de88af4fb1d85207dc475ca6f9079b75049a84c",
+      "group": "RG07",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/command-surface.mjs",
+      "status": "M",
+      "contentHash": "sha256:94ba1eaf80ce7e320a735fb02874a7a084ba78d40573b4e7acdb205d4a1f3e9e",
+      "group": "RG07",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/critical-module-coverage.mjs",
+      "status": "M",
+      "contentHash": "sha256:e79c0f2673f27de55d6e3a504ed760f852c08dbcefbb53ceab3fa4e877919e38",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/generate-external-intake.mjs",
+      "status": "M",
+      "contentHash": "sha256:d2ec61a6367738984542521d861733d2aafd323cf20e6616419da27c99c52522",
+      "group": "RG06",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/hepta-paper.mjs",
+      "status": "M",
+      "contentHash": "sha256:a5f3f1bd506d3a3c15d7635cd140fc917ed409f0130704d09efac4ed000f40a5",
+      "group": "RG07",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/hepta-store-logical-integrity.mjs",
+      "status": "M",
+      "contentHash": "sha256:0aadc9b00e7be379b6d9e277ed54b8cd67c90f424e3662452e56f23a4912bcdd",
+      "group": "RG02",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/hepta-store.mjs",
+      "status": "M",
+      "contentHash": "sha256:2a560ae1e3aa4660383eca85a908a61bf0ef30675b34e7b97780f8d714c7de59",
+      "group": "RG02",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/isolated-runtime-store.mjs",
+      "status": "U",
+      "contentHash": "sha256:f036554b1479638e80a4efb1d368eb32c99b2fb72d9548b433c47df7fa5922a8",
+      "group": "RG02",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/offhost-worm-snapshot.mjs",
+      "status": "M",
+      "contentHash": "sha256:b18daef2cc0b5c831a9fab191b0d409c534b7f19812379070abfca56cc993ded",
+      "group": "RG07",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/operational-proof-status.mjs",
+      "status": "M",
+      "contentHash": "sha256:d4f1faf5fcc09c5161c4f7cb32aa7f9d6d37e357cc386888c7ec1cb5fbbd5cea",
+      "group": "RG06",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/paper-campaign.mjs",
+      "status": "M",
+      "contentHash": "sha256:b13f278160cb6c4a5e3febac0966ec97c8799a8e33869d355c2d2354694ad737",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/paper-compat-workflow-projection.mjs",
+      "status": "U",
+      "contentHash": "sha256:23b8503e481d259e57e55c4c2997a5a8eec19ca4f589cee5032a824c4b7e66f8",
+      "group": "RG07",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/paper-production-core.mjs",
+      "status": "M",
+      "contentHash": "sha256:329ba63b8db172b3bbe8f1ebf3bbaa9c54ab89aecd3cffbdb3bb73f9a56a6875",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/paper-submission-handoff.mjs",
+      "status": "U",
+      "contentHash": "sha256:568dd2c7a8916c5455c3b5d75cb26b71d316d9d7c8511d921b22953d2c50a3a9",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/reassess-local-accepts.mjs",
+      "status": "M",
+      "contentHash": "sha256:9a098cab689c5a8927237df1f197eaebe17a6bfec71c57642019f9415c748d3b",
+      "group": "RG06",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/release-evidence-lib.mjs",
+      "status": "M",
+      "contentHash": "sha256:fedafed4637c6a187b09b559b2995da9655043a9c44496ae7ae729a4064323d9",
+      "group": "RG01",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/release-state-check.mjs",
+      "status": "U",
+      "contentHash": "sha256:4f6856b8c9cc1f65e78dc679c44739aa831445948959069628b49f254e3b22b4",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/release-trust-gate.mjs",
+      "status": "M",
+      "contentHash": "sha256:5f17f7b7240d576accbe7a5f45c19f0187778a2be7b7fde590d85fbf5a6c3622",
+      "group": "RG01",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/repair-receipt-ledger-integrity.mjs",
+      "status": "M",
+      "contentHash": "sha256:fd9e9848439e61d15855016664f2a697ac2b5ef2209dce5b4531d7ab4dea14d2",
+      "group": "RG01",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/run-declared-test-suite.mjs",
+      "status": "U",
+      "contentHash": "sha256:94176cd851d4c5307b7af08706cd9ee747470a5ed9a200b1274b78e12c7d4695",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/run-isolated-command.mjs",
+      "status": "M",
+      "contentHash": "sha256:63608c5eef54041054799167bc4e747fd48cacd0372a1e981d137fe9695d8fa2",
+      "group": "RG07",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/run-isolated-verification.mjs",
+      "status": "M",
+      "contentHash": "sha256:130957f83df92bf4474a100b913ce172890523692fd56b39256cec87de0b7735",
+      "group": "RG07",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/run-real-paper-pilot.mjs",
+      "status": "D",
+      "contentHash": "sha256:42fb6c199844ad3bf16d89db0068539780d1dfd2ff3430292d91b0549cd9ffe2",
+      "group": "RG07",
+      "disposition": "move_from",
+      "pairId": "move-real-paper-pilot"
+    },
+    {
+      "path": "paper-core/bin/run-real-paper-provider-sandbox.mjs",
+      "status": "M",
+      "contentHash": "sha256:2fef0c2185096fc8b339402b72846340a14526e7457b2c1bd56eb5e641b8c5af",
+      "group": "RG07",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/runtime-hygiene.mjs",
+      "status": "M",
+      "contentHash": "sha256:c9f0069aa541d414eeda342e259175eeed525ab10b32731f7ae9239f3872a827",
+      "group": "RG07",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/runtime-permissions.mjs",
+      "status": "U",
+      "contentHash": "sha256:44f6342741bbe67bd502c350ef5e50853c8ef4de60640929060451c287a1c063",
+      "group": "RG01",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/verify-cold-volume-contract.mjs",
+      "status": "M",
+      "contentHash": "sha256:cd27acf5a32ae5bcfdfe53ac5c598152a301d629827e870aec3b8f582b18c0d2",
+      "group": "RG07",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/verify-external-intake.mjs",
+      "status": "M",
+      "contentHash": "sha256:e80d911218d6f66371da2bdc6315f82509f4160bb6787539c89508b393c5939b",
+      "group": "RG06",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/bin/workspace-lineage-backfill.mjs",
+      "status": "M",
+      "contentHash": "sha256:3fbc96b1d0402068f69a2ce0640320ba65d00e86238a9ab1305c0f6164f75ddf",
+      "group": "RG02",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/docs/architecture-hardening-v4.md",
+      "status": "D",
+      "contentHash": "sha256:1244e4f8526eeed0332d7f8b9259e155c39b3fd7410d0a9bcfa5af9b3851f59e",
+      "group": "RG09",
+      "disposition": "retire",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/docs/architecture-v3.md",
+      "status": "D",
+      "contentHash": "sha256:7cfafcd7c7b1eadc969b0d90a04113c88cc94de91dfb7ab06ade2369dfe48a72",
+      "group": "RG09",
+      "disposition": "retire",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/docs/ARCHITECTURE.md",
+      "status": "U",
+      "contentHash": "sha256:1d534bdbba654568b3f614a9ad21344f8c9b79263a284f38b4580c73ddd1c987",
+      "group": "RG09",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/docs/authority-pipeline.md",
+      "status": "M",
+      "contentHash": "sha256:92c9c7320542788c4c40a647dcc47800a75a455d4886fbfad67b410651098343",
+      "group": "RG09",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/docs/automation-plane.md",
+      "status": "M",
+      "contentHash": "sha256:e5973043f759409cc8fdcee7f5e66a135472119188f61f5b1a31632a25c4c62b",
+      "group": "RG09",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/docs/COMMAND_SURFACE.md",
+      "status": "M",
+      "contentHash": "sha256:91748fc38d07697b8a4de9f2208c3a1ba07d330f7a9a8a13cd52c453bc9ebcd0",
+      "group": "RG07",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/docs/CURRENT_STATUS.md",
+      "status": "M",
+      "contentHash": "sha256:f2060cb87f73ec235625fca2e922196e909cb2d9d1608f268ae94f91d1a8feaf",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/docs/design-core-workflow-audit-and-paper-plan.md",
+      "status": "D",
+      "contentHash": "sha256:60ac209283504f733f83021605d9ed5747d04014b3bd4b54c540cf9bb9f329c4",
+      "group": "RG09",
+      "disposition": "move_from",
+      "pairId": "move-history-design-audit"
+    },
+    {
+      "path": "paper-core/docs/experimental-taskflow-pilot.md",
+      "status": "U",
+      "contentHash": "sha256:c4e967651bdb7961b177bc3ad6cd1782a1276ff5717efc82910f141939308834",
+      "group": "RG07",
+      "disposition": "move_to",
+      "pairId": "move-taskflow-pilot-doc"
+    },
+    {
+      "path": "paper-core/docs/history/architecture-hardening-v4.md",
+      "status": "U",
+      "contentHash": "sha256:23ee25bfcff5b59812c1ec1ac562562735b59215a57f0cb3c6ca3f69659f834a",
+      "group": "RG09",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/docs/history/architecture-p1p2-checkpoint-2026-07-14.md",
+      "status": "U",
+      "contentHash": "sha256:879a712c0fb7290bad2a154f90b66bc94a45b61812b5c95c06fcacff9dc1b1d9",
+      "group": "RG09",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/docs/history/architecture-p1p2-review-groups-2026-07-14.json",
+      "status": "U",
+      "contentHash": null,
+      "group": "RG00",
+      "disposition": "review_metadata",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/docs/history/architecture-p1p2-review-groups-2026-07-14.md",
+      "status": "U",
+      "contentHash": null,
+      "group": "RG00",
+      "disposition": "review_metadata",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/docs/history/architecture-v3.md",
+      "status": "U",
+      "contentHash": "sha256:1e7d111de195cbd530e9ebb78671d5081e978e00a5ff53896a1b5b2e7934ffb3",
+      "group": "RG09",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/docs/history/design-core-workflow-audit-and-paper-plan.md",
+      "status": "U",
+      "contentHash": "sha256:60ac209283504f733f83021605d9ed5747d04014b3bd4b54c540cf9bb9f329c4",
+      "group": "RG09",
+      "disposition": "move_to",
+      "pairId": "move-history-design-audit"
+    },
+    {
+      "path": "paper-core/docs/history/paper-factory-retirement-migration-plan.md",
+      "status": "U",
+      "contentHash": "sha256:591e93a897bec3f2131619910b8acc11a89452a9a3af1b28afd31a5f73fb2a4f",
+      "group": "RG09",
+      "disposition": "move_to",
+      "pairId": "move-history-factory-plan"
+    },
+    {
+      "path": "paper-core/docs/history/paper-production-migration-master-plan.md",
+      "status": "U",
+      "contentHash": "sha256:695ba7f9fcf73b5971a4ac11844d5083ca3ae5320c865134ffae1cabfa6e696e",
+      "group": "RG09",
+      "disposition": "move_to",
+      "pairId": "move-history-production-master"
+    },
+    {
+      "path": "paper-core/docs/history/paper-production-risk-register-and-next-plan.md",
+      "status": "U",
+      "contentHash": "sha256:f8262f09c057fdcace7df11dcf5be3eccbe58a680b3a0f92bfda5075dede8d87",
+      "group": "RG09",
+      "disposition": "move_to",
+      "pairId": "move-history-risk-register"
+    },
+    {
+      "path": "paper-core/docs/history/phase-1-7-overlay.md",
+      "status": "U",
+      "contentHash": "sha256:d4312c33f97aadab2128765fdbbd9adce7ddc5a078e8f438a754a111385d1000",
+      "group": "RG09",
+      "disposition": "move_to",
+      "pairId": "move-history-phase-overlay"
+    },
+    {
+      "path": "paper-core/docs/history/README.md",
+      "status": "U",
+      "contentHash": "sha256:c148bf4c205a9976c04a623bc4df1d72de4a044198a50217286b1246f68bb7fd",
+      "group": "RG09",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/docs/history/remediation-status-2026-07-10-v0.5.md",
+      "status": "U",
+      "contentHash": "sha256:75ea8fe775385380a5819a8f37b9305cc672580fe36021bc99ac8ec0c8395093",
+      "group": "RG09",
+      "disposition": "move_to",
+      "pairId": "move-history-remediation-v05"
+    },
+    {
+      "path": "paper-core/docs/history/remediation-status-2026-07-10-v0.6.md",
+      "status": "U",
+      "contentHash": "sha256:01dfd7b240853791e256dc89ecc287e8150bdd68eccee7565def7c0ada23aea1",
+      "group": "RG09",
+      "disposition": "move_to",
+      "pairId": "move-history-remediation-v06"
+    },
+    {
+      "path": "paper-core/docs/history/remediation-status-2026-07-10-v0.7.md",
+      "status": "U",
+      "contentHash": "sha256:edfeefbc2ff1df6758169c6feb12eb7bbfe0f532a9bb5d64ab00f9de85ad137d",
+      "group": "RG09",
+      "disposition": "move_to",
+      "pairId": "move-history-remediation-v07"
+    },
+    {
+      "path": "paper-core/docs/history/remediation-status-2026-07-10.md",
+      "status": "U",
+      "contentHash": "sha256:b2e17f21662868a1fc39d03acb94fc16c39b7f57d1f9ecbc02f7c9abcf82621a",
+      "group": "RG09",
+      "disposition": "move_to",
+      "pairId": "move-history-remediation-base"
+    },
+    {
+      "path": "paper-core/docs/OPERATIONS.md",
+      "status": "U",
+      "contentHash": "sha256:b350c0cc62e37fd50eea39f3e7bbef170687aa95e4903478a5311c9b7bdf2cff",
+      "group": "RG09",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/docs/paper-factory-retirement-migration-plan.md",
+      "status": "D",
+      "contentHash": "sha256:0d6ecc5529c330252ad58f9813f444eb82a78f868b936ff4e6c4167492ac949e",
+      "group": "RG09",
+      "disposition": "move_from",
+      "pairId": "move-history-factory-plan"
+    },
+    {
+      "path": "paper-core/docs/paper-production-migration-master-plan.md",
+      "status": "D",
+      "contentHash": "sha256:695ba7f9fcf73b5971a4ac11844d5083ca3ae5320c865134ffae1cabfa6e696e",
+      "group": "RG09",
+      "disposition": "move_from",
+      "pairId": "move-history-production-master"
+    },
+    {
+      "path": "paper-core/docs/paper-production-risk-register-and-next-plan.md",
+      "status": "D",
+      "contentHash": "sha256:f8262f09c057fdcace7df11dcf5be3eccbe58a680b3a0f92bfda5075dede8d87",
+      "group": "RG09",
+      "disposition": "move_from",
+      "pairId": "move-history-risk-register"
+    },
+    {
+      "path": "paper-core/docs/phase-1-7-overlay.md",
+      "status": "D",
+      "contentHash": "sha256:b831461d40edfa53c24c31ed3442629d0ef85c7daf4ad7caf00e240aad3571fe",
+      "group": "RG09",
+      "disposition": "move_from",
+      "pairId": "move-history-phase-overlay"
+    },
+    {
+      "path": "paper-core/docs/reference-and-compatibility-boundaries.md",
+      "status": "U",
+      "contentHash": "sha256:dc30913a9d33d5013dd4db3430bf13739ab66514c6b458f3cf9632c83c6a3bf9",
+      "group": "RG07",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/docs/remediation-status-2026-07-10-v0.5.md",
+      "status": "D",
+      "contentHash": "sha256:75ea8fe775385380a5819a8f37b9305cc672580fe36021bc99ac8ec0c8395093",
+      "group": "RG09",
+      "disposition": "move_from",
+      "pairId": "move-history-remediation-v05"
+    },
+    {
+      "path": "paper-core/docs/remediation-status-2026-07-10-v0.6.md",
+      "status": "D",
+      "contentHash": "sha256:01dfd7b240853791e256dc89ecc287e8150bdd68eccee7565def7c0ada23aea1",
+      "group": "RG09",
+      "disposition": "move_from",
+      "pairId": "move-history-remediation-v06"
+    },
+    {
+      "path": "paper-core/docs/remediation-status-2026-07-10-v0.7.md",
+      "status": "D",
+      "contentHash": "sha256:edfeefbc2ff1df6758169c6feb12eb7bbfe0f532a9bb5d64ab00f9de85ad137d",
+      "group": "RG09",
+      "disposition": "move_from",
+      "pairId": "move-history-remediation-v07"
+    },
+    {
+      "path": "paper-core/docs/remediation-status-2026-07-10.md",
+      "status": "D",
+      "contentHash": "sha256:d0d565c5d0544f64bf8c62d472f8fd3537b45cd335153adf70f0a1f7e6aadd5b",
+      "group": "RG09",
+      "disposition": "move_from",
+      "pairId": "move-history-remediation-base"
+    },
+    {
+      "path": "paper-core/docs/taskflow-pilot.md",
+      "status": "D",
+      "contentHash": "sha256:08eb4a801abd9587a858e4980b47dc0dd9774cbf19e613c2e93fd38e397c3cf6",
+      "group": "RG07",
+      "disposition": "move_from",
+      "pairId": "move-taskflow-pilot-doc"
+    },
+    {
+      "path": "paper-core/experimental/run-real-paper-pilot.mjs",
+      "status": "U",
+      "contentHash": "sha256:42fb6c199844ad3bf16d89db0068539780d1dfd2ff3430292d91b0549cd9ffe2",
+      "group": "RG07",
+      "disposition": "move_to",
+      "pairId": "move-real-paper-pilot"
+    },
+    {
+      "path": "paper-core/src/architecture-entrypoint-manifest.mjs",
+      "status": "U",
+      "contentHash": "sha256:f6f4efb6e14030cfe1e36c9e8753ae5d9f0010c79480d05eed94446748a858c2",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/src/batch-summary.mjs",
+      "status": "M",
+      "contentHash": "sha256:5b481105792247d8708705bbe7a23aea6397718a812f475818ff72db0c3eaa5a",
+      "group": "RG04",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/src/cold-volume-cas-repository.mjs",
+      "status": "D",
+      "contentHash": "sha256:ddc11f16a9ddf9b4fd4dcc5eb877da937405ed31355e70a5196d3cf4b12bdaa9",
+      "group": "RG07",
+      "disposition": "move_from",
+      "pairId": "move-cold-volume-repository"
+    },
+    {
+      "path": "paper-core/src/cold-volume-contract.mjs",
+      "status": "D",
+      "contentHash": "sha256:098ebe1bf1b656d40e8ba0bdb69799f5d955b1f3761ebb5f1d389cb49b5c894f",
+      "group": "RG07",
+      "disposition": "move_from",
+      "pairId": "move-cold-volume-contract"
+    },
+    {
+      "path": "paper-core/src/command-registry.mjs",
+      "status": "U",
+      "contentHash": "sha256:272d7a5ab2378bccf33bc6d48bd3f0448ec1611731e5be78bbdf77cd770265ab",
+      "group": "RG07",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/src/compatibility-facade-catalog.mjs",
+      "status": "U",
+      "contentHash": "sha256:da35e439b7b0cd045352307503ec83e4831a05d49d9cd59b4de99fd7a7a04260",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/src/execution-context.mjs",
+      "status": "D",
+      "contentHash": "sha256:99db0b72b07d228e1b6d1a8b038fe73d6156e44eb4b7e1a80ba978aa2985ca78",
+      "group": "RG07",
+      "disposition": "retire",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/src/external-intake-verifier.mjs",
+      "status": "D",
+      "contentHash": "sha256:9ab037ae5ed5a572e8aa5a54958573549db6a8ca6bd27ecb437190dccc3248ef",
+      "group": "RG06",
+      "disposition": "move_from",
+      "pairId": "move-external-intake-verifier"
+    },
+    {
+      "path": "paper-core/src/mode-registry.mjs",
+      "status": "D",
+      "contentHash": "sha256:6e521276085a4cca1025b91dafeccfecc5f2655e33a7a702b778e6c39a271d96",
+      "group": "RG07",
+      "disposition": "retire",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/src/npm-command-surface-manifest.mjs",
+      "status": "U",
+      "contentHash": "sha256:5003ad0773e524c15947169887e40521a6f01a4aed19a5cefc7aa978b3c3ce75",
+      "group": "RG07",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/src/offhost-worm-repository.mjs",
+      "status": "D",
+      "contentHash": "sha256:1f21780b1fec55e83b763abcc0f17e1e96f268e29728b0c7ed9a13f4c81e87dd",
+      "group": "RG07",
+      "disposition": "move_from",
+      "pairId": "move-offhost-worm-repository"
+    },
+    {
+      "path": "paper-core/src/paper-production-cli-options.mjs",
+      "status": "U",
+      "contentHash": "sha256:e85920090a68e5c9f14da63f5b28810ce825f1e7e1db7fcfa66adab3b3fe5eed",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/src/release-state-contract.mjs",
+      "status": "U",
+      "contentHash": "sha256:d1c335ba6e6d6e031233d7071b0593b81334ccae04315c36e2d0c6ef97618bbd",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/src/sqlite-logical-integrity.mjs",
+      "status": "D",
+      "contentHash": "sha256:6193c5aec73e21f5c3c3c577bda3a63f652911c76ab3f450a92a97fe14ffa461",
+      "group": "RG02",
+      "disposition": "move_from",
+      "pairId": "move-sqlite-logical-integrity"
+    },
+    {
+      "path": "paper-core/src/strict-cli-arguments.mjs",
+      "status": "U",
+      "contentHash": "sha256:a1cec89231dcb4e50713eaccbb8fc16ea2134a8e9dde07ef150a261f7ed11f34",
+      "group": "RG07",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/src/test-suite-manifest.mjs",
+      "status": "U",
+      "contentHash": "sha256:7d4305c2d6907e59415ddf9d083c835d38ef538f2b388a7861e26ea5fa6de8d2",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/src/workflow-engine.mjs",
+      "status": "D",
+      "contentHash": "sha256:c268f02489fe876a2b4911436264be7494d7b806ba6492d4e7f286d21259a7f0",
+      "group": "RG07",
+      "disposition": "retire",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/agent-executor-template.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:61cb5d4d2dfd10adda4a4828a36706ebb8867a490a1483d6ef5ce3dc21cbf4e5",
+      "group": "RG03",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/architecture-conformance.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:8891ed0db0765918b4781f12b113a6f4be1952933a5a0671a368e8ddd0ddcd4d",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/automation-campaign.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:1d4349e0a012963bb4185c1d6fcf81fada90f699dab2ddcdc0896a6ec67f6358",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/automation-executors.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:b4c9bd06d78cbb0e67e1bb1a55a4e4254d42464f28f520084a3714c28933b204",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/automation-orchestration.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:9298d4bf2e2ab6b86e2af18f3d6042d18b70fb3dd03a888cfa41a54ded5d65b2",
+      "group": "RG03",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/automation-taskflow.test.mjs",
+      "status": "D",
+      "contentHash": "sha256:67fee029c05d01747180a4f3065e12f17c1b1129cb16433b77f557c50175f8a8",
+      "group": "RG07",
+      "disposition": "retire",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/batch-campaign-mode-plan.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:9018ba635f756691474a95d4975a44a13c82193431eb5524ca92b23c7c54cb63",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/batch-summary-golden.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:e77eb199417d994e8eb138a64d69b103793b66a81c6fd4294905c1678a80ed73",
+      "group": "RG04",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/campaign-attempt-fencing.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:881e6cbf597390edf66b21afd3f7a0caeb4251fd9291752149d50b4965bc0477",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/campaign-evolution-policy.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:3100453e566febffa22d37fee87c6343980f60cb713db4e41cd49add07470d11",
+      "group": "RG04",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/campaign-experiment-artifact-authority.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:929223ce98940a38acd9a64668a576b8e86b11192a4850922985fefe8ecb21d4",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/campaign-mode-execution-semantics.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:886a7629914522b1695f7db8dd3c590410fd88ca5e94522cf19a09bebcd79b74",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/campaign-node-workspace-support.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:8cfe630a684a4cd5ecaa0ffaad3264bedebeec15942c3860af9fa1775657072d",
+      "group": "RG03",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/campaign-query-presenter.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:ed70bfa805c188537f61b6970f529e2f7e13a7742a4991dc749d5603fc589370",
+      "group": "RG04",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/campaign-release-handoff.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:ce1563a50b2465220c7bafe20e70405cbd6006ce6c0a3a3893e730652aec6a52",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/campaign-release-source-lineage.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:e468dfc95f6d579ba6e2416c5977ffe424fa8e3afa8203ac3195dbeaa5368dc4",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/campaign-slo.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:d13f723162450454dac5c91e03bea91ef50d15ea5688df1629e72bc902f59e43",
+      "group": "RG04",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/campaign-state-policy.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:3fa1f927706fc47341d28a18e4ebceaea68d84eb1907a127b6f5ea508b4ca37f",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/cold-volume-cas-recovery.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:c7f68ec716e1ca1d5fa10c16320b35a1600a9f861fa03858529206e873a67ff8",
+      "group": "RG07",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/cold-volume-contract.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:400d5f3fbf4d12b899b166b4401d9ef53c3c3fa43544c1215f7ddb739e4ba39b",
+      "group": "RG07",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/composition-context-profiles.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:e9398f32dcd4004f81a6abe9a9c0280a5645e578031b095147ca564bd945735c",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/domain-purity-identity.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:3f1428904d37d4b48e2c701455af4ea72364b6b405ded290e69eb3286d25fcc8",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/empirical-contract.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:b361bebe36ee3971ce86baad94e9edeae0079275d0fde786ffa830a3450cf287",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/empirical-p1-authority.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:03b6ed58e1443f25107c88e09613fd537e992a7f261f5bb0cf5ee48c44ea3e6f",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/executor-capabilities.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:2a31639ab3960def58332462d2e94362e0996ca1f4414b57e07b2ab42c6920fe",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/external-intake-verifier.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:f19816d7435927c847ec0b7e385289e8887b6c9271c6d76ba174505a683858c6",
+      "group": "RG06",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/formal-campaign-release.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:f52a5f884ce4fc15adc764a8d9dfd6bf8f04a3a16319acb858a228ccf97fdaf5",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/formal-claim-binding-policy.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:2416c2869d6bc48a0dfa54f370c4270d250434a126f781a0aee231454c1e97fb",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/formal-review-agent-bootstrap.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:e34f832b6d93a813e4b5ee952f4b4ee2f14d53ff7d823e6ebb4780f1d8b62aa1",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/lean-source-formal-verifier.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:65e6b39b430060a33cc9e14e2ab19a6288c975478f242f70873ee7c5ab258db5",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/legacy-provenance-delivery-hardening.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:753b1b994642abd1f6dda56ca6be5f2cf61f4bee03739904fefd3ed7de9b5796",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/legacy-salvage-boundary-hardening.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:e0d2a0527ba972fd4a0be1e73605b37dfd124e682be2330b54a112937bdf29b9",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/manuscript-promotion-boundaries.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:0a1245611b6ec32306e23789e2b23f7f2a854c563930e4ad5a43433b52fc526f",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/multiprocess-resource-governor.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:0fc94c5d1169552cd63befa1182a1ca7677d5330ad245d126f5812859a83051a",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/native-receipt-hash-policy.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:11f599806eacfd57333c1e6de9b6d8c0cd0982b3bf80535df66ec6147ba8134a",
+      "group": "RG01",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/offhost-worm-snapshot.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:8b8c88772eab36b0e6eea4aad4a6824ff170a7d9b2489f2b1070997209b844fd",
+      "group": "RG07",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/orchestrator-facade-compatibility.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:c6b12b9e0c20b9531945145a61f777e1add5586e5dc05b5b710a70f665d2af66",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/package-script-surface.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:07488e9a8a6294938cc8a7060a1140cb5b3fb683c30d11f281075d0c806fa449",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/paper-batch-dry-run.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:c21d8fc7cf74ab492beab9c83f49321ebb04e0a188e3f5484bce4aa59574241e",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/paper-contracts-facade.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:7dcbc5304e03638b17861fa1175e66696289b9d44ecfc56f2aca2e96c2928ce7",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/path-utils.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:18cf66e3fe44c0a3348933c924672ef2f0ed931d9b33b3fe39c133c594d462cb",
+      "group": "RG01",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/receipt-hash-selector.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:3b295bb3a53f7d6b16fc937e9e7352c0352927bcfe6bd8e6021a8d72591838e1",
+      "group": "RG01",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/receipt-issuer-policy.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:eb692942d3c6ecf1bd51cea4db02b7abec0ea225f2914de1cd7dac1dbed3f840",
+      "group": "RG01",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/release-state-consistency.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:3976d2df3cc01c76e6a8d6b69e8fd8cc5cfd628b6fc53d174761217b0b800121",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/repair-orchestrator-split.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:0fcf1dbc9b2d11e1caf83726d763602e7228e14d293eb16a46b2d79fcc1d1af5",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/repository-module-imports.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:2a01868c06f5f08b1fdd253990b88ec8038c24c9ea4179e0f6513f46491da77b",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/research-vacuity-boundaries.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:127bb13535eb19c0b640663d4323ae93d43f8588e059bebaf2c5bc87fd7e9725",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/research-verify-orchestrator.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:84c9ea527e37c914597d8fa70badda11c89a111c3fe5ed4136bfcd378d31f07b",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/runtime-file-primitives.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:57c46ced8cd1350640ee0cac5f4b69fe08ca31c4cf6723ddd9cf6886a416f92f",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/runtime-permissions.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:e20217aa50af751c4bff47daa31319421e2a6664d05a7309f47e1e7cf2844d8d",
+      "group": "RG01",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/runtime-retention.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:d3b7676698dc8bc6c480702dd640f2146e392ed0e0a4cfdbb9bf4e7bd686c57e",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/scoped-file-materialization-repository.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:b4a3582eca77c43d2d2b632edaf975a138f6613e8e61967187fa6cdb84f85524",
+      "group": "RG01",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/sqlite-logical-integrity.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:a3fd3740e3be998e17e211bdaa686876d0b2bc7197d862cfb033ace23750922a",
+      "group": "RG02",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/sqlite-store-failure-contract.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:f0f847b7c0b785680e6a935cf4451a45610bfe240b884dc3481f38416c280d31",
+      "group": "RG02",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/submission-handoff-bundle.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:596ea867ca2c0aa9681d27bbaf9098761b3ed90a43b49103736036e65adede48",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/system-benchmark-harness-integrity.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:f1f2ba03cad0280c05c6a67e9dee2b76efa3fa564135b4fd4f09f5ec8fe3b165",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/taskflow-reviewed-submit.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:790c338e249cbb73b1d980361960feefefba36d907b78de0fb0eef55ddbf338d",
+      "group": "RG07",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/trusted-evidence-test-support.mjs",
+      "status": "M",
+      "contentHash": "sha256:923559caec90de6f460a19cf823ebd706e33ab06bcbbdfc7d33a3a6fa2a1a15f",
+      "group": "RG01",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/trusted-research-producers.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:f19335102cb73abc9041d80aabc5ddd868a2b65229fb96699c67c24d6e819b16",
+      "group": "RG01",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/typed-persistence-ports.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:c7e96e511ef29e7ba2e32194e293b624b243101b1d1663aff227b9e172e31d22",
+      "group": "RG02",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/verification-runtime-isolation.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:42d7e1e062f3de38e92e4eb9c2c99f951b79c6b0b37885ae63c17cec8a671f6f",
+      "group": "RG02",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/workflow-operational-authority.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:7dce89906b2f7f978ced2a5e6fcf0698a924c7ffb681131182a2af2aaf60a5cf",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/workflow-state-store.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:5cec554d8de08ec796c302a37ff2622c74bc89cdb0cf504d3d9ae31b6a2655b1",
+      "group": "RG02",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/workspace-attempt-integration.test.mjs",
+      "status": "U",
+      "contentHash": "sha256:88c24cd77587b4e8e910d4707c32c3cc9f16d89f56dac30b38ef8c59f18a9406",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/workspace-registry.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:dee8fbcc894c0684f7bb1b6df4adbe2e584ea64845421027ebe6775cde0f4a89",
+      "group": "RG02",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/tests/workspace-snapshot-exporter.test.mjs",
+      "status": "M",
+      "contentHash": "sha256:6323a78a530c9c4ec4605e9006934b1bf6bf24cd5cf29f36d7546b657560abce",
+      "group": "RG02",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/verification/authority-pipeline-selftest.mjs",
+      "status": "M",
+      "contentHash": "sha256:468112659dd977a97c92b92901d5de3b239eb3ac2e1bbd10d89aa01a5a7f676b",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/verification/remediation-selftest.mjs",
+      "status": "M",
+      "contentHash": "sha256:a5f46b6acf50de6a6b7dd004479b010d236bc64c035b63524b8750f9c8cb6fb6",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/verification/review-group-checkpoint.mjs",
+      "status": "U",
+      "contentHash": null,
+      "group": "RG00",
+      "disposition": "review_metadata",
+      "pairId": null
+    },
+    {
+      "path": "paper-core/verification/selftest.mjs",
+      "status": "M",
+      "contentHash": "sha256:80d7ea2bc7598f0db718018be38b9433946fa3e3a89e1fbe79ae7058af278b7f",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/automation/campaign-benchmark-selector.mjs",
+      "status": "U",
+      "contentHash": "sha256:c591a952f0cdeccd14a4940b9e6c2074adec178a63fe9dfcd9a287b969a1377d",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/automation/campaign-evolution-policy.mjs",
+      "status": "M",
+      "contentHash": "sha256:cd885394212b1cdc6c178af97d42aa3704832a7bba7fca15767a188c922d56be",
+      "group": "RG04",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/automation/campaign-mode-graph.mjs",
+      "status": "U",
+      "contentHash": "sha256:43938d5e3ee03760d7eff536e17e7952e2c6933d0b6e1db2f86b01adf52a9eb8",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/automation/campaign-plan.mjs",
+      "status": "M",
+      "contentHash": "sha256:e2d9aa3dfd81bacfcb1903eb32abcaa10a88f5c56c0556cf84bbd41774ed13c6",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/automation/campaign-release-contracts.mjs",
+      "status": "U",
+      "contentHash": "sha256:7d7659e0adb331fd682a1087b9f786affd0df1e6f565fff738d0722d06ff9cc4",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/automation/campaign-research-contract.mjs",
+      "status": "U",
+      "contentHash": "sha256:fa662ace59775c9f731c845253e24e1ee387c66d896b62abe7345c3214c09a7e",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/automation/campaign-slo.mjs",
+      "status": "M",
+      "contentHash": "sha256:09df52aa07f66cc3aae18a91de2b252a41c84676e8f4fde25d968190b71bb86e",
+      "group": "RG04",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/automation/campaign-state-policy.mjs",
+      "status": "U",
+      "contentHash": "sha256:b639b68b9cc912d0817bd56ff29a1d5df13ee7dc889e1563219fb69e0ce947b7",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/automation/empirical-contract.mjs",
+      "status": "M",
+      "contentHash": "sha256:c6a29b3a6dfdaec0956709ddd884b1b1e93987d5c63d939cb75d3c41b38309d9",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/automation/experiment-run-artifact-contract.mjs",
+      "status": "U",
+      "contentHash": "sha256:3bf1ee25f3d482eebb179630897b23b7b275d3ec5c6151ab73845b4a9de7542b",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/automation/experiment-run-contract.mjs",
+      "status": "U",
+      "contentHash": "sha256:8712fa029240e8121b2acbaa7d20a5a367ae668e3ddbcee288146e1d64cb8e3f",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/automation/system-benchmark-arm-protocol.mjs",
+      "status": "U",
+      "contentHash": "sha256:cbe2e93cb66411f0c538e61f6c4aa296bab5a5795765c17db735c4fb65beec63",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/automation/system-benchmark-challenge.mjs",
+      "status": "U",
+      "contentHash": "sha256:547f1f7d7ae14f29d663b6c0b757fbca308a3500332b7d5703651bc6d8e35cd2",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/automation/system-benchmark-harness-identity.mjs",
+      "status": "U",
+      "contentHash": "sha256:9616d8f73cef4208f725ae6437045ea4e9ea7ee830d5cf371923337cd4150922",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/contracts/intake-resolution.mjs",
+      "status": "M",
+      "contentHash": "sha256:1885a19930176b61129b3156d9b5766aab8fd96112292157f4e3ee161d024a24",
+      "group": "RG05",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/contracts/primitives.mjs",
+      "status": "M",
+      "contentHash": "sha256:c7606b72a51e69ada335c453f7e5dd2bd666bc574bb7900c742941a6bd3bede8",
+      "group": "RG01",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/contracts/proposal-contracts.mjs",
+      "status": "M",
+      "contentHash": "sha256:1fc10e7ea5d95b9b393ea83d11159df96e3d06fbb6a8f9cc088f5924e47514c8",
+      "group": "RG05",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/contracts/referee-application.mjs",
+      "status": "M",
+      "contentHash": "sha256:58329a2f571a8d38bc2834dd23202e454e4bacf5783c5c92a1cb06960fff0790",
+      "group": "RG05",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/contracts/referee-closure.mjs",
+      "status": "M",
+      "contentHash": "sha256:866cc18fe8dfe833e5500b6116146543bbcd60c6c84663ff676f26c069503b94",
+      "group": "RG05",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/contracts/referee-planning.mjs",
+      "status": "M",
+      "contentHash": "sha256:6943841be716bfd8ed3b535c3ccd055ee0c258a6f5481f75b2d6ee96ebbc2281",
+      "group": "RG05",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/contracts/research-contracts.mjs",
+      "status": "M",
+      "contentHash": "sha256:60188f52658a7158e06a3a8076d529a6d98e841d012604ac35572c12df0482f9",
+      "group": "RG05",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/contracts/submission.mjs",
+      "status": "M",
+      "contentHash": "sha256:e859f75fe52bb5b315c3f7060865c3cbd6b74b1f7f062fec7ccabf2098f7cf1f",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/contracts/venue-contracts.mjs",
+      "status": "M",
+      "contentHash": "sha256:4e1a8b98eaa0522f5ab7fef600472caa189c8325d683ba54730c7808496dcdce",
+      "group": "RG05",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/contracts/workflow-contracts.mjs",
+      "status": "M",
+      "contentHash": "sha256:fe4a6733157e795929c4bd91d41b39e8bc5dc18d5e546a7dc24e0d8b2a0f6c7e",
+      "group": "RG04",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/evidence/evidence-consumption-policy.mjs",
+      "status": "M",
+      "contentHash": "sha256:b28ab3e809042c6985d53ddbada988ee598db8c0a38401b492de23a2591b35d0",
+      "group": "RG01",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/evidence/evidence-reference-validity.mjs",
+      "status": "M",
+      "contentHash": "sha256:2184f1c47ce681cb36781441291febc7181c02ce92ddccfc99bfb60eac8c8275",
+      "group": "RG01",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/evidence/receipt-hash-policy.mjs",
+      "status": "U",
+      "contentHash": "sha256:fccf1a6ca3f01c5989f109519f91926fbb1bd9f0330f500a4ffcac967f9ee3bc",
+      "group": "RG01",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/evidence/receipt-hash-selector.mjs",
+      "status": "U",
+      "contentHash": "sha256:5d5e59dbb4c2feaa5e761b0b421f9325fc59b21a877b3d79ff1bd7c709ab71a8",
+      "group": "RG01",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/evidence/receipt-issuer-policy-registry.mjs",
+      "status": "U",
+      "contentHash": "sha256:341533eddd62ceb43e7768899d51745d3573e7fa01ec0c9ec082a51eeefbeb6a",
+      "group": "RG01",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/evidence/trusted-ledger-receipt.mjs",
+      "status": "M",
+      "contentHash": "sha256:8a700b203b6a91ec7f9ef2416276ba3885768fb27941b852a4565c39a93d777f",
+      "group": "RG01",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/governance/capability-catalog.mjs",
+      "status": "U",
+      "contentHash": "sha256:164c91ee3d87bcc0cfaae41fc11760c531a5280e8adc46fd4c6bee2b4a77d327",
+      "group": "RG06",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/governance/legacy-owner-acceptance-family-manifest.v1.json",
+      "status": "U",
+      "contentHash": "sha256:4e65671c91c92e3b4bbfafaad4b73e59303b4de7faa2cd649d1b1589ad639d36",
+      "group": "RG06",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/governance/owner-acceptance-family.mjs",
+      "status": "U",
+      "contentHash": "sha256:fbce6f8aeb2651a75d3c3fe30453b9bcbb991ba1116dab74e7f461a99f00b3cd",
+      "group": "RG06",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/journal/contracts.mjs",
+      "status": "U",
+      "contentHash": "sha256:af56937139c067304e9416d04861f07c634c9845be8d8f901284d3690bebb1fe",
+      "group": "RG05",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/journal/data/journal-profiles.v1.data.mjs",
+      "status": "U",
+      "contentHash": "sha256:4998b77329b02ca3952c5c0f20a7b1cb22748b945fe19288bd5b6c68c7d5fdf1",
+      "group": "RG05",
+      "disposition": "move_to",
+      "pairId": "move-journal-profile"
+    },
+    {
+      "path": "paper-domain/journal/journal-registry.mjs",
+      "status": "U",
+      "contentHash": "sha256:ff135ae73c3c9390281360302f0d7d176affca2a628526b6b89ac2fe8596622f",
+      "group": "RG05",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/journal/review-authority.mjs",
+      "status": "U",
+      "contentHash": "sha256:0b3decc9e25fcb8fd57ef76b184dfd888fa3f3180b3ae26b5b7aedf697e2b973",
+      "group": "RG05",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/journal/selection.mjs",
+      "status": "U",
+      "contentHash": "sha256:02e99501f033a1743160664990bdb28239ccfecfb581630d3ff1c762913da749",
+      "group": "RG05",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/quality/manuscript-promotion-gate.mjs",
+      "status": "M",
+      "contentHash": "sha256:416defbb9be6eb55850d3cfca73a7647cff7fd229651d92bbf2e18dedfe5e565",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/quality/source-package-contract.mjs",
+      "status": "M",
+      "contentHash": "sha256:85042af1bfdc8a36eecb79d42d1c14b9c404ff569af90843c585034969608b7f",
+      "group": "RG05",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/research/claim-registry.mjs",
+      "status": "M",
+      "contentHash": "sha256:4c488ec41b3176986378b0d992cab2fc0459b7577a63611f050e2e3abbf488cc",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/research/evidence-ingestor.mjs",
+      "status": "M",
+      "contentHash": "sha256:3ba9a38b686f1ccc15d7a1cee88d4cc9daf8849ca4ed6fca342fef96e2c195b2",
+      "group": "RG01",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/research/evidence-quality-gate.mjs",
+      "status": "M",
+      "contentHash": "sha256:5649a4f5745d83c031b36538ebcc8df06b1095017e08f443f7f7bee091792504",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/research/experiment-registry-authority.mjs",
+      "status": "U",
+      "contentHash": "sha256:73b8dba92c40d0d2d3f0c5c3cd708afaa118d672be8c3bbb4bd287afdcc0a894",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/research/experiment-registry-verifier.mjs",
+      "status": "U",
+      "contentHash": "sha256:b7666ee73f88e307f5d79973a05582210ee18552bd2919b54e185aa26c462ae2",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/research/experiment-registry.mjs",
+      "status": "M",
+      "contentHash": "sha256:72177e2ee085cb8b4107a5373885b1902fe41a429eaf36f7fd710ce0077cc08f",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/research/formal-certificate-intake.mjs",
+      "status": "M",
+      "contentHash": "sha256:2a0840d52fde9b2baa8bbe3d8659740ad8c33b24390831bf3a8e621280db30ac",
+      "group": "RG01",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/research/formal-claim-binding-policy.mjs",
+      "status": "M",
+      "contentHash": "sha256:65b064473bcfe0b8d0fe60ba3375e7dcb85ece81b2c08daf411308fce2c00742",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/research/formal-claim-contract.mjs",
+      "status": "U",
+      "contentHash": "sha256:6835f1f73ebf29a4f296ee94f561183377763ec5bd859c0e0c02be89f9cf4094",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/research/formal-verifier-policy.mjs",
+      "status": "M",
+      "contentHash": "sha256:573ce6d8d254f4d9628f0d4c396b166c358076bc9a5b09bd4933389b20ab6682",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/research/formal-verifier-registry.mjs",
+      "status": "M",
+      "contentHash": "sha256:e882bd19b609aaa906073868919821c0241e46d731353ae6d85216126188eab7",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/research/gap-planner.mjs",
+      "status": "M",
+      "contentHash": "sha256:8f8d6ad7daf4e65856d8b818bc167048d5a77282c723657fdaac534bb2455bec",
+      "group": "RG05",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/submission/delivery-runtime.mjs",
+      "status": "M",
+      "contentHash": "sha256:98cd11a78aed0f951135110aed2ba8e7bffbec105889ce5fad24fd8213213f3c",
+      "group": "RG02",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/submission/redrive-decision.mjs",
+      "status": "M",
+      "contentHash": "sha256:07141ba402003d710c7c906c3fe3a458370b3caadc2bc7bbed310d36ee6ae8b2",
+      "group": "RG02",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/submission/reviewed-venue-evidence.mjs",
+      "status": "M",
+      "contentHash": "sha256:a79eadc190e77e2836e06fdd100a3462e85d569166015ecf952731c1c4e3cad2",
+      "group": "RG02",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/workflow/mode-registry.mjs",
+      "status": "M",
+      "contentHash": "sha256:5e21138b483b16dd498775376f8c2312eb7e966695b2b79255ed8a543afc7194",
+      "group": "RG04",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-domain/workflow/operational-authority-policy.mjs",
+      "status": "U",
+      "contentHash": "sha256:81cbace6d0454f04dae684224d27de4d5ac267c31349a9aef820c5c1f9362840",
+      "group": "RG06",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-ports/application-service-port-catalog.mjs",
+      "status": "U",
+      "contentHash": "sha256:dbf34c94700759d64c525a3dda2381a9657d1cd7ab5e890d9f849dbc09557292",
+      "group": "RG02",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-ports/campaign-release-authority-port.mjs",
+      "status": "U",
+      "contentHash": "sha256:0616ce2bca91f73c35fec54fee75dc94cadedb8cbfbecb9a4a6782fdea59c1e6",
+      "group": "RG02",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-ports/campaign-release-packager-port.mjs",
+      "status": "U",
+      "contentHash": "sha256:84a160856cfc6e758de0c85143fd3cecc3eaca0561d48dc8a4e59a5413f8267c",
+      "group": "RG02",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-ports/campaign-release-query-port.mjs",
+      "status": "U",
+      "contentHash": "sha256:015c795d36ae8df56f6a21cf26af4c3d79484f0742ab01b2571fdace946e1c08",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-ports/campaign-research-verifier-port.mjs",
+      "status": "U",
+      "contentHash": "sha256:57fcd516314ce0a1daf5bc67c98d11dbb5ca8fe8cbe8f1fa307f971e61d5229f",
+      "group": "RG03",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-ports/campaign-store-port.mjs",
+      "status": "M",
+      "contentHash": "sha256:a2331a0cb16ee37ccfef23e182f6872712c7e9e41d1598584da797515e6dcabb",
+      "group": "RG02",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-ports/execution-service-ports.mjs",
+      "status": "U",
+      "contentHash": "sha256:8146f144739137275a0577c2ea73b4bf7841b078e9b5ba084e017854823c778d",
+      "group": "RG02",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-ports/experimental/task-flow-port.mjs",
+      "status": "U",
+      "contentHash": "sha256:f0d7dc9d5e77bb72ee115b77059ea05f8500f7fd5f95075b8a995d63df100707",
+      "group": "RG07",
+      "disposition": "move_to",
+      "pairId": "move-taskflow-port"
+    },
+    {
+      "path": "paper-ports/hasher-port.mjs",
+      "status": "D",
+      "contentHash": "sha256:614d433c4f7179bdc7eea408be8c867be72e8fc4206a2834dad06d89549a3c9c",
+      "group": "RG01",
+      "disposition": "retire",
+      "pairId": null
+    },
+    {
+      "path": "paper-ports/id-generator-port.mjs",
+      "status": "U",
+      "contentHash": "sha256:270dd00bf5ce33127ec1b9686ac38f11f37c0a35df2434be6d27d3d3d70517aa",
+      "group": "RG02",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-ports/inventory-repository-port.mjs",
+      "status": "U",
+      "contentHash": "sha256:9620fbba792182c14393e0d5967fce2d1d26f265780b75ebb9d180d3f3b22f58",
+      "group": "RG05",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-ports/journal-policy-port.mjs",
+      "status": "U",
+      "contentHash": "sha256:7ff03d1d9ad92c9d9042c4826c8840b29da73ab055062fbc73ccc9793a26dfee",
+      "group": "RG05",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-ports/paper-stage-execution-port.mjs",
+      "status": "U",
+      "contentHash": "sha256:38cbd43a58bb26d4f0ea3e4f8d6a6f0782b0cea2dad14081c1648e02bc423a16",
+      "group": "RG07",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-ports/referee-issue-query-port.mjs",
+      "status": "U",
+      "contentHash": "sha256:0c09b896922d5925ccb4cfe8290924074ad2db9e595eb8af78c952631826a1d9",
+      "group": "RG02",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-ports/scheduler-port.mjs",
+      "status": "U",
+      "contentHash": "sha256:ff43ec851d22851ef5917c5cdaee531e7d183be49bb3943fb87ccb76a4c1dbaf",
+      "group": "RG02",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-ports/store-port.mjs",
+      "status": "M",
+      "contentHash": "sha256:b0e79dda425aeae34257ab5908599cd1f5a019f8bb1b7cf2de70204bbaa378d1",
+      "group": "RG02",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "paper-ports/task-flow-port.mjs",
+      "status": "D",
+      "contentHash": "sha256:f0d7dc9d5e77bb72ee115b77059ea05f8500f7fd5f95075b8a995d63df100707",
+      "group": "RG07",
+      "disposition": "move_from",
+      "pairId": "move-taskflow-port"
+    },
+    {
+      "path": "paper-ports/unit-of-work-port.mjs",
+      "status": "U",
+      "contentHash": "sha256:96551e2ad9566e2a0db370239d4001971b983dfb0eb8dd1e35504a4d31d99c9d",
+      "group": "RG02",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "paper-ports/worker-runner-port.mjs",
+      "status": "M",
+      "contentHash": "sha256:89341c433492a79c15526e6839cfc26fd2cfe41a96199e3f0385c60bd2c996b7",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "README.md",
+      "status": "M",
+      "contentHash": "sha256:f1e6f85307f912f19659c18a30dc2ecc8c0ec31fef7d198c4d0ce9126bd3927b",
+      "group": "RG09",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "RELEASE.md",
+      "status": "M",
+      "contentHash": "sha256:4961553e8bbbd443896d5b42abca5c5431e3b293e20fc09a60ab49254038d586",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "runtime-images/python-scientific/Dockerfile",
+      "status": "M",
+      "contentHash": "sha256:3827086488161f1b7575f798ea6c108d962e2e2df154999be3ad09e52e00b6e6",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "runtime-images/r-scientific/Dockerfile",
+      "status": "M",
+      "contentHash": "sha256:2e395f0f77dffe597d159cc0e2054e3ba0851cd74484d4bf1e9caf5a4785dd07",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "runtime-images/r-scientific/restore-locked.R",
+      "status": "M",
+      "contentHash": "sha256:4650b7be28ed0d058ac49dc79876748ef06b0ed1f657f62e7dd0c945ab44cd61",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "store/migrations/021_job_lease_fencing.sql",
+      "status": "U",
+      "contentHash": "sha256:63d02d9650314b20ece5b0755db4b65eb720d0fcdaa117bc8c00f8c8484626cf",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "store/migrations/022_campaign_attempt_fencing.sql",
+      "status": "U",
+      "contentHash": "sha256:baaf19b0f68eacd3d9445428b71508d35e225ee3ef0976c49ee6a2d4ea1646e6",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "store/migrations/023_workspace_retention_qualification.sql",
+      "status": "U",
+      "contentHash": "sha256:7aa51eaff5a5473a0a497b6daf2587263d11205b122c02b4eaa13201bc5e26b9",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "workflow-kernel/record-hash.mjs",
+      "status": "M",
+      "contentHash": "sha256:d6c967c74f80f22ea7d058114ef52a3691e533a1ad5a4107463c8cbb1e969267",
+      "group": "RG01",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "workflow-kernel/runtime/data-utils.mjs",
+      "status": "M",
+      "contentHash": "sha256:a316674c5edf524f3a758d6d67a388f8e6e6d1d7686e8c281d0c76a9dd71352e",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "workflow-kernel/runtime/file-descriptor-utils.mjs",
+      "status": "U",
+      "contentHash": "sha256:f5a665d829520f62147c629e5b1b87e0bc2f1bf603c5cd0bf3c7491747caa30c",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "workflow-kernel/runtime/file-utils.mjs",
+      "status": "M",
+      "contentHash": "sha256:3faf415a6e5ad99047ed410700ffc6c2b23af17d5018c964b9e012a95aabc011",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "workflow-kernel/runtime/path-utils.mjs",
+      "status": "U",
+      "contentHash": "sha256:266f3e51bf016d5b2d3bf776fe92b9b02e2b455bc738db09104f52f0a79aaf50",
+      "group": "RG01",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "workflow-kernel/runtime/process-identity.mjs",
+      "status": "U",
+      "contentHash": "sha256:fbe335be01f69a94f6170b8507f201d71d0578f5c7be2c2445d6af15ebca833c",
+      "group": "RG01",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "workflow-kernel/runtime/scoped-file-identity.mjs",
+      "status": "M",
+      "contentHash": "sha256:6861e960c6a483a5dbd346c218f6a3a7b96eb2f227a11de0a07fe6387bf10daf",
+      "group": "RG10",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "workflow-kernel/runtime/text-utils.mjs",
+      "status": "M",
+      "contentHash": "sha256:040544e6b5a69db42c38d0d1eb6303fe553f1e8852f61cfb0e1ead9e874cc22b",
+      "group": "RG01",
+      "disposition": "modify",
+      "pairId": null
+    },
+    {
+      "path": "workflow-kernel/runtime/workspace-execution-identity.mjs",
+      "status": "U",
+      "contentHash": "sha256:bbd3449bec2c3881ca50418f3ef84deb85bb387e331f1a2e79e7dbdfd53ddf72",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "workflow-kernel/system-benchmark-harness-implementation-manifest.mjs",
+      "status": "U",
+      "contentHash": "sha256:fe2f519290d4827b819df6c7e886aa0ff4e1b712753e4df64694e9727f9fcfa4",
+      "group": "RG10",
+      "disposition": "add",
+      "pairId": null
+    },
+    {
+      "path": "workflow-kernel/workflow.mjs",
+      "status": "D",
+      "contentHash": "sha256:0c5dc435a74725046043ab64a85be07ab21d30be4094704ad021d3a7361435d9",
+      "group": "RG01",
+      "disposition": "retire",
+      "pairId": null
+    }
+  ]
+}

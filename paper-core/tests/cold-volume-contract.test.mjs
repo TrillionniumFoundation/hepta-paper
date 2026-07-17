@@ -1,10 +1,9 @@
 import assert from 'node:assert/strict';
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { verifyColdVolumeContract } from '../src/cold-volume-contract.mjs';
+import { verifyColdVolumeContract } from '../../paper-adapters/archives/cold-volume-contract.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 test('cold-volume contract verifies logical links and fails closed until mounted content is manifested', (t) => {

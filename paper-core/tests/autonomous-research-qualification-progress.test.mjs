@@ -1,0 +1,142 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  createAutonomousResearchQualificationContextProvider,
+} from '../../paper-composition/automation/autonomous-research-qualification-context.mjs';
+import {
+  resolveAutonomousResearchProviderConfiguration,
+} from '../../paper-composition/automation/autonomous-research-provider-configuration.mjs';
+import {
+  AUTONOMOUS_EXTERNAL_QUALIFICATION_ATTEMPT_LEASE_MS,
+  normalizeExternalQualificationRetryPolicy,
+} from '../../paper-domain/automation/autonomous-external-qualification-state-contract.mjs';
+
+const H = (label) => hashRecord('QualificationProgressTestHash', { label });
+const START = Date.parse('2026-07-17T06:00:00.000Z');
+
+test('qualification attempt leases retain a five-minute margin over one KMS command', () => {
+  assert.equal(AUTONOMOUS_EXTERNAL_QUALIFICATION_ATTEMPT_LEASE_MS, 10 * 60 * 1000);
+  assert.equal(
+    normalizeExternalQualificationRetryPolicy().attemptLeaseMs,
+    AUTONOMOUS_EXTERNAL_QUALIFICATION_ATTEMPT_LEASE_MS,
+  );
+  assert.equal(
+    normalizeExternalQualificationRetryPolicy({ attemptLeaseMs: 60_000 }).attemptLeaseMs,
+    AUTONOMOUS_EXTERNAL_QUALIFICATION_ATTEMPT_LEASE_MS,
+  );
+});
+
+function fixture({ attestorStageMs = 9 * 60 * 1000 } = {}) {
+  let nowMs = START;
+  let campaignLeaseExpiresAt = START + 15 * 60 * 1000;
+  let attemptLeaseExpiresAt = START + 10 * 60 * 1000;
+  const stages = [];
+  let signerStarted = false;
+  const renew = (kind, leaseMs, readExpiry, writeExpiry) => ({ stage }) => {
+    if (nowMs >= readExpiry()) {
+      throw new Error(kind === 'attempt'
+        ? 'autonomous_research_qualification_attempt_lease_lost'
+        : 'supervisor_lease_lost');
+    }
+    writeExpiry(nowMs + leaseMs);
+    stages.push(`${kind}:${stage}`);
+  };
+  const providerConfiguration = resolveAutonomousResearchProviderConfiguration({
+    environment: {
+      HEPTA_RESEARCH_AUTHOR_PROVIDER: 'codex',
+      HEPTA_RESEARCH_AUTHOR_MODEL: 'author-model',
+      HEPTA_FORMAL_REVIEW_PROVIDER: 'codex',
+      HEPTA_FORMAL_REVIEW_MODEL: 'reviewer-model',
+    },
+  });
+  const campaignProgress = renew(
+    'campaign',
+    15 * 60 * 1000,
+    () => campaignLeaseExpiresAt,
+    (value) => { campaignLeaseExpiresAt = value; },
+  );
+  const provider = createAutonomousResearchQualificationContextProvider({
+    schemaVersionReceipt: Object.freeze({ version: 1 }),
+    providerConfiguration,
+    expectedProviderConfigurationHash:
+      providerConfiguration.autonomousResearchProviderConfigurationHash,
+    clock: { now: () => new Date(nowMs) },
+    onProgress: campaignProgress,
+    onSynchronousProgress: campaignProgress,
+    preflightAuthor: () => ({ capabilityReceipt: Object.freeze({ role: 'author' }) }),
+    preflightReviewer: () => ({ capabilityReceipt: Object.freeze({ role: 'reviewer' }) }),
+    probeModelAvailability: ({ errorPrefix }) => {
+      nowMs += 8 * 60 * 1000;
+      return Object.freeze({ kind: 'FixtureCanary', errorPrefix });
+    },
+    codeProvenanceProvider: () => Object.freeze({ status: 'fixture' }),
+    runtimeImageStatusComposer: () => Object.freeze({
+      blockers: Object.freeze([]),
+      inspection: Object.freeze({ ready: true }),
+    }),
+    pinnedImageDigestInspector: (profile) => H(profile.name || profile.image),
+    releaseAttestorInspector: ({ onSynchronousProgress }) => {
+      onSynchronousProgress({ stage: 'release_attestor_before_backend_probe' });
+      nowMs += attestorStageMs;
+      onSynchronousProgress({
+        stage: 'release_attestor_after_backend_probe_before_signer_challenge',
+      });
+      signerStarted = true;
+      nowMs += attestorStageMs;
+      onSynchronousProgress({ stage: 'release_attestor_after_active_signer_challenge' });
+      return Object.freeze({ ready: true, productionReady: true });
+    },
+  });
+  return {
+    provider,
+    providerConfiguration,
+    stages,
+    elapsed: () => nowMs - START,
+    signerStarted: () => signerStarted,
+    attemptProgress: renew(
+      'attempt',
+      10 * 60 * 1000,
+      () => attemptLeaseExpiresAt,
+      (value) => { attemptLeaseExpiresAt = value; },
+    ),
+  };
+}
+
+test('qualification progress renews all fences across timer-starving synchronous stages', async () => {
+  const f = fixture();
+  const result = await f.provider({
+    preparation: {
+      autonomousResearchProviderConfigurationHash:
+        f.providerConfiguration.autonomousResearchProviderConfigurationHash,
+    },
+    onSynchronousProgress: f.attemptProgress,
+  });
+  assert.equal(result.releaseAttestorInspection.productionReady, true);
+  assert.equal(f.signerStarted(), true);
+  assert.ok(f.elapsed() > 30 * 60 * 1000);
+  assert.ok(f.stages.includes(
+    'campaign:qualification_context_after_author_provider_canary',
+  ));
+  assert.ok(f.stages.includes(
+    'attempt:qualification_context_before_reviewer_provider_canary',
+  ));
+  assert.ok(f.stages.includes(
+    'campaign:release_attestor_after_backend_probe_before_signer_challenge',
+  ));
+  assert.ok(f.stages.includes(
+    'attempt:release_attestor_after_backend_probe_before_signer_challenge',
+  ));
+});
+
+test('qualification progress blocks the signer when a synchronous attempt fence expires', async () => {
+  const f = fixture({ attestorStageMs: 11 * 60 * 1000 });
+  await assert.rejects(() => f.provider({
+    preparation: {
+      autonomousResearchProviderConfigurationHash:
+        f.providerConfiguration.autonomousResearchProviderConfigurationHash,
+    },
+    onSynchronousProgress: f.attemptProgress,
+  }), /attempt_lease_lost/);
+  assert.equal(f.signerStarted(), false);
+});

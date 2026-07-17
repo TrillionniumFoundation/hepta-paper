@@ -29,7 +29,3 @@ export function parseMaybeQuoted(value) {
   if (/^-?\d+(\.\d+)?$/.test(raw)) return Number(raw);
   return raw;
 }
-
-export function firstPresent(values = []) {
-  return values.find((value) => value !== null && value !== undefined && value !== '') ?? null;
-}

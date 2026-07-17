@@ -21,16 +21,11 @@ import { buildExecutorCapabilities } from '../../paper-ports/executor-capabiliti
 import { submissionExecutorDescriptor } from '../../paper-ports/submission-executor-port.mjs';
 import { validateBoundaryRecord } from '../../paper-ports/boundary-schema-catalog.mjs';
 import { signAuthorityDocument } from '../src/authority-signatures.mjs';
-import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { trustedExperimentFixture, trustedFormalFixture, trustedVenueFixture } from './trusted-evidence-test-support.mjs';
 
 const h = (character) => `sha256:${character.repeat(64)}`;
 const paperTask = { paperId: 'paper-hardening', taskKey: 'paper:paper-hardening', venueTarget: 'Journal X' };
 const venuePlan = { status: 'local_dry_run_ready', venueSubmissionPlanHash: h('a'), target: 'Journal X' };
-
-function venueObservation(overrides = {}) {
-  return { provider: 'portal-x', portalRoute: '/submit/manuscript', venueTarget: 'Journal X', track: 'main', deadlineState: 'open', observedState: 'accepting_submissions', observedAt: '2026-07-13T00:00:00.000Z', expiresAt: '2026-07-13T02:00:00.000Z', reviewedBy: 'operator-1', evidenceHashes: [h('b')], fetchedPortalState: true, ...overrides };
-}
 
 test('reviewed venue evidence is real, reviewed and expiring rather than a zero-evidence label', () => {
   const blocked = buildReviewedVenueEvidence({ paperTask, venuePlan, observation: { fetchedPortalState: false }, now: new Date('2026-07-13T01:00:00Z') });
@@ -101,13 +96,14 @@ test('submission metadata packet requires human confirmation and never treats wo
   assert.equal(human.localWorksheetGrantsAuthorization, false);
 });
 
-test('Coq and Isabelle are registry/certificate contracts, not support inferred from executable presence', () => {
+test('Coq and Isabelle remain explicit unavailable tiers rather than support inferred from executable presence', () => {
   const trusted = trustedFormalFixture({});
   const registry = buildFormalVerifierRegistry({ adapterReceipts: [trusted.adapterReceipt], receiptLedger: trusted.ledger });
-  assert.equal(registry.verifiers.find((item) => item.kind === 'coq').status, 'formal_verifier_registered');
+  assert.equal(registry.verifiers.find((item) => item.kind === 'coq').status, 'formal_verifier_unavailable');
   assert.equal(registry.verifiers.find((item) => item.kind === 'isabelle').status, 'formal_verifier_unavailable');
   const intake = buildGenericFormalCertificateIntake({ verifierKind: 'coq', verifierRegistry: registry, certificate: trusted.certificate, sourceRecords: trusted.sourceRecords, claimBindings: trusted.claimBindings, executionReceipt: trusted.executionReceipt, receiptLedger: trusted.ledger, artifactVerifier: trusted.artifactVerifier });
-  assert.equal(intake.status, 'formal_certificate_intake_verified');
+  assert.equal(intake.status, 'formal_certificate_intake_blocked');
+  assert.ok(intake.blockers.includes('formal_verifier_adapter_not_registered'));
   const weakened = buildGenericFormalCertificateIntake({ verifierKind: 'coq', verifierRegistry: registry, certificate: trusted.certificate, sourceRecords: trusted.sourceRecords, claimBindings: trusted.claimBindings, executionReceipt: { ...trusted.executionReceipt, networkPolicy: 'provider-scoped' }, receiptLedger: trusted.ledger, artifactVerifier: trusted.artifactVerifier });
   assert.equal(weakened.status, 'formal_certificate_intake_blocked');
   assert.ok(weakened.blockers.includes('formal_execution_isolation_claim_invalid'));

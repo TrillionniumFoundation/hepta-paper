@@ -1,12 +1,14 @@
 # Research evidence and submission authority pipeline
 
-This pipeline separates four authorities that must not be conflated:
+This pipeline separates five authorities that must not be conflated:
 
-1. native research workers execute bounded local verification or analysis;
-2. an academic-evidence authority signs the current source, worker receipts,
+1. a proposal approver signs the exact proposal, venue, claims, quality profiles,
+   risks, operator identity, and validity window before any source is materialized;
+2. native research workers execute bounded local verification or analysis;
+3. an academic-evidence authority signs the current source, worker receipts,
    claims, and artifacts;
-3. an independent referee signs a verdict against those exact hashes; and
-4. two distinct live-submission authorities sign a single-use, provider- and
+4. an independent referee signs a verdict against those exact hashes; and
+5. two distinct live-submission authorities sign a single-use, provider- and
    account-scoped authorization lasting at most 24 hours.
 
 No private key belongs in this repository or in the runtime trust store. The
@@ -30,9 +32,20 @@ trust store contains active Ed25519 public keys only:
 ```
 
 Store it at `runtime/trust/AUTHORITY_TRUST_STORE.json`. Required roles are
-`academic_evidence_authority`, `independent_referee`, `submission_operator`,
-and `live_executor_authorizer`. Run `npm run authority:status` for a read-only
+`proposal_approver`, `academic_evidence_authority`, `independent_referee`,
+`submission_operator`, and `live_executor_authorizer`. Run `npm run authority:status` for a read-only
 inventory. It rejects private-key material in the trust store.
+
+## Proposal approval
+
+`PaperProposalApprovalDocument` is required before proposal materialization or
+inventory staging. Its Ed25519 signature must have role `proposal_approver` and
+bind the proposal envelope hash, generation receipt hash, paper ID, exact target
+venue, every ordered contribution-claim hash, ordered quality profiles, all
+proposal risk hashes with an explicit acceptance rationale, the operator subject,
+and a validity window of at most seven days. Materialization and staging each
+reload the runtime trust store and reverify the signed document and all lineage
+hashes. See `proposal-approval-authority.md` for the complete contract.
 
 ## Native research workers
 
@@ -105,7 +118,7 @@ executor and always records external actions as zero.
 
 ```bash
 npm run paper:authority-selftest
-npm run paper:research-verify -- --paper <paper_id> --execute
+npm run migration:p1-research-selftest
 npm run authority:status
 npm test
 ```

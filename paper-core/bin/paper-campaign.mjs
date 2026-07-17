@@ -1,53 +1,79 @@
 #!/usr/bin/env node
-import fs from 'node:fs';
 import path from 'node:path';
-import { createSqliteCampaignStore } from '../../paper-adapters/persistence/sqlite-campaign-store.mjs';
-import { createCodexAgentExecutor } from '../../paper-adapters/automation/codex-agent-executor.mjs';
-import { createOllamaStructuredAgentExecutor } from '../../paper-adapters/automation/ollama-structured-agent-executor.mjs';
-import { createOpenClawAgentExecutor } from '../../paper-adapters/automation/openclaw-agent-executor.mjs';
-import { createAgentBackendRouter } from '../../paper-adapters/automation/agent-backend-router.mjs';
-import { createIsolatedAgentExecutor } from '../../paper-adapters/automation/isolated-agent-executor.mjs';
-import { createCampaignNodeExecutor } from '../../paper-adapters/automation/campaign-node-executor.mjs';
-import { createTheoremQualityRevisionSink } from '../../paper-adapters/automation/theorem-quality-revision-sink.mjs';
-import { createMultiLanguageEmpiricalExecutor } from '../../paper-adapters/automation/multi-language-empirical-executor.mjs';
-import { createFilesystemEmpiricalCacheRepository } from '../../paper-adapters/automation/empirical-cache-repository.mjs';
-import { createOsSandboxedWorkerRunner, directoryMerkleHash, fileSha256Hash } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
-import { buildRuntimeRetentionPlan, executeRuntimeRetentionPlan } from '../../paper-adapters/automation/runtime-retention.mjs';
-import { runtimeImagesForCampaign } from '../../paper-adapters/automation/runtime-image-registry.mjs';
-import { bootstrapPaperExecutionContext } from '../../paper-composition/bootstrap/service-bootstrap.mjs';
-import { runPaperCampaign } from '../../paper-application/automation/campaign-engine.mjs';
-import { presentCampaignStatus, presentNodeLog, summarizeCampaign, summarizeEvent, summarizeNode, summarizePlan, summarizeRun } from '../../paper-application/automation/campaign-query-presenter.mjs';
-import { createSqliteResourceGovernor } from '../../paper-adapters/automation/sqlite-resource-governor.mjs';
-import { createWorkspaceRegistry } from '../../paper-adapters/automation/workspace-registry.mjs';
-import { buildPaperCampaignPlan } from '../../paper-domain/automation/campaign-plan.mjs';
-import { buildCampaignSloReport } from '../../paper-domain/automation/campaign-slo.mjs';
-import { discoverInventory } from '../../paper-adapters/inventory/index.mjs';
+import { executePaperCampaignCommand } from '../../paper-composition/automation/paper-campaign-command-composition.mjs';
 import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
+import { parseStrictCliArguments } from '../src/strict-cli-arguments.mjs';
 
 function args(argv) {
-  const out = { paper: [], dataset: [], 'dataset-license': [] };
-  for (let index = 0; index < argv.length; index += 1) {
-    const token = argv[index];
-    if (token === '--execute' || token === '--inline' || token === '--json' || token === '--help' || token === '--gpu' || token === '--effective' || token === '--details' || token === '--retain-failed-workspaces' || token === '--apply') out[token.slice(2)] = true;
-    else if (token.startsWith('--')) {
-      const key = token.slice(2);
-      const value = argv[++index];
-      if (key === 'paper') out.paper.push(value); else if (key === 'dataset' || key === 'dataset-license') out[key].push(value); else out[key] = value;
-    }
-  }
-  return out;
-}
-
-function selectedBudgetOverrides(options = {}) {
-  return Object.fromEntries([
-    ['maxWallTimeMs', 'max-wall-ms'],
-    ['maxAgentCalls', 'max-agent-calls'],
-    ['maxCpuJobs', 'max-cpu-jobs'],
-    ['maxGpuJobs', 'max-gpu-jobs'],
-    ['maxTokenCount', 'max-tokens'],
-    ['maxCostUsd', 'max-cost-usd'],
-    ['maxMemoryMiB', 'memory-mib'],
-  ].filter(([, option]) => options[option] !== undefined).map(([budget, option]) => [budget, Number(options[option])]));
+  const parsed = parseStrictCliArguments(argv, {
+    booleanFlags: [
+      'execute',
+      'inline',
+      'json',
+      'help',
+      'gpu',
+      'effective',
+      'details',
+      'retain-failed-workspaces',
+      'apply',
+    ],
+    valueFlags: [
+      'root',
+      'runtime-root',
+      'agent-provider',
+      'openclaw-agent',
+      'model',
+      'formal-review-provider',
+      'formal-review-model',
+      'formal-review-codex-binary',
+      'formal-review-codex-home',
+      'codex-home',
+      'codex-binary',
+      'ollama-model',
+      'concurrency',
+      'agent-slots',
+      'cpu-slots',
+      'gpu-slots',
+      'memory-mib',
+      'max-wall-ms',
+      'max-agent-calls',
+      'max-cpu-jobs',
+      'max-gpu-jobs',
+      'max-tokens',
+      'max-cost-usd',
+      'action',
+      'campaign-id',
+      'run-id',
+      'node-id',
+      'rounds',
+      'referees',
+      'minimum-revision-rounds',
+      'quality-profile',
+      'languages',
+      'metric-schema',
+      'benchmark-id',
+      'status',
+      'limit',
+      'before',
+      'kind',
+      'reason',
+      'parent-campaign-id',
+      'supersedes-campaign-id',
+      'recovery-of-campaign-id',
+      'worker-memory-mib',
+      'worker-cpu-seconds',
+    ],
+    repeatableValueFlags: ['paper', 'dataset', 'dataset-license', 'dataset-authorization', 'dataset-harness'],
+    positional: false,
+  });
+  return {
+    ...parsed,
+    paper: parsed.paper || [],
+    dataset: parsed.dataset || [],
+    'dataset-license': parsed['dataset-license'] || [],
+    'dataset-authorization': parsed['dataset-authorization'] || [],
+    'dataset-harness': parsed['dataset-harness'] || [],
+  };
 }
 
 async function main() {
@@ -62,6 +88,12 @@ async function main() {
       '  --agent-provider <name>   auto|openclaw|ollama|codex (default auto)',
       '  --openclaw-agent <id>     OpenClaw agent id (default hepta-paper-worker)',
       '  --model <name>            primary agent model override',
+      '  --formal-review-provider <name>  independent reviewer backend (codex; OpenClaw fails closed until per-turn workspace binding exists)',
+      '  --formal-review-model <name>  independent reviewer model override',
+      '  --formal-review-codex-binary <path>  pinned reviewer Codex executable (default codex)',
+      '  --formal-review-codex-home <path>  dedicated reviewer CODEX_HOME; required for Codex review',
+      '  --codex-home <path>      primary Codex author CODEX_HOME; must differ from reviewer home',
+      '  --codex-binary <path>    pinned primary Codex author executable (default codex)',
       '  --ollama-model <name>     local fallback model',
       '  --concurrency <n>         total dependency-ready node concurrency (default 8)',
       '  --agent-slots <n>         global OpenClaw/model slots (default 4)',
@@ -81,223 +113,46 @@ async function main() {
       '  --rounds <n>              maximum referee/revise rounds (default 3)',
       '  --referees <n>            independent referees per round (default 3)',
       '  --minimum-revision-rounds <n>  require this many revise/re-review rounds before convergence',
-      '  --quality-profile <name>   explicit paper quality profile (for example theorem_or_proof)',
+      '  --quality-profile <names>  comma/+ separated quality requirements: formal_theorem_or_proof, empirical_or_experiment, or both; theorem_or_proof aliases formal when Lean is selected',
       '  --languages <csv>         empirical languages (default python,latex)',
       '  --gpu                     allow and require GPU access for empirical nodes',
       '  --dataset <name=path>     add a read-only dataset mount; repeat as needed',
       '  --dataset-license <name=SPDX>  required license id for each dataset mount',
+      '  --dataset-authorization <name=sha256:...>  operator authorization for LicenseRef datasets',
+      '  --dataset-harness <name=/host/path/envelope.json>  signed host-only academic harness envelope; repeat as needed',
       '  --metric-schema <path>    JSON metric paths and numeric tolerances',
+      '  --benchmark-id <id>       bind the empirical selector; inferred only for one dataset mount',
       '  --details                 include full specs, nodes and receipts (default is concise)',
       '  --retain-failed-workspaces  keep failed COW trees (default; retained unless explicitly exported/eligible)',
       '  --apply                   apply a GC plan (GC is dry-run by default)',
       '  --root <path>             paper asset root',
       '  --runtime-root <path>     runtime and campaign store root',
       '',
+      'Formal review environment:',
+      '  HEPTA_FORMAL_REVIEW_MODEL',
+      '  HEPTA_FORMAL_REVIEW_CODEX_BINARY',
+      '  HEPTA_FORMAL_REVIEW_CODEX_HOME',
+      '  (Codex reviewer home must contain private config.toml and be authenticated)',
+      '  (OpenClaw reviewer remains fail-closed until dynamic workspace binding exists)',
+      '  HEPTA_OPENCLAW_FORMAL_REVIEW_AGENT',
+      '  HEPTA_OPENCLAW_FORMAL_REVIEW_AGENT_CAPABILITY_PROFILE',
+      '  HEPTA_OPENCLAW_FORMAL_REVIEW_AGENT_CAPABILITY_PROFILE_HASH',
+      '',
+      'Research author environment:',
+      '  HEPTA_RESEARCH_AUTHOR_MODEL',
+      '  HEPTA_RESEARCH_AUTHOR_CODEX_BINARY',
+      '  HEPTA_RESEARCH_AUTHOR_CODEX_HOME',
+      '  (research-grade auto selection requires a private authenticated Codex home and explicit model)',
+      '',
     ].join('\n'));
     return;
   }
   const root = path.resolve(options.root || defaultPaperAssetRoot());
   const runtimeRoot = path.resolve(options['runtime-root'] || defaultPaperRuntimeRoot());
-  if (options['campaign-id'] && options['run-id']) throw new Error('--campaign-id and --run-id cannot be combined');
-  const runId = options['run-id'] ? String(options['run-id']).replace(/[^A-Za-z0-9_.-]/g, '_') : null;
-  if (options['run-id'] && !runId) throw new Error('--run-id must contain at least one safe character');
-  const readOnlyAction = ['slo', 'gc'].includes(String(options.action || '')) && !options.apply;
-  const context = bootstrapPaperExecutionContext({ root, runtimeRoot, mode: 'paper-campaign', execute: Boolean(options.execute), readOnly: readOnlyAction });
-  const campaignStore = createSqliteCampaignStore({ store: context.services.store, clock: context.services.clock });
-  const workspaceRegistry = createWorkspaceRegistry({ store: context.services.store, clock: context.services.clock });
-  const workAction = options.action === 'work';
-  if (options.action && !workAction) {
-    const action = String(options.action);
-    const campaignId = options['campaign-id'];
-    let result;
-    if (action === 'slo') {
-      const campaigns = campaignStore.listCampaigns({ limit: Number(options.limit || 1000) });
-      const nodes = campaigns.flatMap((campaign) => campaignStore.listNodes(campaign.campaign_id));
-      const events = campaigns.flatMap((campaign) => campaignStore.listEvents(campaign.campaign_id));
-      const telemetrySamples = campaigns.flatMap((campaign) => campaignStore.listTelemetry?.(campaign.campaign_id) || []);
-      const retention = buildRuntimeRetentionPlan({ runtimeRoot, activeNodeIds: nodes.filter((node) => ['leased', 'running'].includes(node.status)).map((node) => node.node_id), workspaceRecords: workspaceRegistry?.retentionRecords() || [] });
-      result = buildCampaignSloReport({ campaigns, nodes, events, telemetrySamples, runtimeBytes: retention.categories.reduce((total, category) => total + category.bytesBefore, 0) });
-    }
-    else if (action === 'gc') {
-      if (options.apply) workspaceRegistry?.reconcileMissingEligible?.();
-      const activeNodeIds = campaignStore.listCampaigns({ status: 'running', limit: 1000 }).flatMap((campaign) => campaignStore.listNodes(campaign.campaign_id)).filter((node) => ['leased', 'running'].includes(node.status)).map((node) => node.node_id);
-      const plan = buildRuntimeRetentionPlan({ runtimeRoot, activeNodeIds, workspaceRecords: workspaceRegistry?.retentionRecords() || [] });
-      result = { plan, receipt: executeRuntimeRetentionPlan(plan, { apply: Boolean(options.apply), workspaceRegistry }) };
-    }
-    else if (action === 'list') {
-      const campaigns = campaignStore.listCampaigns({ status: options.status || null, limit: options.limit || 100, effectiveOnly: Boolean(options.effective) });
-      result = options.details ? campaigns : campaigns.map(summarizeCampaign);
-    }
-    else if (action === 'status') result = presentCampaignStatus(campaignStore.getCampaign(campaignId), campaignStore.listNodes(campaignId), { details: Boolean(options.details) });
-    else if (action === 'events') {
-      const events = campaignStore.listEvents(campaignId, { limit: Number(options.limit || 50), before: options.before || null });
-      result = options.details ? events : events.map(summarizeEvent);
-    }
-    else if (action === 'logs') {
-      const node = campaignStore.listNodes(campaignId).find((item) => item.node_id === options['node-id'] || item.kind === options.kind);
-      if (!node) throw new Error('campaign node not found for log query');
-      result = presentNodeLog(node, { details: Boolean(options.details) });
-    }
-    else if (action === 'pause') result = campaignStore.pauseCampaign(campaignId, options.reason || 'operator_paused');
-    else if (action === 'resume') result = campaignStore.resumeCampaign(campaignId, { budgetOverrides: selectedBudgetOverrides(options) });
-    else if (action === 'extend') {
-      const existing = campaignStore.getCampaign(campaignId);
-      if (!existing) throw new Error(`campaign not found: ${campaignId}`);
-      const nextRounds = Number(options.rounds || existing.maxRounds + 1);
-      const nextPlan = buildPaperCampaignPlan({
-        paperId: existing.paper_id,
-        sourceWorkspace: existing.spec.sourceWorkspace,
-        campaignId,
-        maxRounds: nextRounds,
-        refereeCount: existing.spec.refereeCount,
-        minimumRevisionRounds: existing.spec.convergenceThresholds?.minimumRoundIndex || 1,
-        languages: existing.spec.languages,
-        requiresGpu: existing.spec.requiresGpu,
-        datasetMounts: existing.spec.datasetMounts,
-        metricSchema: existing.spec.metricSchema,
-        paperQualityProfile: existing.spec.paperQualityProfile || null,
-        budgets: { ...existing.spec.budgets, ...selectedBudgetOverrides(options) },
-        parentCampaignId: existing.parentCampaignId || existing.parent_campaign_id || existing.spec.parentCampaignId || null,
-        supersedesCampaignId: existing.supersedesCampaignId || existing.supersedes_campaign_id || existing.spec.supersedesCampaignId || null,
-        recoveryOfCampaignId: existing.recoveryOfCampaignId || existing.recovery_of_campaign_id || existing.spec.recoveryOfCampaignId || null,
-      });
-      result = campaignStore.extendCampaign(nextPlan);
-    }
-    else if (action === 'cancel') result = campaignStore.cancelCampaign(campaignId, options.reason || 'operator_cancelled');
-    else if (action === 'cancel-node') result = campaignStore.cancelNode(options['node-id'], options.reason || 'operator_node_cancelled');
-    else if (action === 'retry') result = campaignStore.retryNode(options['node-id']);
-    else throw new Error(`unsupported campaign action: ${action}`);
-    const presented = options.details
-      ? result
-      : result?.campaign_id && result?.paper_id
-        ? summarizeCampaign(result)
-        : result?.node_id
-          ? summarizeNode(result)
-          : result;
-    process.stdout.write(`${JSON.stringify({ status: `paper_campaign_${action}`, result: presented }, null, 2)}\n`);
-    return;
-  }
-  let datasetMounts;
-  let plans;
-  if (workAction) {
-    const campaigns = options['campaign-id']
-      ? [campaignStore.getCampaign(options['campaign-id'])].filter(Boolean)
-      : campaignStore.listCampaigns({ status: 'running', limit: Number(options.limit || 100), effectiveOnly: true });
-    plans = campaigns.map((campaign) => campaign.spec);
-    const seenDatasets = new Set();
-    datasetMounts = campaigns.flatMap((campaign) => campaign.spec?.datasetMounts || []).filter((mount) => {
-      const key = `${mount.name}:${mount.source}:${mount.manifestHash || ''}`;
-      if (seenDatasets.has(key)) return false;
-      seenDatasets.add(key);
-      return true;
-    });
-  } else {
-    const inventory = await discoverInventory({ root, store: context.services.store, paperIds: options.paper, inventorySource: 'auto', proposalStagingRoot: path.join(runtimeRoot, 'proposal-staging') });
-    const datasetLicenses = new Map(options['dataset-license'].map((value) => {
-      const separator = String(value).indexOf('=');
-      if (separator < 1) throw new Error('--dataset-license must use name=SPDX syntax');
-      return [String(value).slice(0, separator), String(value).slice(separator + 1)];
-    }));
-    datasetMounts = options.dataset.map((value, index) => {
-    const separator = String(value).indexOf('=');
-    const name = separator >= 0 ? String(value).slice(0, separator) : `dataset-${index + 1}`;
-    const source = path.resolve(separator >= 0 ? String(value).slice(separator + 1) : String(value));
-    if (!fs.existsSync(source)) throw new Error(`dataset path does not exist: ${source}`);
-    const manifestHash = fs.statSync(source).isDirectory()
-      ? directoryMerkleHash(source)
-      : fileSha256Hash(source);
-    return { name, source, readOnly: true, manifestHash, licenseId: datasetLicenses.get(name) || null };
-    });
-    const metricSchema = options['metric-schema']
-      ? JSON.parse(fs.readFileSync(path.resolve(options['metric-schema']), 'utf8'))
-      : {};
-    plans = inventory.rows.map((row) => {
-    const mainTex = row.task.mainTex ? path.resolve(root, row.task.mainTex) : null;
-    const sourceWorkspace = mainTex && fs.existsSync(mainTex) && fs.statSync(mainTex).isFile()
-      ? path.dirname(mainTex)
-      : path.resolve(root, row.task.sourceWorkspace || '.');
-    return buildPaperCampaignPlan({
-      paperId: row.task.paperId,
-      sourceWorkspace,
-      maxRounds: Number(options.rounds || 3),
-      refereeCount: Number(options.referees || 3),
-      minimumRevisionRounds: Number(options['minimum-revision-rounds'] || 1),
-      languages: String(options.languages || 'python,latex').split(',').filter(Boolean),
-      requiresGpu: Boolean(options.gpu),
-      budgets: {
-        maxWallTimeMs: Number(options['max-wall-ms'] || 6 * 60 * 60 * 1000),
-        maxAgentCalls: Number(options['max-agent-calls'] || 30),
-        maxCpuJobs: Number(options['max-cpu-jobs'] || 32),
-        maxGpuJobs: Number(options['max-gpu-jobs'] || 8),
-        maxTokenCount: Number(options['max-tokens'] || 500000),
-        maxCostUsd: Number(options['max-cost-usd'] || 100),
-        maxMemoryMiB: Number(options['memory-mib'] || 8192),
-      },
-      datasetMounts,
-      metricSchema,
-      paperQualityProfile: options['quality-profile'] || row.task.paperQualityProfile || null,
-      campaignId: options.paper.length === 1 && options['campaign-id']
-        ? options['campaign-id']
-        : runId ? `paper-campaign:${row.task.paperId}:${runId}` : null,
-      parentCampaignId: options['parent-campaign-id'] || null,
-      supersedesCampaignId: options['supersedes-campaign-id'] || null,
-      recoveryOfCampaignId: options['recovery-of-campaign-id'] || null,
-    });
-    });
-  }
-  if (!workAction && !options.execute) {
-    process.stdout.write(`${JSON.stringify({ status: 'paper_campaigns_planned', execute: false, plans: options.details ? plans : plans.map(summarizePlan) }, null, 2)}\n`);
-    return;
-  }
-  const executables = ['python3', process.execPath, 'Rscript', 'julia', 'lake', 'latexmk'];
-  if (!plans.length) {
-    process.stdout.write(`${JSON.stringify({ status: 'paper_campaign_worker_idle', campaignCount: 0 }, null, 2)}\n`);
-    return;
-  }
-  const requiresGpu = Boolean(options.gpu) || plans.some((plan) => plan.requiresGpu);
-  const runtimeImages = runtimeImagesForCampaign({ gpu: requiresGpu });
-  const workerRunner = createOsSandboxedWorkerRunner({
-    allowedExecutables: executables,
-    allowedRoots: plans.map((plan) => plan.sourceWorkspace),
-    allowedOutputRoots: [path.join(runtimeRoot, 'automation-artifacts')],
-    allowedDatasetRoots: datasetMounts.map((mount) => mount.source),
-    allowedContainerImages: Object.values(runtimeImages).map((item) => item.image),
-    allowGpu: requiresGpu,
-    maximumTimeoutMs: Number(options['max-wall-ms'] || 6 * 60 * 60 * 1000),
-    maximumMemoryBytes: Number(options['worker-memory-mib'] || 4096) * 1024 * 1024,
-    maximumCpuSeconds: Number(options['worker-cpu-seconds'] || 3600),
+  const response = await executePaperCampaignCommand({
+    options, root, runtimeRoot, environment: process.env,
   });
-  const empiricalExecutor = createMultiLanguageEmpiricalExecutor({ workerRunner, runtimeImages, cache: createFilesystemEmpiricalCacheRepository({ root: path.join(runtimeRoot, 'automation-cache', 'empirical') }) });
-  const provider = String(options['agent-provider'] || 'auto');
-  const openclaw = createOpenClawAgentExecutor({ agentId: options['openclaw-agent'] || 'hepta-paper-worker', model: options.model || undefined });
-  let ollamaModel = options['ollama-model'] || (provider === 'ollama' ? options.model : null) || null;
-  if (!ollamaModel) {
-    const { spawnSync } = await import('node:child_process');
-    const tags = spawnSync('ollama', ['list'], { encoding: 'utf8', timeout: 5000 });
-    ollamaModel = String(tags.stdout || '').split(/\n/).slice(1).map((line) => line.trim().split(/\s+/)[0]).find((name) => name && !/embed/i.test(name)) || null;
-  }
-  const ollama = ollamaModel ? createOllamaStructuredAgentExecutor({ model: ollamaModel }) : null;
-  const codex = createCodexAgentExecutor({ model: provider === 'codex' ? options.model || null : null });
-  const selected = provider === 'openclaw' ? openclaw
-    : provider === 'ollama' ? ollama
-      : provider === 'codex' ? codex
-        : createAgentBackendRouter({ primary: openclaw, fallbacks: [ollama] });
-  if (!selected) throw new Error(`agent provider unavailable: ${provider}`);
-  const agentExecutor = createIsolatedAgentExecutor({ delegate: selected, isolationRoot: path.join(runtimeRoot, 'automation-workspaces'), keepWorkspaces: false, keepFailedWorkspaces: true, workspaceRegistry });
-  const nodeExecutor = createCampaignNodeExecutor({ agentExecutor, empiricalExecutor, runtimeRoot, theoremQualityRevisionSink: createTheoremQualityRevisionSink({ store: context.services.store, clock: context.services.clock }) });
-  if (!workAction) for (const plan of plans) campaignStore.createCampaign(plan);
-  if (!workAction && !options.inline) {
-    process.stdout.write(`${JSON.stringify({ status: 'paper_campaigns_submitted', execute: false, campaignCount: plans.length, campaignIds: plans.map((plan) => plan.campaignId) }, null, 2)}\n`);
-    return;
-  }
-  const totalConcurrency = Math.max(1, Number(options.concurrency || 8));
-  const governor = createSqliteResourceGovernor({
-    store: context.services.store,
-    clock: context.services.clock,
-    limits: { agent: Number(options['agent-slots'] || 4), cpu: Number(options['cpu-slots'] || 4), gpu: Number(options['gpu-slots'] || 1), memoryMiB: Number(options['memory-mib'] || 8192) },
-  });
-  const results = await Promise.all(plans.map((plan) => runPaperCampaign({ campaignId: plan.campaignId, campaignStore, executor: nodeExecutor, concurrency: totalConcurrency, resourceGovernor: governor })));
-  process.stdout.write(`${JSON.stringify({ status: workAction ? 'paper_campaign_worker_batch_completed' : 'paper_campaigns_completed', execute: true, campaignCount: results.length, results: options.details ? results : results.map(summarizeRun) }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify(response, null, 2)}\n`);
 }
 
 main().catch((error) => { process.stderr.write(`${error?.stack || error}\n`); process.exitCode = 1; });

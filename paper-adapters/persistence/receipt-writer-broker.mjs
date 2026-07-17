@@ -13,4 +13,7 @@ export const issueProductionCapabilityArtifactWriter = () => issueReceiptWriterC
 export const issueConformanceReplayWriter = () => issueReceiptWriterCapability('conformance-replay');
 export const issueLedgerAdministratorWriter = () => issueReceiptWriterCapability('ledger-administrator');
 export const issueAutomationReconcilerWriter = () => issueReceiptWriterCapability('automation-reconciler');
-export const issueTestArtifactRepositoryWriter = () => issueReceiptWriterCapability('test-artifact-repository');
+export const issueStoreAdministratorWriter = () => issueReceiptWriterCapability('store-administrator');
+export const issueRuntimeRetentionWriter = () => issueReceiptWriterCapability('runtime-retention');
+export const issueWorkspaceSnapshotVerifierWriter = () => issueReceiptWriterCapability('workspace-snapshot-verifier');
+export const issueWorkflowStateProjectorWriter = () => issueReceiptWriterCapability('workflow-state-projector');

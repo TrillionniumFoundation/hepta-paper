@@ -1,13 +1,23 @@
 #!/usr/bin/env node
-import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { heptaStorePath } from '../src/hepta-store.mjs';
-import { createReadOnlySqliteStore } from '../../paper-adapters/persistence/sqlite-store.mjs';
-import { createDefaultPaperStore, createReadOnlyPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
-import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqlite-receipt-ledger.mjs';
-import { createSystemClock } from '../../paper-adapters/runtime/system-clock.mjs';
-import { resolveWorkspaceLayout } from '../src/workspace-layout.mjs';
+import {
+  createDefaultPaperStore,
+  createReadOnlyPaperStore,
+  createReadOnlySqliteStore,
+  openExistingWritablePaperStore,
+} from '../../paper-composition/bootstrap/operator-persistence-composition.mjs';
+import {
+  createSystemClock,
+  fileSha256HashSync,
+  readRegularJsonFileSync,
+  writeDurableJsonSync,
+} from '../../paper-composition/bootstrap/operator-runtime-composition.mjs';
+import { composeStoreAdministratorReceiptLedger } from '../../paper-composition/bootstrap/receipt-ledger-composition.mjs';
+import { assertWorkspaceLayoutPhysicallyDecoupled, resolveWorkspaceLayout } from '../src/workspace-layout.mjs';
+import { pathWithin } from '../../workflow-kernel/runtime/file-utils.mjs';
 
 const layout = resolveWorkspaceLayout();
 const root = layout.assetRoot;
@@ -16,13 +26,20 @@ const clock = createSystemClock();
 let mutableStore = null;
 let mutableReceiptLedger = null;
 
-function writableStore() {
-  if (!mutableStore) mutableStore = createDefaultPaperStore({ root, runtimeRoot: layout.runtimeRoot, dbPath });
+function writableStore({ migrate = false } = {}) {
+  assertWorkspaceLayoutPhysicallyDecoupled({
+    assetRoot: layout.assetRoot,
+    runtimeRoot: layout.runtimeRoot,
+    legacyRoot: layout.legacyRoot,
+  });
+  if (!mutableStore) mutableStore = migrate
+    ? createDefaultPaperStore({ root, runtimeRoot: layout.runtimeRoot, dbPath })
+    : openExistingWritablePaperStore({ root, runtimeRoot: layout.runtimeRoot, dbPath });
   return mutableStore;
 }
 
 function receiptLedger() {
-  if (!mutableReceiptLedger) mutableReceiptLedger = createSqliteReceiptLedger({ store: writableStore(), clock });
+  if (!mutableReceiptLedger) mutableReceiptLedger = composeStoreAdministratorReceiptLedger({ store: writableStore(), clock });
   return mutableReceiptLedger;
 }
 
@@ -36,12 +53,68 @@ function runSql(store, sql, { json = false } = {}) {
   return json ? JSON.stringify(result.rows) : result.stdout;
 }
 
-function fileSha256(file) {
-  return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+const fileSha256 = (file) => fileSha256HashSync(file, { prefix: false });
+const within = pathWithin;
+const writeDurableJson = writeDurableJsonSync;
+const jsonFile = readRegularJsonFileSync;
+
+function ledgerIdentity(receipt, evidenceClass) {
+  return receiptLedger().prepare(receipt, {
+    stream: 'store-admin',
+    environment: 'administrative',
+    evidenceClass,
+  });
+}
+
+function assertTrustedStoreReceipt(identity, expectedKind) {
+  const row = receiptLedger().get(identity.receiptId);
+  if (!row
+    || row.receipt_id !== identity.receiptId
+    || row.receipt_sha256 !== identity.receiptHash
+    || row.kind !== expectedKind
+    || Number(row.effective_receipt_usable) !== 1
+    || Number(row.writer_trusted) !== 1
+    || row.issuer_policy_id !== 'store-administrator'
+    || row.environment !== 'administrative') {
+    throw new Error('hepta_store_backup_receipt_not_trusted');
+  }
+  return row;
+}
+
+function resolveBackupReceipt(requestedPath = null) {
+  const backupRoot = path.resolve(layout.runtimeRoot, 'backups');
+  const candidates = requestedPath ? [path.resolve(requestedPath)] : (fs.existsSync(backupRoot)
+    ? fs.readdirSync(backupRoot)
+      .filter((name) => name.endsWith('.sqlite'))
+      .map((name) => path.join(backupRoot, name))
+      .filter((candidate) => {
+        try { const stat = fs.lstatSync(candidate); return stat.isFile() && !stat.isSymbolicLink(); } catch { return false; }
+      })
+      .sort((left, right) => fs.statSync(right).mtimeMs - fs.statSync(left).mtimeMs || right.localeCompare(left))
+    : []);
+  if (!candidates.length) return null;
+  const backupPath = candidates[0];
+  const stat = fs.lstatSync(backupPath);
+  if (!within(backupRoot, backupPath) || stat.isSymbolicLink() || !stat.isFile() || !within(backupRoot, fs.realpathSync(backupPath))) {
+    throw new Error('hepta_store_backup_path_unsafe');
+  }
+  const receipt = jsonFile(`${backupPath}.receipt.json`);
+  if (receipt?.version !== 1
+    || receipt.kind !== 'HeptaStoreBackupReceipt'
+    || receipt.status !== 'hepta_store_backup_recorded'
+    || path.resolve(String(receipt.sourcePath || '')) !== path.resolve(dbPath)
+    || path.resolve(String(receipt.backupPath || '')) !== backupPath
+    || receipt.backupSha256 !== `sha256:${fileSha256(backupPath)}`
+    || Number(receipt.bytes) !== stat.size) {
+    throw new Error('hepta_store_backup_receipt_invalid');
+  }
+  const identity = ledgerIdentity(receipt, 'backup');
+  assertTrustedStoreReceipt(identity, 'HeptaStoreBackupReceipt');
+  return Object.freeze({ receipt, identity });
 }
 
 function initialize() {
-  writableStore();
+  writableStore({ migrate: true });
   return status();
 }
 
@@ -126,45 +199,69 @@ function backup() {
     bytes: fs.statSync(backupPath).size,
     createdAt: new Date().toISOString(),
   };
-  fs.writeFileSync(`${backupPath}.receipt.json`, `${JSON.stringify(receipt, null, 2)}\n`);
+  writeDurableJson(`${backupPath}.receipt.json`, receipt);
   const ledgerReceipt = receiptLedger().record(receipt, { stream: 'store-admin', environment: 'administrative', evidenceClass: 'backup' });
   return { ...receipt, ledgerReceipt };
 }
 
-function restoreDrill() {
-  const backupReceipt = backup();
-  const drillPath = `${backupReceipt.backupPath}.restore-drill.sqlite`;
-  fs.copyFileSync(backupReceipt.backupPath, drillPath);
-  const drillStore = createReadOnlySqliteStore({ dbPath: drillPath });
-  const quick = drillStore.query('PRAGMA quick_check;');
-  const foreignKeys = drillStore.query('PRAGMA foreign_key_check;');
-  const hashMatches = `sha256:${fileSha256(drillPath)}` === backupReceipt.backupSha256;
-  drillStore.close();
-  fs.rmSync(drillPath, { force: true });
+function restoreDrill({ backupPath = null } = {}) {
+  let selected = resolveBackupReceipt(backupPath);
+  if (!selected) {
+    const created = backup();
+    selected = Object.freeze({
+      receipt: Object.freeze(Object.fromEntries(Object.entries(created).filter(([key]) => key !== 'ledgerReceipt'))),
+      identity: created.ledgerReceipt,
+    });
+  }
+  const backupReceipt = selected.receipt;
+  const drillRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-store-restore-drill-'));
+  const drillPath = path.join(drillRoot, 'restore-drill.sqlite');
+  let quick = { ok: false, rows: [] };
+  let foreignKeys = { ok: false, rows: [] };
+  let hashMatches = false;
+  try {
+    fs.copyFileSync(backupReceipt.backupPath, drillPath, fs.constants.COPYFILE_FICLONE);
+    const drillStore = createReadOnlySqliteStore({ dbPath: drillPath });
+    try {
+      quick = drillStore.query('PRAGMA quick_check;');
+      foreignKeys = drillStore.query('PRAGMA foreign_key_check;');
+      hashMatches = `sha256:${fileSha256(drillPath)}` === backupReceipt.backupSha256;
+    } finally { drillStore.close(); }
+  } finally { fs.rmSync(drillRoot, { recursive: true, force: true }); }
   const receipt = {
-    version: 1,
+    version: 2,
     kind: 'HeptaStoreRestoreDrillReceipt',
     status: quick.ok && quick.rows?.[0]?.quick_check === 'ok' && foreignKeys.ok && foreignKeys.rows.length === 0 && hashMatches
       ? 'hepta_store_restore_drill_passed'
       : 'hepta_store_restore_drill_blocked',
     backupPath: backupReceipt.backupPath,
     backupSha256: backupReceipt.backupSha256,
+    backupLedgerReceiptSha256: selected.identity.receiptHash,
+    backupLedgerReceiptId: selected.identity.receiptId,
     hashMatches,
     quickCheck: quick.rows?.[0]?.quick_check || 'unknown',
     foreignKeyViolationCount: foreignKeys.rows?.length ?? null,
     performedAt: new Date().toISOString(),
     productionStoreMutated: false,
   };
+  writeDurableJson(`${backupReceipt.backupPath}.restore-drill.receipt.json`, receipt);
   const ledgerReceipt = receiptLedger().record(receipt, { stream: 'store-admin', environment: 'administrative', evidenceClass: 'restore_drill' });
   return { ...receipt, ledgerReceipt };
 }
 
 const command = process.argv[2] || 'status';
+const backupOptionIndex = process.argv.indexOf('--backup');
+const selectedBackupPath = backupOptionIndex >= 0 ? process.argv[backupOptionIndex + 1] : null;
+if (backupOptionIndex >= 0 && !selectedBackupPath) throw new Error('--backup requires a path');
 let output = null;
 if (command === 'init' || command === 'migrate') output = initialize();
 else if (command === 'backup') output = backup();
-else if (command === 'restore-drill') output = restoreDrill();
+else if (command === 'restore-drill') output = restoreDrill({ backupPath: selectedBackupPath });
 else if (command === 'status') output = status({ allowIsolatedVerificationEvidence: process.argv.includes('--allow-isolated-verification-evidence') });
 else throw new Error(`Unknown hepta-store command: ${command}`);
 process.stdout.write(`${JSON.stringify(output || status(), null, 2)}\n`);
-if (command === 'status' && process.argv.includes('--require-trust-clean') && output?.status !== 'hepta_native_store_ready') process.exitCode = 1;
+const blocked = (command === 'status'
+    && process.argv.includes('--require-trust-clean')
+    && output?.status !== 'hepta_native_store_ready')
+  || (command === 'restore-drill' && output?.status !== 'hepta_store_restore_drill_passed');
+if (blocked) process.exitCode = 1;

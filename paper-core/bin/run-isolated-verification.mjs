@@ -1,22 +1,48 @@
 #!/usr/bin/env node
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { createDefaultPaperStore, createReadOnlyPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
-import { copySqliteDatabase } from '../../paper-adapters/persistence/sqlite-consistent-copy.mjs';
-import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
+import {
+  buildSqliteLogicalIntegrityReport,
+  copySqliteDatabase,
+  createReadOnlyPaperStore,
+} from '../../paper-composition/bootstrap/operator-persistence-composition.mjs';
+import { assertWorkspaceLayoutPhysicallyDecoupled, defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 import { currentCodeProvenance } from '../src/code-provenance.mjs';
+import { inspectIsolatedVerificationPreflight } from '../src/isolated-verification-policy.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
-import { buildSqliteLogicalIntegrityReport } from '../src/sqlite-logical-integrity.mjs';
+import { sha256FileSync } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { prepareImmutableLegacyMatrixReference } from '../../migration/legacy-matrix-reference.mjs';
+import { prepareIsolatedRuntimeStore } from './isolated-runtime-store.mjs';
+import { inspectTrackedProductionGraph } from '../verification/tracked-production-graph.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const mode = process.argv[2] || 'test';
 if (!['test', 'ci', 'release'].includes(mode)) throw new Error(`Unsupported isolated verification mode: ${mode}`);
+const provenanceBefore = currentCodeProvenance();
+const verificationPreflight = inspectIsolatedVerificationPreflight({
+  mode,
+  codeProvenance: provenanceBefore,
+});
+const productionGraphTracking = mode === 'release'
+  ? inspectTrackedProductionGraph({ workspaceRoot })
+  : null;
+const verificationPreflightBlockers = [
+  ...verificationPreflight.blockers,
+  ...(productionGraphTracking?.blockers || []),
+];
+if (verificationPreflightBlockers.length) {
+  throw new Error(`isolated_verification_preflight_blocked:${verificationPreflightBlockers.join(',')}`);
+}
 const productionRuntimeRoot = defaultPaperRuntimeRoot();
+if (mode === 'release') {
+  assertWorkspaceLayoutPhysicallyDecoupled({
+    assetRoot: defaultPaperAssetRoot(),
+    runtimeRoot: productionRuntimeRoot,
+  });
+}
 const isolatedRuntimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), `hepta-paper-${mode}-`));
 const isolatedDb = path.join(isolatedRuntimeRoot, 'hepta-paper.sqlite');
 const productionDb = path.join(productionRuntimeRoot, 'hepta-paper.sqlite');
@@ -27,7 +53,7 @@ if (mode === 'release' && fs.existsSync(productionDb)) {
 }
 
 function sha(file) {
-  return fs.existsSync(file) ? `sha256:${crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')}` : null;
+  return fs.existsSync(file) ? sha256FileSync(file) : null;
 }
 
 const productionHashBefore = sha(productionDb);
@@ -41,12 +67,19 @@ for (const relative of ['owner-acceptance', 'operational-proof', 'conformance-pr
   const target = path.join(isolatedRuntimeRoot, relative);
   if (fs.existsSync(source)) fs.cpSync(source, target, { recursive: true, dereference: false });
 }
-const store = createDefaultPaperStore({ root: defaultPaperAssetRoot(), runtimeRoot: isolatedRuntimeRoot, dbPath: isolatedDb });
-if (!fs.existsSync(productionDb)) {
-  store.execute("INSERT OR IGNORE INTO papers(slug,title,canonical_dir,source_dir,status) VALUES('verification_fixture','Verification fixture','verification_fixture','','draft');");
-}
+prepareIsolatedRuntimeStore({
+  root: defaultPaperAssetRoot(),
+  runtimeRoot: isolatedRuntimeRoot,
+  dbPath: isolatedDb,
+  initialize(store) {
+    if (!fs.existsSync(productionDb)) {
+      const inserted = store.execute("INSERT OR IGNORE INTO papers(slug,title,canonical_dir,source_dir,status) VALUES('verification_fixture','Verification fixture','verification_fixture','','draft');");
+      if (!inserted.ok) throw new Error(inserted.error || 'isolated_verification_fixture_write_failed');
+    }
+  },
+});
 const provenance = {
-  ...currentCodeProvenance(),
+  ...provenanceBefore,
   evidenceEnvironment: 'verification',
   evidenceClass: 'technical_conformance',
 };
@@ -70,6 +103,10 @@ const result = spawnSync('npm', ['run', `${mode}:inner`], {
   stdio: ['inherit', 'inherit', 'inherit'],
 });
 const productionHashAfter = sha(productionDb);
+const provenanceAfter = currentCodeProvenance();
+const sourceMutated = provenanceBefore.commit !== provenanceAfter.commit
+  || provenanceBefore.commitTree !== provenanceAfter.commitTree
+  || provenanceBefore.worktreeStateHash !== provenanceAfter.worktreeStateHash;
 const productionLogicalAfter = fs.existsSync(productionDb)
   ? buildSqliteLogicalIntegrityReport({ dbPath: productionDb, store: createReadOnlyPaperStore({ dbPath: productionDb }) })
   : null;
@@ -85,10 +122,25 @@ const payload = {
     && productionHashBefore === productionHashAfter
     && !productionLogicalMutated
     && !productionLogicalBlocked
+    && !sourceMutated
     ? 'isolated_verification_passed'
     : 'isolated_verification_blocked',
   mode,
   codeProvenance: provenance,
+  completedCodeProvenance: provenanceAfter,
+  sourceMutatedDuringVerification: sourceMutated,
+  productionGraphTracking: productionGraphTracking
+    ? {
+      version: productionGraphTracking.version,
+      kind: productionGraphTracking.kind,
+      status: productionGraphTracking.status,
+      moduleCount: productionGraphTracking.moduleCount,
+      edgeCount: productionGraphTracking.edgeCount,
+      trackedModuleCount: productionGraphTracking.trackedModuleCount,
+      indexBoundModuleCount: productionGraphTracking.indexBoundModuleCount,
+      productionGraphManifestHash: productionGraphTracking.productionGraphManifestHash,
+    }
+    : null,
   startedAt,
   completedAt: new Date().toISOString(),
   exitCode: result.status,
@@ -125,6 +177,6 @@ process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`);
 legacyReference.cleanup();
 if (receipt.status === 'isolated_verification_passed') fs.rmSync(isolatedRuntimeRoot, { recursive: true, force: true });
 else process.stderr.write(`Isolated verification runtime retained: ${isolatedRuntimeRoot}\n`);
-if (result.status !== 0 || receipt.productionStoreMutated || receipt.productionLogicalStoreMutated || productionLogicalBlocked) {
+if (result.status !== 0 || receipt.productionStoreMutated || receipt.productionLogicalStoreMutated || productionLogicalBlocked || sourceMutated) {
   process.exitCode = result.status || 1;
 }

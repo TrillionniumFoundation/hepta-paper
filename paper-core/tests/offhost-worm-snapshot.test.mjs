@@ -7,7 +7,7 @@ import {
   createOffhostWormSnapshot,
   drillOffhostWormRestore,
   resolveLatestReleaseEvidencePointer,
-} from '../src/offhost-worm-repository.mjs';
+} from '../../paper-adapters/archives/offhost-worm-repository.mjs';
 
 test('release evidence selection orders semantic versions numerically', (t) => {
   const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-release-pointer-'));

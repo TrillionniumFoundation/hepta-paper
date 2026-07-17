@@ -1,23 +1,12 @@
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { failClosedStoreQueries } from '../../paper-ports/store-port.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { fileSha256HashSync } from '../runtime/pinned-file-reader.mjs';
 import { exportWorkspaceSnapshot, restoreWorkspaceSnapshot } from './workspace-snapshot-exporter.mjs';
 
 function safeKey(value) { return String(value || '').replace(/[^A-Za-z0-9_.-]/g, '_'); }
-function fileHash(file) {
-  const hash = crypto.createHash('sha256');
-  const descriptor = fs.openSync(file, 'r');
-  const buffer = Buffer.allocUnsafe(4 * 1024 * 1024);
-  try {
-    let bytesRead = 0;
-    do {
-      bytesRead = fs.readSync(descriptor, buffer, 0, buffer.length, null);
-      if (bytesRead) hash.update(buffer.subarray(0, bytesRead));
-    } while (bytesRead);
-  } finally { fs.closeSync(descriptor); }
-  return `sha256:${hash.digest('hex')}`;
-}
+const fileHash = (file) => fileSha256HashSync(file);
 function manifest(root) {
   const entries = [];
   const walk = (current) => {
@@ -33,8 +22,9 @@ function manifest(root) {
   return entries.sort((left, right) => left.path.localeCompare(right.path));
 }
 
-export function buildWorkspaceLineageBackfillPlan({ store, runtimeRoot, assetRoot } = {}) {
-  if (!store || !runtimeRoot || !assetRoot) throw new Error('Workspace lineage backfill requires store, runtimeRoot and assetRoot');
+export function buildWorkspaceLineageBackfillPlan({ store: suppliedStore, runtimeRoot, assetRoot } = {}) {
+  if (!suppliedStore || !runtimeRoot || !assetRoot) throw new Error('Workspace lineage backfill requires store, runtimeRoot and assetRoot');
+  const store = failClosedStoreQueries(suppliedStore);
   const workspaceRoot = path.join(path.resolve(runtimeRoot), 'automation-workspaces');
   const nodes = store.query(`SELECT n.node_id,n.campaign_id,n.status AS node_status,c.status AS campaign_status,c.paper_id,p.canonical_dir
     FROM campaign_nodes n JOIN paper_campaigns c ON c.campaign_id=n.campaign_id
@@ -78,8 +68,8 @@ export function buildWorkspaceLineageBackfillPlan({ store, runtimeRoot, assetRoo
   return Object.freeze({ ...payload, status: entries.every((entry) => entry.matchCount === undefined) ? 'workspace_lineage_backfill_ready' : 'workspace_lineage_backfill_blocked', workspaceLineageBackfillPlanHash: hashRecord('WorkspaceLineageBackfillPlan', payload) });
 }
 
-export function executeWorkspaceLineageBackfill({ plan, registry, exportRoot, restoreRoot } = {}) {
-  if (plan?.status !== 'workspace_lineage_backfill_ready' || !registry || !exportRoot || !restoreRoot) throw new Error('Workspace lineage backfill execution prerequisites missing');
+export function executeWorkspaceLineageBackfill({ plan, registry, exportRoot, restoreRoot, restoreReceiptLedger = null } = {}) {
+  if (plan?.status !== 'workspace_lineage_backfill_ready' || !registry || !exportRoot || !restoreRoot || !restoreReceiptLedger) throw new Error('Workspace lineage backfill execution prerequisites missing');
   const results = [];
   for (const entry of plan.entries) {
     const registered = registry.register({ workspaceId: entry.workspaceId, campaignId: entry.campaignId, nodeId: entry.nodeId, sourcePath: entry.sourcePath, workspacePath: entry.workspacePath, manifestHash: entry.manifestHash });
@@ -90,7 +80,7 @@ export function executeWorkspaceLineageBackfill({ plan, registry, exportRoot, re
     }
     registry.transition(registered.workspaceId, { status: 'merged', retentionState: 'protected', retentionReason: 'completed_node_pending_snapshot' });
     const snapshot = exportWorkspaceSnapshot({ registry, workspaceId: registered.workspaceId, workspacePath: entry.workspacePath, exportRoot, externalContentBindings: entry.externalContentBindings });
-    const restore = restoreWorkspaceSnapshot({ receipt: snapshot, restoreRoot: path.join(restoreRoot, safeKey(registered.workspaceId)) });
+    const restore = restoreWorkspaceSnapshot({ receipt: snapshot, restoreRoot: path.join(restoreRoot, safeKey(registered.workspaceId)), registry, restoreReceiptLedger, workspaceId: registered.workspaceId });
     if (restore.status !== 'workspace_snapshot_restore_verified') throw new Error(`workspace snapshot restore blocked:${registered.workspaceId}`);
     fs.rmSync(path.join(restoreRoot, safeKey(registered.workspaceId)), { recursive: true, force: true });
     results.push({ workspaceId: registered.workspaceId, status: 'workspace_backfilled_exported_and_restore_verified', bytes: entry.bytes, externalContentBytes: entry.externalContentBytes, archiveBytes: snapshot.bytes, manifestHash: snapshot.manifestHash, archiveHash: snapshot.archiveHash, exportReceiptHash: snapshot.exportReceiptHash, restoreReceiptHash: restore.restoreReceiptHash });

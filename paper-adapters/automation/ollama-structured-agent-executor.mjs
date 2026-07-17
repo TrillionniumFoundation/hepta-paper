@@ -1,11 +1,17 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
-import { assertAgentExecutorPort } from '../../paper-ports/agent-executor-port.mjs';
-import { buildExecutorCapabilities, capabilityRequestFromExecution, evaluateExecutorCapabilityRequest } from '../../paper-ports/executor-capabilities.mjs';
-import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
-
-function within(root, candidate) { return candidate === root || candidate.startsWith(`${root}${path.sep}`); }
+import { createAgentExecutorTemplate, isExternalAgentCancellation } from './agent-executor-template.mjs';
+import {
+  abortStagedScopedFileSync,
+  commitStagedScopedFileSync,
+  inspectScopedRegularFileSync,
+  inspectScopedRegularFileWithRecoverySync,
+  normalizeScopedRelativePath,
+  stageScopedRegularFileCopySync,
+} from '../runtime/scoped-file-materialization-repository.mjs';
+import { isPathWithin } from '../../workflow-kernel/runtime/path-utils.mjs';
 
 function sourceFiles(root) {
   const preferred = ['main.tex', 'paper.tex', 'manuscript.tex', 'RESEARCH_PLAN.md', 'references.bib', 'run.py', 'analysis.py', 'run.mjs', 'analysis.mjs', 'run.R', 'analysis.R', 'run.jl', 'analysis.jl'];
@@ -43,9 +49,22 @@ const OUTPUT_SCHEMA = Object.freeze({
 
 async function runOllama({ ollamaHost, model, prompt, timeoutMs, maximumOutputTokens, fetchImpl, signal = null }) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const abort = () => controller.abort();
+  let termination = null;
+  const abort = () => {
+    if (controller.signal.aborted) return;
+    termination = 'external';
+    controller.abort(signal?.reason);
+  };
+  if (signal?.aborted) abort();
+  if (termination === 'external') {
+    return { exitCode: null, stdout: '', stderr: '', error: null, doneReason: null, evalCount: 0, aborted: true, timedOut: false };
+  }
   signal?.addEventListener('abort', abort, { once: true });
+  const timer = setTimeout(() => {
+    if (controller.signal.aborted) return;
+    termination = 'timeout';
+    controller.abort(new DOMException('ollama provider timed out', 'TimeoutError'));
+  }, timeoutMs);
   try {
     const response = await fetchImpl(`${ollamaHost.replace(/\/$/, '')}/api/generate`, {
       method: 'POST',
@@ -61,6 +80,19 @@ async function runOllama({ ollamaHost, model, prompt, timeoutMs, maximumOutputTo
       signal: controller.signal,
     });
     const body = await response.json();
+    if (termination) {
+      const timedOut = termination === 'timeout';
+      return {
+        exitCode: null,
+        stdout: '',
+        stderr: timedOut ? 'ollama provider timed out' : '',
+        error: timedOut ? new Error('ollama provider timed out') : null,
+        doneReason: null,
+        evalCount: 0,
+        aborted: !timedOut,
+        timedOut,
+      };
+    }
     return {
       exitCode: response.ok ? 0 : 1,
       stdout: String(body.response || ''),
@@ -68,9 +100,20 @@ async function runOllama({ ollamaHost, model, prompt, timeoutMs, maximumOutputTo
       error: response.ok ? null : new Error(body.error || `ollama_http_${response.status}`),
       doneReason: body.done_reason || null,
       evalCount: Number(body.eval_count || 0),
+      aborted: false,
+      timedOut: false,
     };
   } catch (error) {
-    return { exitCode: null, stdout: '', stderr: String(error?.message || error), error, doneReason: null, evalCount: 0 };
+    return {
+      exitCode: null,
+      stdout: '',
+      stderr: String(error?.message || error),
+      error,
+      doneReason: null,
+      evalCount: 0,
+      aborted: termination === 'external',
+      timedOut: termination === 'timeout',
+    };
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener('abort', abort);
@@ -87,27 +130,29 @@ export function createOllamaStructuredAgentExecutor({
 } = {}) {
   if (!model) throw new Error('Ollama model is required');
   const executorId = 'ollama-structured-agent-v1';
-  const capabilities = buildExecutorCapabilities({
-    executorId,
-    sandboxModes: ['read-only', 'workspace-write'],
-    networkPolicy: 'local-provider-only',
-    workspaceIsolation: false,
-    maximumTimeoutMs: timeoutMs,
-    maximumOutputTokens: Math.min(8192, maximumOutputTokens),
-    receiptKinds: ['AgentExecutionReceipt'],
-    provider: 'ollama',
-  });
-  return assertAgentExecutorPort({
-    version: 1,
+  return createAgentExecutorTemplate({
     kind: 'OllamaStructuredAgentExecutor',
     executorId,
-    capabilities: () => capabilities,
-    async execute(input = {}) {
-      const { role, workspacePath, instructions, context = {}, requiredChecks = [], sandbox = 'workspace-write', outputTokenBudget = null, timeoutMs: requestedTimeout = null, signal = null } = input;
-      const preflight = evaluateExecutorCapabilityRequest({ capabilities, request: capabilityRequestFromExecution({ ...input, sandbox, outputTokenBudget, timeoutMs: requestedTimeout }) });
-      if (preflight.blockers.length) throw new Error(preflight.blockers.join(','));
-      const workspace = path.resolve(workspacePath || '');
-      if (!role || !instructions || !fs.existsSync(workspace)) throw new Error('role, instructions and workspacePath are required');
+    capabilityDefinition: {
+      networkPolicy: 'local-provider-only',
+      maximumTimeoutMs: timeoutMs,
+      maximumOutputTokens: Math.min(8192, maximumOutputTokens),
+      provider: 'ollama',
+    },
+    workspaceValidationMessage: 'role, instructions and workspacePath are required',
+    requireDirectory: false,
+    async executeStrategy({
+      role,
+      instructions,
+      context,
+      requiredChecks,
+      sandbox,
+      outputTokenBudget,
+      requestedTimeout,
+      signal,
+      workspace,
+      promptHash,
+    }) {
       const files = sourceFiles(workspace);
       let bytes = 0;
       const sources = [];
@@ -130,46 +175,83 @@ export function createOllamaStructuredAgentExecutor({
         `Context: ${JSON.stringify(context)}`,
         `Files: ${JSON.stringify(sources)}`,
       ].join('\n\n');
-      const promptHash = `sha256:${crypto.createHash('sha256').update(prompt).digest('hex')}`;
+      const promptDigest = promptHash(prompt);
       const sessionId = `ollama-exec:${crypto.randomUUID()}`;
       const startedAt = new Date().toISOString();
       const result = await runOllama({ ollamaHost, model, prompt, timeoutMs: Math.min(Number(requestedTimeout || timeoutMs), timeoutMs), maximumOutputTokens: effectiveOutputTokens, fetchImpl, signal });
+      const cancelled = isExternalAgentCancellation({
+        ...result,
+        aborted: result.aborted || signal?.aborted === true,
+      });
       let response = null;
-      try { response = JSON.parse(result.stdout); } catch { /* handled below */ }
+      if (!cancelled) {
+        try { response = JSON.parse(result.stdout); } catch { /* handled below */ }
+      }
       const blockers = [];
-      if (result.exitCode !== 0 || result.error) blockers.push('ollama_agent_process_failed');
-      if (result.doneReason === 'length') blockers.push('ollama_agent_output_truncated');
-      if (!response || !Array.isArray(response.edits)) blockers.push('ollama_agent_invalid_json');
-      if (sandbox === 'read-only' && response?.edits?.length) blockers.push('read_only_agent_returned_edits');
+      if (cancelled) {
+        blockers.push('ollama_agent_cancelled');
+      } else {
+        if (result.exitCode !== 0 || result.error) blockers.push('ollama_agent_process_failed');
+        if (result.doneReason === 'length') blockers.push('ollama_agent_output_truncated');
+        if (!response || !Array.isArray(response.edits)) blockers.push('ollama_agent_invalid_json');
+        if (sandbox === 'read-only' && response?.edits?.length) blockers.push('read_only_agent_returned_edits');
+      }
       const changedPaths = [];
       if (!blockers.length && sandbox !== 'read-only') {
+        const edits = [];
         for (const edit of response.edits) {
-          const destination = path.resolve(workspace, String(edit.path || ''));
-          if (!edit.path || path.isAbsolute(edit.path) || !within(workspace, destination) || typeof edit.content !== 'string') {
+          try {
+            const relative = normalizeScopedRelativePath(edit.path);
+            const destination = path.resolve(workspace, ...relative.split('/'));
+            if (path.isAbsolute(edit.path) || !isPathWithin(workspace, destination) || typeof edit.content !== 'string') throw new Error('invalid edit');
+            inspectScopedRegularFileSync({ scopeRoot: workspace, relative });
+            edits.push({ relative, content: edit.content });
+          } catch {
             blockers.push('ollama_agent_edit_path_or_content_invalid');
             break;
           }
         }
         if (!blockers.length) {
-          for (const edit of response.edits) {
-            const destination = path.resolve(workspace, edit.path);
-            fs.mkdirSync(path.dirname(destination), { recursive: true });
-            const temporary = `${destination}.hepta-agent-${process.pid}.tmp`;
-            fs.writeFileSync(temporary, edit.content);
-            fs.renameSync(temporary, destination);
-            changedPaths.push(edit.path.replace(/\\/g, '/'));
+          const stagingRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-ollama-edit-'));
+          try {
+            for (const [index, edit] of edits.entries()) {
+              const sourceRelative = `edit-${index}`;
+              fs.writeFileSync(path.join(stagingRoot, sourceRelative), edit.content);
+              const destination = inspectScopedRegularFileWithRecoverySync({ scopeRoot: workspace, relative: edit.relative });
+              const postimageHash = `sha256:${crypto.createHash('sha256').update(edit.content).digest('hex')}`;
+              if (destination.hash === postimageHash) {
+                changedPaths.push(edit.relative);
+                continue;
+              }
+              const staged = stageScopedRegularFileCopySync({
+                sourceRoot: stagingRoot,
+                destinationRoot: workspace,
+                relative: sourceRelative,
+                destinationRelative: edit.relative,
+                stageId: `ollama-edit:${crypto.createHash('sha256').update(`${edit.relative}\0${postimageHash}\0${destination.hash}`).digest('hex')}`,
+                expectedHash: destination.hash,
+              });
+              try {
+                commitStagedScopedFileSync(staged, { destinationRoot: workspace, expectedHash: destination.hash });
+              } catch (error) {
+                abortStagedScopedFileSync(staged);
+                throw error;
+              }
+              changedPaths.push(edit.relative);
+            }
+          } catch {
+            blockers.push('ollama_agent_edit_path_or_content_invalid');
+          } finally {
+            fs.rmSync(stagingRoot, { recursive: true, force: true });
           }
         }
       }
       const completedAt = new Date().toISOString();
       const payload = {
-        version: 1,
-        kind: 'AgentExecutionReceipt',
-        executorId,
         providerMode: 'local:ollama',
         model,
         resolvedModel: model,
-        promptHash,
+        promptHash: promptDigest,
         sessionId,
         childSessionId: sessionId,
         maximumOutputTokens: effectiveOutputTokens,
@@ -190,15 +272,13 @@ export function createOllamaStructuredAgentExecutor({
         startedAt,
         completedAt,
         externalActionPerformed: false,
+        externalActionVerification: 'local_provider_without_agent_tools',
       };
-      const receipt = Object.freeze({ ...payload, agentExecutionReceiptHash: hashRecord('AgentExecutionReceipt', payload) });
-      if (payload.status !== 'agent_execution_completed') {
-        const error = new Error(payload.blockers.join(',') || 'ollama agent failed');
-        error.retryable = true;
-        error.receipt = receipt;
-        throw error;
-      }
-      return receipt;
+      return {
+        payload,
+        failureMessage: payload.blockers.join(',') || 'ollama agent failed',
+        retryable: !cancelled,
+      };
     },
   });
 }

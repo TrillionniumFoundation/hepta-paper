@@ -3,9 +3,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { createOpenClawAgentExecutor } from '../../paper-adapters/automation/openclaw-agent-executor.mjs';
-import { createOllamaStructuredAgentExecutor } from '../../paper-adapters/automation/ollama-structured-agent-executor.mjs';
-import { createAgentBackendRouter } from '../../paper-adapters/automation/agent-backend-router.mjs';
+import {
+  createAgentBackendRouter,
+  createOllamaStructuredAgentExecutor,
+  createOpenClawAgentExecutor,
+} from '../../paper-composition/bootstrap/operator-automation-composition.mjs';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-real-agent-smoke-'));
 try {

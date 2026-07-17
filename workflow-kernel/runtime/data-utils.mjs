@@ -1,6 +1,14 @@
 import { parseMaybeQuoted } from './text-utils.mjs';
 
 export function safeJsonParse(value, fallback = null) { try { return JSON.parse(String(value ?? '')); } catch { return fallback; } }
+export function parseJsonOrThrow(value, errorCode = 'json_value_invalid') {
+  try { return JSON.parse(String(value)); }
+  catch (cause) {
+    const error = new Error(errorCode, { cause });
+    error.code = errorCode;
+    throw error;
+  }
+}
 export function parseSimpleYamlList(text, key) {
   const lines = String(text || '').split('\n');
   const start = lines.findIndex((line) => line.trim() === `${key}:`);

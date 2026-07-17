@@ -11,24 +11,31 @@ import {
   walkFiles,
 } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { normalizeText } from '../../workflow-kernel/runtime/text-utils.mjs';
+import { resolveRepoPath } from '../../workflow-kernel/runtime/path-utils.mjs';
 import { writeJsonFile, writeTextFile } from '../artifacts/write-artifact.mjs';
 import {
   createPaperBuildArtifactAcceptance,
   createPaperArtifactPackage,
 } from '../../paper-domain/contracts/index.mjs';
-import { sqlEscape } from '../../paper-ports/store-port.mjs';
+import { assertStoreQueryResult, sqlEscape } from '../../paper-ports/store-port.mjs';
 import { verifyPackageBundle } from './package-verifier.mjs';
-import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { inspectScopedPathSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
 import { runTheoremManuscriptReadinessCheck } from '../automation/theorem-manuscript-readiness-check.mjs';
 import { evaluateManuscriptPromotion, explicitPaperQualityProfile } from '../../paper-domain/quality/manuscript-promotion-gate.mjs';
-import { buildSourcePackageManifest, resolveSourcePackageContract } from '../../paper-domain/quality/source-package-contract.mjs';
+import { buildSourcePackageManifest, resolveSourcePackageContract } from './source-package-contract-reader.mjs';
+import {
+  abortStagedScopedFileSync,
+  commitStagedScopedFileSync,
+  stageScopedRegularFileCopySync,
+} from '../runtime/scoped-file-materialization-repository.mjs';
+import {
+  createResearchExecutionReleaseAttestor,
+  materializeCampaignReleaseEvidenceCapsule,
+} from './research-evidence-capsule.mjs';
+import { verifyIndependentPdfRebuildVerificationReceipt } from '../../paper-domain/automation/independent-pdf-rebuild-contract.mjs';
 
-function repoPath(root, value) {
-  const text = normalizeText(value);
-  if (!text) return null;
-  return path.isAbsolute(text) ? text : path.join(root, text);
-}
+export { verifyCampaignReleaseEvidenceCapsuleDirectory } from './research-evidence-capsule.mjs';
+export { createResearchExecutionReleaseAttestor };
 
 function sourceWorkspaceAuthority({ root, runtimeRoot, row, sourceDir, mainTex }) {
   if (!sourceDir) return { scopeRoot: null, blockers: ['source_workspace_missing'] };
@@ -62,11 +69,11 @@ function commandExists(command) {
 }
 
 function sqliteJson(store, sql) {
-  return store.query(sql).rows;
+  return assertStoreQueryResult(store.query(sql)).rows;
 }
 
 async function fileRecordFromRepoPath(root, value, role) {
-  const candidate = repoPath(root, value);
+  const candidate = resolveRepoPath(root, value);
   if (!candidate || !(await fileExists(candidate))) return null;
   return fileRecord(root, candidate, role);
 }
@@ -108,9 +115,10 @@ function buildCommand({ tool, mainTex, buildDir }) {
   return [tool, '-interaction=nonstopmode', '-halt-on-error', '-output-directory', buildDir, mainTex];
 }
 
-export async function runLatexBuildAdapter({ root, row, runtimeRoot, execute = false } = {}) {
-  const sourceDir = repoPath(root, row.task.sourceWorkspace);
-  const mainTex = repoPath(root, row.task.mainTex);
+export async function runLatexBuildAdapter({ root, row, runtimeRoot, execute = false, createdAt = null } = {}) {
+  const buildObservedAt = createdAt || new Date().toISOString();
+  const sourceDir = resolveRepoPath(root, row.task.sourceWorkspace);
+  const mainTex = resolveRepoPath(root, row.task.mainTex);
   const blockers = [];
   const warnings = [];
   if (!sourceDir) blockers.push('source_workspace_missing');
@@ -157,6 +165,7 @@ export async function runLatexBuildAdapter({ root, row, runtimeRoot, execute = f
     execution,
     blockers,
     warnings,
+    createdAt: buildObservedAt,
   });
   let buildArtifactAcceptanceRecord = null;
   if (execute && buildArtifactAcceptance.accepted) {
@@ -227,7 +236,11 @@ function uniqueArtifactRecords(artifacts = []) {
   const out = [];
   const seen = new Set();
   for (const artifact of artifacts) {
-    const key = artifact.hash || artifact.path || artifact.filename;
+    // Content identity alone is not semantic artifact identity. A deterministic
+    // independent rebuild may legitimately produce the same bytes as the
+    // authoritative compile while still carrying a distinct role and receipt.
+    const locator = artifact.hash || artifact.path || artifact.filename;
+    const key = locator ? `${artifact.role || ''}\0${locator}` : null;
     if (!key || seen.has(key)) continue;
     seen.add(key);
     out.push(artifact);
@@ -242,7 +255,20 @@ function sha256SumsText(artifacts = []) {
     .join('\n') + '\n';
 }
 
-async function writePackageRecords({ root, runtimeRoot, packageDir, row, artifactPackage, verificationArtifacts = [], sourceTreeManifest = null, sourcePackageContract = null, execute }) {
+async function writePackageRecords({
+  root,
+  runtimeRoot,
+  packageDir,
+  row,
+  artifactPackage,
+  verificationArtifacts = [],
+  sourceTreeManifest = null,
+  sourcePackageContract = null,
+  researchEvidenceCapsule = null,
+  independentPdfRebuildReceipt = null,
+  portableOutput = false,
+  execute,
+}) {
   await ensureDir(packageDir);
   const packageRecord = {
     version: 1,
@@ -251,14 +277,23 @@ async function writePackageRecords({ root, runtimeRoot, packageDir, row, artifac
     taskKey: row.task.taskKey,
     title: row.task.title,
     venueTarget: row.task.venueTarget || null,
-    sourceWorkspace: row.task.sourceWorkspace || null,
-    mainTex: row.task.mainTex || null,
+    sourceWorkspace: portableOutput ? null : row.task.sourceWorkspace || null,
+    mainTex: portableOutput
+      ? sourceTreeManifest?.rows?.find((item) => item.role === 'main_tex')?.path || null
+      : row.task.mainTex || null,
     mode: execute ? 'local-package' : 'local-package-dry-run',
     sourceMutation: false,
     externalActionPerformed: false,
     artifactPackageHash: artifactPackage.artifactPackageHash,
     sourceTreeManifestHash: sourceTreeManifest?.sourceTreeManifestHash || null,
     sourcePackageContractHash: sourcePackageContract?.sourcePackageContractHash || null,
+    researchEvidenceCapsuleManifestHash: researchEvidenceCapsule?.researchEvidenceCapsuleManifestHash || null,
+    researchExecutionReleaseAttestationHash:
+      researchEvidenceCapsule?.researchExecutionReleaseAttestationHash || null,
+    independentPdfRebuildVerificationReceiptHash:
+      independentPdfRebuildReceipt?.independentPdfRebuildVerificationReceiptHash || null,
+    independentRebuiltPdfHash: independentPdfRebuildReceipt?.rebuiltPdf?.hash || null,
+    researchEvidenceCapsuleEntryCount: researchEvidenceCapsule?.manifest?.entryCount || 0,
     sourceTreeManifest,
     artifactCount: artifactPackage.artifactCount,
     artifacts: artifactPackage.artifacts,
@@ -268,27 +303,52 @@ async function writePackageRecords({ root, runtimeRoot, packageDir, row, artifac
   const sumsPath = path.join(packageDir, 'SHA256SUMS.txt');
   await writeJsonFile(recordPath, packageRecord);
   await writeTextFile(sumsPath, sha256SumsText(verificationArtifacts));
+  const logicalRoot = portableOutput ? path.dirname(packageDir) : root;
   return {
-    packageRecord: await scopedLogicalFileRecord(runtimeRoot, root, recordPath, 'package_record'),
-    sha256Sums: await scopedLogicalFileRecord(runtimeRoot, root, sumsPath, 'sha256sums'),
+    packageRecord: await scopedLogicalFileRecord(runtimeRoot, logicalRoot, recordPath, 'package_record'),
+    sha256Sums: await scopedLogicalFileRecord(runtimeRoot, logicalRoot, sumsPath, 'sha256sums'),
   };
 }
 
-export async function runPackageAdapter({ root, row, buildResult = null, researchReport = null, runtimeRoot, execute = false, store = null } = {}) {
-  const sourceDir = repoPath(root, row.task.sourceWorkspace);
-  const packageMainTex = repoPath(root, row.task.mainTex);
+export async function runPackageAdapter({
+  root,
+  row,
+  buildResult = null,
+  researchReport = null,
+  runtimeRoot,
+  execute = false,
+  store = null,
+  packageOutputDir = null,
+  immutableOutput = false,
+  sourceArchiveDefinition = null,
+  createdAt = null,
+  requirePaperQuality = Boolean(execute),
+  experimentRegistryAuthorityVerifier = null,
+  expectedCampaignId = null,
+  receiptLedger = null,
+  operatorDatasetAuthorityTrustStore = null,
+  researchExecutionReleaseAttestor = null,
+  independentPdfRebuild = null,
+} = {}) {
+  const packageObservedAt = createdAt || new Date().toISOString();
+  const sourceDir = resolveRepoPath(root, row.task.sourceWorkspace);
+  const packageMainTex = resolveRepoPath(root, row.task.mainTex);
   const blockers = [];
   const warnings = [];
   if (!sourceDir) blockers.push('source_workspace_missing');
   if (!packageMainTex || !(await fileExists(packageMainTex))) blockers.push('main_tex_missing');
   const sourceAuthority = sourceWorkspaceAuthority({ root, runtimeRoot, row, sourceDir, mainTex: packageMainTex });
   blockers.push(...sourceAuthority.blockers);
-  const sourcePackageContract = sourceDir
+  const sourcePackageContract = sourceArchiveDefinition?.sourcePackageContract || (sourceDir
     ? resolveSourcePackageContract({ sourceRoot: sourceDir, paperTask: row.task })
-    : null;
-  const sourceTreeManifest = sourceDir
+    : null);
+  const sourceTreeManifest = sourceArchiveDefinition?.sourceTreeManifest || (sourceDir
     ? buildSourcePackageManifest({ sourceRoot: sourceDir, sourcePackageContract })
-    : null;
+    : null);
+  if (sourceArchiveDefinition && (sourceArchiveDefinition.sourceTreeManifestHash !== sourceTreeManifest?.sourceTreeManifestHash
+    || sourceArchiveDefinition.sourcePackageContractHash !== sourcePackageContract?.sourcePackageContractHash)) {
+    blockers.push('source_archive_definition_binding_invalid');
+  }
   if (sourceTreeManifest?.status !== 'scoped_source_tree_verified') {
     blockers.push(...(sourceTreeManifest?.blockers || ['source_tree_manifest_required']).map((item) => `source_tree:${item}`));
   }
@@ -300,7 +360,25 @@ export async function runPackageAdapter({ root, row, buildResult = null, researc
     || (row.artifacts?.pdfs || [])[0]
     || persistedArtifacts.find((artifact) => artifact.role === 'compiled_pdf')
     || null;
-  const artifacts = uniqueArtifactRecords([
+  const sourceRelativeMain = sourceDir && packageMainTex
+    ? path.relative(sourceDir, packageMainTex).replace(/\\/g, '/')
+    : 'main.tex';
+  const independentPdfRebuildVerification = immutableOutput
+    ? verifyIndependentPdfRebuildVerificationReceipt(independentPdfRebuild?.receipt, {
+      paperId: row.task.paperId,
+      sourcePackageContractHash: sourcePackageContract?.sourcePackageContractHash,
+      sourceTreeManifestHash: sourceTreeManifest?.sourceTreeManifestHash,
+      sourceMerkleHash: sourceArchiveDefinition?.archivedSourceMerkleHash,
+      sourceWorkspaceManifestHash: sourceArchiveDefinition?.sourceWorkspaceManifestHash,
+      mainTex: sourceRelativeMain,
+      authoritativePdfHash: authoritativePdf?.hash,
+    })
+    : Object.freeze({ valid: true, blockers: Object.freeze([]) });
+  if (immutableOutput && (independentPdfRebuild?.status !== 'independent_pdf_rebuild_verified'
+    || !independentPdfRebuildVerification.valid || !independentPdfRebuild?.rebuiltPdfPath)) {
+    blockers.push('independent_pdf_rebuild_required', ...independentPdfRebuildVerification.blockers);
+  }
+  let artifacts = uniqueArtifactRecords([
     ...sourceArtifacts,
     ...(authoritativePdf ? [authoritativePdf] : []),
     ...runtimeArtifacts.filter((artifact) => artifact.role === 'build_artifact_acceptance'),
@@ -309,13 +387,25 @@ export async function runPackageAdapter({ root, row, buildResult = null, researc
   const hasSource = artifacts.some((artifact) => ['main_tex', 'tex_source', 'source_file'].includes(artifact.role));
   if (!hasPdf) warnings.push('compiled_pdf_missing');
   if (!hasSource) blockers.push('source_files_missing');
-  const packageDir = path.join(runtimeRoot, 'packages', row.task.paperId);
+  const packageDir = packageOutputDir ? path.resolve(packageOutputDir) : path.join(runtimeRoot, 'packages', row.task.paperId);
+  const artifactBaseRoot = immutableOutput ? path.dirname(packageDir) : path.resolve(root);
+  if (!pathWithin(runtimeRoot, packageDir) || path.resolve(runtimeRoot) === packageDir) blockers.push('package_output_outside_runtime');
+  if (immutableOutput && fs.existsSync(packageDir) && fs.readdirSync(packageDir).length) {
+    throw new Error(`immutable_package_output_exists:${packageDir}`);
+  }
+  if (immutableOutput && execute) fs.mkdirSync(packageDir, { mode: 0o700 });
   let sourceZip = null;
   let sourceZipVerification = null;
+  let immutableCompiledPdf = null;
+  let independentRebuiltPdf = null;
+  let independentRebuiltPdfVerification = null;
+  let independentPdfRebuildReceiptRecord = null;
+  let independentPdfRebuildReceiptVerification = null;
+  let researchEvidenceCapsule = null;
   if (!blockers.length && execute) {
-    await ensureDir(packageDir);
+    if (!immutableOutput) await ensureDir(packageDir);
     const zipPath = path.join(packageDir, `${row.task.paperId}-source-workspace.zip`);
-    fs.rmSync(zipPath, { force: true });
+    if (!immutableOutput) fs.rmSync(zipPath, { force: true });
     const result = spawnSync('zip', ['-q', '-X', zipPath, '--', ...sourceTreeManifest.rows.map((item) => item.path)], {
       cwd: sourceDir,
       encoding: 'utf8',
@@ -324,9 +414,95 @@ export async function runPackageAdapter({ root, row, buildResult = null, researc
     });
     if (result.status !== 0) blockers.push('source_zip_failed');
     if (await fileExists(zipPath)) {
-      sourceZip = await scopedLogicalFileRecord(runtimeRoot, root, zipPath, 'generated_source_zip');
-      sourceZipVerification = await fileRecord(runtimeRoot, zipPath, 'generated_source_zip');
+      sourceZip = await scopedLogicalFileRecord(runtimeRoot, artifactBaseRoot, zipPath, 'generated_source_zip');
+      sourceZipVerification = await fileRecord(immutableOutput ? packageDir : runtimeRoot, zipPath, 'generated_source_zip');
       artifacts.unshift(sourceZip);
+    }
+    if (immutableOutput && authoritativePdf?.path) {
+      const absolutePdf = resolveRepoPath(root, authoritativePdf.path);
+      const pdfScopeRoot = absolutePdf && pathWithin(root, absolutePdf)
+        ? path.resolve(root)
+        : absolutePdf && pathWithin(runtimeRoot, absolutePdf)
+          ? path.resolve(runtimeRoot)
+          : null;
+      if (!pdfScopeRoot) throw new Error('immutable_package_pdf_outside_authorized_scope');
+      const relativePdf = relativePath(pdfScopeRoot, absolutePdf);
+      const immutablePdfPath = path.join(packageDir, `${row.task.paperId}-compiled.pdf`);
+      let staged = null;
+      try {
+        staged = stageScopedRegularFileCopySync({
+          sourceRoot: pdfScopeRoot,
+          destinationRoot: runtimeRoot,
+          relative: relativePdf,
+          destinationRelative: relativePath(runtimeRoot, immutablePdfPath),
+          stageId: `build-package-pdf:${sha256Text(`${row.task.paperId}\0${relativePath(runtimeRoot, immutablePdfPath)}\0${authoritativePdf.hash || relativePdf}`)}`,
+          expectedHash: null,
+        });
+        commitStagedScopedFileSync(staged, { destinationRoot: runtimeRoot, expectedHash: null });
+      } finally {
+        abortStagedScopedFileSync(staged);
+      }
+      immutableCompiledPdf = await scopedLogicalFileRecord(runtimeRoot, artifactBaseRoot, immutablePdfPath, 'compiled_pdf');
+      const rebuiltSourcePath = path.resolve(independentPdfRebuild.rebuiltPdfPath);
+      const rebuiltSourceStat = fs.statSync(rebuiltSourcePath);
+      const authoritativePdfStat = fs.statSync(absolutePdf);
+      if (!pathWithin(runtimeRoot, rebuiltSourcePath)
+        || rebuiltSourcePath === absolutePdf
+        || (rebuiltSourceStat.dev === authoritativePdfStat.dev && rebuiltSourceStat.ino === authoritativePdfStat.ino)) {
+        throw new Error('independent_pdf_rebuild_source_aliases_final_pdf');
+      }
+      const independentPdfPath = path.join(packageDir, `${row.task.paperId}-independent-rebuild.pdf`);
+      let stagedRebuild = null;
+      try {
+        stagedRebuild = stageScopedRegularFileCopySync({
+          sourceRoot: runtimeRoot,
+          destinationRoot: runtimeRoot,
+          relative: relativePath(runtimeRoot, rebuiltSourcePath),
+          destinationRelative: relativePath(runtimeRoot, independentPdfPath),
+          stageId: `build-package-independent-pdf:${sha256Text(`${row.task.paperId}\0${independentPdfRebuild.receipt.independentPdfRebuildVerificationReceiptHash}`)}`,
+          expectedHash: null,
+        });
+        if (stagedRebuild.hash !== independentPdfRebuild.receipt.rebuiltPdf.hash
+          || Number(stagedRebuild.bytes) !== Number(independentPdfRebuild.receipt.rebuiltPdf.bytes)) {
+          throw new Error('independent_pdf_rebuild_output_changed_before_packaging');
+        }
+        commitStagedScopedFileSync(stagedRebuild, { destinationRoot: runtimeRoot, expectedHash: null });
+      } finally {
+        abortStagedScopedFileSync(stagedRebuild);
+      }
+      const rebuildReceiptPath = path.join(packageDir, 'INDEPENDENT_PDF_REBUILD_RECEIPT.json');
+      await writeJsonFile(rebuildReceiptPath, independentPdfRebuild.receipt);
+      independentRebuiltPdf = await scopedLogicalFileRecord(runtimeRoot, artifactBaseRoot, independentPdfPath, 'independent_rebuilt_pdf');
+      independentRebuiltPdfVerification = await fileRecord(packageDir, independentPdfPath, 'independent_rebuilt_pdf');
+      independentPdfRebuildReceiptRecord = await scopedLogicalFileRecord(runtimeRoot, artifactBaseRoot, rebuildReceiptPath, 'independent_pdf_rebuild_receipt');
+      independentPdfRebuildReceiptVerification = await fileRecord(packageDir, rebuildReceiptPath, 'independent_pdf_rebuild_receipt');
+      if (independentRebuiltPdf?.hash !== independentPdfRebuild.receipt.rebuiltPdf.hash
+        || Number(independentRebuiltPdf?.sizeBytes) !== Number(independentPdfRebuild.receipt.rebuiltPdf.bytes)) {
+        throw new Error('independent_pdf_rebuild_packaged_output_mismatch');
+      }
+      artifacts = uniqueArtifactRecords([
+        sourceZip,
+        immutableCompiledPdf,
+        independentRebuiltPdf,
+        independentPdfRebuildReceiptRecord,
+      ].filter(Boolean));
+    }
+    if (immutableOutput) {
+      const profiles = new Set([
+        ...(Array.isArray(row.task.paperQualityProfiles) ? row.task.paperQualityProfiles : []),
+        row.task.paperQualityProfile,
+      ].filter(Boolean));
+      researchEvidenceCapsule = materializeCampaignReleaseEvidenceCapsule({
+        packageDir,
+        researchReport,
+        campaignId: expectedCampaignId,
+        paperId: row.task.paperId,
+        receiptLedger,
+        operatorDatasetAuthorityTrustStore,
+        researchExecutionReleaseAttestor,
+        academicEvidenceRequired: profiles.has('empirical_or_experiment'),
+        createdAt: packageObservedAt,
+      });
     }
   }
   const packageStatus = blockers.length
@@ -344,36 +520,45 @@ export async function runPackageAdapter({ root, row, buildResult = null, researc
     sourceSnapshotHash,
     sourceTreeManifestHash: sourceTreeManifest?.sourceTreeManifestHash || null,
     sourcePackageContractHash: sourcePackageContract?.sourcePackageContractHash || null,
+    createdAt: packageObservedAt,
   });
-  const packageRecords = await writePackageRecords({
-    root,
-    runtimeRoot,
-    packageDir,
-    row,
-    artifactPackage: candidateArtifactPackage,
-    verificationArtifacts: sourceZipVerification ? [sourceZipVerification] : [],
-    sourceTreeManifest,
-    sourcePackageContract,
-    execute,
-  });
+  const verificationArtifacts = [
+    sourceZipVerification,
+    independentRebuiltPdfVerification,
+    independentPdfRebuildReceiptVerification,
+    ...(researchEvidenceCapsule?.allFiles || []),
+  ].filter(Boolean);
+  const packageRecords = execute
+    ? await writePackageRecords({
+      root,
+      runtimeRoot,
+      packageDir,
+      row,
+      artifactPackage: candidateArtifactPackage,
+      verificationArtifacts,
+      sourceTreeManifest,
+      sourcePackageContract,
+      researchEvidenceCapsule,
+      independentPdfRebuildReceipt: independentPdfRebuild?.receipt || null,
+      portableOutput: immutableOutput,
+      execute,
+    })
+    : { packageRecord: null, sha256Sums: null };
   const packageVerificationReceipt = execute
     ? verifyPackageBundle({
-      scopeRoot: runtimeRoot,
+      scopeRoot: immutableOutput ? packageDir : runtimeRoot,
       packageDir,
       expectedArtifactPackageHash: candidateArtifactPackage.artifactPackageHash,
-      expectedArtifacts: sourceZipVerification ? [sourceZipVerification] : [],
+      expectedArtifacts: verificationArtifacts,
       expectedArchivePath: sourceZipVerification?.path || null,
       expectedArchiveManifest: sourceTreeManifest,
-      artifactBaseRoot: root,
+      artifactBaseRoot,
       artifactScopeRoots: [root, runtimeRoot],
     })
     : null;
   if (packageVerificationReceipt && packageVerificationReceipt.status !== 'package_verification_passed') {
     blockers.push(...packageVerificationReceipt.blockers.map((blocker) => `package_verification:${blocker}`));
   }
-  const sourceRelativeMain = sourceDir && packageMainTex
-    ? path.relative(sourceDir, packageMainTex).replace(/\\/g, '/')
-    : 'main.tex';
   const theoremReadiness = sourceDir && packageMainTex && await fileExists(packageMainTex)
     ? runTheoremManuscriptReadinessCheck({
       workspacePath: sourceDir,
@@ -390,8 +575,10 @@ export async function runPackageAdapter({ root, row, buildResult = null, researc
     buildResult,
     requirePackageVerification: Boolean(execute),
     requireResearchQuality: Boolean(researchReport),
-    requirePaperQuality: Boolean(execute),
+    requirePaperQuality: Boolean(requirePaperQuality),
     boundary: 'package',
+    experimentRegistryAuthorityVerifier,
+    expectedCampaignId,
   });
   if (manuscriptPromotionGate.status !== 'manuscript_promotion_ready') {
     blockers.push(...manuscriptPromotionGate.blockers.map((blocker) => `promotion:${blocker}`));
@@ -413,6 +600,7 @@ export async function runPackageAdapter({ root, row, buildResult = null, researc
     sourceTreeManifestHash: sourceTreeManifest?.sourceTreeManifestHash || null,
     sourcePackageContractHash: sourcePackageContract?.sourcePackageContractHash || null,
     promotionGate: manuscriptPromotionGate,
+    createdAt: packageObservedAt,
   });
   return {
     version: 1,
@@ -422,7 +610,15 @@ export async function runPackageAdapter({ root, row, buildResult = null, researc
     submitReady: artifactPackage.submitReady,
     execute: Boolean(execute),
     packageDir: relativePath(root, packageDir),
+    packageDirAbsolute: packageDir,
+    artifactBaseRoot,
+    immutableOutput: Boolean(immutableOutput),
     sourceZip,
+    immutableCompiledPdf,
+    independentRebuiltPdf,
+    independentPdfRebuildReceipt: independentPdfRebuild?.receipt || null,
+    independentPdfRebuildReceiptRecord,
+    researchEvidenceCapsule,
     sourceTreeManifest,
     packageRecord: packageRecords.packageRecord,
     sha256Sums: packageRecords.sha256Sums,

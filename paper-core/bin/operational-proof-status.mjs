@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CAPABILITY_CATALOG } from '../../migration/legacy-capability-matrix-v3.mjs';
-import { loadCapabilityConformanceProofs, loadCapabilityOperationalProofs } from '../../migration/operational-proof-intake.mjs';
+import { loadCapabilityConformanceProofs, loadCapabilityOperationalProofs } from '../../paper-composition/bootstrap/operator-governance-composition.mjs';
+import { CAPABILITY_CATALOG } from '../../paper-domain/governance/capability-catalog.mjs';
 import { currentCodeProvenance } from '../src/code-provenance.mjs';
 import { defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 

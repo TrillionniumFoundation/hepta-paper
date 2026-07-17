@@ -1,7 +1,5 @@
 import assert from 'node:assert/strict';
-import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import { materializeLegacyDifferentialReference } from '../legacy-reference-fixture.mjs';
 import {
   evidenceResyncConsumingSelection,
@@ -15,7 +13,6 @@ import {
 } from '../../paper-adapters/referee-revise/decision-routing.mjs';
 import { buildSafeApplyPlanContract } from '../../paper-domain/repair/command-contract.mjs';
 
-const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const fixture = materializeLegacyDifferentialReference();
 const root = fixture.root;
 process.on('exit', fixture.cleanup);

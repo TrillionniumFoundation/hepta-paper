@@ -1,22 +1,12 @@
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
-
-function sha256(bytes) {
-  return `sha256:${crypto.createHash('sha256').update(bytes).digest('hex')}`;
-}
+import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { isPathWithin } from '../../workflow-kernel/runtime/path-utils.mjs';
 
 function scoped(root, relative) {
   const resolvedRoot = path.resolve(String(root || ''));
   const candidate = path.resolve(resolvedRoot, String(relative || ''));
-  return candidate === resolvedRoot || candidate.startsWith(`${resolvedRoot}${path.sep}`)
-    ? candidate
-    : null;
-}
-
-function inside(root, candidate) {
-  return candidate === root || candidate.startsWith(`${root}${path.sep}`);
+  return isPathWithin(resolvedRoot, candidate) ? candidate : null;
 }
 
 function readStableRegularFile({ root, candidate, label, blockers }) {
@@ -28,7 +18,7 @@ function readStableRegularFile({ root, candidate, label, blockers }) {
       return null;
     }
     const resolvedCandidate = fs.realpathSync(candidate);
-    if (!inside(resolvedRoot, resolvedCandidate)) {
+    if (!isPathWithin(resolvedRoot, resolvedCandidate)) {
       blockers.push(`${label}_realpath_unsafe`);
       return null;
     }
@@ -84,7 +74,7 @@ export function verifyArtifactWriteReceiptSource({ receipt } = {}) {
     objectBytes = readStableRegularFile({ root: receipt?.casRoot, candidate: objectPath, label: 'artifact_object', blockers });
   }
   if (objectBytes) {
-    if (sha256(objectBytes) !== receipt?.hash) blockers.push('artifact_object_hash_mismatch');
+    if (hashBytes(objectBytes) !== receipt?.hash) blockers.push('artifact_object_hash_mismatch');
     if (objectBytes.length !== Number(receipt?.bytes)) blockers.push('artifact_object_size_mismatch');
   }
   let materializedBytes = null;
@@ -92,7 +82,7 @@ export function verifyArtifactWriteReceiptSource({ receipt } = {}) {
     materializedBytes = readStableRegularFile({ root: receipt?.scopeRoot, candidate: materializedPath, label: 'artifact_materialized_file', blockers });
   }
   if (materializedBytes) {
-    if (sha256(materializedBytes) !== receipt?.hash) blockers.push('artifact_materialized_hash_mismatch');
+    if (hashBytes(materializedBytes) !== receipt?.hash) blockers.push('artifact_materialized_hash_mismatch');
     if (materializedBytes.length !== Number(receipt?.bytes)) blockers.push('artifact_materialized_size_mismatch');
   }
   const payload = {

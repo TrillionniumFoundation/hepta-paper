@@ -6,14 +6,10 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { createFilesystemArtifactRepository } from '../../paper-adapters/artifacts/filesystem-artifact-repository.mjs';
-import { JOURNAL_PROFILE_DATASET } from '../../paper-adapters/journal-manage/journal-registry.mjs';
+import { JOURNAL_PROFILE_DATASET } from '../../paper-domain/journal/journal-registry.mjs';
 import { createSqliteStore } from '../../paper-adapters/persistence/sqlite-store.mjs';
 import { createLeanFormalVerifier } from '../../paper-adapters/research-verify/formal-verifier.mjs';
-import { createSandboxedCommandRunner } from '../../paper-adapters/runtime/sandboxed-command-runner.mjs';
 import { buildResearchGapPlan } from '../../paper-application/research/gap-planner.mjs';
-import { createExecutionContext } from '../src/execution-context.mjs';
-import { PAPER_BATCH_MODES, assertPaperMode } from '../src/mode-registry.mjs';
-import { runWorkflowStages } from '../src/workflow-engine.mjs';
 import { buildClaimRegistry } from '../../paper-domain/research/claim-registry.mjs';
 import { buildEvidenceIntake } from '../../paper-domain/research/evidence-ingestor.mjs';
 import { buildEvidenceQualityGate } from '../../paper-domain/research/evidence-quality-gate.mjs';
@@ -24,34 +20,44 @@ import {
 } from '../../paper-domain/submission/delivery-runtime.mjs';
 import { createPaperArtifactPackage } from '../../paper-domain/contracts/workflow-contracts.mjs';
 import { LEGACY_CAPABILITY_MATRIX_V3 } from '../../migration/legacy-capability-matrix-v3.mjs';
-import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { APPLICATION_SERVICE_PORT_CATALOG } from '../../paper-ports/application-service-port-catalog.mjs';
+import { ARCHITECTURE_ENTRYPOINT_MANIFEST } from '../src/architecture-entrypoint-manifest.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
 
-test('workflow registry executes ordered stages and propagates action facts', async () => {
-  const definition = assertPaperMode(PAPER_BATCH_MODES.LOCAL_PACKAGE);
-  const context = createExecutionContext({
-    root: workspaceRoot,
-    runtimeRoot: path.join(workspaceRoot, 'runtime'),
-    mode: definition.mode,
-  });
-  const execution = await runWorkflowStages({
-    definition,
-    context,
-    handlers: {
-      build: async () => ({ build: { status: 'ready', externalActionPerformed: false } }),
-      'research-verify': async ({ state }) => ({ research: { status: state.build.status, externalActionPerformed: false } }),
-      package: async ({ state }) => ({ package: { status: state.build.status, externalActionPerformed: false } }),
-    },
-  });
-  assert.deepEqual(execution.workflowReceipt.stages.map((stage) => stage.stage), ['build', 'research-verify', 'package']);
-  assert.equal(execution.workflowReceipt.externalActionPerformed, false);
-  const actionExecution = await runWorkflowStages({
-    definition: { mode: 'test-action', stages: ['action'] },
-    context,
-    handlers: { action: async () => ({ result: { externalActionPerformed: true } }) },
-  });
-  assert.equal(actionExecution.workflowReceipt.externalActionPerformed, true);
+function resolveArchitectureImport(importer, specifier) {
+  const candidate = path.resolve(path.dirname(importer), specifier);
+  return [candidate, `${candidate}.mjs`, path.join(candidate, 'index.mjs')]
+    .find((file) => fs.existsSync(file) && fs.statSync(file).isFile()) || null;
+}
+
+function architectureReachability(entries) {
+  const pending = entries.map((entry) => path.join(workspaceRoot, entry));
+  const reached = new Set();
+  while (pending.length) {
+    const file = pending.pop();
+    if (reached.has(file)) continue;
+    reached.add(file);
+    const source = fs.readFileSync(file, 'utf8');
+    for (const match of source.matchAll(/(?:from\s+|import\s*\()(['"])(\.[^'"]+)\1/g)) {
+      const resolved = resolveArchitectureImport(file, match[2]);
+      if (resolved && !reached.has(resolved)) pending.push(resolved);
+    }
+  }
+  return [...reached].map((file) => path.relative(workspaceRoot, file).replace(/\\/g, '/'));
+}
+
+test('retired direct workflow implementation cannot return to the active tree', () => {
+  for (const relative of [
+    'workflow-kernel/workflow.mjs',
+    'paper-application/workflow/workflow-engine.mjs',
+    'paper-application/workflow/typed-stage-pipeline.mjs',
+    'paper-application/use-cases/paper-stage-handlers.mjs',
+    'paper-application/use-cases/local-diagnostic-review-loop.mjs',
+    'paper-application/use-cases/local-diagnostic-round-executor.mjs',
+    'paper-core/src/workflow-engine.mjs',
+  ]) assert.equal(fs.existsSync(path.join(workspaceRoot, relative)), false, relative);
 });
 
 test('artifact repository enforces declared scope and emits atomic receipts', async (t) => {
@@ -60,7 +66,7 @@ test('artifact repository enforces declared scope and emits atomic receipts', as
   const repository = createFilesystemArtifactRepository({
     scopeRoot: root,
     casRoot: path.join(root, 'cas'),
-    clock: { nowIso: () => '2026-07-10T00:00:00.000Z' },
+    clock: { now: () => new Date('2026-07-10T00:00:00.000Z'), nowIso: () => '2026-07-10T00:00:00.000Z' },
     receiptLedger: { record: (_receipt) => ({ receiptId: 'test-ledger-receipt' }) },
   });
   const target = path.join(root, 'nested', 'receipt.json');
@@ -159,11 +165,9 @@ test('submission delivery runtime remains fail-closed and has no executor implem
   assert.equal(buildSubmissionDeliveryRuntime({ paperTask }).status, 'submission_delivery_blocked');
 });
 
-test('sandbox and formal verifier ports reject unbounded execution', async (t) => {
+test('formal verifier consumes a bounded command-runner port', async (t) => {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'hepta-formal-port-'));
   t.after(() => fsp.rm(root, { recursive: true, force: true }));
-  const runner = createSandboxedCommandRunner({ allowedExecutables: ['lean'], allowedRoots: [root] });
-  assert.deepEqual(runner.run({ executable: 'bash', cwd: root }).blockers, ['worker_executable_not_allowlisted']);
   const inputPath = path.join(root, 'Proof.lean');
   await fsp.writeFile(inputPath, 'theorem ok : True := by trivial\n');
   const verifier = createLeanFormalVerifier({
@@ -175,8 +179,12 @@ test('sandbox and formal verifier ports reject unbounded execution', async (t) =
     },
   });
   assert.equal(verifier.verify({
-    inputRecords: [{ absolutePath: inputPath, path: 'Proof.lean', hash: 'sha256:test' }],
+    inputRecords: [{ absolutePath: inputPath, path: 'Proof.lean', hash: hashBytes('theorem ok : True := by trivial\n') }],
   }).status, 'formal_verifier_passed');
+  await fsp.writeFile(inputPath, 'theorem impossible : False := by sorry\n');
+  assert.equal(verifier.verify({
+    inputRecords: [{ absolutePath: inputPath, path: 'Proof.lean', hash: hashBytes('theorem impossible : False := by sorry\n') }],
+  }).status, 'formal_verifier_blocked');
 });
 
 test('research bounded contexts apply typed worker requirements to formal claims', () => {
@@ -261,10 +269,8 @@ test('production modules do not bypass StorePort or restore autopilot acceptance
   assert.equal(batchApplication.includes('createDefaultPaperStore('), false);
   assert.equal(batchApplication.includes('function stateWithAdapterResults'), false);
   assert.equal(batchApplication.includes('writeJsonFile('), false);
-  assert.equal(batchApplication.includes('bootstrapPaperExecutionContext'), true);
-  const localLoop = fs.readFileSync(path.join(workspaceRoot, 'paper-application', 'use-cases', 'local-diagnostic-review-loop.mjs'), 'utf8');
-  assert.equal(localLoop.includes('executeLocalDiagnosticRound'), true);
-  assert.equal(/run(?:LatexBuild|Package|ResearchVerify|RefereeReview|RefereeRevise)Adapter/.test(localLoop), false);
+  assert.equal(batchApplication.includes('bootstrapBatchInventoryContext'), true);
+  assert.equal(batchApplication.includes('bootstrapAutomationContext'), true);
   const domainSource = productionFiles.filter((file) => file.includes(`${path.sep}paper-domain${path.sep}`)).map((file) => fs.readFileSync(file, 'utf8')).join('\n');
   assert.equal(domainSource.includes('paper-core/'), false);
   const adapterSource = productionFiles.filter((file) => file.includes(`${path.sep}paper-adapters${path.sep}`)).map((file) => fs.readFileSync(file, 'utf8')).join('\n');
@@ -272,6 +278,20 @@ test('production modules do not bypass StorePort or restore autopilot acceptance
   assert.equal(/from ['"][^'"]*paper-core\/src\//.test(adapterSource), false);
   const applicationSource = productionFiles.filter((file) => file.includes(`${path.sep}paper-application${path.sep}`)).map((file) => fs.readFileSync(file, 'utf8')).join('\n');
   assert.equal(/from ['"][^'"]*paper-core\/src\//.test(applicationSource), false);
+  assert.doesNotMatch(applicationSource, /from ['"][^'"]*store-port\.mjs['"]/);
+  assert.doesNotMatch(applicationSource, /\b(?:sqlEscape|sqlText|sqlJson)\b/);
+  assert.doesNotMatch(applicationSource, /\b(?:SELECT|INSERT\s+INTO|UPDATE\s+[a-z_]+\s+SET|DELETE\s+FROM|PRAGMA)\b/i);
+  assert.doesNotMatch(applicationSource, /\.query\s*\(/);
+  assert.doesNotMatch(applicationSource, /services(?:\?\.|\.)paperStageAdapters\b/);
+  const injectedApplicationServices = [...new Set(
+    [...applicationSource.matchAll(/\bservices(?:\?\.|\.)([A-Za-z][A-Za-z0-9_]*)/g)].map((match) => match[1]),
+  )].sort();
+  const undeclaredApplicationServices = injectedApplicationServices
+    .filter((name) => !APPLICATION_SERVICE_PORT_CATALOG[name]);
+  assert.deepEqual(undeclaredApplicationServices, []);
+  assert.equal(APPLICATION_SERVICE_PORT_CATALOG.refereeIssueQuery, 'RefereeIssueQueryPort');
+  assert.equal(APPLICATION_SERVICE_PORT_CATALOG.unitOfWork, 'UnitOfWorkPort');
+  assert.equal(APPLICATION_SERVICE_PORT_CATALOG.experimentRegistryAuthorityVerifier, 'ExperimentRegistryAuthorityVerifierPort');
   const applicationFiles = productionFiles.filter((file) => file.includes(`${path.sep}paper-application${path.sep}`));
   const directApplicationAdapterImports = applicationFiles.filter((file) => /from ['"][^'"]*paper-adapters\//.test(fs.readFileSync(file, 'utf8')));
   assert.deepEqual(directApplicationAdapterImports, []);
@@ -307,9 +327,6 @@ test('production modules do not bypass StorePort or restore autopilot acceptance
     'migration/bin/refresh-production-capability-verification.mjs',
     'migration/bin/run-production-capability-replays.mjs',
     'paper-composition/bootstrap/receipt-ledger-composition.mjs',
-    'paper-core/bin/automation-reconcile.mjs',
-    'paper-core/bin/repair-receipt-ledger-integrity.mjs',
-    'paper-core/bin/runtime-hygiene.mjs',
   ]);
   const writeFacade = fs.readFileSync(path.join(workspaceRoot, 'paper-adapters', 'artifacts', 'write-artifact.mjs'), 'utf8');
   assert.equal(writeFacade.includes('createFilesystemArtifactRepository'), false);
@@ -333,8 +350,44 @@ test('production modules do not bypass StorePort or restore autopilot acceptance
     // ephemeral work root; host materialization still goes through CAS.
     if (file.endsWith('empirical-analysis/experiment-runner.mjs')) continue;
     const text = fs.readFileSync(file, 'utf8');
+    if (file.endsWith(`${path.sep}scoped-file-materialization-target-lock.mjs`)) {
+      const directWriteCalls = [...text.matchAll(/\b(writeFile|writeFileSync|appendFile|appendFileSync|rename|renameSync)\(/g)]
+        .map((match) => match[1]);
+      assert.deepEqual(directWriteCalls, ['renameSync'], file);
+      assert.match(
+        text,
+        /fs\.renameSync\(\s*descriptorEntryPath\(openedParent\.descriptor, pendingName\),\s*descriptorEntryPath\(openedParent\.descriptor, lock\.name\),?\s*\)/s,
+        file,
+      );
+      continue;
+    }
     assert.equal(/\b(writeFile|writeFileSync|appendFile|appendFileSync|rename|renameSync)\(/.test(text), false, file);
   }
+});
+
+test('domain consumes values and never observes filesystem or wall clock directly', () => {
+  const domainFiles = fs.readdirSync(path.join(workspaceRoot, 'paper-domain'), { recursive: true })
+    .filter((entry) => typeof entry === 'string' && entry.endsWith('.mjs'))
+    .map((entry) => path.join(workspaceRoot, 'paper-domain', entry));
+  const violations = [];
+  for (const file of domainFiles) {
+    const source = fs.readFileSync(file, 'utf8');
+    const relative = path.relative(workspaceRoot, file);
+    if (/from\s+['"]node:(?:fs|path)(?:\/[^'"]*)?['"]|import\s*\(\s*['"]node:(?:fs|path)/.test(source)) {
+      violations.push(`${relative}:node-filesystem-import`);
+    }
+    if (/workflow-kernel\/runtime\/(?:file-utils|scoped-file[^'"]*)\.mjs/.test(source)
+      || /\b(?:readFile|readFileSync|readdir|readdirSync|stat|statSync|existsSync)\s*\(/.test(source)) {
+      violations.push(`${relative}:filesystem-observation`);
+    }
+    if (/\bDate\.now\s*\(|\bnew\s+Date\s*\(\s*\)/.test(source)) {
+      violations.push(`${relative}:implicit-wall-clock`);
+    }
+    if (/workflow-kernel\/runtime\/time-utils\.mjs/.test(source)) {
+      violations.push(`${relative}:wall-clock-facade-import`);
+    }
+  }
+  assert.deepEqual(violations, []);
 });
 
 test('high-risk adapters remain split into bounded modules', () => {
@@ -343,8 +396,6 @@ test('high-risk adapters remain split into bounded modules', () => {
     'paper-adapters/empirical-analysis/benchmark-contracts.mjs',
     'paper-adapters/empirical-analysis/execution-contracts.mjs',
     'paper-adapters/journal-manage/index.mjs',
-    'paper-adapters/journal-manage/selection.mjs',
-    'paper-adapters/journal-manage/contracts.mjs',
     'paper-adapters/referee-revise/index.mjs',
     'paper-adapters/referee-revise/planning-service.mjs',
     'paper-adapters/referee-revise/post-repair.mjs',
@@ -352,8 +403,37 @@ test('high-risk adapters remain split into bounded modules', () => {
     'paper-adapters/proposal/index.mjs',
     'paper-adapters/proposal/proposal-generation.mjs',
     'paper-adapters/proposal/proposal-materialization.mjs',
+    'paper-adapters/automation/workspace-attempt-repository.mjs',
+    'paper-adapters/automation/workspace-attempt-root-snapshot.mjs',
+    'paper-adapters/automation/workspace-attempt-manifest.mjs',
+    'paper-adapters/automation/workspace-attempt-descriptor.mjs',
+    'paper-adapters/automation/workspace-attempt-commit-journal-repository.mjs',
+    'paper-adapters/automation/workspace-snapshot-exporter.mjs',
+    'paper-adapters/automation/workspace-snapshot-staging-repository.mjs',
+    'paper-adapters/automation/workspace-snapshot-publication-repository.mjs',
+    'paper-adapters/automation/runtime-retention.mjs',
+    'paper-adapters/automation/runtime-retention-scope-repository.mjs',
+    'paper-adapters/automation/runtime-retention-evidence-policy.mjs',
+    'paper-adapters/automation/runtime-retention-intent-repository.mjs',
+    'paper-adapters/automation/autonomous-research-supervisor-state-repository.mjs',
+    'paper-adapters/automation/autonomous-research-supervisor-external-action-repository-support.mjs',
+    'paper-adapters/automation/autonomous-research-supervisor-provider-canary-state-operations.mjs',
+    'paper-adapters/runtime/scoped-file-materialization-repository.mjs',
+    'paper-adapters/runtime/scoped-file-materialization-operation-journal-repository.mjs',
+    'paper-adapters/runtime/scoped-file-materialization-recovery-entry-repository.mjs',
+    'paper-adapters/runtime/scoped-file-materialization-prepared-recovery-repository.mjs',
+    'paper-adapters/runtime/runtime-permission-repository.mjs',
+    'paper-adapters/persistence/sqlite-campaign-store.mjs',
+    'paper-adapters/persistence/sqlite-campaign-row-mappers.mjs',
+    'paper-adapters/persistence/campaign-definition-codec.mjs',
+    'paper-application/reporting/campaign-result-summary.mjs',
     'paper-application/reporting/batch-result-summary.mjs',
     'paper-application/reporting/workflow-result-summary.mjs',
+    'paper-application/automation/autonomous-research-supervisor-provider-canary-dispatch.mjs',
+    'paper-composition/automation/autonomous-research-supervisor-external-action-composition.mjs',
+    'paper-domain/automation/autonomous-research-supervisor-external-action-journal.mjs',
+    'paper-domain/automation/autonomous-research-campaign-execution-admission.mjs',
+    'paper-domain/automation/campaign-research-contract.mjs',
   ];
   const rows = boundedModules.map((relative) => ({
     relative,
@@ -368,11 +448,21 @@ test('high-risk adapters remain split into bounded modules', () => {
   ]) {
     assert.equal(rows.find((row) => row.relative === relative).lines <= 400, true, relative);
   }
+  assert.equal(
+    rows.find((row) => row.relative === 'paper-adapters/automation/workspace-attempt-repository.mjs').lines <= 450,
+    true,
+    'workspace attempt repository facade',
+  );
+  assert.equal(
+    rows.find((row) => row.relative === 'paper-adapters/automation/runtime-retention.mjs').lines <= 250,
+    true,
+    'runtime retention facade',
+  );
 });
 
 test('legacy cleanup is retired from the production adapter and mode surfaces', () => {
   assert.equal(fs.existsSync(path.join(workspaceRoot, 'paper-adapters', 'legacy-cleanup')), false);
-  const modeRegistry = fs.readFileSync(path.join(workspaceRoot, 'paper-core', 'src', 'mode-registry.mjs'), 'utf8');
+  const modeRegistry = fs.readFileSync(path.join(workspaceRoot, 'paper-domain', 'workflow', 'mode-registry.mjs'), 'utf8');
   const batchApplication = fs.readFileSync(path.join(workspaceRoot, 'paper-composition', 'batch', 'paper-batch-application.mjs'), 'utf8');
   assert.equal(modeRegistry.includes('legacy-cleanup'), false);
   assert.equal(batchApplication.includes('runLegacyCleanupAdapter'), false);
@@ -398,9 +488,57 @@ test('contract implementations have one domain owner and the receipt ledger is i
   assert.equal(/(?:UPDATE|DELETE\s+FROM)\s+receipt_ledger\b/i.test(source), false);
 });
 
-test('TaskFlow remains an optional outer coordinator and workflow state remains native', () => {
-  const controller = fs.readFileSync(path.join(workspaceRoot, 'paper-application', 'orchestration', 'reviewed-submit-taskflow.mjs'), 'utf8');
-  const adapter = fs.readFileSync(path.join(workspaceRoot, 'paper-adapters', 'orchestration', 'openclaw-taskflow-adapter.mjs'), 'utf8');
+test('zero-consumer infrastructure facades and recovery APIs stay retired', () => {
+  const retiredFacades = Object.freeze({
+    'paper-core/src/execution-context.mjs': 'paper-application/execution-context.mjs',
+    'paper-core/src/mode-registry.mjs': 'paper-domain/workflow/mode-registry.mjs',
+    'paper-core/src/cold-volume-contract.mjs': 'paper-adapters/archives/cold-volume-contract.mjs',
+    'paper-core/src/cold-volume-cas-repository.mjs': 'paper-adapters/archives/cold-volume-cas-repository.mjs',
+    'paper-core/src/offhost-worm-repository.mjs': 'paper-adapters/archives/offhost-worm-repository.mjs',
+    'paper-core/src/external-intake-verifier.mjs': 'paper-adapters/governance/external-intake-verifier.mjs',
+    'paper-core/src/sqlite-logical-integrity.mjs': 'paper-adapters/persistence/sqlite-logical-integrity.mjs',
+    'paper-adapters/journal-manage/contracts.mjs': 'paper-domain/journal/contracts.mjs',
+    'paper-adapters/journal-manage/selection.mjs': 'paper-domain/journal/selection.mjs',
+    'paper-adapters/journal-manage/review-authority.mjs': 'paper-domain/journal/review-authority.mjs',
+    'paper-adapters/journal-manage/journal-registry.mjs': 'paper-domain/journal/journal-registry.mjs',
+  });
+  for (const [relative, owner] of Object.entries(retiredFacades)) {
+    assert.equal(fs.existsSync(path.join(workspaceRoot, relative)), false, relative);
+    assert.equal(fs.existsSync(path.join(workspaceRoot, owner)), true, owner);
+  }
+  const productionBins = fs.readdirSync(path.join(workspaceRoot, 'paper-core', 'bin'))
+    .filter((name) => name.endsWith('.mjs'))
+    .map((name) => fs.readFileSync(path.join(workspaceRoot, 'paper-core', 'bin', name), 'utf8'))
+    .join('\n');
+  assert.doesNotMatch(productionBins, /\.\.\/src\/(?:execution-context|mode-registry|cold-volume-(?:contract|cas-repository)|offhost-worm-repository|external-intake-verifier|sqlite-logical-integrity)\.mjs/);
+  const recoveryRecord = fs.readFileSync(
+    path.join(workspaceRoot, 'paper-adapters/runtime/scoped-file-materialization-recovery-record.mjs'),
+    'utf8',
+  );
+  assert.doesNotMatch(
+    recoveryRecord,
+    /scopedMaterializationRecoveryIntentName|buildScopedMaterializationRecoveryIntentRecord|verifyScopedMaterializationRecoveryIntentRecord/,
+  );
+});
+
+test('active governance contracts never depend on migration support', () => {
+  const governanceFiles = [
+    ...fs.readdirSync(path.join(workspaceRoot, 'paper-domain', 'governance'))
+      .filter((name) => name.endsWith('.mjs'))
+      .map((name) => path.join(workspaceRoot, 'paper-domain', 'governance', name)),
+    ...fs.readdirSync(path.join(workspaceRoot, 'paper-adapters', 'governance'))
+      .filter((name) => name.endsWith('.mjs'))
+      .map((name) => path.join(workspaceRoot, 'paper-adapters', 'governance', name)),
+  ];
+  for (const file of governanceFiles) {
+    const source = fs.readFileSync(file, 'utf8');
+    assert.doesNotMatch(source, /from\s+['"][^'"]*migration\//, path.relative(workspaceRoot, file));
+  }
+});
+
+test('TaskFlow remains explicitly experimental and workflow state remains native', () => {
+  const controller = fs.readFileSync(path.join(workspaceRoot, 'paper-application', 'experimental', 'taskflow', 'reviewed-submit-taskflow.mjs'), 'utf8');
+  const adapter = fs.readFileSync(path.join(workspaceRoot, 'paper-adapters', 'experimental', 'taskflow', 'openclaw-taskflow-adapter.mjs'), 'utf8');
   const domainSource = fs.readdirSync(path.join(workspaceRoot, 'paper-domain'), { recursive: true })
     .filter((entry) => typeof entry === 'string' && entry.endsWith('.mjs'))
     .map((entry) => fs.readFileSync(path.join(workspaceRoot, 'paper-domain', entry), 'utf8'))
@@ -414,16 +552,28 @@ test('TaskFlow remains an optional outer coordinator and workflow state remains 
   assert.equal(adapter.includes('api?.runtime?.tasks?.flow'), true);
   assert.equal(adapter.includes('grantsSubmissionAuthority: false'), true);
   const batch = fs.readFileSync(path.join(workspaceRoot, 'paper-composition', 'batch', 'paper-batch-application.mjs'), 'utf8');
-  assert.equal(batch.includes('workflowStateStore.put'), true);
-  assert.equal(batch.includes('const workflowStateProjection = execute'), true);
+  assert.equal(batch.includes('persistLegacyWorkflowStateProjection'), false);
+  assert.equal(batch.includes('runWorkflowStages'), false);
+  assert.equal(batch.includes('createPaperStageHandlers'), false);
+  assert.equal(batch.includes("../compat/"), false);
 });
 
 test('automation plane stays independent from submission governance', () => {
   const automationFiles = [
+    'paper-domain/automation/autonomous-research-campaign-execution-admission.mjs',
     'paper-domain/automation/campaign-plan.mjs',
+    'paper-domain/automation/campaign-mode-graph.mjs',
+    'paper-domain/automation/campaign-benchmark-selector.mjs',
     'paper-domain/automation/referee-convergence.mjs',
     'paper-application/automation/campaign-engine.mjs',
-    'paper-adapters/automation/campaign-node-executor.mjs',
+    'paper-application/automation/campaign-node-executor.mjs',
+    'paper-application/automation/campaign-node-execution-context.mjs',
+    'paper-application/automation/campaign-node-kind-policy.mjs',
+    'paper-application/automation/campaign-agent-node-orchestrator.mjs',
+    'paper-application/automation/campaign-empirical-node-orchestrator.mjs',
+    'paper-application/automation/campaign-quality-release-orchestrator.mjs',
+    'paper-adapters/automation/campaign-node-primitives-adapter.mjs',
+    'paper-adapters/automation/campaign-research-verifier.mjs',
     'paper-adapters/automation/codex-agent-executor.mjs',
     'paper-adapters/automation/multi-language-empirical-executor.mjs',
     'paper-adapters/automation/ollama-structured-agent-executor.mjs',
@@ -431,11 +581,123 @@ test('automation plane stays independent from submission governance', () => {
   ];
   for (const relative of automationFiles) {
     const text = fs.readFileSync(path.join(workspaceRoot, relative), 'utf8');
-    assert.doesNotMatch(text, /authority|owner.acceptance|submission.release|live.authorization/i, relative);
+    assert.doesNotMatch(text, /submission(?:[-_. ]?)(?:authority|release)|owner.acceptance|live.authorization/i, relative);
+    assert.doesNotMatch(text, /paper-(?:domain|adapters)\/submission/, relative);
     assert.ok(text.split(/\n/).length <= 500, `${relative} exceeds bounded automation module size`);
   }
   const migration = fs.readFileSync(path.join(workspaceRoot, 'store/migrations/004_automation_campaigns.sql'), 'utf8');
   assert.match(migration, /paper_campaigns/);
   assert.match(migration, /campaign_nodes/);
   assert.match(migration, /campaign_events/);
+});
+
+test('campaign node orchestration policy stays in application and adapters remain narrow primitives', () => {
+  const applicationPaths = [
+    'paper-application/automation/campaign-node-executor.mjs',
+    'paper-application/automation/campaign-node-execution-context.mjs',
+    'paper-application/automation/campaign-agent-node-orchestrator.mjs',
+    'paper-application/automation/campaign-empirical-node-orchestrator.mjs',
+    'paper-application/automation/campaign-quality-release-orchestrator.mjs',
+  ];
+  const primitivePaths = [
+    'paper-adapters/automation/campaign-agent-primitives-adapter.mjs',
+    'paper-adapters/automation/campaign-empirical-primitives-adapter.mjs',
+    'paper-adapters/automation/campaign-quality-primitives-adapter.mjs',
+    'paper-adapters/automation/campaign-release-primitives-adapter.mjs',
+    'paper-adapters/automation/campaign-workspace-primitives-adapter.mjs',
+  ];
+  const application = applicationPaths.map((relative) => fs.readFileSync(path.join(workspaceRoot, relative), 'utf8')).join('\n');
+  const primitives = primitivePaths.map((relative) => fs.readFileSync(path.join(workspaceRoot, relative), 'utf8')).join('\n');
+  const context = fs.readFileSync(path.join(workspaceRoot, 'paper-application/automation/campaign-node-execution-context.mjs'), 'utf8');
+  const empirical = fs.readFileSync(path.join(workspaceRoot, 'paper-application/automation/campaign-empirical-node-orchestrator.mjs'), 'utf8');
+  const qualityRelease = fs.readFileSync(path.join(workspaceRoot, 'paper-application/automation/campaign-quality-release-orchestrator.mjs'), 'utf8');
+  const composition = fs.readFileSync(path.join(workspaceRoot, 'paper-composition/automation/campaign-node-execution-composition.mjs'), 'utf8');
+  const nodeKindPolicy = fs.readFileSync(path.join(workspaceRoot, 'paper-application/automation/campaign-node-kind-policy.mjs'), 'utf8');
+  const agentPolicy = fs.readFileSync(path.join(workspaceRoot, 'paper-application/automation/campaign-agent-policy.mjs'), 'utf8');
+  const agentOrchestrator = fs.readFileSync(path.join(workspaceRoot, 'paper-application/automation/campaign-agent-node-orchestrator.mjs'), 'utf8');
+  const formalEvidence = fs.readFileSync(path.join(workspaceRoot, 'paper-adapters/automation/campaign-formal-verification-evidence.mjs'), 'utf8');
+  assert.doesNotMatch(application, /paper-adapters\//);
+  assert.match(context, /allNodes/);
+  assert.match(empirical, /executeWithRepair/);
+  assert.match(qualityRelease, /requiredRevalidationForChanges|evaluateManuscriptPromotion/);
+  assert.doesNotMatch(primitives, /\ballNodes\b|requiredRevalidationForChanges|evaluateManuscriptPromotion|executeWithRepair|retryable\s*=\s*true/);
+  assert.match(composition, /createCampaignNodePrimitivesAdapter/);
+  assert.doesNotMatch(composition, /campaign-node-executor\.mjs.*paper-adapters/);
+  assert.match(nodeKindPolicy, /function isCampaignRefereeNode|function campaignNodeOperation/);
+  assert.doesNotMatch(`${context}\n${agentPolicy}`, /function isCampaignRefereeNode|function isCampaignAgentNode/);
+  assert.match(`${agentOrchestrator}\n${formalEvidence}`, /agent-execution-receipt-contract\.mjs/);
+  assert.doesNotMatch(`${agentOrchestrator}\n${formalEvidence}`, /function agentReceiptPayload/);
+});
+
+test('architecture production inventory follows declared executable reachability', () => {
+  const automation = architectureReachability([
+    'paper-composition/bootstrap/automation-context-bootstrap.mjs',
+    'paper-core/bin/paper-campaign.mjs',
+  ]);
+  const compatibilityCapability = architectureReachability(ARCHITECTURE_ENTRYPOINT_MANIFEST.compatibility);
+  const operatorCli = architectureReachability(['paper-core/bin/paper-production-core.mjs']);
+  const batchProduction = architectureReachability(['paper-composition/batch/paper-batch-application.mjs']);
+  const operatorCliSource = fs.readFileSync(path.join(workspaceRoot, 'paper-core/bin/paper-production-core.mjs'), 'utf8');
+  assert.ok(automation.length > 20);
+  assert.ok(compatibilityCapability.length > 100);
+  assert.deepEqual(automation.filter((relative) => relative.startsWith('paper-adapters/submission/')), []);
+  assert.equal(compatibilityCapability.includes('paper-composition/compat/legacy-stage-port-composition.mjs'), true);
+  assert.equal(compatibilityCapability.includes('paper-composition/compat/legacy-stage-adapter-registry.mjs'), true);
+  assert.equal(compatibilityCapability.includes('paper-adapters/experimental/taskflow/openclaw-taskflow-adapter.mjs'), false);
+  assert.equal(operatorCli.includes('paper-composition/compat/legacy-context-bootstrap.mjs'), false);
+  assert.equal(operatorCli.includes('paper-composition/compat/legacy-stage-adapter-registry.mjs'), false);
+  assert.doesNotMatch(operatorCliSource, /paper-composition.*compat|compatibilityModule|await\s+import\s*\(/);
+  assert.equal(operatorCli.includes('paper-composition/bootstrap/batch-inventory-context-bootstrap.mjs'), true);
+  assert.equal(batchProduction.includes('paper-application/automation/batch-campaign-command.mjs'), true);
+  assert.equal(batchProduction.includes('paper-composition/bootstrap/automation-context-bootstrap.mjs'), true);
+  assert.equal(batchProduction.includes('paper-adapters/runtime/core-integrity.mjs'), false);
+  assert.equal(batchProduction.includes('paper-application/reporting/batch-result-summary.mjs'), false);
+  assert.equal(batchProduction.includes('paper-application/reporting/workflow-result-summary.mjs'), false);
+  assert.equal(batchProduction.includes('paper-composition/compat/legacy-workflow-state-projection.mjs'), false);
+  assert.equal(batchProduction.includes('paper-composition/compat/legacy-stage-port-composition.mjs'), false);
+});
+
+test('vendored reference and migration-support paths cannot enter the active production graph', () => {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(workspaceRoot, 'package.json'), 'utf8'));
+  const reference = packageJson.heptaPaper?.referencePackages?.find((item) => item.path === 'core');
+  assert.equal(reference?.classification, 'vendored_reference');
+  assert.equal(reference?.productionImportPolicy, 'forbidden');
+  assert.equal(reference?.baseline, 'core/CORE_BASELINE.json');
+
+  const production = architectureReachability(ARCHITECTURE_ENTRYPOINT_MANIFEST.production);
+  const compatibility = architectureReachability(ARCHITECTURE_ENTRYPOINT_MANIFEST.compatibility);
+  assert.deepEqual(production.filter((relative) => relative === 'core/src' || relative.startsWith('core/src/')), []);
+  assert.equal(production.includes('paper-adapters/runtime/core-integrity.mjs'), false);
+  const productionSource = production
+    .filter((relative) => relative.endsWith('.mjs'))
+    .map((relative) => fs.readFileSync(path.join(workspaceRoot, relative), 'utf8'))
+    .join('\n');
+  assert.doesNotMatch(productionSource, /(?:from\s+|import\s*\()['"][^'"]*(?:core\/src|design-production-core)/);
+
+  const classificationPath = path.join(workspaceRoot, packageJson.heptaPaper.compatibilityManifest);
+  const classification = JSON.parse(fs.readFileSync(classificationPath, 'utf8'));
+  assert.equal(classification.kind, 'HeptaCompatibilitySupportClassification');
+  const rows = [
+    ...classification.hashBoundCompatibility,
+    ...classification.deprecatedCompatibility,
+    ...classification.migrationSupport,
+    ...classification.historicalTranslationSupport,
+  ];
+  assert.equal(new Set(rows.map((row) => row.path)).size, rows.length);
+  for (const row of rows) assert.equal(fs.existsSync(path.join(workspaceRoot, row.path)), true, row.path);
+  for (const row of rows.filter((item) => item.productionReachability === 'forbidden')) {
+    assert.equal(production.includes(row.path), false, row.path);
+  }
+  const bridge = classification.hashBoundCompatibility.find((row) => row.path.endsWith('/decision-routing.mjs'));
+  assert.equal(bridge?.productionReachability, 'intentional_referee_revise_bridge');
+  assert.equal(production.includes(bridge.path), false);
+  assert.equal(compatibility.includes(bridge.path), true);
+  const salvage = JSON.parse(fs.readFileSync(path.join(workspaceRoot, bridge.bindingManifest), 'utf8'));
+  for (const row of classification.hashBoundCompatibility) {
+    assert.ok(salvage.files.some((item) => item.targets?.some((target) => target.path === row.path && /^sha256:[a-f0-9]{64}$/.test(target.hash))), row.path);
+  }
+  for (const row of classification.retiredCode) {
+    assert.equal(fs.existsSync(path.join(workspaceRoot, row.path)), false, row.path);
+    assert.equal(fs.existsSync(path.join(workspaceRoot, row.replacement)), true, row.replacement);
+  }
 });

@@ -1,4 +1,7 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { manuscriptClaimHash } from './formal-claim-contract.mjs';
+
+const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 
 const TRANSITIONS = Object.freeze({
   candidate: new Set(['supported', 'rejected', 'superseded']),
@@ -32,19 +35,41 @@ function cycleFor(records) {
 }
 
 export function buildClaimRegistry({ paperTask, claims = [] } = {}) {
-  const records = claims.map((claim, index) => ({
-    claimId: String(claim.id || `claim-${index + 1}`),
-    text: String(claim.text || claim.summary || ''),
-    sourceLocator: claim.sourceLocator || claim.source_locator || null,
+  const records = claims.map((claim, index) => {
+    const claimId = String(claim.id || claim.claimId || `claim-${index + 1}`);
+    const text = String(claim.text || claim.summary || '');
+    const sourceLocator = claim.sourceLocator || claim.source_locator || null;
+    const claimKind = claim.claimKind || claim.kind || 'research_claim';
+    const empiricalCanonical = claimKind === 'empirical_claim'
+      && SHA256.test(String(claim.empiricalClaimUniverseEntryHash || ''))
+      && SHA256.test(String(claim.empiricalClaimUniverseHash || ''))
+      && SHA256.test(String(claim.manuscriptCorpusHash || ''))
+      && SHA256.test(String(claim.manuscriptClaimHash || ''));
+    return {
+    claimId,
+    text,
+    sourceLocator,
+    manuscriptClaimHash: empiricalCanonical
+      ? claim.manuscriptClaimHash : manuscriptClaimHash({ claimId, text, sourceLocator }),
     status: claim.status || 'candidate',
     version: Math.max(1, Number(claim.version || 1)),
     dependencyIds: Array.isArray(claim.dependencyIds) ? [...claim.dependencyIds].map(String).sort() : [],
-    claimKind: claim.claimKind || claim.kind || 'research_claim',
+    claimKind,
+    manuscriptPath: claim.manuscriptPath || null,
+    manuscriptByteStart: Number.isSafeInteger(claim.manuscriptByteStart) ? claim.manuscriptByteStart : null,
+    manuscriptByteEnd: Number.isSafeInteger(claim.manuscriptByteEnd) ? claim.manuscriptByteEnd : null,
+    manuscriptContentHash: claim.manuscriptContentHash || null,
+    manuscriptFileHash: claim.manuscriptFileHash || null,
+    empiricalClaimUniverseEntryHash: empiricalCanonical ? claim.empiricalClaimUniverseEntryHash : null,
+    empiricalClaimUniverseHash: empiricalCanonical ? claim.empiricalClaimUniverseHash : null,
+    manuscriptCorpusHash: empiricalCanonical ? claim.manuscriptCorpusHash : null,
+    proposalClaimRecordHash: empiricalCanonical ? (claim.proposalClaimRecordHash || null) : null,
     riskClass: claim.riskClass || claim.risk_class || '',
     proofObligations: Array.isArray(claim.proofObligations || claim.proof_obligations) ? [...(claim.proofObligations || claim.proof_obligations)].map(String).sort() : [],
     verificationPlan: claim.verificationPlan || claim.verification_plan || null,
     negativeResultPolicy: claim.negativeResultPolicy || claim.negative_result_policy || 'preserve_and_do_not_promote_without_explicit_acceptance',
-  }));
+  };
+  });
   const ids = records.map((claim) => claim.claimId);
   const idSet = new Set(ids);
   const duplicateIds = ids.filter((id, index) => ids.indexOf(id) !== index);
@@ -57,6 +82,23 @@ export function buildClaimRegistry({ paperTask, claims = [] } = {}) {
     ...[...new Set(duplicateIds)].map((id) => `duplicate_claim_id:${id}`),
     ...missingDependencies.map(({ claimId, dependencyId }) => `missing_claim_dependency:${claimId}:${dependencyId}`),
     ...(cycle ? [`claim_dependency_cycle:${cycle.join('>')}`] : []),
+    ...records.filter((claim) => claim.claimKind === 'formal_claim' && (
+      !claim.manuscriptPath
+      || claim.manuscriptByteStart === null
+      || claim.manuscriptByteEnd === null
+      || !claim.manuscriptContentHash
+      || !claim.manuscriptFileHash
+    )).map((claim) => `formal_claim_canonical_manuscript_binding_missing:${claim.claimId}`),
+    ...records.filter((claim) => claim.claimKind === 'empirical_claim' && (
+      !claim.manuscriptPath
+      || claim.manuscriptByteStart === null
+      || claim.manuscriptByteEnd === null
+      || !claim.manuscriptContentHash
+      || !claim.manuscriptFileHash
+      || !claim.empiricalClaimUniverseEntryHash
+      || !claim.empiricalClaimUniverseHash
+      || !claim.manuscriptCorpusHash
+    )).map((claim) => `empirical_claim_canonical_manuscript_binding_missing:${claim.claimId}`),
   ];
   const record = {
     version: 2,

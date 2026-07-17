@@ -2,10 +2,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { currentCodeProvenance, reportPointerIsCurrent } from '../src/code-provenance.mjs';
-import { defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
+import { assertWorkspaceLayoutPhysicallyDecoupled, defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 const runtimeRoot = defaultPaperRuntimeRoot();
+assertWorkspaceLayoutPhysicallyDecoupled({ assetRoot: defaultPaperAssetRoot(), runtimeRoot });
 const reportRoot = path.join(runtimeRoot, 'reports');
 const staleRoot = path.join(reportRoot, 'stale');
 fs.mkdirSync(staleRoot, { recursive: true });

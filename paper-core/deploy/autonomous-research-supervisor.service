@@ -1,0 +1,39 @@
+[Unit]
+Description=Hepta Paper autonomous research supervisor
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=hepta-paper
+Group=hepta-paper
+WorkingDirectory=/opt/hepta-paper
+# This file contains paths and bounded policy values only. Provider credentials
+# remain in the two private credential roots referenced by that file.
+EnvironmentFile=/etc/hepta-paper/autonomous-research-supervisor.env
+ExecStart=/usr/bin/node paper-core/bin/hepta-paper.mjs operator autonomous-supervisor -- --require-fully-autonomous --machine-intake-config ${HEPTA_AUTONOMOUS_RESEARCH_INTAKE_CONFIG} --topic-producer-profile ${HEPTA_AUTONOMOUS_RESEARCH_TOPIC_PRODUCER_PROFILE} --root ${HEPTA_PAPER_ASSET_ROOT} --runtime-root ${HEPTA_PAPER_RUNTIME_ROOT} --poll-ms ${HEPTA_SUPERVISOR_POLL_MS} --resident-instance-lease-ms ${HEPTA_SUPERVISOR_INSTANCE_LEASE_MS} --resident-instance-heartbeat-ms ${HEPTA_SUPERVISOR_INSTANCE_HEARTBEAT_MS} --maximum-dispatches ${HEPTA_SUPERVISOR_MAXIMUM_DISPATCHES} --maximum-lifecycle-cost-usd ${HEPTA_SUPERVISOR_MAXIMUM_LIFECYCLE_COST_USD} --maximum-lifetime-ms ${HEPTA_SUPERVISOR_MAXIMUM_LIFETIME_MS} --qualification-action-safety-margin-ms ${HEPTA_SUPERVISOR_QUALIFICATION_ACTION_SAFETY_MARGIN_MS}
+Restart=always
+RestartSec=5s
+# A healthy process is rolled periodically as the systemd fallback for a hung
+# event loop. TimeoutStopSec then bounds a non-cooperative process before the
+# always-restart policy creates the replacement generation.
+RuntimeMaxSec=8h
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=15min
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+# systemd path sandbox directives support specifiers, not shell-style
+# environment expansion. Keep these concrete paths aligned with the env file.
+ReadOnlyPaths=/srv/hepta-paper/assets /srv/hepta-paper/datasets /etc/hepta-paper/authority-rotation
+ReadWritePaths=/var/lib/hepta-paper/runtime
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

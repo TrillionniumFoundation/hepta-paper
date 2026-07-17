@@ -1,26 +1,22 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  fileRecord,
-  pathWithin,
-  readJsonIfExists,
-  sha256File,
-} from '../../workflow-kernel/runtime/file-utils.mjs';
+import { fileRecord, pathWithin, readJsonIfExists, sha256File } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { inspectScopedPathSync, inspectScopedWriteTargetSync, readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
 import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
-import { createLeanFormalVerifier } from './formal-verifier.mjs';
-import { createLakeFormalVerifier } from './lake-formal-verifier.mjs';
-import { SYSTEM_ALLOWED_FORMAL_AXIOMS, formalAxiomPolicyBlockers } from '../../paper-domain/research/formal-verifier-policy.mjs';
-import { createOsSandboxedWorkerRunner, directoryMerkleHash } from '../runtime/os-sandboxed-worker-runner.mjs';
+import { computeReceiptHash, sealReceiptHash } from '../../paper-domain/evidence/receipt-hash-policy.mjs';
+import { buildFormalClaimContract } from '../../paper-domain/research/formal-claim-contract.mjs';
+import { normalizeFormalProofObligationMappings } from '../../paper-domain/research/formal-proof-obligation-mapping.mjs';
+import { verifyTheoremSpecification } from '../../paper-domain/research/theorem-specification.mjs';
+import { verifyProposalClaimToTheoremBinding } from '../../paper-domain/research/proposal-claim-to-theorem-binding.mjs';
+import { directoryMerkleHash } from '../runtime/os-sandboxed-worker-runner.mjs';
+import { canonicalClaimsFromWorkerPlan } from './canonical-claim-registry-reader.mjs';
+import { executeNativeResearchWorker, NATIVE_RESEARCH_WORKER_TYPES } from './native-research-worker-execution.mjs';
+import { NATIVE_RESEARCH_WORKER_JOB_LEASE_SECONDS, withJobAttemptLeaseHeartbeat } from './job-attempt-lease-heartbeat.mjs';
+import { formalAcademicPromotionBlockers } from './formal-academic-promotion-policy.mjs';
 
-export const NATIVE_RESEARCH_WORKER_TYPES = Object.freeze([
-  'artifact_integrity',
-  'csv_descriptive_statistics',
-  'json_assertions',
-  'formal_verifier_lean',
-  'formal_verifier_lake',
-]);
+export { NATIVE_RESEARCH_WORKER_TYPES };
+export { formalAcademicPromotionBlockers } from './formal-academic-promotion-policy.mjs';
 
 const WORKER_TYPE_SET = new Set(NATIVE_RESEARCH_WORKER_TYPES);
 
@@ -29,186 +25,7 @@ function safeWorkerId(value) {
   return /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(id) ? id : null;
 }
 
-function parseCsvLine(line) {
-  const values = [];
-  let value = '';
-  let quoted = false;
-  for (let index = 0; index < line.length; index += 1) {
-    const char = line[index];
-    if (char === '"' && quoted && line[index + 1] === '"') {
-      value += '"';
-      index += 1;
-    } else if (char === '"') {
-      quoted = !quoted;
-    } else if (char === ',' && !quoted) {
-      values.push(value.trim());
-      value = '';
-    } else {
-      value += char;
-    }
-  }
-  values.push(value.trim());
-  return values;
-}
-
-function finiteNumber(value) {
-  if (value === '' || value === null || value === undefined) return null;
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
-}
-
-function descriptiveStatistics(values) {
-  const count = values.length;
-  const sum = values.reduce((total, value) => total + value, 0);
-  const mean = count ? sum / count : null;
-  const variance = count > 1
-    ? values.reduce((total, value) => total + ((value - mean) ** 2), 0) / (count - 1)
-    : 0;
-  return {
-    count,
-    min: count ? Math.min(...values) : null,
-    max: count ? Math.max(...values) : null,
-    sum,
-    mean,
-    sampleVariance: variance,
-    sampleStdDev: Math.sqrt(variance),
-  };
-}
-
-function jsonPathValue(document, pointer) {
-  const parts = String(pointer || '')
-    .replace(/^\$\.?/, '')
-    .split('.')
-    .filter(Boolean);
-  let current = document;
-  for (const part of parts) {
-    if (current === null || current === undefined || typeof current !== 'object') return undefined;
-    current = current[part];
-  }
-  return current;
-}
-
-function assertionPassed(actual, assertion) {
-  switch (assertion.op) {
-    case 'exists': return actual !== undefined;
-    case 'equals': return JSON.stringify(actual) === JSON.stringify(assertion.value);
-    case 'gte': return Number.isFinite(Number(actual)) && Number(actual) >= Number(assertion.value);
-    case 'lte': return Number.isFinite(Number(actual)) && Number(actual) <= Number(assertion.value);
-    case 'truthy': return Boolean(actual);
-    default: return false;
-  }
-}
-
-async function executeWorker(worker, inputRecords, { sourceRoot } = {}) {
-  if (worker.type === 'artifact_integrity') {
-    return {
-      status: 'native_research_worker_passed',
-      artifactCount: inputRecords.length,
-      artifacts: inputRecords.map((record) => ({
-        role: record.role,
-        path: record.path,
-        hash: record.hash,
-        verified: record.hash === record.expectedHash,
-      })),
-    };
-  }
-  if (worker.type === 'csv_descriptive_statistics') {
-    if (inputRecords.length !== 1) {
-      return { status: 'native_research_worker_blocked', blockers: ['csv_worker_requires_exactly_one_input'] };
-    }
-    const text = await fs.readFile(inputRecords[0].absolutePath, 'utf8');
-    const lines = text.split(/\r?\n/).filter((line) => line.trim());
-    if (lines.length < 2) return { status: 'native_research_worker_blocked', blockers: ['csv_data_rows_missing'] };
-    const headers = parseCsvLine(lines[0]);
-    const rows = lines.slice(1).map((line) => parseCsvLine(line));
-    const requestedColumns = Array.isArray(worker.parameters?.numericColumns)
-      ? worker.parameters.numericColumns.map(String)
-      : headers;
-    const blockers = [];
-    const columns = {};
-    for (const name of requestedColumns) {
-      const columnIndex = headers.indexOf(name);
-      if (columnIndex < 0) {
-        blockers.push(`csv_numeric_column_missing:${name}`);
-        continue;
-      }
-      const values = rows.map((row) => finiteNumber(row[columnIndex])).filter((value) => value !== null);
-      if (values.length !== rows.length) blockers.push(`csv_numeric_column_contains_non_numeric_value:${name}`);
-      columns[name] = descriptiveStatistics(values);
-    }
-    return {
-      status: blockers.length ? 'native_research_worker_blocked' : 'native_research_worker_passed',
-      rowCount: rows.length,
-      columns,
-      blockers,
-    };
-  }
-  if (worker.type === 'json_assertions') {
-    if (inputRecords.length !== 1) {
-      return { status: 'native_research_worker_blocked', blockers: ['json_assertion_worker_requires_exactly_one_input'] };
-    }
-    const document = JSON.parse(await fs.readFile(inputRecords[0].absolutePath, 'utf8'));
-    const assertions = Array.isArray(worker.parameters?.assertions) ? worker.parameters.assertions : [];
-    if (!assertions.length) {
-      return { status: 'native_research_worker_blocked', blockers: ['json_assertions_missing'] };
-    }
-    const results = assertions.map((assertion) => {
-      const actual = jsonPathValue(document, assertion.path);
-      return {
-        path: String(assertion.path || ''),
-        op: String(assertion.op || ''),
-        expected: assertion.value ?? null,
-        actual: actual ?? null,
-        passed: assertionPassed(actual, assertion),
-      };
-    });
-    const blockers = results.filter((item) => !item.passed).map((item) => `json_assertion_failed:${item.path}`);
-    return {
-      status: blockers.length ? 'native_research_worker_blocked' : 'native_research_worker_passed',
-      assertionCount: results.length,
-      passedAssertionCount: results.filter((item) => item.passed).length,
-      assertions: results,
-      blockers,
-    };
-  }
-  if (worker.type === 'formal_verifier_lean') {
-    const verifier = createLeanFormalVerifier({
-      sourceRoot,
-      executable: String(worker.parameters?.executable || 'lean'),
-    });
-    return verifier.verify({ inputRecords, parameters: worker.parameters || {} });
-  }
-  if (worker.type === 'formal_verifier_lake') {
-    const relativeProjectRoot = String(worker.parameters?.projectRoot || '.');
-    const projectRoot = path.resolve(sourceRoot, relativeProjectRoot);
-    const projectIdentity = inspectScopedPathSync({ scopeRoot: sourceRoot, candidate: projectRoot, expect: 'directory', forbidHardlinks: false });
-    if (projectIdentity.status !== 'scoped_file_identity_verified') {
-      return { status: 'formal_verifier_blocked', blockers: ['formal_project_root_outside_source_workspace'] };
-    }
-    const executable = String(worker.parameters?.executable || 'lake');
-    const commandRunner = createOsSandboxedWorkerRunner({
-      allowedExecutables: [executable],
-      allowedRoots: [projectRoot],
-    });
-    const verifier = createLakeFormalVerifier({ projectRoot, commandRunner, executable });
-    const expectedInputs = inputRecords.map((record) => ({
-      path: path.relative(projectRoot, record.absolutePath),
-      hash: record.hash,
-    }));
-    if (expectedInputs.some((input) => input.path.startsWith('..'))) {
-      return { status: 'formal_verifier_blocked', blockers: ['formal_input_outside_project_root'] };
-    }
-    return verifier.verify({
-      expectedInputs,
-      timeoutMs: Math.min(Number(worker.parameters?.timeoutMs || 120000), 120000),
-      claimBindings: Array.isArray(worker.parameters?.claimBindings) ? worker.parameters.claimBindings : [],
-      allowedAxioms: SYSTEM_ALLOWED_FORMAL_AXIOMS,
-    });
-  }
-  return { status: 'native_research_worker_blocked', blockers: ['native_research_worker_type_not_allowed'] };
-}
-
-async function validateInputs({ root, sourceRoot, worker }) {
+async function validateInputs({ sourceRoot, worker }) {
   const blockers = [];
   const inputSpecs = Array.isArray(worker.inputs) ? worker.inputs : [];
   if (!inputSpecs.length) blockers.push('research_worker_inputs_missing');
@@ -256,34 +73,13 @@ function normalizedWorkerDefinition(worker) {
   };
 }
 
-export function formalAcademicPromotionBlockers(worker = {}, result = {}) {
-  if (worker.type !== 'formal_verifier_lake') return [];
-  const blockers = [];
-  const claimBindings = Array.isArray(worker.parameters?.claimBindings) ? worker.parameters.claimBindings : [];
-  blockers.push(...formalAxiomPolicyBlockers(worker.parameters?.allowedAxioms));
-  if (!claimBindings.length) blockers.push('formal_claim_bindings_required_for_academic_evidence');
-  if (result.status !== 'formal_claim_verified') blockers.push(`formal_claim_verification_required:${result.status || 'missing'}`);
-  const declaredClaimIds = new Set((worker.claimIds || []).map(String));
-  for (const binding of claimBindings) {
-    if (!binding?.claimId || !declaredClaimIds.has(String(binding.claimId))) {
-      blockers.push(`formal_claim_binding_worker_claim_mismatch:${binding?.claimId || 'missing'}`);
-    }
-  }
-  return [...new Set(blockers)];
-}
-
-function receiptHash(receipt) {
-  const { nativeResearchWorkerExecutionReceiptHash: _hash, ...payload } = receipt;
-  return hashPaperRecord('NativeResearchWorkerExecutionReceipt', payload);
-}
-
 function validatePersistedReceipt({ persisted, expected }) {
   const blockers = [];
   if (!persisted) blockers.push('native_research_worker_execution_receipt_missing');
-  if (persisted && receiptHash(persisted) !== persisted.nativeResearchWorkerExecutionReceiptHash) {
+  if (persisted && computeReceiptHash(persisted) !== persisted.nativeResearchWorkerExecutionReceiptHash) {
     blockers.push('native_research_worker_execution_receipt_hash_invalid');
   }
-  for (const key of ['paperId', 'taskKey', 'workerId', 'workerType', 'planHash', 'workerDefinitionHash', 'engineHash', 'resultHash']) {
+  for (const key of ['paperId', 'taskKey', 'workerId', 'workerType', 'jobId', 'attemptId', 'leaseGeneration', 'planHash', 'theoremSpecificationHash', 'workerDefinitionHash', 'engineHash', 'resultHash']) {
     if (persisted && persisted[key] !== expected[key]) blockers.push(`native_research_worker_receipt_${key}_mismatch`);
   }
   if (persisted && JSON.stringify(persisted.inputs) !== JSON.stringify(expected.inputs)) {
@@ -295,6 +91,316 @@ function validatePersistedReceipt({ persisted, expected }) {
   return blockers;
 }
 
+export function verifyNativeResearchWorkerExecutionReport(report, {
+  paperId = null,
+  taskKey = null,
+  requireFormalWorkers = false,
+  theoremSpecificationHash = null,
+} = {}) {
+  const blockers = [];
+  const { nativeResearchWorkerExecutionReportHash: claimedHash, ...payload } = report || {};
+  if (!report || report.version !== 1 || report.kind !== 'NativeResearchWorkerExecutionReport') {
+    blockers.push('native_research_worker_execution_report_shape_invalid');
+  }
+  if (!claimedHash || hashPaperRecord('NativeResearchWorkerExecutionReport', payload) !== claimedHash) {
+    blockers.push('native_research_worker_execution_report_hash_invalid');
+  }
+  if (paperId && report?.paperId !== paperId) blockers.push('native_research_worker_execution_report_paper_mismatch');
+  if (taskKey && report?.taskKey !== taskKey) blockers.push('native_research_worker_execution_report_task_mismatch');
+  if (theoremSpecificationHash && report?.theoremSpecificationHash !== theoremSpecificationHash) {
+    blockers.push('native_research_worker_execution_report_theorem_specification_mismatch');
+  }
+  if (report?.status !== 'native_research_workers_verified') blockers.push('native_research_workers_not_verified');
+  if (Array.isArray(report?.blockers) && report.blockers.length) blockers.push('native_research_worker_execution_report_has_blockers');
+  const receipts = Array.isArray(report?.workerReceipts) ? report.workerReceipts : [];
+  if (!Array.isArray(report?.workerReceipts)) blockers.push('native_research_worker_receipts_invalid');
+  const verifiedHashes = [];
+  for (const receipt of receipts) {
+    if (computeReceiptHash(receipt) !== receipt?.nativeResearchWorkerExecutionReceiptHash) {
+      blockers.push(`native_research_worker_receipt_hash_invalid:${receipt?.workerId || 'missing'}`);
+    }
+    if (receipt?.resultHash !== hashPaperRecord('NativeResearchWorkerResult', receipt?.result)) {
+      blockers.push(`native_research_worker_result_hash_invalid:${receipt?.workerId || 'missing'}`);
+    }
+    if (receipt?.paperId !== report?.paperId || receipt?.taskKey !== report?.taskKey
+      || receipt?.planHash !== report?.planHash || receipt?.engineHash !== report?.engineHash
+      || receipt?.theoremSpecificationHash !== report?.theoremSpecificationHash) {
+      blockers.push(`native_research_worker_report_binding_invalid:${receipt?.workerId || 'missing'}`);
+    }
+    if (receipt?.status !== 'native_research_worker_execution_verified'
+      || receipt?.academicEvidenceEligible !== true || receipt?.sourceMutationDetected === true) {
+      blockers.push(`native_research_worker_receipt_not_verified:${receipt?.workerId || 'missing'}`);
+    }
+    if (receipt?.nativeResearchWorkerExecutionReceiptHash) {
+      verifiedHashes.push(receipt.nativeResearchWorkerExecutionReceiptHash);
+    }
+  }
+  if (Number(report?.plannedResearchWorkerCount) !== receipts.length
+    || Number(report?.executedResearchWorkerCount) !== receipts.length
+    || Number(report?.verifiedAcademicEvidenceWorkerCount) !== receipts.length
+    || JSON.stringify(report?.workerReceiptHashes || []) !== JSON.stringify(verifiedHashes)) {
+    blockers.push('native_research_worker_execution_report_counts_invalid');
+  }
+  const formalReceipts = receipts.filter((receipt) => receipt?.workerType === 'formal_verifier_lake');
+  if (requireFormalWorkers && !formalReceipts.length) blockers.push('formal_lake_worker_receipt_required');
+  if (requireFormalWorkers && (report?.executeRequested !== true
+    || JSON.stringify(report?.workerTypeFilter) !== JSON.stringify(['formal_verifier_lake']))) {
+    blockers.push('formal_verification_worker_scope_invalid');
+  }
+  if (requireFormalWorkers && receipts.some((receipt) => receipt?.workerType !== 'formal_verifier_lake')) {
+    blockers.push('formal_verification_scope_contains_non_formal_worker');
+  }
+  for (const receipt of formalReceipts) {
+    if (receipt?.result?.status !== 'formal_claim_verified'
+      || receipt?.result?.replayReceipt?.status !== 'formal_claim_replay_verified'
+      || !receipt?.result?.formalCertificateReplayReceiptHash) {
+      blockers.push(`formal_lake_worker_receipt_incomplete:${receipt?.workerId || 'missing'}`);
+    }
+  }
+  return Object.freeze({ valid: blockers.length === 0, blockers: Object.freeze([...new Set(blockers)]) });
+}
+
+function verifyFormalReviewEnvelope(envelope, {
+  paperId,
+  manuscriptHash,
+  workerPlanHash,
+  formalClaimUniverseHash,
+  canonicalClaimRegistryHash,
+  theoremSpecificationHash,
+} = {}) {
+  const blockers = [];
+  const { formalSemanticReviewEnvelopeHash, workspaceAttemptIntegration: _workspaceAttemptIntegration, ...payload } = envelope || {};
+  if (!envelope || envelope.kind !== 'FormalClaimSemanticReviewEnvelope'
+    || hashPaperRecord('FormalClaimSemanticReviewEnvelope', payload) !== formalSemanticReviewEnvelopeHash) {
+    blockers.push('formal_semantic_review_envelope_hash_invalid');
+  }
+  if (envelope?.status !== 'formal_semantic_review_envelope_verified') blockers.push('formal_semantic_review_envelope_not_verified');
+  if (envelope?.paperId !== paperId) blockers.push('formal_semantic_review_envelope_paper_mismatch');
+  if (envelope?.manuscriptHash !== manuscriptHash) blockers.push('formal_semantic_review_envelope_manuscript_mismatch');
+  if (envelope?.workerPlanHash !== workerPlanHash) blockers.push('formal_semantic_review_envelope_plan_mismatch');
+  if (!formalClaimUniverseHash || envelope?.formalClaimUniverseHash !== formalClaimUniverseHash) {
+    blockers.push('formal_semantic_review_envelope_claim_universe_mismatch');
+  }
+  if (!canonicalClaimRegistryHash || envelope?.canonicalClaimRegistryHash !== canonicalClaimRegistryHash) {
+    blockers.push('formal_semantic_review_envelope_claim_registry_mismatch');
+  }
+  if (theoremSpecificationHash !== undefined
+    && (!theoremSpecificationHash || envelope?.theoremSpecificationHash !== theoremSpecificationHash)) {
+    blockers.push('formal_semantic_review_envelope_theorem_specification_mismatch');
+  }
+  for (const field of ['reviewNodeId', 'reviewAttemptId', 'reviewAgentReceiptHash', 'authorNodeId', 'authorAgentReceiptHash', 'reviewerPrincipalId', 'authorPrincipalId']) {
+    if (!envelope?.[field]) blockers.push(`formal_semantic_review_envelope_${field}_missing`);
+  }
+  if (envelope?.reviewNodeId === envelope?.authorNodeId
+    || envelope?.reviewAgentReceiptHash === envelope?.authorAgentReceiptHash
+    || envelope?.reviewerPrincipalId === envelope?.authorPrincipalId) {
+    blockers.push('formal_semantic_review_envelope_independence_invalid');
+  }
+  if (!['filesystem_credential_root_and_principal_separation', 'configured_principal_and_process_separation']
+    .includes(envelope?.reviewerIndependenceAssuranceScope)
+    || envelope?.providerAccountIndependenceVerified !== false) {
+    blockers.push('formal_semantic_review_envelope_assurance_scope_invalid');
+  }
+  return [...new Set(blockers)];
+}
+
+export function bindFormalReviewsToWorkers({
+  workers = [],
+  formalReviewEnvelope = null,
+  theoremSpecification = null,
+  paperId = null,
+  canonicalClaimRegistry = null,
+  workerPlanHash = null,
+} = {}) {
+  const specificationRequired = theoremSpecification !== null && theoremSpecification !== undefined;
+  const specificationVerification = specificationRequired
+    ? verifyTheoremSpecification(theoremSpecification, { paperId })
+    : Object.freeze({ valid: false, blockers: Object.freeze([]) });
+  const envelopeBlockers = verifyFormalReviewEnvelope(formalReviewEnvelope, {
+    paperId,
+    manuscriptHash: canonicalClaimRegistry?.manuscriptHash || null,
+    workerPlanHash,
+    formalClaimUniverseHash: canonicalClaimRegistry?.formalClaimUniverseHash || null,
+    canonicalClaimRegistryHash: canonicalClaimRegistry?.canonicalClaimRegistryHash || null,
+    theoremSpecificationHash: specificationRequired && specificationVerification.valid
+      ? theoremSpecification.theoremSpecificationHash
+      : undefined,
+  });
+  const reviewByClaim = new Map((!envelopeBlockers.length && Array.isArray(formalReviewEnvelope?.reviews) ? formalReviewEnvelope.reviews : [])
+    .map((review) => [String(review?.claimId || ''), review]));
+  const specificationClaims = new Map((specificationVerification.valid ? theoremSpecification.claims : [])
+    .map((claim) => [String(claim.claimId || ''), claim]));
+  const bindingBlockers = [
+    ...envelopeBlockers,
+    ...specificationVerification.blockers.map((blocker) => `formal_theorem_specification:${blocker}`),
+    ...(specificationVerification.valid
+      && theoremSpecification.formalClaimUniverseHash !== canonicalClaimRegistry?.formalClaimUniverseHash
+      ? ['formal_theorem_specification_claim_universe_mismatch'] : []),
+  ];
+  if (specificationVerification.valid && theoremSpecification.proposalClaimLineageRequired === true) {
+    const proposalBindingVerification = verifyProposalClaimToTheoremBinding(
+      formalReviewEnvelope?.proposalClaimToTheoremBinding,
+      {
+        paperId,
+        theoremSpecificationHash: theoremSpecification.theoremSpecificationHash,
+        approvedProposalSeedBindingHash: theoremSpecification.approvedProposalSeedBindingHash,
+        proposalSeedContractBundleHash: theoremSpecification.proposalSeedContractBundleHash,
+        claimAuthorityType: theoremSpecification.claimAuthorityType,
+        claimAuthorityBindingHash: theoremSpecification.claimAuthorityBindingHash,
+        claimAuthorityBundleHash: theoremSpecification.claimAuthorityBundleHash,
+        reviewAgentReceiptHash: formalReviewEnvelope?.reviewAgentReceiptHash,
+        reviewerPrincipalId: formalReviewEnvelope?.reviewerPrincipalId,
+        theoremSpecification,
+        reviews: formalReviewEnvelope?.reviews,
+      },
+    );
+    bindingBlockers.push(...proposalBindingVerification.blockers.map((blocker) => `formal_proposal_lineage:${blocker}`));
+    if (formalReviewEnvelope?.proposalClaimToTheoremBindingHash
+      !== proposalBindingVerification.proposalClaimToTheoremBindingHash) {
+      bindingBlockers.push('formal_proposal_lineage_envelope_hash_mismatch');
+    }
+  }
+  const boundWorkers = workers.map((worker) => {
+    if (worker.type !== 'formal_verifier_lake') return worker;
+    const claimBindings = (Array.isArray(worker.parameters?.claimBindings) ? worker.parameters.claimBindings : []).map((binding) => {
+      const canonicalClaim = canonicalClaimRegistry?.byClaimId?.get(String(binding?.claimId || '')) || null;
+      const specificationClaim = specificationClaims.get(String(binding?.claimId || '')) || null;
+      const review = reviewByClaim.get(String(binding?.claimId || ''));
+      if (!canonicalClaim) {
+        bindingBlockers.push(`formal_claim_canonical_registry_binding_missing:${binding?.claimId || 'missing'}`);
+        return binding;
+      }
+      if (!review) {
+        bindingBlockers.push(`formal_semantic_review_missing:${binding?.claimId || 'missing'}`);
+        return binding;
+      }
+      const obligationMapping = normalizeFormalProofObligationMappings({
+        proofObligationContracts: specificationClaim?.proofObligationContracts
+          || binding?.proofObligationContracts,
+        proofObligations: specificationClaim?.proofObligations
+          || binding?.proofObligations || binding?.obligationNames,
+        proofObligationMappings: binding?.proofObligationMappings,
+        theoremName: binding?.theoremName,
+      });
+      if (!obligationMapping.valid) {
+        bindingBlockers.push(...obligationMapping.blockers
+          .map((blocker) => `formal_theorem_obligation_mapping:${binding?.claimId || 'missing'}:${blocker}`));
+      }
+      if (binding?.proofObligationContracts
+        && JSON.stringify(binding.proofObligationContracts)
+          !== JSON.stringify(specificationClaim?.proofObligationContracts || [])) {
+        bindingBlockers.push(`formal_theorem_obligation_contract_mismatch:${binding?.claimId || 'missing'}`);
+      }
+      const specificationBindingValid = !specificationRequired || (specificationClaim
+        && binding?.theoremSpecificationHash === theoremSpecification?.theoremSpecificationHash
+        && binding?.theoremSpecificationClaimHash === specificationClaim.theoremSpecificationClaimHash
+        && specificationClaim.statement === canonicalClaim.text
+        && specificationClaim.manuscriptSource?.path === canonicalClaim.manuscriptPath
+        && specificationClaim.manuscriptSource?.byteStart === canonicalClaim.manuscriptByteStart
+        && specificationClaim.manuscriptSource?.byteEnd === canonicalClaim.manuscriptByteEnd
+        && specificationClaim.manuscriptSource?.contentHash === canonicalClaim.manuscriptContentHash
+        && specificationClaim.manuscriptSource?.formalClaimUniverseEntryHash === canonicalClaim.formalClaimUniverseEntryHash
+        && JSON.stringify([...(specificationClaim.proofObligations || [])].map(String).sort())
+          === JSON.stringify([...(binding.proofObligations || binding.obligationNames || [])].map(String).sort())
+        && obligationMapping.valid);
+      if (!specificationBindingValid) {
+        bindingBlockers.push(`formal_theorem_specification_binding_mismatch:${binding?.claimId || 'missing'}`);
+        return binding;
+      }
+      const exactReviewFields = [
+        ['theoremName', binding.theoremName],
+        ['theoremTypeHash', binding.expectedTypeHash],
+        ['sourceStatementHash', binding.sourceStatementHash],
+        ['manuscriptClaimHash', canonicalClaim.manuscriptClaimHash],
+      ];
+      const mismatches = exactReviewFields.filter(([field, value]) => !value || review?.[field] !== value);
+      if (mismatches.length || review.status !== 'formal_semantic_review_verified'
+        || review.semanticEquivalenceVerified !== true || review.verdict !== 'equivalent') {
+        bindingBlockers.push(`formal_semantic_review_binding_mismatch:${binding?.claimId || 'missing'}`);
+        return binding;
+      }
+      const reviewPayload = {
+        version: 2, kind: 'FormalSemanticReviewReceipt', paperId, claimId: binding.claimId,
+        theoremName: binding.theoremName,
+        reviewEnvelopeHash: formalReviewEnvelope.formalSemanticReviewEnvelopeHash,
+        theoremSpecificationHash: specificationClaim ? theoremSpecification.theoremSpecificationHash : null,
+        theoremSpecificationClaimHash: specificationClaim?.theoremSpecificationClaimHash || null,
+        proposalClaimToTheoremBindingHash:
+          formalReviewEnvelope.proposalClaimToTheoremBindingHash || null,
+        proposalClaimRecordHash: specificationClaim?.proposalClaimSource?.proposalClaimRecordHash || null,
+        reviewerId: formalReviewEnvelope.reviewerPrincipalId,
+        authorId: formalReviewEnvelope.authorPrincipalId,
+        semanticEquivalenceVerified: review.semanticEquivalenceVerified === true, verdict: review.verdict || null,
+      };
+      const formalClaimContract = buildFormalClaimContract({
+        claimId: binding.claimId,
+        claimText: canonicalClaim.text,
+        sourceLocator: canonicalClaim.sourceLocator,
+        theoremName: binding.theoremName,
+        theoremTypeHash: binding.expectedTypeHash,
+        sourceStatementHash: binding.sourceStatementHash,
+        proofObligations: binding.proofObligations || binding.obligationNames,
+        proofObligationContracts: obligationMapping.contracts,
+        proofObligationMappings: obligationMapping.mappings,
+        manuscriptSourceIdentity: {
+          path: canonicalClaim.manuscriptPath,
+          byteStart: canonicalClaim.manuscriptByteStart,
+          byteEnd: canonicalClaim.manuscriptByteEnd,
+          contentHash: canonicalClaim.manuscriptContentHash,
+          fileHash: canonicalClaim.manuscriptFileHash,
+        },
+        theoremSpecificationHash: specificationClaim ? theoremSpecification.theoremSpecificationHash : null,
+        theoremSpecificationClaimHash: specificationClaim?.theoremSpecificationClaimHash || null,
+        semanticReview: {
+          status: review.status,
+          reviewerId: formalReviewEnvelope.reviewerPrincipalId,
+          authorId: formalReviewEnvelope.authorPrincipalId,
+          semanticEquivalenceVerified: review.semanticEquivalenceVerified,
+          reviewReceiptHash: hashPaperRecord('FormalSemanticReviewReceipt', reviewPayload),
+          reviewEnvelopeHash: formalReviewEnvelope.formalSemanticReviewEnvelopeHash,
+          reviewNodeId: formalReviewEnvelope.reviewNodeId,
+          reviewAttemptId: formalReviewEnvelope.reviewAttemptId,
+          reviewAgentReceiptHash: formalReviewEnvelope.reviewAgentReceiptHash,
+          authorNodeId: formalReviewEnvelope.authorNodeId,
+          authorAgentReceiptHash: formalReviewEnvelope.authorAgentReceiptHash,
+          reviewedManuscriptHash: formalReviewEnvelope.manuscriptHash,
+          reviewedWorkerPlanHash: formalReviewEnvelope.workerPlanHash,
+          theoremSpecificationHash: specificationClaim ? theoremSpecification.theoremSpecificationHash : null,
+          theoremSpecificationClaimHash: specificationClaim?.theoremSpecificationClaimHash || null,
+          proposalClaimToTheoremBindingHash:
+            formalReviewEnvelope.proposalClaimToTheoremBindingHash || null,
+          proposalClaimRecordHash: specificationClaim?.proposalClaimSource?.proposalClaimRecordHash || null,
+        },
+      });
+      if (formalClaimContract.status !== 'formal_claim_contract_verified') {
+        bindingBlockers.push(...formalClaimContract.blockers.map((item) => `${binding.claimId}:${item}`));
+      }
+      return {
+        ...binding,
+        claimText: canonicalClaim.text,
+        sourceLocator: canonicalClaim.sourceLocator,
+        manuscriptSource: {
+          path: canonicalClaim.manuscriptPath,
+          byteStart: canonicalClaim.manuscriptByteStart,
+          byteEnd: canonicalClaim.manuscriptByteEnd,
+          contentHash: canonicalClaim.manuscriptContentHash,
+        },
+        manuscriptClaimHash: formalClaimContract.manuscriptClaimHash,
+        theoremSpecificationHash: specificationClaim ? theoremSpecification.theoremSpecificationHash : null,
+        theoremSpecificationClaimHash: specificationClaim?.theoremSpecificationClaimHash || null,
+        proposalClaimToTheoremBindingHash:
+          formalReviewEnvelope.proposalClaimToTheoremBindingHash || null,
+        proposalClaimRecordHash: specificationClaim?.proposalClaimSource?.proposalClaimRecordHash || null,
+        proofObligationContracts: obligationMapping.contracts,
+        proofObligationMappings: obligationMapping.mappings,
+        formalClaimContract,
+      };
+    });
+    return { ...worker, parameters: { ...(worker.parameters || {}), claimBindings } };
+  });
+  return Object.freeze({ workers: boundWorkers, blockers: [...new Set(bindingBlockers)] });
+}
+
 export async function runNativeResearchWorkers({
   root,
   sourceRoot,
@@ -303,6 +409,10 @@ export async function runNativeResearchWorkers({
   execute = false,
   jobReceiptStore = null,
   artifactRepositoryFactory = null,
+  formalReviewEnvelope = null,
+  theoremSpecification = null,
+  campaignEvidenceContext = null,
+  workerTypes = null,
 } = {}) {
   const planPath = sourceRoot ? path.join(sourceRoot, 'RESEARCH_WORKER_PLAN.json') : null;
   const plan = planPath ? await readJsonIfExists(planPath) : null;
@@ -314,14 +424,40 @@ export async function runNativeResearchWorkers({
   }
   if (plan && plan.paperId !== paperTask?.paperId) reportBlockers.push('research_worker_plan_paper_id_mismatch');
   if (plan && plan.taskKey !== paperTask?.taskKey) reportBlockers.push('research_worker_plan_task_key_mismatch');
-  const workers = Array.isArray(plan?.workers) ? plan.workers : [];
-  if (plan && (!workers.length || workers.length > 16)) reportBlockers.push('research_worker_plan_worker_count_invalid');
-  const workerIds = workers.map((worker) => safeWorkerId(worker.id));
+  const planRecord = planPath && plan ? await fileRecord(root, planPath, 'native_research_worker_plan') : null;
+  const canonicalClaimRegistry = plan
+    ? canonicalClaimsFromWorkerPlan({ sourceRoot, paperTask, plan })
+    : null;
+  const declaredWorkers = Array.isArray(plan?.workers) ? plan.workers : [];
+  const selectedWorkerTypes = workerTypes === null
+    ? null
+    : new Set((Array.isArray(workerTypes) ? workerTypes : []).map(String));
+  if (selectedWorkerTypes && [...selectedWorkerTypes].some((workerType) => !WORKER_TYPE_SET.has(workerType))) {
+    reportBlockers.push('native_research_worker_type_filter_invalid');
+  }
+  const selectedWorkers = selectedWorkerTypes
+    ? declaredWorkers.filter((worker) => selectedWorkerTypes.has(String(worker?.type || '')))
+    : declaredWorkers;
+  const bound = bindFormalReviewsToWorkers({
+    workers: selectedWorkers,
+    formalReviewEnvelope,
+    theoremSpecification,
+    paperId: paperTask?.paperId || null,
+    canonicalClaimRegistry,
+    workerPlanHash: planRecord?.hash || null,
+  });
+  const workers = bound.workers;
+  if (workers.some((worker) => worker.type === 'formal_verifier_lake')) {
+    reportBlockers.push(...(canonicalClaimRegistry?.blockers || ['canonical_claim_registry_required']), ...bound.blockers);
+  }
+  if (plan && (!declaredWorkers.length || declaredWorkers.length > 16)) reportBlockers.push('research_worker_plan_worker_count_invalid');
+  if (selectedWorkerTypes && !workers.length) reportBlockers.push('native_research_worker_type_filter_empty');
+  const workerIds = declaredWorkers.map((worker) => safeWorkerId(worker.id));
   if (workerIds.some((id) => !id)) reportBlockers.push('research_worker_id_invalid');
   if (new Set(workerIds.filter(Boolean)).size !== workerIds.filter(Boolean).length) reportBlockers.push('research_worker_id_duplicate');
-  const planRecord = planPath && plan ? await fileRecord(root, planPath, 'native_research_worker_plan') : null;
   const engineFiles = [
     fileURLToPath(import.meta.url),
+    fileURLToPath(new URL('./native-research-worker-execution.mjs', import.meta.url)),
     fileURLToPath(new URL('./formal-verifier.mjs', import.meta.url)),
     fileURLToPath(new URL('./lake-formal-verifier.mjs', import.meta.url)),
     fileURLToPath(new URL('../runtime/os-sandboxed-worker-runner.mjs', import.meta.url)),
@@ -360,26 +496,43 @@ export async function runNativeResearchWorkers({
     if (!Array.isArray(worker.claimIds) || !worker.claimIds.length) blockers.push('research_worker_claim_ids_missing');
     const inputValidation = await validateInputs({ root, sourceRoot, worker });
     blockers.push(...inputValidation.blockers);
-    const jobId = `research-worker:${paperTask?.paperId || 'paper'}:${id || 'invalid'}`;
+    const campaignExecutionScopeHash = campaignEvidenceContext?.researchNodeId
+      ? hashPaperRecord('CampaignResearchWorkerExecutionScope', {
+        campaignId: campaignEvidenceContext.campaignId || null,
+        paperId: paperTask?.paperId || null,
+        researchNodeId: campaignEvidenceContext.researchNodeId,
+        researchAttemptId: campaignEvidenceContext.researchAttemptId || null,
+        researchLeaseGeneration: campaignEvidenceContext.researchLeaseGeneration || null,
+        verificationIteration: Number.isSafeInteger(campaignEvidenceContext.verificationIteration)
+          ? campaignEvidenceContext.verificationIteration
+          : null,
+      })
+      : null;
+    const jobId = `research-worker:${paperTask?.paperId || 'paper'}:${id || 'invalid'}${campaignExecutionScopeHash ? `:${campaignExecutionScopeHash.slice(-16)}` : ''}`;
     let attempt = null;
     if (execute && jobReceiptStore && id) {
       jobReceiptStore.createJob({
         jobId,
-        deduplicationKey: `${paperTask?.paperId}:${planRecord?.hash}:${id}`,
+        deduplicationKey: `${paperTask?.paperId}:${planRecord?.hash}:${formalReviewEnvelope?.formalSemanticReviewEnvelopeHash || 'no-review'}:${id}:${campaignExecutionScopeHash || 'standalone'}`,
         paperId: paperTask?.paperId,
         kind: `research-worker:${worker.type}`,
         priority: Number(worker.priority || 100),
         workerDefinitionHash: hashPaperRecord('NativeResearchWorkerDefinition', normalizedWorkerDefinition(worker)),
       });
-      const lease = jobReceiptStore.acquireLease({ jobId, workerId: id, leaseSeconds: 180 });
+      const lease = jobReceiptStore.acquireLease({ jobId, workerId: id, leaseSeconds: NATIVE_RESEARCH_WORKER_JOB_LEASE_SECONDS });
       if (!lease) blockers.push('research_worker_job_lease_unavailable');
-      else attempt = jobReceiptStore.recordAttempt({ jobId, workerId: id });
+      else attempt = jobReceiptStore.recordAttempt({ jobId, workerId: id, leaseGeneration: lease.leaseGeneration });
     }
-    const sourceMerkleHashBefore = sourceRoot ? directoryMerkleHash(sourceRoot) : null;
-    const result = blockers.length
-      ? { status: 'native_research_worker_blocked', blockers }
-      : await executeWorker(worker, inputValidation.records, { sourceRoot });
-    const sourceMerkleHashAfter = sourceRoot ? directoryMerkleHash(sourceRoot) : null;
+    const { result, sourceMerkleHashBefore, sourceMerkleHashAfter } = await withJobAttemptLeaseHeartbeat(
+      jobReceiptStore, attempt, async (signal) => {
+        const sourceMerkleHashBefore = sourceRoot ? directoryMerkleHash(sourceRoot) : null;
+        const result = blockers.length
+          ? { status: 'native_research_worker_blocked', blockers }
+          : await executeNativeResearchWorker(worker, inputValidation.records, { sourceRoot, signal });
+        const sourceMerkleHashAfter = sourceRoot ? directoryMerkleHash(sourceRoot) : null;
+        return { result, sourceMerkleHashBefore, sourceMerkleHashAfter };
+      },
+    );
     const sourceMutationDetected = sourceMerkleHashBefore !== sourceMerkleHashAfter;
     if (sourceMutationDetected) blockers.push('native_research_worker_source_mutation_detected');
     blockers.push(...(result.blockers || []));
@@ -396,10 +549,14 @@ export async function runNativeResearchWorkers({
       taskKey: paperTask?.taskKey || null,
       workerId: id,
       workerType: worker.type || null,
+      jobId,
+      attemptId: attempt?.attemptId || null,
+      leaseGeneration: attempt?.leaseGeneration || null,
       status: blockers.length
         ? 'native_research_worker_execution_blocked'
         : 'native_research_worker_execution_verified',
       planHash: planRecord?.hash || null,
+      theoremSpecificationHash: theoremSpecification?.theoremSpecificationHash || null,
       workerDefinitionHash,
       engineHash,
       inputs: inputValidation.records.map(({ absolutePath: _absolutePath, ...record }) => record),
@@ -425,14 +582,11 @@ export async function runNativeResearchWorkers({
       executedAt: execute ? new Date().toISOString() : null,
     };
     if (execute) {
-      let receipt = {
-        ...baseReceipt,
-        nativeResearchWorkerExecutionReceiptHash: receiptHash(baseReceipt),
-      };
+      let receipt = sealReceiptHash(baseReceipt, { hashField: 'nativeResearchWorkerExecutionReceiptHash' });
       if (jobReceiptStore && attempt) {
         const completed = receipt.status === 'native_research_worker_execution_verified'
-          ? jobReceiptStore.completeJob({ jobId, attemptId: attempt.attemptId, receipt })
-          : jobReceiptStore.failJob({ jobId, attemptId: attempt.attemptId, failureClass: 'worker_verification_failed', retryable: false, receipt });
+          ? jobReceiptStore.completeJob({ jobId, attemptId: attempt.attemptId, workerId: attempt.workerId, leaseGeneration: attempt.leaseGeneration, receipt })
+          : jobReceiptStore.failJob({ jobId, attemptId: attempt.attemptId, workerId: attempt.workerId, leaseGeneration: attempt.leaseGeneration, failureClass: 'worker_verification_failed', retryable: false, receipt });
         receipt = { ...receipt, ledgerReceiptId: completed.ledgerReceipt?.receiptId || completed.result_receipt_id || null };
       }
       if (artifactRepository && id) {
@@ -447,6 +601,8 @@ export async function runNativeResearchWorkers({
         : null;
       const expected = {
         ...baseReceipt,
+        attemptId: persisted?.attemptId || null,
+        leaseGeneration: persisted?.leaseGeneration || null,
         executedAt: persisted?.executedAt || null,
       };
       const persistedBlockers = validatePersistedReceipt({ persisted, expected });
@@ -476,7 +632,11 @@ export async function runNativeResearchWorkers({
     executeRequested: Boolean(execute),
     planPath: planRecord?.path || null,
     planHash: planRecord?.hash || null,
+    theoremSpecificationHash: theoremSpecification?.theoremSpecificationHash || null,
+    theoremSpecificationClaimHashes: Object.freeze((theoremSpecification?.claims || [])
+      .map((claim) => claim.theoremSpecificationClaimHash)),
     engineHash,
+    workerTypeFilter: selectedWorkerTypes ? [...selectedWorkerTypes].sort() : null,
     plannedResearchWorkerCount: workers.length,
     executedResearchWorkerCount: verifiedReceipts.length,
     verifiedAcademicEvidenceWorkerCount: verifiedReceipts.length,

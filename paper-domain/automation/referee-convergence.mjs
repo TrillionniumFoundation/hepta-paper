@@ -15,6 +15,7 @@ export function evaluateRefereeConvergence({
   expectedManuscriptHash = null,
   minimumRoundIndex = 1,
   qualityGates = [],
+  revisionMaterialization = null,
 } = {}) {
   const normalized = reviews.map((review) => ({
     reviewerId: String(review.reviewerId || 'unknown'),
@@ -80,6 +81,8 @@ export function evaluateRefereeConvergence({
     qualityGatesPassed,
     qualityGateBlockers,
     qualityGates: normalizedQualityGates,
+    revisionMaterialization: revisionMaterialization && typeof revisionMaterialization === 'object'
+      ? Object.freeze({ ...revisionMaterialization }) : null,
     reviews: normalized,
     thresholds: { minimumReviewers, minimumMeanScore, minimumAcceptRatio, maximumVariance, minimumRoundIndex: Math.max(1, Number(minimumRoundIndex || 1)) },
     academicAcceptanceGranted: false,

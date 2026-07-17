@@ -53,7 +53,12 @@ export function buildSubmissionDispatchAuthorization({
   if (expectedArtifactHashes.length !== (artifactPackage?.artifacts || []).length) blockers.push('artifact_package_contains_unhashed_artifact');
   if (expectedArtifactHashes.some((hash) => !sha256Hash(hash))) blockers.push('artifact_package_contains_invalid_hash');
   if (artifactPackageHash) {
-    const { artifactPackageHash: _artifactPackageHash, ...artifactPackagePayload } = artifactPackage || {};
+    const {
+      artifactPackageHash: _artifactPackageHash,
+      semanticIdentityVersion: _semanticIdentityVersion,
+      semanticIdentityHash: _semanticIdentityHash,
+      ...artifactPackagePayload
+    } = artifactPackage || {};
     if (digest({ version: 1, kind: 'PaperArtifactPackage', payload: artifactPackagePayload }) !== artifactPackageHash) blockers.push('artifact_package_hash_invalid');
   }
   if (liveAuthorizationReceipt?.authorizationSubject?.artifactPackageHash !== artifactPackageHash) {

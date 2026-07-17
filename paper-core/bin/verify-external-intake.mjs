@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { verifyExternalIntake } from '../src/external-intake-verifier.mjs';
+import { verifyExternalIntake } from '../../paper-composition/bootstrap/operator-governance-composition.mjs';
 import { currentCodeProvenance } from '../src/code-provenance.mjs';
 import { defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 

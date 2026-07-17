@@ -4,20 +4,22 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
-import { createSqliteCampaignStore } from '../../paper-adapters/persistence/sqlite-campaign-store.mjs';
-import { createOpenClawAgentExecutor } from '../../paper-adapters/automation/openclaw-agent-executor.mjs';
-import { createOllamaStructuredAgentExecutor } from '../../paper-adapters/automation/ollama-structured-agent-executor.mjs';
-import { createAgentBackendRouter } from '../../paper-adapters/automation/agent-backend-router.mjs';
-import { createIsolatedAgentExecutor } from '../../paper-adapters/automation/isolated-agent-executor.mjs';
-import { createCampaignNodeExecutor } from '../../paper-adapters/automation/campaign-node-executor.mjs';
-import { createMultiLanguageEmpiricalExecutor } from '../../paper-adapters/automation/multi-language-empirical-executor.mjs';
-import { createFilesystemEmpiricalCacheRepository } from '../../paper-adapters/automation/empirical-cache-repository.mjs';
-import { runtimeImagesForCampaign } from '../../paper-adapters/automation/runtime-image-registry.mjs';
-import { createOsSandboxedWorkerRunner } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
+import { createDefaultPaperStore, createSqliteCampaignStore } from '../../paper-composition/bootstrap/operator-persistence-composition.mjs';
+import {
+  createOpenClawAgentExecutor,
+  createOllamaStructuredAgentExecutor,
+  createAgentBackendRouter,
+  createIsolatedAgentExecutor,
+  createMultiLanguageEmpiricalExecutor,
+  createFilesystemEmpiricalCacheRepository,
+  runtimeImagesForCampaign,
+} from '../../paper-composition/bootstrap/operator-automation-composition.mjs';
+import { createCampaignNodeExecutor } from '../../paper-composition/automation/campaign-node-execution-composition.mjs';
+import { createOsSandboxedWorkerRunner, createSystemScheduler, createRandomIdGenerator } from '../../paper-composition/bootstrap/operator-runtime-composition.mjs';
 import { runPaperCampaign } from '../../paper-application/automation/campaign-engine.mjs';
 import { createResourceGovernor } from '../../paper-application/automation/resource-governor.mjs';
 import { buildPaperCampaignPlan } from '../../paper-domain/automation/campaign-plan.mjs';
+import { sha256FileSync } from '../../workflow-kernel/runtime/file-utils.mjs';
 
 const sourceRoot = path.resolve(process.env.HEPTA_STRICT_REREVIEW_SOURCE || '/data/home-data/hepta-paper-assets/drafts/DQL_Stochastic_Optimization');
 const paperId = process.env.HEPTA_STRICT_REREVIEW_PAPER_ID || path.basename(sourceRoot);
@@ -38,7 +40,7 @@ function liveSourceHash() {
       if (!includeLiveSource(candidate)) continue;
       const relative = path.relative(sourceRoot, candidate).replace(/\\/g, '/');
       if (entry.isDirectory()) walk(candidate);
-      else if (entry.isFile()) rows.push(`${relative}\0${crypto.createHash('sha256').update(fs.readFileSync(candidate)).digest('hex')}`);
+      else if (entry.isFile()) rows.push(`${relative}\0${sha256FileSync(candidate, { prefix: false })}`);
     }
   };
   walk(sourceRoot);
@@ -61,15 +63,16 @@ try {
   }
   const store = createDefaultPaperStore({ root, runtimeRoot });
   const clock = { now: () => new Date(), nowIso: () => new Date().toISOString() };
+  const campaignRuntime = { clock, scheduler: createSystemScheduler(), idGenerator: createRandomIdGenerator() };
   const campaignStore = createSqliteCampaignStore({ store, clock });
   let campaignId;
   if (resuming) {
     const existing = campaignStore.listCampaigns({ limit: 2 });
     if (existing.length !== 1) throw new Error(`strict resume requires exactly one campaign, found ${existing.length}`);
-    campaignId = existing[0].campaign_id;
+    campaignId = existing[0].campaignId;
     const failed = campaignStore.listNodes(campaignId).filter((node) => node.status === 'failed_terminal');
     if (!failed.length) throw new Error('strict resume requires at least one failed terminal node');
-    failed.forEach((node) => campaignStore.retryNode(node.node_id));
+    failed.forEach((node) => campaignStore.retryNode(node.nodeId));
     campaignStore.pauseCampaign(campaignId, 'strict_acceptance_resume_checkpoint');
     campaignStore.resumeCampaign(campaignId);
   } else {
@@ -112,7 +115,7 @@ try {
   const empiricalExecutor = createMultiLanguageEmpiricalExecutor({ workerRunner: runner, runtimeImages, cache: createFilesystemEmpiricalCacheRepository({ root: path.join(runtimeRoot, 'automation-cache', 'empirical') }) });
   const executor = createCampaignNodeExecutor({ agentExecutor, empiricalExecutor, runtimeRoot });
   const governor = createResourceGovernor({ agent: 3, cpu: 2, gpu: 1, memoryMiB: 8192 });
-  const result = await runPaperCampaign({ campaignId, campaignStore, executor, concurrency: 8, resourceGovernor: governor, pollMs: 50 });
+  const result = await runPaperCampaign({ campaignId, campaignStore, executor, concurrency: 8, resourceGovernor: governor, pollMs: 50, ...campaignRuntime });
   const convergence = result.nodes.filter((node) => node.kind === 'convergence' && node.status === 'completed').sort((left, right) => left.roundIndex - right.roundIndex);
   const initialReviews = result.nodes.filter((node) => /^referee-\d+$/.test(node.kind) && node.status === 'completed');
   const revisedReviews = result.nodes.filter((node) => /^revision-referee-\d+$/.test(node.kind) && node.status === 'completed');
@@ -135,7 +138,7 @@ try {
     paperId,
     campaignId,
     campaignStatus: result.campaign.status,
-    stopReason: result.campaign.stop_reason,
+    stopReason: result.campaign.stopReason,
     completedNodes: result.nodes.filter((node) => node.status === 'completed').length,
     criticalFindingCount,
     revisionRoundCount: reviseNodes.length,

@@ -20,7 +20,6 @@ import {
   buildPostRepairBuildPackage,
   buildRefereeIssueResolutionProof,
   buildRepairReconciliation,
-  buildRepairStateMutationReceipt,
 } from '../../paper-domain/contracts/referee-closure.mjs';
 import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
 import { heptaStorePath } from '../../paper-adapters/persistence/store-paths.mjs';

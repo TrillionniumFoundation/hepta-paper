@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "kind": "LegacyEmpiricalAnalysisDeprecationReceipt",
+  "status": "legacy_empirical_analysis_compatibility_frozen",
+  "compatibilityEntrypoint": "paper-composition/compat/legacy-stage-adapter-registry.mjs",
+  "implementationRoot": "paper-adapters/empirical-analysis",
+  "implementationModules": [
+    "benchmark-contracts.mjs",
+    "evidence-policy.mjs",
+    "execution-contracts.mjs",
+    "experiment-runner.mjs",
+    "index.mjs",
+    "trusted-experiment-producer.mjs"
+  ],
+  "canonicalReplacement": "paper-domain/automation/experiment-run-contract.mjs",
+  "productionReachability": "forbidden",
+  "assuranceLevel": "compatibility_self_reported_execution_only",
+  "academicPromotionEligible": false,
+  "promotionScope": "compatibility_only",
+  "featurePolicy": "security_fixes_and_migration_compatibility_only",
+  "retirementCriteria": [
+    "migration plugin boundary retires PaperStageExecutionPort.empiricalAnalysis",
+    "legacy empirical runtime artifacts complete their retention window",
+    "historical readers accept campaign-experiment-run-v1"
+  ],
+  "legacyEmpiricalAnalysisDeprecationReceiptHash": "sha256:41683d61c4ce0852a0a178ee1f03dc361cc4366952bacb6aeefc2d1e92d8b6fc"
+}

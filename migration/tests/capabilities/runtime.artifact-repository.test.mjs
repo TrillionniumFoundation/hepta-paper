@@ -10,7 +10,10 @@ test('runtime.artifact-repository performs scoped atomic writes and persists rec
   const repository = createFilesystemArtifactRepository({
     scopeRoot: root,
     casRoot: path.join(root, 'cas'),
-    clock: { nowIso: () => '2026-07-10T00:00:00.000Z' },
+    clock: {
+      now: () => new Date('2026-07-10T00:00:00.000Z'),
+      nowIso: () => '2026-07-10T00:00:00.000Z',
+    },
     receiptLedger: { record: (receipt) => { receipts.push(receipt); return { receiptId: `r:${receipts.length}` }; } },
   });
   const receipt = await repository.writeJson(path.join(root, 'a.json'), { ok: true }, { role: 'test', atomic: true });

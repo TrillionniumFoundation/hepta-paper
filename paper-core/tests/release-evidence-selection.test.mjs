@@ -2,8 +2,53 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { releaseAttestationCodeProvenance, retirementLifecycleStatus, selectCurrentReleaseVerificationReceipt } from '../bin/release-evidence-lib.mjs';
+import { currentCodeProvenance } from '../../paper-adapters/runtime/code-provenance.mjs';
+
+function git(root, ...args) {
+  const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  return String(result.stdout || '').trim();
+}
+
+test('code provenance binds both the commit tree and exact worktree state', (t) => {
+  const releaseCommit = process.env.HEPTA_RELEASE_COMMIT;
+  process.env.HEPTA_RELEASE_COMMIT = 'f'.repeat(40);
+  t.after(() => {
+    if (releaseCommit === undefined) delete process.env.HEPTA_RELEASE_COMMIT;
+    else process.env.HEPTA_RELEASE_COMMIT = releaseCommit;
+  });
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-code-provenance-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, 'package.json'), '{"version":"1.2.3"}\n');
+  fs.writeFileSync(path.join(root, 'source.mjs'), 'export const value = 1;\n');
+  git(root, 'init', '-q');
+  git(root, 'config', 'user.email', 'hepta-test@example.invalid');
+  git(root, 'config', 'user.name', 'Hepta Test');
+  git(root, 'add', '.');
+  git(root, 'commit', '-qm', 'fixture');
+  const clean = currentCodeProvenance({ workspaceRoot: root });
+  assert.equal(clean.version, 2);
+  assert.equal(clean.treeDirty, false);
+  assert.equal(clean.commitTree, git(root, 'rev-parse', 'HEAD^{tree}'));
+  fs.writeFileSync(path.join(root, 'source.mjs'), 'export const value = 2;\n');
+  const dirty = currentCodeProvenance({ workspaceRoot: root });
+  assert.equal(dirty.commit, clean.commit);
+  assert.equal(dirty.commitTree, clean.commitTree);
+  assert.equal(dirty.treeDirty, true);
+  assert.notEqual(dirty.worktreeStateHash, clean.worktreeStateHash);
+  fs.writeFileSync(path.join(root, 'source.mjs'), 'export const value = 3;\n');
+  const dirtyAgain = currentCodeProvenance({ workspaceRoot: root });
+  assert.notEqual(dirtyAgain.repositoryContentHash, dirty.repositoryContentHash);
+  assert.notEqual(dirtyAgain.worktreeStateHash, dirty.worktreeStateHash);
+  fs.writeFileSync(path.join(root, 'untracked.txt'), 'first\n');
+  const untracked = currentCodeProvenance({ workspaceRoot: root });
+  fs.writeFileSync(path.join(root, 'untracked.txt'), 'second\n');
+  const changedUntracked = currentCodeProvenance({ workspaceRoot: root });
+  assert.notEqual(changedUntracked.worktreeStateHash, untracked.worktreeStateHash);
+});
 
 test('release attestation is administrative evidence rather than production runtime evidence', () => {
   const provenance = releaseAttestationCodeProvenance({
@@ -18,7 +63,7 @@ test('release attestation is administrative evidence rather than production runt
   assert.equal(provenance.commit, 'current-commit');
 });
 
-test('retirement lifecycle reports observed deletion instead of hard-coded non-deletion', (t) => {
+test('retirement lifecycle reports observed deletion instead of hard-coded non-deletion', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-retirement-lifecycle-'));
   fs.rmSync(root, { recursive: true, force: true });
   const status = retirementLifecycleStatus({
@@ -68,4 +113,30 @@ test('release evidence selection fails closed without an exact current receipt',
     verificationRoot,
     codeProvenance: { packageVersion: '0.15.0', commit: 'current-commit' },
   }), null);
+});
+
+test('release evidence selection rejects a same-commit receipt from a different dirty worktree', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-release-worktree-selection-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const current = {
+    version: 2,
+    packageVersion: '0.15.0',
+    commit: 'same-commit',
+    commitTree: 'same-tree',
+    indexStateHash: `sha256:${'1'.repeat(64)}`,
+    repositoryContentHash: `sha256:${'2'.repeat(64)}`,
+    worktreeStateHash: `sha256:${'3'.repeat(64)}`,
+  };
+  fs.writeFileSync(path.join(root, 'receipt.json'), JSON.stringify({
+    kind: 'IsolatedVerificationReceipt',
+    mode: 'release',
+    status: 'isolated_verification_passed',
+    completedAt: '2026-07-15T00:00:00.000Z',
+    codeProvenance: {
+      ...current,
+      repositoryContentHash: `sha256:${'4'.repeat(64)}`,
+      treeDirty: false,
+    },
+  }));
+  assert.equal(selectCurrentReleaseVerificationReceipt({ verificationRoot: root, codeProvenance: current }), null);
 });

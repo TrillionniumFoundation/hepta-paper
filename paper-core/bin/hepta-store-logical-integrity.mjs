@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import path from 'node:path';
-import { createReadOnlyPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
-import { buildSqliteLogicalIntegrityReport } from '../src/sqlite-logical-integrity.mjs';
+import {
+  buildSqliteLogicalIntegrityReport,
+  createReadOnlyPaperStore,
+} from '../../paper-composition/bootstrap/operator-persistence-composition.mjs';
 import { defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 
 const dbPath = process.argv[2]

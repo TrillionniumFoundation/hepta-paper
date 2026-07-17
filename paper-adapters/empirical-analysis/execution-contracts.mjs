@@ -1,25 +1,29 @@
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import {
   ensureDir,
-  dirExists,
   fileRecord,
   pathWithin,
-  readJsonIfExists,
   readTextIfExists,
   relativePath,
   sha256Text,
-  walkFiles,
 } from '../../workflow-kernel/runtime/file-utils.mjs';
-import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
+import { uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
 import { nowIso } from '../../workflow-kernel/runtime/time-utils.mjs';
-import { writeJsonFile, writeTextFile } from '../artifacts/write-artifact.mjs';
+import { resolveRepoPath } from '../../workflow-kernel/runtime/path-utils.mjs';
+import { writeTextFile } from '../artifacts/write-artifact.mjs';
 import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
-import { buildEmpiricalEvidenceGate } from './evidence-policy.mjs';
-import { defaultPaperRuntimeRoot } from '../../paper-adapters/runtime/workspace-layout.mjs';
+import { escapeTexText } from './benchmark-contracts.mjs';
 
-import { experimentConfig, makeExperimentCode } from './experiment-runner.mjs';
-import { repoPath, escapeTexText } from './benchmark-contracts.mjs';
+export const COMPAT_EMPIRICAL_RECEIPT_POLICY = Object.freeze({
+  receiptVocabulary: 'legacy-empirical-analysis-v1',
+  canonicalReceiptVocabulary: 'campaign-experiment-run-v1',
+  assuranceProfile: 'legacy-self-reported-execution-v1',
+  assuranceLevel: 'compatibility_self_reported_execution_only',
+  evidenceClass: 'compatibility-smoke-evidence',
+  academicPromotionEligible: false,
+  promotionScope: 'compatibility_only',
+  canonicalReplacement: 'paper-domain/automation/experiment-run-contract.mjs',
+});
 
 
 function buildExperimentCodePatchBundle({
@@ -132,6 +136,7 @@ function buildExperimentRunReceipt({
   const receipt = {
     version: 1,
     kind: 'ExperimentRunReceipt',
+    ...COMPAT_EMPIRICAL_RECEIPT_POLICY,
     paperId: paperTask?.paperId || null,
     taskKey: paperTask?.taskKey || null,
     status: blockers.length ? 'experiment_run_receipt_blocked' : 'experiment_run_receipt_recorded',
@@ -262,7 +267,6 @@ function empiricalLatexBlock({
   paperTask,
   plan,
   datasetContract,
-  datasetLicenseProvenanceGate,
   tableFigureSpec,
   resultPackage,
 }) {
@@ -368,8 +372,8 @@ async function buildManuscriptEmpiricalApplyPlan({
   resultPackage,
   createdAt,
 }) {
-  const mainTexAbs = repoPath(root, row?.task?.mainTex);
-  const sourceDirAbs = repoPath(root, row?.task?.sourceWorkspace);
+  const mainTexAbs = resolveRepoPath(root, row?.task?.mainTex);
+  const sourceDirAbs = resolveRepoPath(root, row?.task?.sourceWorkspace);
   const blockers = [];
   if (approvalPacket.status !== 'manuscript_empirical_apply_approval_ready') {
     blockers.push('manuscript_empirical_apply_approval_not_ready');
@@ -437,10 +441,10 @@ async function applyManuscriptEmpiricalPatch({
   if (plan.status !== 'manuscript_empirical_apply_plan_ready') {
     blockers.push('manuscript_empirical_apply_plan_not_ready');
   }
-  const mainTexAbs = repoPath(root, row?.task?.mainTex);
-  const sourceDirAbs = repoPath(root, row?.task?.sourceWorkspace);
-  const tableSource = repoPath(root, plan.sourceAdjuncts?.[0]?.sourceArtifactPath);
-  const figureSource = repoPath(root, plan.sourceAdjuncts?.[1]?.sourceArtifactPath);
+  const mainTexAbs = resolveRepoPath(root, row?.task?.mainTex);
+  const sourceDirAbs = resolveRepoPath(root, row?.task?.sourceWorkspace);
+  const tableSource = resolveRepoPath(root, plan.sourceAdjuncts?.[0]?.sourceArtifactPath);
+  const figureSource = resolveRepoPath(root, plan.sourceAdjuncts?.[1]?.sourceArtifactPath);
   const tableTarget = sourceDirAbs ? path.join(sourceDirAbs, 'empirical', 'table_empirical_summary.tex') : null;
   const figureTarget = sourceDirAbs ? path.join(sourceDirAbs, 'empirical', 'figure_spec.json') : null;
   let applyMode = null;
@@ -543,4 +547,15 @@ function buildManuscriptEmpiricalPatch({
 }
 
 
-export { buildExperimentCodePatchBundle, buildSandboxExecutionPlan, buildExperimentRunReceipt, recordArtifacts, buildResultArtifactPackage, manuscriptPatchText, empiricalLatexBlock, replaceEmpiricalBlock, buildManuscriptEmpiricalApplyApprovalPacket, buildManuscriptEmpiricalApplyPlan, applyManuscriptEmpiricalPatch, buildManuscriptEmpiricalPatch };
+export {
+  buildExperimentCodePatchBundle,
+  buildSandboxExecutionPlan,
+  buildExperimentRunReceipt,
+  recordArtifacts,
+  buildResultArtifactPackage,
+  manuscriptPatchText,
+  buildManuscriptEmpiricalApplyApprovalPacket,
+  buildManuscriptEmpiricalApplyPlan,
+  applyManuscriptEmpiricalPatch,
+  buildManuscriptEmpiricalPatch,
+};

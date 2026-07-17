@@ -1,11 +1,12 @@
-import { sqlJson, sqlText } from '../../paper-ports/store-port.mjs';
+import { failClosedStoreQueries, sqlJson, sqlText } from '../../paper-ports/store-port.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { resolveReceiptWriterCapability } from './receipt-issuer-policy.mjs';
 
 const DISPOSITIONS = new Set(['superseded', 'invalid', 'administrative_exported', 'retention_tombstone']);
 
-export function createSqliteReceiptLedgerQualificationStore({ store, clock, issuerCapability } = {}) {
-  if (!store || !clock) throw new Error('Receipt ledger qualification store and clock are required');
+export function createSqliteReceiptLedgerQualificationStore({ store: suppliedStore, clock, issuerCapability } = {}) {
+  if (!suppliedStore || !clock) throw new Error('Receipt ledger qualification store and clock are required');
+  const store = failClosedStoreQueries(suppliedStore);
   const issuer = resolveReceiptWriterCapability(issuerCapability);
   if (!issuer || issuer.policyId !== 'ledger-administrator') throw new Error('ledger_administrator_capability_required');
   return Object.freeze({

@@ -1,19 +1,13 @@
 // Historical retirement planning retained for immutable-reference verification only.
 import path from 'node:path';
-import fsp from 'node:fs/promises';
 import {
-  fileRecord,
-  relativePath,
   walkFiles,
 } from '../../workflow-kernel/runtime/file-utils.mjs';
-import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
-import { writeJsonFile } from '../../paper-adapters/artifacts/write-artifact.mjs';
+import { uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
 import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
-import { buildMigrationMatrixAudit } from './migration-matrix.mjs';
-import { heptaStorePath } from '../../paper-adapters/persistence/store-paths.mjs';
 import { resolveWorkspaceLayout } from '../../paper-adapters/runtime/workspace-layout.mjs';
 
-import { RETIREMENT_WAVES, classifyLegacyFile, migrationTargetFor, migrationActionFor, retirementWaveFor, retirementWaveFamilyFor, priorityFor, enrichLegacyEntry } from './classification.mjs';
+import { RETIREMENT_WAVES } from './classification.mjs';
 
 async function detectHeptaCapabilities(_legacyRoot) {
   const adaptersRoot = path.join(resolveWorkspaceLayout().workspaceRoot, 'paper-adapters');

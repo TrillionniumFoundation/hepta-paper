@@ -4,13 +4,10 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { normalizeText } from './text-utils.mjs';
 import { readScopedFileSync } from './scoped-file-identity.mjs';
+import { hashBytes } from '../record-hash.mjs';
+export { isPathWithin as pathWithin } from './path-utils.mjs';
 
 export function toPosixPath(value) { return normalizeText(value).replace(/\\/g, '/'); }
-export function pathWithin(root, candidate) {
-  const resolvedRoot = path.resolve(root);
-  const resolvedCandidate = path.resolve(candidate);
-  return resolvedCandidate === resolvedRoot || resolvedCandidate.startsWith(resolvedRoot + path.sep);
-}
 export function relativePath(root, candidate) {
   if (!candidate) return null;
   const rel = path.relative(path.resolve(root), path.resolve(candidate));
@@ -27,7 +24,7 @@ export async function readJsonIfExists(candidate) {
 }
 export async function listDirSafe(candidate) { try { return await fsp.readdir(candidate, { withFileTypes: true }); } catch { return []; } }
 export async function ensureDir(candidate) { await fsp.mkdir(candidate, { recursive: true }); return candidate; }
-export function sha256Text(value) { return `sha256:${crypto.createHash('sha256').update(String(value ?? '')).digest('hex')}`; }
+export function sha256Text(value) { return hashBytes(String(value ?? '')); }
 export async function sha256File(candidate) {
   const hash = crypto.createHash('sha256');
   await new Promise((resolve, reject) => {
@@ -37,6 +34,10 @@ export async function sha256File(candidate) {
     stream.on('end', resolve);
   });
   return `sha256:${hash.digest('hex')}`;
+}
+export function sha256FileSync(candidate, { prefix = true } = {}) {
+  const hash = hashBytes(fs.readFileSync(candidate));
+  return prefix ? hash : hash.slice('sha256:'.length);
 }
 export async function fileRecord(root, candidate, role = 'artifact') {
   const read = readScopedFileSync({ scopeRoot: root, candidate });

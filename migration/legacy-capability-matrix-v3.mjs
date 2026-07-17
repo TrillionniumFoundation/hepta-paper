@@ -2,11 +2,18 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loadCapabilityOperationalProofs } from '../paper-adapters/governance/capability-proof-verifier.mjs';
+import {
+  LEGACY_OWNER_ACCEPTANCE_FAMILY_MANIFEST,
+} from '../paper-adapters/governance/legacy-owner-acceptance-contract.mjs';
+import { loadOwnerAcceptance } from '../paper-adapters/governance/owner-acceptance-verifier.mjs';
 import { validateCapabilityOperationalEvidence } from './capability-operational-evidence.mjs';
-import { buildOwnerAcceptanceFamilies, loadOwnerAcceptance } from './owner-acceptance.mjs';
+import { CAPABILITY_CATALOG } from '../paper-domain/governance/capability-catalog.mjs';
+import { buildOwnerAcceptanceFamilies } from '../paper-domain/governance/owner-acceptance-family.mjs';
 import { defaultPaperRuntimeRoot } from '../paper-adapters/runtime/workspace-layout.mjs';
 import { currentCodeProvenance } from '../paper-adapters/runtime/code-provenance.mjs';
-import { loadCapabilityOperationalProofs } from './operational-proof-intake.mjs';
+
+export { CAPABILITY_CATALOG };
 
 const migrationRoot = path.dirname(fileURLToPath(import.meta.url));
 const workspaceRoot = path.resolve(migrationRoot, '..');
@@ -39,23 +46,6 @@ const SUPERSEDED_ACTIONS = new Set([
   'retired_legacy_submission_schema_superseded_by_native_lifecycle',
   'retired_legacy_research_source_mutation_or_patch_queue_control_plane',
 ]);
-
-export const CAPABILITY_CATALOG = Object.freeze({
-  'research.claim-registry': { boundedContext: 'research', target: 'paper-domain/research/claim-registry.mjs' },
-  'research.gap-planner': { boundedContext: 'research', target: 'paper-application/research/gap-planner.mjs' },
-  'research.evidence-ingestor': { boundedContext: 'research', target: 'paper-domain/research/evidence-ingestor.mjs' },
-  'research.evidence-quality-gate': { boundedContext: 'research', target: 'paper-domain/research/evidence-quality-gate.mjs' },
-  'research.experiment-registry': { boundedContext: 'research', target: 'paper-domain/research/experiment-registry.mjs' },
-  'research.formal-verifier': { boundedContext: 'research', target: 'paper-ports/formal-verifier-port.mjs' },
-  'research.change-proposal': { boundedContext: 'research', target: 'paper-domain/research/change-proposal.mjs' },
-  'runtime.sandboxed-worker-runner': { boundedContext: 'runtime', target: 'paper-ports/worker-runner-port.mjs' },
-  'runtime.artifact-repository': { boundedContext: 'runtime', target: 'paper-ports/artifact-repository-port.mjs' },
-  'runtime.job-receipt-store': { boundedContext: 'runtime', target: 'paper-ports/job-receipt-store-port.mjs' },
-  'submission.executor-port': { boundedContext: 'submission', target: 'paper-ports/submission-executor-port.mjs' },
-  'submission.delivery-runtime': { boundedContext: 'submission', target: 'paper-domain/submission/delivery-runtime.mjs' },
-  'submission.release-lock': { boundedContext: 'submission', target: 'paper-domain/submission/release-lock.mjs' },
-  'repair.safe-apply': { boundedContext: 'repair', target: 'paper-adapters/referee-revise/repair-executor.mjs' },
-});
 
 function conformanceTestPath(capabilityId) {
   return `migration/tests/capabilities/${capabilityId}.test.mjs`;
@@ -176,6 +166,11 @@ export function buildLegacyCapabilityMatrixV3({ matrixV2 = null, operationalEvid
     return { ...entry, businessDecision, capabilityIds };
   });
   const ownerAcceptanceFamilyManifest = buildOwnerAcceptanceFamilies(entryPlans);
+  if (!matrixV2
+    && JSON.stringify(ownerAcceptanceFamilyManifest)
+      !== JSON.stringify(LEGACY_OWNER_ACCEPTANCE_FAMILY_MANIFEST)) {
+    throw new Error('legacy_owner_acceptance_active_manifest_drift');
+  }
   const acceptedById = loadOwnerAcceptance({
     runtimeRoot: resolvedRuntimeRoot,
     familyManifest: ownerAcceptanceFamilyManifest,

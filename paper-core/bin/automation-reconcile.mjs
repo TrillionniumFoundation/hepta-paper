@@ -1,22 +1,21 @@
 #!/usr/bin/env node
-import { planAutomationRuntimeReconciliation, executeAutomationRuntimeReconciliation } from '../../paper-adapters/automation/automation-runtime-reconciler.mjs';
-import { issueAutomationReconcilerWriter } from '../../paper-adapters/persistence/receipt-writer-broker.mjs';
-import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqlite-receipt-ledger.mjs';
-import { createDefaultPaperStore, createReadOnlyPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
-import { createSystemClock } from '../../paper-adapters/runtime/system-clock.mjs';
-import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
+import { planAutomationRuntimeReconciliation, executeAutomationRuntimeReconciliation } from '../../paper-composition/bootstrap/operator-automation-composition.mjs';
+import { composeAutomationReconcilerReceiptLedger, createReadOnlyPaperStore, openExistingWritablePaperStore } from '../../paper-composition/bootstrap/operator-persistence-composition.mjs';
+import { createSystemClock } from '../../paper-composition/bootstrap/operator-runtime-composition.mjs';
+import { assertWorkspaceLayoutPhysicallyDecoupled, defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 
 const execute = process.argv.includes('--execute');
 const root = defaultPaperAssetRoot();
 const runtimeRoot = defaultPaperRuntimeRoot();
+if (execute) assertWorkspaceLayoutPhysicallyDecoupled({ assetRoot: root, runtimeRoot });
 const clock = createSystemClock();
-const store = execute ? createDefaultPaperStore({ root, runtimeRoot }) : createReadOnlyPaperStore({ root, runtimeRoot });
+const store = execute ? openExistingWritablePaperStore({ root, runtimeRoot }) : createReadOnlyPaperStore({ root, runtimeRoot });
 try {
   const result = execute
     ? executeAutomationRuntimeReconciliation({
         store,
         clock,
-        receiptLedger: createSqliteReceiptLedger({ store, clock, issuerCapability: issueAutomationReconcilerWriter() }),
+        receiptLedger: composeAutomationReconcilerReceiptLedger({ store, clock }),
       })
     : planAutomationRuntimeReconciliation({ store, clock });
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

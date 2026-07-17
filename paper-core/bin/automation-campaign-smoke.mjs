@@ -2,12 +2,10 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
-import { createSqliteCampaignStore } from '../../paper-adapters/persistence/sqlite-campaign-store.mjs';
-import { createOllamaStructuredAgentExecutor } from '../../paper-adapters/automation/ollama-structured-agent-executor.mjs';
-import { createCampaignNodeExecutor } from '../../paper-adapters/automation/campaign-node-executor.mjs';
-import { createMultiLanguageEmpiricalExecutor } from '../../paper-adapters/automation/multi-language-empirical-executor.mjs';
-import { createOsSandboxedWorkerRunner } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
+import { createDefaultPaperStore, createSqliteCampaignStore } from '../../paper-composition/bootstrap/operator-persistence-composition.mjs';
+import { createOllamaStructuredAgentExecutor, createMultiLanguageEmpiricalExecutor } from '../../paper-composition/bootstrap/operator-automation-composition.mjs';
+import { createCampaignNodeExecutor } from '../../paper-composition/automation/campaign-node-execution-composition.mjs';
+import { createOsSandboxedWorkerRunner, createSystemScheduler, createRandomIdGenerator } from '../../paper-composition/bootstrap/operator-runtime-composition.mjs';
 import { buildPaperCampaignPlan } from '../../paper-domain/automation/campaign-plan.mjs';
 import { runPaperCampaign } from '../../paper-application/automation/campaign-engine.mjs';
 
@@ -26,6 +24,7 @@ if (!resumeRoot) {
 try {
   const store = createDefaultPaperStore({ root, runtimeRoot });
   const clock = { now: () => new Date(), nowIso: () => new Date().toISOString() };
+  const campaignRuntime = { clock, scheduler: createSystemScheduler(), idGenerator: createRandomIdGenerator() };
   const campaignStore = createSqliteCampaignStore({ store, clock });
   const existingId = resumeRoot ? store.query('SELECT campaign_id FROM paper_campaigns ORDER BY created_at LIMIT 1;').rows[0]?.campaign_id : null;
   const plan = existingId
@@ -51,7 +50,7 @@ try {
   progressTimer.unref();
   let result;
   try {
-    result = await runPaperCampaign({ campaignId, campaignStore, executor, concurrency: 4, pollMs: 10 });
+    result = await runPaperCampaign({ campaignId, campaignStore, executor, concurrency: 4, pollMs: 10, ...campaignRuntime });
   } finally {
     clearInterval(progressTimer);
   }
@@ -66,7 +65,7 @@ try {
     maximumObservedConcurrency: result.maximumObservedConcurrency,
     finalManuscriptPresent: fs.existsSync(path.join(paperRoot, 'main.tex')),
     externalActionPerformed: false,
-    nodes: result.nodes.map((node) => ({ kind: node.kind, roundIndex: node.roundIndex, status: node.status, attemptCount: node.attemptCount, failureClass: node.failure_class })),
+    nodes: result.nodes.map((node) => ({ kind: node.kind, roundIndex: node.roundIndex, status: node.status, attemptCount: node.attemptCount, failureClass: node.failureClass })),
   };
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   removeWorkspace = report.status === 'real_automation_campaign_smoke_passed';

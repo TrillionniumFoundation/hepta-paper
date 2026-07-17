@@ -1,7 +1,7 @@
 // Concrete pilot composition; domain authority remains in the injected services.
 import path from 'node:path';
 import { runPaperBatch } from '../batch/paper-batch-application.mjs';
-import { bootstrapPaperExecutionContext } from '../bootstrap/service-bootstrap.mjs';
+import { bootstrapBatchInventoryContext } from '../bootstrap/batch-inventory-context-bootstrap.mjs';
 import { withArtifactWriteContext } from '../../paper-adapters/artifacts/artifact-write-context.mjs';
 import { sha256File } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
@@ -15,7 +15,15 @@ export async function runRealPaperPilot({ root, runtimeRoot, paperId = null } = 
   const mainTex = path.resolve(root, selected.task.mainTex);
   const mainTexRelative = path.relative(sourceRoot, mainTex).replace(/\\/g, '/');
   if (mainTexRelative.startsWith('..')) throw new Error('Pilot main source is outside its source workspace');
-  const context = bootstrapPaperExecutionContext({ root, runtimeRoot, mode: 'real-paper-pilot', execute: true, writeReport: true });
+  const context = bootstrapBatchInventoryContext({
+    root,
+    runtimeRoot,
+    mode: 'experimental-real-paper-pilot',
+    execute: false,
+    writeReport: true,
+    readOnly: false,
+    allowMissingReadOnlyStore: false,
+  });
   return withArtifactWriteContext(context.services, async () => {
     const mainTexHash = await sha256File(mainTex);
     const plan = {
@@ -85,5 +93,7 @@ export async function runRealPaperPilot({ root, runtimeRoot, paperId = null } = 
     const repository = context.services.artifactRepositoryFactory(outputRoot);
     const writeReceipt = await repository.writeJson(path.join(outputRoot, 'REAL_PAPER_END_TO_END_PILOT_RECEIPT.json'), { ...receipt, ledgerReceiptId: ledger.receiptId }, { role: 'real_paper_pilot_receipt' });
     return { ...receipt, ledgerReceiptId: ledger.receiptId, writeReceiptHash: writeReceipt.writeReceiptHash };
+  }).finally(() => {
+    context.services.persistenceSession.close?.();
   });
 }

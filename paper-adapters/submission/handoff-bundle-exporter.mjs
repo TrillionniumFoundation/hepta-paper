@@ -2,6 +2,8 @@ import path from 'node:path';
 import { assertArtifactRepository } from '../../paper-ports/artifact-repository-port.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
+import { isPathWithin } from '../../workflow-kernel/runtime/path-utils.mjs';
+import { verifyCampaignReleaseBundleForSubmission } from './campaign-release-bundle-consumer.mjs';
 
 function safeName(value) {
   return String(value || 'artifact').replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 160) || 'artifact';
@@ -9,7 +11,7 @@ function safeName(value) {
 
 function resolveArtifact(artifact, baseRoot, scopeRoots) {
   const candidate = path.resolve(path.isAbsolute(artifact.path) ? artifact.path : path.join(baseRoot, artifact.path));
-  const scopeRoot = scopeRoots.find((root) => candidate === root || candidate.startsWith(`${root}${path.sep}`));
+  const scopeRoot = scopeRoots.find((root) => isPathWithin(root, candidate));
   return { candidate, scopeRoot: scopeRoot || null };
 }
 
@@ -26,9 +28,24 @@ export async function exportSubmissionHandoffBundle({
   submissionDecisionPacket,
   artifactBaseRoot,
   artifactScopeRoots = [],
+  campaignReleaseBundle = null,
+  campaignReleaseAuthority = null,
 } = {}) {
   assertArtifactRepository(artifactRepository);
   const blockers = [];
+  if (campaignReleaseBundle) {
+    const releaseRoot = path.resolve(campaignReleaseBundle.packageOutput?.releaseRoot || '.');
+    const releaseRuntimeRoot = artifactScopeRoots.map((item) => path.resolve(item)).find((item) => isPathWithin(item, releaseRoot)) || null;
+    const releaseVerification = verifyCampaignReleaseBundleForSubmission({
+      releaseAuthority: campaignReleaseAuthority,
+      releaseBundle: campaignReleaseBundle,
+      runtimeRoot: releaseRuntimeRoot,
+      sourceScopeRoots: [artifactBaseRoot, ...artifactScopeRoots].filter(Boolean),
+    });
+    if (releaseVerification.status !== 'submission_campaign_release_verified') blockers.push(...releaseVerification.blockers);
+    if (campaignReleaseBundle.artifactPackageHash !== artifactPackage?.artifactPackageHash) blockers.push('campaign_release_handoff_artifact_package_mismatch');
+    if (campaignReleaseBundle.packageVerificationReceiptHash !== packageVerificationReceipt?.packageVerificationReceiptHash) blockers.push('campaign_release_handoff_package_verification_mismatch');
+  }
   if (!bundleRoot) blockers.push('handoff_bundle_root_missing');
   if (artifactPackage?.submitReady !== true || !artifactPackage?.artifactPackageHash) blockers.push('artifact_package_not_submit_ready');
   if (packageVerificationReceipt?.status !== 'package_verification_passed') blockers.push('package_verification_not_ready');
@@ -109,6 +126,7 @@ export async function exportSubmissionHandoffBundle({
     accountId: dispatchAuthorization.accountId,
     nonce: dispatchAuthorization.nonce,
     reviewedSubmissionDecisionPacketHash: submissionDecisionPacket.reviewedSubmissionDecisionPacketHash,
+    campaignReleaseBundleHash: campaignReleaseBundle?.campaignReleaseBundleHash || null,
     submissionMetadata: submissionDecisionPacket.metadata,
     artifacts: copiedArtifacts,
     artifactCount: copiedArtifacts.length,

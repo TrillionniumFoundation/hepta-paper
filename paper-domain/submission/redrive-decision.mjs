@@ -4,13 +4,14 @@ export function buildSubmissionRedriveDecision({
   dispatchAuthorization,
   responseIntake,
   responseDueAt,
-  now = new Date(),
+  now = null,
   reviewedVenueEvidence = null,
   humanReview = null,
   humanReviewVerificationReceipt = null,
 } = {}) {
   const blockers = [];
   const nowMs = now instanceof Date ? now.getTime() : Date.parse(String(now));
+  if (!Number.isFinite(nowMs)) blockers.push('submission_redrive_reference_time_required');
   const dueMs = Date.parse(String(responseDueAt || ''));
   const explicitFailure = responseIntake?.status === 'executor_response_accepted'
     && responseIntake?.outcome === 'failed';

@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { createOpenClawAgentExecutor } from '../../paper-adapters/automation/openclaw-agent-executor.mjs';
+import { createOpenClawAgentExecutor, openClawAgentCapabilityProfileHash } from '../../paper-adapters/automation/openclaw-agent-executor.mjs';
+import { openClawAgentConfigurationHash, openClawGatewayConfigurationHash } from '../../paper-adapters/automation/openclaw-agent-configuration.mjs';
 import { createAgentBackendRouter } from '../../paper-adapters/automation/agent-backend-router.mjs';
 import { createIsolatedAgentExecutor } from '../../paper-adapters/automation/isolated-agent-executor.mjs';
 import { runManuscriptQualityChecks } from '../../paper-adapters/automation/manuscript-quality-checks.mjs';
@@ -29,6 +31,69 @@ function temporary(t, prefix) {
   return root;
 }
 
+function openClawPolicy(agentId = 'fixture', workspace = process.cwd()) {
+  const runtimeConfig = {
+    agents: {
+      defaults: {},
+      list: [{
+        id: agentId,
+        runtime: { type: 'embedded' },
+        workspace,
+        skills: [],
+        subagents: { allowAgents: [] },
+        sandbox: {
+          mode: 'all',
+          backend: 'docker',
+          scope: 'session',
+          workspaceAccess: 'rw',
+          docker: {
+            network: 'none', readOnlyRoot: true, capDrop: ['ALL'], binds: [], env: {},
+            pidsLimit: 64, memory: '1g', memorySwap: '1g', cpus: 2, user: '1000:1000',
+          },
+          browser: { enabled: false, allowHostControl: false, binds: [] },
+        },
+        tools: {
+          allow: ['apply_patch', 'edit', 'exec', 'process', 'read', 'write'],
+          elevated: { enabled: false },
+          fs: { workspaceOnly: true },
+          exec: {
+            host: 'sandbox', mode: 'allowlist', security: 'allowlist', ask: 'off', strictInlineEval: true,
+            pathPrepend: [], safeBins: [], safeBinTrustedDirs: [], safeBinProfiles: {},
+            applyPatch: { workspaceOnly: true },
+          },
+          sandbox: { tools: { allow: ['apply_patch', 'edit', 'exec', 'process', 'read', 'write'] } },
+          subagents: { tools: { allow: [] } },
+        },
+      }],
+    },
+    tools: {},
+  };
+  const resolvedConfiguration = {
+    gatewayInstanceId: 'fixture-gateway-instance',
+    gatewayUrl: 'ws://127.0.0.1:18789',
+    snapshot: {
+      valid: true,
+      hash: crypto.createHash('sha256').update(JSON.stringify(runtimeConfig)).digest('hex'),
+      runtimeConfig,
+    },
+  };
+  const agentCapabilityProfile = Object.freeze({
+    version: 2,
+    kind: 'OpenClawAgentCapabilityProfile',
+    agentId,
+    enforcement: 'openclaw-gateway-runtime-configuration',
+    delivery: 'disabled',
+    toolPolicy: Object.freeze({ messaging: 'denied', externalMutation: 'denied', credentialAccess: 'denied' }),
+    openClawAgentConfigurationHash: openClawAgentConfigurationHash(resolvedConfiguration, agentId),
+    openClawGatewayConfigurationHash: openClawGatewayConfigurationHash(resolvedConfiguration, agentId),
+  });
+  return {
+    agentCapabilityProfile,
+    expectedAgentCapabilityProfileHash: openClawAgentCapabilityProfileHash(agentCapabilityProfile),
+    openClawConfigurationResolver: async () => resolvedConfiguration,
+  };
+}
+
 test('OpenClaw executor uses an isolated session key and captures usage and changes', async (t) => {
   const root = temporary(t, 'hepta-openclaw-executor-');
   fs.writeFileSync(path.join(root, 'main.tex'), 'before\n');
@@ -38,7 +103,7 @@ printf 'after\\n' > main.tex
 printf '%s\\n' '{"runId":"run","status":"ok","result":{"payloads":[{"text":"{\\"status\\":\\"completed\\",\\"summary\\":\\"ok\\",\\"checksRun\\":[],\\"blockers\\":[]}"}],"meta":{"agentMeta":{"sessionId":"child-session","usage":{"input":10,"output":2,"total":12}}}}}'
 `);
   fs.chmodSync(shim, 0o755);
-  const executor = createOpenClawAgentExecutor({ openclawBinary: shim, agentId: 'fixture', timeoutMs: 5000 });
+  const executor = createOpenClawAgentExecutor({ openclawBinary: shim, agentId: 'fixture', timeoutMs: 5000, ...openClawPolicy('fixture', root) });
   const receipt = await executor.execute({ role: 'writer', workspacePath: root, instructions: 'edit', context: { campaignId: 'c', nodeId: 'n' } });
   assert.equal(receipt.status, 'agent_execution_completed');
   assert.equal(receipt.sessionId, 'child-session');
@@ -65,6 +130,29 @@ test('isolated executor merges non-conflicting changes and backend router falls 
   assert.equal(fs.existsSync(path.join(paper, '__pycache__')), false);
 });
 
+test('isolated agents cannot mint system-owned automation result artifacts', async (t) => {
+  const root = temporary(t, 'hepta-system-owned-results-');
+  const paper = path.join(root, 'paper');
+  fs.mkdirSync(paper);
+  fs.writeFileSync(path.join(paper, 'main.tex'), 'before\n');
+  const delegate = {
+    executorId: 'result-minting-delegate',
+    capabilities: fixtureCapabilities('result-minting-delegate'),
+    async execute(input) {
+      fs.mkdirSync(path.join(input.workspacePath, 'automation-results'));
+      fs.writeFileSync(path.join(input.workspacePath, 'automation-results', 'results.json'), '{"score":1}\n');
+      return { status: 'agent_execution_completed', agentExecutionReceiptHash: 'sha256:result-mint' };
+    },
+  };
+  const isolated = createIsolatedAgentExecutor({ delegate, isolationRoot: path.join(root, 'isolated') });
+  await assert.rejects(
+    isolated.execute({ role: 'writer', workspacePath: paper, instructions: 'mint result' }),
+    (error) => error.retryable === false
+      && error.message === 'workspace_mutation_system_owned:automation-results/results.json',
+  );
+  assert.equal(fs.existsSync(path.join(paper, 'automation-results')), false);
+});
+
 test('OpenClaw timeout is eligible for fallback while isolated workspaces reject symlinks', async (t) => {
   const root = temporary(t, 'hepta-openclaw-timeout-');
   const paper = path.join(root, 'paper');
@@ -73,13 +161,62 @@ test('OpenClaw timeout is eligible for fallback while isolated workspaces reject
   const slow = path.join(root, 'slow.sh');
   fs.writeFileSync(slow, '#!/bin/sh\nsleep 30\n');
   fs.chmodSync(slow, 0o755);
-  const primary = createOpenClawAgentExecutor({ openclawBinary: slow, agentId: 'fixture', timeoutMs: 25 });
+  const primary = createOpenClawAgentExecutor({ openclawBinary: slow, agentId: 'fixture', timeoutMs: 25, ...openClawPolicy('fixture', paper) });
   const fallback = { executorId: 'fallback-after-timeout', capabilities: fixtureCapabilities('fallback-after-timeout'), async execute() { return { status: 'agent_execution_completed', changedPaths: [], agentExecutionReceiptHash: 'sha256:fallback-timeout' }; } };
   const receipt = await createAgentBackendRouter({ primary, fallbacks: [fallback] }).execute({ role: 'writer', workspacePath: paper, instructions: 'probe', context: { campaignId: 'c', nodeId: 'n' } });
   assert.equal(receipt.selectedExecutorId, 'fallback-after-timeout');
   fs.symlinkSync('/tmp', path.join(paper, 'unsafe-link'));
   const isolated = createIsolatedAgentExecutor({ delegate: fallback, isolationRoot: path.join(root, 'isolated') });
   await assert.rejects(() => isolated.execute({ role: 'writer', workspacePath: paper, instructions: 'probe' }), /isolated_workspace_symlink_forbidden/);
+});
+
+test('isolated merge rejects a delegate-created symlink and preserves the source preimage', async (t) => {
+  const root = temporary(t, 'hepta-isolated-merge-symlink-');
+  const paper = path.join(root, 'paper');
+  const outside = path.join(root, 'outside.txt');
+  fs.mkdirSync(paper);
+  fs.writeFileSync(path.join(paper, 'main.tex'), 'before\n');
+  fs.writeFileSync(outside, 'outside\n');
+  const delegate = {
+    executorId: 'symlink-delegate',
+    capabilities: fixtureCapabilities('symlink-delegate'),
+    async execute(input) {
+      fs.rmSync(path.join(input.workspacePath, 'main.tex'));
+      fs.symlinkSync(outside, path.join(input.workspacePath, 'main.tex'));
+      return { status: 'agent_execution_completed', agentExecutionReceiptHash: 'sha256:symlink' };
+    },
+  };
+  const isolated = createIsolatedAgentExecutor({ delegate, isolationRoot: path.join(root, 'isolated'), keepFailedWorkspaces: false });
+  await assert.rejects(
+    () => isolated.execute({ role: 'writer', workspacePath: paper, instructions: 'edit' }),
+    (error) => error.retryable === false && error.message.startsWith('isolated_workspace_unsafe_change:main.tex:'),
+  );
+  assert.equal(fs.readFileSync(path.join(paper, 'main.tex'), 'utf8'), 'before\n');
+  assert.equal(fs.readFileSync(outside, 'utf8'), 'outside\n');
+});
+
+test('isolated merge rejects a symlinked destination parent even when source links are skipped', async (t) => {
+  const root = temporary(t, 'hepta-isolated-destination-parent-symlink-');
+  const paper = path.join(root, 'paper');
+  const outside = path.join(root, 'outside');
+  fs.mkdirSync(paper);
+  fs.mkdirSync(outside);
+  fs.symlinkSync(outside, path.join(paper, 'linked'));
+  const delegate = {
+    executorId: 'parent-link-delegate',
+    capabilities: fixtureCapabilities('parent-link-delegate'),
+    async execute(input) {
+      fs.mkdirSync(path.join(input.workspacePath, 'linked'));
+      fs.writeFileSync(path.join(input.workspacePath, 'linked', 'new.txt'), 'agent\n');
+      return { status: 'agent_execution_completed', agentExecutionReceiptHash: 'sha256:parent-link' };
+    },
+  };
+  const isolated = createIsolatedAgentExecutor({ delegate, isolationRoot: path.join(root, 'isolated'), keepFailedWorkspaces: false });
+  await assert.rejects(
+    () => isolated.execute({ role: 'writer', workspacePath: paper, instructions: 'edit', isolationPolicy: { skipSourceSymlinks: true } }),
+    (error) => error.retryable === false && error.message.includes('isolated_workspace_unsafe_change:linked/new.txt:'),
+  );
+  assert.equal(fs.existsSync(path.join(outside, 'new.txt')), false);
 });
 
 test('isolated merge conflicts retain delegate usage receipts for hard budgets', async (t) => {
@@ -122,14 +259,14 @@ test('campaign operations persist pause resume retry cancel and usage', (t) => {
   campaigns.createCampaign(plan);
   const [prePauseLease] = campaigns.claimReady({ campaignId: 'campaign', workerId: 'pre-pause-worker' });
   assert.equal(campaigns.pauseCampaign('campaign').status, 'paused');
-  assert.equal(campaigns.listNodes('campaign').find((node) => node.node_id === prePauseLease.node_id).status, 'queued');
+  assert.equal(campaigns.listNodes('campaign').find((node) => node.nodeId === prePauseLease.nodeId).status, 'queued');
   assert.equal(campaigns.resumeCampaign('campaign').status, 'running');
   assert.equal(campaigns.recordUsage('campaign', { agentCalls: 2, cpuJobs: 1, tokens: 42 }).agentCallCount, 2);
   const [leased] = campaigns.claimReady({ campaignId: 'campaign', workerId: 'worker' });
-  campaigns.startNode({ nodeId: leased.node_id, workerId: 'worker' });
+  campaigns.startNode({ nodeId: leased.nodeId, workerId: 'worker', attemptId: leased.attemptId, leaseGeneration: leased.leaseGeneration });
   assert.equal(campaigns.getCampaign('campaign').currentPhase, leased.kind);
-  campaigns.failNode({ nodeId: leased.node_id, workerId: 'worker', retryable: false });
-  assert.equal(campaigns.retryNode(leased.node_id).status, 'queued');
+  campaigns.failNode({ nodeId: leased.nodeId, workerId: 'worker', attemptId: leased.attemptId, leaseGeneration: leased.leaseGeneration, retryable: false });
+  assert.equal(campaigns.retryNode(leased.nodeId).status, 'queued');
   assert.equal(campaigns.getCampaign('campaign').currentPhase, leased.kind);
   assert.equal(campaigns.cancelCampaign('campaign').status, 'cancelled');
 });
@@ -163,7 +300,7 @@ test('budget-stopped campaigns require an explicit increase and reopen only budg
   assert.equal(resumed.spec.budgets.maxTokenCount, 750000);
   assert.notEqual(resumed.spec.campaignPlanHash, plan.campaignPlanHash);
   assert.ok(campaigns.listNodes(plan.campaignId).every((node) => node.status === 'queued'));
-  assert.ok(campaigns.listNodes(plan.campaignId).every((node) => node.failure_class === null));
+  assert.ok(campaigns.listNodes(plan.campaignId).every((node) => node.failureClass === null));
   assert.equal(campaigns.listEvents(plan.campaignId).at(-1).event.kind, 'campaign_resumed');
 });
 
@@ -200,7 +337,7 @@ test('nonconverged campaigns append a review round without replaying completed w
   assert.equal(extended.maxRounds, 2);
   assert.equal(extended.spec.campaignPlanHash, second.campaignPlanHash);
   const nodes = campaigns.listNodes(first.campaignId);
-  assert.equal(nodes.find((node) => node.kind === 'package' && node.roundIndex === 2).failure_class, 'campaign_round_extension_superseded');
+  assert.equal(nodes.find((node) => node.kind === 'package' && node.roundIndex === 2).failureClass, 'campaign_round_extension_superseded');
   assert.equal(nodes.find((node) => node.kind === 'referee-1' && node.roundIndex === 2).status, 'queued');
   assert.equal(nodes.find((node) => node.kind === 'package' && node.roundIndex === 3).status, 'queued');
   assert.equal(campaigns.listEvents(first.campaignId).at(-1).event.kind, 'campaign_extended');
@@ -229,4 +366,118 @@ test('manuscript citation and artifact checks are deterministic and fail closed'
   fs.writeFileSync(path.join(root, 'main.tex'), '\\begin{table}theorem cases\\end{table}\n');
   assert.equal(runManuscriptQualityChecks({ workspacePath: root }).passed, true);
   assert.ok(runManuscriptQualityChecks({ workspacePath: root, requiresEmpiricalArtifacts: true }).blockers.includes('table_or_figure_without_empirical_artifact'));
+});
+
+test('self-created result JSON cannot authorize manuscript numbers without accepted original and replay ledger evidence', (t) => {
+  const root = temporary(t, 'hepta-untrusted-result-authority-');
+  fs.mkdirSync(path.join(root, 'automation-results'));
+  fs.writeFileSync(path.join(root, 'automation-results', 'results.json'), '{"score":0.99}\n');
+  fs.writeFileSync(path.join(root, 'main.tex'), [
+    '% HEPTA_RESULT automation-results/results.json#score=0.99',
+    'The empirical result score was 0.99.',
+  ].join('\n'));
+  const receipt = runManuscriptQualityChecks({
+    workspacePath: root,
+    requiresEmpiricalArtifacts: true,
+    requiresTrustedEmpiricalAuthority: true,
+    experimentRegistry: null,
+    expectedPaperId: 'paper',
+    expectedCampaignId: 'campaign',
+  });
+  assert.equal(receipt.passed, false);
+  assert.ok(receipt.blockers.includes('empirical_result_registry_authority_invalid'));
+  assert.ok(receipt.blockers.includes('empirical_result_artifact_authority_missing'));
+  assert.ok(receipt.blockers.includes('claim_result_provenance_mismatch'));
+});
+
+test('manuscript empirical provenance covers the recursive TeX corpus and every numeric result claim', (t) => {
+  const root = temporary(t, 'hepta-quality-provenance-corpus-');
+  fs.mkdirSync(path.join(root, 'sections'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'results.json'), '{"accuracy":0.91,"latency":12}\n');
+  fs.writeFileSync(path.join(root, 'main.tex'), '\\input{sections/results}\n');
+  fs.writeFileSync(path.join(root, 'sections', 'results.tex'), [
+    '% HEPTA_RESULT results.json#accuracy=0.91',
+    'The observed accuracy was 91\\%.',
+    'The observed latency was 12 ms.',
+  ].join('\n'));
+  const unbound = runManuscriptQualityChecks({ workspacePath: root, requiresEmpiricalArtifacts: true });
+  assert.ok(unbound.blockers.includes('empirical_numeric_claim_provenance_missing'));
+  assert.deepEqual(unbound.details.manuscriptCorpusFiles, ['main.tex', 'sections/results.tex']);
+  assert.equal(unbound.details.unboundEmpiricalNumericClaims.length, 1);
+  assert.equal(unbound.details.unboundEmpiricalNumericClaims[0].sourcePath, 'sections/results.tex');
+
+  fs.writeFileSync(path.join(root, 'sections', 'results.tex'), [
+    '% HEPTA_RESULT results.json#accuracy=0.91',
+    'The observed accuracy was 91\\%.',
+    '% HEPTA_RESULT results.json#latency=12',
+    'The observed latency was 12 ms.',
+  ].join('\n'));
+  const bound = runManuscriptQualityChecks({ workspacePath: root, requiresEmpiricalArtifacts: true });
+  assert.equal(bound.passed, true, JSON.stringify(bound.blockers));
+  assert.equal(bound.details.resultProvenanceMarkerCount, 2);
+  assert.deepEqual(bound.details.unboundEmpiricalNumericClaims, []);
+});
+
+test('empirical manuscript checks reject keyword-free numbers and fake figure bytes', (t) => {
+  const root = temporary(t, 'hepta-quality-adversarial-provenance-');
+  fs.mkdirSync(path.join(root, 'automation-results'));
+  fs.writeFileSync(path.join(root, 'automation-results', 'results.json'), '{"score":0.734}\n');
+  fs.writeFileSync(path.join(root, 'fake.png'), 'not-a-real-figure');
+  fs.writeFileSync(path.join(root, 'main.tex'), [
+    '% HEPTA_RESULT automation-results/results.json#score=0.734',
+    'Filler prose.',
+    'Filler prose.',
+    'Filler prose.',
+    'Our method reached 73.4 percent.',
+    'The ablation dominates every alternative in practice.',
+    '\\includegraphics{fake.png}',
+  ].join('\n'));
+  const receipt = runManuscriptQualityChecks({
+    workspacePath: root,
+    requiresEmpiricalArtifacts: true,
+  });
+  assert.equal(receipt.passed, false);
+  assert.ok(receipt.blockers.includes('empirical_numeric_claim_provenance_missing'));
+  assert.ok(receipt.blockers.includes('empirical_assertion_provenance_missing'));
+  assert.ok(receipt.blockers.includes('invalid_figure_artifacts'));
+  assert.ok(receipt.blockers.includes('empirical_figure_artifacts_unsupported'));
+});
+
+test('manuscript quality checks bind canonical CSV metrics by name and reject partial numeric coverage', (t) => {
+  const root = temporary(t, 'hepta-manuscript-csv-provenance-');
+  fs.writeFileSync(path.join(root, 'results.csv'), 'metric,value\naccuracy,0.91\nlatency_ms,27\n');
+  fs.writeFileSync(path.join(root, 'main.tex'), [
+    '% HEPTA_RESULT results.csv#accuracy=0.91',
+    '% HEPTA_RESULT results.csv#latency_ms=27',
+    'The empirical result has accuracy 0.91 and latency 27 ms.',
+  ].join('\n'));
+
+  const complete = runManuscriptQualityChecks({ workspacePath: root, requiresEmpiricalArtifacts: true });
+  assert.equal(complete.passed, true, JSON.stringify(complete.blockers));
+
+  fs.writeFileSync(path.join(root, 'main.tex'), [
+    '% HEPTA_RESULT results.csv#accuracy=0.91',
+    'The empirical result has accuracy 0.91 and latency 27 ms.',
+  ].join('\n'));
+  const partial = runManuscriptQualityChecks({ workspacePath: root, requiresEmpiricalArtifacts: true });
+  assert.equal(partial.passed, false);
+  assert.ok(partial.blockers.includes('empirical_numeric_claim_provenance_missing'));
+});
+
+test('manuscript quality checks reject result and TeX-input symlinks that escape the workspace', (t) => {
+  const root = temporary(t, 'hepta-manuscript-symlink-provenance-');
+  const outside = temporary(t, 'hepta-manuscript-symlink-outside-');
+  fs.writeFileSync(path.join(outside, 'results.json'), '{"score":0.95}\n');
+  fs.writeFileSync(path.join(outside, 'claims.tex'), 'The empirical result is 0.95.\n');
+  fs.symlinkSync(path.join(outside, 'results.json'), path.join(root, 'results.json'));
+  fs.symlinkSync(path.join(outside, 'claims.tex'), path.join(root, 'claims.tex'));
+  fs.writeFileSync(path.join(root, 'main.tex'), [
+    '% HEPTA_RESULT results.json#score=0.95',
+    '\\input{claims}',
+  ].join('\n'));
+
+  const receipt = runManuscriptQualityChecks({ workspacePath: root, requiresEmpiricalArtifacts: true });
+  assert.equal(receipt.passed, false);
+  assert.ok(receipt.blockers.includes('claim_result_provenance_mismatch'));
+  assert.ok(receipt.blockers.includes('missing_table_or_input_artifacts'));
 });

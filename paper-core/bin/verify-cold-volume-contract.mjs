@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { verifyColdVolumeContract } from '../src/cold-volume-contract.mjs';
+import { verifyColdVolumeContract } from '../../paper-composition/bootstrap/operator-release-composition.mjs';
 import { defaultPaperAssetRoot } from '../src/workspace-layout.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');

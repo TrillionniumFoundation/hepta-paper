@@ -2,12 +2,8 @@ import crypto from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { assertArtifactRepository, assertArtifactTarget } from '../../paper-ports/artifact-repository-port.mjs';
-import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { inspectScopedWriteTargetSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
-
-function sha256(value) {
-  return `sha256:${crypto.createHash('sha256').update(value).digest('hex')}`;
-}
 
 function digestPart(value) {
   return String(value).replace(/^sha256:/, '');
@@ -21,7 +17,7 @@ async function writeImmutable(candidate, bytes) {
   } catch (error) {
     if (error.code !== 'EEXIST') throw error;
     const existing = await fsp.readFile(candidate);
-    if (sha256(existing) !== sha256(bytes)) throw new Error(`Immutable artifact collision: ${candidate}`);
+    if (hashBytes(existing) !== hashBytes(bytes)) throw new Error(`Immutable artifact collision: ${candidate}`);
     return false;
   }
 }
@@ -58,7 +54,9 @@ export function createFilesystemArtifactRepository({
   retentionPolicy = {},
 } = {}) {
   if (!receiptLedger || typeof receiptLedger.record !== 'function') throw new Error('ArtifactRepository requires a persistent receipt ledger');
-  if (!clock || typeof clock.nowIso !== 'function') throw new Error('ArtifactRepository requires an injected clock');
+  if (!clock || typeof clock.nowIso !== 'function' || typeof clock.now !== 'function') {
+    throw new Error('ArtifactRepository requires an injected ClockPort');
+  }
   const declaredRoot = path.resolve(scopeRoot || '.');
   const declaredCasRoot = path.resolve(casRoot || path.join(declaredRoot, '.hepta-artifact-cas'));
   const objectsRoot = path.join(declaredCasRoot, 'objects', 'sha256');
@@ -77,7 +75,7 @@ export function createFilesystemArtifactRepository({
       throw new Error(`Artifact target is unsafe: ${beforeTarget.blockers.join(',')}`);
     }
     const bytes = Buffer.isBuffer(payload) ? payload : Buffer.from(String(payload), 'utf8');
-    const contentHash = sha256(bytes);
+    const contentHash = hashBytes(bytes);
     const digest = digestPart(contentHash);
     const objectPath = path.join(objectsRoot, digest.slice(0, 2), digest.slice(2));
     const objectCreated = await writeImmutable(objectPath, bytes);
@@ -154,7 +152,7 @@ export function createFilesystemArtifactRepository({
       for (const file of manifestFiles) {
         try { referenced.add((JSON.parse(await fsp.readFile(file, 'utf8'))).contentHash); } catch { /* invalid manifests are retained for audit */ }
       }
-      const now = Date.now();
+      const now = clock.now().getTime();
       const candidates = [];
       for (const objectPath of await walkFiles(objectsRoot)) {
         const relative = path.relative(objectsRoot, objectPath).replace(/\\/g, '');

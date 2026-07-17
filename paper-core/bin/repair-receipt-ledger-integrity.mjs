@@ -1,33 +1,24 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
 import path from 'node:path';
-import { createDefaultPaperStore, createReadOnlyPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
-import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqlite-receipt-ledger.mjs';
-import { createSqliteReceiptLedgerQualificationStore } from '../../paper-adapters/persistence/sqlite-receipt-ledger-qualification.mjs';
-import { issueLedgerAdministratorWriter } from '../../paper-adapters/persistence/receipt-writer-broker.mjs';
-import { createSystemClock } from '../../paper-adapters/runtime/system-clock.mjs';
+import { createReadOnlyPaperStore, openExistingWritablePaperStore, composeLedgerAdministratorServices } from '../../paper-composition/bootstrap/operator-persistence-composition.mjs';
+import { createSystemClock } from '../../paper-composition/bootstrap/operator-runtime-composition.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { selectReceiptHash } from '../../paper-domain/evidence/receipt-hash-selector.mjs';
 import { sqlText } from '../../paper-ports/store-port.mjs';
 import { currentCodeProvenance } from '../src/code-provenance.mjs';
-import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
-
-function expectedReceiptHash(receipt) {
-  return receipt.receiptHash
-    || receipt.writeReceiptHash
-    || receipt.jobReceiptHash
-    || Object.entries(receipt).reverse().find(([key]) => key.endsWith('ReceiptHash'))?.[1]
-    || hashRecord(receipt.kind || 'Receipt', receipt);
-}
+import { assertWorkspaceLayoutPhysicallyDecoupled, defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 
 const execute = process.argv.includes('--execute');
 const runtimeRoot = defaultPaperRuntimeRoot();
 const root = defaultPaperAssetRoot();
+if (execute) assertWorkspaceLayoutPhysicallyDecoupled({ assetRoot: root, runtimeRoot });
 const readStore = createReadOnlyPaperStore({ root, runtimeRoot });
 const rows = readStore.query('SELECT receipt_id,stream,receipt_json,receipt_sha256 FROM receipt_ledger ORDER BY receipt_id;').rows;
 const invalid = rows.flatMap((row) => {
   try {
     const receipt = JSON.parse(row.receipt_json);
-    const expected = expectedReceiptHash(receipt);
+    const expected = selectReceiptHash(receipt);
     const expectedId = `${row.stream}:${expected}`;
     return expected === row.receipt_sha256 && expectedId === row.receipt_id
       ? []
@@ -42,11 +33,11 @@ const blockers = [
 const repaired = [];
 readStore.close?.();
 if (execute && !blockers.length) {
-  const store = createDefaultPaperStore({ root, runtimeRoot });
+  const store = openExistingWritablePaperStore({ root, runtimeRoot });
   const clock = createSystemClock();
-  const administratorCapability = issueLedgerAdministratorWriter();
-  const qualifications = createSqliteReceiptLedgerQualificationStore({ store, clock, issuerCapability: administratorCapability });
-  const replacementLedger = createSqliteReceiptLedger({ store, clock });
+  const administratorServices = composeLedgerAdministratorServices({ store, clock });
+  const qualifications = administratorServices.qualifications;
+  const replacementLedger = administratorServices.replacementLedger;
   for (const row of invalid) {
     const conflict = store.query(`SELECT receipt_id,receipt_sha256 FROM receipt_ledger WHERE receipt_id=${sqlText(row.expectedId)} AND receipt_id<>${sqlText(row.receipt_id)} LIMIT 1;`).rows[0];
     if (conflict) {
@@ -82,7 +73,7 @@ if (execute && !blockers.length) {
     });
     repaired.push({ priorReceiptId: row.receipt_id, receiptId: replacement.receiptId, receiptHash: replacement.receiptHash, qualificationHash: qualification.qualificationHash });
   }
-  const ledger = createSqliteReceiptLedger({ store, clock, issuerCapability: administratorCapability });
+  const ledger = administratorServices.ledger;
   const payload = {
     version: 1,
     kind: 'ReceiptLedgerIntegrityRepairReceipt',

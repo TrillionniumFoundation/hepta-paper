@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { currentCodeProvenance } from '../src/code-provenance.mjs';
-import { defaultLegacyPaperFactoryRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
+import { assertWorkspaceLayoutPhysicallyDecoupled, defaultLegacyPaperFactoryRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 import { sha256File, signReleasePayload } from './release-evidence-lib.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
@@ -12,6 +12,7 @@ const requestedVersion = process.argv.find((value) => value.startsWith('--versio
 const version = requestedVersion || currentCodeProvenance().packageVersion;
 const legacyRoot = defaultLegacyPaperFactoryRoot();
 const runtimeRoot = defaultPaperRuntimeRoot();
+assertWorkspaceLayoutPhysicallyDecoupled({ legacyRoot, runtimeRoot });
 const archiveRoot = path.join(path.dirname(legacyRoot), 'hepta-paper-legacy-reference', version);
 const archivePath = path.join(archiveRoot, 'paper-factory-control-plane-reference.tar.gz');
 if (!fs.existsSync(archivePath)) throw new Error(`Legacy reference archive missing: ${archivePath}`);

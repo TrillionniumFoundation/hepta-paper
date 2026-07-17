@@ -3,10 +3,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
-import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqlite-receipt-ledger.mjs';
-import { createSqliteSubmissionDeliveryStore } from '../../paper-adapters/submission/sqlite-delivery-store.mjs';
-import { createSystemClock } from '../../paper-adapters/runtime/system-clock.mjs';
+import { bootstrapSubmissionContext } from '../../paper-composition/bootstrap/capability-scoped-bootstrap.mjs';
+import { createDefaultPaperStore } from '../../paper-composition/bootstrap/operator-persistence-composition.mjs';
 import { defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 import { currentCodeProvenance } from '../src/code-provenance.mjs';
 import { signReleasePayload } from './release-evidence-lib.mjs';
@@ -21,15 +19,22 @@ if (!fs.existsSync(priorPath)) throw new Error(`Real paper pilot receipt missing
 const prior = JSON.parse(fs.readFileSync(priorPath, 'utf8'));
 const sandboxRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..', '..', 'hepta-paper-provider-sandbox');
 const verificationRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'real-paper-provider-sandbox-'));
-const store = createDefaultPaperStore({ root: verificationRoot, runtimeRoot: verificationRoot });
-const clock = createSystemClock();
-const receiptLedger = createSqliteReceiptLedger({ store, clock });
-const delivery = createSqliteSubmissionDeliveryStore({ store, receiptLedger, clock });
+const verificationAssetRoot = path.join(verificationRoot, 'assets');
+const verificationRuntimeRoot = path.join(verificationRoot, 'runtime');
+fs.mkdirSync(verificationAssetRoot, { recursive: true });
+createDefaultPaperStore({ root: verificationAssetRoot, runtimeRoot: verificationRuntimeRoot }).close();
+const context = bootstrapSubmissionContext({
+  root: verificationAssetRoot,
+  runtimeRoot: verificationRuntimeRoot,
+  mode: 'provider-sandbox-submission',
+  execute: true,
+});
+const delivery = context.services.submissionDeliveryStore;
 const dispatchPayload = { version: 1, kind: 'SubmissionDispatchAuthorization', status: 'submission_dispatch_authorization_ready', paperId, provider: 'sandbox-provider', accountId: 'sandbox-account', nonce: `sandbox-${prior.realPaperEndToEndPilotReceiptHash}` };
 const dispatchAuthorization = { ...dispatchPayload, submissionDispatchAuthorizationHash: hashRecord('SubmissionDispatchAuthorization', dispatchPayload) };
 const outbox = delivery.enqueue({ paperId, dispatchAuthorization, payload: { packageHash: prior.mainTexHash, realPilotReceiptHash: prior.realPaperEndToEndPilotReceiptHash } });
-const input = path.join(verificationRoot, 'provider-request.json');
-const output = path.join(verificationRoot, 'provider-response.json');
+const input = path.join(verificationRuntimeRoot, 'provider-request.json');
+const output = path.join(verificationRuntimeRoot, 'provider-response.json');
 fs.writeFileSync(input, JSON.stringify({ environment: 'provider_sandbox', liveActionAllowed: false, provider: dispatchAuthorization.provider, accountId: dispatchAuthorization.accountId, paperId, dispatchAuthorizationHash: dispatchAuthorization.submissionDispatchAuthorizationHash, packageHash: prior.mainTexHash }));
 const result = spawnSync(process.execPath, [path.join(sandboxRoot, 'provider-sandbox.mjs'), input, output], { encoding: 'utf8' });
 if (result.status !== 0) throw new Error(result.stderr || 'provider_sandbox_failed');
@@ -62,5 +67,6 @@ const receipt = { ...payload, realPaperProviderSandboxReceiptHash: hashRecord('R
 const signature = signReleasePayload(receipt, runtimeRoot);
 const target = path.join(runtimeRoot, 'pilots', paperId, 'REAL_PAPER_PROVIDER_SANDBOX_RECEIPT.json');
 fs.writeFileSync(target, `${JSON.stringify({ ...receipt, signature }, null, 2)}\n`);
+context.services.persistenceSession.close();
 fs.rmSync(verificationRoot, { recursive: true, force: true });
 process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`);

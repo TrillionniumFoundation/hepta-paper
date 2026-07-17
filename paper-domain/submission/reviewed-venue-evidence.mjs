@@ -11,12 +11,13 @@ export function buildReviewedVenueEvidence({
   paperTask,
   venuePlan,
   observation = null,
-  now = new Date(),
+  now = null,
   purpose = 'submission_preflight',
   sourceVerificationReceipt = null,
 } = {}) {
   const blockers = [];
   const nowMs = now instanceof Date ? now.getTime() : Date.parse(String(now));
+  if (!Number.isFinite(nowMs)) blockers.push('reviewed_venue_reference_time_required');
   const observedAtMs = Date.parse(String(observation?.observedAt || ''));
   const expiresAtMs = Date.parse(String(observation?.expiresAt || ''));
   const evidenceHashes = unique(observation?.evidenceHashes).sort();

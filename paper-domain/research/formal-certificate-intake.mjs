@@ -1,10 +1,14 @@
-import path from 'node:path';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { formalVerifierDescriptor } from './formal-verifier-registry.mjs';
 import { verifyTrustedLedgerReceipt } from '../evidence/trusted-ledger-receipt.mjs';
 
 const HASH = /^sha256:[a-f0-9]{64}$/i;
 const validHash = (value) => HASH.test(String(value || ''));
+const sourceExtension = (value) => {
+  const leaf = String(value || '').replace(/\\/g, '/').split('/').pop() || '';
+  const index = leaf.lastIndexOf('.');
+  return index > 0 ? leaf.slice(index).toLowerCase() : '';
+};
 
 export function buildFormalSourceManifest({ verifierKind, sourceRecords = [] } = {}) {
   const payload = {
@@ -96,7 +100,7 @@ export function buildGenericFormalCertificateIntake({
   if (!validHash(certificate?.toolchainHash)) blockers.push('formal_toolchain_hash_invalid');
   if (!Array.isArray(sourceRecords) || !sourceRecords.length) blockers.push('formal_certificate_source_records_missing');
   for (const [index, source] of sourceRecords.entries()) {
-    if (path.extname(String(source?.path || '')).toLowerCase() !== descriptor?.extension) blockers.push(`formal_source_extension_invalid:${index}`);
+    if (sourceExtension(source?.path) !== descriptor?.extension) blockers.push(`formal_source_extension_invalid:${index}`);
     if (!validHash(source?.hash)) blockers.push(`formal_source_hash_invalid:${index}`);
   }
   if (!Array.isArray(claimBindings) || !claimBindings.length) blockers.push('formal_claim_bindings_missing');

@@ -4,12 +4,22 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   CAPABILITY_DECISIONS,
+  buildLegacyCapabilityMatrixV3,
   LEGACY_CAPABILITY_MATRIX_V3,
 } from '../legacy-capability-matrix-v3.mjs';
+import { capabilityEvidencePath } from '../capability-operational-evidence.mjs';
+import { defaultPaperRuntimeRoot } from '../../paper-adapters/runtime/workspace-layout.mjs';
 
-const matrix = LEGACY_CAPABILITY_MATRIX_V3;
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
 const sha256File = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+const releaseProfile = process.argv.includes('--release-profile');
+const runtimeRoot = defaultPaperRuntimeRoot();
+const matrix = releaseProfile
+  ? buildLegacyCapabilityMatrixV3({
+    runtimeRoot,
+    operationalEvidence: JSON.parse(fs.readFileSync(capabilityEvidencePath(runtimeRoot), 'utf8')),
+  })
+  : LEGACY_CAPABILITY_MATRIX_V3;
 assert.equal(matrix.version, 3);
 assert.equal(matrix.entries.length, 249);
 assert.equal(new Set(matrix.entries.map((entry) => entry.legacyMatrixEntryId)).size, 249);
@@ -21,7 +31,6 @@ assert.deepEqual(matrix.summary.byDecision, {
 assert.equal(matrix.summary.uniqueCapabilityCount, 5);
 assert.equal(matrix.summary.decisionMapped, 249);
 assert.equal(matrix.summary.contractsDefined, 249);
-const releaseProfile = process.argv.includes('--release-profile');
 if (releaseProfile) assert.equal(matrix.summary.implementationVerified, 40);
 else assert.ok(matrix.summary.implementationVerified >= 0 && matrix.summary.implementationVerified <= 40);
 assert.equal(matrix.summary.implementationNotApplicable, 209);

@@ -5,7 +5,7 @@ import { evaluateDependencyFreshness } from './dependency-freshness-policy.mjs';
 function values(value) { return Array.isArray(value) ? value.map(String) : []; }
 
 export function evaluateEvidenceConsumption({
-  reference = {}, expected = {}, nowMs = Date.now(), maximumAgeMs = null,
+  reference = {}, expected = {}, nowMs = null, maximumAgeMs = null,
   requiredOutputs = [], availableOutputs = [], claimId = null, sourceLocator = null,
   acceptedResultClasses = ['positive', 'verified'], resultClass = null,
   forbiddenSideEffects = [], observedSideEffects = [], requireCreatedAt = true,

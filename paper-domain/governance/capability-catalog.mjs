@@ -1,0 +1,16 @@
+export const CAPABILITY_CATALOG = Object.freeze({
+  'research.claim-registry': { boundedContext: 'research', target: 'paper-domain/research/claim-registry.mjs' },
+  'research.gap-planner': { boundedContext: 'research', target: 'paper-application/research/gap-planner.mjs' },
+  'research.evidence-ingestor': { boundedContext: 'research', target: 'paper-domain/research/evidence-ingestor.mjs' },
+  'research.evidence-quality-gate': { boundedContext: 'research', target: 'paper-domain/research/evidence-quality-gate.mjs' },
+  'research.experiment-registry': { boundedContext: 'research', target: 'paper-domain/research/experiment-registry.mjs' },
+  'research.formal-verifier': { boundedContext: 'research', target: 'paper-ports/formal-verifier-port.mjs' },
+  'research.change-proposal': { boundedContext: 'research', target: 'paper-domain/research/change-proposal.mjs' },
+  'runtime.sandboxed-worker-runner': { boundedContext: 'runtime', target: 'paper-ports/worker-runner-port.mjs' },
+  'runtime.artifact-repository': { boundedContext: 'runtime', target: 'paper-ports/artifact-repository-port.mjs' },
+  'runtime.job-receipt-store': { boundedContext: 'runtime', target: 'paper-ports/job-receipt-store-port.mjs' },
+  'submission.executor-port': { boundedContext: 'submission', target: 'paper-ports/submission-executor-port.mjs' },
+  'submission.delivery-runtime': { boundedContext: 'submission', target: 'paper-domain/submission/delivery-runtime.mjs' },
+  'submission.release-lock': { boundedContext: 'submission', target: 'paper-domain/submission/release-lock.mjs' },
+  'repair.safe-apply': { boundedContext: 'repair', target: 'paper-adapters/referee-revise/repair-executor.mjs' },
+});

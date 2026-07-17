@@ -9,13 +9,8 @@ import {
   relativePath,
   walkFiles,
 } from '../../workflow-kernel/runtime/file-utils.mjs';
-import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
-
-function repoPath(root, value) {
-  const text = normalizeText(value);
-  if (!text) return null;
-  return path.isAbsolute(text) ? text : path.join(root, text);
-}
+import { uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
+import { resolveRepoPath } from '../../workflow-kernel/runtime/path-utils.mjs';
 
 function texScore(file) {
   const base = path.basename(file).toLowerCase();
@@ -77,7 +72,7 @@ async function candidateRecords(root, sourceRoot) {
 
 export async function runSourceAdaptAdapter({ root, row } = {}) {
   const submissionIntent = row.submissionIntent || row.task.registry?.submissionIntent || null;
-  const sourceRoot = repoPath(root, row.task.sourceWorkspace);
+  const sourceRoot = resolveRepoPath(root, row.task.sourceWorkspace);
   const candidates = await candidateRecords(root, sourceRoot);
   const packet = buildSourceAdaptationPacket({
     paperTask: row.task,

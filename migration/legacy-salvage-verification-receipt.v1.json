@@ -2,7 +2,7 @@
   "version": 1,
   "kind": "SalvageReplacementVerificationReceipt",
   "status": "salvage_replacements_behavior_verified",
-  "manifestHash": "sha256:d7a7283fffc64244dca25b908e6f12350a30f0d595545f4e55537922e9bfcd78",
+  "manifestHash": "sha256:f91d4d3de77035e91cbb8c6062c875e4d62590c75f044b162752d90690a7f6f8",
   "replacementCount": 26,
   "replacements": [
     {
@@ -260,11 +260,11 @@
       ],
       "evidenceHashes": [
         "sha256:3a3ba69650af53e43463abc9f52196e01b3aba1e550aed88ce09556ac7594425",
-        "sha256:dce900e96e110f6c064050f0f3dce46ee4d0bb5eb850e08fc927c94304f192bd",
-        "sha256:6f9578212785a89e5a662e1d341dd68004a828e4a86650be4b1ada9e27bbb4a9",
+        "sha256:e0d2a0527ba972fd4a0be1e73605b37dfd124e682be2330b54a112937bdf29b9",
+        "sha256:753b1b994642abd1f6dda56ca6be5f2cf61f4bee03739904fefd3ed7de9b5796",
         "sha256:d8322bac5506682688febb2eedf201484179f30bb1138e3c1d251f4b680f3094"
       ],
-      "boundReceiptHash": "sha256:42e393984d7e1ee670c3176f3254ec1ed6f7fc731919cd8920d8b028ae78c825"
+      "boundReceiptHash": "sha256:c21097be510807ee2f874f70c97776bf9275242e5c8d4583dc827a500113a032"
     },
     {
       "path": "paperctl_modules/research_compute_formal_verifier_adapter.py",
@@ -273,7 +273,7 @@
         "sha256:f8bdd517888deb0b531654a2fc929a9d8a835da8e62efbb123acc8009e43a815",
         "sha256:d6a71dd69b4299178aebf961407c5b3e435ee8e17984d247c02ecea2957f6a80",
         "sha256:377647c781cfeba10027ee2cbfac1c9cc7aa8b48f4e62a1dfa509c08c3c42f79",
-        "sha256:91425527e8e155737d00851489c4b3d5094835e3c3df3e1c3f522375e56b4473",
+        "sha256:e882bd19b609aaa906073868919821c0241e46d731353ae6d85216126188eab7",
         "sha256:2813690a16bf0b671390a66c7faa70edc965751d541abdea05f97fc15d8fe0ba",
         "sha256:c63587b6ead0027ca56de93aa7f85431bf63b6740b33590584536477c5f4fe2f"
       ],
@@ -281,27 +281,27 @@
         "sha256:4320397ffd47fc050c9264d96974a6133cd992f3d093e0a2194be8702902559d",
         "sha256:81df25c38ec9478c5c0a0e261a94fea74ed92dc9752b070a2a480ec743d64e0c",
         "sha256:b2cd28c586b3b336463968bd110959d799cdfa2bcd8a97a809b3a8de1ea41fef",
-        "sha256:dce900e96e110f6c064050f0f3dce46ee4d0bb5eb850e08fc927c94304f192bd",
-        "sha256:6f9578212785a89e5a662e1d341dd68004a828e4a86650be4b1ada9e27bbb4a9"
+        "sha256:e0d2a0527ba972fd4a0be1e73605b37dfd124e682be2330b54a112937bdf29b9",
+        "sha256:753b1b994642abd1f6dda56ca6be5f2cf61f4bee03739904fefd3ed7de9b5796"
       ],
-      "boundReceiptHash": "sha256:633c3ad18c950e0b786b0836ea4b31faae6e95238c912ff42b869a12c6cfba4c"
+      "boundReceiptHash": "sha256:5a5537544913ddbdaeadc69b3d9ff133fa873b9c67d675fd400aa52f04a51210"
     },
     {
       "path": "paperctl_modules/research_compute_formal_verifier_certificate_intake.py",
       "sourceHash": "sha256:af347ddef6b23b20f0dcb2d0fa843a2b78d3ba860787808d1b40da541b2bae07",
       "targetHashes": [
         "sha256:2813690a16bf0b671390a66c7faa70edc965751d541abdea05f97fc15d8fe0ba",
-        "sha256:91425527e8e155737d00851489c4b3d5094835e3c3df3e1c3f522375e56b4473",
+        "sha256:e882bd19b609aaa906073868919821c0241e46d731353ae6d85216126188eab7",
         "sha256:c63587b6ead0027ca56de93aa7f85431bf63b6740b33590584536477c5f4fe2f",
         "sha256:377647c781cfeba10027ee2cbfac1c9cc7aa8b48f4e62a1dfa509c08c3c42f79"
       ],
       "evidenceHashes": [
         "sha256:4320397ffd47fc050c9264d96974a6133cd992f3d093e0a2194be8702902559d",
         "sha256:b2cd28c586b3b336463968bd110959d799cdfa2bcd8a97a809b3a8de1ea41fef",
-        "sha256:dce900e96e110f6c064050f0f3dce46ee4d0bb5eb850e08fc927c94304f192bd",
-        "sha256:6f9578212785a89e5a662e1d341dd68004a828e4a86650be4b1ada9e27bbb4a9"
+        "sha256:e0d2a0527ba972fd4a0be1e73605b37dfd124e682be2330b54a112937bdf29b9",
+        "sha256:753b1b994642abd1f6dda56ca6be5f2cf61f4bee03739904fefd3ed7de9b5796"
       ],
-      "boundReceiptHash": "sha256:c5fcd65fcd3bba9902e53f39ac42312673e89ba5f6823febf0d7c854d0ebe120"
+      "boundReceiptHash": "sha256:1bf7b7a7598ef279fad2ddc7939b16bbba80500254a660631ea43469761dd5e5"
     },
     {
       "path": "paperctl_modules/research_compute_gap_mapper.py",
@@ -395,11 +395,11 @@
     },
     {
       "path": "paper-core/tests/legacy-provenance-delivery-hardening.test.mjs",
-      "hash": "sha256:6f9578212785a89e5a662e1d341dd68004a828e4a86650be4b1ada9e27bbb4a9"
+      "hash": "sha256:753b1b994642abd1f6dda56ca6be5f2cf61f4bee03739904fefd3ed7de9b5796"
     },
     {
       "path": "paper-core/tests/legacy-salvage-boundary-hardening.test.mjs",
-      "hash": "sha256:dce900e96e110f6c064050f0f3dce46ee4d0bb5eb850e08fc927c94304f192bd"
+      "hash": "sha256:e0d2a0527ba972fd4a0be1e73605b37dfd124e682be2330b54a112937bdf29b9"
     },
     {
       "path": "paper-core/tests/manuscript-promotion-boundaries.test.mjs",
@@ -432,5 +432,5 @@
   ],
   "executedEvidenceCount": 22,
   "testExitCode": 0,
-  "salvageReplacementVerificationReceiptHash": "sha256:8a4437baed739e6f390771194c085cf38accefa264613060799b9d0f14e6f7af"
+  "salvageReplacementVerificationReceiptHash": "sha256:5f4a46ba4b8d0d5258759ab942678859846578c25aadfec58a023f9b8429143a"
 }

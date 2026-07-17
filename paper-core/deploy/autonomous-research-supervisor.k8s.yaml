@@ -1,0 +1,207 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hepta-autonomous-research-supervisor
+spec:
+  # One writer per SQLite volume is the conservative deployment default. The
+  # application leases still fence accidental overlap during rolling recovery.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: hepta-autonomous-research-supervisor
+  template:
+    metadata:
+      labels:
+        app: hepta-autonomous-research-supervisor
+    spec:
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 900
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        # Provision writable PVCs for uid/gid 10001 out of band. A pod fsGroup
+        # is intentionally absent: it must not rewrite the root-owned external
+        # intake-authority anchor or make any authority file group-writable.
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: supervisor
+          image: REPLACE_WITH_PINNED_HEPTA_IMAGE_DIGEST
+          imagePullPolicy: IfNotPresent
+          command: ["node", "paper-core/bin/hepta-paper.mjs"]
+          args:
+            - operator
+            - autonomous-supervisor
+            - "--"
+            - --require-fully-autonomous
+            - --machine-intake-config
+            - /hepta/intake/config.json
+            - --topic-producer-profile
+            - /hepta/intake/topic-producer-profile.json
+            - --root
+            - /hepta/assets
+            - --runtime-root
+            - /hepta/runtime
+            - --poll-ms
+            - "5000"
+            - --resident-instance-lease-ms
+            - "900000"
+            - --resident-instance-heartbeat-ms
+            - "30000"
+            - --maximum-dispatches
+            - "256"
+            - --maximum-lifecycle-cost-usd
+            - "150"
+            - --maximum-lifetime-ms
+            - "604800000"
+            - --qualification-action-safety-margin-ms
+            - "900000"
+          env:
+            - name: HEPTA_PAPER_ASSET_ROOT
+              value: /hepta/assets
+            - name: HEPTA_PAPER_RUNTIME_ROOT
+              value: /hepta/runtime
+            - name: HEPTA_RESEARCH_AUTHOR_CODEX_HOME
+              value: /hepta/credentials/research-author
+            - name: HEPTA_FORMAL_REVIEW_CODEX_HOME
+              value: /hepta/credentials/formal-reviewer
+            - name: HEPTA_AUTONOMOUS_EXTERNAL_QUALIFICATION_CONFIG
+              value: /hepta/qualification/process-config.json
+            - name: HEPTA_AUTONOMOUS_RESEARCH_INTAKE_CONFIG
+              value: /hepta/intake/config.json
+            - name: HEPTA_AUTONOMOUS_RESEARCH_TOPIC_PRODUCER_PROFILE
+              value: /hepta/intake/topic-producer-profile.json
+            - name: HEPTA_AUTONOMOUS_RESEARCH_DATASET_ROOT
+              value: /datasets
+            - name: HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG
+              value: /hepta/release-attestor/config.json
+            - name: HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG
+              value: /hepta/runtime-reproducibility/process-config.json
+            # These are explicit fail-closed operational budgets. Keep the
+            # cost and lead values synchronized with the mounted verifier
+            # configuration; they are intentionally not inferred at runtime.
+            - name: HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_MAXIMUM_REFRESH_ATTEMPTS_PER_EPOCH
+              value: "4"
+            - name: HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_MAXIMUM_REFRESH_COST_USD_PER_EPOCH
+              valueFrom:
+                configMapKeyRef:
+                  name: hepta-autonomous-research-supervisor
+                  key: runtime-reproducibility-maximum-refresh-cost-usd-per-epoch
+            - name: HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_REFRESH_RENEWAL_LEAD_MS
+              valueFrom:
+                configMapKeyRef:
+                  name: hepta-autonomous-research-supervisor
+                  key: runtime-reproducibility-refresh-renewal-lead-ms
+            - name: HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_REFRESH_ACTION_SAFETY_MARGIN_MS
+              value: "900000"
+          envFrom:
+            # Models and other non-secret pinned provider settings only.
+            - configMapRef:
+                name: hepta-autonomous-research-supervisor
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          startupProbe:
+            exec:
+              command:
+                - node
+                - paper-core/bin/autonomous-research-supervisor-health.mjs
+                - --runtime-root
+                - /hepta/runtime
+                - --require-startup-reconciliation
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 180
+          readinessProbe:
+            exec:
+              command:
+                - node
+                - paper-core/bin/autonomous-research-supervisor-health.mjs
+                - --runtime-root
+                - /hepta/runtime
+                - --require-fully-autonomous
+            periodSeconds: 30
+            timeoutSeconds: 25
+            failureThreshold: 2
+          livenessProbe:
+            exec:
+              command:
+                - node
+                - paper-core/bin/autonomous-research-supervisor-health.mjs
+                - --runtime-root
+                - /hepta/runtime
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: runtime
+              mountPath: /hepta/runtime
+            - name: assets
+              mountPath: /hepta/assets
+              readOnly: true
+            # Every datasetMounts[].source in the mounted producer profile must
+            # resolve below this separately provisioned, immutable data root.
+            - name: datasets
+              mountPath: /datasets
+              readOnly: true
+            # This PVC must expose four root-owned, nlink=1 regular files. Do
+            # not replace it with a projected ConfigMap/Secret (`..data`
+            # symlinks are rejected by the production authority loader).
+            - name: intake-authority
+              mountPath: /etc/hepta-paper/authority-rotation
+              readOnly: true
+            # Provision these private directories out of band (for example with
+            # a CSI secret provider). Do not put credential bytes in this file.
+            - name: credentials
+              mountPath: /hepta/credentials
+              readOnly: true
+            - name: qualification
+              mountPath: /hepta/qualification
+              readOnly: true
+            - name: release-attestor
+              mountPath: /hepta/release-attestor
+              readOnly: true
+            - name: runtime-reproducibility
+              mountPath: /hepta/runtime-reproducibility
+              readOnly: true
+            - name: intake
+              mountPath: /hepta/intake
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: runtime
+          persistentVolumeClaim:
+            claimName: hepta-runtime
+        - name: assets
+          persistentVolumeClaim:
+            claimName: hepta-assets
+        - name: datasets
+          persistentVolumeClaim:
+            claimName: hepta-research-datasets
+        - name: intake-authority
+          persistentVolumeClaim:
+            claimName: hepta-autonomous-research-intake-authority
+        - name: credentials
+          persistentVolumeClaim:
+            claimName: hepta-provider-credentials
+        - name: qualification
+          persistentVolumeClaim:
+            claimName: hepta-qualification-config
+        - name: release-attestor
+          persistentVolumeClaim:
+            claimName: hepta-release-attestor-config
+        - name: runtime-reproducibility
+          persistentVolumeClaim:
+            claimName: hepta-runtime-reproducibility-config
+        - name: intake
+          persistentVolumeClaim:
+            claimName: hepta-autonomous-research-intake-config
+        - name: tmp
+          emptyDir:
+            sizeLimit: 1Gi

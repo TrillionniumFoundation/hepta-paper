@@ -5,6 +5,7 @@ import { buildVenueObservationSubject, verifyReviewedVenueObservationSource } fr
 import { buildExperimentExecutionContract, buildExperimentOutputManifest } from '../../paper-domain/research/experiment-evidence-binding.mjs';
 import { buildExperimentAcceptanceContract } from '../../paper-domain/research/experiment-profiles.mjs';
 import { buildFormalClaimBindingsManifest, buildFormalExecutionContract, buildFormalSourceManifest } from '../../paper-domain/research/formal-certificate-intake.mjs';
+import { resolveReceiptIssuerPolicy } from '../../paper-domain/evidence/receipt-issuer-policy-registry.mjs';
 
 export const h = (character) => `sha256:${character.repeat(64)}`;
 
@@ -24,6 +25,14 @@ const WRITER_KIND_BY_KIND = Object.freeze({
   FormalVerifierExecutionReceipt: 'formal-verifier-runner',
 });
 
+const POLICY_BY_KIND = Object.freeze({
+  ArtifactWriteReceipt: 'artifact-repository',
+  ExperimentWorkerExecutionReceipt: 'experiment-worker',
+  ExperimentReproducibilityReceipt: 'experiment-reproducibility',
+  FormalVerifierAdapterReceipt: 'formal-adapter-bootstrap',
+  FormalVerifierExecutionReceipt: 'formal-verifier-runner',
+});
+
 export function createMemoryReceiptLedger() {
   const rows = new Map();
   let counter = 0;
@@ -31,7 +40,10 @@ export function createMemoryReceiptLedger() {
     add(receipt) {
       const ledgerReceiptId = `test-ledger:${++counter}:${receipt.kind}`;
       const receiptHash = receipt.writeReceiptHash || receipt.receiptHash || receipt.jobReceiptHash;
-      rows.set(ledgerReceiptId, { receipt_id: ledgerReceiptId, receipt_sha256: receiptHash, receipt_json: JSON.stringify(receipt), stream: STREAM_BY_KIND[receipt.kind] || 'test', writer_id: `trusted-test-${receipt.kind}`, writer_kind: WRITER_KIND_BY_KIND[receipt.kind] || 'test-fixture', writer_trusted: 1, issuer_policy_id: 'trusted-test-fixture', issuer_policy_hash: `sha256:${'f'.repeat(64)}`, issuer_assurance: 'test_only' });
+      const policyId = POLICY_BY_KIND[receipt.kind];
+      const policy = resolveReceiptIssuerPolicy(policyId);
+      if (!policy) throw new Error(`trusted_test_receipt_policy_missing:${receipt.kind}`);
+      rows.set(ledgerReceiptId, { receipt_id: ledgerReceiptId, receipt_sha256: receiptHash, receipt_json: JSON.stringify(receipt), kind: receipt.kind, status: receipt.status || 'recorded', stream: STREAM_BY_KIND[receipt.kind] || 'test', writer_id: policy.writerId, writer_kind: WRITER_KIND_BY_KIND[receipt.kind] || policy.writerKind, writer_trusted: 1, issuer_policy_id: policyId, issuer_policy_hash: policy.issuerPolicyHash, issuer_assurance: policy.assurance });
       return { ...receipt, ledgerReceiptId };
     },
     get(id) { return rows.get(id) || null; },

@@ -1,16 +1,12 @@
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
-
-function sha256(text) {
-  return `sha256:${crypto.createHash('sha256').update(text).digest('hex')}`;
-}
+import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { isPathWithin } from '../../workflow-kernel/runtime/path-utils.mjs';
 
 export function sanitizeGeneratedLatex({ workspacePath, manuscriptPath } = {}) {
   const workspace = path.resolve(workspacePath || '');
   const manuscript = path.resolve(workspace, manuscriptPath || 'main.tex');
-  if (path.isAbsolute(manuscriptPath || '') || (manuscript !== workspace && !manuscript.startsWith(`${workspace}${path.sep}`))) {
+  if (path.isAbsolute(manuscriptPath || '') || !isPathWithin(workspace, manuscript)) {
     throw new Error('generated latex manuscript must stay inside workspace');
   }
   const before = fs.readFileSync(manuscript, 'utf8');
@@ -52,8 +48,8 @@ export function sanitizeGeneratedLatex({ workspacePath, manuscriptPath } = {}) {
     tableRowTerminatorReplacements,
     markdownBoldReplacements,
     missingPackageInsertions,
-    beforeHash: sha256(before),
-    afterHash: sha256(after),
+    beforeHash: hashBytes(before),
+    afterHash: hashBytes(after),
     externalActionPerformed: false,
   };
   return Object.freeze({ ...payload, generatedLatexSanitizerReceiptHash: hashRecord('GeneratedLatexSanitizerReceipt', payload) });

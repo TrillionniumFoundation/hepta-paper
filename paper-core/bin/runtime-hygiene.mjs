@@ -2,24 +2,26 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { createDefaultPaperStore, createReadOnlyPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
-import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqlite-receipt-ledger.mjs';
-import { createSqliteReceiptLedgerQualificationStore } from '../../paper-adapters/persistence/sqlite-receipt-ledger-qualification.mjs';
-import { issueLedgerAdministratorWriter } from '../../paper-adapters/persistence/receipt-writer-broker.mjs';
-import { createSystemClock } from '../../paper-adapters/runtime/system-clock.mjs';
-import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
+import { openScopedPaperStore } from '../../paper-composition/bootstrap/context-foundation-composition.mjs';
+import { composeLedgerAdministratorServices } from '../../paper-composition/bootstrap/operator-persistence-composition.mjs';
+import { createSystemClock } from '../../paper-composition/bootstrap/operator-runtime-composition.mjs';
+import { assertWorkspaceLayoutPhysicallyDecoupled, defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 const execute = process.argv.includes('--execute');
 const runtimeRoot = defaultPaperRuntimeRoot();
-const dbPath = path.join(runtimeRoot, 'hepta-paper.sqlite');
-const store = execute
-  ? createDefaultPaperStore({ root: defaultPaperAssetRoot(), runtimeRoot, dbPath })
-  : createReadOnlyPaperStore({ root: defaultPaperAssetRoot(), runtimeRoot, dbPath });
+if (execute) assertWorkspaceLayoutPhysicallyDecoupled({ assetRoot: defaultPaperAssetRoot(), runtimeRoot });
+const { store } = openScopedPaperStore({
+  root: defaultPaperAssetRoot(),
+  runtimeRoot,
+  readOnly: !execute,
+  serviceOverrides: {},
+  rootKind: 'runtime-hygiene',
+});
 const clock = createSystemClock();
-const administratorCapability = execute ? issueLedgerAdministratorWriter() : null;
-const ledger = execute ? createSqliteReceiptLedger({ store, clock, issuerCapability: administratorCapability }) : null;
-const qualifications = execute ? createSqliteReceiptLedgerQualificationStore({ store, clock, issuerCapability: administratorCapability }) : null;
+const administratorServices = execute ? composeLedgerAdministratorServices({ store, clock }) : null;
+const ledger = administratorServices?.ledger || null;
+const qualifications = administratorServices?.qualifications || null;
 const quarantineRoot = path.join(runtimeRoot, 'quarantine', 'pre-v0.5-runtime-evidence');
 const candidates = store.query("SELECT * FROM jobs WHERE environment='legacy_unclassified' AND status='queued' AND attempt_count=0 ORDER BY created_at;").rows;
 const contaminatedReceipts = store.query(`
@@ -109,3 +111,4 @@ const ledgerReceipt = execute ? ledger.record({ ...payload, receiptHash }, {
   evidenceClass: 'evidence_hygiene',
 }) : null;
 process.stdout.write(`${JSON.stringify({ ...payload, runtimeEvidenceHygieneReceiptHash: receiptHash, ledgerReceipt }, null, 2)}\n`);
+store.close?.();

@@ -1,22 +1,20 @@
 #!/usr/bin/env node
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
-import { copySqliteDatabase } from '../../paper-adapters/persistence/sqlite-consistent-copy.mjs';
+import { copySqliteDatabase } from '../../paper-composition/bootstrap/operator-persistence-composition.mjs';
 import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 import { currentCodeProvenance } from '../src/code-provenance.mjs';
 import { prepareImmutableLegacyMatrixReference } from '../../migration/legacy-matrix-reference.mjs';
+import { sha256FileSync } from '../../workflow-kernel/runtime/file-utils.mjs';
+import { prepareIsolatedRuntimeStore } from './isolated-runtime-store.mjs';
 
 const args = process.argv.slice(2);
 if (!args.length) throw new Error('Usage: run-isolated-command.mjs <command> [args...]');
 
 function sha(file) {
-  return fs.existsSync(file)
-    ? `sha256:${crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')}`
-    : null;
+  return fs.existsSync(file) ? sha256FileSync(file) : null;
 }
 
 function run(env) {
@@ -44,7 +42,7 @@ if (process.env.HEPTA_PAPER_RUNTIME_ISOLATED === '1' && process.env.HEPTA_PAPER_
     const target = path.join(isolatedRuntimeRoot, relative);
     if (fs.existsSync(source)) fs.cpSync(source, target, { recursive: true, dereference: false });
   }
-  createDefaultPaperStore({
+  prepareIsolatedRuntimeStore({
     root: defaultPaperAssetRoot(),
     runtimeRoot: isolatedRuntimeRoot,
     dbPath: isolatedDb,

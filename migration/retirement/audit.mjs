@@ -1,20 +1,35 @@
 import path from 'node:path';
-import fsp from 'node:fs/promises';
 import {
   fileRecord,
-  relativePath,
   walkFiles,
 } from '../../workflow-kernel/runtime/file-utils.mjs';
-import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
-import { writeJsonFile } from '../../paper-adapters/artifacts/write-artifact.mjs';
+import { uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
 import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
 import { buildMigrationMatrixAudit } from './migration-matrix.mjs';
-import { heptaStorePath } from '../../paper-adapters/persistence/store-paths.mjs';
-import { resolveWorkspaceLayout } from '../../paper-adapters/runtime/workspace-layout.mjs';
 
-import { RETIREMENT_WAVES, classifyLegacyFile, migrationTargetFor, migrationActionFor, retirementWaveFor, retirementWaveFamilyFor, priorityFor, enrichLegacyEntry } from './classification.mjs';
-import { detectHeptaCapabilities, countBy, sampleEntries, hashBound, entriesForWaveFamily, buildLegacyEntrypointDeprecationPacket, buildDataAssetExportPlan, buildMigrationBacklogPacket, migrationContractFamilyFor, verifiedDispositionForEntry, buildP0P1BacklogDrainReceipt, buildQuarantineManifest, liveExternalExecutorPolicyFinalized, dataAssetExportRecorded, p0P1BacklogDrained, waveBlockersFor, buildRetirementWavePackets, buildRetirementReadinessGate, buildRetirementPlan } from './retirement-planning.mjs';
-import { buildLegacyEntrypointFreezeReceipt, collectDataStoreRecords, nativeStoreMigrationStatus, buildHeptaDataAssetExportReceipt, buildMigrationCoverageReceipt, buildQuarantineIsolationReceipt, buildLiveExternalExecutorPolicyReceipt, buildOldControlPlaneRemovalReceipt, buildRetirementWaveExecutionReceipts, writeRetirementRuntimeReceipts } from './retirement-execution.mjs';
+import { classifyLegacyFile, enrichLegacyEntry } from './classification.mjs';
+import {
+  detectHeptaCapabilities,
+  countBy,
+  buildLegacyEntrypointDeprecationPacket,
+  buildDataAssetExportPlan,
+  buildMigrationBacklogPacket,
+  buildP0P1BacklogDrainReceipt,
+  buildQuarantineManifest,
+  buildRetirementWavePackets,
+  buildRetirementReadinessGate,
+  buildRetirementPlan,
+} from './retirement-planning.mjs';
+import {
+  buildLegacyEntrypointFreezeReceipt,
+  buildHeptaDataAssetExportReceipt,
+  buildMigrationCoverageReceipt,
+  buildQuarantineIsolationReceipt,
+  buildLiveExternalExecutorPolicyReceipt,
+  buildOldControlPlaneRemovalReceipt,
+  buildRetirementWaveExecutionReceipts,
+  writeRetirementRuntimeReceipts,
+} from './retirement-execution.mjs';
 
 export async function runRetirementAudit({
   root,

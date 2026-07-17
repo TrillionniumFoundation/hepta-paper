@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
@@ -7,7 +8,9 @@ import {
   createPaperActionManifest,
   buildPaperHandoffEnvelope,
   buildPaperAdapterRunReceipt,
+  createPaperProposalApprovalDocument,
 } from '../../paper-domain/contracts/index.mjs';
+import { signAuthorityDocument } from '../../paper-adapters/authority/authority-signatures.mjs';
 import { discoverInventory } from '../../paper-adapters/inventory/index.mjs';
 import { runPaperBatch } from '../src/paper-batch-runner.mjs';
 import { runPaperProposalAdapter } from '../../paper-adapters/proposal/index.mjs';
@@ -21,12 +24,21 @@ import { buildSubmissionLifecycle } from '../../paper-adapters/submission/index.
 import {
   buildJournalConferenceRegistry,
   buildTargetSelectionPolicy,
+  runJournalManageAdapter,
 } from '../../paper-adapters/journal-manage/index.mjs';
+import { runRefereeReviewAdapter } from '../../paper-adapters/referee-review/index.mjs';
+import { runRefereeReviseAdapter } from '../../paper-adapters/referee-revise/index.mjs';
+import { runVenueResolveAdapter } from '../../paper-adapters/venue-resolve/index.mjs';
+import { runSourceAdaptAdapter } from '../../paper-adapters/source-adapt/index.mjs';
 import {
   defaultPaperAssetRoot,
   defaultPaperRuntimeRoot,
 } from '../src/workspace-layout.mjs';
-import { bootstrapPaperExecutionContext } from '../../paper-composition/bootstrap/service-bootstrap.mjs';
+import { bootstrapAutomationContext } from '../../paper-composition/bootstrap/automation-context-bootstrap.mjs';
+import {
+  createDefaultPaperStore,
+  createReadOnlyPaperStore,
+} from '../../paper-adapters/persistence/store-provider.mjs';
 import { enterArtifactWriteContext } from '../../paper-adapters/artifacts/artifact-write-context.mjs';
 import { assertIsolatedVerificationRuntime } from '../src/verification-runtime.mjs';
 
@@ -61,14 +73,100 @@ async function assertNoOldControlPlaneImports() {
   }
 }
 
+async function snapshotRuntimeTree(root) {
+  const entries = [];
+  async function visit(current, relative = '') {
+    let children;
+    try {
+      children = await fs.readdir(current, { withFileTypes: true });
+    } catch (error) {
+      if (error?.code === 'ENOENT') return;
+      throw error;
+    }
+    children.sort((left, right) => left.name.localeCompare(right.name));
+    for (const child of children) {
+      const childRelative = relative ? path.join(relative, child.name) : child.name;
+      const childPath = path.join(current, child.name);
+      const stat = await fs.lstat(childPath);
+      entries.push({
+        path: childRelative,
+        type: child.isDirectory() ? 'directory' : child.isSymbolicLink() ? 'symlink' : 'file',
+        size: stat.size,
+        mtimeMs: stat.mtimeMs,
+      });
+      if (child.isDirectory()) await visit(childPath, childRelative);
+    }
+  }
+  await visit(root);
+  return entries;
+}
+
+function proposalApprovalAuthority(report) {
+  const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519');
+  const now = Date.now();
+  const operatorIdentity = { subjectId: 'paper-selftest-proposal-operator', displayName: 'Paper Selftest Operator' };
+  const unsigned = createPaperProposalApprovalDocument({
+    ideaBrief: report.ideaBrief,
+    proposalEnvelope: report.proposalEnvelope,
+    generationReceipt: report.generationReceipt,
+    operatorIdentity,
+    riskAcceptanceRationale: 'Selftest operator accepts the exact proposal risks bound by the signed document.',
+    signedAt: new Date(now - 60_000).toISOString(),
+    validFrom: new Date(now - 60_000).toISOString(),
+    expiresAt: new Date(now + 24 * 60 * 60 * 1000).toISOString(),
+  });
+  return {
+    approvalDocument: signAuthorityDocument(unsigned, {
+      privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }),
+      keyId: 'paper-selftest-proposal-key',
+      role: 'proposal_approver',
+    }),
+    trustStoreOverride: {
+      version: 1,
+      kind: 'AuthorityTrustStore',
+      keys: [{
+        keyId: 'paper-selftest-proposal-key',
+        subjectId: operatorIdentity.subjectId,
+        algorithm: 'ed25519',
+        publicKeyPem: publicKey.export({ type: 'spki', format: 'pem' }),
+        roles: ['proposal_approver'],
+        status: 'active',
+      }],
+    },
+  };
+}
+
+function selftestScientificClaimDocument() {
+  return {
+    version: 1,
+    kind: 'PaperScientificClaimInput',
+    claims: [{
+      claimKey: 'distributionally-robust-rl-convergence',
+      statement: 'For every discounted finite-state control problem satisfying the stated rectangular ambiguity and contraction assumptions, the proposed robust Bellman iteration converges to its unique fixed point.',
+      assumptions: ['The ambiguity set is rectangular and the robust Bellman operator is a contraction.'],
+      quantifiers: ['For every discounted finite-state control problem satisfying the stated assumptions.'],
+      negativeBoundaries: ['No convergence claim is made for non-rectangular ambiguity sets or undiscounted problems.'],
+      proofObligations: ['Prove contraction, fixed-point uniqueness, and convergence of the robust Bellman iteration.'],
+    }],
+  };
+}
+
 async function main() {
-  const selftestContext = bootstrapPaperExecutionContext({
+  // Selftest owns this disposable isolated store, so schema creation is an
+  // explicit fixture setup step rather than an implicit bootstrap side effect.
+  await fs.rm(selftestRuntimeRoot, { recursive: true, force: true });
+  createDefaultPaperStore({
+    root: paperFactoryRoot,
+    runtimeRoot: selftestRuntimeRoot,
+  }).close();
+  const selftestContext = bootstrapAutomationContext({
     root: paperFactoryRoot,
     runtimeRoot: selftestRuntimeRoot,
     mode: 'selftest',
     execute: true,
   });
-  enterArtifactWriteContext(selftestContext.services);
+  try {
+    enterArtifactWriteContext(selftestContext.services);
   assert.equal(PAPER_PRODUCT_PROFILE.safety.importsOldControlPlane, false);
   await assertNoOldControlPlaneImports();
 
@@ -93,6 +191,7 @@ async function main() {
     venue: 'NeurIPS',
     title: 'Distributionally Robust RL for Stochastic Control',
     materials: ['existing theorem sketch', 'simulation plan'],
+    scientificClaimDocument: selftestScientificClaimDocument(),
   });
   assert.equal(proposalReport.kind, 'PaperProposalAdapterReport');
   assert.equal(proposalReport.safety.modelCallPerformed, false);
@@ -115,7 +214,7 @@ async function main() {
   assert.equal(proposalReport.venueRubricManager.kind, 'VenueRubricManager');
   assert.equal(proposalReport.venueRubricManager.status, 'venue_rubric_manager_ready');
   assert.equal(proposalReport.reviewGate.approved, false);
-  assert.ok(proposalReport.reviewGate.blockers.includes('explicit_proposal_approval_required'));
+  assert.ok(proposalReport.reviewGate.blockers.includes('proposal_approval_authority_required'));
 
   const autoVenueProposalReport = await runPaperProposalAdapter({
     root: paperFactoryRoot,
@@ -249,7 +348,9 @@ async function main() {
     discipline: 'machine learning',
     venue: 'NeurIPS',
     title: 'Distributionally Robust RL for Stochastic Control',
-    approved: true,
+    materials: ['existing theorem sketch', 'simulation plan'],
+    scientificClaimDocument: selftestScientificClaimDocument(),
+    ...proposalApprovalAuthority(proposalReport),
     materializeSource: true,
   });
   assert.equal(approvedProposalReport.reviewGate.approved, true);
@@ -274,7 +375,7 @@ async function main() {
 
   const stagedPaperId = 'selftest_proposal_staging';
   const stagedRuntimeRoot = selftestRuntimeRoot;
-  const stagedProposalReport = await runPaperProposalAdapter({
+  const stagedProposalInput = {
     root: paperFactoryRoot,
     runtimeRoot: stagedRuntimeRoot,
     paperId: stagedPaperId,
@@ -282,7 +383,11 @@ async function main() {
     discipline: 'machine learning',
     venue: 'NeurIPS',
     title: 'Selftest Proposal Staging',
-    approved: true,
+  };
+  const stagedProposalDraft = await runPaperProposalAdapter(stagedProposalInput);
+  const stagedProposalReport = await runPaperProposalAdapter({
+    ...stagedProposalInput,
+    ...proposalApprovalAuthority(stagedProposalDraft),
     materializeSource: true,
     stageInventory: true,
   });
@@ -340,11 +445,21 @@ async function main() {
     row: stagedInventory.rows[0],
     datasetRoot: authorizedDatasetRoot,
     benchmarkId: 'selftest_authorized_rl_dataset',
+    datasetLicenseId: 'CC0-1.0',
     applyManuscript: true,
     execute: true,
   });
   assert.equal(stagedEmpiricalReport.kind, 'EmpiricalAnalysisAdapterReport');
-  assert.equal(stagedEmpiricalReport.status, 'empirical_analysis_smoke_ready');
+  assert.equal(stagedEmpiricalReport.status, 'empirical_analysis_smoke_ready', JSON.stringify({
+    blockers: stagedEmpiricalReport.blockers,
+    kernelSandboxReceipt: stagedEmpiricalReport.kernelSandboxReceipt
+      ? {
+        ok: stagedEmpiricalReport.kernelSandboxReceipt.ok,
+        blockers: stagedEmpiricalReport.kernelSandboxReceipt.blockers,
+      }
+      : null,
+    validationBlockers: stagedEmpiricalReport.empiricalEvidenceGate?.validationBlockers,
+  }));
   assert.equal(stagedEmpiricalReport.empiricalBenchmarkRegistry.status, 'empirical_benchmark_registry_ready');
   assert.equal(stagedEmpiricalReport.benchmarkSuiteSelectionPolicy.status, 'benchmark_suite_selection_ready');
   assert.equal(stagedEmpiricalReport.localBenchmarkRegistry.status, 'local_benchmark_registry_ready');
@@ -429,336 +544,194 @@ async function main() {
     assert.equal(stagedReviewedSubmitLifecycle.receipt?.externalActionPerformed, false);
   }
 
+  let previewStageCalls = 0;
+  const previewStageTrap = new Proxy({}, {
+    get() {
+      previewStageCalls += 1;
+      throw new Error('batch_preview_must_not_resolve_stage_execution');
+    },
+  });
+  // This selftest deliberately keeps its writable automation context open.
+  // Supply an explicit read-only connection so the batch preview cannot fall
+  // back to immutable mode while a live WAL belongs to that context.
+  const previewStore = createReadOnlyPaperStore({
+    root: paperFactoryRoot,
+    runtimeRoot: selftestRuntimeRoot,
+  });
+  const runtimeBeforePreview = await snapshotRuntimeTree(selftestRuntimeRoot);
   const report = await runPaperBatch({
     root: paperFactoryRoot,
     runtimeRoot: selftestRuntimeRoot,
     mode: 'local-dry-run',
     limit: 3,
+    execute: false,
+    writeReport: false,
+    serviceOverrides: { stageExecution: previewStageTrap, store: previewStore },
   });
-  assert.equal(report.safety.coreSnapshotModified, false);
+  const runtimeAfterPreview = await snapshotRuntimeTree(selftestRuntimeRoot);
+  assert.deepEqual(runtimeAfterPreview, runtimeBeforePreview, 'batch preview must not mutate runtime state');
+  assert.equal(previewStageCalls, 0, 'batch preview must not resolve or execute a stage adapter');
+  assert.equal(report.safety.vendoredReferenceRuntimeScanPerformed, false);
+  assert.equal(Object.hasOwn(report.safety, 'coreSnapshotModified'), false);
+  assert.equal(Object.hasOwn(report, 'coreIntegrity'), false);
+  assert.equal(Object.hasOwn(report, 'compatibilityStageSummary'), false);
   assert.equal(report.safety.importsOldPaperFactoryControlPlane, false);
   assert.equal(report.safety.externalActionPerformed, false);
   assert.equal(report.rows.length, 3);
   assert.ok(report.markdownTable.includes('| paper_id |'));
-  assert.ok(Number.isFinite(report.summary.researchTypedContracts));
-  assert.ok(Number.isFinite(report.summary.legacyCatalogReferenceReceipts));
-  assert.ok(Number.isFinite(report.summary.legacyCatalogReferenceCount));
-  assert.ok(Number.isFinite(report.summary.researchContractReady));
-  assert.ok(Number.isFinite(report.summary.researchEvidenceCandidatePresent));
-  assert.ok(Number.isFinite(report.summary.researchNativeExecutionReady));
-  assert.ok(Number.isFinite(report.summary.researchAcademicEvidenceReady));
-  assert.ok(Number.isFinite(report.summary.lifecycleOutboxItems));
-  assert.ok(report.summary.submissionPreflight && Number.isFinite(report.summary.submissionPreflight.externalActionsPerformed));
-  assert.ok(report.results.some((result) => result.lifecycle?.replayGuard?.kind === 'SubmissionReplayGuard'));
+  assert.equal(Object.hasOwn(report.summary, 'researchTypedContracts'), false);
+  assert.equal(Object.hasOwn(report.summary, 'lifecycleOutboxItems'), false);
+  assert.equal(Object.hasOwn(report.summary, 'submissionPreflight'), false);
+  assert.ok(Number.isFinite(report.summary.campaignQueue.nodeCount));
+  const stageResultKeys = [
+    'buildResult',
+    'packageResult',
+    'researchReport',
+    'refereeReview',
+    'refereeRevision',
+    'localDiagnosticReviewLoop',
+    'journalManagement',
+    'empiricalAnalysis',
+    'venueResolution',
+    'sourceAdaptation',
+    'lifecycle',
+  ];
   assert.ok(report.results.every((result) => (
-    result.researchReport?.typedContracts?.legacyCatalogReferences?.length === 0
-    && result.researchReport?.safety?.legacyWorkerCatalogScanned === false
+    stageResultKeys.every((key) => !Object.hasOwn(result, key))
+    && result.campaignSubmission === null
+    && result.workflowAuthorityLedgerEntry === null
+    && result.workflowStateProjection === null
   )));
 
-  const journalManageReport = await runPaperBatch({
+  const batchCampaignOptions = {
     root: paperFactoryRoot,
     runtimeRoot: selftestRuntimeRoot,
-    mode: 'journal-manage',
-    limit: 3,
-  });
-  assert.equal(journalManageReport.safety.externalActionPerformed, false);
-  assert.ok(Number.isFinite(journalManageReport.summary.journalManageReports));
-  assert.ok(Number.isFinite(journalManageReport.summary.journalConferenceRegistries));
-  assert.ok(Number.isFinite(journalManageReport.summary.targetSelectionPolicies));
-  assert.ok(Number.isFinite(journalManageReport.summary.journalTargetProfiles));
-  assert.ok(Number.isFinite(journalManageReport.summary.journalTargetProfileReady));
-  assert.ok(Number.isFinite(journalManageReport.summary.journalRubricPackets));
-  assert.ok(Number.isFinite(journalManageReport.summary.journalRubricReady));
-  assert.ok(Number.isFinite(journalManageReport.summary.venueRubricManagers));
-  assert.ok(Number.isFinite(journalManageReport.summary.freshRefereePools));
-  assert.ok(Number.isFinite(journalManageReport.summary.venueEvidenceGates));
-  assert.ok(Number.isFinite(journalManageReport.summary.venueLifecyclePolicies));
-  assert.ok(Number.isFinite(journalManageReport.summary.journalConferenceSystemPackets));
-  assert.ok(journalManageReport.results.some((result) => (
-    result.journalManagement?.registry?.kind === 'JournalConferenceRegistry'
-  )));
-  assert.ok(journalManageReport.results.some((result) => (
-    result.journalManagement?.targetSelectionPolicy?.kind === 'TargetSelectionPolicy'
-  )));
-  assert.ok(journalManageReport.results.some((result) => (
-    result.journalManagement?.targetProfile?.kind === 'JournalTargetProfile'
-  )));
-  assert.ok(journalManageReport.results.some((result) => (
-    result.journalManagement?.rubricPacket?.kind === 'JournalRubricPacket'
-  )));
-  assert.ok(journalManageReport.results.some((result) => (
-    result.journalManagement?.venueRubricManager?.kind === 'VenueRubricManager'
-  )));
-  assert.ok(journalManageReport.results.some((result) => (
-    result.journalManagement?.freshRefereePool?.kind === 'FreshRefereePool'
-  )));
-  assert.ok(journalManageReport.results.some((result) => (
-    result.journalManagement?.systemPacket?.kind === 'JournalConferenceSystemPacket'
-  )));
-
-  const journalManageOverrideReport = await runPaperBatch({
-    root: paperFactoryRoot,
-    runtimeRoot: selftestRuntimeRoot,
-    mode: 'journal-manage',
+    mode: 'local-build',
     limit: 1,
-    targetOverride: 'JMLR',
-  });
-  assert.equal(journalManageOverrideReport.requestedTargetOverride, 'JMLR');
+    paperIds: [inventory.rows[0].task.paperId],
+    inventorySource: 'yaml',
+    execute: true,
+    writeReport: false,
+  };
+  const campaignReport = await runPaperBatch(batchCampaignOptions);
+  assert.equal(campaignReport.results.length, 1);
+  const campaignResult = campaignReport.results[0];
+  assert.equal(campaignResult.campaignSubmission?.status, 'paper_campaign_queued');
+  assert.deepEqual(campaignResult.campaignPlan?.nodes?.map((node) => node.kind), ['compile']);
+  assert.equal(campaignReport.status, 'paper_campaigns_queued_not_executed');
+  assert.equal(campaignReport.executionStatus, 'queued_not_executed');
+  assert.equal(campaignReport.workflowExecutionPerformed, false);
   assert.equal(
-    journalManageOverrideReport.results[0]?.journalManagement?.targetProfile?.profile?.id,
-    'jmlr',
+    campaignResult.workflowAuthorityLineage?.campaignId,
+    campaignResult.campaignPlan?.campaignId,
   );
   assert.equal(
-    journalManageOverrideReport.results[0]?.journalManagement?.targetProfile?.safety?.writesLegacyRegistry,
-    false,
+    campaignResult.workflowAuthorityLineage?.campaignPlanHash,
+    campaignResult.campaignPlan?.campaignPlanHash,
+  );
+  assert.equal(campaignResult.workflowAuthorityLineage?.workflowReceiptHash, null);
+  assert.ok(stageResultKeys.every((key) => !Object.hasOwn(campaignResult, key)));
+  const replayedCampaignReport = await runPaperBatch(batchCampaignOptions);
+  assert.equal(
+    replayedCampaignReport.results[0]?.campaignSubmission?.status,
+    'paper_campaign_already_queued',
+  );
+  assert.equal(
+    replayedCampaignReport.results[0]?.campaignPlan?.campaignPlanHash,
+    campaignResult.campaignPlan?.campaignPlanHash,
   );
 
-  const refereeReviewReport = await runPaperBatch({
+  const adapterRow = inventory.rows[0];
+  const journalManagement = await runJournalManageAdapter({
     root: paperFactoryRoot,
     runtimeRoot: selftestRuntimeRoot,
-    mode: 'referee-review',
-    limit: 3,
+    row: adapterRow,
+    target: 'JMLR',
+    execute: false,
   });
-  assert.equal(refereeReviewReport.safety.externalActionPerformed, false);
-  assert.ok(Number.isFinite(refereeReviewReport.summary.refereeReviewReports));
-  assert.ok(Number.isFinite(refereeReviewReport.summary.refereeReviewReady));
-  assert.ok(Number.isFinite(refereeReviewReport.summary.refereeReviewBlocked));
-  assert.ok(Number.isFinite(refereeReviewReport.summary.refereeReviewFindings));
-  assert.ok(Number.isFinite(refereeReviewReport.summary.refereeIssueQueueMaterializations));
-  assert.ok(Number.isFinite(refereeReviewReport.summary.refereeIssueQueueMaterializationPlanned));
-  assert.ok(Number.isFinite(refereeReviewReport.summary.refereeIssueQueueMaterialized));
-  assert.ok(Number.isFinite(refereeReviewReport.summary.refereeIssueQueueMaterializationBlocked));
-  assert.ok(Number.isFinite(refereeReviewReport.summary.refereeReviewIssueRowsInserted));
-  assert.ok(Number.isFinite(refereeReviewReport.summary.refereeReviewIssueRowsAlreadyPresent));
-  assert.ok(refereeReviewReport.results.some((result) => result.refereeReview?.intake?.kind === 'RefereeReviewIntake')
-    || refereeReviewReport.results.every((result) => !result.task?.mainTex));
-  assert.ok(refereeReviewReport.results.some((result) => result.refereeReview?.reviewReport?.kind === 'AgentRefereeReviewReport')
-    || refereeReviewReport.results.every((result) => !result.task?.mainTex));
-  assert.ok(refereeReviewReport.results.some((result) => result.refereeReview?.materialization?.kind === 'RefereeIssueQueueMaterialization')
-    || refereeReviewReport.results.every((result) => !result.task?.mainTex));
-  assert.ok(refereeReviewReport.results.every((result) => result.refereeReview?.safety?.sourceMutation === false));
-  assert.ok(refereeReviewReport.results.every((result) => result.refereeReview?.safety?.externalActionPerformed === false));
+  assert.equal(journalManagement.kind, 'JournalManageAdapterReport');
+  assert.equal(journalManagement.registry?.kind, 'JournalConferenceRegistry');
+  assert.equal(journalManagement.targetSelectionPolicy?.kind, 'TargetSelectionPolicy');
+  assert.equal(journalManagement.targetProfile?.kind, 'JournalTargetProfile');
+  assert.equal(journalManagement.targetProfile?.profile?.id, 'jmlr');
+  assert.equal(journalManagement.rubricPacket?.kind, 'JournalRubricPacket');
+  assert.equal(journalManagement.venueRubricManager?.kind, 'VenueRubricManager');
+  assert.equal(journalManagement.freshRefereePool?.kind, 'FreshRefereePool');
+  assert.equal(journalManagement.systemPacket?.kind, 'JournalConferenceSystemPacket');
+  assert.equal(journalManagement.safety?.writesLegacyRegistry, false);
+  assert.equal(journalManagement.safety?.externalActionPerformed, false);
 
-  const refereeReport = await runPaperBatch({
+  const adapterStore = createReadOnlyPaperStore({
     root: paperFactoryRoot,
     runtimeRoot: selftestRuntimeRoot,
-    mode: 'referee-revise',
-    limit: 3,
+    immutable: true,
   });
-  assert.equal(refereeReport.safety.externalActionPerformed, false);
-  assert.ok(Number.isFinite(refereeReport.summary.refereeOpenIssues));
-  assert.ok(Number.isFinite(refereeReport.summary.refereePreflightReady));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeRollbackLedgerDrafts));
-  assert.ok(Number.isFinite(refereeReport.summary.refereePreimageSnapshotLedgers));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeExecutePlansReady));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeApplyModeContracts));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeExecuteDesignPackets));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeExecuteDesignReadyApplyBlocked));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeExecuteDesignReadyForApplyExecution));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeApplyApprovalPackets));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeApplyApprovalBlocked));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeApplyApprovalReady));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeApplyAgentApproved));
-  assert.ok(Number.isFinite(refereeReport.summary.refereePatchApplyExecutions));
-  assert.ok(Number.isFinite(refereeReport.summary.refereePatchApplyExecutionBlocked));
-  assert.ok(Number.isFinite(refereeReport.summary.refereePatchApplyExecutionReady));
-  assert.ok(Number.isFinite(refereeReport.summary.refereePatchApplyApprovalGateBlocked));
-  assert.ok(Number.isFinite(refereeReport.summary.refereePatchApplyInvocations));
-  assert.ok(Number.isFinite(refereeReport.summary.refereePatchApplyInvocationBlocked));
-  assert.ok(Number.isFinite(refereeReport.summary.refereePatchApplyInvocationRequired));
-  assert.ok(Number.isFinite(refereeReport.summary.refereePatchApplyValidationBlocked));
-  assert.ok(Number.isFinite(refereeReport.summary.refereePatchApplyInvocationApplied));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeAgentRepairPatchBundles));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeAgentRepairPatchBundleReady));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeAgentRepairPatchBundleAlreadyPresent));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeAgentRepairPatchBundleBlocked));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeSourceMutations));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeAppliedPatchReceipts));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeAppliedPatchReceiptBlocked));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeAppliedPatchReceiptRecorded));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeAppliedPatchExecutionGateBlocked));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeAppliedPatchInvocationGateBlocked));
-  assert.ok(Number.isFinite(refereeReport.summary.refereePostRepairBuildPackages));
-  assert.ok(Number.isFinite(refereeReport.summary.refereePostRepairBuildPackageBlocked));
-  assert.ok(Number.isFinite(refereeReport.summary.refereePostRepairBuildPackageReady));
-  assert.ok(Number.isFinite(refereeReport.summary.refereePostRepairBuildRecheckPassed));
-  assert.ok(Number.isFinite(refereeReport.summary.refereePostRepairPackageRewriteReady));
-  assert.ok(Number.isFinite(refereeReport.summary.refereePostRepairResearchRecheckPassed));
-  assert.ok(Number.isFinite(refereeReport.summary.refereePostRepairAppliedReceiptGateBlocked));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeIssueResolutionProofs));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeIssueResolutionProofBlocked));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeIssueResolutionProofReady));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeIssueResolutionEvidenceItems));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeIssueResolutionPostRepairGateBlocked));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeRepairReconciliations));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeRepairReconciliationBlocked));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeRepairReconciliationReady));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeRepairReconciled));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeRepairStateMutationReceipts));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeRepairStateMutationRecorded));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeRepairStateMutationBlocked));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeRepairStateMutationIssueRowsUpdated));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeRepairStateMutationPatchRowsInserted));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeRepairStateMutationPatchRowsUpdated));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeRepairStateMutationPatchRowsAlreadyPresent));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeReviewedSubmitReadinessReleased));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeIssueStateMutations));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeSqliteWrites));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeRepairReconciliationProofGateBlocked));
-  assert.ok(Number.isFinite(refereeReport.summary.refereeApplyApprovalRequired));
-  assert.ok(refereeReport.results.some((result) => result.refereeRevision?.patchExecutionPreflight?.kind === 'RefereeRevisionPatchExecutionPreflight')
-    || refereeReport.results.every((result) => !result.refereeRevision?.openIssueCount));
-  assert.ok(refereeReport.results.some((result) => result.refereeRevision?.rollbackLedgerDraft?.kind === 'RefereeRevisionRollbackLedgerDraft')
-    || refereeReport.results.every((result) => !result.refereeRevision?.openIssueCount));
-  assert.ok(refereeReport.results.some((result) => result.refereeRevision?.executeDesignPacket?.kind === 'RefereeRevisionExecuteDesignPacket')
-    || refereeReport.results.every((result) => !result.refereeRevision?.openIssueCount));
-  assert.ok(refereeReport.results.some((result) => result.refereeRevision?.applyApprovalPacket?.kind === 'RefereeApplyApprovalPacket')
-    || refereeReport.results.every((result) => !result.refereeRevision?.openIssueCount));
-  assert.ok(refereeReport.results.some((result) => result.refereeRevision?.applyApprovalPacket?.status === 'referee_apply_approval_ready_for_patch_execution')
-    || refereeReport.results.every((result) => !result.refereeRevision?.openIssueCount));
-  assert.ok(refereeReport.results.some((result) => result.refereeRevision?.applyApprovalPacket?.approvalActor === 'agent')
-    || refereeReport.results.every((result) => !result.refereeRevision?.openIssueCount));
-  assert.ok(refereeReport.results.some((result) => result.refereeRevision?.patchApplyExecution?.kind === 'RefereePatchApplyExecution')
-    || refereeReport.results.every((result) => !result.refereeRevision?.openIssueCount));
-  assert.ok(refereeReport.results.some((result) => result.refereeRevision?.patchApplyExecution?.status === 'referee_patch_apply_ready_for_separate_executor')
-    || refereeReport.results.every((result) => !result.refereeRevision?.openIssueCount));
-  assert.ok(refereeReport.results.some((result) => (
-    result.refereeRevision?.patchApplyExecution?.safety?.sourceMutation === false
-  )) || refereeReport.results.every((result) => !result.refereeRevision?.openIssueCount));
-  assert.ok(refereeReport.results.some((result) => result.refereeRevision?.patchApplyInvocation?.kind === 'RefereePatchApplyInvocation')
-    || refereeReport.results.every((result) => !result.refereeRevision?.openIssueCount));
-  assert.ok(refereeReport.results.some((result) => result.refereeRevision?.patchApplyInvocation?.status === 'referee_patch_apply_invocation_blocked')
-    || refereeReport.results.every((result) => !result.refereeRevision?.openIssueCount));
-  assert.ok(refereeReport.results.some((result) => (
-    result.refereeRevision?.patchApplyInvocation?.safety?.sourceMutation === false
-  )) || refereeReport.results.every((result) => !result.refereeRevision?.openIssueCount));
-  assert.ok(refereeReport.results.some((result) => result.refereeRevision?.appliedPatchReceipt?.kind === 'RefereeAppliedPatchReceipt')
-    || refereeReport.results.every((result) => !result.refereeRevision?.openIssueCount));
-  assert.ok(refereeReport.results.some((result) => result.refereeRevision?.appliedPatchReceipt?.status === 'applied_patch_receipt_blocked')
-    || refereeReport.results.every((result) => !result.refereeRevision?.openIssueCount));
-  assert.ok(refereeReport.results.some((result) => (
-    result.refereeRevision?.appliedPatchReceipt?.safety?.writesSource === false
-  )) || refereeReport.results.every((result) => !result.refereeRevision?.openIssueCount));
-  assert.ok(refereeReport.results.some((result) => result.refereeRevision?.postRepairBuildPackage?.kind === 'PostRepairBuildPackage')
-    || refereeReport.results.every((result) => !result.refereeRevision?.openIssueCount));
-  assert.ok(refereeReport.results.some((result) => result.refereeRevision?.postRepairBuildPackage?.status === 'post_repair_build_package_blocked')
-    || refereeReport.results.every((result) => !result.refereeRevision?.openIssueCount));
-  assert.ok(refereeReport.results.some((result) => (
-    result.refereeRevision?.postRepairBuildPackage?.safety?.writesPackage === false
-  )) || refereeReport.results.every((result) => !result.refereeRevision?.openIssueCount));
-  assert.ok(refereeReport.results.some((result) => result.refereeRevision?.issueResolutionProof?.kind === 'RefereeIssueResolutionProof')
-    || refereeReport.results.every((result) => !result.refereeRevision?.openIssueCount));
-  assert.ok(refereeReport.results.some((result) => result.refereeRevision?.issueResolutionProof?.status === 'referee_issue_resolution_proof_blocked')
-    || refereeReport.results.every((result) => !result.refereeRevision?.openIssueCount));
-  assert.ok(refereeReport.results.some((result) => (
-    result.refereeRevision?.issueResolutionProof?.safety?.marksIssuesResolved === false
-  )) || refereeReport.results.every((result) => !result.refereeRevision?.openIssueCount));
-  assert.ok(refereeReport.results.some((result) => result.refereeRevision?.repairReconciliation?.kind === 'RepairReconciliation')
-    || refereeReport.results.every((result) => !result.refereeRevision?.openIssueCount));
-  assert.ok(refereeReport.results.some((result) => result.refereeRevision?.repairReconciliation?.status === 'repair_reconciliation_blocked')
-    || refereeReport.results.every((result) => !result.refereeRevision?.openIssueCount));
-  assert.ok(refereeReport.results.some((result) => (
-    result.refereeRevision?.repairReconciliation?.safety?.advancesSubmissionReadiness === false
-  )) || refereeReport.results.every((result) => !result.refereeRevision?.openIssueCount));
+  try {
+    const refereeReview = await runRefereeReviewAdapter({
+      root: paperFactoryRoot,
+      runtimeRoot: selftestRuntimeRoot,
+      row: adapterRow,
+      execute: false,
+      store: adapterStore,
+    });
+    assert.equal(refereeReview.kind, 'RefereeReviewAdapterReport');
+    assert.equal(refereeReview.intake?.kind, 'RefereeReviewIntake');
+    assert.equal(refereeReview.reviewReport?.kind, 'AgentRefereeReviewReport');
+    assert.equal(refereeReview.materialization?.kind, 'RefereeIssueQueueMaterialization');
+    assert.equal(refereeReview.safety?.sourceMutation, false);
+    assert.equal(refereeReview.safety?.sqliteWrites, false);
+    assert.equal(refereeReview.safety?.externalActionPerformed, false);
 
-  const localReviewLoopReport = await runPaperBatch({
+    const refereeRevision = await runRefereeReviseAdapter({
+      root: paperFactoryRoot,
+      runtimeRoot: selftestRuntimeRoot,
+      row: adapterRow,
+      mode: 'dry-run',
+      execute: false,
+      store: adapterStore,
+    });
+    assert.equal(refereeRevision.kind, 'RefereeRevisionAdapterReport');
+    assert.equal(
+      refereeRevision.patchExecutionPreflight?.kind,
+      'RefereeRevisionPatchExecutionPreflight',
+    );
+    assert.equal(refereeRevision.rollbackLedgerDraft?.kind, 'RefereeRevisionRollbackLedgerDraft');
+    assert.equal(refereeRevision.executeDesignPacket?.kind, 'RefereeRevisionExecuteDesignPacket');
+    assert.equal(refereeRevision.safety?.dryRunOnly, true);
+    assert.equal(refereeRevision.safety?.sourceMutation, false);
+    assert.equal(refereeRevision.safety?.externalActionPerformed, false);
+  } finally {
+    adapterStore.close();
+  }
+
+  const venueResolution = await runVenueResolveAdapter({
+    row: adapterRow,
+    venues: inventory.venues,
+  });
+  assert.equal(venueResolution.kind, 'VenueResolveAdapterReport');
+  assert.equal(venueResolution.venueResolutionOperatorPacket?.kind, 'VenueResolutionOperatorPacket');
+  assert.equal(venueResolution.safety?.writesRegistry, false);
+  assert.equal(venueResolution.safety?.externalActionPerformed, false);
+
+  const sourceAdaptation = await runSourceAdaptAdapter({
     root: paperFactoryRoot,
-    runtimeRoot: selftestRuntimeRoot,
-    mode: 'local-review-loop',
-    limit: 1,
-    maxRounds: 2,
-    targetOverride: 'JMLR',
+    row: adapterRow,
   });
-  assert.equal(localReviewLoopReport.safety.externalActionPerformed, false);
-  assert.equal(localReviewLoopReport.requestedTargetOverride, 'JMLR');
-  for (const metric of [
-    'localDiagnosticReviewLoopRuns',
-    'localDiagnosticReviewLoopPassed',
-    'localDiagnosticReviewLoopBlocked',
-    'localDiagnosticReviewLoopRounds',
-    'localDiagnosticReviewLoopFinalOpenIssues',
-    'localDiagnosticReviewLoopSourceMutations',
-    'localDiagnosticReviewLoopSqliteWrites',
-    'localDiagnosticReviewLoopReceipts',
-    'localDiagnosticReviewLoopPassRecorded',
-    'localDiagnosticReviewLoopExternalActions',
-    'localHeuristicVerdicts',
-    'localDiagnosticPasses',
-    'localDiagnosticRevisions',
-  ]) assert.ok(Number.isFinite(localReviewLoopReport.summary[metric]), metric);
-  assert.ok(localReviewLoopReport.results.some((result) => (
-    result.localDiagnosticReviewLoop?.kind === 'LocalDiagnosticReviewLoopReport'
-  )));
-  assert.ok(localReviewLoopReport.results.every((result) => (
-    result.localDiagnosticReviewLoop?.targetSelectionPolicy?.kind === 'TargetSelectionPolicy'
-  )));
-  assert.ok(localReviewLoopReport.results.every((result) => (
-    result.localDiagnosticReviewLoop?.targetJournalProfile?.kind === 'JournalTargetProfile'
-  )));
-  assert.ok(localReviewLoopReport.results.every((result) => (
-    result.localDiagnosticReviewLoop?.targetJournalProfile?.profile?.id === 'jmlr'
-  )));
-  assert.ok(localReviewLoopReport.results.every((result) => (
-    result.localDiagnosticReviewLoop?.targetOverrideApplied === true
-  )));
-  assert.ok(localReviewLoopReport.results.every((result) => (
-    result.localDiagnosticReviewLoop?.safety?.targetOverrideRuntimeOnly === true
-  )));
-  assert.ok(localReviewLoopReport.results.every((result) => (
-    result.localDiagnosticReviewLoop?.safety?.writesLegacyRegistry === false
-  )));
-  assert.ok(localReviewLoopReport.results.every((result) => (
-    result.localDiagnosticReviewLoop?.finalVenueEvidenceGate?.kind === 'VenueEvidenceGate'
-  )));
-  assert.ok(localReviewLoopReport.results.every((result) => (
-    result.localDiagnosticReviewLoop?.finalVenueLifecyclePolicy?.kind === 'VenueLifecyclePolicy'
-  )));
-  assert.ok(localReviewLoopReport.results.every((result) => (
-    result.localDiagnosticReviewLoop?.finalFreshRefereeVerdict?.kind === 'FreshRefereeVerdict'
-  )));
-  assert.ok(localReviewLoopReport.results.every((result) => (
-    result.localDiagnosticReviewLoop?.diagnosticReceipt?.kind === 'LocalDiagnosticReviewLoopReceipt'
-    && result.localDiagnosticReviewLoop?.academicAcceptanceGranted === false
-  )));
-  assert.ok(localReviewLoopReport.results.every((result) => (
-    result.localDiagnosticReviewLoop?.safety?.externalActionPerformed === false
-  )));
-
-  const venueReport = await runPaperBatch({
-    root: paperFactoryRoot,
-    runtimeRoot: selftestRuntimeRoot,
-    mode: 'venue-resolve',
-    limit: 3,
-  });
-  assert.equal(venueReport.safety.externalActionPerformed, false);
-  assert.ok(Number.isFinite(venueReport.summary.venueResolution.required));
-  assert.ok(Number.isFinite(venueReport.summary.venueResolution.submitReadyPackagePlansRequired));
-  assert.ok(Number.isFinite(venueReport.summary.venueResolution.registryAddPlansReady));
-  assert.ok(Number.isFinite(venueReport.summary.venueResolution.operatorPacketsReady));
-  assert.ok(Number.isFinite(venueReport.summary.venueResolution.operatorPacketsBlocked));
-  assert.ok(venueReport.results.some((result) => result.venueResolution?.venueResolutionOperatorPacket?.kind === 'VenueResolutionOperatorPacket')
-    || venueReport.summary.venueResolution.required === 0);
-
-  const sourceAdaptReport = await runPaperBatch({
-    root: paperFactoryRoot,
-    runtimeRoot: selftestRuntimeRoot,
-    mode: 'source-adapt',
-    limit: 3,
-  });
-  assert.equal(sourceAdaptReport.safety.externalActionPerformed, false);
-  assert.ok(Number.isFinite(sourceAdaptReport.summary.sourceAdaptation.required));
-  assert.ok(Number.isFinite(sourceAdaptReport.summary.sourceAdaptation.operatorPacketsReady));
-  assert.ok(Number.isFinite(sourceAdaptReport.summary.sourceAdaptation.operatorPacketsBlocked));
-  assert.ok(sourceAdaptReport.results.some((result) => result.sourceAdaptation?.sourceAdaptationOperatorPacket?.kind === 'SourceAdaptationOperatorPacket')
-    || sourceAdaptReport.summary.sourceAdaptation.required === 0);
-
+  assert.equal(sourceAdaptation.kind, 'SourceAdaptAdapterReport');
+  assert.equal(sourceAdaptation.sourceAdaptationOperatorPacket?.kind, 'SourceAdaptationOperatorPacket');
+  assert.equal(sourceAdaptation.safety?.writesSource, false);
+  assert.equal(sourceAdaptation.safety?.externalActionPerformed, false);
   process.stdout.write(JSON.stringify({
     ok: true,
     inventoryRows: inventory.rows.length,
     proposalStatus: proposalReport.status,
     dryRunRows: report.rows.length,
+    campaignId: campaignResult.campaignPlan?.campaignId,
     summary: report.summary,
   }, null, 2) + '\n');
+  } finally {
+    selftestContext.services.persistenceSession.close?.();
+  }
 }
 
 main().catch((error) => {

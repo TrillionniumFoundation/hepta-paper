@@ -4,12 +4,13 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { currentCodeProvenance } from '../src/code-provenance.mjs';
 import { contentTreeManifest, sha256File, signReleasePayload } from './release-evidence-lib.mjs';
-import { defaultLegacyPaperFactoryRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
+import { assertWorkspaceLayoutPhysicallyDecoupled, defaultLegacyPaperFactoryRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 const execute = process.argv.includes('--execute');
 const legacyRoot = defaultLegacyPaperFactoryRoot();
 const runtimeRoot = defaultPaperRuntimeRoot();
+assertWorkspaceLayoutPhysicallyDecoupled({ legacyRoot, runtimeRoot });
 const roots = ['bin', 'paperctl_modules', 'plugins', 'schema', 'registry', 'templates', 'docs', 'paper_factory.sqlite'];
 const before = contentTreeManifest(legacyRoot, roots);
 const version = currentCodeProvenance().packageVersion;

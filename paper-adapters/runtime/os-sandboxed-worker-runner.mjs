@@ -6,135 +6,126 @@ import { spawnSync } from 'node:child_process';
 import { assertWorkerRunnerPort } from '../../paper-ports/worker-runner-port.mjs';
 import { buildExecutorCapabilities, evaluateExecutorCapabilityRequest } from '../../paper-ports/executor-capabilities.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
-
-const PROBE_CACHE = new Map();
-const SOURCE_EXCLUDED_NAMES = new Set(['.git', 'node_modules', 'runtime', 'automation-results', '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache']);
-
-function sourceExcludedName(name) {
-  return SOURCE_EXCLUDED_NAMES.has(name) || /^\.venv(?:-|$)/.test(name) || name === 'venv';
-}
-
-export function sourceTreeExcludedNames(root) {
-  if (!fs.existsSync(root) || !fs.statSync(root).isDirectory()) return [...SOURCE_EXCLUDED_NAMES];
-  return [...new Set([...SOURCE_EXCLUDED_NAMES, ...fs.readdirSync(root, { withFileTypes: true }).filter((entry) => sourceExcludedName(entry.name)).map((entry) => entry.name)])];
-}
-
-function resolveExecutable(executable) {
-  const value = String(executable || '');
-  if (!value) return null;
-  if (path.isAbsolute(value)) {
-    try { return fs.realpathSync(value); } catch { return value; }
-  }
-  const located = spawnSync('which', [value], { encoding: 'utf8', timeout: 3000 });
-  const candidate = String(located.stdout || '').trim();
-  if (!candidate) return null;
-  try { return fs.realpathSync(candidate); } catch { return candidate; }
-}
-
-function probeBubblewrap(bubblewrap) {
-  const result = spawnSync(bubblewrap, ['--unshare-user-try', '--unshare-net', '--die-with-parent', '--ro-bind', '/', '/', '/bin/true'], { encoding: 'utf8', timeout: 5000 });
-  return { available: result.status === 0, backend: 'bubblewrap', status: result.status === 0 ? 'os_sandbox_available' : 'os_sandbox_unavailable', detail: String(result.stderr || result.error?.message || '').trim() };
-}
-
-function probeDocker({ docker, image, refresh = false }) {
-  const cacheKey = `docker:${docker}:${image}`;
-  if (!refresh && PROBE_CACHE.has(cacheKey)) return PROBE_CACHE.get(cacheKey);
-  const imageCheck = spawnSync(docker, ['image', 'inspect', image], { encoding: 'utf8', timeout: 15000 });
-  if (imageCheck.status !== 0) return { available: false, backend: 'docker', status: 'os_sandbox_unavailable', detail: 'sandbox_image_not_present_locally', image };
-  const result = spawnSync(docker, ['info', '--format', '{{.ServerVersion}}'], { encoding: 'utf8', timeout: 15000 });
-  const probe = Object.freeze({ available: result.status === 0, backend: 'docker', status: result.status === 0 ? 'os_sandbox_available' : 'os_sandbox_unavailable', detail: String(result.stderr || result.error?.message || '').trim(), image, readinessCheck: 'image_inspect_and_daemon_info' });
-  if (probe.available) PROBE_CACHE.set(cacheKey, probe);
-  return probe;
-}
-
-export function probeOsSandbox({ bubblewrap = 'bwrap', docker = 'docker', dockerImage = 'alpine:3.20', refresh = false } = {}) {
-  const cacheKey = `${bubblewrap}:${docker}:${dockerImage}`;
-  if (!refresh && PROBE_CACHE.has(cacheKey)) return PROBE_CACHE.get(cacheKey);
-  const bubblewrapProbe = probeBubblewrap(bubblewrap);
-  const result = bubblewrapProbe.available ? bubblewrapProbe : { ...probeDocker({ docker, image: dockerImage, refresh }), fallbackReason: bubblewrapProbe.detail || 'bubblewrap_unavailable' };
-  if (result.available) PROBE_CACHE.set(cacheKey, Object.freeze(result));
-  return result;
-}
-
-function within(root, candidate) {
-  return candidate === root || candidate.startsWith(root + path.sep);
-}
-
-export function directoryMerkleHash(root, { excludeRoots = [], excludeNames = [] } = {}) {
-  const excluded = excludeRoots.map((candidate) => path.resolve(candidate));
-  const names = new Set(excludeNames);
-  const records = [];
-  const walk = (current) => {
-    for (const entry of fs.readdirSync(current, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-      if (names.has(entry.name)) continue;
-      const candidate = path.join(current, entry.name);
-      if (excluded.some((blocked) => candidate === blocked || candidate.startsWith(`${blocked}${path.sep}`))) continue;
-      const relative = path.relative(root, candidate).replace(/\\/g, '/');
-      if (entry.isDirectory()) walk(candidate);
-      else if (entry.isFile()) records.push(`${relative}\0${fileSha256Hash(candidate).slice('sha256:'.length)}`);
-      else if (entry.isSymbolicLink()) records.push(`${relative}\0link:${fs.readlinkSync(candidate)}`);
-    }
-  };
-  walk(root);
-  return `sha256:${crypto.createHash('sha256').update(records.join('\n')).digest('hex')}`;
-}
-
-export function fileSha256Hash(candidate) {
-  const descriptor = fs.openSync(candidate, 'r');
-  const digest = crypto.createHash('sha256');
-  const buffer = Buffer.allocUnsafe(1024 * 1024);
-  try {
-    let bytesRead;
-    do {
-      bytesRead = fs.readSync(descriptor, buffer, 0, buffer.length, null);
-      if (bytesRead) digest.update(buffer.subarray(0, bytesRead));
-    } while (bytesRead);
-  } finally {
-    fs.closeSync(descriptor);
-  }
-  return `sha256:${digest.digest('hex')}`;
-}
-
-function datasetManifestHash(source) {
-  if (!fs.existsSync(source)) return null;
-  if (fs.statSync(source).isDirectory()) return directoryMerkleHash(source);
-  return fileSha256Hash(source);
-}
-
-function mapWorkArgument(argument, sourceRoot) {
-  const value = String(argument);
-  if (!path.isAbsolute(value)) return value;
-  const resolved = path.resolve(value);
-  return within(sourceRoot, resolved) ? `/work${resolved.slice(sourceRoot.length)}` : value;
-}
-
-function dockerSystemMounts(executable) {
-  const mounts = ['/usr', '/bin', '/lib', '/lib64', '/var/lib/texmf', '/etc/texmf']
-    .filter((candidate) => fs.existsSync(candidate))
-    .flatMap((candidate) => ['--volume', `${candidate}:${candidate}:ro`]);
-  const markerIndex = executable.indexOf(`${path.sep}.elan${path.sep}`);
-  if (markerIndex >= 0) {
-    const elanRoot = executable.slice(0, markerIndex + '/.elan'.length);
-    if (fs.existsSync(elanRoot)) mounts.push('--volume', `${elanRoot}:${elanRoot}:ro`);
-  }
-  return mounts;
-}
-
+import { inspectScopedPathSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
+import { isPathWithin } from '../../workflow-kernel/runtime/path-utils.mjs';
+import { sha256FileSync } from '../../workflow-kernel/runtime/file-utils.mjs';
+import { runBoundedChildProcess } from '../automation/bounded-child-process.mjs';
+import { inspectDockerImageDigest, normalizeContainerImageDigest, probeDockerDaemon, probeOsSandbox, probeProcessLimit, resolveExecutable, resolveExecutableInvocationPath } from './sandbox-backend-probe.mjs'; export { probeOsSandbox } from './sandbox-backend-probe.mjs';
+import { fileSha256Hash, inspectStrictDatasetManifest, inspectWorkspaceExecutionSnapshot, mapWorkArgument, materializeDatasetSnapshot, materializeRuntimeExecutableSnapshot, safeStrictDatasetManifestHash, sourceTreeExcludedNames } from './execution-snapshot.mjs'; export { directoryMerkleHash, fileSha256Hash, inspectWorkspaceExecutionSnapshot, sourceTreeExcludedNames } from './execution-snapshot.mjs';
+import {
+  abortStagedScopedFileSync,
+  commitStagedScopedFileSync,
+  inspectScopedRegularFileSync,
+  inspectScopedRegularFileWithRecoverySync,
+  stageScopedRegularFileCopySync,
+} from './scoped-file-materialization-repository.mjs';
+import { buildDatasetRuntimeAccessReceipt, buildRuntimeDatasetAuthorizationSet, DATASET_ACCESS_SUPERVISOR_TRACER } from './dataset-runtime-access-receipt.mjs';
+import { selectAndValidateWorkerEnvironment } from './worker-environment-policy.mjs';
+import { createWorkerEnvironmentBomPreparer } from './worker-environment-bom-binding.mjs';
+import { beginWorkerProcessIdentity, bubblewrapRuntimeResourceMounts, buildBubblewrapWorkerCommand, buildDockerWorkerCommand, completeWorkerProcessIdentity, createDatasetSupervisorEvidenceFiles, datasetRuntimePreflightBlockers, dockerSystemMounts, executableRuntimePathSupported, explicitContainerRuntimeIdentityPayload, normalizeTrustedDatasetSupervisorImage, prepareUnprivilegedDatasetWorkspace } from './os-sandbox-worker-runtime-support.mjs';
 export function createOsSandboxedWorkerRunner({
   allowedExecutables = [], allowedRoots = [], allowedOutputRoots = [], allowGpu = false, bubblewrap = 'bwrap', prlimit = 'prlimit', docker = 'docker', dockerImage = 'alpine:3.20',
-  allowedContainerImages = [], allowedDatasetRoots = [],
-  maximumTimeoutMs = 120000, maximumMemoryBytes = 1024 * 1024 * 1024, maximumCpuSeconds = 120, maximumPids = 128,
-  executor = spawnSync, probe = null,
+  allowedContainerImages = [], allowedDatasetRoots = [], trustedDatasetSupervisorImages = [],
+  maximumTimeoutMs = 120000, maximumMemoryBytes = 1024 * 1024 * 1024, maximumCpuSeconds = 120, maximumPids = 128, maximumOutputBytes = 256 * 1024 * 1024, maximumCapturedBytes = 4 * 1024 * 1024,
+  executor = spawnSync, probe = null, imageDigestResolver = null, datasetSnapshotObserver = null, runtimeExecutableSnapshotObserver = null, workspaceSnapshotObserver = null,
 } = {}) {
-  const executableMap = new Map(allowedExecutables.map((value) => [String(value), resolveExecutable(value)]));
-  const executableSet = new Set([...executableMap.values()].filter(Boolean));
+  const allowedExecutableEntries = allowedExecutables.map((value) => Object.freeze({
+    requested: String(value),
+    invocationPath: resolveExecutableInvocationPath(value),
+    resolvedExecutable: resolveExecutable(value),
+  }));
+  const resolveAllowedExecutable = (executable) => {
+    const requested = String(executable || '');
+    const invocationPath = resolveExecutableInvocationPath(executable);
+    const resolvedExecutable = resolveExecutable(executable);
+    const entry = allowedExecutableEntries.find((candidate) => candidate.requested === requested
+      && candidate.invocationPath === invocationPath
+      && candidate.resolvedExecutable === resolvedExecutable) || null;
+    return Object.freeze({ requested, invocationPath, resolvedExecutable, entry, allowlisted: Boolean(entry && invocationPath && resolvedExecutable) });
+  };
   const roots = allowedRoots.map((root) => path.resolve(root));
   const outputRoots = allowedOutputRoots.map((root) => path.resolve(root));
   const datasetRoots = allowedDatasetRoots.map((root) => path.resolve(root));
   const containerImages = new Set(allowedContainerImages.map(String));
-  const availability = probe || probeOsSandbox({ bubblewrap, docker, dockerImage });
+  const trustedDatasetSupervisors = new Map(trustedDatasetSupervisorImages
+    .map(normalizeTrustedDatasetSupervisorImage)
+    .filter(Boolean)
+    .map((entry) => [entry.image, entry]));
+  const issuedExecutionIdentities = new WeakMap();
+  const resolveImageDigest = imageDigestResolver || ((image) => inspectDockerImageDigest(docker, image));
+  const trustedDatasetSupervisorProfiles = [...trustedDatasetSupervisors.values()];
+  const availability = probe || probeOsSandbox({ bubblewrap, prlimit, docker, dockerImage, trustedDatasetSupervisorImages: trustedDatasetSupervisorProfiles });
   const backend = availability.backend || 'bubblewrap';
-  const runnerId = `${backend}-kernel-isolation-worker-v3`;
+  const advertisedProcessLimit = backend === 'docker'
+    ? Object.freeze({ available: true, mechanism: 'docker-pids-cgroup' })
+    : (availability.processLimit || probeProcessLimit(prlimit));
+  const runnerId = `${backend}-kernel-isolation-worker-v4`;
+  const issueExecutionIdentity = (payload) => {
+    const identity = Object.freeze({ ...payload, runtimeIdentityHash: hashRecord('WorkerExecutionRuntimeIdentity', payload) });
+    issuedExecutionIdentities.set(identity, { identity, consumed: false });
+    return identity;
+  };
+  const resolveExecutionRuntimeIdentity = ({ executable, containerImage = null, containerExecutable = null } = {}) => {
+    const allowedExecutable = resolveAllowedExecutable(executable);
+    const resolvedExecutable = allowedExecutable.resolvedExecutable;
+    const executableInvocationPath = allowedExecutable.invocationPath;
+    const executableInvocationName = path.basename(String(executable || ''));
+    const executableAllowlisted = allowedExecutable.allowlisted;
+    if (containerImage) {
+      const requestedImage = String(containerImage);
+      const digest = normalizeContainerImageDigest(requestedImage) || normalizeContainerImageDigest(resolveImageDigest(requestedImage));
+      return issueExecutionIdentity(explicitContainerRuntimeIdentityPayload({
+        requestedImage, digest, containerExecutable, runnerId,
+        allowedImages: containerImages,
+        trustedDatasetSupervisors,
+      }));
+    }
+    if (backend === 'docker') {
+      const probedDigest = availability.image === dockerImage
+        ? normalizeContainerImageDigest(availability.imageDigest)
+        : null;
+      const digest = probedDigest || normalizeContainerImageDigest(dockerImage) || normalizeContainerImageDigest(resolveImageDigest(dockerImage));
+      let executableHash = null;
+      try { executableHash = resolvedExecutable ? sha256FileSync(resolvedExecutable) : null; } catch { executableHash = null; }
+      return issueExecutionIdentity({
+        version: 1,
+        kind: 'WorkerExecutionRuntimeIdentity',
+        runtimeType: 'container',
+        executionClass: 'hybrid-docker',
+        runnerId,
+        backend: 'docker',
+        requestedImage: dockerImage,
+        digest,
+        containerExecutable: null,
+        hostExecutable: resolvedExecutable,
+        hostExecutableHash: executableHash,
+        executableInvocationPath,
+        executableInvocationName,
+        available: Boolean(digest && executableHash),
+        allowlisted: executableAllowlisted,
+        cacheable: false,
+        hybridHostRuntime: true,
+      });
+    }
+    let executableHash = null;
+    try { executableHash = resolvedExecutable ? sha256FileSync(resolvedExecutable) : null; } catch { executableHash = null; }
+    const payload = {
+      version: 1,
+      kind: 'HostRuntimeIdentity',
+      runtimeType: 'host',
+      executionClass: 'host',
+      runnerId,
+      backend,
+      executable: String(executable || ''),
+      executableInvocationPath,
+      executableInvocationName,
+      resolvedExecutable,
+      executableHash,
+      available: Boolean(executableHash),
+      allowlisted: executableAllowlisted,
+    };
+    return issueExecutionIdentity({ ...payload, cacheable: false });
+  };
   const capabilities = buildExecutorCapabilities({
     executorId: runnerId,
     sandboxModes: ['kernel-isolated'],
@@ -146,157 +137,531 @@ export function createOsSandboxedWorkerRunner({
     receiptKinds: ['OsSandboxWorkerReceipt'],
     provider: backend,
   });
-
+  const prepareEnvironmentBom = createWorkerEnvironmentBomPreparer({ maximumTimeoutMs, maximumMemoryBytes, maximumCpuSeconds, maximumPids, maximumOutputBytes, maximumCapturedBytes });
   return assertWorkerRunnerPort({
-    version: 3,
+    version: 4,
     kind: 'OsSandboxedWorkerRunner',
     runnerId,
     capabilities: () => capabilities,
+    resolveExecutionRuntimeIdentity,
+    prepareEnvironmentBom,
     availability,
-    isolation: Object.freeze({ backend, sourceReadOnly: true, ephemeralWorkRoot: true, separateOutputRoot: true, hostEtcMounted: false, userNamespace: backend === 'bubblewrap', mountNamespace: true, pidNamespace: true, networkNamespace: true, readOnlyRuntime: true, memoryLimit: true, cpuLimit: true, processLimit: true }),
-    run({ executable, args = [], cwd, sourceRoot = null, timeoutMs = 30000, outputPaths = [], outputDirectory = null, requiresGpu = false, env = {}, containerImage = null, containerExecutable = null, datasetMounts = [], memoryBytes = null, cpuSeconds = null, maximumProcesses = null } = {}) {
+    isolation: Object.freeze({ backend, sourceReadOnly: true, ephemeralWorkRoot: true, separateOutputRoot: true, hostEtcMounted: false, userNamespace: backend === 'bubblewrap', mountNamespace: true, pidNamespace: true, networkNamespace: true, readOnlyRuntime: true, memoryLimit: true, cpuLimit: true, processLimit: advertisedProcessLimit.available, processLimitMechanism: advertisedProcessLimit.mechanism }),
+    run(spec = {}) {
+      const removedInputs = ['containerImageIdentity', 'containerImageDigest']
+        .filter((name) => Object.prototype.hasOwnProperty.call(spec, name));
+      if (removedInputs.length) {
+        return {
+          ok: false,
+          status: 'os_sandbox_worker_blocked',
+          blockers: removedInputs.map((name) => `worker_run_input_removed:${name}`),
+          availability,
+          isolation: { kernelNetworkIsolationVerified: false, filesystemNamespaceVerified: false, sourceReadOnlyVerified: false, resourceLimitsVerified: false },
+        };
+      }
+      const { executable, args = [], cwd, sourceRoot = null, timeoutMs = 30000, outputPaths = [], outputDirectory = null, requiresGpu = false, env = {}, executionIdentity: suppliedExecutionIdentity = null, containerImage = null, containerExecutable = null, datasetMounts = [], requireDatasetAccessProof = false, requireSeparateOutputRoot = false, memoryBytes = null, cpuSeconds = null, maximumProcesses = null, requestedMaximumOutputBytes = null, language = 'unknown', determinismPolicy = 'unknown', deterministicSeed = null, runtimePackageClosure = null, runtimeBuildReproducibility = null, expectedSourceMerkleHash = null, expectedSourceWorkspaceManifestHash = null, signal = null } = spec;
       const capabilityPreflight = evaluateExecutorCapabilityRequest({
         capabilities,
         request: { sandbox: 'kernel-isolated', requiresGpu, requiresWorkspaceIsolation: true, requiresNetworkIsolation: true, timeoutMs },
       });
       if (capabilityPreflight.blockers.length) return { ok: false, status: 'os_sandbox_worker_blocked', blockers: capabilityPreflight.blockers, availability, isolation: { kernelNetworkIsolationVerified: false, filesystemNamespaceVerified: false, sourceReadOnlyVerified: false, resourceLimitsVerified: false } };
       const selectedImage = containerImage ? String(containerImage) : dockerImage;
-      const executionAvailability = containerImage ? probeDocker({ docker, image: selectedImage }) : (availability.available ? availability : probeOsSandbox({ bubblewrap, docker, dockerImage, refresh: true }));
+      const executionAvailability = containerImage
+        ? (availability.available && availability.backend === 'docker'
+          ? availability
+          : probeDockerDaemon({ docker, image: selectedImage }))
+        : (availability.available ? availability : probeOsSandbox({ bubblewrap, prlimit, docker, dockerImage, trustedDatasetSupervisorImages: trustedDatasetSupervisorProfiles, refresh: true }));
       const executionBackend = containerImage ? 'docker' : (executionAvailability.backend || backend);
-      const resolvedExecutable = executableMap.get(String(executable)) || resolveExecutable(executable);
+      const presentedExecutionIdentity = suppliedExecutionIdentity || null;
+      const issuedExecutionRecord = presentedExecutionIdentity && typeof presentedExecutionIdentity === 'object'
+        ? issuedExecutionIdentities.get(presentedExecutionIdentity) || null
+        : null;
+      const issuedExecutionIdentity = issuedExecutionRecord?.identity || null;
+      const issuedExecutionIdentityAlreadyConsumed = Boolean(issuedExecutionRecord?.consumed);
+      if (issuedExecutionRecord && !issuedExecutionRecord.consumed) issuedExecutionRecord.consumed = true;
+      const internallyResolvedExecutionIdentity = presentedExecutionIdentity
+        ? null
+        : resolveExecutionRuntimeIdentity({ executable, containerImage, containerExecutable });
+      const activeExecutionIdentity = issuedExecutionIdentity || internallyResolvedExecutionIdentity;
+      const expectedExecutionClass = containerImage ? 'explicit-container' : executionBackend === 'docker' ? 'hybrid-docker' : 'host';
+      const imageIdentity = activeExecutionIdentity?.runtimeType === 'container'
+        ? activeExecutionIdentity
+        : Object.freeze({ requestedImage: selectedImage, digest: null, available: executionBackend !== 'docker', allowlisted: executionBackend !== 'docker' });
+      const processLimitProbe = executionBackend === 'bubblewrap' ? probeProcessLimit(prlimit) : Object.freeze({ available: true, mechanism: 'docker-pids-cgroup', executable: docker, detail: 'docker_pids_limit_available' });
+      const containerImageDigest = executionBackend === 'docker' ? imageIdentity.digest : null;
+      const allowedExecutable = resolveAllowedExecutable(executable);
+      const resolvedExecutable = allowedExecutable.resolvedExecutable;
+      const executableInvocationPath = allowedExecutable.invocationPath;
+      const executableInvocationName = path.basename(String(executable || ''));
+      let resolvedExecutableHash = null;
+      try { resolvedExecutableHash = resolvedExecutable ? sha256FileSync(resolvedExecutable) : null; } catch { resolvedExecutableHash = null; }
       const resolvedCwd = path.resolve(cwd || '.');
-      const allowedRoot = roots.find((root) => within(root, resolvedCwd));
+      const allowedRoot = roots.find((root) => isPathWithin(root, resolvedCwd));
       const resolvedSourceRoot = path.resolve(sourceRoot || allowedRoot || resolvedCwd);
       const blockers = [];
       if (!executionAvailability.available) blockers.push('os_sandbox_runtime_unavailable');
+      if (!processLimitProbe.available) blockers.push('os_sandbox_process_limit_unavailable');
+      if (presentedExecutionIdentity && !issuedExecutionIdentity) blockers.push('worker_execution_identity_capability_invalid');
+      if (issuedExecutionIdentityAlreadyConsumed) blockers.push('worker_execution_identity_capability_consumed');
+      if (activeExecutionIdentity && activeExecutionIdentity.executionClass !== expectedExecutionClass) blockers.push('worker_execution_identity_class_mismatch');
+      if (activeExecutionIdentity && activeExecutionIdentity.backend !== executionBackend) blockers.push('worker_execution_identity_backend_mismatch');
+      if (expectedExecutionClass === 'explicit-container' && activeExecutionIdentity?.requestedImage !== selectedImage) blockers.push('worker_container_image_identity_image_mismatch');
+      if (expectedExecutionClass === 'explicit-container' && activeExecutionIdentity?.containerExecutable !== String(containerExecutable || '')) blockers.push('worker_container_executable_identity_mismatch');
+      if (expectedExecutionClass === 'hybrid-docker' && (activeExecutionIdentity?.hostExecutable !== resolvedExecutable || activeExecutionIdentity?.hostExecutableHash !== resolvedExecutableHash || activeExecutionIdentity?.executableInvocationPath !== executableInvocationPath || activeExecutionIdentity?.executableInvocationName !== executableInvocationName)) blockers.push('worker_hybrid_executable_identity_mismatch');
+      if (expectedExecutionClass === 'host' && (activeExecutionIdentity?.executable !== String(executable || '') || activeExecutionIdentity?.executableInvocationPath !== executableInvocationPath || activeExecutionIdentity?.executableInvocationName !== executableInvocationName || activeExecutionIdentity?.resolvedExecutable !== resolvedExecutable || activeExecutionIdentity?.executableHash !== resolvedExecutableHash)) blockers.push('worker_host_executable_identity_mismatch');
+      if (executionBackend === 'docker' && !/^sha256:[0-9a-f]{64}$/i.test(String(containerImageDigest || ''))) blockers.push('worker_container_image_digest_unavailable');
       if (containerImage) {
-        if (!containerImages.has(selectedImage)) blockers.push('worker_container_image_not_allowlisted');
+        if (!imageIdentity.allowlisted) blockers.push('worker_container_image_not_allowlisted');
         if (!containerExecutable || path.isAbsolute(String(containerExecutable))) blockers.push('worker_container_executable_invalid');
-      } else if (!resolvedExecutable || !executableSet.has(resolvedExecutable)) blockers.push('worker_executable_not_allowlisted');
+      } else if (!allowedExecutable.allowlisted) blockers.push('worker_executable_not_allowlisted');
       if (!allowedRoot) blockers.push('worker_cwd_outside_allowed_roots');
-      if (!allowedRoot || !within(allowedRoot, resolvedSourceRoot) || !within(resolvedSourceRoot, resolvedCwd)) blockers.push('worker_source_root_invalid');
+      if (!allowedRoot || !isPathWithin(allowedRoot, resolvedSourceRoot) || !isPathWithin(resolvedSourceRoot, resolvedCwd)) blockers.push('worker_source_root_invalid');
+      if (expectedExecutionClass !== 'explicit-container'
+        && (!executableRuntimePathSupported(resolvedExecutable, resolvedSourceRoot) || !executableRuntimePathSupported(executableInvocationPath, resolvedSourceRoot))) {
+        blockers.push('worker_runtime_executable_support_root_unavailable');
+      }
+      if (allowedRoot) {
+        const sourceIdentity = inspectScopedPathSync({ scopeRoot: allowedRoot, candidate: resolvedSourceRoot, expect: 'directory', forbidHardlinks: false });
+        const cwdIdentity = inspectScopedPathSync({ scopeRoot: allowedRoot, candidate: resolvedCwd, expect: 'directory', forbidHardlinks: false });
+        if (sourceIdentity.blockers.length || cwdIdentity.blockers.length) blockers.push('worker_workspace_path_unsafe');
+      }
       if (outputPaths.some((candidate) => path.isAbsolute(String(candidate)) || String(candidate).split(/[\\/]+/).includes('..'))) blockers.push('worker_output_path_not_relative');
       const resolvedOutputDirectory = outputDirectory ? path.resolve(outputDirectory) : null;
-      if (outputPaths.length && (!resolvedOutputDirectory || !outputRoots.some((root) => within(root, resolvedOutputDirectory)))) blockers.push('worker_output_directory_not_allowlisted');
+      const allowedOutputRoot = resolvedOutputDirectory ? outputRoots.find((root) => isPathWithin(root, resolvedOutputDirectory)) : null;
+      if (outputPaths.length && (!resolvedOutputDirectory || !allowedOutputRoot)) blockers.push('worker_output_directory_not_allowlisted');
       const gpuDevices = fs.existsSync('/dev') ? fs.readdirSync('/dev').filter((name) => /^nvidia(?:\d+|ctl|uvm|uvm-tools|modeset)$/.test(name)).map((name) => `/dev/${name}`) : [];
       if (requiresGpu && (!allowGpu || gpuDevices.length === 0)) blockers.push('worker_gpu_not_available_or_not_allowed');
       const normalizedDatasets = datasetMounts.map((mount, index) => {
         const source = path.resolve(String(mount?.source || ''));
         const name = String(mount?.name || `dataset-${index + 1}`).replace(/[^A-Za-z0-9_.-]/g, '_');
-        return { source, target: `/datasets/${name}`, name, readOnly: mount?.readOnly === true, manifestHash: mount?.manifestHash || null, licenseId: mount?.licenseId || null };
+        const allowedDatasetRoot = datasetRoots.find((root) => isPathWithin(root, source)) || null;
+        let sourceType = null;
+        let boundaryBlockers = [];
+        let manifestInspection = null;
+        if (allowedDatasetRoot) {
+          try {
+            const stat = fs.lstatSync(source);
+            sourceType = stat.isFile() ? 'file' : stat.isDirectory() ? 'directory' : null;
+            const identity = inspectScopedPathSync({ scopeRoot: allowedDatasetRoot, candidate: source, expect: sourceType || 'file', forbidHardlinks: sourceType === 'file' });
+            boundaryBlockers = identity.blockers;
+            if (!boundaryBlockers.length && sourceType) {
+              manifestInspection = inspectStrictDatasetManifest(source, allowedDatasetRoot);
+              boundaryBlockers = [...boundaryBlockers, ...manifestInspection.blockers];
+            }
+          } catch (error) {
+            boundaryBlockers = [error?.code || 'dataset_source_unreadable'];
+          }
+        }
+        return { source, target: `/datasets/${name}`, name, readOnly: mount?.readOnly === true,
+          manifestHash: mount?.manifestHash || null, manifestHashBefore: manifestInspection?.hash || null, manifestEntries: manifestInspection?.entries || [], licenseId: mount?.licenseId || null,
+          operatorAuthorizationHash: mount?.operatorAuthorizationHash || null, operatorDatasetAuthorityDocumentHash: mount?.operatorDatasetAuthorityDocumentHash || null, operatorDatasetAuthority: mount?.operatorDatasetAuthority || null,
+          splitManifestHash: mount?.splitManifestHash || null, benchmarkHarnessDocumentHash: mount?.benchmarkHarnessDocumentHash || null, benchmarkHarnessDefinitionHash: mount?.benchmarkHarnessDefinitionHash || null,
+          benchmarkFamily: mount?.benchmarkFamily || null, benchmarkSeedSchedule: Array.isArray(mount?.benchmarkSeedSchedule) ? mount.benchmarkSeedSchedule.map(Number) : [], benchmarkMinimumRepetitions: Number(mount?.benchmarkMinimumRepetitions || 0), analysisProtocol: mount?.analysisProtocol || null, analysisProtocolHash: mount?.analysisProtocolHash || null,
+          allowedDatasetRoot, sourceType, boundaryBlockers };
       });
-      if (normalizedDatasets.some((mount) => !fs.existsSync(mount.source) || !datasetRoots.some((root) => within(root, mount.source)) || !mount.readOnly)) blockers.push('worker_dataset_mount_invalid_or_not_read_only');
-      if (normalizedDatasets.some((mount) => !mount.licenseId)) blockers.push('worker_dataset_license_missing');
-      if (normalizedDatasets.some((mount) => !mount.manifestHash || datasetManifestHash(mount.source) !== mount.manifestHash)) blockers.push('worker_dataset_manifest_hash_mismatch');
+      const datasetAuthorizationSet = buildRuntimeDatasetAuthorizationSet(normalizedDatasets);
+      blockers.push(...datasetRuntimePreflightBlockers({
+        datasets: normalizedDatasets, environment: env,
+        authorizationSetHash: datasetAuthorizationSet.datasetAuthorizationSetHash,
+        requireProof: requireDatasetAccessProof, executionBackend, executionClass: expectedExecutionClass,
+        executionIdentity: activeExecutionIdentity, containerImageDigest,
+        hostTracerAvailable: fs.existsSync(DATASET_ACCESS_SUPERVISOR_TRACER),
+      }));
+      if (expectedSourceMerkleHash !== null && expectedSourceMerkleHash !== undefined && !/^sha256:[0-9a-f]{64}$/i.test(String(expectedSourceMerkleHash))) blockers.push('worker_expected_source_merkle_hash_invalid');
+      if (expectedSourceWorkspaceManifestHash !== null && expectedSourceWorkspaceManifestHash !== undefined && !/^sha256:[0-9a-f]{64}$/i.test(String(expectedSourceWorkspaceManifestHash))) blockers.push('worker_expected_source_workspace_manifest_hash_invalid');
       if (blockers.length) return { ok: false, status: 'os_sandbox_worker_blocked', blockers, availability: executionAvailability, isolation: { kernelNetworkIsolationVerified: false, filesystemNamespaceVerified: false, sourceReadOnlyVerified: false, resourceLimitsVerified: false } };
-
-      const sourceDatasetRoots = normalizedDatasets.map((mount) => mount.source).filter((source) => source !== resolvedSourceRoot && within(resolvedSourceRoot, source));
+      const sourceDatasetRoots = normalizedDatasets.map((mount) => mount.source).filter((source) => source !== resolvedSourceRoot && isPathWithin(resolvedSourceRoot, source));
       const sourceExcludedNames = sourceTreeExcludedNames(resolvedSourceRoot);
-      const sourceMerkleHashBefore = directoryMerkleHash(resolvedSourceRoot, { excludeRoots: sourceDatasetRoots, excludeNames: sourceExcludedNames });
+      const sourceExecutionSnapshotBefore = inspectWorkspaceExecutionSnapshot(resolvedSourceRoot, { excludeRoots: sourceDatasetRoots, excludeNames: sourceExcludedNames });
+      const sourceMerkleHashBefore = sourceExecutionSnapshotBefore.merkleHash;
+      const sourceWorkspaceManifestHashBefore = sourceExecutionSnapshotBefore.manifestHash;
+      if (sourceExecutionSnapshotBefore.blockers.length) {
+        return {
+          ok: false,
+          status: 'os_sandbox_worker_blocked',
+          blockers: ['worker_workspace_execution_snapshot_unsafe', ...sourceExecutionSnapshotBefore.blockers],
+          availability: executionAvailability,
+          isolation: { kernelNetworkIsolationVerified: false, filesystemNamespaceVerified: false, sourceReadOnlyVerified: false, resourceLimitsVerified: false, workspaceExecutionSnapshotVerified: false },
+        };
+      }
+      if (expectedSourceMerkleHash && sourceMerkleHashBefore !== String(expectedSourceMerkleHash).toLowerCase()) {
+        return {
+          ok: false,
+          status: 'os_sandbox_worker_blocked',
+          blockers: ['worker_expected_source_merkle_hash_mismatch'],
+          expectedSourceMerkleHash: String(expectedSourceMerkleHash).toLowerCase(),
+          sourceMerkleHashBefore,
+          availability: executionAvailability,
+          isolation: { kernelNetworkIsolationVerified: false, filesystemNamespaceVerified: false, sourceReadOnlyVerified: false, resourceLimitsVerified: false, workspaceExecutionSnapshotVerified: false },
+        };
+      }
+      if (expectedSourceWorkspaceManifestHash && sourceWorkspaceManifestHashBefore !== String(expectedSourceWorkspaceManifestHash).toLowerCase()) {
+        return {
+          ok: false,
+          status: 'os_sandbox_worker_blocked',
+          blockers: ['worker_expected_source_workspace_manifest_hash_mismatch'],
+          expectedSourceWorkspaceManifestHash: String(expectedSourceWorkspaceManifestHash).toLowerCase(),
+          sourceWorkspaceManifestHashBefore,
+          availability: executionAvailability,
+          isolation: { kernelNetworkIsolationVerified: false, filesystemNamespaceVerified: false, sourceReadOnlyVerified: false, resourceLimitsVerified: false, workspaceExecutionSnapshotVerified: false },
+        };
+      }
       const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-os-sandbox-'));
       const workRoot = path.join(sandboxRoot, 'work');
       const outputRoot = path.join(sandboxRoot, 'output');
-      const mountedDatasets = normalizedDatasets.map((mount) => {
-        if (!fs.statSync(mount.source).isFile()) return { ...mount, bindSource: mount.source, sourceType: 'directory', fileName: null };
-        const bindSource = path.join(sandboxRoot, 'datasets', mount.name);
-        const fileName = path.basename(mount.source);
-        fs.mkdirSync(bindSource, { recursive: true });
-        fs.copyFileSync(mount.source, path.join(bindSource, fileName), fs.constants.COPYFILE_FICLONE);
-        return { ...mount, bindSource, sourceType: 'file', fileName };
-      });
-      fs.cpSync(resolvedSourceRoot, workRoot, {
-        recursive: true,
-        dereference: false,
-        filter: (candidate) => {
-          if (sourceDatasetRoots.some((blocked) => candidate === blocked || candidate.startsWith(`${blocked}${path.sep}`))) return false;
-          const relative = path.relative(resolvedSourceRoot, candidate);
-          const first = relative.split(path.sep)[0];
-          return !sourceExcludedNames.includes(first);
-        },
-      });
-      fs.mkdirSync(outputRoot, { recursive: true });
-      const relativeCwd = path.relative(resolvedSourceRoot, resolvedCwd);
-      const boundedTimeout = Math.max(1, Math.min(Number(timeoutMs || 30000), maximumTimeoutMs));
-      const boundedMemory = Math.max(64 * 1024 * 1024, Math.min(Number(memoryBytes || maximumMemoryBytes), maximumMemoryBytes));
-      const boundedCpu = Math.max(1, Math.min(Number(cpuSeconds || maximumCpuSeconds), maximumCpuSeconds));
-      const boundedPids = Math.max(8, Math.min(Number(maximumProcesses || maximumPids), maximumPids));
-      const permittedEnvironment = Object.entries(env).filter(([key]) => ['ELAN_HOME', 'ELAN_TOOLCHAIN', 'LEAN_PATH', 'LAKE_HOME', 'HEPTA_SEED', 'HEPTA_OUTPUT_DIR', 'PYTHONHASHSEED', 'OMP_NUM_THREADS', 'CUDA_VISIBLE_DEVICES', 'R_ENVIRON_USER', 'RENV_PATHS_CACHE'].includes(key) || key.startsWith('HEPTA_DATASET_'));
-      let launcher = prlimit;
-      let command = [
-        `--as=${boundedMemory}`, `--cpu=${boundedCpu}`, bubblewrap,
-        '--unshare-user-try', '--unshare-pid', '--unshare-ipc', '--unshare-uts', '--unshare-cgroup-try', '--unshare-net', '--die-with-parent', '--new-session',
-        '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp', '--ro-bind', '/usr', '/usr', '--ro-bind', '/bin', '/bin', '--ro-bind', '/lib', '/lib', '--ro-bind', '/lib64', '/lib64',
-        ...(fs.existsSync('/var/lib/texmf') ? ['--ro-bind', '/var/lib/texmf', '/var/lib/texmf'] : []),
-        ...(fs.existsSync('/etc/texmf') ? ['--ro-bind', '/etc/texmf', '/etc/texmf'] : []),
-        '--ro-bind', resolvedSourceRoot, '/source', '--bind', workRoot, '/work', '--bind', outputRoot, '/output', '--chdir', `/work${relativeCwd ? `/${relativeCwd}` : ''}`,
-        ...mountedDatasets.flatMap((mount) => ['--ro-bind', mount.bindSource, mount.target]),
-        ...(requiresGpu ? gpuDevices.flatMap((device) => ['--dev-bind', device, device]) : []),
-        '--setenv', 'HOME', '/tmp', '--setenv', 'PATH', '/usr/local/bin:/usr/bin:/bin', ...permittedEnvironment.flatMap(([key, value]) => ['--setenv', key, String(value)]), resolvedExecutable, ...args.map((argument) => mapWorkArgument(argument, resolvedSourceRoot)),
+      const supervisorRoot = path.join(sandboxRoot, 'supervisor');
+      const datasetAccessTracePath = path.join(supervisorRoot, 'dataset-access.trace');
+      const datasetAccessSupervisorIdentityPath = path.join(supervisorRoot, 'supervisor-identity');
+      fs.mkdirSync(supervisorRoot, { mode: 0o700 });
+      fs.chmodSync(supervisorRoot, 0o700);
+      if (requireDatasetAccessProof && executionBackend === 'docker') {
+        createDatasetSupervisorEvidenceFiles({ tracePath: datasetAccessTracePath, identityPath: datasetAccessSupervisorIdentityPath });
+      }
+      let runtimeExecutableSnapshot = null;
+      if (expectedExecutionClass !== 'explicit-container') {
+        const expectedExecutablePath = expectedExecutionClass === 'hybrid-docker'
+          ? activeExecutionIdentity.hostExecutable
+          : activeExecutionIdentity.resolvedExecutable;
+        const expectedExecutableHash = expectedExecutionClass === 'hybrid-docker'
+          ? activeExecutionIdentity.hostExecutableHash
+          : activeExecutionIdentity.executableHash;
+        try {
+          runtimeExecutableSnapshot = materializeRuntimeExecutableSnapshot({ source: expectedExecutablePath, expectedHash: expectedExecutableHash, invocationName: activeExecutionIdentity.executableInvocationName, sandboxRoot });
+        } catch (error) {
+          fs.rmSync(sandboxRoot, { recursive: true, force: true });
+          return {
+            ok: false,
+            status: 'os_sandbox_worker_blocked',
+            blockers: ['worker_runtime_executable_snapshot_failed', error?.code || 'runtime_executable_snapshot_failed'],
+            availability: executionAvailability,
+            isolation: { kernelNetworkIsolationVerified: false, filesystemNamespaceVerified: false, sourceReadOnlyVerified: false, resourceLimitsVerified: false, runtimeExecutableSnapshotVerified: false },
+          };
+        }
+      }
+      runtimeExecutableSnapshotObserver?.(Object.freeze({
+        phase: 'after_runtime_executable_snapshot',
+        source: resolvedExecutable,
+        snapshotHash: runtimeExecutableSnapshot?.hash || null,
+        executionClass: expectedExecutionClass,
+      }));
+      let mountedDatasets = [];
+      try {
+        datasetSnapshotObserver?.(Object.freeze({ phase: 'before_dataset_snapshot', datasets: Object.freeze(normalizedDatasets.map((mount) => Object.freeze({ name: mount.name, source: mount.source, manifestHashBefore: mount.manifestHashBefore }))) }));
+        mountedDatasets = normalizedDatasets.map((mount) => materializeDatasetSnapshot(mount, sandboxRoot));
+      } catch (error) {
+        fs.rmSync(sandboxRoot, { recursive: true, force: true });
+        return {
+          ok: false,
+          status: 'os_sandbox_worker_blocked',
+          blockers: ['worker_dataset_snapshot_materialization_failed', error?.code || 'dataset_snapshot_failed'],
+          availability: executionAvailability,
+          isolation: { kernelNetworkIsolationVerified: false, filesystemNamespaceVerified: false, sourceReadOnlyVerified: false, resourceLimitsVerified: false, datasetSnapshotsVerified: false },
+        };
+      }
+      const invalidSnapshots = mountedDatasets.filter((mount) => mount.snapshotBlockers.length || mount.snapshotManifestHash !== mount.manifestHashBefore || mount.snapshotManifestHash !== mount.manifestHash);
+      if (invalidSnapshots.length) {
+        const failedDatasetNames = invalidSnapshots.map((mount) => mount.name);
+        fs.rmSync(sandboxRoot, { recursive: true, force: true });
+        return {
+          ok: false,
+          status: 'os_sandbox_worker_blocked',
+          blockers: ['worker_dataset_snapshot_manifest_mismatch', ...failedDatasetNames.map((name) => `worker_dataset_snapshot_invalid:${name}`)],
+          availability: executionAvailability,
+          isolation: { kernelNetworkIsolationVerified: false, filesystemNamespaceVerified: false, sourceReadOnlyVerified: false, resourceLimitsVerified: false, datasetSnapshotsVerified: false },
+        };
+      }
+      try {
+        workspaceSnapshotObserver?.(Object.freeze({ phase: 'before_workspace_copy', sourceRoot: resolvedSourceRoot, workRoot, sourceMerkleHashBefore, sourceWorkspaceManifestHashBefore }));
+        fs.cpSync(resolvedSourceRoot, workRoot, {
+          recursive: true,
+          dereference: false,
+          filter: (candidate) => {
+            if (path.resolve(candidate) === resolvedSourceRoot) return true;
+            if (sourceDatasetRoots.some((blocked) => isPathWithin(blocked, candidate))) return false;
+            return !sourceExcludedNames.includes(path.basename(candidate));
+          },
+        });
+        workspaceSnapshotObserver?.(Object.freeze({ phase: 'after_workspace_copy', sourceRoot: resolvedSourceRoot, workRoot, sourceMerkleHashBefore, sourceWorkspaceManifestHashBefore }));
+      } catch (error) {
+        fs.rmSync(sandboxRoot, { recursive: true, force: true });
+        return {
+          ok: false,
+          status: 'os_sandbox_worker_blocked',
+          blockers: ['worker_workspace_snapshot_copy_failed', error?.code || 'workspace_copy_failed'],
+          availability: executionAvailability,
+          isolation: { kernelNetworkIsolationVerified: false, filesystemNamespaceVerified: false, sourceReadOnlyVerified: false, resourceLimitsVerified: false, workspaceExecutionSnapshotVerified: false },
+        };
+      }
+      const workDatasetRoots = sourceDatasetRoots.map((source) => path.join(workRoot, path.relative(resolvedSourceRoot, source)));
+      const workExecutionSnapshot = inspectWorkspaceExecutionSnapshot(workRoot, { excludeRoots: workDatasetRoots, excludeNames: sourceExcludedNames });
+      const workSourceMerkleHash = workExecutionSnapshot.merkleHash;
+      const workWorkspaceManifestHash = workExecutionSnapshot.manifestHash;
+      const workspaceSnapshotBlockers = [
+        ...workExecutionSnapshot.blockers,
+        ...(workSourceMerkleHash !== sourceMerkleHashBefore || workWorkspaceManifestHash !== sourceWorkspaceManifestHashBefore ? ['worker_workspace_execution_snapshot_mismatch'] : []),
       ];
+      if (runtimeExecutableSnapshot && isPathWithin(resolvedSourceRoot, resolvedExecutable)) {
+        const workExecutable = path.join(workRoot, path.relative(resolvedSourceRoot, resolvedExecutable));
+        let workExecutableHash = null;
+        try { workExecutableHash = fileSha256Hash(workExecutable); } catch { workExecutableHash = null; }
+        if (workExecutableHash !== runtimeExecutableSnapshot.hash) workspaceSnapshotBlockers.push('worker_workspace_executable_snapshot_mismatch');
+      }
+      if (workspaceSnapshotBlockers.length) {
+        fs.rmSync(sandboxRoot, { recursive: true, force: true });
+        return {
+          ok: false,
+          status: 'os_sandbox_worker_blocked',
+          blockers: [...new Set(workspaceSnapshotBlockers)],
+          sourceMerkleHashBefore,
+          sourceWorkspaceManifestHashBefore,
+          workSourceMerkleHash,
+          workWorkspaceManifestHash,
+          availability: executionAvailability,
+          isolation: { kernelNetworkIsolationVerified: false, filesystemNamespaceVerified: false, sourceReadOnlyVerified: false, resourceLimitsVerified: false, workspaceExecutionSnapshotVerified: false },
+        };
+      }
+      fs.mkdirSync(outputRoot, { recursive: true });
+      if (requireDatasetAccessProof && executionBackend === 'docker') {
+        prepareUnprivilegedDatasetWorkspace({ outputRoot, workRoot, mountedDatasets });
+      }
+      const relativeCwd = path.relative(resolvedSourceRoot, resolvedCwd);
+      const runtimeExecutableOverlayTarget = runtimeExecutableSnapshot
+        ? (isPathWithin(resolvedSourceRoot, resolvedExecutable) ? `/work${resolvedExecutable.slice(resolvedSourceRoot.length)}` : resolvedExecutable)
+        : resolvedExecutable;
+      const runtimeExecutableInvocationTarget = runtimeExecutableSnapshot
+        ? (isPathWithin(resolvedSourceRoot, activeExecutionIdentity.executableInvocationPath)
+          ? `/work${activeExecutionIdentity.executableInvocationPath.slice(resolvedSourceRoot.length)}`
+          : activeExecutionIdentity.executableInvocationPath)
+        : resolvedExecutable;
+      const processInvocationId = beginWorkerProcessIdentity();
+      const { permittedEnvironment, environmentBindingHash, blockers: environmentBlockers } = selectAndValidateWorkerEnvironment({
+        env,
+        datasetAuthorizationSetHash: datasetAuthorizationSet.datasetAuthorizationSetHash,
+      });
+      if (environmentBlockers.length) {
+        fs.rmSync(sandboxRoot, { recursive: true, force: true });
+        return {
+          ok: false,
+          status: 'os_sandbox_worker_blocked',
+          blockers: [...environmentBlockers],
+          availability: executionAvailability,
+          isolation: { kernelNetworkIsolationVerified: false, filesystemNamespaceVerified: false, sourceReadOnlyVerified: false, resourceLimitsVerified: false },
+        };
+      }
+      const environmentBomBinding = prepareEnvironmentBom({ executionIdentity: activeExecutionIdentity, language, executable: containerImage ? containerExecutable : resolvedExecutable, requiresGpu, determinismPolicy, deterministicSeed: deterministicSeed ?? env.HEPTA_EXPERIMENT_SEED ?? env.HEPTA_SEED ?? env.PYTHONHASHSEED ?? null, timeoutMs, memoryBytes, cpuSeconds, maximumProcesses, requestedMaximumOutputBytes, env: Object.fromEntries(permittedEnvironment), runtimePackageClosure, runtimeBuildReproducibility });
+      if (environmentBomBinding.blockers.length) { fs.rmSync(sandboxRoot, { recursive: true, force: true }); return { ok: false, status: 'os_sandbox_worker_blocked', blockers: environmentBomBinding.blockers, availability: executionAvailability, isolation: { kernelNetworkIsolationVerified: false, filesystemNamespaceVerified: false, sourceReadOnlyVerified: false, resourceLimitsVerified: false } }; }
+      const { timeoutMs: boundedTimeout, memoryBytes: boundedMemory, cpuSeconds: boundedCpu, maximumPids: boundedPids, maximumOutputBytes: boundedOutput } = environmentBomBinding.limits;
+      let launcher = prlimit;
+      let command = buildBubblewrapWorkerCommand({
+        limits: { memory: boundedMemory, cpu: boundedCpu, pids: boundedPids }, bubblewrap,
+        texMounts: ['/var/lib/texmf', '/etc/texmf'].filter((candidate) => fs.existsSync(candidate)).flatMap((candidate) => ['--ro-bind', candidate, candidate]),
+        runtimeMounts: bubblewrapRuntimeResourceMounts(resolvedExecutable), workRoot, outputRoot,
+        runtimeExecutableSnapshot, runtimeExecutableOverlayTarget, relativeCwd, mountedDatasets,
+        requiresGpu, gpuDevices, environment: permittedEnvironment, executable: runtimeExecutableInvocationTarget,
+        arguments: args.map((argument) => mapWorkArgument(argument, resolvedSourceRoot)),
+      });
       if (executionBackend === 'docker') {
         launcher = docker;
         const uid = typeof process.getuid === 'function' ? process.getuid() : 65534;
         const gid = typeof process.getgid === 'function' ? process.getgid() : 65534;
-        const dockerExecutable = !containerImage && within(resolvedSourceRoot, resolvedExecutable)
-          ? `/work${resolvedExecutable.slice(resolvedSourceRoot.length)}`
-          : (containerImage ? containerExecutable : resolvedExecutable);
-        command = [
-          'run', '--pull', 'never', '--rm', '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges',
-          '--memory', String(boundedMemory), '--cpus', '1', '--pids-limit', String(boundedPids), '--ulimit', `cpu=${boundedCpu}`,
-          '--tmpfs', '/tmp:rw,noexec,nosuid,size=64m', '--user', `${uid}:${gid}`, '--env', 'HOME=/tmp', '--env', 'PATH=/usr/local/bin:/usr/bin:/bin',
-          ...permittedEnvironment.flatMap(([key, value]) => ['--env', `${key}=${String(value)}`]),
-          ...(requiresGpu ? ['--runtime', 'nvidia', '--env', 'NVIDIA_VISIBLE_DEVICES=all', '--env', 'NVIDIA_DRIVER_CAPABILITIES=compute,utility'] : []), ...(containerImage ? [] : dockerSystemMounts(resolvedExecutable)),
-          '--volume', `${resolvedSourceRoot}:/source:ro`, '--volume', `${workRoot}:/work:rw`, '--volume', `${outputRoot}:/output:rw`,
-          ...mountedDatasets.flatMap((mount) => ['--volume', `${mount.bindSource}:${mount.target}:ro`]),
-          '--workdir', `/work${relativeCwd ? `/${relativeCwd}` : ''}`, selectedImage, dockerExecutable,
-          ...args.map((argument) => mapWorkArgument(argument, resolvedSourceRoot)),
-        ];
+        const dockerExecutable = containerImage ? containerExecutable : runtimeExecutableInvocationTarget;
+        const datasetSupervisor = requireDatasetAccessProof ? activeExecutionIdentity?.datasetAccessSupervisor : null;
+        command = buildDockerWorkerCommand({
+          limits: { memory: boundedMemory, cpu: boundedCpu, pids: boundedPids }, uid, gid,
+          environment: permittedEnvironment, requiresGpu,
+          systemMounts: containerImage ? [] : dockerSystemMounts(resolvedExecutable),
+          workRoot, outputRoot, supervisorRoot, runtimeExecutableSnapshot, runtimeExecutableOverlayTarget,
+          mountedDatasets, relativeCwd, containerImageDigest, datasetSupervisor, executable: dockerExecutable,
+          arguments: args.map((argument) => mapWorkArgument(argument, resolvedSourceRoot)),
+        });
       }
-
-      let result;
-      try {
-        result = executor(launcher, command, { encoding: 'utf8', timeout: boundedTimeout, maxBuffer: 4 * 1024 * 1024 });
-      } finally {
-        // Hash the immutable source while the ephemeral work/output roots still exist.
+      if (requireDatasetAccessProof && executionBackend === 'bubblewrap') {
+        command = ['-f', '-qq', '-yy', '-e', 'trace=open,openat,read', '-o', datasetAccessTracePath, '--', launcher, ...command];
+        launcher = DATASET_ACCESS_SUPERVISOR_TRACER;
       }
-      const sourceMerkleHashAfter = directoryMerkleHash(resolvedSourceRoot, { excludeRoots: sourceDatasetRoots, excludeNames: sourceExcludedNames });
-      const sourceMutationDetected = sourceMerkleHashAfter !== sourceMerkleHashBefore;
-      const commandPassed = result.status === 0 && !result.error;
-      const passed = commandPassed && !sourceMutationDetected;
-      const artifacts = [];
-      if (passed && resolvedOutputDirectory) {
-        fs.mkdirSync(resolvedOutputDirectory, { recursive: true });
-        for (const declared of outputPaths.map(String)) {
-          const source = [path.join(outputRoot, declared), path.join(workRoot, declared)].find((candidate) => fs.existsSync(candidate) && fs.statSync(candidate).isFile());
-          if (!source) continue;
-          const destination = path.join(resolvedOutputDirectory, declared);
-          fs.mkdirSync(path.dirname(destination), { recursive: true });
-          fs.copyFileSync(source, destination);
-          artifacts.push({ path: declared, sha256: `sha256:${crypto.createHash('sha256').update(fs.readFileSync(destination)).digest('hex')}`, bytes: fs.statSync(destination).size });
+      const finalize = (result) => {
+        const sourceExecutionSnapshotAfter = inspectWorkspaceExecutionSnapshot(resolvedSourceRoot, { excludeRoots: sourceDatasetRoots, excludeNames: sourceExcludedNames });
+        const sourceMerkleHashAfter = sourceExecutionSnapshotAfter.merkleHash;
+        const sourceWorkspaceManifestHashAfter = sourceExecutionSnapshotAfter.manifestHash;
+        const sourceMutationDetected = sourceExecutionSnapshotAfter.blockers.length > 0 || sourceMerkleHashAfter !== sourceMerkleHashBefore || sourceWorkspaceManifestHashAfter !== sourceWorkspaceManifestHashBefore;
+        const finalizedDatasets = mountedDatasets.map((mount) => {
+          const manifestHashAfter = safeStrictDatasetManifestHash(mount.source, mount.allowedDatasetRoot);
+          const snapshotManifestHashAfter = safeStrictDatasetManifestHash(
+            mount.snapshotSource,
+            mount.sourceType === 'file' ? mount.bindSource : mount.snapshotSource,
+          );
+          return {
+            ...mount,
+            manifestHashAfter,
+            manifestVerifiedAfterExecution: manifestHashAfter === mount.manifestHashBefore,
+            snapshotManifestHashAfter,
+            snapshotVerifiedAfterExecution: snapshotManifestHashAfter === mount.snapshotManifestHash,
+          };
+        });
+        const datasetMutationDetected = finalizedDatasets.some((mount) => !mount.manifestVerifiedAfterExecution || !mount.snapshotVerifiedAfterExecution);
+        const datasetSnapshotMutationDetected = finalizedDatasets.some((mount) => !mount.snapshotVerifiedAfterExecution);
+        const datasetAccess = buildDatasetRuntimeAccessReceipt({
+          tracePath: datasetAccessTracePath,
+          supervisorRoot,
+          executionBackend,
+          datasets: finalizedDatasets,
+          required: requireDatasetAccessProof,
+          supervisorIdentityPath: datasetAccessSupervisorIdentityPath,
+          expectedSupervisor: activeExecutionIdentity?.datasetAccessSupervisor || null,
+          runtimeIdentityHash: activeExecutionIdentity?.runtimeIdentityHash || null,
+          environmentBindingHash,
+          containerImageDigest,
+          traceOwnerUid: typeof process.getuid === 'function' ? process.getuid() : 65534,
+          traceOwnerGid: typeof process.getgid === 'function' ? process.getgid() : 65534,
+          workloadExitCode: result.status,
+        });
+        const datasetAccessReceipt = datasetAccess.receipt;
+        const datasetAccessBlockers = datasetAccess.blockers;
+        let runtimeExecutableSnapshotHashAfter = null;
+        try { runtimeExecutableSnapshotHashAfter = runtimeExecutableSnapshot ? fileSha256Hash(runtimeExecutableSnapshot.path) : null; } catch { runtimeExecutableSnapshotHashAfter = null; }
+        const runtimeExecutableSnapshotVerified = !runtimeExecutableSnapshot || runtimeExecutableSnapshotHashAfter === runtimeExecutableSnapshot.hash;
+        const commandPassed = result.status === 0 && !result.error && !result.aborted && !result.timedOut;
+        let passed = commandPassed && !sourceMutationDetected && !datasetMutationDetected && !datasetAccessBlockers.length && runtimeExecutableSnapshotVerified;
+        const artifacts = [], artifactBlockers = []; let artifactOutputBytes = 0;
+        if (passed && resolvedOutputDirectory) {
+          for (const declared of outputPaths.map(String)) {
+            let selectedSourceRoot = null;
+            for (const candidateRoot of requireSeparateOutputRoot ? [outputRoot] : [outputRoot, workRoot]) {
+              try {
+                fs.lstatSync(path.resolve(candidateRoot, declared));
+                selectedSourceRoot = candidateRoot;
+                break;
+              } catch (error) {
+                if (error?.code !== 'ENOENT') {
+                  artifactBlockers.push(`worker_output_path_unsafe:${declared}:${error?.code || 'lstat_failed'}`);
+                  break;
+                }
+              }
+            }
+            if (!selectedSourceRoot) {
+              if (requireSeparateOutputRoot) artifactBlockers.push(`worker_declared_output_missing_from_separate_root:${declared}`);
+              continue;
+            }
+            let staged = null;
+            try {
+              const destination = path.resolve(resolvedOutputDirectory, declared);
+              const destinationRelative = path.relative(allowedOutputRoot, destination).replace(/\\/g, '/');
+              const source = inspectScopedRegularFileSync({ scopeRoot: selectedSourceRoot, relative: declared });
+              artifactOutputBytes += source.bytes;
+              if (artifactOutputBytes > boundedOutput) { const error = new Error('worker_output_bytes_limit_exceeded'); error.code = 'worker_output_bytes_limit_exceeded'; throw error; }
+              const current = inspectScopedRegularFileWithRecoverySync({ scopeRoot: allowedOutputRoot, relative: destinationRelative });
+              if (current.hash === source.hash) {
+                artifacts.push({ path: declared, sha256: current.hash, bytes: current.bytes });
+                continue;
+              }
+              staged = stageScopedRegularFileCopySync({
+                sourceRoot: selectedSourceRoot,
+                destinationRoot: allowedOutputRoot,
+                relative: declared,
+                destinationRelative,
+                stageId: `os-sandbox-output:${crypto.createHash('sha256').update(`${sourceMerkleHashBefore}\0${allowedOutputRoot}\0${destinationRelative}\0${declared}\0${current.hash}\0${source.hash}`).digest('hex')}`,
+                expectedHash: current.hash,
+              });
+              const persisted = commitStagedScopedFileSync(staged, { destinationRoot: allowedOutputRoot, expectedHash: current.hash });
+              artifacts.push({ path: declared, sha256: persisted.hash, bytes: persisted.bytes });
+            } catch (error) {
+              artifactBlockers.push(`worker_output_path_unsafe:${declared}:${error?.code || 'materialization_failed'}`);
+            } finally {
+              abortStagedScopedFileSync(staged);
+            }
+          }
         }
-      }
-      const receiptPayload = {
-        version: 3,
-        kind: 'OsSandboxWorkerReceipt',
-        runnerId: `${executionBackend}-kernel-isolation-worker-v3`,
-        backend: executionBackend,
-        status: passed ? 'os_sandbox_worker_passed' : 'os_sandbox_worker_failed',
-        exitCode: result.status,
-        signal: result.signal || null,
-        stdout: String(result.stdout || ''),
-        stderr: String(result.stderr || result.error?.message || ''),
-        sourceMerkleHashBefore,
-        sourceMerkleHashAfter,
-        sourceMutationDetected,
-        declaredOutputPaths: outputPaths.map(String),
-        limits: { timeoutMs: boundedTimeout, memoryBytes: boundedMemory, cpuSeconds: boundedCpu, maximumPids: boundedPids },
-        containerImage: containerImage ? selectedImage : null,
-        datasetMounts: mountedDatasets.map((mount) => ({ name: mount.name, target: mount.target, sourceType: mount.sourceType, fileName: mount.fileName, readOnly: true, manifestHash: mount.manifestHash, licenseId: mount.licenseId })),
-        isolation: { kernelNetworkIsolationVerified: true, filesystemNamespaceVerified: true, sourceReadOnlyVerified: !sourceMutationDetected, sourceReadOnlyMount: true, ephemeralWorkRootVerified: true, separateOutputRootVerified: true, hostEtcMounted: false, readOnlyRuntimeVerified: true, resourceLimitsVerified: true, gpuAccessRequested: Boolean(requiresGpu), gpuDeviceIsolationVerified: !requiresGpu || gpuDevices.length > 0 },
-        externalActionPerformed: false,
+        passed = passed && artifactBlockers.length === 0;
+        const receiptPayload = {
+          version: 4,
+          kind: 'OsSandboxWorkerReceipt',
+          runnerId: `${executionBackend}-kernel-isolation-worker-v4`,
+          backend: executionBackend,
+          status: result.aborted ? 'os_sandbox_worker_cancelled' : passed ? 'os_sandbox_worker_passed' : 'os_sandbox_worker_failed',
+          exitCode: result.status,
+          signal: result.signal || null,
+          stdout: String(result.stdout || ''),
+          stderr: String(result.stderr || result.error?.message || ''),
+          sourceMerkleHashBefore,
+          sourceMerkleHashAfter,
+          sourceWorkspaceManifestHashBefore,
+          sourceWorkspaceManifestHashAfter,
+          workSourceMerkleHash,
+          workWorkspaceManifestHash,
+          expectedSourceMerkleHash: expectedSourceMerkleHash ? String(expectedSourceMerkleHash).toLowerCase() : null,
+          expectedSourceWorkspaceManifestHash: expectedSourceWorkspaceManifestHash ? String(expectedSourceWorkspaceManifestHash).toLowerCase() : null,
+          sourceMutationDetected,
+          datasetMutationDetected,
+          declaredOutputPaths: outputPaths.map(String),
+          declaredOutputsRestrictedToSeparateRoot: requireSeparateOutputRoot === true,
+          artifacts,
+          artifactManifestHash: hashRecord('OsSandboxWorkerArtifactManifest', artifacts),
+          limits: { timeoutMs: boundedTimeout, memoryBytes: boundedMemory, cpuSeconds: boundedCpu, maximumPids: boundedPids, maximumOutputBytes: boundedOutput, maximumCapturedBytes },
+          runtimeIdentityType: activeExecutionIdentity?.runtimeType || (executionBackend === 'docker' ? 'container' : 'host'),
+          runtimeIdentityHash: activeExecutionIdentity?.runtimeIdentityHash || null,
+          runtimeExecutableSnapshotHash: runtimeExecutableSnapshot?.hash || null,
+          runtimeExecutableSnapshotHashAfter,
+          runtimeExecutableInvocationName: runtimeExecutableSnapshot?.invocationName || null,
+          runtimeExecutableInvocationPath: runtimeExecutableSnapshot ? activeExecutionIdentity.executableInvocationPath : null,
+          runtimeExecutableOverlayTarget: runtimeExecutableSnapshot ? runtimeExecutableOverlayTarget : null,
+          containerImage: executionBackend === 'docker' ? selectedImage : null,
+          containerImageDigest,
+          environmentBindingHash,
+          environmentBom: environmentBomBinding.environmentBom, environmentBomHash: environmentBomBinding.environmentBomHash,
+          ...completeWorkerProcessIdentity({ processInvocationId, result }),
+          executionBindings: Object.freeze(Object.fromEntries(permittedEnvironment
+            .filter(([key]) => key.startsWith('HEPTA_BENCHMARK_') || key.startsWith('HEPTA_EXPERIMENT_') || ['HEPTA_PRE_DATA_ACCESS_FREEZE_HASH', 'HEPTA_HARNESS_CELL_ID', 'HEPTA_DATASET_AUTHORIZATION_SET_HASH', 'HEPTA_SEED', 'PYTHONHASHSEED'].includes(key))
+            .map(([key, value]) => [key, String(value)])
+            .sort(([left], [right]) => left.localeCompare(right)))),
+          datasetAuthorizationSetHash: datasetAuthorizationSet.datasetAuthorizationSetHash,
+          datasetMounts: finalizedDatasets.map((mount) => ({ name: mount.name, target: mount.target, sourceType: mount.sourceType, fileName: mount.fileName,
+            readOnly: true, manifestHash: mount.manifestHash, manifestHashBefore: mount.manifestHashBefore, snapshotManifestHash: mount.snapshotManifestHash, manifestHashAfter: mount.manifestHashAfter,
+            manifestVerifiedAfterExecution: mount.manifestVerifiedAfterExecution, snapshotManifestHashAfter: mount.snapshotManifestHashAfter, snapshotVerifiedAfterExecution: mount.snapshotVerifiedAfterExecution,
+            licenseId: mount.licenseId, operatorAuthorizationHash: mount.operatorAuthorizationHash || null, operatorDatasetAuthorityDocumentHash: mount.operatorDatasetAuthorityDocumentHash || null,
+            operatorDatasetAuthority: mount.operatorDatasetAuthority || null, splitManifestHash: mount.splitManifestHash || null, benchmarkHarnessDocumentHash: mount.benchmarkHarnessDocumentHash || null,
+            benchmarkHarnessDefinitionHash: mount.benchmarkHarnessDefinitionHash || null, benchmarkFamily: mount.benchmarkFamily || null, benchmarkSeedSchedule: mount.benchmarkSeedSchedule || [], benchmarkMinimumRepetitions: mount.benchmarkMinimumRepetitions || 0, analysisProtocol: mount.analysisProtocol || null, analysisProtocolHash: mount.analysisProtocolHash || null })),
+          datasetAccessReceipt,
+          datasetAccessSupervisorIdentityHash: datasetAccessReceipt?.supervisor?.identityHash || null,
+          isolation: {
+            kernelNetworkIsolationVerified: true,
+            filesystemNamespaceVerified: true,
+            sourceReadOnlyVerified: !sourceMutationDetected,
+            sourceReadOnlyMount: true,
+            ephemeralWorkRootVerified: true,
+            workspaceExecutionSnapshotVerified: true,
+            separateOutputRootVerified: requireSeparateOutputRoot
+              ? outputPaths.every((declared) => artifacts.some((artifact) => artifact.path === String(declared)))
+              : true,
+            hostEtcMounted: false,
+            readOnlyRuntimeVerified: true,
+            runtimeExecutableSnapshotVerified,
+            immutableContainerImageVerified: executionBackend !== 'docker' || Boolean(containerImageDigest),
+            datasetSnapshotsVerified: finalizedDatasets.every((mount) => mount.snapshotManifestHash === mount.manifestHash),
+            datasetManifestsVerifiedAfterExecution: !datasetMutationDetected,
+            datasetAccessSupervisorVerified: requireDatasetAccessProof
+              ? datasetAccessReceipt?.status === 'dataset_runtime_access_verified'
+              : true,
+            memoryLimitVerified: true,
+            cpuLimitVerified: true,
+            processLimitVerified: processLimitProbe.available,
+            processLimitMechanism: processLimitProbe.mechanism,
+            resourceLimitsVerified: processLimitProbe.available,
+            gpuAccessRequested: Boolean(requiresGpu),
+            gpuDeviceIsolationVerified: !requiresGpu || gpuDevices.length > 0,
+          },
+          externalActionPerformed: false,
+        };
+        fs.rmSync(sandboxRoot, { recursive: true, force: true });
+        return { ok: passed, ...receiptPayload, receiptHash: hashRecord('OsSandboxWorkerReceipt', receiptPayload), blockers: [...(result.aborted ? ['os_sandbox_command_aborted'] : []), ...(result.timedOut ? ['os_sandbox_command_timed_out'] : []), ...(!commandPassed && !result.aborted && !result.timedOut ? ['os_sandbox_command_failed'] : []), ...(sourceMutationDetected ? ['source_mutation_detected', ...sourceExecutionSnapshotAfter.blockers] : []), ...(datasetMutationDetected ? ['worker_dataset_manifest_changed_during_execution'] : []), ...(datasetSnapshotMutationDetected ? ['worker_dataset_snapshot_changed_during_execution'] : []), ...datasetAccessBlockers, ...(!runtimeExecutableSnapshotVerified ? ['worker_runtime_executable_snapshot_changed_during_execution'] : []), ...artifactBlockers] };
       };
-      fs.rmSync(sandboxRoot, { recursive: true, force: true });
-      return { ok: passed, ...receiptPayload, artifacts, receiptHash: hashRecord('OsSandboxWorkerReceipt', receiptPayload), blockers: [...(!commandPassed ? ['os_sandbox_command_failed'] : []), ...(sourceMutationDetected ? ['source_mutation_detected'] : [])] };
+      if (signal) {
+        return runBoundedChildProcess({ executable: launcher, args: command, cwd: resolvedCwd, timeoutMs: boundedTimeout, signal, maximumCapturedBytes })
+          .then(
+            (result) => finalize({ ...result, status: result.exitCode, signal: result.signal }),
+            (error) => { fs.rmSync(sandboxRoot, { recursive: true, force: true }); throw error; },
+          );
+      }
+      return finalize(executor(launcher, command, { encoding: 'utf8', timeout: boundedTimeout, maxBuffer: maximumCapturedBytes }));
     },
   });
 }

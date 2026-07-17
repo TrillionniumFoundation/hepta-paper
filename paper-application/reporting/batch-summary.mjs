@@ -1,6 +1,6 @@
 import { PAPER_ACTIONS } from '../../paper-domain/contracts/index.mjs';
 
-export { summarizeResults } from './batch-result-summary.mjs';
+export { summarizeCampaignResults } from './campaign-result-summary.mjs';
 export { blockerFamilySummary, makeBlockerFamilyMarkdown } from './blocker-family-summary.mjs';
 
 export function makeMarkdownTable(rows) {

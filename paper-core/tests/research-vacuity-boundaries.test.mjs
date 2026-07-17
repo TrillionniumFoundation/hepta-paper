@@ -13,7 +13,27 @@ test('empty claim and evidence graphs cannot become promotion-ready', () => {
   assert.equal(claimRegistry.status, 'claim_graph_blocked');
   assert.equal(evidenceIntake.status, 'evidence_intake_blocked');
   assert.equal(quality.status, 'evidence_quality_blocked');
+  assert.equal(quality.version, 6);
+  assert.equal(quality.evidenceIntakeRequired, false);
   assert.ok(quality.blockers.includes('claim_registry_empty'));
+  assert.equal(quality.blockers.includes('evidence_intake_not_verified'), false);
+});
+
+test('a registered evidence-required claim cannot bypass a blocked evidence intake', () => {
+  const paperTask = { paperId: 'paper' };
+  const claimRegistry = buildClaimRegistry({ paperTask, claims: [{
+    id: 'claim-evidence-required',
+    text: 'This claim requires external evidence.',
+    sourceLocator: 'main.tex#bytes=0-38',
+    verificationPlan: { kind: 'evidence', requiresEvidence: true },
+  }] });
+  const evidenceIntake = buildEvidenceIntake({ paperTask, evidenceItems: [] });
+  const quality = buildEvidenceQualityGate({ paperTask, claimRegistry, evidenceIntake, nativeWorkerReceipts: [] });
+  assert.equal(claimRegistry.status, 'claim_graph_valid');
+  assert.equal(evidenceIntake.status, 'evidence_intake_blocked');
+  assert.equal(quality.evidenceIntakeRequired, true);
+  assert.ok(quality.blockers.includes('evidence_intake_not_verified'));
+  assert.ok(quality.blockers.includes('claim_evidence_coverage_missing:claim-evidence-required'));
 });
 
 test('worker-created claims and unbound formal declarations cannot self-certify', () => {

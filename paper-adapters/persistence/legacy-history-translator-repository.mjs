@@ -1,12 +1,9 @@
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { safeJsonParse } from '../../workflow-kernel/runtime/data-utils.mjs';
+import { writeImmutableFileSync } from '../runtime/immutable-file-repository.mjs';
 import { verifyLegacyHistorySnapshot } from './legacy-history-snapshot-repository.mjs';
-
-function sha256(value) {
-  return `sha256:${crypto.createHash('sha256').update(value).digest('hex')}`;
-}
 
 function readNdjson(candidate) {
   const text = fs.readFileSync(candidate, 'utf8');
@@ -17,22 +14,9 @@ function readNdjson(candidate) {
   });
 }
 
-function immutableWrite(candidate, content) {
-  try { fs.writeFileSync(candidate, content, { flag: 'wx', mode: 0o444 }); }
-  catch (error) {
-    if (error.code !== 'EEXIST') throw error;
-    if (sha256(fs.readFileSync(candidate)) !== sha256(content)) throw new Error(`legacy_translation_immutable_collision:${candidate}`);
-  }
-}
-
 function first(row, keys) {
   for (const key of keys) if (row?.[key] !== undefined && row?.[key] !== null && row?.[key] !== '') return row[key];
   return null;
-}
-
-function parsedJson(value, fallback = {}) {
-  try { const parsed = JSON.parse(String(value || '')); return parsed && typeof parsed === 'object' ? parsed : fallback; }
-  catch { return fallback; }
 }
 
 function nativeRecord(kind, table, row, lineage, fields = {}) {
@@ -94,7 +78,7 @@ function translateTable(table, rows, lineage) {
         versionType: first(row, ['version_type', 'type']),
         label: first(row, ['label', 'version']),
         parentVersionId: first(row, ['parent_version_id', 'parent_id', 'supersedes_version_id']),
-        artifactMembers: parsedJson(row.metadata_json, {}).files || [],
+        artifactMembers: safeJsonParse(row.metadata_json, {})?.files || [],
         createdAt: first(row, ['created_at']),
       });
     }
@@ -184,7 +168,7 @@ export function translateLegacyHistorySnapshot({ manifestPath, receiptLedger = n
   }
   const ndjson = records.length ? `${records.map((record) => JSON.stringify(record)).join('\n')}\n` : '';
   const translationsPath = path.join(root, 'native-translations.ndjson');
-  immutableWrite(translationsPath, Buffer.from(ndjson));
+  writeImmutableFileSync(translationsPath, Buffer.from(ndjson), { collisionError: 'legacy_translation_immutable_collision' });
   const byKind = Object.fromEntries([...new Set(records.map((record) => record.kind))].sort()
     .map((kind) => [kind, records.filter((record) => record.kind === kind).length]));
   const payload = {
@@ -193,7 +177,7 @@ export function translateLegacyHistorySnapshot({ manifestPath, receiptLedger = n
     status: 'legacy_native_translations_verified',
     sourceManifestHash: manifest.manifestHash,
     translationsPath,
-    translationsHash: sha256(Buffer.from(ndjson)),
+    translationsHash: hashBytes(Buffer.from(ndjson)),
     translationCount: records.length,
     byKind,
     eventClassificationCounts,
@@ -216,7 +200,7 @@ export function translateLegacyHistorySnapshot({ manifestPath, receiptLedger = n
 export function verifyLegacyNativeTranslation({ bundle } = {}) {
   const blockers = [];
   if (!bundle?.translationsPath || !fs.existsSync(bundle.translationsPath)) blockers.push('legacy_native_translation_file_missing');
-  else if (sha256(fs.readFileSync(bundle.translationsPath)) !== bundle.translationsHash) blockers.push('legacy_native_translation_hash_mismatch');
+  else if (hashBytes(fs.readFileSync(bundle.translationsPath)) !== bundle.translationsHash) blockers.push('legacy_native_translation_hash_mismatch');
   const records = !blockers.length ? readNdjson(bundle.translationsPath) : [];
   if (records.length !== Number(bundle?.translationCount || 0)) blockers.push('legacy_native_translation_count_mismatch');
   for (const record of records) {

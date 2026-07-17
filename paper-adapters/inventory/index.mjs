@@ -6,18 +6,15 @@ import {
   listDirSafe,
   pathStat,
   readJsonIfExists,
-  readTextIfExists,
   relativePath,
   walkFiles,
 } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { inspectScopedPathSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
 import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
+import { resolveRepoPath } from '../../workflow-kernel/runtime/path-utils.mjs';
 import { sortByMtimeDesc } from '../../workflow-kernel/runtime/time-utils.mjs';
-import {
-  parseSimpleYamlList,
-  parseSimpleYamlMap,
-  safeJsonParse,
-} from '../../workflow-kernel/runtime/data-utils.mjs';
+import { safeJsonParse } from '../../workflow-kernel/runtime/data-utils.mjs';
+import { readInventorySources } from './inventory-source-readers.mjs';
 import {
   PAPER_ACTIONS,
   createPaperTask,
@@ -30,138 +27,6 @@ import {
 const TEX_IGNORE_RE = /(\.bak|\.backup|\.orig|\.old|\.tmp|\.synctex|supplementary|appendix-only)/i;
 const QUARANTINE_SLUG_RE = /(^rust_patch_queue_shadow|_fixture_|fixture_|test_fixture|shadow_review_|review_flow_(applied|rolled)_back_patch_queue)/i;
 const QUARANTINE_PATH_RE = /(logs\/paperctl\/_batches\/rust|logs\/paperctl\/.*fixture|tests\/fixtures|\/tmp\/|runtime\/)/i;
-
-function repoPath(root, value) {
-  const text = normalizeText(value);
-  if (!text) return null;
-  return path.isAbsolute(text) ? text : path.join(root, text);
-}
-
-async function readRegistry(root) {
-  const registryDir = path.join(root, 'registry');
-  const papersText = await readTextIfExists(path.join(registryDir, 'papers.yaml'));
-  const venuesText = await readTextIfExists(path.join(registryDir, 'venues.yaml'));
-  const workflowsText = await readTextIfExists(path.join(registryDir, 'workflows.yaml'));
-  return {
-    papers: parseSimpleYamlList(papersText || '', 'papers'),
-    venues: parseSimpleYamlList(venuesText || '', 'venues'),
-    workflows: parseSimpleYamlMap(workflowsText || '', 'workflows'),
-    refs: {
-      papers: papersText ? 'registry/papers.yaml' : null,
-      venues: venuesText ? 'registry/venues.yaml' : null,
-      workflows: workflowsText ? 'registry/workflows.yaml' : null,
-    },
-  };
-}
-
-function sqliteJson(store, sql) {
-  if (typeof store.available === 'function' && !store.available()) return { ok: false, rows: [], error: 'sqlite3_not_found' };
-  const result = store.query(sql);
-  return { ok: result.ok, rows: result.rows, error: result.error };
-}
-
-function normalizeSqlitePaper(row = {}, inventorySource = 'hepta_sqlite') {
-  return {
-    slug: row.slug,
-    title: row.title,
-    status: row.status,
-    venue_target: row.venue_target,
-    paper_type: row.paper_type,
-    canonical_dir: row.source_dir || row.canonical_dir,
-    source_dir: row.source_dir || '',
-    current_pdf: row.current_pdf || '',
-    current_source_zip: row.current_source_zip || '',
-    current_verdict: row.current_verdict,
-    next_action: row.next_action,
-    updated_at: row.updated_at,
-    inventory_source: inventorySource,
-    metadata_json: row.metadata_json || '{}',
-    ledger_lifecycle_stage: row.ledger_lifecycle_stage || '',
-    ledger_submission_state: row.ledger_submission_state || '',
-    ledger_next_action: row.ledger_next_action || '',
-    ledger_evidence_json: row.ledger_evidence_json || '{}',
-  };
-}
-
-function readSqliteRegistry(root, { legacy = false, store = null } = {}) {
-  if (legacy || !store) {
-    return {
-      ok: false,
-      papers: [],
-      venues: [],
-      error: legacy ? 'legacy_inventory_runtime_disabled' : 'native_store_not_injected',
-      refs: { papers: null, venues: null },
-    };
-  }
-  const papersResult = sqliteJson(store, [
-    'select p.slug,p.title,p.status,p.venue_target,p.paper_type,p.canonical_dir,p.source_dir,p.current_pdf,p.current_source_zip,p.current_verdict,p.next_action,p.updated_at,p.metadata_json,',
-    'l.lifecycle_stage as ledger_lifecycle_stage,l.submission_state as ledger_submission_state,l.next_action as ledger_next_action,l.evidence_json as ledger_evidence_json',
-    'from papers p left join submission_ledger l on p.slug=l.slug order by p.slug',
-  ].join(' '));
-  const venuesResult = sqliteJson(store, [
-    'select venue_id,name,kind,cycle,deadline,metadata_json',
-    'from venues order by venue_id',
-  ].join(' '));
-  if (!papersResult.ok) {
-    return {
-      ok: false,
-      papers: [],
-      venues: [],
-      error: papersResult.error,
-      refs: { papers: null, venues: null },
-    };
-  }
-  return {
-    ok: true,
-    papers: (papersResult.rows || []).map((row) => normalizeSqlitePaper(
-      row,
-      legacy ? 'legacy_sqlite' : 'hepta_sqlite',
-    )),
-    venues: venuesResult.ok ? (venuesResult.rows || []) : [],
-    error: venuesResult.ok ? null : venuesResult.error,
-    refs: {
-      papers: `${legacy ? 'legacy:' : ''}hepta-paper.sqlite:papers`,
-      venues: venuesResult.ok ? `${legacy ? 'legacy:' : ''}hepta-paper.sqlite:venues` : null,
-    },
-  };
-}
-
-async function readInventorySources(root, source = 'auto', store = null) {
-  const yaml = await readRegistry(root);
-  if (source === 'yaml') {
-    return {
-      ...yaml,
-      source: 'yaml',
-      refs: { ...yaml.refs, source: 'yaml' },
-      fallback: null,
-    };
-  }
-  const legacyRequested = source === 'legacy-sqlite';
-  const sqlite = readSqliteRegistry(root, { legacy: legacyRequested, store });
-  if (['sqlite', 'hepta', 'legacy-sqlite'].includes(source)
-    || (source === 'auto' && sqlite.ok && sqlite.papers.length)) {
-    return {
-      papers: sqlite.papers,
-      venues: sqlite.venues.length ? sqlite.venues : yaml.venues,
-      workflows: yaml.workflows,
-      refs: {
-        ...yaml.refs,
-        papers: sqlite.refs.papers,
-        venues: sqlite.refs.venues || yaml.refs.venues,
-        workflows: yaml.refs.workflows,
-        source: legacyRequested ? 'legacy_sqlite' : 'hepta_sqlite',
-      },
-      source: legacyRequested ? 'legacy_sqlite' : 'hepta_sqlite',
-      fallback: sqlite.venues.length ? null : 'venues_yaml_fallback',
-    };
-  }
-  return {
-    ...yaml,
-    source: 'yaml',
-    refs: { ...yaml.refs, source: 'yaml' },
-    fallback: sqlite.ok ? 'sqlite_empty_papers' : sqlite.error,
-  };
-}
 
 function quarantineReason(paper = {}) {
   const slug = normalizeText(paper.slug);
@@ -181,8 +46,8 @@ function quarantineReason(paper = {}) {
 async function candidateSourceDirs(root, paper) {
   const slug = normalizeText(paper.slug);
   const candidates = [
-    repoPath(root, paper.source_dir),
-    repoPath(root, paper.canonical_dir),
+    resolveRepoPath(root, paper.source_dir),
+    resolveRepoPath(root, paper.canonical_dir),
     path.join(root, 'drafts', slug),
     path.join(root, 'workspaces', slug),
     path.join(root, 'accepted', slug),
@@ -272,9 +137,9 @@ async function directArtifactRecords(root, paper) {
     const value = normalizeText(paper[field]);
     if (!value) continue;
     const candidates = [
-      repoPath(root, value),
-      repoPath(root, paper.canonical_dir ? path.join(paper.canonical_dir, value) : ''),
-      repoPath(root, paper.source_dir ? path.join(paper.source_dir, value) : ''),
+      resolveRepoPath(root, value),
+      resolveRepoPath(root, paper.canonical_dir ? path.join(paper.canonical_dir, value) : ''),
+      resolveRepoPath(root, paper.source_dir ? path.join(paper.source_dir, value) : ''),
     ].filter(Boolean);
     for (const candidate of candidates) {
       if (!(await fileExists(candidate))) continue;
@@ -343,7 +208,7 @@ function buildSubmissionIntent(paper, { sourceDir = null, mainTex = null } = {})
   };
 }
 
-async function discoverPaper(root, paper) {
+async function discoverPaper(root, paper, createdAt) {
   const slug = normalizeText(paper.slug);
   const sourceDirs = await candidateSourceDirs(root, paper);
   const sourceDir = sourceDirs[0] || null;
@@ -396,6 +261,7 @@ async function discoverPaper(root, paper) {
       currentSourceZip: normalizeText(paper.current_source_zip) || null,
     },
     evidenceRefs,
+    createdAt,
   });
   const draftStatus = !sourceDir ? 'missing_source' : mainTex ? 'source_tex_present' : 'source_present';
   const compileStatus = artifacts.pdfs.length ? 'compiled_pdf_present' : mainTex ? 'build_ready' : 'missing_main_tex';
@@ -430,6 +296,7 @@ async function discoverPaper(root, paper) {
     blockers,
     warnings,
     evidenceRefs,
+    createdAt,
   });
   state = {
     ...state,
@@ -480,7 +347,7 @@ function proposalStagingPaperRow(root, stagingRoot, record, recordPath) {
   if (record.status !== 'proposal_staged_for_inventory') return null;
   const slug = normalizeText(record.paperId);
   if (!slug) return null;
-  const sourceWorkspace = repoPath(root, record.sourceWorkspace);
+  const sourceWorkspace = resolveRepoPath(root, record.sourceWorkspace);
   const proposalRoot = path.join(path.dirname(stagingRoot), 'proposals');
   const sourceIdentity = sourceWorkspace
     ? inspectScopedPathSync({ scopeRoot: proposalRoot, candidate: sourceWorkspace, expect: 'directory', forbidHardlinks: false })
@@ -559,6 +426,7 @@ export async function discoverInventory({
   proposalStagingRoot = null,
   paperIds = [],
   limit = null,
+  observedAt = null,
 } = {}) {
   if (!root) throw new Error('discoverInventory requires root');
   const registry = await readInventorySources(root, inventorySource, store);
@@ -588,8 +456,9 @@ export async function discoverInventory({
   if (requested.size) papers = papers.filter((paper) => requested.has(normalizeText(paper.slug)));
   if (Number.isFinite(Number(limit)) && Number(limit) > 0) papers = papers.slice(0, Number(limit));
   const rows = [];
+  const scanObservedAt = observedAt || new Date().toISOString();
   for (const paper of papers) {
-    const row = await discoverPaper(root, paper);
+    const row = await discoverPaper(root, paper, scanObservedAt);
     row.venue = venueMatchesTarget(registry.venues, row.task.venueTarget);
     rows.push(row);
   }

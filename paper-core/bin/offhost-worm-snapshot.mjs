@@ -8,7 +8,7 @@ import {
   drillOffhostWormRestore,
   resolveLatestReleaseEvidencePointer,
   verifyOffhostWormTarget,
-} from '../src/offhost-worm-repository.mjs';
+} from '../../paper-composition/bootstrap/operator-release-composition.mjs';
 import { defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');

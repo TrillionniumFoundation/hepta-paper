@@ -22,8 +22,16 @@ Current overlay adapters:
 - `proposal/`: local deterministic initial-idea to proposal/pre-production
   plan adapter, with idea brief, generation manifest, proposal receipt, review
   gate, and draft production plan. It performs no model call and creates no
-  `PaperTask` unless `--approved --materialize-source` is explicitly supplied;
-  materialization writes only a local runtime source skeleton and task draft.
+  `PaperTask` unless `--approval-document PATH --materialize-source` supplies a
+  current Ed25519-signed document from a trusted `proposal_approver`;
+  the legacy `--approved` boolean is rejected. Materialization writes the signed
+  approval, its hash-bound verification receipt, a local runtime source skeleton,
+  and a task draft.
+  Formal profiles additionally require `--scientific-claim-document PATH` before
+  approval. Its exact statement, assumptions, quantifiers, negative boundaries,
+  and proof obligations become immutable proposal seeds. The approval records
+  operator authority over this structure; it does not automatically establish
+  novelty, scientific correctness, or a proof.
   It also writes `PROPOSAL_CLAIM_PROOF_EVIDENCE_REPRO_SEED_CONTRACTS.json`
   from the approved proposal, marked as proposal-derived seed material rather
   than verified research output.
@@ -58,10 +66,10 @@ Current overlay adapters:
   native worker plans/receipts, and a
   verify receipt. For proposal-staged
   papers it reports `proposal_seed_present` until real evidence replaces the
-  seed material. It also scans runtime empirical-analysis artifacts when present,
-  so a paper can advance to `evidence_present` only after real local run
-  receipts and result artifacts exist.
-- `empirical-analysis/`: local empirical evidence production adapter. It builds
+  seed material. The compatibility reader can still scan retained
+  `runtime/empirical-analysis` artifacts, but those records are not academic
+  campaign evidence.
+- `empirical-analysis/`: frozen compatibility-only empirical adapter. It builds
   an `EmpiricalBenchmarkRegistry`, `BenchmarkSuiteSelectionPolicy`,
   `EmpiricalAnalysisPlan`, `DatasetAccessContract`,
   `DatasetLicenseProvenanceGate`, `TableFigureSpec`,
@@ -70,17 +78,19 @@ Current overlay adapters:
   `ManuscriptEmpiricalPatch` draft. Execute mode writes generated experiment
   code only under `runtime/empirical-analysis/<paper>/`, selects a domain
   benchmark suite from paper/source/venue profile signals, can consume an
-  explicit local benchmark directory through `--dataset-root` /
-  `--benchmark-id`, and falls back to generated/synthetic data when no
-  authorized local data is bound. Every run records stdout/stderr/exit
+  explicit local benchmark directory through the legacy stage port and falls
+  back to generated/synthetic data when no authorized local data is bound.
+  Every compatibility run records stdout/stderr/exit
   code/artifact hashes plus table/figure specs. By default it writes only a
   manuscript patch draft; `--apply-manuscript` adds a controlled
   approval/plan/receipt boundary, copies table/figure adjuncts into the source
   workspace, and applies a marker-based idempotent TeX block. It never accesses
   the network, calls a model, performs external actions, or authorizes live
-  submission.
-  `local-review-loop --execute` can invoke it when venue evidence is missing,
-  then rerun `research-verify` before asking a fresh referee.
+  submission. It is reachable only from
+  `paper-composition/compat/legacy-stage-adapter-registry.mjs`; production
+  uses the campaign empirical DAG and
+  `paper-domain/automation/experiment-run-contract.mjs`. New features are
+  forbidden here except security and migration-compatibility fixes.
 - `referee-review/`: deterministic local agent referee review intake. It reads
   the current `main.tex`, builds `RefereeReviewIntake` and
   `AgentRefereeReviewReport` contracts, and plans

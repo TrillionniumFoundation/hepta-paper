@@ -2,10 +2,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { defaultPaperAssetRoot } from '../src/workspace-layout.mjs';
-import { coldVolumeCasStatus, drillColdVolumeCasRestore, importColdVolumeToCas } from '../src/cold-volume-cas-repository.mjs';
+import { coldVolumeCasStatus, drillColdVolumeCasRestore, importColdVolumeToCas } from '../../paper-composition/bootstrap/operator-release-composition.mjs';
 
 const command = process.argv[2] || 'status';
 const execute = process.argv.includes('--execute');
+const requireReady = process.argv.includes('--require-ready');
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
 const contractPath = path.join(workspaceRoot, 'paper-core', 'config', 'cold-volume-contract.v1.json');
 const contract = JSON.parse(fs.readFileSync(contractPath, 'utf8'));
@@ -16,4 +17,4 @@ else if (command === 'import') result = importColdVolumeToCas({ assetRoot: defau
 else if (command === 'restore-drill') result = drillColdVolumeCasRestore({ casRoot });
 else throw new Error(`Unknown cold-volume CAS command: ${command}`);
 process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-if (result.status.endsWith('_blocked')) process.exitCode = 1;
+if (result.status.endsWith('_blocked') || (requireReady && result.status !== 'cold_volume_cas_ready')) process.exitCode = 1;

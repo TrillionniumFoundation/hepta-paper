@@ -7,7 +7,7 @@ function list(value) {
 export function evaluateEvidenceReferenceValidity({
   reference = {},
   expected = {},
-  nowMs = Date.now(),
+  nowMs = null,
   maximumClockSkewMs = 5 * 60 * 1000,
   maximumAgeMs = null,
 } = {}) {
@@ -32,10 +32,14 @@ export function evaluateEvidenceReferenceValidity({
   if (expected.releaseCommit && releaseCommit !== expected.releaseCommit) blockers.push('evidence_release_commit_mismatch');
   if (!hash) blockers.push('evidence_hash_missing');
   const createdAtMs = Date.parse(reference?.createdAt || reference?.created_at || '');
+  const referenceNowMs = nowMs === null || nowMs === undefined || nowMs === ''
+    ? Number.NaN
+    : Number(nowMs);
+  if (!Number.isFinite(referenceNowMs)) blockers.push('evidence_reference_time_required');
   if (!Number.isFinite(createdAtMs)) warnings.push('evidence_created_at_missing_or_invalid');
-  else {
-    if (createdAtMs - nowMs > Math.max(0, Number(maximumClockSkewMs))) blockers.push('evidence_future_dated');
-    if (maximumAgeMs !== null && nowMs - createdAtMs > Math.max(0, Number(maximumAgeMs))) blockers.push('evidence_ttl_expired');
+  else if (Number.isFinite(referenceNowMs)) {
+    if (createdAtMs - referenceNowMs > Math.max(0, Number(maximumClockSkewMs))) blockers.push('evidence_future_dated');
+    if (maximumAgeMs !== null && referenceNowMs - createdAtMs > Math.max(0, Number(maximumAgeMs))) blockers.push('evidence_ttl_expired');
   }
   const payload = {
     version: 1,

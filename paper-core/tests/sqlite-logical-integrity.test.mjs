@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { createDefaultPaperStore, createReadOnlyPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
-import { buildSqliteLogicalIntegrityReport } from '../src/sqlite-logical-integrity.mjs';
+import { buildSqliteLogicalIntegrityReport } from '../../paper-adapters/persistence/sqlite-logical-integrity.mjs';
 
 test('logical integrity is read-only and stable across insert-delete page churn', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-logical-integrity-'));

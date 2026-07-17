@@ -2,22 +2,27 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { currentCodeProvenance } from '../src/code-provenance.mjs';
-import { defaultPaperAssetRoot } from '../src/workspace-layout.mjs';
-import { verifyColdVolumeContract } from '../src/cold-volume-contract.mjs';
+import { assertWorkspaceLayoutPhysicallyDecoupled, defaultPaperAssetRoot } from '../src/workspace-layout.mjs';
+import {
+  coldVolumeCasStatus,
+  verifyColdVolumeContract,
+  verifyOffhostWormTarget,
+} from '../../paper-composition/bootstrap/operator-release-composition.mjs';
 import { verifyLegacyDifferentialReference } from '../../migration/legacy-reference-fixture.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
-import { buildSqliteLogicalIntegrityReport } from '../src/sqlite-logical-integrity.mjs';
-import { coldVolumeCasStatus } from '../src/cold-volume-cas-repository.mjs';
-import { verifyOffhostWormTarget } from '../src/offhost-worm-repository.mjs';
+import { sha256FileSync } from '../../workflow-kernel/runtime/file-utils.mjs';
+import {
+  buildSqliteLogicalIntegrityReport,
+  createReadOnlyPaperStore,
+} from '../../paper-composition/bootstrap/operator-persistence-composition.mjs';
 import { immutableLegacyMatrixReferenceStatus, resolveImmutableLegacyMatrixArchive } from '../../migration/legacy-matrix-reference.mjs';
-import { createReadOnlyPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
-import { CAPABILITY_CATALOG } from '../../migration/legacy-capability-matrix-v3.mjs';
+import { loadCapabilityConformanceProofs, loadCapabilityOperationalProofs } from '../../paper-composition/bootstrap/operator-governance-composition.mjs';
 import { validateCapabilityOperationalEvidence } from '../../migration/capability-operational-evidence.mjs';
-import { loadCapabilityConformanceProofs, loadCapabilityOperationalProofs } from '../../migration/operational-proof-intake.mjs';
+import { CAPABILITY_CATALOG } from '../../paper-domain/governance/capability-catalog.mjs';
 import { buildReleaseTrustLayerGate } from '../../paper-domain/governance/release-trust-layer-gate.mjs';
 
 export function sha256File(file) {
-  return `sha256:${crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')}`;
+  return sha256FileSync(file);
 }
 
 export function contentTreeManifest(root, relativeRoots) {
@@ -53,6 +58,7 @@ export function contentTreeManifest(root, relativeRoots) {
 }
 
 export function ensureReleaseSigningKey(runtimeRoot) {
+  assertWorkspaceLayoutPhysicallyDecoupled({ assetRoot: defaultPaperAssetRoot(), runtimeRoot });
   const keyRoot = path.join(runtimeRoot, 'release-signing');
   const privatePath = path.join(keyRoot, 'release-integrity-ed25519-private.pem');
   const publicPath = path.join(keyRoot, 'release-integrity-ed25519-public.pem');
@@ -99,10 +105,18 @@ export function selectCurrentReleaseVerificationReceipt({ verificationRoot, code
   for (const name of fs.readdirSync(verificationRoot).filter((candidate) => candidate.endsWith('.json'))) {
     try {
       const receipt = JSON.parse(fs.readFileSync(path.join(verificationRoot, name), 'utf8'));
+      const exactWorktreeIdentityRequired = Number(codeProvenance?.version || 0) >= 2;
       if (receipt?.kind !== 'IsolatedVerificationReceipt'
         || receipt?.mode !== 'release'
         || receipt?.codeProvenance?.packageVersion !== codeProvenance.packageVersion
         || receipt?.codeProvenance?.commit !== codeProvenance.commit
+        || (exactWorktreeIdentityRequired && (
+          receipt?.codeProvenance?.version !== codeProvenance.version
+          || receipt?.codeProvenance?.commitTree !== codeProvenance.commitTree
+          || receipt?.codeProvenance?.indexStateHash !== codeProvenance.indexStateHash
+          || receipt?.codeProvenance?.repositoryContentHash !== codeProvenance.repositoryContentHash
+          || receipt?.codeProvenance?.worktreeStateHash !== codeProvenance.worktreeStateHash
+        ))
         || receipt?.codeProvenance?.treeDirty === true) continue;
       receipts.push({ receipt, name });
     } catch { /* Ignore malformed historical receipts; absence remains fail-closed. */ }
@@ -264,6 +278,11 @@ export function buildReleaseEvidenceBundle({ runtimeRoot, legacyRoot } = {}) {
 }
 
 export function writeSignedReleaseEvidence({ runtimeRoot, legacyRoot } = {}) {
+  assertWorkspaceLayoutPhysicallyDecoupled({
+    assetRoot: defaultPaperAssetRoot(),
+    runtimeRoot,
+    legacyRoot,
+  });
   const bundle = buildReleaseEvidenceBundle({ runtimeRoot, legacyRoot });
   const signature = signReleasePayload(bundle, runtimeRoot);
   const root = path.join(runtimeRoot, 'release-evidence', bundle.codeProvenance.packageVersion, bundle.codeProvenance.commit || 'unknown');

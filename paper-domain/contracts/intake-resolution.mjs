@@ -1,5 +1,4 @@
 import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
-import { nowIso } from '../../workflow-kernel/runtime/time-utils.mjs';
 import { PAPER_CORE_VERSION, hashPaperRecord, normalizedId } from './primitives.mjs';
 
 export function buildVenueResolutionPacket({
@@ -56,7 +55,7 @@ export function buildVenueResolutionPacket({
       externalActionPerformed: false,
       choosesVenueAutomatically: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return { ...packet, venueResolutionPacketHash: hashPaperRecord('VenueResolutionPacket', packet) };
 }
@@ -108,7 +107,7 @@ export function buildSubmitReadyPackagePlan({
       externalActionPerformed: false,
       executeRequiresExplicitFlag: true,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return { ...plan, submitReadyPackagePlanHash: hashPaperRecord('SubmitReadyPackagePlan', plan) };
 }
@@ -156,7 +155,7 @@ export function buildVenueRegistryAddPlan({
       writesSqlite: false,
       externalActionPerformed: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return { ...plan, venueRegistryAddPlanHash: hashPaperRecord('VenueRegistryAddPlan', plan) };
 }
@@ -222,7 +221,7 @@ export function buildVenueResolutionOperatorPacket({
       externalActionPerformed: false,
       choosesVenueAutomatically: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return {
     ...packet,
@@ -302,7 +301,7 @@ export function buildSourceAdaptationPacket({
       externalActionPerformed: false,
       choosesEntryPointAutomatically: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return { ...packet, sourceAdaptationPacketHash: hashPaperRecord('SourceAdaptationPacket', packet) };
 }
@@ -369,7 +368,7 @@ export function buildSourceAdaptationOperatorPacket({
       externalActionPerformed: false,
       choosesEntryPointAutomatically: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return {
     ...packet,

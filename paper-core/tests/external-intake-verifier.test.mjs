@@ -4,10 +4,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { buildLegacyCapabilityMatrixV3, CAPABILITY_CATALOG } from '../../migration/legacy-capability-matrix-v3.mjs';
-import { capabilityTargetBindings } from '../../migration/operational-proof-intake.mjs';
+import { capabilityTargetBindings } from '../../paper-adapters/governance/capability-proof-verifier.mjs';
+import { LEGACY_OWNER_ACCEPTANCE_FAMILY_MANIFEST } from '../../paper-adapters/governance/legacy-owner-acceptance-contract.mjs';
 import { signAuthorityDocument } from '../src/authority-signatures.mjs';
-import { validatePublicTrustStore, verifyExternalIntake } from '../src/external-intake-verifier.mjs';
+import { validatePublicTrustStore, verifyExternalIntake } from '../../paper-adapters/governance/external-intake-verifier.mjs';
+import { CAPABILITY_CATALOG } from '../../paper-domain/governance/capability-catalog.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
 
@@ -90,13 +91,12 @@ test('external intake preflight accepts complete fixture signatures without auth
   const ownerTrustStore = { version: 1, kind: 'AuthorityTrustStore', keys: [owner.publicRecord, observer.publicRecord] };
   writeJson(path.join(stagingRoot, 'OWNER_TRUST_STORE.json'), ownerTrustStore);
 
-  const matrix = buildLegacyCapabilityMatrixV3({ runtimeRoot });
   let ownerAcceptance = {
     version: 2,
     kind: 'CapabilityOwnerAcceptance',
-    familyManifestHash: matrix.ownerAcceptanceFamilyManifest.familyManifestHash,
+    familyManifestHash: LEGACY_OWNER_ACCEPTANCE_FAMILY_MANIFEST.familyManifestHash,
     acceptedAt: '2026-07-11T00:00:00.000Z',
-    acceptedFamilies: matrix.ownerAcceptanceFamilyManifest.families.map((family) => ({
+    acceptedFamilies: LEGACY_OWNER_ACCEPTANCE_FAMILY_MANIFEST.families.map((family) => ({
       familyId: family.familyId,
       familyHash: family.familyHash,
       businessDecision: family.businessDecision,

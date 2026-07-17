@@ -17,7 +17,7 @@ const report = {
   assetRootPresent: fs.existsSync(layout.assetRoot),
   runtimeRootPresent: fs.existsSync(layout.runtimeRoot),
   nativeStorePresent: fs.existsSync(path.join(layout.runtimeRoot, 'hepta-paper.sqlite')),
-  status: layout.physicallyDecoupled ? 'hepta_workspace_physically_decoupled' : 'hepta_workspace_legacy_colocated',
+  status: layout.physicallyDecoupled ? 'hepta_workspace_physically_decoupled' : 'hepta_workspace_paths_overlap',
 };
 process.stdout.write(JSON.stringify(report, null, 2) + '\n');
 if (process.argv.includes('--require-decoupled') && !layout.physicallyDecoupled) process.exitCode = 2;

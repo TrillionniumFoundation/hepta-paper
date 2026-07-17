@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { evaluateTheoremManuscriptReadiness } from '../../paper-domain/quality/theorem-manuscript-readiness-policy.mjs';
 import { analyzeManuscriptSurface } from '../../paper-domain/quality/manuscript-surface-analyzer.mjs';
+import { isPathWithin } from '../../workflow-kernel/runtime/path-utils.mjs';
 
 function firstFile(workspace, candidates) {
   return candidates.find((candidate) => fs.existsSync(path.join(workspace, candidate)) && fs.statSync(path.join(workspace, candidate)).isFile()) || null;
@@ -9,11 +10,11 @@ function firstFile(workspace, candidates) {
 
 function workspaceFile(workspace, relative) {
   const absolute = path.resolve(workspace, relative);
-  if (absolute !== workspace && !absolute.startsWith(`${workspace}${path.sep}`)) return null;
+  if (!isPathWithin(workspace, absolute)) return null;
   if (!fs.existsSync(absolute) || !fs.statSync(absolute).isFile()) return null;
   const realWorkspace = fs.realpathSync(workspace);
   const real = fs.realpathSync(absolute);
-  return real.startsWith(`${realWorkspace}${path.sep}`) ? absolute : null;
+  return real !== realWorkspace && isPathWithin(realWorkspace, real) ? absolute : null;
 }
 
 function latexCorpus(workspace, manuscriptPath) {
@@ -52,7 +53,7 @@ function supportingFiles(workspace, prefix) {
 export function runTheoremManuscriptReadinessCheck({ workspacePath, manuscriptPath = 'main.tex', paperId = null, profile = null } = {}) {
   const workspace = path.resolve(workspacePath || '');
   const manuscript = path.resolve(workspace, manuscriptPath);
-  if (!manuscript.startsWith(`${workspace}${path.sep}`) || !fs.existsSync(manuscript)) throw new Error('existing manuscript inside workspace is required');
+  if (manuscript === workspace || !isPathWithin(workspace, manuscript) || !fs.existsSync(manuscript)) throw new Error('existing manuscript inside workspace is required');
   const proofStatusPath = firstFile(workspace, ['proof_status.md', 'PROOF_STATUS.md']);
   const evidenceManifestPath = firstFile(workspace, ['evidence_manifest.md', 'EVIDENCE_MANIFEST.md']);
   const corpus = latexCorpus(workspace, manuscriptPath);

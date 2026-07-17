@@ -2,11 +2,12 @@ import path from 'node:path';
 import { ensureDir, relativePath } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { writeJsonFile } from '../artifacts/write-artifact.mjs';
 import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
-import { buildJournalConferenceRegistry, buildTargetSelectionPolicy, buildJournalTargetProfile, buildJournalRubricPacket, buildVenueRubricManager, buildFreshRefereePool, buildVenueEvidenceGate, buildVenueLifecyclePolicy, buildJournalConferenceSystemPacket, buildFreshRefereeVerdict } from './contracts.mjs';
+import { nowIso } from '../../workflow-kernel/runtime/time-utils.mjs';
+import { buildJournalConferenceRegistry, buildTargetSelectionPolicy, buildJournalTargetProfile, buildJournalRubricPacket, buildVenueRubricManager, buildFreshRefereePool, buildVenueEvidenceGate, buildVenueLifecyclePolicy, buildJournalConferenceSystemPacket } from '../../paper-domain/journal/contracts.mjs';
 
-export { JOURNAL_PROFILES } from './journal-registry.mjs';
-export { resolveJournalProfile } from './selection.mjs';
-export { buildJournalConferenceRegistry, buildTargetSelectionPolicy, buildJournalTargetProfile, buildJournalRubricPacket, buildVenueRubricManager, buildFreshRefereePool, buildVenueEvidenceGate, buildVenueLifecyclePolicy, buildJournalConferenceSystemPacket, buildFreshRefereeVerdict } from './contracts.mjs';
+export { JOURNAL_PROFILES } from '../../paper-domain/journal/journal-registry.mjs';
+export { resolveJournalProfile } from '../../paper-domain/journal/selection.mjs';
+export { buildJournalConferenceRegistry, buildTargetSelectionPolicy, buildJournalTargetProfile, buildJournalRubricPacket, buildVenueRubricManager, buildFreshRefereePool, buildVenueEvidenceGate, buildVenueLifecyclePolicy, buildJournalConferenceSystemPacket, buildFreshRefereeVerdict } from '../../paper-domain/journal/contracts.mjs';
 
 export async function runJournalManageAdapter({
   root = null,
@@ -20,12 +21,14 @@ export async function runJournalManageAdapter({
   roundIndex = null,
   execute = false,
 } = {}) {
-  const registry = buildJournalConferenceRegistry();
+  const createdAt = nowIso();
+  const registry = buildJournalConferenceRegistry({ createdAt });
   const targetSelectionPolicy = buildTargetSelectionPolicy({
     paperTask: row?.task || null,
     target: target || row?.task?.venueTarget || null,
     hints,
     registry,
+    createdAt,
   });
   const targetProfile = buildJournalTargetProfile({
     paperTask: row?.task || null,
@@ -33,11 +36,13 @@ export async function runJournalManageAdapter({
     registry,
     targetSelectionPolicy,
     hints,
+    createdAt,
   });
   const freshRefereePool = buildFreshRefereePool({
     paperTask: row?.task || null,
     targetProfile,
     roundIndex: roundIndex || 1,
+    createdAt,
   });
   const venueRubricManager = buildVenueRubricManager({
     paperTask: row?.task || null,
@@ -45,6 +50,7 @@ export async function runJournalManageAdapter({
     targetSelectionPolicy,
     roundIndex,
     refereePool: freshRefereePool,
+    createdAt,
   });
   const rubricPacket = buildJournalRubricPacket({
     paperTask: row?.task || null,
@@ -53,6 +59,7 @@ export async function runJournalManageAdapter({
     venueRubricManager,
     refereePool: freshRefereePool,
     roundIndex,
+    createdAt,
   });
   const evidenceGate = buildVenueEvidenceGate({
     paperTask: row?.task || null,
@@ -60,12 +67,14 @@ export async function runJournalManageAdapter({
     venueRubricManager,
     researchReport,
     packageResult,
+    createdAt,
   });
   const lifecyclePolicy = buildVenueLifecyclePolicy({
     paperTask: row?.task || null,
     targetProfile,
     evidenceGate,
     lifecycle,
+    createdAt,
   });
   const systemPacket = buildJournalConferenceSystemPacket({
     paperTask: row?.task || null,
@@ -77,6 +86,7 @@ export async function runJournalManageAdapter({
     freshRefereePool,
     evidenceGate,
     lifecyclePolicy,
+    createdAt,
   });
   if (runtimeRoot && row?.task?.paperId && execute) {
     const dir = path.join(runtimeRoot, 'journal-manage', row.task.paperId);

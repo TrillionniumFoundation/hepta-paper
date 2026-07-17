@@ -18,12 +18,21 @@ import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-trusted-producer-'));
   const store = createDefaultPaperStore({ root, runtimeRoot: root, dbPath: path.join(root, 'store.sqlite') });
-  const clock = { nowIso: () => '2026-07-13T11:00:00.000Z' };
+  const fixedNow = '2026-07-13T11:00:00.000Z';
+  const clock = { now: () => new Date(fixedNow), nowIso: () => fixedNow };
   const ledgers = composeTrustedReceiptLedgers({ store, clock });
   const reader = createSqliteReceiptLedger({ store, clock });
   const artifactRepositoryFactory = (scopeRoot) => createFilesystemArtifactRepository({ scopeRoot, casRoot: path.join(root, 'cas'), receiptLedger: ledgers.artifact, clock });
   return { root, store, clock, ledgers, reader, artifactRepositoryFactory };
 }
+
+test('artifact repositories require the complete injected ClockPort', () => {
+  assert.throws(() => createFilesystemArtifactRepository({
+    scopeRoot: '.',
+    receiptLedger: { record() {} },
+    clock: { nowIso: () => '2026-07-13T11:00:00.000Z' },
+  }), /requires an injected ClockPort/);
+});
 
 test('kernel-isolated experiment producer persists trusted CAS and ledger lineage', async () => {
   const f = fixture();

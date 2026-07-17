@@ -16,7 +16,6 @@ const legacyRoot = path.resolve(requestedSourceRoot);
 if (!fs.existsSync(legacyRoot) || !fs.statSync(legacyRoot).isDirectory()) {
   throw new Error(`historical_salvage_source_root_missing:${legacyRoot}`);
 }
-const outputPath = path.join(workspaceRoot, 'migration', 'legacy-salvage-manifest.v1.json');
 const allowedExtensions = new Set(['.py', '.rs', '.lean', '.sql', '.md', '.json', '.yaml', '.yml', '.toml']);
 const roots = ['paperctl_modules', 'rust', 'PaperFactoryFormalVerifier', 'schema', 'docs', 'tests'];
 const excludedDirectories = new Set(['.git', '__pycache__', 'target']);

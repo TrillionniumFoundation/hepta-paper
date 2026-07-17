@@ -6,6 +6,7 @@ export function stripLeanComments(source) {
   let blockDepth = 0;
   let lineComment = false;
   let string = false;
+  let stringEscape = false;
   for (let index = 0; index < input.length; index += 1) {
     const pair = input.slice(index, index + 2);
     if (lineComment) {
@@ -18,9 +19,16 @@ export function stripLeanComments(source) {
       output += input[index] === '\n' ? '\n' : ' ';
       continue;
     }
-    if (!string && pair === '--') { lineComment = true; output += '  '; index += 1; continue; }
-    if (!string && pair === '/-') { blockDepth = 1; output += '  '; index += 1; continue; }
-    if (input[index] === '"' && input[index - 1] !== '\\') string = !string;
+    if (string) {
+      output += input[index] === '\n' ? '\n' : ' ';
+      if (stringEscape) stringEscape = false;
+      else if (input[index] === '\\') stringEscape = true;
+      else if (input[index] === '"') string = false;
+      continue;
+    }
+    if (pair === '--') { lineComment = true; output += '  '; index += 1; continue; }
+    if (pair === '/-') { blockDepth = 1; output += '  '; index += 1; continue; }
+    if (input[index] === '"') { string = true; output += ' '; continue; }
     output += input[index];
   }
   return output;
@@ -99,6 +107,21 @@ function conclusionFromSignature(signature) {
   return splitTopLevelArrows(result).at(-1) || '';
 }
 
+function conjunctionComponents(value) {
+  const normalized = normalizeLeanType(value);
+  const parts = [];
+  let rest = normalized;
+  while (rest) {
+    const index = topLevelIndex(rest, '∧');
+    if (index < 0) break;
+    parts.push(rest.slice(0, index));
+    rest = rest.slice(index + 1);
+  }
+  if (!parts.length) return [normalized];
+  parts.push(rest);
+  return parts.flatMap((part) => conjunctionComponents(part)).map(normalizeLeanType).filter(Boolean);
+}
+
 export function analyzeLeanTypeContract(signature) {
   const normalizedType = normalizeLeanType(signature).replace(/^:/, '');
   const binders = binderGroups(String(signature || ''));
@@ -110,7 +133,9 @@ export function analyzeLeanTypeContract(signature) {
     ...binders.filter((binder) => !/^(?:Prop|Type(?:\s+\d+)?|Sort(?:\s+\d+)?)$/.test(binder.type)).map((binder) => binder.type),
     ...arrows.slice(0, -1),
   ].map(normalizeLeanType).filter(Boolean);
-  const conclusionAssumedAsPremise = Boolean(conclusion && premises.some((premise) => premise === conclusion));
+  const conclusionAssumedAsPremise = Boolean(conclusion && premises.some((premise) => (
+    conjunctionComponents(premise).includes(conclusion)
+  )));
   return Object.freeze({
     normalizedType,
     typeHash: normalizedType ? hashBytes(Buffer.from(normalizedType)) : null,

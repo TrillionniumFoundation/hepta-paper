@@ -1,48 +1,134 @@
 import crypto from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
-import { spawn } from 'node:child_process';
-import { assertAgentExecutorPort } from '../../paper-ports/agent-executor-port.mjs';
-import { buildExecutorCapabilities, capabilityRequestFromExecution, evaluateExecutorCapabilityRequest } from '../../paper-ports/executor-capabilities.mjs';
+import { spawn, spawnSync } from 'node:child_process';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
-import { runBoundedChildProcess } from './bounded-child-process.mjs';
-import { changedWorkspacePaths, createWorkspaceManifest, readOnlyMutationBlockers } from './workspace-change-tracker.mjs';
+import { restrictedChildEnvironment, runBoundedChildProcess } from './bounded-child-process.mjs';
+import { createAgentExecutorTemplate, isExternalAgentCancellation } from './agent-executor-template.mjs';
+import { readOnlyMutationBlockers } from './workspace-change-tracker.mjs';
+import { preflightCodexRuntime } from './codex-runtime-preflight.mjs';
+
+function parseStructuredOutput(text) {
+  const source = String(text || '').trim();
+  if (!source) return null;
+  try { return JSON.parse(source); } catch { /* diagnostics may precede JSON */ }
+  const lines = source.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    try { return JSON.parse(lines.slice(index).join('\n')); } catch { /* keep scanning */ }
+  }
+  return null;
+}
 
 export function createCodexAgentExecutor({
   codexBinary = 'codex',
+  codexHome = null,
   model = null,
+  principalId = null,
+  formalReviewerCapabilityReceipt = null,
+  researchAuthorCapabilityReceipt = null,
   oss = false,
   localProvider = 'ollama',
   spawnImpl = spawn,
+  spawnSyncImpl = spawnSync,
   timeoutMs = 30 * 60 * 1000,
 } = {}) {
-  const executorId = 'codex-agent-executor-v1';
-  const capabilities = buildExecutorCapabilities({
-    executorId,
-    sandboxModes: ['read-only', 'workspace-write'],
-    networkPolicy: oss ? 'local-provider-only' : 'sandbox-restricted',
-    workspaceIsolation: false,
-    maximumTimeoutMs: timeoutMs,
-    maximumOutputTokens: null,
-    receiptKinds: ['AgentExecutionReceipt'],
-    provider: oss ? `local:${localProvider}` : 'openai',
-  });
-  return assertAgentExecutorPort({
-    version: 1,
+  if (principalId !== null && !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(String(principalId))) {
+    throw new Error('codex_agent_principal_id_invalid');
+  }
+  const executorId = principalId
+    ? `codex-agent-executor-v1:${principalId}`
+    : 'codex-agent-executor-v1';
+  if (formalReviewerCapabilityReceipt) {
+    const { codexFormalReviewerCapabilityReceiptHash, ...capabilityPayload } = formalReviewerCapabilityReceipt;
+    if (formalReviewerCapabilityReceipt?.status !== 'codex_formal_reviewer_capability_ready'
+      || hashRecord('CodexFormalReviewerCapabilityReceipt', capabilityPayload)
+        !== codexFormalReviewerCapabilityReceiptHash
+      || !formalReviewerCapabilityReceipt?.credentialConfigIdentityHash
+      || !formalReviewerCapabilityReceipt?.codexBinaryIdentityHash
+      || formalReviewerCapabilityReceipt?.model !== model
+      || formalReviewerCapabilityReceipt?.authenticationStatus !== 'codex_authentication_verified'
+      || formalReviewerCapabilityReceipt?.modelOptionVerified !== true
+      || formalReviewerCapabilityReceipt?.selectedModelExecutionCanaryVerified !== false
+      || formalReviewerCapabilityReceipt?.readOnlyReviewRequired !== true
+      || formalReviewerCapabilityReceipt?.dynamicAttemptWorkspaceRequired !== true
+      || formalReviewerCapabilityReceipt?.credentialIndependenceVerified !== true
+      || !['filesystem_credential_root_and_principal_separation', 'configured_principal_and_process_separation']
+        .includes(formalReviewerCapabilityReceipt?.assuranceScope)
+      || formalReviewerCapabilityReceipt?.providerAccountIndependenceVerified !== false
+      || !codexHome || !model || !principalId) {
+      throw new Error('codex_formal_reviewer_capability_receipt_invalid');
+    }
+  }
+  if (formalReviewerCapabilityReceipt && researchAuthorCapabilityReceipt) {
+    throw new Error('codex_agent_capability_role_ambiguous');
+  }
+  if (researchAuthorCapabilityReceipt) {
+    const { codexResearchAuthorCapabilityReceiptHash, ...capabilityPayload } = researchAuthorCapabilityReceipt;
+    if (researchAuthorCapabilityReceipt.status !== 'codex_research_author_capability_ready'
+      || hashRecord('CodexResearchAuthorCapabilityReceipt', capabilityPayload)
+        !== codexResearchAuthorCapabilityReceiptHash
+      || !researchAuthorCapabilityReceipt.credentialConfigIdentityHash
+      || !researchAuthorCapabilityReceipt.codexBinaryIdentityHash
+      || researchAuthorCapabilityReceipt.model !== model
+      || researchAuthorCapabilityReceipt.assuranceScope !== 'filesystem_credential_root_runtime_and_model_selection_preflight'
+      || researchAuthorCapabilityReceipt.providerAccountIdentityAttested !== false
+      || researchAuthorCapabilityReceipt.authenticationStatus !== 'codex_authentication_verified'
+      || researchAuthorCapabilityReceipt.selectedModelExecutionCanaryVerified !== false
+      || researchAuthorCapabilityReceipt.workspaceWriteRequired !== true
+      || researchAuthorCapabilityReceipt.dynamicAttemptWorkspaceRequired !== true
+      || !codexHome || !model || !principalId) {
+      throw new Error('codex_research_author_capability_receipt_invalid');
+    }
+  }
+  return createAgentExecutorTemplate({
     kind: 'CodexAgentExecutor',
     executorId,
-    capabilities: () => capabilities,
-    async execute(input = {}) {
-      const { role, workspacePath, instructions, context = {}, requiredChecks = [], sandbox = 'workspace-write', outputTokenBudget = null, timeoutMs: requestedTimeout = null, signal = null } = input;
-      const preflight = evaluateExecutorCapabilityRequest({ capabilities, request: capabilityRequestFromExecution({ ...input, sandbox, outputTokenBudget, timeoutMs: requestedTimeout }) });
-      if (preflight.blockers.length) throw new Error(preflight.blockers.join(','));
-      const workspace = path.resolve(workspacePath || '');
-      if (!role || !instructions || !fs.existsSync(workspace) || !fs.statSync(workspace).isDirectory()) {
-        throw new Error('agent role, existing workspacePath and instructions are required');
+    capabilityDefinition: {
+      networkPolicy: oss ? 'local-provider-only' : 'sandbox-restricted',
+      maximumTimeoutMs: timeoutMs,
+      maximumOutputTokens: null,
+      provider: oss ? `local:${localProvider}` : 'openai',
+    },
+    workspaceValidationMessage: 'agent role, existing workspacePath and instructions are required',
+    sandboxValidationMessage: 'agent sandbox must be read-only or workspace-write',
+    captureWorkspaceManifest: true,
+    async executeStrategy({
+      role,
+      instructions,
+      context,
+      requiredChecks,
+      sandbox,
+      outputTokenBudget,
+      requestedTimeout,
+      signal,
+      workspace,
+      promptHash,
+      changedWorkspacePaths,
+    }) {
+      let verifiedCodexBinary = codexBinary;
+      const capabilityReceipt = formalReviewerCapabilityReceipt || researchAuthorCapabilityReceipt;
+      if (capabilityReceipt) {
+        const prefix = formalReviewerCapabilityReceipt ? 'formal_review_codex' : 'research_author_codex';
+        const freshRuntime = preflightCodexRuntime({
+          codexBinary,
+          codexHome,
+          model,
+          errorPrefix: prefix,
+          spawnSyncImpl,
+        });
+        if (freshRuntime.codexBinaryIdentityHash !== capabilityReceipt.codexBinaryIdentityHash
+          || freshRuntime.credentialRootIdentityHash !== capabilityReceipt.credentialRootIdentityHash
+          || freshRuntime.credentialConfigIdentityHash !== capabilityReceipt.credentialConfigIdentityHash
+          || freshRuntime.codexVersion !== capabilityReceipt.codexVersion
+          || freshRuntime.authenticationStatus !== capabilityReceipt.authenticationStatus
+          || freshRuntime.model !== capabilityReceipt.model) {
+          const error = new Error(`${prefix}_capability_runtime_identity_changed`);
+          error.retryable = false;
+          throw error;
+        }
+        verifiedCodexBinary = freshRuntime.codexBinary;
       }
-      const before = createWorkspaceManifest(workspace);
       const prompt = [
         `You are the ${role} for an automated paper campaign.`,
+        principalId ? `Your runtime principal is ${principalId}. Do not impersonate another campaign principal.` : '',
         'Work only inside the provided workspace. Do not submit externally, send messages, or access credentials.',
         String(instructions),
         `Structured context: ${JSON.stringify(context)}`,
@@ -50,9 +136,8 @@ export function createCodexAgentExecutor({
         outputTokenBudget ? `Keep the final response within ${Math.max(128, Number(outputTokenBudget))} output tokens. Prefer editing files with tools over returning file bodies.` : '',
         'Finish with one compact JSON object containing status, summary, checksRun, and blockers. Include every role-specific JSON field explicitly requested by the task in that same object.',
       ].filter(Boolean).join('\n\n');
-      const promptHash = `sha256:${crypto.createHash('sha256').update(prompt).digest('hex')}`;
+      const promptDigest = promptHash(prompt);
       const sessionId = `codex-exec:${crypto.randomUUID()}`;
-      if (!['read-only', 'workspace-write'].includes(sandbox)) throw new Error('agent sandbox must be read-only or workspace-write');
       const args = ['exec'];
       if (oss) args.push('--oss', '--local-provider', localProvider);
       if (model) args.push('--model', model);
@@ -60,29 +145,38 @@ export function createCodexAgentExecutor({
       const startedAt = new Date().toISOString();
       const processResult = await runBoundedChildProcess({
         spawnImpl,
-        executable: codexBinary,
+        executable: verifiedCodexBinary,
         args,
         cwd: workspace,
-        env: { ...process.env, HEPTA_AUTOMATION_ROLE: role },
+        env: restrictedChildEnvironment({
+          allowedKeys: ['CODEX_HOME', 'OLLAMA_HOST'],
+          overrides: {
+            HEPTA_AUTOMATION_ROLE: role,
+            ...(codexHome ? { CODEX_HOME: codexHome } : {}),
+          },
+        }),
         stdin: prompt,
         timeoutMs: Math.min(Number(requestedTimeout || timeoutMs), timeoutMs),
         signal,
       });
       const completedAt = new Date().toISOString();
-      const changes = changedWorkspacePaths(before, createWorkspaceManifest(workspace));
+      const changes = changedWorkspacePaths();
       const blockers = [];
+      const cancelled = isExternalAgentCancellation(processResult);
       if (processResult.timedOut) blockers.push('codex_agent_timeout');
-      if (processResult.aborted) blockers.push('codex_agent_cancelled');
-      if (processResult.exitCode !== 0 || processResult.error) blockers.push('codex_agent_process_failed');
+      if (cancelled) blockers.push('codex_agent_cancelled');
+      if (!cancelled && (processResult.exitCode !== 0 || processResult.error)) blockers.push('codex_agent_process_failed');
+      if (processResult.outputTruncated) blockers.push('codex_agent_output_truncated');
       blockers.push(...readOnlyMutationBlockers({ sandbox, changedPaths: changes }));
+      const structuredOutput = processResult.outputTruncated
+        ? null
+        : parseStructuredOutput(processResult.stdout);
       const payload = {
-        version: 1,
-        kind: 'AgentExecutionReceipt',
-        executorId,
         providerMode: oss ? `local:${localProvider}` : 'openai',
+        agentId: principalId,
         model,
         resolvedModel: model,
-        promptHash,
+        promptHash: promptDigest,
         sessionId,
         childSessionId: sessionId,
         maximumOutputTokens: outputTokenBudget ? Math.max(128, Number(outputTokenBudget)) : null,
@@ -96,20 +190,41 @@ export function createCodexAgentExecutor({
         stderrHash: processResult.stderrHash,
         outputTruncated: processResult.outputTruncated,
         finalOutput: processResult.stdout.slice(-12000),
+        structuredOutput,
         stderrTail: processResult.stderr.slice(-12000),
         error: processResult.error?.message || null,
         startedAt,
         completedAt,
         externalActionPerformed: false,
+        externalActionVerification: 'codex_sandbox_policy',
+        ...(formalReviewerCapabilityReceipt ? {
+          codexFormalReviewerCapabilityReceiptHash: formalReviewerCapabilityReceipt.codexFormalReviewerCapabilityReceiptHash,
+          codexCredentialRootIdentityHash: formalReviewerCapabilityReceipt.credentialRootIdentityHash,
+          codexCredentialConfigIdentityHash: formalReviewerCapabilityReceipt.credentialConfigIdentityHash,
+          codexAuthorCredentialRootIdentityHash: formalReviewerCapabilityReceipt.authorCredentialRootIdentityHash,
+          codexCredentialIndependenceVerified: formalReviewerCapabilityReceipt.credentialIndependenceVerified,
+          codexReviewerAssuranceScope: formalReviewerCapabilityReceipt.assuranceScope,
+          codexProviderAccountIndependenceVerified: false,
+          codexBinaryIdentityHash: formalReviewerCapabilityReceipt.codexBinaryIdentityHash,
+          codexVersion: formalReviewerCapabilityReceipt.codexVersion,
+          codexAuthenticationStatus: formalReviewerCapabilityReceipt.authenticationStatus,
+        } : {}),
+        ...(researchAuthorCapabilityReceipt ? {
+          codexResearchAuthorCapabilityReceiptHash: researchAuthorCapabilityReceipt.codexResearchAuthorCapabilityReceiptHash,
+          codexResearchAuthorAssuranceScope: researchAuthorCapabilityReceipt.assuranceScope,
+          codexResearchAuthorProviderAccountIdentityAttested: researchAuthorCapabilityReceipt.providerAccountIdentityAttested,
+          codexCredentialRootIdentityHash: researchAuthorCapabilityReceipt.credentialRootIdentityHash,
+          codexCredentialConfigIdentityHash: researchAuthorCapabilityReceipt.credentialConfigIdentityHash,
+          codexBinaryIdentityHash: researchAuthorCapabilityReceipt.codexBinaryIdentityHash,
+          codexVersion: researchAuthorCapabilityReceipt.codexVersion,
+          codexAuthenticationStatus: researchAuthorCapabilityReceipt.authenticationStatus,
+        } : {}),
       };
-      const receipt = Object.freeze({ ...payload, agentExecutionReceiptHash: hashRecord('AgentExecutionReceipt', payload) });
-      if (payload.status !== 'agent_execution_completed') {
-        const error = new Error(blockers.join(',') || payload.error || `agent exited ${payload.exitCode}`);
-        error.retryable = !processResult.aborted && !blockers.includes('read_only_agent_modified_workspace');
-        error.receipt = receipt;
-        throw error;
-      }
-      return receipt;
+      return {
+        payload,
+        failureMessage: blockers.join(',') || payload.error || `agent exited ${payload.exitCode}`,
+        retryable: !cancelled && !blockers.includes('read_only_agent_modified_workspace'),
+      };
     },
   });
 }

@@ -16,6 +16,8 @@ import { buildEvidenceQualityGate } from '../../paper-domain/research/evidence-q
 import { buildExperimentRegistry } from '../../paper-domain/research/experiment-registry.mjs';
 import { buildExperimentExecutionContract, buildExperimentOutputManifest } from '../../paper-domain/research/experiment-evidence-binding.mjs';
 import { createLakeFormalVerifier } from '../../paper-adapters/research-verify/lake-formal-verifier.mjs';
+import { createLeanToolchainIdentityProvider } from '../../paper-adapters/research-verify/lean-toolchain-identity.mjs';
+import { resolvePinnedLakeExecutable } from '../../paper-adapters/research-verify/pinned-lake-executable-resolver.mjs';
 import { buildResearchChangeProposal } from '../../paper-domain/research/change-proposal.mjs';
 import { createOsSandboxedWorkerRunner, probeOsSandbox } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
 import { createFilesystemArtifactRepository } from '../../paper-adapters/artifacts/filesystem-artifact-repository.mjs';
@@ -95,10 +97,6 @@ function createLedger(store) {
   });
 }
 
-function shaFileSync(file) {
-  return `sha256:${crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')}`;
-}
-
 function writeJsonArtifact(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   try { fs.chmodSync(file, 0o600); } catch (error) {
@@ -135,7 +133,7 @@ async function replayEvidenceIngestor(root) {
   const bytes = Buffer.from(`${JSON.stringify({ paperId, mainTexHash, evidence: 'production-bound-operational-replay' })}\n`);
   await fsp.writeFile(evidencePath, bytes);
   const verified = await verifyEvidenceArtifact({ sourceRoot: root, evidence: { id: 'operational-evidence', path: 'evidence.json', hash: hashBytes(bytes), provenance: 'production_source_snapshot' } });
-  const intake = buildEvidenceIntake({ evidenceItems: [{ id: 'operational-evidence', claimIds: ['operational-main-claim'], path: 'evidence.json', hash: verified.verifiedHash, provenance: 'production_source_snapshot', verificationStatus: verified.status, verifiedHash: verified.verifiedHash, provenanceReceiptHash: verified.provenanceReceiptHash, createdAt: verified.createdAt, verificationReceipt: verified }] });
+  const intake = buildEvidenceIntake({ nowMs: Date.parse(verified.createdAt), evidenceItems: [{ id: 'operational-evidence', claimIds: ['operational-main-claim'], path: 'evidence.json', hash: verified.verifiedHash, provenance: 'production_source_snapshot', verificationStatus: verified.status, verifiedHash: verified.verifiedHash, provenanceReceiptHash: verified.provenanceReceiptHash, createdAt: verified.createdAt, verificationReceipt: verified }] });
   return { verificationStatus: verified.status, verifiedHash: verified.verifiedHash, intakeStatus: intake.status, intakeItemCount: intake.items.length, sourceMutationPerformed: false };
 }
 
@@ -191,7 +189,19 @@ async function replayFormalVerifier(root) {
       return { ok: result.status === 0 && !result.error, status: result.status === 0 && !result.error ? 'production_formal_command_passed' : 'production_formal_command_failed', stdout: String(result.stdout || ''), stderr: String(result.stderr || result.error?.message || ''), exitCode: result.status, receiptHash: hashRecord('ProductionFormalCommandReceipt', payload), isolation: { networkPolicy: 'none_by_operational_contract', sourceMutationPerformed: false, externalActionPerformed: false } };
     },
   };
-  const verifier = createLakeFormalVerifier({ projectRoot, commandRunner });
+  const pinnedRuntime = resolvePinnedLakeExecutable();
+  if (pinnedRuntime.status !== 'formal_pinned_lake_resolved') throw new Error(pinnedRuntime.blockers.join(','));
+  const verifier = createLakeFormalVerifier({
+    projectRoot,
+    commandRunner,
+    executable: pinnedRuntime.lakeExecutable,
+    toolchainIdentityProvider: createLeanToolchainIdentityProvider({
+      toolchain: pinnedRuntime.toolchain,
+      toolchainRoot: pinnedRuntime.toolchainRoot,
+      leanExecutable: pinnedRuntime.leanExecutable,
+      lakeExecutable: pinnedRuntime.lakeExecutable,
+    }),
+  });
   const certificate = await verifier.verify({ timeoutMs: 120000 });
   const replay = await verifier.replay({ certificateBundle: certificate });
   return { certificateStatus: certificate.status, replayStatus: replay.status, projectFiles: certificate.projectFiles?.map((item) => ({ path: item.path, hash: item.hash })).sort((a, b) => a.path.localeCompare(b.path)), toolchainHash: certificate.toolchainHash, manifestHash: certificate.manifestHash, externalActionPerformed: certificate.externalActionPerformed };
@@ -230,8 +240,8 @@ async function replayJobReceiptStore(root) {
   const jobId = `operational-job:${paperId}`;
   jobs.createJob({ jobId, deduplicationKey: hashRecord('OperationalJobDeduplication', { paperId, mainTexHash }), kind: 'operational-capability-replay', paperId, environment: 'production', evidenceClass: 'operational' });
   const lease = jobs.acquireLease({ jobId, workerId: 'operational-worker' });
-  const attempt = jobs.recordAttempt({ jobId, workerId: 'operational-worker' });
-  const completed = jobs.completeJob({ jobId, attemptId: attempt.attemptId, receipt: seal('OperationalJobResultReceipt', { status: 'operational_job_completed', paperId, mainTexHash }, 'jobReceiptHash') });
+  const attempt = jobs.recordAttempt({ jobId, workerId: 'operational-worker', leaseGeneration: lease.leaseGeneration });
+  const completed = jobs.completeJob({ jobId, attemptId: attempt.attemptId, workerId: 'operational-worker', leaseGeneration: attempt.leaseGeneration, receipt: seal('OperationalJobResultReceipt', { status: 'operational_job_completed', paperId, mainTexHash }, 'jobReceiptHash') });
   const result = { leaseStatus: lease.status, attemptId: attempt.attemptId, attemptNumber: attempt.attemptNumber, completedStatus: completed.status, attemptCount: completed.attemptCount, environment: completed.environment, evidenceClass: completed.evidence_class };
   store.close?.();
   return result;

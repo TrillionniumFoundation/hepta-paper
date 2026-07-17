@@ -1,37 +1,62 @@
 import crypto from 'node:crypto';
-import { sqlText } from '../../paper-ports/store-port.mjs';
+import { failClosedStoreQueries, sqlText } from '../../paper-ports/store-port.mjs';
+import { currentProcessIdentity, formatProcessIdentitySuffix, parseProcessIdentitySuffix, processIdentityIsStale } from '../../workflow-kernel/runtime/process-identity.mjs';
 
 const KEYS = Object.freeze(['agent', 'cpu', 'gpu', 'memoryMiB']);
-const COLUMNS = Object.freeze({ agent: 'agent', cpu: 'cpu', gpu: 'gpu', memoryMiB: 'memory_mib' });
 const LIMIT_COLUMNS = Object.freeze({ agent: 'agent_limit', cpu: 'cpu_limit', gpu: 'gpu_limit', memoryMiB: 'memory_mib_limit' });
-const PEAK_COLUMNS = Object.freeze({ agent: 'agent_peak', cpu: 'cpu_peak', gpu: 'gpu_peak', memoryMiB: 'memory_mib_peak' });
 
 function normalizedResources(value = {}) {
   return Object.fromEntries(KEYS.map((key) => [key, Math.max(0, Math.floor(Number(value[key] || 0)))]));
 }
 
-function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
-
-function ownerProcessId(ownerId) {
-  const match = String(ownerId || '').match(/^resource-owner:(\d+):/);
-  return match ? Number(match[1]) : null;
+function acquisitionAborted(signal) {
+  const error = new Error(`resource_acquire_aborted:${String(signal?.reason || 'aborted')}`);
+  error.name = 'AbortError';
+  error.code = 'resource_acquire_aborted';
+  return error;
 }
 
-function processAlive(pid) {
-  if (!pid) return true;
-  try { process.kill(pid, 0); return true; } catch (error) { return error?.code !== 'ESRCH'; }
+function sleep(ms, signal = null) {
+  if (signal?.aborted) return Promise.reject(acquisitionAborted(signal));
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(done, ms);
+    function done() {
+      signal?.removeEventListener('abort', aborted);
+      resolve();
+    }
+    function aborted() {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', aborted);
+      reject(acquisitionAborted(signal));
+    }
+    signal?.addEventListener('abort', aborted, { once: true });
+  });
+}
+
+function legacyOwnerProcessIdentity(ownerId) {
+  const match = String(ownerId || '').match(/^resource-owner:(\d+):/);
+  return match ? Object.freeze({ pid: Number(match[1]), pidStartTime: null }) : null;
+}
+
+function ownerProcessIdentity(ownerId) {
+  return parseProcessIdentitySuffix(ownerId) || legacyOwnerProcessIdentity(ownerId);
+}
+
+function defaultOwnerId() {
+  return `resource-owner:${crypto.randomUUID()}:${formatProcessIdentitySuffix(currentProcessIdentity())}`;
 }
 
 export function createSqliteResourceGovernor({
-  store,
+  store: suppliedStore,
   limits = { agent: 4, cpu: 4, gpu: 1, memoryMiB: 8192 },
   scope = 'global',
-  ownerId = `resource-owner:${process.pid}:${crypto.randomUUID()}`,
+  ownerId = defaultOwnerId(),
   leaseSeconds = 1800,
   pollMs = 50,
   clock = { now: () => new Date(), nowIso: () => new Date().toISOString() },
 } = {}) {
-  if (!store) throw new Error('StorePort is required for the SQLite resource governor');
+  if (!suppliedStore) throw new Error('StorePort is required for the SQLite resource governor');
+  const store = failClosedStoreQueries(suppliedStore);
   const maximum = normalizedResources(limits);
   const existing = store.query(`SELECT * FROM automation_resource_limits WHERE scope=${sqlText(scope)} LIMIT 1;`).rows[0];
   if (!existing) {
@@ -54,8 +79,8 @@ COMMIT;`);
     const now = clock.nowIso();
     const rows = store.query(`SELECT DISTINCT owner_id FROM automation_resource_leases WHERE scope=${sqlText(scope)} AND expires_at>${sqlText(now)} UNION SELECT DISTINCT owner_id FROM automation_resource_waiters WHERE scope=${sqlText(scope)} AND expires_at>${sqlText(now)};`).rows;
     const dead = rows.map((row) => row.owner_id).filter((value) => {
-      const pid = ownerProcessId(value);
-      return pid && pid !== process.pid && !processAlive(pid);
+      const identity = ownerProcessIdentity(value);
+      return identity && processIdentityIsStale(identity);
     });
     if (!dead.length) return 0;
     const removed = store.execute(`BEGIN IMMEDIATE; DELETE FROM automation_resource_leases WHERE scope=${sqlText(scope)} AND owner_id IN (${dead.map(sqlText).join(',')}); DELETE FROM automation_resource_waiters WHERE scope=${sqlText(scope)} AND owner_id IN (${dead.map(sqlText).join(',')}); COMMIT;`);
@@ -100,6 +125,8 @@ COMMIT;`);
     async acquire(request = {}, context = {}) {
       const resources = normalizedResources(request);
       for (const key of KEYS) if (resources[key] > maximum[key]) throw new Error(`resource_request_exceeds_limit:${key}`);
+      const signal = context.signal || null;
+      if (signal?.aborted) throw acquisitionAborted(signal);
       const leaseId = `${ownerId}:${crypto.randomUUID()}`;
       const waiterId = `resource-waiter:${process.pid}:${crypto.randomUUID()}`;
       const requestedAt = clock.nowIso();
@@ -107,7 +134,10 @@ COMMIT;`);
       const waiterExpiry = new Date(clock.now().getTime() + 30_000).toISOString();
       const queued = store.execute(`INSERT INTO automation_resource_waiters(waiter_id,scope,owner_id,campaign_id,node_id,agent,cpu,gpu,memory_mib,requested_at,renewed_at,expires_at) VALUES(${sqlText(waiterId)},${sqlText(scope)},${sqlText(ownerId)},${context.campaignId ? sqlText(context.campaignId) : 'NULL'},${context.nodeId ? sqlText(context.nodeId) : 'NULL'},${resources.agent},${resources.cpu},${resources.gpu},${resources.memoryMiB},${sqlText(requestedAt)},${sqlText(requestedAt)},${sqlText(waiterExpiry)});`);
       if (!queued.ok) throw new Error(queued.error || 'resource_waiter_enqueue_failed');
-      while (true) {
+      let acquiredLease = false;
+      try {
+        while (true) {
+        if (signal?.aborted) throw acquisitionAborted(signal);
         reapDeadOwners();
         const now = clock.now();
         const nowIso = now.toISOString();
@@ -139,29 +169,64 @@ UPDATE automation_resource_peaks SET
   updated_at=${sqlText(nowIso)} WHERE scope=${sqlText(scope)};
 COMMIT;`);
         if (!insert.ok) throw new Error(insert.error || 'resource_lease_acquire_failed');
-        const acquired = store.query(`SELECT lease_id FROM automation_resource_leases WHERE lease_id=${sqlText(leaseId)} LIMIT 1;`).rows.length === 1;
+        const acquiredLookup = store.query(`SELECT lease_id FROM automation_resource_leases WHERE lease_id=${sqlText(leaseId)} LIMIT 1;`);
+        if (!acquiredLookup.ok) throw new Error(acquiredLookup.error || 'resource_lease_lookup_failed');
+        const acquired = acquiredLookup.rows.length === 1;
         if (acquired) {
+          acquiredLease = true;
           const acquiredAt = nowIso;
           let released = false;
+          const lostController = new AbortController();
+          const markLost = (reason) => {
+            if (!lostController.signal.aborted) lostController.abort(reason);
+          };
           const heartbeat = setInterval(() => {
             if (released) return;
             const renewedAt = clock.now();
             const renewedExpiry = new Date(renewedAt.getTime() + Math.max(1, Number(leaseSeconds)) * 1000).toISOString();
-            store.execute(`UPDATE automation_resource_leases SET renewed_at=${sqlText(renewedAt.toISOString())},expires_at=${sqlText(renewedExpiry)} WHERE lease_id=${sqlText(leaseId)} AND owner_id=${sqlText(ownerId)};`);
+            try {
+              const renewed = store.query(`UPDATE automation_resource_leases SET renewed_at=${sqlText(renewedAt.toISOString())},expires_at=${sqlText(renewedExpiry)} WHERE lease_id=${sqlText(leaseId)} AND owner_id=${sqlText(ownerId)} AND expires_at>${sqlText(renewedAt.toISOString())} RETURNING lease_id;`);
+              if (renewed.rows.length === 1) return;
+              clearInterval(heartbeat);
+              markLost('resource_lease_heartbeat_fence_lost');
+            } catch (error) {
+              clearInterval(heartbeat);
+              markLost(error?.message || 'resource_lease_heartbeat_failed');
+            }
           }, Math.max(250, Math.floor(Math.max(1, Number(leaseSeconds)) * 1000 / 3)));
           heartbeat.unref();
           const release = () => {
-            if (released) return;
+            if (released) return false;
             released = true;
             clearInterval(heartbeat);
-            const removed = store.execute(`DELETE FROM automation_resource_leases WHERE lease_id=${sqlText(leaseId)} AND owner_id=${sqlText(ownerId)};`);
-            if (!removed.ok) throw new Error(removed.error || 'resource_lease_release_failed');
+            const releasedAt = clock.nowIso();
+            let removed;
+            try {
+              removed = store.query(`DELETE FROM automation_resource_leases WHERE lease_id=${sqlText(leaseId)} AND owner_id=${sqlText(ownerId)} AND expires_at>${sqlText(releasedAt)} RETURNING lease_id;`);
+            } catch (error) {
+              markLost(error?.message || 'resource_lease_release_failed');
+              throw error;
+            }
+            if (removed.rows.length !== 1) {
+              markLost('resource_lease_release_fence_lost');
+              return false;
+            }
+            return true;
           };
           release.telemetry = Object.freeze({ requestedAt, acquiredAt, lockWaitMs: Math.max(0, Date.parse(acquiredAt) - Date.parse(requestedAt)), queueContentionCount: contentionCount });
+          release.leaseId = leaseId;
+          release.fencingToken = leaseId;
+          release.lostSignal = lostController.signal;
           return release;
         }
         contentionCount += 1;
-        await sleep(Math.max(5, Number(pollMs || 50)));
+        await sleep(Math.max(5, Number(pollMs || 50)), signal);
+        }
+      } finally {
+        if (!acquiredLease) {
+          const removed = store.execute(`DELETE FROM automation_resource_waiters WHERE waiter_id=${sqlText(waiterId)} AND owner_id=${sqlText(ownerId)};`);
+          if (!removed.ok) throw new Error(removed.error || 'resource_waiter_cleanup_failed');
+        }
       }
     },
   });

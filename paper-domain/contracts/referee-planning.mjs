@@ -1,5 +1,4 @@
 import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
-import { nowIso } from '../../workflow-kernel/runtime/time-utils.mjs';
 import { PAPER_CORE_VERSION, hashPaperRecord, normalizedId, normalizeRefs } from './primitives.mjs';
 
 export function buildRefereeReviewIntake({
@@ -32,7 +31,7 @@ export function buildRefereeReviewIntake({
       writesSource: false,
       externalActionPerformed: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return { ...intake, refereeReviewIntakeHash: hashPaperRecord('RefereeReviewIntake', intake) };
 }
@@ -85,7 +84,7 @@ export function buildAgentRefereeReviewReport({
       writesSource: false,
       externalActionPerformed: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return { ...report, agentRefereeReviewReportHash: hashPaperRecord('AgentRefereeReviewReport', report) };
 }
@@ -147,7 +146,7 @@ export function buildRefereeIssueQueueMaterialization({
       externalActionPerformed: false,
       requiresRefereeReviseForSourceMutation: true,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return {
     ...materialization,
@@ -199,7 +198,7 @@ export function buildRefereeRevisionIssueQueue({
       sourceMutation: false,
       externalActionPerformed: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return { ...queue, refereeRevisionIssueQueueHash: hashPaperRecord('RefereeRevisionIssueQueue', queue) };
 }
@@ -237,7 +236,7 @@ export function buildRefereeRevisionPatchPlan({
       requiresRollbackLedgerForExecute: true,
       externalActionPerformed: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return { ...plan, refereeRevisionPatchPlanHash: hashPaperRecord('RefereeRevisionPatchPlan', plan) };
 }
@@ -293,7 +292,7 @@ export function buildRefereeRevisionPatchExecutionPreflight({
       externalActionPerformed: false,
       requiresRollbackLedgerForExecute: true,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return {
     ...preflight,
@@ -346,7 +345,7 @@ export function buildRefereeRevisionRollbackLedgerDraft({
       writesRollbackLedger: false,
       externalActionPerformed: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return {
     ...draft,
@@ -395,7 +394,7 @@ export function buildRefereeRevisionPreimageSnapshotLedger({
       appliesPatch: false,
       externalActionPerformed: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return {
     ...ledger,
@@ -447,7 +446,7 @@ export function buildRefereeRevisionExecutePlan({
       externalActionPerformed: false,
       requiresExplicitApplyMode: true,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return { ...plan, refereeRevisionExecutePlanHash: hashPaperRecord('RefereeRevisionExecutePlan', plan) };
 }
@@ -503,7 +502,7 @@ export function buildRefereeRevisionApplyModeContract({
       requiresSeparateApplyInvocation: true,
       agentApprovalOnly: true,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return {
     ...contract,
@@ -539,7 +538,7 @@ export function buildRefereeRevisionDryRunReceipt({
     sourceMutationPerformed: false,
     rollbackLedgerWritten: false,
     executeBlockedUntilExplicitMode: true,
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return { ...receipt, refereeRevisionDryRunReceiptHash: hashPaperRecord('RefereeRevisionDryRunReceipt', receipt) };
 }
@@ -632,7 +631,7 @@ export function buildRefereeRevisionExecuteDesignPacket({
       externalActionPerformed: false,
       requiresSeparateApplyInvocation: true,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return {
     ...packet,

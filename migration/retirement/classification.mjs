@@ -1,17 +1,5 @@
 // Historical paper_factory retirement classification. This module is not part of the live adapter surface.
-import path from 'node:path';
-import fsp from 'node:fs/promises';
-import {
-  fileRecord,
-  relativePath,
-  walkFiles,
-} from '../../workflow-kernel/runtime/file-utils.mjs';
-import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
-import { writeJsonFile } from '../../paper-adapters/artifacts/write-artifact.mjs';
-import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
-import { buildMigrationMatrixAudit } from './migration-matrix.mjs';
-import { heptaStorePath } from '../../paper-adapters/persistence/store-paths.mjs';
-import { resolveWorkspaceLayout } from '../../paper-adapters/runtime/workspace-layout.mjs';
+import { normalizeText } from '../../workflow-kernel/runtime/text-utils.mjs';
 
 const RETIREMENT_WAVES = [
   {

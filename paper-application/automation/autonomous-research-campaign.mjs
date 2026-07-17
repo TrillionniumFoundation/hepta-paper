@@ -1,0 +1,601 @@
+import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { buildPaperCampaignPlan } from '../../paper-domain/automation/campaign-plan.mjs';
+import { buildCampaignBenchmarkSelector } from '../../paper-domain/automation/campaign-benchmark-selector.mjs';
+import { analysisProtocolMatchesEmpiricalClaimUniverse } from '../../paper-domain/automation/analysis-protocol-contract.mjs';
+import { verifyAutonomousEmpiricalClaimLineage } from '../../paper-domain/automation/autonomous-empirical-claim-lineage-contract.mjs';
+import {
+  evaluateAutonomousCampaignTopology,
+  evaluateAutonomousResearchQualificationEligibility,
+} from '../../paper-domain/automation/autonomous-research-readiness-policy.mjs';
+import { runPaperCampaign } from './campaign-engine.mjs';
+import { presentCampaignStatus, summarizeRun } from './campaign-query-presenter.mjs';
+import { requestExternalResearchQualification } from './external-qualification-recovery.mjs';
+import {
+  verifyAutonomousEmpiricalExecutionProfileSelection,
+} from '../../paper-domain/automation/autonomous-empirical-execution-profile-policy.mjs';
+import {
+  verifyAutonomousResearchSupervisorDispatchAuthorization,
+} from './autonomous-research-supervisor-dispatch-authorization.mjs';
+import {
+  inspectAutonomousResearchCampaignExecutionAdmission,
+} from '../../paper-domain/automation/autonomous-research-campaign-execution-admission.mjs';
+
+const SETTLED = new Set(['completed', 'failed', 'cancelled']);
+const MUTATING_ACTIONS = new Set(['launch', 'resume', 'converge']);
+const ADMISSION_PREFLIGHT_INSPECTION_KEYS = Object.freeze([
+  'autonomousResearchAdmissionPreflightExecutionInspectionHash',
+  'externalActionPerformed',
+  'kind',
+  'localDaemonActionPerformed',
+  'localDockerDaemonProbeCount',
+  'localProcessActionPerformed',
+  'networkActionPerformed',
+  'processCount',
+  'sandbox',
+  'version',
+].sort());
+
+function hasExplicitBudgetConfiguration(budgets) {
+  return budgets && typeof budgets === 'object' && !Array.isArray(budgets)
+    && Object.values(budgets).some((value) => value !== undefined);
+}
+
+function loopPreparationFrom(report) {
+  return report?.kind === 'AutonomousResearchReadinessCompositionReport'
+    ? report.loopPreparation
+    : report;
+}
+
+function requireCampaignStore(campaignStore) {
+  for (const method of ['createCampaign', 'getCampaign', 'listNodes', 'resumeCampaign']) {
+    if (typeof campaignStore?.[method] !== 'function') {
+      throw new Error('autonomous_research_campaign_store_required');
+    }
+  }
+  return campaignStore;
+}
+
+export function requireAutonomousResearchAdmissionPreflightExecutionInspection(inspection) {
+  const {
+    autonomousResearchAdmissionPreflightExecutionInspectionHash: claimedHash,
+    ...payload
+  } = inspection || {};
+  const processCount = Number(inspection?.processCount);
+  const localDockerDaemonProbeCount = Number(inspection?.localDockerDaemonProbeCount);
+  if (!inspection || Object.getPrototypeOf(inspection) !== Object.prototype
+    || JSON.stringify(Object.keys(inspection).sort())
+      !== JSON.stringify(ADMISSION_PREFLIGHT_INSPECTION_KEYS)
+    || inspection.version !== 1
+    || inspection.kind !== 'AutonomousResearchAdmissionPreflightExecutionInspection'
+    || inspection.sandbox !== 'bubblewrap-unshare-net-read-only-root-v1'
+    || !Number.isSafeInteger(inspection.processCount) || processCount !== 8
+    || !Number.isSafeInteger(inspection.localDockerDaemonProbeCount)
+    || localDockerDaemonProbeCount !== 2
+    || inspection.localProcessActionPerformed !== true
+    || inspection.localDaemonActionPerformed !== true
+    || inspection.networkActionPerformed !== false
+    || inspection.externalActionPerformed !== false
+    || hashRecord(
+      'AutonomousResearchAdmissionPreflightExecutionInspection',
+      payload,
+    ) !== claimedHash) {
+    throw new Error('autonomous_research_admission_preflight_execution_inspection_invalid');
+  }
+  return inspection;
+}
+
+function machineIntakeDispatchBinding(campaign, action) {
+  if (!MUTATING_ACTIONS.has(action)) return null;
+  const inspection = inspectAutonomousResearchCampaignExecutionAdmission(campaign?.spec);
+  if (!inspection.present) return null;
+  if (!inspection.valid || inspection.binding.campaignId !== campaign?.campaignId) {
+    throw new Error('autonomous_research_machine_intake_dispatch_binding_invalid');
+  }
+  return Object.freeze({
+    ...inspection.binding,
+    action,
+  });
+}
+
+function dispatchAuthorizationTime(runtime) {
+  const observed = runtime?.clock?.now ? runtime.clock.now() : new Date();
+  const now = observed instanceof Date ? observed : new Date(observed);
+  if (!Number.isFinite(now.getTime())) {
+    throw new Error('autonomous_research_supervisor_dispatch_authorization_clock_invalid');
+  }
+  return now;
+}
+
+function requireMachineIntakeDispatchAuthorization({
+  campaign,
+  action,
+  authorization,
+  runtime,
+  consume = false,
+} = {}) {
+  const binding = machineIntakeDispatchBinding(campaign, action);
+  if (!binding) return false;
+  if (!verifyAutonomousResearchSupervisorDispatchAuthorization({
+    authorization,
+    ...binding,
+    now: dispatchAuthorizationTime(runtime),
+    consume,
+  })) {
+    throw new Error('autonomous_research_supervisor_dispatch_authorization_invalid');
+  }
+  return true;
+}
+
+function qualificationFor({ preparation, campaignReleaseAuthority, inspection = null } = {}) {
+  return evaluateAutonomousResearchQualificationEligibility({
+    proposal: preparation?.proposal,
+    policyAuthorization: preparation?.policyAuthorization,
+    seedBundle: preparation?.seedBundle,
+    seedBinding: preparation?.seedBinding,
+    principalSeparation: preparation?.principalSeparation,
+    topologyInspection: preparation?.topologyInspection,
+    datasetLaunchInspection: preparation?.datasetLaunchInspection,
+    empiricalRuntimeCapabilityInspection: preparation?.empiricalRuntimeCapabilityInspection,
+    empiricalExecutionProfileSelection: preparation?.empiricalExecutionProfileSelection,
+    campaignReleaseAuthority,
+    fullResearchQualificationInspection: inspection,
+  });
+}
+
+async function requestExternalQualification({
+  externalQualificationClient,
+  externalQualificationVerifier,
+  campaignReleaseAuthority,
+  preparation,
+  qualificationStateStore = null,
+  allowRequest = false,
+  retry = {},
+} = {}) {
+  return requestExternalResearchQualification({
+    externalQualificationClient,
+    externalQualificationVerifier,
+    campaignReleaseAuthority,
+    preparation,
+    qualificationStateStore,
+    allowRequest,
+    retry,
+    evaluateEligibility: (inspection) => qualificationFor({
+      preparation,
+      campaignReleaseAuthority,
+      inspection,
+    }),
+  });
+}
+
+export function buildAutonomousResearchCampaignPlan({
+  loopPreparation,
+  materialization,
+  datasetMounts = [],
+  campaignId = null,
+  budgets = {},
+  machineIntake = null,
+  machineIntakeAdmission = null,
+} = {}) {
+  const proposal = loopPreparation?.proposal;
+  const empiricalProfileSelection = loopPreparation?.empiricalExecutionProfileSelection;
+  if (loopPreparation?.autonomousExecutionLaunchReady !== true
+    || materialization?.status !== 'autonomous_research_workspace_materialized') {
+    throw new Error('autonomous_research_campaign_launch_not_ready');
+  }
+  if (!verifyAutonomousEmpiricalExecutionProfileSelection(empiricalProfileSelection, {
+    protocolFamily: proposal?.protocolFamily,
+    requireReady: true,
+    runtimeCapabilityInspection: loopPreparation?.empiricalRuntimeCapabilityInspection,
+    requireRuntimeCapabilityInspection: true,
+  }) || loopPreparation?.topologyTemplate?.empiricalExecutionProfileSelectionHash
+    !== empiricalProfileSelection.autonomousEmpiricalExecutionProfileSelectionHash
+    || JSON.stringify(loopPreparation?.topologyTemplate?.empiricalExecutionProfile)
+      !== JSON.stringify(empiricalProfileSelection.executionProfile)) {
+    throw new Error('autonomous_research_empirical_execution_profile_invalid');
+  }
+  if (!Array.isArray(datasetMounts) || datasetMounts.length !== 1
+    || datasetMounts[0]?.benchmarkFamily !== proposal?.protocolFamily
+    || loopPreparation?.datasetLaunchInspection?.status
+      !== 'autonomous_research_dataset_launch_ready'
+    || loopPreparation.datasetLaunchInspection.datasetManifestHash
+      !== datasetMounts[0]?.manifestHash
+    || loopPreparation.datasetLaunchInspection.operatorDatasetAuthorityDocumentHash
+      !== datasetMounts[0]?.operatorDatasetAuthorityDocumentHash) {
+    throw new Error('autonomous_research_academic_dataset_authority_required');
+  }
+  const {
+    autonomousResearchWorkspaceMaterializationReceiptHash: materializationHash,
+    ...materializationPayload
+  } = materialization;
+  const templateSelector = buildCampaignBenchmarkSelector({
+    benchmarkId: datasetMounts[0].name,
+    datasetMounts,
+  });
+  const analysisProtocolTemplate = Object.freeze({
+    ...templateSelector.experimentDesign.analysisProtocol,
+    analysisProtocolHash: templateSelector.experimentDesign.analysisProtocolHash,
+  });
+  if (materialization.version !== 2
+    || hashRecord('AutonomousResearchWorkspaceMaterializationReceipt', materializationPayload)
+      !== materializationHash
+    || materialization.analysisProtocolTemplateHash !== analysisProtocolTemplate.analysisProtocolHash
+    || materialization.empiricalExecutionProfileSelectionHash
+      !== empiricalProfileSelection.autonomousEmpiricalExecutionProfileSelectionHash
+    || materialization.empiricalRuntimeCapabilityInspectionHash
+      !== empiricalProfileSelection.runtimeCapabilityInspectionHash
+    || !verifyAutonomousEmpiricalClaimLineage({
+      lineage: materialization.empiricalClaimLineage,
+      proposal,
+      seedBundle: loopPreparation.seedBundle,
+      analysisProtocolTemplate,
+      empiricalClaimUniverse: materialization.empiricalClaimUniverse,
+    })) {
+    throw new Error('autonomous_research_empirical_claim_lineage_invalid');
+  }
+  const plan = buildPaperCampaignPlan({
+    paperId: proposal.paperId,
+    sourceWorkspace: materialization.sourceWorkspace,
+    campaignId: campaignId || `autonomous-research:${proposal.paperId}`,
+    mode: 'full-campaign',
+    maxRounds: loopPreparation.topologyTemplate.revisionRounds,
+    refereeCount: loopPreparation.topologyTemplate.refereeCount,
+    minimumRevisionRounds: 1,
+    languages: ['lean', empiricalProfileSelection.executionProfile.language, 'latex'],
+    datasetMounts,
+    benchmarkId: datasetMounts[0].name,
+    empiricalClaimUniverse: materialization.empiricalClaimUniverse,
+    applyManuscript: true,
+    paperQualityProfiles: ['formal_theorem_or_proof', 'empirical_or_experiment'],
+    scientificClaimAuthority: loopPreparation.seedBinding,
+    autonomousResearchPreparation: loopPreparation,
+    autonomousResearchMachineIntake: machineIntake,
+    autonomousResearchMachineIntakeAdmission: machineIntakeAdmission,
+    budgets,
+  });
+  const topology = evaluateAutonomousCampaignTopology({ nodes: plan.nodes });
+  if (topology.status !== 'autonomous_research_campaign_topology_ready') {
+    throw new Error(`autonomous_research_campaign_topology_invalid:${topology.blockers.join(',')}`);
+  }
+  if (plan.autonomousEmpiricalExecutionProfileSelectionHash
+      !== empiricalProfileSelection.autonomousEmpiricalExecutionProfileSelectionHash
+    || plan.languages.filter((language) => !['lean', 'latex'].includes(language)).length !== 1
+    || plan.languages.filter((language) => !['lean', 'latex'].includes(language))[0]
+      !== empiricalProfileSelection.executionProfile.language) {
+    throw new Error('autonomous_research_campaign_profile_binding_invalid');
+  }
+  const boundAnalysisProtocol = Object.freeze({
+    ...plan.benchmarkSelector?.analysisProtocol,
+    analysisProtocolHash: plan.benchmarkSelector?.analysisProtocolHash,
+  });
+  if (boundAnalysisProtocol.version !== 2
+    || !analysisProtocolMatchesEmpiricalClaimUniverse(
+      boundAnalysisProtocol,
+      materialization.empiricalClaimUniverse,
+    )) {
+    throw new Error('autonomous_research_empirical_protocol_lineage_invalid');
+  }
+  return plan;
+}
+
+export function enqueuePreparedAutonomousResearchCampaign({
+  readinessReport,
+  campaignId,
+  datasetMounts = [],
+  budgets = {},
+  campaignStore,
+  preparedMaterialization,
+  machineIntake = null,
+  machineIntakeAdmission = null,
+  admissionPreflightExecutionInspection = null,
+} = {}) {
+  const store = requireCampaignStore(campaignStore);
+  const preparation = loopPreparationFrom(readinessReport);
+  const id = campaignId || (preparation?.proposal?.paperId
+    ? `autonomous-research:${preparation.proposal.paperId}` : null);
+  if (!id || preparation?.autonomousExecutionLaunchReady !== true
+    || !preparedMaterialization) {
+    throw new Error('autonomous_research_machine_intake_enqueue_not_ready');
+  }
+  const preflightInspection = machineIntake
+    ? requireAutonomousResearchAdmissionPreflightExecutionInspection(
+      admissionPreflightExecutionInspection,
+    )
+    : null;
+  const plan = buildAutonomousResearchCampaignPlan({
+    loopPreparation: preparation,
+    materialization: preparedMaterialization,
+    datasetMounts,
+    campaignId: id,
+    budgets,
+    machineIntake,
+    machineIntakeAdmission,
+  });
+  if (plan?.campaignId !== id
+    || plan?.scientificClaimAuthority?.autonomousResearchSeedBindingHash
+      !== preparation.seedBinding.autonomousResearchSeedBindingHash) {
+    throw new Error('autonomous_research_prepared_campaign_plan_invalid');
+  }
+  const existing = store.getCampaign(id);
+  if (existing && (existing.spec?.campaignPlanHash !== plan.campaignPlanHash
+    || existing.spec?.autonomousResearchMachineIntakeHash
+      !== machineIntake?.intakeHash
+    || existing.spec?.autonomousResearchMachineIntakeAdmissionHash
+      !== machineIntakeAdmission?.autonomousResearchMachineIntakeAdmissionHash
+    || existing.spec?.autonomousResearchPreparation
+      ?.autonomousResearchLoopPreparationReportHash
+        !== preparation.autonomousResearchLoopPreparationReportHash)) {
+    throw new Error('autonomous_research_machine_intake_campaign_identity_conflict');
+  }
+  const campaign = existing || store.createCampaign(plan);
+  if (machineIntake && (campaign.status !== 'paused'
+    || campaign.spec?.executionAdmission?.status
+      !== 'autonomous_research_campaign_admitted_not_authorized'
+    || campaign.spec?.executionAdmission?.initialCampaignStatus !== 'paused'
+    || campaign.spec?.executionAdmission?.supervisorDispatchAuthorizationRequired !== true)) {
+    throw new Error('autonomous_research_machine_intake_execution_admission_not_persisted');
+  }
+  const payload = Object.freeze({
+    version: 1,
+    kind: 'AutonomousResearchCampaignEnqueueReceipt',
+    status: existing
+      ? 'autonomous_research_campaign_already_enqueued'
+      : 'autonomous_research_campaign_enqueued',
+    campaignId: id,
+    paperId: campaign.paperId,
+    campaignPlanHash: plan.campaignPlanHash,
+    autonomousResearchMachineIntakeHash: machineIntake?.intakeHash || null,
+    autonomousResearchMachineIntakeAdmission: machineIntakeAdmission,
+    autonomousResearchMachineIntakeAdmissionHash:
+      machineIntakeAdmission?.autonomousResearchMachineIntakeAdmissionHash || null,
+    autonomousResearchLoopPreparationReportHash:
+      preparation.autonomousResearchLoopPreparationReportHash,
+    autonomousResearchCampaignExecutionAdmissionHash:
+      campaign.spec?.executionAdmission
+        ?.autonomousResearchCampaignExecutionAdmissionHash || null,
+    admissionPreflightExecutionInspection: preflightInspection,
+    admissionOnly: Boolean(machineIntake),
+    executionAuthorized: false,
+    initialCampaignStatus: machineIntake ? 'paused' : campaign.status,
+    created: !existing,
+    executionStarted: false,
+    externalActionPerformed: false,
+  });
+  return Object.freeze({
+    ...payload,
+    campaign,
+    autonomousResearchCampaignEnqueueReceiptHash: hashRecord(
+      'AutonomousResearchCampaignEnqueueReceipt',
+      payload,
+    ),
+  });
+}
+
+async function executionReport({
+  action,
+  campaignStore,
+  campaignId,
+  executionResult = null,
+  campaignReleaseAuthorityReader = null,
+  externalQualificationClient = null,
+  externalQualificationVerifier = null,
+  qualificationStateStore = null,
+  qualificationRetry = {},
+  providerConfigurationBinding = null,
+  launchModeGate = null,
+  goldenQualificationController = null,
+} = {}) {
+  const campaign = campaignStore.getCampaign(campaignId);
+  const nodes = campaignStore.listNodes(campaignId);
+  const preparation = campaign?.spec?.autonomousResearchPreparation || null;
+  let campaignReleaseAuthority = null;
+  if (campaign?.status === 'completed' && typeof campaignReleaseAuthorityReader === 'function') {
+    campaignReleaseAuthority = await campaignReleaseAuthorityReader({ campaignId, paperId: campaign.paperId });
+  }
+  const externalQualification = preparation ? await requestExternalQualification({
+    externalQualificationClient,
+    externalQualificationVerifier,
+    campaignReleaseAuthority,
+    preparation,
+    qualificationStateStore,
+    allowRequest: action === 'launch' || action === 'resume' || action === 'converge'
+      || Boolean(executionResult),
+    retry: qualificationRetry,
+  }) : Object.freeze({ status: 'qualification_preparation_unavailable', inspection: null });
+  const goldenQualificationPublication = action !== 'status'
+    && preparation && campaignReleaseAuthority
+    && goldenQualificationController?.kind === 'GoldenCampaignQualificationController'
+    ? await goldenQualificationController.finalize({
+      externalQualification,
+      campaign,
+      campaignReleaseAuthority,
+      preparation,
+      qualificationStateStore,
+      evaluateEligibility: (inspection) => qualificationFor({
+        preparation,
+        campaignReleaseAuthority,
+        inspection,
+      }),
+    }) : null;
+  const effectiveQualificationInspection = goldenQualificationPublication
+    ? (goldenQualificationPublication.ready === true
+      && goldenQualificationPublication.pointerPublished === true
+      ? goldenQualificationPublication.inspection : externalQualification.inspection)
+    : externalQualification.inspection;
+  const qualificationEligibility = preparation ? qualificationFor({
+    preparation,
+    campaignReleaseAuthority,
+    inspection: effectiveQualificationInspection,
+  }) : null;
+  const campaignFullyQualified = qualificationEligibility?.campaignFullyQualified === true;
+  const payload = {
+    version: 1,
+    kind: 'AutonomousResearchCampaignExecutionReport',
+    status: campaign?.status === 'completed'
+      ? qualificationEligibility?.fullAutomaticResearchWritingReady
+        ? 'autonomous_research_campaign_completed_and_qualified'
+        : qualificationEligibility?.qualificationRequestEligible
+          ? 'autonomous_research_campaign_completed_external_qualification_eligible'
+          : 'autonomous_research_campaign_completed_qualification_blocked'
+      : `autonomous_research_campaign_${campaign?.status || 'unavailable'}`,
+    action,
+    campaignId,
+    campaign: presentCampaignStatus(campaign, nodes),
+    run: executionResult ? summarizeRun(executionResult) : null,
+    campaignReleaseAuthorityAvailable: Boolean(campaignReleaseAuthority),
+    externalQualification,
+    goldenQualificationPublication,
+    qualificationEligibility,
+    autonomousExecutionLaunchReady:
+      qualificationEligibility?.autonomousExecutionLaunchReady === true,
+    campaignFullyQualified,
+    fullAutomaticResearchWritingReady: campaignFullyQualified,
+    providerConfigurationBinding,
+    launchModeGate,
+    operatorApprovalClaimed: false,
+    externalSubmissionPerformed: false,
+    selfSignedExternalQualification: false,
+    automaticBudgetExpansionPerformed: false,
+  };
+  return Object.freeze({
+    ...payload,
+    autonomousResearchCampaignExecutionReportHash:
+      hashRecord('AutonomousResearchCampaignExecutionReport', payload),
+  });
+}
+
+export async function executeAutonomousResearchCampaign({
+  action = 'launch',
+  readinessReport = null,
+  campaignId = null,
+  datasetMounts = [],
+  budgets = {},
+  campaignStore,
+  executor = null,
+  workspaceMaterializer = null,
+  preparedMaterialization = null,
+  campaignRunner = runPaperCampaign,
+  campaignReleaseAuthorityReader = null,
+  externalQualificationClient = null,
+  externalQualificationVerifier = null,
+  qualificationStateStore = null,
+  qualificationRetry = {},
+  providerConfigurationBinding = null,
+  launchModeGate = null,
+  supervisorDispatchAuthorization = null,
+  goldenQualificationController = null,
+  runtime = {},
+} = {}) {
+  const store = requireCampaignStore(campaignStore);
+  if (!['launch', 'status', 'resume', 'converge'].includes(action)) {
+    throw new Error(`autonomous_research_campaign_action_invalid:${action}`);
+  }
+  const preparation = loopPreparationFrom(readinessReport);
+  const id = campaignId || (preparation?.proposal?.paperId
+    ? `autonomous-research:${preparation.proposal.paperId}` : null);
+  if (!id) throw new Error('autonomous_research_campaign_id_required');
+  let campaign = store.getCampaign(id);
+  let executionResult = null;
+  let dispatchAuthorizationConsumed = false;
+  if (campaign) {
+    requireMachineIntakeDispatchAuthorization({
+      campaign,
+      action,
+      authorization: supervisorDispatchAuthorization,
+      runtime,
+    });
+  }
+  if (['launch', 'converge'].includes(action) && !campaign) {
+    if (preparation?.autonomousExecutionLaunchReady !== true || typeof executor?.execute !== 'function') {
+      throw new Error('autonomous_research_campaign_launch_dependencies_not_ready');
+    }
+    const materialization = preparedMaterialization
+      || (typeof workspaceMaterializer === 'function'
+        ? await workspaceMaterializer({ loopPreparation: preparation, datasetMounts }) : null);
+    const plan = buildAutonomousResearchCampaignPlan({
+      loopPreparation: preparation, materialization, datasetMounts, campaignId: id, budgets,
+    });
+    if (plan?.campaignId !== id
+      || plan?.scientificClaimAuthority?.autonomousResearchSeedBindingHash
+        !== preparation.seedBinding.autonomousResearchSeedBindingHash) {
+      throw new Error('autonomous_research_prepared_campaign_plan_invalid');
+    }
+    campaign = store.createCampaign(plan);
+  }
+  if (!campaign) throw new Error(`autonomous_research_campaign_not_found:${id}`);
+  const convergeResumeRequested = action === 'converge'
+    && ['paused', 'stopped'].includes(campaign.status);
+  const resumeTransitionRequested = ['resume', 'converge'].includes(action)
+    && ['paused', 'stopped'].includes(campaign.status);
+  if (convergeResumeRequested
+    && !hasExplicitBudgetConfiguration(budgets)) {
+    throw new Error('autonomous_research_converge_resume_budget_configuration_required');
+  }
+  if (resumeTransitionRequested && typeof executor?.execute !== 'function') {
+    throw new Error('autonomous_research_campaign_executor_required');
+  }
+  if (['resume', 'converge'].includes(action)
+    && ['paused', 'stopped'].includes(campaign.status)) {
+    const previousPlanHash = campaign.spec?.campaignPlanHash || null;
+    dispatchAuthorizationConsumed = requireMachineIntakeDispatchAuthorization({
+      campaign,
+      action,
+      authorization: supervisorDispatchAuthorization,
+      runtime,
+      consume: true,
+    });
+    campaign = store.resumeCampaign(id, { budgetOverrides: budgets });
+    if (dispatchAuthorizationConsumed
+      && campaign.spec?.campaignPlanHash !== previousPlanHash) {
+      throw new Error('autonomous_research_supervisor_dispatch_authorization_plan_changed');
+    }
+  }
+  const shouldRun = action !== 'status' && campaign.status === 'running';
+  if (shouldRun) {
+    if (typeof executor?.execute !== 'function') throw new Error('autonomous_research_campaign_executor_required');
+    if (!dispatchAuthorizationConsumed) {
+      dispatchAuthorizationConsumed = requireMachineIntakeDispatchAuthorization({
+        campaign,
+        action,
+        authorization: supervisorDispatchAuthorization,
+        runtime,
+        consume: true,
+      });
+    }
+    executionResult = await campaignRunner({
+      campaignId: id,
+      campaignStore: store,
+      executor,
+      ...runtime,
+    });
+  } else if (action === 'resume' && !SETTLED.has(campaign.status) && campaign.status !== 'paused') {
+    throw new Error(`autonomous_research_campaign_resume_state_invalid:${campaign.status}`);
+  }
+  if (!dispatchAuthorizationConsumed) {
+    requireMachineIntakeDispatchAuthorization({
+      campaign,
+      action,
+      authorization: supervisorDispatchAuthorization,
+      runtime,
+      consume: true,
+    });
+  }
+  return executionReport({
+    action,
+    campaignStore: store,
+    campaignId: id,
+    executionResult,
+    campaignReleaseAuthorityReader,
+    externalQualificationClient,
+    externalQualificationVerifier,
+    qualificationStateStore,
+    qualificationRetry: {
+      ...qualificationRetry,
+      clock: qualificationRetry.clock || runtime.clock,
+      scheduler: qualificationRetry.scheduler || runtime.scheduler,
+      signal: qualificationRetry.signal || runtime.signal || null,
+    },
+    providerConfigurationBinding,
+    launchModeGate,
+    goldenQualificationController,
+  });
+}

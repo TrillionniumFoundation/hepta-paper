@@ -1,6 +1,14 @@
 import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
-import { nowIso } from '../../workflow-kernel/runtime/time-utils.mjs';
-import { PAPER_CORE_VERSION, PAPER_MANIFEST_STATUS, PAPER_RUN_RECEIPT_STATUS, hashPaperRecord, normalizedId, normalizeRefs } from './primitives.mjs';
+import {
+  PAPER_CORE_VERSION,
+  PAPER_MANIFEST_STATUS,
+  PAPER_RUN_RECEIPT_STATUS,
+  PAPER_SEMANTIC_IDENTITY_VERSION,
+  hashPaperRecord,
+  hashPaperSemanticIdentity,
+  normalizedId,
+  normalizeRefs,
+} from './primitives.mjs';
 import { PAPER_ACTIONS, PAPER_CHANNEL_IDS, PAPER_OUTPUT_MODES, PAPER_PRODUCT_IDS, PAPER_PRODUCT_PROFILE, PAPER_WORKFLOW_STAGES } from './product-profile.mjs';
 
 export function createPaperTask({
@@ -17,6 +25,7 @@ export function createPaperTask({
   evidenceRefs = [],
   createdAt = null,
   paperQualityProfile = null,
+  paperQualityProfiles = [],
 } = {}) {
   const id = normalizeText(paperId);
   if (!id) throw new Error('PaperTask requires paperId');
@@ -39,16 +48,43 @@ export function createPaperTask({
     source: source || null,
     evidenceRefs: normalizeRefs(evidenceRefs),
     paperQualityProfile: normalizeText(paperQualityProfile || '') || null,
-    createdAt: createdAt || nowIso(),
+    paperQualityProfiles: uniqueStrings([
+      ...(Array.isArray(paperQualityProfiles) ? paperQualityProfiles : []),
+      paperQualityProfile,
+    ].filter(Boolean), 16),
+    createdAt: createdAt || null,
   };
-  return { ...task, taskHash: hashPaperRecord('PaperTask', task) };
+  return {
+    ...task,
+    taskHash: hashPaperRecord('PaperTask', task),
+    semanticIdentityVersion: PAPER_SEMANTIC_IDENTITY_VERSION,
+    semanticIdentityHash: hashPaperSemanticIdentity('PaperTask', task),
+  };
 }
 
 export function bindPaperTaskQualityProfile(paperTask, paperQualityProfile) {
   if (!paperTask?.taskKey) throw new Error('PaperTask required for quality profile binding');
-  const { taskHash: _taskHash, ...subject } = paperTask;
-  const task = { ...subject, paperQualityProfile: normalizeText(paperQualityProfile || '') || null };
-  return Object.freeze({ ...task, taskHash: hashPaperRecord('PaperTask', task) });
+  const {
+    taskHash: _taskHash,
+    semanticIdentityVersion: _semanticIdentityVersion,
+    semanticIdentityHash: _semanticIdentityHash,
+    ...subject
+  } = paperTask;
+  const normalizedProfile = normalizeText(paperQualityProfile || '') || null;
+  const task = {
+    ...subject,
+    paperQualityProfile: normalizedProfile,
+    paperQualityProfiles: uniqueStrings([
+      ...(Array.isArray(subject.paperQualityProfiles) ? subject.paperQualityProfiles : []),
+      normalizedProfile,
+    ].filter(Boolean), 16),
+  };
+  return Object.freeze({
+    ...task,
+    taskHash: hashPaperRecord('PaperTask', task),
+    semanticIdentityVersion: PAPER_SEMANTIC_IDENTITY_VERSION,
+    semanticIdentityHash: hashPaperSemanticIdentity('PaperTask', task),
+  });
 }
 
 export function createPaperBuildArtifactAcceptance({
@@ -105,11 +141,13 @@ export function createPaperBuildArtifactAcceptance({
       externalActionPerformed: false,
       acceptsForLiveSubmit: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return {
     ...acceptance,
     paperBuildArtifactAcceptanceHash: hashPaperRecord('PaperBuildArtifactAcceptance', acceptance),
+    semanticIdentityVersion: PAPER_SEMANTIC_IDENTITY_VERSION,
+    semanticIdentityHash: hashPaperSemanticIdentity('PaperBuildArtifactAcceptance', acceptance),
   };
 }
 
@@ -172,9 +210,14 @@ export function createPaperArtifactPackage({
       externalActionPerformed: false,
     },
     evidenceRefs: normalizeRefs(evidenceRefs),
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
-  return { ...pkg, artifactPackageHash: hashPaperRecord('PaperArtifactPackage', pkg) };
+  return {
+    ...pkg,
+    artifactPackageHash: hashPaperRecord('PaperArtifactPackage', pkg),
+    semanticIdentityVersion: PAPER_SEMANTIC_IDENTITY_VERSION,
+    semanticIdentityHash: hashPaperSemanticIdentity('PaperArtifactPackage', pkg),
+  };
 }
 
 export function createPaperWorkflowState({
@@ -217,9 +260,14 @@ export function createPaperWorkflowState({
     blockers: uniqueStrings(blockers, 32),
     warnings: uniqueStrings(warnings, 32),
     evidenceRefs: normalizeRefs(evidenceRefs),
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
-  return { ...state, stateHash: hashPaperRecord('PaperWorkflowState', state) };
+  return {
+    ...state,
+    stateHash: hashPaperRecord('PaperWorkflowState', state),
+    semanticIdentityVersion: PAPER_SEMANTIC_IDENTITY_VERSION,
+    semanticIdentityHash: hashPaperSemanticIdentity('PaperWorkflowState', state),
+  };
 }
 
 export function paperWorkflowRow(state) {
@@ -384,10 +432,16 @@ export function createPaperActionManifest({
       controlledExecutorBoundary: normalizedAction === PAPER_ACTIONS.REVIEWED_SUBMIT,
       cryptographicDualControlRequired: normalizedAction === PAPER_ACTIONS.REVIEWED_SUBMIT,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   const manifestHash = hashPaperRecord('PaperActionManifest', manifest);
-  return { ...manifest, manifestHash, hash: manifestHash };
+  return {
+    ...manifest,
+    manifestHash,
+    hash: manifestHash,
+    semanticIdentityVersion: PAPER_SEMANTIC_IDENTITY_VERSION,
+    semanticIdentityHash: hashPaperSemanticIdentity('PaperActionManifest', manifest),
+  };
 }
 
 export function buildPaperHandoffEnvelope({ manifest, createdAt = null } = {}) {
@@ -420,9 +474,17 @@ export function buildPaperHandoffEnvelope({ manifest, createdAt = null } = {}) {
       executesExternalAction: false,
       sourceMutation: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
-  return { ...envelope, envelopeHash: hashPaperRecord('PaperHandoffEnvelope', envelope) };
+  return {
+    ...envelope,
+    envelopeHash: hashPaperRecord('PaperHandoffEnvelope', envelope),
+    semanticIdentityVersion: PAPER_SEMANTIC_IDENTITY_VERSION,
+    semanticIdentityHash: hashPaperSemanticIdentity('PaperHandoffEnvelope', {
+      ...envelope,
+      manifestHash: manifest.semanticIdentityHash || manifest.manifestHash,
+    }),
+  };
 }
 
 export function buildPaperAdapterRunReceipt({ envelope, manifest, createdAt = null } = {}) {
@@ -440,7 +502,16 @@ export function buildPaperAdapterRunReceipt({ envelope, manifest, createdAt = nu
     envelopeHash: envelope.envelopeHash,
     externalActionPerformed: false,
     sourceMutationPerformed: false,
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
-  return { ...receipt, receiptHash: hashPaperRecord('PaperAdapterRunReceipt', receipt) };
+  return {
+    ...receipt,
+    receiptHash: hashPaperRecord('PaperAdapterRunReceipt', receipt),
+    semanticIdentityVersion: PAPER_SEMANTIC_IDENTITY_VERSION,
+    semanticIdentityHash: hashPaperSemanticIdentity('PaperAdapterRunReceipt', {
+      ...receipt,
+      manifestHash: manifest.semanticIdentityHash || manifest.manifestHash,
+      envelopeHash: envelope.semanticIdentityHash || envelope.envelopeHash,
+    }),
+  };
 }

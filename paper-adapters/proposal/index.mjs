@@ -15,7 +15,7 @@ import {
   buildJournalTargetProfile,
   buildTargetSelectionPolicy,
   buildVenueRubricManager,
-} from '../journal-manage/index.mjs';
+} from '../../paper-domain/journal/contracts.mjs';
 import {
   DISCIPLINE_PROFILES,
   VENUE_PROFILES,
@@ -28,6 +28,7 @@ import {
   materializeApprovedProposal,
   stageApprovedProposalForInventory,
 } from './proposal-materialization.mjs';
+import { verifyPaperProposalApproval } from './proposal-approval-verification.mjs';
 
 export async function runPaperProposalAdapter({
   root = null,
@@ -41,7 +42,10 @@ export async function runPaperProposalAdapter({
   materials = [],
   constraints = [],
   riskPreference = null,
-  approved = false,
+  scientificClaimDocument = null,
+  approvalDocument = null,
+  trustStoreOverride = null,
+  now = new Date(),
   materializeSource = false,
   stageInventory = false,
 } = {}) {
@@ -57,13 +61,15 @@ export async function runPaperProposalAdapter({
       ? 'or'
       : fallbackVenueIdForDiscipline(disciplineProfile),
   );
-  const journalConferenceRegistry = buildJournalConferenceRegistry();
+  const createdAt = nowIso();
+  const journalConferenceRegistry = buildJournalConferenceRegistry({ createdAt });
   const venueFallbackId = fallbackVenueIdForDiscipline(disciplineProfile);
   const preliminaryTargetSelectionPolicy = buildTargetSelectionPolicy({
     target: venue || null,
     hints: [discipline, paperType, title, idea],
     registry: journalConferenceRegistry,
     fallbackId: venueFallbackId,
+    createdAt,
   });
   const preliminaryJournalProfile = buildJournalTargetProfile({
     target: venue || null,
@@ -71,6 +77,7 @@ export async function runPaperProposalAdapter({
     targetSelectionPolicy: preliminaryTargetSelectionPolicy,
     hints: [discipline, paperType, title, idea],
     fallbackId: venueFallbackId,
+    createdAt,
   });
   const ideaBrief = createPaperIdeaBrief({
     idea,
@@ -102,6 +109,7 @@ export async function runPaperProposalAdapter({
     hints: [discipline, paperType, title, idea],
     registry: journalConferenceRegistry,
     fallbackId: venueFallbackId,
+    createdAt,
   });
   const targetJournalProfile = buildJournalTargetProfile({
     paperTask: proposalPaperTask,
@@ -110,17 +118,20 @@ export async function runPaperProposalAdapter({
     targetSelectionPolicy,
     hints: [discipline, paperType, title, idea],
     fallbackId: venueFallbackId,
+    createdAt,
   });
   const venueRubricManager = buildVenueRubricManager({
     paperTask: proposalPaperTask,
     targetProfile: targetJournalProfile,
     targetSelectionPolicy,
+    createdAt,
   });
   const journalRubricPacket = buildJournalRubricPacket({
     paperTask: proposalPaperTask,
     targetProfile: targetJournalProfile,
     targetSelectionPolicy,
     venueRubricManager,
+    createdAt,
   });
   const selectedVenueProfile = targetJournalProfile.profile || venueProfile;
   const generationManifest = createPaperProposalGenerationManifest({
@@ -140,16 +151,30 @@ export async function runPaperProposalAdapter({
   const proposalEnvelope = createPaperProposalEnvelope({
     ideaBrief,
     generationManifest,
-    proposal: buildDeterministicProposal({ ideaBrief, disciplineProfile, venueProfile: selectedVenueProfile }),
+    proposal: buildDeterministicProposal({
+      ideaBrief,
+      disciplineProfile,
+      venueProfile: selectedVenueProfile,
+      scientificClaimDocument,
+    }),
   });
   const generationReceipt = buildPaperProposalGenerationReceipt({
     generationManifest,
     proposalEnvelope,
   });
+  const approvalVerification = await verifyPaperProposalApproval({
+    ideaBrief,
+    proposalEnvelope,
+    generationReceipt,
+    approvalDocument,
+    runtimeRoot,
+    trustStoreOverride,
+    now,
+  });
   const reviewGate = buildPaperProposalReviewGate({
     proposalEnvelope,
     generationReceipt,
-    approved,
+    approvalVerification,
   });
   const productionPlanEnvelope = createPaperProductionPlanEnvelope({
     proposalEnvelope,
@@ -161,8 +186,12 @@ export async function runPaperProposalAdapter({
       runtimeRoot,
       ideaBrief,
       proposalEnvelope,
+      generationReceipt,
       productionPlanEnvelope,
       reviewGate,
+      approvalDocument,
+      trustStoreOverride,
+      now,
       journalConferenceRegistry,
       targetSelectionPolicy,
       targetJournalProfile,
@@ -174,8 +203,14 @@ export async function runPaperProposalAdapter({
     ? await stageApprovedProposalForInventory({
       root,
       runtimeRoot: runtimeRoot || (root ? defaultPaperRuntimeRoot() : null),
+      ideaBrief,
       proposalEnvelope,
+      generationReceipt,
       productionPlanEnvelope,
+      reviewGate,
+      approvalDocument,
+      trustStoreOverride,
+      now,
       materialization,
     })
     : null;
@@ -189,6 +224,7 @@ export async function runPaperProposalAdapter({
     generationManifest,
     proposalEnvelope,
     generationReceipt,
+    approvalVerification,
     reviewGate,
     productionPlanEnvelope,
     journalConferenceRegistry,
@@ -211,6 +247,13 @@ export async function runPaperProposalAdapter({
       journalRubricStatus: journalRubricPacket.status,
       venueRubricManagerStatus: venueRubricManager.status,
       proposalStatus: proposalEnvelope.status,
+      recommendedPaperQualityProfiles: proposalEnvelope.proposal?.recommendedPaperQualityProfiles || [],
+      scientificClaimInputStatus: proposalEnvelope.proposal?.scientificClaimInput?.status || 'not_supplied',
+      scientificClaimInputHash:
+        proposalEnvelope.proposal?.scientificClaimInput?.paperScientificClaimInputHash || null,
+      approvalStatus: approvalVerification.status,
+      approvalDocumentHash: approvalVerification.approvalDocumentHash,
+      approvalOperatorSubjectId: approvalVerification.operatorIdentity?.subjectId || null,
       reviewStatus: reviewGate.status,
       productionPlanStatus: productionPlanEnvelope.status,
       materializationStatus: materialization?.status || 'not_requested',
@@ -231,6 +274,9 @@ export async function runPaperProposalAdapter({
       createsPaperTask: materialization?.paperTaskCreationEnvelope?.status === 'paper_task_draft_ready',
       createsInventoryStaging: inventoryStaging?.status === 'proposal_inventory_staged',
       createsProposalSeedContracts: Boolean(materialization?.seedContractRecord),
+      proposalApprovalAuthorityVerified: approvalVerification.status === 'proposal_approval_verified',
+      scientificClaimNoveltyAutomaticallyVerified: false,
+      scientificClaimCorrectnessAutomaticallyVerified: false,
     },
   };
   return { ...report, paperProposalAdapterReportHash: hashPaperRecord('PaperProposalAdapterReport', report) };

@@ -1,20 +1,17 @@
 import { assertReceiptLedgerPort } from '../../paper-ports/receipt-ledger-port.mjs';
-import { sqlText, sqlJson } from '../../paper-ports/store-port.mjs';
+import { failClosedStoreQueries, sqlText, sqlJson } from '../../paper-ports/store-port.mjs';
+import { selectReceiptHash } from '../../paper-domain/evidence/receipt-hash-selector.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { resolveReceiptWriterCapability } from './receipt-issuer-policy.mjs';
 
-export function receiptHash(receipt) {
-  return receipt.receiptHash
-    || receipt.writeReceiptHash
-    || receipt.jobReceiptHash
-    || Object.entries(receipt).reverse().find(([key]) => key.endsWith('ReceiptHash'))?.[1]
-    || hashRecord(receipt.kind || 'Receipt', receipt);
-}
+export const receiptHash = selectReceiptHash;
 
-export function createSqliteReceiptLedger({ store, clock, writerIdentity = null, issuerCapability = null } = {}) {
-  if (!store) throw new Error('Receipt ledger store is required');
+export function createSqliteReceiptLedger({ store: suppliedStore, clock, writerIdentity = null, issuerCapability = null } = {}) {
+  if (!suppliedStore) throw new Error('Receipt ledger store is required');
   if (!clock) throw new Error('Receipt ledger clock is required');
+  const store = failClosedStoreQueries(suppliedStore);
   if (writerIdentity?.trusted === true) throw new Error('raw_trusted_writer_identity_forbidden');
+  const query = (sql) => store.query(sql);
   const issued = resolveReceiptWriterCapability(issuerCapability);
   if (issuerCapability && !issued) throw new Error('receipt_issuer_capability_invalid');
   const writer = Object.freeze(issued ? {
@@ -69,7 +66,7 @@ export function createSqliteReceiptLedger({ store, clock, writerIdentity = null,
       return Object.freeze(recorded);
     },
     getRawForAudit(receiptId) {
-      return store.query(`SELECT * FROM receipt_ledger WHERE receipt_id=${sqlText(receiptId)} LIMIT 1;`).rows[0] || null;
+      return query(`SELECT * FROM receipt_ledger WHERE receipt_id=${sqlText(receiptId)} LIMIT 1;`).rows[0] || null;
     },
     listRawForAudit({ stream = null, paperId = null, environment = null, evidenceClass = null, limit = 100 } = {}) {
       const filters = [
@@ -78,10 +75,10 @@ export function createSqliteReceiptLedger({ store, clock, writerIdentity = null,
         ...(environment ? [`environment=${sqlText(environment)}`] : []),
         ...(evidenceClass ? [`evidence_class=${sqlText(evidenceClass)}`] : []),
       ];
-      return store.query(`SELECT * FROM receipt_ledger${filters.length ? ` WHERE ${filters.join(' AND ')}` : ''} ORDER BY created_at DESC LIMIT ${Math.max(1, Math.min(1000, Number(limit) || 100))};`).rows;
+      return query(`SELECT * FROM receipt_ledger${filters.length ? ` WHERE ${filters.join(' AND ')}` : ''} ORDER BY created_at DESC LIMIT ${Math.max(1, Math.min(1000, Number(limit) || 100))};`).rows;
     },
     get(receiptId) {
-      return store.query(`SELECT * FROM effective_receipt_ledger WHERE receipt_id=${sqlText(receiptId)} LIMIT 1;`).rows[0] || null;
+      return query(`SELECT * FROM effective_receipt_ledger WHERE receipt_id=${sqlText(receiptId)} LIMIT 1;`).rows[0] || null;
     },
     resolveEffective(receiptId, { maxDepth = 16 } = {}) {
       const visited = new Set();
@@ -90,10 +87,10 @@ export function createSqliteReceiptLedger({ store, clock, writerIdentity = null,
       for (let depth = 0; depth < Math.max(1, Math.min(64, Number(maxDepth) || 16)); depth += 1) {
         if (visited.has(currentReceiptId)) return Object.freeze({ status: 'effective_receipt_resolution_blocked', receiptRow: null, lineage, blockers: ['trusted_receipt_replacement_cycle'] });
         visited.add(currentReceiptId);
-        const row = store.query(`SELECT * FROM effective_receipt_ledger WHERE receipt_id=${sqlText(currentReceiptId)} LIMIT 1;`).rows[0] || null;
+        const row = query(`SELECT * FROM effective_receipt_ledger WHERE receipt_id=${sqlText(currentReceiptId)} LIMIT 1;`).rows[0] || null;
         if (!row) return Object.freeze({ status: 'effective_receipt_resolution_blocked', receiptRow: null, lineage, blockers: ['trusted_receipt_ledger_row_missing'] });
         if (Number(row.effective_receipt_usable ?? 1) === 1) return Object.freeze({ status: 'effective_receipt_resolved', receiptRow: row, lineage, blockers: [] });
-        const qualification = store.query(`SELECT * FROM receipt_ledger_qualifications WHERE receipt_id=${sqlText(currentReceiptId)} LIMIT 1;`).rows[0] || null;
+        const qualification = query(`SELECT * FROM receipt_ledger_qualifications WHERE receipt_id=${sqlText(currentReceiptId)} LIMIT 1;`).rows[0] || null;
         if (!qualification) return Object.freeze({ status: 'effective_receipt_resolution_blocked', receiptRow: row, lineage, blockers: ['trusted_receipt_qualification_missing'] });
         let payload = null;
         try { payload = JSON.parse(qualification.qualification_json); } catch { /* fail closed below */ }
@@ -118,7 +115,7 @@ export function createSqliteReceiptLedger({ store, clock, writerIdentity = null,
         ...(evidenceClass ? [`evidence_class=${sqlText(evidenceClass)}`] : []),
         ...(!includeQualified ? ['effective_receipt_usable=1'] : []),
       ];
-      return store.query(`SELECT * FROM effective_receipt_ledger${filters.length ? ` WHERE ${filters.join(' AND ')}` : ''} ORDER BY created_at DESC LIMIT ${Math.max(1, Math.min(1000, Number(limit) || 100))};`).rows;
+      return query(`SELECT * FROM effective_receipt_ledger${filters.length ? ` WHERE ${filters.join(' AND ')}` : ''} ORDER BY created_at DESC LIMIT ${Math.max(1, Math.min(1000, Number(limit) || 100))};`).rows;
     },
   });
 }

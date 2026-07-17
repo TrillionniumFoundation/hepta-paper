@@ -66,10 +66,10 @@ export function bindResearchGapPlan({ plan, jobReceiptStore, receiptLedger, cloc
     if (workerId && ['queued', 'failed_retryable'].includes(persisted?.status)) {
       lease = jobReceiptStore.acquireLease({ jobId: job.jobId, workerId, leaseSeconds: 60 });
       if (lease) {
-        attempt = jobReceiptStore.recordAttempt({ jobId: job.jobId, workerId });
+        attempt = jobReceiptStore.recordAttempt({ jobId: job.jobId, workerId, leaseGeneration: lease.leaseGeneration });
         const completionPayload = { version: 1, kind: 'ResearchGapPlanningReceipt', status: 'research_gap_job_bound', paperId: plan.paperId, jobId: job.jobId, claimId: job.claimId, planHash: plan.researchGapPlanHash, attemptId: attempt.attemptId, createdAt: clock.nowIso() };
         const receiptHash = hashRecord('ResearchGapPlanningReceipt', completionPayload);
-        jobReceiptStore.completeJob({ jobId: job.jobId, attemptId: attempt.attemptId, receipt: { ...completionPayload, receiptHash } });
+        jobReceiptStore.completeJob({ jobId: job.jobId, attemptId: attempt.attemptId, workerId, leaseGeneration: attempt.leaseGeneration, receipt: { ...completionPayload, receiptHash } });
       }
     }
     bindings.push({ jobId: job.jobId, claimId: job.claimId, persistedStatus: jobReceiptStore.get(job.jobId)?.status || persisted?.status || null, leaseOwner: lease?.lease_owner || null, attemptId: attempt?.attemptId || null });

@@ -1,29 +1,18 @@
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import {
-  ensureDir,
   dirExists,
   fileRecord,
   pathWithin,
-  readJsonIfExists,
   readTextIfExists,
   relativePath,
-  sha256Text,
   walkFiles,
 } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { inspectScopedPathSync, readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
 import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
+import { resolveRepoPath } from '../../workflow-kernel/runtime/path-utils.mjs';
 import { nowIso } from '../../workflow-kernel/runtime/time-utils.mjs';
-import { writeJsonFile, writeTextFile } from '../artifacts/write-artifact.mjs';
 import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
-import { buildEmpiricalEvidenceGate } from './evidence-policy.mjs';
-import { defaultPaperRuntimeRoot } from '../../paper-adapters/runtime/workspace-layout.mjs';
-
-function repoPath(root, value) {
-  const text = normalizeText(value);
-  if (!text) return null;
-  return path.isAbsolute(text) ? text : path.join(root, text);
-}
+import { isDatasetLicenseId } from '../../paper-domain/automation/empirical-contract.mjs';
 
 function escapeTexText(value) {
   return String(value ?? '')
@@ -34,7 +23,7 @@ function escapeTexText(value) {
 }
 
 async function readSourceText(root, row) {
-  const mainTex = repoPath(root, row?.task?.mainTex);
+  const mainTex = resolveRepoPath(root, row?.task?.mainTex);
   const text = await readTextIfExists(mainTex);
   return normalizeText(text || '');
 }
@@ -375,6 +364,9 @@ async function buildLocalBenchmarkRegistry({
   runtimeRoot,
   datasetRoot = null,
   benchmarkId = null,
+  datasetLicenseId = null,
+  datasetOperatorAuthorizationHash = null,
+  datasetSplitManifestHash = null,
   paperTask = null,
   createdAt = null,
 } = {}) {
@@ -384,6 +376,15 @@ async function buildLocalBenchmarkRegistry({
   let resolvedDatasetRoot = null;
   let registryManifest = null;
   if (normalizedDatasetRoot) {
+    if (!isDatasetLicenseId(datasetLicenseId)) blockers.push('authorized_dataset_license_invalid');
+    if (String(datasetLicenseId || '').startsWith('LicenseRef-')
+      && !/^sha256:[0-9a-f]{64}$/i.test(String(datasetOperatorAuthorizationHash || ''))) {
+      blockers.push('authorized_dataset_operator_authorization_missing');
+    }
+    if (datasetSplitManifestHash
+      && !/^sha256:[0-9a-f]{64}$/i.test(String(datasetSplitManifestHash))) {
+      blockers.push('authorized_dataset_split_manifest_hash_invalid');
+    }
     if (path.isAbsolute(normalizedDatasetRoot)) {
       resolvedDatasetRoot = path.resolve(normalizedDatasetRoot);
     } else {
@@ -450,6 +451,9 @@ async function buildLocalBenchmarkRegistry({
       }
       : null,
     datasetRoot: resolvedDatasetRoot ? relativePath(root, resolvedDatasetRoot) : null,
+    datasetLicenseId: normalizedDatasetRoot ? datasetLicenseId : null,
+    datasetOperatorAuthorizationHash: normalizedDatasetRoot ? datasetOperatorAuthorizationHash : null,
+    datasetSplitManifestHash: normalizedDatasetRoot ? datasetSplitManifestHash : null,
     primaryDataset,
     datasetFiles: records,
     datasetFileCount: records.length,
@@ -496,6 +500,9 @@ function buildDatasetAccessContract({
       hash: record.hash,
       filename: record.filename,
       sizeBytes: record.sizeBytes,
+      licenseId: localBenchmarkRegistry.datasetLicenseId,
+      operatorAuthorizationHash: localBenchmarkRegistry.datasetOperatorAuthorizationHash,
+      splitManifestHash: localBenchmarkRegistry.datasetSplitManifestHash,
       licenseBoundary: 'operator_authorized_local_data',
       externalAccessRequired: false,
     }))
@@ -516,8 +523,13 @@ function buildDatasetAccessContract({
     datasetMode,
     authorizedDatasets,
     primaryDataset: authorizedLocalDatasetReady ? localBenchmarkRegistry.primaryDataset : null,
+    datasetLicenseId: authorizedLocalDatasetReady ? localBenchmarkRegistry.datasetLicenseId : null,
+    datasetOperatorAuthorizationHash: authorizedLocalDatasetReady
+      ? localBenchmarkRegistry.datasetOperatorAuthorizationHash
+      : null,
+    datasetSplitManifestHash: authorizedLocalDatasetReady ? localBenchmarkRegistry.datasetSplitManifestHash : null,
     primaryDatasetAbsolutePath: authorizedLocalDatasetReady
-      ? repoPath(root, localBenchmarkRegistry.primaryDataset.path)
+      ? resolveRepoPath(root, localBenchmarkRegistry.primaryDataset.path)
       : null,
     datasetRoot: authorizedLocalDatasetReady
       ? localBenchmarkRegistry.datasetRoot
@@ -557,6 +569,13 @@ function buildDatasetLicenseProvenanceGate({
   if (datasetContract?.datasetMode === 'authorized_local_dataset' && !datasetContract.primaryDataset?.hash) {
     blockers.push('authorized_primary_dataset_hash_missing');
   }
+  if (datasetContract?.datasetMode === 'authorized_local_dataset'
+    && !isDatasetLicenseId(datasetContract.datasetLicenseId)) blockers.push('authorized_dataset_license_invalid');
+  if (datasetContract?.datasetMode === 'authorized_local_dataset'
+    && String(datasetContract.datasetLicenseId || '').startsWith('LicenseRef-')
+    && !/^sha256:[0-9a-f]{64}$/i.test(String(datasetContract.datasetOperatorAuthorizationHash || ''))) {
+    blockers.push('authorized_dataset_operator_authorization_missing');
+  }
   const gate = {
     version: 1,
     kind: 'DatasetLicenseProvenanceGate',
@@ -575,6 +594,9 @@ function buildDatasetLicenseProvenanceGate({
         datasetRoot: datasetContract.datasetRoot || null,
         primaryDatasetPath: datasetContract.primaryDataset?.path || null,
         primaryDatasetHash: datasetContract.primaryDataset?.hash || null,
+        datasetLicenseId: datasetContract.datasetLicenseId || null,
+        operatorAuthorizationHash: datasetContract.datasetOperatorAuthorizationHash || null,
+        splitManifestHash: datasetContract.datasetSplitManifestHash || null,
         datasetFileCount: localBenchmarkRegistry?.datasetFileCount || 0,
       }
       : {
@@ -587,6 +609,9 @@ function buildDatasetLicenseProvenanceGate({
     licenseBoundary: datasetContract?.datasetMode === 'authorized_local_dataset'
       ? 'operator_authorized_local_data'
       : 'local_generated_no_external_data',
+    datasetLicenseId: datasetContract?.datasetLicenseId || null,
+    datasetOperatorAuthorizationHash: datasetContract?.datasetOperatorAuthorizationHash || null,
+    datasetSplitManifestHash: datasetContract?.datasetSplitManifestHash || null,
     blockers: uniqueStrings(blockers, 32),
     safety: {
       localOnly: true,
@@ -650,4 +675,14 @@ function buildTableFigureSpec({
 }
 
 
-export { repoPath, escapeTexText, readSourceText, countSignals, buildEmpiricalBenchmarkRegistry, selectBenchmarkSuite, judgeEmpiricalDesign, buildEmpiricalAnalysisPlan, unsafeDatasetPath, buildLocalBenchmarkRegistry, buildDatasetAccessContract, buildDatasetLicenseProvenanceGate, buildTableFigureSpec };
+export {
+  escapeTexText,
+  readSourceText,
+  buildEmpiricalBenchmarkRegistry,
+  selectBenchmarkSuite,
+  buildEmpiricalAnalysisPlan,
+  buildLocalBenchmarkRegistry,
+  buildDatasetAccessContract,
+  buildDatasetLicenseProvenanceGate,
+  buildTableFigureSpec,
+};

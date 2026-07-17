@@ -11,16 +11,25 @@ The single current architecture/runtime status is maintained in
 
 ## Automation Plane
 
-The automation plane does not require owner signatures, academic authority
-keys, legacy acceptance, cold-volume availability, or a live submission
-provider. One paper is one persistent `PaperCampaign` DAG; several campaigns
-and their dependency-ready nodes may run concurrently. SQLite leases,
-idempotent node results, bounded retries and expired-lease recovery provide
-crash-safe execution.
+The draft automation plane does not require owner signatures, academic
+authority keys, legacy acceptance, cold-volume availability, or a live
+submission provider. Academic empirical promotion separately requires its
+externally authorized dataset/harness and release-attestor trust boundaries. One
+paper is one persistent `PaperCampaign` DAG; several campaigns
+and their dependency-ready nodes may run concurrently. SQLite
+generation-fenced leases, immutable prepared results, bounded retries and
+expired-lease recovery provide crash-safe execution. A stale worker cannot
+heartbeat, fail or complete a newer attempt, and recovery can integrate a
+prepared result without rerunning its external executor.
 
-Agent work uses isolated OpenClaw child sessions by default, with a local
-structured Ollama model as the offline fallback and authenticated Codex as an
-optional backend.
+Draft agent work may use isolated OpenClaw child sessions or a local structured
+Ollama circuit breaker. Research-grade campaigns fail closed unless an
+explicit-model, private, authenticated Codex author and a separately rooted
+Codex formal reviewer pass configuration preflight. The strict research-status
+command additionally performs one explicit, read-only, ephemeral live-model
+canary for each role; every later campaign call revalidates the selected binary,
+credential root, config content/identity and authentication before execution.
+Draft backends are never silently promoted to research-grade authorship.
 Empirical workers support Python, Node, R, Julia, Lean and LaTeX when their
 host runtimes are installed, with network isolation, timeouts, CPU/memory/PID
 limits, optional GPU access and declared artifact export. Code and LaTeX
@@ -31,12 +40,25 @@ local automation decision, never an academic acceptance or submission grant.
 ```bash
 npm run store:migrate
 npm run automation:status
+npm run automation:research-status
 npm run automation:selftest
 HEPTA_AGENT_LOCAL_PROVIDER=ollama \
   HEPTA_AGENT_MODEL=<local-model> npm run automation:agent-smoke
 HEPTA_AGENT_MODEL=<local-model> npm run automation:campaign-smoke
 npm run paper:campaign -- --help
+npm run hepta-paper -- operator autonomous-research -- --help
 ```
+
+The autonomous command can machine-select a bounded, versioned agenda and run a
+persisted research-to-package DAG without research-time human checkpoints. It
+separates the empirical hypothesis from a non-circular Lean support theorem,
+uses independent author/reviewer principals, performs original plus replay
+experiments, independently recomputes their raw events, binds trusted
+tables/figures/captions, rebuilds the PDF from source in a fresh sandbox,
+revises against fresh referee evidence, and can request a signed qualification
+from an external machine service. It does not claim universal
+scientific novelty or natural-language-to-Lean equivalence, and it never
+self-signs missing dataset, provider-account or release trust.
 
 Budget-stopped campaigns can be continued in place only after an explicit
 budget increase. If strict referee convergence exhausts the configured rounds,
@@ -54,40 +76,53 @@ hash, preserves completed results, and reopens or appends only the required
 nodes. Non-budget operational stops cannot be resumed, and non-convergence
 cannot be bypassed by packaging.
 
-The optional TaskFlow integration mirrors long-lived campaign checkpoints and
-waits; the native campaign store remains the DAG source of truth. Details are
-in `paper-core/docs/automation-plane.md`.
+Campaign completion produces a typed, immutable handoff rather than granting
+submission authority directly:
+
+`campaign → AutomationPromotionCandidate → build-package → prepared CampaignReleaseBundle → fenced package completion/current-release authority → submission verification`
+
+The experimental TaskFlow pilot is limited to reviewed-submission waiting and
+is absent from campaign and production composition roots. The native campaign
+store is the only DAG execution authority. Details are in
+`paper-core/docs/automation-plane.md`.
 
 ## Layout
 
 - `core/` is a vendored fork with an accepted content-hash baseline in
   `core/CORE_BASELINE.json`. It records historical upstream commit
   `3f90aa277a9a1bde6898dc6ddd9d25d49fa94f30`, but does **not** claim byte
-  identity with that now-unavailable snapshot.
+  identity with that now-unavailable snapshot. It is a reference package, is
+  not imported by the active production graph, and is governed by
+  `paper-core/docs/reference-and-compatibility-boundaries.md`.
 - `paper-domain/` contains pure paper/submission contracts and the workflow
   mode vocabulary.
-- `paper-application/` contains execution context, workflow orchestration, use
-  cases, bounded planning and reporting.
+- `paper-application/` contains execution context, campaign orchestration,
+  bounded planning and reporting.
 - `paper-ports/` contains Store, Artifact, Worker, FormalVerifier, and
   SubmissionExecutor boundaries.
 - `paper-adapters/` contains native paper-domain and infrastructure adapters.
 - `paper-core/` contains CLI composition, selftests and compatibility facades;
   it is not a second contract or runtime-utility owner.
-- `workflow-kernel/` is the small active, domain-neutral transition/hash
+- `workflow-kernel/` is the small active, domain-neutral hash/runtime utility
   kernel. The full vendored core remains a reference fork.
 
 Production defaults are physically separated: repository
 `/data/home-data/hepta-paper`, assets `/data/home-data/hepta-paper-assets`,
-runtime/store `/data/home-data/hepta-paper/runtime`, and immutable retirement
+runtime/store `/data/home-data/hepta-paper-runtime/native-runtime`, and immutable retirement
 references `/data/home-data/hepta-paper-legacy-reference`. The live
 `/data/home-data/paper_factory` tree has been retired and physically removed.
+Every writable composition bootstrap repeats a symlink-safe real-path overlap
+check, so an explicit `--runtime-root` cannot place mutable runtime state back
+inside the repository, assets, or legacy reference tree.
 
 ## Migration Rule
 
-The paper workflow engine owns ordered stage execution and receipts. Generic
-dispatch, replay, receipt, reconciliation, and settlement concepts are exposed
-through native contracts and ports. The full vendored core is hash-bound but is
-not claimed to be the active runtime implementation of every paper capability.
+The campaign DAG is the sole execution authority. The retired ordered-stage
+workflow engine, stage handlers, and local diagnostic loop are absent from the
+active tree. Dispatch, replay, receipt, reconciliation, and settlement concepts
+are exposed through native contracts and ports. The full vendored core is
+hash-bound but is not claimed to be the active runtime implementation of every
+paper capability.
 
 The old `paper_factory` tree no longer participates in runtime or development.
 Historical semantics can be inspected only through the immutable retirement
@@ -118,14 +153,16 @@ submission_status, next_action, auto_level`.
 
 The clean overlay now lives outside the hepta snapshot:
 
-- `paper-domain/` owns paper contracts; `paper-application/` owns the batch
-  workflow; `paper-core/` owns CLI composition, compatibility facades and
+- `paper-domain/` owns paper contracts; `paper-application/` owns campaign use
+  cases; `paper-core/` owns CLI composition, bounded migration facades and
   selftests.
 - `paper-adapters/` owns plugin-style paper domain adapters.
-- `runtime/` is ignored output for local build/package/report dry runs.
+- `runtime/` is ignored output for explicitly local build/package/report dry
+  runs; it is not the default mutable production root.
 - `store/migrations/` owns the hepta-native SQLite schema. The runtime database
-  is `runtime/hepta-paper.sqlite`; no root-level legacy SQLite placeholder is
-  retained.
+  defaults to
+  `/data/home-data/hepta-paper-runtime/native-runtime/hepta-paper.sqlite`; no
+  root-level legacy SQLite placeholder is retained.
 
 Run:
 
@@ -134,12 +171,13 @@ npm run store:status
 npm run store:logical-integrity
 npm run workspace:verify-decoupled
 npm run store:restore-drill
-npm run core:integrity
+npm run reference:integrity
+npm run safety:all
 npm test
 npm run paper:selftest
 npm run paper:authority-selftest
 npm run paper:architecture-selftest
-npm run taskflow:pilot-selftest
+npm run experimental:taskflow-selftest
 npm run coverage:architecture
 npm run coverage:critical-modules
 npm run coverage:repository
@@ -154,9 +192,9 @@ npm run legacy:fixture-verify
 npm run legacy:matrix-reference-status
 npm run migration:retirement-status
 npm run offhost:worm-status
-node paper-core/bin/paper-production-core.mjs proposal --idea "distributionally robust reinforcement learning for stochastic control" --discipline "machine learning" --venue NeurIPS --write-report
-node paper-core/bin/paper-production-core.mjs proposal --idea "distributionally robust reinforcement learning for stochastic control" --discipline "machine learning" --venue NeurIPS --approved --materialize-source --write-report
-node paper-core/bin/paper-production-core.mjs proposal --paper distributionally_robust_rl_for_stochastic_control --idea "distributionally robust reinforcement learning for stochastic control" --discipline "machine learning" --venue NeurIPS --title "Distributionally Robust RL for Stochastic Control" --approved --materialize-source --stage-inventory --write-report
+node paper-core/bin/paper-production-core.mjs proposal --idea "distributionally robust reinforcement learning for stochastic control" --discipline "machine learning" --venue NeurIPS --scientific-claim-document /secure/path/SCIENTIFIC_CLAIMS.json --write-report
+node paper-core/bin/paper-production-core.mjs proposal --idea "distributionally robust reinforcement learning for stochastic control" --discipline "machine learning" --venue NeurIPS --scientific-claim-document /secure/path/SCIENTIFIC_CLAIMS.json --approval-document /secure/path/PROPOSAL_APPROVAL_DOCUMENT.json --materialize-source --write-report
+node paper-core/bin/paper-production-core.mjs proposal --paper distributionally_robust_rl_for_stochastic_control --idea "distributionally robust reinforcement learning for stochastic control" --discipline "machine learning" --venue NeurIPS --title "Distributionally Robust RL for Stochastic Control" --scientific-claim-document /secure/path/SCIENTIFIC_CLAIMS.json --approval-document /secure/path/PROPOSAL_APPROVAL_DOCUMENT.json --materialize-source --stage-inventory --write-report
 node paper-core/bin/paper-production-core.mjs batch-run --mode inventory --paper distributionally_robust_rl_for_stochastic_control
 node paper-core/bin/paper-production-core.mjs batch-run --mode local-build --paper distributionally_robust_rl_for_stochastic_control --execute
 node paper-core/bin/paper-production-core.mjs batch-run --mode local-dry-run --paper distributionally_robust_rl_for_stochastic_control
@@ -168,12 +206,21 @@ node paper-core/bin/paper-production-core.mjs batch-run --mode reviewed-submit
 node paper-core/bin/paper-production-core.mjs batch-run --mode local-review-loop --paper distributionally_robust_rl_for_stochastic_control
 ```
 
-The proposal staging path writes only `runtime/proposal-staging/*.json`, a
-runtime source skeleton, and proposal-derived seed contracts. It lets inventory
-see an approved proposal as a staged `PaperTask` with
+`npm run scripts:surface` prints the supported operator plus verification,
+maintenance, retirement, compatibility, experimental and internal command
+groups. Only the operator group belongs to the production operator surface.
+The concise operational runbook is `paper-core/docs/OPERATIONS.md`.
+
+The proposal staging path requires an Ed25519-signed approval document verified
+by an active `proposal_approver` public key in
+`runtime/trust/AUTHORITY_TRUST_STORE.json`; the removed `--approved` boolean is
+rejected. It writes only `runtime/proposal-staging/*.json`, a runtime source
+skeleton, the signed approval and verification receipt, and proposal-derived
+seed contracts. It lets inventory see an approved proposal as a staged `PaperTask` with
 `research_verify_status=proposal_seed_present`, without mutating
 the hepta-native store, retired legacy data, YAML registry files, or
-external venues.
+external venues. See `paper-core/docs/proposal-approval-authority.md` for the
+signed schema and two-pass draft/approval flow.
 
 The deterministic empirical runner is pipeline smoke only. Its simulator
 encodes method effects and therefore cannot satisfy the academic evidence gate.
@@ -183,8 +230,9 @@ verified native worker receipts. Deterministic local referee personas have no
 academic acceptance authority. The complete authority protocol is documented
 in `paper-core/docs/authority-pipeline.md`.
 
-Legacy capability decisions and the target layering are documented in
-`paper-core/docs/architecture-v3.md`. The 249 retired legacy source decisions
+Legacy capability decisions and the current target layering are documented in
+`paper-core/docs/ARCHITECTURE.md` and the versioned records under
+`paper-core/docs/history/`. The 249 retired legacy source decisions
 are grouped into 19 hash-bound families. All 249 currently have
 `local_admin_delegated` acceptance; none is represented as independent
 external-owner acceptance. Fourteen production-source-bound conformance
@@ -203,6 +251,38 @@ a content-addressed recovery store and independently restore-drilled. Release
 verification never treats a missing volume or absent CAS manifest as
 operational proof.
 
+Schema migrations 021–023 add generation fencing for jobs, attempt/revision
+fencing plus recoverable prepared results for campaign nodes, and restore-proof
+qualification for workspace retention. Workflow projection and its effective
+ledger receipt now commit atomically. Backup deletion requires trusted backup
+and restore-drill evidence, retains at least two generations, and records a
+durable intent before deletion.
+
+Deploy 021–023 as an offline cutover: stop all old job/campaign/submission
+workers, expire or recover/clear every outstanding job, campaign, delivery,
+and response-consumption lease marker, checkpoint and close the old store, then
+run `npm run store:migrate`. The migration command checks the old schema and
+lease state through a read-only connection before opening the database for
+upgrade; live leases or an active WAL reject the cutover without changing its
+schema or bytes. Verify schema version 23 and the hash-matched 021–023 history
+with `npm run store:status`, then restart only new workers. Rolling mixed
+old/new workers are unsupported. Scoped production roots refuse startup
+against an older or mismatched schema. No writable runtime root, including the
+explicit legacy compatibility facade, runs migrations implicitly; run
+`store:migrate` first. Every production surface that writes a store, report,
+proposal, staging record or administrative receipt first rejects physical or
+symlink-resolved overlap among the source workspace, asset, runtime and legacy
+roots.
+
+Planning and dry-run modes open no writable store, run no migration and create
+no database. Reports are written only when `--write-report` is explicit; their
+content-addressed artifacts and local provenance receipts live under the
+runtime report directories and never enter the business SQLite trust plane.
+The default immutable preview refuses an active SQLite WAL/SHM, so checkpoint
+and close writers before an operator preview. Cancellation propagates an
+`AbortSignal` to the child process group; a late or cancelled result is rejected
+again at the fenced integration boundary.
+
 All selftests, capability checks, coverage commands and release verification
 run against disposable runtime state. Read-only status commands use a
 read-only StorePort. The signed release binds both SQLite bytes and a canonical
@@ -213,8 +293,9 @@ the immutable archive; it no longer reads the live legacy working directory.
 Executed workflows may also write a hash-bound native `workflow_states`
 projection through `WorkflowStatePort`; its matching ledger receipt remains
 the audit anchor. Planning and status commands do not write this projection.
-The optional OpenClaw TaskFlow pilot is documented in
-`paper-core/docs/taskflow-pilot.md`. It is disabled by default and coordinates
+The experimental OpenClaw TaskFlow pilot is documented in
+`paper-core/docs/experimental-taskflow-pilot.md`. It is disabled by default,
+is not reachable from a production composition root, and coordinates
 external waits for one allowlisted reviewed-submission attempt without owning
 business gates, evidence validation, credentials, release locks, or authority.
 

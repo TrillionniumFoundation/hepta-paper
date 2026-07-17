@@ -1,13 +1,10 @@
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { sha256FileSync } from '../../workflow-kernel/runtime/file-utils.mjs';
+import { isPathWithin } from '../../workflow-kernel/runtime/path-utils.mjs';
 import { readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
-
-function sha256File(candidate) {
-  return `sha256:${crypto.createHash('sha256').update(fs.readFileSync(candidate)).digest('hex')}`;
-}
 
 function safeRelative(value) {
   const normalized = String(value || '').replace(/\\/g, '/').replace(/^\*+/, '').trim();
@@ -48,7 +45,7 @@ export function verifyPackageBundle({
   if (expectedArchiveManifest && expectedArchiveManifest.status !== 'scoped_source_tree_verified') {
     blockers.push('package_source_tree_manifest_not_verified', ...(expectedArchiveManifest.blockers || []));
   }
-  if (bundle !== root && !bundle.startsWith(`${root}${path.sep}`)) blockers.push('package_directory_outside_scope');
+  if (!isPathWithin(root, bundle)) blockers.push('package_directory_outside_scope');
   const recordPath = path.join(bundle, 'PACKAGE_RECORD.json');
   const sumsPath = path.join(bundle, 'SHA256SUMS.txt');
   if (!fs.existsSync(recordPath)) blockers.push('package_record_missing');
@@ -68,9 +65,9 @@ export function verifyPackageBundle({
       const relative = match[2].trim();
       if (!safeRelative(relative)) { blockers.push(`package_path_unsafe:${relative}`); continue; }
       const candidate = path.resolve(root, relative);
-      if (candidate !== root && !candidate.startsWith(`${root}${path.sep}`)) { blockers.push(`package_path_outside_scope:${relative}`); continue; }
+      if (!isPathWithin(root, candidate)) { blockers.push(`package_path_outside_scope:${relative}`); continue; }
       if (!fs.existsSync(candidate) || !fs.lstatSync(candidate).isFile() || fs.lstatSync(candidate).isSymbolicLink()) { blockers.push(`package_file_missing_or_unsafe:${relative}`); continue; }
-      const actual = sha256File(candidate);
+      const actual = sha256FileSync(candidate);
       if (actual !== `sha256:${match[1].toLowerCase()}`) blockers.push(`package_file_hash_mismatch:${relative}`);
       verifiedFiles.push({ path: relative, hash: actual, bytes: fs.statSync(candidate).size });
     }
@@ -96,7 +93,7 @@ export function verifyPackageBundle({
     const candidate = path.isAbsolute(artifact.path)
       ? path.resolve(artifact.path)
       : path.resolve(artifactBase, artifact.path);
-    const scope = allowedArtifactRoots.find((candidateRoot) => candidate === candidateRoot || candidate.startsWith(`${candidateRoot}${path.sep}`));
+    const scope = allowedArtifactRoots.find((candidateRoot) => isPathWithin(candidateRoot, candidate));
     if (!scope) {
       blockers.push(`package_artifact_outside_authorized_scope:${artifact.path}`);
       continue;
@@ -158,7 +155,7 @@ export function verifyPackageBundle({
           });
           if (extracted.status !== 0) { issues.push(`archive_member_read_failed:${expected.path}`); continue; }
           const content = Buffer.isBuffer(extracted.stdout) ? extracted.stdout : Buffer.from(extracted.stdout || '');
-          const hash = `sha256:${crypto.createHash('sha256').update(content).digest('hex')}`;
+          const hash = hashBytes(content);
           if (hash !== expected.hash) issues.push(`archive_member_hash_mismatch:${expected.path}`);
           if (content.length !== Number(expected.bytes)) issues.push(`archive_member_size_mismatch:${expected.path}`);
         }
@@ -171,7 +168,7 @@ export function verifyPackageBundle({
     version: 1,
     kind: 'PackageVerificationReceipt',
     status: blockers.length ? 'package_verification_blocked' : 'package_verification_passed',
-    packageRecordHash: fs.existsSync(recordPath) ? sha256File(recordPath) : null,
+    packageRecordHash: fs.existsSync(recordPath) ? sha256FileSync(recordPath) : null,
     verifiedArtifactPackageHash: record?.artifactPackageHash || null,
     sourceTreeManifestHash: record?.sourceTreeManifestHash || null,
     paperId: record?.paperId || record?.slug || null,

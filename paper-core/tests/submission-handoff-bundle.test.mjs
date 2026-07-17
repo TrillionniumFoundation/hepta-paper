@@ -23,7 +23,7 @@ test('submission handoff exporter creates a portable hash-bound artifact bundle'
   const repository = createFilesystemArtifactRepository({
     scopeRoot: root,
     receiptLedger: { record: () => ({ receiptId: 'ledger-receipt' }) },
-    clock: { nowIso: () => '2026-07-13T00:00:00.000Z' },
+    clock: { now: () => new Date('2026-07-13T00:00:00.000Z'), nowIso: () => '2026-07-13T00:00:00.000Z' },
   });
   const packageVerificationReceipt = { status: 'package_verification_passed', verifiedArtifactPackageHash: 'sha256:candidate', packageVerificationReceiptHash: 'sha256:verification' };
   const artifactPackage = {

@@ -27,7 +27,19 @@ import { buildExecutorCapabilities } from '../../paper-ports/executor-capabiliti
 import { submissionExecutorDescriptor } from '../../paper-ports/submission-executor-port.mjs';
 import { buildReviewedSubmissionDecisionPacket } from '../../paper-domain/submission/reviewed-submission-decision.mjs';
 import { buildReviewedVenueEvidence } from '../../paper-domain/submission/reviewed-venue-evidence.mjs';
+import {
+  buildControlledExternalExecutorReceipt,
+  buildExternalExecutorHandoffOutbox,
+  buildExternalSubmissionReceipt,
+  buildFreshVenueEvidenceBundle,
+  buildReviewedSubmitPreflightPacket,
+  buildSubmissionApprovalPacket,
+  buildSubmissionReceiptInbox,
+  buildSubmissionReconciliation,
+  buildSubmissionReplayGuard,
+} from '../../paper-domain/contracts/submission.mjs';
 import { buildVenueObservationSubject, verifyReviewedVenueObservationSource } from '../../paper-adapters/submission/venue-observation-verification.mjs';
+import { resolveReceiptIssuerPolicy } from '../../paper-domain/evidence/receipt-issuer-policy-registry.mjs';
 
 function keyMaterial(keyId, subjectId, roles) {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
@@ -147,11 +159,12 @@ try {
   const sourceHashBeforeWorkers = await sha256File(path.join(sourceRoot, 'main.tex'));
   let artifactLedgerCounter = 0;
   const artifactLedgerRows = new Map();
+  const artifactIssuerPolicy = resolveReceiptIssuerPolicy('artifact-repository');
   const artifactReceiptLedger = {
     record(receipt) {
       const receiptId = `authority-selftest:${++artifactLedgerCounter}`;
       const receiptHash = receipt.writeReceiptHash || receipt.receiptHash || hashPaperRecord(receipt.kind || 'Receipt', receipt);
-      artifactLedgerRows.set(receiptId, { receipt_id: receiptId, receipt_sha256: receiptHash, receipt_json: JSON.stringify(receipt), stream: receipt.kind === 'ArtifactWriteReceipt' ? 'artifact-writes' : 'authority-selftest', writer_id: 'authority-selftest', writer_kind: receipt.kind === 'ArtifactWriteReceipt' ? 'content-addressed-repository' : 'isolated-selftest', writer_trusted: 1, issuer_policy_id: 'authority-selftest-fixture', issuer_policy_hash: `sha256:${'f'.repeat(64)}`, issuer_assurance: 'test_only' });
+      artifactLedgerRows.set(receiptId, { receipt_id: receiptId, receipt_sha256: receiptHash, receipt_json: JSON.stringify(receipt), kind: receipt.kind, status: receipt.status || 'recorded', stream: receipt.kind === 'ArtifactWriteReceipt' ? 'artifact-writes' : 'authority-selftest', writer_id: artifactIssuerPolicy.writerId, writer_kind: artifactIssuerPolicy.writerKind, writer_trusted: 1, issuer_policy_id: 'artifact-repository', issuer_policy_hash: artifactIssuerPolicy.issuerPolicyHash, issuer_assurance: artifactIssuerPolicy.assurance });
       return { receiptId, receiptHash };
     },
     get(receiptId) { return artifactLedgerRows.get(receiptId) || null; },
@@ -160,7 +173,7 @@ try {
   const artifactRepositoryFactory = (scopeRoot) => createFilesystemArtifactRepository({
     scopeRoot,
     casRoot: path.join(runtimeRoot, 'artifact-cas'),
-    clock: { nowIso: () => new Date().toISOString() },
+    clock: { now: () => new Date(), nowIso: () => new Date().toISOString() },
     receiptLedger: artifactReceiptLedger,
   });
   await Promise.all([
@@ -494,6 +507,85 @@ try {
   assert.equal(liveAuthorizationReceipt.status, 'live_submission_authorization_verified');
   assert.equal(liveAuthorizationReceipt.liveExternalActionAuthorized, true);
   assert.equal(liveAuthorizationReceipt.authorizerSubjectIds.length, 2);
+
+  const emptyLiveSubject = buildLiveSubmissionAuthorizationSubject();
+  assert.equal(emptyLiveSubject.paperId, null);
+  assert.equal(emptyLiveSubject.venueTarget, null);
+  assert.equal(emptyLiveSubject.providerCapabilityVerificationReceiptHash, null);
+  assert.ok(emptyLiveSubject.liveSubmissionAuthorizationSubjectHash);
+
+  const missingLiveAuthorization = await verifyLiveSubmissionAuthorization({
+    root,
+    runtimeRoot: null,
+    paperTask,
+    now: fixedNow,
+  });
+  assert.equal(missingLiveAuthorization.status, 'live_submission_authorization_blocked');
+  assert.deepEqual(missingLiveAuthorization.blockers, ['live_submission_authorization_missing']);
+
+  await writeJson(path.join(inbox, 'LIVE_SUBMISSION_AUTHORIZATION.json'), {
+    ...liveAuthorization,
+    version: 2,
+    kind: 'MalformedLiveSubmissionAuthorization',
+    paperId: 'wrong-paper',
+    taskKey: 'wrong-task',
+    allowLiveExternalAction: false,
+    environment: 'staging',
+    portalAction: 'preview_manuscript',
+    nonce: 'short',
+    singleUse: false,
+    provider: null,
+    accountId: null,
+    responseDueAt: 'not-a-time',
+  });
+  const malformedLiveAuthorization = await verifyLiveSubmissionAuthorization({
+    root,
+    runtimeRoot,
+    paperTask,
+    artifactPackage: null,
+    researchReport: null,
+    independentReviewAuthorityReceipt: null,
+    venuePlan: null,
+    semanticPromotionLock: null,
+    trustStoreOverride: trustStore,
+    now: fixedNow,
+    executorDescriptor: null,
+    submissionDecisionPacket: null,
+    reviewedVenueEvidence: null,
+    venueObservationSourceVerificationReceipt: null,
+    providerCapabilityVerificationReceipt: null,
+    redrivePlan: {
+      status: 'redrive_not_ready',
+      redriveDecisionHash: 'sha256:wrong-redrive-decision',
+      dispatchAuthorizationHash: 'sha256:prior-authorization',
+      priorDispatchCycleHash: 'sha256:prior-cycle',
+    },
+    redriveDecision: {
+      status: 'redrive_not_approved',
+      submissionRedriveDecisionHash: 'sha256:different-redrive-decision',
+    },
+  });
+  assert.equal(malformedLiveAuthorization.status, 'live_submission_authorization_blocked');
+  for (const blocker of [
+    'live_submission_authorization_schema_invalid',
+    'live_submission_authorization_paper_id_mismatch',
+    'live_submission_authorization_task_key_mismatch',
+    'live_external_action_not_explicitly_authorized',
+    'live_submission_environment_not_production',
+    'live_submission_portal_action_invalid',
+    'live_submission_authorization_must_be_single_use',
+    'live_submission_authorization_nonce_invalid',
+    'live_submission_provider_scope_missing',
+    'redrive_plan_not_ready',
+    'redrive_decision_not_approved',
+    'redrive_decision_plan_mismatch',
+    'live_submission_artifact_package_missing',
+    'live_submission_semantic_promotion_lock_not_ready',
+    'live_submission_academic_evidence_not_verified',
+    'live_submission_independent_referee_acceptance_missing',
+    'live_submission_response_due_at_invalid',
+  ]) assert.ok(malformedLiveAuthorization.blockers.includes(blocker), blocker);
+
   await writeJson(path.join(inbox, 'LIVE_SUBMISSION_AUTHORIZATION.json'), {
     ...liveAuthorization,
     accountId: 'tampered-account',
@@ -541,7 +633,16 @@ try {
     reviewedVenueEvidenceOverride: reviewedVenueEvidence,
     providerCapabilityVerificationReceipt,
   });
-  assert.equal(lifecycle.approvalPacket.status, 'approved_for_external_executor_handoff');
+  assert.equal(
+    lifecycle.approvalPacket.status,
+    'approved_for_external_executor_handoff',
+    JSON.stringify({
+      approvalPacket: lifecycle.approvalPacket,
+      researchStatus: researchReport.status,
+      researchBlockers: researchReport.blockers,
+      experimentRegistry: researchReport.capabilities?.experimentRegistry,
+    }),
+  );
   assert.equal(lifecycle.approvalPacket.agentApproved, false);
   assert.equal(lifecycle.reviewedSubmitPreflightPacket.status, 'reviewed_submit_preflight_ready_for_external_executor');
   assert.equal(lifecycle.controlledExecutorReceipt.status, 'controlled_external_executor_receipt_recorded');
@@ -550,6 +651,111 @@ try {
   assert.equal(lifecycle.safety.externalActionPerformed, false);
   assert.equal(lifecycle.receipt.externalActionPerformed, false);
   assert.equal(lifecycle.auditArchive.liveSubmitBlocked, true);
+
+  const blockedApprovalPacket = buildSubmissionApprovalPacket({ paperTask });
+  assert.equal(blockedApprovalPacket.status, 'blocked_approval_packet');
+  const blockedVenuePlan = {
+    kind: 'VenueSubmissionPlan',
+    status: 'blocked_plan',
+    venueSubmissionPlanHash: 'sha256:blocked-venue-plan',
+  };
+  const blockedVenueEvidenceBundle = buildFreshVenueEvidenceBundle({
+    paperTask,
+    venuePlan: blockedVenuePlan,
+    requireAcademicEvidence: true,
+  });
+  assert.equal(blockedVenueEvidenceBundle.status, 'blocked_fresh_venue_evidence');
+  const blockedManifest = {
+    kind: 'PaperSubmissionManifest',
+    status: 'blocked_manifest',
+    taskKey: paperTask.taskKey,
+    paperId: paperTask.paperId,
+    action: 'reviewed_submit',
+    manifestHash: 'sha256:blocked-manifest',
+    readyForAdapter: false,
+    blockers: ['selftest_manifest_blocked'],
+  };
+  const blockedReplayGuard = buildSubmissionReplayGuard({
+    manifest: blockedManifest,
+    venueEvidenceBundle: blockedVenueEvidenceBundle,
+    priorReceipt: { receiptHash: 'sha256:prior-receipt', externalActionPerformed: true },
+  });
+  assert.equal(blockedReplayGuard.status, 'blocked_replay_guard');
+  const blockedHandoff = {
+    kind: 'ExternalExecutorHandoff',
+    envelopeHash: 'sha256:blocked-handoff',
+    commandPreview: ['submit'],
+    blockers: ['selftest_handoff_blocked'],
+  };
+  const blockedOutbox = buildExternalExecutorHandoffOutbox({
+    manifest: blockedManifest,
+    handoff: blockedHandoff,
+    replayGuard: blockedReplayGuard,
+  });
+  assert.equal(blockedOutbox.status, 'blocked_outbox_item');
+  const blockedPreflight = buildReviewedSubmitPreflightPacket({
+    paperTask,
+    approvalPacket: blockedApprovalPacket,
+    freshVenueEvidenceBundle: blockedVenueEvidenceBundle,
+    manifest: blockedManifest,
+    replayGuard: blockedReplayGuard,
+    outbox: blockedOutbox,
+  });
+  assert.equal(blockedPreflight.status, 'reviewed_submit_preflight_blocked');
+  const blockedControlledReceipt = buildControlledExternalExecutorReceipt({
+    paperTask,
+    approvalPacket: blockedApprovalPacket,
+    reviewedSubmitPreflightPacket: blockedPreflight,
+    manifest: blockedManifest,
+    outbox: blockedOutbox,
+    replayGuard: blockedReplayGuard,
+    independentReviewAuthorityReceipt: { status: 'blocked' },
+    liveAuthorizationReceipt: { status: 'blocked', provider: 'portal', accountId: 'account' },
+    executorDescriptor: {
+      kind: 'SubmissionExecutorDescriptor',
+      executorId: 'wrong-executor',
+      provider: 'wrong-provider',
+      accountId: 'wrong-account',
+      submissionExecutorDescriptorHash: 'sha256:descriptor',
+    },
+    submissionDecisionPacket: { status: 'blocked' },
+  });
+  assert.equal(blockedControlledReceipt.status, 'controlled_external_executor_blocked');
+  assert.ok(blockedControlledReceipt.blockers.includes('submission_executor_provider_mismatch'));
+  const blockedExternalReceipt = buildExternalSubmissionReceipt({
+    manifest: blockedManifest,
+    outbox: blockedOutbox,
+    venuePlan: blockedVenuePlan,
+    reviewedSubmit: true,
+  });
+  assert.equal(blockedExternalReceipt.result, 'blocked');
+  const blockedInbox = buildSubmissionReceiptInbox({
+    receipt: {
+      ...blockedExternalReceipt,
+      outboxHash: 'sha256:wrong-outbox',
+      externalActionPerformed: true,
+    },
+    outbox: blockedOutbox,
+  });
+  assert.equal(blockedInbox.status, 'blocked_receipt_inbox');
+  const blockedReconciliation = buildSubmissionReconciliation({
+    manifest: blockedManifest,
+    outbox: blockedOutbox,
+    receipt: {
+      ...blockedExternalReceipt,
+      manifestHash: 'sha256:wrong-manifest',
+      outboxHash: 'sha256:wrong-outbox',
+      externalActionPerformed: true,
+    },
+    venueStateProof: {
+      kind: 'VenueStateProof',
+      receiptHash: 'sha256:wrong-receipt',
+      venueStateProofHash: 'sha256:blocked-venue-proof',
+      externalStateChanged: true,
+    },
+  });
+  assert.equal(blockedReconciliation.status, 'blocked_reconciliation');
+  assert.ok(blockedReconciliation.blockers.includes('unexpected_external_state_change'));
 
   const expiredAuthorizationReceipt = await verifyLiveSubmissionAuthorization({
     root,

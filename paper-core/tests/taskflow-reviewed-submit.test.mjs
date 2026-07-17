@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { openClawTaskFlowRuntimeStatus } from '../../paper-adapters/orchestration/openclaw-taskflow-adapter.mjs';
+import { openClawTaskFlowRuntimeStatus } from '../../paper-adapters/experimental/taskflow/openclaw-taskflow-adapter.mjs';
 import {
   advanceReviewedSubmitTaskFlow,
   buildReviewedSubmitDomainSnapshot,
   buildReviewedSubmitCoordinationPlan,
   startReviewedSubmitTaskFlow,
-} from '../../paper-application/orchestration/reviewed-submit-taskflow.mjs';
+} from '../../paper-application/experimental/taskflow/reviewed-submit-taskflow.mjs';
 
 function snapshot(overrides = {}) {
   return {

@@ -27,16 +27,28 @@ export function buildEvidenceQualityGate({
     && Boolean(receipt.sourceSnapshotHash)
     && workerLedgerVerifications[index]?.status === 'trusted_ledger_receipt_verified'
   )).flatMap((receipt) => receipt.claimIds || []));
+  const verifiedNativeFormalClaims = new Set(nativeWorkerReceipts.filter((receipt, index) => (
+    receipt?.workerType === 'formal_verifier_lake'
+    && receipt?.status === 'native_research_worker_execution_verified'
+    && receipt?.academicEvidenceEligible === true
+    && workerLedgerVerifications[index]?.status === 'trusted_ledger_receipt_verified'
+    && receipt?.result?.status === 'formal_claim_verified'
+    && receipt?.result?.replayReceipt?.status === 'formal_claim_replay_verified'
+    && Boolean(receipt?.result?.formalCertificateReplayReceiptHash)
+  )).flatMap((receipt) => receipt.claimIds || []));
   const verifiedExperimentClaims = new Set(experimentEvidenceBindings.filter((binding) => (
     binding?.status === 'experiment_evidence_binding_verified'
     && binding?.trustedLedgerReceiptsVerified === true
-    && binding?.artifactSourcesVerified === true
+    && (binding?.artifactSourcesVerified === true || binding?.rawArtifactSourcesVerified === true)
   )).flatMap((binding) => binding.claimIds || []));
-  const verifiedFormalClaims = new Set(formalCertificateIntakes.filter((intake) => (
+  const verifiedFormalClaims = new Set([
+    ...verifiedNativeFormalClaims,
+    ...formalCertificateIntakes.filter((intake) => (
     intake?.status === 'formal_certificate_intake_verified'
     && intake?.trustedLedgerReceiptsVerified === true
     && intake?.artifactSourcesVerified === true
-  )).flatMap((intake) => (intake.claimBindings || []).map((binding) => binding.claimId)));
+    )).flatMap((intake) => (intake.claimBindings || []).map((binding) => binding.claimId)),
+  ]);
   const evidenceClaims = new Set((evidenceIntake?.items || []).flatMap((item) => (
     item.verificationStatus === 'evidence_artifact_verified'
       && item.verifiedHash === item.hash
@@ -48,14 +60,14 @@ export function buildEvidenceQualityGate({
   const claimCoverageResults = (claimRegistry?.claims || []).map((claim) => {
     const planKind = String(claim?.verificationPlan?.kind || claim?.verificationPlan?.type || claim?.claimKind || claim?.riskClass || '').toLowerCase();
     const workerRequired = claim?.verificationPlan?.requiresWorker === true
-      || /(?:formal|proof|theorem|experiment|empirical|reproduc)/.test(planKind);
+      || /(?:formal|proof|theorem)/.test(planKind);
     const formalCertificateRequired = /(?:formal|proof|theorem)/.test(planKind);
     const experimentBindingRequired = /(?:experiment|empirical|reproduc)/.test(planKind);
     const evidenceRequired = claim?.verificationPlan?.requiresEvidence !== false;
     const workerVerified = verifiedWorkerClaims.has(claim.claimId);
     const formalCertificateVerified = verifiedFormalClaims.has(claim.claimId);
     const experimentBindingVerified = verifiedExperimentClaims.has(claim.claimId);
-    const evidenceVerified = evidenceClaims.has(claim.claimId);
+    const evidenceVerified = evidenceClaims.has(claim.claimId) || verifiedNativeFormalClaims.has(claim.claimId);
     return {
       claimId: claim.claimId,
       verificationKind: planKind || 'evidence',
@@ -77,15 +89,18 @@ export function buildEvidenceQualityGate({
   const missingClaimIds = (claimRegistry?.claims || []).map((claim) => claim.claimId).filter((id) => !coveredClaimIds.includes(id));
   const registeredClaimIds = new Set((claimRegistry?.claims || []).map((claim) => claim.claimId));
   const unregisteredWorkerClaimIds = [...verifiedWorkerClaims].filter((id) => !registeredClaimIds.has(id));
+  const unregisteredExperimentClaimIds = [...verifiedExperimentClaims].filter((id) => !registeredClaimIds.has(id));
   const unregisteredEvidenceClaimIds = [...evidenceClaims].filter((id) => !registeredClaimIds.has(id));
+  const evidenceIntakeRequired = (claimRegistry?.claims || []).some((claim) => claim?.verificationPlan?.requiresEvidence !== false);
   const blockers = [
     ...(claimRegistry?.status === 'claim_graph_valid' ? [] : ['claim_graph_not_valid']),
     ...(claimContractReadiness.status === 'claim_contract_readiness_ready' ? [] : claimContractReadiness.blockers),
-    ...(evidenceIntake?.status === 'evidence_intake_ready' ? [] : ['evidence_intake_not_verified']),
+    ...(!evidenceIntakeRequired || evidenceIntake?.status === 'evidence_intake_ready' ? [] : ['evidence_intake_not_verified']),
     ...missingClaimIds.map((id) => `claim_evidence_coverage_missing:${id}`),
     ...unregisteredWorkerClaimIds.map((id) => `worker_claim_not_registered_in_manuscript:${id}`),
+    ...unregisteredExperimentClaimIds.map((id) => `experiment_claim_not_registered_in_manuscript:${id}`),
     ...unregisteredEvidenceClaimIds.map((id) => `evidence_claim_not_registered_in_manuscript:${id}`),
   ];
-  const record = { version: 5, kind: 'EvidenceQualityGate', paperId: paperTask?.paperId || null, status: blockers.length ? 'evidence_quality_blocked' : 'evidence_quality_ready', claimContractReadiness, claimCoverageResults, coveredClaimIds, missingClaimIds, unregisteredWorkerClaimIds, unregisteredEvidenceClaimIds, workerLedgerVerifications, verifiedFormalClaimIds: [...verifiedFormalClaims].sort(), verifiedExperimentClaimIds: [...verifiedExperimentClaims].sort(), blockers: [...new Set(blockers)] };
+  const record = { version: 6, kind: 'EvidenceQualityGate', paperId: paperTask?.paperId || null, status: blockers.length ? 'evidence_quality_blocked' : 'evidence_quality_ready', evidenceIntakeRequired, claimContractReadiness, claimCoverageResults, coveredClaimIds, missingClaimIds, unregisteredWorkerClaimIds, unregisteredExperimentClaimIds, unregisteredEvidenceClaimIds, workerLedgerVerifications, verifiedNativeFormalClaimIds: [...verifiedNativeFormalClaims].sort(), verifiedFormalClaimIds: [...verifiedFormalClaims].sort(), verifiedExperimentClaimIds: [...verifiedExperimentClaims].sort(), blockers: [...new Set(blockers)] };
   return { ...record, evidenceQualityGateHash: hashRecord('EvidenceQualityGate', record) };
 }

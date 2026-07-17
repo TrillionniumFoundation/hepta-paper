@@ -6,9 +6,13 @@ import test from 'node:test';
 import { runPackageAdapter } from '../../paper-adapters/build-package/index.mjs';
 import { withArtifactWriteContext } from '../../paper-adapters/artifacts/artifact-write-context.mjs';
 import { evaluateManuscriptPromotion } from '../../paper-domain/quality/manuscript-promotion-gate.mjs';
+import { verifyExperimentRegistry } from '../../paper-domain/research/experiment-registry-verifier.mjs';
 import { buildTargetScopeReceipt } from '../../paper-domain/automation/target-scope-policy.mjs';
 import { buildSemanticPromotionLock } from '../../paper-domain/submission/semantic-promotion-lock.mjs';
-import { formalAcademicPromotionBlockers } from '../../paper-adapters/research-verify/worker-runtime.mjs';
+import { bindFormalReviewsToWorkers, formalAcademicPromotionBlockers } from '../../paper-adapters/research-verify/worker-runtime.mjs';
+import { buildFormalClaimContract } from '../../paper-domain/research/formal-claim-contract.mjs';
+import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
+import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { bindPaperTaskQualityProfile, createPaperActionManifest, createPaperTask, PAPER_ACTIONS } from '../../paper-domain/contracts/index.mjs';
 
 function services() {
@@ -87,13 +91,262 @@ test('evidence, experiment and formal blockers fail semantic promotion closed', 
   assert.equal(semantic.status, 'semantic_promotion_locked');
 });
 
+test('a rehashed synthetic registry cannot self-declare academic eligibility', () => {
+  const raw = (name, suffix) => ({
+    name,
+    path: `${name}.ndjson`,
+    hash: `sha256:${suffix.repeat(64)}`,
+    role: `campaign-experiment-raw-events:paper:campaign:node:attempt:${name}`,
+    bytes: 64,
+    artifactWriteReceiptHash: `sha256:${(name === 'raw-events-original' ? 'c' : 'd').repeat(64)}`,
+    ledgerReceiptId: `ledger:${name}`,
+  });
+  const evidencePayload = {
+    version: 3,
+    kind: 'CampaignExperimentEvidenceBinding',
+    status: 'experiment_evidence_binding_verified',
+    experimentId: 'synthetic-fixture',
+    outputArtifacts: [raw('raw-events-original', 'a'), raw('raw-events-independent-replay', 'b')],
+    trustedLedgerReceiptsVerified: true,
+    rawArtifactSourcesVerified: true,
+    rawArtifactLedgerReceiptsVerified: true,
+    assuranceScope: 'synthetic-conformance-only-not-academic-promotion-v1',
+    evidenceClass: 'software-conformance-evidence',
+    promotionScope: 'software-conformance-only',
+    academicPromotionEligible: false,
+    blockers: [],
+  };
+  const evidenceBinding = {
+    ...evidencePayload,
+    experimentEvidenceBindingHash: hashRecord('CampaignExperimentEvidenceBinding', evidencePayload),
+  };
+  const acceptancePayload = {
+    version: 1,
+    kind: 'ExperimentAcceptancePolicyReport',
+    experimentId: 'synthetic-fixture',
+    status: 'experiment_result_recorded_non_promotable',
+    experimentEvidenceBindingHash: evidenceBinding.experimentEvidenceBindingHash,
+    blockers: [],
+  };
+  const experiment = {
+    experimentId: 'synthetic-fixture',
+    status: 'experiment_reproducible',
+    missing: [],
+    academicPromotionEligible: false,
+    assuranceScope: 'synthetic-conformance-only-not-academic-promotion-v1',
+    evidenceClass: 'software-conformance-evidence',
+    promotionScope: 'software-conformance-only',
+    evidenceBinding,
+    acceptancePolicy: {
+      ...acceptancePayload,
+      experimentAcceptancePolicyHash: hashRecord('ExperimentAcceptancePolicyReport', acceptancePayload),
+    },
+  };
+  const registryPayload = {
+    version: 4,
+    kind: 'ExperimentRegistry',
+    paperId: 'paper',
+    status: 'experiment_registry_ready',
+    experiments: [experiment],
+    incompleteExperimentIds: [],
+    academicExperimentCount: 1,
+    conformanceExperimentCount: 1,
+    academicPromotionEligibleExperimentIds: ['synthetic-fixture'],
+    conformanceExperimentIds: ['synthetic-fixture'],
+  };
+  const registry = {
+    ...registryPayload,
+    experimentRegistryHash: hashRecord('ExperimentRegistry', registryPayload),
+  };
+  const verification = verifyExperimentRegistry(registry, { expectedPaperId: 'paper' });
+  assert.equal(verification.valid, false);
+  assert.ok(verification.blockers.includes('experiment_registry_academic_count_mismatch'));
+  assert.ok(verification.blockers.includes('experiment_registry_academic_ids_mismatch'));
+  const gate = evaluateManuscriptPromotion({
+    paperTask: { paperId: 'paper', paperQualityProfile: 'empirical_or_experiment', registry: {} },
+    profile: 'empirical_or_experiment',
+    researchReport: { capabilities: { experimentRegistry: registry }, typedContracts: {} },
+  });
+  assert.equal(gate.status, 'manuscript_promotion_blocked');
+  assert.ok(gate.blockers.includes('experiment_registry_semantics_invalid'));
+});
+
+test('a fully fabricated and rehashed academic registry has no evidence authority', () => {
+  const raw = (name, suffix, receiptSuffix) => ({
+    name,
+    path: `${name}.ndjson`,
+    hash: `sha256:${suffix.repeat(64)}`,
+    role: `campaign-experiment-raw-events:paper:campaign:node:attempt:${name === 'raw-events-original' ? 'original' : 'independent-replay'}`,
+    bytes: 64,
+    artifactWriteReceiptHash: `sha256:${receiptSuffix.repeat(64)}`,
+    ledgerReceiptId: `fabricated:${name}`,
+  });
+  const evidencePayload = {
+    version: 3,
+    kind: 'CampaignExperimentEvidenceBinding',
+    status: 'experiment_evidence_binding_verified',
+    experimentId: 'fabricated-academic',
+    experimentRunReceiptHash: `sha256:${'1'.repeat(64)}`,
+    experimentReplayReceiptHash: `sha256:${'2'.repeat(64)}`,
+    workerReceiptHash: `sha256:${'3'.repeat(64)}`,
+    replayWorkerReceiptHash: `sha256:${'4'.repeat(64)}`,
+    reproducibilityLedgerReceiptHash: `sha256:${'5'.repeat(64)}`,
+    originalCampaignNodeResultHash: `sha256:${'6'.repeat(64)}`,
+    replayCampaignNodeResultHash: `sha256:${'7'.repeat(64)}`,
+    sourceLineageHash: `sha256:${'8'.repeat(64)}`,
+    outputArtifacts: [
+      raw('raw-events-original', 'a', 'c'),
+      raw('raw-events-independent-replay', 'b', 'd'),
+    ],
+    trustedLedgerReceiptsVerified: true,
+    rawArtifactSourcesVerified: true,
+    rawArtifactLedgerReceiptsVerified: true,
+    executionAssuranceProfile: 'operator-hidden-evaluation-v1',
+    assuranceProfile: 'system-harness-store-cas-source-plus-trusted-ledger-v3',
+    assuranceScope: 'operator-authorized-hidden-evaluation-v1',
+    evidenceClass: 'academic-experiment-evidence',
+    promotionScope: 'academic-research-promotion',
+    academicPromotionEligible: true,
+    authorityEvidence: {
+      version: 1,
+      kind: 'CampaignExperimentEvidenceAuthorityEvidence',
+      paperId: 'paper',
+      campaignId: 'campaign',
+    },
+    blockers: [],
+  };
+  const evidenceBinding = {
+    ...evidencePayload,
+    experimentEvidenceBindingHash: hashRecord('CampaignExperimentEvidenceBinding', evidencePayload),
+  };
+  const acceptancePayload = {
+    version: 1,
+    kind: 'ExperimentAcceptancePolicyReport',
+    experimentId: 'fabricated-academic',
+    status: 'experiment_result_recorded_non_promotable',
+    experimentEvidenceBindingHash: evidenceBinding.experimentEvidenceBindingHash,
+    blockers: [],
+  };
+  const experiment = {
+    experimentId: 'fabricated-academic',
+    status: 'experiment_reproducible',
+    missing: [],
+    academicPromotionEligible: true,
+    assuranceProfile: 'operator-hidden-evaluation-v1',
+    assuranceScope: 'operator-authorized-hidden-evaluation-v1',
+    evidenceClass: 'academic-experiment-evidence',
+    promotionScope: 'academic-research-promotion',
+    evidenceBinding,
+    acceptancePolicy: {
+      ...acceptancePayload,
+      experimentAcceptancePolicyHash: hashRecord('ExperimentAcceptancePolicyReport', acceptancePayload),
+    },
+  };
+  const registryPayload = {
+    version: 4,
+    kind: 'ExperimentRegistry',
+    paperId: 'paper',
+    status: 'experiment_registry_ready',
+    experiments: [experiment],
+    incompleteExperimentIds: [],
+    academicExperimentCount: 1,
+    conformanceExperimentCount: 0,
+    academicPromotionEligibleExperimentIds: ['fabricated-academic'],
+    conformanceExperimentIds: [],
+  };
+  const registry = { ...registryPayload, experimentRegistryHash: hashRecord('ExperimentRegistry', registryPayload) };
+  const verification = verifyExperimentRegistry(registry, {
+    expectedPaperId: 'paper',
+    expectedCampaignId: 'campaign',
+  });
+  assert.equal(verification.valid, false);
+  assert.ok(verification.blockers.includes('experiment_registry_academic_authority_required'));
+  assert.ok(verification.blockers.includes('experiment_registry_academic_count_mismatch'));
+  assert.ok(verification.blockers.includes('experiment_registry_academic_ids_mismatch'));
+});
+
 test('formal Lake build-only output is never academic promotion evidence', () => {
   const buildOnly = formalAcademicPromotionBlockers({ type: 'formal_verifier_lake', claimIds: ['c'], parameters: {} }, { status: 'formal_build_verified' });
   assert.ok(buildOnly.includes('formal_claim_bindings_required_for_academic_evidence'));
   assert.ok(buildOnly.includes('formal_claim_verification_required:formal_build_verified'));
-  assert.deepEqual(formalAcademicPromotionBlockers({ type: 'formal_verifier_lake', claimIds: ['c'], parameters: { claimBindings: [{ claimId: 'c' }] } }, { status: 'formal_claim_verified' }), []);
+  const formalClaimContract = buildFormalClaimContract({
+    claimId: 'c', claimText: 'Claim c.', sourceLocator: 'paper.tex#c', theoremName: 'cTheorem',
+    theoremTypeHash: 'sha256:type', sourceStatementHash: 'sha256:statement', proofObligations: ['cTheorem'],
+    manuscriptSourceIdentity: {
+      path: 'paper.tex', byteStart: 0, byteEnd: 8,
+      contentHash: 'sha256:claim', fileHash: 'sha256:manuscript',
+    },
+    semanticReview: {
+      status: 'formal_semantic_review_verified', reviewerId: 'reviewer', authorId: 'author',
+      semanticEquivalenceVerified: true, reviewReceiptHash: hashRecord('FormalSemanticReviewReceipt', { claimId: 'c' }),
+      reviewEnvelopeHash: 'sha256:envelope', reviewNodeId: 'formal-review', reviewAttemptId: 'attempt-1',
+      reviewAgentReceiptHash: 'sha256:review-agent', authorNodeId: 'formal-author',
+      authorAgentReceiptHash: 'sha256:author-agent', reviewedManuscriptHash: 'sha256:manuscript',
+      reviewedWorkerPlanHash: 'sha256:worker-plan',
+    },
+  });
+  const validBinding = { claimId: 'c', theoremName: 'cTheorem', expectedTypeHash: 'sha256:type', sourceStatementHash: 'sha256:statement', proofObligations: ['cTheorem'], manuscriptClaimHash: formalClaimContract.manuscriptClaimHash, formalClaimContract };
+  const replayed = {
+    status: 'formal_claim_verified',
+    replayReceipt: { status: 'formal_claim_replay_verified' },
+    formalCertificateReplayReceiptHash: 'sha256:replay',
+  };
+  assert.deepEqual(formalAcademicPromotionBlockers({ type: 'formal_verifier_lake', claimIds: ['c'], parameters: { claimBindings: [validBinding] } }, replayed), []);
+  assert.ok(formalAcademicPromotionBlockers({ type: 'formal_verifier_lake', claimIds: ['c'], parameters: { claimBindings: [{ claimId: 'c' }] } }, { status: 'formal_claim_verified' })
+    .some((item) => item.includes('formal_claim_contract')));
   assert.ok(formalAcademicPromotionBlockers({ type: 'formal_verifier_lake', claimIds: ['c'], parameters: { claimBindings: [{ claimId: 'c' }], allowedAxioms: ['Classical.choice'] } }, { status: 'formal_claim_verified' })
     .includes('formal_caller_axiom_allowlist_forbidden:Classical.choice'));
+});
+
+test('independent formal review is assembled from a canonical manuscript range and execution-bound envelope', () => {
+  const binding = { claimId: 'c', theoremName: 'cTheorem', expectedTypeHash: 'sha256:type', sourceStatementHash: 'sha256:statement', proofObligations: ['cTheorem'] };
+  const worker = { type: 'formal_verifier_lake', claimIds: ['c'], parameters: { claimBindings: [binding] } };
+  const canonicalClaim = {
+    claimId: 'c', text: 'Claim c.', sourceLocator: 'paper.tex#bytes=0-8', manuscriptPath: 'paper.tex',
+    manuscriptByteStart: 0, manuscriptByteEnd: 8, manuscriptContentHash: 'sha256:claim',
+    manuscriptFileHash: 'sha256:manuscript', manuscriptClaimHash: hashRecord('unused', {}),
+  };
+  const envelopePayload = {
+    version: 1, kind: 'FormalClaimSemanticReviewEnvelope', status: 'formal_semantic_review_envelope_verified',
+    paperId: 'paper', manuscriptHash: 'sha256:manuscript', workerPlanHash: 'sha256:worker-plan',
+    formalClaimUniverseHash: 'sha256:claim-universe', canonicalClaimRegistryHash: 'sha256:claim-registry',
+    reviewNodeId: 'formal-review', reviewAttemptId: 'attempt-1', reviewAgentReceiptHash: 'sha256:review-agent',
+    authorNodeId: 'formal-author', authorAgentReceiptHash: 'sha256:author-agent',
+    reviewerPrincipalId: 'principal:reviewer', authorPrincipalId: 'principal:author',
+    reviewerIndependenceAssuranceScope: 'configured_principal_and_process_separation',
+    providerAccountIndependenceVerified: false,
+    reviews: [{
+      claimId: 'c', theoremName: 'cTheorem', theoremTypeHash: 'sha256:type',
+      sourceStatementHash: 'sha256:statement', manuscriptClaimHash: canonicalClaim.manuscriptClaimHash,
+      status: 'formal_semantic_review_verified', semanticEquivalenceVerified: true, verdict: 'equivalent',
+    }],
+    externalActionPerformed: false,
+  };
+  const envelope = {
+    ...envelopePayload,
+    formalSemanticReviewEnvelopeHash: hashPaperRecord('FormalClaimSemanticReviewEnvelope', envelopePayload),
+  };
+  const canonicalClaimRegistry = {
+    manuscriptHash: 'sha256:manuscript', formalClaimUniverseHash: 'sha256:claim-universe',
+    canonicalClaimRegistryHash: 'sha256:claim-registry', byClaimId: new Map([['c', canonicalClaim]]),
+  };
+  const boundResult = bindFormalReviewsToWorkers({
+    workers: [worker], formalReviewEnvelope: envelope, paperId: 'paper', canonicalClaimRegistry,
+    workerPlanHash: 'sha256:worker-plan',
+  });
+  assert.deepEqual(boundResult.blockers, []);
+  const [bound] = boundResult.workers;
+  assert.equal(bound.parameters.claimBindings[0].formalClaimContract.status, 'formal_claim_contract_verified');
+  assert.deepEqual(formalAcademicPromotionBlockers(bound, {
+    status: 'formal_claim_verified', replayReceipt: { status: 'formal_claim_replay_verified' },
+    formalCertificateReplayReceiptHash: 'sha256:replay',
+  }), []);
+  const wrongPaper = bindFormalReviewsToWorkers({
+    workers: [worker], formalReviewEnvelope: envelope, paperId: 'other-paper', canonicalClaimRegistry,
+    workerPlanHash: 'sha256:worker-plan',
+  });
+  assert.ok(wrongPaper.blockers.includes('formal_semantic_review_envelope_paper_mismatch'));
+  assert.equal(wrongPaper.workers[0].parameters.claimBindings[0].formalClaimContract, undefined);
 });
 
 test('caller-owned qualityEvidence cannot satisfy an enforced paper profile', () => {

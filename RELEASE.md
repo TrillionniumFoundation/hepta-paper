@@ -1,6 +1,6 @@
 # Release process
 
-Version 0.20.0 is an unreleased automation-first research-production candidate. It combines
+Version 0.21.0 is an unreleased automation-first research-production candidate. It combines
 the native WAL/dispatcher and evidence hardening from 0.17 with explicit
 multi-language empirical DAGs, licensed content-addressed datasets, repeated
 metric/artifact verification, persistent fair resource admission, bounded
@@ -47,11 +47,13 @@ SQLite/CAS/ledger state, proves that production database byte and logical hashes
 are unchanged, and restores the 263-row source audit from the ext4-immutable
 archive. Neither the matrix audit nor the two Python-to-JavaScript differentials
 require the live legacy working directory.
-The gate requires the full local selftest, architecture, repository-wide and
-full-system coverage, the cold-volume contract, both differentials, physical workspace
-separation, read-only native-store health and logical integrity, an isolated
-verification runtime, a backup/restore drill, the immutable archive and a
-deletion/restore drill. The
+The gate requires the full local selftest, architecture coverage, one
+deduplicated repository-wide full-system coverage run, and a strict operational
+Docker gate that executes both pinned Python and R academic dataset harnesses
+through original and replay runs. It also requires the cold-volume contract,
+both differentials, physical workspace separation, read-only native-store
+health and logical integrity, an isolated verification runtime, a backup/restore
+drill, the immutable archive and a deletion/restore drill. The
 release evidence bundle binds the
 commit, verification receipt, capability manifest, migration matrix, legacy
 tree and database hashes. Its local signature proves build/archive integrity

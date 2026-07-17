@@ -1,4 +1,5 @@
-// Domain-owned workflow vocabulary and stage graph.
+// Domain-owned command vocabulary. Execution topology belongs exclusively to
+// the campaign plan factory; this registry must not grow a second stage graph.
 export const PAPER_BATCH_MODES = Object.freeze({
   INVENTORY: 'inventory',
   LOCAL_BUILD: 'local-build',
@@ -16,26 +17,15 @@ export const PAPER_BATCH_MODES = Object.freeze({
   REVIEWED_SUBMIT: 'reviewed-submit',
 });
 
-const definitions = [
-  { mode: PAPER_BATCH_MODES.INVENTORY, stages: [] },
-  { mode: PAPER_BATCH_MODES.LOCAL_BUILD, stages: ['build'] },
-  { mode: PAPER_BATCH_MODES.LOCAL_PACKAGE, stages: ['build', 'research-verify', 'package'] },
-  { mode: PAPER_BATCH_MODES.REFEREE_REVIEW, stages: ['referee-review'] },
-  { mode: PAPER_BATCH_MODES.REFEREE_REVISE, stages: ['referee-revise'] },
-  { mode: PAPER_BATCH_MODES.LOCAL_REVIEW_LOOP, stages: ['local-review-loop'] },
-  { mode: PAPER_BATCH_MODES.REFEREE_AUTOPILOT, aliasFor: PAPER_BATCH_MODES.LOCAL_REVIEW_LOOP, stages: ['local-review-loop'] },
-  { mode: PAPER_BATCH_MODES.EMPIRICAL_ANALYSIS, stages: ['empirical-analysis'] },
-  { mode: PAPER_BATCH_MODES.RESEARCH_VERIFY, stages: ['research-verify'] },
-  { mode: PAPER_BATCH_MODES.JOURNAL_MANAGE, stages: ['journal-manage'] },
-  { mode: PAPER_BATCH_MODES.VENUE_RESOLVE, stages: ['build', 'package', 'venue-resolve'] },
-  { mode: PAPER_BATCH_MODES.SOURCE_ADAPT, stages: ['source-adapt'] },
-  { mode: PAPER_BATCH_MODES.LOCAL_DRY_RUN, stages: ['build', 'research-verify', 'package', 'submission'] },
-  { mode: PAPER_BATCH_MODES.REVIEWED_SUBMIT, stages: ['build', 'research-verify', 'package', 'submission'] },
-];
+const definitions = Object.values(PAPER_BATCH_MODES).map((mode) => (
+  mode === PAPER_BATCH_MODES.REFEREE_AUTOPILOT
+    ? { mode, aliasFor: PAPER_BATCH_MODES.LOCAL_REVIEW_LOOP }
+    : { mode }
+));
 
 export const PAPER_MODE_REGISTRY = Object.freeze(Object.fromEntries(definitions.map((definition) => [
   definition.mode,
-  Object.freeze({ ...definition, stages: Object.freeze([...definition.stages]) }),
+  Object.freeze({ ...definition }),
 ])));
 
 export function paperModeDefinition(mode) {

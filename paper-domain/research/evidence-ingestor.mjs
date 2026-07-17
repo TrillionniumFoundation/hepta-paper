@@ -1,7 +1,7 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { evaluateEvidenceConsumption } from '../evidence/evidence-consumption-policy.mjs';
 
-export function buildEvidenceIntake({ paperTask, evidenceItems = [], nowMs = Date.now(), maximumAgeMs = null } = {}) {
+export function buildEvidenceIntake({ paperTask, evidenceItems = [], nowMs = null, maximumAgeMs = null } = {}) {
   const items = evidenceItems.map((item, index) => ({
     evidenceId: String(item.id || `evidence-${index + 1}`),
     claimIds: Array.isArray(item.claimIds) ? item.claimIds.map(String).sort() : [],

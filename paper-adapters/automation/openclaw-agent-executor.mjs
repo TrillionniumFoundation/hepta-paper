@@ -1,12 +1,18 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
-import { assertAgentExecutorPort } from '../../paper-ports/agent-executor-port.mjs';
-import { buildExecutorCapabilities, capabilityRequestFromExecution, evaluateExecutorCapabilityRequest } from '../../paper-ports/executor-capabilities.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
-import { runBoundedChildProcess } from './bounded-child-process.mjs';
-import { changedWorkspacePaths, createWorkspaceManifest, readOnlyMutationBlockers } from './workspace-change-tracker.mjs';
+import { restrictedChildEnvironment, runBoundedChildProcess } from './bounded-child-process.mjs';
+import { createAgentExecutorTemplate, isExternalAgentCancellation } from './agent-executor-template.mjs';
+import {
+  createOpenClawRuntimeConfigurationResolver,
+  openClawAgentConfigurationHash,
+  openClawGatewayConfigurationHash,
+  verifyOpenClawAgentConfiguration,
+} from './openclaw-agent-configuration.mjs';
+import { readOnlyMutationBlockers } from './workspace-change-tracker.mjs';
 
 function parseResult(stdout) {
   const source = String(stdout || '').trim();
@@ -45,40 +51,116 @@ function parseAgentOutput(text) {
   try { return JSON.parse(match[0]); } catch { return null; }
 }
 
+export function openClawAgentCapabilityProfileHash(profile) {
+  return hashRecord('OpenClawAgentCapabilityProfile', profile);
+}
+
+function assertExactKeys(value, expected, code) {
+  const actual = Object.keys(value || {}).sort();
+  const wanted = [...expected].sort();
+  if (actual.length !== wanted.length || actual.some((key, index) => key !== wanted[index])) {
+    throw new Error(code);
+  }
+}
+
+function resolveAgentCapabilityProfile({
+  agentId,
+  profile,
+  profilePath,
+  expectedHash,
+}) {
+  const source = profile || (profilePath
+    ? JSON.parse(fs.readFileSync(path.resolve(profilePath), 'utf8'))
+    : null);
+  if (!source) throw new Error('openclaw_agent_capability_profile_required');
+  assertExactKeys(source, [
+    'version',
+    'kind',
+    'agentId',
+    'enforcement',
+    'delivery',
+    'toolPolicy',
+    'openClawAgentConfigurationHash',
+    'openClawGatewayConfigurationHash',
+  ], 'openclaw_agent_capability_profile_shape_invalid');
+  assertExactKeys(source.toolPolicy, ['messaging', 'externalMutation', 'credentialAccess'], 'openclaw_agent_capability_profile_tool_policy_invalid');
+  if (source.version !== 2
+    || source.kind !== 'OpenClawAgentCapabilityProfile'
+    || source.agentId !== agentId
+    || source.enforcement !== 'openclaw-gateway-runtime-configuration'
+    || source.delivery !== 'disabled'
+    || source.toolPolicy.messaging !== 'denied'
+    || source.toolPolicy.externalMutation !== 'denied'
+    || source.toolPolicy.credentialAccess !== 'denied'
+    || !/^sha256:[a-f0-9]{64}$/i.test(source.openClawAgentConfigurationHash)
+    || !/^sha256:[a-f0-9]{64}$/i.test(source.openClawGatewayConfigurationHash)) {
+    throw new Error('openclaw_agent_capability_profile_not_least_authority');
+  }
+  const profileHash = openClawAgentCapabilityProfileHash(source);
+  if (!expectedHash || profileHash !== expectedHash) {
+    throw new Error('openclaw_agent_capability_profile_hash_mismatch');
+  }
+  return Object.freeze({ profile: Object.freeze(source), profileHash });
+}
+
 export function createOpenClawAgentExecutor({
   openclawBinary = 'openclaw',
   agentId = process.env.HEPTA_OPENCLAW_AGENT || 'hepta-paper-worker',
   model = process.env.HEPTA_OPENCLAW_MODEL || null,
   thinking = process.env.HEPTA_OPENCLAW_THINKING || 'high',
+  agentCapabilityProfile = null,
+  agentCapabilityProfilePath = process.env.HEPTA_OPENCLAW_AGENT_CAPABILITY_PROFILE || null,
+  expectedAgentCapabilityProfileHash = process.env.HEPTA_OPENCLAW_AGENT_CAPABILITY_PROFILE_HASH || null,
+  openClawConfigurationResolver = null,
   spawnImpl = spawn,
   timeoutMs = 45 * 60 * 1000,
 } = {}) {
   const executorId = 'openclaw-agent-executor-v1';
-  const capabilities = buildExecutorCapabilities({
-    executorId,
-    sandboxModes: ['read-only', 'workspace-write'],
-    networkPolicy: 'provider-controlled',
-    workspaceIsolation: false,
-    maximumTimeoutMs: timeoutMs,
-    maximumOutputTokens: null,
-    receiptKinds: ['AgentExecutionReceipt'],
-    provider: 'openclaw',
+  const configurationResolver = openClawConfigurationResolver || createOpenClawRuntimeConfigurationResolver({
+    openclawBinary,
   });
-  return assertAgentExecutorPort({
-    version: 1,
+  return createAgentExecutorTemplate({
     kind: 'OpenClawAgentExecutor',
     executorId,
-    capabilities: () => capabilities,
-    async execute(input = {}) {
-      const { role, workspacePath, instructions, context = {}, requiredChecks = [], sandbox = 'workspace-write', outputTokenBudget = null, timeoutMs: requestedTimeout = null, signal = null } = input;
-      const preflight = evaluateExecutorCapabilityRequest({ capabilities, request: capabilityRequestFromExecution({ ...input, sandbox, outputTokenBudget, timeoutMs: requestedTimeout }) });
-      if (preflight.blockers.length) throw new Error(preflight.blockers.join(','));
-      const workspace = path.resolve(workspacePath || '');
-      if (!role || !instructions || !fs.existsSync(workspace) || !fs.statSync(workspace).isDirectory()) {
-        throw new Error('agent role, existing workspacePath and instructions are required');
+    capabilityDefinition: {
+      networkPolicy: 'provider-controlled',
+      maximumTimeoutMs: timeoutMs,
+      maximumOutputTokens: null,
+      provider: 'openclaw',
+    },
+    workspaceValidationMessage: 'agent role, existing workspacePath and instructions are required',
+    sandboxValidationMessage: 'agent sandbox must be read-only or workspace-write',
+    captureWorkspaceManifest: true,
+    async executeStrategy({
+      role,
+      instructions,
+      context,
+      requiredChecks,
+      sandbox,
+      outputTokenBudget,
+      requestedTimeout,
+      signal,
+      workspace,
+      promptHash,
+      changedWorkspacePaths,
+    }) {
+      const verifiedCapabilityProfile = resolveAgentCapabilityProfile({
+        agentId,
+        profile: agentCapabilityProfile,
+        profilePath: agentCapabilityProfilePath,
+        expectedHash: expectedAgentCapabilityProfileHash,
+      });
+      const resolvedConfigurationBefore = await configurationResolver({ agentId, cwd: workspace });
+      const verifiedConfiguration = verifyOpenClawAgentConfiguration({
+        resolvedConfiguration: resolvedConfigurationBefore,
+        agentId,
+        workspace,
+        sandbox,
+      });
+      if (verifiedCapabilityProfile.profile.openClawAgentConfigurationHash !== verifiedConfiguration.configurationHash
+        || verifiedCapabilityProfile.profile.openClawGatewayConfigurationHash !== verifiedConfiguration.gatewayConfigHash) {
+        throw new Error('openclaw_agent_configuration_hash_mismatch');
       }
-      if (!['read-only', 'workspace-write'].includes(sandbox)) throw new Error('agent sandbox must be read-only or workspace-write');
-      const before = createWorkspaceManifest(workspace);
       const sessionNonce = crypto.randomUUID();
       const sessionKey = `agent:${agentId}:hepta-paper-${String(context.campaignId || 'campaign').replace(/[^A-Za-z0-9_.-]/g, '_')}-${String(context.nodeId || role).replace(/[^A-Za-z0-9_.-]/g, '_')}-${sessionNonce}`;
       const prompt = [
@@ -92,18 +174,49 @@ export function createOpenClawAgentExecutor({
         outputTokenBudget ? `Keep the final response within ${Math.max(128, Number(outputTokenBudget))} output tokens. Prefer editing files with tools over returning file bodies.` : '',
         'Finish with one compact JSON object containing status, summary, checksRun, and blockers. If the task instructions request role-specific JSON fields (for example verdict, score, criticalFindingCount, and findings), include those fields in the same final object.',
       ].filter(Boolean).join('\n\n');
-      const promptHash = `sha256:${crypto.createHash('sha256').update(prompt).digest('hex')}`;
-      const args = ['agent', '--agent', agentId, '--session-key', sessionKey, '--message', prompt, '--json', '--thinking', thinking, '--timeout', String(Math.max(1, Math.ceil(Math.min(Number(requestedTimeout || timeoutMs), timeoutMs) / 1000)))];
+      const promptDigest = promptHash(prompt);
+      const requestRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-openclaw-request-'));
+      fs.chmodSync(requestRoot, 0o700);
+      const requestPath = path.join(requestRoot, 'prompt.txt');
+      const requestDescriptor = fs.openSync(
+        requestPath,
+        fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | (fs.constants.O_NOFOLLOW || 0),
+        0o600,
+      );
+      try {
+        fs.writeSync(requestDescriptor, prompt, null, 'utf8');
+        fs.fsyncSync(requestDescriptor);
+      } finally {
+        fs.closeSync(requestDescriptor);
+      }
+      const args = ['agent', '--agent', agentId, '--session-key', sessionKey, '--message-file', requestPath, '--json', '--thinking', thinking, '--timeout', String(Math.max(1, Math.ceil(Math.min(Number(requestedTimeout || timeoutMs), timeoutMs) / 1000)))];
       if (model) args.push('--model', model);
       const startedAt = new Date().toISOString();
-      const processResult = await runBoundedChildProcess({
-        spawnImpl,
-        executable: openclawBinary,
-        args,
-        cwd: workspace,
-        timeoutMs: Math.min(Number(requestedTimeout || timeoutMs), timeoutMs) + 5000,
-        signal,
-      });
+      let processResult;
+      try {
+        processResult = await runBoundedChildProcess({
+          spawnImpl,
+          executable: openclawBinary,
+          args,
+          cwd: workspace,
+          env: restrictedChildEnvironment({
+            allowedKeys: [
+              'OPENCLAW_HOME',
+              'OPENCLAW_CONFIG_PATH',
+              'OPENCLAW_PROFILE',
+              'OPENCLAW_GATEWAY_URL',
+              'OPENCLAW_GATEWAY_TOKEN',
+            ],
+            overrides: {
+              OPENCLAW_GATEWAY_URL: verifiedConfiguration.gatewayUrl,
+            },
+          }),
+          timeoutMs: Math.min(Number(requestedTimeout || timeoutMs), timeoutMs) + 5000,
+          signal,
+        });
+      } finally {
+        fs.rmSync(requestRoot, { recursive: true, force: true });
+      }
       const completedAt = new Date().toISOString();
       const parsed = parseResult(processResult.stdout);
       const finalOutput = responseText(parsed, processResult.stdout);
@@ -114,21 +227,39 @@ export function createOpenClawAgentExecutor({
         || parsed?.model
         || model
         || null;
-      const changedPaths = changedWorkspacePaths(before, createWorkspaceManifest(workspace));
+      const changedPaths = changedWorkspacePaths();
       const blockers = [];
+      const cancelled = isExternalAgentCancellation(processResult);
       if (processResult.timedOut) blockers.push('openclaw_agent_timeout');
-      if (processResult.aborted) blockers.push('openclaw_agent_cancelled');
-      if (processResult.exitCode !== 0 || processResult.error) blockers.push('openclaw_agent_process_failed');
+      if (cancelled) blockers.push('openclaw_agent_cancelled');
+      if (!cancelled && (processResult.exitCode !== 0 || processResult.error)) blockers.push('openclaw_agent_process_failed');
+      let configurationReverified = false;
+      try {
+        const resolvedConfigurationAfter = await configurationResolver({ agentId, cwd: workspace });
+        const configurationHashAfter = openClawAgentConfigurationHash(resolvedConfigurationAfter, agentId);
+        const gatewayConfigurationHashAfter = openClawGatewayConfigurationHash(resolvedConfigurationAfter, agentId);
+        if (configurationHashAfter !== verifiedConfiguration.configurationHash
+          || gatewayConfigurationHashAfter !== verifiedConfiguration.gatewayConfigHash) {
+          blockers.push('openclaw_agent_configuration_drift_detected');
+        } else {
+          verifyOpenClawAgentConfiguration({
+            resolvedConfiguration: resolvedConfigurationAfter,
+            agentId,
+            workspace,
+            sandbox,
+          });
+          configurationReverified = true;
+        }
+      } catch {
+        blockers.push('openclaw_agent_configuration_reverification_failed');
+      }
       blockers.push(...readOnlyMutationBlockers({ sandbox, changedPaths }));
       const payload = {
-        version: 1,
-        kind: 'AgentExecutionReceipt',
-        executorId,
         providerMode: 'openclaw:detached-child-session',
         agentId,
         model,
         resolvedModel,
-        promptHash,
+        promptHash: promptDigest,
         maximumOutputTokens: outputTokenBudget ? Math.max(128, Number(outputTokenBudget)) : null,
         role,
         sessionKey,
@@ -142,6 +273,18 @@ export function createOpenClawAgentExecutor({
         structuredOutput,
         openClawRunId: parsed?.runId || null,
         usage: parsed?.result?.meta?.agentMeta?.usage || null,
+        agentCapabilityProfileHash: verifiedCapabilityProfile.profileHash,
+        openClawAgentConfigurationHash: verifiedConfiguration.configurationHash,
+        openClawGatewayConfigurationHash: verifiedConfiguration.gatewayConfigHash,
+        openClawGatewayInstanceId: verifiedConfiguration.gatewayInstanceId,
+        openClawConfigurationReverified: configurationReverified,
+        // Gateway runtime configuration is checked immediately before and
+        // after the turn. This still does not observe every provider-side tool
+        // invocation, so do not mint a false negative for external actions.
+        externalActionPerformed: null,
+        externalActionVerification: configurationReverified
+          ? 'not_observed:openclaw_gateway_runtime_configuration_bound_pre_and_post'
+          : 'not_observed:openclaw_gateway_runtime_configuration_not_reverified',
         blockers,
         stdoutHash: processResult.stdoutHash,
         stderrHash: processResult.stderrHash,
@@ -149,16 +292,12 @@ export function createOpenClawAgentExecutor({
         stderrTail: processResult.stderr.slice(-8000),
         startedAt,
         completedAt,
-        externalActionPerformed: false,
       };
-      const receipt = Object.freeze({ ...payload, agentExecutionReceiptHash: hashRecord('AgentExecutionReceipt', payload) });
-      if (payload.status !== 'agent_execution_completed') {
-        const error = new Error(blockers.join(',') || processResult.error?.message || `openclaw agent exited ${processResult.exitCode}`);
-        error.retryable = !processResult.aborted && !blockers.includes('read_only_agent_modified_workspace');
-        error.receipt = receipt;
-        throw error;
-      }
-      return receipt;
+      return {
+        payload,
+        failureMessage: blockers.join(',') || processResult.error?.message || `openclaw agent exited ${processResult.exitCode}`,
+        retryable: !cancelled && !blockers.includes('read_only_agent_modified_workspace'),
+      };
     },
   });
 }

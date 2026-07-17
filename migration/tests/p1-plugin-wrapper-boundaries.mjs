@@ -21,15 +21,20 @@ import {
   PAPER_BATCH_MODES,
   runPaperBatch,
 } from '../../paper-core/src/paper-batch-runner.mjs';
-import { bootstrapPaperExecutionContext } from '../../paper-composition/bootstrap/service-bootstrap.mjs';
+import { bootstrapLegacyPaperExecutionContext } from '../../paper-composition/compat/legacy-context-bootstrap.mjs';
 import { enterArtifactWriteContext } from '../../paper-adapters/artifacts/artifact-write-context.mjs';
+import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const root = defaultLegacyPaperFactoryRoot();
-const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-plugin-boundary-'));
-process.on('exit', () => fs.rmSync(runtimeRoot, { recursive: true, force: true }));
-const pluginRoot = path.join(root, 'plugins', 'core');
-const executionContext = bootstrapPaperExecutionContext({ root, runtimeRoot, mode: 'migration-plugin-boundary-test' });
+const legacyRoot = defaultLegacyPaperFactoryRoot();
+const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-plugin-boundary-'));
+const root = path.join(testRoot, 'assets');
+const runtimeRoot = path.join(testRoot, 'runtime');
+fs.mkdirSync(root, { recursive: true });
+process.on('exit', () => fs.rmSync(testRoot, { recursive: true, force: true }));
+const pluginRoot = path.join(legacyRoot, 'plugins', 'core');
+createDefaultPaperStore({ root, runtimeRoot }).close();
+const executionContext = bootstrapLegacyPaperExecutionContext({ root, runtimeRoot, mode: 'migration-plugin-boundary-test' });
 enterArtifactWriteContext(executionContext.services);
 
 function parseScalar(value) {
@@ -94,7 +99,7 @@ const productionText = [
   ...mjsFiles(path.join(workspaceRoot, 'paper-adapters')),
 ].map((file) => fs.readFileSync(file, 'utf8')).join('\n');
 for (const runnerPath of retiredRunnerPaths) {
-  assert.ok(fs.existsSync(path.join(root, runnerPath)), runnerPath);
+  assert.ok(fs.existsSync(path.join(legacyRoot, runnerPath)), runnerPath);
   assert.doesNotMatch(productionText, new RegExp(runnerPath.replace(/[.*+?^$()|[\]{}\\]/g, '\\$&')));
 }
 
@@ -210,7 +215,6 @@ const proposal = await runPaperProposalAdapter({
   runtimeRoot,
   idea: 'migration wrapper boundary fixture',
   paperId: 'migration_wrapper_boundary_fixture',
-  approved: false,
   materializeSource: false,
   stageInventory: false,
 });

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { runRetirementAudit } from '../retirement/audit.mjs';
-import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
+import { createReadOnlyPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { defaultLegacyPaperFactoryRoot, defaultPaperRuntimeRoot } from '../../paper-adapters/runtime/workspace-layout.mjs';
 import { assertIsolatedVerificationRuntime } from '../../paper-core/src/verification-runtime.mjs';
 import { immutableLegacyMatrixReferenceStatus, prepareImmutableLegacyMatrixReference } from '../legacy-matrix-reference.mjs';
@@ -12,12 +12,14 @@ if (reference) process.on('exit', reference.cleanup);
 const referenceStatus = immutableLegacyMatrixReferenceStatus();
 const root = reference?.root || defaultLegacyPaperFactoryRoot();
 if (reference) process.env.PAPER_FACTORY_LEGACY_ROOT = root;
+const auditStore = createReadOnlyPaperStore({ root, runtimeRoot: defaultPaperRuntimeRoot(), immutable: true });
 const report = await runRetirementAudit({
   root,
   runtimeRoot: defaultPaperRuntimeRoot(),
   execute: false,
-  store: createDefaultPaperStore({ root, runtimeRoot: defaultPaperRuntimeRoot() }),
+  store: auditStore,
 });
+auditStore.close();
 const audit = report.retirementPlan.migrationMatrixAudit;
 
 assert.equal(audit.backlogCount, 263);

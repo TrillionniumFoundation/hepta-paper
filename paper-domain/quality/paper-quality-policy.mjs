@@ -1,8 +1,8 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 export const PAPER_QUALITY_PROFILES = Object.freeze({
-  theorem_or_proof: Object.freeze(['claim_registry', 'proof_review', 'limitations']),
-  formal_theorem_or_proof: Object.freeze(['claim_registry', 'formal_claim_binding', 'proof_review', 'limitations']),
+  theorem_or_proof: Object.freeze(['claim_registry', 'proof_surface_readiness', 'limitations']),
+  formal_theorem_or_proof: Object.freeze(['claim_registry', 'formal_claim_binding', 'proof_surface_readiness', 'limitations']),
   empirical_or_experiment: Object.freeze(['claim_registry', 'experiment_registry', 'dataset_provenance', 'reproduction_receipt', 'limitations']),
   systems_or_artifact: Object.freeze(['claim_registry', 'artifact_manifest', 'build_receipt', 'reproduction_receipt', 'limitations']),
   survey_or_position: Object.freeze(['claim_registry', 'source_provenance', 'novelty_scope_review', 'limitations']),

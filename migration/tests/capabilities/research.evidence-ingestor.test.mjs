@@ -13,7 +13,7 @@ test('research.evidence-ingestor verifies bytes and provenance before intake', a
   const bytes = Buffer.from('{"ok":true}\n');
   await fsp.writeFile(target, bytes);
   const receipt = await verifyEvidenceArtifact({ sourceRoot: root, evidence: { id: 'e', path: 'evidence.json', hash: hashBytes(bytes), provenance: 'controlled_dataset' } });
-  const intake = buildEvidenceIntake({ evidenceItems: [{ id: 'e', claimIds: ['c'], path: 'evidence.json', hash: receipt.verifiedHash, provenance: 'controlled_dataset', verificationStatus: receipt.status, verifiedHash: receipt.verifiedHash, provenanceReceiptHash: receipt.provenanceReceiptHash, createdAt: receipt.createdAt, verificationReceipt: receipt }] });
+  const intake = buildEvidenceIntake({ nowMs: Date.parse(receipt.createdAt), evidenceItems: [{ id: 'e', claimIds: ['c'], path: 'evidence.json', hash: receipt.verifiedHash, provenance: 'controlled_dataset', verificationStatus: receipt.status, verifiedHash: receipt.verifiedHash, provenanceReceiptHash: receipt.provenanceReceiptHash, createdAt: receipt.createdAt, verificationReceipt: receipt }] });
   assert.equal(intake.status, 'evidence_intake_ready');
   assert.equal((await verifyEvidenceArtifact({ sourceRoot: root, evidence: { id: 'e', path: '../escape', hash: 'sha256:x', provenance: 'x' } })).status, 'evidence_artifact_blocked');
   const outside = path.join(path.dirname(root), `outside-${path.basename(root)}.json`);

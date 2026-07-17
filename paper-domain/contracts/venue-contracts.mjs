@@ -1,5 +1,4 @@
 import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
-import { nowIso } from '../../workflow-kernel/runtime/time-utils.mjs';
 import { PAPER_CORE_VERSION, PAPER_RUN_RECEIPT_STATUS, hashPaperRecord } from './primitives.mjs';
 
 export function buildVenueSubmissionPlan({
@@ -35,7 +34,7 @@ export function buildVenueSubmissionPlan({
       emails: false,
       submits: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return { ...plan, venueSubmissionPlanHash: hashPaperRecord('VenueSubmissionPlan', plan) };
 }
@@ -57,7 +56,7 @@ export function buildVenueStateProof({ receipt, venuePlan, createdAt = null } = 
     status: blockers.length ? 'blocked_proof' : 'dry_run_state_proof',
     externalStateChanged: false,
     blockers,
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return { ...proof, venueStateProofHash: hashPaperRecord('VenueStateProof', proof) };
 }

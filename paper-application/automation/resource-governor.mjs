@@ -1,3 +1,8 @@
+import {
+  campaignEmpiricalNodeClassification,
+  isCampaignAgentNode,
+} from './campaign-node-kind-policy.mjs';
+
 const DEFAULTS = Object.freeze({ agent: 4, cpu: 4, gpu: 1, memoryMiB: 8192 });
 
 function normalize(request = {}) {
@@ -10,11 +15,13 @@ function normalize(request = {}) {
 }
 
 export function resourcesForCampaignNode(campaign, node) {
-  const agent = ['research-plan', 'writer', 'manuscript-integrate', 'revise'].includes(node.kind) || /^coder(?:-|$)/.test(node.kind) || /^(?:revision-)?referee-\d+$/.test(node.kind);
-  const empirical = /^(?:empirical(?:-reproduce)?(?:-|$)|compile$|package$|revalidate-(?:code|empirical)(?:-|$)|revalidate-(?:compile|citations|artifacts)$)/.test(node.kind);
-  const gpuExecution = /^(?:empirical(?:-reproduce)?(?:-|$)|revalidate-empirical(?:-|$))/.test(node.kind);
+  const classification = campaignEmpiricalNodeClassification(node.kind);
+  const agent = isCampaignAgentNode(node.kind);
+  const empirical = classification.empirical || ['formal-verify', 'package', 'revalidate-citations', 'revalidate-artifacts'].includes(node.kind);
+  const gpuExecution = classification.primary || classification.reproduction || classification.revalidate;
   const gpu = gpuExecution && Boolean(node.spec?.requiresGpu || node.requiresGpu || campaign?.spec?.requiresGpu);
-  return normalize({ agent: agent ? 1 : 0, cpu: empirical ? 1 : 0, gpu: gpu ? 1 : 0, memoryMiB: agent ? 2048 : empirical ? 1024 : 128 });
+  const empiricalMemoryMiB = Math.max(1, Math.ceil(Number(campaign?.spec?.workerMemoryBytes || 4 * 1024 * 1024 * 1024) / (1024 * 1024)));
+  return normalize({ agent: agent ? 1 : 0, cpu: empirical ? 1 : 0, gpu: gpu ? 1 : 0, memoryMiB: agent ? 2048 : empirical ? empiricalMemoryMiB : 128 });
 }
 
 export function createResourceGovernor(limits = {}) {
@@ -26,8 +33,15 @@ export function createResourceGovernor(limits = {}) {
   const drain = () => {
     for (let index = 0; index < queue.length;) {
       const waiter = queue[index];
+      if (waiter.signal?.aborted) {
+        queue.splice(index, 1);
+        waiter.signal.removeEventListener('abort', waiter.abort);
+        waiter.reject(Object.assign(new Error(`resource_acquire_aborted:${String(waiter.signal.reason || 'aborted')}`), { name: 'AbortError', code: 'resource_acquire_aborted' }));
+        continue;
+      }
       if (!fits(waiter.request)) { index += 1; continue; }
       queue.splice(index, 1);
+      waiter.signal?.removeEventListener('abort', waiter.abort);
       Object.keys(used).forEach((key) => { used[key] += waiter.request[key]; peak[key] = Math.max(peak[key], used[key]); });
       waiter.resolve(() => {
         Object.keys(used).forEach((key) => { used[key] -= waiter.request[key]; });
@@ -40,10 +54,22 @@ export function createResourceGovernor(limits = {}) {
     kind: 'GlobalResourceGovernor',
     limits: Object.freeze({ ...maximum }),
     snapshot: () => Object.freeze({ limits: { ...maximum }, used: { ...used }, peak: { ...peak }, waiting: queue.length }),
-    acquire(request = {}) {
+    acquire(request = {}, { signal = null } = {}) {
       const normalized = normalize(request);
       for (const key of Object.keys(maximum)) if (normalized[key] > maximum[key]) throw new Error(`resource_request_exceeds_limit:${key}`);
-      return new Promise((resolve) => { queue.push({ request: normalized, resolve }); drain(); });
+      if (signal?.aborted) return Promise.reject(Object.assign(new Error(`resource_acquire_aborted:${String(signal.reason || 'aborted')}`), { name: 'AbortError', code: 'resource_acquire_aborted' }));
+      return new Promise((resolve, reject) => {
+        const waiter = { request: normalized, resolve, reject, signal, abort: null };
+        waiter.abort = () => {
+          const index = queue.indexOf(waiter);
+          if (index >= 0) queue.splice(index, 1);
+          signal?.removeEventListener('abort', waiter.abort);
+          reject(Object.assign(new Error(`resource_acquire_aborted:${String(signal?.reason || 'aborted')}`), { name: 'AbortError', code: 'resource_acquire_aborted' }));
+        };
+        signal?.addEventListener('abort', waiter.abort, { once: true });
+        queue.push(waiter);
+        drain();
+      });
     },
   });
 }

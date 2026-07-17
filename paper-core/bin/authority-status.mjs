@@ -49,6 +49,7 @@ async function main() {
     });
   }
   const requiredRoleCounts = {
+    proposal_approver: 1,
     academic_evidence_authority: 1,
     independent_referee: 1,
     submission_operator: 1,

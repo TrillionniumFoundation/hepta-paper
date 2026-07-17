@@ -1,7 +1,39 @@
 # Changelog
 
-## Unreleased (0.20.0 development)
+## Unreleased (0.21.0 development)
 
+- Added a fail-closed unattended research campaign: a hash-bound machine agenda
+  produces separate empirical and non-circular formal-support claims, system
+  policy authorizes only bounded capabilities, and launch/status/resume operate
+  on the persisted fenced DAG. Completed launch and external qualification are
+  idempotent; qualification must come from an injected external signer/verifier
+  and is never self-issued.
+- Bound theorem specifications to the exact scientific claim key, assumptions,
+  quantifiers, negative boundaries and proof obligations for both operator and
+  machine authorities. Stable obligation ids map to audited Lean declarations;
+  empirical claims, premise-echo theorems, vacuous proofs and author self-review
+  fail closed. Revision readiness blockers now feed the next round.
+- Closed the academic numerical provenance and budget gaps: original and replay
+  cells share one absolute deadline and per-process resource ledger, raw events
+  are recomputed into a hash-bound residual manifest, and manuscript values must
+  resolve through accepted registry plus trusted-ledger original/replay hashes.
+  Agent workspaces cannot write system-owned automation results. GPU and trusted
+  dataset capabilities now compose explicitly.
+- Added a separately implemented raw-event recomputation TCB for every built-in
+  benchmark family and arm. Its implementation hash and independence contract
+  flow through the experiment registry, signed evidence capsule and full
+  qualification; producer-side evaluators cannot satisfy this gate.
+- Bound manuscript tables, figures, captions and deterministic presentation PDF
+  bytes to typed empirical assertion authority. Release verification rejects
+  missing surfaces, forged markers, caption/body drift, PDF replacement and
+  figure-directory symlink escapes. A second sandbox now rebuilds the PDF from
+  the bound read-only LaTeX source with a typed tool/process/resource receipt;
+  no byte-identical rebuild claim is made.
+- Corrected the unreleased WorkerRunner contract to v4: prepared execution has
+  one opaque, runner-issued `executionIdentity` input. The never-released
+  `containerImageIdentity` alias and caller-supplied `containerImageDigest`
+  input now fail closed before resolution or execution; digest remains in the
+  immutable execution receipt.
 - Expanded each campaign plan into explicit per-runtime Python, R, GPU and
   LaTeX execution/revalidation nodes. Dataset-bound work now requires a
   licensed, content-addressed, read-only mount; single-file datasets are

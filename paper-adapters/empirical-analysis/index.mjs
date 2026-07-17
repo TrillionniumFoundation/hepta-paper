@@ -7,8 +7,8 @@ import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
 import { buildEmpiricalEvidenceGate } from './evidence-policy.mjs';
 import { defaultPaperRuntimeRoot } from '../../paper-adapters/runtime/workspace-layout.mjs';
 import { experimentConfig, makeExperimentCode } from './experiment-runner.mjs';
-import { repoPath, escapeTexText, readSourceText, countSignals, buildEmpiricalBenchmarkRegistry, selectBenchmarkSuite, judgeEmpiricalDesign, buildEmpiricalAnalysisPlan, unsafeDatasetPath, buildLocalBenchmarkRegistry, buildDatasetAccessContract, buildDatasetLicenseProvenanceGate, buildTableFigureSpec } from './benchmark-contracts.mjs';
-import { buildExperimentCodePatchBundle, buildSandboxExecutionPlan, buildExperimentRunReceipt, recordArtifacts, buildResultArtifactPackage, manuscriptPatchText, empiricalLatexBlock, replaceEmpiricalBlock, buildManuscriptEmpiricalApplyApprovalPacket, buildManuscriptEmpiricalApplyPlan, applyManuscriptEmpiricalPatch, buildManuscriptEmpiricalPatch } from './execution-contracts.mjs';
+import { readSourceText, buildEmpiricalBenchmarkRegistry, selectBenchmarkSuite, buildEmpiricalAnalysisPlan, buildLocalBenchmarkRegistry, buildDatasetAccessContract, buildDatasetLicenseProvenanceGate, buildTableFigureSpec } from './benchmark-contracts.mjs';
+import { buildExperimentCodePatchBundle, buildSandboxExecutionPlan, buildExperimentRunReceipt, recordArtifacts, buildResultArtifactPackage, manuscriptPatchText, buildManuscriptEmpiricalApplyApprovalPacket, buildManuscriptEmpiricalApplyPlan, applyManuscriptEmpiricalPatch, buildManuscriptEmpiricalPatch } from './execution-contracts.mjs';
 import { createOsSandboxedWorkerRunner } from '../runtime/os-sandboxed-worker-runner.mjs';
 import { produceTrustedExperimentEvidence } from './trusted-experiment-producer.mjs';
 
@@ -31,6 +31,9 @@ export async function runEmpiricalAnalysisAdapter({
   targetSelectionPolicy = null,
   datasetRoot = null,
   benchmarkId = null,
+  datasetLicenseId = null,
+  datasetOperatorAuthorizationHash = null,
+  datasetSplitManifestHash = null,
   applyManuscript = false,
   execute = false,
   workerRunner = null,
@@ -71,6 +74,9 @@ export async function runEmpiricalAnalysisAdapter({
     runtimeRoot: resolvedRuntimeRoot,
     datasetRoot,
     benchmarkId,
+    datasetLicenseId,
+    datasetOperatorAuthorizationHash,
+    datasetSplitManifestHash,
     paperTask: row.task,
     createdAt,
   });
@@ -104,7 +110,7 @@ export async function runEmpiricalAnalysisAdapter({
     tableFigureSpec,
   });
   const config = datasetContract.datasetMode === 'authorized_local_dataset'
-    ? { ...rawConfig, primaryDatasetAbsolutePath: `/datasets/primary/${path.basename(datasetContract.primaryDatasetAbsolutePath)}` }
+    ? { ...rawConfig, primaryDatasetAbsolutePath: '/datasets/primary' }
     : rawConfig;
   const codeText = makeExperimentCode(config);
   const codePath = path.join(runDir, 'experiments', 'run_empirical_analysis.mjs');
@@ -156,7 +162,9 @@ export async function runEmpiricalAnalysisAdapter({
       name: 'primary',
       source: datasetContract.primaryDatasetAbsolutePath,
       manifestHash: datasetContract.primaryDataset.hash,
-      licenseId: 'operator_authorized_local_data',
+      licenseId: datasetContract.datasetLicenseId,
+      operatorAuthorizationHash: datasetContract.datasetOperatorAuthorizationHash,
+      splitManifestHash: datasetContract.datasetSplitManifestHash,
       readOnly: true,
     }] : [];
     const runner = workerRunner || createOsSandboxedWorkerRunner({

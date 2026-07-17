@@ -1,5 +1,4 @@
 import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
-import { nowIso } from '../../workflow-kernel/runtime/time-utils.mjs';
 import { PAPER_CORE_VERSION, hashPaperRecord, normalizedId, normalizeRefs } from './primitives.mjs';
 
 function normalizeContractItems(values = [], fallbackPrefix = 'item', limit = 64) {
@@ -52,7 +51,7 @@ export function createClaimScopeContract({
       sourceMutation: false,
       externalActionPerformed: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return { ...contract, claimScopeContractHash: hashPaperRecord('ClaimScopeContract', contract) };
 }
@@ -86,7 +85,7 @@ export function createProofObligationContract({
       externalActionPerformed: false,
       claimsMachineCheckedProof: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return { ...contract, proofObligationContractHash: hashPaperRecord('ProofObligationContract', contract) };
 }
@@ -119,7 +118,7 @@ export function createEvidenceMatrixContract({
       sourceMutation: false,
       externalActionPerformed: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return { ...contract, evidenceMatrixContractHash: hashPaperRecord('EvidenceMatrixContract', contract) };
 }
@@ -152,7 +151,7 @@ export function createReproducibilityContract({
       sourceMutation: false,
       externalActionPerformed: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return { ...contract, reproducibilityContractHash: hashPaperRecord('ReproducibilityContract', contract) };
 }
@@ -212,51 +211,7 @@ export function buildPaperResearchVerifyReceipt({
       externalActionPerformed: false,
       claimsMachineCheckedProof: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return { ...receipt, researchVerifyReceiptHash: hashPaperRecord('PaperResearchVerifyReceipt', receipt) };
-}
-
-export function buildPaperResearchWorkerBridgeReceipt({
-  paperTask,
-  worker,
-  role,
-  contractHashes = {},
-  evidenceRefs = [],
-  createdAt = null,
-} = {}) {
-  if (!paperTask?.taskKey || !worker?.path) throw new Error('PaperResearchWorkerBridgeReceipt requires paperTask and worker');
-  const normalizedEvidenceRefs = normalizeRefs(evidenceRefs);
-  const receipt = {
-    version: PAPER_CORE_VERSION,
-    kind: 'PaperResearchWorkerBridgeReceipt',
-    taskKey: paperTask.taskKey,
-    paperId: paperTask.paperId,
-    workerId: normalizeText(worker.id || worker.filename || worker.path),
-    workerPath: normalizeText(worker.path),
-    workerHash: normalizeText(worker.hash || '') || null,
-    role: normalizeText(role || worker.role || 'evidence') || 'evidence',
-    status: normalizedEvidenceRefs.length ? 'worker_bridge_evidence_bound' : 'worker_bridge_available_no_evidence',
-    executionMode: 'discovery_only_no_import_no_execute',
-    contractHashes: {
-      claimScopeContractHash: contractHashes.claimScopeContractHash || null,
-      proofObligationContractHash: contractHashes.proofObligationContractHash || null,
-      evidenceMatrixContractHash: contractHashes.evidenceMatrixContractHash || null,
-      reproducibilityContractHash: contractHashes.reproducibilityContractHash || null,
-    },
-    evidenceRefs: normalizedEvidenceRefs,
-    safety: {
-      importsOldControlPlane: false,
-      executesWorker: false,
-      readsOnly: true,
-      sourceMutation: false,
-      externalActionPerformed: false,
-      claimsMachineCheckedProof: false,
-    },
-    createdAt: createdAt || nowIso(),
-  };
-  return {
-    ...receipt,
-    paperResearchWorkerBridgeReceiptHash: hashPaperRecord('PaperResearchWorkerBridgeReceipt', receipt),
-  };
 }

@@ -1,5 +1,4 @@
 import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
-import { nowIso } from '../../workflow-kernel/runtime/time-utils.mjs';
 import { PAPER_CORE_VERSION, hashPaperRecord, normalizedId } from './primitives.mjs';
 
 export function buildRefereeApplyApprovalPacket({
@@ -106,7 +105,7 @@ export function buildRefereeApplyApprovalPacket({
       approvalDecision: approvalNeeded && approved && blockers.length === 0 ? 'approved_by_agent' : null,
       agentId: approvalNeeded && approved ? normalizedApprover || null : null,
       operatorId: null,
-      decisionTimestamp: approvalNeeded && approved && blockers.length === 0 ? (createdAt || nowIso()) : null,
+      decisionTimestamp: approvalNeeded && approved && blockers.length === 0 ? (createdAt || null) : null,
       acceptedHashes: {
         issueQueueHash: issueQueue.refereeRevisionIssueQueueHash,
         patchPlanHash: patchPlan.refereeRevisionPatchPlanHash,
@@ -152,7 +151,7 @@ export function buildRefereeApplyApprovalPacket({
       requiresSeparateApplyExecutor: true,
       requiresPostApplyReceipts: true,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return {
     ...packet,
@@ -266,7 +265,7 @@ export function buildRefereePatchApplyExecution({
       requiresAppliedPatchReceipt: true,
       requiresPostRepairGateRecheck: true,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return {
     ...execution,
@@ -376,7 +375,7 @@ export function buildRefereePatchApplyInvocation({
       requiresAppliedPatchReceipt: true,
       requiresPostRepairGateRecheck: true,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return {
     ...invocation,
@@ -469,7 +468,7 @@ export function buildRefereeAppliedPatchReceipt({
       requiresActualSourceMutationExecutorReceipt: true,
       requiresPostRepairGateRecheck: true,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return {
     ...receipt,

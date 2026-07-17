@@ -370,7 +370,7 @@ export async function runRefereeReviewAdapter({
     ...materializationInputs,
     blockers,
   });
-  if (runtimeRoot && (execute || reviewReport.findingCount > 0)) {
+  if (runtimeRoot && execute) {
     const reviewDir = path.join(runtimeRoot, 'referee-review', row.task.paperId);
     await ensureDir(reviewDir);
     await writeJsonFile(path.join(reviewDir, 'REFEREE_REVIEW_INTAKE.json'), intake);

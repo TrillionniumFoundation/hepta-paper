@@ -1,5 +1,4 @@
 import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
-import { nowIso } from '../../workflow-kernel/runtime/time-utils.mjs';
 import { PAPER_CORE_VERSION, hashPaperRecord, normalizedId } from './primitives.mjs';
 
 export function buildPostRepairBuildPackage({
@@ -80,7 +79,7 @@ export function buildPostRepairBuildPackage({
       requiresAppliedPatchReceipt: true,
       requiresPostRepairRechecks: true,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return {
     ...gate,
@@ -177,7 +176,7 @@ export function buildRefereeIssueResolutionProof({
       requiresPostRepairPackage: true,
       requiresIssueResolutionEvidence: true,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return {
     ...proof,
@@ -307,7 +306,7 @@ export function buildRepairReconciliation({
       requiresIssueResolutionProof: true,
       requiresPostRepairPackage: true,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return {
     ...reconciliation,
@@ -416,7 +415,7 @@ export function buildRepairStateMutationReceipt({
       recordsAgentPatchQueueRows: true,
       releasesReviewedSubmitReadiness: recorded,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return {
     ...receipt,

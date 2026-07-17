@@ -1,8 +1,8 @@
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createReadOnlySqliteStore } from './sqlite-store.mjs';
-import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { writeImmutableFileSync } from '../runtime/immutable-file-repository.mjs';
 
 export const LEGACY_HISTORY_TABLES = Object.freeze([
   Object.freeze({ name: 'gate_runs', category: 'gate_history', translationTarget: 'receipt_ledger_archive' }),
@@ -18,12 +18,8 @@ export const LEGACY_HISTORY_TABLES = Object.freeze([
   Object.freeze({ name: 'source_workspaces', category: 'workspace_history', translationTarget: 'workspace_lineage_reference' }),
 ]);
 
-function sha256Bytes(value) {
-  return `sha256:${crypto.createHash('sha256').update(value).digest('hex')}`;
-}
-
 function fileHash(candidate) {
-  return sha256Bytes(fs.readFileSync(candidate));
+  return hashBytes(fs.readFileSync(candidate));
 }
 
 function stable(value) {
@@ -42,16 +38,6 @@ function query(store, sql) {
   const result = store.query(sql);
   if (!result.ok) throw new Error(result.error || result.stderr || 'legacy_history_query_failed');
   return result.rows || [];
-}
-
-function immutableWrite(candidate, bytes) {
-  fs.mkdirSync(path.dirname(candidate), { recursive: true });
-  try {
-    fs.writeFileSync(candidate, bytes, { flag: 'wx', mode: 0o444 });
-  } catch (error) {
-    if (error.code !== 'EEXIST') throw error;
-    if (fileHash(candidate) !== sha256Bytes(bytes)) throw new Error(`legacy_history_immutable_collision:${candidate}`);
-  }
 }
 
 function tableRows(store, table) {
@@ -115,8 +101,8 @@ export function exportLegacyHistorySnapshot({
         columns: table.columns,
         primaryKey: table.primaryKey,
         rowCount: table.rows.length,
-        contentHash: sha256Bytes(bytes),
-        rowLineageHash: sha256Bytes(rowLineage),
+        contentHash: hashBytes(bytes),
+        rowLineageHash: hashBytes(rowLineage),
         rowLineageCount: table.rows.length,
         bytes: bytes.length,
         content: bytes,
@@ -144,11 +130,11 @@ export function exportLegacyHistorySnapshot({
   const snapshotId = manifestHash.replace(/^sha256:/, '');
   const snapshotRoot = path.join(path.resolve(outputRoot), snapshotId);
   for (const table of tablePayloads) {
-    immutableWrite(path.join(snapshotRoot, `${table.name}.ndjson`), table.content);
-    immutableWrite(path.join(snapshotRoot, `${table.name}.lineage.ndjson`), table.rowLineage);
+    writeImmutableFileSync(path.join(snapshotRoot, `${table.name}.ndjson`), table.content, { collisionError: 'legacy_history_immutable_collision' });
+    writeImmutableFileSync(path.join(snapshotRoot, `${table.name}.lineage.ndjson`), table.rowLineage, { collisionError: 'legacy_history_immutable_collision' });
   }
   const manifestPath = path.join(snapshotRoot, 'manifest.json');
-  immutableWrite(manifestPath, Buffer.from(`${JSON.stringify({ ...subject, manifestHash }, null, 2)}\n`));
+  writeImmutableFileSync(manifestPath, Buffer.from(`${JSON.stringify({ ...subject, manifestHash }, null, 2)}\n`), { collisionError: 'legacy_history_immutable_collision' });
   const blockers = missingTables.map((table) => `legacy_history_table_missing:${table}`);
   const receiptPayload = {
     version: 1,

@@ -6,7 +6,3 @@ export function heptaStorePath(root, runtimeRoot = null) {
     'hepta-paper.sqlite',
   );
 }
-
-export function legacyStorePath(root) {
-  return path.join(path.resolve(root), 'paper_factory.sqlite');
-}

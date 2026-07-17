@@ -29,20 +29,20 @@ export function buildCampaignSloReport({ campaigns = [], nodes = [], events = []
   const eventsByNode = new Map();
   const completedAtByNode = new Map();
   for (const row of events) {
-    const nodeId = row.node_id || row.event?.nodeId;
+    const nodeId = row.nodeId || row.event?.nodeId;
     if (!nodeId) continue;
     const values = eventsByNode.get(nodeId) || [];
-    values.push({ kind: row.kind || row.event?.kind, at: Date.parse(row.created_at || row.event?.createdAt), row });
+    values.push({ kind: row.kind || row.event?.kind, at: Date.parse(row.createdAt || row.event?.createdAt), row });
     eventsByNode.set(nodeId, values);
-    if ((row.kind || row.event?.kind) === 'campaign_node_completed') completedAtByNode.set(nodeId, Date.parse(row.created_at || row.event?.createdAt));
+    if ((row.kind || row.event?.kind) === 'campaign_node_completed') completedAtByNode.set(nodeId, Date.parse(row.createdAt || row.event?.createdAt));
   }
   const queueWaits = [];
   const recoveryTimes = [];
   for (const node of nodes) {
-    const timeline = (eventsByNode.get(node.node_id || node.nodeId) || []).filter((item) => Number.isFinite(item.at)).sort((left, right) => left.at - right.at);
+    const timeline = (eventsByNode.get(node.nodeId) || []).filter((item) => Number.isFinite(item.at)).sort((left, right) => left.at - right.at);
     const started = timeline.find((item) => item.kind === 'campaign_node_started');
     const dependencyReadyTimes = (node.dependencies || []).map((dependency) => completedAtByNode.get(dependency)).filter(Number.isFinite);
-    const createdAt = Date.parse(node.created_at || node.createdAt);
+    const createdAt = Date.parse(node.createdAt);
     const readyAt = dependencyReadyTimes.length === (node.dependencies || []).length && dependencyReadyTimes.length
       ? Math.max(...dependencyReadyTimes)
       : createdAt;
@@ -75,11 +75,11 @@ export function buildCampaignSloReport({ campaigns = [], nodes = [], events = []
     lockWaitHistogram: histogram(lockWaits, [0, 1, 5, 10, 50, 100, 500, 1000]),
     queueContentionHistogram: histogram(queueContention, [0, 1, 2, 5, 10]),
     retryEventCount: events.filter((row) => ['campaign_node_retry_queued', 'campaign_node_manually_retried'].includes(row.kind || row.event?.kind)).length,
-    uniqueChildSessionCount: new Set(nodes.map((node) => node.childSessionId || node.child_session_id).filter(Boolean)).size,
-    totalAgentCalls: campaigns.reduce((total, campaign) => total + Number(campaign.agentCallCount ?? campaign.agent_call_count ?? 0), 0),
-    totalCpuJobs: campaigns.reduce((total, campaign) => total + Number(campaign.cpuJobCount ?? campaign.cpu_job_count ?? 0), 0),
-    totalGpuJobs: campaigns.reduce((total, campaign) => total + Number(campaign.gpuJobCount ?? campaign.gpu_job_count ?? 0), 0),
-    totalTokens: campaigns.reduce((total, campaign) => total + Number(campaign.tokenCount ?? campaign.token_count ?? 0), 0),
+    uniqueChildSessionCount: new Set(nodes.map((node) => node.childSessionId).filter(Boolean)).size,
+    totalAgentCalls: campaigns.reduce((total, campaign) => total + Number(campaign.agentCallCount ?? 0), 0),
+    totalCpuJobs: campaigns.reduce((total, campaign) => total + Number(campaign.cpuJobCount ?? 0), 0),
+    totalGpuJobs: campaigns.reduce((total, campaign) => total + Number(campaign.gpuJobCount ?? 0), 0),
+    totalTokens: campaigns.reduce((total, campaign) => total + Number(campaign.tokenCount ?? 0), 0),
     unknownCostCampaignCount: unknownCostCampaigns,
     runtimeBytes: Number(runtimeBytes || 0),
   };

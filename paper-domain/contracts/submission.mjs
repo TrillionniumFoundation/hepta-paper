@@ -1,5 +1,4 @@
 import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
-import { nowIso } from '../../workflow-kernel/runtime/time-utils.mjs';
 import {
   PAPER_CORE_VERSION,
   PAPER_MANIFEST_STATUS,
@@ -60,7 +59,7 @@ export function buildSubmissionApprovalPacket({
     agentApproved: false,
     artifactPackageHash: artifactPackage?.artifactPackageHash || null,
     venueSubmissionPlanHash: venuePlan?.venueSubmissionPlanHash || null,
-    researchReportHash: researchReport?.researchReportHash || researchReport?.researchVerifyReceiptHash || null,
+    researchReportHash: researchReport?.researchReportHash || null,
     academicEvidenceVerificationHash: researchReport?.academicEvidenceAttestation
       ?.academicEvidenceAttestationVerificationHash || null,
     independentRefereeAuthorityReceiptHash:
@@ -78,7 +77,7 @@ export function buildSubmissionApprovalPacket({
       agentMayApprove: false,
       cryptographicDualControlRequired: true,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   const approvalHash = hashPaperRecord('SubmissionApprovalPacket', packet);
   return { ...packet, approvalHash, submissionApprovalPacketHash: approvalHash };
@@ -130,7 +129,7 @@ export function buildFreshVenueEvidenceBundle({
     status: blockers.length ? 'blocked_fresh_venue_evidence' : 'fresh_venue_evidence_ready',
     venueSubmissionPlanHash: venuePlan.venueSubmissionPlanHash,
     artifactPackageHash: artifactPackage?.artifactPackageHash || null,
-    researchReportHash: researchReport?.researchReportHash || researchReport?.researchVerifyReceiptHash || null,
+    researchReportHash: researchReport?.researchReportHash || null,
     academicEvidenceStatus: researchReport?.academicEvidenceStatus || null,
     academicEvidenceEligible: researchReport?.academicEvidenceEligible === true,
     academicEvidenceVerificationHash: researchReport?.academicEvidenceAttestation
@@ -150,7 +149,7 @@ export function buildFreshVenueEvidenceBundle({
       externalActionPerformed: false,
       dryRunEvidenceOnly: !requireAcademicEvidence,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return { ...bundle, freshVenueEvidenceBundleHash: hashPaperRecord('FreshVenueEvidenceBundle', bundle) };
 }
@@ -188,7 +187,7 @@ export function buildSubmissionReplayGuard({
       grantsExecutionPermission: false,
       externalActionPerformed: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return { ...guard, submissionReplayGuardHash: hashPaperRecord('SubmissionReplayGuard', guard) };
 }
@@ -222,7 +221,7 @@ export function buildExternalExecutorHandoffOutbox({
       externalActionPerformed: false,
       sourceMutation: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return { ...outbox, externalExecutorHandoffOutboxHash: hashPaperRecord('ExternalExecutorHandoffOutbox', outbox) };
 }
@@ -278,7 +277,7 @@ export function buildReviewedSubmitPreflightPacket({
     approvalRequired: blockers.includes('explicit_reviewed_submit_approval_required') || !approvalPacket.approved,
     liveExecutorBoundaryBlocked: blockers.length > 0,
     artifactPackageHash: artifactPackage?.artifactPackageHash || null,
-    researchReportHash: researchReport?.researchReportHash || researchReport?.researchVerifyReceiptHash || null,
+    researchReportHash: researchReport?.researchReportHash || null,
     venueSubmissionPlanHash: venuePlan?.venueSubmissionPlanHash || null,
     approvalHash: approvalPacket.approvalHash || approvalPacket.submissionApprovalPacketHash || null,
     freshVenueEvidenceBundleHash: freshVenueEvidenceBundle.freshVenueEvidenceBundleHash || null,
@@ -302,7 +301,7 @@ export function buildReviewedSubmitPreflightPacket({
         liveAuthorizationReceipt?.status === 'live_submission_authorization_verified',
       externalActionPerformed: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return {
     ...packet,
@@ -395,7 +394,7 @@ export function buildControlledExternalExecutorReceipt({
       dualControlAuthorizationVerified:
         liveAuthorizationReceipt?.status === 'live_submission_authorization_verified',
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return {
     ...receipt,
@@ -430,7 +429,7 @@ export function buildExternalSubmissionReceipt({
     externalActionPerformed: false,
     sourceMutationPerformed: false,
     blockers: uniqueStrings(blockers, 32),
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   const receiptHash = hashPaperRecord('ExternalSubmissionReceipt', receipt);
   return { ...receipt, receiptHash, externalSubmissionReceiptHash: receiptHash };
@@ -454,7 +453,7 @@ export function buildSubmissionReceiptInbox({
     receiptHash: receipt.receiptHash,
     outboxHash: outbox.externalExecutorHandoffOutboxHash,
     blockers: uniqueStrings(blockers, 32),
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return { ...inbox, submissionReceiptInboxHash: hashPaperRecord('SubmissionReceiptInbox', inbox) };
 }
@@ -491,7 +490,7 @@ export function buildSubmissionReconciliation({
       externalActionPerformed: false,
       externalStateChanged: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return { ...reconciliation, submissionReconciliationHash: hashPaperRecord('SubmissionReconciliation', reconciliation) };
 }

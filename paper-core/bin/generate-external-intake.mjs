@@ -2,14 +2,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { buildLegacyCapabilityMatrixV3 } from '../../migration/legacy-capability-matrix-v3.mjs';
-import { bootstrapPaperExecutionContext } from '../../paper-composition/bootstrap/service-bootstrap.mjs';
-import { withArtifactWriteContext } from '../../paper-adapters/artifacts/artifact-write-context.mjs';
+import { bootstrapBatchInventoryContext } from '../../paper-composition/bootstrap/batch-inventory-context-bootstrap.mjs';
+import { withArtifactWriteContext } from '../../paper-composition/bootstrap/operator-artifact-composition.mjs';
 import { currentCodeProvenance } from '../src/code-provenance.mjs';
 import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
-import { capabilityTargetBindings } from '../../migration/operational-proof-intake.mjs';
+import { sha256FileSync } from '../../workflow-kernel/runtime/file-utils.mjs';
+import { capabilityTargetBindings } from '../../paper-composition/bootstrap/operator-governance-composition.mjs';
 import { fileURLToPath } from 'node:url';
-import crypto from 'node:crypto';
 
 process.env.HEPTA_EVIDENCE_ENVIRONMENT = 'administrative';
 process.env.HEPTA_EVIDENCE_CLASS = 'external_intake';
@@ -18,12 +18,18 @@ const root = defaultPaperAssetRoot();
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const matrix = buildLegacyCapabilityMatrixV3({ runtimeRoot });
 const provenance = currentCodeProvenance();
-const context = bootstrapPaperExecutionContext({ root, runtimeRoot, mode: 'external-intake-generation', execute: false, writeReport: true });
+const context = bootstrapBatchInventoryContext({
+  root,
+  runtimeRoot,
+  mode: 'external-intake-generation',
+  execute: false,
+  writeReport: true,
+  readOnly: false,
+  allowMissingReadOnlyStore: false,
+});
 
 function sha256File(file) {
-  return fs.existsSync(file)
-    ? `sha256:${crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex')}`
-    : null;
+  return fs.existsSync(file) ? sha256FileSync(file) : null;
 }
 
 function boundRuntimeDocument(relative) {
@@ -62,11 +68,11 @@ await withArtifactWriteContext(context.services, async () => {
     kind: 'AuthorityOnboardingPacket',
     status: 'external_public_keys_and_signed_documents_required',
     codeProvenance: provenance,
-    requiredRoles: ['academic_evidence_authority', 'independent_referee', 'submission_operator', 'live_executor_authorizer'],
+    requiredRoles: ['proposal_approver', 'academic_evidence_authority', 'independent_referee', 'submission_operator', 'live_executor_authorizer'],
     trustStorePath: 'runtime/trust/AUTHORITY_TRUST_STORE.json',
     publicKeysOnly: true,
     privateKeysForbidden: true,
-    requiredDocuments: ['ACADEMIC_EVIDENCE_ATTESTATION.json', 'INDEPENDENT_REFEREE_VERDICT.json', 'LIVE_SUBMISSION_AUTHORIZATION.json'],
+    requiredDocuments: ['PROPOSAL_APPROVAL_DOCUMENT.json', 'ACADEMIC_EVIDENCE_ATTESTATION.json', 'INDEPENDENT_REFEREE_VERDICT.json', 'LIVE_SUBMISSION_AUTHORIZATION.json'],
     separationOfDutiesRequired: true,
   };
   const authorityTrustStoreTemplate = {
@@ -226,4 +232,6 @@ await withArtifactWriteContext(context.services, async () => {
     operationallyProven: matrix.summary.operationallyProven,
     writeReceiptHashes: outputs.map((receipt) => receipt.writeReceiptHash),
   }, null, 2)}\n`);
+}).finally(() => {
+  context.services.persistenceSession.close?.();
 });

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createAgentBackendRouter } from '../../paper-adapters/automation/agent-backend-router.mjs';
 import { buildExecutorCapabilities, evaluateExecutorCapabilityRequest } from '../../paper-ports/executor-capabilities.mjs';
+import { assertWorkerRunnerPort } from '../../paper-ports/worker-runner-port.mjs';
 
 function executor(executorId, overrides = {}) {
   const capabilities = buildExecutorCapabilities({
@@ -41,4 +42,24 @@ test('agent backend router skips capability mismatches before invoking a backend
   assert.equal(receipt.selectedExecutorId, 'gpu-worker');
   assert.equal(receipt.fallbackFailures[0].message, 'backend_capability_mismatch');
   assert.ok(receipt.fallbackFailures[0].blockers.includes('executor_gpu_unsupported'));
+});
+
+test('worker runner v4 exposes one execution identity capability and no deprecated run inputs', () => {
+  const capabilities = buildExecutorCapabilities({
+    executorId: 'worker-v4',
+    sandboxModes: ['kernel-isolated'],
+    networkPolicy: 'none',
+    workspaceIsolation: true,
+    receiptKinds: ['OsSandboxWorkerReceipt'],
+  });
+  const runner = {
+    version: 4,
+    runnerId: 'worker-v4',
+    capabilities: () => capabilities,
+    resolveExecutionRuntimeIdentity() { return {}; },
+    run() { return {}; },
+  };
+  assert.equal(assertWorkerRunnerPort(runner), runner);
+  assert.throws(() => assertWorkerRunnerPort({ ...runner, version: 3 }), /version 4/);
+  assert.throws(() => assertWorkerRunnerPort({ ...runner, deprecatedRunInputs: { containerImageDigest: 'legacy' } }), /deprecated run inputs/);
 });

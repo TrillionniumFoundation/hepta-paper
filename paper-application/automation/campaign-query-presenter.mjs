@@ -8,45 +8,45 @@ function countsBy(items, key) {
 
 export function summarizeCampaign(campaign = {}) {
   return Object.freeze({
-    campaignId: campaign.campaign_id || campaign.campaignId || null,
-    paperId: campaign.paper_id || campaign.paperId || null,
+    campaignId: campaign.campaignId || null,
+    paperId: campaign.paperId || null,
     status: campaign.status || null,
-    effectiveStatus: campaign.effectiveStatus || campaign.effective_status || campaign.status || null,
-    currentPhase: campaign.currentPhase || campaign.current_phase || null,
-    currentReviewRound: Number(campaign.currentReviewRound ?? campaign.current_review_round ?? 0),
-    maxRounds: Number(campaign.maxRounds ?? campaign.max_rounds ?? 0),
+    effectiveStatus: campaign.effectiveStatus || campaign.status || null,
+    currentPhase: campaign.currentPhase || null,
+    currentReviewRound: Number(campaign.currentReviewRound ?? 0),
+    maxRounds: Number(campaign.maxRounds ?? 0),
     usage: {
-      agentCalls: Number(campaign.agentCallCount ?? campaign.agent_call_count ?? 0),
-      cpuJobs: Number(campaign.cpuJobCount ?? campaign.cpu_job_count ?? 0),
-      gpuJobs: Number(campaign.gpuJobCount ?? campaign.gpu_job_count ?? 0),
-      tokens: Number(campaign.tokenCount ?? campaign.token_count ?? 0),
-      costUsd: campaign.costKnown === false ? 'unknown' : (campaign.costUsd ?? campaign.cost_usd ?? 'unknown'),
+      agentCalls: Number(campaign.agentCallCount ?? 0),
+      cpuJobs: Number(campaign.cpuJobCount ?? 0),
+      gpuJobs: Number(campaign.gpuJobCount ?? 0),
+      tokens: Number(campaign.tokenCount ?? 0),
+      costUsd: campaign.costKnown === false ? 'unknown' : (campaign.costUsd ?? 'unknown'),
     },
-    stopReason: campaign.stop_reason || campaign.stopReason || null,
+    stopReason: campaign.stopReason || null,
     lineage: {
-      parent: campaign.parentCampaignId || campaign.parent_campaign_id || null,
-      supersedes: campaign.supersedesCampaignId || campaign.supersedes_campaign_id || null,
-      recoveryOf: campaign.recoveryOfCampaignId || campaign.recovery_of_campaign_id || null,
+      parent: campaign.parentCampaignId || null,
+      supersedes: campaign.supersedesCampaignId || null,
+      recoveryOf: campaign.recoveryOfCampaignId || null,
     },
-    updatedAt: campaign.updated_at || campaign.updatedAt || null,
+    updatedAt: campaign.updatedAt || null,
   });
 }
 
 export function summarizeNode(node = {}) {
   return Object.freeze({
-    nodeId: node.node_id || node.nodeId || null,
+    nodeId: node.nodeId || null,
     kind: node.kind || null,
-    roundIndex: Number(node.roundIndex ?? node.round_index ?? 0),
+    roundIndex: Number(node.roundIndex ?? 0),
     status: node.status || null,
-    attemptCount: Number(node.attemptCount ?? node.attempt_count ?? 0),
-    maxAttempts: Number(node.maxAttempts ?? node.max_attempts ?? 0),
-    failureClass: node.failure_class || node.failureClass || null,
-    reviewerId: node.reviewerId || node.reviewer_id || null,
-    childSessionId: node.childSessionId || node.child_session_id || null,
-    reviewHash: node.reviewHash || node.review_hash || null,
-    resolvedModel: node.resolvedModel || node.resolved_model || null,
-    resultHash: node.result_sha256 || node.resultHash || null,
-    updatedAt: node.updated_at || node.updatedAt || null,
+    attemptCount: Number(node.attemptCount ?? 0),
+    maxAttempts: Number(node.maxAttempts ?? 0),
+    failureClass: node.failureClass || null,
+    reviewerId: node.reviewerId || null,
+    childSessionId: node.childSessionId || null,
+    reviewHash: node.reviewHash || null,
+    resolvedModel: node.resolvedModel || null,
+    resultHash: node.resultSha256 || null,
+    updatedAt: node.updatedAt || null,
   });
 }
 
@@ -89,13 +89,13 @@ export function summarizeRun(result = {}) {
 export function summarizeEvent(row = {}) {
   const event = row.event || {};
   return Object.freeze({
-    eventId: row.event_id || null,
-    campaignId: row.campaign_id || event.campaignId || null,
-    nodeId: row.node_id || event.nodeId || null,
+    eventId: row.eventId || null,
+    campaignId: row.campaignId || event.campaignId || null,
+    nodeId: row.nodeId || event.nodeId || null,
     kind: row.kind || event.kind || null,
     detail: event.detail || {},
-    createdAt: row.created_at || event.createdAt || null,
-    eventHash: row.event_sha256 || null,
+    createdAt: row.createdAt || event.createdAt || null,
+    eventHash: row.eventSha256 || null,
   });
 }
 
@@ -109,7 +109,7 @@ export function presentNodeLog(node, { details = false } = {}) {
     result: node.result ? {
       kind: result.kind || null,
       status: result.status || null,
-      receiptHash: result.receiptHash || result.agentExecutionReceiptHash || result.multiLanguageEmpiricalReceiptHash || result.automationRepairExecutionReceiptHash || node.result_sha256 || null,
+      receiptHash: result.receiptHash || result.agentExecutionReceiptHash || result.multiLanguageEmpiricalReceiptHash || result.automationRepairExecutionReceiptHash || node.resultSha256 || null,
       blockers: Array.isArray(result.blockers) ? result.blockers : [],
       usage: result.usage || null,
       summary: result.summary || null,
@@ -119,7 +119,7 @@ export function presentNodeLog(node, { details = false } = {}) {
       blockers: Array.isArray(failure.blockers) ? failure.blockers : [],
       receiptKind: failure.receiptKind || null,
       receiptStatus: failure.receiptStatus || null,
-      receiptHash: failure.receiptHash || node.failure_sha256 || null,
+      receiptHash: failure.receiptHash || node.failureSha256 || null,
       stderrTail: String(failure.stderrTail || '').slice(-2000),
     } : null,
   });

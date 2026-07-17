@@ -1,11 +1,12 @@
-import { sqlJson, sqlText } from '../../paper-ports/store-port.mjs';
+import { failClosedStoreQueries, sqlJson, sqlText } from '../../paper-ports/store-port.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
-export function planAutomationRuntimeReconciliation({ store, clock, noProgressSeconds = 1800 } = {}) {
-  if (!store || !clock) throw new Error('Automation reconciliation requires store and clock');
+export function planAutomationRuntimeReconciliation({ store: suppliedStore, clock, noProgressSeconds = 1800 } = {}) {
+  if (!suppliedStore || !clock) throw new Error('Automation reconciliation requires store and clock');
+  const store = failClosedStoreQueries(suppliedStore);
   const now = clock.nowIso();
   const noProgressCutoff = new Date(clock.now().getTime() - Math.max(60, Number(noProgressSeconds || 1800)) * 1000).toISOString();
-  const expiredNodes = store.query(`SELECT node_id,campaign_id,status,lease_owner,lease_expires_at FROM campaign_nodes WHERE status IN ('leased','running') AND lease_expires_at IS NOT NULL AND lease_expires_at<=${sqlText(now)} ORDER BY campaign_id,node_id;`).rows;
+  const expiredNodes = store.query(`SELECT node_id,campaign_id,status,lease_owner,lease_expires_at,attempt_id,lease_generation,node_revision FROM campaign_nodes WHERE status IN ('leased','running') AND lease_expires_at IS NOT NULL AND julianday(lease_expires_at)<=julianday(${sqlText(now)}) ORDER BY campaign_id,node_id;`).rows;
   const expiredResourceLeases = store.query(`SELECT lease_id,scope,owner_id,campaign_id,node_id,expires_at FROM automation_resource_leases WHERE expires_at<=${sqlText(now)} ORDER BY lease_id;`).rows;
   const expiredWaiters = store.query(`SELECT waiter_id,scope,owner_id,campaign_id,node_id,expires_at FROM automation_resource_waiters WHERE expires_at IS NOT NULL AND expires_at<=${sqlText(now)} ORDER BY waiter_id;`).rows;
   const noProgressCampaigns = store.query(`SELECT c.campaign_id,c.paper_id,c.updated_at,c.current_phase,count(n.node_id) AS queued_node_count
@@ -64,7 +65,7 @@ export function executeAutomationRuntimeReconciliation({ store, clock, receiptLe
     evidenceClass: 'runtime_reconciliation',
     strictInsert: true,
   });
-  const eventSql = plan.expiredNodes.map((node) => {
+  const recoverySql = plan.expiredNodes.map((node) => {
     const eventPayload = {
       version: 1,
       kind: 'campaign_node_lease_recovered',
@@ -75,7 +76,10 @@ export function executeAutomationRuntimeReconciliation({ store, clock, receiptLe
     };
     const eventHash = hashRecord('PaperCampaignEvent', eventPayload);
     const eventId = `${node.campaign_id}:${reconciledAt}:${eventHash.slice(-16)}`;
-    return `INSERT OR IGNORE INTO campaign_events(event_id,campaign_id,node_id,kind,event_json,event_sha256,created_at) VALUES(${sqlText(eventId)},${sqlText(node.campaign_id)},${sqlText(node.node_id)},'campaign_node_lease_recovered',${sqlJson(eventPayload)},${sqlText(eventHash)},${sqlText(reconciledAt)});`;
+    const attemptCondition = node.attempt_id ? `attempt_id=${sqlText(node.attempt_id)}` : 'attempt_id IS NULL';
+    const ownerCondition = node.lease_owner ? `lease_owner=${sqlText(node.lease_owner)}` : 'lease_owner IS NULL';
+    return `UPDATE campaign_nodes SET status='queued',lease_owner=NULL,lease_expires_at=NULL,attempt_id=NULL,node_revision=node_revision+1,failure_class='lease_expired_recovered',updated_at=${sqlText(reconciledAt)} WHERE node_id=${sqlText(node.node_id)} AND status=${sqlText(node.status)} AND ${ownerCondition} AND ${attemptCondition} AND lease_generation=${Number(node.lease_generation || 0)} AND node_revision=${Number(node.node_revision || 0)} AND julianday(lease_expires_at)<=julianday(${sqlText(reconciledAt)}) AND EXISTS(SELECT 1 FROM paper_campaigns c WHERE c.campaign_id=campaign_nodes.campaign_id AND c.status='running');
+INSERT OR IGNORE INTO campaign_events(event_id,campaign_id,node_id,kind,event_json,event_sha256,created_at) SELECT ${sqlText(eventId)},${sqlText(node.campaign_id)},${sqlText(node.node_id)},'campaign_node_lease_recovered',${sqlJson(eventPayload)},${sqlText(eventHash)},${sqlText(reconciledAt)} WHERE changes()=1;`;
   }).join('\n');
   const campaignEventSql = plan.noProgressCampaigns.map((campaign) => {
     const eventPayload = {
@@ -111,8 +115,7 @@ export function executeAutomationRuntimeReconciliation({ store, clock, receiptLe
     return `INSERT OR IGNORE INTO campaign_events(event_id,campaign_id,node_id,kind,event_json,event_sha256,created_at) VALUES(${sqlText(eventId)},${sqlText(node.campaign_id)},${sqlText(node.node_id)},'campaign_terminal_child_closed',${sqlJson(eventPayload)},${sqlText(eventHash)},${sqlText(reconciledAt)});`;
   }).join('\n');
   const result = store.execute(`BEGIN IMMEDIATE;
-${plan.expiredNodes.length ? `UPDATE campaign_nodes SET status='queued',lease_owner=NULL,lease_expires_at=NULL,failure_class='lease_expired_recovered',updated_at=${sqlText(reconciledAt)} WHERE node_id IN (${plan.expiredNodes.map((node) => sqlText(node.node_id)).join(',')}) AND status IN ('leased','running') AND lease_expires_at<=${sqlText(reconciledAt)};` : ''}
-${eventSql}
+${recoverySql}
 ${plan.noProgressCampaigns.length ? `UPDATE paper_campaigns SET status='paused',current_phase='paused',stop_reason='reconciliation_no_progress_timeout',accumulated_run_ms=accumulated_run_ms+CASE WHEN last_resumed_at IS NULL THEN 0 ELSE max(0,CAST((julianday(${sqlText(reconciledAt)})-julianday(last_resumed_at))*86400000 AS INTEGER)) END,last_resumed_at=NULL,revision=revision+1,updated_at=${sqlText(reconciledAt)} WHERE campaign_id IN (${plan.noProgressCampaigns.map((campaign) => sqlText(campaign.campaign_id)).join(',')}) AND status='running';` : ''}
 ${campaignEventSql}
 ${plan.terminalCampaignQueuedNodes.length ? `UPDATE campaign_nodes SET status='skipped',failure_class='terminal_campaign_reconciled',failure_json=NULL,failure_sha256=NULL,lease_owner=NULL,lease_expires_at=NULL,updated_at=${sqlText(reconciledAt)} WHERE node_id IN (${plan.terminalCampaignQueuedNodes.map((node) => sqlText(node.node_id)).join(',')}) AND status='queued' AND EXISTS(SELECT 1 FROM paper_campaigns c WHERE c.campaign_id=campaign_nodes.campaign_id AND c.status IN ('failed','cancelled','stopped','completed'));` : ''}

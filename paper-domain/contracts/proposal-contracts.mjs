@@ -1,11 +1,157 @@
 import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
-import { nowIso } from '../../workflow-kernel/runtime/time-utils.mjs';
 import { PAPER_CORE_VERSION, hashPaperRecord, normalizeRefs } from './primitives.mjs';
 import { PAPER_ACTIONS } from './product-profile.mjs';
+import { PAPER_QUALITY_PROFILES } from '../quality/paper-quality-policy.mjs';
+import { verifyPaperScientificClaimInput } from './scientific-claim-input.mjs';
 
 function normalizeList(values = [], limit = 32) {
   if (typeof values === 'string') return uniqueStrings(values.split(/\n|;/), limit);
   return uniqueStrings(values || [], limit);
+}
+
+function normalizePaperQualityProfiles(values = []) {
+  return normalizeList(values, 8).filter((profile) => Object.hasOwn(PAPER_QUALITY_PROFILES, profile));
+}
+
+function exactStringList(value) {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string')
+    ? value
+    : null;
+}
+
+function exactListsMatch(left, right) {
+  return Array.isArray(left)
+    && Array.isArray(right)
+    && left.length === right.length
+    && left.every((value, index) => value === right[index]);
+}
+
+export function paperProposalContributionClaimHashes({ proposalEnvelope } = {}) {
+  const paperId = normalizeText(proposalEnvelope?.paperId);
+  return (proposalEnvelope?.proposal?.contributionClaims || []).map((claim, index) => hashPaperRecord(
+    'PaperProposalContributionClaim',
+    {
+      paperId,
+      claimIndex: index,
+      claim: normalizeText(claim),
+    },
+  ));
+}
+
+export function paperProposalRiskHashes({ proposalEnvelope } = {}) {
+  const paperId = normalizeText(proposalEnvelope?.paperId);
+  return [
+    ['novelty', proposalEnvelope?.proposal?.noveltyRisk],
+    ['feasibility', proposalEnvelope?.proposal?.feasibilityRisk],
+  ].map(([riskType, risk]) => hashPaperRecord('PaperProposalRisk', {
+    paperId,
+    riskType,
+    risk: normalizeText(risk),
+  }));
+}
+
+export function buildPaperProposalApprovalBinding({
+  ideaBrief,
+  proposalEnvelope,
+  generationReceipt,
+} = {}) {
+  if (!ideaBrief?.kind || !proposalEnvelope?.kind || !generationReceipt?.kind) {
+    throw new Error('PaperProposalApprovalBinding requires ideaBrief, proposalEnvelope, and generationReceipt');
+  }
+  return Object.freeze({
+    paperId: proposalEnvelope.paperId || null,
+    proposalEnvelopeHash: proposalEnvelope.paperProposalEnvelopeHash,
+    generationReceiptHash: generationReceipt.paperProposalGenerationReceiptHash,
+    targetVenue: normalizeText(ideaBrief.targetVenue) || null,
+    contributionClaimHashes: Object.freeze(paperProposalContributionClaimHashes({ proposalEnvelope })),
+    qualityProfiles: Object.freeze([...(proposalEnvelope.proposal?.recommendedPaperQualityProfiles || [])]),
+    riskHashes: Object.freeze(paperProposalRiskHashes({ proposalEnvelope })),
+  });
+}
+
+export function createPaperProposalApprovalDocument({
+  ideaBrief,
+  proposalEnvelope,
+  generationReceipt,
+  operatorIdentity,
+  riskAcceptanceRationale,
+  signedAt,
+  validFrom = null,
+  expiresAt,
+} = {}) {
+  const binding = buildPaperProposalApprovalBinding({ ideaBrief, proposalEnvelope, generationReceipt });
+  return {
+    version: 1,
+    kind: 'PaperProposalApprovalDocument',
+    decision: 'approve',
+    paperId: binding.paperId,
+    proposalEnvelopeHash: binding.proposalEnvelopeHash,
+    generationReceiptHash: binding.generationReceiptHash,
+    targetVenue: binding.targetVenue,
+    contributionClaimHashes: [...binding.contributionClaimHashes],
+    qualityProfiles: [...binding.qualityProfiles],
+    riskAcceptance: {
+      status: 'accepted',
+      acceptedRiskHashes: [...binding.riskHashes],
+      rationale: normalizeText(riskAcceptanceRationale),
+    },
+    operatorIdentity: {
+      ...(operatorIdentity || {}),
+      subjectId: normalizeText(operatorIdentity?.subjectId) || null,
+      role: 'proposal_approver',
+    },
+    signedAt: signedAt || null,
+    validFrom: validFrom || signedAt || null,
+    expiresAt: expiresAt || null,
+  };
+}
+
+export function validatePaperProposalApprovalDocument({
+  ideaBrief,
+  proposalEnvelope,
+  generationReceipt,
+  approvalDocument,
+} = {}) {
+  const binding = buildPaperProposalApprovalBinding({ ideaBrief, proposalEnvelope, generationReceipt });
+  const blockers = [];
+  if (approvalDocument?.version !== 1 || approvalDocument?.kind !== 'PaperProposalApprovalDocument') {
+    blockers.push('proposal_approval_document_missing_or_invalid');
+  }
+  if (approvalDocument?.decision !== 'approve') blockers.push('proposal_approval_decision_not_approve');
+  if (approvalDocument?.paperId !== binding.paperId) blockers.push('proposal_approval_paper_id_mismatch');
+  if (approvalDocument?.proposalEnvelopeHash !== binding.proposalEnvelopeHash) {
+    blockers.push('proposal_approval_envelope_hash_mismatch');
+  }
+  if (approvalDocument?.generationReceiptHash !== binding.generationReceiptHash) {
+    blockers.push('proposal_approval_generation_receipt_hash_mismatch');
+  }
+  if (approvalDocument?.targetVenue !== binding.targetVenue) blockers.push('proposal_approval_target_venue_mismatch');
+  const claimHashes = exactStringList(approvalDocument?.contributionClaimHashes);
+  if (!claimHashes || !exactListsMatch(claimHashes, binding.contributionClaimHashes)) {
+    blockers.push('proposal_approval_contribution_claim_hashes_mismatch');
+  }
+  const qualityProfiles = exactStringList(approvalDocument?.qualityProfiles);
+  if (!qualityProfiles || !exactListsMatch(qualityProfiles, binding.qualityProfiles)) {
+    blockers.push('proposal_approval_quality_profiles_mismatch');
+  }
+  const acceptedRiskHashes = exactStringList(approvalDocument?.riskAcceptance?.acceptedRiskHashes);
+  if (approvalDocument?.riskAcceptance?.status !== 'accepted'
+    || !acceptedRiskHashes
+    || !exactListsMatch(acceptedRiskHashes, binding.riskHashes)) {
+    blockers.push('proposal_approval_risk_acceptance_mismatch');
+  }
+  if (!normalizeText(approvalDocument?.riskAcceptance?.rationale)) {
+    blockers.push('proposal_approval_risk_acceptance_rationale_missing');
+  }
+  if (!normalizeText(approvalDocument?.operatorIdentity?.subjectId)
+    || approvalDocument?.operatorIdentity?.role !== 'proposal_approver') {
+    blockers.push('proposal_approval_operator_identity_invalid');
+  }
+  return {
+    status: blockers.length ? 'proposal_approval_binding_blocked' : 'proposal_approval_binding_verified',
+    binding,
+    blockers: uniqueStrings(blockers, 32),
+  };
 }
 
 export function createPaperIdeaBrief({
@@ -40,7 +186,7 @@ export function createPaperIdeaBrief({
       externalActionPerformed: false,
       modelCallPerformed: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return { ...brief, paperIdeaBriefHash: hashPaperRecord('PaperIdeaBrief', brief) };
 }
@@ -80,7 +226,7 @@ export function createPaperProposalGenerationManifest({
       sourceMutation: false,
       externalActionPerformed: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return {
     ...manifest,
@@ -98,11 +244,16 @@ export function createPaperProposalEnvelope({
     throw new Error('PaperProposalEnvelope requires ideaBrief and generationManifest');
   }
   const blockers = [...(generationManifest.blockers || [])];
+  const scientificClaimInputVerification = verifyPaperScientificClaimInput(proposal?.scientificClaimInput);
+  const scientificClaimInput = scientificClaimInputVerification.valid
+    ? proposal.scientificClaimInput
+    : null;
   const normalizedProposal = {
     tentativeTitle: normalizeText(proposal?.tentativeTitle || ideaBrief.title || ideaBrief.idea.slice(0, 96)),
     abstract: normalizeText(proposal?.abstract || ''),
     centralThesis: normalizeText(proposal?.centralThesis || ideaBrief.idea),
     contributionClaims: normalizeList(proposal?.contributionClaims || [], 12),
+    scientificClaimInput,
     expectedStructure: normalizeList(proposal?.expectedStructure || [], 16),
     proofObligations: normalizeList(proposal?.proofObligations || [], 16),
     evidencePlan: normalizeList(proposal?.evidencePlan || [], 16),
@@ -111,9 +262,29 @@ export function createPaperProposalEnvelope({
     noveltyRisk: normalizeText(proposal?.noveltyRisk || 'needs_literature_scan'),
     feasibilityRisk: normalizeText(proposal?.feasibilityRisk || 'needs_manual_review'),
     requiredArtifacts: normalizeList(proposal?.requiredArtifacts || [], 16),
+    recommendedPaperQualityProfiles: normalizePaperQualityProfiles(proposal?.recommendedPaperQualityProfiles || []),
   };
   if (!normalizedProposal.abstract) blockers.push('proposal_abstract_missing');
   if (!normalizedProposal.contributionClaims.length) blockers.push('proposal_claims_missing');
+  if (!normalizedProposal.recommendedPaperQualityProfiles.length) blockers.push('proposal_quality_profile_recommendation_missing');
+  if (proposal?.scientificClaimInput && !scientificClaimInput) {
+    blockers.push('proposal_scientific_claim_input_invalid');
+  }
+  const formalProposal = normalizedProposal.recommendedPaperQualityProfiles.includes('formal_theorem_or_proof');
+  if (formalProposal && !scientificClaimInput) {
+    blockers.push('formal_scientific_claim_input_required');
+  }
+  if (scientificClaimInput) {
+    const scientificStatements = scientificClaimInput.claims.map((claim) => claim.statement);
+    const scientificProofObligations = uniqueStrings(
+      scientificClaimInput.claims.flatMap((claim) => claim.proofObligations),
+      16,
+    );
+    if (!exactListsMatch(normalizedProposal.contributionClaims, scientificStatements)
+      || !exactListsMatch(normalizedProposal.proofObligations, scientificProofObligations)) {
+      blockers.push('proposal_scientific_claim_input_projection_mismatch');
+    }
+  }
   const envelope = {
     version: PAPER_CORE_VERSION,
     kind: 'PaperProposalEnvelope',
@@ -126,14 +297,22 @@ export function createPaperProposalEnvelope({
     venueProfileId: generationManifest.venueProfile?.id || null,
     proposal: normalizedProposal,
     blockers: uniqueStrings(blockers, 32),
-    warnings: uniqueStrings(proposal?.warnings || [], 32),
+    warnings: uniqueStrings([
+      ...(proposal?.warnings || []),
+      ...(scientificClaimInput
+        ? ['scientific_claim_novelty_and_correctness_not_automatically_verified']
+        : []),
+    ], 32),
     safety: {
       draftOnly: true,
+      operatorScientificClaimInputBound: Boolean(scientificClaimInput),
+      noveltyAutomaticallyVerified: false,
+      scientificCorrectnessAutomaticallyVerified: false,
       sourceMutation: false,
       externalActionPerformed: false,
       modelCallPerformed: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return { ...envelope, paperProposalEnvelopeHash: hashPaperRecord('PaperProposalEnvelope', envelope) };
 }
@@ -165,7 +344,7 @@ export function buildPaperProposalGenerationReceipt({
       sourceMutation: false,
       externalActionPerformed: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return {
     ...receipt,
@@ -176,29 +355,39 @@ export function buildPaperProposalGenerationReceipt({
 export function buildPaperProposalReviewGate({
   proposalEnvelope,
   generationReceipt,
-  approved = false,
+  approvalVerification = null,
   createdAt = null,
 } = {}) {
   if (!proposalEnvelope?.kind || !generationReceipt?.kind) {
     throw new Error('PaperProposalReviewGate requires proposalEnvelope and generationReceipt');
   }
   const blockers = [...(proposalEnvelope.blockers || []), ...(generationReceipt.blockers || [])];
-  if (!approved) blockers.push('explicit_proposal_approval_required');
+  if (approvalVerification?.status !== 'proposal_approval_verified'
+    || approvalVerification?.proposalEnvelopeHash !== proposalEnvelope.paperProposalEnvelopeHash
+    || approvalVerification?.generationReceiptHash !== generationReceipt.paperProposalGenerationReceiptHash) {
+    blockers.push('proposal_approval_authority_required');
+  }
   const gate = {
     version: PAPER_CORE_VERSION,
     kind: 'PaperProposalReviewGate',
     paperId: proposalEnvelope.paperId || null,
     status: blockers.length ? 'proposal_review_blocked' : 'proposal_approved_for_production_plan',
-    approved: Boolean(approved) && blockers.length === 0,
+    approved: approvalVerification?.status === 'proposal_approval_verified' && blockers.length === 0,
     proposalEnvelopeHash: proposalEnvelope.paperProposalEnvelopeHash,
     generationReceiptHash: generationReceipt.paperProposalGenerationReceiptHash,
+    approvalDocumentHash: approvalVerification?.approvalDocumentHash || null,
+    approvalVerificationReceiptHash: approvalVerification?.paperProposalApprovalVerificationReceiptHash || null,
+    approvedOperatorSubjectId: approvalVerification?.operatorIdentity?.subjectId || null,
     requiredOperatorInputs: [
-      'approval_decision',
-      'target_venue_confirmation',
-      'claim_scope_acceptance',
-      'risk_acceptance',
-      'operator_id',
-      'decision_timestamp',
+      'ed25519_signed_proposal_approval_document',
+      'proposal_envelope_hash_binding',
+      'generation_receipt_hash_binding',
+      'target_venue_binding',
+      'all_contribution_claim_hashes',
+      'paper_quality_profiles',
+      'risk_acceptance_with_rationale',
+      'trusted_operator_identity',
+      'signed_validity_window',
     ],
     blockers: uniqueStrings(blockers, 32),
     safety: {
@@ -207,7 +396,7 @@ export function buildPaperProposalReviewGate({
       sourceMutation: false,
       externalActionPerformed: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return { ...gate, paperProposalReviewGateHash: hashPaperRecord('PaperProposalReviewGate', gate) };
 }
@@ -255,10 +444,12 @@ export function createPaperProductionPlanEnvelope({
       'run_local_dry_run_submission_lifecycle',
     ],
     expectedArtifacts: proposal.requiredArtifacts || [],
+    recommendedPaperQualityProfiles: proposal.recommendedPaperQualityProfiles || [],
     gatePlan: [
       ...((proposal.contributionClaims || []).length ? ['claim_scope_gate'] : []),
       ...((proposal.proofObligations || []).length ? ['proof_obligation_gate'] : []),
       ...((proposal.evidencePlan || []).length ? ['evidence_matrix_gate'] : []),
+      ...((proposal.recommendedPaperQualityProfiles || []).length ? ['paper_quality_profile_gate'] : []),
       'venue_fit_gate',
       'proposal_approval_gate',
     ],
@@ -269,7 +460,7 @@ export function createPaperProductionPlanEnvelope({
       sourceMutation: false,
       externalActionPerformed: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return {
     ...plan,
@@ -317,7 +508,7 @@ export function createManuscriptSourceContract({
       externalActionPerformed: false,
       modelCallPerformed: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return { ...contract, manuscriptSourceContractHash: hashPaperRecord('ManuscriptSourceContract', contract) };
 }
@@ -357,7 +548,7 @@ export function buildPaperTaskCreationEnvelope({
       writesLegacySource: false,
       externalActionPerformed: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return { ...envelope, paperTaskCreationEnvelopeHash: hashPaperRecord('PaperTaskCreationEnvelope', envelope) };
 }
@@ -365,6 +556,7 @@ export function buildPaperTaskCreationEnvelope({
 export function createPaperProposalStagingRecord({
   proposalEnvelope,
   productionPlanEnvelope,
+  approvalVerification,
   manuscriptSourceContract,
   paperTaskCreationEnvelope,
   paperTask,
@@ -378,6 +570,10 @@ export function createPaperProposalStagingRecord({
   }
   const recordBlockers = [...(blockers || [])];
   if (productionPlanEnvelope.status !== 'production_plan_ready') recordBlockers.push('production_plan_not_ready');
+  if (approvalVerification?.status !== 'proposal_approval_verified'
+    || approvalVerification?.proposalEnvelopeHash !== proposalEnvelope.paperProposalEnvelopeHash) {
+    recordBlockers.push('proposal_approval_verification_required_for_staging');
+  }
   if (!manuscriptSourceContract?.kind) {
     recordBlockers.push('manuscript_source_contract_missing');
   } else if (manuscriptSourceContract.status !== 'manuscript_source_skeleton_ready') {
@@ -398,6 +594,10 @@ export function createPaperProposalStagingRecord({
     stagingPath: normalizeText(stagingPath) || null,
     proposalEnvelopeHash: proposalEnvelope.paperProposalEnvelopeHash,
     productionPlanEnvelopeHash: productionPlanEnvelope.paperProductionPlanEnvelopeHash,
+    approvalDocumentHash: approvalVerification?.approvalDocumentHash || null,
+    approvalVerificationReceiptHash:
+      approvalVerification?.paperProposalApprovalVerificationReceiptHash || null,
+    approvedOperatorSubjectId: approvalVerification?.operatorIdentity?.subjectId || null,
     manuscriptSourceContractHash: manuscriptSourceContract?.manuscriptSourceContractHash || null,
     paperTaskCreationEnvelopeHash: paperTaskCreationEnvelope?.paperTaskCreationEnvelopeHash || null,
     paperTaskHash: paperTask?.taskHash || null,
@@ -411,7 +611,7 @@ export function createPaperProposalStagingRecord({
       externalActionPerformed: false,
       modelCallPerformed: false,
     },
-    createdAt: createdAt || nowIso(),
+    createdAt: createdAt || null,
   };
   return { ...record, paperProposalStagingRecordHash: hashPaperRecord('PaperProposalStagingRecord', record) };
 }

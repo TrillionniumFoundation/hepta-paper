@@ -19,7 +19,7 @@ import {
   buildFreshRefereeVerdict,
   JOURNAL_PROFILES as journalProfilesFacade,
 } from '../../paper-adapters/journal-manage/index.mjs';
-import { JOURNAL_PROFILES as journalProfilesDirect } from '../../paper-adapters/journal-manage/journal-registry.mjs';
+import { JOURNAL_PROFILES as journalProfilesDirect } from '../../paper-domain/journal/journal-registry.mjs';
 import { makeExperimentCode } from '../../paper-adapters/empirical-analysis/experiment-runner.mjs';
 import { validateAndMaybeApplyPatches } from '../../paper-adapters/referee-revise/repair-executor.mjs';
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';

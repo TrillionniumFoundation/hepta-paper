@@ -1,7 +1,6 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { analyzeLatexTheoremEnvironments } from './latex-theorem-environment-syntax.mjs';
 
-const THEOREM_ENVIRONMENT = /\\begin\{(?:theorem|lemma|proposition|corollary|inputcondition)\}/gi;
-const PROOF_ENVIRONMENT = /\\begin\{proof\}(?:\[[^\]]*\])?/gi;
 const PROOF_SKELETON = /proof\s+sketch|proof\s+skeleton|sketched|remaining\s+work|still\s+open|conditional\s+proof/gi;
 const APPENDIX = /\\appendix|\\begin\{appendices\}/i;
 const APPENDIX_WAIVER = /appendix\s+waiv|supplement\s+waiv|appendix\/supplement\s+waiv|appendix\s+or\s+supplement\s+waiv/i;
@@ -55,9 +54,14 @@ export function evaluateTheoremManuscriptReadiness({
   appendixPaths = [],
   supplementPaths = [],
 } = {}) {
-  const theoremStatementCount = matches(manuscriptText, THEOREM_ENVIRONMENT);
-  const theoremSurfaceRequired = profile === 'theorem_or_proof' || theoremStatementCount > 0;
-  const proofEnvironmentCount = matches(manuscriptText, PROOF_ENVIRONMENT);
+  const theoremSyntax = analyzeLatexTheoremEnvironments(manuscriptText);
+  const { theoremStatementCount, proofEnvironmentCount } = theoremSyntax;
+  const theoremMacroConstructionBlockerCount = theoremSyntax.blockers.filter((blocker) => (
+    blocker.code === 'theorem_environment_macro_construction_unsupported'
+  )).length;
+  const theoremDeclarationSyntaxBlockerCount = theoremSyntax.blockers.length - theoremMacroConstructionBlockerCount;
+  const theoremProfile = profile === 'theorem_or_proof' || profile === 'formal_theorem_or_proof';
+  const theoremSurfaceRequired = theoremProfile || theoremStatementCount > 0 || theoremSyntax.blockers.length > 0;
   const proofSkeletonMarkerCount = matches(`${manuscriptText}\n${proofStatusText}`, PROOF_SKELETON);
   const openProofObligations = stillOpenRows(proofStatusText);
   const evidenceNegativeBoundaryLines = negativeEvidenceLines(evidenceManifestText);
@@ -77,6 +81,10 @@ export function evaluateTheoremManuscriptReadiness({
     if (!String(evidenceManifestText).trim()) blockers.push('theorem_evidence_manifest_missing');
     if (theoremStatementCount === 0) blockers.push('theorem_statement_missing');
     if (proofEnvironmentCount === 0) blockers.push('theorem_proof_environment_missing');
+    if (theoremStatementCount !== proofEnvironmentCount) blockers.push('theorem_proof_environment_count_mismatch');
+    if (theoremSyntax.theoremProofPairingBlockers.length > 0) blockers.push('theorem_proof_environment_pairing_invalid');
+    if (theoremDeclarationSyntaxBlockerCount > 0) blockers.push('theorem_environment_declaration_unresolved');
+    if (theoremMacroConstructionBlockerCount > 0) blockers.push('theorem_environment_macro_construction_unresolved');
     if (proofSkeletonMarkerCount > 0) blockers.push('theorem_proof_skeleton_present');
     if (openProofObligations.length > 0) blockers.push('theorem_open_proof_obligations_present');
     if (!appendixOrSupplementPresent && !appendixOrSupplementWaived) blockers.push('theorem_appendix_or_supplement_missing');
@@ -94,10 +102,16 @@ export function evaluateTheoremManuscriptReadiness({
       ? 'theorem_manuscript_readiness_not_applicable'
       : passed ? 'theorem_manuscript_readiness_passed' : 'theorem_manuscript_readiness_blocked',
     theoremStatementCount,
+    theoremEnvironmentDeclarationCount: theoremSyntax.declarations.length,
+    theoremEnvironmentDeclarations: theoremSyntax.declarations,
+    theoremEnvironmentMacroDefinitionCount: theoremSyntax.macroDefinitions.length,
+    theoremEnvironmentMacroConstructionBlockerCount: theoremMacroConstructionBlockerCount,
+    theoremEnvironmentSyntaxBlockers: theoremSyntax.blockers,
     manuscriptPaths: [...manuscriptPaths],
     manuscriptIncludeGraph: [...manuscriptIncludeGraph],
     manuscriptSurfaceAnalysisHash: manuscriptSurfaceAnalysis?.manuscriptSurfaceAnalysisHash || null,
     proofEnvironmentCount,
+    theoremProofPairingBlockers: theoremSyntax.theoremProofPairingBlockers,
     proofSkeletonMarkerCount,
     openProofObligationCount: openProofObligations.length,
     openProofObligations,

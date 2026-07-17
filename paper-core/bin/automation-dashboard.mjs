@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { createReadOnlyPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
+import { createReadOnlyPaperStore } from '../../paper-composition/bootstrap/operator-persistence-composition.mjs';
 import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 import { safeJsonParse } from '../../workflow-kernel/runtime/data-utils.mjs';
 import { sqlText } from '../../paper-ports/store-port.mjs';

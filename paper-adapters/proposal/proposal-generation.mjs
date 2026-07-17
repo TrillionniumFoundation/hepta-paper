@@ -1,4 +1,5 @@
 import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
+import { createPaperScientificClaimInput } from '../../paper-domain/contracts/scientific-claim-input.mjs';
 
 export const DISCIPLINE_PROFILES = Object.freeze([
   {
@@ -131,20 +132,60 @@ function sentence(value) {
   return text.endsWith('.') ? text : `${text}.`;
 }
 
-export function buildDeterministicProposal({ ideaBrief, disciplineProfile, venueProfile }) {
+export function recommendedPaperQualityProfiles({ ideaBrief = {}, disciplineProfile = {} } = {}) {
+  const text = tokenText([
+    ideaBrief.idea,
+    ideaBrief.title,
+    ideaBrief.paperType,
+    ideaBrief.discipline,
+  ]);
+  if (/\b(?:survey|position|perspective|review article)\b/.test(text)) {
+    return Object.freeze(['survey_or_position']);
+  }
+  const profiles = [];
+  const add = (profile) => { if (!profiles.includes(profile)) profiles.push(profile); };
+  if (['mathematics', 'statistics', 'operations_research'].includes(disciplineProfile.id)
+    || /\b(?:theorem|proof|lemma|formal|guarantee|convergence bound|regret bound|identifiability)\b/.test(text)) {
+    add('formal_theorem_or_proof');
+  }
+  if (['machine_learning', 'statistics', 'economics_finance', 'operations_research'].includes(disciplineProfile.id)
+    || /\b(?:experiment|empirical|simulation|benchmark|dataset|evaluation|ablation)\b/.test(text)) {
+    add('empirical_or_experiment');
+  }
+  if (/\b(?:system|artifact|compiler|database|runtime|infrastructure)\b/.test(text)) add('systems_or_artifact');
+  if (/\b(?:human subjects?|clinical|patient|survey respondents?|external data|personal data)\b/.test(text)) {
+    add('external_data_or_human_subjects');
+  }
+  if (!profiles.length) add('survey_or_position');
+  return Object.freeze(profiles);
+}
+
+export function buildDeterministicProposal({
+  ideaBrief,
+  disciplineProfile,
+  venueProfile,
+  scientificClaimDocument = null,
+}) {
   const title = ideaBrief.title
     || `A ${disciplineProfile.label} Study of ${normalizeText(ideaBrief.idea).slice(0, 80)}`;
-  const contributionClaims = uniqueStrings([
+  const scientificClaimInput = scientificClaimDocument
+    ? createPaperScientificClaimInput(scientificClaimDocument)
+    : null;
+  const contributionClaims = scientificClaimInput
+    ? scientificClaimInput.claims.map((claim) => claim.statement)
+    : uniqueStrings([
     `Define a venue-scoped research question around: ${ideaBrief.idea}`,
     `Establish a ${disciplineProfile.label.toLowerCase()} contribution aligned with ${venueProfile.label}`,
     'Produce a hash-bound evidence, proof, or reproducibility plan before manuscript production',
-  ], 8);
-  const proofObligations = uniqueStrings([
+    ], 8);
+  const proofObligations = scientificClaimInput
+    ? uniqueStrings(scientificClaimInput.claims.flatMap((claim) => claim.proofObligations), 16)
+    : uniqueStrings([
     ...disciplineProfile.proposalEmphasis
       .filter((item) => /theorem|proof|assumption|guarantee|formal|rigor/i.test(item))
       .map((item) => `Clarify ${item}`),
     'List assumptions and boundary cases before claiming venue readiness',
-  ], 8);
+    ], 8);
   const evidencePlan = uniqueStrings([
     ...disciplineProfile.proposalEmphasis
       .filter((item) => /experiment|evidence|simulation|reproducibility|empirical|validation/i.test(item))
@@ -165,6 +206,7 @@ export function buildDeterministicProposal({ ideaBrief, disciplineProfile, venue
     abstract: sentence(`${title} proposes to develop ${ideaBrief.idea} for ${venueProfile.label}, with an initial production plan focused on ${disciplineProfile.proposalEmphasis.slice(0, 3).join(', ')}`),
     centralThesis: sentence(`The central thesis is that ${ideaBrief.idea} can be turned into a ${disciplineProfile.label.toLowerCase()} paper if its claims, evidence, and venue fit pass explicit review gates`),
     contributionClaims,
+    scientificClaimInput,
     expectedStructure: disciplineProfile.defaultSections,
     proofObligations,
     evidencePlan,
@@ -176,7 +218,12 @@ export function buildDeterministicProposal({ ideaBrief, disciplineProfile, venue
     noveltyRisk: 'requires_literature_and_competing_claim_scan',
     feasibilityRisk: 'requires_operator_review_before_paper_task_creation',
     requiredArtifacts,
-    warnings: ideaBrief.materials.length ? [] : ['initial_materials_not_supplied'],
+    recommendedPaperQualityProfiles: recommendedPaperQualityProfiles({ ideaBrief, disciplineProfile }),
+    warnings: [
+      ...(ideaBrief.materials.length ? [] : ['initial_materials_not_supplied']),
+      ...(scientificClaimInput
+        ? ['operator_scientific_claims_require_independent_novelty_and_correctness_review']
+        : []),
+    ],
   };
 }
-

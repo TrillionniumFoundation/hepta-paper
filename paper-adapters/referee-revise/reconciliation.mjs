@@ -1,55 +1,12 @@
 import path from 'node:path';
-export {
-  evidenceResyncConsumingSelection,
-  evidenceResyncDecisionPlan,
-  postApplyFinalGateConsumingSelection,
-  postApplyFinalGateDecisionPlan,
-  readyMergeBoundaryConsumingSelection,
-  readyMergeBoundaryDecisionPlan,
-  refereeRevisionRequestConsumingSelection,
-  refereeRevisionRequestDecisionPlan,
-} from './decision-routing.mjs';
 import {
   fileRecord,
   pathWithin,
   relativePath,
 } from '../../workflow-kernel/runtime/file-utils.mjs';
-import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
-import { writeJsonFile } from '../artifacts/write-artifact.mjs';
+import { normalizeText } from '../../workflow-kernel/runtime/text-utils.mjs';
+import { buildRepairStateMutationReceipt } from '../../paper-domain/contracts/referee-closure.mjs';
 import {
-  buildRefereeRevisionDryRunReceipt,
-  buildRefereeRevisionIssueQueue,
-  buildRefereeRevisionPatchPlan,
-  buildRefereeRevisionPatchExecutionPreflight,
-  buildRefereeRevisionPreimageSnapshotLedger,
-  buildRefereeRevisionExecutePlan,
-  buildRefereeRevisionApplyModeContract,
-  buildRefereeRevisionExecuteDesignPacket,
-  buildRefereeRevisionRollbackLedgerDraft,
-} from '../../paper-domain/contracts/referee-planning.mjs';
-import {
-  buildRefereeApplyApprovalPacket,
-  buildRefereePatchApplyExecution,
-  buildRefereePatchApplyInvocation,
-  buildRefereeAppliedPatchReceipt,
-} from '../../paper-domain/contracts/referee-application.mjs';
-import {
-  buildPostRepairBuildPackage,
-  buildRefereeIssueResolutionProof,
-  buildRepairReconciliation,
-  buildRepairStateMutationReceipt,
-} from '../../paper-domain/contracts/referee-closure.mjs';
-import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
-import { heptaStorePath } from '../../paper-adapters/persistence/store-paths.mjs';
-import {
-  runLatexBuildAdapter,
-  runPackageAdapter,
-} from '../build-package/index.mjs';
-import { runResearchVerifyAdapter } from '../research-verify/index.mjs';
-import {
-  escapeSqlText,
-  normalizePatch,
-  normalizeRequest,
   sqliteExec,
   sqliteJson,
   sqlJson,
@@ -57,12 +14,10 @@ import {
 } from '../referee-store.mjs';
 
 import {
-  buildAgentRepairPatchBundle,
   issueIsOpen,
   stderrLines,
-  validateAndMaybeApplyPatches,
 } from './repair-executor.mjs';
-import { withRecordHash, repairMainTexRow, runPostRepairRechecks } from './post-repair.mjs';
+import { withRecordHash } from './post-repair.mjs';
 
 function repairedArtifactRefs(postRepairRechecks = {}) {
   return [
@@ -119,7 +74,6 @@ function buildIssueResolutionEvidence({
 
 function buildRepairReconciliationInputs({
   row,
-  issueQueue,
   appliedPatchReceipt = null,
   postRepairRechecks = null,
   postRepairBuildPackage = null,
@@ -307,7 +261,7 @@ async function runRepairStateMutationExecutor({
   }
   const openRequestRows = (requests || [])
     .filter((request) => resolvedIssueIds.has(normalizeText(request.request_key || request.requestKey || request.id || '')))
-    .filter((request) => !CLOSED_REFEREE_STATUSES.has(normalizeText(request.status || '').toLowerCase()));
+    .filter(issueIsOpen);
   const missingIssueRows = [...resolvedIssueIds].filter((issueId) => !openRequestRows.some((request) => (
     normalizeText(request.request_key || request.requestKey || request.id || '') === issueId
   )));

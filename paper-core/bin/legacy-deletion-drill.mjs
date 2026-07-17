@@ -10,7 +10,7 @@ import { defaultLegacyPaperFactoryRoot, defaultPaperRuntimeRoot } from '../src/w
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { verifyLegacyDifferentialReference } from '../../migration/legacy-reference-fixture.mjs';
 import { resolveImmutableLegacyMatrixArchive } from '../../migration/legacy-matrix-reference.mjs';
-import { copySqliteDatabase } from '../../paper-adapters/persistence/sqlite-consistent-copy.mjs';
+import { copySqliteDatabase } from '../../paper-composition/bootstrap/operator-persistence-composition.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
 const runtimeRoot = defaultPaperRuntimeRoot();

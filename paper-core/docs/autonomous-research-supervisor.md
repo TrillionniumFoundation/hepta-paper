@@ -272,14 +272,30 @@ ordering leaves a crash window between the external head and SQLite commit.
 Accordingly, deployment is **No-Go** when the threat model requires protection
 against writable-runtime snapshot rollback/replacement. Closing that threat
 requires an independently administered, linearizable authority-head broker
-that externally creates and binds a `databaseInstanceId`, reserves the exact
-next generation/receipt before mutation, lets the single SQLite transaction
-apply that reservation, then finalizes it. Startup and crash recovery must
-compare SQLite with the broker and deterministically reconcile reserved versus
-finalized states. Until that reserve → apply → finalize/startup-compare protocol
-is integrated, do not describe this command or the fixed root files as
-same-UID whole-database anti-rollback protection. A WORM export remains useful
-audit evidence, but is not a substitute for that online monotonic-head gate.
+that externally creates and binds each `databaseInstanceId`. Advancing only the
+machine-intake authority generation is insufficient: an old snapshot from the
+same generation can also roll back intake rows, leases, budgets and external
+action journals. Every trust-bearing SQLite transaction across the runtime must
+therefore reserve the next global and per-database mutation sequence before its
+durable commit. The reservation must bind the schema identity, canonical
+pre/post logical-state hashes, a replayable SQLite changeset and the exact
+domain authorization/side-effect reservations; the same SQLite transaction
+records that reservation before commit, and only then may the broker finalize
+it. The broker must maintain an authoritative database-scope inventory and
+validate mutations or require an authorization unavailable to the database
+writer. A local caller-controlled sequence service is not an independent
+authority.
+
+Startup and crash recovery must compare every locally bound database with the
+broker, replay an exact reserved changeset when it was not committed, finalize
+an already committed reservation idempotently, and reject a missing, old or
+divergent local state against a finalized remote head. Provider or KMS actions
+may run only after their marker transaction is externally finalized. Until that
+whole-runtime reserve → apply → finalize/startup-compare protocol is integrated
+for every registered trust database, do not describe this command or the fixed
+root files as same-UID whole-database anti-rollback protection. A WORM export
+remains useful audit evidence, but is not a substitute for that online
+monotonic-head gate.
 
 ## Filesystem and secret boundary
 

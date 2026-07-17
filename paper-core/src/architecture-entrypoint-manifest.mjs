@@ -51,6 +51,7 @@ export const ARCHITECTURE_ENTRYPOINT_MANIFEST = Object.freeze({
     'paper-core/bin/workspace-lineage-backfill.mjs',
     'paper-core/bin/repair-receipt-ledger-integrity.mjs',
     'paper-core/bin/generate-external-intake.mjs',
+    'paper-core/bin/verify-external-intake.mjs',
   ]),
   migrationSupport: Object.freeze([
     'migration/bin/verify-capabilities.mjs',

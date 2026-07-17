@@ -3,12 +3,14 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { capabilityTargetBindings } from '../../paper-adapters/governance/capability-proof-verifier.mjs';
 import { LEGACY_OWNER_ACCEPTANCE_FAMILY_MANIFEST } from '../../paper-adapters/governance/legacy-owner-acceptance-contract.mjs';
 import { signAuthorityDocument } from '../src/authority-signatures.mjs';
 import { validatePublicTrustStore, verifyExternalIntake } from '../../paper-adapters/governance/external-intake-verifier.mjs';
 import { CAPABILITY_CATALOG } from '../../paper-domain/governance/capability-catalog.mjs';
+import { currentCodeProvenance } from '../src/code-provenance.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
 
@@ -47,6 +49,7 @@ test('external intake verifier is read-only and fails closed for an empty stagin
   });
   assert.equal(result.status, 'external_evidence_intake_blocked');
   assert.equal(result.ownerAccepted, 0);
+  assert.equal(result.externallyOwnerAccepted, 0);
   assert.equal(result.operationallyProven, 0);
   assert.equal(result.installAuthorized, false);
   assert.deepEqual(fs.readdirSync(stagingRoot), before);
@@ -67,12 +70,12 @@ test('public trust validation rejects private material and missing role separati
   assert.ok(result.blockers.includes('trust_store_role_missing:independent_referee'));
 });
 
-test('external intake preflight accepts complete fixture signatures without authorizing installation', (t) => {
+test('external intake preflight requires external owner assurance and never authorizes installation', (t) => {
   const stagingRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-external-intake-complete-'));
   const runtimeRoot = path.join(stagingRoot, 'runtime');
   t.after(() => fs.rmSync(stagingRoot, { recursive: true, force: true }));
   const paperId = 'A_Theory_of__Expectations';
-  const releaseCommit = 'fixture-release';
+  const releaseCommit = currentCodeProvenance().commit;
   const authorities = [
     fixtureAuthority('academic-key', 'academic-subject', ['academic_evidence_authority']),
     fixtureAuthority('referee-key', 'referee-subject', ['independent_referee']),
@@ -169,8 +172,106 @@ test('external intake preflight accepts complete fixture signatures without auth
   const result = verifyExternalIntake({ stagingRoot, workspaceRoot, runtimeRoot, releaseCommit, paperId });
   assert.equal(result.status, 'external_evidence_intake_preflight_verified');
   assert.equal(result.ownerAccepted, 249);
+  assert.equal(result.externallyOwnerAccepted, 249);
+  assert.equal(result.ownerAcceptanceFamilyManifestBound, true);
   assert.equal(result.operationallyProven, 14);
   assert.equal(result.authorityDocuments.every((item) => item.envelopeVerified), true);
   assert.equal(result.installAuthorized, false);
   assert.equal(result.semanticValidationDeferredToProductionPipeline, true);
+
+  const cli = spawnSync(process.execPath, [
+    'paper-core/bin/verify-external-intake.mjs',
+    '--staging', stagingRoot,
+  ], {
+    cwd: workspaceRoot,
+    encoding: 'utf8',
+    env: { ...process.env, HEPTA_PAPER_RUNTIME_ROOT: runtimeRoot },
+  });
+  assert.equal(cli.status, 0, cli.stderr);
+  const cliResult = JSON.parse(cli.stdout);
+  assert.equal(cliResult.status, 'external_evidence_intake_preflight_verified');
+  assert.equal(cliResult.installAuthorized, false);
+  assert.equal(fs.existsSync(runtimeRoot), false);
+
+  const delegatedOwner = fixtureAuthority(
+    'delegated-owner-key',
+    'delegated-owner-subject',
+    ['capability_owner'],
+  );
+  delegatedOwner.publicRecord.assurance = 'local_admin_delegated';
+  writeJson(path.join(stagingRoot, 'OWNER_TRUST_STORE.json'), {
+    version: 1,
+    kind: 'AuthorityTrustStore',
+    keys: [owner.publicRecord, observer.publicRecord, delegatedOwner.publicRecord],
+  });
+  const delegatedAcceptance = signAuthorityDocument({
+    ...ownerAcceptance,
+    signatures: [],
+  }, {
+    privateKeyPem: delegatedOwner.privateKeyPem,
+    keyId: delegatedOwner.keyId,
+    role: 'capability_owner',
+  });
+  writeJson(
+    path.join(stagingRoot, 'CAPABILITY_OWNER_ACCEPTANCE.json'),
+    delegatedAcceptance,
+  );
+
+  const delegated = verifyExternalIntake({
+    stagingRoot,
+    workspaceRoot,
+    runtimeRoot,
+    releaseCommit,
+    paperId,
+  });
+  assert.equal(delegated.status, 'external_evidence_intake_blocked');
+  assert.equal(delegated.ownerAccepted, 249);
+  assert.equal(delegated.externallyOwnerAccepted, 0);
+  assert.equal(delegated.operationallyProven, 14);
+  assert.ok(delegated.blockers.includes('external_owner_acceptance_incomplete:0/249'));
+  assert.equal(delegated.installAuthorized, false);
+
+  const delegatedCli = spawnSync(process.execPath, [
+    'paper-core/bin/verify-external-intake.mjs',
+    '--staging', stagingRoot,
+  ], {
+    cwd: workspaceRoot,
+    encoding: 'utf8',
+    env: { ...process.env, HEPTA_PAPER_RUNTIME_ROOT: runtimeRoot },
+  });
+  assert.equal(delegatedCli.status, 1, delegatedCli.stderr);
+  assert.equal(JSON.parse(delegatedCli.stdout).status, 'external_evidence_intake_blocked');
+  assert.equal(fs.existsSync(runtimeRoot), false);
+
+  let bogusLegacyAcceptance = {
+    version: 1,
+    kind: 'CapabilityOwnerAcceptance',
+    acceptedEntries: Array.from({ length: 249 }, (_, index) => ({
+      legacyMatrixEntryId: `bogus-${index}`,
+    })),
+    signatures: [],
+  };
+  bogusLegacyAcceptance = signAuthorityDocument(bogusLegacyAcceptance, {
+    privateKeyPem: owner.privateKeyPem,
+    keyId: owner.keyId,
+    role: 'capability_owner',
+  });
+  writeJson(
+    path.join(stagingRoot, 'CAPABILITY_OWNER_ACCEPTANCE.json'),
+    bogusLegacyAcceptance,
+  );
+  const bogusLegacy = verifyExternalIntake({
+    stagingRoot,
+    workspaceRoot,
+    runtimeRoot,
+    releaseCommit,
+    paperId,
+  });
+  assert.equal(bogusLegacy.status, 'external_evidence_intake_blocked');
+  assert.equal(bogusLegacy.ownerAccepted, 249);
+  assert.equal(bogusLegacy.externallyOwnerAccepted, 0);
+  assert.equal(bogusLegacy.ownerAcceptanceFamilyManifestBound, false);
+  assert.ok(bogusLegacy.blockers.includes('owner_acceptance_v2_family_manifest_required'));
+  assert.equal(bogusLegacy.installAuthorized, false);
+  assert.equal(fs.existsSync(runtimeRoot), false);
 });

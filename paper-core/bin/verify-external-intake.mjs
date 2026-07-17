@@ -17,4 +17,4 @@ const result = verifyExternalIntake({
   releaseCommit: currentCodeProvenance().commit,
 });
 process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
-if (result.status !== 'external_evidence_intake_verified') process.exitCode = 1;
+if (result.status !== 'external_evidence_intake_preflight_verified') process.exitCode = 1;

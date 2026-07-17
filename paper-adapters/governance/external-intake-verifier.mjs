@@ -22,6 +22,18 @@ function validateAuthorityDocumentEnvelope({ document, name, kind, version, pape
   return blockers;
 }
 
+function ownerAcceptanceMatchesExactFamilyManifest(document) {
+  if (document?.kind !== 'CapabilityOwnerAcceptance' || document?.version !== 2
+    || document.familyManifestHash !== LEGACY_OWNER_ACCEPTANCE_FAMILY_MANIFEST.familyManifestHash
+    || !Array.isArray(document.acceptedFamilies)) return false;
+  const expected = LEGACY_OWNER_ACCEPTANCE_FAMILY_MANIFEST.families
+    .map((family) => family.familyId).sort();
+  const actual = document.acceptedFamilies.map((family) => family?.familyId).sort();
+  return actual.length === expected.length
+    && new Set(actual).size === actual.length
+    && JSON.stringify(actual) === JSON.stringify(expected);
+}
+
 export function validatePublicTrustStore({ trustStore, requiredRoles = [], requireDistinctSubjects = false } = {}) {
   const blockers = [];
   if (trustStore?.version !== 1 || trustStore?.kind !== 'AuthorityTrustStore') blockers.push('trust_store_contract_invalid');
@@ -72,6 +84,14 @@ export function verifyExternalIntake({ stagingRoot, workspaceRoot, releaseCommit
     trustStore: ownerTrustStore,
     familyManifest: LEGACY_OWNER_ACCEPTANCE_FAMILY_MANIFEST,
   });
+  const ownerAcceptanceFamilyManifestBound = ownerAcceptanceMatchesExactFamilyManifest(
+    ownerDocument,
+  );
+  const externallyAccepted = ownerAcceptanceFamilyManifestBound
+    ? [...accepted.values()].filter((record) => (
+      record?.issuerAssurance === 'external_independent'
+        && record?.acceptanceClass === 'external_independent_owner_acceptance'
+    )) : [];
   const targetBindings = capabilityTargetBindings(workspaceRoot, CAPABILITY_CATALOG);
   const operational = [];
   for (const capabilityId of Object.keys(CAPABILITY_CATALOG).sort()) {
@@ -114,6 +134,11 @@ export function verifyExternalIntake({ stagingRoot, workspaceRoot, releaseCommit
     ...(accepted.size === LEGACY_OWNER_ACCEPTANCE_ENTRY_COUNT
       ? []
       : [`owner_acceptance_incomplete:${accepted.size}/${LEGACY_OWNER_ACCEPTANCE_ENTRY_COUNT}`]),
+    ...(ownerAcceptanceFamilyManifestBound
+      ? [] : ['owner_acceptance_v2_family_manifest_required']),
+    ...(externallyAccepted.length === LEGACY_OWNER_ACCEPTANCE_ENTRY_COUNT
+      ? []
+      : [`external_owner_acceptance_incomplete:${externallyAccepted.length}/${LEGACY_OWNER_ACCEPTANCE_ENTRY_COUNT}`]),
     ...(operational.every((item) => item.verified) ? [] : [`operational_proof_incomplete:${operational.filter((item) => item.verified).length}/${operational.length}`]),
     ...(authorityDocuments.every((item) => item.envelopeVerified && item.signatureStatus === 'authority_signatures_verified') ? [] : ['authority_documents_incomplete_or_invalid']),
   ];
@@ -126,6 +151,8 @@ export function verifyExternalIntake({ stagingRoot, workspaceRoot, releaseCommit
     authorityTrust,
     ownerTrust,
     ownerAccepted: accepted.size,
+    externallyOwnerAccepted: externallyAccepted.length,
+    ownerAcceptanceFamilyManifestBound,
     ownerRequired: LEGACY_OWNER_ACCEPTANCE_ENTRY_COUNT,
     operationallyProven: operational.filter((item) => item.verified).length,
     operationalRequired: operational.length,

@@ -736,6 +736,10 @@ test('systemd and Kubernetes contracts host canonical resident probes without se
   assert.match(operations, /--rotation-intent/);
   assert.match(operations, /projected ConfigMap or Secret/);
   assert.match(operations, /linearizable authority-head broker/);
+  assert.match(operations, /Every trust-bearing SQLite transaction/);
+  assert.match(operations, /replayable SQLite changeset/);
+  assert.match(operations, /authoritative database-scope inventory/);
+  assert.match(operations, /Provider or KMS actions/);
   assert.match(operations, /deployment is \*\*No-Go\*\*/);
   assert.doesNotMatch(`${systemd}\n${environment}\n${kubernetes}`,
     /(?:api[_-]?key|access[_-]?token|private[_-]?key|password)\s*[:=]\s*[A-Za-z0-9+/]{16,}/i);

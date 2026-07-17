@@ -780,7 +780,7 @@ test('canonical context closure covers every entry and rejects undeclared or ign
       ? originalDockerfile.replace(/^# syntax=.*$/m, firstLine)
       : originalDockerfile.replace(/^# syntax=.*\n/m, '');
     write(path.join(context, 'Dockerfile'), dockerfile, 0o644);
-    const definitionPaths = ['Dockerfile', 'requirements.lock'];
+    const definitionPaths = AUTOMATION_RUNTIME_IMAGE_BUILD_DEFINITIONS.pythonGpu.definitionPaths;
     const definitionManifestHash = hashRecord('RuntimeImageBuildDefinitionManifest',
       definitionPaths.map((relativePath) => ({
         path: `context/${relativePath}`,

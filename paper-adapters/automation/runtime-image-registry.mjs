@@ -66,7 +66,7 @@ export const RUNTIME_IMAGE_BUILD_REPRODUCIBILITY = Object.freeze({
   r: buildRuntimeImageReproducibilityAssessment({
     image: SYSTEM_DATASET_ACCESS_RUNTIME_IMAGES.r.image,
     imageDigest: SYSTEM_DATASET_ACCESS_RUNTIME_IMAGES.r.imageDigest,
-    definitionManifestHash: 'sha256:6469bfa05a2cfa500156bd138cd5321384e06dce30d4335f1c53b46d109473d7',
+    definitionManifestHash: 'sha256:5e172fce22a0f643357a455007104330aa3834c339a7aaf9b5ef6f2cfd4ed790',
     baseImageDigestPinned: true,
     osPackageSnapshotPinned: true,
     dependencyVersionsPinned: true,

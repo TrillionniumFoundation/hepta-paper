@@ -41,6 +41,8 @@ const AUTOMATION_TESTS = Object.freeze([
   'paper-core/tests/full-research-qualification.test.mjs',
   'paper-core/tests/fully-autonomous-research-system-status.test.mjs',
   'paper-core/tests/operator-dataset-harness-authority.test.mjs',
+  'paper-core/tests/runtime-image-reproducibility.test.mjs',
+  'paper-core/tests/runtime-image-reproducibility-trust.test.mjs',
   'paper-core/tests/system-benchmark-harness-integrity.test.mjs',
   'paper-core/tests/campaign-evolution-policy.test.mjs',
   'paper-core/tests/campaign-query-presenter.test.mjs',

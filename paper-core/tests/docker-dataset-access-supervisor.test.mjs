@@ -10,6 +10,9 @@ import { createMultiLanguageEmpiricalExecutor } from '../../paper-adapters/autom
 import { authorizeOperatorDatasetMount } from '../../paper-adapters/automation/operator-dataset-harness-reader.mjs';
 import { AUTOMATION_RUNTIME_IMAGES } from '../../paper-adapters/automation/runtime-image-registry.mjs';
 import { inspectStrictDatasetManifest } from '../../paper-adapters/runtime/execution-snapshot.mjs';
+import {
+  createDockerDatasetSupervisorProbeWorkspace,
+} from '../../paper-adapters/runtime/docker-dataset-supervisor-probe-repository.mjs';
 import { probeTrustedDockerDatasetSupervisors } from '../../paper-adapters/runtime/sandbox-backend-probe.mjs';
 import { createOsSandboxedWorkerRunner, fileSha256Hash } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
 import {
@@ -46,6 +49,25 @@ function trustedProfile(runtime = AUTOMATION_RUNTIME_IMAGES.python) {
     imageDigest: runtime.imageDigest,
     containerExecutable: runtime.executable,
     supervisor: runtime.datasetAccessSupervisor,
+  };
+}
+
+function trustedDockerImageInspection(runtime) {
+  return {
+    status: 0,
+    stdout: JSON.stringify([{
+      Descriptor: {
+        digest: runtime.imageDigest,
+        mediaType: 'application/vnd.oci.image.manifest.v1+json',
+      },
+      Os: 'linux',
+      Architecture: 'amd64',
+      Config: { Labels: {
+        'io.hepta.dataset-supervisor.protocol': runtime.datasetAccessSupervisor.protocol,
+        'io.hepta.dataset-supervisor.sha256': runtime.datasetAccessSupervisor.sha256,
+      } },
+    }]),
+    stderr: '',
   };
 }
 
@@ -465,6 +487,454 @@ test('academic readiness requires real end-to-end probes for both pinned supervi
   });
   assert.equal(mutable.available, false);
   assert.match(mutable.detail, /profile_invalid|image_digest_mismatch/);
+});
+
+test('a timed-out trusted supervisor probe removes its created Docker container', () => {
+  const runtime = AUTOMATION_RUNTIME_IMAGES.python;
+  const calls = [];
+  const containerId = 'a'.repeat(64);
+  let cleanupAttempts = 0;
+  let containerName = null;
+  const probe = probeTrustedDockerDatasetSupervisors({
+    profiles: [trustedProfile(runtime)],
+    refresh: true,
+    environment: { PATH: process.env.PATH || '' },
+    spawnSyncImpl(executable, args, options) {
+      calls.push({ executable, args, options });
+      if (args[0] === 'ps') return { status: 0, stdout: '', stderr: '' };
+      if (args[0] === 'image' && args[1] === 'inspect') {
+        return trustedDockerImageInspection(runtime);
+      }
+      if (args[0] === 'run') {
+        containerName = args[args.indexOf('--name') + 1];
+        const containerIdPath = args[args.indexOf('--cidfile') + 1];
+        fs.writeFileSync(containerIdPath, `${containerId}\n`);
+        return {
+          status: null,
+          stdout: '',
+          stderr: '',
+          error: Object.assign(new Error('spawnSync docker ETIMEDOUT'), { code: 'ETIMEDOUT' }),
+        };
+      }
+      if (args[0] === 'container' && args[1] === 'inspect') {
+        cleanupAttempts += 1;
+        return cleanupAttempts < 3
+          ? { status: 1, stdout: '', stderr: 'No such container' }
+          : {
+            status: 0,
+            stdout: JSON.stringify([{
+              Id: containerId,
+              Name: `/${containerName}`,
+              Created: new Date().toISOString(),
+              Config: { Labels: {
+                'io.hepta.probe.kind': 'trusted-dataset-supervisor',
+                'io.hepta.probe.id': containerName,
+              } },
+            }]),
+            stderr: '',
+          };
+      }
+      if (args[0] === 'rm') return { status: 0, stdout: containerId, stderr: '' };
+      throw new Error(`unexpected_docker_probe_command:${args.join(' ')}`);
+    },
+  });
+  assert.equal(probe.available, false);
+  assert.match(probe.detail, /ETIMEDOUT/);
+  const run = calls.find(({ args }) => args[0] === 'run');
+  assert.equal(run.options.timeout, 60_000);
+  assert.equal(containerName, run.args[run.args.indexOf('--name') + 1]);
+  assert.match(containerName, /^hepta-dataset-supervisor-probe-/);
+  assert.equal(probe.results[0].cleanupStatus, 'confirmed_removed');
+  assert.equal(cleanupAttempts, 3);
+  assert.deepEqual(
+    calls.find(({ args }) => args[0] === 'container').args,
+    ['container', 'inspect', containerId],
+  );
+  assert.deepEqual(calls.at(-1).args, ['rm', '--force', containerId]);
+  assert.equal(calls.at(-1).options.env.DOCKER_HOST, 'unix:///var/run/docker.sock');
+  assert.equal(fs.existsSync(path.join(os.tmpdir(), containerName)), false);
+});
+
+test('nonzero and thrown Docker run failures clean only their cid-bound container', () => {
+  const runtime = AUTOMATION_RUNTIME_IMAGES.python;
+  for (const [index, mode] of ['nonzero', 'thrown'].entries()) {
+    const containerId = String(index + 1).repeat(64);
+    let containerName = null;
+    let removed = false;
+    const probe = probeTrustedDockerDatasetSupervisors({
+      profiles: [trustedProfile(runtime)],
+      refresh: true,
+      environment: { PATH: process.env.PATH || '' },
+      spawnSyncImpl(_executable, args) {
+        if (args[0] === 'ps') return { status: 0, stdout: '', stderr: '' };
+        if (args[0] === 'image') return trustedDockerImageInspection(runtime);
+        if (args[0] === 'run') {
+          containerName = args[args.indexOf('--name') + 1];
+          const containerIdPath = args[args.indexOf('--cidfile') + 1];
+          fs.writeFileSync(containerIdPath, `${containerId}\n`);
+          if (mode === 'thrown') throw new Error('simulated_docker_transport_failure');
+          return { status: 125, stdout: '', stderr: 'simulated_daemon_disconnect' };
+        }
+        if (args[0] === 'container') {
+          assert.equal(args[2], containerId);
+          return {
+            status: 0,
+            stdout: JSON.stringify([{
+              Id: containerId,
+              Name: `/${containerName}`,
+              Created: new Date().toISOString(),
+              Config: { Labels: {
+                'io.hepta.probe.kind': 'trusted-dataset-supervisor',
+                'io.hepta.probe.id': containerName,
+              } },
+            }]),
+            stderr: '',
+          };
+        }
+        if (args[0] === 'rm') { removed = true; return { status: 0, stdout: containerId }; }
+        throw new Error(`unexpected_docker_probe_command:${args.join(' ')}`);
+      },
+    });
+    assert.equal(probe.results[0].cleanupStatus, 'confirmed_removed');
+    assert.equal(removed, true);
+    assert.equal(fs.existsSync(path.join(os.tmpdir(), containerName)), false);
+  }
+});
+
+test('a completed Docker failure accepts only repeated explicit container absence', () => {
+  const runtime = AUTOMATION_RUNTIME_IMAGES.python;
+  let containerName = null;
+  let inspectionCount = 0;
+  const probe = probeTrustedDockerDatasetSupervisors({
+    profiles: [trustedProfile(runtime)],
+    refresh: true,
+    environment: { PATH: process.env.PATH || '' },
+    spawnSyncImpl(_executable, args) {
+      if (args[0] === 'ps') return { status: 0, stdout: '', stderr: '' };
+      if (args[0] === 'image') return trustedDockerImageInspection(runtime);
+      if (args[0] === 'run') {
+        containerName = args[args.indexOf('--name') + 1];
+        return { status: 125, stdout: '', stderr: 'simulated_create_failure' };
+      }
+      if (args[0] === 'container') {
+        inspectionCount += 1;
+        return { status: 1, stdout: '', stderr: 'Error: No such container' };
+      }
+      throw new Error(`unexpected_docker_probe_command:${args.join(' ')}`);
+    },
+  });
+  assert.equal(inspectionCount, 5);
+  assert.equal(probe.results[0].cleanupStatus, 'confirmed_absent');
+  assert.equal(fs.existsSync(path.join(os.tmpdir(), containerName)), false);
+});
+
+test('a failed cleanup inspection can never become confirmed absence', (t) => {
+  const runtime = AUTOMATION_RUNTIME_IMAGES.python;
+  let containerName = null;
+  let inspectionCount = 0;
+  const probe = probeTrustedDockerDatasetSupervisors({
+    profiles: [trustedProfile(runtime)],
+    refresh: true,
+    environment: { PATH: process.env.PATH || '' },
+    spawnSyncImpl(_executable, args) {
+      if (args[0] === 'ps') return { status: 0, stdout: '', stderr: '' };
+      if (args[0] === 'image') return trustedDockerImageInspection(runtime);
+      if (args[0] === 'run') {
+        containerName = args[args.indexOf('--name') + 1];
+        return { status: 125, stdout: '', stderr: 'simulated_daemon_disconnect' };
+      }
+      if (args[0] === 'container') {
+        inspectionCount += 1;
+        return inspectionCount === 1
+          ? {
+            status: null, stdout: '', stderr: '',
+            error: Object.assign(new Error('inspect ETIMEDOUT'), { code: 'ETIMEDOUT' }),
+          }
+          : { status: 1, stdout: '', stderr: 'Error: No such container' };
+      }
+      throw new Error(`unexpected_docker_probe_command:${args.join(' ')}`);
+    },
+  });
+  t.after(() => fs.rmSync(path.join(os.tmpdir(), containerName), { recursive: true, force: true }));
+  assert.equal(inspectionCount, 5);
+  assert.equal(probe.results[0].cleanupStatus, 'unresolved');
+  assert.equal(fs.existsSync(path.join(os.tmpdir(), containerName)), true);
+});
+
+test('an owned container with exhausted remove attempts remains unresolved', (t) => {
+  const runtime = AUTOMATION_RUNTIME_IMAGES.python;
+  const containerId = '9'.repeat(64);
+  let containerName = null;
+  let removeCount = 0;
+  const probe = probeTrustedDockerDatasetSupervisors({
+    profiles: [trustedProfile(runtime)],
+    refresh: true,
+    environment: { PATH: process.env.PATH || '' },
+    spawnSyncImpl(_executable, args) {
+      if (args[0] === 'ps') return { status: 0, stdout: '', stderr: '' };
+      if (args[0] === 'image') return trustedDockerImageInspection(runtime);
+      if (args[0] === 'run') {
+        containerName = args[args.indexOf('--name') + 1];
+        const containerIdPath = args[args.indexOf('--cidfile') + 1];
+        fs.writeFileSync(containerIdPath, `${containerId}\n`);
+        return { status: 125, stdout: '', stderr: 'simulated_daemon_disconnect' };
+      }
+      if (args[0] === 'container') {
+        return {
+          status: 0,
+          stdout: JSON.stringify([{
+            Id: containerId,
+            Name: `/${containerName}`,
+            Created: new Date().toISOString(),
+            Config: { Labels: {
+              'io.hepta.probe.kind': 'trusted-dataset-supervisor',
+              'io.hepta.probe.id': containerName,
+            } },
+          }]),
+        };
+      }
+      if (args[0] === 'rm') {
+        removeCount += 1;
+        return { status: 1, stdout: '', stderr: 'simulated_remove_failure' };
+      }
+      throw new Error(`unexpected_docker_probe_command:${args.join(' ')}`);
+    },
+  });
+  t.after(() => fs.rmSync(path.join(os.tmpdir(), containerName), { recursive: true, force: true }));
+  assert.equal(removeCount, 5);
+  assert.equal(probe.results[0].cleanupStatus, 'unresolved');
+  assert.equal(fs.existsSync(path.join(os.tmpdir(), containerName)), true);
+});
+
+test('a timed-out probe never deletes a name collision without its ownership label', () => {
+  const runtime = AUTOMATION_RUNTIME_IMAGES.python;
+  let containerName = null;
+  let removeCount = 0;
+  const probe = probeTrustedDockerDatasetSupervisors({
+    profiles: [trustedProfile(runtime)],
+    refresh: true,
+    environment: { PATH: process.env.PATH || '' },
+    spawnSyncImpl(_executable, args) {
+      if (args[0] === 'ps') return { status: 0, stdout: '', stderr: '' };
+      if (args[0] === 'image') return trustedDockerImageInspection(runtime);
+      if (args[0] === 'run') {
+        containerName = args[args.indexOf('--name') + 1];
+        return {
+          status: null, stdout: '', stderr: '',
+          error: Object.assign(new Error('spawnSync docker ETIMEDOUT'), { code: 'ETIMEDOUT' }),
+        };
+      }
+      if (args[0] === 'container') {
+        return {
+          status: 0,
+          stdout: JSON.stringify([{
+            Id: 'b'.repeat(64),
+            Name: `/${containerName}`,
+            Config: { Labels: {
+              'io.hepta.probe.kind': 'foreign-probe',
+              'io.hepta.probe.id': containerName,
+            } },
+          }]),
+          stderr: '',
+        };
+      }
+      if (args[0] === 'rm') { removeCount += 1; return { status: 0 }; }
+      throw new Error(`unexpected_docker_probe_command:${args.join(' ')}`);
+    },
+  });
+  assert.equal(probe.results[0].cleanupStatus, 'ownership_mismatch');
+  assert.equal(removeCount, 0);
+  assert.equal(fs.existsSync(path.join(os.tmpdir(), containerName)), false);
+});
+
+test('unresolved timeout evidence is preserved for a later cold-start reconciliation', (t) => {
+  const runtime = AUTOMATION_RUNTIME_IMAGES.python;
+  let containerName = null;
+  const probe = probeTrustedDockerDatasetSupervisors({
+    profiles: [trustedProfile(runtime)],
+    refresh: true,
+    environment: { PATH: process.env.PATH || '' },
+    spawnSyncImpl(_executable, args) {
+      if (args[0] === 'ps') return { status: 0, stdout: '', stderr: '' };
+      if (args[0] === 'image') return trustedDockerImageInspection(runtime);
+      if (args[0] === 'run') {
+        containerName = args[args.indexOf('--name') + 1];
+        return {
+          status: null, stdout: '', stderr: '',
+          error: Object.assign(new Error('spawnSync docker ETIMEDOUT'), { code: 'ETIMEDOUT' }),
+        };
+      }
+      if (args[0] === 'container') {
+        return { status: 1, stdout: '', stderr: 'No such container' };
+      }
+      throw new Error(`unexpected_docker_probe_command:${args.join(' ')}`);
+    },
+  });
+  t.after(() => fs.rmSync(path.join(os.tmpdir(), containerName), { recursive: true, force: true }));
+  assert.equal(probe.results[0].cleanupStatus, 'unresolved');
+  assert.equal(fs.existsSync(path.join(os.tmpdir(), containerName)), true);
+});
+
+test('cold-start reconciliation removes stale owned probe containers and workspaces', (t) => {
+  const runtime = AUTOMATION_RUNTIME_IMAGES.python;
+  const workspace = createDockerDatasetSupervisorProbeWorkspace();
+  t.after(() => fs.rmSync(workspace.root, { recursive: true, force: true }));
+  const containerName = path.basename(workspace.root);
+  const containerId = 'c'.repeat(64);
+  const stale = new Date(Date.now() - 180_000);
+  fs.utimesSync(workspace.root, stale, stale);
+  let removed = false;
+  const probe = probeTrustedDockerDatasetSupervisors({
+    profiles: [trustedProfile(runtime)],
+    refresh: true,
+    environment: { PATH: process.env.PATH || '' },
+    spawnSyncImpl(_executable, args) {
+      if (args[0] === 'ps') return { status: 0, stdout: `${containerId}\n`, stderr: '' };
+      if (args[0] === 'container') {
+        return {
+          status: 0,
+          stdout: JSON.stringify([{
+            Id: containerId,
+            Name: `/${containerName}`,
+            Created: stale.toISOString(),
+            Config: { Labels: {
+              'io.hepta.probe.kind': 'trusted-dataset-supervisor',
+              'io.hepta.probe.id': containerName,
+            } },
+          }]),
+          stderr: '',
+        };
+      }
+      if (args[0] === 'rm') { removed = true; return { status: 0, stdout: containerId }; }
+      if (args[0] === 'image') return { status: 1, stdout: '', stderr: 'blocked_after_reconcile' };
+      throw new Error(`unexpected_docker_probe_command:${args.join(' ')}`);
+    },
+  });
+  assert.equal(probe.available, false);
+  assert.equal(removed, true);
+  assert.equal(fs.existsSync(workspace.root), false);
+});
+
+test('cold-start reconciliation preserves a concurrent active owned probe workspace', (t) => {
+  const runtime = AUTOMATION_RUNTIME_IMAGES.python;
+  const workspace = createDockerDatasetSupervisorProbeWorkspace();
+  t.after(() => fs.rmSync(workspace.root, { recursive: true, force: true }));
+  const containerName = path.basename(workspace.root);
+  const containerId = 'e'.repeat(64);
+  const old = new Date(Date.now() - 180_000);
+  fs.utimesSync(workspace.root, old, old);
+  let removeCount = 0;
+  const probe = probeTrustedDockerDatasetSupervisors({
+    profiles: [trustedProfile(runtime)],
+    refresh: true,
+    environment: { PATH: process.env.PATH || '' },
+    spawnSyncImpl(_executable, args) {
+      if (args[0] === 'ps') return { status: 0, stdout: `${containerId}\n` };
+      if (args[0] === 'container') {
+        return {
+          status: 0,
+          stdout: JSON.stringify([{
+            Id: containerId,
+            Name: `/${containerName}`,
+            Created: new Date().toISOString(),
+            Config: { Labels: {
+              'io.hepta.probe.kind': 'trusted-dataset-supervisor',
+              'io.hepta.probe.id': containerName,
+            } },
+          }]),
+        };
+      }
+      if (args[0] === 'rm') { removeCount += 1; return { status: 0 }; }
+      if (args[0] === 'image') return { status: 1, stdout: '', stderr: 'stop_after_reconcile' };
+      throw new Error(`unexpected_docker_probe_command:${args.join(' ')}`);
+    },
+  });
+  assert.equal(probe.available, false);
+  assert.equal(removeCount, 0);
+  assert.equal(fs.existsSync(workspace.root), true);
+});
+
+test('cold-start reconciliation blocks when owned workspace removal cannot be verified', (t) => {
+  const runtime = AUTOMATION_RUNTIME_IMAGES.python;
+  const workspace = createDockerDatasetSupervisorProbeWorkspace();
+  t.after(() => fs.rmSync(workspace.root, { recursive: true, force: true }));
+  const containerName = path.basename(workspace.root);
+  const containerId = 'f'.repeat(64);
+  const stale = new Date(Date.now() - 180_000);
+  fs.writeFileSync(workspace.ownershipPath, '{}\n', { mode: 0o600 });
+  fs.utimesSync(workspace.root, stale, stale);
+  const probe = probeTrustedDockerDatasetSupervisors({
+    profiles: [trustedProfile(runtime)],
+    refresh: true,
+    environment: { PATH: process.env.PATH || '' },
+    spawnSyncImpl(_executable, args) {
+      if (args[0] === 'ps') return { status: 0, stdout: `${containerId}\n` };
+      if (args[0] === 'container') {
+        return {
+          status: 0,
+          stdout: JSON.stringify([{
+            Id: containerId,
+            Name: `/${containerName}`,
+            Created: stale.toISOString(),
+            Config: { Labels: {
+              'io.hepta.probe.kind': 'trusted-dataset-supervisor',
+              'io.hepta.probe.id': containerName,
+            } },
+          }]),
+        };
+      }
+      if (args[0] === 'rm') return { status: 0, stdout: containerId };
+      throw new Error(`unexpected_docker_probe_command:${args.join(' ')}`);
+    },
+  });
+  assert.equal(probe.available, false);
+  assert.equal(probe.detail, 'trusted_dataset_supervisor_reconciliation_failed');
+  assert.equal(fs.existsSync(workspace.root), true);
+});
+
+test('cold-start reconciliation fails closed on uninspectable or undated candidates', () => {
+  const runtime = AUTOMATION_RUNTIME_IMAGES.python;
+  const containerId = 'd'.repeat(64);
+  const containerName = 'hepta-dataset-supervisor-probe-fixture';
+  for (const mode of ['inspect_failed', 'created_invalid']) {
+    let imageInspectionCount = 0;
+    const probe = probeTrustedDockerDatasetSupervisors({
+      profiles: [trustedProfile(runtime)],
+      refresh: true,
+      environment: { PATH: process.env.PATH || '' },
+      spawnSyncImpl(_executable, args) {
+        if (args[0] === 'ps') {
+          return { status: 0, stdout: `${containerId}\n`, stderr: '' };
+        }
+        if (args[0] === 'container' && mode === 'inspect_failed') {
+          return { status: 1, stdout: '', stderr: 'daemon_inspection_failed' };
+        }
+        if (args[0] === 'container') {
+          return {
+            status: 0,
+            stdout: JSON.stringify([{
+              Id: containerId,
+              Name: `/${containerName}`,
+              Created: 'not-a-date',
+              Config: { Labels: {
+                'io.hepta.probe.kind': 'trusted-dataset-supervisor',
+                'io.hepta.probe.id': containerName,
+              } },
+            }]),
+            stderr: '',
+          };
+        }
+        if (args[0] === 'image') {
+          imageInspectionCount += 1;
+          return trustedDockerImageInspection(runtime);
+        }
+        throw new Error(`unexpected_docker_probe_command:${args.join(' ')}`);
+      },
+    });
+    assert.equal(probe.available, false);
+    assert.equal(probe.detail, 'trusted_dataset_supervisor_reconciliation_failed');
+    assert.equal(imageInspectionCount, 0);
+  }
 });
 
 test('academic-docker-operational: actual Python and R academic dataset harnesses execute all arms through the trusted supervisor', academicDockerOperationalOptions, (t) => {

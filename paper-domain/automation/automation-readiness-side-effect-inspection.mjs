@@ -97,7 +97,8 @@ export function verifyAutomationReadinessSideEffectInspection(value) {
     || value.failedProcessActionCount !== actions.filter((action) => !action.succeeded).length
     || value.credentialStatusActionCount !== (expectedCounts.credential_status || 0)
     || value.dockerDaemonActionCount !== dockerDaemonActionCount
-    || value.dockerContainerActionCount !== (expectedCounts.docker_container_probe || 0)
+    || value.dockerContainerActionCount !== actions.filter((action) =>
+      action.operation.startsWith('docker_container_')).length
     || value.providerCanaryActionCount !== (expectedCounts.provider_model_canary || 0)
     || value.releaseAttestorProcessActionCount
       !== (expectedCounts.release_attestor_backend_process || 0)

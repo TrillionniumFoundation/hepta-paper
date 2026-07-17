@@ -278,6 +278,10 @@ test('readiness side-effect ledger records controlled process, daemon, canary, K
   const release = ledger.spawnSyncFor('release-attestor');
   runtime('which', ['python3']);
   runtime('docker', ['image', 'inspect', 'runtime@sha256:test']);
+  runtime('docker', ['run', '--rm', 'runtime@sha256:test']);
+  runtime('docker', ['ps', '--all', '--filter', 'label=io.hepta.probe.kind=test']);
+  runtime('docker', ['container', 'inspect', 'probe-container']);
+  runtime('docker', ['rm', '--force', 'probe-container']);
   provider('codex', ['login', 'status']);
   provider('codex', ['exec', '--model', 'test-model']);
   release('/opt/kms/backend-probe', ['--probe']);
@@ -291,17 +295,21 @@ test('readiness side-effect ledger records controlled process, daemon, canary, K
         `sha256:${'a'.repeat(64)}`,
     },
   }).automationReadinessSideEffectInspection;
-  assert.equal(failedInspection.processActionCount, 6);
+  assert.equal(failedInspection.processActionCount, 10);
   assert.equal(failedInspection.failedProcessActionCount, 1);
   assert.equal(failedInspection.credentialStatusActionCount, 1);
-  assert.equal(failedInspection.dockerDaemonActionCount, 1);
-  assert.equal(failedInspection.dockerContainerActionCount, 0);
+  assert.equal(failedInspection.dockerDaemonActionCount, 5);
+  assert.equal(failedInspection.dockerContainerActionCount, 4);
   assert.equal(failedInspection.providerCanaryActionCount, 1);
   assert.equal(failedInspection.releaseAttestorProcessActionCount, 1);
   assert.equal(failedInspection.releaseAttestorBackendProbeActionCount, 1);
   assert.equal(failedInspection.releaseAttestorSignerChallengeActionCount, 1);
   assert.equal(failedInspection.externalActionPerformed, true);
   assert.match(failedInspection.externalActionScope, /credential_status/);
+  assert.match(failedInspection.externalActionScope, /docker_container_cleanup/);
+  assert.match(failedInspection.externalActionScope, /docker_container_inspection/);
+  assert.match(failedInspection.externalActionScope, /docker_container_probe/);
+  assert.match(failedInspection.externalActionScope, /docker_container_reconciliation/);
   assert.match(failedInspection.externalActionScope, /docker_image_inspection/);
   assert.equal(calls[0].options.env.SECRET_TOKEN, undefined);
   assert.equal(calls[0].options.env.HTTPS_PROXY, undefined);

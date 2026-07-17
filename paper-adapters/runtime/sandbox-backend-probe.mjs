@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
@@ -11,6 +12,7 @@ import {
   createDockerDatasetSupervisorProbeWorkspace,
   readDockerDatasetSupervisorProbeEvidence,
   removeDockerDatasetSupervisorProbeWorkspace,
+  verifyDockerDatasetSupervisorProbeWorkspace,
 } from './docker-dataset-supervisor-probe-repository.mjs';
 import { restrictedChildEnvironment } from '../automation/bounded-child-process.mjs';
 
@@ -24,6 +26,14 @@ const GENERIC_MANIFEST_MEDIA_TYPES = new Set([
   'application/vnd.docker.distribution.manifest.list.v2+json',
 ]);
 const LOCAL_DOCKER_HOST = 'unix:///var/run/docker.sock';
+const TRUSTED_DATASET_SUPERVISOR_PROBE_TIMEOUT_MS = 60_000;
+const TRUSTED_DATASET_SUPERVISOR_CLEANUP_TIMEOUT_MS = 5_000;
+const TRUSTED_DATASET_SUPERVISOR_CLEANUP_RETRY_DELAYS_MS = Object.freeze([
+  0, 250, 500, 1_000, 2_500,
+]);
+const TRUSTED_DATASET_SUPERVISOR_PROBE_PREFIX = 'hepta-dataset-supervisor-probe-';
+const TRUSTED_DATASET_SUPERVISOR_PROBE_KIND = 'trusted-dataset-supervisor';
+const TRUSTED_DATASET_SUPERVISOR_PROBE_STALE_MS = 120_000;
 
 function controlledProbeEnvironment(environment, { docker = false } = {}) {
   if (environment?.DOCKER_CONTEXT
@@ -149,6 +159,136 @@ function inspectDockerManifest(docker, image, {
   });
 }
 
+function dockerInspectionDocument(result) {
+  try {
+    const documents = JSON.parse(String(result?.stdout || ''));
+    return Array.isArray(documents) && documents.length === 1 ? documents[0] : null;
+  } catch { return null; }
+}
+
+function ownedDockerProbeIdentity(document, expectedContainerName = null) {
+  const containerId = String(document?.Id || '');
+  const containerName = String(document?.Name || '').replace(/^\//, '');
+  const labels = document?.Config?.Labels || {};
+  const probeId = String(labels['io.hepta.probe.id'] || '');
+  const owned = /^[0-9a-f]{64}$/.test(containerId)
+    && containerName.startsWith(TRUSTED_DATASET_SUPERVISOR_PROBE_PREFIX)
+    && probeId === containerName
+    && labels['io.hepta.probe.kind'] === TRUSTED_DATASET_SUPERVISOR_PROBE_KIND
+    && (!expectedContainerName || containerName === expectedContainerName);
+  return Object.freeze({ owned, containerId, containerName });
+}
+
+function removeOwnedProbeWorkspace(containerName) {
+  if (!containerName.startsWith(TRUSTED_DATASET_SUPERVISOR_PROBE_PREFIX)) return false;
+  const candidate = path.join(os.tmpdir(), containerName);
+  if (!fs.existsSync(candidate)) return true;
+  const workspace = Object.freeze({ root: candidate });
+  if (!verifyDockerDatasetSupervisorProbeWorkspace(workspace)) return false;
+  try { return removeDockerDatasetSupervisorProbeWorkspace(workspace); } catch { return false; }
+}
+
+function cleanupFailedDockerProbe({
+  docker, containerName, containerIdPath, spawnSyncImpl, environment,
+  allowConfirmedAbsent = false,
+}) {
+  const waitBuffer = new Int32Array(new SharedArrayBuffer(4));
+  let everyInspectionConfirmedAbsent = true;
+  for (const delayMs of TRUSTED_DATASET_SUPERVISOR_CLEANUP_RETRY_DELAYS_MS) {
+    if (delayMs > 0) Atomics.wait(waitBuffer, 0, 0, delayMs);
+    try {
+      let reference = containerName;
+      try {
+        const containerId = fs.readFileSync(containerIdPath, 'utf8').trim();
+        if (/^[0-9a-f]{64}$/.test(containerId)) reference = containerId;
+      } catch { /* Docker may still be completing create and cidfile publication */ }
+      const inspection = spawnSyncImpl(docker, ['container', 'inspect', reference], {
+        encoding: 'utf8', timeout: TRUSTED_DATASET_SUPERVISOR_CLEANUP_TIMEOUT_MS,
+        killSignal: 'SIGKILL',
+        maxBuffer: 1024 * 1024,
+        env: { ...controlledProbeEnvironment(environment, { docker: true }) },
+      });
+      if (inspection.status !== 0) {
+        const confirmedAbsent = inspection.status === 1
+          && !inspection.error && !inspection.signal
+          && /no such (?:object|container)/i.test(String(inspection.stderr || ''));
+        if (!confirmedAbsent) everyInspectionConfirmedAbsent = false;
+        continue;
+      }
+      everyInspectionConfirmedAbsent = false;
+      const identity = ownedDockerProbeIdentity(
+        dockerInspectionDocument(inspection), containerName,
+      );
+      if (!identity.owned) return 'ownership_mismatch';
+      const cleanup = spawnSyncImpl(docker, ['rm', '--force', identity.containerId], {
+        encoding: 'utf8', timeout: TRUSTED_DATASET_SUPERVISOR_CLEANUP_TIMEOUT_MS,
+        killSignal: 'SIGKILL',
+        maxBuffer: 1024 * 1024,
+        env: { ...controlledProbeEnvironment(environment, { docker: true }) },
+      });
+      if (cleanup.status === 0) return 'confirmed_removed';
+    } catch {
+      everyInspectionConfirmedAbsent = false;
+      /* preserve the original probe failure and retry bounded cleanup */
+    }
+  }
+  return allowConfirmedAbsent && everyInspectionConfirmedAbsent
+    ? 'confirmed_absent' : 'unresolved';
+}
+
+function pruneStaleProbeWorkspaces(activeNames, nowMs) {
+  let entries = [];
+  try { entries = fs.readdirSync(os.tmpdir()); } catch { return false; }
+  for (const entry of entries) {
+    if (!entry.startsWith(TRUSTED_DATASET_SUPERVISOR_PROBE_PREFIX)
+      || activeNames.has(entry)) continue;
+    const candidate = path.join(os.tmpdir(), entry);
+    try {
+      const identity = fs.lstatSync(candidate);
+      if (nowMs - identity.mtimeMs >= TRUSTED_DATASET_SUPERVISOR_PROBE_STALE_MS) {
+        if (!verifyDockerDatasetSupervisorProbeWorkspace({ root: candidate })) continue;
+        if (!removeOwnedProbeWorkspace(entry)) return false;
+      }
+    } catch (error) {
+      if (error?.code !== 'ENOENT') return false;
+    }
+  }
+  return true;
+}
+
+function reconcileAbandonedDockerProbes({ docker, spawnSyncImpl, environment }) {
+  const options = {
+    encoding: 'utf8', timeout: TRUSTED_DATASET_SUPERVISOR_CLEANUP_TIMEOUT_MS,
+    killSignal: 'SIGKILL',
+    maxBuffer: 1024 * 1024,
+    env: { ...controlledProbeEnvironment(environment, { docker: true }) },
+  };
+  const listed = spawnSyncImpl(docker, [
+    'ps', '--all', '--quiet', '--filter',
+    `label=io.hepta.probe.kind=${TRUSTED_DATASET_SUPERVISOR_PROBE_KIND}`,
+  ], options);
+  if (listed.status !== 0) return false;
+  const nowMs = Date.now();
+  const activeNames = new Set();
+  const containerIds = String(listed.stdout || '').split(/\s+/).filter(Boolean);
+  for (const containerId of containerIds) {
+    const inspected = spawnSyncImpl(docker, ['container', 'inspect', containerId], options);
+    if (inspected.status !== 0) return false;
+    const document = dockerInspectionDocument(inspected);
+    const identity = ownedDockerProbeIdentity(document);
+    if (!identity.owned) return false;
+    activeNames.add(identity.containerName);
+    const createdAtMs = Date.parse(String(document?.Created || ''));
+    if (!Number.isFinite(createdAtMs)) return false;
+    if (nowMs - createdAtMs < TRUSTED_DATASET_SUPERVISOR_PROBE_STALE_MS) continue;
+    const removed = spawnSyncImpl(docker, ['rm', '--force', identity.containerId], options);
+    if (removed.status !== 0) return false;
+    activeNames.delete(identity.containerName);
+    if (!removeOwnedProbeWorkspace(identity.containerName)) return false;
+  }
+  return pruneStaleProbeWorkspaces(activeNames, nowMs);
+}
+
 function probeTrustedDockerDatasetSupervisor({ docker, profile, spawnSyncImpl, environment }) {
   const image = String(profile?.image || '');
   const expectedImageDigest = normalizeContainerImageDigest(profile?.imageDigest);
@@ -178,13 +318,21 @@ function probeTrustedDockerDatasetSupervisor({ docker, profile, spawnSyncImpl, e
     return Object.freeze({ image, expectedImageDigest, observedImageDigest, available: false, detail: 'trusted_dataset_supervisor_image_label_mismatch' });
   }
   const workspace = createDockerDatasetSupervisorProbeWorkspace();
+  const containerIdPath = path.join(workspace.root, 'container.cid');
+  const containerName = path.basename(workspace.root);
+  let containerMayExist = false;
+  let preserveWorkspace = false;
   try {
     const uid = typeof process.getuid === 'function' ? process.getuid() : 65534;
     const gid = typeof process.getgid === 'function' ? process.getgid() : 65534;
     const pythonProbe = `import os,pathlib\ncontent=pathlib.Path('/datasets/probe').read_bytes()\ndenied=False\ntry: pathlib.Path('/hepta-supervisor/dataset-access.trace').write_text('FORGED')\nexcept PermissionError: denied=True\nstatus=pathlib.Path('/proc/self/status').read_text().splitlines()\ncap=next(x.split()[1] for x in status if x.startswith('CapEff:'))\npathlib.Path('/output/probe.txt').write_text(f'bytes={len(content)}\\nuid={os.getuid()}\\ntrace_overwrite_denied={str(denied).lower()}\\ncap_eff={cap}\\n')`;
     const rProbe = `x <- readBin('/datasets/probe', 'raw', n=file.info('/datasets/probe')$size); denied <- inherits(try(writeLines('FORGED', '/hepta-supervisor/dataset-access.trace'), silent=TRUE), 'try-error'); status <- readLines('/proc/self/status'); cap <- sub('^CapEff:[[:space:]]*', '', status[grepl('^CapEff:', status)]); uid <- as.integer(strsplit(sub('^Uid:[[:space:]]*', '', status[grepl('^Uid:', status)]), '[[:space:]]+')[[1]][1]); writeLines(sprintf('bytes=%d\\nuid=%d\\ntrace_overwrite_denied=%s\\ncap_eff=%s', length(x), uid, tolower(as.character(denied)), cap), '/output/probe.txt')`;
+    containerMayExist = true;
     const result = spawnSyncImpl(docker, [
-      'run', '--pull', 'never', '--rm', '--network', 'none', '--read-only', '--cap-drop', 'ALL',
+      'run', '--name', containerName, '--cidfile', containerIdPath,
+      '--label', 'io.hepta.probe.kind=trusted-dataset-supervisor',
+      '--label', `io.hepta.probe.id=${containerName}`,
+      '--pull', 'never', '--rm', '--network', 'none', '--read-only', '--cap-drop', 'ALL',
       '--cap-add', 'SYS_PTRACE', '--cap-add', 'SETUID', '--cap-add', 'SETGID', '--cap-add', 'SETPCAP', '--cap-add', 'DAC_OVERRIDE',
       '--security-opt', 'no-new-privileges', '--memory', '256m', '--cpus', '1', '--pids-limit', '64', '--tmpfs', '/tmp:rw,noexec,nosuid,size=32m',
       '--volume', `${workspace.datasetPath}:/datasets/probe:ro`, '--volume', `${workspace.outputRoot}:/output:rw`, '--volume', `${workspace.supervisorRoot}:/hepta-supervisor:rw`,
@@ -195,12 +343,26 @@ function probeTrustedDockerDatasetSupervisor({ docker, profile, spawnSyncImpl, e
       '--workload-uid', String(supervisor.workloadUid), '--workload-gid', String(gid), '--',
       executable, ...(executable === 'python3' ? ['-c', pythonProbe] : ['-e', rProbe]),
     ], {
-      encoding: 'utf8', timeout: 30000, maxBuffer: 4 * 1024 * 1024,
+      encoding: 'utf8', timeout: TRUSTED_DATASET_SUPERVISOR_PROBE_TIMEOUT_MS,
+      killSignal: 'SIGKILL',
+      maxBuffer: 4 * 1024 * 1024,
       env: { ...controlledProbeEnvironment(environment, { docker: true }) },
     });
     if (result.status !== 0) {
-      return Object.freeze({ image, expectedImageDigest, observedImageDigest, available: false, detail: `trusted_dataset_supervisor_probe_failed:${String(result.stderr || result.error?.message || '').trim().slice(-512)}` });
+      const uncertainCreate = result.status === null || Boolean(result.error || result.signal);
+      const cleanupStatus = cleanupFailedDockerProbe({
+        docker, containerName, containerIdPath, spawnSyncImpl, environment,
+        allowConfirmedAbsent: !uncertainCreate,
+      });
+      preserveWorkspace = cleanupStatus === 'unresolved';
+      containerMayExist = false;
+      return Object.freeze({
+        image, expectedImageDigest, observedImageDigest, available: false,
+        detail: `trusted_dataset_supervisor_probe_failed:${String(result.stderr || result.error?.message || '').trim().slice(-512)}`,
+        cleanupStatus, containerName,
+      });
     }
+    containerMayExist = false;
     const { outputIdentity, output, traceIdentity, identityIdentity, trace, identity } = readDockerDatasetSupervisorProbeEvidence(workspace);
     const verified = outputIdentity.uid === supervisor.workloadUid
       && output.includes(`uid=${supervisor.workloadUid}\n`)
@@ -230,9 +392,20 @@ function probeTrustedDockerDatasetSupervisor({ docker, profile, spawnSyncImpl, e
       detail: verified ? 'trusted_dataset_supervisor_end_to_end_verified' : 'trusted_dataset_supervisor_evidence_mismatch',
     });
   } catch (error) {
-    return Object.freeze({ image, expectedImageDigest, observedImageDigest, available: false, detail: `trusted_dataset_supervisor_probe_error:${error?.code || error?.message || 'unknown'}` });
+    let cleanupStatus = 'not_required';
+    if (containerMayExist) {
+      cleanupStatus = cleanupFailedDockerProbe({
+        docker, containerName, containerIdPath, spawnSyncImpl, environment,
+      });
+      preserveWorkspace = cleanupStatus === 'unresolved';
+    }
+    return Object.freeze({
+      image, expectedImageDigest, observedImageDigest, available: false,
+      detail: `trusted_dataset_supervisor_probe_error:${error?.code || error?.message || 'unknown'}`,
+      cleanupStatus, containerName,
+    });
   } finally {
-    removeDockerDatasetSupervisorProbeWorkspace(workspace);
+    if (!preserveWorkspace) removeDockerDatasetSupervisorProbeWorkspace(workspace);
   }
 }
 
@@ -241,6 +414,17 @@ export function probeTrustedDockerDatasetSupervisors({
   spawnSyncImpl = spawnSync, environment = process.env,
 } = {}) {
   controlledProbeEnvironment(environment, { docker: true });
+  if (profiles.length > 0 && !reconcileAbandonedDockerProbes({
+    docker, spawnSyncImpl, environment,
+  })) {
+    return Object.freeze({
+      available: false,
+      backend: null,
+      status: 'academic_empirical_dataset_supervisor_unavailable',
+      detail: 'trusted_dataset_supervisor_reconciliation_failed',
+      results: Object.freeze([]),
+    });
+  }
   const cacheKey = `dataset-supervisor:${docker}:${JSON.stringify(profiles)}`;
   const cacheAllowed = spawnSyncImpl === spawnSync;
   if (cacheAllowed && !refresh && PROBE_CACHE.has(cacheKey)) return PROBE_CACHE.get(cacheKey);

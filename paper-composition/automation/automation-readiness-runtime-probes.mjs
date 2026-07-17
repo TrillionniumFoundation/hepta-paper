@@ -32,6 +32,13 @@ function readinessOperation(executable, args, scope) {
   const name = path.basename(String(executable || '')).toLowerCase();
   if (name === 'docker') {
     if (args[0] === 'run') return 'docker_container_probe';
+    if (args[0] === 'rm' && args.includes('--force')) return 'docker_container_cleanup';
+    if (args[0] === 'container' && args[1] === 'inspect') {
+      return 'docker_container_inspection';
+    }
+    if (args[0] === 'ps' && args.includes('--filter')) {
+      return 'docker_container_reconciliation';
+    }
     if (args[0] === 'image' && args[1] === 'inspect') return 'docker_image_inspection';
     if (args[0] === 'info') return 'docker_daemon_status';
     return 'docker_daemon_command';
@@ -114,7 +121,8 @@ export function createAutomationReadinessSideEffectLedger({
       failedProcessActionCount: actions.filter((action) => !action.succeeded).length,
       credentialStatusActionCount: operationCounts.credential_status || 0,
       dockerDaemonActionCount,
-      dockerContainerActionCount: operationCounts.docker_container_probe || 0,
+      dockerContainerActionCount: actions.filter((action) =>
+        action.operation.startsWith('docker_container_')).length,
       providerCanaryActionCount: operationCounts.provider_model_canary || 0,
       releaseAttestorProcessActionCount:
         operationCounts.release_attestor_backend_process || 0,

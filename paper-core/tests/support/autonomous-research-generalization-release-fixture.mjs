@@ -1214,9 +1214,13 @@ export function bindGenericGoldenPreparationFixture({
     autonomousResearchLoopPreparationReportHash: _baseHash,
     ...basePayload
   } = basePreparation || {};
+  const {
+    autonomousResearchLoopPreparationReportHash: _fixtureHash,
+    ...fixturePreparationPayload
+  } = fixture.preparation || {};
   const merged = {
     ...basePayload,
-    ...fixture.preparation,
+    ...fixturePreparationPayload,
     policyAuthorization,
     seedBundle,
     seedBinding,

@@ -267,6 +267,9 @@ function qualificationConfigurationInspection({
       maximumQualificationCostUsd,
       qualificationCostAuthority,
       independentVerifierConfigured: true,
+      authoritativeLookupSupported: true,
+      authoritativeLookupVerifierConfigured: true,
+      authoritativeLookupVerificationTrustSetHash: trustedSignerTrustSetHash,
       independentVerifierResponseAttestationRequired: true,
       privateSigningKeyLoaded: false,
       trustedSignerTrustSetVersion: 1,
@@ -511,6 +514,11 @@ test('resident prerequisites keep renewable receipts in bootstrap mode and hard-
     configurationInspection,
     configuration,
     runtimeReproducibilityStatus,
+    externalActionRecoveryInspection: {
+      ready: true,
+      signedCapabilityVerified: true,
+      configurationIdentityHash: H('external-action-recovery-config'),
+    },
     codeProvenance: { version: 2, worktreeStateHash: H('current-worktree') },
     now: new Date('2026-07-15T10:00:00.000Z'),
   };
@@ -679,6 +687,18 @@ test('action-aware full-ready policy never treats prepare postconditions as laun
       status: 'autonomous_research_campaign_completed_and_qualified',
     },
   }), 0);
+  assert.equal(autonomousResearchCommandExitCode({
+    action: 'converge',
+    launchMode: 'golden-bootstrap',
+    report: { boundedGoldenQualificationPublished: true },
+    requireBoundedGoldenReady: true,
+  }), 0);
+  assert.equal(autonomousResearchCommandExitCode({
+    action: 'converge',
+    launchMode: 'production-run',
+    report: { boundedGoldenQualificationPublished: true },
+    requireBoundedGoldenReady: true,
+  }), 2);
 });
 
 test('unattended launch and qualification service readiness replay independent hash domains', () => {
@@ -955,12 +975,14 @@ test('prepare inspects matching qualification configuration without invoking eit
     ...identities,
     serviceIdentityHash: H('injected-client'),
     async requestQualification() { fs.writeFileSync(fixture.marker, 'client called'); },
+    async lookupQualification() { fs.writeFileSync(fixture.marker, 'client lookup called'); },
   };
   const injectedVerifier = {
     kind: 'IndependentExternalResearchQualificationVerifier',
     ...identities,
     serviceIdentityHash: H('injected-verifier'),
     async verify() { fs.writeFileSync(fixture.marker, 'verifier called'); },
+    async verifyLookup() { fs.writeFileSync(fixture.marker, 'verifier lookup called'); },
   };
   await assert.rejects(() => composeAutonomousResearchCampaignAction({
     action: 'prepare',

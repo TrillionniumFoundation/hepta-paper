@@ -5,6 +5,11 @@ import {
   TRUSTED_AUTONOMOUS_MANUSCRIPT_PROSE,
   TRUSTED_AUTONOMOUS_MANUSCRIPT_SECTIONS,
 } from '../../paper-domain/automation/trusted-autonomous-manuscript-prose.mjs';
+import {
+  evidenceBoundManuscriptSectionHeadings,
+  latexEscapeEvidenceBoundText,
+  verifyEvidenceBoundManuscriptIr,
+} from '../../paper-domain/research/evidence-bound-manuscript-ir.mjs';
 import { stripLatexComment } from '../../paper-domain/quality/latex-comment-syntax.mjs';
 import { analyzeTheoremEnvironmentMacroDefinitions } from '../../paper-domain/quality/latex-theorem-environment-syntax.mjs';
 import {
@@ -24,6 +29,10 @@ import {
   extractFormalSupportSurfaces,
   lineInsideFormalSupportSurface,
 } from './formal-support-surface-reader.mjs';
+import {
+  extractEvidenceBoundManuscriptSurfaces,
+  lineInsideEvidenceBoundManuscriptSurface,
+} from './evidence-bound-manuscript-surface-reader.mjs';
 
 const INCLUDE_COMMAND = /\\(input|include)(?![A-Za-z@])/gi;
 const BEGIN = /^\s*%\s*HEPTA_EMPIRICAL_ASSERTION_BEGIN\s+(\{.*\})\s*$/;
@@ -39,7 +48,7 @@ const ENVIRONMENT_BOUNDARY = /^\s*\\(begin|end)\s*\{([A-Za-z][A-Za-z0-9:_-]*\*?)
 const SAFE_DOCUMENT_CLASS = /^\s*\\documentclass\[11pt\]\{article\}\s*$/;
 const SAFE_PACKAGE_SET = /^\s*\\usepackage\{amsmath,amssymb,amsthm(?:,graphicx)?\}\s*$/;
 const SAFE_THEOREM_DECLARATION = /^\s*\\newtheorem\s*\{(?:theorem|lemma|proposition|corollary|definition|assumption)\}\s*\{(?:Theorem|Lemma|Proposition|Corollary|Definition|Assumption)\}\s*$/;
-const SAFE_DOCUMENT_METADATA = /^\s*\\(?:title\{Autonomous bounded research report\}|author\{\}|date\{\})\s*$/;
+const SAFE_EMPTY_DOCUMENT_METADATA = /^\s*\\(?:author\{\}|date\{\})\s*$/;
 const SAFE_STANDALONE_COMMAND = /^\s*\\(?:begin\s*\{document\}|end\s*\{document\}|maketitle|appendix|clearpage|newpage|pagebreak|noindent)\s*$/i;
 const SAFE_LABEL_COMMAND = /^\s*\\label\s*\{[A-Za-z0-9_.:-]+\}\s*$/;
 const SAFE_FIXED_PROSE = new Set([
@@ -300,9 +309,19 @@ function inspectRenderSupportFiles(rootPath, blockers, maximumEntries = 2048) {
   }
 }
 
-function safeSection(title) {
+function safeSection(title, trustedManuscriptIr) {
   const normalized = String(title || '').replace(/\\[A-Za-z@]+\s*/g, '').trim().toLowerCase();
-  return SAFE_SECTION_TITLES.has(normalized);
+  const trusted = new Set(evidenceBoundManuscriptSectionHeadings(trustedManuscriptIr)
+    .map((heading) => heading.toLowerCase()));
+  return SAFE_SECTION_TITLES.has(normalized) || trusted.has(normalized);
+}
+
+function safeDocumentMetadata(line, trustedManuscriptIr) {
+  if (SAFE_EMPTY_DOCUMENT_METADATA.test(line)) return true;
+  if (!trustedManuscriptIr?.title) {
+    return line.trim() === '\\title{Autonomous bounded research report}';
+  }
+  return line.trim() === `\\title{${latexEscapeEvidenceBoundText(trustedManuscriptIr.title)}}`;
 }
 
 function lineIncludes(line, includes) {
@@ -331,6 +350,9 @@ export function readEmpiricalAssertionUniverse({
   maximumFiles = 128,
   trustedEmpiricalClaimUniverse = null,
   trustedFormalSupportAuthority = null,
+  trustedManuscriptIr = null,
+  trustedManuscriptIrAgentExecutionReceipt = null,
+  trustedPriorArtReceipt = null,
 } = {}) {
   const rootPath = path.resolve(sourceRoot || '.');
   const rootManuscript = safeManuscriptPath(manuscriptPath);
@@ -338,6 +360,18 @@ export function readEmpiricalAssertionUniverse({
   if (trustedFormalSupportAuthority
     && !verifyAutonomousFormalSupportSurfaceAuthority(trustedFormalSupportAuthority)) {
     blockers.push('autonomous_formal_support_trusted_authority_invalid');
+  }
+  if (trustedManuscriptIr) {
+    const irVerification = verifyEvidenceBoundManuscriptIr(trustedManuscriptIr, {
+      authorityBindings: trustedManuscriptIr.authorityBindings,
+      priorArtReceipt: trustedPriorArtReceipt,
+      agentExecutionReceipt: trustedManuscriptIrAgentExecutionReceipt,
+    });
+    if (!irVerification.valid) {
+      blockers.push(...irVerification.blockers.map((blocker) => (
+        `evidence_bound_manuscript_ir:${blocker}`
+      )));
+    }
   }
   inspectRenderSupportFiles(rootPath, blockers);
   const claimRanges = trustedClaimRanges({
@@ -351,6 +385,7 @@ export function readEmpiricalAssertionUniverse({
   const extractedAssertions = [];
   const extractedPresentations = [];
   const extractedFormalSupports = [];
+  const extractedEvidenceBoundSurfaces = [];
   const visited = new Set();
   const active = new Set();
   const visit = (relative, depth = 0) => {
@@ -394,6 +429,14 @@ export function readEmpiricalAssertionUniverse({
     });
     blockers.push(...formalSupportResult.blockers);
     extractedFormalSupports.push(...formalSupportResult.formalSupports);
+    const evidenceBoundResult = extractEvidenceBoundManuscriptSurfaces({
+      relative,
+      read,
+      trustedManuscriptIr,
+      trustedPriorArtReceipt,
+    });
+    blockers.push(...evidenceBoundResult.blockers);
+    extractedEvidenceBoundSurfaces.push(...evidenceBoundResult.surfaces);
     for (const line of manuscriptLineRecords(latin1)) {
       if (LEGACY_RESULT_MARKER.test(line.text)) {
         blockers.push(`legacy_empirical_result_marker_forbidden:${relative}:${line.byteStart}`);
@@ -403,6 +446,7 @@ export function readEmpiricalAssertionUniverse({
       if (!insideAssertion(line, extracted.assertions)
         && !insidePresentation(line, presentationResult.presentations)
         && !lineInsideFormalSupportSurface(line, formalSupportResult.formalSupports)
+        && !lineInsideEvidenceBoundManuscriptSurface(line, evidenceBoundResult.surfaces)
         && UNSUPPORTED_RESULT_SURFACE.test(rawWithoutComment)) {
         blockers.push(`empirical_assertion_unsupported_result_surface:${relative}:${line.byteStart}`);
       }
@@ -411,6 +455,7 @@ export function readEmpiricalAssertionUniverse({
       if (insideAssertion(line, extracted.assertions)
         || insidePresentation(line, presentationResult.presentations)
         || lineInsideFormalSupportSurface(line, formalSupportResult.formalSupports)
+        || lineInsideEvidenceBoundManuscriptSurface(line, evidenceBoundResult.surfaces)
         || insideClaim(line, claimRanges.filter((claim) => claim.manuscriptPath === relative))) continue;
       const boundary = environmentBoundary(rawWithoutComment);
       if (boundary?.environment === 'document' && SAFE_STANDALONE_COMMAND.test(rawWithoutComment)) continue;
@@ -426,12 +471,13 @@ export function readEmpiricalAssertionUniverse({
       const remainder = untypedLineRemainder(rawWithoutComment, lineRelativeIncludes);
       if (!remainder) continue;
       if (section) {
-        if (!safeSection(section[1])) blockers.push(`empirical_assertion_untrusted_section_surface:${relative}:${line.byteStart}`);
+        if (!safeSection(section[1], trustedManuscriptIr)) blockers.push(`empirical_assertion_untrusted_section_surface:${relative}:${line.byteStart}`);
         continue;
       }
       if (SAFE_DOCUMENT_CLASS.test(remainder) || SAFE_PACKAGE_SET.test(remainder)
         || SAFE_THEOREM_DECLARATION.test(remainder)
-        || SAFE_DOCUMENT_METADATA.test(remainder) || SAFE_STANDALONE_COMMAND.test(remainder)
+        || safeDocumentMetadata(remainder, trustedManuscriptIr)
+        || SAFE_STANDALONE_COMMAND.test(remainder)
         || SAFE_LABEL_COMMAND.test(remainder) || SAFE_FIXED_PROSE.has(remainder)) continue;
       blockers.push(`empirical_assertion_untyped_result_prose:${relative}:${line.byteStart}`);
     }
@@ -447,6 +493,10 @@ export function readEmpiricalAssertionUniverse({
     || left.markerByteStart - right.markerByteStart);
   const formalSupports = extractedFormalSupports.sort((left, right) => left.manuscriptPath.localeCompare(right.manuscriptPath)
     || left.markerByteStart - right.markerByteStart);
+  const evidenceBoundSurfaces = extractedEvidenceBoundSurfaces.sort((left, right) => (
+    left.manuscriptPath.localeCompare(right.manuscriptPath)
+      || left.markerByteStart - right.markerByteStart
+  ));
   const ids = new Set();
   for (const assertion of assertions) {
     if (ids.has(assertion.declaration.assertionId)) {
@@ -472,6 +522,16 @@ export function readEmpiricalAssertionUniverse({
   if (trustedFormalSupportAuthority && formalSupports.length !== 1) {
     blockers.push('autonomous_formal_support_surface_count_invalid');
   }
+  if (trustedManuscriptIr) {
+    const expectedBlockIds = trustedManuscriptIr.sections.flatMap((section) => section.blocks)
+      .filter((block) => block.type !== 'slot').map((block) => block.blockId);
+    const observedBlockIds = evidenceBoundSurfaces.map((surface) => surface.declaration.blockId);
+    if (observedBlockIds.length !== expectedBlockIds.length
+      || new Set(observedBlockIds).size !== observedBlockIds.length
+      || expectedBlockIds.some((blockId) => !observedBlockIds.includes(blockId))) {
+      blockers.push('evidence_bound_manuscript_surface_coverage_invalid');
+    }
+  }
   const presentationArtifacts = Object.freeze(presentations
     .filter((presentation) => presentation.artifact)
     .map((presentation) => presentation.artifact)
@@ -482,6 +542,8 @@ export function readEmpiricalAssertionUniverse({
       trustedEmpiricalClaimUniverse?.empiricalClaimUniverseHash || null,
     trustedFormalSupportAuthorityHash:
       trustedFormalSupportAuthority?.autonomousFormalSupportSurfaceAuthorityHash || null,
+    trustedManuscriptIrHash:
+      trustedManuscriptIr?.evidenceBoundManuscriptIrHash || null,
     sourceCorpusHash,
     assertions: assertions.map((assertion) => ({
       assertionId: assertion.declaration.assertionId,
@@ -520,6 +582,17 @@ export function readEmpiricalAssertionUniverse({
       manuscriptContentHash: formalSupport.manuscriptContentHash,
       formalSupportSurfaceHash: formalSupport.formalSupportSurfaceHash,
     })),
+    evidenceBoundSurfaces: evidenceBoundSurfaces.map((surface) => ({
+      blockId: surface.declaration.blockId,
+      blockHash: surface.declaration.blockHash,
+      manuscriptPath: surface.manuscriptPath,
+      markerByteStart: surface.markerByteStart,
+      markerByteEnd: surface.markerByteEnd,
+      manuscriptByteStart: surface.manuscriptByteStart,
+      manuscriptByteEnd: surface.manuscriptByteEnd,
+      manuscriptContentHash: surface.manuscriptContentHash,
+      evidenceBoundManuscriptSurfaceHash: surface.evidenceBoundManuscriptSurfaceHash,
+    })),
   });
   const uniqueBlockers = Object.freeze([...new Set(blockers)]);
   const payload = {
@@ -533,12 +606,15 @@ export function readEmpiricalAssertionUniverse({
       trustedEmpiricalClaimUniverse?.empiricalClaimUniverseHash || null,
     trustedFormalSupportAuthorityHash:
       trustedFormalSupportAuthority?.autonomousFormalSupportSurfaceAuthorityHash || null,
+    trustedManuscriptIrHash:
+      trustedManuscriptIr?.evidenceBoundManuscriptIrHash || null,
     manuscriptCorpusHash,
     sourceCorpusHash,
     files: Object.freeze(sortedFiles),
     assertions: Object.freeze(assertions),
     presentations: Object.freeze(presentations),
     formalSupports: Object.freeze(formalSupports),
+    evidenceBoundSurfaces: Object.freeze(evidenceBoundSurfaces),
     presentationArtifacts,
     blockers: uniqueBlockers,
   };

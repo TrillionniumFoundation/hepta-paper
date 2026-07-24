@@ -1,7 +1,12 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { normalizeText } from '../../workflow-kernel/runtime/text-utils.mjs';
-import { ANALYSIS_PROTOCOL_FAMILY_PROFILES } from './analysis-protocol-contract.mjs';
+import {
+  AUTONOMOUS_EMPIRICAL_PLUGIN_PROTOCOL_FAMILIES,
+} from './autonomous-empirical-family-plugin-registry.mjs';
 import { verifyMachineProposedScientificClaimSet } from './autonomous-research-proposal-contract.mjs';
+import {
+  verifyDynamicFormalClaimSeed,
+} from '../research/dynamic-formal-claim-seed-contract.mjs';
 
 const ALLOWED_CAPABILITIES = Object.freeze([
   'draft_manuscript',
@@ -17,7 +22,7 @@ const ALLOWED_CAPABILITIES = Object.freeze([
 export const AUTONOMOUS_RESEARCH_POLICY_PROFILE = Object.freeze({
   version: 1,
   policyId: 'hepta-bounded-autonomous-research-v1',
-  allowedProtocolFamilies: Object.freeze(Object.keys(ANALYSIS_PROTOCOL_FAMILY_PROFILES).sort()),
+  allowedProtocolFamilies: AUTONOMOUS_EMPIRICAL_PLUGIN_PROTOCOL_FAMILIES,
   allowedCapabilities: ALLOWED_CAPABILITIES,
   minimumRefereeCount: 2,
   minimumRevisionRounds: 1,
@@ -212,6 +217,14 @@ export function buildAutonomousResearchSeedContractBundle({
   const proposalVerification = verifyMachineProposedScientificClaimSet(proposal);
   const policyVerification = verifyAutonomousResearchPolicyAuthorization(policyAuthorization, { proposal });
   const blockers = [...proposalVerification.blockers, ...policyVerification.blockers];
+  const dynamicFormalClaimSeed = proposal?.version === 2
+    ? proposal.dynamicFormalClaimSeed : null;
+  const dynamicFormalVerification = dynamicFormalClaimSeed
+    ? verifyDynamicFormalClaimSeed(dynamicFormalClaimSeed, {
+      claimKey: `${proposal?.paperId}:formal-support:1`,
+    })
+    : Object.freeze({ valid: true, blockers: Object.freeze([]) });
+  blockers.push(...(dynamicFormalVerification.blockers || []));
   const claims = (proposal?.claims || []).map((claim, index) => Object.freeze({
     id: `${proposal.paperId}:autonomous_claim:${index + 1}`,
     kind: 'machine_proposed_claim_seed',
@@ -225,10 +238,21 @@ export function buildAutonomousResearchSeedContractBundle({
     proofObligations: claim.proofObligations,
     empiricalObligations: claim.empiricalObligations,
     machineProposedScientificClaimSetHash: proposal.machineProposedScientificClaimSetHash,
+    ...(claim.verificationMode === 'formal_kernel' && dynamicFormalClaimSeed ? {
+      dynamicFormalClaimSeedHash: dynamicFormalClaimSeed.dynamicFormalClaimSeedHash,
+      leanDeclarationName: dynamicFormalClaimSeed.leanDeclarationName,
+      leanTypeSource: dynamicFormalClaimSeed.leanTypeSource,
+      leanTypeSourceHash: dynamicFormalClaimSeed.leanTypeSourceHash,
+      leanNormalizedTypeHash: dynamicFormalClaimSeed.leanNormalizedTypeHash,
+      allowedImports: dynamicFormalClaimSeed.allowedImports,
+      formalClaimCapabilityScopeManifestHash:
+        dynamicFormalClaimSeed.capabilityScopeManifestHash,
+      formalClaimGeneratorReceiptHash: dynamicFormalClaimSeed.generatorReceiptHash,
+    } : {}),
   }));
   if (!claims.length) blockers.push('autonomous_research_seed_claims_missing');
   const payload = {
-    version: 1,
+    version: dynamicFormalClaimSeed ? 2 : 1,
     kind: 'AutonomousResearchSeedContractBundle',
     status: blockers.length
       ? 'autonomous_research_seed_contracts_blocked'
@@ -238,6 +262,11 @@ export function buildAutonomousResearchSeedContractBundle({
     formalSupportRegistryHash: proposal?.formalSupportRegistryHash || null,
     formalSupportTemplateId: proposal?.formalSupportTemplateId || null,
     formalSupportTemplateHash: proposal?.formalSupportTemplateHash || null,
+    ...(dynamicFormalClaimSeed ? {
+      formalSupportMode: 'dynamic-lean-type-v1',
+      dynamicFormalClaimSeed,
+      dynamicFormalClaimSeedHash: dynamicFormalClaimSeed.dynamicFormalClaimSeedHash,
+    } : {}),
     claimAuthorityType: 'machine-policy-authorized',
     proposalHash: proposal?.machineProposedScientificClaimSetHash || null,
     policyAuthorizationHash: policyAuthorization?.autonomousResearchPolicyAuthorizationHash || null,

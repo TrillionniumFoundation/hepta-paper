@@ -1,7 +1,12 @@
 // Application execution boundary; concrete services are supplied by the composition root.
 import path from 'node:path';
-import { assertArtifactRepositoryFactoryPort, assertCampaignStorePort, assertJobReceiptStorePort, assertLegacyStorePort, assertPersistenceSessionPort, assertResourceGovernorFactoryPort, assertSchemaVersionReceipt, assertSubmissionDeliveryStorePort, assertSubmissionExecutorDescriptorValue, assertTheoremQualityRevisionSinkPort, assertTrustedResearchReceiptWritersPort, assertWorkspaceRegistryPort } from '../paper-ports/execution-service-ports.mjs';
+import { assertArtifactRepositoryFactoryPort, assertCampaignStorePort, assertJobReceiptStorePort, assertLegacyStorePort, assertPackageLifecycleAuthorityPort, assertPersistenceSessionPort, assertResourceGovernorFactoryPort, assertRuntimeRetentionReachabilityProvider, assertSchemaVersionReceipt, assertSubmissionDeliveryStorePort, assertSubmissionExecutorDescriptorValue, assertTheoremQualityRevisionSinkPort, assertTrustedResearchReceiptWritersPort, assertWorkspaceRegistryPort } from '../paper-ports/execution-service-ports.mjs';
 import { assertAuthorityVerifierPort } from '../paper-ports/authority-verifier-port.mjs';
+import {
+  assertAutonomousSubmissionHandoffOutboxPort,
+  assertAutonomousSubmissionOutboxPort,
+  assertAutonomousSubmissionRequestVerifierPort,
+} from '../paper-ports/autonomous-submission-outbox-port.mjs';
 import { assertCampaignReleaseAuthorityPort } from '../paper-ports/campaign-release-authority-port.mjs';
 import { createCampaignReleaseQueryCapability } from '../paper-ports/campaign-release-query-port.mjs';
 import { assertCampaignReleasePackagerPort } from '../paper-ports/campaign-release-packager-port.mjs';
@@ -36,16 +41,20 @@ const SERVICE_PROFILE_REQUIREMENTS = Object.freeze({
   ]),
   automation: Object.freeze([
     'artifactRepositoryFactory',
+    'autonomousSubmissionOutbox',
+    'autonomousSubmissionRequestVerifier',
     'campaignStore',
     'clock',
     'idGenerator',
     'experimentRegistryAuthorityVerifier',
     'inventoryRepository',
+    'packageLifecycleAuthority',
     'persistenceSession',
     'receiptLedger',
     'releasePackager',
     'researchVerifier',
     'resourceGovernorFactory',
+    'runtimeRetentionReachabilityProvider',
     'scheduler',
     'schemaVersion',
     'theoremQualityRevisionSink',
@@ -62,8 +71,6 @@ const SERVICE_PROFILE_REQUIREMENTS = Object.freeze({
     'receiptLedger',
     'jobReceiptStore',
     'nativeResearchWorkerJobReceiptStore',
-    'stageExecution',
-    'journalPolicy',
     'unitOfWork',
     'refereeIssueQuery',
     'schemaVersion',
@@ -78,8 +85,6 @@ const SERVICE_PROFILE_REQUIREMENTS = Object.freeze({
     'receiptLedger',
     'jobReceiptStore',
     'nativeResearchWorkerJobReceiptStore',
-    'stageExecution',
-    'journalPolicy',
     'unitOfWork',
     'refereeIssueQuery',
     'submissionDeliveryStore',
@@ -105,7 +110,10 @@ const SERVICE_PROFILE_REQUIREMENTS = Object.freeze({
 const CAPABILITIES_BY_PROFILE = Object.freeze({
   handoff: Object.freeze(['submission-release-read']),
   inventory: Object.freeze(['artifact-repository', 'inventory-read', 'receipt-ledger', 'typed-persistence']),
-  automation: Object.freeze(['artifact-repository', 'automation-coordination', 'receipt-ledger', 'typed-persistence']),
+  automation: Object.freeze([
+    'artifact-repository', 'automation-coordination',
+    'autonomous-submission-outbox', 'receipt-ledger', 'typed-persistence',
+  ]),
   batch: Object.freeze(['artifact-repository', 'batch-workflow', 'receipt-ledger', 'research-jobs', 'typed-persistence']),
   submission: Object.freeze(['artifact-repository', 'batch-workflow', 'receipt-ledger', 'research-jobs', 'submission-delivery', 'submission-policy', 'typed-persistence']),
   legacy: Object.freeze(['legacy-full-service-facade']),
@@ -118,6 +126,12 @@ function normalizeService(name, value, profile, allServices) {
   switch (name) {
     case 'artifactRepositoryFactory': return assertArtifactRepositoryFactoryPort(value);
     case 'authorityVerifier': return assertAuthorityVerifierPort(value);
+    case 'autonomousSubmissionOutbox':
+      return profile === 'automation'
+        ? assertAutonomousSubmissionHandoffOutboxPort(value)
+        : assertAutonomousSubmissionOutboxPort(value);
+    case 'autonomousSubmissionRequestVerifier':
+      return assertAutonomousSubmissionRequestVerifierPort(value);
     case 'campaignReleaseAuthorityRepository': return assertCampaignReleaseAuthorityPort(value);
     case 'campaignReleaseQuery': return createCampaignReleaseQueryCapability(value);
     case 'campaignStore': return assertCampaignStorePort(value);
@@ -127,10 +141,12 @@ function normalizeService(name, value, profile, allServices) {
     case 'idGenerator': return assertIdGeneratorPort(value);
     case 'jobReceiptStore':
     case 'nativeResearchWorkerJobReceiptStore': return assertJobReceiptStorePort(value);
+    case 'packageLifecycleAuthority': return assertPackageLifecycleAuthorityPort(value);
     case 'journalPolicy': return assertJournalPolicyPort(value);
     case 'persistenceSession': return assertPersistenceSessionPort(value);
     case 'receiptLedger':
     case 'runtimeRetentionReceiptLedger': return assertReceiptLedgerPort(value);
+    case 'runtimeRetentionReachabilityProvider': return assertRuntimeRetentionReachabilityProvider(value);
     case 'refereeIssueQuery': return assertRefereeIssueQueryPort(value);
     case 'releasePackager': return assertCampaignReleasePackagerPort(value);
     case 'researchVerifier': return assertCampaignResearchVerifierPort(value);

@@ -6,6 +6,7 @@ import { isPathWithin } from '../../workflow-kernel/runtime/path-utils.mjs';
 import { inspectScopedPathSync, inspectScopedWriteTargetSync, readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
 import { verifyEmpiricalEnvironmentBom } from '../../paper-domain/automation/environment-bom-contract.mjs';
 import { buildEnvironmentBoundEmpiricalCacheKey, verifyEmpiricalCacheReproducibilityDecision } from '../../paper-domain/automation/empirical-cache-reproducibility-policy.mjs';
+import { fsyncDirectorySync } from '../runtime/durable-json-repository.mjs';
 
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/;
 
@@ -46,10 +47,52 @@ function writeScopedBytes(root, relative, bytes) {
   scopedArtifact(root, relative, { write: true });
   const temporary = `${destination}.tmp-${process.pid}-${crypto.randomUUID()}`;
   const descriptor = fs.openSync(temporary, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | (fs.constants.O_NOFOLLOW || 0), 0o600);
-  try { fs.writeFileSync(descriptor, bytes); } finally { fs.closeSync(descriptor); }
+  try {
+    fs.writeFileSync(descriptor, bytes);
+    fs.fsyncSync(descriptor);
+  } finally { fs.closeSync(descriptor); }
   fs.renameSync(temporary, destination);
+  fsyncDirectorySync(path.dirname(destination));
   const identity = inspectScopedPathSync({ scopeRoot: root, candidate: destination, expect: 'file', forbidHardlinks: true });
   if (identity.status !== 'scoped_file_identity_verified') throw new Error(`empirical_cache_materialized_artifact_unsafe:${identity.blockers.join(',')}`);
+}
+
+function verifiedCacheEntry(cacheDirectory, cacheKey) {
+  const manifestPath = path.join(cacheDirectory, 'manifest.json');
+  if (!fs.existsSync(manifestPath)) return null;
+  const manifestRead = readScopedFileSync({
+    scopeRoot: cacheDirectory,
+    candidate: manifestPath,
+    maximumBytes: 4 * 1024 * 1024,
+  });
+  if (manifestRead.status !== 'scoped_file_read_verified') return null;
+  const manifest = JSON.parse(manifestRead.content.toString('utf8'));
+  if (manifest.version !== 3 || manifest.cacheKey !== cacheKey
+    || !verifyEmpiricalEnvironmentBom(manifest.environmentBom).valid
+    || !verifyEmpiricalCacheReproducibilityDecision(
+      manifest.cacheReproducibilityDecision,
+      manifest.environmentBom,
+    )
+    || manifest.cacheReproducibilityDecision.cacheAllowed !== true
+    || buildEnvironmentBoundEmpiricalCacheKey(
+      manifest.baseCacheDescriptor,
+      manifest.cacheReproducibilityDecision,
+    ) !== cacheKey) return null;
+  const artifacts = (Array.isArray(manifest.artifacts) ? manifest.artifacts : [])
+    .map(normalizedArtifact);
+  if (!artifacts.length) return null;
+  const verified = artifacts.map((artifact) => {
+    const source = scopedArtifact(path.join(cacheDirectory, 'artifacts'), artifact.path);
+    const read = readScopedFileSync({
+      scopeRoot: path.join(cacheDirectory, 'artifacts'),
+      candidate: source,
+    });
+    if (read.status !== 'scoped_file_read_verified' || read.hash !== artifact.sha256) {
+      throw new Error('empirical_cache_artifact_invalid');
+    }
+    return Object.freeze({ artifact, bytes: read.content });
+  });
+  return Object.freeze({ manifest, artifacts: Object.freeze(artifacts), verified });
 }
 
 export function createFilesystemEmpiricalCacheRepository({ root } = {}) {
@@ -61,30 +104,17 @@ export function createFilesystemEmpiricalCacheRepository({ root } = {}) {
     get(cacheKey, { outputDirectory } = {}) {
       let cacheDirectory;
       try { cacheDirectory = cacheKeyDirectory(cacheRoot, cacheKey); } catch { return null; }
-      const manifestPath = path.join(cacheDirectory, 'manifest.json');
-      if (!outputDirectory || !fs.existsSync(manifestPath)) return null;
+      if (!outputDirectory) return null;
       try {
-        const manifestRead = readScopedFileSync({ scopeRoot: cacheDirectory, candidate: manifestPath, maximumBytes: 4 * 1024 * 1024 });
-        if (manifestRead.status !== 'scoped_file_read_verified') return null;
-        const manifest = JSON.parse(manifestRead.content.toString('utf8'));
-        if (manifest.version !== 3 || manifest.cacheKey !== cacheKey
-          || !verifyEmpiricalEnvironmentBom(manifest.environmentBom).valid
-          || !verifyEmpiricalCacheReproducibilityDecision(manifest.cacheReproducibilityDecision, manifest.environmentBom)
-          || manifest.cacheReproducibilityDecision.cacheAllowed !== true
-          || buildEnvironmentBoundEmpiricalCacheKey(manifest.baseCacheDescriptor, manifest.cacheReproducibilityDecision) !== cacheKey) return null;
-        const artifacts = (Array.isArray(manifest.artifacts) ? manifest.artifacts : []).map(normalizedArtifact);
-        if (!artifacts.length) return null;
-        const verified = artifacts.map((artifact) => {
-          const source = scopedArtifact(path.join(cacheDirectory, 'artifacts'), artifact.path);
-          const read = readScopedFileSync({ scopeRoot: path.join(cacheDirectory, 'artifacts'), candidate: source });
-          if (read.status !== 'scoped_file_read_verified' || read.hash !== artifact.sha256) throw new Error('empirical_cache_artifact_invalid');
-          return { artifact, bytes: read.content };
-        });
+        const entry = verifiedCacheEntry(cacheDirectory, cacheKey);
+        if (!entry) return null;
         fs.mkdirSync(outputDirectory, { recursive: true, mode: 0o700 });
         const outputIdentity = inspectScopedPathSync({ scopeRoot: outputDirectory, candidate: outputDirectory, expect: 'directory', forbidHardlinks: false });
         if (outputIdentity.status !== 'scoped_file_identity_verified') return null;
-        for (const item of verified) writeScopedBytes(outputDirectory, item.artifact.path, item.bytes);
-        return Object.freeze({ ...manifest, artifacts });
+        for (const item of entry.verified) {
+          writeScopedBytes(outputDirectory, item.artifact.path, item.bytes);
+        }
+        return Object.freeze({ ...entry.manifest, artifacts: entry.artifacts });
       } catch { return null; }
     },
     put(cacheKey, { outputDirectory, artifacts = [], runnerReceiptHash = null, environmentBom = null, cacheReproducibilityDecision = null, baseCacheDescriptor = null } = {}) {
@@ -116,12 +146,19 @@ export function createFilesystemEmpiricalCacheRepository({ root } = {}) {
         writeScopedBytes(path.join(temporary, 'artifacts'), artifact.path, read.content);
       }
       writeScopedBytes(temporary, 'manifest.json', Buffer.from(`${JSON.stringify({ version: 3, cacheKey, artifacts: normalizedArtifacts, runnerReceiptHash, environmentBom, cacheReproducibilityDecision, baseCacheDescriptor }, null, 2)}\n`));
-      if (fs.existsSync(cacheDirectory)) fs.rmSync(cacheDirectory, { recursive: true, force: true });
       try {
+        fsyncDirectorySync(path.join(temporary, 'artifacts'));
+        fsyncDirectorySync(temporary);
         fs.renameSync(temporary, cacheDirectory);
+        fsyncDirectorySync(path.dirname(cacheDirectory));
         return Object.freeze({ stored: true, cacheKey });
-      } catch {
+      } catch (error) {
         fs.rmSync(temporary, { recursive: true, force: true });
+        try {
+          if (verifiedCacheEntry(cacheDirectory, cacheKey)) {
+            return Object.freeze({ stored: true, cacheKey, reusedExisting: true });
+          }
+        } catch { /* fail closed below */ }
         return Object.freeze({ stored: false, reason: 'cache_publish_race' });
       }
     },

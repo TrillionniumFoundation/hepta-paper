@@ -237,6 +237,12 @@ export function readOperatorDatasetHarness(datasetMount, {
     || datasetMount?.benchmarkHarnessDocumentHash !== envelopeRead.hash
     || datasetMount?.operatorDatasetHarnessHandle !== envelopeRead.hash
     || JSON.stringify(datasetMount?.operatorDatasetAuthority) !== JSON.stringify(validated.authority)
+    || (validated.authority.version === 3 && (
+      datasetMount?.operatorDatasetResearchSemanticsHash
+        !== hashRecord('OperatorDatasetResearchSemantics', validated.authority.researchSemantics)
+      || JSON.stringify(datasetMount?.operatorDatasetResearchSemantics)
+        !== JSON.stringify(validated.authority.researchSemantics)
+    ))
   )) blockers.push('operator_dataset_harness_plan_binding_mismatch');
   const authorityVerification = Object.freeze({
     status: blockers.some((blocker) => blocker.startsWith('operator_dataset_authority:'))
@@ -264,6 +270,12 @@ export function readOperatorDatasetHarness(datasetMount, {
     benchmarkFamily: validated?.definition?.benchmarkFamily || null,
     analysisProtocol: validated?.analysisProtocol || null,
     analysisProtocolHash: validated?.analysisProtocolHash || null,
+    ...(validated?.authority?.version === 3 ? {
+      operatorDatasetResearchSemantics: validated.authority.researchSemantics,
+      operatorDatasetResearchSemanticsHash: hashRecord(
+        'OperatorDatasetResearchSemantics', validated.authority.researchSemantics,
+      ),
+    } : {}),
     authority: validated?.authority || null,
     envelopeDocumentHash: envelopeRead.hash || null,
     operatorDatasetAuthorityVerificationHash: hashRecord('OperatorDatasetAuthorityVerification', authorityVerification),
@@ -322,6 +334,12 @@ export function authorizeOperatorDatasetMount(datasetMount, {
     benchmarkMinimumRepetitions: validated.definition.minimumRepetitions,
     analysisProtocol: validated.analysisProtocol,
     analysisProtocolHash: validated.analysisProtocolHash,
+    ...(validated.authority.version === 3 ? {
+      operatorDatasetResearchSemantics: validated.authority.researchSemantics,
+      operatorDatasetResearchSemanticsHash: hashRecord(
+        'OperatorDatasetResearchSemantics', validated.authority.researchSemantics,
+      ),
+    } : {}),
   });
   const resolution = readOperatorDatasetHarness(enriched, {
     authorityTrustStore,

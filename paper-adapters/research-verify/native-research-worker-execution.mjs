@@ -80,7 +80,13 @@ function assertionPassed(actual, assertion) {
   }
 }
 
-export async function executeNativeResearchWorker(worker, inputRecords, { sourceRoot, signal = null } = {}) {
+export async function executeNativeResearchWorker(worker, inputRecords, {
+  sourceRoot,
+  signal = null,
+  trustedFormalSandboxRuntime = null,
+  dynamicFormalExecutionAuthority = null,
+  dynamicFormalExecutionEnvironment = process.env,
+} = {}) {
   if (worker.type === 'artifact_integrity') {
     return {
       status: 'native_research_worker_passed',
@@ -160,7 +166,15 @@ export async function executeNativeResearchWorker(worker, inputRecords, { source
     return verifier.verify({ inputRecords, parameters: worker.parameters || {} });
   }
   if (worker.type === 'formal_verifier_lake') {
-    return executeLakeFormalWorker({ worker, inputRecords, sourceRoot, signal });
+    return executeLakeFormalWorker({
+      worker,
+      inputRecords,
+      sourceRoot,
+      signal,
+      trustedSandboxRuntime: trustedFormalSandboxRuntime,
+      dynamicFormalExecutionAuthority,
+      dynamicFormalExecutionEnvironment,
+    });
   }
   return { status: 'native_research_worker_blocked', blockers: ['native_research_worker_type_not_allowed'] };
 }

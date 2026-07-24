@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hasExactObjectKeys as hasExactKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
 import { hashWorkspaceFile } from './campaign-node-workspace-support.mjs';
 import { canonicalClaimsFromWorkerPlan } from '../research-verify/canonical-claim-registry-reader.mjs';
@@ -9,6 +10,10 @@ import {
   createProposalClaimToTheoremBinding,
   verifyProposalClaimToTheoremBinding,
 } from '../../paper-domain/research/proposal-claim-to-theorem-binding.mjs';
+import {
+  reviewerReceiptSigningSubject,
+  verifySignedReviewerReceipt,
+} from '../../paper-domain/research/signed-reviewer-receipt-contract.mjs';
 
 const REVIEW_DOCUMENT_KEYS = Object.freeze([
   'kind',
@@ -35,11 +40,6 @@ const PROPOSAL_REVIEW_ENTRY_KEYS = Object.freeze([
   'proposalToTheoremSemanticVerified',
   'proposalToTheoremVerdict',
 ]);
-
-function hasExactKeys(value, expected) {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value)
-    && JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...expected].sort()));
-}
 
 function sortedStrings(values) {
   return [...new Set((Array.isArray(values) ? values : []).map(String))].sort();
@@ -121,12 +121,46 @@ export async function executeCampaignFormalVerification({ campaign, node, campai
   return result;
 }
 
-function formalAgentPrincipal(receipt, { independentReviewer = false } = {}) {
+function signedPoolReviewerVerified(receipt, { signedReviewerReceiptVerifier = null } = {}) {
+  if (receipt?.signedReviewerReceipt) {
+    try {
+      const subjectHash = reviewerReceiptSigningSubject({
+        unsignedAgentExecutionReceiptHash: receipt.unsignedAgentExecutionReceiptHash,
+        principalDescriptorHash: receipt.reviewPrincipalDescriptorHash,
+        researchPrincipalPoolHash: receipt.researchPrincipalPoolHash,
+      });
+      const expected = {
+        subjectHash,
+        principalId: receipt.reviewPrincipalId,
+        principalDescriptorHash: receipt.reviewPrincipalDescriptorHash,
+        researchPrincipalPoolHash: receipt.researchPrincipalPoolHash,
+        signerIdentityHash: receipt.reviewerSignerIdentityHash,
+      };
+      if (receipt.signedReviewerReceipt.version === 2
+        && typeof signedReviewerReceiptVerifier === 'function') {
+        return signedReviewerReceiptVerifier({
+          receipt: receipt.signedReviewerReceipt,
+          expected,
+        }) === true;
+      }
+      return verifySignedReviewerReceipt(receipt.signedReviewerReceipt, expected);
+    } catch { return false; }
+  }
+  return false;
+}
+
+function formalAgentPrincipal(receipt, {
+  independentReviewer = false,
+  signedReviewerReceiptVerifier = null,
+} = {}) {
   if (!receipt?.providerMode || !receipt?.executorId) return null;
   const openClaw = receipt.providerMode === 'openclaw:detached-child-session';
   if (openClaw && (!receipt.agentId || !receipt.agentCapabilityProfileHash
     || !receipt.openClawAgentConfigurationHash || !receipt.openClawGatewayConfigurationHash)) return null;
   const codexReviewer = independentReviewer && receipt.providerMode === 'openai';
+  const signedPoolReviewer = independentReviewer && signedPoolReviewerVerified(receipt, {
+    signedReviewerReceiptVerifier,
+  });
   if (codexReviewer && (!receipt.agentId
     || !receipt.codexFormalReviewerCapabilityReceiptHash
     || !receipt.codexCredentialRootIdentityHash
@@ -153,18 +187,50 @@ function formalAgentPrincipal(receipt, { independentReviewer = false } = {}) {
     codexAuthorCredentialRootIdentityHash: receipt.codexAuthorCredentialRootIdentityHash || null,
     codexCredentialIndependenceVerified: receipt.codexCredentialIndependenceVerified === true,
     reviewerAssuranceScope: receipt.providerMode === 'openai'
-      ? receipt.codexReviewerAssuranceScope || null
+      ? signedPoolReviewer
+        ? 'signed_configured_identity_credential_root_and_signer_separation'
+        : receipt.codexReviewerAssuranceScope || null
       : 'configured_principal_and_process_separation',
+    // Even a signed reviewer-pool identity does not prove separation from the
+    // author account unless an author identity attestation is compared here.
     providerAccountIndependenceVerified: false,
+    reviewPrincipalId: receipt.reviewPrincipalId || null,
+    reviewPrincipalDescriptorHash: receipt.reviewPrincipalDescriptorHash || null,
+    reviewerProviderAccountIdentityHash:
+      receipt.reviewerProviderAccountIdentityHash || null,
+    reviewerCredentialRootIdentityHash:
+      receipt.reviewerCredentialRootIdentityHash || null,
+    reviewerTrustDomainIdentityHash: receipt.reviewerTrustDomainIdentityHash || null,
+    reviewerSignerIdentityHash: receipt.reviewerSignerIdentityHash || null,
+    researchPrincipalPoolHash: receipt.researchPrincipalPoolHash || null,
+    signedReviewerReceiptHash: receipt.signedReviewerReceiptHash || null,
+    signatureVerificationReceiptHash:
+      receipt.signatureVerificationReceiptHash || null,
     codexBinaryIdentityHash: receipt.codexBinaryIdentityHash || null,
     codexVersion: receipt.codexVersion || null,
   };
   return hashRecord('FormalAgentPrincipal', payload);
 }
 
-export function buildCampaignFormalReviewEnvelope({ campaign, node, authorNode = null, receipt, workspace, manuscript } = {}) {
-  const reviewerPrincipalId = formalAgentPrincipal(receipt, { independentReviewer: true });
+export function buildCampaignFormalReviewEnvelope({
+  campaign,
+  node,
+  authorNode = null,
+  receipt,
+  workspace,
+  manuscript,
+  signedReviewerReceiptVerifier = null,
+} = {}) {
+  const reviewerPrincipalId = formalAgentPrincipal(receipt, {
+    independentReviewer: true,
+    signedReviewerReceiptVerifier,
+  });
   const authorPrincipalId = formalAgentPrincipal(authorNode?.result);
+  const signedPoolReviewer = signedPoolReviewerVerified(receipt, {
+    signedReviewerReceiptVerifier,
+  });
+  const expectedResearchPrincipalPoolHash = campaign?.spec?.autonomousResearchPreparation
+    ?.researchPrincipalPoolHash || null;
   let workerPlanHash = null;
   try { workerPlanHash = hashWorkspaceFile(workspace, 'RESEARCH_WORKER_PLAN.json'); } catch { workerPlanHash = null; }
   let canonicalClaimRegistry = null;
@@ -201,6 +267,9 @@ export function buildCampaignFormalReviewEnvelope({ campaign, node, authorNode =
     ...(!authorNode?.result?.agentExecutionReceiptHash ? ['formal_author_execution_receipt_missing'] : []),
     ...(!receipt?.agentExecutionReceiptHash ? ['formal_review_execution_receipt_missing'] : []),
     ...(!reviewerPrincipalId || !authorPrincipalId || reviewerPrincipalId === authorPrincipalId ? ['formal_review_principal_independence_invalid'] : []),
+    ...(expectedResearchPrincipalPoolHash && (!signedPoolReviewer
+      || receipt?.researchPrincipalPoolHash !== expectedResearchPrincipalPoolHash)
+      ? ['formal_review_signed_principal_pool_binding_invalid'] : []),
     ...(!workerPlanHash || !manuscriptHash ? ['formal_review_input_hash_missing'] : []),
     ...(!theoremSpecification ? ['formal_review_theorem_specification_invalid'] : []),
     ...(theoremSpecification && agentDocument.theoremSpecificationHash !== theoremSpecification.theoremSpecificationHash
@@ -270,9 +339,20 @@ export function buildCampaignFormalReviewEnvelope({ campaign, node, authorNode =
     reviewAgentReceiptHash: receipt?.agentExecutionReceiptHash || null,
     reviewerPrincipalId,
     reviewerIndependenceAssuranceScope: receipt?.providerMode === 'openai'
-      ? receipt.codexReviewerAssuranceScope || null
+      ? receipt.signedReviewerReceiptHash
+        ? 'signed_configured_identity_credential_root_and_signer_separation'
+        : receipt.codexReviewerAssuranceScope || null
       : 'configured_principal_and_process_separation',
     providerAccountIndependenceVerified: false,
+    reviewPrincipalDescriptorHash: receipt?.reviewPrincipalDescriptorHash || null,
+    reviewerProviderAccountIdentityHash:
+      receipt?.reviewerProviderAccountIdentityHash || null,
+    reviewerCredentialRootIdentityHash:
+      receipt?.reviewerCredentialRootIdentityHash || null,
+    reviewerTrustDomainIdentityHash:
+      receipt?.reviewerTrustDomainIdentityHash || null,
+    researchPrincipalPoolHash: receipt?.researchPrincipalPoolHash || null,
+    signedReviewerReceiptHash: receipt?.signedReviewerReceiptHash || null,
     authorNodeId: authorNode?.nodeId || null,
     authorAgentReceiptHash: authorNode?.result?.agentExecutionReceiptHash || null,
     authorPrincipalId,

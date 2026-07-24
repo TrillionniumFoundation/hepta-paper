@@ -9,7 +9,8 @@ const PERMITTED_WORKER_ENVIRONMENT_KEYS = new Set([
   'HEPTA_EXPERIMENT_ARM', 'HEPTA_EXPERIMENT_ARM_PROTOCOL_ID', 'HEPTA_EXPERIMENT_ARM_PROTOCOL_HASH',
   'HEPTA_EXPERIMENT_ARM_PROTOCOL_SET_HASH', 'HEPTA_EXPERIMENT_ARM_ADAPTER_PATH',
   'HEPTA_EXPERIMENT_ARM_ADAPTER_HASH', 'HEPTA_EXPERIMENT_ARM_ADAPTER_SET_HASH',
-  'HEPTA_PRE_DATA_ACCESS_FREEZE_HASH',
+  'HEPTA_PRE_DATA_ACCESS_FREEZE_HASH', 'HEPTA_EXPERIMENT_IR_HASH',
+  'HEPTA_EXPERIMENT_RESEARCH_BINDING_HASH', 'HEPTA_DATASET_RESEARCH_COMPATIBILITY_HASH',
   'HEPTA_BENCHMARK_CHALLENGE_HASH', 'HEPTA_BENCHMARK_CHALLENGE_JSON', 'HEPTA_BENCHMARK_CHALLENGE_PART_COUNT',
   'HEPTA_BENCHMARK_CHALLENGE_JSON_PART_1', 'HEPTA_BENCHMARK_CHALLENGE_JSON_PART_2',
   'HEPTA_BENCHMARK_CHALLENGE_JSON_PART_3', 'HEPTA_BENCHMARK_CHALLENGE_JSON_PART_4', 'HEPTA_HARNESS_CELL_ID',
@@ -35,7 +36,11 @@ export function selectAndValidateWorkerEnvironment({ env = {}, datasetAuthorizat
     }
   } else if (challengeEnvironment.HEPTA_BENCHMARK_CHALLENGE_PART_COUNT !== undefined
     || challengeEnvironment.HEPTA_BENCHMARK_CHALLENGE_HASH !== undefined) {
-    if (!decodeSystemBenchmarkArmBatchChallengeEnvironment(challengeEnvironment)) {
+    const challenge = decodeSystemBenchmarkArmBatchChallengeEnvironment(challengeEnvironment);
+    if (!challenge
+      || (challenge.version === 2
+        && challenge.versionedExperimentIrHash
+          !== challengeEnvironment.HEPTA_EXPERIMENT_IR_HASH)) {
       blockers.push('worker_benchmark_arm_batch_challenge_binding_invalid');
     }
   }

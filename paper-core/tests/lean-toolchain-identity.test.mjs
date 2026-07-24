@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { createLeanToolchainIdentityProvider } from '../../paper-adapters/research-verify/lean-toolchain-identity.mjs';
+import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-lean-toolchain-identity-'));
@@ -59,4 +60,43 @@ test('Lean toolchain cache cannot hide same-size content replacement with restor
   const changed = trustedProvider.inspect();
   assert.equal(changed.status, 'lean_toolchain_identity_blocked');
   assert.ok(changed.blockers.includes('formal_toolchain_trust_anchor_mismatch'));
+});
+
+test('Lean toolchain identity changes when the resolved host runtime closure drifts', (t) => {
+  const root = fixture(t);
+  const measured = provider(root).inspect({ forceContentRehash: true });
+  let generation = 0;
+  const trustedProvider = createLeanToolchainIdentityProvider({
+    toolchain: 'leanprover/lean4:v-fixture-host-drift',
+    toolchainRoot: root,
+    leanExecutable: path.join(root, 'bin', 'lean'),
+    lakeExecutable: path.join(root, 'bin', 'lake'),
+    expectedToolchainRootMerkleHash: measured.measuredToolchainRootMerkleHash,
+    inspectExternalRuntime() {
+      generation += 1;
+      const records = Object.freeze([Object.freeze({
+        path: '/lib/libfixture.so',
+        mode: 0o555,
+        bytes: 1,
+        hash: `sha256:${generation === 1 ? '1'.repeat(64) : '2'.repeat(64)}`,
+        stat: Object.freeze({ generation: generation === 1 ? 1 : 2 }),
+      })]);
+      return Object.freeze({
+        records,
+        blockers: Object.freeze([]),
+        metadataManifestHash: hashRecord(
+          'LeanExternalDynamicRuntimeMetadataManifest',
+          records.map(({ hash: _hash, ...record }) => record),
+        ),
+      });
+    },
+  });
+  const before = trustedProvider.inspect({ forceContentRehash: true });
+  const after = trustedProvider.inspect();
+  assert.equal(before.status, 'lean_toolchain_identity_verified');
+  assert.equal(after.status, 'lean_toolchain_identity_verified');
+  assert.notEqual(after.externalDynamicRuntimeManifestHash,
+    before.externalDynamicRuntimeManifestHash);
+  assert.notEqual(after.leanToolchainContentIdentityHash,
+    before.leanToolchainContentIdentityHash);
 });

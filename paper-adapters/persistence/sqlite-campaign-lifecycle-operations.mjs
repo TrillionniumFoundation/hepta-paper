@@ -1,15 +1,14 @@
 import { sqlJson, sqlText } from '../../paper-ports/store-port.mjs';
-import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { evolveCampaignForResume, validateCampaignRoundExtension } from '../../paper-domain/automation/campaign-evolution-policy.mjs';
-import { CAMPAIGN_NODE_DONE_STATUSES, cascadeCancelledNodeIds, decideCampaignCommand, decideManualNodeRetry, selectFutureRoundNodeIds } from '../../paper-domain/automation/campaign-state-policy.mjs';
+import { decideCampaignCommand, selectFutureRoundNodeIds } from '../../paper-domain/automation/campaign-state-policy.mjs';
 import { assertCampaignDefinition, assertCampaignDefinitionReplay, campaignDefinitionHash } from './campaign-definition-codec.mjs';
 import { buildSqliteCampaignProjectionStatement } from './sqlite-campaign-projection.mjs';
-import { mapCampaignNodeRow as parseNode } from './sqlite-campaign-row-mappers.mjs';
 import {
   inspectAutonomousResearchCampaignExecutionAdmission,
 } from '../../paper-domain/automation/autonomous-research-campaign-execution-admission.mjs';
-
-const DONE = new Set(CAMPAIGN_NODE_DONE_STATUSES);
+import {
+  createCampaignLifecycleTerminalOperations,
+} from './sqlite-campaign-lifecycle-terminal-operations.mjs';
 
 function campaignInitialExecutionState(spec) {
   const inspection = inspectAutonomousResearchCampaignExecutionAdmission(spec);
@@ -30,7 +29,7 @@ function campaignInitialExecutionState(spec) {
   });
 }
 
-export function createCampaignLifecycleOperations({ store, clock, transaction, guarded, eventStatement, usageSql, usageBudgetCondition, readCampaignDefinitionSnapshot, getApi } = {}) {
+export function createCampaignLifecycleOperations({ store, clock, mutation, guarded, eventStatement, usageSql, usageBudgetCondition, readCampaignDefinitionSnapshot, getApi } = {}) {
   return {
     createCampaign(spec = {}) {
       assertCampaignDefinition(spec);
@@ -50,15 +49,23 @@ export function createCampaignLifecycleOperations({ store, clock, transaction, g
       if (!admitted) {
         statements.push(`UPDATE paper_campaigns SET status='running',current_phase='dispatching',updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(spec.campaignId)} AND status='queued';`);
       }
-      statements.push(eventStatement(spec.campaignId, null, 'campaign_created', {
+      const eventRow = eventStatement(spec.campaignId, null, 'campaign_created', {
         nodeCount: spec.nodes.length,
         campaignDefinitionHash: requestedDefinitionHash,
         executionAdmissionHash: initialExecutionState.admissionHash,
         initialStatus: initialExecutionState.status,
-      }, now).sql);
+      }, now);
+      statements.push(eventRow.sql);
       try {
-        transaction(statements, 'campaign_create_failed');
+        mutation({
+          databaseRole: 'native-store',
+          operationId: 'native-store.campaign-lifecycle.createCampaign.v1',
+          statements,
+          fallback: 'campaign_create_failed',
+          input: { spec, admitted, initialExecutionState, now, eventRow },
+        });
       } catch (error) {
+        if (error?.committed) throw error;
         // Another creator may have won the campaign-id race. Re-read only
         // after the failed transaction has rolled back, and accept it solely
         // when the complete persisted campaign/DAG definition is identical.
@@ -75,11 +82,18 @@ export function createCampaignLifecycleOperations({ store, clock, transaction, g
       const updateFutureNodes = futureNodeIds.length
         ? `UPDATE campaign_nodes SET status='skipped',failure_class=${sqlText(reason)},lease_owner=NULL,lease_expires_at=NULL,attempt_id=NULL,node_revision=node_revision+1,updated_at=${sqlText(now)} WHERE node_id IN (${futureNodeIds.map(sqlText).join(',')}) AND campaign_id=${sqlText(campaignId)} AND status='queued';`
         : '';
-      transaction([
+      const eventRow = eventStatement(campaignId, null, 'campaign_future_rounds_skipped', { afterRound, reason }, now);
+      mutation({
+        databaseRole: 'native-store',
+        operationId: 'native-store.campaign-lifecycle.skipFutureRounds.v1',
+        statements: [
         updateFutureNodes,
-        eventStatement(campaignId, null, 'campaign_future_rounds_skipped', { afterRound, reason }, now).sql,
+        eventRow.sql,
         buildSqliteCampaignProjectionStatement({ campaignId, now }),
-      ], 'campaign_future_round_skip_failed');
+        ],
+        fallback: 'campaign_future_round_skip_failed',
+        input: { futureNodeIds, reason, now, campaignId, eventRow },
+      });
       return getApi().getCampaign(campaignId);
     },
     pauseCampaign(campaignId, reason = 'operator_paused') {
@@ -87,11 +101,18 @@ export function createCampaignLifecycleOperations({ store, clock, transaction, g
       if (!campaign) throw new Error(`campaign not found: ${campaignId}`);
       if (!decideCampaignCommand(campaign, 'pause').apply) return campaign;
       const now = clock.nowIso();
-      transaction([
+      const eventRow = eventStatement(campaignId, null, 'campaign_paused', { reason }, now);
+      mutation({
+        databaseRole: 'native-store',
+        operationId: 'native-store.campaign-lifecycle.pauseCampaign.v1',
+        statements: [
         guarded(`UPDATE paper_campaigns SET status='paused',stop_reason=${sqlText(reason)},accumulated_run_ms=accumulated_run_ms+max(0,CAST((julianday(${sqlText(now)})-julianday(last_resumed_at))*86400000 AS INTEGER)),last_resumed_at=NULL,revision=revision+1,updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(campaignId)} AND status='running' AND revision=${campaign.revision} AND NOT EXISTS(SELECT 1 FROM campaign_nodes n WHERE n.campaign_id=paper_campaigns.campaign_id AND n.status<>'completed' AND n.prepared_integration_status IN ('integrating','integrated'));`),
         `UPDATE campaign_nodes SET status='queued',lease_owner=NULL,lease_expires_at=NULL,attempt_id=NULL,node_revision=node_revision+1,updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(campaignId)} AND status IN ('leased','running');`,
-        eventStatement(campaignId, null, 'campaign_paused', { reason }, now).sql,
-      ], 'campaign_pause_failed');
+        eventRow.sql,
+        ],
+        fallback: 'campaign_pause_failed',
+        input: { reason, now, campaignId, campaign, eventRow },
+      });
       return getApi().getCampaign(campaignId);
     },
     resumeCampaign(campaignId, { budgetOverrides = {} } = {}) {
@@ -113,11 +134,25 @@ export function createCampaignLifecycleOperations({ store, clock, transaction, g
         previousCampaignPlanHash,
         campaignPlanHash: nextSpec.campaignPlanHash,
       };
-      transaction([
+      const eventRow = eventStatement(campaignId, null, 'campaign_resumed', detail, now);
+      mutation({
+        databaseRole: 'native-store',
+        operationId: 'native-store.campaign-lifecycle.resumeCampaign.v1',
+        statements: [
         guarded(`UPDATE paper_campaigns SET status='running',current_phase=CASE WHEN current_phase='admitted-not-authorized' THEN 'dispatching' ELSE current_phase END,stop_reason=NULL,last_resumed_at=${sqlText(now)},spec_json=${sqlJson(nextSpec)},revision=revision+1,updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(campaignId)} AND status=${sqlText(campaign.status)} AND revision=${campaign.revision};`),
         reopenSql,
-        eventStatement(campaignId, null, 'campaign_resumed', detail, now).sql,
-      ], 'campaign_resume_failed');
+        eventRow.sql,
+        ],
+        fallback: 'campaign_resume_failed',
+        input: {
+          now,
+          nextSpec,
+          campaignId,
+          campaign,
+          reopenStoppedNodes,
+          eventRow,
+        },
+      });
       return getApi().getCampaign(campaignId);
     },
     extendCampaign(spec = {}) {
@@ -141,8 +176,15 @@ export function createCampaignLifecycleOperations({ store, clock, transaction, g
         campaignPlanHash: spec.campaignPlanHash || null,
       };
       statements.push(guarded(`UPDATE paper_campaigns SET status='running',stop_reason=NULL,max_rounds=${Number(spec.maxRounds)},spec_json=${sqlJson(spec)},last_resumed_at=${sqlText(now)},revision=revision+1,updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(spec.campaignId)} AND status=${sqlText(campaign.status)} AND revision=${campaign.revision};`));
-      statements.push(eventStatement(spec.campaignId, null, 'campaign_extended', detail, now).sql);
-      transaction(statements, 'campaign_extension_failed');
+      const eventRow = eventStatement(spec.campaignId, null, 'campaign_extended', detail, now);
+      statements.push(eventRow.sql);
+      mutation({
+        databaseRole: 'native-store',
+        operationId: 'native-store.campaign-lifecycle.extendCampaign.v1',
+        statements,
+        fallback: 'campaign_extension_failed',
+        input: { spec, additions, campaign, now, eventRow },
+      });
       return getApi().getCampaign(spec.campaignId);
     },
     cancelCampaign(campaignId, reason = 'operator_cancelled') {
@@ -151,93 +193,29 @@ export function createCampaignLifecycleOperations({ store, clock, transaction, g
       if (!decideCampaignCommand(campaign, 'cancel').apply) return campaign;
       const now = clock.nowIso();
       const elapsedSql = campaign.lastResumedAt ? `accumulated_run_ms=accumulated_run_ms+max(0,CAST((julianday(${sqlText(now)})-julianday(last_resumed_at))*86400000 AS INTEGER)),` : '';
-      transaction([
+      const eventRow = eventStatement(campaignId, null, 'campaign_cancelled', { reason }, now);
+      mutation({
+        databaseRole: 'native-store',
+        operationId: 'native-store.campaign-lifecycle.cancelCampaign.v1',
+        statements: [
         guarded(`UPDATE paper_campaigns SET ${elapsedSql}status='cancelled',stop_reason=${sqlText(reason)},last_resumed_at=NULL,revision=revision+1,updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(campaignId)} AND status=${sqlText(campaign.status)} AND revision=${campaign.revision} AND NOT EXISTS(SELECT 1 FROM campaign_nodes n WHERE n.campaign_id=paper_campaigns.campaign_id AND n.status<>'completed' AND n.prepared_integration_status IN ('integrating','integrated'));`),
         `UPDATE campaign_nodes SET status='skipped',failure_class=${sqlText(reason)},lease_owner=NULL,lease_expires_at=NULL,attempt_id=NULL,node_revision=node_revision+1,updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(campaignId)} AND status IN ('queued','leased','running');`,
-        eventStatement(campaignId, null, 'campaign_cancelled', { reason }, now).sql,
-      ], 'campaign_cancel_failed');
+        eventRow.sql,
+        ],
+        fallback: 'campaign_cancel_failed',
+        input: { campaign, now, reason, campaignId, eventRow },
+      });
       return getApi().getCampaign(campaignId);
     },
-    cancelNode(nodeId, reason = 'operator_node_cancelled') {
-      const node = parseNode(store.query(`SELECT * FROM campaign_nodes WHERE node_id=${sqlText(nodeId)} LIMIT 1;`).rows[0]);
-      if (!node) throw new Error(`campaign node not found: ${nodeId}`);
-      if (DONE.has(node.status) || node.status === 'failed_terminal') return node;
-      const nodes = getApi().listNodes(node.campaignId);
-      const cancelled = new Set(cascadeCancelledNodeIds(nodes, nodeId));
-      const now = clock.nowIso();
-      const ids = [...cancelled].map(sqlText).join(',');
-      const failureDetail = { reason, rootNodeId: nodeId };
-      const failureHash = hashRecord('PaperCampaignNodeFailure', failureDetail);
-      const packageNode = nodes.find((candidate) => candidate.kind === 'package');
-      const campaign = getApi().getCampaign(node.campaignId);
-      const statements = [
-        guarded(`UPDATE paper_campaigns SET revision=revision WHERE campaign_id=${sqlText(node.campaignId)} AND NOT EXISTS(SELECT 1 FROM campaign_nodes n WHERE n.campaign_id=paper_campaigns.campaign_id AND n.node_id IN (${ids}) AND n.status<>'completed' AND n.prepared_integration_status IN ('integrating','integrated'));`),
-        `UPDATE campaign_nodes SET status='skipped',failure_class=${sqlText(reason)},failure_json=${sqlJson(failureDetail)},failure_sha256=${sqlText(failureHash)},lease_owner=NULL,lease_expires_at=NULL,attempt_id=NULL,node_revision=node_revision+1,updated_at=${sqlText(now)} WHERE node_id IN (${ids}) AND status IN ('queued','leased','running');`,
-        eventStatement(node.campaignId, nodeId, 'campaign_node_cancelled', { reason, skippedNodeIds: [...cancelled].sort() }, now).sql,
-      ];
-      if (packageNode && cancelled.has(packageNode.nodeId) && campaign?.status === 'running') {
-        statements.push(guarded(`UPDATE paper_campaigns SET status='stopped',stop_reason='operator_node_cancelled_required_path',accumulated_run_ms=accumulated_run_ms+CASE WHEN last_resumed_at IS NULL THEN 0 ELSE max(0,CAST((julianday(${sqlText(now)})-julianday(last_resumed_at))*86400000 AS INTEGER)) END,last_resumed_at=NULL,revision=revision+1,updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(node.campaignId)} AND status='running' AND revision=${campaign.revision};`));
-        statements.push(eventStatement(node.campaignId, null, 'campaign_stopped', { reason: 'operator_node_cancelled_required_path' }, now).sql);
-      } else {
-        statements.push(buildSqliteCampaignProjectionStatement({ campaignId: node.campaignId, now }));
-      }
-      transaction(statements, 'campaign_node_cancel_failed');
-      return parseNode(store.query(`SELECT * FROM campaign_nodes WHERE node_id=${sqlText(nodeId)} LIMIT 1;`).rows[0]);
-    },
-    retryNode(nodeId) {
-      const node = parseNode(store.query(`SELECT * FROM campaign_nodes WHERE node_id=${sqlText(nodeId)} LIMIT 1;`).rows[0]);
-      if (!node) throw new Error(`campaign node not found: ${nodeId}`);
-      if (!decideManualNodeRetry(node).apply) return node;
-      const now = clock.nowIso();
-      const campaign = getApi().getCampaign(node.campaignId);
-      transaction([
-        guarded(`UPDATE campaign_nodes SET status='queued',attempt_count=0,failure_class=NULL,failure_json=NULL,failure_sha256=NULL,lease_owner=NULL,lease_expires_at=NULL,attempt_id=NULL,prepared_result_json=CASE WHEN prepared_integration_status='integrated' THEN prepared_result_json ELSE NULL END,prepared_result_sha256=CASE WHEN prepared_integration_status='integrated' THEN prepared_result_sha256 ELSE NULL END,prepared_attempt_id=CASE WHEN prepared_integration_status='integrated' THEN prepared_attempt_id ELSE NULL END,prepared_at=CASE WHEN prepared_integration_status='integrated' THEN prepared_at ELSE NULL END,prepared_requires_integration=CASE WHEN prepared_integration_status='integrated' THEN prepared_requires_integration ELSE 0 END,prepared_integration_key=CASE WHEN prepared_integration_status='integrated' THEN prepared_integration_key ELSE NULL END,prepared_integration_status=CASE WHEN prepared_integration_status='integrated' THEN 'integrated' ELSE 'none' END,prepared_integration_started_at=CASE WHEN prepared_integration_status='integrated' THEN prepared_integration_started_at ELSE NULL END,prepared_integration_receipt_json=CASE WHEN prepared_integration_status='integrated' THEN prepared_integration_receipt_json ELSE NULL END,prepared_integration_receipt_sha256=CASE WHEN prepared_integration_status='integrated' THEN prepared_integration_receipt_sha256 ELSE NULL END,prepared_integrated_at=CASE WHEN prepared_integration_status='integrated' THEN prepared_integrated_at ELSE NULL END,node_revision=node_revision+1,updated_at=${sqlText(now)} WHERE node_id=${sqlText(nodeId)} AND status='failed_terminal' AND node_revision=${node.nodeRevision};`),
-        guarded(`UPDATE paper_campaigns SET status='running',current_phase=${sqlText(node.kind)},current_review_round=max(current_review_round,${Math.max(0, Number(node.roundIndex || 0))}),stop_reason=NULL,last_resumed_at=coalesce(last_resumed_at,${sqlText(now)}),revision=revision+1,updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(node.campaignId)} AND status=${sqlText(campaign.status)} AND revision=${campaign.revision};`),
-        eventStatement(node.campaignId, nodeId, 'campaign_node_manually_retried', {}, now).sql,
-      ], 'campaign_node_retry_failed');
-      return parseNode(store.query(`SELECT * FROM campaign_nodes WHERE node_id=${sqlText(nodeId)} LIMIT 1;`).rows[0]);
-    },
-    recordUsage(campaignId, delta = {}, { enforceBudget = false } = {}) {
-      const now = clock.nowIso();
-      if (enforceBudget) {
-        try {
-          transaction([
-            guarded(`UPDATE paper_campaigns SET ${usageSql(delta)},updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(campaignId)} AND status='running' AND ${usageBudgetCondition(delta)};`),
-          ], 'campaign_usage_budget_reservation_failed');
-        } catch {
-          throw new Error('campaign_usage_budget_reservation_failed');
-        }
-        return getApi().getCampaign(campaignId);
-      }
-      const write = store.execute(`UPDATE paper_campaigns SET ${usageSql(delta)},updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(campaignId)} AND status='running';`);
-      if (!write.ok) throw new Error(write.error || 'campaign_usage_write_failed');
-      return getApi().getCampaign(campaignId);
-    },
-    failCampaign(campaignId, reason = 'campaign_failed') {
-      const campaign = getApi().getCampaign(campaignId);
-      if (!campaign) throw new Error(`campaign not found: ${campaignId}`);
-      if (!decideCampaignCommand(campaign, 'fail').apply) return campaign;
-      const now = clock.nowIso();
-      const elapsedSql = campaign.lastResumedAt ? `accumulated_run_ms=accumulated_run_ms+max(0,CAST((julianday(${sqlText(now)})-julianday(last_resumed_at))*86400000 AS INTEGER)),` : '';
-      transaction([
-        guarded(`UPDATE paper_campaigns SET ${elapsedSql}status='failed',stop_reason=${sqlText(reason)},last_resumed_at=NULL,revision=revision+1,updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(campaignId)} AND status=${sqlText(campaign.status)} AND revision=${campaign.revision} AND NOT EXISTS(SELECT 1 FROM campaign_nodes n WHERE n.campaign_id=paper_campaigns.campaign_id AND n.status<>'completed' AND n.prepared_integration_status IN ('integrating','integrated'));`),
-        `UPDATE campaign_nodes SET status='failed_terminal',failure_class=${sqlText(reason)},lease_owner=NULL,lease_expires_at=NULL,attempt_id=NULL,node_revision=node_revision+1,updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(campaignId)} AND status IN ('queued','leased','running');`,
-        eventStatement(campaignId, null, 'campaign_failed', { reason }, now).sql,
-      ], 'campaign_fail_failed');
-      return getApi().getCampaign(campaignId);
-    },
-    stopCampaign(campaignId, reason = 'campaign_stopped') {
-      const campaign = getApi().getCampaign(campaignId);
-      if (!campaign) throw new Error(`campaign not found: ${campaignId}`);
-      if (!decideCampaignCommand(campaign, 'stop').apply) return campaign;
-      const now = clock.nowIso();
-      const elapsedSql = campaign.lastResumedAt ? `accumulated_run_ms=accumulated_run_ms+max(0,CAST((julianday(${sqlText(now)})-julianday(last_resumed_at))*86400000 AS INTEGER)),` : '';
-      transaction([
-        guarded(`UPDATE paper_campaigns SET ${elapsedSql}status='stopped',stop_reason=${sqlText(reason)},last_resumed_at=NULL,revision=revision+1,updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(campaignId)} AND status=${sqlText(campaign.status)} AND revision=${campaign.revision} AND NOT EXISTS(SELECT 1 FROM campaign_nodes n WHERE n.campaign_id=paper_campaigns.campaign_id AND n.status<>'completed' AND n.prepared_integration_status IN ('integrating','integrated'));`),
-        `UPDATE campaign_nodes SET status='skipped',failure_class=${sqlText(reason)},lease_owner=NULL,lease_expires_at=NULL,attempt_id=NULL,node_revision=node_revision+1,updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(campaignId)} AND status IN ('queued','leased','running');`,
-        eventStatement(campaignId, null, 'campaign_stopped', { reason }, now).sql,
-      ], 'campaign_stop_failed');
-      return getApi().getCampaign(campaignId);
-    },
+    ...createCampaignLifecycleTerminalOperations({
+      store,
+      clock,
+      mutation,
+      guarded,
+      eventStatement,
+      usageSql,
+      usageBudgetCondition,
+      getApi,
+    }),
   };
 }

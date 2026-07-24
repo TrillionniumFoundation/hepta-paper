@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import {
   automationReadinessExitCode,
   evaluateAutomationReadiness,
+  evaluateAutomationReadinessLevels,
 } from '../../paper-application/automation/automation-readiness-policy.mjs';
 import {
   createAutomationReadinessSideEffectLedger,
@@ -18,6 +19,9 @@ import {
 } from '../../paper-composition/automation/automation-readiness-query.mjs';
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { probeOsSandbox } from '../../paper-adapters/runtime/sandbox-backend-probe.mjs';
+import {
+  AUTONOMOUS_RESEARCH_STATE_DATABASE_ROLES,
+} from '../../paper-domain/automation/autonomous-research-state-backup-contract.mjs';
 
 function readyInput() {
   return {
@@ -47,6 +51,8 @@ function readyInput() {
     runtimeImageReproducibility: { ready: true, blockers: [] },
     fullResearchQualification: {
       ready: true,
+      qualificationScope: 'bounded-capability-only-v1',
+      genericContentCanaryVerified: true,
       independentHypothesisPriorArtReviewVerified: true,
       independentHypothesisPriorArtReceiptHash: `sha256:${'a'.repeat(64)}`,
       blockers: [],
@@ -134,6 +140,94 @@ test('readiness exit codes distinguish runtime, store, degradation, and qualific
   }), 0);
 });
 
+test('top-level readiness levels expose runtime, bounded, generic, and production semantics', () => {
+  assert.deepEqual(evaluateAutomationReadinessLevels({
+    runtimeReady: false,
+    runtimeStatus: 'automation_plane_store_blocked',
+    boundedProfileReady: true,
+    genericCapabilityReady: true,
+    formalSandboxRuntimeReady: true,
+    dynamicFormalProjectClosureReady: true,
+    submissionDispatcherReady: true,
+  }), {
+    version: 1,
+    kind: 'AutomationReadinessLevels',
+    status: 'automation_plane_store_blocked',
+    runtimeReady: false,
+    boundedProfileReady: false,
+    configuredScopeReady: false,
+    genericResearchReady: false,
+    productionReady: false,
+  });
+
+  const boundedBlocked = evaluateAutomationReadinessLevels({ runtimeReady: true });
+  assert.equal(boundedBlocked.status, 'automation_plane_bounded_profile_blocked');
+
+  const genericBlocked = evaluateAutomationReadinessLevels({
+    runtimeReady: true,
+    boundedProfileReady: true,
+  });
+  assert.equal(genericBlocked.status, 'automation_plane_generic_research_blocked');
+
+  const configuredScopeBlocked = evaluateAutomationReadinessLevels({
+    runtimeReady: true,
+    boundedProfileReady: true,
+    genericCapabilityReady: true,
+    formalSandboxRuntimeReady: true,
+    dynamicFormalProjectClosureReady: true,
+    submissionDispatcherReady: true,
+  });
+  assert.equal(configuredScopeBlocked.configuredScopeReady, false);
+  assert.equal(configuredScopeBlocked.genericResearchReady, false);
+  assert.equal(configuredScopeBlocked.productionReady, false);
+
+  const formalSandboxBlocked = evaluateAutomationReadinessLevels({
+    runtimeReady: true,
+    boundedProfileReady: true,
+    configuredScopeReady: true,
+    genericCapabilityReady: true,
+  });
+  assert.equal(formalSandboxBlocked.status, 'automation_plane_generic_research_blocked');
+  assert.equal(formalSandboxBlocked.genericResearchReady, false);
+
+  const dynamicFormalClosureBlocked = evaluateAutomationReadinessLevels({
+    runtimeReady: true,
+    boundedProfileReady: true,
+    configuredScopeReady: true,
+    genericCapabilityReady: true,
+    formalSandboxRuntimeReady: true,
+    submissionDispatcherReady: true,
+  });
+  assert.equal(dynamicFormalClosureBlocked.status,
+    'automation_plane_generic_research_blocked');
+  assert.equal(dynamicFormalClosureBlocked.genericResearchReady, false);
+  assert.equal(dynamicFormalClosureBlocked.productionReady, false);
+
+  const productionBlocked = evaluateAutomationReadinessLevels({
+    runtimeReady: true,
+    boundedProfileReady: true,
+    configuredScopeReady: true,
+    genericCapabilityReady: true,
+    formalSandboxRuntimeReady: true,
+    dynamicFormalProjectClosureReady: true,
+  });
+  assert.equal(productionBlocked.status, 'automation_plane_production_blocked');
+  assert.equal(productionBlocked.genericResearchReady, true);
+  assert.equal(productionBlocked.productionReady, false);
+
+  const productionReady = evaluateAutomationReadinessLevels({
+    runtimeReady: true,
+    boundedProfileReady: true,
+    configuredScopeReady: true,
+    genericCapabilityReady: true,
+    formalSandboxRuntimeReady: true,
+    dynamicFormalProjectClosureReady: true,
+    submissionDispatcherReady: true,
+  });
+  assert.equal(productionReady.status, 'automation_plane_production_ready');
+  assert.equal(productionReady.productionReady, true);
+});
+
 test('readiness side-effect ledger rejects remote Docker before any process', () => {
   let spawnCount = 0;
   for (const environment of [
@@ -194,7 +288,6 @@ test('automation readiness query completes a passive blocked report with exact s
     root,
     runtimeRoot,
     environment: {},
-    activeReleaseAttestorVerification: false,
     spawnSyncImpl(executable, args, options) {
       calls.push({ executable, args, options });
       return {
@@ -208,8 +301,27 @@ test('automation readiness query completes a passive blocked report with exact s
   });
 
   assert.equal(query.exitCode, 1);
+  assert.equal(query.report.version, 2);
   assert.equal(query.report.status, 'automation_plane_runtime_blocked');
+  assert.equal(query.report.runtimeStatus, 'automation_plane_runtime_blocked');
+  assert.equal(query.report.runtimeReady, false);
+  assert.equal(query.report.boundedProfileReady, false);
+  assert.equal(query.report.genericResearchReady, false);
+  assert.equal(query.report.productionReady, false);
+  assert.equal(
+    query.report.boundedProfileReady,
+    query.report.boundedProfileAutonomousResearchSystemReady,
+  );
+  assert.equal(query.report.productionReady, query.report.fullyAutonomousResearchSystemReady);
   assert.equal(query.report.fullAutomaticResearchWritingReady, false);
+  assert.equal(query.report.formalSandboxRuntimeReady, false);
+  assert.equal(query.report.dynamicFormalProjectClosureReady, false);
+  assert.ok(query.report.dynamicFormalProjectClosure.blockers.includes(
+    'dynamic_formal_project_root_required',
+  ));
+  assert.ok(query.report.fullyAutonomousResearchSystemBlockers.some((blocker) => (
+    blocker.includes('formal_sandbox') || blocker.includes('trusted_formal_sandbox')
+  )));
   assert.equal(query.report.externalActionPerformed, true);
   assert.equal(
     query.report.externalActionScope,
@@ -233,13 +345,42 @@ test('automation readiness query completes a passive blocked report with exact s
   );
   assert.equal(query.report.readinessSideEffectInspection.providerCanaryActionCount, 0);
   assert.equal(query.report.liveProviderCanaryRequested, false);
+  assert.equal(query.report.liveReleaseAttestorVerificationRequested, false);
+  assert.equal(query.report.autonomousStateSafety.statusReadOnly, true);
+  assert.equal(query.report.autonomousStateSafety.externalActionPerformed, false);
+  assert.equal(
+    query.report.autonomousStateSafety.coveredWriterCount,
+    AUTONOMOUS_RESEARCH_STATE_DATABASE_ROLES.length,
+  );
+  assert.equal(
+    query.report.autonomousStateSafety.requiredWriterCount,
+    AUTONOMOUS_RESEARCH_STATE_DATABASE_ROLES.length,
+  );
+  assert.equal(query.report.autonomousStateRestoreAuthorityConfigured, false);
+  assert.equal(query.report.autonomousStateRestoreAuthorityConfigurationHash, null);
+  assert.equal(query.report.autonomousStateOnlineAntiRollbackReady, false);
+  assert.ok(query.report.fullyAutonomousResearchSystemBlockers.includes(
+    'autonomous_research_online_anti_rollback_coordinator_not_implemented',
+  ));
   assert.ok(query.report.fullAutomaticResearchWritingBlockers.length > 0);
 });
 
-test('automation-status pins release-attestor inspection to passive mode', () => {
+test('automation-status keeps release-attestor verification behind an explicit live flag', () => {
   const source = fs.readFileSync(new URL('../bin/automation-status.mjs', import.meta.url), 'utf8');
-  assert.match(source, /activeReleaseAttestorVerification:\s*false/);
+  const packageDocument = JSON.parse(fs.readFileSync(
+    new URL('../../package.json', import.meta.url),
+    'utf8',
+  ));
+  assert.match(
+    source,
+    /activeReleaseAttestorVerification:\s*args\['live-release-attestor'\]\s*===\s*true/,
+  );
   assert.doesNotMatch(source, /activeReleaseAttestorVerification:\s*true/);
+  assert.doesNotMatch(source, /activeReleaseAttestorVerification:\s*false/);
+  assert.match(
+    packageDocument.scripts['automation:research-status'],
+    /--live-provider-canary --live-release-attestor$/,
+  );
 });
 
 test('automation-status help exits without performing readiness actions', () => {
@@ -252,10 +393,12 @@ test('automation-status help exits without performing readiness actions', () => 
   });
   assert.equal(run.status, 0, run.stderr);
   assert.deepEqual(JSON.parse(run.stdout), {
-    version: 1,
+    version: 2,
     kind: 'AutomationStatusUsage',
-    usage: 'automation-status [--root PATH] [--runtime-root PATH] [--require-full-research] [--require-fully-autonomous] [--live-provider-canary]',
-    mutation: 'none',
+    usage: 'automation-status [--root PATH] [--runtime-root PATH] [--require-full-research] [--require-fully-autonomous] [--live-provider-canary] [--live-release-attestor]',
+    mutation: 'no-canonical-state-write',
+    localObservationEffects: 'runtime-metadata-and-daemon-probes-may-change',
+    externalAction: 'argument-dependent',
   });
 });
 

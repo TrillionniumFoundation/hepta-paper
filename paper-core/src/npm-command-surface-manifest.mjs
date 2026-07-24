@@ -1,5 +1,13 @@
-// Declarative classification for package scripts that are not direct supported
-// hepta-paper routes. Unknown scripts remain blocked by default.
+// Declarative npm classification for supported hepta-paper routes.
+export const ROUTED_NPM_SCRIPT_CLASSIFICATION = Object.freeze({
+  operator: 'operator',
+  maintenance: 'maintenance',
+  verify: 'verification',
+  retirement: 'retirement',
+});
+
+// Package scripts that are not direct routes are classified explicitly.
+// Unknown scripts remain blocked by default.
 export const EXPLICIT_NPM_SCRIPTS = Object.freeze({
   operator: Object.freeze([
     'hepta-paper',
@@ -53,12 +61,17 @@ export const EXPLICIT_NPM_SCRIPTS = Object.freeze({
     'store:restore-drill',
     'static:check',
     'test:academic-docker-operational',
+    'test:dynamic-formal-kernel-operational',
     'test:migration-differential',
+    'test:typed-numeric-process-operational',
     'workspace:verify-decoupled',
   ]),
   maintenance: Object.freeze([
     'assets:cold-volume-cas-import',
     'automation:runtime-build',
+    'automation:runtime-bootstrap:python',
+    'automation:runtime-bootstrap:r',
+    'automation:runtime-image-bundle-load',
     'automation:workspace-backfill',
     'automation:workspace-backfill:execute',
     'conformance:replay',

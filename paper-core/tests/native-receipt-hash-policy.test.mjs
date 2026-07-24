@@ -480,6 +480,54 @@ test('native completion and failure require the current self-hash policy and sha
     }), /native_job_failure_receipt_paper_id_mismatch/);
     assertUnsettled(forgedFailureJob, forgedFailureAttempt);
 
+    const invalidFailureStatusJob = 'native-invalid-failure-status';
+    const invalidFailureStatusAttempt = beginAttempt(
+      jobs,
+      invalidFailureStatusJob,
+      'native-invalid-failure-status-worker',
+    );
+    const invalidFailureStatus = nativeCompletionReceipt({
+      jobId: invalidFailureStatusJob,
+      attempt: invalidFailureStatusAttempt,
+      overrides: {
+        academicEvidenceEligible: false,
+        blockers: ['worker_failed'],
+      },
+    });
+    assert.throws(() => jobs.failJob({
+      jobId: invalidFailureStatusJob,
+      attemptId: invalidFailureStatusAttempt.attemptId,
+      workerId: invalidFailureStatusAttempt.workerId,
+      leaseGeneration: invalidFailureStatusAttempt.leaseGeneration,
+      failureClass: 'worker_verification_failed',
+      receipt: invalidFailureStatus,
+    }), /native_job_failure_receipt_status_invalid/);
+    assertUnsettled(invalidFailureStatusJob, invalidFailureStatusAttempt);
+
+    const invalidFailureEvidenceJob = 'native-invalid-failure-evidence';
+    const invalidFailureEvidenceAttempt = beginAttempt(
+      jobs,
+      invalidFailureEvidenceJob,
+      'native-invalid-failure-evidence-worker',
+    );
+    const invalidFailureEvidence = nativeCompletionReceipt({
+      jobId: invalidFailureEvidenceJob,
+      attempt: invalidFailureEvidenceAttempt,
+      overrides: {
+        status: 'native_research_worker_execution_blocked',
+        blockers: ['worker_failed'],
+      },
+    });
+    assert.throws(() => jobs.failJob({
+      jobId: invalidFailureEvidenceJob,
+      attemptId: invalidFailureEvidenceAttempt.attemptId,
+      workerId: invalidFailureEvidenceAttempt.workerId,
+      leaseGeneration: invalidFailureEvidenceAttempt.leaseGeneration,
+      failureClass: 'worker_verification_failed',
+      receipt: invalidFailureEvidence,
+    }), /native_job_failure_receipt_academic_evidence_invalid/);
+    assertUnsettled(invalidFailureEvidenceJob, invalidFailureEvidenceAttempt);
+
     const validFailureJob = 'native-valid-failure';
     const validFailureAttempt = beginAttempt(jobs, validFailureJob, 'native-valid-failure-worker');
     const validFailure = nativeCompletionReceipt({

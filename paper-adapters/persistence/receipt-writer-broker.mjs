@@ -15,5 +15,9 @@ export const issueLedgerAdministratorWriter = () => issueReceiptWriterCapability
 export const issueAutomationReconcilerWriter = () => issueReceiptWriterCapability('automation-reconciler');
 export const issueStoreAdministratorWriter = () => issueReceiptWriterCapability('store-administrator');
 export const issueRuntimeRetentionWriter = () => issueReceiptWriterCapability('runtime-retention');
+export const issuePackageLifecycleWriter = () => issueReceiptWriterCapability('package-lifecycle-authority');
 export const issueWorkspaceSnapshotVerifierWriter = () => issueReceiptWriterCapability('workspace-snapshot-verifier');
 export const issueWorkflowStateProjectorWriter = () => issueReceiptWriterCapability('workflow-state-projector');
+export const issueAutonomousSubmissionHandoffWriter = () => (
+  issueReceiptWriterCapability('autonomous-submission-handoff')
+);

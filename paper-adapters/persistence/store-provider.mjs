@@ -4,7 +4,18 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { heptaStorePath } from '../../paper-adapters/persistence/store-paths.mjs';
 import { assertStorePort } from '../../paper-ports/store-port.mjs';
-import { createReadOnlySqliteStore, createSqliteStore } from './sqlite-store.mjs';
+import {
+  NATIVE_STORE_CAMPAIGN_TELEMETRY_MUTATION_PLANS,
+  NATIVE_STORE_CAMPAIGN_TELEMETRY_WRITER_ID,
+  NATIVE_STORE_DATABASE_INSTANCE_ID,
+  NATIVE_STORE_SCHEMA_CONTRACT_ID,
+} from './native-store-online-mutation-plan.mjs';
+import {
+  createExternallyFencedNativeSqliteStore,
+  createOfflineSqliteStore,
+  createReadOnlySqliteStore,
+  createSqliteStore,
+} from './sqlite-store.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const migrations = [
@@ -31,10 +42,12 @@ const migrations = [
   { version: 21, name: '021_job_lease_fencing', path: path.join(workspaceRoot, 'store', 'migrations', '021_job_lease_fencing.sql') },
   { version: 22, name: '022_campaign_attempt_fencing', path: path.join(workspaceRoot, 'store', 'migrations', '022_campaign_attempt_fencing.sql') },
   { version: 23, name: '023_workspace_retention_qualification', path: path.join(workspaceRoot, 'store', 'migrations', '023_workspace_retention_qualification.sql') },
+  { version: 24, name: '024_submission_outbox_delivery_kind', path: path.join(workspaceRoot, 'store', 'migrations', '024_submission_outbox_delivery_kind.sql') },
+  { version: 25, name: '025_external_autonomous_submission_handoff', path: path.join(workspaceRoot, 'store', 'migrations', '025_external_autonomous_submission_handoff.sql') },
 ];
 
 const latestMigrationVersion = migrations.at(-1).version;
-const offlineCutoverMigrationVersions = new Set([21, 22, 23]);
+const offlineCutoverMigrationVersions = new Set([21, 22, 23, 24, 25]);
 
 function sqlQuote(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
@@ -193,7 +206,7 @@ export function createDefaultPaperStore({ root, runtimeRoot = null, dbPath = nul
       inspector.close();
     }
   }
-  const store = createSqliteStore({ dbPath: resolved, maxBuffer });
+  const store = createOfflineSqliteStore({ dbPath: resolved, maxBuffer });
   try {
     return applyStoreMigrations(store, { targetVersion: target });
   } catch (error) {
@@ -206,6 +219,31 @@ export function openExistingWritablePaperStore({ root, runtimeRoot = null, dbPat
   const resolved = dbPath || heptaStorePath(root, runtimeRoot);
   if (!fs.existsSync(resolved)) throw new Error(`paper_store_not_initialized:run_store_migrate:${resolved}`);
   return createSqliteStore({ dbPath: resolved, maxBuffer });
+}
+
+export function openExistingExternallyFencedPaperStore({
+  root,
+  runtimeRoot = null,
+  dbPath = null,
+  maxBuffer,
+  mutationCoordinator,
+  databaseInstanceId = NATIVE_STORE_DATABASE_INSTANCE_ID,
+  schemaContractId = NATIVE_STORE_SCHEMA_CONTRACT_ID,
+  writerId = NATIVE_STORE_CAMPAIGN_TELEMETRY_WRITER_ID,
+  operationWriters = null,
+  operationIds = Object.keys(NATIVE_STORE_CAMPAIGN_TELEMETRY_MUTATION_PLANS),
+} = {}) {
+  const resolved = dbPath || heptaStorePath(root, runtimeRoot);
+  return createExternallyFencedNativeSqliteStore({
+    dbPath: resolved,
+    maxBuffer,
+    mutationCoordinator,
+    databaseInstanceId,
+    schemaContractId,
+    writerId,
+    operationWriters,
+    operationIds,
+  });
 }
 
 function createMissingReadOnlyPaperStore(dbPath) {

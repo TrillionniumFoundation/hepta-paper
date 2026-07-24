@@ -29,9 +29,27 @@ async function reportQualificationProgress(onProgress, stage) {
   }
   try { await onProgress(Object.freeze({ stage })); }
   catch (error) {
+    if (error?.stateRecoverabilityFatal === true
+      || error?.stateRecoverabilityDeferred === true
+      || error?.authorityEvidenceRenewalFatal === true
+      || error?.authorityEvidenceRenewalDeferred === true
+      || error?.residentReactivationRequired === true) throw error;
     throw new Error('autonomous_research_qualification_progress_fence_lost', {
       cause: error,
     });
+  }
+}
+
+function reportQualificationSynchronousProgress(onSynchronousProgress, stage) {
+  if (onSynchronousProgress === null || onSynchronousProgress === undefined) return;
+  if (typeof onSynchronousProgress !== 'function') {
+    throw new Error('autonomous_research_qualification_progress_callback_invalid');
+  }
+  const result = onSynchronousProgress(Object.freeze({ stage }));
+  if (result && typeof result.then === 'function') {
+    throw new Error(
+      'autonomous_research_qualification_synchronous_progress_callback_required',
+    );
   }
 }
 
@@ -46,6 +64,21 @@ function eligibilityFor(preparation, campaignReleaseAuthority, inspection) {
     datasetLaunchInspection: preparation?.datasetLaunchInspection,
     empiricalRuntimeCapabilityInspection: preparation?.empiricalRuntimeCapabilityInspection,
     empiricalExecutionProfileSelection: preparation?.empiricalExecutionProfileSelection,
+    runtimeImageReproducibilityInspection:
+      preparation?.runtimeImageReproducibilityInspection,
+    capabilityScopeManifest: preparation?.capabilityScopeManifest,
+    externalCapabilityTrustInspection:
+      preparation?.externalCapabilityTrustInspection,
+    researchAgendaProducerReceipt:
+      preparation?.researchAgendaProducerReceipt,
+    autonomousResearchProviderConfigurationHash:
+      preparation?.autonomousResearchProviderConfigurationHash,
+    autonomousResearchLoopPreparationReportHash:
+      preparation?.autonomousResearchLoopPreparationReportHash,
+    autonomousResearchMachineIntakeAdmissionHash:
+      preparation?.autonomousResearchMachineIntakeAdmissionHash,
+    launchMode: preparation?.launchMode,
+    observedAt: preparation?.createdAt,
     campaignReleaseAuthority,
     fullResearchQualificationInspection: inspection,
   });
@@ -76,6 +109,8 @@ function requireDependencies(value) {
     || typeof value.receiptPointerRepository.tryAcquirePublicationLease !== 'function'
     || typeof value.receiptPointerRepository.publish !== 'function'
     || typeof value.receiptPointerRepository.releasePublicationLease !== 'function'
+    || (value.receiptPointerRepository.externallyFencedMutationsRequired === true
+      && typeof value.receiptPointerRepository.recoverPendingPublication !== 'function')
     || typeof value.assertSupervisorLease !== 'function'
     || typeof value.inspectGlobalReadiness !== 'function') {
     throw new Error('autonomous_research_qualification_renewal_dependencies_invalid');
@@ -115,6 +150,7 @@ export function createAutonomousResearchQualificationRenewal({
       supervisorLease,
       signal = null,
       onProgress = null,
+      onSynchronousProgress = null,
     } = {}) {
       const preparation = campaign?.spec?.autonomousResearchPreparation || null;
       const now = dateFromClock(clock);
@@ -126,6 +162,10 @@ export function createAutonomousResearchQualificationRenewal({
         throw new Error('autonomous_research_qualification_renewal_input_invalid');
       }
       assertSupervisorLease({ lease: supervisorLease, now });
+      if (receiptPointerRepository.externallyFencedMutationsRequired === true) {
+        receiptPointerRepository.recoverPendingPublication();
+        assertSupervisorLease({ lease: supervisorLease, now: dateFromClock(clock) });
+      }
       await reportQualificationProgress(
         onProgress,
         'qualification_renewal_before_external_recovery',
@@ -143,6 +183,7 @@ export function createAutonomousResearchQualificationRenewal({
           ...(scheduler ? { scheduler } : {}),
           signal,
           onProgress,
+          onSynchronousProgress,
           renewalLeadMs: Math.max(
             requiredValidity,
             Number(qualificationRetry.renewalLeadMs || 0),
@@ -175,17 +216,35 @@ export function createAutonomousResearchQualificationRenewal({
           onProgress,
           'qualification_renewal_before_local_verification',
         );
+        reportQualificationSynchronousProgress(
+          onSynchronousProgress,
+          'qualification_renewal_local_verification',
+        );
+        const evidence =
+          state?.verifiedInspection?.independentVerificationEvidence || null;
+        if (evidence
+          ?.independentExternalResearchQualificationVerificationEvidenceHash
+          !== state?.verifiedInspection?.independentVerificationEvidenceHash) {
+          throw new Error(
+            'qualification_renewal_independent_verification_evidence_invalid',
+          );
+        }
         localInspection = await externalQualificationVerifier.verifyLocally({
           receipt: state?.receipt,
           campaignReleaseAuthority,
           preparation,
-          independentInspection: state?.verifiedInspection,
+          independentVerificationEvidence: evidence,
         });
         await reportQualificationProgress(
           onProgress,
           'qualification_renewal_after_local_verification',
         );
       } catch (error) {
+        if (error?.stateRecoverabilityFatal === true
+          || error?.stateRecoverabilityDeferred === true
+          || error?.authorityEvidenceRenewalFatal === true
+          || error?.authorityEvidenceRenewalDeferred === true
+          || error?.residentReactivationRequired === true) throw error;
         if (error?.message === 'autonomous_research_qualification_progress_fence_lost') {
           throw error;
         }
@@ -299,6 +358,10 @@ export function createAutonomousResearchQualificationRenewal({
       await reportQualificationProgress(
         onProgress,
         'qualification_renewal_before_global_readiness',
+      );
+      reportQualificationSynchronousProgress(
+        onSynchronousProgress,
+        'qualification_renewal_global_readiness',
       );
       const readinessResult = await inspectGlobalReadiness({
         now: dateFromClock(clock),

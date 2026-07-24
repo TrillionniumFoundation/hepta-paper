@@ -19,10 +19,45 @@ import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { inspectWorkspaceExecutionSnapshot, sourceTreeExcludedNames } from '../../paper-adapters/runtime/execution-snapshot.mjs';
 import { bootstrapAutomationContext } from '../../paper-composition/bootstrap/automation-context-bootstrap.mjs';
+import {
+  convergeAutonomousSubmissionHandoff,
+} from '../../paper-composition/bootstrap/autonomous-submission-handoff-migration-composition.mjs';
 import { bootstrapSubmissionContext } from '../../paper-composition/bootstrap/capability-scoped-bootstrap.mjs';
 import { verifyCampaignReleaseEvidenceCapsuleDirectory } from '../../paper-adapters/build-package/research-evidence-capsule.mjs';
+import { createCampaignReleasePackager } from '../../paper-adapters/automation/campaign-release-packager.mjs';
+import { createTrustedIndependentPdfRebuildVerifierFixture }
+  from './fixtures/trusted-independent-pdf-rebuild-verifier.mjs';
+import { buildDeterministicPdfFixture }
+  from './support/deterministic-pdf-fixture.mjs';
 
 const submissionHandoffCli = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', 'bin', 'paper-submission-handoff.mjs');
+
+function testHandoffMutationCoordinator() {
+  const coveredDatabaseRoles = Object.freeze(['submission-handoff']);
+  return Object.freeze({
+    implemented: true,
+    coveredDatabaseRoles,
+    executeMutation() {
+      throw new Error('campaign_release_handoff_test_mutation_unexpected');
+    },
+    recoverPendingMutations() { return Object.freeze([]); },
+    inspectStatus() {
+      return Object.freeze({
+        status: 'externally_fenced_sqlite_mutation_coordinator_ready',
+        implemented: true,
+        coveredDatabaseRoles,
+        blockers: Object.freeze([]),
+      });
+    },
+  });
+}
+
+function bootstrapTestAutomationContext(options) {
+  return bootstrapAutomationContext({
+    ...options,
+    submissionHandoffMutationCoordinator: testHandoffMutationCoordinator(),
+  });
+}
 
 function runSubmissionHandoffCli({ campaignId, root, runtimeRoot } = {}) {
   return spawnSync(process.execPath, [
@@ -47,7 +82,10 @@ function fixture(t) {
     venueTarget: 'Fixture Journal',
     files: [{ path: 'main.tex', role: 'main_tex', required: true }],
   }));
-  fs.writeFileSync(path.join(workspace, 'automation-results', 'final', 'main.pdf'), Buffer.from('%PDF-1.4\nfixture\n'));
+  fs.writeFileSync(
+    path.join(workspace, 'automation-results', 'final', 'main.pdf'),
+    buildDeterministicPdfFixture({ marker: 'campaign-release-authoritative' }),
+  );
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   return { root, workspace, runtimeRoot };
 }
@@ -167,7 +205,25 @@ function nodes(workspace = null) {
   return { finalCompileNode, researchVerifyNode, packageNode };
 }
 
-async function prepareFencedPackage({ context, workspace, runtimeRoot, campaignId = 'campaign' } = {}) {
+function createTrustedReleasePackagerFixture({ context, store, runtimeRoot, fixtureId }) {
+  return createCampaignReleasePackager({
+    artifactRepositoryFactory: context.services.artifactRepositoryFactory,
+    store,
+    receiptLedger: context.services.receiptLedger,
+    runtimeRoot,
+    clock: context.services.clock,
+    independentPdfRebuildVerifier:
+      createTrustedIndependentPdfRebuildVerifierFixture({ fixtureId }),
+  });
+}
+
+async function prepareFencedPackage({
+  context,
+  workspace,
+  runtimeRoot,
+  campaignId = 'campaign',
+  releasePackager = context?.services?.releasePackager,
+} = {}) {
   const campaignStore = context.services.campaignStore;
   const { finalCompileNode, researchVerifyNode, packageNode } = nodes(workspace);
   finalCompileNode.nodeId = `${campaignId}:1:final-compile`;
@@ -250,7 +306,7 @@ async function prepareFencedPackage({ context, workspace, runtimeRoot, campaignI
   });
   const executor = createCampaignNodeExecutor({
     runtimeRoot,
-    releasePackager: context.services.releasePackager,
+    releasePackager,
     agentExecutor: { async execute() { throw new Error('agent_not_expected'); } },
     empiricalExecutor: { execute() { throw new Error('empirical_not_expected'); } },
   });
@@ -449,7 +505,8 @@ test('prepared bundle becomes submission-consumable only through the current com
   const submissionRoot = path.join(root, 'independent-submission-root');
   fs.mkdirSync(submissionRoot, { recursive: true });
   const store = createDefaultPaperStore({ root: workspace, runtimeRoot });
-  const context = bootstrapAutomationContext({
+  convergeAutonomousSubmissionHandoff({ nativeStore: store, runtimeRoot });
+  const context = bootstrapTestAutomationContext({
     root: workspace,
     runtimeRoot,
     mode: 'campaign-release-test',
@@ -459,7 +516,18 @@ test('prepared bundle becomes submission-consumable only through the current com
   t.after(() => context.services.persistenceSession.close());
   const submissionContext = bootstrapSubmissionContext({ root: workspace, runtimeRoot, execute: true });
   t.after(() => submissionContext.services.persistenceSession.close());
-  const preparedPackage = await prepareFencedPackage({ context, workspace, runtimeRoot });
+  const releasePackager = createTrustedReleasePackagerFixture({
+    context,
+    store,
+    runtimeRoot,
+    fixtureId: 'submission-consumable',
+  });
+  const preparedPackage = await prepareFencedPackage({
+    context,
+    workspace,
+    runtimeRoot,
+    releasePackager,
+  });
   const first = preparedPackage.result;
   const campaignPlanHash = preparedPackage.campaign.spec.campaignPlanHash;
   const authorityRepository = submissionContext.services.campaignReleaseAuthorityRepository;
@@ -547,6 +615,28 @@ test('prepared bundle becomes submission-consumable only through the current com
   assert.equal(authority.promotionReceipt.verifiedSourceMerkleHash, first.releaseBundle.verifiedSourceMerkleHash);
   assert.deepEqual(first.releaseBundle.promotionCandidate.sourceTreeManifest.rows.map((row) => row.path).sort(), ['SOURCE_PACKAGE_CONTRACT.json', 'main.tex']);
   assert.equal(authorityRepository.promoteCompletedRelease({ campaignId: 'campaign' }).promotionReceipt.campaignReleasePromotionReceiptHash, authority.promotionReceipt.campaignReleasePromotionReceiptHash);
+
+  // Exercise recovery from a missing derived current-release row. The durable
+  // completed package remains authoritative, so a fresh repository promotion
+  // must reconstruct the exact same release instead of relying on the normal
+  // campaign-completion callback having populated the projection already.
+  const removedProjection = store.execute(
+    "DELETE FROM campaign_current_releases WHERE campaign_id='campaign';",
+  );
+  assert.equal(removedProjection.ok, true);
+  assert.equal(authorityRepository.getCurrentRelease({ campaignId: 'campaign' }), null);
+  const recoveredAuthority = authorityRepository.promoteCompletedRelease({
+    campaignId: 'campaign',
+  });
+  assert.equal(recoveredAuthority.status, 'current_completed_release');
+  assert.equal(
+    recoveredAuthority.promotionReceipt.campaignReleasePromotionReceiptHash,
+    authority.promotionReceipt.campaignReleasePromotionReceiptHash,
+  );
+  assert.equal(
+    recoveredAuthority.campaignReleaseBundleHash,
+    authority.campaignReleaseBundleHash,
+  );
 
   const verified = verifyCampaignReleaseBundleForSubmission({
     releaseAuthority: authority,
@@ -734,11 +824,24 @@ test('prepared bundle becomes submission-consumable only through the current com
 test('release promotion is atomic with fenced completion across a simulated crash', async (t) => {
   const { workspace, runtimeRoot } = fixture(t);
   const store = createDefaultPaperStore({ root: workspace, runtimeRoot });
-  const context = bootstrapAutomationContext({ root: workspace, runtimeRoot, execute: true, serviceOverrides: { store } });
+  convergeAutonomousSubmissionHandoff({ nativeStore: store, runtimeRoot });
+  const context = bootstrapTestAutomationContext({ root: workspace, runtimeRoot, execute: true, serviceOverrides: { store } });
   t.after(() => context.services.persistenceSession.close());
   const submissionContext = bootstrapSubmissionContext({ root: workspace, runtimeRoot, execute: true });
   t.after(() => submissionContext.services.persistenceSession.close());
-  const prepared = await integratePreparedPackage(await prepareFencedPackage({ context, workspace, runtimeRoot, campaignId: 'crash' }));
+  const releasePackager = createTrustedReleasePackagerFixture({
+    context,
+    store,
+    runtimeRoot,
+    fixtureId: 'atomic-crash',
+  });
+  const prepared = await integratePreparedPackage(await prepareFencedPackage({
+    context,
+    workspace,
+    runtimeRoot,
+    campaignId: 'crash',
+    releasePackager,
+  }));
   assert.equal(store.execute(`CREATE TRIGGER fail_release_promotion BEFORE INSERT ON campaign_current_releases BEGIN SELECT RAISE(ABORT,'simulated_release_promotion_crash'); END;`).ok, true);
   assert.throws(() => completePreparedPackage(prepared), /campaign_node_lease_lost/);
   const afterFailure = prepared.campaignStore.listNodes('crash').find((node) => node.kind === 'package');
@@ -756,11 +859,24 @@ test('cancelled prepared attempts and stale or manually orphaned current rows ar
   const submissionRoot = path.join(root, 'independent-submission-root');
   fs.mkdirSync(submissionRoot, { recursive: true });
   const store = createDefaultPaperStore({ root: workspace, runtimeRoot });
-  const context = bootstrapAutomationContext({ root: workspace, runtimeRoot, execute: true, serviceOverrides: { store } });
+  convergeAutonomousSubmissionHandoff({ nativeStore: store, runtimeRoot });
+  const context = bootstrapTestAutomationContext({ root: workspace, runtimeRoot, execute: true, serviceOverrides: { store } });
   t.after(() => context.services.persistenceSession.close());
   const submissionContext = bootstrapSubmissionContext({ root: workspace, runtimeRoot, execute: true });
   t.after(() => submissionContext.services.persistenceSession.close());
-  const cancelled = await prepareFencedPackage({ context, workspace, runtimeRoot, campaignId: 'cancelled' });
+  const releasePackager = createTrustedReleasePackagerFixture({
+    context,
+    store,
+    runtimeRoot,
+    fixtureId: 'cancelled-and-stale',
+  });
+  const cancelled = await prepareFencedPackage({
+    context,
+    workspace,
+    runtimeRoot,
+    campaignId: 'cancelled',
+    releasePackager,
+  });
   cancelled.campaignStore.cancelCampaign('cancelled', 'test_cancelled_after_bundle_prepare');
   assert.equal(cancelled.campaignStore.getCampaign('cancelled').status, 'cancelled');
   assert.equal(submissionContext.services.campaignReleaseAuthorityRepository.getCurrentRelease({ campaignId: 'cancelled' }), null);
@@ -774,7 +890,13 @@ test('cancelled prepared attempts and stale or manually orphaned current rows ar
   assert.notEqual(cancelledCli.status, 0);
   assert.match(cancelledCli.stderr, /campaign_release_authority_required/);
 
-  const completed = await integratePreparedPackage(await prepareFencedPackage({ context, workspace, runtimeRoot, campaignId: 'stale' }));
+  const completed = await integratePreparedPackage(await prepareFencedPackage({
+    context,
+    workspace,
+    runtimeRoot,
+    campaignId: 'stale',
+    releasePackager,
+  }));
   completePreparedPackage(completed);
   assert.ok(submissionContext.services.campaignReleaseAuthorityRepository.getCurrentRelease({ campaignId: 'stale' }));
   assert.equal(store.execute(`UPDATE campaign_current_releases SET package_attempt_id='manual-orphan-attempt' WHERE campaign_id='stale';`).ok, true);

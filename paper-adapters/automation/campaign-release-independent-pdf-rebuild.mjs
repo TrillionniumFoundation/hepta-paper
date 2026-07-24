@@ -5,16 +5,18 @@ export async function executeIndependentCampaignPdfRebuild({
   verifier,
   sourceWorkspace,
   sourceArchiveDefinition,
+  campaignId = null,
   rebuildRoot,
   paperId,
   mainTex,
   authoritativePdf,
   createdAt,
   signal = null,
+  assertExternalSideEffectReady = null,
 } = {}) {
   if (!verifier) throw new Error('campaign_release_independent_pdf_rebuild_verifier_required');
   const trustedVerifier = assertIndependentPdfRebuildVerifierPort(verifier);
-  const result = await trustedVerifier.rebuild({
+  const rebuildInput = {
     sourceWorkspace,
     sourceArchiveDefinition,
     rebuildRoot,
@@ -23,7 +25,38 @@ export async function executeIndependentCampaignPdfRebuild({
     authoritativePdf,
     createdAt,
     signal,
+  };
+  const request = Object.freeze({
+    action: 'campaign_independent_pdf_rebuild',
+    campaignId,
+    paperId,
+    sourcePackageContractHash:
+      sourceArchiveDefinition?.sourcePackageContractHash || null,
+    sourceTreeManifestHash:
+      sourceArchiveDefinition?.sourceTreeManifestHash || null,
+    sourceWorkspaceManifestHash:
+      sourceArchiveDefinition?.sourceWorkspaceManifestHash || null,
+    authoritativePdfHash: authoritativePdf?.hash || null,
+    mainTex,
   });
+  let result;
+  if (assertExternalSideEffectReady?.run) {
+    result = await assertExternalSideEffectReady.run(
+      request,
+      ({ externalActionId }) => trustedVerifier.rebuild({
+        ...rebuildInput,
+        externalActionId,
+        idempotencyKey: externalActionId,
+      }),
+    );
+  } else {
+    if (assertExternalSideEffectReady) {
+      await assertExternalSideEffectReady(request);
+      assertExternalSideEffectReady.assertCurrent?.(request);
+      await assertExternalSideEffectReady.markStarted?.(request);
+    }
+    result = await trustedVerifier.rebuild(rebuildInput);
+  }
   const verification = verifyIndependentPdfRebuildVerificationReceipt(result?.receipt, {
     paperId,
     sourcePackageContractHash: sourceArchiveDefinition?.sourcePackageContractHash,

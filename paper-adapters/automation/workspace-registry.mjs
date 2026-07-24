@@ -2,6 +2,9 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { failClosedStoreQueries, sqlJson, sqlText } from '../../paper-ports/store-port.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  NATIVE_STORE_RESOURCE_WORKSPACE_STATEMENT_IDS,
+} from '../persistence/native-store-resource-workspace-mutation-plan.mjs';
 import { verifyWorkspaceRetentionEvidence } from './workspace-retention-evidence.mjs';
 
 function parse(row) {
@@ -39,6 +42,8 @@ function parseRetention(row, receiptLedger) {
 export function createWorkspaceRegistry({ store: suppliedStore, clock, receiptLedger = null } = {}) {
   if (!suppliedStore || !clock) throw new Error('Workspace registry requires StorePort and ClockPort');
   const store = failClosedStoreQueries(suppliedStore);
+  const strict = typeof store.mutate === 'function';
+  const statementIds = NATIVE_STORE_RESOURCE_WORKSPACE_STATEMENT_IDS;
   const query = (sql) => store.query(sql);
   return Object.freeze({
     version: 1,
@@ -47,8 +52,36 @@ export function createWorkspaceRegistry({ store: suppliedStore, clock, receiptLe
       if (!campaignId || !sourcePath || !workspacePath) throw new Error('campaignId, sourcePath and workspacePath are required');
       const id = workspaceId || `workspace:${crypto.randomUUID()}`;
       const now = clock.nowIso();
-      const write = store.execute(`INSERT INTO campaign_workspaces(workspace_id,campaign_id,node_id,parent_workspace_id,source_path,workspace_path,source_sha256,workspace_manifest_sha256,status,retention_state,retention_reason,created_at,updated_at) VALUES(${sqlText(id)},${sqlText(campaignId)},${nodeId ? sqlText(nodeId) : 'NULL'},${parentWorkspaceId ? sqlText(parentWorkspaceId) : 'NULL'},${sqlText(sourcePath)},${sqlText(workspacePath)},${sourceHash ? sqlText(sourceHash) : 'NULL'},${manifestHash ? sqlText(manifestHash) : 'NULL'},'created','protected','active_or_unresolved_lineage',${sqlText(now)},${sqlText(now)}) ON CONFLICT(workspace_path) DO UPDATE SET node_id=excluded.node_id,workspace_manifest_sha256=excluded.workspace_manifest_sha256,updated_at=excluded.updated_at;`);
-      if (!write.ok) throw new Error(write.error || 'workspace_registry_register_failed');
+      if (strict) {
+        const write = store.mutate({
+          databaseRole: 'native-store',
+          operationId: 'native-store.workspace-registry.register.v1',
+          authorizationReceiptHashes: [],
+          sideEffectReservationHashes: [],
+          mutate: (transaction) => transaction.run(
+            statementIds.registerWorkspace,
+            id,
+            campaignId,
+            nodeId,
+            parentWorkspaceId,
+            sourcePath,
+            workspacePath,
+            sourceHash,
+            manifestHash,
+            now,
+            now,
+          ).changes,
+        });
+        if (![
+          'externally_fenced_sqlite_mutation_finalized',
+          'externally_fenced_sqlite_mutation_no_change',
+        ].includes(write?.status) || write.value !== 1) {
+          throw new Error('workspace_registry_external_register_receipt_invalid');
+        }
+      } else {
+        const write = store.execute(`INSERT INTO campaign_workspaces(workspace_id,campaign_id,node_id,parent_workspace_id,source_path,workspace_path,source_sha256,workspace_manifest_sha256,status,retention_state,retention_reason,created_at,updated_at) VALUES(${sqlText(id)},${sqlText(campaignId)},${nodeId ? sqlText(nodeId) : 'NULL'},${parentWorkspaceId ? sqlText(parentWorkspaceId) : 'NULL'},${sqlText(sourcePath)},${sqlText(workspacePath)},${sourceHash ? sqlText(sourceHash) : 'NULL'},${manifestHash ? sqlText(manifestHash) : 'NULL'},'created','protected','active_or_unresolved_lineage',${sqlText(now)},${sqlText(now)}) ON CONFLICT(workspace_path) DO UPDATE SET node_id=excluded.node_id,workspace_manifest_sha256=excluded.workspace_manifest_sha256,updated_at=excluded.updated_at;`);
+        if (!write.ok) throw new Error(write.error || 'workspace_registry_register_failed');
+      }
       return parse(query(`SELECT * FROM campaign_workspaces WHERE workspace_path=${sqlText(workspacePath)} LIMIT 1;`).rows[0]);
     },
     transition(workspaceId, { status, failureClass = null, retentionState = null, retentionReason = null, manifestHash = null, exportReceiptHash = null } = {}) {
@@ -65,8 +98,35 @@ export function createWorkspaceRegistry({ store: suppliedStore, clock, receiptLe
         nextReason = retentionReason || 'failure_or_unresolved_lineage';
       }
       const now = clock.nowIso();
-      const write = store.execute(`UPDATE campaign_workspaces SET status=${sqlText(nextStatus)},failure_class=${failureClass ? sqlText(failureClass) : 'failure_class'},retention_state=${sqlText(nextRetention)},retention_reason=${sqlText(nextReason)},workspace_manifest_sha256=${manifestHash ? sqlText(manifestHash) : 'workspace_manifest_sha256'},export_receipt_sha256=${exportReceiptHash ? sqlText(exportReceiptHash) : 'export_receipt_sha256'},exported_at=${exportReceiptHash ? sqlText(now) : 'exported_at'},updated_at=${sqlText(now)} WHERE workspace_id=${sqlText(workspaceId)};`);
-      if (!write.ok) throw new Error(write.error || 'workspace_registry_transition_failed');
+      if (strict) {
+        const write = store.mutate({
+          databaseRole: 'native-store',
+          operationId: 'native-store.workspace-registry.transition.v1',
+          authorizationReceiptHashes: [],
+          sideEffectReservationHashes: [],
+          mutate: (transaction) => transaction.run(
+            statementIds.transitionWorkspace,
+            nextStatus,
+            failureClass || existing.failure_class || null,
+            nextRetention,
+            nextReason,
+            manifestHash || existing.workspace_manifest_sha256 || null,
+            exportReceiptHash || existing.export_receipt_sha256 || null,
+            exportReceiptHash ? now : existing.exported_at || null,
+            now,
+            workspaceId,
+          ).changes,
+        });
+        if (![
+          'externally_fenced_sqlite_mutation_finalized',
+          'externally_fenced_sqlite_mutation_no_change',
+        ].includes(write?.status) || write.value !== 1) {
+          throw new Error('workspace_registry_external_transition_receipt_invalid');
+        }
+      } else {
+        const write = store.execute(`UPDATE campaign_workspaces SET status=${sqlText(nextStatus)},failure_class=${failureClass ? sqlText(failureClass) : 'failure_class'},retention_state=${sqlText(nextRetention)},retention_reason=${sqlText(nextReason)},workspace_manifest_sha256=${manifestHash ? sqlText(manifestHash) : 'workspace_manifest_sha256'},export_receipt_sha256=${exportReceiptHash ? sqlText(exportReceiptHash) : 'export_receipt_sha256'},exported_at=${exportReceiptHash ? sqlText(now) : 'exported_at'},updated_at=${sqlText(now)} WHERE workspace_id=${sqlText(workspaceId)};`);
+        if (!write.ok) throw new Error(write.error || 'workspace_registry_transition_failed');
+      }
       return parse(query(`SELECT * FROM campaign_workspaces WHERE workspace_id=${sqlText(workspaceId)} LIMIT 1;`).rows[0]);
     },
     recordSnapshot(workspaceId, { manifestHash, manifestPath = null, archivePath = null, archiveHash = null, externalContentHash = null, bytes = 0, status = 'recorded', exportReceiptHash = null } = {}) {
@@ -75,8 +135,37 @@ export function createWorkspaceRegistry({ store: suppliedStore, clock, receiptLe
       const payload = { version: 1, kind: 'WorkspaceSnapshot', workspaceId, manifestHash, archivePath, archiveHash, bytes: Number(bytes || 0), status, createdAt };
       const snapshotHash = hashRecord('WorkspaceSnapshot', payload);
       const snapshotId = `snapshot:${snapshotHash.replace(/^sha256:/, '')}`;
-      const write = store.execute(`INSERT OR IGNORE INTO workspace_snapshots(snapshot_id,workspace_id,manifest_sha256,manifest_path,archive_path,archive_sha256,external_content_sha256,bytes,status,created_at,export_receipt_sha256) VALUES(${sqlText(snapshotId)},${sqlText(workspaceId)},${sqlText(manifestHash)},${manifestPath ? sqlText(manifestPath) : 'NULL'},${archivePath ? sqlText(archivePath) : 'NULL'},${archiveHash ? sqlText(archiveHash) : 'NULL'},${externalContentHash ? sqlText(externalContentHash) : 'NULL'},${Math.max(0, Number(bytes || 0))},${sqlText(status)},${sqlText(createdAt)},${exportReceiptHash ? sqlText(exportReceiptHash) : 'NULL'});`);
-      if (!write.ok) throw new Error(write.error || 'workspace_snapshot_record_failed');
+      if (strict) {
+        const write = store.mutate({
+          databaseRole: 'native-store',
+          operationId: 'native-store.workspace-registry.recordSnapshot.v1',
+          authorizationReceiptHashes: [],
+          sideEffectReservationHashes: [],
+          mutate: (transaction) => transaction.run(
+            statementIds.recordSnapshot,
+            snapshotId,
+            workspaceId,
+            manifestHash,
+            manifestPath,
+            archivePath,
+            archiveHash,
+            externalContentHash,
+            Math.max(0, Number(bytes || 0)),
+            status,
+            createdAt,
+            exportReceiptHash,
+          ).changes,
+        });
+        if (![
+          'externally_fenced_sqlite_mutation_finalized',
+          'externally_fenced_sqlite_mutation_no_change',
+        ].includes(write?.status) || ![0, 1].includes(write.value)) {
+          throw new Error('workspace_snapshot_external_record_receipt_invalid');
+        }
+      } else {
+        const write = store.execute(`INSERT OR IGNORE INTO workspace_snapshots(snapshot_id,workspace_id,manifest_sha256,manifest_path,archive_path,archive_sha256,external_content_sha256,bytes,status,created_at,export_receipt_sha256) VALUES(${sqlText(snapshotId)},${sqlText(workspaceId)},${sqlText(manifestHash)},${manifestPath ? sqlText(manifestPath) : 'NULL'},${archivePath ? sqlText(archivePath) : 'NULL'},${archiveHash ? sqlText(archiveHash) : 'NULL'},${externalContentHash ? sqlText(externalContentHash) : 'NULL'},${Math.max(0, Number(bytes || 0))},${sqlText(status)},${sqlText(createdAt)},${exportReceiptHash ? sqlText(exportReceiptHash) : 'NULL'});`);
+        if (!write.ok) throw new Error(write.error || 'workspace_snapshot_record_failed');
+      }
       return Object.freeze({ ...payload, snapshotId, workspaceSnapshotHash: snapshotHash });
     },
     qualifyForRetention(workspaceId, { manifestHash, archiveHash, restoreReceipt = null, restoreLedgerReceiptId = null } = {}) {
@@ -105,9 +194,61 @@ export function createWorkspaceRegistry({ store: suppliedStore, clock, receiptLe
         throw new Error('workspace retention qualification requires a verified hash-bound restore receipt');
       }
       const now = restoreReceipt.verifiedAt;
-      const guard = 'workspace_retention_qualification_guard';
       const latestSnapshot = `(SELECT candidate.snapshot_id FROM workspace_snapshots candidate WHERE candidate.workspace_id=${sqlText(workspaceId)} ORDER BY candidate.created_at DESC,candidate.snapshot_id DESC LIMIT 1)`;
-      const write = store.execute(`BEGIN IMMEDIATE;
+      if (strict) {
+        const write = store.mutate({
+          databaseRole: 'native-store',
+          operationId: 'native-store.workspace-registry.qualifyForRetention.v1',
+          authorizationReceiptHashes: [],
+          sideEffectReservationHashes: [],
+          mutate(transaction) {
+            const snapshotChanges = transaction.run(
+              statementIds.qualifySnapshot,
+              restoreReceiptHash,
+              JSON.stringify(restoreReceipt),
+              restoreLedgerReceiptId,
+              now,
+              now,
+              latest.snapshot_id,
+              workspaceId,
+              manifestHash,
+              archiveHash,
+              workspaceId,
+              restoreReceiptHash,
+              restoreLedgerReceiptId,
+              workspaceId,
+            ).changes;
+            if (snapshotChanges !== 1) {
+              throw new Error('workspace_retention_qualification_precondition_failed');
+            }
+            const workspaceChanges = transaction.run(
+              statementIds.qualifyWorkspace,
+              now,
+              workspaceId,
+              latest.snapshot_id,
+              manifestHash,
+              archiveHash,
+              restoreReceiptHash,
+              restoreLedgerReceiptId,
+              now,
+            ).changes;
+            if (workspaceChanges !== 1) {
+              throw new Error('workspace_retention_qualification_precondition_failed');
+            }
+            return Object.freeze({ snapshotChanges, workspaceChanges });
+          },
+        });
+        if (![
+          'externally_fenced_sqlite_mutation_finalized',
+          'externally_fenced_sqlite_mutation_no_change',
+        ].includes(write?.status)
+          || write.value?.snapshotChanges !== 1
+          || write.value?.workspaceChanges !== 1) {
+          throw new Error('workspace_retention_external_qualification_receipt_invalid');
+        }
+      } else {
+        const guard = 'workspace_retention_qualification_guard';
+        const write = store.execute(`BEGIN IMMEDIATE;
 CREATE TEMP TABLE IF NOT EXISTS ${guard}(matched INTEGER NOT NULL CHECK(matched=1));
 DELETE FROM ${guard};
 INSERT INTO ${guard}(matched)
@@ -149,7 +290,8 @@ WHERE workspace_id=${sqlText(workspaceId)} AND status='exported' AND retention_s
   );
 INSERT INTO ${guard}(matched) VALUES(changes());
 COMMIT;`);
-      if (!write.ok) throw new Error(write.error || 'workspace_retention_qualification_failed');
+        if (!write.ok) throw new Error(write.error || 'workspace_retention_qualification_failed');
+      }
       const qualified = query(`SELECT workspace.*,snapshot.manifest_path,snapshot.archive_path,snapshot.archive_sha256,snapshot.external_content_sha256,snapshot.restore_receipt_sha256,snapshot.restore_receipt_json,snapshot.restore_ledger_receipt_id,snapshot.restore_verified_at,snapshot.retention_qualified_at FROM campaign_workspaces workspace JOIN workspace_snapshots snapshot ON snapshot.snapshot_id=${latestSnapshot} WHERE workspace.workspace_id=${sqlText(workspaceId)} AND snapshot.manifest_sha256=${sqlText(manifestHash)} AND snapshot.archive_sha256=${sqlText(archiveHash)} LIMIT 1;`).rows[0] || null;
       if (!qualified || qualified.retention_state !== 'eligible' || qualified.restore_receipt_sha256 !== restoreReceiptHash || qualified.restore_ledger_receipt_id !== restoreLedgerReceiptId) {
         throw new Error('workspace_retention_qualification_precondition_failed');
@@ -159,6 +301,17 @@ COMMIT;`);
     list({ campaignId = null } = {}) {
       const where = campaignId ? ` WHERE campaign_id=${sqlText(campaignId)}` : '';
       return query(`SELECT * FROM campaign_workspaces${where} ORDER BY created_at,workspace_id;`).rows.map(parse);
+    },
+    snapshotRetentionRecords() {
+      const result = query(`SELECT snapshot.snapshot_id,snapshot.workspace_id,snapshot.manifest_sha256,
+snapshot.manifest_path,snapshot.archive_path,snapshot.archive_sha256,snapshot.external_content_sha256,
+snapshot.export_receipt_sha256,snapshot.restore_receipt_sha256,snapshot.restore_receipt_json,
+snapshot.restore_ledger_receipt_id,snapshot.restore_verified_at,snapshot.retention_qualified_at,
+snapshot.status,snapshot.created_at
+FROM workspace_snapshots snapshot
+JOIN campaign_workspaces workspace ON workspace.workspace_id=snapshot.workspace_id
+ORDER BY snapshot.workspace_id,snapshot.created_at,snapshot.snapshot_id;`);
+      return result.rows.map((row) => Object.freeze({ ...row }));
     },
     retentionRecords() {
       const result = query(`SELECT workspace.workspace_id,workspace.campaign_id,workspace.node_id,workspace.workspace_path,workspace.status,workspace.retention_state,workspace.retention_reason,workspace.export_receipt_sha256,snapshot.manifest_sha256,snapshot.manifest_path,snapshot.archive_path,snapshot.archive_sha256,snapshot.external_content_sha256,snapshot.restore_receipt_sha256,snapshot.restore_receipt_json,snapshot.restore_ledger_receipt_id,snapshot.restore_verified_at,snapshot.retention_qualified_at

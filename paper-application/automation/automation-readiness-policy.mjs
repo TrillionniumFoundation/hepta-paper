@@ -1,3 +1,8 @@
+import {
+  BOUNDED_CAPABILITY_QUALIFICATION_SCOPE,
+  PRODUCTION_AGENT_AUTHORED_QUALIFICATION_SCOPE,
+} from '../../paper-domain/automation/autonomous-research-release-binding-contract.mjs';
+
 function unique(values) {
   return Object.freeze([...new Set((values || []).filter(Boolean))]);
 }
@@ -45,6 +50,16 @@ export function evaluateAutomationReadiness({
     ));
   const fullResearchQualificationReady = fullResearchQualification?.ready === true
     && independentHypothesisPriorArtQualificationReady;
+  const boundedGoldenInfrastructureQualificationReady = fullResearchQualificationReady
+    && fullResearchQualification?.qualificationScope
+      === BOUNDED_CAPABILITY_QUALIFICATION_SCOPE
+    && fullResearchQualification?.genericContentCanaryVerified === true;
+  const productionGenericResearchQualificationReady = fullResearchQualificationReady
+    && fullResearchQualification?.qualificationScope
+      === PRODUCTION_AGENT_AUTHORED_QUALIFICATION_SCOPE;
+  const autonomousQualificationAuthorityReady =
+    boundedGoldenInfrastructureQualificationReady
+    || productionGenericResearchQualificationReady;
   const liveProviderCanaryReady = agent.researchAuthorProviderAvailable === true
     && agent.formalReviewProviderAvailable === true;
   const providersReady = liveProviderCanaryRequired
@@ -55,8 +70,9 @@ export function evaluateAutomationReadiness({
     && providersReady
     && campaignStoreReady
     && operationalIntegrityReady
-    && fullResearchQualificationReady;
-  const campaignFullyQualified = fullAutomaticResearchWritingReady;
+    && autonomousQualificationAuthorityReady;
+  const campaignFullyQualified = fullAutomaticResearchWritingReady
+    && productionGenericResearchQualificationReady;
   const blockers = unique([
     ...(!automationRuntimeReady ? ['automation_runtime_not_ready'] : []),
     ...(!campaignStoreReady ? ['campaign_store_not_ready'] : []),
@@ -74,6 +90,8 @@ export function evaluateAutomationReadiness({
     ...(!providersReady ? ['qualified_provider_canaries_not_ready'] : []),
     ...(!independentHypothesisPriorArtQualificationReady
       ? ['independent_hypothesis_prior_art_qualification_not_ready'] : []),
+    ...(!autonomousQualificationAuthorityReady
+      ? ['generic_content_qualification_authority_not_ready'] : []),
     ...(fullResearchQualification?.blockers || []),
   ]);
   return Object.freeze({
@@ -94,6 +112,8 @@ export function evaluateAutomationReadiness({
     fullAutomaticResearchWritingRuntimePreflightReady,
     independentHypothesisPriorArtQualificationReady,
     fullResearchQualificationReady,
+    boundedGoldenInfrastructureQualificationReady,
+    productionGenericResearchQualificationReady,
     liveProviderCanaryRequired,
     liveProviderCanaryReady,
     campaignFullyQualified,
@@ -107,6 +127,52 @@ export function evaluateAutomationReadiness({
         ? 'full_automatic_research_writing_qualification_blocked'
         : 'full_automatic_research_writing_runtime_blocked',
     blockers,
+  });
+}
+
+export function evaluateAutomationReadinessLevels({
+  runtimeReady = false,
+  runtimeStatus = null,
+  boundedProfileReady = false,
+  configuredScopeReady = false,
+  genericCapabilityReady = false,
+  formalSandboxRuntimeReady = false,
+  dynamicFormalProjectClosureReady = false,
+  submissionDispatcherReady = false,
+} = {}) {
+  const effectiveRuntimeReady = runtimeReady === true;
+  const effectiveBoundedProfileReady = effectiveRuntimeReady
+    && boundedProfileReady === true;
+  const effectiveConfiguredScopeReady = effectiveBoundedProfileReady
+    && configuredScopeReady === true;
+  const genericResearchReady = effectiveBoundedProfileReady
+    && effectiveConfiguredScopeReady
+    && genericCapabilityReady === true
+    && formalSandboxRuntimeReady === true
+    && dynamicFormalProjectClosureReady === true;
+  const productionReady = genericResearchReady
+    && submissionDispatcherReady === true;
+  const blockedRuntimeStatus = runtimeStatus
+    && runtimeStatus !== 'automation_plane_runtime_ready'
+    ? runtimeStatus
+    : 'automation_plane_runtime_blocked';
+  return Object.freeze({
+    version: 1,
+    kind: 'AutomationReadinessLevels',
+    status: !effectiveRuntimeReady
+      ? blockedRuntimeStatus
+      : !effectiveBoundedProfileReady
+        ? 'automation_plane_bounded_profile_blocked'
+        : !genericResearchReady
+          ? 'automation_plane_generic_research_blocked'
+          : !productionReady
+            ? 'automation_plane_production_blocked'
+            : 'automation_plane_production_ready',
+    runtimeReady: effectiveRuntimeReady,
+    boundedProfileReady: effectiveBoundedProfileReady,
+    configuredScopeReady: effectiveConfiguredScopeReady,
+    genericResearchReady,
+    productionReady,
   });
 }
 

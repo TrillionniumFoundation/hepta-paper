@@ -31,6 +31,7 @@ test('ordinary and revision referees cannot fall back to the author principal', 
   const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-independent-referee-'));
   t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
   fs.writeFileSync(path.join(workspace, 'main.tex'), '\\section{Claim}A bounded draft.\n');
+  fs.mkdirSync(path.join(workspace, 'runtime'), { recursive: true });
   let authorCalls = 0;
   const withoutIndependentReviewer = createCampaignNodeExecutor({
     runtimeRoot: path.join(workspace, 'runtime'),

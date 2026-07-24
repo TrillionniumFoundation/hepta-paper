@@ -4,9 +4,6 @@ import {
   buildAutonomousResearchSupervisorExternalActionAttemptMarker,
   buildAutonomousResearchSupervisorExternalActionAttemptReceipt,
   buildAutonomousResearchSupervisorExternalActionProgressReceipt,
-  verifyAutonomousResearchSupervisorExternalActionAttemptMarker,
-  verifyAutonomousResearchSupervisorExternalActionAttemptReceipt,
-  verifyAutonomousResearchSupervisorExternalActionProgressReceipt,
 } from '../../paper-domain/automation/autonomous-research-supervisor-external-action-journal.mjs';
 import {
   verifyAutonomousResearchProviderCanarySideEffectInspection,
@@ -14,149 +11,121 @@ import {
 import {
   verifyAutomationReadinessSideEffectInspection,
 } from '../../paper-domain/automation/automation-readiness-side-effect-inspection.mjs';
+import {
+  autonomousResearchSupervisorExternalActionStableKey,
+} from '../../paper-domain/automation/autonomous-research-supervisor-external-action-recovery-contract.mjs';
+import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  assertAutonomousResearchSupervisorFinalizedSideEffectPermit,
+  autonomousResearchSupervisorExternalActionReservationValid,
+  autonomousResearchSupervisorSideEffectReservationHash,
+  mapAutonomousResearchSupervisorExternalActionRow,
+} from './autonomous-research-supervisor-external-action-journal-storage.mjs';
+
+export {
+  installAutonomousResearchSupervisorExternalActionJournalSchema,
+} from './autonomous-research-supervisor-external-action-journal-storage.mjs';
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,255}$/;
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 
-function parseJournalJson(value) {
-  if (!value) return null;
-  try { return JSON.parse(value); }
-  catch { throw new Error('autonomous_research_supervisor_external_action_journal_invalid'); }
-}
-
-function mapExternalActionRow(row) {
-  if (!row) return null;
-  const marker = parseJournalJson(row.marker_json);
-  const progress = parseJournalJson(row.progress_json);
-  const receipt = parseJournalJson(row.receipt_json);
-  if (!verifyAutonomousResearchSupervisorExternalActionAttemptMarker(marker)
-    || marker.autonomousResearchSupervisorExternalActionAttemptMarkerHash !== row.marker_hash
-    || marker.attemptId !== row.attempt_id || marker.campaignId !== row.campaign_id
-    || marker.actionKind !== row.action_kind || marker.reservationHash !== row.reservation_hash
-    || marker.leaseGeneration !== Number(row.lease_generation)
-    || marker.dispatchCount !== Number(row.dispatch_count)
-    || marker.providerCanaryCount !== Number(row.provider_canary_count)
-    || marker.startedAt !== row.started_at
-    || !['in_progress', 'completed', 'failed', 'recovered_incomplete'].includes(row.status)
-    || Boolean(progress) !== Boolean(row.progress_hash)
-    || (progress && (!verifyAutonomousResearchSupervisorExternalActionProgressReceipt(
-      progress, { marker },
-    ) || progress.autonomousResearchSupervisorExternalActionProgressReceiptHash
-      !== row.progress_hash))
-    || Boolean(receipt) !== Boolean(row.receipt_hash)
-    || (receipt && (!verifyAutonomousResearchSupervisorExternalActionAttemptReceipt(
-      receipt, { marker },
-    ) || receipt.autonomousResearchSupervisorExternalActionAttemptReceiptHash
-      !== row.receipt_hash))
-    || (row.status === 'in_progress' && (receipt || row.completed_at))
-    || (row.status !== 'in_progress' && (!receipt || receipt.status !== row.status
-      || receipt.completedAt !== row.completed_at))) {
-    throw new Error('autonomous_research_supervisor_external_action_journal_invalid');
-  }
-  return Object.freeze({
-    attemptId: row.attempt_id,
-    campaignId: row.campaign_id,
-    actionKind: row.action_kind,
-    reservationHash: row.reservation_hash,
-    leaseGeneration: Number(row.lease_generation),
-    dispatchCount: Number(row.dispatch_count),
-    providerCanaryCount: Number(row.provider_canary_count),
-    status: row.status,
-    marker: Object.freeze(marker),
-    progress: progress ? Object.freeze(progress) : null,
-    receipt: receipt ? Object.freeze(receipt) : null,
-    startedAt: row.started_at,
-    completedAt: row.completed_at || null,
-  });
-}
-
-function reservationValid(actionKind, reservation, current) {
-  if (!reservation || typeof reservation !== 'object' || Array.isArray(reservation)
-    || reservation.campaignId !== current.campaignId
-    || reservation.dispatchCount !== current.dispatchCount) return false;
-  if (actionKind === AUTONOMOUS_RESEARCH_SUPERVISOR_EXTERNAL_ACTION_KINDS.PROVIDER_CANARY) {
-    const canary = reservation.providerCanaryReservation;
-    return reservation.kind === 'AutonomousResearchSupervisorProviderCanaryReservation'
-      && SHA256.test(String(reservation.providerConfigurationHash || ''))
-      && canary?.generationSequence === current.providerCanaryCount
-      && canary?.providerCanaryReservedAttemptCount === 1
-      && Number(canary?.providerCanaryReservedCostUsd)
-        === current.policy.providerCanaryReservationCostUsd
-      && SHA256.test(String(canary?.plannedGenerationHash || ''));
-  }
-  return reservation.kind === 'AutonomousResearchSupervisorReadinessActionReservation'
-    && ['launch', 'resume', 'converge'].includes(reservation.action)
-    && SHA256.test(String(reservation.dispatchAuthorizationHash || ''))
-    && SHA256.test(String(reservation.providerConfigurationHash || ''))
-    && ((actionKind
-      === AUTONOMOUS_RESEARCH_SUPERVISOR_EXTERNAL_ACTION_KINDS.PRODUCTION_READINESS
-      && reservation.launchMode === 'production-run')
-      || (actionKind
-        === AUTONOMOUS_RESEARCH_SUPERVISOR_EXTERNAL_ACTION_KINDS.GOLDEN_RELEASE_ATTESTOR
-        && reservation.launchMode === 'golden-bootstrap'));
-}
-
-export function installAutonomousResearchSupervisorExternalActionJournalSchema(database) {
-  database.exec(`CREATE TABLE IF NOT EXISTS autonomous_research_supervisor_external_action_journal (
-    attempt_id TEXT PRIMARY KEY,
-    campaign_id TEXT NOT NULL,
-    action_kind TEXT NOT NULL CHECK(action_kind IN (
-      'provider-canary','production-readiness','golden-release-attestor'
-    )),
-    reservation_hash TEXT NOT NULL,
-    lease_generation INTEGER NOT NULL CHECK(lease_generation>=1),
-    dispatch_count INTEGER NOT NULL CHECK(dispatch_count>=1),
-    provider_canary_count INTEGER NOT NULL CHECK(provider_canary_count>=0),
-    status TEXT NOT NULL CHECK(status IN (
-      'in_progress','completed','failed','recovered_incomplete'
-    )),
-    marker_json TEXT NOT NULL,
-    marker_hash TEXT NOT NULL,
-    progress_json TEXT,
-    progress_hash TEXT,
-    receipt_json TEXT,
-    receipt_hash TEXT,
-    started_at TEXT NOT NULL,
-    completed_at TEXT,
-    UNIQUE(campaign_id,action_kind,reservation_hash)
-  ) STRICT;
-  CREATE UNIQUE INDEX IF NOT EXISTS
-    idx_autonomous_research_supervisor_external_action_one_active
-    ON autonomous_research_supervisor_external_action_journal(campaign_id)
-    WHERE status='in_progress';
-  CREATE INDEX IF NOT EXISTS idx_autonomous_research_supervisor_external_action_history
-    ON autonomous_research_supervisor_external_action_journal(campaign_id,started_at,attempt_id);`);
-}
-
 export function createAutonomousResearchSupervisorExternalActionRepositorySupport({
   database,
+  mutationCoordinator,
+  databaseInstanceId,
+  schemaContractId,
+  writerId,
   requireOpen,
-  beginTransaction,
-  rollback,
   fencedRow,
   leaseIdentity,
   timestamp,
   providerCanarySuccessEvidenceValid,
   providerCanaryProgressEvidenceValid,
+  requireExternallyFencedMutations = false,
 } = {}) {
-  function externalActionRow(attemptId) {
+  const externalActionPermits = new WeakMap();
+  function mutationValue(receipt) {
+    if (!receipt || !Object.prototype.hasOwnProperty.call(receipt, 'value')) {
+      throw new Error('autonomous_research_supervisor_state_mutation_receipt_invalid');
+    }
+    return receipt.value;
+  }
+
+  const mutationInput = Object.freeze({
+      database,
+      databaseInstanceId,
+      schemaContractId,
+      writerId,
+      authorizationReceiptHashes: Object.freeze([]),
+      sideEffectReservationHashes: Object.freeze([]),
+  });
+
+  function externalActionRow(attemptId, transaction = null) {
     requireOpen();
-    return mapExternalActionRow(database.prepare(
-      'SELECT * FROM autonomous_research_supervisor_external_action_journal WHERE attempt_id=?',
-    ).get(attemptId));
+    const value = transaction
+      ? transaction.get('supervisor-state.external-attempt.get.v1', attemptId)
+      : database.prepare(
+        `SELECT * FROM autonomous_research_supervisor_external_action_journal
+          WHERE attempt_id=?`,
+      ).get(attemptId);
+    return mapAutonomousResearchSupervisorExternalActionRow(value);
   }
 
-  function activeAttemptForCampaign(campaignId) {
-    return mapExternalActionRow(database.prepare(`SELECT * FROM
-      autonomous_research_supervisor_external_action_journal
-      WHERE campaign_id=? AND status='in_progress'`).get(campaignId));
+  function activeAttemptForCampaign(campaignId, transaction = null) {
+    const value = transaction
+      ? transaction.get('supervisor-state.external-active.get.v1', campaignId)
+      : database.prepare(`SELECT * FROM
+        autonomous_research_supervisor_external_action_journal
+        WHERE campaign_id=? AND status='in_progress'`).get(campaignId);
+    return mapAutonomousResearchSupervisorExternalActionRow(value);
   }
 
-  function insertInTransaction({ identity, current, actionKind, reservation, observedAt }) {
-    if (!reservationValid(actionKind, reservation, current)) {
+  function attemptForIdempotencyKey(idempotencyKey, transaction = null) {
+    const value = transaction
+      ? transaction.get('supervisor-state.external-idempotency.get.v1', idempotencyKey)
+      : database.prepare(`SELECT * FROM
+        autonomous_research_supervisor_external_action_journal
+        WHERE idempotency_key=?`).get(idempotencyKey);
+    return mapAutonomousResearchSupervisorExternalActionRow(value);
+  }
+
+  function insertInTransaction({
+    transaction, identity, current, actionKind, reservation, observedAt,
+  }) {
+    if (!autonomousResearchSupervisorExternalActionReservationValid(
+      actionKind,
+      reservation,
+      current,
+    )) {
       throw new Error('autonomous_research_supervisor_external_action_reservation_invalid');
     }
     const attemptId = `external-action:${crypto.randomUUID()}`;
+    const idempotencyKey = autonomousResearchSupervisorExternalActionStableKey({
+      campaignId: current.campaignId,
+      actionKind,
+      dispatchCount: current.dispatchCount,
+      providerCanaryCount: current.providerCanaryCount,
+      providerConfigurationHash: reservation.providerConfigurationHash,
+      actionConfigurationIdentityHash:
+        reservation.externalActionConfigurationIdentityHash
+          || reservation.providerConfigurationHash,
+      attemptScopeHash: reservation.providerCanaryReservation?.plannedGenerationHash
+        || reservation.dispatchAuthorizationHash,
+      action: reservation.action || null,
+      launchMode: reservation.launchMode || null,
+    });
+    const existing = attemptForIdempotencyKey(idempotencyKey, transaction);
+    if (existing) {
+      if (existing.campaignId !== current.campaignId
+        || existing.actionKind !== actionKind
+        || existing.dispatchCount !== current.dispatchCount
+        || !['in_progress', 'completed', 'failed'].includes(existing.status)) {
+        throw new Error(
+          'autonomous_research_supervisor_external_action_idempotency_conflict',
+        );
+      }
+      return existing;
+    }
     const marker = buildAutonomousResearchSupervisorExternalActionAttemptMarker({
       attemptId,
       campaignId: current.campaignId,
@@ -165,23 +134,23 @@ export function createAutonomousResearchSupervisorExternalActionRepositorySuppor
       dispatchCount: current.dispatchCount,
       providerCanaryCount: current.providerCanaryCount,
       leaseGeneration: identity.leaseGeneration,
+      idempotencyKey,
       startedAt: observedAt.toISOString(),
     });
-    database.prepare(`INSERT INTO autonomous_research_supervisor_external_action_journal(
-      attempt_id,campaign_id,action_kind,reservation_hash,lease_generation,dispatch_count,
-      provider_canary_count,status,marker_json,marker_hash,started_at
-    ) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(
+    transaction.run(
+      'supervisor-state.external-start.apply.v1',
       marker.attemptId, marker.campaignId, marker.actionKind, marker.reservationHash,
+      marker.idempotencyKey,
       marker.leaseGeneration, marker.dispatchCount, marker.providerCanaryCount,
       'in_progress', JSON.stringify(marker),
       marker.autonomousResearchSupervisorExternalActionAttemptMarkerHash, marker.startedAt,
     );
-    return externalActionRow(attemptId);
+    return externalActionRow(attemptId, transaction);
   }
 
-  function requireFencedAttempt(identity, attempt, observedAt) {
-    fencedRow(identity, observedAt);
-    const value = externalActionRow(attempt?.attemptId || attempt);
+  function requireFencedAttempt(identity, attempt, observedAt, transaction) {
+    fencedRow(identity, observedAt, transaction);
+    const value = externalActionRow(attempt?.attemptId || attempt, transaction);
     if (!value || value.status !== 'in_progress'
       || value.campaignId !== identity.campaignId
       || value.leaseGeneration !== identity.leaseGeneration
@@ -192,6 +161,7 @@ export function createAutonomousResearchSupervisorExternalActionRepositorySuppor
   }
 
   function finishInTransaction({
+    transaction,
     identity,
     attempt,
     observedAt,
@@ -201,7 +171,7 @@ export function createAutonomousResearchSupervisorExternalActionRepositorySuppor
     externalActionPerformed,
     blocker,
   }) {
-    const current = requireFencedAttempt(identity, attempt, observedAt);
+    const current = requireFencedAttempt(identity, attempt, observedAt, transaction);
     if (current.actionKind
       === AUTONOMOUS_RESEARCH_SUPERVISOR_EXTERNAL_ACTION_KINDS.PROVIDER_CANARY) {
       const reservation = current.marker.reservation;
@@ -239,10 +209,8 @@ export function createAutonomousResearchSupervisorExternalActionRepositorySuppor
       externalActionPerformed,
       blocker,
     });
-    const result = database.prepare(`UPDATE
-      autonomous_research_supervisor_external_action_journal SET
-      status=?,receipt_json=?,receipt_hash=?,completed_at=?
-      WHERE attempt_id=? AND status='in_progress'`).run(
+    const result = transaction.run(
+      'supervisor-state.external-finish.apply.v1',
       status, JSON.stringify(receipt),
       receipt.autonomousResearchSupervisorExternalActionAttemptReceiptHash,
       receipt.completedAt, current.attemptId,
@@ -250,10 +218,10 @@ export function createAutonomousResearchSupervisorExternalActionRepositorySuppor
     if (Number(result.changes) !== 1) {
       throw new Error('autonomous_research_supervisor_external_action_fence_conflict');
     }
-    return externalActionRow(current.attemptId);
+    return externalActionRow(current.attemptId, transaction);
   }
 
-  function recoverAttemptInTransaction({ attempt, observedAt, blocker }) {
+  function recoverAttemptInTransaction({ transaction, attempt, observedAt, blocker }) {
     const receipt = buildAutonomousResearchSupervisorExternalActionAttemptReceipt({
       marker: attempt.marker,
       status: 'recovered_incomplete',
@@ -264,10 +232,8 @@ export function createAutonomousResearchSupervisorExternalActionRepositorySuppor
       externalActionPerformed: Boolean(attempt.progress),
       blocker,
     });
-    const updated = database.prepare(`UPDATE
-      autonomous_research_supervisor_external_action_journal SET
-      status='recovered_incomplete',receipt_json=?,receipt_hash=?,completed_at=?
-      WHERE attempt_id=? AND status='in_progress'`).run(
+    const updated = transaction.run(
+      'supervisor-state.external-recover.apply.v1',
       JSON.stringify(receipt),
       receipt.autonomousResearchSupervisorExternalActionAttemptReceiptHash,
       receipt.completedAt,
@@ -279,16 +245,152 @@ export function createAutonomousResearchSupervisorExternalActionRepositorySuppor
     return receipt;
   }
 
-  function markProviderAttemptInterrupted(attempt) {
+  function cancelAttemptBeforeStartInTransaction({
+    transaction,
+    attempt,
+    observedAt,
+    blocker,
+  }) {
+    if (attempt.status !== 'in_progress' || attempt.progress !== null) {
+      throw new Error(
+        'autonomous_research_supervisor_external_action_pre_start_cancel_invalid',
+      );
+    }
+    const receipt = buildAutonomousResearchSupervisorExternalActionAttemptReceipt({
+      marker: attempt.marker,
+      status: 'failed',
+      evidence: null,
+      lastProgress: null,
+      completedAt: observedAt.toISOString(),
+      actionAccountingComplete: true,
+      externalActionPerformed: false,
+      blocker,
+    });
+    const updated = transaction.run(
+      'supervisor-state.external-finish.apply.v1',
+      'failed',
+      JSON.stringify(receipt),
+      receipt.autonomousResearchSupervisorExternalActionAttemptReceiptHash,
+      receipt.completedAt,
+      attempt.attemptId,
+    );
+    if (Number(updated.changes) !== 1) {
+      throw new Error('autonomous_research_supervisor_external_action_recovery_conflict');
+    }
+    return receipt;
+  }
+
+  function markProviderAttemptInterrupted(transaction, attempt) {
     if (attempt.actionKind
       !== AUTONOMOUS_RESEARCH_SUPERVISOR_EXTERNAL_ACTION_KINDS.PROVIDER_CANARY) return;
-    database.prepare(`UPDATE autonomous_research_supervisor_campaign SET
-      last_provider_canary_status='failed_unattributed',
-      last_provider_canary_receipt_hash=NULL,last_error=?
-      WHERE campaign_id=? AND last_provider_canary_status='in_progress'`).run(
+    transaction.run(
+      'supervisor-state.campaign-canary-interrupted.apply.v1',
       'autonomous_research_supervisor_provider_canary_interrupted',
       attempt.campaignId,
     );
+  }
+
+  function completeRecoveryInTransaction({
+    transaction,
+    attempt,
+    resolution,
+    observedAt,
+  }) {
+    if (attempt.status !== 'in_progress' || !attempt.progress
+      || !['completed', 'failed'].includes(resolution?.outcome)
+      || resolution.actionKind !== attempt.actionKind
+      || resolution.idempotencyKey !== attempt.idempotencyKey
+      || resolution.markerHash
+        !== attempt.marker.autonomousResearchSupervisorExternalActionAttemptMarkerHash
+      || resolution.reservationHash !== attempt.reservationHash
+      || resolution.actionConfigurationIdentityHash
+        !== (attempt.marker.reservation.externalActionConfigurationIdentityHash
+          || attempt.marker.reservation.providerConfigurationHash)
+      || resolution.progressHash
+        !== attempt.progress.autonomousResearchSupervisorExternalActionProgressReceiptHash
+      || resolution.actionAccountingComplete !== true
+      || !resolution.result || typeof resolution.result !== 'object'
+      || Array.isArray(resolution.result)) {
+      throw new Error('autonomous_research_supervisor_external_action_recovery_invalid');
+    }
+    const successful = resolution.outcome === 'completed';
+    let evidence = null;
+    if (attempt.actionKind
+      === AUTONOMOUS_RESEARCH_SUPERVISOR_EXTERNAL_ACTION_KINDS.PROVIDER_CANARY) {
+      evidence = successful
+        ? resolution.result.providerCanaryPairReceipt || null
+        : resolution.result.sideEffectInspection || null;
+      if ((successful && !providerCanarySuccessEvidenceValid(evidence, attempt.marker))
+        || (!successful && !verifyAutonomousResearchProviderCanarySideEffectInspection(
+          evidence,
+          {
+            providerConfigurationHash: attempt.marker.reservation.providerConfigurationHash,
+            reservation: attempt.marker.reservation.providerCanaryReservation,
+          },
+        ))) {
+        throw new Error('autonomous_research_supervisor_external_action_recovery_invalid');
+      }
+    } else {
+      evidence = resolution.result.sideEffectInspection || null;
+      const actionResult = resolution.result.actionResult;
+      const productionReport = actionResult?.report || actionResult?.readiness || actionResult;
+      const embeddedInspection = attempt.actionKind
+        === AUTONOMOUS_RESEARCH_SUPERVISOR_EXTERNAL_ACTION_KINDS.PRODUCTION_READINESS
+        ? productionReport?.readinessSideEffectInspection || null
+        : evidence;
+      if (!verifyAutomationReadinessSideEffectInspection(evidence)
+        || !actionResult || typeof actionResult !== 'object' || Array.isArray(actionResult)
+        || JSON.stringify(embeddedInspection) !== JSON.stringify(evidence)) {
+        throw new Error('autonomous_research_supervisor_external_action_recovery_invalid');
+      }
+    }
+    if (resolution.externalActionPerformed !== evidence.externalActionPerformed) {
+      throw new Error('autonomous_research_supervisor_external_action_recovery_invalid');
+    }
+    const status = successful ? 'completed' : 'failed';
+    const receipt = buildAutonomousResearchSupervisorExternalActionAttemptReceipt({
+      marker: attempt.marker,
+      status,
+      evidence,
+      lastProgress: attempt.progress,
+      completedAt: resolution.completedAt || observedAt.toISOString(),
+      actionAccountingComplete: true,
+      externalActionPerformed: resolution.externalActionPerformed,
+      blocker: successful ? null
+        : 'autonomous_research_supervisor_external_action_recovered_failure',
+    });
+    const updated = transaction.run(
+      'supervisor-state.external-finish.apply.v1',
+      status, JSON.stringify(receipt),
+      receipt.autonomousResearchSupervisorExternalActionAttemptReceiptHash,
+      receipt.completedAt, attempt.attemptId,
+    );
+    if (Number(updated.changes) !== 1) {
+      throw new Error('autonomous_research_supervisor_external_action_recovery_conflict');
+    }
+    const recoveryResultHash = storeRecoveryResultInTransaction({
+      transaction, attempt, result: resolution.result,
+    });
+    return Object.freeze({ receipt, recoveryResultHash, evidence, successful });
+  }
+
+  function storeRecoveryResultInTransaction({ transaction, attempt, result }) {
+    const resultHash = hashRecord(
+      'AutonomousResearchSupervisorExternalActionRecoveryResult',
+      {
+        actionKind: attempt.actionKind,
+        idempotencyKey: attempt.idempotencyKey,
+        result,
+      },
+    );
+    const updated = transaction.run(
+      'supervisor-state.external-recovery-result.apply.v1',
+      JSON.stringify(result), resultHash, attempt.attemptId,
+    );
+    if (Number(updated.changes) !== 1) {
+      throw new Error('autonomous_research_supervisor_external_action_recovery_conflict');
+    }
+    return resultHash;
   }
 
   return Object.freeze({
@@ -296,34 +398,151 @@ export function createAutonomousResearchSupervisorExternalActionRepositorySuppor
     insertInTransaction,
     requireFencedAttempt,
     finishInTransaction,
+    cancelInfrastructureDeferred({
+      lease,
+      attempt = null,
+      now = new Date(),
+    } = {}) {
+      requireOpen();
+      const identity = leaseIdentity(lease);
+      const observedAt = timestamp(now);
+      return mutationValue(mutationCoordinator.executeMutation({
+        ...mutationInput,
+        databaseRole: 'supervisor-state',
+        operationId:
+          'supervisor-state.supervisor-external-action-repository-support.cancelInfrastructureDeferred.v1',
+        mutate(transaction) {
+          const current = fencedRow(identity, observedAt, transaction);
+          const active = attempt
+            ? requireFencedAttempt(identity, attempt, observedAt, transaction)
+            : activeAttemptForCampaign(identity.campaignId, transaction);
+          if (!active) return Object.freeze({ cancelled: false });
+          if (active.actionKind
+              === AUTONOMOUS_RESEARCH_SUPERVISOR_EXTERNAL_ACTION_KINDS.PROVIDER_CANARY
+            || active.progress !== null
+            || active.dispatchCount !== current.dispatchCount) {
+            throw new Error(
+              'autonomous_research_supervisor_external_action_infrastructure_cancel_fence_lost',
+            );
+          }
+          const finished = finishInTransaction({
+            transaction,
+            identity,
+            attempt: active,
+            observedAt,
+            successful: false,
+            evidence: null,
+            actionAccountingComplete: false,
+            externalActionPerformed: false,
+            blocker: 'autonomous_research_supervisor_infrastructure_deferred_before_external_action',
+          });
+          const result = transaction.run(
+            'supervisor-state.campaign-external-infrastructure-cancel.apply.v1',
+            observedAt.toISOString(), identity.campaignId, identity.ownerId,
+            identity.leaseToken, identity.leaseGeneration,
+            active.dispatchCount, active.dispatchCount, identity.leaseGeneration,
+            identity.campaignId, active.dispatchCount,
+            active.attemptId,
+          );
+          if (Number(result.changes) !== 1) {
+            throw new Error(
+              'autonomous_research_supervisor_external_action_infrastructure_cancel_fence_lost',
+            );
+          }
+          externalActionPermits.delete(attempt || active);
+          return Object.freeze({
+            cancelled: true,
+            attempt: finished,
+            campaign: fencedRow(identity, observedAt, transaction),
+          });
+        },
+      }));
+    },
     beginExternalActionAttempt({ lease, actionKind, reservation, now = new Date() } = {}) {
       requireOpen();
       const identity = leaseIdentity(lease);
       const observedAt = timestamp(now);
-      try {
-        beginTransaction();
-        const current = fencedRow(identity, observedAt);
+      const current = fencedRow(identity, observedAt);
+      const idempotencyKey = autonomousResearchSupervisorExternalActionStableKey({
+        campaignId: current.campaignId,
+        actionKind,
+        dispatchCount: current.dispatchCount,
+        providerCanaryCount: current.providerCanaryCount,
+        providerConfigurationHash: reservation?.providerConfigurationHash,
+        actionConfigurationIdentityHash:
+          reservation?.externalActionConfigurationIdentityHash
+            || reservation?.providerConfigurationHash,
+        attemptScopeHash: reservation?.providerCanaryReservation?.plannedGenerationHash
+          || reservation?.dispatchAuthorizationHash,
+        action: reservation?.action || null,
+        launchMode: reservation?.launchMode || null,
+      });
+      const prior = attemptForIdempotencyKey(idempotencyKey);
+      const reservationHash = prior?.reservationHash
+        || autonomousResearchSupervisorSideEffectReservationHash({
+        campaignId: identity.campaignId,
+        actionKind,
+        reservation,
+      });
+      const mutationReceipt = mutationCoordinator.executeMutation({
+        ...mutationInput,
+        databaseRole: 'supervisor-state',
+        operationId:
+          'supervisor-state.supervisor-external-action-repository-support.beginExternalActionAttempt.v1',
+        sideEffectReservationHashes: [reservationHash],
+        mutate(transaction) {
+        const current = fencedRow(identity, observedAt, transaction);
         const attempt = insertInTransaction({
-          identity, current, actionKind, reservation, observedAt,
+          transaction, identity, current, actionKind, reservation, observedAt,
         });
-        database.exec('COMMIT;');
         return attempt;
-      } catch (error) {
-        rollback();
-        throw error;
+        },
+      });
+      const attempt = mutationValue(mutationReceipt);
+      if (attempt?.reservationHash !== reservationHash
+        || attempt?.idempotencyKey !== idempotencyKey) {
+        throw new Error('autonomous_research_supervisor_external_action_reservation_invalid');
       }
+      if (attempt.status !== 'in_progress') return attempt;
+      assertAutonomousResearchSupervisorFinalizedSideEffectPermit({
+        receipt: mutationReceipt,
+        required: requireExternallyFencedMutations,
+        reservationHash,
+      });
+      externalActionPermits.set(attempt, Object.freeze({
+        required: requireExternallyFencedMutations,
+        reservationHash,
+        sideEffectPermitHash: mutationReceipt.sideEffectPermitHash || null,
+      }));
+      return attempt;
+    },
+    assertExternalActionSideEffectPermit({ attempt } = {}) {
+      const permit = externalActionPermits.get(attempt);
+      externalActionPermits.delete(attempt);
+      if (!permit || permit.reservationHash !== attempt?.reservationHash
+        || (permit.required && !SHA256.test(String(permit.sideEffectPermitHash || '')))) {
+        throw new Error(
+          'autonomous_research_supervisor_external_action_side_effect_permit_invalid',
+        );
+      }
+      return true;
     },
     recordExternalActionProgress({ lease, attempt, evidence, now = new Date() } = {}) {
       requireOpen();
       const identity = leaseIdentity(lease);
       const observedAt = timestamp(now);
-      try {
-        beginTransaction();
-        const current = requireFencedAttempt(identity, attempt, observedAt);
+      return mutationValue(mutationCoordinator.executeMutation({
+        ...mutationInput,
+        databaseRole: 'supervisor-state',
+        operationId:
+          'supervisor-state.supervisor-external-action-repository-support.recordExternalActionProgress.v1',
+        mutate(transaction) {
+        const campaign = fencedRow(identity, observedAt, transaction);
+        const current = requireFencedAttempt(identity, attempt, observedAt, transaction);
         if (current.actionKind
           === AUTONOMOUS_RESEARCH_SUPERVISOR_EXTERNAL_ACTION_KINDS.PROVIDER_CANARY
           && !providerCanaryProgressEvidenceValid(
-            evidence, current.marker.reservation,
+            evidence, current.marker,
           )) {
           throw new Error('autonomous_research_supervisor_external_action_progress_invalid');
         }
@@ -333,9 +552,8 @@ export function createAutonomousResearchSupervisorExternalActionRepositorySuppor
           sequence: (current.progress?.sequence || 0) + 1,
           recordedAt: observedAt.toISOString(),
         });
-        const result = database.prepare(`UPDATE
-          autonomous_research_supervisor_external_action_journal SET
-          progress_json=?,progress_hash=? WHERE attempt_id=? AND status='in_progress'`).run(
+        const result = transaction.run(
+          'supervisor-state.external-progress.apply.v1',
           JSON.stringify(progress),
           progress.autonomousResearchSupervisorExternalActionProgressReceiptHash,
           current.attemptId,
@@ -343,12 +561,22 @@ export function createAutonomousResearchSupervisorExternalActionRepositorySuppor
         if (Number(result.changes) !== 1) {
           throw new Error('autonomous_research_supervisor_external_action_fence_conflict');
         }
-        database.exec('COMMIT;');
-        return externalActionRow(current.attemptId);
-      } catch (error) {
-        rollback();
-        throw error;
-      }
+        if (campaign.activeDispatchPhase === 'reserved') {
+          const started = transaction.run(
+            'supervisor-state.campaign-dispatch-started.apply.v1',
+            observedAt.toISOString(), identity.campaignId, current.dispatchCount,
+            identity.leaseGeneration,
+          );
+          if (Number(started.changes) !== 1) {
+            throw new Error('autonomous_research_supervisor_dispatch_started_fence_lost');
+          }
+        } else if (campaign.activeDispatchPhase !== 'started'
+          || campaign.activeDispatchCount !== current.dispatchCount) {
+          throw new Error('autonomous_research_supervisor_dispatch_started_fence_lost');
+        }
+        return externalActionRow(current.attemptId, transaction);
+        },
+      }));
     },
     finishExternalActionAttempt({
       lease,
@@ -363,18 +591,16 @@ export function createAutonomousResearchSupervisorExternalActionRepositorySuppor
       requireOpen();
       const identity = leaseIdentity(lease);
       const observedAt = timestamp(now);
-      try {
-        beginTransaction();
-        const result = finishInTransaction({
-          identity, attempt, observedAt, successful, evidence,
+      return mutationValue(mutationCoordinator.executeMutation({
+        ...mutationInput,
+        databaseRole: 'supervisor-state',
+        operationId:
+          'supervisor-state.supervisor-external-action-repository-support.finishExternalActionAttempt.v1',
+        mutate: (transaction) => finishInTransaction({
+          transaction, identity, attempt, observedAt, successful, evidence,
           actionAccountingComplete, externalActionPerformed, blocker,
-        });
-        database.exec('COMMIT;');
-        return result;
-      } catch (error) {
-        rollback();
-        throw error;
-      }
+        }),
+      }));
     },
     getExternalActionAttempt(attemptId) {
       return externalActionRow(attemptId);
@@ -388,35 +614,25 @@ export function createAutonomousResearchSupervisorExternalActionRepositorySuppor
       return Object.freeze(database.prepare(`SELECT * FROM
         autonomous_research_supervisor_external_action_journal WHERE campaign_id=?
         ORDER BY started_at,attempt_id LIMIT ?`).all(campaignId, bounded)
-        .map(mapExternalActionRow));
+        .map(mapAutonomousResearchSupervisorExternalActionRow));
     },
-    recoverStaleAttemptsInTransaction({ observedAt }) {
-      const unfinished = database.prepare(`SELECT journal.*
-        FROM autonomous_research_supervisor_external_action_journal AS journal
-        JOIN autonomous_research_supervisor_campaign AS campaign
-          ON campaign.campaign_id=journal.campaign_id
-        WHERE journal.status='in_progress' AND (
-          campaign.lease_expires_at IS NULL
-          OR campaign.lease_generation<>journal.lease_generation
-          OR julianday(campaign.lease_expires_at)<=julianday(?)
-        ) ORDER BY journal.started_at,journal.attempt_id`).all(observedAt.toISOString())
-        .map(mapExternalActionRow);
-      const receipts = unfinished.map((attempt) => {
-        const receipt = recoverAttemptInTransaction({
-          attempt,
-          observedAt,
-          blocker: 'autonomous_research_supervisor_external_action_interrupted',
-        });
-        markProviderAttemptInterrupted(attempt);
-        return receipt;
-      });
-      return Object.freeze(receipts);
+    staleAttemptsInTransaction({ transaction, observedAt }) {
+      return Object.freeze(transaction.all(
+        'supervisor-state.external-stale.all.v1',
+        observedAt.toISOString(),
+      )
+        .map(mapAutonomousResearchSupervisorExternalActionRow));
     },
-    recoverActiveAttemptInTransaction({ current, observedAt, blocker }) {
+    cancelAttemptBeforeStartInTransaction,
+    completeRecoveryInTransaction,
+    storeRecoveryResultInTransaction,
+    recoverActiveAttemptInTransaction({ transaction, current, observedAt, blocker }) {
       const attempt = current.activeExternalActionAttempt;
       if (!attempt) return null;
-      const receipt = recoverAttemptInTransaction({ attempt, observedAt, blocker });
-      markProviderAttemptInterrupted(attempt);
+      const receipt = recoverAttemptInTransaction({
+        transaction, attempt, observedAt, blocker,
+      });
+      markProviderAttemptInterrupted(transaction, attempt);
       return receipt;
     },
   });

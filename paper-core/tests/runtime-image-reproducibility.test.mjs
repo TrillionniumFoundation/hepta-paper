@@ -262,6 +262,8 @@ test('Python images require a complete hashed wheel closure and immutable OS sna
 test('R system packages use an immutable Ubuntu snapshot and exact requested versions', () => {
   const dockerfile = fs.readFileSync('runtime-images/r-scientific/Dockerfile', 'utf8');
   const restore = fs.readFileSync('runtime-images/r-scientific/restore-locked.R', 'utf8');
+  assert.equal(AUTOMATION_RUNTIME_IMAGES.r.imageDigest,
+    'sha256:8fb19fecb75e13e74a7c2fc1e4c9c9e53bd0621be1e4cc62a8bd660e76ce3c03');
   assert.match(dockerfile, /snapshot\.ubuntu\.com\/ubuntu\/20260715T000000Z/);
   assert.match(dockerfile, /COPY source-cas \/opt\/hepta-r-source-cas/);
   assert.match(dockerfile, /RUN --network=none Rscript \/tmp\/restore-locked\.R/);
@@ -338,7 +340,19 @@ test('GPU image is self-contained on a public immutable base and registry binds 
     'hepta-dataset-access-supervisor',
   ]);
   const packageDocument = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-  assert.match(packageDocument.scripts['automation:runtime-build'], /docker build -t hepta\/python-gpu:0\.14\.0 runtime-images\/python-gpu/);
+  assert.match(packageDocument.scripts['automation:runtime-build'],
+    /automation:runtime-bootstrap:python -- --profile python --build/);
+  assert.match(packageDocument.scripts['automation:runtime-build'],
+    /automation:runtime-bootstrap:python -- --profile pythonGpu --build/);
+  assert.match(packageDocument.scripts['automation:runtime-build'], /npm run automation:runtime-bootstrap:r -- --build/);
+  assert.doesNotMatch(packageDocument.scripts['automation:runtime-build'],
+    /docker build -t hepta\/python/);
+  assert.doesNotMatch(packageDocument.scripts['automation:runtime-build'],
+    /docker build -t hepta\/r-scientific/);
+  assert.equal(packageDocument.scripts['automation:runtime-bootstrap:python'],
+    'node paper-core/bin/automation-python-runtime-bootstrap.mjs');
+  assert.equal(packageDocument.scripts['automation:runtime-bootstrap:r'],
+    'node paper-core/bin/automation-r-runtime-bootstrap.mjs');
   assert.doesNotMatch(packageDocument.scripts['automation:runtime-build'], /python-gpu:0\.13\.0/);
 });
 

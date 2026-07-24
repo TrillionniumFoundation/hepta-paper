@@ -253,6 +253,7 @@ export function verifyIndependentRawEventArtifactRecomputation({
     rawEventRows: primitive.recomputedRows,
     requiredMetrics: design?.requiredMetrics || [],
     metricSpecs: design?.metricSpecs || {},
+    versionedExperimentIrHash: harnessReceipt?.versionedExperimentIrHash || null,
   });
   blockers.push(...recomputationManifest.blockers.map((item) => `raw_event_recomputation:${item}`));
   if (!same(recomputationManifest, harnessReceipt?.rawEventRecomputationManifest)) {

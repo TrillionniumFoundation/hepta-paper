@@ -97,11 +97,20 @@ export function createGoldenCampaignQualificationController({
       }
       let localInspection;
       try {
+        const evidence =
+          state.verifiedInspection?.independentVerificationEvidence || null;
+        if (evidence
+          ?.independentExternalResearchQualificationVerificationEvidenceHash
+          !== state.verifiedInspection?.independentVerificationEvidenceHash) {
+          throw new Error(
+            'golden_campaign_independent_verification_evidence_invalid',
+          );
+        }
         localInspection = await localQualificationVerifier.verifyLocally({
           receipt: state.receipt,
           campaignReleaseAuthority,
           preparation,
-          independentInspection: state.verifiedInspection,
+          independentVerificationEvidence: evidence,
           observedAt: now(),
         });
       } catch {
@@ -114,7 +123,9 @@ export function createGoldenCampaignQualificationController({
         || localInspection?.ready !== true
         || localInspection?.receiptAccepted !== true
         || localInspection?.fullDomainVerificationReady !== true
-        || eligibility?.fullAutomaticResearchWritingReady !== true) {
+        || eligibility?.boundedGoldenCapabilityQualificationVerified !== true
+        || eligibility?.fullAutomaticResearchWritingReady === true
+        || eligibility?.campaignFullyQualified === true) {
         return blocked('golden_campaign_local_reverification_blocked', [
           'golden_campaign_local_full_domain_reverification_required',
           ...(localInspection?.blockers || []),

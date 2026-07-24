@@ -8,8 +8,65 @@ import {
   verifyAnalysisProtocolReplayBinding,
 } from './analysis-protocol-evaluator.mjs';
 import { evaluateSystemBenchmarkArmRawObservation } from './system-benchmark-arm-protocol.mjs';
+import {
+  autonomousEmpiricalFamilyPluginProfileFor,
+} from './autonomous-empirical-family-plugin-registry.mjs';
+import {
+  buildTypedNumericOracleCertificate,
+  buildTypedNumericOracleCertificateSet,
+} from '../research/typed-numeric-oracle-certificate.mjs';
+import {
+  buildTypedNumericOracleProduction,
+  verifyTypedNumericOracleProduction,
+} from '../research/typed-numeric-oracle-production.mjs';
+import {
+  verifyIndependentTypedNumericOracleRecomputation,
+} from '../research/independent-typed-numeric-oracle-recomputation.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
+
+function processIsolatedRecomputationEvidenceValid(independent) {
+  const assurance = independent?.processIsolatedRawEventRecomputationAssurance;
+  const worker = assurance?.workerReceipt;
+  if (!assurance
+    || assurance.version !== 1
+    || assurance.kind !== 'ProcessIsolatedRawEventRecomputationAssurance'
+    || assurance.status !== 'process_isolated_raw_event_recomputation_verified'
+    || assurance.assuranceScope !== 'process-isolated-independent-implementation-v1'
+    || assurance.processIndependent !== true
+    || assurance.networkActionPerformed !== false
+    || assurance.externalActionPerformed !== false
+    || !Array.isArray(assurance.blockers) || assurance.blockers.length !== 0
+    || !worker
+    || worker.status !== 'process_isolated_raw_event_recomputation_verified'
+    || worker.processIndependent !== true
+    || worker.networkActionPerformed !== false
+    || worker.externalActionPerformed !== false
+    || worker.workerPid === worker.parentPid
+    || assurance.workerPid !== worker.workerPid
+    || assurance.parentPid !== worker.parentPid
+    || assurance.workerReceiptHash
+      !== worker.processIsolatedRawEventRecomputationWorkerReceiptHash
+    || assurance.rawEventRecomputationManifestHash
+      !== worker.rawEventRecomputationManifestHash
+    || assurance.workerImplementationHash !== worker.workerImplementationHash
+    || assurance.workerImplementationSourceHash
+      !== worker.workerImplementationSourceHash) return false;
+  const {
+    processIsolatedRawEventRecomputationWorkerReceiptHash: workerHash,
+    ...workerPayload
+  } = worker;
+  const {
+    processIsolatedRawEventRecomputationAssuranceHash: assuranceHash,
+    ...assurancePayload
+  } = assurance;
+  return SHA256.test(String(workerHash || ''))
+    && hashRecord('ProcessIsolatedRawEventRecomputationWorkerReceipt', workerPayload)
+      === workerHash
+    && SHA256.test(String(assuranceHash || ''))
+    && hashRecord('ProcessIsolatedRawEventRecomputationAssurance', assurancePayload)
+      === assuranceHash;
+}
 
 function rawObservationAuthorityFacts(receipt) {
   const cells = receipt?.cells || [];
@@ -32,6 +89,11 @@ function rawObservationAuthorityFacts(receipt) {
   if (recomputationPayload) delete recomputationPayload.rawEventRecomputationManifestHash;
   const rawObservationRecomputationVerified = propertyOracleVerified
     && receipt.rawEventManifestHash === hashRecord('SystemBenchmarkRawEventManifest', rawEventManifest)
+    && SHA256.test(String(receipt?.versionedExperimentIrHash || ''))
+    && cells.every((cell) => cell.versionedExperimentIrHash
+      === receipt.versionedExperimentIrHash)
+    && recomputation?.versionedExperimentIrHash
+      === receipt.versionedExperimentIrHash
     && recomputation?.status === 'raw_event_recomputation_verified'
     && SHA256.test(String(recomputation?.rawEventRecomputationManifestHash || ''))
     && hashRecord('RawEventRecomputationManifest', recomputationPayload) === recomputation.rawEventRecomputationManifestHash
@@ -48,6 +110,7 @@ function rawObservationAuthorityFacts(receipt) {
         rawEventArtifactHash: cell.rawEventArtifactHash,
         rawEventCount: cell.rawEventCount,
         metrics: cell.metrics,
+        versionedExperimentIrHash: receipt.versionedExperimentIrHash,
       });
       return SHA256.test(String(cell.rawEventArtifactHash || ''))
         && Number.isSafeInteger(cell.rawEventCount) && cell.rawEventCount >= 2
@@ -57,16 +120,68 @@ function rawObservationAuthorityFacts(receipt) {
           === hashRecord('RawEventRecomputedMetricsExpected', cell.metrics)
         && cell.systemBenchmarkArmProtocolExecutionReceiptHash === expected;
     });
+  const independent = receipt?.independentRawEventRecomputationAssurance || null;
+  const independentPayload = independent ? { ...independent } : null;
+  if (independentPayload) {
+    delete independentPayload.independentRawEventRecomputationAssuranceHash;
+  }
+  const independentResidualRecomputationVerified = rawObservationRecomputationVerified
+    && [1, 2].includes(independent?.version)
+    && independent?.kind === 'IndependentRawEventRecomputationAssurance'
+    && independent?.status === 'independent_raw_event_recomputation_assurance_verified'
+    && independent?.versionedExperimentIrHash
+      === receipt.versionedExperimentIrHash
+    && independent?.assuranceScope
+      === 'process-isolated-independent-implementation-v1'
+    && independent?.processIndependent === true
+    && processIsolatedRecomputationEvidenceValid(independent)
+    && independent?.producerManifestHash
+      === recomputation?.rawEventRecomputationManifestHash
+    && independent?.independentManifestHash
+      === recomputation?.rawEventRecomputationManifestHash
+    && independent?.producerImplementationHash
+      === receipt?.systemBenchmarkHarnessImplementationHash
+    && SHA256.test(String(independent?.verifierImplementationHash || ''))
+    && independent.verifierImplementationHash
+      !== independent.producerImplementationHash
+    && independent?.verifierImplementationHash
+      === independent?.processIsolatedRawEventRecomputationAssurance
+        ?.workerImplementationHash
+    && independent?.independenceContractHash
+      === independent?.processIsolatedRawEventRecomputationAssurance
+        ?.processIsolatedRawEventRecomputationAssuranceHash
+    && Number(independent?.maximumAbsoluteResidual) === 0
+    && Array.isArray(independent?.blockers) && independent.blockers.length === 0
+    && SHA256.test(String(
+      independent?.independentRawEventRecomputationAssuranceHash || '',
+    ))
+    && hashRecord('IndependentRawEventRecomputationAssurance', independentPayload)
+      === independent.independentRawEventRecomputationAssuranceHash;
   return {
     propertyOracleVerified,
     rawObservationRecomputationVerified,
+    independentResidualRecomputationVerified,
     rawEventRecomputationManifestHash: recomputation?.rawEventRecomputationManifestHash || null,
+    independentRecomputationAssuranceHash:
+      independent?.independentRawEventRecomputationAssuranceHash || null,
+    independentVerifierImplementationHash:
+      independent?.verifierImplementationHash || null,
+    independentRecomputationAssuranceScope:
+      independent?.assuranceScope || null,
+    independentRecomputationProcessIndependent:
+      independent?.processIndependent === true,
     aggregateResidual: Number(recomputation?.maximumAbsoluteResidual),
     toleranceSatisfied: rawObservationRecomputationVerified && Number(recomputation?.maximumAbsoluteResidual) === 0,
   };
 }
 
-export function buildRawEventRecomputationManifest({ cells = [], rawEventRows = [], requiredMetrics = [], metricSpecs = {} } = {}) {
+export function buildRawEventRecomputationManifest({
+  cells = [],
+  rawEventRows = [],
+  requiredMetrics = [],
+  metricSpecs = {},
+  versionedExperimentIrHash = null,
+} = {}) {
   const rows = new Map(rawEventRows.map((row) => [row?.cellId, row]));
   const blockers = [];
   let maximumAbsoluteResidual = 0;
@@ -80,6 +195,10 @@ export function buildRawEventRecomputationManifest({ cells = [], rawEventRows = 
       metricSpecs,
     });
     const rowHash = line ? hashBytes(line) : null;
+    if (versionedExperimentIrHash
+      && cell?.versionedExperimentIrHash !== versionedExperimentIrHash) {
+      blockers.push(`raw_event_recomputation_experiment_ir_mismatch:${cell.cellId}`);
+    }
     if (rowHash !== cell.rawEventArtifactHash) blockers.push(`raw_event_recomputation_artifact_mismatch:${cell.cellId}`);
     if (evaluated.status !== 'system_benchmark_arm_observation_computed') blockers.push(...evaluated.blockers.map((item) => `${item}:${cell.cellId}`));
     for (const metric of requiredMetrics) {
@@ -98,12 +217,13 @@ export function buildRawEventRecomputationManifest({ cells = [], rawEventRows = 
   if (rows.size !== cells.length) blockers.push('raw_event_recomputation_row_bijection_invalid');
   if (maximumAbsoluteResidual !== 0) blockers.push('raw_event_recomputation_residual_nonzero');
   const payload = {
-    version: 1,
+    version: versionedExperimentIrHash ? 2 : 1,
     kind: 'RawEventRecomputationManifest',
     status: blockers.length ? 'raw_event_recomputation_blocked' : 'raw_event_recomputation_verified',
     cells: Object.freeze(recomputedCells),
     maximumAbsoluteResidual,
     blockers: Object.freeze([...new Set(blockers)]),
+    ...(versionedExperimentIrHash ? { versionedExperimentIrHash } : {}),
   };
   return Object.freeze({ ...payload, rawEventRecomputationManifestHash: hashRecord('RawEventRecomputationManifest', payload) });
 }
@@ -112,13 +232,197 @@ export function buildHarnessAnalysisObservationAuthority(receipt) {
   const observations = (receipt?.cells || []).map((cell) => ({
     seed: cell.seed, repetition: cell.repetition, arm: cell.arm, metrics: cell.metrics,
   }));
+  const facts = rawObservationAuthorityFacts(receipt);
+  const pluginProfile = autonomousEmpiricalFamilyPluginProfileFor(
+    receipt?.benchmarkFamily
+      || receipt?.benchmarkSelector?.experimentDesign?.benchmarkFamily,
+  );
+  let typedNumericOracleCertificateSet = null;
+  let typedNumericOracleProduction = null;
+  let typedNumericOracleRecomputationReceipt = null;
+  if (pluginProfile && facts.propertyOracleVerified
+    && facts.rawObservationRecomputationVerified
+    && facts.independentResidualRecomputationVerified
+    && SHA256.test(String(receipt?.analysisProtocolHash || ''))
+    && SHA256.test(String(receipt?.rawEventManifestHash || ''))
+    && SHA256.test(String(receipt?.rawEventArtifactHash || ''))
+    && SHA256.test(String(facts.rawEventRecomputationManifestHash || ''))
+    && SHA256.test(String(receipt?.sourceLineageHash || ''))
+    && Number.isFinite(facts.aggregateResidual)) {
+    const propertyEvidenceHash = hashRecord('SystemBenchmarkPropertyOracleEvidence', {
+      rawEventManifestHash: receipt.rawEventManifestHash,
+      cells: (receipt.cells || []).map((cell) => ({
+        cellId: cell.cellId,
+        systemBenchmarkCellChallengeHash: cell.systemBenchmarkCellChallengeHash,
+        systemBenchmarkCellOracleHash: cell.systemBenchmarkCellOracleHash,
+      })),
+    });
+    const certificates = [
+      buildTypedNumericOracleCertificate({
+        certificateId: `property-oracle:${propertyEvidenceHash.slice('sha256:'.length, 39)}`,
+        oracleType: 'property-oracle-v1',
+        subjectHash: receipt.rawEventManifestHash,
+        quantity: 'property_oracle_verified',
+        observedValue: 1,
+        relation: 'interval',
+        lowerBound: 1,
+        upperBound: 1,
+        unit: 'boolean-indicator',
+        verifierId: 'repository-system-benchmark-property-oracle-v1',
+        producerImplementationHash:
+          SYSTEM_BENCHMARK_HARNESS_IMPLEMENTATION.systemBenchmarkHarnessImplementationHash,
+        verifierImplementationHash:
+          SYSTEM_BENCHMARK_HARNESS_IMPLEMENTATION.systemBenchmarkHarnessImplementationHash,
+        verificationReceiptHash: propertyEvidenceHash,
+        evidenceHashes: [receipt.rawEventManifestHash, propertyEvidenceHash],
+        assuranceScope: 'producer-bound-self-check-v1',
+      }),
+      buildTypedNumericOracleCertificate({
+        certificateId: `residual-bound:${facts.rawEventRecomputationManifestHash
+          .slice('sha256:'.length, 39)}`,
+        oracleType: 'residual-bound-v1',
+        subjectHash: facts.rawEventRecomputationManifestHash,
+        quantity: 'maximum_absolute_residual',
+        observedValue: facts.aggregateResidual,
+        relation: 'less-than-or-equal',
+        upperBound: Number(receipt?.numericResidualMaximum
+          ?? receipt?.analysisProtocol?.numericValidation?.residual?.maximumAbsoluteResidual
+          ?? 1e-10),
+        unit: 'absolute-metric-unit',
+        verifierId: 'repository-independent-raw-event-recomputation-v1',
+        producerImplementationHash:
+          SYSTEM_BENCHMARK_HARNESS_IMPLEMENTATION.systemBenchmarkHarnessImplementationHash,
+        verifierImplementationHash: facts.independentVerifierImplementationHash,
+        verificationReceiptHash: facts.independentRecomputationAssuranceHash,
+        evidenceHashes: [
+          receipt.rawEventArtifactHash,
+          facts.rawEventRecomputationManifestHash,
+          facts.independentRecomputationAssuranceHash,
+        ],
+        assuranceScope: facts.independentRecomputationAssuranceScope,
+      }),
+    ];
+    const advancedOracleTypes = pluginProfile.typedOracleKinds.filter((type) => (
+      !['property-oracle-v1', 'residual-bound-v1'].includes(type)
+    ));
+    let processRecomputationVerified = false;
+    if (advancedOracleTypes.length && receipt?.analysisProtocol) {
+      const productionInputs = {
+        observations,
+        analysisProtocol: receipt.analysisProtocol,
+        pluginProfile,
+        experimentIr: receipt?.experimentIr
+          || receipt?.analysisObservationAuthority?.experimentIr
+          || null,
+      };
+      const expectedProduction = buildTypedNumericOracleProduction(productionInputs);
+      const suppliedProduction = receipt?.typedNumericOracleProduction
+        || receipt?.analysisObservationAuthority?.typedNumericOracleProduction
+        || null;
+      const suppliedRecomputation = receipt?.typedNumericOracleRecomputationReceipt
+        || receipt?.analysisObservationAuthority?.typedNumericOracleRecomputationReceipt
+        || null;
+      typedNumericOracleProduction = verifyTypedNumericOracleProduction(
+        suppliedProduction, productionInputs,
+      ) ? suppliedProduction : expectedProduction;
+      const recomputationInputs = {
+        ...productionInputs,
+        production: typedNumericOracleProduction,
+      };
+      processRecomputationVerified = Boolean(
+        suppliedRecomputation?.version === 2
+        && suppliedRecomputation?.assuranceScope
+          === 'process-isolated-independent-implementation-v1'
+        && suppliedRecomputation?.processIndependent === true
+        && suppliedRecomputation?.networkGuardInstalled === true
+        && suppliedRecomputation?.networkActionPerformed === false
+        && suppliedRecomputation?.externalActionPerformed === false
+        && verifyIndependentTypedNumericOracleRecomputation(
+          suppliedRecomputation, recomputationInputs,
+        ),
+      );
+      typedNumericOracleRecomputationReceipt = suppliedRecomputation;
+      const comparisons = new Map(
+        (processRecomputationVerified
+          ? typedNumericOracleRecomputationReceipt.comparisons : [])
+          .map((item) => [item.oracleType, item]),
+      );
+      for (const produced of typedNumericOracleProduction.outputs) {
+        const comparison = comparisons.get(produced.oracleType);
+        if (!comparison?.match) continue;
+        certificates.push(buildTypedNumericOracleCertificate({
+          version: 3,
+          certificateId: `${produced.oracleType}:${produced
+            .typedNumericOracleAlgorithmOutputHash.slice('sha256:'.length, 39)}`,
+          oracleType: produced.oracleType,
+          subjectHash: produced.numericInputManifestHash,
+          quantity: produced.quantity,
+          observedValue: produced.observedValue,
+          relation: produced.relation,
+          lowerBound: produced.lowerBound,
+          upperBound: produced.upperBound,
+          unit: produced.unit,
+          verifierId: 'repository-independent-typed-numeric-oracle-v1',
+          producerImplementationHash: typedNumericOracleProduction.producerImplementationHash,
+          verifierImplementationHash:
+            typedNumericOracleRecomputationReceipt.verifierImplementationHash,
+          verificationReceiptHash:
+            comparison.independentTypedNumericOracleComparisonHash,
+          evidenceHashes: [
+            receipt.rawEventArtifactHash,
+            facts.independentRecomputationAssuranceHash,
+            produced.typedNumericOracleAlgorithmOutputHash,
+            typedNumericOracleRecomputationReceipt
+              .independentTypedNumericOracleRecomputationHash,
+          ],
+          assuranceScope: 'process-isolated-independent-implementation-v1',
+          algorithmId: produced.algorithmId,
+          algorithmVersion: produced.algorithmVersion,
+          algorithmConfigurationHash: produced.algorithmConfigurationHash,
+          numericInputManifestHash: produced.numericInputManifestHash,
+          finiteInputCount: produced.finiteInputCount,
+          finiteInputsVerified: produced.finiteInputsVerified,
+          boundsAuthorityHash: produced.boundsAuthorityHash,
+        }));
+      }
+    }
+    typedNumericOracleCertificateSet = buildTypedNumericOracleCertificateSet({
+      analysisProtocolHash: receipt.analysisProtocolHash,
+      experimentAttemptId: receipt.experimentAttemptId,
+      sourceLineageHash: receipt.sourceLineageHash,
+      requiredOracleTypes: pluginProfile.typedOracleKinds,
+      certificates,
+      ...(advancedOracleTypes.length ? {
+        empiricalPluginProfileHash:
+          pluginProfile.autonomousEmpiricalFamilyPluginProfileHash,
+        independentRecomputationReceiptHash:
+          processRecomputationVerified
+            ? typedNumericOracleRecomputationReceipt
+            ?.independentTypedNumericOracleRecomputationHash
+            : hashRecord('TypedNumericOracleMissingRecomputation', {
+              analysisProtocolHash: receipt.analysisProtocolHash,
+            }),
+      } : {}),
+    });
+  }
   return buildRepositoryAnalysisObservationAuthority({
     observations,
     rawEventManifestHash: receipt?.rawEventManifestHash,
     rawEventArtifactHash: receipt?.rawEventArtifactHash,
-    ...rawObservationAuthorityFacts(receipt),
+    ...facts,
+    typedNumericOracleCertificateSet,
+    typedNumericOracleProduction,
+    typedNumericOracleRecomputationReceipt,
+    empiricalPluginProfileHash:
+      typedNumericOracleProduction
+        ? pluginProfile?.autonomousEmpiricalFamilyPluginProfileHash : null,
+    experimentIr: typedNumericOracleProduction
+      ? (receipt?.experimentIr || receipt?.analysisObservationAuthority?.experimentIr || null)
+      : null,
     experimentAttemptId: receipt?.experimentAttemptId,
     sourceLineageHash: receipt?.sourceLineageHash,
+    analysisProtocol: receipt?.analysisProtocol || null,
+    allowLegacyNonProduction: !receipt?.analysisProtocol,
   });
 }
 
@@ -152,8 +456,12 @@ function same(left, right) {
 
 export function verifyHarnessAnalysisProtocolBinding(receipt, design) {
   if (!receipt || !design?.analysisProtocol || !design.analysisProtocolHash) return false;
-  const inputs = expectedInputs(receipt, design);
-  const expected = evaluateAnalysisProtocol(inputs);
+  let inputs;
+  let expected;
+  try {
+    inputs = expectedInputs(receipt, design);
+    expected = evaluateAnalysisProtocol(inputs);
+  } catch { return false; }
   if (expected.status !== 'academic_analysis_protocol_verified'
     || !verifyAnalysisProtocolEvaluation(receipt.analysisProtocolEvaluation, inputs)
     || !same(receipt.analysisProtocol, inputs.analysisProtocol)

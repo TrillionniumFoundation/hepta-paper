@@ -18,6 +18,17 @@ import {
   buildDeterministicAutonomousHypothesisDraft,
   verifyMachineProposedScientificClaimSet,
 } from '../../paper-domain/automation/autonomous-research-proposal-contract.mjs';
+import {
+  buildAutonomousResearchCapabilityScopeManifest,
+} from '../../paper-domain/automation/autonomous-research-capability-scope-manifest.mjs';
+import {
+  buildAutonomousResearchAgendaProductionReceipt,
+  buildAutonomousResearchAgendaProductionRequest,
+} from '../../paper-domain/automation/autonomous-research-agenda-production-contract.mjs';
+import {
+  productionContentLineageFixture,
+  productionPriorArtAuthorityFixture,
+} from './support/autonomous-research-generalization-fixture.mjs';
 
 const HASH = (label) => hashRecord('AutonomousResearchReadinessTestHash', { label });
 
@@ -127,6 +138,183 @@ test('autonomous composition prepares a machine-proposed bounded loop with disti
   assert.equal(report.safety.operatorApprovalClaimed, false);
   assert.equal(report.safety.universalResearchValidityClaimed, false);
   assert.equal(report.safety.naturalLanguageToLeanEquivalenceMachineProven, false);
+});
+
+test('declared off-host replay capability requires and binds a concrete replay configuration', async () => {
+  const manifest = buildAutonomousResearchCapabilityScopeManifest({
+    scopeId: 'hepta.test.external-replay-binding',
+    agendaMode: 'registered-profile',
+    manuscriptMode: 'minimal-report-evidence-bound-ir-v1',
+    formalClaimClasses: ['registered-template-v1'],
+    empiricalFamilies: ['econometrics_panel_benchmark'],
+    priorArtMode: 'opaque-hash-v1',
+    reviewerPrincipalCount: 1,
+    reviewerTrustDomainCount: 1,
+    replayMode: 'external-trust-domain-v1',
+    venueMode: 'disabled',
+  });
+  const request = {
+    paperId: 'external-replay-bound-paper',
+    objective: 'Evaluate a bounded estimator under the registered panel benchmark.',
+    protocolFamily: 'econometrics_panel_benchmark',
+    declaredCapabilityScopeManifest: manifest,
+    createdAt: '2026-07-15T10:00:00.000Z',
+  };
+  await assert.rejects(() => prepareAutonomousResearchLoop(request),
+    /autonomous_research_declared_capability_scope_invalid/);
+  const configurationHash = HASH('external-replay-configuration');
+  const report = await prepareAutonomousResearchLoop({
+    ...request,
+    externalResearchReplayConfigurationHash: configurationHash,
+  });
+  assert.equal(report.capabilityScopeManifest.replayMode, 'external-trust-domain-v1');
+  assert.equal(report.externalResearchReplayConfigurationHash, configurationHash);
+  assert.equal(report.capabilityScopeManifest.externalPrerequisites
+    .includes('external-replay-service'), false);
+});
+
+test('production preparation rejects missing agent agenda and content producers before fallback', async () => {
+  await assert.rejects(() => prepareAutonomousResearchLoop({
+    paperId: 'production-fallback-forbidden',
+    objective: 'Evaluate a bounded production hypothesis.',
+    protocolFamily: 'ml_algorithm_benchmark',
+    launchMode: 'production-run',
+    createdAt: '2026-07-15T10:00:00.000Z',
+  }), /autonomous_research_production_profile_inputs_blocked:.*production_agenda_producer_required.*production_content_producer_required/);
+});
+
+test('production preparation rejects prior-art supplied by the content generator', async () => {
+  const paperId = 'production-generated-prior-art-forbidden';
+  const objective = 'Evaluate a bounded intervention with independently retrieved prior art.';
+  const protocolFamily = 'ml_algorithm_benchmark';
+  const manifest = buildAutonomousResearchCapabilityScopeManifest({
+    scopeId: 'hepta.test.production-generated-prior-art-forbidden',
+    agendaMode: 'machine-generated',
+    manuscriptMode: 'agent-authored-evidence-bound-ir-v1',
+    formalClaimClasses: ['dynamic-lean-type-v1'],
+    empiricalFamilies: [protocolFamily],
+    priorArtMode: 'structured-ranked-deduplicated-v2',
+    reviewerPrincipalCount: 2,
+    reviewerTrustDomainCount: 2,
+    replayMode: 'external-trust-domain-v1',
+    venueMode: 'submission-enabled-v1',
+  });
+  const authority = productionPriorArtAuthorityFixture({ paperId });
+  const agendaRequest = buildAutonomousResearchAgendaProductionRequest({
+    paperId,
+    objectiveHint: objective,
+    protocolFamilyHint: protocolFamily,
+    allowedProtocolFamilies: [protocolFamily],
+  });
+  const agentPayload = {
+    status: 'agent_execution_completed',
+    executorId: 'fixture-agenda-executor',
+    agentId: 'research-author',
+    providerMode: 'configured-agent-provider',
+    resolvedModel: 'pinned-research-model',
+    promptHash: HASH('production-agenda-prompt'),
+    changedPaths: [],
+  };
+  const agendaAgentReceipt = Object.freeze({
+    ...agentPayload,
+    agentExecutionReceiptHash: hashRecord('AgentExecutionReceipt', agentPayload),
+  });
+  const agendaReceipt = buildAutonomousResearchAgendaProductionReceipt({
+    request: agendaRequest,
+    selectedObjective: objective,
+    selectedProtocolFamily: protocolFamily,
+    agentExecutionReceipt: agendaAgentReceipt,
+    producerId: 'research-author',
+    generatedAt: '2026-07-15T10:00:00.000Z',
+  });
+  const researchAgendaProducer = Object.freeze({
+    producerId: 'research-author',
+    produce: async () => Object.freeze({
+      request: agendaRequest,
+      agentExecutionReceipt: agendaAgentReceipt,
+      researchAgendaProducerReceipt: agendaReceipt,
+      selectedObjective: objective,
+      selectedProtocolFamily: protocolFamily,
+    }),
+  });
+  const lineage = productionContentLineageFixture({
+    paperId,
+    protocolFamily,
+    capabilityScopeManifest: manifest,
+  });
+  const deterministicDraft = buildDeterministicAutonomousHypothesisDraft({
+    objective,
+    protocolFamily,
+  });
+  const draft = Object.freeze({
+    empiricalHypothesis: deterministicDraft.empiricalHypothesis,
+    formalSupportClaim: Object.freeze({
+      statement: lineage.dynamicFormalClaimSeed.statement,
+      assumptions: lineage.dynamicFormalClaimSeed.assumptions,
+      quantifiers: lineage.dynamicFormalClaimSeed.quantifiers,
+      negativeBoundaries: lineage.dynamicFormalClaimSeed.negativeBoundaries,
+      proofObligations: lineage.dynamicFormalClaimSeed.proofObligations,
+    }),
+  });
+  const { autonomousResearchContentProductionReceiptHash: _oldHash, ...contentPayload } =
+    lineage.researchContentProducerReceipt;
+  const canonicalContentPayload = Object.freeze({
+    ...contentPayload,
+    outputHash: hashRecord('AutonomousResearchHypothesisDraft', draft),
+  });
+  const contentReceipt = Object.freeze({
+    ...canonicalContentPayload,
+    autonomousResearchContentProductionReceiptHash: hashRecord(
+      'AutonomousResearchContentProductionReceipt', canonicalContentPayload,
+    ),
+  });
+  const hypothesisGenerator = Object.freeze({
+    generate: async () => Object.freeze({
+      draft,
+      principalId: 'research-author',
+      provider: 'configured-agent-provider',
+      model: 'pinned-research-model',
+      priorArtReceipt: authority.priorArtReceipt,
+      researchContentProducerReceipt: contentReceipt,
+      dynamicFormalClaimSeed: lineage.dynamicFormalClaimSeed,
+      externalActionPerformed: true,
+    }),
+  });
+
+  await assert.rejects(() => prepareAutonomousResearchLoop({
+    paperId,
+    objective,
+    protocolFamily,
+    launchMode: 'production-run',
+    researchAgendaProducer,
+    hypothesisGenerator,
+    requireAgentAuthoredProse: true,
+    declaredCapabilityScopeManifest: manifest,
+    externalCapabilityTrustInspection: authority.externalCapabilityTrustInspection,
+    createdAt: '2026-07-15T10:00:00.000Z',
+  }), /autonomous_research_production_generated_prior_art_forbidden/);
+});
+
+test('declared dynamic formal capability cannot fall back to a registered template', async () => {
+  const declared = buildAutonomousResearchCapabilityScopeManifest({
+    scopeId: 'hepta.test.dynamic-formal-no-fallback',
+    agendaMode: 'registered-profile',
+    manuscriptMode: 'minimal-report-evidence-bound-ir-v1',
+    formalClaimClasses: ['dynamic-lean-type-v1', 'registered-template-v1'],
+    empiricalFamilies: ['ml_algorithm_benchmark'],
+    priorArtMode: 'opaque-hash-v1',
+    reviewerPrincipalCount: 1,
+    reviewerTrustDomainCount: 1,
+    replayMode: 'same-process-recomputation-v1',
+    venueMode: 'disabled',
+  });
+  await assert.rejects(() => prepareAutonomousResearchLoop({
+    paperId: 'declared-dynamic-template-fallback',
+    objective: 'Evaluate a bounded benchmark hypothesis.',
+    protocolFamily: 'ml_algorithm_benchmark',
+    declaredCapabilityScopeManifest: declared,
+    createdAt: '2026-07-15T10:00:00.000Z',
+  }), /autonomous_research_declared_capability_scope_invalid/);
 });
 
 test('prepare cannot accept a caller-supplied ready inspection or bypass dataset launch authority', async () => {

@@ -373,7 +373,7 @@ export function createMultiLanguageEmpiricalExecutor({
           executionIdentity, benchmarkSourceDescriptor, workerRunner, prepareRuntimeIdentity,
           operatorDatasetAuthorityTrustStore, runtimeRoot });
       }
-      const pending = workerRunner.run({
+      const operation = () => workerRunner.run({
         executable: command.executable,
         args: command.args(spec),
         cwd: spec.cwd,
@@ -402,6 +402,9 @@ export function createMultiLanguageEmpiricalExecutor({
         runtimeBuildReproducibility: runtimeImage?.buildReproducibility || null,
         signal: spec.signal || null,
       });
+      const pending = typeof spec.runEmpiricalCell === 'function'
+        ? spec.runEmpiricalCell(operation, { requiresGpu: Boolean(spec.requiresGpu) })
+        : operation();
       const finish = (result) => {
         const cancelled = result.status === 'os_sandbox_worker_cancelled' || (result.blockers || []).includes('os_sandbox_command_aborted');
         const imageIdentityMismatch = executionIdentity.runtimeType === 'container' && result.containerImageDigest !== executionIdentity.digest;

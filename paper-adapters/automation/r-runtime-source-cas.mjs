@@ -4,6 +4,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hasExactObjectKeys as exactKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 import { assertRRuntimeSourceArchiveTransport } from '../../paper-ports/r-runtime-source-archive-transport-port.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
@@ -13,11 +14,6 @@ const SNAPSHOT = 'https://packagemanager.posit.co/cran/2024-11-01';
 
 function bytesHash(value) {
   return `sha256:${crypto.createHash('sha256').update(value).digest('hex')}`;
-}
-
-function exactKeys(value, expected) {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    && Object.keys(value).sort().join('\0') === [...expected].sort().join('\0');
 }
 
 function readLock(lockPath) {

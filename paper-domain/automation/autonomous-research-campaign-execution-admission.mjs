@@ -1,4 +1,5 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hasExactPlainObjectKeys as exactKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 import {
   verifyAutonomousResearchMachineIntakeAdmission,
 } from './autonomous-research-machine-intake-admission-contract.mjs';
@@ -26,12 +27,6 @@ const EXECUTION_ADMISSION_KEYS = Object.freeze([
   'supervisorDispatchAuthorizationRequired',
   'version',
 ].sort());
-
-function exactKeys(value, keys) {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    && Object.getPrototypeOf(value) === Object.prototype
-    && JSON.stringify(Object.keys(value).sort()) === JSON.stringify(keys);
-}
 
 export function inspectAutonomousResearchCampaignExecutionAdmission(spec = null) {
   const markerPresence = MACHINE_MARKER_KEYS.map((key) => Object.hasOwn(spec || {}, key));

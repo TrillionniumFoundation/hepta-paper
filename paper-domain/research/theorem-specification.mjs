@@ -1,4 +1,6 @@
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { dynamicFormalLeanTypeSourceValid } from './dynamic-formal-claim-seed-contract.mjs';
+import { leanTypeIdentity } from './lean-type-identity.mjs';
 
 const SHA256 = /^sha256:[a-f0-9]{64}$/i;
 const MAX_CLAIMS = 128;
@@ -33,6 +35,14 @@ function exactTextArray(value, label, { minimum = 1, maximum = 64 } = {}) {
   });
   if (new Set(result).size !== result.length) throw new Error(`theorem_specification_${label}_duplicate`);
   return Object.freeze(result);
+}
+
+function dependencyClaimKeys(value) {
+  const values = textArray(value || [], 'claim_proof_dependencies', { maximum: MAX_CLAIMS });
+  if (values.some((item) => !/^[A-Za-z0-9][A-Za-z0-9_.:-]*$/.test(item))) {
+    throw new Error('theorem_specification_claim_proof_dependency_key_invalid');
+  }
+  return values;
 }
 
 export function createProofObligationContracts({ claimKey, proofObligations } = {}) {
@@ -71,6 +81,7 @@ function proposalClaimSource(value) {
   if (!exactProposalClaimText.trim() || exactProposalClaimText.length > 8_000) {
     throw new Error('theorem_specification_proposal_claim_text_invalid');
   }
+  const dynamicFormal = Boolean(value?.dynamicFormalClaimSeedHash);
   const source = {
     claimAuthorityType: requiredText(value?.claimAuthorityType, 'proposal_claim_authority_type', 100),
     claimAuthorityBindingHash: String(value?.claimAuthorityBindingHash || '').toLowerCase(),
@@ -88,6 +99,20 @@ function proposalClaimSource(value) {
       ? String(value.proposalSeedContractBundleHash).toLowerCase() : null,
     approvedProposalSeedBindingHash: value?.approvedProposalSeedBindingHash
       ? String(value.approvedProposalSeedBindingHash).toLowerCase() : null,
+    ...(dynamicFormal ? {
+      dynamicFormalClaimSeedHash: String(value.dynamicFormalClaimSeedHash || '').toLowerCase(),
+      leanDeclarationName: requiredText(value.leanDeclarationName, 'proposal_lean_declaration_name', 160),
+      leanTypeSource: String(value.leanTypeSource || '').trim(),
+      leanTypeSourceHash: String(value.leanTypeSourceHash || '').toLowerCase(),
+      leanNormalizedTypeHash: String(value.leanNormalizedTypeHash || '').toLowerCase(),
+      allowedImports: exactTextArray(value.allowedImports, 'proposal_allowed_imports'),
+      formalClaimCapabilityScopeManifestHash: String(
+        value.formalClaimCapabilityScopeManifestHash || '',
+      ).toLowerCase(),
+      formalClaimGeneratorReceiptHash: String(
+        value.formalClaimGeneratorReceiptHash || '',
+      ).toLowerCase(),
+    } : {}),
   };
   if (!['operator-signed', 'machine-policy-authorized'].includes(source.claimAuthorityType)
     || ![source.claimAuthorityBindingHash, source.claimAuthorityBundleHash,
@@ -98,7 +123,21 @@ function proposalClaimSource(value) {
     || (source.claimAuthorityType === 'machine-policy-authorized'
       && (source.proposalSeedContractBundleHash !== null
         || source.approvedProposalSeedBindingHash !== null))
-    || source.proposalClaimTextHash !== hashBytes(Buffer.from(source.proposalClaimText, 'utf8'))) {
+    || source.proposalClaimTextHash !== hashBytes(Buffer.from(source.proposalClaimText, 'utf8'))
+    || (dynamicFormal && (
+      !dynamicFormalLeanTypeSourceValid(source.leanTypeSource)
+      || !/^[A-Za-z_][A-Za-z0-9_'.]*$/.test(source.leanDeclarationName)
+      || ![
+        source.dynamicFormalClaimSeedHash,
+        source.leanTypeSourceHash,
+        source.leanNormalizedTypeHash,
+        source.formalClaimCapabilityScopeManifestHash,
+        source.formalClaimGeneratorReceiptHash,
+      ].every((hash) => SHA256.test(hash))
+      || source.leanTypeSourceHash !== hashBytes(Buffer.from(source.leanTypeSource, 'utf8'))
+      || source.leanNormalizedTypeHash
+        !== leanTypeIdentity(source.leanTypeSource).normalizedTypeHash
+    ))) {
     throw new Error('theorem_specification_proposal_claim_source_invalid');
   }
   return Object.freeze(source);
@@ -129,8 +168,10 @@ function canonicalClaim(value) {
     negativeBoundaries,
     proofObligations,
     proofObligationContracts: obligationContracts,
+    proofDependencyClaimKeys: dependencyClaimKeys(value?.proofDependencyClaimKeys),
     evidenceObligations: textArray(value?.evidenceObligations || [], 'claim_evidence_obligations'),
     manuscriptIntent: value?.manuscriptIntent === 'existing' ? 'existing' : 'new',
+    releasePolicy: value?.manuscriptIntent === 'existing' ? 'required' : 'optional',
     formalizationTarget: 'lean4',
     manuscriptSource: manuscriptSource(value?.manuscriptSource),
     proposalClaimSource: proposalClaimSource(value?.proposalClaimSource),
@@ -162,6 +203,27 @@ export function createTheoremSpecification({
   }
   const claimKeys = normalizedClaims.map((claim) => claim.claimKey);
   if (new Set(claimKeys).size !== claimKeys.length) throw new Error('theorem_specification_claim_keys_duplicate');
+  const claimKeySet = new Set(claimKeys);
+  for (const claim of normalizedClaims) {
+    if (claim.proofDependencyClaimKeys.includes(claim.claimKey)) {
+      throw new Error('theorem_specification_claim_proof_dependency_self_reference');
+    }
+    if (claim.proofDependencyClaimKeys.some((dependency) => !claimKeySet.has(dependency))) {
+      throw new Error('theorem_specification_claim_proof_dependency_missing');
+    }
+  }
+  const visitState = new Map();
+  const byKey = new Map(normalizedClaims.map((claim) => [claim.claimKey, claim]));
+  const visit = (claimKey) => {
+    if (visitState.get(claimKey) === 'visiting') {
+      throw new Error('theorem_specification_claim_proof_dependency_cycle');
+    }
+    if (visitState.get(claimKey) === 'visited') return;
+    visitState.set(claimKey, 'visiting');
+    for (const dependency of byKey.get(claimKey).proofDependencyClaimKeys) visit(dependency);
+    visitState.set(claimKey, 'visited');
+  };
+  for (const claimKey of claimKeys) visit(claimKey);
   if (!SHA256.test(String(sourceManuscriptHash || ''))) {
     throw new Error('theorem_specification_source_manuscript_hash_invalid');
   }

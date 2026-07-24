@@ -1,17 +1,25 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { operatorDatasetHarnessCell } from './operator-dataset-harness-contract.mjs';
+import {
+  autonomousEmpiricalFamilyPluginProfileFor,
+} from './autonomous-empirical-family-plugin-registry.mjs';
+import {
+  REGISTERED_SCALAR_RESPONSE_BENCHMARK_FAMILY,
+} from './system-benchmark-evaluator-abi.mjs';
+import {
+  SYSTEM_BENCHMARK_ARM_BATCH_MAXIMUM_CELLS,
+  SYSTEM_BENCHMARK_CASE_COUNT,
+  SYSTEM_BENCHMARK_CHALLENGE_MAXIMUM_PARTS,
+  SYSTEM_BENCHMARK_CHALLENGE_PART_BYTES,
+} from './system-benchmark-challenge-limits.mjs';
 
-const CASE_COUNT = 8;
-const MAXIMUM_ARM_BATCH_CELLS = 128;
-export const SYSTEM_BENCHMARK_ARM_BATCH_CHALLENGE_PART_BYTES = 60 * 1024;
-export const SYSTEM_BENCHMARK_ARM_BATCH_CHALLENGE_MAXIMUM_PARTS = 16;
-const RESPONSE_FIELDS = Object.freeze({
-  rl_stochastic_control_benchmark: 'action',
-  ml_algorithm_benchmark: 'prediction',
-  econometrics_panel_benchmark: 'estimate',
-  finance_asset_pricing_benchmark: 'position',
-  operations_optimization_benchmark: 'decision',
-});
+export const SYSTEM_BENCHMARK_ARM_BATCH_CHALLENGE_PART_BYTES =
+  SYSTEM_BENCHMARK_CHALLENGE_PART_BYTES;
+export const SYSTEM_BENCHMARK_ARM_BATCH_CHALLENGE_MAXIMUM_PARTS =
+  SYSTEM_BENCHMARK_CHALLENGE_MAXIMUM_PARTS;
+function responseFieldFor(benchmarkFamily) {
+  return autonomousEmpiricalFamilyPluginProfileFor(benchmarkFamily)?.responseField || null;
+}
 
 function unit(parts) {
   const hexadecimal = hashRecord('SystemBenchmarkDeterministicFixtureScalar', parts).slice('sha256:'.length, 'sha256:'.length + 13);
@@ -73,11 +81,25 @@ function caseFixture({ benchmarkId, arm, seed, repetition, index }) {
   return null;
 }
 
-export function buildSystemBenchmarkCellChallenge({ protocol, seed, repetition, operatorDatasetHarnessDefinition = null } = {}) {
+function challengeInputPolicy({ arm, operatorDatasetHarnessDefinition }) {
+  const authority = operatorDatasetHarnessDefinition
+    ? 'operator-authorized' : 'repository-owned';
+  return arm === 'ablation'
+    ? `${authority}-primary-feature-removed-v1`
+    : `${authority}-fixed-input-v1`;
+}
+
+export function buildSystemBenchmarkCellChallenge({
+  protocol,
+  seed,
+  repetition,
+  operatorDatasetHarnessDefinition = null,
+  versionedExperimentIrHash = null,
+} = {}) {
   const benchmarkId = String(protocol?.benchmarkId || '');
   const benchmarkFamily = String(protocol?.benchmarkFamily || benchmarkId);
   const arm = String(protocol?.arm || '');
-  const responseField = RESPONSE_FIELDS[benchmarkFamily] || null;
+  const responseField = responseFieldFor(benchmarkFamily);
   if (!responseField || !['treatment', 'baseline', 'ablation'].includes(arm)
     || !Number.isSafeInteger(Number(seed)) || !Number.isSafeInteger(Number(repetition)) || Number(repetition) < 1) {
     throw new Error('system_benchmark_fixture_request_invalid');
@@ -92,7 +114,7 @@ export function buildSystemBenchmarkCellChallenge({ protocol, seed, repetition, 
       referenceResponse: item.referenceResponse,
       oracle: item.oracle,
     }))
-    : Array.from({ length: CASE_COUNT }, (_, index) => caseFixture({
+    : Array.from({ length: SYSTEM_BENCHMARK_CASE_COUNT }, (_, index) => caseFixture({
       benchmarkId: benchmarkFamily, arm, seed: Number(seed), repetition: Number(repetition), index,
     }));
   if (fixtures.some((fixture) => !fixture)) throw new Error(`system_benchmark_fixture_unavailable:${benchmarkId}`);
@@ -101,8 +123,12 @@ export function buildSystemBenchmarkCellChallenge({ protocol, seed, repetition, 
     input,
     ...(arm === 'baseline' ? { referenceResponse } : {}),
   }));
+  if (versionedExperimentIrHash !== null
+    && !/^sha256:[0-9a-f]{64}$/i.test(String(versionedExperimentIrHash))) {
+    throw new Error('system_benchmark_experiment_ir_hash_invalid');
+  }
   const payload = {
-    version: 1,
+    version: versionedExperimentIrHash ? 2 : 1,
     kind: 'SystemBenchmarkCellChallenge',
     benchmarkId,
     benchmarkFamily,
@@ -110,7 +136,8 @@ export function buildSystemBenchmarkCellChallenge({ protocol, seed, repetition, 
     seed: Number(seed),
     repetition: Number(repetition),
     responseField,
-    inputPolicy: arm === 'ablation' ? 'repository-owned-primary-feature-removed-v1' : 'repository-owned-fixed-input-v1',
+    ...(versionedExperimentIrHash ? { versionedExperimentIrHash } : {}),
+    inputPolicy: challengeInputPolicy({ arm, operatorDatasetHarnessDefinition }),
     cases: publicCases,
   };
   const challenge = Object.freeze({ ...payload, systemBenchmarkCellChallengeHash: hashRecord('SystemBenchmarkCellChallenge', payload) });
@@ -124,12 +151,18 @@ export function buildSystemBenchmarkCellChallenge({ protocol, seed, repetition, 
   return Object.freeze({ challenge, oracle });
 }
 
-export function buildSystemBenchmarkArmBatchChallenge({ protocol, cells = [], operatorDatasetHarnessDefinition = null } = {}) {
+export function buildSystemBenchmarkArmBatchChallenge({
+  protocol,
+  cells = [],
+  operatorDatasetHarnessDefinition = null,
+  versionedExperimentIrHash = null,
+} = {}) {
   const benchmarkId = String(protocol?.benchmarkId || '');
   const benchmarkFamily = String(protocol?.benchmarkFamily || benchmarkId);
   const arm = String(protocol?.arm || '');
-  if (!Array.isArray(cells) || cells.length < 1 || cells.length > MAXIMUM_ARM_BATCH_CELLS
-    || !RESPONSE_FIELDS[benchmarkFamily] || !['treatment', 'baseline', 'ablation'].includes(arm)) {
+  if (!Array.isArray(cells) || cells.length < 1
+    || cells.length > SYSTEM_BENCHMARK_ARM_BATCH_MAXIMUM_CELLS
+    || !responseFieldFor(benchmarkFamily) || !['treatment', 'baseline', 'ablation'].includes(arm)) {
     throw new Error('system_benchmark_arm_batch_request_invalid');
   }
   const seen = new Set();
@@ -148,12 +181,13 @@ export function buildSystemBenchmarkArmBatchChallenge({ protocol, cells = [], op
     return Object.freeze({ cellId, ...fixture });
   });
   const payload = {
-    version: 1,
+    version: versionedExperimentIrHash ? 2 : 1,
     kind: 'SystemBenchmarkArmBatchChallenge',
     benchmarkId,
     benchmarkFamily,
     arm,
-    responseField: RESPONSE_FIELDS[benchmarkFamily],
+    responseField: responseFieldFor(benchmarkFamily),
+    ...(versionedExperimentIrHash ? { versionedExperimentIrHash } : {}),
     scheduleCellCount: fixtures.length,
     cells: fixtures.map(({ cellId, challenge }) => Object.freeze({ cellId, challenge })),
   };
@@ -193,7 +227,10 @@ export function decodeSystemBenchmarkArmBatchChallengeEnvironment(environment = 
   let challenge = null;
   try { challenge = JSON.parse(parts.join('')); } catch { return null; }
   const { systemBenchmarkArmBatchChallengeHash = null, ...payload } = challenge || {};
-  if (!challenge || challenge.version !== 1 || challenge.kind !== 'SystemBenchmarkArmBatchChallenge'
+  if (!challenge || ![1, 2].includes(challenge.version)
+    || challenge.kind !== 'SystemBenchmarkArmBatchChallenge'
+    || (challenge.version === 2
+      && !/^sha256:[0-9a-f]{64}$/i.test(String(challenge.versionedExperimentIrHash || '')))
     || systemBenchmarkArmBatchChallengeHash !== environment.HEPTA_BENCHMARK_CHALLENGE_HASH
     || hashRecord('SystemBenchmarkArmBatchChallenge', payload) !== systemBenchmarkArmBatchChallengeHash) return null;
   return challenge;
@@ -217,17 +254,40 @@ function eventFromResponse({ benchmarkId, response, oracle }) {
     const robust = response * oracle.robustReturn;
     return { return: realized, robustnessReturn: robust, tailReturn: Math.min(realized, robust) };
   }
-  const score = -((response - oracle.demand) ** 2) - (oracle.unitCost * Math.max(0, response));
-  const robustScore = -((response - (oracle.demand * 1.1)) ** 2) - (oracle.unitCost * Math.max(0, response));
-  return { constraintViolation: response < 0 || response > oracle.capacity ? 1 : 0, robustnessScore: robustScore, score };
+  if (benchmarkId === 'operations_optimization_benchmark') {
+    const score = -((response - oracle.demand) ** 2) - (oracle.unitCost * Math.max(0, response));
+    const robustScore = -((response - (oracle.demand * 1.1)) ** 2)
+      - (oracle.unitCost * Math.max(0, response));
+    return {
+      constraintViolation: response < 0 || response > oracle.capacity ? 1 : 0,
+      robustnessScore: robustScore,
+      score,
+    };
+  }
+  if (benchmarkId === REGISTERED_SCALAR_RESPONSE_BENCHMARK_FAMILY) {
+    return {
+      constraintViolation: response < oracle.lowerBound || response > oracle.upperBound ? 1 : 0,
+      robustnessScore: -((response - oracle.robustTarget) ** 2),
+      score: -((response - oracle.target) ** 2),
+    };
+  }
+  return null;
 }
 
 export function evaluateSystemBenchmarkCellResponses({ protocol, challenge, oracle, document, operatorDatasetHarnessDefinition = null } = {}) {
   const blockers = [];
   const benchmarkFamily = protocol?.benchmarkFamily || protocol?.benchmarkId;
-  const responseField = RESPONSE_FIELDS[benchmarkFamily] || null;
+  const responseField = responseFieldFor(benchmarkFamily);
   const expected = (() => {
-    try { return buildSystemBenchmarkCellChallenge({ protocol, seed: challenge?.seed, repetition: challenge?.repetition, operatorDatasetHarnessDefinition }); } catch { return null; }
+    try {
+      return buildSystemBenchmarkCellChallenge({
+        protocol,
+        seed: challenge?.seed,
+        repetition: challenge?.repetition,
+        operatorDatasetHarnessDefinition,
+        versionedExperimentIrHash: challenge?.versionedExperimentIrHash || null,
+      });
+    } catch { return null; }
   })();
   if (!expected || hashRecord('SystemBenchmarkCellChallengeExpected', expected.challenge)
     !== hashRecord('SystemBenchmarkCellChallengeExpected', challenge)
@@ -236,7 +296,8 @@ export function evaluateSystemBenchmarkCellResponses({ protocol, challenge, orac
   if (!document || document.version !== 1 || document.kind !== 'CampaignBenchmarkCellResponses'
     || document.systemBenchmarkCellChallengeHash !== challenge?.systemBenchmarkCellChallengeHash
     || Object.keys(document || {}).sort().join('\0') !== ['kind', 'responses', 'systemBenchmarkCellChallengeHash', 'version'].join('\0')
-    || !Array.isArray(document.responses) || document.responses.length !== CASE_COUNT) {
+    || !Array.isArray(document.responses)
+    || document.responses.length !== SYSTEM_BENCHMARK_CASE_COUNT) {
     blockers.push('benchmark_cell_response_document_shape_invalid');
   }
   const oracleById = new Map((oracle?.cases || []).map((item) => [item.caseId, item.oracle]));
@@ -261,9 +322,21 @@ export function evaluateSystemBenchmarkCellResponses({ protocol, challenge, orac
       continue;
     }
     canonicalResponses.push(Object.freeze({ caseId, [responseField]: value }));
-    events.push(eventFromResponse({ benchmarkId: benchmarkFamily, response: value, oracle: oracleById.get(caseId) }));
+    const event = eventFromResponse({
+      benchmarkId: benchmarkFamily,
+      response: value,
+      oracle: oracleById.get(caseId),
+    });
+    if (!event) {
+      blockers.push('benchmark_response_evaluator_unavailable');
+      continue;
+    }
+    events.push(event);
   }
-  if (seen.size !== CASE_COUNT) blockers.push('benchmark_cell_response_case_set_incomplete');
+  if (seen.size !== SYSTEM_BENCHMARK_CASE_COUNT
+    || events.length !== SYSTEM_BENCHMARK_CASE_COUNT) {
+    blockers.push('benchmark_cell_response_case_set_incomplete');
+  }
   return Object.freeze({
     status: blockers.length ? 'system_benchmark_cell_response_blocked' : 'system_benchmark_cell_response_evaluated',
     blockers: [...new Set(blockers)],

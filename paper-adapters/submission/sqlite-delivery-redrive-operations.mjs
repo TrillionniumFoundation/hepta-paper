@@ -1,6 +1,20 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  preparedSqliteReceiptLedgerMutation,
+} from '../persistence/sqlite-receipt-ledger.mjs';
+import {
+  NATIVE_STORE_SUBMISSION_DELIVERY_STATEMENT_IDS,
+} from '../persistence/native-store-submission-delivery-mutation-plan.mjs';
 import { sqlJson, sqlText } from './sqlite-delivery-persistence.mjs';
 import { hasValidDeliveryRecordHash, parseSubmissionOutboxPayload } from './sqlite-delivery-row-mappers.mjs';
+
+const S = NATIVE_STORE_SUBMISSION_DELIVERY_STATEMENT_IDS;
+const SHA256 = /^sha256:[0-9a-f]{64}$/;
+
+function authorizationHashes(...values) {
+  return Object.freeze([...new Set(values.filter((value) => SHA256.test(String(value || ''))))]
+    .sort());
+}
 
 export function createSqliteDeliveryRedriveOperations({ persistence, receiptLedger, clock, getApi } = {}) {
   return {
@@ -45,17 +59,33 @@ export function createSqliteDeliveryRedriveOperations({ persistence, receiptLedg
       const receiptHash = hashRecord('SubmissionRedriveReauthorizationRequiredReceipt', receipt);
       if (typeof receiptLedger.prepare !== 'function') throw new Error('atomic receipt ledger preparation required');
       const preparedLedger = receiptLedger.prepare({ ...receipt, receiptHash }, { stream: 'submission-delivery', paperId: message.paper_id, strictInsert: true });
-      persistence.execute('BEGIN IMMEDIATE;');
-      const updated = persistence.query(`UPDATE submission_outbox SET status='reauthorization_required',attempt_count=${currentAttempt},payload_json=${sqlJson(updatedPayload)},next_attempt_at=${sqlText(eligibleAt)},updated_at=${sqlText(now)} WHERE message_id=${sqlText(messageId)} AND status='retryable_failure' AND dispatch_hash=${sqlText(message.dispatch_hash)} RETURNING message_id;`);
-      if (!updated.ok || updated.rows?.length !== 1) {
-        persistence.rollback();
-        throw new Error(updated.error || 'redrive message changed before commit');
-      }
-      try {
-        persistence.execute(`${preparedLedger.sql} COMMIT;`);
-      } catch (error) {
-        persistence.rollback();
-        throw error;
+      if (typeof persistence.mutate === 'function') {
+        const ledgerMutation = preparedSqliteReceiptLedgerMutation(preparedLedger);
+        persistence.mutate({
+          databaseRole: 'native-store',
+          operationId: 'native-store.delivery-redrive-operations.scheduleRedrive.v1',
+          authorizationReceiptHashes: [],
+          sideEffectReservationHashes: [],
+          mutate(transaction) {
+            const updated = transaction.run(
+              S.redriveSchedule,
+              currentAttempt,
+              JSON.stringify(updatedPayload),
+              eligibleAt,
+              now,
+              messageId,
+              message.dispatch_hash,
+            );
+            if (updated.changes !== 1) throw new Error('redrive message changed before commit');
+            transaction.run(S.receiptInsert, ...ledgerMutation.parameters);
+          },
+        });
+      } else {
+      persistence.transaction((transaction) => {
+        const updated = transaction.query(`UPDATE submission_outbox SET status='reauthorization_required',attempt_count=${currentAttempt},payload_json=${sqlJson(updatedPayload)},next_attempt_at=${sqlText(eligibleAt)},updated_at=${sqlText(now)} WHERE delivery_kind='reviewed' AND message_id=${sqlText(messageId)} AND status='retryable_failure' AND dispatch_hash=${sqlText(message.dispatch_hash)} RETURNING message_id;`);
+        if (!updated.ok || updated.rows?.length !== 1) throw new Error(updated.error || 'redrive message changed before commit');
+        transaction.execute(preparedLedger.sql);
+      });
       }
       return Object.freeze({ ...receipt, receiptHash, ledgerReceiptId: preparedLedger.receiptId });
     },
@@ -66,19 +96,48 @@ export function createSqliteDeliveryRedriveOperations({ persistence, receiptLedg
       if (redriveDecision?.dispatchAuthorizationHash !== message.dispatch_hash) throw new Error('ambiguous result decision dispatch mismatch');
       if (!hasValidDeliveryRecordHash('SubmissionRedriveDecision', redriveDecision, 'submissionRedriveDecisionHash')) throw new Error('ambiguous result decision hash invalid');
       const now = clock.nowIso();
-      if (redriveDecision?.decision === 'continue_waiting') {
-        persistence.execute(`UPDATE submission_outbox SET status='waiting_for_response',next_attempt_at=${sqlText(redriveDecision.responseDueAt)},updated_at=${sqlText(now)} WHERE message_id=${sqlText(messageId)};`);
+      const continueWaiting = redriveDecision?.decision === 'continue_waiting';
+      let updatedPayload = null;
+      if (!continueWaiting) {
+        if (redriveDecision?.status !== 'submission_redrive_reauthorization_approved'
+          || redrivePlan?.status !== 'submission_redrive_reauthorization_required'
+          || redrivePlan?.redriveDecisionHash !== redriveDecision?.submissionRedriveDecisionHash) {
+          throw new Error('approved ambiguous result decision and redrive plan required');
+        }
+        if (!hasValidDeliveryRecordHash('SubmissionRedrivePlan', redrivePlan, 'submissionRedrivePlanHash')) throw new Error('ambiguous redrive plan hash invalid');
+        const payload = parseSubmissionOutboxPayload(message);
+        updatedPayload = { ...payload, _delivery: { ...payload._delivery, redriveReauthorization: { redrivePlanHash: redrivePlan.submissionRedrivePlanHash, redriveDecisionHash: redriveDecision.submissionRedriveDecisionHash, nextAttempt: redrivePlan.nextAttempt, eligibleAt: now } } };
+      }
+      if (typeof persistence.mutate === 'function') {
+        persistence.mutate({
+          databaseRole: 'native-store',
+          operationId: 'native-store.delivery-redrive-operations.reviewAmbiguousResult.v1',
+          authorizationReceiptHashes: [],
+          sideEffectReservationHashes: [],
+          mutate: (transaction) => (continueWaiting
+            ? transaction.run(
+              S.redriveMarkWaiting,
+              redriveDecision.responseDueAt,
+              now,
+              messageId,
+            ).changes
+            : transaction.run(
+              S.redriveMarkReauthorization,
+              Math.max(1, Number(message.attempt_count || 0) + 1),
+              JSON.stringify(updatedPayload),
+              now,
+              now,
+              messageId,
+            ).changes),
+        });
+      } else if (continueWaiting) {
+        persistence.execute(`UPDATE submission_outbox SET status='waiting_for_response',next_attempt_at=${sqlText(redriveDecision.responseDueAt)},updated_at=${sqlText(now)} WHERE delivery_kind='reviewed' AND message_id=${sqlText(messageId)};`);
+      } else {
+      persistence.execute(`UPDATE submission_outbox SET status='reauthorization_required',attempt_count=${Math.max(1, Number(message.attempt_count || 0) + 1)},payload_json=${sqlJson(updatedPayload)},next_attempt_at=${sqlText(now)},updated_at=${sqlText(now)} WHERE delivery_kind='reviewed' AND message_id=${sqlText(messageId)};`);
+      }
+      if (continueWaiting) {
         return Object.freeze({ status: 'submission_redrive_waiting', messageId, responseDueAt: redriveDecision.responseDueAt, externalActionPerformed: false });
       }
-      if (redriveDecision?.status !== 'submission_redrive_reauthorization_approved'
-        || redrivePlan?.status !== 'submission_redrive_reauthorization_required'
-        || redrivePlan?.redriveDecisionHash !== redriveDecision?.submissionRedriveDecisionHash) {
-        throw new Error('approved ambiguous result decision and redrive plan required');
-      }
-      if (!hasValidDeliveryRecordHash('SubmissionRedrivePlan', redrivePlan, 'submissionRedrivePlanHash')) throw new Error('ambiguous redrive plan hash invalid');
-      const payload = parseSubmissionOutboxPayload(message);
-      const updatedPayload = { ...payload, _delivery: { ...payload._delivery, redriveReauthorization: { redrivePlanHash: redrivePlan.submissionRedrivePlanHash, redriveDecisionHash: redriveDecision.submissionRedriveDecisionHash, nextAttempt: redrivePlan.nextAttempt, eligibleAt: now } } };
-      persistence.execute(`UPDATE submission_outbox SET status='reauthorization_required',attempt_count=${Math.max(1, Number(message.attempt_count || 0) + 1)},payload_json=${sqlJson(updatedPayload)},next_attempt_at=${sqlText(now)},updated_at=${sqlText(now)} WHERE message_id=${sqlText(messageId)};`);
       return Object.freeze({ status: 'submission_redrive_reauthorization_required', messageId, redrivePlanHash: redrivePlan.submissionRedrivePlanHash, externalActionPerformed: false });
     },
     enqueueRedrive({ previousMessageId, dispatchAuthorization, payload } = {}) {
@@ -123,15 +182,68 @@ export function createSqliteDeliveryRedriveOperations({ persistence, receiptLedg
       const receiptHash = hashRecord('SubmissionRedriveEnqueueReceipt', receipt);
       if (typeof receiptLedger.prepare !== 'function') throw new Error('atomic receipt ledger preparation required');
       const preparedLedger = receiptLedger.prepare({ ...receipt, receiptHash }, { stream: 'submission-delivery', paperId: previous.paper_id, strictInsert: true });
-      persistence.execute(`BEGIN IMMEDIATE;
-        ${preparedLedger.sql}
-        UPDATE submission_outbox SET status='superseded',updated_at=${sqlText(now)} WHERE message_id=${sqlText(previousMessageId)};
-        INSERT INTO submission_outbox(message_id,paper_id,dispatch_hash,provider,account_id,nonce,status,attempt_count,payload_json,next_attempt_at,created_at,updated_at,replay_key,action_scope_key,dispatch_cycle_hash,authorization_receipt_hash,executor_descriptor_hash,response_due_at,executor_capabilities_hash,provider_capability_verification_receipt_hash,portal_route)
-        VALUES(${sqlText(messageId)},${sqlText(previous.paper_id)},${sqlText(dispatchHash)},${sqlText(dispatchAuthorization.provider)},${sqlText(dispatchAuthorization.accountId)},${sqlText(dispatchAuthorization.nonce)},'pending',${Number(dispatchAuthorization.attempt) - 1},${sqlJson(storedPayload)},${sqlText(now)},${sqlText(now)},${sqlText(now)},${sqlText(dispatchAuthorization.replayKey)},${sqlText(dispatchAuthorization.actionScopeKey)},${sqlText(dispatchAuthorization.dispatchCycleHash)},${sqlText(dispatchAuthorization.liveAuthorizationHash)},${dispatchAuthorization.executorDescriptorHash ? sqlText(dispatchAuthorization.executorDescriptorHash) : 'NULL'},${sqlText(dispatchAuthorization.responseDueAt)},${dispatchAuthorization.executorCapabilitiesHash ? sqlText(dispatchAuthorization.executorCapabilitiesHash) : 'NULL'},${sqlText(dispatchAuthorization.providerCapabilityVerificationReceiptHash)},${sqlText(dispatchAuthorization.portalRoute)});
+      if (typeof persistence.mutate === 'function') {
+        const ledgerMutation = preparedSqliteReceiptLedgerMutation(preparedLedger);
+        persistence.mutate({
+          databaseRole: 'native-store',
+          operationId: 'native-store.delivery-redrive-operations.enqueueRedrive.v1',
+          authorizationReceiptHashes: authorizationHashes(
+            dispatchAuthorization.liveAuthorizationHash,
+          ),
+          sideEffectReservationHashes: [],
+          mutate(transaction) {
+            transaction.run(S.receiptInsert, ...ledgerMutation.parameters);
+            transaction.run(S.redriveSupersede, now, previousMessageId);
+            transaction.run(
+              S.enqueueRedriveOutbox,
+              messageId,
+              previous.paper_id,
+              dispatchHash,
+              dispatchAuthorization.provider,
+              dispatchAuthorization.accountId,
+              dispatchAuthorization.nonce,
+              Number(dispatchAuthorization.attempt) - 1,
+              JSON.stringify(storedPayload),
+              now,
+              now,
+              now,
+              dispatchAuthorization.replayKey,
+              dispatchAuthorization.actionScopeKey,
+              dispatchAuthorization.dispatchCycleHash,
+              dispatchAuthorization.liveAuthorizationHash,
+              dispatchAuthorization.executorDescriptorHash || null,
+              dispatchAuthorization.responseDueAt,
+              dispatchAuthorization.executorCapabilitiesHash || null,
+              dispatchAuthorization.providerCapabilityVerificationReceiptHash,
+              dispatchAuthorization.portalRoute,
+            );
+            transaction.run(
+              S.enqueueRedriveAuthorizationConsumption,
+              dispatchAuthorization.nonce,
+              dispatchAuthorization.liveAuthorizationHash,
+              dispatchAuthorization.replayKey,
+              dispatchAuthorization.dispatchCycleHash,
+              previous.paper_id,
+              messageId,
+              now,
+            );
+            transaction.run(
+              S.enqueueRedriveReleaseLock,
+              messageId,
+              dispatchHash,
+              previous.paper_id,
+            );
+          },
+        });
+      } else {
+      persistence.transaction((transaction) => transaction.execute(`${preparedLedger.sql}
+        UPDATE submission_outbox SET status='superseded',updated_at=${sqlText(now)} WHERE delivery_kind='reviewed' AND message_id=${sqlText(previousMessageId)};
+        INSERT INTO submission_outbox(delivery_kind,message_id,paper_id,dispatch_hash,provider,account_id,nonce,status,attempt_count,payload_json,next_attempt_at,created_at,updated_at,replay_key,action_scope_key,dispatch_cycle_hash,authorization_receipt_hash,executor_descriptor_hash,response_due_at,executor_capabilities_hash,provider_capability_verification_receipt_hash,portal_route)
+        VALUES('reviewed',${sqlText(messageId)},${sqlText(previous.paper_id)},${sqlText(dispatchHash)},${sqlText(dispatchAuthorization.provider)},${sqlText(dispatchAuthorization.accountId)},${sqlText(dispatchAuthorization.nonce)},'pending',${Number(dispatchAuthorization.attempt) - 1},${sqlJson(storedPayload)},${sqlText(now)},${sqlText(now)},${sqlText(now)},${sqlText(dispatchAuthorization.replayKey)},${sqlText(dispatchAuthorization.actionScopeKey)},${sqlText(dispatchAuthorization.dispatchCycleHash)},${sqlText(dispatchAuthorization.liveAuthorizationHash)},${dispatchAuthorization.executorDescriptorHash ? sqlText(dispatchAuthorization.executorDescriptorHash) : 'NULL'},${sqlText(dispatchAuthorization.responseDueAt)},${dispatchAuthorization.executorCapabilitiesHash ? sqlText(dispatchAuthorization.executorCapabilitiesHash) : 'NULL'},${sqlText(dispatchAuthorization.providerCapabilityVerificationReceiptHash)},${sqlText(dispatchAuthorization.portalRoute)});
         INSERT INTO submission_authorization_consumptions(nonce,authorization_receipt_hash,replay_key,dispatch_cycle_hash,paper_id,message_id,consumed_at)
         VALUES(${sqlText(dispatchAuthorization.nonce)},${sqlText(dispatchAuthorization.liveAuthorizationHash)},${sqlText(dispatchAuthorization.replayKey)},${sqlText(dispatchAuthorization.dispatchCycleHash)},${sqlText(previous.paper_id)},${sqlText(messageId)},${sqlText(now)});
-        UPDATE submission_release_locks SET message_id=${sqlText(messageId)},lock_token=${sqlText(dispatchHash)},status='locked',released_at=NULL,reconciliation_hash=NULL WHERE paper_id=${sqlText(previous.paper_id)};
-        COMMIT;`);
+        UPDATE submission_release_locks SET message_id=${sqlText(messageId)},lock_token=${sqlText(dispatchHash)},status='locked',released_at=NULL,reconciliation_hash=NULL WHERE paper_id=${sqlText(previous.paper_id)};`));
+      }
       const message = getApi().getOutbox(messageId);
       if (!message || message.message_id !== messageId) throw new Error('redrive message persistence failed');
       return Object.freeze({ ...receipt, receiptHash, ledgerReceiptId: preparedLedger.receiptId });
@@ -145,7 +257,30 @@ export function createSqliteDeliveryRedriveOperations({ persistence, receiptLedg
       const sealedReceipt = { ...receipt, receiptHash: hashRecord('SubmissionDeadLetterReceipt', receipt) };
       if (typeof receiptLedger.prepare !== 'function') throw new Error('atomic receipt ledger preparation required');
       const preparedLedger = receiptLedger.prepare(sealedReceipt, { stream: 'submission-delivery', paperId: message.paper_id });
-      persistence.execute(`BEGIN IMMEDIATE; ${preparedLedger.sql} INSERT OR IGNORE INTO submission_dead_letters(dead_letter_id,message_id,failure_class,attempt_count,receipt_json,created_at) VALUES(${sqlText(id)},${sqlText(messageId)},${sqlText(failureClass)},${receipt.attemptCount},${sqlJson(receipt)},${sqlText(now)}); UPDATE submission_outbox SET status='dead_letter',updated_at=${sqlText(now)} WHERE message_id=${sqlText(messageId)}; COMMIT;`);
+      if (typeof persistence.mutate === 'function') {
+        const ledgerMutation = preparedSqliteReceiptLedgerMutation(preparedLedger);
+        persistence.mutate({
+          databaseRole: 'native-store',
+          operationId: 'native-store.delivery-redrive-operations.deadLetter.v1',
+          authorizationReceiptHashes: [],
+          sideEffectReservationHashes: [],
+          mutate(transaction) {
+            transaction.run(S.receiptInsertIgnore, ...ledgerMutation.parameters);
+            transaction.run(
+              S.deadLetterInsert,
+              id,
+              messageId,
+              failureClass,
+              receipt.attemptCount,
+              JSON.stringify(receipt),
+              now,
+            );
+            transaction.run(S.setDeadLetter, now, messageId);
+          },
+        });
+      } else {
+      persistence.transaction((transaction) => transaction.execute(`${preparedLedger.sql} INSERT OR IGNORE INTO submission_dead_letters(dead_letter_id,message_id,failure_class,attempt_count,receipt_json,created_at) VALUES(${sqlText(id)},${sqlText(messageId)},${sqlText(failureClass)},${receipt.attemptCount},${sqlJson(receipt)},${sqlText(now)}); UPDATE submission_outbox SET status='dead_letter',updated_at=${sqlText(now)} WHERE delivery_kind='reviewed' AND message_id=${sqlText(messageId)};`));
+      }
       return Object.freeze({ ...receipt, ledgerReceiptId: preparedLedger.receiptId });
     },
   };

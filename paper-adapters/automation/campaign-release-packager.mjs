@@ -15,17 +15,52 @@ import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
 import { createTrustedExperimentRegistryAuthorityVerifier } from '../research-verify/experiment-registry-authority-verifier.mjs';
 import { createOperatorDatasetHarnessAuthorityReceiptVerifier } from './operator-dataset-harness-authority-receipt-verifier.mjs';
 import {
-  assertImmutableCampaignPackageFilesSync,
-  campaignReleaseRebuildRootFor,
-  campaignReleaseRootFor,
-  fsyncCampaignReleasePackageDirectorySync,
-  initializeCampaignReleaseRootSync,
+  assertImmutableCampaignPackageFilesSync, campaignReleasePackageRootFor,
+  campaignReleaseRebuildRootFor, campaignReleaseRootFor,
+  fsyncCampaignReleasePackageDirectorySync, initializeCampaignReleaseRootSync,
+  initializeCampaignReleasePackageScopeSync,
   persistCampaignReleaseMaterializationSync,
   readCampaignReleaseMaterializationSync,
 } from './campaign-release-materialization.mjs';
 import { executeIndependentCampaignPdfRebuild } from './campaign-release-independent-pdf-rebuild.mjs';
+import {
+  assertCampaignReleaseExternalResearchReplayAuthority,
+} from './campaign-external-research-replay.mjs';
+import {
+  inspectAutonomousResearchReleaseReviewerEvidence,
+} from '../../paper-domain/automation/autonomous-research-release-reviewer-evidence-contract.mjs';
 
 export { createResearchExecutionReleaseAttestor };
+
+export function assertCampaignReleaseReviewerEvidenceForPackaging({
+  campaign,
+  releaseBinding,
+  reviewerEvidenceAuthority,
+  expectedManuscriptHash,
+  errorCode = 'campaign_release_reviewer_evidence_invalid',
+} = {}) {
+  if (campaign?.spec?.autonomousResearchPreparation?.launchMode !== 'production-run') {
+    return null;
+  }
+  const inspection = inspectAutonomousResearchReleaseReviewerEvidence(
+    releaseBinding?.releaseReviewerEvidence,
+    {
+      runtimePrincipalBinding:
+        campaign.spec.autonomousResearchPreparation.runtimePrincipalBinding,
+      reviewerEvidenceAuthority,
+      expected: {
+        campaignId: campaign.campaignId,
+        paperId: campaign.paperId,
+        campaignPlanHash: campaign.spec.campaignPlanHash,
+        expectedManuscriptHash,
+      },
+    },
+  );
+  if (!inspection.valid) {
+    throw new Error(`${errorCode}:${inspection.blockers.join(',')}`);
+  }
+  return inspection;
+}
 
 function manuscriptPath(workspace) {
   for (const name of ['main.tex', 'paper.tex', 'manuscript.tex']) if (fs.existsSync(path.join(workspace, name))) return name;
@@ -173,6 +208,7 @@ export function createCampaignReleasePackager({
   clock = null,
   researchExecutionReleaseAttestor = null,
   independentPdfRebuildVerifier: suppliedPdfRebuildVerifier = null,
+  externalResearchReplay = null,
   packageAdapter = runPackageAdapter,
 } = {}) {
   if (typeof artifactRepositoryFactory !== 'function') throw new Error('Campaign release packager requires ArtifactRepositoryFactory');
@@ -183,7 +219,24 @@ export function createCampaignReleasePackager({
   const port = {
     version: 1,
     kind: 'CampaignReleasePackagerPort',
-    async packageRelease({ campaign, packageNode, finalCompileNode, researchVerifyNode = null, researchReport = null, sourceWorkspace, runtimeRoot, createdAt, executionSignal = null } = {}) {
+    async packageRelease({
+      campaign,
+      packageNode,
+      finalCompileNode,
+      researchVerifyNode = null,
+      researchReport = null,
+      sourceWorkspace,
+      manuscriptPath: requestedManuscriptPath = null,
+      trustedAutonomousManuscriptResult = null,
+      refereeConvergenceDecision = null,
+      evidenceEntailmentReviewReceipt = null,
+      reviewerEvidenceAuthority = null,
+      experimentExecutionClosure = null,
+      runtimeRoot,
+      createdAt,
+      executionSignal = null,
+      assertExternalSideEffectReady = null,
+    } = {}) {
       if (executionSignal?.aborted) throw new Error('campaign_release_packaging_cancelled');
       if (!campaign?.campaignId || !campaign?.spec?.campaignPlanHash) throw new Error('campaign_release_campaign_lineage_required');
       if (packageNode?.kind !== 'package') throw new Error('campaign_release_package_node_required');
@@ -197,6 +250,11 @@ export function createCampaignReleasePackager({
         if (!researchVerifyNode.attemptId || !Number.isInteger(researchVerifyNode.leaseGeneration) || researchVerifyNode.leaseGeneration < 1) throw new Error('campaign_release_research_attempt_identity_required');
         if (researchReport?.kind !== 'PaperResearchVerifyReport' || !researchReport.researchReportHash || researchReport.promotionEligibility?.status !== 'research_promotion_ready') throw new Error('campaign_release_research_report_not_promotion_ready');
       }
+      assertCampaignReleaseExternalResearchReplayAuthority({
+        campaign,
+        researchReport,
+        externalResearchReplay,
+      });
       if (!createdAt || !Number.isFinite(Date.parse(createdAt))) throw new Error('campaign_release_created_at_required');
       const workspace = path.resolve(sourceWorkspace || campaign.spec.sourceWorkspace || '');
       const requestedRuntimeRoot = runtimeRoot
@@ -274,6 +332,40 @@ export function createCampaignReleasePackager({
         lineageHash: campaignResearchSourceSnapshot?.campaignResearchSourceSnapshotHash || null,
       });
       const releaseRoot = campaignReleaseRootFor(resolvedRuntimeRoot, campaign, packageNode);
+      const mainTex = String(requestedManuscriptPath || manuscriptPath(workspace));
+      const mainRecord = packageStartSourceSnapshot.fileRecords
+        .find((record) => record.path === mainTex) || null;
+      const manuscriptIrRecord = packageStartSourceSnapshot.fileRecords
+        .find((record) => record.path === 'AUTONOMOUS_MANUSCRIPT_IR.json') || null;
+      const manuscriptIrDraftRecord = packageStartSourceSnapshot.fileRecords
+        .find((record) => record.path === 'AUTONOMOUS_MANUSCRIPT_IR_DRAFT.json') || null;
+      let manuscriptIr = null;
+      let manuscriptIrDraft = null;
+      if (manuscriptIrRecord) {
+        try {
+          manuscriptIr = JSON.parse(fs.readFileSync(
+            path.resolve(workspace, manuscriptIrRecord.path),
+            'utf8',
+          ));
+        } catch {
+          throw new Error('campaign_release_manuscript_ir_invalid');
+        }
+        const { evidenceBoundManuscriptIrHash: claimedIrHash, ...irPayload } = manuscriptIr || {};
+        if (!claimedIrHash
+          || hashRecord('EvidenceBoundManuscriptIR', irPayload) !== claimedIrHash) {
+          throw new Error('campaign_release_manuscript_ir_hash_invalid');
+        }
+      }
+      if (manuscriptIrDraftRecord) {
+        try {
+          manuscriptIrDraft = JSON.parse(fs.readFileSync(
+            path.resolve(workspace, manuscriptIrDraftRecord.path),
+            'utf8',
+          ));
+        } catch {
+          throw new Error('campaign_release_manuscript_ir_draft_invalid');
+        }
+      }
       const autonomousResearchReleaseBinding = createAutonomousResearchReleaseBinding({
         campaignId: campaign.campaignId,
         paperId: campaign.paperId,
@@ -282,6 +374,31 @@ export function createCampaignReleasePackager({
         machineIntake: campaign.spec.autonomousResearchMachineIntake || null,
         machineIntakeAdmission:
           campaign.spec.autonomousResearchMachineIntakeAdmission || null,
+        manuscriptPath: mainTex,
+        renderedManuscriptHash: mainRecord?.hash || null,
+        evidenceBoundManuscriptIrHash:
+          manuscriptIr?.evidenceBoundManuscriptIrHash || null,
+        manuscriptIrFileHash: manuscriptIrRecord?.hash || null,
+        agentAuthoredSourceDraft: manuscriptIrDraft,
+        agentAuthoredSourceDraftFileHash: manuscriptIrDraftRecord?.hash || null,
+        trustedAutonomousManuscriptResult,
+        refereeConvergenceDecision,
+        reviewerEvidenceAuthority,
+        researchReport,
+        experimentIrExecutionAuthorityReceipt:
+          experimentExecutionClosure?.experimentIrExecutionAuthorityReceipt || null,
+        experimentReplayReceipt:
+          experimentExecutionClosure?.experimentReplayReceipt || null,
+      });
+      const productionEntailmentRequired = campaign.spec.autonomousResearchPreparation
+        ?.launchMode === 'production-run';
+      const trustedRenderReceipt = trustedAutonomousManuscriptResult
+        ?.result?.trustedAutonomousManuscriptRenderReceipt || null;
+      assertCampaignReleaseReviewerEvidenceForPackaging({
+        campaign,
+        releaseBinding: autonomousResearchReleaseBinding,
+        reviewerEvidenceAuthority,
+        expectedManuscriptHash: mainRecord?.hash || null,
       });
       const expected = {
         campaignId: campaign.campaignId,
@@ -312,24 +429,45 @@ export function createCampaignReleasePackager({
       if (existing) {
         const verification = verifyCampaignReleaseBundle(existing.bundle, expected, { experimentRegistryAuthorityVerifier });
         if (!verification.valid) throw new Error(`campaign_release_immutable_bundle_invalid:${verification.blockers.join(',')}`);
+        if (productionEntailmentRequired
+          && (existing.bundle?.manuscriptPromotionGate?.version !== 2
+            || existing.bundle?.manuscriptPromotionGate
+              ?.evidenceEntailmentReviewRequired !== true
+            || existing.bundle?.manuscriptPromotionGate
+              ?.independentEvidenceEntailmentReviewReceiptHash
+                !== evidenceEntailmentReviewReceipt
+                  ?.independentEvidenceEntailmentReviewReceiptHash)) {
+          throw new Error('campaign_release_immutable_entailment_review_invalid');
+        }
+        if (campaign.spec.autonomousResearchPreparation?.launchMode === 'production-run') {
+          const persistedBinding = existing.bundle.autonomousResearchReleaseBinding || null;
+          assertCampaignReleaseReviewerEvidenceForPackaging({
+            campaign,
+            releaseBinding: persistedBinding,
+            reviewerEvidenceAuthority,
+            expectedManuscriptHash: mainRecord?.hash || null,
+            errorCode: 'campaign_release_immutable_reviewer_evidence_invalid',
+          });
+        }
         assertImmutableCampaignPackageFilesSync(existing.bundle.packageOutput, resolvedRuntimeRoot);
         const materializationReceipt = persistCampaignReleaseMaterializationSync({ runtimeRoot: resolvedRuntimeRoot, releaseRoot, bundle: existing.bundle });
         return packageNodeResult(existing.bundle, materializationReceipt);
       }
-      initializeCampaignReleaseRootSync(resolvedRuntimeRoot, releaseRoot);
-      const mainTex = manuscriptPath(workspace);
+      initializeCampaignReleaseRootSync(resolvedRuntimeRoot, releaseRoot); initializeCampaignReleasePackageScopeSync(resolvedRuntimeRoot);
       const builtPdf = await compiledPdfRecord(workspace, finalCompileNode);
       if (!builtPdf) throw new Error('campaign_release_compiled_pdf_required');
       const independentPdfRebuild = await executeIndependentCampaignPdfRebuild({
         verifier: suppliedPdfRebuildVerifier,
         sourceWorkspace: workspace,
         sourceArchiveDefinition: archiveDefinition,
+        campaignId: campaign.campaignId,
         rebuildRoot: campaignReleaseRebuildRootFor(resolvedRuntimeRoot, campaign, packageNode),
         paperId: campaign.paperId,
         mainTex,
         authoritativePdf: builtPdf,
         createdAt,
         signal: executionSignal,
+        assertExternalSideEffectReady,
       });
       const paperTask = createPaperTask({
         paperId: campaign.paperId,
@@ -359,7 +497,7 @@ export function createCampaignReleasePackager({
         state: { compileStatus: 'build_passed' },
         artifacts: { pdfs: [builtPdf] },
       };
-      const packageDir = path.join(releaseRoot, 'package');
+      const packageDir = campaignReleasePackageRootFor(resolvedRuntimeRoot, campaign, packageNode);
       const packageResult = await withArtifactWriteContext({ artifactRepositoryFactory }, () => packageAdapter({
         root: workspace,
         row,
@@ -379,8 +517,20 @@ export function createCampaignReleasePackager({
           ? runtimeTrustStoreProvider()
           : null,
         researchExecutionReleaseAttestor,
+        assertExternalSideEffectReady,
         independentPdfRebuild,
         sourceArchiveDefinition: archiveDefinition,
+        evidenceEntailmentReviewReceipt,
+        requireEvidenceEntailmentReview: productionEntailmentRequired,
+        expectedManuscriptHash: mainRecord?.hash || null,
+        expectedEvidenceEntailmentContractHash:
+          trustedRenderReceipt?.evidenceEntailmentContractHash || null,
+        expectedEvidenceBoundManuscriptIrHash:
+          manuscriptIr?.evidenceBoundManuscriptIrHash || null,
+        expectedManuscriptAuthorPrincipalId:
+          trustedAutonomousManuscriptResult?.result?.agentExecutionReceipt?.principalId
+          || trustedAutonomousManuscriptResult?.result?.agentExecutionReceipt?.agentId
+          || null,
       }));
       if (executionSignal?.aborted) throw new Error('campaign_release_packaging_cancelled');
       const packageEndSourceSnapshot = inspectReleaseSourceSnapshot(workspace, snapshotOptions);
@@ -394,6 +544,14 @@ export function createCampaignReleasePackager({
         error.retryable = false;
         error.receipt = packageResult.packageVerificationReceipt || packageResult.manuscriptPromotionGate || packageResult;
         throw error;
+      }
+      if (productionEntailmentRequired
+        && (packageResult.manuscriptPromotionGate?.version !== 2
+          || packageResult.manuscriptPromotionGate
+            ?.independentEvidenceEntailmentReviewReceiptHash
+              !== evidenceEntailmentReviewReceipt
+                ?.independentEvidenceEntailmentReviewReceiptHash)) {
+        throw new Error('campaign_release_package_entailment_review_invalid');
       }
       for (const candidate of [
         packageResult.sourceZip?.path ? path.resolve(packageResult.artifactBaseRoot, packageResult.sourceZip.path) : null,

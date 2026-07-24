@@ -1,6 +1,10 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { evaluateClaimContractReadiness } from './claim-contract-readiness-policy.mjs';
 import { verifyTrustedLedgerReceipt } from '../evidence/trusted-ledger-receipt.mjs';
+import {
+  verifyGenericFormalCertificateIntakeClosureBinding,
+  verifyNativeFormalResearchClosureBinding,
+} from './formal-certificate-intake.mjs';
 
 export function buildEvidenceQualityGate({
   paperTask,
@@ -10,6 +14,11 @@ export function buildEvidenceQualityGate({
   receiptLedger = null,
   experimentEvidenceBindings = [],
   formalCertificateIntakes = [],
+  campaignId = null,
+  researchSourceSnapshotHash = null,
+  expectedFormalClaimBindings = [],
+  proposalClaimToTheoremBinding = null,
+  nativeResearchWorkerExecution = null,
 } = {}) {
   const claimContractReadiness = evaluateClaimContractReadiness({ claimRegistry });
   const workerLedgerVerifications = nativeWorkerReceipts.map((receipt) => verifyTrustedLedgerReceipt({
@@ -27,27 +36,58 @@ export function buildEvidenceQualityGate({
     && Boolean(receipt.sourceSnapshotHash)
     && workerLedgerVerifications[index]?.status === 'trusted_ledger_receipt_verified'
   )).flatMap((receipt) => receipt.claimIds || []));
-  const verifiedNativeFormalClaims = new Set(nativeWorkerReceipts.filter((receipt, index) => (
-    receipt?.workerType === 'formal_verifier_lake'
-    && receipt?.status === 'native_research_worker_execution_verified'
-    && receipt?.academicEvidenceEligible === true
-    && workerLedgerVerifications[index]?.status === 'trusted_ledger_receipt_verified'
-    && receipt?.result?.status === 'formal_claim_verified'
-    && receipt?.result?.replayReceipt?.status === 'formal_claim_replay_verified'
-    && Boolean(receipt?.result?.formalCertificateReplayReceiptHash)
-  )).flatMap((receipt) => receipt.claimIds || []));
+  const trustedNativeFormalReceiptHashes = nativeWorkerReceipts
+    .filter((receipt, index) => (
+      receipt?.workerType === 'formal_verifier_lake'
+      && workerLedgerVerifications[index]?.status === 'trusted_ledger_receipt_verified'
+    ))
+    .map((receipt) => receipt.nativeResearchWorkerExecutionReceiptHash)
+    .filter(Boolean);
+  const nativeFormalClosureVerification =
+    verifyNativeFormalResearchClosureBinding(nativeResearchWorkerExecution, {
+      paperId: paperTask?.paperId || null,
+      campaignId,
+      researchSourceSnapshotHash,
+      taskKey: paperTask?.taskKey || null,
+      proposalBinding: proposalClaimToTheoremBinding,
+      expectedClaimBindings: expectedFormalClaimBindings,
+    });
+  const nativeFormalLedgerTrusted = nativeFormalClosureVerification.receipt
+    && trustedNativeFormalReceiptHashes.includes(
+      nativeFormalClosureVerification.receipt
+        .nativeResearchWorkerExecutionReceiptHash,
+    );
+  const verifiedNativeFormalClaims = new Set(
+    nativeFormalClosureVerification.valid && nativeFormalLedgerTrusted
+      ? nativeFormalClosureVerification.receipt.claimIds || []
+      : [],
+  );
   const verifiedExperimentClaims = new Set(experimentEvidenceBindings.filter((binding) => (
     binding?.status === 'experiment_evidence_binding_verified'
     && binding?.trustedLedgerReceiptsVerified === true
     && (binding?.artifactSourcesVerified === true || binding?.rawArtifactSourcesVerified === true)
   )).flatMap((binding) => binding.claimIds || []));
+  const formalCertificateIntakeClosureVerifications = formalCertificateIntakes.map((intake) => (
+    verifyGenericFormalCertificateIntakeClosureBinding(intake, {
+      paperId: paperTask?.paperId || null,
+      campaignId,
+      researchSourceSnapshotHash,
+      taskKey: paperTask?.taskKey || null,
+      expectedClaimBindings: expectedFormalClaimBindings,
+      proposalBinding: proposalClaimToTheoremBinding,
+      nativeResearchWorkerExecution,
+      requireNativeFormalLedgerTrust: true,
+      trustedNativeFormalReceiptHashes,
+    })
+  ));
+  const verifiedFormalCertificateIntakes = formalCertificateIntakes.filter((_, index) => (
+    formalCertificateIntakeClosureVerifications[index]?.valid === true
+  ));
   const verifiedFormalClaims = new Set([
     ...verifiedNativeFormalClaims,
-    ...formalCertificateIntakes.filter((intake) => (
-    intake?.status === 'formal_certificate_intake_verified'
-    && intake?.trustedLedgerReceiptsVerified === true
-    && intake?.artifactSourcesVerified === true
-    )).flatMap((intake) => (intake.claimBindings || []).map((binding) => binding.claimId)),
+    ...verifiedFormalCertificateIntakes.flatMap((intake) => (
+      (intake.claimBindings || []).map((binding) => binding.claimId)
+    )),
   ]);
   const evidenceClaims = new Set((evidenceIntake?.items || []).flatMap((item) => (
     item.verificationStatus === 'evidence_artifact_verified'
@@ -92,6 +132,11 @@ export function buildEvidenceQualityGate({
   const unregisteredExperimentClaimIds = [...verifiedExperimentClaims].filter((id) => !registeredClaimIds.has(id));
   const unregisteredEvidenceClaimIds = [...evidenceClaims].filter((id) => !registeredClaimIds.has(id));
   const evidenceIntakeRequired = (claimRegistry?.claims || []).some((claim) => claim?.verificationPlan?.requiresEvidence !== false);
+  const formalIntakeLineageBlockers = formalCertificateIntakeClosureVerifications.flatMap(
+    (verification, index) => verification.valid ? [] : verification.blockers.map((blocker) => (
+      `formal_certificate_intake_closure_binding:${index}:${blocker}`
+    )),
+  );
   const blockers = [
     ...(claimRegistry?.status === 'claim_graph_valid' ? [] : ['claim_graph_not_valid']),
     ...(claimContractReadiness.status === 'claim_contract_readiness_ready' ? [] : claimContractReadiness.blockers),
@@ -100,7 +145,18 @@ export function buildEvidenceQualityGate({
     ...unregisteredWorkerClaimIds.map((id) => `worker_claim_not_registered_in_manuscript:${id}`),
     ...unregisteredExperimentClaimIds.map((id) => `experiment_claim_not_registered_in_manuscript:${id}`),
     ...unregisteredEvidenceClaimIds.map((id) => `evidence_claim_not_registered_in_manuscript:${id}`),
+    ...formalIntakeLineageBlockers,
+    ...(expectedFormalClaimBindings.length
+      && (!nativeFormalClosureVerification.valid || !nativeFormalLedgerTrusted)
+      ? [
+        'native_formal_current_closure_required',
+        ...nativeFormalClosureVerification.blockers.map((blocker) => (
+          `native_formal_current_closure:${blocker}`
+        )),
+      ] : []),
+    ...(expectedFormalClaimBindings.length && !verifiedFormalCertificateIntakes.length
+      ? ['formal_certificate_intake_current_closure_required'] : []),
   ];
-  const record = { version: 6, kind: 'EvidenceQualityGate', paperId: paperTask?.paperId || null, status: blockers.length ? 'evidence_quality_blocked' : 'evidence_quality_ready', evidenceIntakeRequired, claimContractReadiness, claimCoverageResults, coveredClaimIds, missingClaimIds, unregisteredWorkerClaimIds, unregisteredExperimentClaimIds, unregisteredEvidenceClaimIds, workerLedgerVerifications, verifiedNativeFormalClaimIds: [...verifiedNativeFormalClaims].sort(), verifiedFormalClaimIds: [...verifiedFormalClaims].sort(), verifiedExperimentClaimIds: [...verifiedExperimentClaims].sort(), blockers: [...new Set(blockers)] };
+  const record = { version: 7, kind: 'EvidenceQualityGate', paperId: paperTask?.paperId || null, campaignId: campaignId || null, researchSourceSnapshotHash: researchSourceSnapshotHash || null, status: blockers.length ? 'evidence_quality_blocked' : 'evidence_quality_ready', evidenceIntakeRequired, claimContractReadiness, claimCoverageResults, coveredClaimIds, missingClaimIds, unregisteredWorkerClaimIds, unregisteredExperimentClaimIds, unregisteredEvidenceClaimIds, workerLedgerVerifications, nativeFormalClosureVerification, formalCertificateIntakeClosureVerifications, verifiedNativeFormalClaimIds: [...verifiedNativeFormalClaims].sort(), verifiedFormalClaimIds: [...verifiedFormalClaims].sort(), verifiedFormalCertificateIntakeHashes: verifiedFormalCertificateIntakes.map((intake) => intake.genericFormalCertificateIntakeHash).sort(), verifiedExperimentClaimIds: [...verifiedExperimentClaims].sort(), blockers: [...new Set(blockers)] };
   return { ...record, evidenceQualityGateHash: hashRecord('EvidenceQualityGate', record) };
 }

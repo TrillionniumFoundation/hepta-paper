@@ -1,9 +1,17 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hasExactObjectKeys as exactKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 import {
   matchesRuntimeImageReproducibilityCanonicalContextTarMetadataPolicy,
   matchesRuntimeImageReproducibilityDockerfileFrontend,
   matchesRuntimeImageReproducibilityCanonicalBuild,
 } from './runtime-image-reproducibility-build-policy.mjs';
+import {
+  AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_PACKAGE,
+  AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_PRODUCTION_PROFILES,
+  AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_REGISTRY,
+  AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_STARTUP_INSPECTION,
+  AUTONOMOUS_EMPIRICAL_PLUGIN_RUNTIME_LANGUAGES,
+} from './autonomous-empirical-family-plugin-registry.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{2,159}$/;
@@ -11,13 +19,79 @@ const PROFILE = /^[A-Za-z][A-Za-z0-9]{0,31}$/;
 const MAXIMUM_AGE_MS = 24 * 60 * 60 * 1000;
 const MAXIMUM_RECEIPT_ISSUANCE_LAG_MS = 60_000;
 
-export const REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES = Object.freeze([
-  'python', 'pythonGpu', 'r',
-]);
+const SUPPORTED_RUNTIME_IMAGE_PROFILES = new Set(['python', 'r']);
 
-function exactKeys(value, expected) {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    && Object.keys(value).sort().join('\0') === [...expected].sort().join('\0');
+export const REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES = Object.freeze(
+  [...AUTONOMOUS_EMPIRICAL_PLUGIN_RUNTIME_LANGUAGES],
+);
+
+if (REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES.length < 1
+  || REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES
+    .some((profile) => !SUPPORTED_RUNTIME_IMAGE_PROFILES.has(profile))
+  || AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_PRODUCTION_PROFILES
+    .some((profile) => profile.executionProfile.requiresGpu === true)) {
+  throw new Error('runtime_reproducibility_active_plugin_profile_scope_invalid');
+}
+
+const ACTIVE_PLUGIN_SCOPE_PAYLOAD = Object.freeze({
+  version: 1,
+  kind: 'RuntimeImageReproducibilityActivePluginScope',
+  empiricalFamilyPluginPackageHash:
+    AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_PACKAGE
+      .autonomousEmpiricalFamilyPluginPackageHash,
+  empiricalFamilyPluginRegistryHash:
+    AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_REGISTRY
+      .autonomousEmpiricalFamilyPluginRegistryHash,
+  empiricalFamilyPluginStartupInspectionHash:
+    AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_STARTUP_INSPECTION
+      .autonomousEmpiricalFamilyPluginStartupInspectionHash,
+  activeProductionProfileHashes: Object.freeze(
+    AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_PRODUCTION_PROFILES
+      .map((profile) => profile.autonomousEmpiricalFamilyPluginProfileHash),
+  ),
+  requiredProfiles: REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES,
+  productionGpuProfileCount: 0,
+});
+
+export const RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE = Object.freeze({
+  ...ACTIVE_PLUGIN_SCOPE_PAYLOAD,
+  runtimeImageReproducibilityActivePluginScopeHash: hashRecord(
+    'RuntimeImageReproducibilityActivePluginScope',
+    ACTIVE_PLUGIN_SCOPE_PAYLOAD,
+  ),
+});
+
+function activePluginScopeFields() {
+  return Object.freeze({
+    empiricalFamilyPluginPackageHash:
+      RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE
+        .empiricalFamilyPluginPackageHash,
+    empiricalFamilyPluginRegistryHash:
+      RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE
+        .empiricalFamilyPluginRegistryHash,
+    empiricalFamilyPluginStartupInspectionHash:
+      RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE
+        .empiricalFamilyPluginStartupInspectionHash,
+    activeProductionProfileHashes:
+      RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE.activeProductionProfileHashes,
+    runtimeImageReproducibilityActivePluginScopeHash:
+      RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE
+        .runtimeImageReproducibilityActivePluginScopeHash,
+  });
+}
+
+function activePluginScopeMatches(value) {
+  const expected = activePluginScopeFields();
+  return expected.empiricalFamilyPluginPackageHash
+      === value?.empiricalFamilyPluginPackageHash
+    && expected.empiricalFamilyPluginRegistryHash
+      === value?.empiricalFamilyPluginRegistryHash
+    && expected.empiricalFamilyPluginStartupInspectionHash
+      === value?.empiricalFamilyPluginStartupInspectionHash
+    && JSON.stringify(expected.activeProductionProfileHashes)
+      === JSON.stringify(value?.activeProductionProfileHashes)
+    && expected.runtimeImageReproducibilityActivePluginScopeHash
+      === value?.runtimeImageReproducibilityActivePluginScopeHash;
 }
 
 function canonicalIso(value) {
@@ -151,6 +225,18 @@ export function buildRuntimeImageReproducibilityRequest({
   codeProvenanceHash,
   releaseIdentityHash,
   inputs,
+  empiricalFamilyPluginPackageHash = RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE
+    .empiricalFamilyPluginPackageHash,
+  empiricalFamilyPluginRegistryHash = RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE
+    .empiricalFamilyPluginRegistryHash,
+  empiricalFamilyPluginStartupInspectionHash =
+    RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE
+      .empiricalFamilyPluginStartupInspectionHash,
+  activeProductionProfileHashes = RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE
+    .activeProductionProfileHashes,
+  runtimeImageReproducibilityActivePluginScopeHash =
+    RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE
+      .runtimeImageReproducibilityActivePluginScopeHash,
 } = {}) {
   const profiles = (inputs || []).map((input) => input.profile);
   if (!SAFE_ID.test(String(nonce || '')) || canonicalIso(requestedAt) === null
@@ -160,11 +246,18 @@ export function buildRuntimeImageReproducibilityRequest({
     || !SHA256.test(String(codeProvenanceHash || ''))
     || !SHA256.test(String(releaseIdentityHash || ''))
     || JSON.stringify(profiles) !== JSON.stringify(REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES)
+    || !activePluginScopeMatches({
+      empiricalFamilyPluginPackageHash,
+      empiricalFamilyPluginRegistryHash,
+      empiricalFamilyPluginStartupInspectionHash,
+      activeProductionProfileHashes,
+      runtimeImageReproducibilityActivePluginScopeHash,
+    })
     || inputs.some((input) => !inputClosureValid(input))) {
     throw new Error('runtime_reproducibility_request_invalid');
   }
   const payload = Object.freeze({
-    version: 1,
+    version: 2,
     kind: 'RuntimeImageReproducibilityVerificationRequest',
     nonce: String(nonce),
     requestedAt,
@@ -174,6 +267,11 @@ export function buildRuntimeImageReproducibilityRequest({
     codeProvenanceHash,
     releaseIdentityHash,
     requiredProfiles: REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES,
+    empiricalFamilyPluginPackageHash,
+    empiricalFamilyPluginRegistryHash,
+    empiricalFamilyPluginStartupInspectionHash,
+    activeProductionProfileHashes: Object.freeze([...activeProductionProfileHashes]),
+    runtimeImageReproducibilityActivePluginScopeHash,
     inputs: Object.freeze([...inputs]),
   });
   return Object.freeze({
@@ -184,9 +282,11 @@ export function buildRuntimeImageReproducibilityRequest({
 
 export function verifyRuntimeImageReproducibilityRequest(request) {
   if (!exactKeys(request, [
-    'codeProvenanceHash', 'configurationIdentityHash', 'expiresAt', 'inputs', 'kind',
+    'activeProductionProfileHashes', 'codeProvenanceHash', 'configurationIdentityHash',
+    'empiricalFamilyPluginPackageHash', 'empiricalFamilyPluginRegistryHash',
+    'empiricalFamilyPluginStartupInspectionHash', 'expiresAt', 'inputs', 'kind',
     'nonce', 'releaseIdentityHash', 'requestHash', 'requestedAt', 'requiredProfiles',
-    'trustIdentityHash', 'version',
+    'runtimeImageReproducibilityActivePluginScopeHash', 'trustIdentityHash', 'version',
   ])) return false;
   try {
     const expected = buildRuntimeImageReproducibilityRequest(request);
@@ -349,7 +449,7 @@ export function buildRuntimeImageReproducibilityReceipt({
     throw new Error('runtime_reproducibility_receipt_input_invalid');
   }
   const payload = Object.freeze({
-    version: 1,
+    version: 2,
     kind: 'RuntimeImageReproducibilityReceipt',
     status: 'runtime_image_reproducibility_external_attestations_recorded',
     request,
@@ -388,7 +488,7 @@ export function verifyRuntimeImageReproducibilityReceipt(receipt, {
     'issuedAt', 'kind',
     'privateSigningKeyLoadedByController', 'request', 'responseHashes', 'responses',
     'runtimeImageReproducibilityReceiptHash', 'status', 'version',
-  ]) || receipt?.version !== 1 || receipt?.kind !== 'RuntimeImageReproducibilityReceipt'
+  ]) || receipt?.version !== 2 || receipt?.kind !== 'RuntimeImageReproducibilityReceipt'
     || receipt?.status !== 'runtime_image_reproducibility_external_attestations_recorded'
     || receipt?.externalActionPerformed !== true
     || receipt?.privateSigningKeyLoadedByController !== false
@@ -443,6 +543,11 @@ export function verifyRuntimeImageReproducibilityReceipt(receipt, {
         !== hashRecord('RuntimeImageReproducibilityCurrentInputEquality', request.inputs)) {
       blockers.push('runtime_reproducibility_build_input_closure_drift');
     }
+    if (!activePluginScopeMatches(request)
+      || JSON.stringify(request.requiredProfiles)
+        !== JSON.stringify(REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES)) {
+      blockers.push('runtime_reproducibility_active_plugin_scope_drift');
+    }
   }
   const responses = Array.isArray(receipt?.responses) ? receipt.responses : [];
   if (responses.length !== 2 || !Array.isArray(receipt?.responseHashes)
@@ -468,7 +573,7 @@ export function verifyRuntimeImageReproducibilityReceipt(receipt, {
   }
   const uniqueBlockers = Object.freeze(canonical(blockers));
   return Object.freeze({
-    version: 1,
+    version: 2,
     kind: 'RuntimeImageReproducibilityReceiptInspection',
     status: uniqueBlockers.length
       ? 'runtime_image_reproducibility_blocked'
@@ -480,6 +585,20 @@ export function verifyRuntimeImageReproducibilityReceipt(receipt, {
     expiresAt: uniqueBlockers.length ? null : receipt.expiresAt,
     remainingValidityMs: uniqueBlockers.length ? 0 : expiresAt - nowMs,
     requiredProfiles: REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES,
+    empiricalFamilyPluginPackageHash:
+      RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE
+        .empiricalFamilyPluginPackageHash,
+    empiricalFamilyPluginRegistryHash:
+      RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE
+        .empiricalFamilyPluginRegistryHash,
+    empiricalFamilyPluginStartupInspectionHash:
+      RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE
+        .empiricalFamilyPluginStartupInspectionHash,
+    activeProductionProfileHashes:
+      RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE.activeProductionProfileHashes,
+    runtimeImageReproducibilityActivePluginScopeHash:
+      RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE
+        .runtimeImageReproducibilityActivePluginScopeHash,
     definitionManifestHashes: uniqueBlockers.length ? null : Object.freeze(Object.fromEntries(
       request.inputs.map((input) => [input.profile, input.definitionManifestHash]),
     )),

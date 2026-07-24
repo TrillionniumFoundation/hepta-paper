@@ -4,6 +4,22 @@ function autonomousCampaign(campaign) {
     && campaign.spec.autonomousResearchPreparation.proposal?.paperId === campaign.paperId);
 }
 
+export function supervisorNowDate(clock) {
+  const value = clock?.now ? clock.now() : new Date();
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    throw new Error('autonomous_research_supervisor_clock_invalid');
+  }
+  return date;
+}
+
+export function supervisorBackoffMilliseconds(policy, failures, random) {
+  const exponent = Math.max(0, Math.min(20, Number(failures || 0)));
+  const base = Math.min(policy.maximumCooldownMs, policy.baseCooldownMs * (2 ** exponent));
+  const jitter = Math.floor(base * 0.2 * Math.max(0, Math.min(1, Number(random()))));
+  return Math.min(policy.maximumCooldownMs, base + jitter);
+}
+
 export function selectFairAutonomousCampaignWindow(campaigns, {
   afterCampaignId = null,
   limit = 100,
@@ -46,13 +62,12 @@ export function discoverAutonomousResearchCampaignWindow({
     if (page.length < pageSize || unseen.length === 0) break;
   }
   const candidates = allCampaigns.filter(autonomousCampaign);
-  const eligible = operationMode === 'bootstrap-only'
-    ? candidates.filter((campaign) => {
-      const intakeId = campaign?.spec?.autonomousResearchMachineIntakeAdmission?.intakeId;
-      const record = machineIntake && intakeId
-        ? machineIntake.repository.readIntake(intakeId) : null;
-      return autonomyFence.inspectCampaign({ campaign, record, operationMode }).ready;
-    }) : candidates;
+  const eligible = candidates.filter((campaign) => {
+    const intakeId = campaign?.spec?.autonomousResearchMachineIntakeAdmission?.intakeId;
+    const record = machineIntake && intakeId
+      ? machineIntake.repository.readIntake(intakeId) : null;
+    return autonomyFence.inspectCampaign({ campaign, record, operationMode }).ready;
+  });
   const window = selectFairAutonomousCampaignWindow(eligible, { afterCampaignId, limit });
   return Object.freeze({
     ...window,

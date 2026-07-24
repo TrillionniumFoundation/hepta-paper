@@ -7,6 +7,7 @@ const args = parseStrictCliArguments(process.argv.slice(2), {
   booleanFlags: [
     'help',
     'live-provider-canary',
+    'live-release-attestor',
     'require-full-research',
     'require-fully-autonomous',
   ],
@@ -16,10 +17,12 @@ const args = parseStrictCliArguments(process.argv.slice(2), {
 
 if (args.help) {
   process.stdout.write(`${JSON.stringify({
-    version: 1,
+    version: 2,
     kind: 'AutomationStatusUsage',
-    usage: 'automation-status [--root PATH] [--runtime-root PATH] [--require-full-research] [--require-fully-autonomous] [--live-provider-canary]',
-    mutation: 'none',
+    usage: 'automation-status [--root PATH] [--runtime-root PATH] [--require-full-research] [--require-fully-autonomous] [--live-provider-canary] [--live-release-attestor]',
+    mutation: 'no-canonical-state-write',
+    localObservationEffects: 'runtime-metadata-and-daemon-probes-may-change',
+    externalAction: 'argument-dependent',
   }, null, 2)}\n`);
   process.exit(0);
 }
@@ -29,7 +32,7 @@ const query = queryAutomationReadiness({
   liveProviderCanaryRequested: args['live-provider-canary'] === true,
   requireFullResearch: args['require-full-research'] === true,
   requireFullyAutonomous: args['require-fully-autonomous'] === true,
-  activeReleaseAttestorVerification: false,
+  activeReleaseAttestorVerification: args['live-release-attestor'] === true,
 });
 process.stdout.write(`${JSON.stringify(query.report, null, 2)}\n`);
 process.exitCode = query.exitCode;

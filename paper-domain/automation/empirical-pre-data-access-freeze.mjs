@@ -15,6 +15,7 @@ export function buildEmpiricalPreDataAccessFreeze({
   experimentAttemptId,
   attemptVersion = 1,
   failedAttemptLineageHashes = [],
+  versionedExperimentIrHash,
   campaignBenchmarkSelectorHash,
   experimentDesignHash,
   analysisProtocolHash,
@@ -23,6 +24,8 @@ export function buildEmpiricalPreDataAccessFreeze({
   sourceMerkleHash,
   sourceWorkspaceManifestHash,
   sourceLineageHash,
+  experimentResearchBindingHash = null,
+  datasetResearchCompatibilityHash = null,
 } = {}) {
   const version = Number(attemptVersion);
   const hashes = {
@@ -34,7 +37,14 @@ export function buildEmpiricalPreDataAccessFreeze({
     sourceMerkleHash,
     sourceWorkspaceManifestHash,
     sourceLineageHash,
+    versionedExperimentIrHash,
   };
+  const researchResolved = experimentResearchBindingHash !== null
+    || datasetResearchCompatibilityHash !== null;
+  if (researchResolved) {
+    hashes.experimentResearchBindingHash = experimentResearchBindingHash;
+    hashes.datasetResearchCompatibilityHash = datasetResearchCompatibilityHash;
+  }
   if (!String(experimentAttemptId || '') || !Number.isSafeInteger(version) || version < 1
     || Object.values(hashes).some((value) => !SHA256.test(String(value || '')))) {
     throw new Error('empirical_pre_data_access_freeze_input_invalid');
@@ -49,12 +59,18 @@ export function buildEmpiricalPreDataAccessFreeze({
     failedAttemptLineageHashes: lineage,
   };
   const payload = {
-    version: 1,
+    version: researchResolved ? 3 : 2,
     kind: 'EmpiricalPreDataAccessFreeze',
     status: 'empirical_protocol_and_code_frozen',
     experimentAttemptId: String(experimentAttemptId),
     attemptVersion: version,
     failedAttemptLineageHashes: lineage,
+    versionedExperimentIrHash: String(versionedExperimentIrHash).toLowerCase(),
+    ...(researchResolved ? {
+      experimentResearchBindingHash: String(experimentResearchBindingHash).toLowerCase(),
+      datasetResearchCompatibilityHash:
+        String(datasetResearchCompatibilityHash).toLowerCase(),
+    } : {}),
     campaignBenchmarkSelectorHash: String(campaignBenchmarkSelectorHash).toLowerCase(),
     experimentDesignHash: String(experimentDesignHash).toLowerCase(),
     analysisProtocolHash: String(analysisProtocolHash).toLowerCase(),
@@ -75,14 +91,19 @@ export function buildEmpiricalPreDataAccessFreeze({
 }
 
 export function verifyEmpiricalPreDataAccessFreeze(value) {
+  const researchResolved = value?.version === 3;
   if (!exactKeys(value, [
     'version', 'kind', 'status', 'experimentAttemptId', 'attemptVersion', 'failedAttemptLineageHashes',
+    'versionedExperimentIrHash',
     'campaignBenchmarkSelectorHash', 'experimentDesignHash', 'analysisProtocolHash',
     'systemBenchmarkArmProtocolSetHash', 'systemBenchmarkArmAdapterSetHash', 'sourceMerkleHash',
     'sourceWorkspaceManifestHash', 'sourceLineageHash', 'empiricalSourceVersionHash',
     'protocolFrozenBeforeDataAccess', 'codeFrozenBeforeDataAccess', 'dataAccessAllowedAfterFreezeOnly',
     'empiricalPreDataAccessFreezeHash',
-  ]) || value.version !== 1 || value.kind !== 'EmpiricalPreDataAccessFreeze'
+    ...(researchResolved ? [
+      'experimentResearchBindingHash', 'datasetResearchCompatibilityHash',
+    ] : []),
+  ]) || ![2, 3].includes(value.version) || value.kind !== 'EmpiricalPreDataAccessFreeze'
     || value.status !== 'empirical_protocol_and_code_frozen' || !String(value.experimentAttemptId || '')
     || !Number.isSafeInteger(value.attemptVersion) || value.attemptVersion < 1
     || value.protocolFrozenBeforeDataAccess !== true || value.codeFrozenBeforeDataAccess !== true
@@ -95,6 +116,11 @@ export function verifyEmpiricalPreDataAccessFreeze(value) {
     value.campaignBenchmarkSelectorHash, value.experimentDesignHash, value.analysisProtocolHash,
     value.systemBenchmarkArmProtocolSetHash, value.systemBenchmarkArmAdapterSetHash,
     value.sourceMerkleHash, value.sourceWorkspaceManifestHash, value.sourceLineageHash,
+    value.versionedExperimentIrHash,
+    ...(researchResolved ? [
+      value.experimentResearchBindingHash,
+      value.datasetResearchCompatibilityHash,
+    ] : []),
     value.empiricalSourceVersionHash, value.empiricalPreDataAccessFreezeHash,
   ];
   if (hashes.some((hash) => !SHA256.test(String(hash || '')))) return false;

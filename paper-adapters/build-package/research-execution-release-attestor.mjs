@@ -30,6 +30,14 @@ function reportSynchronousProgress(onProgress, stage) {
   }
 }
 
+async function reportProgress(onProgress, stage) {
+  if (onProgress === null || onProgress === undefined) return;
+  if (typeof onProgress !== 'function') {
+    throw new Error('research_execution_release_attestor_progress_callback_invalid');
+  }
+  await onProgress(Object.freeze({ stage }));
+}
+
 function matchingTrustedKey(configuration, signer, { signedAt, verificationTime } = {}) {
   const signedAtMs = canonicalTimestamp(String(signedAt || ''));
   const verificationMs = verificationTime instanceof Date
@@ -286,6 +294,97 @@ export function inspectResearchExecutionReleaseAttestorConfiguration({
   }
   if (signerChallenge.verified !== true) {
     productionBlockers.push('research_execution_release_attestor_active_signer_challenge_required');
+  }
+  const payload = inspectionPayload({
+    read, timestamp, probe, probeAttempted, signerChallenge, blockers, productionBlockers,
+  });
+  return Object.freeze({
+    ...payload,
+    researchExecutionReleaseAttestorConfigurationInspectionHash: hashRecord(
+      'ResearchExecutionReleaseAttestorConfigurationInspection',
+      payload,
+    ),
+  });
+}
+
+export async function inspectResearchExecutionReleaseAttestorConfigurationAsync({
+  runtimeRoot,
+  configPath = null,
+  now = new Date(),
+  environment = process.env,
+  spawnSyncImpl = spawnSync,
+  randomBytesImpl = crypto.randomBytes,
+  onProgress = null,
+  activeVerification = true,
+} = {}) {
+  await reportProgress(onProgress, 'release_attestor_before_configuration_read');
+  const read = readProvisionedReleaseAttestorConfiguration({
+    runtimeRoot, configPath, environment, spawnSyncImpl, randomBytesImpl,
+  });
+  await reportProgress(onProgress, 'release_attestor_after_configuration_read');
+  const blockers = read.blocker ? [read.blocker] : [];
+  const timestamp = now instanceof Date ? now.getTime() : Date.parse(now);
+  if (!Number.isFinite(timestamp)) {
+    blockers.push('research_execution_release_attestor_inspection_time_invalid');
+  }
+  const activeKey = read.configuration?.activeKey || null;
+  if (activeKey && (timestamp < Date.parse(activeKey.effectiveFrom)
+    || timestamp >= Date.parse(activeKey.expiresAt)
+    || (activeKey.revokedAt && timestamp >= Date.parse(activeKey.revokedAt)))) {
+    blockers.push('research_execution_release_attestor_key_not_currently_valid');
+  }
+  let probe = Object.freeze({ verified: false, attestation: null });
+  const descriptor = read.configuration?.backendPort?.describeBackend() || null;
+  const probeAttempted = activeVerification === true
+    && descriptor?.productionEligible === true && Number.isFinite(timestamp);
+  if (probeAttempted) {
+    await reportProgress(onProgress, 'release_attestor_before_backend_probe');
+    try {
+      probe = read.configuration.backendPort.probeBackend({
+        inspectedAt: new Date(timestamp),
+      });
+    } catch { probe = Object.freeze({ verified: false, attestation: null }); }
+    await reportProgress(
+      onProgress,
+      'release_attestor_after_backend_probe_before_signer_challenge',
+    );
+    if (probe.verified !== true) {
+      blockers.push('research_execution_release_attestor_backend_probe_not_verified');
+    }
+  }
+  await reportProgress(onProgress, 'release_attestor_before_active_signer_challenge');
+  const signerChallenge = activeVerification === true
+    ? activeSignerChallenge({
+      configuration: read.configuration,
+      descriptor,
+      timestamp,
+      probe,
+      randomBytesImpl,
+    }) : Object.freeze({
+      attempted: false, verified: false, signingPayloadHash: null, verificationHash: null,
+    });
+  await reportProgress(onProgress, 'release_attestor_after_active_signer_challenge');
+  if (activeVerification === true && descriptor?.productionEligible === true
+    && signerChallenge.verified !== true) {
+    blockers.push('research_execution_release_attestor_active_signer_challenge_not_verified');
+  }
+  const productionBlockers = [];
+  if (descriptor?.productionEligible !== true
+    || descriptor?.backendKind
+      !== RESEARCH_EXECUTION_RELEASE_SIGNER_BACKEND_KINDS.EXTERNAL_KMS_COMMAND
+    || descriptor?.hardwareProtected !== true || descriptor?.privateKeyExportable !== false
+    || descriptor?.externalSignerProcess !== true) {
+    productionBlockers.push('research_execution_release_attestor_production_backend_required');
+  }
+  if (probe.verified !== true) {
+    productionBlockers.push(
+      'research_execution_release_attestor_independent_backend_probe_required',
+    );
+  }
+  if (signerChallenge.verified !== true) {
+    productionBlockers.push(
+      'research_execution_release_attestor_active_signer_challenge_required',
+    );
   }
   const payload = inspectionPayload({
     read, timestamp, probe, probeAttempted, signerChallenge, blockers, productionBlockers,

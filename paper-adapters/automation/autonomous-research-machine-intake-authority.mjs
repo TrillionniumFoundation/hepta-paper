@@ -481,33 +481,20 @@ export function bindMachineIntakeAuthorityGenesis(database, {
   return Object.freeze({ ...payload, genesisHash });
 }
 
-export function assertMachineIntakeAuthorityState(database) {
-  const configuredSourceAuthorityHash = readConfiguredSourceAuthorityHash(database);
-  const authorizedMachineProducerProfileHash = readAuthorizedMachineProducerProfileHash(database);
-  const authorityGeneration = readMachineIntakeAuthorityGeneration(database);
-  const metadataColumns = new Set(database.prepare(
-    'PRAGMA table_info(autonomous_research_machine_intake_metadata)',
-  ).all().map((column) => column.name));
-  const lastAuthorityRotationReceiptHash = metadataColumns.has(
-    'last_authority_rotation_receipt_hash',
-  ) ? database.prepare(`SELECT last_authority_rotation_receipt_hash FROM
-    autonomous_research_machine_intake_metadata WHERE singleton=1`).get()
-    ?.last_authority_rotation_receipt_hash ?? null : null;
-  const journalPresent = Boolean(database.prepare(`SELECT name FROM sqlite_master
-    WHERE type='table' AND name='autonomous_research_machine_intake_authority_rotation'`).get());
-  let journal = [];
-  try {
-    journal = journalPresent ? database.prepare(`SELECT * FROM
-      autonomous_research_machine_intake_authority_rotation
-      ORDER BY authority_generation`).all() : [];
-  } catch { authorityStateInvalid(); }
-  let genesis = [];
-  try {
-    const genesisPresent = Boolean(database.prepare(`SELECT name FROM sqlite_master
-      WHERE type='table' AND name='autonomous_research_machine_intake_authority_genesis'`).get());
-    genesis = genesisPresent ? database.prepare(`SELECT * FROM
-      autonomous_research_machine_intake_authority_genesis ORDER BY singleton`).all() : [];
-  } catch { authorityStateInvalid(); }
+export function assertMachineIntakeAuthorityEvidence({
+  configuredSourceAuthorityHash, authorizedMachineProducerProfileHash,
+  authorityGeneration, lastAuthorityRotationReceiptHash = null,
+  journal = [], genesis = [],
+} = {}) {
+  if (!SHA256.test(String(configuredSourceAuthorityHash || ''))
+    || (authorizedMachineProducerProfileHash !== null
+      && !SHA256.test(String(authorizedMachineProducerProfileHash || '')))
+    || !Number.isSafeInteger(Number(authorityGeneration)) || Number(authorityGeneration) < 1
+    || (lastAuthorityRotationReceiptHash !== null
+      && !SHA256.test(String(lastAuthorityRotationReceiptHash || '')))
+    || !Array.isArray(journal) || !Array.isArray(genesis)) {
+    authorityStateInvalid();
+  }
   let genesisValid = false;
   if (genesis.length === 1) {
     const row = genesis[0];
@@ -602,6 +589,38 @@ export function assertMachineIntakeAuthorityState(database) {
   });
 }
 
+export function assertMachineIntakeAuthorityState(database) {
+  const configuredSourceAuthorityHash = readConfiguredSourceAuthorityHash(database);
+  const authorizedMachineProducerProfileHash = readAuthorizedMachineProducerProfileHash(database);
+  const authorityGeneration = readMachineIntakeAuthorityGeneration(database);
+  const metadataColumns = new Set(database.prepare(
+    'PRAGMA table_info(autonomous_research_machine_intake_metadata)',
+  ).all().map((column) => column.name));
+  const lastAuthorityRotationReceiptHash = metadataColumns.has(
+    'last_authority_rotation_receipt_hash',
+  ) ? database.prepare(`SELECT last_authority_rotation_receipt_hash FROM
+    autonomous_research_machine_intake_metadata WHERE singleton=1`).get()
+    ?.last_authority_rotation_receipt_hash ?? null : null;
+  const journalPresent = Boolean(database.prepare(`SELECT name FROM sqlite_master
+    WHERE type='table' AND name='autonomous_research_machine_intake_authority_rotation'`).get());
+  let journal = [];
+  try {
+    journal = journalPresent ? database.prepare(`SELECT * FROM
+      autonomous_research_machine_intake_authority_rotation
+      ORDER BY authority_generation`).all() : [];
+  } catch { authorityStateInvalid(); }
+  let genesis = [];
+  try {
+    const genesisPresent = Boolean(database.prepare(`SELECT name FROM sqlite_master
+      WHERE type='table' AND name='autonomous_research_machine_intake_authority_genesis'`).get());
+    genesis = genesisPresent ? database.prepare(`SELECT * FROM
+      autonomous_research_machine_intake_authority_genesis ORDER BY singleton`).all() : [];
+  } catch { authorityStateInvalid(); }
+  return assertMachineIntakeAuthorityEvidence({
+    configuredSourceAuthorityHash, authorizedMachineProducerProfileHash,
+    authorityGeneration, lastAuthorityRotationReceiptHash, journal, genesis,
+  });
+}
 export function bindConfiguredSourceAuthorityHash(database, authorizedSourceAuthorityHash) {
   if (!SHA256.test(String(authorizedSourceAuthorityHash || ''))) {
     throw new Error('autonomous_research_machine_intake_source_authority_required');

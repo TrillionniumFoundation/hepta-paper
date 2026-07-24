@@ -17,55 +17,30 @@ import {
   isOperatorDatasetBenchmarkFamily,
   validateOperatorDatasetAuthorityDocument,
 } from './operator-dataset-harness-contract.mjs';
+import {
+  AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_PACKAGE,
+  AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_REGISTRY,
+  AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_STARTUP_INSPECTION,
+} from './autonomous-empirical-family-plugin-registry.mjs';
 
-const BUILTIN_BENCHMARKS = Object.freeze({
-  rl_stochastic_control_benchmark: { seedSchedule: [17, 23, 31, 43, 59], minimumRepetitions: 2, requiredMetrics: ['mean_return', 'tail_return', 'constraint_violation_rate', 'robustness_gap'] },
-  ml_algorithm_benchmark: { seedSchedule: [17, 23, 31, 43, 59], minimumRepetitions: 7, requiredMetrics: ['mean_score', 'standard_error', 'baseline_gap', 'robustness_gap'] },
-  econometrics_panel_benchmark: { seedSchedule: [19, 29, 37, 47, 61], minimumRepetitions: 2, requiredMetrics: ['mean_effect', 'standard_error', 'placebo_gap', 'robustness_gap'] },
-  finance_asset_pricing_benchmark: { seedSchedule: [13, 31, 41, 53, 67], minimumRepetitions: 2, requiredMetrics: ['mean_return', 'tail_return', 'standard_error', 'robustness_gap'] },
-  operations_optimization_benchmark: { seedSchedule: [11, 23, 47, 71, 89], minimumRepetitions: 7, requiredMetrics: ['mean_score', 'constraint_violation_rate', 'standard_error', 'robustness_gap'] },
-});
+const BUILTIN_BENCHMARKS = Object.freeze(Object.fromEntries(
+  AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_REGISTRY.profiles.map((profile) => [
+    profile.benchmarkFamily,
+    Object.freeze({
+      seedSchedule: profile.seedSchedule,
+      minimumRepetitions: profile.minimumRepetitions,
+      requiredMetrics: profile.requiredMetrics,
+    }),
+  ]),
+));
 const BUILTIN_BENCHMARK_IDS = new Set(Object.keys(BUILTIN_BENCHMARKS));
 
-const METRIC_SPECS = Object.freeze({
-  rl_stochastic_control_benchmark: Object.freeze({
-    mean_return: { unit: 'reward', direction: 'maximize', minimum: -1e9, maximum: 1e9 },
-    tail_return: { unit: 'reward', direction: 'maximize', minimum: -1e9, maximum: 1e9 },
-    constraint_violation_rate: { unit: 'ratio', direction: 'minimize', minimum: 0, maximum: 1 },
-    robustness_gap: { unit: 'reward', direction: 'maximize', minimum: -1e9, maximum: 1e9 },
-  }),
-  ml_algorithm_benchmark: Object.freeze({
-    mean_score: { unit: 'ratio', direction: 'maximize', minimum: 0, maximum: 1 },
-    standard_error: { unit: 'ratio', direction: 'minimize', minimum: 0, maximum: 1 },
-    baseline_gap: { unit: 'ratio', direction: 'maximize', minimum: -1, maximum: 1 },
-    robustness_gap: { unit: 'ratio', direction: 'maximize', minimum: -1, maximum: 1 },
-  }),
-  econometrics_panel_benchmark: Object.freeze({
-    mean_effect: { unit: 'outcome-unit', direction: 'maximize', minimum: -1e6, maximum: 1e6 },
-    standard_error: { unit: 'outcome-unit', direction: 'minimize', minimum: 0, maximum: 1e6 },
-    placebo_gap: { unit: 'outcome-unit', direction: 'maximize', minimum: -1e6, maximum: 1e6 },
-    robustness_gap: { unit: 'outcome-unit', direction: 'maximize', minimum: -1e6, maximum: 1e6 },
-  }),
-  finance_asset_pricing_benchmark: Object.freeze({
-    mean_return: { unit: 'decimal-return', direction: 'maximize', minimum: -10, maximum: 10 },
-    tail_return: { unit: 'decimal-return', direction: 'maximize', minimum: -10, maximum: 10 },
-    standard_error: { unit: 'decimal-return', direction: 'minimize', minimum: 0, maximum: 10 },
-    robustness_gap: { unit: 'decimal-return', direction: 'maximize', minimum: -10, maximum: 10 },
-  }),
-  operations_optimization_benchmark: Object.freeze({
-    mean_score: { unit: 'objective-unit', direction: 'maximize', minimum: -1e12, maximum: 1e12 },
-    constraint_violation_rate: { unit: 'ratio', direction: 'minimize', minimum: 0, maximum: 1 },
-    standard_error: { unit: 'objective-unit', direction: 'minimize', minimum: 0, maximum: 1e12 },
-    robustness_gap: { unit: 'objective-unit', direction: 'maximize', minimum: -1e12, maximum: 1e12 },
-  }),
-});
-
-const DEFAULT_METRIC_SPECS = Object.freeze({
-  primary_metric: { unit: 'declared-unit', direction: 'maximize', minimum: -1e12, maximum: 1e12 },
-  standard_error: { unit: 'declared-unit', direction: 'minimize', minimum: 0, maximum: 1e12 },
-  baseline_gap: { unit: 'declared-unit', direction: 'maximize', minimum: -1e12, maximum: 1e12 },
-  robustness_gap: { unit: 'declared-unit', direction: 'maximize', minimum: -1e12, maximum: 1e12 },
-});
+const METRIC_SPECS = Object.freeze(Object.fromEntries(
+  AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_REGISTRY.profiles.map((profile) => [
+    profile.benchmarkFamily,
+    profile.metricSpecs,
+  ]),
+));
 
 const BENCHMARK_HARNESS_VERSION = 1;
 
@@ -106,16 +81,26 @@ function benchmarkHarness(benchmarkId, profile, datasetMount) {
     armProtocolSet,
     systemBenchmarkArmProtocolSetHash: armProtocolSet.systemBenchmarkArmProtocolSetHash,
     systemBenchmarkHarnessImplementationHash: SYSTEM_BENCHMARK_HARNESS_IMPLEMENTATION.systemBenchmarkHarnessImplementationHash,
+    empiricalFamilyPluginRegistryHash:
+      AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_REGISTRY
+        .autonomousEmpiricalFamilyPluginRegistryHash,
+    empiricalFamilyPluginPackageHash:
+      AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_PACKAGE
+        .autonomousEmpiricalFamilyPluginPackageHash,
+    empiricalFamilyPluginStartupInspectionHash:
+      AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_STARTUP_INSPECTION
+        .autonomousEmpiricalFamilyPluginStartupInspectionHash,
   };
   return Object.freeze({ ...payload, benchmarkHarnessHash: hashRecord('CampaignBenchmarkHarness', payload) });
 }
 
 function buildExperimentDesign(benchmarkId, datasetMount, empiricalClaimUniverse = null) {
   const benchmarkFamily = datasetMount?.benchmarkFamily || benchmarkId;
-  const baseProfile = BUILTIN_BENCHMARKS[benchmarkFamily] || {
-    seedSchedule: [41, 42, 43], minimumRepetitions: 3, requiredMetrics: ['primary_metric', 'standard_error', 'baseline_gap', 'robustness_gap'],
-  };
-  const metricSpecs = METRIC_SPECS[benchmarkFamily] || DEFAULT_METRIC_SPECS;
+  const baseProfile = BUILTIN_BENCHMARKS[benchmarkFamily];
+  const metricSpecs = METRIC_SPECS[benchmarkFamily];
+  if (!baseProfile || !metricSpecs) {
+    throw new Error('campaign_benchmark_family_plugin_unavailable');
+  }
   const primaryMetric = baseProfile.requiredMetrics[0];
   const profile = Object.freeze({
     ...baseProfile,

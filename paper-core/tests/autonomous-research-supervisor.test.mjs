@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -15,22 +14,14 @@ import {
   createAutonomousResearchSupervisorStateRepository,
 } from '../../paper-adapters/automation/autonomous-research-supervisor-state-repository.mjs';
 import {
-  buildAutonomousResearchMachineIntake,
-} from '../../paper-domain/automation/autonomous-research-machine-intake-contract.mjs';
-import {
-  buildAutonomousResearchMachineIntakeAdmission,
-} from '../../paper-domain/automation/autonomous-research-machine-intake-admission-contract.mjs';
-import {
   createAutonomousResearchSupervisor,
   selectFairAutonomousCampaignWindow,
-  verifyAutonomousResearchMachineIntakeEnqueueCommit,
 } from '../../paper-application/automation/autonomous-research-supervisor.mjs';
 import {
   autonomousResearchSupervisorDispatchDecision,
   autonomousResearchSupervisorNextSchedule,
 } from '../../paper-application/automation/autonomous-research-supervisor-readiness-policy.mjs';
 import {
-  composeAutonomousResearchSupervisor,
   createFencedAutonomousResearchProviderCanary,
   resolveAutonomousResearchSupervisorDispatchPolicy,
 } from '../../paper-composition/automation/autonomous-research-supervisor-composition.mjs';
@@ -43,15 +34,7 @@ import {
 import {
   requestExternalResearchQualification,
 } from '../../paper-application/automation/external-qualification-recovery.mjs';
-import { runPaperCampaign } from '../../paper-application/automation/campaign-engine.mjs';
-import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
-import { createSqliteCampaignStore } from '../../paper-adapters/persistence/sqlite-campaign-store.mjs';
-import { createSystemClock } from '../../paper-adapters/runtime/system-clock.mjs';
-import { createSystemScheduler } from '../../paper-adapters/runtime/system-scheduler.mjs';
-import { createRandomIdGenerator } from '../../paper-adapters/runtime/random-id-generator.mjs';
-import { buildCanonicalAdmissionPreflightExecutionInspection, buildExecutionAdmittedSupervisorCampaign, buildMachineIntakeExecutionAdmission } from './autonomous-research-supervisor-enqueue-test-support.mjs';
-const H = (label) => hashRecord('AutonomousSupervisorTestHash', { label });
-const repositoryRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../..');
+import { H, campaign, readinessLifecycle } from './support/autonomous-research-supervisor-fixture.mjs';
 
 test('fair campaign windows eventually cover more campaigns than one cycle limit', () => {
   const campaigns = Array.from({ length: 250 }, (_, index) => ({
@@ -194,6 +177,7 @@ test('qualification state uses SQLite CAS and a renewable stale-recoverable leas
   assert.equal(fs.existsSync(path.join(path.dirname(first.statePath),
     'external-qualification-state.lock')), false);
   assert.match(first.statePath, /\.sqlite$/);
+  fs.mkdirSync(path.dirname(first.legacyStatePath), { recursive: true });
   fs.writeFileSync(first.legacyStatePath, '{invalid legacy json', { mode: 0o600 });
   const reopened = createAutonomousResearchQualificationStateRepository({
     runtimeRoot,
@@ -427,24 +411,6 @@ test('qualification cost authority cannot be lowered by a composition caller', (
   }), /autonomous_research_qualification_cost_authority_invalid/);
 });
 
-function campaign(campaignId, status, stopReason = null) {
-  return {
-    campaignId,
-    paperId: campaignId.split(':').at(-1),
-    status,
-    stopReason,
-    costKnown: true,
-    costUsd: 2,
-    spec: {
-      budgets: { maxCostUsd: 100 },
-      autonomousResearchPreparation: {
-        proposal: { paperId: campaignId.split(':').at(-1) },
-        autonomousResearchProviderConfigurationHash: H('supervisor-provider-configuration'),
-      },
-    },
-  };
-}
-
 function supervisorDispatchCampaign(launchMode, { legacy = false } = {}) {
   const preparationPayload = {
     version: 1,
@@ -540,487 +506,6 @@ test('provider canary completion is rejected after its supervisor lease is repla
   completeProbe();
   await assert.rejects(pending, /autonomous_research_supervisor_lease_lost/);
   assert.equal(assertions, 2);
-});
-
-test('composition reconciles the SQLite receipt mirror once before read-only runtime status', async (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-supervisor-mirror-root-'));
-  const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-supervisor-mirror-runtime-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  t.after(() => fs.rmSync(runtimeRoot, { recursive: true, force: true }));
-  const clock = createSystemClock();
-  const store = createDefaultPaperStore({ root, runtimeRoot });
-  const campaigns = createSqliteCampaignStore({ store, clock });
-  campaigns.createCampaign({
-    campaignId: 'autonomous-research:mirror-order-paper',
-    paperId: 'mirror-order-paper',
-    budgets: {
-      maxWallTimeMs: 60 * 60 * 1000,
-      maxAgentCalls: 1,
-      maxCpuJobs: 1,
-      maxGpuJobs: 1,
-      maxTokenCount: 1000,
-      maxCostUsd: 10,
-      maxMemoryMiB: 1024,
-    },
-    autonomousResearchPreparation: {
-      proposal: { paperId: 'mirror-order-paper' },
-    },
-    nodes: [{
-      nodeId: 'mirror-order-node',
-      kind: 'agent',
-      dependencies: [],
-      maxAttempts: 1,
-    }],
-  });
-  store.close();
-  const events = [];
-  const runtimeReceiptHash = H('composition-runtime-receipt');
-  const composition = composeAutonomousResearchSupervisor({
-    root,
-    runtimeRoot,
-    environment: {
-      HEPTA_RESEARCH_AUTHOR_MAXIMUM_COST_PER_CALL_USD: '1',
-      HEPTA_FORMAL_REVIEWER_MAXIMUM_COST_PER_CALL_USD: '1',
-    },
-    runtimeReproducibilityPolicy: {
-      maximumAttemptsPerEpoch: 2,
-      maximumCostUsdPerEpoch: 10,
-      leaseMs: 1000,
-      baseBackoffMs: 100,
-      maximumBackoffMs: 1000,
-      renewalLeadMs: 5000,
-      actionSafetyMarginMs: 15 * 60 * 1000,
-    },
-    runtimeReproducibilityOverrides: {
-      reconcileMirror() { events.push('mirror-reconcile'); return null; },
-      readStatus({ now }) {
-        events.push('runtime-status');
-        return {
-          ready: true,
-          configuration: {
-            ready: true,
-            configurationIdentityHash: H('composition-runtime-configuration'),
-            maximumVerificationCostUsd: 3,
-            verificationCostAuthority: 'operator_declared_worst_case_usd',
-            maximumVerifierTimeoutMs: 1000,
-            minimumRefreshLeadMs: 3000,
-            maximumReceiptAgeMs: 24 * 60 * 60 * 1000,
-            blockers: [],
-          },
-          inspection: {
-            ready: true,
-            receiptHash: runtimeReceiptHash,
-            issuedAt: now.toISOString(),
-            expiresAt: new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString(),
-          },
-          blockers: [],
-        };
-      },
-      async publish() { throw new Error('current_status_must_not_publish'); },
-    },
-    reconcileRuntimeOverride() { events.push('automation-reconcile'); return null; },
-    readQualificationStateOverride: async () => null,
-    providerCanaryOverride: async () => ({
-      verified: true,
-      providerCanaryPairReceiptHash: H('composition-canary'),
-    }),
-    renewQualificationOverride: async () => ({ ready: false, reason: 'deferred' }),
-    dispatchCampaignOverride: async () => ({
-      status: 'qualification_pending',
-      campaign: { status: 'running' },
-      fullAutomaticResearchWritingReady: false,
-    }),
-    pollMs: 60_000,
-  });
-  t.after(() => composition.close());
-  assert.equal(composition.machineIntakeConfigured, false);
-  assert.equal(composition.coldStartAutonomyReady, false);
-  await composition.supervisor.runCycle();
-  await composition.supervisor.runCycle();
-  assert.deepEqual(events.slice(0, 3), [
-    'mirror-reconcile',
-    'automation-reconcile',
-    'runtime-status',
-  ]);
-  assert.equal(events.filter((event) => event === 'mirror-reconcile').length, 1);
-  assert.equal(events.filter((event) => event === 'runtime-status').length, 1);
-});
-
-test('canonical resident mode rejects pointer drift and fully-autonomous startup without intake', (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-supervisor-startup-fence-root-'));
-  const runtimeRoot = fs.mkdtempSync(path.join(
-    os.tmpdir(),
-    'hepta-supervisor-startup-fence-runtime-',
-  ));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  t.after(() => fs.rmSync(runtimeRoot, { recursive: true, force: true }));
-  assert.throws(() => composeAutonomousResearchSupervisor({
-    root,
-    runtimeRoot,
-    requireFullyAutonomous: true,
-    environment: {},
-  }), /machine_intake_configuration_required/);
-  assert.throws(() => composeAutonomousResearchSupervisor({
-    root,
-    runtimeRoot,
-    environment: {
-      HEPTA_FULL_RESEARCH_QUALIFICATION_RECEIPT: path.join(root, 'attacker-pointer.json'),
-    },
-  }), /qualification_pointer_path_mismatch/);
-});
-
-test('resident cold start loads and enqueues a machine intake under its fenced lease', async (t) => {
-  const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-supervisor-intake-cycle-'));
-  t.after(() => fs.rmSync(runtimeRoot, { recursive: true, force: true }));
-  const stateRepository = createAutonomousResearchSupervisorStateRepository({ runtimeRoot });
-  t.after(() => stateRepository.close());
-  const now = new Date('2026-07-16T03:40:00.000Z');
-  const machineIntake = buildAutonomousResearchMachineIntake({
-    intakeId: 'intake:cold-start-test',
-    paperId: 'cold-start-test',
-    campaignId: 'autonomous-research:cold-start-test',
-    launchMode: 'production-run',
-    admissionCreatedAt: now.toISOString(),
-    objective: 'Evaluate the bounded cold-start supervisor intake.',
-    protocolFamily: 'ml_algorithm_benchmark',
-    datasetMounts: [{
-      name: 'cold-start-dataset',
-      source: '/datasets/cold-start',
-      readOnly: true,
-      manifestHash: H('cold-start-dataset'),
-      licenseId: 'CC0-1.0',
-      benchmarkFamily: 'ml_algorithm_benchmark',
-    }],
-    budgets: {
-      maxWallTimeMs: 60 * 60 * 1000,
-      maxAgentCalls: 10,
-      maxCpuJobs: 10,
-      maxGpuJobs: 0,
-      maxTokenCount: 10_000,
-      maxCostUsd: 10,
-      maxMemoryMiB: 2048,
-    },
-    providerConfigurationHash: H('cold-start-provider'),
-    recurringGoldenProvenance: null,
-    revisionRounds: 1,
-    refereeCount: 2,
-  });
-  const persistedAdmission = buildAutonomousResearchMachineIntakeAdmission({
-    intake: machineIntake,
-    sourceKind: 'machine',
-    sourceAuthorityHash: H('cold-start-source-authority'),
-  });
-  const record = Object.freeze({
-    intakeId: machineIntake.intakeId,
-    intakeHash: machineIntake.intakeHash,
-    campaignId: machineIntake.campaignId,
-    sourceKind: 'machine',
-    sourceRef: 'machine-api',
-    sourceAuthorityHash: H('cold-start-source-authority'),
-    disposition: 'pending',
-    admission: persistedAdmission,
-    admissionHash: persistedAdmission.autonomousResearchMachineIntakeAdmissionHash,
-    intake: machineIntake,
-  });
-  const lease = Object.freeze({
-    ownerId: 'supervisor:intake-cycle',
-    leaseToken: 'intake-lease:test',
-    leaseGeneration: 1,
-  });
-  let listedAt = null;
-  let marked = null;
-  let released = false;
-  let persistedCampaign = null;
-  let emittedAdmission = null;
-  let emittedReceipt = null;
-  const machineRepository = {
-    reconcileExpiredIntakeLeases() { return { recoveredLeaseCount: 0 }; },
-    listPendingIntakes({ now: listedNow }) {
-      listedAt = listedNow;
-      return [record];
-    },
-    listEnqueuedIntakes() { return []; },
-    readIntake() { return null; },
-    tryAcquireIntakeLease() { return lease; },
-    renewIntakeLease() { return { ...lease, expiresAt: '2026-07-16T03:45:00.000Z' }; },
-    assertIntakeLease() { return lease; },
-    markIntakeEnqueued(input) {
-      marked = input;
-      return {
-        campaignPlanHash: input.campaignPlanHash,
-        preparationHash: input.autonomousResearchLoopPreparationReportHash,
-        admissionHash: input.autonomousResearchMachineIntakeAdmissionHash,
-      };
-    },
-    markEnqueuedIntakeInvalid() {
-      throw new Error('valid_enqueued_intake_must_not_be_invalidated');
-    },
-    deferIntake() { throw new Error('successful_intake_must_not_be_deferred'); },
-    releaseIntakeLease() { released = true; },
-  };
-  const supervisor = createAutonomousResearchSupervisor({
-    campaignStore: {
-      listCampaigns() { return []; },
-      getCampaign() { return persistedCampaign; },
-    },
-    stateRepository,
-    async dispatchCampaign() { throw new Error('enqueue_only_must_not_dispatch'); },
-    async readQualificationState() { return null; },
-    async ensureRuntimeReproducibility() { return { ready: false }; },
-    async runProviderCanary() { throw new Error('no_campaign_canary_must_not_run'); },
-    async renewQualification() { throw new Error('no_campaign_renewal_must_not_run'); },
-    async reconcileRuntime() { return null; },
-    machineIntake: {
-      repository: machineRepository,
-      async loadConfiguredIntakes({ now: loadedAt }) {
-        assert.equal(loadedAt.toISOString(), now.toISOString());
-        return { attemptedCount: 1, insertedCount: 1, idempotentCount: 0, errorCount: 0 };
-      },
-      async enqueueIntake({ intake, machineIntakeAdmission, intakeLease, signal }) {
-        emittedAdmission = machineIntakeAdmission;
-        assert.equal(intake, record.intake);
-        assert.equal(intakeLease.intakeId, record.intakeId);
-        assert.equal(intakeLease.leaseToken, lease.leaseToken);
-        assert.equal(signal.aborted, false);
-        const preparationHash = H('cold-start-preparation');
-        const executionAdmission = buildMachineIntakeExecutionAdmission(H('execution-admission'));
-        const planPayload = {
-          version: 4,
-          kind: 'PaperCampaignPlan',
-          autonomousResearchMachineIntakeHash: record.intakeHash,
-          autonomousResearchMachineIntakeAdmissionHash:
-            machineIntakeAdmission.autonomousResearchMachineIntakeAdmissionHash,
-          executionAdmission,
-          autonomousResearchPreparation: {
-            proposal: { paperId: record.intake.paperId },
-            autonomousResearchLoopPreparationReportHash: preparationHash,
-            autonomousResearchMachineIntakeAdmissionHash:
-              machineIntakeAdmission.autonomousResearchMachineIntakeAdmissionHash,
-          },
-        };
-        const planHash = hashRecord('PaperCampaignPlan', planPayload);
-        const admissionPreflightExecutionInspection =
-          buildCanonicalAdmissionPreflightExecutionInspection();
-        const payload = {
-          version: 1,
-          kind: 'AutonomousResearchCampaignEnqueueReceipt',
-          status: 'autonomous_research_campaign_enqueued',
-          campaignId: record.campaignId,
-          paperId: record.intake.paperId,
-          campaignPlanHash: planHash,
-          autonomousResearchMachineIntakeHash: record.intakeHash,
-          autonomousResearchMachineIntakeAdmission: machineIntakeAdmission,
-          autonomousResearchMachineIntakeAdmissionHash:
-            machineIntakeAdmission.autonomousResearchMachineIntakeAdmissionHash,
-          autonomousResearchLoopPreparationReportHash: preparationHash,
-          autonomousResearchCampaignExecutionAdmissionHash:
-            executionAdmission.autonomousResearchCampaignExecutionAdmissionHash,
-          admissionPreflightExecutionInspection,
-          admissionOnly: true,
-          executionAuthorized: false,
-          initialCampaignStatus: 'paused',
-          created: true,
-          executionStarted: false,
-          externalActionPerformed: false,
-        };
-        persistedCampaign = {
-          campaignId: record.campaignId,
-          paperId: record.intake.paperId,
-          status: 'paused',
-          currentPhase: 'admitted-not-authorized',
-          spec: { ...planPayload, campaignPlanHash: planHash },
-        };
-        emittedReceipt = {
-          ...payload,
-          campaign: persistedCampaign,
-          autonomousResearchCampaignEnqueueReceiptHash:
-            hashRecord('AutonomousResearchCampaignEnqueueReceipt', payload),
-        };
-        return emittedReceipt;
-      },
-    },
-    clock: { now: () => new Date(now) },
-    scheduler: {
-      async sleep() {}, setInterval() { return {}; }, clearInterval() {}, unref() {},
-    },
-    ownerId: lease.ownerId,
-  });
-  const cycle = await supervisor.runCycle();
-  assert.equal(listedAt.toISOString(), now.toISOString());
-  assert.equal(cycle.machineIntake.processedCount, 1);
-  assert.equal(cycle.machineIntake.results[0].status, 'machine_intake_enqueued');
-  assert.equal(marked.campaignPlanHash, persistedCampaign.spec.campaignPlanHash);
-  assert.equal(released, false);
-
-  const { campaign: _campaign, autonomousResearchCampaignEnqueueReceiptHash: _hash,
-    ...attackerPayload } = { ...emittedReceipt, attackerControlled: true };
-  const attackerReceipt = {
-    ...attackerPayload,
-    campaign: persistedCampaign,
-    autonomousResearchCampaignEnqueueReceiptHash:
-      hashRecord('AutonomousResearchCampaignEnqueueReceipt', attackerPayload),
-  };
-  assert.throws(() => verifyAutonomousResearchMachineIntakeEnqueueCommit({
-    receipt: attackerReceipt,
-    record,
-    admission: emittedAdmission,
-    campaignStore: { getCampaign: () => persistedCampaign },
-  }), /enqueue_receipt_invalid/);
-  assert.throws(() => verifyAutonomousResearchMachineIntakeEnqueueCommit({
-    receipt: emittedReceipt,
-    record,
-    admission: emittedAdmission,
-    campaignStore: { getCampaign: () => null },
-  }), /campaign_commit_invalid/);
-  const mismatchedCampaign = structuredClone(persistedCampaign);
-  mismatchedCampaign.spec.autonomousResearchMachineIntakeHash = H('attacker-intake');
-  assert.throws(() => verifyAutonomousResearchMachineIntakeEnqueueCommit({
-    receipt: emittedReceipt,
-    record,
-    admission: emittedAdmission,
-    campaignStore: { getCampaign: () => mismatchedCampaign },
-  }), /campaign_commit_invalid/);
-});
-
-test('runtime reproducibility deferral prevents every qualification and campaign dispatch side effect', async (t) => {
-  const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-supervisor-runtime-gate-'));
-  t.after(() => fs.rmSync(runtimeRoot, { recursive: true, force: true }));
-  const repository = createAutonomousResearchSupervisorStateRepository({ runtimeRoot });
-  t.after(() => repository.close());
-  const value = campaign(
-    'autonomous-research:runtime-gated-paper',
-    'paused',
-    'supervisor_transient_failure',
-  );
-  const now = new Date('2026-07-16T03:30:00.000Z');
-  let qualificationReads = 0;
-  let dispatches = 0;
-  const supervisor = createAutonomousResearchSupervisor({
-    campaignStore: {
-      listCampaigns() { return [value]; },
-      getCampaign() { return value; },
-    },
-    stateRepository: repository,
-    async reconcileRuntime() { return null; },
-    async ensureRuntimeReproducibility() {
-      return {
-        ready: false,
-        reason: 'runtime_reproducibility_refresh_leased',
-        deferUntil: new Date(now.getTime() + 1000).toISOString(),
-      };
-    },
-    async readQualificationState() { qualificationReads += 1; return null; },
-    async runProviderCanary() { throw new Error('provider_canary_must_not_run'); },
-    async renewQualification() { throw new Error('qualification_renewal_must_not_run'); },
-    async dispatchCampaign() { dispatches += 1; return null; },
-    lifecyclePolicy: {},
-    clock: { now: () => new Date(now) },
-    scheduler: {
-      async sleep() {}, setInterval() { return {}; }, clearInterval() {}, unref() {},
-    },
-    ownerId: 'supervisor:runtime-gate',
-  });
-  const cycle = await supervisor.runCycle();
-  assert.equal(cycle.results[0].reason, 'runtime_reproducibility_refresh_leased');
-  assert.equal(qualificationReads, 0);
-  assert.equal(dispatches, 0);
-  assert.equal(repository.getCampaign(value.campaignId).disposition, 'active');
-});
-
-test('a fresh recurring Golden campaign executes before its first releasable qualification exists', async (t) => {
-  const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-supervisor-golden-first-run-'));
-  t.after(() => fs.rmSync(runtimeRoot, { recursive: true, force: true }));
-  const repository = createAutonomousResearchSupervisorStateRepository({ runtimeRoot });
-  t.after(() => repository.close());
-  const base = buildExecutionAdmittedSupervisorCampaign({
-    launchMode: 'golden-bootstrap',
-    suffix: 'golden-first-run',
-  });
-  let value = base;
-  const now = new Date('2026-07-16T03:45:00.000Z');
-  const runtimeReceiptHash = H('golden-first-run-runtime');
-  let qualificationState = null;
-  const events = [];
-  const supervisor = createAutonomousResearchSupervisor({
-    campaignStore: {
-      listCampaigns() { return [value]; },
-      getCampaign() { return value; },
-    },
-    stateRepository: repository,
-    async reconcileRuntime() { return null; },
-    async ensureRuntimeReproducibility() {
-      return {
-        ready: true,
-        receiptHash: runtimeReceiptHash,
-        expiresAt: '2026-07-17T03:45:00.000Z',
-        renewAt: '2026-07-17T03:30:00.000Z',
-      };
-    },
-    async readQualificationState() { return qualificationState; },
-    async runProviderCanary() {
-      events.push('provider-canary');
-      return {
-        verified: true,
-        providerCanaryPairReceiptHash: H('golden-first-run-canary'),
-      };
-    },
-    async renewQualification({ campaign: renewingCampaign }) {
-      events.push('pre-release-renewal');
-      assert.equal(
-        renewingCampaign.spec.autonomousResearchPreparation.launchMode,
-        'golden-bootstrap',
-      );
-      assert.equal(qualificationState, null);
-      return {
-        ready: true,
-        preReleaseExecutionAuthorized: true,
-        reason: 'golden_bootstrap_must_produce_fresh_promotable_release',
-      };
-    },
-    async dispatchCampaign({ action }) {
-      events.push('golden-execution');
-      assert.equal(action, 'resume');
-      value = { ...value, status: 'completed', effectiveStatus: 'completed' };
-      qualificationState = {
-        recovery: {
-          status: 'qualification_verified',
-          totalAttemptCount: 1,
-          reservedCostUsd: 0.05,
-        },
-        receipt: {
-          expiresAt: '2026-07-17T03:45:00.000Z',
-          runtimeImageReproducibilityReceiptHash: runtimeReceiptHash,
-        },
-      };
-      return {
-        status: 'autonomous_research_campaign_completed_and_qualified',
-        campaign: { status: 'completed' },
-        externalQualification: { status: 'qualification_external_service_verified' },
-        campaignFullyQualified: true,
-        fullAutomaticResearchWritingReady: true,
-        autonomousResearchCampaignExecutionReportHash: H('golden-first-run-report'),
-      };
-    },
-    lifecyclePolicy: {
-      maximumLifetimeMs: 2 * 60 * 60 * 1000,
-      providerCanaryReservationCostUsd: 1,
-      maximumProviderCanaries: 8,
-    },
-    clock: { now: () => new Date(now) },
-    scheduler: {
-      async sleep() {}, setInterval() { return {}; }, clearInterval() {}, unref() {},
-    },
-    ownerId: 'supervisor:golden-first-run',
-    pollMs: 1000,
-  });
-  const receipt = await supervisor.runCycle();
-  assert.deepEqual(events, [
-    'provider-canary',
-    'pre-release-renewal',
-    'golden-execution',
-  ]);
-  assert.equal(receipt.results[0].status, 'settled');
-  assert.equal(receipt.results[0].outcome.campaignFullyQualified, true);
 });
 
 test('supervisor leases recover after expiry and dispatch budget cannot reset across restarts', (t) => {
@@ -1170,11 +655,15 @@ test('dispatch reserves only the next live canary instead of deadlocking on the 
     leaseMs: 5000,
     now,
   });
-  assert.deepEqual(repository.beginDispatch({
+  const dispatch = repository.beginDispatch({
     lease,
     campaignCostLimitUsd: 100,
     now,
-  }), { authorized: true, dispatchCount: 1 });
+  });
+  assert.equal(dispatch.authorized, true);
+  assert.equal(dispatch.resumed, false);
+  assert.equal(dispatch.dispatchCount, 1);
+  assert.match(dispatch.dispatchReservationHash, /^sha256:[0-9a-f]{64}$/);
   const canaryReservation = repository.beginProviderCanary({ lease,
     providerConfigurationHash: H('canary-cost-provider-configuration'), now });
   assert.equal(canaryReservation.authorized, true);
@@ -1280,20 +769,6 @@ test('verified qualification is renewed automatically at its persisted lead time
   assert.equal(canaries, 1);
 });
 
-function readinessLifecycle(now, overrides = {}) {
-  return {
-    absoluteDeadlineAt: new Date(now.getTime() + 2 * 60 * 60 * 1000).toISOString(),
-    policy: {
-      qualificationRenewalLeadMs: 15 * 60 * 1000,
-      qualificationActionSafetyMarginMs: 15 * 60 * 1000,
-      qualificationMaximumTotalAttempts: 48,
-      qualificationMaximumTotalCostUsd: 25,
-      qualificationAttemptReservationCostUsd: 0.05,
-      ...overrides,
-    },
-  };
-}
-
 test('a completed campaign with a qualification for an old runtime must requalify', () => {
   const now = new Date('2026-07-16T04:45:00.000Z');
   const currentRuntimeHash = H('current-runtime-binding');
@@ -1393,108 +868,152 @@ test('resident wake-up uses the earliest runtime, qualification, or lifecycle re
     new Date(now.getTime() + 24 * 60 * 1000).toISOString());
 });
 
-test('dispatcher signal aborts the active execution and durably pauses it for restart', async (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-supervisor-signal-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const store = createDefaultPaperStore({ root, runtimeRoot: root, dbPath: path.join(root, 'paper.sqlite') });
-  t.after(() => store.close());
-  const clock = createSystemClock();
-  const campaigns = createSqliteCampaignStore({ store, clock });
-  const campaignId = 'autonomous-research:signal-paper';
-  campaigns.createCampaign({
-    campaignId,
-    paperId: 'signal-paper',
-    budgets: {
-      maxWallTimeMs: 60_000,
-      maxAgentCalls: 2,
-      maxCpuJobs: 2,
-      maxGpuJobs: 1,
-      maxTokenCount: 1000,
-      maxCostUsd: 10,
-      maxMemoryMiB: 2048,
+test('bounded Golden publication settles only with its current runtime-bound qualification', () => {
+  const now = new Date('2026-07-16T04:47:30.000Z');
+  const runtimeReceiptHash = H('bounded-golden-publication-runtime');
+  const candidate = campaign('autonomous-research:bounded-golden-publication', 'completed');
+  const lifecycle = readinessLifecycle(now);
+  const runtimeReadiness = {
+    ready: true,
+    receiptHash: runtimeReceiptHash,
+    renewAt: new Date(now.getTime() + 7 * 60 * 60 * 1000).toISOString(),
+  };
+  const currentQualificationState = {
+    recovery: { status: 'qualification_verified' },
+    receipt: {
+      expiresAt: new Date(now.getTime() + 8 * 60 * 60 * 1000).toISOString(),
+      runtimeImageReproducibilityReceiptHash: runtimeReceiptHash,
     },
-    nodes: [{ nodeId: 'signal-node', kind: 'agent', dependencies: [], maxAttempts: 2 }],
+  };
+  const report = {
+    boundedGoldenQualificationPublished: true,
+    campaignFullyQualified: false,
+    fullAutomaticResearchWritingReady: false,
+  };
+
+  const published = autonomousResearchSupervisorNextSchedule({
+    report,
+    campaign: candidate,
+    qualificationState: currentQualificationState,
+    runtimeReadiness,
+    lifecycle,
+    now,
+    pollMs: 1000,
   });
-  const controller = new AbortController();
-  let executionStarted;
-  const started = new Promise((resolve) => { executionStarted = resolve; });
-  const running = runPaperCampaign({
-    campaignId,
-    campaignStore: campaigns,
-    executor: {
-      async execute({ executionSignal }) {
-        executionStarted();
-        await new Promise((resolve, reject) => {
-          executionSignal.addEventListener('abort', () => reject(
-            Object.assign(new Error(String(executionSignal.reason)), { retryable: true }),
-          ), { once: true });
-        });
+  assert.equal(published.settled, true);
+  assert.equal(published.reason,
+    'bounded_golden_qualification_published_beyond_lifecycle');
+
+  const staleRuntimeBinding = autonomousResearchSupervisorNextSchedule({
+    report,
+    campaign: candidate,
+    qualificationState: {
+      ...currentQualificationState,
+      receipt: {
+        ...currentQualificationState.receipt,
+        runtimeImageReproducibilityReceiptHash: H('stale-bounded-golden-runtime'),
       },
     },
-    concurrency: 1,
-    leaseSeconds: 2,
-    clock,
-    scheduler: createSystemScheduler(),
-    idGenerator: createRandomIdGenerator(),
-    signal: controller.signal,
+    runtimeReadiness,
+    lifecycle,
+    now,
+    pollMs: 1000,
   });
-  await started;
-  controller.abort('supervisor_process_shutdown');
-  const receipt = await running;
-  assert.equal(receipt.campaign.status, 'paused');
-  assert.equal(receipt.campaign.stopReason, 'supervisor_process_shutdown');
-  assert.equal(campaigns.listNodes(campaignId)[0].status, 'queued');
+  assert.equal(staleRuntimeBinding.settled, false);
+  assert.equal(staleRuntimeBinding.reason,
+    'qualification_runtime_binding_renewal_required');
+
+  const unpublished = autonomousResearchSupervisorNextSchedule({
+    report: { ...report, boundedGoldenQualificationPublished: false },
+    campaign: candidate,
+    qualificationState: currentQualificationState,
+    runtimeReadiness,
+    lifecycle,
+    now,
+    pollMs: 1000,
+  });
+  assert.equal(unpublished.settled, false);
+  assert.equal(unpublished.reason, 'supervisor_retry_scheduled');
 });
 
-test('canonical resident command forwards SIGTERM and exits through the graceful receipt', async (t) => {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-supervisor-cli-signal-'));
-  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
-  const assetRoot = path.join(base, 'assets');
-  const runtimeRoot = path.join(base, 'runtime');
-  fs.mkdirSync(assetRoot, { recursive: true });
-  fs.mkdirSync(runtimeRoot, { recursive: true });
-  const store = createDefaultPaperStore({ root: assetRoot, runtimeRoot });
-  store.close();
-  const child = spawn(process.execPath, [
-    'paper-core/bin/hepta-paper.mjs',
-    'operator',
-    'autonomous-supervisor',
-    '--',
-    '--root', assetRoot,
-    '--runtime-root', runtimeRoot,
-    '--poll-ms', '5000',
-  ], {
-    cwd: repositoryRoot,
-    env: {
-      ...process.env,
-      HEPTA_RESEARCH_AUTHOR_MAXIMUM_COST_PER_CALL_USD: '1',
-      HEPTA_FORMAL_REVIEWER_MAXIMUM_COST_PER_CALL_USD: '1',
-      HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_MAXIMUM_REFRESH_ATTEMPTS_PER_EPOCH: '2',
-      HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_MAXIMUM_REFRESH_COST_USD_PER_EPOCH: '10',
+test('submission-enabled campaigns cannot settle while durable delivery is uncertain', () => {
+  const now = new Date('2026-07-16T04:48:00.000Z');
+  const runtimeReceiptHash = H('submission-recovery-runtime');
+  const candidate = campaign('autonomous-research:submission-recovery', 'completed');
+  candidate.spec.autonomousResearchPreparation.venueProfileSelection = {
+    requireExternalSubmission: true,
+  };
+  const lifecycle = readinessLifecycle(now);
+  const qualificationState = {
+    recovery: {
+      status: 'qualification_verified',
+      totalAttemptCount: 1,
+      reservedCostUsd: 0.05,
     },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    receipt: {
+      expiresAt: new Date(now.getTime() + 8 * 60 * 60 * 1000).toISOString(),
+      runtimeImageReproducibilityReceiptHash: runtimeReceiptHash,
+    },
+  };
+  const runtimeReadiness = {
+    ready: true,
+    receiptHash: runtimeReceiptHash,
+    renewAt: new Date(now.getTime() + 7 * 60 * 60 * 1000).toISOString(),
+  };
+  const decision = autonomousResearchSupervisorDispatchDecision({
+    campaign: candidate,
+    lifecycle,
+    qualificationState,
+    runtimeReadiness,
+    submissionRecovery: {
+      required: true,
+      status: 'autonomous_research_submission_recovery_not_started',
+      delivery: null,
+    },
+    now,
   });
-  let stdout = '';
-  let stderr = '';
-  let signaled = false;
-  child.stdout.setEncoding('utf8');
-  child.stderr.setEncoding('utf8');
-  child.stdout.on('data', (chunk) => {
-    stdout += chunk;
-    if (!signaled && stdout.includes('AutonomousResearchSupervisorCycleReceipt')) {
-      signaled = true;
-      child.kill('SIGTERM');
-    }
+  assert.equal(decision.action, 'resume');
+  assert.equal(decision.qualificationRenewalRequired, false);
+
+  const uncertain = autonomousResearchSupervisorNextSchedule({
+    report: {
+      fullAutomaticResearchWritingReady: true,
+      autonomousSubmission: {
+        delivery: {
+          status: 'autonomous_submission_delivery_uncertain',
+          terminal: false,
+          lookupRequired: true,
+        },
+      },
+    },
+    campaign: candidate,
+    qualificationState,
+    runtimeReadiness,
+    lifecycle,
+    now,
+    pollMs: 1000,
   });
-  child.stderr.on('data', (chunk) => { stderr += chunk; });
-  const watchdog = setTimeout(() => child.kill('SIGKILL'), 15_000);
-  const result = await new Promise((resolve, reject) => {
-    child.once('error', reject);
-    child.once('exit', (code, signal) => resolve({ code, signal }));
+  assert.equal(uncertain.settled, false);
+  assert.equal(uncertain.reason, 'autonomous_submission_recovery_scheduled');
+
+  const completed = autonomousResearchSupervisorNextSchedule({
+    report: {
+      fullAutomaticResearchWritingReady: true,
+      autonomousSubmission: {
+        delivery: {
+          status: 'autonomous_submission_delivery_completed',
+          terminal: true,
+          lookupRequired: false,
+        },
+      },
+    },
+    campaign: candidate,
+    qualificationState,
+    runtimeReadiness,
+    lifecycle,
+    now,
+    pollMs: 1000,
   });
-  clearTimeout(watchdog);
-  assert.equal(signaled, true, stderr);
-  assert.deepEqual(result, { code: 0, signal: null }, stderr);
-  assert.match(stdout, /AutonomousResearchSupervisorRunReceipt/);
-  assert.match(stdout, /autonomous_research_supervisor_stopped_gracefully/);
+  assert.equal(completed.settled, true);
+  assert.equal(completed.reason, 'qualified_beyond_lifecycle');
 });

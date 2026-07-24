@@ -60,6 +60,44 @@ test('a later revise receives prior theorem readiness blockers and revision mate
   assert.doesNotMatch(request.instructions, /must_not_leak_from_same_round/);
   assert.deepEqual(request.context.qualityGateBlockers, ['theorem_proof_status_missing']);
   assert.ok(request.requiredChecks.includes('rerun theorem manuscript readiness and clear every carried-forward blocker'));
+  assert.equal(request.timeoutMs, 60_000);
+});
+
+test('agent requests cap one call below the whole-campaign wall-time budget', () => {
+  const request = buildCampaignAgentExecutionRequest({
+    campaign: {
+      campaignId: 'campaign', paperId: 'paper-timeout-cap',
+      spec: { datasetMounts: [] },
+    },
+    node: {
+      nodeId: 'campaign:0:research-plan', kind: 'research-plan', roundIndex: 0,
+    },
+    workspace: '/tmp/agent-timeout-cap',
+    manuscript: 'main.tex',
+    reviews: [],
+    executionBudget: {
+      remainingTokenCount: 8192,
+      remainingWallTimeMs: 6 * 60 * 60 * 1000,
+    },
+    executionSignal: null,
+  });
+  assert.equal(request.timeoutMs, 20 * 60 * 1000);
+  assert.deepEqual(request.workspaceMutationPolicy.allowedPaths, ['RESEARCH_PLAN.md']);
+  assert.deepEqual(request.workspaceMutationPolicy.allowedExtensions, []);
+});
+
+test('referee instructions require verdict and score coherence', () => {
+  const request = buildCampaignAgentExecutionRequest({
+    campaign: { campaignId: 'campaign', paperId: 'paper', spec: { datasetMounts: [] } },
+    node: { nodeId: 'review', kind: 'revision-referee-1', role: 'reviewer', roundIndex: 1 },
+    workspace: '/tmp/referee-coherence',
+    manuscript: 'main.tex',
+    reviews: [],
+    executionBudget: { remainingTokenCount: 1024, remainingWallTimeMs: 30_000 },
+  });
+  assert.match(request.instructions, /accept only when no actionable revision is required/i);
+  assert.match(request.instructions, /findings must contain deficiencies, not praise/i);
+  assert.match(request.instructions, /never mechanically return revise or score 0/i);
 });
 
 test('revise fails closed against future, current-round, incomplete, and unhashed convergence context', () => {

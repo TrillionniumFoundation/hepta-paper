@@ -2,6 +2,7 @@ export function buildDockerWorkerCommand({
   limits, uid, gid, environment, requiresGpu, systemMounts, workRoot, outputRoot, supervisorRoot,
   runtimeExecutableSnapshot, runtimeExecutableOverlayTarget, mountedDatasets, relativeCwd,
   containerImageDigest, datasetSupervisor, executable, arguments: workerArguments,
+  immutableWorkRoot = false,
 } = {}) {
   return [
     'run', '--pull', 'never', '--rm', '--network', 'none', '--read-only', '--cap-drop', 'ALL',
@@ -13,7 +14,7 @@ export function buildDockerWorkerCommand({
     ...environment.flatMap(([key, value]) => ['--env', `${key}=${String(value)}`]),
     ...(requiresGpu ? ['--runtime', 'nvidia', '--env', 'NVIDIA_VISIBLE_DEVICES=all', '--env', 'NVIDIA_DRIVER_CAPABILITIES=compute,utility'] : []),
     ...systemMounts,
-    '--volume', `${workRoot}:/source:ro`, '--volume', `${workRoot}:/work:${datasetSupervisor ? 'ro' : 'rw'}`, '--volume', `${outputRoot}:/output:rw`,
+    '--volume', `${workRoot}:/source:ro`, '--volume', `${workRoot}:/work:${datasetSupervisor || immutableWorkRoot ? 'ro' : 'rw'}`, '--volume', `${outputRoot}:/output:rw`,
     ...(datasetSupervisor ? ['--volume', `${supervisorRoot}:/hepta-supervisor:rw`] : []),
     ...(runtimeExecutableSnapshot ? ['--volume', `${runtimeExecutableSnapshot.path}:${runtimeExecutableOverlayTarget}:ro`] : []),
     ...mountedDatasets.flatMap((mount) => ['--volume', `${mount.mountSource}:${mount.target}:ro`]),
@@ -29,13 +30,14 @@ export function buildBubblewrapWorkerCommand({
   limits, bubblewrap, texMounts, runtimeMounts, workRoot, outputRoot, runtimeExecutableSnapshot,
   runtimeExecutableOverlayTarget, relativeCwd, mountedDatasets, requiresGpu, gpuDevices,
   environment, executable, arguments: workerArguments,
+  immutableWorkRoot = false,
 } = {}) {
   return [
     `--as=${limits.memory}`, `--cpu=${limits.cpu}`, `--nproc=${limits.pids}:${limits.pids}`, '--', bubblewrap,
     '--unshare-user-try', '--unshare-pid', '--unshare-ipc', '--unshare-uts', '--unshare-cgroup-try', '--unshare-net', '--die-with-parent', '--new-session',
     '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp', '--ro-bind', '/usr', '/usr', '--ro-bind', '/bin', '/bin', '--ro-bind', '/lib', '/lib', '--ro-bind', '/lib64', '/lib64',
     ...texMounts, ...runtimeMounts,
-    '--ro-bind', workRoot, '/source', '--bind', workRoot, '/work', '--bind', outputRoot, '/output',
+    '--ro-bind', workRoot, '/source', immutableWorkRoot ? '--ro-bind' : '--bind', workRoot, '/work', '--bind', outputRoot, '/output',
     ...(runtimeExecutableSnapshot ? ['--ro-bind', runtimeExecutableSnapshot.path, runtimeExecutableOverlayTarget] : []),
     '--chdir', `/work${relativeCwd ? `/${relativeCwd}` : ''}`,
     ...mountedDatasets.flatMap((mount) => ['--ro-bind', mount.mountSource, mount.target]),

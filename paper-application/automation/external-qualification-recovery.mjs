@@ -7,173 +7,32 @@ import {
 import {
   classifyExternalQualificationFailureCodes,
 } from '../../paper-domain/automation/external-research-qualification-failure-policy.mjs';
-
-const SHA256 = /^sha256:[0-9a-f]{64}$/i;
-
-function configurationIdentity(client, verifier) {
-  const clientDeclaresCost = Object.hasOwn(client || {}, 'maximumQualificationCostUsd')
-    || Object.hasOwn(client || {}, 'qualificationCostAuthority');
-  const verifierDeclaresCost = Object.hasOwn(verifier || {}, 'maximumQualificationCostUsd')
-    || Object.hasOwn(verifier || {}, 'qualificationCostAuthority');
-  const maximumQualificationCostUsd = clientDeclaresCost
-    ? Number(client.maximumQualificationCostUsd) : null;
-  const qualificationCostAuthority = clientDeclaresCost
-    ? client.qualificationCostAuthority : null;
-  const costAuthorityValid = clientDeclaresCost && verifierDeclaresCost
-    && maximumQualificationCostUsd
-      === Number(verifier.maximumQualificationCostUsd)
-    && qualificationCostAuthority === verifier.qualificationCostAuthority
-    && Number.isFinite(maximumQualificationCostUsd)
-    && maximumQualificationCostUsd >= 0 && maximumQualificationCostUsd <= 1_000
-    && (maximumQualificationCostUsd === 0
-      ? qualificationCostAuthority === 'externally_operated_zero_cost'
-      : qualificationCostAuthority === 'operator_declared_worst_case_usd');
-  const value = Object.freeze({
-    configurationIdentityHash: client?.configurationIdentityHash || null,
-    trustIdentityHash: client?.trustIdentityHash || null,
-    clientServiceIdentityHash: client?.serviceIdentityHash || null,
-    verifierServiceIdentityHash: verifier?.serviceIdentityHash || null,
-    maximumQualificationCostUsd,
-    qualificationCostAuthority,
-  });
-  if (![value.configurationIdentityHash, value.trustIdentityHash,
-    value.clientServiceIdentityHash, value.verifierServiceIdentityHash]
-    .every((item) => SHA256.test(String(item || '')))
-    || !costAuthorityValid
-    || value.configurationIdentityHash !== verifier?.configurationIdentityHash
-    || value.trustIdentityHash !== verifier?.trustIdentityHash
-    || value.clientServiceIdentityHash === value.verifierServiceIdentityHash) {
-    throw new Error('autonomous_research_external_qualification_identity_invalid');
-  }
-  return Object.freeze({
-    ...value,
-    recoveryConfigurationIdentityHash: hashRecord(
-      'AutonomousExternalQualificationRecoveryConfigurationIdentity',
-      value,
-    ),
-  });
-}
-
-function recoveryIdentity(authority, preparation, configuration, retryPolicyIdentityHash) {
-  return hashRecord('AutonomousExternalQualificationRecoveryIdentity', {
-    campaignId: authority.campaignId,
-    paperId: authority.paperId,
-    campaignReleaseBundleHash: authority.campaignReleaseBundleHash,
-    proposalHash: preparation.proposal.machineProposedScientificClaimSetHash,
-    policyAuthorizationHash:
-      preparation.policyAuthorization.autonomousResearchPolicyAuthorizationHash,
-    seedBindingHash: preparation.seedBinding.autonomousResearchSeedBindingHash,
-    recoveryConfigurationIdentityHash: configuration.recoveryConfigurationIdentityHash,
-    retryPolicyIdentityHash,
-  });
-}
-
-function evidence(configuration) {
-  if (!configuration) return Object.freeze({
-    configurationIdentityHash: null,
-    trustIdentityHash: null,
-    clientServiceIdentityHash: null,
-    verifierServiceIdentityHash: null,
-  });
-  return Object.freeze({
-    configurationIdentityHash: configuration.configurationIdentityHash,
-    trustIdentityHash: configuration.trustIdentityHash,
-    clientServiceIdentityHash: configuration.clientServiceIdentityHash,
-    verifierServiceIdentityHash: configuration.verifierServiceIdentityHash,
-  });
-}
-
-function outcome(status, inspection = null, identity = null) {
-  return Object.freeze({ status, inspection, ...evidence(identity) });
-}
-
-function nowMilliseconds(retry) {
-  const observed = retry.clock?.now ? retry.clock.now() : new Date();
-  const value = observed instanceof Date ? observed.getTime() : Date.parse(String(observed));
-  if (!Number.isFinite(value)) throw new Error('external_qualification_clock_invalid');
-  return value;
-}
-
-async function reportProgress(retry, stage) {
-  if (retry.onProgress === null || retry.onProgress === undefined) return;
-  if (typeof retry.onProgress !== 'function') {
-    throw new Error('autonomous_research_qualification_progress_callback_invalid');
-  }
-  try { await retry.onProgress(Object.freeze({ stage })); }
-  catch (error) {
-    throw new Error('autonomous_research_qualification_progress_fence_lost', {
-      cause: error,
-    });
-  }
-}
-
-async function boundedDelay(milliseconds, retry) {
-  if (milliseconds <= 0) return;
-  if (retry.signal?.aborted) throw new Error(String(retry.signal.reason || 'external_qualification_aborted'));
-  await reportProgress(retry, 'qualification_recovery_before_retry_delay');
-  if (typeof retry.scheduler?.delay === 'function') {
-    await retry.scheduler.delay(milliseconds, { signal: retry.signal });
-  } else if (typeof retry.scheduler?.sleep === 'function') {
-    await retry.scheduler.sleep(milliseconds, { signal: retry.signal });
-  } else await new Promise((resolve) => { setTimeout(resolve, milliseconds); });
-  await reportProgress(retry, 'qualification_recovery_after_retry_delay');
-}
-
-function durableCasStore(store) {
-  return store?.kind === 'AutonomousResearchQualificationStateRepository'
-    && store.durable === true && store.compareAndSwap === true
-    && store.systemOwnedRuntimeState === true
-    && typeof store.readExternalQualificationState === 'function'
-    && typeof store.compareAndSwapExternalQualificationState === 'function';
-}
-
-function boundToRelease(state, authority) {
-  return state?.campaignId === authority?.campaignId
-    && state?.paperId === authority?.paperId
-    && state?.campaignReleaseBundleHash === authority?.campaignReleaseBundleHash;
-}
-
-function locallyCurrentVerifiedInspection(state, authority, nowMs, minimumValidityMs = 0) {
-  if (!boundToRelease(state, authority)
-    || state?.recovery?.status !== 'qualification_verified'
-    || Date.parse(state?.receipt?.expiresAt || '') <= nowMs + minimumValidityMs) return null;
-  return state.verifiedInspection;
-}
-
-function supportsRecoverableAttemptLease(store) {
-  return store?.recoverableAttemptLease === true
-    && typeof store.tryAcquireQualificationAttemptLease === 'function'
-    && typeof store.renewQualificationAttemptLease === 'function'
-    && typeof store.releaseQualificationAttemptLease === 'function';
-}
-
-function recurringTimer(retry, callback, milliseconds) {
-  const handle = typeof retry.scheduler?.setInterval === 'function'
-    ? retry.scheduler.setInterval(callback, milliseconds)
-    : setInterval(callback, milliseconds);
-  retry.scheduler?.unref?.(handle);
-  handle?.unref?.();
-  return handle;
-}
-
-function clearRecurringTimer(retry, handle) {
-  if (!handle) return;
-  if (typeof retry.scheduler?.clearInterval === 'function') retry.scheduler.clearInterval(handle);
-  else clearInterval(handle);
-}
-
-function identityFromState(state) {
-  return state?.recovery ? Object.freeze({
-    configurationIdentityHash: state.recovery.configurationIdentityHash,
-    trustIdentityHash: state.recovery.trustIdentityHash,
-    clientServiceIdentityHash: state.recovery.clientServiceIdentityHash,
-    verifierServiceIdentityHash: state.recovery.verifierServiceIdentityHash,
-  }) : null;
-}
-
-function inspectionWithIdentity(inspection, configuration) {
-  return Object.freeze({ ...inspection, ...evidence(configuration) });
-}
+import {
+  boundedExternalQualificationDelay as boundedDelay,
+  clearExternalQualificationRecurringTimer as clearRecurringTimer,
+  durableExternalQualificationCasStore as durableCasStore,
+  externalQualificationBoundToRelease as boundToRelease,
+  externalQualificationConfigurationIdentity as configurationIdentity,
+  externalQualificationEvidence as evidence,
+  externalQualificationEpochIdempotencyKey,
+  externalQualificationIdentityFromState as identityFromState,
+  externalQualificationInfrastructureControlFlow as isInfrastructureFenceControlFlow,
+  externalQualificationInspectionWithIdentity as inspectionWithIdentity,
+  externalQualificationNowMilliseconds as nowMilliseconds,
+  externalQualificationOutcome as outcome,
+  externalQualificationRecoveryIdentity as recoveryIdentity,
+  locallyCurrentExternalQualificationInspection as locallyCurrentVerifiedInspection,
+  markExternalQualificationSideEffectStarted as markExternalSideEffectStarted,
+  reportExternalQualificationProgress as reportProgress,
+  reportExternalQualificationSynchronousProgress as reportSynchronousProgress,
+  startExternalQualificationRecurringTimer as recurringTimer,
+  supportsRecoverableExternalQualificationAttemptLease as supportsRecoverableAttemptLease,
+  supportsRecoverableExternalQualificationInfrastructureReservation
+    as supportsRecoverableInfrastructureReservation,
+} from './external-qualification-recovery-support.mjs';
+import {
+  recoverStaleExternalQualificationAttempt,
+} from './external-qualification-stale-attempt-recovery.mjs';
 
 export async function requestExternalResearchQualification({
   externalQualificationClient,
@@ -279,6 +138,7 @@ export async function requestExternalResearchQualification({
   const cycle = startingNewCycle
     ? Number(lifecyclePrior.cycle || 0) + 1 : Number(prior?.cycle || 1);
   if (startingNewCycle) prior = null;
+  let staleAttemptExpired = false;
   if (prior?.status === 'qualification_attempt_in_progress') {
     const leaseUntil = Math.min(
       Date.parse(prior.nextAttemptAt || ''),
@@ -287,6 +147,7 @@ export async function requestExternalResearchQualification({
     if (Number.isFinite(leaseUntil) && leaseUntil > currentNow()) {
       return outcome('qualification_external_service_attempt_in_progress', null, configuration);
     }
+    staleAttemptExpired = true;
   }
 
   let expectedStateHash = existing?.autonomousExternalQualificationStateHash || null;
@@ -329,7 +190,7 @@ export async function requestExternalResearchQualification({
     verifiedInspection = null,
     nextAttemptAtMs = null,
     terminalFailure = null,
-  }, attemptLease = null) => {
+  }, attemptLease = null, sideEffectReservationHashes = []) => {
     const state = createAutonomousExternalQualificationState(Object.freeze({
       version: 4,
       kind: 'AutonomousExternalQualificationState',
@@ -369,12 +230,32 @@ export async function requestExternalResearchQualification({
       expectedStateHash,
       state,
       attemptLease,
+      sideEffectReservationHashes,
       now: new Date(currentNow()),
     });
     existing = state;
     expectedStateHash = state.autonomousExternalQualificationStateHash;
     generation = state.generation;
   };
+
+  if (staleAttemptExpired
+    && supportsRecoverableInfrastructureReservation(qualificationStateStore)) {
+    const recovered = await recoverStaleExternalQualificationAttempt({
+      staleAttemptExpired,
+      qualificationStateStore,
+      externalQualificationClient,
+      externalQualificationVerifier,
+      campaignReleaseAuthority,
+      preparation,
+      configuration,
+      policy,
+      retry,
+      currentNow,
+      writeState,
+      evaluateEligibility,
+    });
+    if (recovered.handled) return recovered.result;
+  }
 
   let lastInspection = null;
   if (prior?.status === 'qualification_epoch_cooldown') {
@@ -420,6 +301,11 @@ export async function requestExternalResearchQualification({
       }
       attemptCount += 1;
       totalAttemptCount += 1;
+      const externalRequestIdempotencyKey = externalQualificationEpochIdempotencyKey({
+        recoveryIdentityHash,
+        cycle,
+        epoch,
+      });
       reservedCostUsd = Math.min(
         maximumTotalCostUsd,
         reservedCostUsd + attemptReservationCostUsd,
@@ -432,9 +318,9 @@ export async function requestExternalResearchQualification({
             globalDeadlineAtMs,
             currentNow() + policy.attemptLeaseMs,
           ),
-        }, attemptLease);
+        }, attemptLease, [externalRequestIdempotencyKey]);
       } catch (error) {
-        if (attemptLease) {
+        if (attemptLease && error?.committed !== true) {
           qualificationStateStore.releaseQualificationAttemptLease(attemptLease);
         }
         if (error?.message === 'autonomous_research_qualification_state_fence_conflict') {
@@ -446,6 +332,70 @@ export async function requestExternalResearchQualification({
         }
         throw error;
       }
+      const recoverableInfrastructureReservation =
+        supportsRecoverableInfrastructureReservation(qualificationStateStore);
+      let durableExternalActionMayHaveStarted = false;
+      let externalSideEffectPermitHash = null;
+      const cancelInfrastructureReservation = (originalError) => {
+        if (durableExternalActionMayHaveStarted
+          || !supportsRecoverableInfrastructureReservation(qualificationStateStore)
+          || originalError?.qualificationInfrastructureReservationCancelled === true) {
+          return false;
+        }
+        let cancellation;
+        try {
+          cancellation = qualificationStateStore
+            .cancelQualificationAttemptInfrastructureDeferred({
+              expectedStateHash,
+              expectedGeneration: generation,
+              idempotencyKey: externalRequestIdempotencyKey,
+              attemptLease,
+              now: new Date(currentNow()),
+            });
+        } catch (cancelError) {
+          const fatal = new Error(
+            'autonomous_research_qualification_infrastructure_reservation_cancel_failed',
+            { cause: cancelError },
+          );
+          fatal.stateRecoverabilityFatal = true;
+          fatal.originalInfrastructureControlError = originalError;
+          throw fatal;
+        }
+        if (cancellation?.cancelled !== true
+          || cancellation?.releasedLease !== true) {
+          const fatal = new Error(
+            'autonomous_research_qualification_infrastructure_reservation_cancel_failed',
+          );
+          fatal.stateRecoverabilityFatal = true;
+          fatal.originalInfrastructureControlError = originalError;
+          throw fatal;
+        }
+        originalError.qualificationInfrastructureReservationCancelled = true;
+        return true;
+      };
+      const persistExternalActionMarker = (action) => {
+        if (!recoverableInfrastructureReservation) {
+          durableExternalActionMayHaveStarted = true;
+          return;
+        }
+        try {
+          const marker = qualificationStateStore
+            .markQualificationAttemptExternalActionStarted({
+            expectedStateHash,
+            expectedGeneration: generation,
+            idempotencyKey: externalRequestIdempotencyKey,
+            attemptLease,
+            action,
+            now: new Date(currentNow()),
+          });
+          externalSideEffectPermitHash = marker?.sideEffectPermitHash || null;
+          durableExternalActionMayHaveStarted = true;
+          return marker;
+        } catch (error) {
+          if (error?.committed === true) durableExternalActionMayHaveStarted = true;
+          throw error;
+        }
+      };
       let receipt = null;
       let inspection = null;
       let attemptLeaseLost = false;
@@ -463,7 +413,7 @@ export async function requestExternalResearchQualification({
           throw new Error('autonomous_research_qualification_attempt_lease_lost');
         }
       } : null;
-      const heartbeat = attemptLease ? recurringTimer(retry, () => {
+      const renewAttemptLeaseInBackground = attemptLease ? () => {
         try {
           const renewed = qualificationStateStore.renewQualificationAttemptLease({
             ...attemptLease,
@@ -472,14 +422,44 @@ export async function requestExternalResearchQualification({
           });
           if (!renewed) attemptLeaseLost = true;
         } catch { attemptLeaseLost = true; }
-      }, Math.max(250, Math.floor(policy.attemptLeaseMs / 3))) : null;
+      } : null;
+      let heartbeat = null;
+      const stopHeartbeat = () => {
+        clearRecurringTimer(retry, heartbeat);
+        heartbeat = null;
+      };
+      const startHeartbeat = () => {
+        if (!renewAttemptLeaseInBackground || heartbeat) return;
+        heartbeat = recurringTimer(
+          retry,
+          renewAttemptLeaseInBackground,
+          Math.max(250, Math.floor(policy.attemptLeaseMs / 3)),
+        );
+      };
       try {
         const remainingQualificationMs = Math.max(1, Math.min(
           deadlineAtMs,
           globalDeadlineAtMs,
         ) - currentNow());
+        renewAttemptLeaseAtProgress?.();
         await reportProgress(retry, 'qualification_recovery_before_external_request');
-        receipt = await externalQualificationClient.requestQualification({
+        reportSynchronousProgress(
+          retry,
+          'qualification_recovery_external_request',
+        );
+        const releaseBinding = campaignReleaseAuthority.releaseBundle
+          ?.autonomousResearchReleaseBinding || null;
+        persistExternalActionMarker('external_qualification_request');
+        markExternalSideEffectStarted(retry, 'external_qualification_request');
+        await reportProgress(
+          retry,
+          'qualification_recovery_after_external_request_marker',
+        );
+        reportSynchronousProgress(
+          retry,
+          'qualification_recovery_external_request_final_fence',
+        );
+        const qualificationRequest = externalQualificationClient.requestQualification({
           campaignId: campaignReleaseAuthority.campaignId,
           paperId: campaignReleaseAuthority.paperId,
           campaignReleaseBundleHash: campaignReleaseAuthority.campaignReleaseBundleHash,
@@ -487,25 +467,61 @@ export async function requestExternalResearchQualification({
           policyAuthorizationHash:
             preparation.policyAuthorization.autonomousResearchPolicyAuthorizationHash,
           seedBindingHash: preparation.seedBinding.autonomousResearchSeedBindingHash,
-          idempotencyKey: hashRecord('AutonomousExternalQualificationEpochIdempotency', {
-            recoveryIdentityHash,
-            cycle,
-            epoch,
-          }),
+          qualificationScope: releaseBinding?.qualificationScope || null,
+          genericContentCanaryVerified:
+            releaseBinding?.genericContentCanaryVerified === true,
+          trustedAutonomousManuscriptRenderReceiptHash:
+            releaseBinding?.trustedAutonomousManuscriptRenderReceiptHash || null,
+          evidenceBoundManuscriptIrHash:
+            releaseBinding?.evidenceBoundManuscriptIrHash || null,
+          manuscriptIrFileHash: releaseBinding?.manuscriptIrFileHash || null,
+          renderedManuscriptHash: releaseBinding?.renderedManuscriptHash || null,
+          agentExecutionReceiptHash: releaseBinding?.agentExecutionReceiptHash || null,
+          isolatedAgentMergeReceiptHash:
+            releaseBinding?.isolatedAgentMergeReceiptHash || null,
+          agentAuthoredSourceDraftHash:
+            releaseBinding?.agentAuthoredSourceDraftHash || null,
+          agentAuthoredSourceDraftFileHash:
+            releaseBinding?.agentAuthoredSourceDraftFileHash || null,
+          agentWorkspacePostimageBindingHash:
+            releaseBinding?.agentWorkspacePostimageBindingHash || null,
+          venueProfileSelectionHash: releaseBinding?.venueProfileSelectionHash || null,
+          submissionMetadataReceiptHash:
+            releaseBinding?.submissionMetadataReceiptHash || null,
+          idempotencyKey: externalRequestIdempotencyKey,
           qualificationCycle: cycle,
           qualificationEpoch: epoch,
           qualificationAttempt: attemptCount,
           qualificationTotalAttempt: totalAttemptCount,
+          sideEffectPermitHash: externalSideEffectPermitHash,
         }, {
           signal: retry.signal || null,
           timeoutMs: remainingQualificationMs,
         });
+        startHeartbeat();
+        receipt = await qualificationRequest;
+        stopHeartbeat();
         await reportProgress(retry, 'qualification_recovery_after_external_request');
         if (retry.signal?.aborted || currentNow() >= deadlineAtMs
           || currentNow() >= globalDeadlineAtMs) {
           throw new Error('external_qualification_deadline_exhausted');
         }
+        renewAttemptLeaseAtProgress?.();
         await reportProgress(retry, 'qualification_recovery_before_external_verification');
+        reportSynchronousProgress(
+          retry,
+          'qualification_recovery_external_verification',
+        );
+        persistExternalActionMarker('external_qualification_verification');
+        markExternalSideEffectStarted(retry, 'external_qualification_verification');
+        await reportProgress(
+          retry,
+          'qualification_recovery_after_external_verification_marker',
+        );
+        reportSynchronousProgress(
+          retry,
+          'qualification_recovery_external_verification_final_fence',
+        );
         inspection = inspectionWithIdentity(await externalQualificationVerifier.verify({
           receipt,
           campaignReleaseAuthority,
@@ -519,12 +535,27 @@ export async function requestExternalResearchQualification({
         if (retry.signal?.aborted || currentNow() >= deadlineAtMs
           || currentNow() >= globalDeadlineAtMs) inspection = null;
       } catch (error) {
+        if (isInfrastructureFenceControlFlow(error)) {
+          cancelInfrastructureReservation(error);
+          throw error;
+        }
+        if (String(error?.message || '').startsWith(
+          'autonomous_research_qualification_attempt_external_action_',
+        )) {
+          cancelInfrastructureReservation(error);
+          throw error;
+        }
         if (error?.message === 'autonomous_research_qualification_progress_fence_lost') {
+          cancelInfrastructureReservation(error);
+          throw error;
+        }
+        if (error?.message
+          === 'autonomous_research_qualification_side_effect_marker_failed') {
           throw error;
         }
         inspection = null;
       }
-      finally { clearRecurringTimer(retry, heartbeat); }
+      finally { stopHeartbeat(); }
       if (attemptLeaseLost) {
         if (attemptLease) {
           try { qualificationStateStore.releaseQualificationAttemptLease(attemptLease); }
@@ -545,7 +576,8 @@ export async function requestExternalResearchQualification({
       lastInspection = inspection;
       const eligibility = inspection?.kind === 'FullResearchQualificationInspection'
         ? evaluateEligibility(inspection) : null;
-      if (eligibility?.fullAutomaticResearchWritingReady) {
+      if (eligibility?.fullAutomaticResearchWritingReady
+        || eligibility?.boundedGoldenCapabilityQualificationVerified) {
         if (!persistAttemptState({
           status: 'qualification_verified',
           receipt,

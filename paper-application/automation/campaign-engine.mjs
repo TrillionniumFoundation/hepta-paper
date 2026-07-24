@@ -3,12 +3,26 @@ import { formatProcessIdentitySuffix } from '../../workflow-kernel/runtime/proce
 import { createCampaignEmpiricalCellRunner } from './campaign-empirical-cell-budget.mjs';
 import { buildCampaignConvergenceDecision } from './campaign-convergence-evaluator.mjs';
 import {
+  campaignInfrastructureControlError,
+  cancelCampaignNodeInfrastructureReservation,
+  createCampaignNodeExternalSideEffectGate,
+} from './campaign-node-infrastructure-control.mjs';
+import {
+  abortCampaignExecution,
+  campaignExecutionAbortError,
+  createCampaignNestedAgentRunner,
+} from './campaign-nested-agent-runner.mjs';
+import {
   campaignBudgetBlocker as budgetBlocker,
   campaignNodeUsageDelta as usageDelta,
   elapsedRunMs,
   meteredCampaignResultUsage as meteredResultUsage,
   postExecutionCampaignBudgetBlocker as postExecutionBudgetBlocker,
 } from './campaign-execution-budget-policy.mjs';
+import {
+  assertCampaignPackageLifecycleAuthority,
+  prepareCampaignPackageLifecycle,
+} from './campaign-package-lifecycle.mjs';
 
 function boundedFailureDetail(error) {
   const receipt = error?.receipt || {};
@@ -16,7 +30,10 @@ function boundedFailureDetail(error) {
     message: String(error?.message || 'campaign_executor_failed').slice(0, 1000),
     receiptKind: receipt.kind || null,
     receiptStatus: receipt.status || null,
-    receiptHash: receipt.agentExecutionReceiptHash || receipt.multiLanguageEmpiricalReceiptHash || receipt.receiptHash || null,
+    receiptHash: receipt.agentExecutionReceiptHash
+      || receipt.multiLanguageEmpiricalReceiptHash
+      || receipt.formalProofSearchFailureCertificateHash
+      || receipt.receiptHash || null,
     blockers: Array.isArray(receipt.blockers) ? receipt.blockers.slice(0, 20) : [],
     exitCode: receipt.exitCode ?? null,
     stderrTail: String(receipt.stderrTail || '').slice(-4000),
@@ -24,30 +41,6 @@ function boundedFailureDetail(error) {
     receiptDetails: receipt.details || null,
     backendFailures: Array.isArray(error?.failures) ? error.failures.slice(0, 10) : [],
   });
-}
-
-function abortOnce(controller, reason = 'resource_lease_lost') {
-  if (!controller.signal.aborted) controller.abort(reason);
-}
-
-function bindResourceLeaseLoss(release, controller) {
-  const lostSignal = release?.lostSignal;
-  if (!lostSignal || typeof lostSignal.addEventListener !== 'function') return () => {};
-  const onLost = () => abortOnce(controller, lostSignal.reason || 'resource_lease_lost');
-  if (lostSignal.aborted) onLost();
-  else lostSignal.addEventListener('abort', onLost, { once: true });
-  let detached = false;
-  return () => {
-    if (detached) return;
-    detached = true;
-    lostSignal.removeEventListener?.('abort', onLost);
-  };
-}
-
-function executionAbortError(signal, fallback = 'campaign_execution_aborted') {
-  const error = new Error(String(signal?.reason || fallback));
-  error.retryable = true;
-  return error;
 }
 
 export async function runPaperCampaign({
@@ -64,6 +57,8 @@ export async function runPaperCampaign({
   scheduler,
   idGenerator,
   signal = null,
+  assertExternalSideEffectReady = null,
+  packageLifecycleAuthority = null,
 } = {}) {
   if (!campaignId || !campaignStore || typeof executor?.execute !== 'function') {
     throw new Error('campaignId, CampaignStorePort and executor are required');
@@ -72,6 +67,19 @@ export async function runPaperCampaign({
     || typeof scheduler?.setInterval !== 'function' || typeof scheduler?.clearInterval !== 'function'
     || typeof idGenerator?.next !== 'function') {
     throw new Error('ClockPort, SchedulerPort and IdGeneratorPort are required');
+  }
+  if (assertExternalSideEffectReady !== null
+    && typeof assertExternalSideEffectReady !== 'function') {
+    throw new Error('campaign_external_side_effect_recoverability_gate_invalid');
+  }
+  assertCampaignPackageLifecycleAuthority(packageLifecycleAuthority);
+  if (assertExternalSideEffectReady
+    && (typeof campaignStore.cancelNodeInfrastructureDeferred !== 'function'
+      || typeof campaignStore.reserveNodeInfrastructureUsage !== 'function'
+      || typeof campaignStore.markNodeExternalActionStarted !== 'function'
+      || typeof campaignStore.completeNodeExternalAction !== 'function'
+      || typeof campaignStore.getNodeExternalAction !== 'function')) {
+    throw new Error('campaign_node_infrastructure_cancel_required');
   }
   const nowEpochMs = () => clock.now().getTime();
   const workerCount = Math.max(1, Math.min(64, Number(concurrency) || 4));
@@ -91,6 +99,8 @@ export async function runPaperCampaign({
     memoryMiB: campaignMemoryMiB,
   });
 
+  await packageLifecycleAuthority?.reconcile();
+
   while (true) {
     let campaign = campaignStore.getCampaign(campaignId);
     if (!campaign) throw new Error(`campaign not found: ${campaignId}`);
@@ -98,6 +108,7 @@ export async function runPaperCampaign({
       campaign = campaignStore.pauseCampaign(campaignId, 'supervisor_process_shutdown');
     }
     if (['completed', 'failed', 'cancelled', 'paused', 'stopped'].includes(campaign.status)) {
+      await packageLifecycleAuthority?.reconcileCampaign({ campaignId });
       return Object.freeze({
         version: 1,
         kind: 'PaperCampaignRunResult',
@@ -188,6 +199,17 @@ export async function runPaperCampaign({
         return;
       }
       const replayingPreparedResult = Boolean(claimedNode.preparedResultHash);
+      const nodeBudgetReservation = replayingPreparedResult
+        ? {} : usageDelta(reservedCampaign, claimedNode);
+      const {
+        gate: nodeSideEffectGate,
+        externalActionStarted: nodeExternalSideEffectStarted,
+      } = createCampaignNodeExternalSideEffectGate({
+        assertExternalSideEffectReady,
+        campaignStore,
+        node: claimedNode,
+        workerId,
+      });
       let node;
       try {
         node = campaignStore.startNode({
@@ -195,7 +217,7 @@ export async function runPaperCampaign({
           workerId,
           attemptId: claimedNode.attemptId,
           leaseGeneration: claimedNode.leaseGeneration,
-          usageDelta: replayingPreparedResult ? {} : usageDelta(reservedCampaign, claimedNode),
+          usageDelta: nodeBudgetReservation,
         });
       } catch (error) {
         releaseLocalResources();
@@ -231,75 +253,57 @@ export async function runPaperCampaign({
       maximumObservedConcurrency = Math.max(maximumObservedConcurrency, active);
       try {
         const remainingWallTimeMs = Math.max(1, Number(currentCampaign.spec?.budgets?.maxWallTimeMs ?? 6 * 60 * 60 * 1000) - elapsedRunMs(currentCampaign, nowMs));
-        const runNestedAgent = async (operation) => {
-          const nestedRequest = { agent: 1, cpu: 0, gpu: 0, memoryMiB: 0 };
-          const releaseNestedGlobal = await governor.acquire(nestedRequest, { campaignId, nodeId: `${node.nodeId}:nested-agent`, signal: controller.signal });
-          let releaseNestedLocal;
-          let nestedResult;
-          let operationError = null;
-          let localReleaseError = null;
-          let globalReleaseError = null;
-          const detachNestedLeaseLoss = bindResourceLeaseLoss(releaseNestedGlobal, controller);
-          try {
-            if (controller.signal.aborted) throw executionAbortError(controller.signal, 'resource_lease_lost');
-            releaseNestedLocal = await localGovernor.acquire(nestedRequest, { signal: controller.signal });
-            const latest = campaignStore.getCampaign(campaignId);
-            if (latest?.status !== 'running') {
-              const error = new Error(`campaign_${latest?.status || 'unavailable'}`);
-              error.retryable = false;
-              throw error;
-            }
-            if (latest.agentCallCount >= Number(latest.spec?.budgets?.maxAgentCalls ?? Infinity)) {
-              campaignStore.stopCampaign(campaignId, 'campaign_agent_call_budget_exhausted');
-              const error = new Error('campaign_agent_call_budget_exhausted');
-              error.retryable = false;
-              throw error;
-            }
-            if (Number(latest.spec?.budgets?.maxTokenCount ?? Infinity) - latest.tokenCount < 128) {
-              campaignStore.stopCampaign(campaignId, 'campaign_token_budget_exhausted');
-              const error = new Error('campaign_token_budget_exhausted');
-              error.retryable = false;
-              throw error;
-            }
-            try {
-              campaignStore.recordUsage(campaignId, { agentCalls: 1 }, { enforceBudget: true });
-            } catch (error) {
-              campaignStore.stopCampaign(campaignId, 'campaign_agent_call_budget_exhausted');
-              error.retryable = false;
-              throw error;
-            }
-            nestedResult = await operation({
-              remainingTokenCount: Math.max(128, Number(latest.spec?.budgets?.maxTokenCount ?? Infinity) - latest.tokenCount),
-              signal: controller.signal,
-            });
-            if (controller.signal.aborted) throw executionAbortError(controller.signal, 'resource_lease_lost');
-            campaignStore.recordUsage(campaignId, meteredResultUsage(nestedResult, { agentCall: true }));
-          } catch (error) {
-            operationError = error;
-          } finally {
-            try { releaseNestedLocal?.(); } catch (error) { localReleaseError = error; }
-            try {
-              if (releaseNestedGlobal() === false) {
-                abortOnce(controller, releaseNestedGlobal.lostSignal?.reason || 'resource_lease_release_fence_lost');
-                globalReleaseError = executionAbortError(controller.signal, 'resource_lease_release_fence_lost');
-              }
-            } catch (error) {
-              abortOnce(controller, error?.message || 'resource_lease_release_failed');
-              globalReleaseError = error;
-            } finally {
-              detachNestedLeaseLoss();
-            }
-          }
-          if (globalReleaseError) throw globalReleaseError;
-          if (releaseNestedGlobal.lostSignal?.aborted) throw executionAbortError(releaseNestedGlobal.lostSignal, 'resource_lease_lost');
-          if (localReleaseError) throw localReleaseError;
-          if (operationError) throw operationError;
-          if (controller.signal.aborted) throw executionAbortError(controller.signal, 'resource_lease_lost');
-          return nestedResult;
-        };
-        const runEmpiricalCell = createCampaignEmpiricalCellRunner({ campaignId, campaignStore, controller });
+        const runNestedAgent = createCampaignNestedAgentRunner({
+          campaignId,
+          campaignStore,
+          node,
+          workerId,
+          controller,
+          governor,
+          localGovernor,
+          nodeSideEffectGate,
+          externalActionStarted: nodeExternalSideEffectStarted,
+        });
+        const runEmpiricalCell = createCampaignEmpiricalCellRunner({
+          campaignId,
+          campaignStore,
+          controller,
+          nodeAttempt: {
+            nodeId: node.nodeId,
+            workerId,
+            attemptId: node.attemptId,
+            leaseGeneration: node.leaseGeneration,
+          },
+          assertExternalSideEffectReady: nodeSideEffectGate,
+          externalActionStarted: nodeExternalSideEffectStarted,
+        });
         const remainingTokenCount = Math.max(0, Number(currentCampaign.spec?.budgets?.maxTokenCount ?? Infinity) - currentCampaign.tokenCount);
-        let result = node.preparedResult || await executor.execute({ campaign: currentCampaign, node, allNodes: campaignStore.listNodes(campaignId), workerIndex: index, executionBudget: { remainingWallTimeMs, remainingTokenCount, absoluteDeadlineEpochMs: nowMs + remainingWallTimeMs }, executionSignal: controller.signal, executionResources: { runNestedAgent, runEmpiricalCell }, deferWorkspaceIntegration: true });
+        if (!node.preparedResult && nodeSideEffectGate) {
+          try {
+            await nodeSideEffectGate({
+              action: `campaign_node_execute:${node.nodeId}`,
+              campaignId,
+              nodeId: node.nodeId,
+            });
+            nodeSideEffectGate.assertCurrent?.({
+              action: `campaign_node_execute:${node.nodeId}`,
+              campaignId,
+              nodeId: node.nodeId,
+            });
+          } catch (error) {
+            if (campaignInfrastructureControlError(error)) {
+              cancelCampaignNodeInfrastructureReservation({
+                campaignStore,
+                node,
+                workerId,
+                error,
+                externalActionStarted: nodeExternalSideEffectStarted(),
+              });
+            }
+            throw error;
+          }
+        }
+        let result = node.preparedResult || await executor.execute({ campaign: currentCampaign, node, allNodes: campaignStore.listNodes(campaignId), workerIndex: index, executionBudget: { remainingWallTimeMs, remainingTokenCount, absoluteDeadlineEpochMs: nowMs + remainingWallTimeMs }, executionSignal: controller.signal, executionResources: { runNestedAgent, runEmpiricalCell, assertExternalSideEffectReady: nodeSideEffectGate }, deferWorkspaceIntegration: true, assertExternalSideEffectReady: nodeSideEffectGate });
         if (controller.signal.aborted) {
           const error = new Error(String(controller.signal.reason || 'campaign_execution_fence_lost'));
           error.retryable = true;
@@ -307,7 +311,15 @@ export async function runPaperCampaign({
         }
         if (!node.preparedResult && node.kind === 'convergence') {
           const nodes = campaignStore.listNodes(campaignId);
-          result = buildCampaignConvergenceDecision({ campaign: currentCampaign, node, nodes, executionResult: result });
+          result = buildCampaignConvergenceDecision({
+            campaign: currentCampaign,
+            node,
+            nodes,
+            executionResult: result,
+            signedReviewerReceiptVerifier:
+              typeof executor.verifySignedReviewerReceipt === 'function'
+                ? executor.verifySignedReviewerReceipt : null,
+          });
         }
         const workspaceIntegrationDescriptor = result?.workspaceAttemptIntegration || null;
         const integrationKey = workspaceIntegrationDescriptor?.workspaceAttemptIntegrationDescriptorHash || null;
@@ -381,6 +393,10 @@ export async function runPaperCampaign({
           throw error;
         }
         const resultUsage = meteredResultUsage(result, { agentCall: requestedResources.agent > 0 });
+        prepareCampaignPackageLifecycle({
+          authority: packageLifecycleAuthority, campaignId, node, workerId,
+          preparedResultHash: prepared.preparedResultHash,
+        });
         campaignStore.completeNode({
           nodeId: node.nodeId,
           workerId,
@@ -389,6 +405,9 @@ export async function runPaperCampaign({
           preparedResultHash: prepared.preparedResultHash,
           usageDelta: resultUsage,
         });
+        if (node.kind === 'package' && packageLifecycleAuthority) {
+          packageLifecycleAuthority.reconcileCampaign({ campaignId });
+        }
         const postBlocker = postExecutionBudgetBlocker(campaignStore.getCampaign(campaignId));
         if (postBlocker) campaignStore.stopCampaign(campaignId, postBlocker);
         executedNodeCount += 1;
@@ -398,6 +417,16 @@ export async function runPaperCampaign({
           campaignStore.stopCampaign(campaignId, 'referee_convergence_not_reached_within_budget');
         }
       } catch (error) {
+        if (campaignInfrastructureControlError(error)) {
+          cancelCampaignNodeInfrastructureReservation({
+            campaignStore,
+            node,
+            workerId,
+            error,
+            externalActionStarted: nodeExternalSideEffectStarted(),
+          });
+          throw error;
+        }
         if (signal?.aborted) return;
         const latestNode = campaignStore.listNodes(campaignId).find((item) => item.nodeId === node.nodeId);
         if (latestNode?.status !== 'running' || latestNode?.attemptId !== node.attemptId || latestNode?.leaseGeneration !== node.leaseGeneration) return;
@@ -428,11 +457,11 @@ export async function runPaperCampaign({
         try { releaseLocalResources(); } catch (error) { localReleaseError = error; }
         try {
           if (releaseResources() === false) {
-            abortOnce(controller, releaseResources.lostSignal?.reason || 'resource_lease_release_fence_lost');
-            globalReleaseError = executionAbortError(controller.signal, 'resource_lease_release_fence_lost');
+            abortCampaignExecution(controller, releaseResources.lostSignal?.reason || 'resource_lease_release_fence_lost');
+            globalReleaseError = campaignExecutionAbortError(controller.signal, 'resource_lease_release_fence_lost');
           }
         } catch (error) {
-          abortOnce(controller, error?.message || 'resource_lease_release_failed');
+          abortCampaignExecution(controller, error?.message || 'resource_lease_release_failed');
           globalReleaseError = error;
         }
         const releasedMs = nowEpochMs();
@@ -459,7 +488,7 @@ export async function runPaperCampaign({
           telemetryError = error;
         }
         if (globalReleaseError) throw globalReleaseError;
-        if (releaseResources.lostSignal?.aborted) throw executionAbortError(releaseResources.lostSignal, 'resource_lease_lost');
+        if (releaseResources.lostSignal?.aborted) throw campaignExecutionAbortError(releaseResources.lostSignal, 'resource_lease_lost');
         if (localReleaseError) throw localReleaseError;
         if (telemetryError) throw telemetryError;
       }

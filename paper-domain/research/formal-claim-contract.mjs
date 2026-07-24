@@ -1,5 +1,9 @@
-import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { normalizeFormalProofObligationMappings } from './formal-proof-obligation-mapping.mjs';
+import { dynamicFormalLeanTypeSourceValid } from './dynamic-formal-claim-seed-contract.mjs';
+import { leanTypeIdentity } from './lean-type-identity.mjs';
+
+const SHA256 = /^sha256:[0-9a-f]{64}$/;
 
 function normalizedText(value) {
   return String(value || '').normalize('NFKC').replace(/\s+/g, ' ').trim();
@@ -31,6 +35,7 @@ export function buildFormalClaimContract({
   manuscriptSourceIdentity = null,
   theoremSpecificationHash = null,
   theoremSpecificationClaimHash = null,
+  dynamicFormalClaimAuthority = null,
   semanticReview = null,
 } = {}) {
   const normalizedClaimId = String(claimId || '').trim();
@@ -69,6 +74,38 @@ export function buildFormalClaimContract({
     contentHash: manuscriptSourceIdentity.contentHash || null,
     fileHash: manuscriptSourceIdentity.fileHash || null,
   }) : null;
+  const dynamicAuthority = dynamicFormalClaimAuthority && typeof dynamicFormalClaimAuthority === 'object'
+    ? Object.freeze({
+      dynamicFormalClaimSeedHash: dynamicFormalClaimAuthority.dynamicFormalClaimSeedHash || null,
+      leanDeclarationName: dynamicFormalClaimAuthority.leanDeclarationName || null,
+      leanTypeSource: dynamicFormalClaimAuthority.leanTypeSource || null,
+      leanTypeSourceHash: dynamicFormalClaimAuthority.leanTypeSourceHash || null,
+      leanNormalizedTypeHash: dynamicFormalClaimAuthority.leanNormalizedTypeHash || null,
+      allowedImports: normalizedStrings(dynamicFormalClaimAuthority.allowedImports),
+      capabilityScopeManifestHash:
+        dynamicFormalClaimAuthority.formalClaimCapabilityScopeManifestHash || null,
+      generatorReceiptHash: dynamicFormalClaimAuthority.formalClaimGeneratorReceiptHash || null,
+    })
+    : null;
+  const dynamicAuthorityValid = !dynamicAuthority || (
+    [
+      dynamicAuthority.dynamicFormalClaimSeedHash,
+      dynamicAuthority.leanTypeSourceHash,
+      dynamicAuthority.leanNormalizedTypeHash,
+      dynamicAuthority.capabilityScopeManifestHash,
+      dynamicAuthority.generatorReceiptHash,
+    ].every((hash) => SHA256.test(String(hash || '')))
+    && dynamicAuthority.leanDeclarationName === normalizedTheoremName
+    && dynamicFormalLeanTypeSourceValid(dynamicAuthority.leanTypeSource)
+    && dynamicAuthority.leanTypeSourceHash
+      === hashBytes(Buffer.from(String(dynamicAuthority.leanTypeSource || ''), 'utf8'))
+  );
+  const dynamicTypeValid = !dynamicAuthority || (
+    dynamicAuthority.leanNormalizedTypeHash
+      === leanTypeIdentity(dynamicAuthority.leanTypeSource).normalizedTypeHash
+    && theoremTypeHash === dynamicAuthority.leanNormalizedTypeHash
+    && dynamicAuthority.allowedImports.length > 0
+  );
   const blockers = [
     ...(!normalizedClaimId ? ['formal_claim_id_missing'] : []),
     ...(!normalizedText(claimText) ? ['formal_claim_text_missing'] : []),
@@ -93,9 +130,11 @@ export function buildFormalClaimContract({
     ...(review && Boolean(review.proposalClaimToTheoremBindingHash)
       !== Boolean(review.proposalClaimRecordHash)
       ? ['formal_proposal_claim_lineage_incomplete'] : []),
+    ...(!dynamicAuthorityValid ? ['formal_dynamic_claim_authority_invalid'] : []),
+    ...(!dynamicTypeValid ? ['formal_dynamic_claim_type_mismatch'] : []),
   ];
   const payload = {
-    version: 1,
+    version: dynamicAuthority ? 2 : 1,
     kind: 'FormalClaimContract',
     status: blockers.length ? 'formal_claim_contract_blocked' : 'formal_claim_contract_verified',
     claimId: normalizedClaimId || null,
@@ -111,6 +150,7 @@ export function buildFormalClaimContract({
     proofObligationMappings: obligationMapping.mappings,
     theoremSpecificationHash: theoremSpecificationHash || null,
     theoremSpecificationClaimHash: theoremSpecificationClaimHash || null,
+    ...(dynamicAuthority ? { dynamicFormalClaimAuthority: dynamicAuthority } : {}),
     semanticReview: review,
     blockers,
   };
@@ -124,6 +164,28 @@ export function verifyFormalClaimContract(contract, expected = {}) {
     blockers.push('formal_claim_contract_hash_invalid');
   }
   if (contract?.status !== 'formal_claim_contract_verified' || contract?.blockers?.length) blockers.push('formal_claim_contract_not_verified');
+  const dynamicAuthority = contract?.dynamicFormalClaimAuthority || null;
+  if ((contract?.version === 2) !== Boolean(dynamicAuthority)
+    || (dynamicAuthority && (
+      ![
+        dynamicAuthority.dynamicFormalClaimSeedHash,
+        dynamicAuthority.leanTypeSourceHash,
+        dynamicAuthority.leanNormalizedTypeHash,
+        dynamicAuthority.capabilityScopeManifestHash,
+        dynamicAuthority.generatorReceiptHash,
+      ].every((hash) => SHA256.test(String(hash || '')))
+      || dynamicAuthority.leanDeclarationName !== contract?.theoremName
+      || !dynamicFormalLeanTypeSourceValid(dynamicAuthority.leanTypeSource)
+      || dynamicAuthority.leanTypeSourceHash
+        !== hashBytes(Buffer.from(String(dynamicAuthority.leanTypeSource || ''), 'utf8'))
+      || dynamicAuthority.leanNormalizedTypeHash
+        !== leanTypeIdentity(dynamicAuthority.leanTypeSource).normalizedTypeHash
+      || dynamicAuthority.leanNormalizedTypeHash !== contract?.theoremTypeHash
+      || !Array.isArray(dynamicAuthority.allowedImports)
+      || dynamicAuthority.allowedImports.length === 0
+    ))) {
+    blockers.push('formal_claim_contract_dynamic_authority_invalid');
+  }
   const expectedValues = {
     claimId: expected.claimId,
     manuscriptClaimHash: expected.manuscriptClaimHash,
@@ -176,6 +238,10 @@ export function verifyFormalClaimContract(contract, expected = {}) {
   if (expected.proposalClaimRecordHash
     && review?.proposalClaimRecordHash !== expected.proposalClaimRecordHash) {
     blockers.push('formal_claim_contract_proposal_claim_mismatch');
+  }
+  if (expected.dynamicFormalClaimSeedHash
+    && dynamicAuthority?.dynamicFormalClaimSeedHash !== expected.dynamicFormalClaimSeedHash) {
+    blockers.push('formal_claim_contract_dynamic_seed_mismatch');
   }
   return Object.freeze({
     valid: blockers.length === 0,

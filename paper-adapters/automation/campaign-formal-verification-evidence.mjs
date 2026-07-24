@@ -5,6 +5,29 @@ import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { verifyNativeResearchWorkerExecutionReport } from '../research-verify/worker-runtime.mjs';
 import { verifyProposalClaimToTheoremBinding } from '../../paper-domain/research/proposal-claim-to-theorem-binding.mjs';
 import { readFormalSemanticReviewAgentDocument } from './campaign-formal-review-envelope.mjs';
+import {
+  createFormalProofSearchPlan,
+  createTypedTheoremObligationBundle,
+  verifyFormalProofSearchAttempts,
+  verifyFormalProofSearchPlan,
+  verifyTypedTheoremObligationBundle,
+} from '../../paper-domain/research/typed-theorem-proof-search-contract.mjs';
+import {
+  verifyFormalProofSearchOperationReceipt,
+} from '../research-verify/formal-proof-search-operations-executor.mjs';
+import {
+  createTypedTheoremDependencyGraph,
+  verifyTypedTheoremDependencyGraph,
+} from '../../paper-domain/research/typed-theorem-dependency-graph.mjs';
+import {
+  verifyFormalTheoremDependencyGraphOperationReceipt,
+} from '../research-verify/formal-theorem-dependency-graph-operations-executor.mjs';
+import {
+  buildFormalTheoremDependencyReadableProofBundle,
+} from '../research-verify/formal-theorem-dependency-readable-proof.mjs';
+import {
+  verifyDynamicFormalExecutionAuthority,
+} from '../research-verify/dynamic-formal-project-closure-readiness.mjs';
 
 export function validCampaignFormalAgentReceipt(receipt) {
   return verifyAgentExecutionReceipt(receipt);
@@ -157,11 +180,25 @@ export function verifyCampaignFormalReceipt(receipt, {
     taskKey: paperTask?.taskKey,
     requireFormalWorkers: true,
     theoremSpecificationHash: theoremSpecification?.theoremSpecificationHash || null,
+    dynamicFormalExecutionAuthorityHash: receipt?.dynamicFormalExecutionAuthority
+      ?.dynamicFormalExecutionAuthorityHash || null,
   });
   blockers.push(...workerVerification.blockers.map((blocker) => `formal_worker:${blocker}`));
   if (receipt?.nativeResearchWorkerExecutionReportHash
     !== receipt?.nativeResearchWorkerExecution?.nativeResearchWorkerExecutionReportHash) {
     blockers.push('campaign_formal_verification_worker_report_hash_mismatch');
+  }
+  const readableProofHashes = (receipt?.nativeResearchWorkerExecution?.workerReceipts || [])
+    .map((item) => item?.result?.formalReadableProofExplanationBundleHash)
+    .filter(Boolean);
+  const readableProofReady = (receipt?.nativeResearchWorkerExecution?.workerReceipts || []).length > 0
+    && receipt.nativeResearchWorkerExecution.workerReceipts.every((item) => (
+      item?.result?.productionReadableProofExplanationReady === true
+    ));
+  if (JSON.stringify(receipt?.formalReadableProofExplanationBundleHashes || [])
+      !== JSON.stringify(readableProofHashes)
+    || receipt?.productionReadableProofExplanationReady !== readableProofReady) {
+    blockers.push('campaign_formal_verification_readable_proof_binding_invalid');
   }
   const expectedSpecificationClaimHashes = (theoremSpecification?.claims || [])
     .map((claim) => claim.theoremSpecificationClaimHash);
@@ -234,7 +271,7 @@ export function verifyCampaignFormalReceipt(receipt, {
   }
   const verificationIteration = Number(receipt?.formalVerificationIteration);
   const repairHistory = Array.isArray(receipt?.formalRepairHistory) ? receipt.formalRepairHistory : [];
-  if (!Number.isSafeInteger(verificationIteration) || verificationIteration < 0 || verificationIteration > 2
+  if (!Number.isSafeInteger(verificationIteration) || verificationIteration < 0
     || Number(receipt?.formalRepairCount) !== verificationIteration
     || authorReceipts.length !== verificationIteration + 1
     || repairHistory.length !== verificationIteration
@@ -242,6 +279,181 @@ export function verifyCampaignFormalReceipt(receipt, {
       || entry?.authorAgentReceiptHash !== authorReceiptHashes[index]
       || !entry?.reviewAgentReceiptHash || !entry?.formalReviewEnvelopeHash)) {
     blockers.push('campaign_formal_verification_repair_history_invalid');
+  }
+  let expectedTypedObligationBundle = null;
+  let expectedProofSearchPlan = null;
+  let expectedTheoremDependencyGraph = null;
+  try {
+    expectedTypedObligationBundle = createTypedTheoremObligationBundle(theoremSpecification);
+    expectedProofSearchPlan = createFormalProofSearchPlan(expectedTypedObligationBundle);
+    expectedTheoremDependencyGraph = createTypedTheoremDependencyGraph({
+      theoremSpecification,
+      bundle: expectedTypedObligationBundle,
+    });
+  } catch { blockers.push('campaign_formal_verification_proof_search_authority_invalid'); }
+  const dynamicFormalRequired = expectedTypedObligationBundle?.obligations?.some((obligation) => (
+    obligation.typedTheoremDsl?.allowedImports?.some((moduleName) => (
+      moduleName === 'Mathlib' || moduleName.startsWith('Mathlib.')
+    )) === true
+  )) === true;
+  if (dynamicFormalRequired) {
+    if (!verifyDynamicFormalExecutionAuthority(receipt?.dynamicFormalExecutionAuthority)) {
+      blockers.push('campaign_formal_verification_dynamic_execution_authority_invalid');
+    }
+  } else if (receipt?.dynamicFormalExecutionAuthority !== null) {
+    blockers.push('campaign_formal_verification_dynamic_execution_authority_unexpected');
+  }
+  if (verificationIteration >= Number(expectedProofSearchPlan?.candidateCount || 0)) {
+    blockers.push('campaign_formal_verification_iteration_outside_canonical_plan');
+  }
+  const typedObligationVerification = verifyTypedTheoremObligationBundle(
+    receipt?.typedTheoremObligationBundle,
+    { theoremSpecification },
+  );
+  blockers.push(...typedObligationVerification.blockers.map((blocker) => (
+    `campaign_formal_verification_typed_obligation:${blocker}`
+  )));
+  const proofSearchPlanVerification = verifyFormalProofSearchPlan(
+    receipt?.formalProofSearchPlan,
+    { bundle: expectedTypedObligationBundle },
+  );
+  blockers.push(...proofSearchPlanVerification.blockers.map((blocker) => (
+    `campaign_formal_verification_proof_search_plan:${blocker}`
+  )));
+  const theoremDependencyGraphEvidenceRequired =
+    expectedTheoremDependencyGraph?.nodeCount > 1
+    || receipt?.typedTheoremDependencyGraph !== undefined;
+  if (theoremDependencyGraphEvidenceRequired) {
+    const theoremDependencyGraphVerification = verifyTypedTheoremDependencyGraph(
+      receipt?.typedTheoremDependencyGraph,
+      { theoremSpecification, bundle: expectedTypedObligationBundle },
+    );
+    blockers.push(...theoremDependencyGraphVerification.blockers.map((blocker) => (
+      `campaign_formal_verification_theorem_dependency_graph:${blocker}`
+    )));
+    if (receipt?.typedTheoremDependencyGraphHash
+      !== expectedTheoremDependencyGraph?.typedTheoremDependencyGraphHash) {
+      blockers.push('campaign_formal_verification_theorem_dependency_graph_hash_mismatch');
+    }
+  }
+  if (expectedTheoremDependencyGraph?.nodeCount > 1) {
+    const graphOperationVerification = verifyFormalTheoremDependencyGraphOperationReceipt(
+      receipt?.formalTheoremDependencyGraphOperationReceipt,
+      {
+        graph: expectedTheoremDependencyGraph,
+        candidate: expectedProofSearchPlan?.candidates?.[verificationIteration],
+        expectedDynamicFormalExecutionAuthority:
+          receipt?.dynamicFormalExecutionAuthority || null,
+      },
+    );
+    blockers.push(...graphOperationVerification.blockers.map((blocker) => (
+      `campaign_formal_verification_theorem_dependency_operation:${blocker}`
+    )));
+    if (receipt?.formalTheoremDependencyGraphOperationReceiptHash
+      !== receipt?.formalTheoremDependencyGraphOperationReceipt
+        ?.formalTheoremDependencyGraphOperationReceiptHash) {
+      blockers.push('campaign_formal_verification_theorem_dependency_operation_hash_mismatch');
+    }
+  } else if (receipt?.formalTheoremDependencyGraphOperationReceipt != null
+    || receipt?.formalTheoremDependencyGraphOperationReceiptHash != null) {
+    blockers.push('campaign_formal_verification_unexpected_theorem_dependency_operation');
+  }
+  const expectedDependencyReadableBundles = (receipt?.nativeResearchWorkerExecution
+    ?.workerReceipts || []).map((item) => item.result?.readableProofExplanationBundle
+    ? buildFormalTheoremDependencyReadableProofBundle({
+      graph: expectedTheoremDependencyGraph,
+      readableProofBundle: item.result.readableProofExplanationBundle,
+    }) : null).filter(Boolean);
+  const claimedDependencyReadableBundles =
+    receipt?.formalTheoremDependencyReadableProofBundles || [];
+  const claimedDependencyReadableHashes =
+    receipt?.formalTheoremDependencyReadableProofBundleHashes || [];
+  if (expectedTheoremDependencyGraph?.nodeCount > 1
+    && (!expectedDependencyReadableBundles.length
+      || expectedDependencyReadableBundles.some((item) => (
+        item.status !== 'formal_theorem_dependency_readable_proof_verified'
+      )))) {
+    blockers.push('campaign_formal_verification_theorem_dependency_readable_proof_invalid');
+  }
+  if ((expectedTheoremDependencyGraph?.nodeCount > 1
+      || receipt?.formalTheoremDependencyReadableProofBundles !== undefined)
+    && (JSON.stringify(claimedDependencyReadableBundles)
+        !== JSON.stringify(expectedDependencyReadableBundles)
+      || JSON.stringify(claimedDependencyReadableHashes)
+        !== JSON.stringify(expectedDependencyReadableBundles.map((item) => (
+          item.formalTheoremDependencyReadableProofBundleHash
+        ))))) {
+    blockers.push('campaign_formal_verification_theorem_dependency_readable_proof_binding_invalid');
+  }
+  const proofSearchAttempts = Array.isArray(receipt?.formalProofSearchAttempts)
+    ? receipt.formalProofSearchAttempts : [];
+  const proofSearchAttemptVerification = verifyFormalProofSearchAttempts(
+    proofSearchAttempts,
+    { plan: expectedProofSearchPlan, expectedCount: verificationIteration },
+  );
+  blockers.push(...proofSearchAttemptVerification.blockers.map((blocker) => (
+    `campaign_formal_verification_proof_search_attempt:${blocker}`
+  )));
+  const semanticReviewOnlyAllowed = Boolean(expectedTypedObligationBundle?.obligations?.length)
+    && expectedTypedObligationBundle.obligations.every((obligation) => (
+      obligation.typedTheoremDsl?.machineSearchEligible !== true
+    ));
+  const multiTheorem = expectedTheoremDependencyGraph?.nodeCount > 1;
+  const currentOperationVerification = multiTheorem
+    ? Object.freeze({ valid: true, blockers: Object.freeze([]) })
+    : verifyFormalProofSearchOperationReceipt(
+      receipt?.formalProofSearchOperationReceipt,
+      {
+        bundle: expectedTypedObligationBundle,
+        plan: expectedProofSearchPlan,
+        candidate: expectedProofSearchPlan?.candidates?.[verificationIteration],
+        allowSemanticReviewOnly: semanticReviewOnlyAllowed,
+        expectedDynamicFormalExecutionAuthority:
+          receipt?.dynamicFormalExecutionAuthority || null,
+      },
+    );
+  blockers.push(...currentOperationVerification.blockers.map((blocker) => (
+    `campaign_formal_verification_proof_search_operation:${blocker}`
+  )));
+  proofSearchAttempts.forEach((attempt, index) => {
+    const operationVerification = multiTheorem
+      ? verifyFormalTheoremDependencyGraphOperationReceipt(
+        attempt?.formalProofSearchOperationReceipt,
+        {
+          graph: expectedTheoremDependencyGraph,
+          candidate: expectedProofSearchPlan?.candidates?.[index],
+          expectedDynamicFormalExecutionAuthority:
+            receipt?.dynamicFormalExecutionAuthority || null,
+        },
+      )
+      : verifyFormalProofSearchOperationReceipt(
+        attempt?.formalProofSearchOperationReceipt,
+        {
+          bundle: expectedTypedObligationBundle,
+          plan: expectedProofSearchPlan,
+          candidate: expectedProofSearchPlan?.candidates?.[index],
+          allowSemanticReviewOnly: semanticReviewOnlyAllowed,
+          expectedDynamicFormalExecutionAuthority:
+            receipt?.dynamicFormalExecutionAuthority || null,
+        },
+      );
+    blockers.push(...operationVerification.blockers.map((blocker) => (
+      `campaign_formal_verification_proof_search_attempt_operation:${index}:${blocker}`
+    )));
+  });
+  if (receipt?.typedTheoremObligationBundleHash
+      !== expectedTypedObligationBundle?.typedTheoremObligationBundleHash
+    || receipt?.formalProofSearchPlanHash !== expectedProofSearchPlan?.formalProofSearchPlanHash
+    || receipt?.formalProofSearchCandidateId
+      !== expectedProofSearchPlan?.candidates?.[verificationIteration]?.candidateId
+    || (!multiTheorem && receipt?.formalProofSearchOperationReceiptHash
+      !== receipt?.formalProofSearchOperationReceipt?.formalProofSearchOperationReceiptHash)
+    || proofSearchAttempts.some((attempt, index) => (
+      attempt?.authorAgentReceiptHash !== authorReceiptHashes[index]
+      || attempt?.reviewAgentReceiptHash !== repairHistory[index]?.reviewAgentReceiptHash
+      || attempt?.formalReviewEnvelopeHash !== repairHistory[index]?.formalReviewEnvelopeHash
+    ))) {
+    blockers.push('campaign_formal_verification_proof_search_lineage_invalid');
   }
   return Object.freeze({ valid: blockers.length === 0, blockers: Object.freeze([...new Set(blockers)]) });
 }

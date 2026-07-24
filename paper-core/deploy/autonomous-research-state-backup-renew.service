@@ -1,0 +1,28 @@
+[Unit]
+Description=Hepta Paper autonomous research state backup and restore-drill renewal
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+User=hepta-paper
+Group=hepta-paper
+WorkingDirectory=/opt/hepta-paper
+EnvironmentFile=/etc/hepta-paper/autonomous-research-supervisor.env
+RuntimeDirectory=hepta-paper-state-backup
+RuntimeDirectoryMode=0700
+ExecStart=/usr/bin/flock --exclusive --nonblock /run/hepta-paper-state-backup/renew.lock /usr/bin/node paper-core/bin/autonomous-research-state-backup.mjs --action renew --runtime-root ${HEPTA_PAPER_RUNTIME_ROOT} --authority-config ${HEPTA_AUTONOMOUS_RESEARCH_STATE_BACKUP_AUTHORITY_CONFIG}
+TimeoutStartSec=30min
+Restart=on-failure
+RestartSec=15min
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ReadOnlyPaths=/etc/hepta-paper/online-mutation-authority /etc/hepta-paper/state-backup-authority
+ReadWritePaths=/var/lib/hepta-paper/runtime /run/hepta-paper-state-backup
+UMask=0077

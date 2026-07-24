@@ -7,6 +7,7 @@ import test from 'node:test';
 import {
   createResearchExecutionReleaseAttestor,
   inspectResearchExecutionReleaseAttestorConfiguration,
+  inspectResearchExecutionReleaseAttestorConfigurationAsync,
 } from '../../paper-adapters/build-package/research-execution-release-attestor.mjs';
 import {
   composeAutomationReleaseAttestorTrust,
@@ -339,6 +340,88 @@ test('external KMS inspection proves a non-exportable backend and overlap verifi
     manifest: releaseManifest,
     manifestFileHash: H('manifest-file'),
   }), true);
+
+  for (const [name, input] of [
+    ['missing-attestation', {}],
+    ['wrong-manifest-file', {
+      attestation,
+      manifest: releaseManifest,
+      manifestFileHash: H('wrong-manifest-file'),
+    }],
+    ['wrong-key-version', {
+      attestation: { ...attestation, keyVersion: 'retired-version' },
+      manifest: releaseManifest,
+      manifestFileHash: H('manifest-file'),
+    }],
+  ]) {
+    assert.equal(attestor.verifyAttestation(input), false, name);
+  }
+  for (const [name, input] of [
+    ['missing-detached-input', {}],
+    ['malformed-payload-hash', {
+      signingPayloadHash: 'not-a-hash',
+      signature: retiringSignature,
+      signer: signer('release-key-old', 'v1'),
+      signedAt: '2026-07-15T11:00:00.000Z',
+    }],
+    ['malformed-signature', {
+      signingPayloadHash: payloadHash,
+      signature: 'not-base64',
+      signer: signer('release-key-old', 'v1'),
+      signedAt: '2026-07-15T11:00:00.000Z',
+    }],
+    ['unknown-signer', {
+      signingPayloadHash: payloadHash,
+      signature: retiringSignature,
+      signer: signer('unknown-release-key', 'v1'),
+      signedAt: '2026-07-15T11:00:00.000Z',
+    }],
+    ['invalid-signed-at', {
+      signingPayloadHash: payloadHash,
+      signature: retiringSignature,
+      signer: signer('release-key-old', 'v1'),
+      signedAt: 'not-a-time',
+    }],
+  ]) {
+    assert.equal(attestor.verifyDetachedSignature(input), false, name);
+  }
+
+  const stringClockAttestor = createResearchExecutionReleaseAttestor({
+    configPath: f.configPath,
+    clock: { now: () => NOW },
+    spawnSyncImpl: f.spawnSyncImpl,
+  });
+  assert.equal(stringClockAttestor.verifyDetachedSignature({
+    signingPayloadHash: payloadHash,
+    signature: retiringSignature,
+    signer: signer('release-key-old', 'v1'),
+    signedAt: '2026-07-15T11:00:00.000Z',
+  }), true);
+  assert.throws(() => attestor.attestCapsuleManifest({
+    manifest: releaseManifest,
+    manifestFileHash: H('manifest-file'),
+    signedAt: 'not-a-time',
+  }), /research_execution_release_attestor_key_not_valid_at_signing_time/);
+
+  const unavailable = createResearchExecutionReleaseAttestor({
+    configPath: path.join(f.root, 'missing-release-attestor.json'),
+    clock: { now: () => new Date(NOW) },
+  });
+  assert.equal(unavailable.verifyAttestation({
+    attestation,
+    manifest: releaseManifest,
+    manifestFileHash: H('manifest-file'),
+  }), false);
+  assert.equal(unavailable.verifyDetachedSignature({
+    signingPayloadHash: payloadHash,
+    signature: retiringSignature,
+    signer: signer('release-key-old', 'v1'),
+    signedAt: '2026-07-15T11:00:00.000Z',
+  }), false);
+  assert.throws(() => unavailable.attestCapsuleManifest({
+    manifest: releaseManifest,
+    manifestFileHash: H('manifest-file'),
+  }), /research_execution_release_attestor_config_not_private_regular_file/);
 });
 
 test('Golden release-attestor verification uses the bounded readiness side-effect ledger', (t) => {
@@ -412,6 +495,7 @@ test('enqueue admission trust inspection reads KMS configuration without probe o
     liveProviderCanaryRequested: false,
     externalActionPerformed: false,
     researchExecutionReleaseAttestor: trust.inspection,
+    productionGenericCapabilityReady: true,
     fullAutomaticResearchWritingBlockers: [
       'research_execution_release_attestor_production_backend_not_ready',
     ],
@@ -531,6 +615,86 @@ test('external KMS inspection synchronously fences the probe-to-signer boundary'
   }), /progress_callback_must_be_synchronous/);
   assert.equal(externalCalls, 0);
 });
+
+test('async release-attestor inspection mirrors live trust and fails closed per boundary',
+  async (t) => {
+    const f = fixture(t);
+    const stages = [];
+    const live = await inspectResearchExecutionReleaseAttestorConfigurationAsync({
+      configPath: f.configPath,
+      now: new Date(NOW),
+      spawnSyncImpl: f.spawnSyncImpl,
+      randomBytesImpl: () => Buffer.alloc(32, 19),
+      async onProgress({ stage }) { stages.push(stage); },
+    });
+    assert.equal(live.ready, true, JSON.stringify(live.blockers));
+    assert.equal(live.productionReady, true, JSON.stringify(live.productionBlockers));
+    assert.ok(stages.indexOf('release_attestor_after_configuration_read')
+      < stages.indexOf('release_attestor_before_backend_probe'));
+    assert.ok(stages.indexOf(
+      'release_attestor_after_backend_probe_before_signer_challenge',
+    ) < stages.indexOf('release_attestor_before_active_signer_challenge'));
+
+    await assert.rejects(() => inspectResearchExecutionReleaseAttestorConfigurationAsync({
+      configPath: f.configPath,
+      now: new Date(NOW),
+      spawnSyncImpl: f.spawnSyncImpl,
+      onProgress: 'not-a-function',
+    }), /research_execution_release_attestor_progress_callback_invalid/);
+
+    for (const scenario of [
+      Object.freeze({
+        name: 'passive',
+        options: Object.freeze({ activeVerification: false }),
+        expectedReady: true,
+        expectedProductionReady: false,
+        expectedBlocker: null,
+      }),
+      Object.freeze({
+        name: 'invalid-time',
+        options: Object.freeze({ now: 'not-a-time' }),
+        expectedReady: false,
+        expectedProductionReady: false,
+        expectedBlocker: 'research_execution_release_attestor_inspection_time_invalid',
+      }),
+      Object.freeze({
+        name: 'invalid-entropy',
+        options: Object.freeze({ randomBytesImpl: () => Buffer.alloc(1) }),
+        expectedReady: false,
+        expectedProductionReady: false,
+        expectedBlocker:
+          'research_execution_release_attestor_active_signer_challenge_not_verified',
+      }),
+      Object.freeze({
+        name: 'missing-configuration',
+        options: Object.freeze({
+          configPath: path.join(f.root, 'missing-async-release-attestor.json'),
+          activeVerification: false,
+        }),
+        expectedReady: false,
+        expectedProductionReady: false,
+        expectedBlocker:
+          'research_execution_release_attestor_config_not_private_regular_file',
+      }),
+    ]) {
+      const inspection = await inspectResearchExecutionReleaseAttestorConfigurationAsync({
+        configPath: f.configPath,
+        now: new Date(NOW),
+        spawnSyncImpl: f.spawnSyncImpl,
+        randomBytesImpl: () => Buffer.alloc(32, 23),
+        ...scenario.options,
+      });
+      assert.equal(inspection.ready, scenario.expectedReady, scenario.name);
+      assert.equal(
+        inspection.productionReady,
+        scenario.expectedProductionReady,
+        scenario.name,
+      );
+      if (scenario.expectedBlocker) {
+        assert.ok(inspection.blockers.includes(scenario.expectedBlocker), scenario.name);
+      }
+    }
+  });
 
 test('revocation, duplicate SPKI encodings, wrong algorithm, and private-key disclosure fail closed', (t) => {
   const f = fixture(t);
@@ -744,4 +908,15 @@ test('an independent probe cannot hide an unreachable or wrong active KMS signin
   assert.equal(mismatched.independentBackendProbeVerified, true);
   assert.equal(mismatched.activeSignerChallengeVerified, false);
   assert.equal(mismatched.productionReady, false);
+
+  const mismatchedAttestor = createResearchExecutionReleaseAttestor({
+    configPath: f.configPath,
+    clock: { now: () => new Date(NOW) },
+    spawnSyncImpl: wrongKeySigner,
+  });
+  assert.throws(() => mismatchedAttestor.attestCapsuleManifest({
+    manifest: manifest(),
+    manifestFileHash: H('manifest-file'),
+    signedAt: NOW,
+  }), /research_execution_release_attestor_backend_signature_invalid/);
 });

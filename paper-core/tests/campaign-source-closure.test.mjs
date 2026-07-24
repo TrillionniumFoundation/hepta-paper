@@ -16,6 +16,7 @@ test('source-closure empirical and final compile nodes fail closed without invok
     fs.writeFileSync(path.join(root, 'main.tex'), fixture.language === 'latex' ? fixture.source : 'fixture\n');
     if (fixture.language === 'python') fs.writeFileSync(path.join(root, fixture.entrypoint), fixture.source);
     const before = new Map(fs.readdirSync(root).map((name) => [name, fs.readFileSync(path.join(root, name))]));
+    fs.mkdirSync(path.join(root, 'runtime'), { recursive: true });
     let agentCalls = 0;
     let empiricalCalls = 0;
     const executor = createCampaignNodeExecutor({

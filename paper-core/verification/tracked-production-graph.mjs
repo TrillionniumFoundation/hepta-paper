@@ -8,10 +8,10 @@ import {
   ARCHITECTURE_ENTRYPOINT_MANIFEST,
   assertArchitectureEntrypointManifest,
 } from '../src/architecture-entrypoint-manifest.mjs';
+import { relativeModuleSpecifiers } from './javascript-module-specifiers.mjs';
 
 const thisFile = fileURLToPath(import.meta.url);
 const defaultWorkspaceRoot = path.resolve(path.dirname(thisFile), '..', '..');
-const RELATIVE_IMPORT_PATTERN = /(?:\bfrom\s+|\bimport\s*\(\s*|\bimport\s+)(['"])(\.[^'"]+)\1/g;
 
 function posix(relativePath) {
   return relativePath.replace(/\\/g, '/');
@@ -108,8 +108,7 @@ function inspectReachability(workspaceRoot, rawEntrypoints) {
       continue;
     }
     const localDependencies = new Set();
-    for (const match of source.matchAll(RELATIVE_IMPORT_PATTERN)) {
-      const specifier = match[2];
+    for (const specifier of relativeModuleSpecifiers(source)) {
       const resolution = resolveRelativeImport({ workspaceRoot, importer: absolute, specifier });
       if (resolution.escaped) {
         escapedPaths.push(`${relative}->${specifier}`);

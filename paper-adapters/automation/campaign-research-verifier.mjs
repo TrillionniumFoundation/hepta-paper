@@ -2,7 +2,6 @@ import path from 'node:path';
 import { createPaperTask } from '../../paper-domain/contracts/workflow-contracts.mjs';
 import { buildCampaignResearchSourceSnapshot, verifyCampaignResearchVerificationInput } from '../../paper-domain/automation/campaign-research-contract.mjs';
 import { runResearchVerifyAdapter } from '../research-verify/index.mjs';
-import { runNativeResearchWorkers, verifyNativeResearchWorkerExecutionReport } from '../research-verify/worker-runtime.mjs';
 import { assertCampaignResearchVerifierPort } from '../../paper-ports/campaign-research-verifier-port.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { verifyExperimentReplayReceipt, verifyExperimentRunReceipt } from '../../paper-domain/automation/experiment-run-contract.mjs';
@@ -10,9 +9,17 @@ import { hashWorkspaceFile } from './campaign-node-workspace-support.mjs';
 import { inspectWorkspaceExecutionSnapshot, sourceTreeExcludedNames } from '../runtime/execution-snapshot.mjs';
 import { isPathWithin } from '../../workflow-kernel/runtime/path-utils.mjs';
 import { readFinalizedTheoremSpecification } from './theorem-specification-finalizer.mjs';
-import { assertCompletedCampaignFormalNode, proposalLineageReviewBlockers, validCampaignFormalAgentReceipt,
-  verifyCampaignFormalReceipt, verifyTheoremSpecificationNodeResult } from './campaign-formal-verification-evidence.mjs';
+import {
+  assertCompletedCampaignFormalNode,
+  verifyCampaignFormalReceipt,
+} from './campaign-formal-verification-evidence.mjs';
 import { recordCampaignExperimentReceipts } from './campaign-experiment-receipt-recorder.mjs';
+import { runCampaignExternalResearchReplay } from './campaign-external-research-replay.mjs';
+import { verifyCampaignFormalResearch } from './campaign-formal-research-verifier.mjs';
+
+export {
+  runFencedFormalNativeResearchWorkers,
+} from './campaign-formal-research-verifier.mjs';
 
 function assertCompletedNodeResult(node, label) {
   if (!node || node.status !== 'completed' || !node.attemptId || !Number.isInteger(node.leaseGeneration)
@@ -44,6 +51,10 @@ export function createCampaignResearchVerifier({
   campaignStore = null,
   operatorDatasetHarnessAuthorityVerifier = null,
   rawEventRecomputationVerifier = null,
+  externalResearchReplay = null,
+  trustedFormalSandboxRuntime = null,
+  dynamicFormalExecutionAuthority = null,
+  dynamicFormalExecutionEnvironment = process.env,
 } = {}) {
   if (!runtimeRoot || !clock?.now) throw new Error('campaign research verifier requires runtimeRoot and ClockPort');
   return Object.freeze(assertCampaignResearchVerifierPort({
@@ -60,9 +71,17 @@ export function createCampaignResearchVerifier({
       formalReviewAgentReceipt = null,
       formalVerificationIteration = 0,
       formalRepairHistory = [],
+      typedTheoremObligationBundle = null,
+      formalProofSearchPlan = null,
+      formalProofSearchCandidate = null,
+      formalProofSearchOperationReceipt = null,
+      typedTheoremDependencyGraph = null,
+      formalTheoremDependencyGraphOperationReceipt = null,
+      formalProofSearchAttempts = [],
       formalVerificationReceipt = null,
       verificationScope = null,
       executionSignal = null,
+      assertExternalSideEffectReady = null,
     } = {}) {
       if (executionSignal?.aborted) throw new Error('campaign_research_verification_cancelled');
       const effectiveVerificationScope = verificationScope
@@ -163,120 +182,37 @@ export function createCampaignResearchVerifier({
           error.retryable = false;
           throw error;
         }
-        const specificationNode = theoremSpecificationDependencyNodes.length === 1
-          ? theoremSpecificationDependencyNodes[0]
-          : null;
-        const candidateAuthorReceipts = Array.isArray(formalAuthorReceipts) ? formalAuthorReceipts : [];
-        const candidateRepairHistory = Array.isArray(formalRepairHistory) ? formalRepairHistory : [];
-        const candidateEvidenceBlockers = [
-          ...(theoremSpecification?.theoremSpecificationHash
-            === authoritativeTheoremSpecification?.theoremSpecificationHash
-            ? [] : ['campaign_formal_candidate_theorem_specification_mismatch']),
-          ...verifyTheoremSpecificationNodeResult(specificationNode, authoritativeTheoremSpecification),
-          ...(!Number.isSafeInteger(formalVerificationIteration)
-            || formalVerificationIteration < 0 || formalVerificationIteration > 2
-            ? ['campaign_formal_candidate_iteration_invalid'] : []),
-          ...(!Array.isArray(formalAuthorReceipts)
-            || candidateAuthorReceipts.length !== formalVerificationIteration + 1
-            || candidateAuthorReceipts.some((receipt) => !validCampaignFormalAgentReceipt(receipt))
-            ? ['campaign_formal_candidate_author_receipts_invalid'] : []),
-          ...(!validCampaignFormalAgentReceipt(formalReviewAgentReceipt)
-            ? ['campaign_formal_candidate_review_agent_receipt_invalid'] : []),
-          ...(formalReviewEnvelope?.theoremSpecificationHash
-            !== authoritativeTheoremSpecification?.theoremSpecificationHash
-            ? ['campaign_formal_candidate_review_specification_mismatch'] : []),
-          ...(formalReviewEnvelope?.authorAgentReceiptHash
-            !== candidateAuthorReceipts.at(-1)?.agentExecutionReceiptHash
-            ? ['campaign_formal_candidate_review_author_mismatch'] : []),
-          ...(formalReviewEnvelope?.reviewAgentReceiptHash
-            !== formalReviewAgentReceipt?.agentExecutionReceiptHash
-            ? ['campaign_formal_candidate_review_receipt_mismatch'] : []),
-          ...proposalLineageReviewBlockers(authoritativeTheoremSpecification, formalReviewEnvelope),
-          ...(!Array.isArray(formalRepairHistory)
-            || candidateRepairHistory.length !== formalVerificationIteration
-            || candidateRepairHistory.some((entry, index) => entry?.iteration !== index
-              || entry?.authorAgentReceiptHash !== candidateAuthorReceipts[index]?.agentExecutionReceiptHash
-              || !entry?.reviewAgentReceiptHash || !entry?.formalReviewEnvelopeHash)
-            ? ['campaign_formal_candidate_repair_history_invalid'] : []),
-        ];
-        const formalCampaignEvidenceContext = Object.freeze({
-          ...campaignEvidenceContext,
-          verificationIteration: formalVerificationIteration,
-        });
-        const nativeResearchWorkerExecution = await runNativeResearchWorkers({
-          root: workspace,
-          sourceRoot: workspace,
-          runtimeRoot,
+        return verifyCampaignFormalResearch({
+          assertExternalSideEffectReady,
+          campaign,
+          input,
           paperTask,
-          execute: true,
-          jobReceiptStore: nativeResearchWorkerJobReceiptStore,
-          artifactRepositoryFactory,
-          formalReviewEnvelope,
-          theoremSpecification: authoritativeTheoremSpecification,
-          campaignEvidenceContext: formalCampaignEvidenceContext,
-          workerTypes: ['formal_verifier_lake'],
-        });
-        const workerVerification = verifyNativeResearchWorkerExecutionReport(nativeResearchWorkerExecution, {
-          paperId: paperTask.paperId,
-          taskKey: paperTask.taskKey,
-          requireFormalWorkers: true,
-          theoremSpecificationHash: authoritativeTheoremSpecification.theoremSpecificationHash,
-        });
-        if (executionSignal?.aborted) throw new Error('campaign_research_verification_cancelled');
-        const blockers = [...candidateEvidenceBlockers, ...workerVerification.blockers];
-        const authorAgentReceiptHashes = candidateAuthorReceipts
-          .map((receipt) => receipt.agentExecutionReceiptHash);
-        const payload = {
-          version: 1,
-          kind: 'CampaignFormalVerificationReceipt',
-          status: blockers.length ? 'campaign_formal_verification_blocked' : 'campaign_formal_verification_completed',
-          campaignId: campaign.campaignId,
-          paperId: campaign.paperId,
-          campaignResearchVerificationInputHash: input.campaignResearchVerificationInputHash,
-          formalNodeId: campaignResearchSourceSnapshot.researchNodeId,
-          formalAttemptId: campaignResearchSourceSnapshot.researchAttemptId,
-          formalLeaseGeneration: campaignResearchSourceSnapshot.researchLeaseGeneration,
-          theoremSpecificationNodeId: specificationNode?.nodeId || null,
-          theoremSpecificationAttemptId: specificationNode?.attemptId || null,
-          theoremSpecificationLeaseGeneration: specificationNode?.leaseGeneration || null,
-          theoremSpecificationNodeResultHash: specificationNode?.resultSha256 || null,
-          theoremSpecificationFinalizationReceiptHash:
-            specificationNode?.result?.theoremSpecificationFinalizationReceiptHash || null,
-          theoremSpecificationHash: authoritativeTheoremSpecification.theoremSpecificationHash,
-          theoremSpecificationClaimHashes: Object.freeze(authoritativeTheoremSpecification.claims
-            .map((claim) => claim.theoremSpecificationClaimHash)),
-          formalVerificationIteration,
-          formalRepairCount: formalVerificationIteration,
-          formalRepairHistory: Object.freeze(candidateRepairHistory.map((entry) => Object.freeze({ ...entry }))),
-          formalAuthorAgentReceiptHash: authorAgentReceiptHashes.at(-1) || null,
-          formalAuthorAgentReceiptHashes: Object.freeze(authorAgentReceiptHashes),
-          formalAuthorAgentReceipts: Object.freeze([...candidateAuthorReceipts]),
-          formalReviewAgentReceiptHash: formalReviewAgentReceipt?.agentExecutionReceiptHash || null,
+          workspace,
+          runtimeRoot,
+          authoritativeResearchNode,
+          authoritativeTheoremSpecification,
+          theoremSpecificationDependencyNodes,
+          campaignEvidenceContext,
+          campaignResearchSourceSnapshot,
+          theoremSpecification,
+          formalAuthorReceipts,
           formalReviewAgentReceipt,
-          formalReviewEnvelopeHash: formalReviewEnvelope?.formalSemanticReviewEnvelopeHash || null,
+          formalVerificationIteration,
+          formalRepairHistory,
+          typedTheoremObligationBundle,
+          formalProofSearchPlan,
+          formalProofSearchCandidate,
+          formalProofSearchOperationReceipt,
+          typedTheoremDependencyGraph,
+          formalTheoremDependencyGraphOperationReceipt,
+          formalProofSearchAttempts,
           formalReviewEnvelope,
-          proposalClaimToTheoremBindingHash: formalReviewEnvelope?.proposalClaimToTheoremBindingHash || null,
-          proposalClaimToTheoremBinding: formalReviewEnvelope?.proposalClaimToTheoremBinding || null,
-          formalClaimUniverseHash: authoritativeTheoremSpecification.formalClaimUniverseHash,
-          canonicalClaimRegistryHash: formalReviewEnvelope?.canonicalClaimRegistryHash || null,
-          nativeResearchWorkerExecutionReportHash: nativeResearchWorkerExecution.nativeResearchWorkerExecutionReportHash,
-          formalWorkerReceiptHashes: Object.freeze(nativeResearchWorkerExecution.workerReceipts
-            .map((receipt) => receipt.nativeResearchWorkerExecutionReceiptHash)
-            .filter(Boolean)),
-          formalReplayReceiptHashes: Object.freeze(nativeResearchWorkerExecution.workerReceipts
-            .map((receipt) => receipt.result?.formalCertificateReplayReceiptHash)
-            .filter(Boolean)),
-          verifiedSourceMerkleHash: campaignResearchSourceSnapshot.verifiedSourceMerkleHash,
-          verifiedSourceWorkspaceManifestHash: campaignResearchSourceSnapshot.verifiedSourceWorkspaceManifestHash,
-          campaignFormalSourceSnapshotHash: campaignResearchSourceSnapshot.campaignResearchSourceSnapshotHash,
-          campaignFormalSourceSnapshot: campaignResearchSourceSnapshot,
-          nativeResearchWorkerExecution,
-          blockers: Object.freeze(blockers),
-          externalActionPerformed: false,
-        };
-        return Object.freeze({
-          ...payload,
-          campaignFormalVerificationReceiptHash: hashRecord('CampaignFormalVerificationReceipt', payload),
+          nativeResearchWorkerJobReceiptStore,
+          artifactRepositoryFactory,
+          trustedFormalSandboxRuntime,
+          dynamicFormalExecutionAuthority,
+          dynamicFormalExecutionEnvironment,
+          executionSignal,
         });
       }
       const formalDependencyNodes = authoritativeNodes.filter((candidate) => (
@@ -385,6 +321,18 @@ export function createCampaignResearchVerifier({
           campaignNodeResultHash: replayNode.resultSha256,
         }];
       });
+      const externalReplay = await runCampaignExternalResearchReplay({
+        campaign,
+        campaignResearchSourceSnapshot,
+        campaignExperiments,
+        authoritativeFormalReceipt,
+        externalResearchReplay,
+        signal: executionSignal,
+        assertExternalSideEffectReady,
+      });
+      const externalReplayRequired = externalReplay.required;
+      const externalReplayRequest = externalReplay.request;
+      const externalReplayReceipt = externalReplay.receipt;
       const report = await runResearchVerifyAdapter({
         root: workspace,
         row: { task: paperTask, state: input.state },
@@ -404,6 +352,10 @@ export function createCampaignResearchVerifier({
         campaignResearchSourceSnapshot,
         operatorDatasetHarnessAuthorityVerifier,
         rawEventRecomputationVerifier,
+        externalReplayRequired,
+        externalReplayRequest,
+        externalReplayReceipt,
+        externalReplayReceiptVerifier: externalReplay.receiptVerifier,
         now: clock.now(),
       });
       if (executionSignal?.aborted) throw new Error('campaign_research_verification_cancelled');
@@ -442,7 +394,10 @@ export function createCampaignResearchVerifier({
         campaignResearchSourceSnapshotHash: campaignResearchSourceSnapshot.campaignResearchSourceSnapshotHash,
         campaignResearchSourceSnapshot,
         report,
-        externalActionPerformed: false,
+        externalReplayRequestHash: externalReplayRequest?.requestHash || null,
+        externalResearchReplayReceiptHash:
+          externalReplayReceipt?.externalResearchReplayReceiptHash || null,
+        externalActionPerformed: Boolean(externalReplayReceipt),
       };
       return Object.freeze({
         ...payload,

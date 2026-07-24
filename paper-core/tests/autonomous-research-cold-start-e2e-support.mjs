@@ -19,6 +19,9 @@ import {
 import {
   validateOperatorDatasetAuthorityDocument,
 } from '../../paper-domain/automation/operator-dataset-harness-contract.mjs';
+import {
+  productionSignedReviewerReviewFixture,
+} from './support/autonomous-research-generalization-fixture.mjs';
 
 export const H = (label) => hashRecord('AutonomousCampaignTestHash', { label });
 
@@ -193,7 +196,8 @@ export function fakeExecutor({ failWriterOnce = false, forbidden = false } = {})
   return {
     calls,
     executor: {
-      async execute({ node }) {
+      verifySignedReviewerReceipt() { return true; },
+      async execute({ campaign, node }) {
         if (forbidden) throw new Error('completed_campaign_reexecuted');
         calls.push(node.kind);
         if (failWriterOnce && node.kind === 'writer' && !writerFailed) {
@@ -201,6 +205,21 @@ export function fakeExecutor({ failWriterOnce = false, forbidden = false } = {})
           const error = new Error('transient_fake_author_failure');
           error.retryable = true;
           throw error;
+        }
+        if (/^(?:revision-)?referee-\d+$/.test(node.kind)) {
+          const reviewerOrdinal = Number(node.kind.match(/referee-(\d+)$/)?.[1] || 1);
+          return productionSignedReviewerReviewFixture({
+            campaignId: campaign.campaignId,
+            campaignPlanHash: campaign.spec.campaignPlanHash,
+            paperId: campaign.paperId,
+            manuscriptHash: H(`manuscript:${node.roundIndex}`),
+            runtimePrincipalBinding:
+              campaign.spec.autonomousResearchPreparation.runtimePrincipalBinding,
+            reviewerOrdinal,
+            nodeId: node.nodeId,
+            reviewAttemptId: node.attemptId,
+            roundIndex: node.roundIndex,
+          });
         }
         return {
           version: 1,
@@ -211,16 +230,6 @@ export function fakeExecutor({ failWriterOnce = false, forbidden = false } = {})
             qualityGates: [],
             thresholds: {},
           } : {}),
-          ...(/^(?:revision-)?referee-/.test(node.kind)
-            ? {
-              reviewerId: `independent-review:test:${node.kind}`,
-              childSessionId: `independent-session:${node.kind}`,
-              reviewHash: H(node.nodeId),
-              manuscriptHash: H(`manuscript:${node.roundIndex}`),
-              verdict: 'accept',
-              score: 1,
-              criticalFindingCount: 0,
-            } : {}),
           externalActionPerformed: false,
         };
       },
@@ -239,6 +248,7 @@ export function runtime(clock) {
 }
 
 export function verifiedQualificationInspection({ campaignId, prepared, authority, label }) {
+  const releaseBinding = authority.releaseBundle.autonomousResearchReleaseBinding;
   return {
     kind: 'FullResearchQualificationInspection',
     status: 'full_research_qualification_verified',
@@ -257,6 +267,8 @@ export function verifiedQualificationInspection({ campaignId, prepared, authorit
     policyAuthorizationHash:
       prepared.policyAuthorization.autonomousResearchPolicyAuthorizationHash,
     seedBindingHash: prepared.seedBinding.autonomousResearchSeedBindingHash,
+    qualificationScope: releaseBinding.qualificationScope,
+    genericContentCanaryVerified: releaseBinding.genericContentCanaryVerified,
     fullDomainVerificationReady: true,
     independentHypothesisPriorArtReviewVerified: true,
     independentHypothesisPriorArtReceiptHash: H(`${label}:prior-art`),

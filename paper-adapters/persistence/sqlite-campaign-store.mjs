@@ -3,39 +3,58 @@ import { failClosedStoreQueries, sqlJson, sqlText } from '../../paper-ports/stor
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { mapCampaignNodeRow as parseNode, mapCampaignRow as parseCampaign } from './sqlite-campaign-row-mappers.mjs';
 import { createCampaignLeaseOperations } from './sqlite-campaign-lease-operations.mjs';
+import { createCampaignNodeAttemptOperations } from './sqlite-campaign-node-attempt-operations.mjs';
+import { createCampaignNodeInfrastructureOperations } from './sqlite-campaign-node-infrastructure-operations.mjs';
 import { createCampaignLifecycleOperations } from './sqlite-campaign-lifecycle-operations.mjs';
 import { createCampaignPreparedIntegrationOperations } from './sqlite-campaign-prepared-integration-operations.mjs';
 import { createCampaignQueryOperations } from './sqlite-campaign-query-operations.mjs';
 import { createCampaignTelemetryOperations } from './sqlite-campaign-telemetry-operations.mjs';
+import { createSqliteCampaignMutationBoundary } from './sqlite-campaign-mutation-boundary.mjs';
+import {
+  nativeStoreCampaignEventParameters,
+} from './native-store-campaign-mutation-plan.mjs';
 import crypto from 'node:crypto';
 
 export function createSqliteCampaignStore({ store: suppliedStore, clock, experimentRegistryAuthorityVerifier = null } = {}) {
   if (!suppliedStore || !clock) throw new Error('Campaign store requires StorePort and ClockPort');
   const store = failClosedStoreQueries(suppliedStore);
+  const { guarded, mutation } = createSqliteCampaignMutationBoundary({ store });
 
-  const CAS_GUARD = 'campaign_cas_guard';
-
-  function guarded(statement) {
-    return `DELETE FROM ${CAS_GUARD}; ${statement} INSERT INTO ${CAS_GUARD}(changed) VALUES(changes());`;
-  }
-
-  function transaction(statements, fallback) {
-    const sql = `BEGIN IMMEDIATE; CREATE TEMP TABLE IF NOT EXISTS ${CAS_GUARD}(changed INTEGER NOT NULL CHECK(changed=1)); ${statements.join(' ')} COMMIT;`;
-    const result = store.execute(sql);
-    if (!result.ok) {
-      const error = new Error(`${fallback}:${result.error || result.stderr || 'transaction_failed'}`);
-      error.code = fallback;
-      throw error;
-    }
-    return result;
-  }
-
-  function assertLiveNodeAttempt({ nodeId, workerId, attemptId, leaseGeneration, now, extraCondition = '' } = {}) {
+  function assertLiveNodeAttempt({
+    nodeId,
+    workerId,
+    attemptId,
+    leaseGeneration,
+    now,
+    integrationState,
+    integrationKey,
+    integrationReceiptHash = null,
+  } = {}) {
+    const integrated = integrationState === 'integrated';
+    const extraCondition = integrated
+      ? `AND prepared_requires_integration=1 AND prepared_integration_status='integrated' AND prepared_integration_key=${sqlText(integrationKey)} AND prepared_integration_receipt_sha256=${sqlText(integrationReceiptHash)}`
+      : `AND prepared_requires_integration=1 AND prepared_integration_status IN ('integrating','integrated') AND prepared_integration_key=${sqlText(integrationKey)} AND prepared_result_sha256 IS NOT NULL`;
     try {
-      transaction([
-        guarded(`UPDATE campaign_nodes SET node_revision=node_revision WHERE node_id=${sqlText(nodeId)} AND status='running' AND lease_owner=${sqlText(workerId)} AND attempt_id=${sqlText(attemptId)} AND lease_generation=${Number(leaseGeneration)} AND julianday(lease_expires_at)>=julianday(${sqlText(now)}) ${extraCondition} AND EXISTS(SELECT 1 FROM paper_campaigns c WHERE c.campaign_id=campaign_nodes.campaign_id AND c.status='running');`),
-      ], 'campaign_node_attempt_fence_check_failed');
-    } catch {
+      mutation({
+        databaseRole: 'native-store',
+        operationId: 'native-store.campaign-store.assertLiveNodeAttempt.v1',
+        statements: [
+          guarded(`UPDATE campaign_nodes SET node_revision=node_revision WHERE node_id=${sqlText(nodeId)} AND status='running' AND lease_owner=${sqlText(workerId)} AND attempt_id=${sqlText(attemptId)} AND lease_generation=${Number(leaseGeneration)} AND julianday(lease_expires_at)>=julianday(${sqlText(now)}) ${extraCondition} AND EXISTS(SELECT 1 FROM paper_campaigns c WHERE c.campaign_id=campaign_nodes.campaign_id AND c.status='running');`),
+        ],
+        fallback: 'campaign_node_attempt_fence_check_failed',
+        input: {
+          nodeId,
+          workerId,
+          attemptId,
+          leaseGeneration,
+          now,
+          integrationState,
+          integrationKey,
+          integrationReceiptHash,
+        },
+      });
+    } catch (error) {
+      if (error?.committed) throw error;
       throw new Error('campaign_node_lease_lost');
     }
     return parseNode(store.query(`SELECT * FROM campaign_nodes WHERE node_id=${sqlText(nodeId)} LIMIT 1;`).rows[0]);
@@ -52,6 +71,7 @@ export function createSqliteCampaignStore({ store: suppliedStore, clock, experim
     const built = buildEvent(campaignId, nodeId, kind, detail, createdAt);
     return {
       ...built,
+      parameters: nativeStoreCampaignEventParameters(built),
       sql: `INSERT INTO campaign_events(event_id,campaign_id,node_id,kind,event_json,event_sha256,created_at) VALUES(${sqlText(built.eventId)},${sqlText(campaignId)},${nodeId ? sqlText(nodeId) : 'NULL'},${sqlText(kind)},${sqlJson(built.payload)},${sqlText(built.eventHash)},${sqlText(createdAt)});`,
     };
   }
@@ -107,9 +127,11 @@ export function createSqliteCampaignStore({ store: suppliedStore, clock, experim
     nowEpochMs: () => clock.now().getTime(),
     ...createCampaignQueryOperations({ store }),
     ...createCampaignTelemetryOperations({ store, clock }),
-    ...createCampaignLifecycleOperations({ store, clock, transaction, guarded, eventStatement, usageSql, usageBudgetCondition, readCampaignDefinitionSnapshot, getApi: () => api }),
-    ...createCampaignLeaseOperations({ store, clock, transaction, guarded, eventStatement, usageSql, usageBudgetCondition, getApi: () => api }),
-    ...createCampaignPreparedIntegrationOperations({ store, clock, transaction, guarded, eventStatement, usageSql, assertLiveNodeAttempt, getApi: () => api, experimentRegistryAuthorityVerifier }),
+    ...createCampaignLifecycleOperations({ store, clock, mutation, guarded, eventStatement, usageSql, usageBudgetCondition, readCampaignDefinitionSnapshot, getApi: () => api }),
+    ...createCampaignLeaseOperations({ store, clock, mutation, guarded, eventStatement, getApi: () => api }),
+    ...createCampaignNodeAttemptOperations({ store, clock, mutation, guarded, eventStatement, usageSql, usageBudgetCondition, getApi: () => api }),
+    ...createCampaignNodeInfrastructureOperations({ store, clock, mutation, guarded, eventStatement, usageSql, usageBudgetCondition }),
+    ...createCampaignPreparedIntegrationOperations({ store, clock, mutation, guarded, eventStatement, usageSql, assertLiveNodeAttempt, getApi: () => api, experimentRegistryAuthorityVerifier }),
   };
   return assertCampaignStorePort(api);
 }

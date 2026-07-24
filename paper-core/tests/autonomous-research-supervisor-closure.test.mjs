@@ -12,7 +12,14 @@ import {
 } from '../../paper-adapters/automation/autonomous-research-supervisor-state-repository.mjs';
 import {
   createAutonomousResearchSupervisor,
+  inspectAutonomousResearchMachineIntakeCampaignBinding,
 } from '../../paper-application/automation/autonomous-research-supervisor.mjs';
+import {
+  discoverAutonomousResearchCampaignWindow,
+} from '../../paper-application/automation/autonomous-research-supervisor-cycle.mjs';
+import {
+  createAutonomousResearchSupervisorAutonomyFence,
+} from '../../paper-application/automation/autonomous-research-supervisor-autonomy-fence.mjs';
 import {
   buildAutonomousResearchMachineIntakeAdmission,
 } from '../../paper-domain/automation/autonomous-research-machine-intake-admission-contract.mjs';
@@ -21,6 +28,9 @@ import {
   buildAutonomousResearchRecurringGoldenTemplate,
   materializeAutonomousResearchRecurringGoldenIntake,
 } from '../../paper-domain/automation/autonomous-research-machine-intake-contract.mjs';
+import {
+  buildAutonomousResearchCapabilityScopeManifest,
+} from '../../paper-domain/automation/autonomous-research-capability-scope-manifest.mjs';
 import {
   inspectAutonomousResearchCampaignExecutionAdmission,
 } from '../../paper-domain/automation/autonomous-research-campaign-execution-admission.mjs';
@@ -48,6 +58,7 @@ function residentPrerequisiteReceipt(operationMode, now) {
     externalQualificationCostAuthority: 'operator_declared_worst_case_usd',
     runtimeImageReproducibilityConfigurationIdentityHash: H('resident-runtime-configuration'),
     runtimeImageReproducibilityTrustIdentityHash: H('resident-runtime-trust'),
+    externalActionRecoveryConfigurationIdentityHash: H('resident-external-action-recovery'),
     codeWorktreeStateHash: H('resident-code-worktree'),
   });
   const infrastructureBlockers = Object.freeze(infrastructureReady
@@ -93,6 +104,10 @@ function residentPrerequisiteReceipt(operationMode, now) {
 function machineBoundSupervisorCampaign(launchMode, suffix) {
   const providerConfigurationHash = H(`resident-provider:${suffix}`);
   const sourceAuthorityHash = H(`resident-source:${suffix}`);
+  const capabilityScopeManifest = launchMode === 'golden-bootstrap'
+    ? buildAutonomousResearchCapabilityScopeManifest({
+      empiricalFamilies: ['ml_algorithm_benchmark'],
+    }) : null;
   const datasetMounts = [{
     name: `resident-dataset-${suffix}`,
     source: `/datasets/resident-${suffix}`,
@@ -148,6 +163,11 @@ function machineBoundSupervisorCampaign(launchMode, suffix) {
     kind: 'AutonomousResearchLoopPreparationReport',
     launchMode,
     autonomousResearchProviderConfigurationHash: providerConfigurationHash,
+    ...(capabilityScopeManifest ? {
+      capabilityScopeManifest,
+      capabilityScopeManifestHash:
+        capabilityScopeManifest.autonomousResearchCapabilityScopeManifestHash,
+    } : {}),
     autonomousResearchMachineIntakeAdmissionHash:
       admission.autonomousResearchMachineIntakeAdmissionHash,
     proposal: Object.freeze({
@@ -225,6 +245,58 @@ function machineBoundSupervisorCampaign(launchMode, suffix) {
     }),
   });
 }
+
+test('full autonomous discovery and processing reject legacy minimal campaigns', () => {
+  const now = new Date('2026-07-17T00:05:00.000Z');
+  const machine = machineBoundSupervisorCampaign('production-run', 'full-fence');
+  const legacy = Object.freeze({
+    campaignId: 'autonomous-research:legacy-minimal',
+    paperId: 'legacy-minimal',
+    status: 'completed',
+    effectiveStatus: 'completed',
+    spec: Object.freeze({
+      autonomousResearchPreparation: Object.freeze({
+        proposal: Object.freeze({ paperId: 'legacy-minimal' }),
+        capabilityScopeManifest: Object.freeze({
+          manuscriptMode: 'minimal-report-evidence-bound-ir-v1',
+        }),
+      }),
+    }),
+  });
+  const fence = createAutonomousResearchSupervisorAutonomyFence({
+    required: true,
+    inspectPrerequisites: ({ now: inspectedAt }) =>
+      residentPrerequisiteReceipt('full', inspectedAt),
+    clock: { now: () => now },
+  });
+  fence.inspectStartup();
+  const machineIntake = {
+    repository: {
+      readIntake(intakeId) {
+        return intakeId === machine.record.intakeId ? machine.record : null;
+      },
+    },
+  };
+  const window = discoverAutonomousResearchCampaignWindow({
+    campaignStore: {
+      listCampaigns({ offset }) { return offset === 0 ? [legacy, machine.campaign] : []; },
+    },
+    autonomyFence: fence,
+    operationMode: 'full',
+    machineIntake,
+    limit: 10,
+  });
+  assert.deepEqual(window.campaigns.map((candidate) => candidate.campaignId), [
+    machine.campaign.campaignId,
+  ]);
+  assert.equal(window.suppressedCampaignCount, 1);
+  const processingBinding = inspectAutonomousResearchMachineIntakeCampaignBinding({
+    campaign: legacy,
+    requireRecord: true,
+  });
+  assert.equal(processingBinding.ready, false);
+  assert.equal(processingBinding.reason, 'autonomous_research_machine_intake_campaign_missing');
+});
 
 test('machine execution admission remains fail-closed when all five top-level markers are stripped', () => {
   const fixture = machineBoundSupervisorCampaign('production-run', 'admission-strip');
@@ -649,6 +721,10 @@ test('systemd and Kubernetes contracts host canonical resident probes without se
     'paper-core/deploy/autonomous-research-supervisor.service'), 'utf8');
   const environment = fs.readFileSync(path.join(repositoryRoot,
     'paper-core/deploy/autonomous-research-supervisor.env.example'), 'utf8');
+  const dispatcherSystemd = fs.readFileSync(path.join(repositoryRoot,
+    'paper-core/deploy/autonomous-submission-dispatcher.service'), 'utf8');
+  const dispatcherEnvironment = fs.readFileSync(path.join(repositoryRoot,
+    'paper-core/deploy/autonomous-submission-dispatcher.env.example'), 'utf8');
   const kubernetes = fs.readFileSync(path.join(repositoryRoot,
     'paper-core/deploy/autonomous-research-supervisor.k8s.yaml'), 'utf8');
   const operations = fs.readFileSync(path.join(repositoryRoot,
@@ -656,23 +732,71 @@ test('systemd and Kubernetes contracts host canonical resident probes without se
   assert.match(systemd, /hepta-paper\.mjs operator autonomous-supervisor --/);
   assert.match(systemd, /Restart=always/);
   assert.match(systemd, /StartLimitIntervalSec=0/);
+  assert.match(systemd, /^TimeoutStartSec=1h$/m);
   assert.match(systemd, /KillSignal=SIGTERM/);
   assert.match(systemd, /KillMode=mixed/);
   assert.match(systemd,
     /ReadOnlyPaths=\/srv\/hepta-paper\/assets \/srv\/hepta-paper\/datasets/);
   assert.match(systemd, /\/etc\/hepta-paper\/authority-rotation/);
-  assert.match(systemd, /ReadWritePaths=\/var\/lib\/hepta-paper\/runtime/);
+  assert.match(systemd, /ReadWritePaths=-\/var\/lib\/hepta-paper\/runtime/);
   assert.match(systemd, /--qualification-action-safety-margin-ms/);
   assert.match(systemd, /--require-fully-autonomous/);
+  assert.match(systemd,
+    /ExecStartPre=\/usr\/bin\/flock --exclusive --nonblock \/run\/hepta-paper-state-backup\/renew\.lock .*--action reconcile-and-renew/);
+  assert.match(systemd,
+    /--authority-config \$\{HEPTA_AUTONOMOUS_RESEARCH_STATE_BACKUP_AUTHORITY_CONFIG\}/);
+  assert.match(systemd,
+    /--online-authority-process-config \$\{HEPTA_AUTONOMOUS_RESEARCH_ONLINE_MUTATION_AUTHORITY_PROCESS_CONFIG\}/);
   assert.match(systemd, /--root \$\{HEPTA_PAPER_ASSET_ROOT\}/);
   assert.match(systemd, /--runtime-root \$\{HEPTA_PAPER_RUNTIME_ROOT\}/);
   assert.match(systemd, /--machine-intake-config/);
   assert.match(systemd, /--topic-producer-profile/);
   assert.match(systemd, /--resident-instance-lease-ms/);
   assert.match(systemd, /--resident-instance-heartbeat-ms/);
+  assert.match(systemd,
+    /EnvironmentFile=\/etc\/hepta-paper\/autonomous-research-provider\.secrets\.env/);
+  assert.doesNotMatch(systemd, /autonomous-submission-dispatcher\.secrets\.env/);
+  assert.match(systemd, /\/etc\/hepta-paper\/capabilities-public/);
+  assert.match(systemd, /\/etc\/hepta-paper\/online-mutation-authority/);
+  assert.match(systemd, /\/etc\/hepta-paper\/state-backup-authority/);
+  assert.match(systemd, /^PrivateTmp=yes$/m);
+  assert.match(systemd,
+    /^SupplementaryGroups=docker hepta-runtime-handoff$/m);
+  assert.match(systemd, /^UMask=0007$/m);
+  assert.match(systemd, /^ExecStartPre=\/usr\/bin\/test -w \/var\/lib\/hepta-paper\/runtime$/m);
+  assert.match(systemd, /^ExecStartPre=\/usr\/bin\/test ! -g \/var\/lib\/hepta-paper\/runtime$/m);
+  assert.match(systemd,
+    /^ExecStartPre=\/usr\/bin\/test -g \/var\/lib\/hepta-paper\/runtime\/autonomous-research\/submission-handoff$/m);
+  assert.match(systemd,
+    /^RuntimeDirectory=hepta-paper-worker hepta-paper-state-backup$/m);
+  assert.match(systemd, /^RuntimeDirectoryMode=0700$/m);
+  assert.match(systemd, /^Environment=TMPDIR=\/run\/hepta-paper-worker$/m);
+  assert.match(systemd,
+    /^ReadWritePaths=-\/var\/lib\/hepta-paper\/runtime \/run\/hepta-paper-worker \/run\/hepta-paper-state-backup$/m);
+  assert.match(systemd, /docker\.sock access is root-equivalent/);
+  assert.match(systemd, /only on a dedicated host/);
   assert.doesNotMatch(systemd, /(?:ReadOnlyPaths|ReadWritePaths)=\$\{/);
   assert.match(kubernetes, /restartPolicy: Always/);
   assert.match(kubernetes, /terminationGracePeriodSeconds: 900/);
+  assert.match(kubernetes, /^\s+automountServiceAccountToken: false$/m);
+  assert.match(kubernetes,
+    /^\s+runtimeClassName: REPLACE_WITH_EXTERNALLY_QUALIFIED_NESTED_CONTAINER_RUNTIME_CLASS$/m);
+  assert.match(kubernetes,
+    /hepta\.paper\/nested-runtime-admission: required/);
+  assert.match(kubernetes,
+    /hepta\.paper\/nested-runtime-contract: hepta-nested-container-runtime-v1/);
+  assert.match(kubernetes,
+    /hepta\.paper\/nested-runtime-profile-id: REPLACE_WITH_EXTERNALLY_QUALIFIED_PROFILE_ID/);
+  assert.match(kubernetes,
+    /hepta\.paper\/nested-runtime-qualification-receipt-sha256: REPLACE_WITH_SHA256_OF_SIGNED_QUALIFICATION_RECEIPT/);
+  assert.match(kubernetes,
+    /hepta\.paper\/nested-runtime-qualification-signer: REPLACE_WITH_INDEPENDENT_QUALIFIER_KEY_ID/);
+  assert.match(kubernetes,
+    /hepta\.paper\/nested-runtime-conformance: bind-rw-uid-gid-network-none-memory-cpu-pids-parent-pod-v1/);
+  assert.match(kubernetes,
+    /hepta\.paper\/dedicated-autonomous-research-node: "true"/);
+  assert.match(kubernetes,
+    /hepta\.paper\/nested-runtime-profile-id: REPLACE_WITH_EXTERNALLY_QUALIFIED_PROFILE_ID/);
   assert.match(kubernetes, /readOnlyRootFilesystem: true/);
   assert.match(kubernetes, /claimName: hepta-runtime/);
   assert.match(kubernetes, /mountPath: \/datasets\n\s+readOnly: true/);
@@ -703,6 +827,53 @@ test('systemd and Kubernetes contracts host canonical resident probes without se
   assert.match(kubernetes,
     /HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_REFRESH_ACTION_SAFETY_MARGIN_MS/);
   assert.match(kubernetes, /mountPath: \/hepta\/runtime-reproducibility/);
+  assert.match(kubernetes,
+    /mountPath: \/hepta\/online-mutation-authority\n\s+readOnly: true/);
+  assert.match(kubernetes,
+    /mountPath: \/hepta\/state-backup-authority\n\s+readOnly: true/);
+  assert.match(kubernetes,
+    /claimName: hepta-autonomous-research-online-mutation-authority/);
+  assert.match(kubernetes,
+    /claimName: hepta-autonomous-research-state-backup-authority/);
+  assert.match(kubernetes, /mountPath: \/hepta\/capabilities-public\n\s+readOnly: true/);
+  assert.match(kubernetes,
+    /claimName: hepta-autonomous-research-public-capability-config/);
+  assert.match(kubernetes,
+    /secretRef:\n\s+name: hepta-autonomous-research-provider-tokens/);
+  const noGoGuardStart = kubernetes.indexOf(
+    '- name: deployment-no-go-until-nested-runtime-qualified',
+  );
+  const applicationStart = kubernetes.indexOf('      containers:');
+  assert.ok(noGoGuardStart > 0);
+  assert.ok(applicationStart > noGoGuardStart);
+  const noGoGuard = kubernetes.slice(noGoGuardStart, applicationStart);
+  assert.match(noGoGuard,
+    /image: REPLACE_WITH_PINNED_QUALIFICATION_GUARD_IMAGE_DIGEST/);
+  assert.match(noGoGuard,
+    /NO-GO: install a signed, externally qualified nested-container runtime overlay/);
+  assert.match(noGoGuard, /exit 78/);
+  assert.match(noGoGuard, /runAsUser: 10001/);
+  assert.match(noGoGuard, /allowPrivilegeEscalation: false/);
+  assert.match(noGoGuard, /readOnlyRootFilesystem: true/);
+  assert.match(kubernetes,
+    /name: qualified-runtime-run\n\s+emptyDir:\n\s+medium: Memory/);
+  assert.match(kubernetes,
+    /name: qualified-runtime-run\n\s+mountPath: \/var\/run/);
+  assert.match(kubernetes, /name: tmp\n\s+emptyDir:/);
+  assert.match(kubernetes, /name: tmp\n\s+mountPath: \/tmp/);
+  assert.match(kubernetes,
+    /name: DOCKER_HOST\n\s+value: unix:\/\/\/var\/run\/docker\.sock/);
+  assert.doesNotMatch(kubernetes, /dockerd-rootless\.sh/);
+  assert.doesNotMatch(kubernetes, /ROOTLESS_DOCKER/);
+  assert.doesNotMatch(kubernetes, /name: rootless-docker-daemon/);
+  assert.doesNotMatch(kubernetes, /name: load-pinned-runtime-images/);
+  assert.doesNotMatch(kubernetes,
+    /paper-core\/bin\/automation-runtime-image-bundle-loader\.mjs/);
+  assert.doesNotMatch(kubernetes, /claimName: hepta-runtime-image-oci-bundle/);
+  assert.doesNotMatch(kubernetes, /^\s+hostUsers:/m);
+  assert.doesNotMatch(kubernetes, /^\s*hostPath:/m);
+  assert.doesNotMatch(kubernetes, /privileged: true/);
+  assert.doesNotMatch(kubernetes, /seccompProfile:\n\s+type: Unconfined/);
   assert.match(environment,
     /HEPTA_SUPERVISOR_QUALIFICATION_ACTION_SAFETY_MARGIN_MS=900000/);
   assert.match(environment, /HEPTA_AUTONOMOUS_RESEARCH_INTAKE_CONFIG=/);
@@ -724,11 +895,121 @@ test('systemd and Kubernetes contracts host canonical resident probes without se
   assert.match(kubernetes, /readinessProbe:[\s\S]*timeoutSeconds: 25/);
   assert.match(environment,
     /HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_REFRESH_ACTION_SAFETY_MARGIN_MS=900000/);
+  assert.match(environment,
+    /^HEPTA_AUTONOMOUS_RESEARCH_ONLINE_MUTATION_AUTHORITY_PROCESS_CONFIG=\/etc\/hepta-paper\/online-mutation-authority\/process-config\.json$/m);
+  assert.match(environment,
+    /^HEPTA_AUTONOMOUS_RESEARCH_ONLINE_MUTATION_AUTHORITY_CONFIG=\/etc\/hepta-paper\/online-mutation-authority\/authority-config\.json$/m);
+  assert.match(environment,
+    /^HEPTA_AUTONOMOUS_RESEARCH_STATE_BACKUP_AUTHORITY_CONFIG=\/etc\/hepta-paper\/state-backup-authority\/process-config\.json$/m);
+  assert.match(kubernetes,
+    /name: HEPTA_AUTONOMOUS_RESEARCH_ONLINE_MUTATION_AUTHORITY_PROCESS_CONFIG\n\s+value: \/hepta\/online-mutation-authority\/process-config\.json/);
+  assert.match(kubernetes,
+    /name: HEPTA_AUTONOMOUS_RESEARCH_ONLINE_MUTATION_AUTHORITY_CONFIG\n\s+value: \/hepta\/online-mutation-authority\/authority-config\.json/);
+  assert.match(kubernetes,
+    /name: HEPTA_AUTONOMOUS_RESEARCH_STATE_BACKUP_AUTHORITY_CONFIG\n\s+value: \/hepta\/state-backup-authority\/process-config\.json/);
+  const genericCapabilityEnvironment = Object.freeze({
+    HEPTA_AUTONOMOUS_RESEARCH_CONTENT_MODE: 'agent-evidence-bound',
+    HEPTA_DYNAMIC_FORMAL_CLAIMS_ENABLED: '1',
+    HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG:
+      '/etc/hepta-paper/capabilities-public/research-author-identity.json',
+    HEPTA_REVIEWER_PRINCIPAL_POOL_CONFIG:
+      '/etc/hepta-paper/capabilities-public/reviewer-principals.json',
+    HEPTA_PRIOR_ART_SERVICE_CONFIG:
+      '/etc/hepta-paper/capabilities-public/prior-art-service.json',
+    HEPTA_EXTERNAL_REPLAY_CONFIG:
+      '/etc/hepta-paper/capabilities-public/external-replay-service.json',
+    HEPTA_AUTONOMOUS_VENUE_PROFILE_CONFIG:
+      '/etc/hepta-paper/capabilities-public/venue-profiles.json',
+    HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_CONFIG:
+      '/etc/hepta-paper/capabilities-public/submission-portal-descriptor.json',
+    HEPTA_AUTONOMOUS_SUBMISSION_METADATA_CONFIG:
+      '/etc/hepta-paper/capabilities-public/submission-metadata.json',
+  });
+  for (const [name, value] of Object.entries(genericCapabilityEnvironment)) {
+    const escapePattern = (candidate) => String(candidate)
+      .replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    assert.match(environment, new RegExp(`^${name}=${escapePattern(value)}$`, 'm'));
+    const kubernetesValue = value === '1'
+      ? '"1"'
+      : String(value).replace('/etc/hepta-paper', '/hepta');
+    assert.match(kubernetes, new RegExp(
+      `name: ${name}\\n\\s+value: ${escapePattern(kubernetesValue)}`,
+    ));
+  }
+  assert.match(environment,
+    /^HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG_HASH=REPLACE_WITH_SHA256_CONFIGURATION_HASH$/m);
+  assert.match(environment,
+    /^HEPTA_AUTONOMOUS_VENUE_PROFILE_CONFIG_HASH=REPLACE_WITH_SHA256_CONFIGURATION_HASH$/m);
+  assert.match(environment,
+    /^HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIGURATION_HASH=REPLACE_WITH_SHA256_CONFIGURATION_HASH$/m);
+  assert.match(environment,
+    /^HEPTA_AUTONOMOUS_SUBMISSION_METADATA_CONFIG_HASH=REPLACE_WITH_SHA256_CONFIGURATION_HASH$/m);
+  assert.match(kubernetes,
+    /name: HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG_HASH\n\s+valueFrom:\n\s+configMapKeyRef:\n\s+name: hepta-autonomous-research-supervisor\n\s+key: research-author-identity-configuration-hash/);
+  assert.match(kubernetes,
+    /name: HEPTA_AUTONOMOUS_VENUE_PROFILE_CONFIG_HASH\n\s+valueFrom:\n\s+configMapKeyRef:\n\s+name: hepta-autonomous-research-supervisor\n\s+key: venue-profile-configuration-hash/);
+  assert.match(kubernetes,
+    /name: HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIGURATION_HASH\n\s+valueFrom:\n\s+configMapKeyRef:\n\s+name: hepta-autonomous-research-supervisor\n\s+key: submission-portal-configuration-hash/);
+  assert.match(kubernetes,
+    /name: HEPTA_AUTONOMOUS_SUBMISSION_METADATA_CONFIG_HASH\n\s+valueFrom:\n\s+configMapKeyRef:\n\s+name: hepta-autonomous-research-supervisor\n\s+key: submission-metadata-configuration-hash/);
+  assert.doesNotMatch(environment, /^HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIG=/m);
+  const supervisorDeployment = kubernetes.slice(0, kubernetes.indexOf('\n---\n'));
+  assert.doesNotMatch(supervisorDeployment,
+    /HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIG(?:\s|$)/);
+  assert.doesNotMatch(supervisorDeployment,
+    /hepta-autonomous-submission-portal-token/);
+  assert.match(supervisorDeployment,
+    /hepta\.paper\/submission-dispatch-capability: "denied"/);
+  assert.match(dispatcherSystemd, /^User=hepta-submission-dispatcher$/m);
+  assert.match(dispatcherSystemd, /^SupplementaryGroups=hepta-runtime-handoff$/m);
+  assert.match(dispatcherSystemd, /^UMask=0007$/m);
+  assert.match(dispatcherSystemd,
+    /^ExecStartPre=\/usr\/bin\/test ! -w \/var\/lib\/hepta-paper\/runtime\/hepta-paper\.sqlite$/m);
+  assert.match(dispatcherSystemd,
+    /^ExecStartPre=\/usr\/bin\/test -w \/var\/lib\/hepta-paper\/runtime\/autonomous-research\/submission-handoff\/submission-handoff\.sqlite$/m);
+  assert.match(dispatcherSystemd,
+    /EnvironmentFile=\/etc\/hepta-paper\/autonomous-submission-dispatcher\.secrets\.env/);
+  assert.match(dispatcherSystemd,
+    /operator autonomous-submission-dispatcher -- --resident/);
+  assert.match(dispatcherEnvironment,
+    /^HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIG=\/etc\/hepta-paper\/submission-portal\/config\.json$/m);
+  assert.match(kubernetes, /name: hepta-autonomous-submission-dispatcher/);
+  assert.match(kubernetes,
+    /serviceAccountName: hepta-autonomous-submission-dispatcher/);
+  assert.equal((kubernetes.match(/supplementalGroups: \[20001\]/g) || []).length, 2);
+  assert.equal((kubernetes.match(/test "\$\(stat -c %g \/hepta\/runtime\/autonomous-research\/submission-handoff\)" = "20001"/g)
+    || []).length, 2);
+  assert.equal((kubernetes.match(/test "\$\(stat -c %a \/hepta\/runtime\/autonomous-research\/submission-handoff\)" = "3770"/g)
+    || []).length, 2);
+  assert.equal((kubernetes.match(/umask 0007/g) || []).length, 2);
+  assert.match(kubernetes, /name: hepta-autonomous-submission-portal-token/);
+  assert.match(kubernetes,
+    /name: hepta-autonomous-submission-dispatcher-egress/);
+  assert.match(kubernetes, /cidr: 192\.0\.2\.1\/32/);
+  assert.match(operations, /HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG_HASH/);
+  assert.match(operations,
+    /HEPTA_AUTONOMOUS_RESEARCH_ONLINE_MUTATION_AUTHORITY_PROCESS_CONFIG/);
+  assert.match(operations,
+    /HEPTA_AUTONOMOUS_RESEARCH_ONLINE_MUTATION_AUTHORITY_CONFIG/);
+  assert.match(operations,
+    /HEPTA_AUTONOMOUS_RESEARCH_STATE_BACKUP_AUTHORITY_CONFIG/);
+  assert.match(operations, /out-of-band deployment pin/);
   assert.match(operations, /reconcileMirror\(\)/);
   assert.match(operations, /fixed UTC 24-hour budget epochs/);
   assert.match(operations, /datasetMounts\[\]\.source/);
   assert.match(operations,
     /remaining persisted campaign wall-time budget plus a minimum 15-minute/);
+  assert.match(operations, /intentionally \*\*No-Go\*\*/);
+  assert.match(operations, /deployment-no-go-until-nested-runtime-qualified/);
+  assert.match(operations, /RuntimeClass name alone is only a\s+CRI selector/);
+  assert.match(operations, /independent qualifier has signed a receipt/);
+  assert.match(operations, /fixed-digest worker/);
+  assert.match(operations, /bind sources are visible and writable/);
+  assert.match(operations, /parent Pod resource ceiling/);
+  assert.match(operations, /privileged or unconfined container/);
+  assert.match(operations,
+    /current repository has no CLI that verifies this platform receipt and\s+conformance set/);
+  assert.match(operations, /trusting annotations by\s+themselves is not qualification/);
   assert.match(operations, /AUTHORITY_TRUST_STORE\.json/);
   assert.match(operations, /OWNER_TRUST_STORE\.json/);
   assert.match(operations, /AUTONOMOUS_RESEARCH_INTAKE_AUTHORITY_BOOTSTRAP\.json/);

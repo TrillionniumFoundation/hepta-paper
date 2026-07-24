@@ -5,11 +5,21 @@ import {
 import {
   verifyAutonomousResearchSupervisorExternalActionAttemptReceipt,
 } from '../../paper-domain/automation/autonomous-research-supervisor-external-action-journal.mjs';
+import {
+  verifyAutonomousResearchScientificDispositionReceipt,
+} from '../../paper-domain/automation/autonomous-research-scientific-disposition-contract.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 
 export function compactAutonomousResearchSupervisorOutcome(report) {
   if (!report) return null;
+  const scientificDispositionReceipt = report.scientificDispositionReceipt || null;
+  if (scientificDispositionReceipt
+    && !verifyAutonomousResearchScientificDispositionReceipt(
+      scientificDispositionReceipt,
+    )) {
+    throw new Error('autonomous_research_supervisor_scientific_disposition_invalid');
+  }
   const suppliedExternalActionReceipts = report.supervisorExternalActionReceipts;
   if (suppliedExternalActionReceipts !== undefined
     && (!Array.isArray(suppliedExternalActionReceipts)
@@ -27,9 +37,22 @@ export function compactAutonomousResearchSupervisorOutcome(report) {
     campaignStatus: report.campaign?.status || null,
     externalQualificationStatus: report.externalQualification?.status || null,
     campaignFullyQualified: report.campaignFullyQualified === true,
+    boundedGoldenQualificationPublished:
+      report.boundedGoldenQualificationPublished === true,
     fullAutomaticResearchWritingReady: report.fullAutomaticResearchWritingReady === true,
+    autonomousSubmissionStatus: report.autonomousSubmission?.delivery?.status || null,
+    autonomousSubmissionTerminal:
+      report.autonomousSubmission?.delivery?.terminal === true,
+    autonomousSubmissionLookupRequired:
+      report.autonomousSubmission?.delivery?.lookupRequired === true,
     reportHash: report.autonomousResearchCampaignExecutionReportHash || null,
     externalActionReceipts,
+    ...(scientificDispositionReceipt ? {
+      scientificDispositionReceipt,
+      scientificDispositionReceiptHash:
+        scientificDispositionReceipt
+          .autonomousResearchScientificDispositionReceiptHash,
+    } : {}),
   });
 }
 
@@ -220,6 +243,64 @@ export function buildAutonomousResearchAutonomyBlockedCycleReceipt({
     autonomyOperationMode: 'blocked',
     fullyAutonomousPrerequisiteReceipt: prerequisiteInspection?.receipt || null,
     fullyAutonomousPrerequisiteBlocker: reason,
+    discoveredCampaignCount: 0,
+    processedCampaignCount: 0,
+    results: Object.freeze([]),
+    observedAt: now.toISOString(),
+    externalSubmissionPerformed: false,
+    automaticBudgetExpansionPerformed: false,
+  });
+  return Object.freeze({
+    ...payload,
+    autonomousResearchSupervisorCycleReceiptHash:
+      hashRecord('AutonomousResearchSupervisorCycleReceipt', payload),
+  });
+}
+
+export function buildAutonomousResearchAuthorityEvidenceDeferredCycleReceipt({
+  authorityEvidence,
+  ownerId,
+  startupReconciliation,
+  startupReconciliationReceipt,
+  now,
+} = {}) {
+  const payload = Object.freeze({
+    version: 1,
+    kind: 'AutonomousResearchSupervisorCycleReceipt',
+    status: 'autonomous_research_supervisor_authority_evidence_deferred',
+    ownerId,
+    startupReconciliation,
+    startupReconciliationReceipt,
+    authorityEvidence,
+    discoveredCampaignCount: 0,
+    processedCampaignCount: 0,
+    results: Object.freeze([]),
+    observedAt: now.toISOString(),
+    externalSubmissionPerformed: false,
+    automaticBudgetExpansionPerformed: false,
+  });
+  return Object.freeze({
+    ...payload,
+    autonomousResearchSupervisorCycleReceiptHash:
+      hashRecord('AutonomousResearchSupervisorCycleReceipt', payload),
+  });
+}
+
+export function buildAutonomousResearchStateRecoverabilityDeferredCycleReceipt({
+  stateRecoverability,
+  ownerId,
+  startupReconciliation,
+  startupReconciliationReceipt,
+  now,
+} = {}) {
+  const payload = Object.freeze({
+    version: 1,
+    kind: 'AutonomousResearchSupervisorCycleReceipt',
+    status: 'autonomous_research_supervisor_state_recoverability_deferred',
+    ownerId,
+    startupReconciliation,
+    startupReconciliationReceipt,
+    stateRecoverability,
     discoveredCampaignCount: 0,
     processedCampaignCount: 0,
     results: Object.freeze([]),

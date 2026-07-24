@@ -15,15 +15,27 @@ import {
   createAutonomousResearchTopicProducerCanaryJournalOperations,
 } from './autonomous-research-topic-producer-canary-journal-operations.mjs';
 import {
-  begin,
+  createAutonomousResearchTopicProducerLeaseOperations,
+} from './autonomous-research-topic-producer-lease-operations.mjs';
+import {
   createTopicProducerSchema,
-  leaseDuration,
   leaseIdentity,
   observedDate,
   parseGeneration,
-  rollback, topicProducerFailureInspectionSchemaCurrent,
+  topicProducerFailureInspectionSchemaCurrent,
   utcDayStart,
 } from './autonomous-research-topic-producer-repository-support.mjs';
+import {
+  AUTONOMOUS_RESEARCH_TOPIC_PRODUCER_DATABASE_INSTANCE_ID,
+  AUTONOMOUS_RESEARCH_TOPIC_PRODUCER_SCHEMA_CONTRACT_ID,
+  AUTONOMOUS_RESEARCH_TOPIC_PRODUCER_WRITER_ID,
+} from './autonomous-research-topic-producer-mutation-plan.mjs';
+import {
+  assertTopicProducerMutationClock,
+  assertTopicProducerMutationLease,
+  resolveTopicProducerMutationCoordinator,
+  topicProducerMutationValue,
+} from './autonomous-research-topic-producer-online-mutation.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,255}$/;
@@ -38,6 +50,12 @@ export function createAutonomousResearchTopicProducerRepository({
   liveMutationAuthority,
   create = true,
   busyTimeoutMs = 10_000,
+  offlineProvision = create,
+  mutationCoordinator = null,
+  databaseInstanceId = AUTONOMOUS_RESEARCH_TOPIC_PRODUCER_DATABASE_INSTANCE_ID,
+  schemaContractId = AUTONOMOUS_RESEARCH_TOPIC_PRODUCER_SCHEMA_CONTRACT_ID,
+  writerId = AUTONOMOUS_RESEARCH_TOPIC_PRODUCER_WRITER_ID,
+  requireExternallyFencedMutations = false,
 } = {}) {
   if (!runtimeRoot || !SHA256.test(String(machineIntakeConfigurationHash || ''))
     || !verifyAutonomousResearchTopicProducerProfile(producerProfile)
@@ -47,15 +65,32 @@ export function createAutonomousResearchTopicProducerRepository({
     || providerCanaryPairMaximumCostUsd
       > producerProfile.maximumProviderCanaryCostUsdPerUtcDay
     || typeof liveMutationAuthority?.consume !== 'function'
-    || !Number.isSafeInteger(busyTimeoutMs) || busyTimeoutMs < 1 || busyTimeoutMs > 60_000) {
+    || !Number.isSafeInteger(busyTimeoutMs) || busyTimeoutMs < 1 || busyTimeoutMs > 60_000
+    || typeof create !== 'boolean' || typeof offlineProvision !== 'boolean'
+    || typeof requireExternallyFencedMutations !== 'boolean'
+    || (offlineProvision && !create)
+    || !SAFE_ID.test(String(databaseInstanceId || ''))
+    || !SAFE_ID.test(String(schemaContractId || ''))
+    || !SAFE_ID.test(String(writerId || ''))) {
     throw new Error('autonomous_research_topic_producer_repository_configuration_invalid');
   }
+  const coordinator = resolveTopicProducerMutationCoordinator({
+    mutationCoordinator,
+    offlineProvision,
+    requireExternallyFencedMutations,
+    databaseInstanceId,
+    schemaContractId,
+    writerId,
+  });
   const stateRoot = path.join(path.resolve(runtimeRoot), 'autonomous-research', 'topic-producer');
   const databasePath = path.join(stateRoot, 'topic-producer.sqlite');
-  if (create) {
+  if (offlineProvision) {
     fs.mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
     fs.chmodSync(stateRoot, 0o700);
     if (!fs.existsSync(databasePath)) fs.closeSync(fs.openSync(databasePath, 'wx', 0o600));
+  }
+  if (create && !offlineProvision && !fs.existsSync(databasePath)) {
+    throw new Error('autonomous_research_topic_producer_offline_provisioning_required');
   }
   if (fs.existsSync(databasePath)) {
     const stat = fs.lstatSync(databasePath);
@@ -66,7 +101,7 @@ export function createAutonomousResearchTopicProducerRepository({
   const database = fs.existsSync(databasePath)
     ? new DatabaseSync(databasePath, { readOnly: !create }) : null;
   if (database) database.exec(`PRAGMA busy_timeout=${busyTimeoutMs};`);
-  if (database && create) {
+  if (database && offlineProvision) {
     try {
       database.exec('PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;');
       createTopicProducerSchema(database, {
@@ -117,37 +152,6 @@ export function createAutonomousResearchTopicProducerRepository({
     return database;
   }
 
-  function assertClock(db, observedAt, { update = false } = {}) {
-    const metadata = db.prepare(`SELECT last_observed_at FROM
-      autonomous_research_topic_producer_metadata WHERE singleton=1`).get();
-    if (metadata.last_observed_at
-      && observedAt.toISOString() < metadata.last_observed_at) {
-      throw new Error('autonomous_research_topic_producer_clock_rollback_detected');
-    }
-    if (update) db.prepare(`UPDATE autonomous_research_topic_producer_metadata
-      SET last_observed_at=? WHERE singleton=1`).run(observedAt.toISOString());
-  }
-
-  function activeLease(db, lease, observedAt) {
-    const row = db.prepare(`SELECT * FROM autonomous_research_topic_producer_lease
-      WHERE singleton=1`).get();
-    return row && row.owner_id === lease.ownerId && row.lease_token === lease.leaseToken
-      && Number(row.lease_generation) === lease.leaseGeneration
-      && row.expires_at > observedAt.toISOString();
-  }
-
-  function assertLease({ lease, now = new Date() } = {}) {
-    const db = requireDatabase();
-    const identity = leaseIdentity(lease);
-    const observedAt = observedDate(now);
-    assertClock(db, observedAt);
-    if (!activeLease(db, identity, observedAt)) {
-      throw new Error('autonomous_research_topic_producer_lease_fence_conflict');
-    }
-    return Object.freeze({ ...identity, expiresAt: db.prepare(`SELECT expires_at FROM
-      autonomous_research_topic_producer_lease WHERE singleton=1`).get().expires_at });
-  }
-
   function readGeneration(sequence) {
     const db = requireDatabase();
     if (!Number.isSafeInteger(sequence) || sequence < 1) return null;
@@ -167,30 +171,38 @@ export function createAutonomousResearchTopicProducerRepository({
     });
   }
 
+  const {
+    assertLease,
+    releaseLease,
+    renewLease,
+    tryAcquireLease,
+  } = createAutonomousResearchTopicProducerLeaseOperations({
+    requireDatabase, coordinator, databaseInstanceId, schemaContractId, writerId,
+  });
+
   const canaryJournalOperations =
     createAutonomousResearchTopicProducerCanaryJournalOperations({
-      requireDatabase,
-      assertClock,
-      activeLease,
+      requireDatabase, coordinator, databaseInstanceId, schemaContractId, writerId,
       producerProfile,
       providerCanaryPairMaximumCostUsd,
-      readGeneration,
+      requireExternallyFencedMutations,
     });
   const {
     beginProviderCanaryAction,
+    assertProviderCanaryActionPermit,
     failGeneration,
     finishProviderCanaryAction,
     recoverInterruptedProviderCanary,
   } = canaryJournalOperations;
 
-  function reserveCanary(db, observedAt) {
+  function reserveCanary(transaction, observedAt) {
     const timestamp = observedAt.toISOString();
     const epochStart = utcDayStart(observedAt);
-    db.prepare(`INSERT OR IGNORE INTO autonomous_research_topic_producer_daily_budget(
-      epoch_start,provider_canary_attempt_count,provider_canary_reserved_cost_usd,
-      produced_topic_count,updated_at) VALUES(?,?,?,?,?)`).run(epochStart, 0, 0, 0, timestamp);
-    const daily = db.prepare(`SELECT * FROM autonomous_research_topic_producer_daily_budget
-      WHERE epoch_start=?`).get(epochStart);
+    transaction.run(
+      'topic-producer.prepare.budget-ensure.apply.v1',
+      epochStart, 0, 0, 0, timestamp,
+    );
+    const daily = transaction.get('topic-producer.prepare.budget-current.get.v1', epochStart);
     const attempts = Number(daily.provider_canary_attempt_count) + 1;
     const cost = Number(daily.provider_canary_reserved_cost_usd)
       + providerCanaryPairMaximumCostUsd;
@@ -198,36 +210,47 @@ export function createAutonomousResearchTopicProducerRepository({
       || cost > producerProfile.maximumProviderCanaryCostUsdPerUtcDay) {
       throw new Error('autonomous_research_topic_producer_provider_canary_budget_exhausted');
     }
-    db.prepare(`UPDATE autonomous_research_topic_producer_daily_budget SET
-      provider_canary_attempt_count=?,provider_canary_reserved_cost_usd=?,updated_at=?
-      WHERE epoch_start=?`).run(attempts, cost, timestamp, epochStart);
+    transaction.run(
+      'topic-producer.prepare.budget-reserve-canary.apply.v1',
+      attempts, cost, timestamp, epochStart,
+    );
   }
 
   function prepareGeneration({ lease, now = new Date() } = {}) {
-    const db = requireDatabase({ writable: true });
     const identity = leaseIdentity(lease);
     const observedAt = observedDate(now);
     const timestamp = observedAt.toISOString();
-    try {
-      begin(db);
-      assertClock(db, observedAt, { update: true });
-      if (!activeLease(db, identity, observedAt)) {
-        throw new Error('autonomous_research_topic_producer_lease_fence_conflict');
-      }
-      const outstanding = db.prepare(`SELECT * FROM autonomous_research_topic_producer_generation
-        WHERE status IN ('planned','authorized') ORDER BY generation_sequence LIMIT 1`).get();
+    return topicProducerMutationValue(coordinator.executeMutation({
+      database: requireDatabase({ writable: true }),
+      databaseRole: 'topic-producer',
+      databaseInstanceId,
+      schemaContractId,
+      writerId,
+      operationId: 'topic-producer.topic-producer-repository.prepareGeneration.v1',
+      authorizationReceiptHashes: [],
+      sideEffectReservationHashes: [],
+      mutate(transaction) {
+      const clockState = transaction.get(
+        'topic-producer.prepare.metadata-clock.get.v1',
+      );
+      assertTopicProducerMutationClock(clockState, timestamp);
+      transaction.run('topic-producer.prepare.metadata-clock.update.v1', timestamp);
+      const leaseState = transaction.get('topic-producer.prepare.lease-current.get.v1');
+      assertTopicProducerMutationLease(leaseState, identity, timestamp);
+      const outstanding = transaction.get(
+        'topic-producer.prepare.generation-outstanding.get.v1',
+      );
       if (outstanding) {
         if (recoverInterruptedProviderCanary({
-          database: db,
+          transaction,
           row: outstanding,
           observedAt,
         })) {
-          db.exec('COMMIT;');
           return null;
         }
         if (outstanding.budget_epoch_start !== utcDayStart(observedAt)) {
-          db.prepare(`UPDATE autonomous_research_topic_producer_generation
-            SET status='failed',error=?,updated_at=? WHERE generation_sequence=?`).run(
+          transaction.run(
+            'topic-producer.prepare.generation-expire.apply.v1',
             'autonomous_research_topic_producer_budget_epoch_expired',
             timestamp,
             outstanding.generation_sequence,
@@ -237,51 +260,50 @@ export function createAutonomousResearchTopicProducerRepository({
           JSON.parse(outstanding.planned_generation_json).admissionCreatedAt,
         );
         if (intakeAge < 0 || intakeAge > MAXIMUM_ADMISSION_AGE_MS) {
-          db.prepare(`UPDATE autonomous_research_topic_producer_generation
-            SET status='failed',error=?,updated_at=? WHERE generation_sequence=?`).run(
+          transaction.run(
+            'topic-producer.prepare.generation-expire.apply.v1',
             'autonomous_research_topic_producer_planned_generation_expired',
             timestamp,
             outstanding.generation_sequence,
           );
         } else {
-          if (outstanding.status === 'authorized') reserveCanary(db, observedAt);
-          db.prepare(`UPDATE autonomous_research_topic_producer_generation SET
-            status='planned',lease_generation=?,capability_hash=NULL,capability_nonce=NULL,
-            capability_json=NULL,updated_at=? WHERE generation_sequence=?`).run(
+          if (outstanding.status === 'authorized') reserveCanary(transaction, observedAt);
+          transaction.run(
+            'topic-producer.prepare.generation-reset.apply.v1',
             identity.leaseGeneration,
             timestamp,
             outstanding.generation_sequence,
           );
-          db.exec('COMMIT;');
-          return readGeneration(Number(outstanding.generation_sequence));
+          return parseGeneration(transaction.get(
+            'topic-producer.prepare.generation-result.get.v1',
+            Number(outstanding.generation_sequence),
+          ), {
+            providerCanaryPairMaximumCostUsd,
+            providerConfigurationHash: producerProfile.providerConfigurationHash,
+          });
         }
         }
       }
-      const metadata = db.prepare(`SELECT * FROM autonomous_research_topic_producer_metadata
-        WHERE singleton=1`).get();
+      const metadata = transaction.get('topic-producer.prepare.metadata-current.get.v1');
       if (metadata.next_attempt_at && metadata.next_attempt_at > timestamp) {
-        db.exec('COMMIT;');
         return null;
       }
       if (metadata.last_produced_at
         && observedAt.getTime() - Date.parse(metadata.last_produced_at)
           < producerProfile.minimumGenerationIntervalMs) {
-        db.exec('COMMIT;');
         return null;
       }
-      const daily = db.prepare(`SELECT produced_topic_count FROM
-        autonomous_research_topic_producer_daily_budget WHERE epoch_start=?`).get(
+      const daily = transaction.get(
+        'topic-producer.prepare.budget-current.get.v1',
         utcDayStart(observedAt),
       );
       if (Number(daily?.produced_topic_count || 0) >= producerProfile.maximumTopicsPerUtcDay) {
-        db.exec('COMMIT;');
         return null;
       }
-      reserveCanary(db, observedAt);
+      reserveCanary(transaction, observedAt);
       const epochStart = utcDayStart(observedAt);
-      const reserved = db.prepare(`UPDATE autonomous_research_topic_producer_daily_budget SET
-        produced_topic_count=produced_topic_count+1,updated_at=? WHERE epoch_start=?
-        AND produced_topic_count<?`).run(
+      const reserved = transaction.run(
+        'topic-producer.prepare.budget-reserve-topic.apply.v1',
         timestamp,
         epochStart,
         producerProfile.maximumTopicsPerUtcDay,
@@ -297,22 +319,23 @@ export function createAutonomousResearchTopicProducerRepository({
         admissionCreatedAt: timestamp,
         budgetReservationId: reservationId,
       });
-      db.prepare(`INSERT INTO autonomous_research_topic_producer_generation(
-        generation_sequence,status,lease_generation,producer_topic_id,topic_fingerprint,
-        canonical_research_topic_hash,
-        budget_reservation_id,budget_epoch_start,planned_generation_hash,
-        planned_generation_json,created_at,updated_at
-      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      transaction.run(
+        'topic-producer.prepare.generation-insert.apply.v1',
         sequence, 'planned', identity.leaseGeneration, planned.producerTopicId,
         planned.topicFingerprint, planned.canonicalResearchTopicHash,
         reservationId, planned.budgetEpochStart, planned.plannedGenerationHash,
         JSON.stringify(planned), timestamp, timestamp,
       );
-      db.prepare(`UPDATE autonomous_research_topic_producer_metadata
-        SET generation_high_watermark=? WHERE singleton=1`).run(sequence);
-      db.exec('COMMIT;');
-      return readGeneration(sequence);
-    } catch (error) { rollback(db); throw error; }
+      transaction.run('topic-producer.prepare.metadata-high-water.update.v1', sequence);
+      return parseGeneration(transaction.get(
+        'topic-producer.prepare.generation-result.get.v1',
+        sequence,
+      ), {
+        providerCanaryPairMaximumCostUsd,
+        providerConfigurationHash: producerProfile.providerConfigurationHash,
+      });
+      },
+    }));
   }
 
   function issueAppendAuthorization({
@@ -323,7 +346,6 @@ export function createAutonomousResearchTopicProducerRepository({
     liveMutationAuthorization,
     now,
   } = {}) {
-    const db = requireDatabase({ writable: true });
     const identity = leaseIdentity(lease);
     const observedAt = observedDate(now);
     if (!verifyAutonomousResearchTopicProducerCapabilityReceipt(capability, {
@@ -366,20 +388,33 @@ export function createAutonomousResearchTopicProducerRepository({
       }),
       assertProducerLease: assertLease,
     });
-    try {
-      begin(db);
-      assertClock(db, observedAt, { update: true });
-      if (!activeLease(db, identity, observedAt)) {
-        throw new Error('autonomous_research_topic_producer_lease_fence_conflict');
-      }
-      const result = db.prepare(`UPDATE autonomous_research_topic_producer_generation SET
-        status='authorized',capability_hash=?,capability_nonce=?,capability_json=?,updated_at=?
-        WHERE generation_sequence=? AND status='planned' AND lease_generation=?
-        AND planned_generation_hash=? AND budget_reservation_id=?`).run(
+    topicProducerMutationValue(coordinator.executeMutation({
+      database: requireDatabase({ writable: true }),
+      databaseRole: 'topic-producer',
+      databaseInstanceId,
+      schemaContractId,
+      writerId,
+      operationId:
+        'topic-producer.topic-producer-repository.issueAppendAuthorization.v1',
+      authorizationReceiptHashes: [
+        capability.autonomousResearchTopicProducerCapabilityReceiptHash,
+      ],
+      sideEffectReservationHashes: [plannedGeneration.plannedGenerationHash],
+      mutate(transaction) {
+      const timestamp = observedAt.toISOString();
+      const clockState = transaction.get(
+        'topic-producer.authorize.metadata-clock.get.v1',
+      );
+      assertTopicProducerMutationClock(clockState, timestamp);
+      transaction.run('topic-producer.authorize.metadata-clock.update.v1', timestamp);
+      const leaseState = transaction.get('topic-producer.authorize.lease-current.get.v1');
+      assertTopicProducerMutationLease(leaseState, identity, timestamp);
+      const result = transaction.run(
+        'topic-producer.authorize.generation.update.v1',
         capability.autonomousResearchTopicProducerCapabilityReceiptHash,
         capability.capabilityNonce,
         JSON.stringify(capability),
-        observedAt.toISOString(),
+        timestamp,
         capability.generationSequence,
         identity.leaseGeneration,
         plannedGeneration.plannedGenerationHash,
@@ -388,8 +423,9 @@ export function createAutonomousResearchTopicProducerRepository({
       if (Number(result.changes) !== 1) {
         throw new Error('autonomous_research_topic_producer_generation_fence_conflict');
       }
-      db.exec('COMMIT;');
-    } catch (error) { rollback(db); throw error; }
+      return true;
+      },
+    }));
     const authorization = Object.freeze({
       kind: 'AutonomousResearchTopicProducerAppendAuthorization',
       generationSequence: capability.generationSequence,
@@ -427,18 +463,33 @@ export function createAutonomousResearchTopicProducerRepository({
   }
 
   function completeGeneration({ lease, generationSequence, intakeRecord, now } = {}) {
-    const db = requireDatabase({ writable: true });
     const identity = leaseIdentity(lease);
     const observedAt = observedDate(now);
     const timestamp = observedAt.toISOString();
-    try {
-      begin(db);
-      assertClock(db, observedAt, { update: true });
-      if (!activeLease(db, identity, observedAt)) {
-        throw new Error('autonomous_research_topic_producer_lease_fence_conflict');
-      }
-      const generation = db.prepare(`SELECT * FROM autonomous_research_topic_producer_generation
-        WHERE generation_sequence=?`).get(generationSequence);
+    return topicProducerMutationValue(coordinator.executeMutation({
+      database: requireDatabase({ writable: true }),
+      databaseRole: 'topic-producer',
+      databaseInstanceId,
+      schemaContractId,
+      writerId,
+      operationId: 'topic-producer.topic-producer-repository.completeGeneration.v1',
+      authorizationReceiptHashes: [
+        intakeRecord?.admission?.topicProducerCapabilityReceiptHash,
+      ].filter(Boolean),
+      sideEffectReservationHashes: [
+        intakeRecord?.intakeHash,
+        intakeRecord?.admissionHash,
+      ].filter(Boolean),
+      mutate(transaction) {
+      const clockState = transaction.get('topic-producer.complete.metadata-clock.get.v1');
+      assertTopicProducerMutationClock(clockState, timestamp);
+      transaction.run('topic-producer.complete.metadata-clock.update.v1', timestamp);
+      const leaseState = transaction.get('topic-producer.complete.lease-current.get.v1');
+      assertTopicProducerMutationLease(leaseState, identity, timestamp);
+      const generation = transaction.get(
+        'topic-producer.complete.generation-current.get.v1',
+        generationSequence,
+      );
       if (!generation || generation.status !== 'authorized'
         || Number(generation.lease_generation) !== identity.leaseGeneration
         || generation.capability_hash
@@ -449,9 +500,8 @@ export function createAutonomousResearchTopicProducerRepository({
           !== intakeRecord?.admission?.topicProducerCapabilityReceipt?.topicFingerprint) {
         throw new Error('autonomous_research_topic_producer_completion_fence_conflict');
       }
-      db.prepare(`UPDATE autonomous_research_topic_producer_generation SET
-        status='produced',intake_id=?,intake_hash=?,admission_hash=?,updated_at=?
-        WHERE generation_sequence=? AND status='authorized' AND lease_generation=?`).run(
+      transaction.run(
+        'topic-producer.complete.generation-produced.update.v1',
         intakeRecord.intakeId,
         intakeRecord.intakeHash,
         intakeRecord.admissionHash,
@@ -459,26 +509,44 @@ export function createAutonomousResearchTopicProducerRepository({
         generationSequence,
         identity.leaseGeneration,
       );
-      db.prepare(`UPDATE autonomous_research_topic_producer_metadata SET
-        last_produced_at=?,next_attempt_at=NULL WHERE singleton=1`).run(timestamp);
-      db.exec('COMMIT;');
-      return readGeneration(generationSequence);
-    } catch (error) { rollback(db); throw error; }
+      transaction.run('topic-producer.complete.metadata-produced.update.v1', timestamp);
+      return parseGeneration(transaction.get(
+        'topic-producer.complete.generation-result.get.v1',
+        generationSequence,
+      ), {
+        providerCanaryPairMaximumCostUsd,
+        providerConfigurationHash: producerProfile.providerConfigurationHash,
+      });
+      },
+    }));
   }
 
   function recoverCommittedGeneration({ lease, intakeRecord, now = new Date() } = {}) {
-    const db = requireDatabase({ writable: true });
     const identity = leaseIdentity(lease);
     const observedAt = observedDate(now);
     const timestamp = observedAt.toISOString();
-    try {
-      begin(db);
-      assertClock(db, observedAt, { update: true });
-      if (!activeLease(db, identity, observedAt)) {
-        throw new Error('autonomous_research_topic_producer_lease_fence_conflict');
-      }
-      const row = db.prepare(`SELECT * FROM autonomous_research_topic_producer_generation
-        WHERE status='authorized' ORDER BY generation_sequence LIMIT 1`).get();
+    return topicProducerMutationValue(coordinator.executeMutation({
+      database: requireDatabase({ writable: true }),
+      databaseRole: 'topic-producer',
+      databaseInstanceId,
+      schemaContractId,
+      writerId,
+      operationId:
+        'topic-producer.topic-producer-repository.recoverCommittedGeneration.v1',
+      authorizationReceiptHashes: [
+        intakeRecord?.admission?.topicProducerCapabilityReceiptHash,
+      ].filter(Boolean),
+      sideEffectReservationHashes: [
+        intakeRecord?.intakeHash,
+        intakeRecord?.admissionHash,
+      ].filter(Boolean),
+      mutate(transaction) {
+      const clockState = transaction.get('topic-producer.recover.metadata-clock.get.v1');
+      assertTopicProducerMutationClock(clockState, timestamp);
+      transaction.run('topic-producer.recover.metadata-clock.update.v1', timestamp);
+      const leaseState = transaction.get('topic-producer.recover.lease-current.get.v1');
+      assertTopicProducerMutationLease(leaseState, identity, timestamp);
+      const row = transaction.get('topic-producer.recover.generation-authorized.get.v1');
       const capability = intakeRecord?.admission?.topicProducerCapabilityReceipt;
       if (!row || intakeRecord?.sourceKind !== 'machine'
         || intakeRecord.intakeId !== JSON.parse(row.planned_generation_json).intake.intakeId
@@ -491,9 +559,8 @@ export function createAutonomousResearchTopicProducerRepository({
         || capability?.machineIntakeConfigurationHash !== machineIntakeConfigurationHash) {
         throw new Error('autonomous_research_topic_producer_crash_recovery_binding_invalid');
       }
-      const result = db.prepare(`UPDATE autonomous_research_topic_producer_generation SET
-        status='produced',lease_generation=?,intake_id=?,intake_hash=?,admission_hash=?,updated_at=?
-        WHERE generation_sequence=? AND status='authorized' AND capability_nonce=?`).run(
+      const result = transaction.run(
+        'topic-producer.recover.generation-produced.update.v1',
         identity.leaseGeneration,
         intakeRecord.intakeId,
         intakeRecord.intakeHash,
@@ -505,11 +572,16 @@ export function createAutonomousResearchTopicProducerRepository({
       if (Number(result.changes) !== 1) {
         throw new Error('autonomous_research_topic_producer_completion_fence_conflict');
       }
-      db.prepare(`UPDATE autonomous_research_topic_producer_metadata SET
-        last_produced_at=?,next_attempt_at=NULL WHERE singleton=1`).run(timestamp);
-      db.exec('COMMIT;');
-      return readGeneration(Number(row.generation_sequence));
-    } catch (error) { rollback(db); throw error; }
+      transaction.run('topic-producer.recover.metadata-produced.update.v1', timestamp);
+      return parseGeneration(transaction.get(
+        'topic-producer.recover.generation-result.get.v1',
+        Number(row.generation_sequence),
+      ), {
+        providerCanaryPairMaximumCostUsd,
+        providerConfigurationHash: producerProfile.providerConfigurationHash,
+      });
+      },
+    }));
   }
 
   function readStatus({ now = new Date() } = {}) {
@@ -574,63 +646,18 @@ export function createAutonomousResearchTopicProducerRepository({
     durable: true,
     monotonicHighWatermark: true,
     singleWriterLeaseFencing: true,
-    tryAcquireLease({ ownerId, leaseMs, now = new Date() } = {}) {
-      const db = requireDatabase({ writable: true });
-      if (!SAFE_ID.test(String(ownerId || ''))) {
-        throw new Error('autonomous_research_topic_producer_lease_owner_invalid');
-      }
-      const duration = leaseDuration(leaseMs);
-      const observedAt = observedDate(now);
-      try {
-        begin(db);
-        assertClock(db, observedAt, { update: true });
-        const active = db.prepare(`SELECT * FROM autonomous_research_topic_producer_lease
-          WHERE singleton=1`).get();
-        if (active && active.expires_at > observedAt.toISOString()) {
-          db.exec('COMMIT;');
-          return null;
-        }
-        const metadata = db.prepare(`SELECT lease_generation FROM
-          autonomous_research_topic_producer_metadata WHERE singleton=1`).get();
-        const leaseGeneration = Number(metadata.lease_generation) + 1;
-        const leaseToken = `producer-lease:${crypto.randomUUID()}`;
-        const expiresAt = new Date(observedAt.getTime() + duration).toISOString();
-        db.prepare(`INSERT INTO autonomous_research_topic_producer_lease(
-          singleton,owner_id,lease_token,lease_generation,acquired_at,renewed_at,expires_at
-        ) VALUES(1,?,?,?,?,?,?) ON CONFLICT(singleton) DO UPDATE SET
-          owner_id=excluded.owner_id,lease_token=excluded.lease_token,
-          lease_generation=excluded.lease_generation,acquired_at=excluded.acquired_at,
-          renewed_at=excluded.renewed_at,expires_at=excluded.expires_at`).run(
-          ownerId, leaseToken, leaseGeneration, observedAt.toISOString(),
-          observedAt.toISOString(), expiresAt,
-        );
-        db.prepare(`UPDATE autonomous_research_topic_producer_metadata
-          SET lease_generation=? WHERE singleton=1`).run(leaseGeneration);
-        db.exec('COMMIT;');
-        return Object.freeze({ ownerId, leaseToken, leaseGeneration, expiresAt });
-      } catch (error) { rollback(db); throw error; }
-    },
-    renewLease({ lease, leaseMs, now = new Date() } = {}) {
-      const db = requireDatabase({ writable: true });
-      const identity = leaseIdentity(lease);
-      const observedAt = observedDate(now);
-      const expiresAt = new Date(observedAt.getTime() + leaseDuration(leaseMs)).toISOString();
-      try {
-        begin(db);
-        assertClock(db, observedAt, { update: true });
-        const result = db.prepare(`UPDATE autonomous_research_topic_producer_lease SET
-          renewed_at=?,expires_at=? WHERE singleton=1 AND owner_id=? AND lease_token=?
-          AND lease_generation=? AND expires_at>?`).run(
-          observedAt.toISOString(), expiresAt, identity.ownerId, identity.leaseToken,
-          identity.leaseGeneration, observedAt.toISOString(),
-        );
-        db.exec('COMMIT;');
-        return Number(result.changes) === 1 ? Object.freeze({ ...identity, expiresAt }) : null;
-      } catch (error) { rollback(db); throw error; }
-    },
+    offlineProvisioningPerformed: offlineProvision,
+    externallyFencedMutations: coordinator.implemented === true,
+    externallyFencedMutationsRequired: requireExternallyFencedMutations,
+    databaseInstanceId,
+    schemaContractId,
+    writerId,
+    tryAcquireLease,
+    renewLease,
     assertLease,
     prepareGeneration,
     beginProviderCanaryAction,
+    assertProviderCanaryActionPermit,
     finishProviderCanaryAction,
     readGeneration,
     latestGeneration,
@@ -640,14 +667,7 @@ export function createAutonomousResearchTopicProducerRepository({
     recoverCommittedGeneration,
     failGeneration,
     readStatus,
-    releaseLease({ lease } = {}) {
-      const db = requireDatabase({ writable: true });
-      const identity = leaseIdentity(lease);
-      return Number(db.prepare(`DELETE FROM autonomous_research_topic_producer_lease
-        WHERE singleton=1 AND owner_id=? AND lease_token=? AND lease_generation=?`).run(
-        identity.ownerId, identity.leaseToken, identity.leaseGeneration,
-      ).changes) === 1;
-    },
+    releaseLease,
     close() { if (!closed) database?.close(); closed = true; },
   });
 }

@@ -1,4 +1,5 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hasExactPlainObjectKeys as exactKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 import {
   AUTONOMOUS_RESEARCH_POLICY_PROFILE,
 } from './autonomous-research-policy-contract.mjs';
@@ -56,12 +57,6 @@ export const AUTONOMOUS_RESEARCH_TOPIC_PRODUCER_LIMITS = Object.freeze({
   maximumProviderCanaryAttemptsPerUtcDay: 48,
   maximumProviderCanaryCostUsdPerUtcDay: 100,
 });
-
-function exactKeys(value, keys) {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    && Object.getPrototypeOf(value) === Object.prototype
-    && JSON.stringify(Object.keys(value).sort()) === JSON.stringify(keys);
-}
 
 function canonicalInstant(value, code) {
   const parsed = Date.parse(String(value || ''));

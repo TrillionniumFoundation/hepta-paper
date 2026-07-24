@@ -16,11 +16,9 @@ import {
 } from '../../paper-domain/automation/public-authority-trust-snapshot-contract.mjs';
 import { verifyArtifactWriteReceiptSource } from '../artifacts/artifact-write-receipt-verifier.mjs';
 import { materializeResearchEvidenceCapsuleFilesSync } from './research-evidence-capsule-repository.mjs';
-import {
-  buildOfflineOperatorDatasetAuthorityEvidence,
-  verifyOfflineOperatorDatasetAuthorityEvidence,
-} from './offline-operator-dataset-authority-verifier.mjs';
+import { buildOfflineOperatorDatasetAuthorityEvidence, verifyOfflineOperatorDatasetAuthorityEvidence } from './offline-operator-dataset-authority-verifier.mjs';
 import { verifyOfflineResearchExecutionReleaseAttestation } from './offline-research-execution-release-attestation-verifier.mjs';
+import { attestResearchEvidenceCapsuleManifest } from './research-evidence-capsule-attestation.mjs';
 import {
   RESEARCH_EXECUTION_RELEASE_ATTESTATION_PATH,
   verifyCampaignReleaseExecutionAttestationStructure,
@@ -41,9 +39,8 @@ import {
   portableExperimentRegistryWithAssertionDerivation,
 } from './research-evidence-empirical-assertion-binding.mjs';
 import { researchEvidenceRecomputationIndependenceMatches, researchEvidenceRecomputationIndependenceSummary } from './research-evidence-recomputation-binding.mjs';
-
+import { buildCampaignReleaseFormalReadableProofEvidence } from './research-evidence-formal-readable-proof.mjs';
 export { createResearchExecutionReleaseAttestor } from './research-execution-release-attestor.mjs';
-
 const MAXIMUM_CAPSULE_FILE_BYTES = 256 * 1024 * 1024;
 const SAFE_RELATIVE_PATH = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9_.\/-]{1,512}$/;
 function safeSegment(value) {
@@ -284,7 +281,7 @@ function experimentFilesAndEvidence(experiment, receiptLedger) {
   });
 }
 
-export function materializeCampaignReleaseEvidenceCapsule({
+export async function materializeCampaignReleaseEvidenceCapsule({
   packageDir,
   researchReport,
   campaignId,
@@ -292,6 +289,7 @@ export function materializeCampaignReleaseEvidenceCapsule({
   receiptLedger,
   operatorDatasetAuthorityTrustStore = null,
   researchExecutionReleaseAttestor = null,
+  assertExternalSideEffectReady = null,
   academicEvidenceRequired = false,
   createdAt,
 } = {}) {
@@ -362,12 +360,14 @@ export function materializeCampaignReleaseEvidenceCapsule({
     hiddenOracleIncluded: false,
     hostAbsolutePathsIncluded: false,
   });
+  const formalReadableProofEvidence = buildCampaignReleaseFormalReadableProofEvidence({ researchReport, campaignId, paperId });
   const files = [
     fileEntry({ role: 'portable_research_report', relativePath: 'evidence/RESEARCH_REPORT.json', content: jsonBytes(portableReport) }),
     fileEntry({ role: 'portable_experiment_registry', relativePath: 'evidence/EXPERIMENT_REGISTRY.json', content: jsonBytes(portableRegistry) }),
     fileEntry({ role: 'research_environment_manifest', relativePath: 'evidence/ENVIRONMENT_MANIFEST.json', content: jsonBytes(environmentManifest) }),
     fileEntry({ role: 'research_public_authority_evidence', relativePath: 'evidence/PUBLIC_AUTHORITY_EVIDENCE.json', content: jsonBytes(publicAuthorityEvidence) }),
     fileEntry({ role: 'public_authority_trust_snapshot', relativePath: 'evidence/PUBLIC_AUTHORITY_TRUST_SNAPSHOT.json', content: jsonBytes(publicAuthorityTrustSnapshot) }),
+    ...(formalReadableProofEvidence ? [fileEntry({ role: 'formal_readable_proof_explanations', relativePath: 'evidence/FORMAL_READABLE_PROOF_EXPLANATIONS.json', content: jsonBytes(formalReadableProofEvidence) })] : []),
     ...materialized.flatMap((item) => item.files),
   ];
   for (const file of files.filter((entry) => /\.(?:json|ndjson)$/i.test(entry.path))) {
@@ -401,12 +401,13 @@ export function materializeCampaignReleaseEvidenceCapsule({
   let executionAttestation = null;
   let executionAttestationFile = null;
   if (manifest.externalExecutionAttestationRequired) {
-    if (!researchExecutionReleaseAttestor || typeof researchExecutionReleaseAttestor.attestCapsuleManifest !== 'function') {
-      throw new Error('research_evidence_capsule_execution_release_attestor_required');
-    }
-    executionAttestation = researchExecutionReleaseAttestor.attestCapsuleManifest({
+    executionAttestation = await attestResearchEvidenceCapsuleManifest({
+      researchExecutionReleaseAttestor,
+      assertExternalSideEffectReady,
       manifest,
       manifestFileHash: manifestFile.hash,
+      campaignId,
+      paperId,
       signedAt: createdAt,
     });
     const attestationVerification = verifyCampaignReleaseExecutionAttestationStructure(executionAttestation, {

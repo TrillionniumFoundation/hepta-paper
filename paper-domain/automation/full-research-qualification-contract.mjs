@@ -1,14 +1,19 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
-import { verifyProposalClaimToTheoremBinding } from '../research/proposal-claim-to-theorem-binding.mjs';
+import { verifyPriorArtEvidenceReceipt } from '../research/prior-art-evidence-contract.mjs';
 import {
   REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES,
+  RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE,
 } from './runtime-image-reproducibility-receipt-contract.mjs';
 import {
-  verifyAutonomousResearchReleaseBinding,
-} from './autonomous-research-release-binding-contract.mjs';
+  MANUSCRIPT_RELEASE_PROOF_FIELDS,
+  inspectAutonomousResearchReleaseQualificationScope,
+  inspectSuccessfulFullResearchRelease,
+} from './full-research-release-qualification-inspection.mjs';
+import {
+  REQUIRED_SCOPED_SCHEMA_VERSIONS,
+} from './scoped-schema-version-contract.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
-const REQUIRED_RUNTIME_IMAGE_PROFILES = Object.freeze(['python', 'r']);
 
 export const FULL_RESEARCH_QUALIFICATION_MAXIMUM_AGE_MS = 24 * 60 * 60 * 1000;
 export const CODEX_MODEL_AVAILABILITY_CANARY_MAXIMUM_AGE_MS = 15 * 60 * 1000;
@@ -108,7 +113,8 @@ function schemaValid(receipt, expected) {
   return receipt?.version === 1 && receipt?.kind === 'ScopedSchemaVersionGateReceipt'
     && receipt?.status === 'scoped_schema_version_verified'
     && Array.isArray(receipt?.requiredVersions)
-    && JSON.stringify(receipt.requiredVersions) === JSON.stringify([21, 22, 23])
+    && JSON.stringify(receipt.requiredVersions)
+      === JSON.stringify(REQUIRED_SCOPED_SCHEMA_VERSIONS)
     && recordHashValid(receipt, 'ScopedSchemaVersionGateReceipt', 'scopedSchemaVersionGateReceiptHash')
     && receipt.scopedSchemaVersionGateReceiptHash === expected?.scopedSchemaVersionGateReceiptHash;
 }
@@ -116,8 +122,9 @@ function schemaValid(receipt, expected) {
 function runtimeImagesValid(observed, expected) {
   if (!observed || typeof observed !== 'object' || !expected || typeof expected !== 'object') return false;
   const keys = Object.keys(observed).sort();
-  if (JSON.stringify(keys) !== JSON.stringify([...REQUIRED_RUNTIME_IMAGE_PROFILES])) return false;
-  return REQUIRED_RUNTIME_IMAGE_PROFILES.every((profile) => (
+  if (JSON.stringify(keys)
+    !== JSON.stringify([...REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES])) return false;
+  return REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES.every((profile) => (
     SHA256.test(String(observed[profile] || ''))
     && observed[profile] === expected[profile]
   ));
@@ -126,6 +133,7 @@ function runtimeImagesValid(observed, expected) {
 function runtimeImageReproducibilityBindingShapeValid(receipt) {
   const profiles = receipt?.runtimeImageReproducibilityRequiredProfiles;
   const definitions = receipt?.runtimeImageReproducibilityDefinitionManifestHashes;
+  const scope = RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE;
   return SHA256.test(String(receipt?.runtimeImageReproducibilityReceiptHash || ''))
     && Array.isArray(profiles)
     && JSON.stringify(profiles) === JSON.stringify(
@@ -133,7 +141,17 @@ function runtimeImageReproducibilityBindingShapeValid(receipt) {
     )
     && definitions && typeof definitions === 'object' && !Array.isArray(definitions)
     && JSON.stringify(Object.keys(definitions)) === JSON.stringify(profiles)
-    && profiles.every((profile) => SHA256.test(String(definitions[profile] || '')));
+    && profiles.every((profile) => SHA256.test(String(definitions[profile] || '')))
+    && receipt?.empiricalFamilyPluginPackageHash
+      === scope.empiricalFamilyPluginPackageHash
+    && receipt?.empiricalFamilyPluginRegistryHash
+      === scope.empiricalFamilyPluginRegistryHash
+    && receipt?.empiricalFamilyPluginStartupInspectionHash
+      === scope.empiricalFamilyPluginStartupInspectionHash
+    && JSON.stringify(receipt?.activeEmpiricalProductionProfileHashes)
+      === JSON.stringify(scope.activeProductionProfileHashes)
+    && receipt?.runtimeImageReproducibilityActivePluginScopeHash
+      === scope.runtimeImageReproducibilityActivePluginScopeHash;
 }
 
 function runtimeImageReproducibilityBindingValid(receipt, inspection) {
@@ -144,12 +162,89 @@ function runtimeImageReproducibilityBindingValid(receipt, inspection) {
     && JSON.stringify(receipt.runtimeImageReproducibilityRequiredProfiles)
       === JSON.stringify(inspection.requiredProfiles)
     && JSON.stringify(receipt.runtimeImageReproducibilityDefinitionManifestHashes)
-      === JSON.stringify(inspection.definitionManifestHashes);
+      === JSON.stringify(inspection.definitionManifestHashes)
+    && receipt.empiricalFamilyPluginPackageHash
+      === inspection.empiricalFamilyPluginPackageHash
+    && receipt.empiricalFamilyPluginRegistryHash
+      === inspection.empiricalFamilyPluginRegistryHash
+    && receipt.empiricalFamilyPluginStartupInspectionHash
+      === inspection.empiricalFamilyPluginStartupInspectionHash
+    && JSON.stringify(receipt.activeEmpiricalProductionProfileHashes)
+      === JSON.stringify(inspection.activeProductionProfileHashes)
+    && receipt.runtimeImageReproducibilityActivePluginScopeHash
+      === inspection.runtimeImageReproducibilityActivePluginScopeHash;
 }
 
-function independentHypothesisPriorArtQualificationValid(receipt) {
-  return receipt?.independentHypothesisPriorArtReviewVerified === true
-    && SHA256.test(String(receipt?.independentHypothesisPriorArtReceiptHash || ''));
+function independentHypothesisPriorArtQualificationValid(receipt, releaseBinding, {
+  allowBoundedGoldenCapability = false,
+  releaseScope = null,
+} = {}) {
+  const priorArtEvidenceReceipt = receipt?.priorArtEvidenceReceipt || null;
+  const currentPriorArtEvidenceReceipt = releaseBinding?.priorArtEvidenceReceipt || null;
+  if (receipt?.independentHypothesisPriorArtReviewVerified !== true
+    || !SHA256.test(String(receipt?.independentHypothesisPriorArtReceiptHash || ''))
+    || priorArtEvidenceReceipt?.version !== 2
+    || currentPriorArtEvidenceReceipt?.version !== 2
+    || !SHA256.test(String(releaseBinding?.priorArtEvidenceReceiptHash || ''))
+    || releaseBinding.priorArtEvidenceReceiptHash
+      !== currentPriorArtEvidenceReceipt.priorArtEvidenceReceiptHash
+    || receipt.independentHypothesisPriorArtReceiptHash
+      !== releaseBinding.priorArtEvidenceReceiptHash
+    || priorArtEvidenceReceipt.priorArtEvidenceReceiptHash
+      !== receipt.independentHypothesisPriorArtReceiptHash
+    || JSON.stringify(priorArtEvidenceReceipt)
+      !== JSON.stringify(currentPriorArtEvidenceReceipt)) return false;
+  const boundedGoldenScope = allowBoundedGoldenCapability === true
+    && releaseScope?.valid === true
+    && releaseScope?.boundedGoldenScope === true
+    && releaseScope?.releaseBinding?.autonomousResearchReleaseBindingHash
+      === releaseBinding?.autonomousResearchReleaseBindingHash;
+  if (boundedGoldenScope) {
+    if (releaseBinding?.version !== 3
+      || releaseBinding?.proposal
+      || releaseBinding?.researchAgendaIr
+      || (releaseBinding?.researchAgendaIrHash || null) !== null
+      || !SHA256.test(String(priorArtEvidenceReceipt.agendaSelectionReceiptHash || ''))
+      || !SHA256.test(String(priorArtEvidenceReceipt.researchAgendaIrHash || ''))
+      || !Array.isArray(priorArtEvidenceReceipt.priorArtQueryPlan)
+      || priorArtEvidenceReceipt.priorArtQueryPlan.length === 0
+      || !SHA256.test(String(priorArtEvidenceReceipt.priorArtQueryPlanHash || ''))) {
+      return false;
+    }
+    const verification = verifyPriorArtEvidenceReceipt(priorArtEvidenceReceipt, {
+      paperId: releaseBinding.paperId,
+      agendaSelectionReceiptHash:
+        priorArtEvidenceReceipt.agendaSelectionReceiptHash,
+      researchAgendaIrHash: priorArtEvidenceReceipt.researchAgendaIrHash,
+      priorArtQueryPlan: priorArtEvidenceReceipt.priorArtQueryPlan,
+      priorArtQueryPlanHash: priorArtEvidenceReceipt.priorArtQueryPlanHash,
+      requireVerified: true,
+    });
+    return verification.ready
+      && verification.priorArtEvidenceReceiptHash
+        === releaseBinding.priorArtEvidenceReceiptHash;
+  }
+  const researchAgendaIr = releaseBinding?.researchAgendaIr || null;
+  const agendaSelectionReceiptHash =
+    releaseBinding?.proposal?.agendaSelectionReceiptHash || null;
+  if (!SHA256.test(String(releaseBinding?.researchAgendaIrHash || ''))
+    || !SHA256.test(String(agendaSelectionReceiptHash || ''))
+    || !Array.isArray(researchAgendaIr?.priorArtQueryPlan)
+    || researchAgendaIr.priorArtQueryPlan.length === 0
+    || releaseBinding.researchAgendaIrHash !== researchAgendaIr.researchAgendaIrHash) {
+    return false;
+  }
+  const verification = verifyPriorArtEvidenceReceipt(priorArtEvidenceReceipt, {
+    paperId: releaseBinding.paperId,
+    agendaSelectionReceiptHash,
+    researchAgendaIrHash: releaseBinding.researchAgendaIrHash,
+    priorArtQueryPlan: researchAgendaIr.priorArtQueryPlan,
+    priorArtQueryPlanHash: currentPriorArtEvidenceReceipt.priorArtQueryPlanHash,
+    requireVerified: true,
+  });
+  return verification.ready
+    && verification.priorArtEvidenceReceiptHash
+      === releaseBinding.priorArtEvidenceReceiptHash;
 }
 
 function releaseAttestorSignerTrustedAt(inspection, signer, signedAt) {
@@ -226,70 +321,6 @@ function providerPrincipalIndependenceVerified({
     }) === true;
 }
 
-function successfulFullRelease(authority, receipt, issuedAt, blockers) {
-  if (!authority || authority.status !== 'current_completed_release'
-    || authority.campaignStatus !== 'completed' || authority.packageNodeStatus !== 'completed') {
-    blockers.push('golden_micro_campaign_current_completed_release_required');
-    return null;
-  }
-  const bundle = authority.releaseBundle;
-  if (authority.campaignId !== receipt?.campaignId || authority.paperId !== receipt?.paperId
-    || authority.campaignReleaseBundleHash !== receipt?.campaignReleaseBundleHash
-    || bundle?.campaignReleaseBundleHash !== receipt?.campaignReleaseBundleHash) {
-    blockers.push('golden_micro_campaign_release_pointer_mismatch');
-  }
-  if (bundle?.status !== 'campaign_release_bundle_prepared'
-    || bundle?.researchReport?.promotionEligibility?.status !== 'research_promotion_ready') {
-    blockers.push('golden_micro_campaign_research_promotion_not_ready');
-  }
-  const manifest = bundle?.researchEvidenceCapsuleManifest;
-  if (manifest?.status !== 'research_evidence_capsule_ready'
-    || Number(manifest?.academicExperimentCount) < 1
-    || Number(manifest?.academicExperimentCount) !== Number(manifest?.experimentCount)
-    || !Array.isArray(manifest?.experiments) || !manifest.experiments.length
-    || manifest.experiments.some((experiment) => experiment?.academicPromotionEligible !== true)) {
-    blockers.push('golden_micro_campaign_academic_empirical_release_required');
-  }
-  if (!Array.isArray(manifest?.experiments) || !manifest.experiments.length
-    || manifest.experiments.some((experiment) => (
-      experiment?.independentRecomputationImplementationVerified !== true
-      || experiment?.recomputationIndependenceLevel
-        !== 'repository-separate-implementation-same-process-v1'
-      || !SHA256.test(String(experiment?.rawEventRecomputationIndependenceContractHash || ''))
-      || experiment?.recomputationProcessIndependent !== false
-    ))) {
-    blockers.push('golden_micro_campaign_recomputation_implementation_independence_required');
-  }
-  const report = bundle?.researchReport;
-  const proposalBinding = report?.capabilities?.proposalClaimToTheoremBinding || null;
-  const proposalVerification = verifyProposalClaimToTheoremBinding(proposalBinding || {});
-  const formalIntakes = report?.capabilities?.formalCertificateIntakes;
-  const formalReplays = report?.capabilities?.formalReplayReceipts;
-  const formalWorkers = (report?.nativeResearchWorkerExecution?.workerReceipts || [])
-    .filter((worker) => worker?.workerType === 'formal_verifier_lake');
-  if (!proposalVerification.valid
-    || report?.proposalClaimToTheoremBindingHash !== proposalBinding?.proposalClaimToTheoremBindingHash
-    || bundle?.proposalClaimToTheoremBindingHash !== proposalBinding?.proposalClaimToTheoremBindingHash
-    || !Array.isArray(formalIntakes) || !formalIntakes.length
-    || formalIntakes.some((intake) => intake?.status !== 'formal_certificate_intake_verified')
-    || !Array.isArray(formalReplays) || !formalReplays.length
-    || formalReplays.some((replay) => replay?.status !== 'formal_claim_replay_verified')
-    || !formalWorkers.length
-    || formalWorkers.some((worker) => worker?.result?.status !== 'formal_claim_verified'
-      || worker?.result?.replayReceipt?.status !== 'formal_claim_replay_verified')) {
-    blockers.push('golden_micro_campaign_formal_release_required');
-  }
-  const releaseCreatedAt = Date.parse(String(bundle?.createdAt || ''));
-  const promotedAt = Date.parse(String(authority?.promotedAt || ''));
-  if (!Number.isFinite(releaseCreatedAt) || !Number.isFinite(promotedAt)
-    || releaseCreatedAt > issuedAt || promotedAt > issuedAt
-    || issuedAt - releaseCreatedAt > FULL_RESEARCH_QUALIFICATION_MAXIMUM_AGE_MS
-    || issuedAt - promotedAt > FULL_RESEARCH_QUALIFICATION_MAXIMUM_AGE_MS) {
-    blockers.push('golden_micro_campaign_release_not_fresh');
-  }
-  return bundle;
-}
-
 export function fullResearchQualificationSigningPayloadHash(receipt) {
   const payload = withoutQualificationEnvelope(receipt);
   return payload ? hashRecord('FullResearchQualificationSigningPayload', payload) : null;
@@ -303,9 +334,17 @@ export function verifyFullResearchQualificationReceiptEnvelope(receipt, {
   expectedPolicyAuthorizationHash = null,
   expectedSeedBindingHash = null,
   verifyQualificationSignature = null,
+  allowBoundedGoldenCapability = false,
 } = {}) {
   const blockers = [];
   const nowMs = now instanceof Date ? now.getTime() : Date.parse(String(now));
+  const authority = campaignReleaseAuthority;
+  const autonomousBinding = authority?.releaseBundle?.autonomousResearchReleaseBinding || null;
+  const releaseScope = inspectAutonomousResearchReleaseQualificationScope({
+    authority,
+    receipt,
+    allowBoundedGoldenCapability,
+  });
   if (!Number.isFinite(nowMs)) blockers.push('external_qualification_verification_time_invalid');
   if (receipt?.version !== 1
     || receipt?.kind !== 'FullResearchGoldenMicroCampaignQualificationReceipt'
@@ -313,7 +352,10 @@ export function verifyFullResearchQualificationReceiptEnvelope(receipt, {
     || receipt?.externalActionPerformed !== true) {
     blockers.push('external_qualification_receipt_shape_invalid');
   }
-  if (!independentHypothesisPriorArtQualificationValid(receipt)) {
+  if (!independentHypothesisPriorArtQualificationValid(receipt, autonomousBinding, {
+    allowBoundedGoldenCapability,
+    releaseScope,
+  })) {
     blockers.push('external_qualification_independent_hypothesis_prior_art_qualification_invalid');
   }
   if (!runtimeImageReproducibilityBindingShapeValid(receipt)) {
@@ -332,8 +374,6 @@ export function verifyFullResearchQualificationReceiptEnvelope(receipt, {
     || (Number.isFinite(nowMs) && (nowMs < issuedAt || nowMs >= expiresAt))) {
     blockers.push('external_qualification_receipt_outside_time_window');
   }
-  const authority = campaignReleaseAuthority;
-  const autonomousBinding = authority?.releaseBundle?.autonomousResearchReleaseBinding || null;
   const autonomousBindingPayload = autonomousBinding && typeof autonomousBinding === 'object'
     ? (() => {
       const { autonomousResearchReleaseBindingHash: _hash, ...payload } = autonomousBinding;
@@ -367,6 +407,12 @@ export function verifyFullResearchQualificationReceiptEnvelope(receipt, {
     || receipt?.policyAuthorizationHash !== expectedPolicyAuthorizationHash
     || receipt?.seedBindingHash !== expectedSeedBindingHash) {
     blockers.push('external_qualification_autonomous_preparation_binding_mismatch');
+  }
+  if (releaseScope.blockers.includes('research_release_qualification_scope_invalid')) {
+    blockers.push('external_qualification_release_scope_not_eligible');
+  }
+  if (releaseScope.blockers.includes('research_release_manuscript_proof_mismatch')) {
+    blockers.push('external_qualification_manuscript_release_proof_mismatch');
   }
   const signer = receipt?.signer || null;
   const signingPayloadHash = fullResearchQualificationSigningPayloadHash(receipt);
@@ -411,12 +457,31 @@ export function verifyFullResearchQualificationReceiptEnvelope(receipt, {
       ? null : receipt.runtimeImageReproducibilityRequiredProfiles,
     runtimeImageReproducibilityDefinitionManifestHashes: uniqueBlockers.length
       ? null : receipt.runtimeImageReproducibilityDefinitionManifestHashes,
+    empiricalFamilyPluginPackageHash: uniqueBlockers.length
+      ? null : receipt.empiricalFamilyPluginPackageHash,
+    empiricalFamilyPluginRegistryHash: uniqueBlockers.length
+      ? null : receipt.empiricalFamilyPluginRegistryHash,
+    empiricalFamilyPluginStartupInspectionHash: uniqueBlockers.length
+      ? null : receipt.empiricalFamilyPluginStartupInspectionHash,
+    activeEmpiricalProductionProfileHashes: uniqueBlockers.length
+      ? null : receipt.activeEmpiricalProductionProfileHashes,
+    runtimeImageReproducibilityActivePluginScopeHash: uniqueBlockers.length
+      ? null : receipt.runtimeImageReproducibilityActivePluginScopeHash,
     proposalHash: uniqueBlockers.length ? null : receipt.proposalHash,
     policyAuthorizationHash: uniqueBlockers.length ? null : receipt.policyAuthorizationHash,
     seedBindingHash: uniqueBlockers.length ? null : receipt.seedBindingHash,
+    qualificationScope: uniqueBlockers.length ? null : receipt.qualificationScope,
+    genericContentCanaryVerified: uniqueBlockers.length
+      ? false : autonomousBinding?.genericContentCanaryVerified === true,
+    ...Object.fromEntries(MANUSCRIPT_RELEASE_PROOF_FIELDS.map((field) => [
+      field,
+      uniqueBlockers.length ? null : receipt?.[field] || null,
+    ])),
     independentHypothesisPriorArtReviewVerified: uniqueBlockers.length === 0,
     independentHypothesisPriorArtReceiptHash: uniqueBlockers.length
       ? null : receipt.independentHypothesisPriorArtReceiptHash,
+    structuredPriorArtEvidenceVerified: uniqueBlockers.length === 0
+      && Boolean(receipt.priorArtEvidenceReceipt),
     blockers: uniqueBlockers,
   });
 }
@@ -436,6 +501,8 @@ export function verifyFullResearchQualificationReceipt(receipt, {
   verifyReleaseAttestation = null,
   verifyQualificationSignature = null,
   requireGlobalGoldenAuthority = false,
+  runtimePrincipalBinding = null,
+  reviewerEvidenceAuthority = null,
 } = {}) {
   const blockers = [];
   const nowMs = now instanceof Date ? now.getTime() : Date.parse(String(now));
@@ -444,9 +511,6 @@ export function verifyFullResearchQualificationReceipt(receipt, {
     || receipt?.status !== 'full_research_golden_micro_campaign_qualified'
     || receipt?.externalActionPerformed !== true) {
     blockers.push('golden_micro_campaign_qualification_receipt_shape_invalid');
-  }
-  if (!independentHypothesisPriorArtQualificationValid(receipt)) {
-    blockers.push('golden_micro_campaign_independent_hypothesis_prior_art_qualification_invalid');
   }
   const receiptPayload = withoutReceiptHash(receipt);
   if (!receiptPayload || !SHA256.test(String(receipt?.fullResearchQualificationReceiptHash || ''))
@@ -561,20 +625,40 @@ export function verifyFullResearchQualificationReceipt(receipt, {
     catch { authority = null; }
     if (!authority) blockers.push('golden_micro_campaign_release_authority_verification_failed');
   }
-  const bundle = authority ? successfulFullRelease(authority, receipt, issuedAt, blockers) : null;
+  const releaseScope = authority
+    ? inspectAutonomousResearchReleaseQualificationScope({
+      authority,
+      receipt,
+      allowBoundedGoldenCapability: requireGlobalGoldenAuthority,
+    }) : null;
+  if (!independentHypothesisPriorArtQualificationValid(
+    receipt,
+    authority?.releaseBundle?.autonomousResearchReleaseBinding || null,
+    {
+      allowBoundedGoldenCapability: requireGlobalGoldenAuthority,
+      releaseScope,
+    },
+  )) {
+    blockers.push('golden_micro_campaign_independent_hypothesis_prior_art_qualification_invalid');
+  }
+  const releaseInspection = authority ? inspectSuccessfulFullResearchRelease({
+    authority,
+    receipt,
+    issuedAt,
+    maximumReceiptAgeMs: FULL_RESEARCH_QUALIFICATION_MAXIMUM_AGE_MS,
+    allowBoundedGoldenCapability: requireGlobalGoldenAuthority,
+    runtimePrincipalBinding,
+    reviewerEvidenceAuthority,
+  }) : null;
+  if (releaseInspection) blockers.push(...releaseInspection.blockers);
+  const bundle = releaseInspection?.bundle || null;
   if (bundle && requireGlobalGoldenAuthority) {
     const releaseBinding = bundle.autonomousResearchReleaseBinding || null;
-    const bindingInspection = verifyAutonomousResearchReleaseBinding(releaseBinding, {
-      campaignId: authority.campaignId,
-      paperId: authority.paperId,
-      campaignPlanHash: bundle.campaignPlanHash,
-      launchMode: 'golden-bootstrap',
-    });
     if (!releaseBinding?.globalGoldenQualificationAuthorityHash
       || !releaseBinding?.globalGoldenQualificationAuthority
       || bundle.autonomousResearchReleaseBindingHash
         !== releaseBinding.autonomousResearchReleaseBindingHash
-      || bindingInspection.valid !== true) {
+      || releaseBinding.launchMode !== 'golden-bootstrap') {
       blockers.push('golden_micro_campaign_global_golden_qualification_authority_required');
     }
   }
@@ -628,6 +712,14 @@ export function verifyFullResearchQualificationReceipt(receipt, {
     paperId: uniqueBlockers.length ? null : receipt.paperId,
     campaignReleaseBundleHash: uniqueBlockers.length ? null : receipt.campaignReleaseBundleHash,
     qualificationReceiptHash: uniqueBlockers.length ? null : receipt.fullResearchQualificationReceiptHash,
+    qualificationScope: uniqueBlockers.length ? null : receipt.qualificationScope,
+    genericContentCanaryVerified: uniqueBlockers.length
+      ? false : bundle?.autonomousResearchReleaseBinding
+        ?.genericContentCanaryVerified === true,
+    ...Object.fromEntries(MANUSCRIPT_RELEASE_PROOF_FIELDS.map((field) => [
+      field,
+      uniqueBlockers.length ? null : receipt?.[field] || null,
+    ])),
     issuedAt: uniqueBlockers.length ? null : receipt.issuedAt,
     expiresAt: uniqueBlockers.length ? null : receipt.expiresAt,
     remainingValidityMs: uniqueBlockers.length || !Number.isFinite(nowMs)
@@ -638,9 +730,21 @@ export function verifyFullResearchQualificationReceipt(receipt, {
       ? null : receipt.runtimeImageReproducibilityRequiredProfiles,
     runtimeImageReproducibilityDefinitionManifestHashes: uniqueBlockers.length
       ? null : receipt.runtimeImageReproducibilityDefinitionManifestHashes,
+    empiricalFamilyPluginPackageHash: uniqueBlockers.length
+      ? null : receipt.empiricalFamilyPluginPackageHash,
+    empiricalFamilyPluginRegistryHash: uniqueBlockers.length
+      ? null : receipt.empiricalFamilyPluginRegistryHash,
+    empiricalFamilyPluginStartupInspectionHash: uniqueBlockers.length
+      ? null : receipt.empiricalFamilyPluginStartupInspectionHash,
+    activeEmpiricalProductionProfileHashes: uniqueBlockers.length
+      ? null : receipt.activeEmpiricalProductionProfileHashes,
+    runtimeImageReproducibilityActivePluginScopeHash: uniqueBlockers.length
+      ? null : receipt.runtimeImageReproducibilityActivePluginScopeHash,
     independentHypothesisPriorArtReviewVerified: uniqueBlockers.length === 0,
     independentHypothesisPriorArtReceiptHash: uniqueBlockers.length
       ? null : receipt.independentHypothesisPriorArtReceiptHash,
+    structuredPriorArtEvidenceVerified: uniqueBlockers.length === 0
+      && Boolean(receipt.priorArtEvidenceReceipt),
     blockers: uniqueBlockers,
   });
 }

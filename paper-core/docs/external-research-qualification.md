@@ -108,6 +108,29 @@ release-attestor key, and its organization must differ from every release-attest
 after case and whitespace normalization. Command objects have no organization field; adding one is
 an exact-shape error rather than a way to claim independence.
 
+## Independent verification protocol
+
+The stdio transport name remains `external-qualification-json-stdio-v1`, but the independent
+verification request and response documents are exact-shape version 2. The request carries a
+canonical verification policy bound to the current paper, campaign, release-binding hash and
+version, launch mode, qualification scope, proposal/policy/seed hashes, canonical prior-art v2
+receipt, and native formal-intake v3 requirement. Production v4 and bounded golden v3 policies are
+mutually exclusive. A version-1 response, a missing policy, or a response copied from another
+release fails closed.
+
+The response must echo the request and policy hashes, contain the independently derived inspection,
+include a canonical `signedAt`, and be signed by the configured verifier attestor. The attestor must
+be `active`, unrevoked, and valid at request time, signing time, and verification time. Signing time
+may differ from request time by at most five minutes; the expiry instant itself is not valid. A
+`retiring` verifier attestor cannot sign new responses in the current single-key model.
+
+After live verification, the complete signed request/response evidence and its canonical hash are
+stored in the qualification inspection. Local renewal, golden qualification, ResearchClosure, and
+the pinned submission verifier rebuild the current request and policy and reverify that evidence.
+They do not trust a persisted `independentVerifierVerified` boolean or an unsigned inspection hash.
+Reverification after the verifier key expires fails closed and requires fresh independent evidence
+under an active key.
+
 ## Rotation contract
 
 Preprovision the next release key in both the production release-attestor trust set and this external

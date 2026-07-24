@@ -15,6 +15,7 @@ function fail(code) {
 /**
  * Synchronous, read-only production preflight for the independent Codex formal reviewer.
  * It deliberately never opens auth.json, credentials.json, tokens, cookies or key files.
+ * Known credential-file metadata is identity-bound without reading secret content.
  * Authentication is delegated to `codex login status`; command output is evaluated in
  * memory and is neither returned nor included in the receipt.
  */

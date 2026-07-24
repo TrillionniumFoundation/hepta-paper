@@ -1,20 +1,26 @@
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
-import { systemBenchmarkEvaluatorDescriptorFor } from '../../paper-domain/automation/system-benchmark-evaluator-abi.mjs';
+import { hasExactObjectKeys as exactKeys } from '../../workflow-kernel/exact-object-keys.mjs';
+import {
+  REGISTERED_SCALAR_RESPONSE_BENCHMARK_FAMILY,
+  SYSTEM_BENCHMARK_EVALUATOR_REGISTRY,
+  systemBenchmarkEvaluatorDescriptorFor,
+} from '../../paper-domain/automation/system-benchmark-evaluator-abi.mjs';
+import {
+  SYSTEM_BENCHMARK_CASE_COUNT,
+  SYSTEM_BENCHMARK_CHALLENGE_MAXIMUM_PARTS,
+  SYSTEM_BENCHMARK_CHALLENGE_PART_BYTES,
+} from '../../paper-domain/automation/system-benchmark-challenge-limits.mjs';
+import {
+  autonomousEmpiricalFamilyPluginProfileFor,
+} from '../../paper-domain/automation/autonomous-empirical-family-plugin-registry.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
-const CASE_COUNT = 8;
-const MAXIMUM_CHALLENGE_PART_BYTES = 60 * 1024;
-const MAXIMUM_CHALLENGE_PARTS = 4;
 const MAXIMUM_RAW_EVENTS_PER_CELL = 64;
 const ARMS = new Set(['treatment', 'baseline', 'ablation']);
 
-const RESPONSE_FIELDS = Object.freeze({
-  rl_stochastic_control_benchmark: 'action',
-  ml_algorithm_benchmark: 'prediction',
-  econometrics_panel_benchmark: 'estimate',
-  finance_asset_pricing_benchmark: 'position',
-  operations_optimization_benchmark: 'decision',
-});
+function responseFieldFor(benchmarkFamily) {
+  return autonomousEmpiricalFamilyPluginProfileFor(benchmarkFamily)?.responseField || null;
+}
 
 const INDEPENDENCE_PAYLOAD = Object.freeze({
   version: 1,
@@ -41,24 +47,60 @@ export const RAW_EVENT_RECOMPUTATION_INDEPENDENCE_CONTRACT = Object.freeze({
   ),
 });
 
-function exactKeys(value, expected) {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value)
-    && Object.keys(value).sort().join('\0') === [...expected].sort().join('\0'));
-}
+const IMPLEMENTATION_PAYLOAD = Object.freeze({
+  version: 1,
+  kind: 'IndependentSystemBenchmarkRecomputationImplementation',
+  assuranceScope: RAW_EVENT_RECOMPUTATION_INDEPENDENCE_CONTRACT.level,
+  independenceContractHash:
+    RAW_EVENT_RECOMPUTATION_INDEPENDENCE_CONTRACT
+      .rawEventRecomputationIndependenceContractHash,
+  evaluatorRegistryHash:
+    SYSTEM_BENCHMARK_EVALUATOR_REGISTRY.systemBenchmarkEvaluatorRegistryHash,
+  producerEvaluatorImportsAllowed: false,
+  processIndependent: false,
+});
+
+// The release production-graph manifest binds the bytes of this module. This
+// record separately gives receipts a stable, typed identity for the verifier
+// implementation instead of reusing the producer harness identity.
+export const INDEPENDENT_SYSTEM_BENCHMARK_RECOMPUTATION_IMPLEMENTATION = Object.freeze({
+  ...IMPLEMENTATION_PAYLOAD,
+  independentSystemBenchmarkRecomputationImplementationHash: hashRecord(
+    'IndependentSystemBenchmarkRecomputationImplementation',
+    IMPLEMENTATION_PAYLOAD,
+  ),
+});
 
 function same(left, right, kind = 'IndependentRecomputationExpected') {
   return hashRecord(kind, left) === hashRecord(kind, right);
 }
 
 function mean(values) {
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
+  if (!values.length) return Number.NaN;
+  let total = 0;
+  let lostLowOrder = 0;
+  for (const value of values) {
+    const combined = total + value;
+    lostLowOrder += Math.abs(total) >= Math.abs(value)
+      ? (total - combined) + value
+      : (value - combined) + total;
+    total = combined;
+  }
+  return (total + lostLowOrder) / values.length;
 }
 
 function standardError(values) {
   if (values.length < 2) return Number.NaN;
-  const average = mean(values);
-  const variance = values.reduce((sum, value) => sum + ((value - average) ** 2), 0) / (values.length - 1);
-  return Math.sqrt(variance) / Math.sqrt(values.length);
+  let count = 0;
+  let runningMean = 0;
+  let centeredSquares = 0;
+  for (const value of values) {
+    count += 1;
+    const distance = value - runningMean;
+    runningMean += distance / count;
+    centeredSquares += distance * (value - runningMean);
+  }
+  return Math.sqrt(Math.max(0, centeredSquares) / (count - 1)) / Math.sqrt(count);
 }
 
 function independentlyEvaluateMetricExpression(events, expression) {
@@ -162,9 +204,12 @@ function authorizedCell(definition, seed, repetition) {
   const matches = definition.cells.filter((cell) => (
     Number(cell?.seed) === seed && Number(cell?.repetition) === repetition
   ));
-  if (matches.length !== 1 || !Array.isArray(matches[0].cases) || matches[0].cases.length !== CASE_COUNT) return null;
+  if (matches.length !== 1 || !Array.isArray(matches[0].cases)
+    || matches[0].cases.length !== SYSTEM_BENCHMARK_CASE_COUNT) return null;
   const cases = matches[0].cases;
-  if (new Set(cases.map((item) => item?.caseId)).size !== CASE_COUNT) return null;
+  if (new Set(cases.map((item) => item?.caseId)).size !== SYSTEM_BENCHMARK_CASE_COUNT) {
+    return null;
+  }
   return matches[0];
 }
 
@@ -180,7 +225,7 @@ export function buildIndependentSystemBenchmarkCellFixture({
   const arm = String(protocol?.arm || '');
   const numericSeed = Number(seed);
   const numericRepetition = Number(repetition);
-  const responseField = RESPONSE_FIELDS[family] || null;
+  const responseField = responseFieldFor(family);
   if (!responseField || !ARMS.has(arm) || !Number.isSafeInteger(numericSeed)
     || !Number.isSafeInteger(numericRepetition) || numericRepetition < 1) {
     blockers.push('independent_fixture_request_invalid');
@@ -200,14 +245,16 @@ export function buildIndependentSystemBenchmarkCellFixture({
       referenceResponse: item.referenceResponse,
       oracle: item.oracle,
     }))
-    : Array.from({ length: CASE_COUNT }, (_, index) => independentlyBuiltInCase({
+    : Array.from({ length: SYSTEM_BENCHMARK_CASE_COUNT }, (_, index) => independentlyBuiltInCase({
       family,
       arm,
       seed: numericSeed,
       repetition: numericRepetition,
       index,
     })));
-  if (cases.length !== CASE_COUNT || cases.some((item) => !item)) blockers.push('independent_fixture_unavailable');
+  if (cases.length !== SYSTEM_BENCHMARK_CASE_COUNT || cases.some((item) => !item)) {
+    blockers.push('independent_fixture_unavailable');
+  }
   const publicCases = cases.map(({ caseId, input, referenceResponse }) => ({
     caseId,
     input,
@@ -223,8 +270,8 @@ export function buildIndependentSystemBenchmarkCellFixture({
     repetition: numericRepetition,
     responseField,
     inputPolicy: arm === 'ablation'
-      ? 'repository-owned-primary-feature-removed-v1'
-      : 'repository-owned-fixed-input-v1',
+      ? `${operatorDatasetHarnessDefinition ? 'operator-authorized' : 'repository-owned'}-primary-feature-removed-v1`
+      : `${operatorDatasetHarnessDefinition ? 'operator-authorized' : 'repository-owned'}-fixed-input-v1`,
     cases: publicCases,
   };
   const challenge = blockers.length ? null : Object.freeze({
@@ -251,18 +298,22 @@ export function buildIndependentSystemBenchmarkCellFixture({
 
 export function decodeIndependentSystemBenchmarkArmBatchChallenge(environment = {}) {
   const count = Number(environment.HEPTA_BENCHMARK_CHALLENGE_PART_COUNT);
-  if (!Number.isSafeInteger(count) || count < 1 || count > MAXIMUM_CHALLENGE_PARTS) return null;
+  if (!Number.isSafeInteger(count) || count < 1
+    || count > SYSTEM_BENCHMARK_CHALLENGE_MAXIMUM_PARTS) return null;
   const parts = Array.from({ length: count }, (_, index) => (
     environment[`HEPTA_BENCHMARK_CHALLENGE_JSON_PART_${index + 1}`]
   ));
   if (parts.some((part) => typeof part !== 'string'
-    || Buffer.byteLength(part, 'utf8') > MAXIMUM_CHALLENGE_PART_BYTES)) return null;
-  for (let index = count + 1; index <= MAXIMUM_CHALLENGE_PARTS; index += 1) {
+    || Buffer.byteLength(part, 'utf8') > SYSTEM_BENCHMARK_CHALLENGE_PART_BYTES)) return null;
+  for (let index = count + 1; index <= SYSTEM_BENCHMARK_CHALLENGE_MAXIMUM_PARTS; index += 1) {
     if (environment[`HEPTA_BENCHMARK_CHALLENGE_JSON_PART_${index}`] !== undefined) return null;
   }
   let challenge = null;
   try { challenge = JSON.parse(parts.join('')); } catch { return null; }
-  if (!challenge || challenge.version !== 1 || challenge.kind !== 'SystemBenchmarkArmBatchChallenge') return null;
+  if (!challenge || ![1, 2].includes(challenge.version)
+    || challenge.kind !== 'SystemBenchmarkArmBatchChallenge'
+    || (challenge.version === 2
+      && !SHA256.test(String(challenge.versionedExperimentIrHash || '')))) return null;
   const { systemBenchmarkArmBatchChallengeHash, ...payload } = challenge;
   if (!SHA256.test(String(systemBenchmarkArmBatchChallengeHash || ''))
     || systemBenchmarkArmBatchChallengeHash !== environment.HEPTA_BENCHMARK_CHALLENGE_HASH
@@ -311,6 +362,13 @@ function eventFromResponse(family, response, oracle) {
       score,
     };
   }
+  if (family === REGISTERED_SCALAR_RESPONSE_BENCHMARK_FAMILY) {
+    return {
+      constraintViolation: response < oracle.lowerBound || response > oracle.upperBound ? 1 : 0,
+      robustnessScore: -((response - oracle.robustTarget) ** 2),
+      score: -((response - oracle.target) ** 2),
+    };
+  }
   return null;
 }
 
@@ -322,13 +380,14 @@ export function independentlyEvaluateSystemBenchmarkCellResponses({
 } = {}) {
   const blockers = [];
   const family = String(protocol?.benchmarkFamily || protocol?.benchmarkId || '');
-  const responseField = RESPONSE_FIELDS[family] || null;
+  const responseField = responseFieldFor(family);
   if (!responseField || challenge?.responseField !== responseField
     || challenge?.arm !== protocol?.arm
     || oracle?.systemBenchmarkCellChallengeHash !== challenge?.systemBenchmarkCellChallengeHash
-    || !Array.isArray(challenge?.cases) || challenge.cases.length !== CASE_COUNT
-    || !Array.isArray(oracle?.cases) || oracle.cases.length !== CASE_COUNT
-    || !Array.isArray(responses) || responses.length !== CASE_COUNT) {
+    || !Array.isArray(challenge?.cases)
+    || challenge.cases.length !== SYSTEM_BENCHMARK_CASE_COUNT
+    || !Array.isArray(oracle?.cases) || oracle.cases.length !== SYSTEM_BENCHMARK_CASE_COUNT
+    || !Array.isArray(responses) || responses.length !== SYSTEM_BENCHMARK_CASE_COUNT) {
     blockers.push('independent_response_document_shape_invalid');
   }
   const oracleById = new Map((oracle?.cases || []).map((item) => [item?.caseId, item?.oracle]));
@@ -350,7 +409,8 @@ export function independentlyEvaluateSystemBenchmarkCellResponses({
     if (!event) blockers.push('independent_response_evaluator_unavailable');
     else events.push(Object.freeze(event));
   }
-  if (seen.size !== CASE_COUNT || events.length !== CASE_COUNT) {
+  if (seen.size !== SYSTEM_BENCHMARK_CASE_COUNT
+    || events.length !== SYSTEM_BENCHMARK_CASE_COUNT) {
     blockers.push('independent_response_case_set_incomplete');
   }
   return Object.freeze({
@@ -422,6 +482,7 @@ export function buildIndependentRawEventRecomputationManifest({
   rawEventRows = [],
   requiredMetrics = [],
   metricSpecs = {},
+  versionedExperimentIrHash = null,
 } = {}) {
   const rows = new Map(rawEventRows.map((row) => [row?.cellId, row]));
   const blockers = [];
@@ -436,6 +497,10 @@ export function buildIndependentRawEventRecomputationManifest({
       metricSpecs,
     });
     const rowHash = line ? hashBytes(line) : null;
+    if (versionedExperimentIrHash
+      && cell?.versionedExperimentIrHash !== versionedExperimentIrHash) {
+      blockers.push(`independent_experiment_ir_mismatch:${cell.cellId}`);
+    }
     if (rowHash !== cell.rawEventArtifactHash) {
       blockers.push(`independent_artifact_hash_mismatch:${cell.cellId}`);
     }
@@ -458,12 +523,13 @@ export function buildIndependentRawEventRecomputationManifest({
   if (rows.size !== cells.length) blockers.push('independent_raw_event_row_bijection_invalid');
   if (maximumAbsoluteResidual !== 0) blockers.push('independent_metric_residual_nonzero');
   const payload = {
-    version: 1,
+    version: versionedExperimentIrHash ? 2 : 1,
     kind: 'RawEventRecomputationManifest',
     status: blockers.length ? 'raw_event_recomputation_blocked' : 'raw_event_recomputation_verified',
     cells: Object.freeze(recomputedCells),
     maximumAbsoluteResidual,
     blockers: Object.freeze([...new Set(blockers)]),
+    ...(versionedExperimentIrHash ? { versionedExperimentIrHash } : {}),
   };
   return Object.freeze({
     ...payload,

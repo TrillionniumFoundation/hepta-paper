@@ -25,11 +25,23 @@ export function verifyCampaignReleaseBundleForSubmission({ releaseAuthority = nu
   if (resolvedRuntimeRoot) {
     const releaseRoot = path.resolve(output?.releaseRoot || '.');
     const packageDir = path.resolve(output?.packageDir || '.');
-    if (!isPathWithin(resolvedRuntimeRoot, releaseRoot) || !isPathWithin(releaseRoot, packageDir)) blockers.push('campaign_release_package_output_scope_invalid');
+    const legacyPackageScope = isPathWithin(releaseRoot, packageDir);
+    const lifecyclePackageScope = path.dirname(packageDir)
+      === path.join(resolvedRuntimeRoot, 'packages');
+    if (!isPathWithin(resolvedRuntimeRoot, releaseRoot)
+      || !isPathWithin(resolvedRuntimeRoot, packageDir)
+      || (!legacyPackageScope && !lifecyclePackageScope)) {
+      blockers.push('campaign_release_package_output_scope_invalid');
+    }
     for (const file of output?.files || []) {
       const candidate = path.resolve(file.path || '.');
-      if (!isPathWithin(releaseRoot, candidate)) { blockers.push(`campaign_release_package_output_file_scope_invalid:${file.role || 'unknown'}`); continue; }
-      const read = readScopedFileSync({ scopeRoot: releaseRoot, candidate });
+      const fileInReleaseScope = isPathWithin(releaseRoot, candidate);
+      const fileInPackageScope = isPathWithin(packageDir, candidate);
+      if (!fileInReleaseScope && !fileInPackageScope) { blockers.push(`campaign_release_package_output_file_scope_invalid:${file.role || 'unknown'}`); continue; }
+      const read = readScopedFileSync({
+        scopeRoot: fileInPackageScope ? packageDir : releaseRoot,
+        candidate,
+      });
       if (read.status !== 'scoped_file_read_verified') blockers.push(`campaign_release_package_output_file_unreadable:${file.role || 'unknown'}`);
       else {
         if (read.hash !== file.hash) blockers.push(`campaign_release_package_output_file_hash_mismatch:${file.role || 'unknown'}`);

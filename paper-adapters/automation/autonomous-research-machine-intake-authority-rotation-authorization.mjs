@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hasExactPlainObjectKeys as exactKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 import {
   verifyAuthoritySignatures,
   verifyAuthorityTimeWindow,
@@ -37,12 +38,6 @@ const INTENT_KEYS = Object.freeze([
   'previousRotationReceiptHash', 'quiescenceStateHash', 'rotatorKeySnapshotHash',
   'signatures', 'signedAt', 'status', 'transition', 'validFrom', 'version',
 ].sort());
-
-function exactKeys(value, keys) {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    && Object.getPrototypeOf(value) === Object.prototype
-    && JSON.stringify(Object.keys(value).sort()) === JSON.stringify(keys);
-}
 
 function observedDate(value) {
   const date = value instanceof Date ? value : new Date(value);

@@ -1,3 +1,8 @@
+import {
+  autonomousResearchResidentReactivationStopReason,
+  isResidentReactivationRequired,
+} from './autonomous-research-resident-reactivation-required.mjs';
+
 function observedDate(clock) {
   const value = clock?.now ? clock.now() : new Date();
   const date = value instanceof Date ? value : new Date(value);
@@ -46,6 +51,7 @@ export function assertAutonomousResearchResidentInstanceConfiguration({
 
 export async function runAutonomousResearchResident({
   residentInstanceRepository,
+  residentCycleIntentRepository = null,
   residentInstanceLeaseMs,
   residentInstanceHeartbeatMs,
   requireFullyAutonomous = false,
@@ -58,12 +64,18 @@ export async function runAutonomousResearchResident({
   onCycle,
   pollMs,
 } = {}) {
+  if (residentCycleIntentRepository
+    && (typeof residentCycleIntentRepository.listPending !== 'function'
+      || typeof residentCycleIntentRepository.complete !== 'function')) {
+    throw new Error('autonomous_research_resident_cycle_intent_repository_invalid');
+  }
   const executionSignal = executionController.signal;
   let cycles = 0;
   let lastCycle = null;
   let instanceLease = null;
   let instanceHeartbeat = null;
   let instanceFailure = null;
+  let reactivationStopReason = null;
   const loseInstanceLease = (error) => {
     if (!instanceFailure) instanceFailure = error instanceof Error
       ? error : new Error(String(error
@@ -170,6 +182,9 @@ export async function runAutonomousResearchResident({
       publishResidentProgress({ stage: 'resident_started' });
     }
     while (!executionSignal.aborted) {
+      const pendingCycleIntents = instanceLease && residentCycleIntentRepository
+        ? residentCycleIntentRepository.listPending()
+        : Object.freeze([]);
       lastCycle = await runCycle({
         cycleAuthority,
         onStartupReconciled: instanceLease ? publishStartupReconciliation : null,
@@ -182,6 +197,21 @@ export async function runAutonomousResearchResident({
       cycles += 1;
       if (instanceLease) heartbeat(lastCycle);
       if (instanceFailure) throw instanceFailure;
+      if (lastCycle?.status === 'autonomous_research_supervisor_cycle_completed'
+        && pendingCycleIntents.length > 0) {
+        for (const intent of pendingCycleIntents) {
+          const residentLeaseContext = publishResidentProgress({
+            stage: `resident_cycle_intent_completion:${intent.purpose}`,
+          });
+          if (instanceFailure) throw instanceFailure;
+          residentCycleIntentRepository.complete({
+            intent,
+            cycleReceipt: lastCycle,
+            residentLeaseContext,
+            now: observedDate(clock),
+          });
+        }
+      }
       await onCycle?.(lastCycle);
       if (!executionSignal.aborted) {
         await sleepWithSignal(scheduler, pollMs, executionSignal);
@@ -197,13 +227,20 @@ export async function runAutonomousResearchResident({
       lastCycle,
       stoppedAt: observedDate(clock).toISOString(),
     });
+  } catch (error) {
+    if (isResidentReactivationRequired(error)) {
+      reactivationStopReason = autonomousResearchResidentReactivationStopReason(error);
+      if (!executionSignal.aborted) executionController.abort(reactivationStopReason);
+    }
+    throw error;
   } finally {
     if (instanceHeartbeat) scheduler.clearInterval(instanceHeartbeat);
     if (instanceLease) {
       try {
         residentInstanceRepository.releaseInstanceLease({
           lease: instanceLease,
-          reason: executionSignal.reason || 'supervisor_process_shutdown',
+          reason: reactivationStopReason || executionSignal.reason
+            || 'supervisor_process_shutdown',
           now: observedDate(clock),
         });
       } catch { /* an expired/replaced instance fence must not be cleared */ }

@@ -18,6 +18,13 @@ import {
 } from '../../paper-adapters/automation/empirical-assertion-authority.mjs';
 import { runManuscriptQualityChecks } from '../../paper-adapters/automation/manuscript-quality-checks.mjs';
 import { renderTrustedAutonomousManuscript } from '../../paper-adapters/automation/trusted-autonomous-manuscript-renderer.mjs';
+import {
+  buildDefaultAutonomousManuscriptIrDraft,
+  inspectAutonomousManuscriptSubstantiveAgentProse,
+} from '../../paper-adapters/automation/autonomous-manuscript-ir-materialization.mjs';
+import {
+  verifyTrustedAutonomousManuscriptRenderReceipt,
+} from '../../paper-domain/automation/trusted-autonomous-manuscript-render-contract.mjs';
 import { empiricalAssertionResearchReportValid } from '../../paper-adapters/build-package/research-evidence-empirical-assertion-binding.mjs';
 import { expectedCampaignExperimentArtifactRole } from '../../paper-domain/research/campaign-experiment-claim-lineage.mjs';
 import {
@@ -36,6 +43,9 @@ import {
   evaluateAutonomousResearchPolicy,
 } from '../../paper-domain/automation/autonomous-research-policy-contract.mjs';
 import { renderAutonomousEmpiricalClaimStatement } from '../../paper-domain/automation/autonomous-empirical-claim-lineage-contract.mjs';
+import { buildEvidenceBoundManuscriptIrDraft } from '../../paper-domain/research/evidence-bound-manuscript-ir.mjs';
+import { buildAgentWorkspacePostimageBinding } from '../../paper-domain/evidence/agent-execution-receipt-contract.mjs';
+import { buildPriorArtEvidenceReceipt } from '../../paper-domain/research/prior-art-evidence-contract.mjs';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 const hash = (character) => `sha256:${character.repeat(64)}`;
@@ -50,6 +60,12 @@ function evaluation(
 ) {
   return Object.freeze({
     status: 'academic_analysis_protocol_verified',
+    analysisProtocol: Object.freeze({
+      pairedUnit: 'seed',
+      metricSpecs: Object.freeze({
+        score: Object.freeze({ unit: 'score-points' }),
+      }),
+    }),
     scientificVerdict,
     academicAnalysisProtocolEvaluationHash: hash(accepted ? 'a' : 'b'),
     hypotheses: Object.freeze([Object.freeze({
@@ -212,7 +228,11 @@ function projectedRegistryFixture() {
       version: 1,
       kind: 'AcademicAnalysisProtocolEvaluation',
       analysisProtocolHash,
-      analysisProtocol: { empiricalClaimUniverseHash },
+      analysisProtocol: {
+        empiricalClaimUniverseHash,
+        pairedUnit: 'seed',
+        metricSpecs: { score: { unit: 'score-points' } },
+      },
       blockers: [],
     };
     delete originalPayload.academicAnalysisProtocolEvaluationHash;
@@ -331,8 +351,24 @@ test('typed empirical assertion happy path binds both positive and negative repl
   assert.deepEqual(binding.bindings.map((item) => item.scientificVerdict).sort(), ['negative', 'positive']);
   assert.deepEqual(binding.bindings.map((item) => item.verdict).sort(), ['negative', 'positive']);
   for (const entry of trusted.entries) {
+    assert.equal(entry.predicate.metricUnit, 'score-points');
+    assert.equal(entry.predicate.pairedUnit, 'seed');
     assert.equal(entry.replay.artifactPath, `automation-results/${entry.replay.artifactPath.split('/')[1]}/results.json`);
   }
+});
+
+test('empirical assertion units come from the signed protocol and must match replay', () => {
+  const trustedExperiment = structuredClone(experiment({
+    suffix: 'unit-bound', claimId: 'claim-unit', hypothesisId: 'hyp-unit',
+    accepted: true, estimate: 0.5,
+  }));
+  trustedExperiment.replayEvaluation.analysisProtocol.metricSpecs.score.unit = 'ratio';
+  assert.throws(() => buildEmpiricalAssertionAuthority({
+    paperId: 'paper-unit',
+    campaignId: 'campaign-unit',
+    experimentRegistryHash: hash('d'),
+    experiments: [trustedExperiment],
+  }), /empirical_assertion_replay_verdict_mismatch/);
 });
 
 test('inconclusive scientific verdict and uncertainty reasons remain distinct from a negative result', () => {
@@ -539,7 +575,7 @@ test('autonomous manuscript accepts only registry-bound claims, canonical assert
   assert.ok(changed.blockers.includes('empirical_assertion_trusted_claim_universe_mismatch'));
 });
 
-test('system renderer discards agent prose and rebuilds the autonomous manuscript only from bound authorities', () => {
+test('system renderer rebuilds the evidence-bound manuscript only from verified IR authorities', () => {
   const paperId = 'paper-system-rendered';
   const campaignId = 'campaign-system-rendered';
   const protocolFamily = 'econometrics_panel_benchmark';
@@ -569,6 +605,49 @@ test('system renderer discards agent prose and rebuilds the autonomous manuscrip
     proposal,
     policyAuthorization: policy,
     createdAt: '2026-07-15T00:00:04.000Z',
+  });
+  const priorArtHash = (label) => hashRecord('PriorArtRendererFixture', { label });
+  const priorArtReceipt = buildPriorArtEvidenceReceipt({
+    paperId,
+    agendaSelectionReceiptHash: proposal.agendaSelectionReceiptHash,
+    generatorPrincipalId: proposal.generatorPrincipalId,
+    queries: [{
+      queryId: 'query-system-rendered',
+      query: 'auditable autonomous research evidence systems',
+      providers: ['openalex-snapshot'],
+      executedAt: '2026-07-15T00:00:05.000Z',
+      corpusSnapshotHash: priorArtHash('corpus'),
+      resultSetHash: priorArtHash('results'),
+      retrievalReceiptHash: priorArtHash('retrieval'),
+    }],
+    works: [{
+      workId: 'work-system-rendered',
+      title: 'Auditable machine research systems',
+      authors: ['Ada Researcher'],
+      year: 2025,
+      identifiers: {
+        doi: '10.0000/system.1',
+        arxiv: null,
+        openAlex: null,
+        url: null,
+      },
+      queryIds: ['query-system-rendered'],
+      sourceSnapshotHash: priorArtHash('source'),
+      abstractHash: priorArtHash('abstract'),
+    }],
+    coverageLimitations: [
+      'The finite configured literature snapshot cannot establish open-world completeness.',
+    ],
+    independentReview: {
+      principalId: 'prior-art-reviewer-system-rendered',
+      providerAccountIdentityHash: priorArtHash('reviewer-account'),
+      trustDomainIdentityHash: priorArtHash('reviewer-domain'),
+      reviewReceiptHash: priorArtHash('review'),
+      signatureVerificationReceiptHash: priorArtHash('signature-verification'),
+      independentFromGenerator: true,
+    },
+    createdAt: '2026-07-15T00:00:06.000Z',
+    mode: 'verified',
   });
   const empiricalSeed = seed.claims.find((claim) => claim.verificationMode === 'empirical_protocol');
   const proposalClaimRecordHash = hashRecord('AutonomousResearchClaimRecord', empiricalSeed);
@@ -609,12 +688,22 @@ test('system renderer discards agent prose and rebuilds the autonomous manuscrip
   fs.writeFileSync(path.join(root, 'AUTONOMOUS_RESEARCH_PROPOSAL.json'), JSON.stringify(proposal));
   fs.writeFileSync(path.join(root, 'AUTONOMOUS_RESEARCH_POLICY_AUTHORIZATION.json'), JSON.stringify(policy));
   fs.writeFileSync(path.join(root, 'AUTONOMOUS_RESEARCH_SEED_CONTRACTS.json'), JSON.stringify(seed));
+  fs.writeFileSync(path.join(root, 'AUTONOMOUS_PRIOR_ART_EVIDENCE.json'), JSON.stringify(priorArtReceipt));
   fs.writeFileSync(path.join(root, 'main.tex'), [
     '\\usepackage{attacker}',
     '\\begin{equation}',
     '\\text{Our method always defeats every baseline.}',
     '\\end{equation}',
   ].join('\n'));
+  assert.throws(() => renderTrustedAutonomousManuscript({
+    workspace: root,
+    manuscriptPath: 'main.tex',
+    paperId,
+    campaignId,
+    authority: trusted,
+    requireAgentAuthoredProse: true,
+    manuscriptProductionMode: 'agent-authored-evidence-bound-ir-v1',
+  }), /autonomous_manuscript_ir_substantive_agent_prose_required/);
   const receipt = renderTrustedAutonomousManuscript({
     workspace: root,
     manuscriptPath: 'main.tex',
@@ -623,8 +712,10 @@ test('system renderer discards agent prose and rebuilds the autonomous manuscrip
     authority: trusted,
   });
   assert.equal(receipt.status, 'trusted_autonomous_manuscript_rendered');
-  assert.equal(receipt.version, 2);
-  assert.equal(receipt.sectionModel, 'trusted-evidence-bound-autonomous-manuscript-v2');
+  assert.equal(receipt.version, 6);
+  assert.equal(receipt.sectionModel, 'evidence-bound-manuscript-ir-v1');
+  assert.equal(receipt.manuscriptProductionMode, 'minimal-report-evidence-bound-ir-v1');
+  assert.equal(receipt.requireAgentAuthoredProse, false);
   assert.equal(receipt.unboundScientificProseAccepted, false);
   const rendered = fs.readFileSync(path.join(root, 'main.tex'), 'utf8');
   assert.equal(rendered.includes('attacker'), false);
@@ -639,16 +730,203 @@ test('system renderer discards agent prose and rebuilds the autonomous manuscrip
   assert.match(rendered, /base-retained-zero/);
   assert.match(rendered, /fresh kernel replay/);
   for (const section of [
-    'Research scope', 'Related-work boundary', 'Methods', 'Preregistered claims',
-    'Formal assurance', 'Results', 'Discussion', 'Reproducibility and audit trail',
-    'Limitations', 'Conclusion',
+    'Abstract', 'Related Work', 'Methods and Preregistered Claims', 'Formal Assurance',
+    'Results', 'Reproducibility and Evidence', 'Limitations',
   ]) assert.ok(rendered.includes(`\\section{${section}}`), section);
-  assert.ok(rendered.includes('infer novelty'));
-  assert.ok(rendered.includes('No unregistered causal, universal, convergence, or superiority'));
+  assert.ok(rendered.includes('machine-readable prior-art snapshot'));
+  assert.ok(rendered.includes('Auditable machine research systems'));
+  assert.ok(rendered.includes('10.0000/system.1'));
+  assert.ok(rendered.includes('finite configured literature snapshot'));
+  assert.ok(rendered.includes('Successful execution does not prove exhaustive novelty'));
   assert.equal(receipt.presentationArtifacts.length, 1);
   const [presentationArtifact] = receipt.presentationArtifacts;
   assert.equal(hashBytes(fs.readFileSync(path.join(root, presentationArtifact.path))),
     presentationArtifact.hash);
+
+  const agentDraft = buildEvidenceBoundManuscriptIrDraft({
+    paperId,
+    title: 'Agent-authored evidence synthesis',
+    sections: [{
+      sectionId: 'agent-summary',
+      heading: 'Agent Evidence Synthesis',
+      blocks: [{
+        type: 'prose',
+        blockId: 'agent-summary-prose',
+        claimClass: 'scope',
+        text: 'This model-authored paragraph is admitted only through its verified authority binding and workspace postimage receipt.',
+        evidenceRefs: [proposal.machineProposedScientificClaimSetHash],
+      }],
+    }, {
+      sectionId: 'methods',
+      heading: 'Bound Methods',
+      blocks: [{ type: 'slot', blockId: 'empirical-claims-slot', slot: 'empirical_claims' },
+        { type: 'slot', blockId: 'formal-support-slot', slot: 'formal_support' }],
+    }, {
+      sectionId: 'results',
+      heading: 'Bound Results',
+      blocks: [{ type: 'slot', blockId: 'empirical-results-slot', slot: 'empirical_results' }],
+    }, {
+      sectionId: 'limitations',
+      heading: 'Bound Limitations',
+      blocks: [{
+        type: 'prose',
+        blockId: 'agent-limitations',
+        claimClass: 'limitation',
+        text: 'The bounded evidence does not establish open-world novelty or universal truth.',
+        evidenceRefs: [policy.autonomousResearchPolicyAuthorizationHash],
+      }],
+    }],
+  });
+  const systemSeedDraft = buildDefaultAutonomousManuscriptIrDraft({
+    proposal,
+    policyAuthorization: policy,
+    seedBundle: seed,
+    priorArtReceipt,
+  });
+  const agentReceiptForDraft = (candidate, label) => {
+    const payload = {
+      version: 1,
+      kind: 'AgentExecutionReceipt',
+      status: 'agent_execution_completed',
+      agentId: 'evidence-author',
+      resolvedModel: 'evidence-writer-v1',
+      promptHash: hashRecord('ManuscriptSubstantiveProsePrompt', { label }),
+      changedPaths: ['AUTONOMOUS_MANUSCRIPT_IR_DRAFT.json'],
+    };
+    return Object.freeze({
+      ...payload,
+      agentExecutionReceiptHash: hashRecord('AgentExecutionReceipt', payload),
+      agentWorkspacePostimageBinding: buildAgentWorkspacePostimageBinding({
+        changedPaths: payload.changedPaths,
+        files: [{
+          path: 'AUTONOMOUS_MANUSCRIPT_IR_DRAFT.json',
+          hash: hashBytes(Buffer.from(JSON.stringify(candidate), 'utf8')),
+        }],
+      }),
+    });
+  };
+  const assertSubstantiveProseBlocked = (candidate, label) => {
+    const inspection = inspectAutonomousManuscriptSubstantiveAgentProse({
+      draft: candidate,
+      systemSeedDraft,
+    });
+    assert.equal(inspection.valid, false, label);
+    assert.ok(inspection.blockers.some((blocker) => (
+      blocker.startsWith('autonomous_manuscript_ir_system_seed_prose_retained:')
+        || blocker === 'autonomous_manuscript_ir_multiple_substantive_agent_sections_required'
+    )), `${label}:${inspection.blockers.join(',')}`);
+    fs.writeFileSync(path.join(root, 'AUTONOMOUS_MANUSCRIPT_IR_DRAFT.json'),
+      JSON.stringify(candidate));
+    assert.throws(() => renderTrustedAutonomousManuscript({
+      workspace: root,
+      manuscriptPath: 'main.tex',
+      paperId,
+      campaignId,
+      authority: trusted,
+      agentExecutionReceipt: agentReceiptForDraft(candidate, label),
+      requireAgentAuthoredProse: true,
+      manuscriptProductionMode: 'agent-authored-evidence-bound-ir-v1',
+    }), /autonomous_manuscript_ir_substantive_agent_prose_required/, label);
+  };
+
+  const headingOnlyDraft = structuredClone(systemSeedDraft);
+  headingOnlyDraft.sections[0].heading = 'Agent Renamed Abstract';
+  assertSubstantiveProseBlocked(headingOnlyDraft, 'heading-only metadata change');
+
+  const whitespaceOnlyDraft = structuredClone(systemSeedDraft);
+  whitespaceOnlyDraft.sections[0].blocks[0].text = `  ${
+    whitespaceOnlyDraft.sections[0].blocks[0].text.replaceAll(' ', '   ')}  `;
+  assertSubstantiveProseBlocked(whitespaceOnlyDraft, 'whitespace-only prose change');
+
+  const oneTokenNoiseDraft = structuredClone(systemSeedDraft);
+  for (const block of oneTokenNoiseDraft.sections.flatMap((section) => section.blocks)) {
+    if (block.type === 'prose' || block.type === 'citation') block.text += ' Updated.';
+  }
+  assertSubstantiveProseBlocked(oneTokenNoiseDraft, 'one-token noise per default paragraph');
+
+  const retainedDefaultParagraphDraft = structuredClone(agentDraft);
+  retainedDefaultParagraphDraft.sections[0].blocks.push({
+    ...structuredClone(systemSeedDraft.sections[0].blocks[0]),
+    blockId: 'retained-system-seed-paragraph',
+  });
+  assertSubstantiveProseBlocked(
+    retainedDefaultParagraphDraft,
+    'default paragraph retained beside custom prose',
+  );
+
+  const substantiveInspection = inspectAutonomousManuscriptSubstantiveAgentProse({
+    draft: agentDraft,
+    systemSeedDraft,
+  });
+  assert.equal(substantiveInspection.valid, true);
+  assert.equal(substantiveInspection.substantivelyRewrittenSectionCount, 2);
+  assert.equal(substantiveInspection.claimBoundBlockCount, 2);
+  fs.writeFileSync(path.join(root, 'AUTONOMOUS_MANUSCRIPT_IR_DRAFT.json'),
+    JSON.stringify(agentDraft));
+  const agentExecutionReceipt = agentReceiptForDraft(agentDraft, 'valid-multi-section-prose');
+  const agentRenderedReceipt = renderTrustedAutonomousManuscript({
+    workspace: root,
+    manuscriptPath: 'main.tex',
+    paperId,
+    campaignId,
+    authority: trusted,
+    agentExecutionReceipt,
+    requireAgentAuthoredProse: true,
+    manuscriptProductionMode: 'agent-authored-evidence-bound-ir-v1',
+  });
+  const agentRendered = fs.readFileSync(path.join(root, 'main.tex'), 'utf8');
+  assert.equal(agentRenderedReceipt.agentAuthoredRenderedProseAccepted, true);
+  assert.equal(agentRenderedReceipt.requireAgentAuthoredProse, true);
+  assert.equal(agentRenderedReceipt.agentAuthoredRenderedProseReceiptHash,
+    agentExecutionReceipt.agentExecutionReceiptHash);
+  assert.equal(agentRenderedReceipt.substantiveAgentProseVerified, true);
+  assert.equal(agentRenderedReceipt.substantiveAgentProseInspectionHash,
+    substantiveInspection.autonomousManuscriptSubstantiveAgentProseInspectionHash);
+  assert.deepEqual(agentRenderedReceipt.substantiveAgentProseInspection,
+    substantiveInspection);
+  assert.deepEqual(agentRenderedReceipt.agentAuthoredSourceDraft, agentDraft);
+  assert.deepEqual(agentRenderedReceipt.systemSeedManuscriptIrDraft, systemSeedDraft);
+  assert.equal(agentRenderedReceipt.systemSeedManuscriptIrDraftHash,
+    substantiveInspection.systemSeedDraftHash);
+  assert.equal(agentRenderedReceipt.substantivelyRewrittenSectionCount, 2);
+  assert.equal(agentRenderedReceipt.substantivelyRewrittenBlockCount, 2);
+  assert.equal(verifyTrustedAutonomousManuscriptRenderReceipt(agentRenderedReceipt, {
+    paperId,
+    campaignId,
+    manuscriptPath: 'main.tex',
+    agentExecutionReceipt,
+    requireAgentAuthored: true,
+  }).valid, true);
+  const {
+    trustedAutonomousManuscriptRenderReceiptHash: _receiptHash,
+    ...tamperedCountPayload
+  } = structuredClone(agentRenderedReceipt);
+  tamperedCountPayload.substantivelyRewrittenBlockCount += 1;
+  const tamperedCountReceipt = {
+    ...tamperedCountPayload,
+    trustedAutonomousManuscriptRenderReceiptHash:
+      hashRecord('TrustedAutonomousManuscriptRenderReceipt', tamperedCountPayload),
+  };
+  assert.equal(verifyTrustedAutonomousManuscriptRenderReceipt(tamperedCountReceipt, {
+    agentExecutionReceipt,
+    requireAgentAuthored: true,
+  }).valid, false);
+  assert.match(agentRendered, /Agent Evidence Synthesis/);
+  assert.match(agentRendered, /model-authored paragraph is admitted only through/);
+
+  const unreceiptedDraft = structuredClone(agentDraft);
+  unreceiptedDraft.sections[0].blocks[0].text = 'Unreceipted replacement prose.';
+  fs.writeFileSync(path.join(root, 'AUTONOMOUS_MANUSCRIPT_IR_DRAFT.json'),
+    JSON.stringify(unreceiptedDraft));
+  assert.throws(() => renderTrustedAutonomousManuscript({
+    workspace: root,
+    manuscriptPath: 'main.tex',
+    paperId,
+    campaignId,
+    authority: trusted,
+  }), /autonomous_manuscript_ir_agent_receipt_required/);
+  fs.writeFileSync(path.join(root, 'AUTONOMOUS_MANUSCRIPT_IR_DRAFT.json'),
+    JSON.stringify(agentDraft));
 
   const external = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-empirical-presentation-external-'));
   fs.rmSync(path.join(root, 'figures'), { recursive: true, force: true });
@@ -659,6 +937,7 @@ test('system renderer discards agent prose and rebuilds the autonomous manuscrip
     paperId,
     campaignId,
     authority: trusted,
+    agentExecutionReceipt,
   }), /trusted_autonomous_manuscript_presentation_artifact_path_invalid/);
   assert.deepEqual(fs.readdirSync(external), []);
 });

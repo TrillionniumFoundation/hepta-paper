@@ -85,6 +85,7 @@ export function createAutonomousResearchRuntimeRefresh({
   stateRepository,
   readStatus,
   publish,
+  recoverPendingPublication = null,
   clock = { now: () => new Date() },
   scheduler,
   random = Math.random,
@@ -94,11 +95,28 @@ export function createAutonomousResearchRuntimeRefresh({
     || typeof stateRepository.reserveRefreshAttempt !== 'function'
     || typeof readStatus !== 'function'
     || typeof publish !== 'function'
+    || (recoverPendingPublication !== null
+      && typeof recoverPendingPublication !== 'function')
     || typeof scheduler?.setInterval !== 'function'
     || typeof scheduler?.clearInterval !== 'function') {
     throw new Error('autonomous_research_runtime_refresh_dependencies_invalid');
   }
   const { policy } = stateRepository;
+
+  async function readStatusAfterPublicationRecovery(now) {
+    if (recoverPendingPublication !== null) {
+      try { await recoverPendingPublication({ now }); }
+      catch (error) {
+        const wrapped = new Error(
+          'runtime_reproducibility_pending_publication_recovery_failed',
+          { cause: error },
+        );
+        wrapped.retryablePublicationRecovery = true;
+        throw wrapped;
+      }
+    }
+    return readStatus({ now });
+  }
 
   return Object.freeze({
     version: 1,
@@ -111,7 +129,7 @@ export function createAutonomousResearchRuntimeRefresh({
       const now = observedDate(clock);
       let status;
       try {
-        status = await readStatus({ now });
+        status = await readStatusAfterPublicationRecovery(now);
         const configuration = configurationFromStatus(status, policy);
         const requiredValidity = requiredValidityMs(campaign, policy, now.getTime());
         if (requiredValidity >= configuration.maximumReceiptAgeMs) {
@@ -121,7 +139,7 @@ export function createAutonomousResearchRuntimeRefresh({
         return deferred(
           String(error?.message || error),
           new Date(now.getTime() + policy.maximumBackoffMs).toISOString(),
-          { terminal: true },
+          { terminal: error?.retryablePublicationRecovery !== true },
         );
       }
       const initialRequiredValidity = requiredValidityMs(campaign, policy, now.getTime());
@@ -168,7 +186,7 @@ export function createAutonomousResearchRuntimeRefresh({
       }, Math.max(250, Math.floor(policy.leaseMs / 3)));
       scheduler.unref?.(heartbeat);
       try {
-        status = await readStatus({ now: observedDate(clock) });
+        status = await readStatusAfterPublicationRecovery(observedDate(clock));
         const configuration = configurationFromStatus(status, policy);
         const fencedNow = observedDate(clock);
         const fencedRequiredValidity = requiredValidityMs(

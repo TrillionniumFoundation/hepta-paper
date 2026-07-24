@@ -21,13 +21,35 @@ do not override this document.
 - `core/` is a baseline-bound vendored reference package; the production graph
   may not import `core/src`.
 
-The supported command surface is `npm run hepta-paper -- <operator|verify|retirement> <command>`.
+The supported command surface is `npm run hepta-paper -- <operator|verify|maintenance|retirement> <command>`.
 Remaining npm scripts are classified verification, maintenance, retirement,
 compatibility, experimental or internal plumbing rather than a second
 production operator API.
 The declarative command registry drives both routing and classification;
 unregistered scripts default to internal/blocked rather than operator. Forwarded
 arguments require an explicit `--` separator.
+
+The canonical final deployment gate is `operator strict-full-auto-acceptance`.
+It exposes `plan|status|execute`, requires an immutable plan hash for mutation,
+and converges the closed fifteen-step dependency order with content-addressed
+crash checkpoints. A complete local checkpoint cannot make this gate green;
+every accepted status is derived from a fresh live verification pass. Code
+availability does not make this gate green: independent
+author/reviewer/qualifier identities, KMS/HSM and plugin signer references,
+runtime reproducibility, machine intake, resident supervisor, restore evidence,
+golden qualification, a paper-bound production campaign, generic-domain evidence
+convergence, and the isolated submission dispatcher must all be
+provided by their real external authorities.
+
+The universal submission registry now covers all 97 target profiles without a
+silent fallback. All 60 journal targets and 36/37 conference targets have at
+least one candidate family backed by a local OpenReview, HotCRP, OJS or
+Playwright-assisted prototype. Four targets have a target-specific OpenReview
+seed. `colt_alt` remains identity-blocked until COLT and ALT are split. Current
+verified portal bindings, sandbox qualifications, production qualifications and
+live-commit authorizations remain 0/97; local prototype availability is not
+reported as live readiness. See
+[`universal-submission-system.md`](universal-submission-system.md).
 
 Contract implementations live only in `paper-domain/contracts`. One hash-bound
 `paper-core/src/contracts/workflow-contracts.mjs` retirement facade remains for
@@ -95,7 +117,7 @@ entrypoints are retired.
 
 The default native store is
 `/data/home-data/hepta-paper-runtime/native-runtime/hepta-paper.sqlite` at
-schema 23. The asset workspace and every mutable runtime/report/store root are
+schema 25. The asset workspace and every mutable runtime/report/store root are
 required to remain physically disjoint after symlink resolution; mutating
 bootstraps reject an overlapping layout before the first write. Receipt rows and
 qualification rows are protected by update/delete-deny triggers. Startup
@@ -122,6 +144,9 @@ released about 1.64 GB through the receipt-backed retention path.
 The liveness reconciliation introduced by migration 020 additionally pauses no-progress campaigns
 and transactionally closes queued children of terminal campaigns without
 starting workers or discarding recoverable workspace state.
+Migration 024 classifies submission-outbox delivery kinds; migration 025 moves
+autonomous submission delivery into its dedicated handoff database while
+preserving an atomic, inspectable cutover receipt.
 Batch reports are campaign-first: they record plans, queued/replayed state,
 plan hashes and node kinds, and do not manufacture retired stage results.
 Legacy stage metrics exist only on the explicit non-authoritative compatibility
@@ -172,6 +197,38 @@ provisioned, the research campaign itself has no human checkpoint:
   inspection and fresh replay must all pass before the candidate is integrated.
   Failed candidates can enter a bounded diagnostics-driven repair round without
   first contaminating the source workspace.
+- The typed theorem DSL covers Nat, Int, Bool, Fin, additive identity laws for
+  fixed Vector/Matrix/finite-measure/stochastic-process domains, universal-set
+  intersection for real feasible sets, and a no-division Real ordered-ring
+  polynomial fragment. The five generic-domain qualification profiles are
+  non-reflexive Mathlib goals closed through pinned proof-state search and fresh
+  replay; they remain capability diagnostics, not theorem discovery or
+  domain-completeness claims. The bounded tactic portfolio includes direct
+  elaboration, simplification, library-guided automation, Presburger arithmetic,
+  polynomial normalization, linear/nonlinear arithmetic, numeric normalization
+  and positivity before it emits an exhaustion certificate. Real and structured
+  obligations require a pinned Mathlib
+  project closure. The production source anchor is the official Mathlib
+  `v4.30.0` tag, commit `c5ea00351c28e24afc9f0f84379aa41082b1188f`
+  and tree `1fe688f4d9e84fb268a300f8ac33cbca883fbd28`; the exact Lake
+  manifest provenance fields and a clean materialized Git worktree are checked.
+  Generic and production readiness also require the complete source,
+  dependency, `.lake/build` and Lake-metadata closure to be authorized by a
+  code-reviewed build allowlist or an independently signed, separately
+  configuration-hash-pinned Ed25519 authority that binds the exact closure,
+  official Mathlib release identity, Lean toolchain and toolchain Merkle root.
+  The code allowlist currently has no reviewed Mathlib 4.30 closure; absent the
+  external authority the capability remains fail-closed with
+  `dynamic_formal_mathlib_build_authority_required`. If a closure is authorized,
+  readiness additionally requires the production Lean
+  toolchain Merkle identity and a closure-bound `import Mathlib` probe in the
+  same digest-pinned Docker sandbox from a sealed read-only `/work` snapshot.
+  Closure files, probe bytes, source provenance, build authority and toolchain
+  content identity are remeasured after execution, so in-probe mutation or
+  mutate-and-restore drift fails closed; the default Alpine/Init-only runtime
+  cannot satisfy this gate. Its bounded
+  integer-embedding search may produce a counterexample witness, but absence of
+  a witness is always inconclusive and never promoted as a proof.
 - Academic empirical runs use an externally authorized dataset/harness and
   signed `AnalysisProtocol`. Each scheduled cell is bound to exactly one
   approved Python or R runtime profile, runs in a supervised container process,
@@ -193,8 +250,19 @@ provisioned, the research campaign itself has no human checkpoint:
   markers are accepted only when a typed presentation authority binds them to
   the accepted experiment registry, trusted ledger, assertion universe and
   matching original plus replay lineage. Agents cannot write the system-owned
-  `automation-results/` tree. Unsupported convergence, condition-number or
-  method-specific claims still block promotion.
+  `automation-results/` tree. Each signed production profile is also compiled
+  into a hash-bound Experiment IR covering design, estimator, metrics, stopping
+  rule, dataset contract, execution binding and typed numeric-oracle ABI.
+  Convergence, condition-number, error-bound and optimality-gap claims require
+  a separately signed advanced profile plus process-isolated recomputation;
+  the built-in property/residual profiles cannot authorize those claims.
+  The evaluator ABI also contains an externally activatable, data-only
+  `registered_scalar_response_benchmark` for arbitrary operator-authorized JSON
+  inputs with scalar responses and host-held interval/target oracles. Producer
+  and independently implemented recomputation paths agree on challenge,
+  response-event and metric semantics; no executable plugin payload is loaded.
+  This broadens experiment onboarding but does not claim that one scalar loss
+  captures every scientific domain or that empirical success proves causality.
 - Original and replay receipts bind source, dataset, runtime, resource limits,
   hardware, package closure, determinism policy and a normalized Environment
   BOM. Academic, GPU, nondeterministic and unknown modes bypass the generic
@@ -285,13 +353,46 @@ requires `fullAutomaticResearchWritingReady`, a current machine-intake authority
 that can produce and enqueue a registered topic from an empty campaign queue,
 and a healthy fenced resident whose startup and intake reconciliation receipts
 match that current authority. `automation-status --require-fully-autonomous`
-returns exit code 4 until all three conditions are true. This is a bounded
-unattended execution claim for registered profiles, not a claim of universal
-scientific validity, exhaustive prior-art search, or self-created independent
-trust.
+returns exit code 4 when the lower runtime, store, operational, and full-research
+layers are ready but the autonomous layer is not; an earlier failed layer keeps
+its lower exit code. Live production attestor verification is explicit through
+`--live-release-attestor`; `automation:research-status` supplies it together
+with the live author/reviewer canary flag. This is a bounded unattended
+execution claim for registered profiles, not a claim of universal scientific
+validity, exhaustive prior-art search, or self-created independent trust.
+
+The autonomous layer also requires the fail-closed state-safety gate documented
+in [`autonomous-research-state-safety-readiness.md`](autonomous-research-state-safety-readiness.md):
+closed database inventory and latest valid restore coverage must both be 10/10,
+and online writer coverage must be 10/10 with matching static AST and broker-
+signed scope evidence bound to a current signed authority head and recent
+active challenge. Ordinary status is passive. The production operation
+manifest now covers all ten roles through sixteen writer entries and binds
+202 coordinator-integrated mutation operations to factory-pinned typed plans;
+the code-level writer coverage contract therefore reports `10/10` (100%).
+Constructor/schema DDL remains an offline provisioning operation. Startup can
+verify signed per-database unresolved reservations and idempotently finalize a
+trusted local committed marker. A marker-absent reservation is automatically
+aborted only under a database write lock when its exact local
+sequence/hash/schema/state still equals the signed pre-commit head; otherwise
+it is preserved as possible commit or rollback evidence and blocks startup. A
+deployment remains blocked until its databases are
+provisioned to the declared schemas, final-head reconciliation and production
+runtime activation succeed for all roles, and live external authority and
+restore evidence are present; backup or restore receipts cannot bypass those
+checks.
+
+Supervisor startup always performs a fresh no-write authority challenge after
+all ten databases reconcile, validates state safety, and only then persists a
+short-lived signed JSON evidence cache at
+`automation-cache/online-authority-evidence-v1/current.json`. This derived
+passive-status cache is outside the canonical ten-database inventory, is bound
+to the database scope, writer manifest and active-refresh receipt, and can never
+authorize a mutation. Cache write failure or any post-write inventory drift
+prevents the ready coordinator from being exposed.
 
 Store readiness is schema-authoritative rather than query-based: status verifies
-the exact migration identities for versions 21--23. A readable older database
+the exact migration identities for versions 21--25. A readable older database
 is reported as `automation_plane_store_blocked` until an offline migration is
 completed.
 
@@ -303,6 +404,10 @@ reported false until all transitive source/artifact hashes are available.
 ## Verification surface
 
 Use these commands for current status and release verification:
+
+`npm run static:check` includes syntax, lint, release-state consistency, and the
+architecture/import conformance suites. A green static result therefore cannot
+mask a red architecture gate.
 
 ```bash
 npm test

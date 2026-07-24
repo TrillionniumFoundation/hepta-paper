@@ -44,21 +44,24 @@ npm run automation:research-status
 npm run automation:selftest
 HEPTA_AGENT_LOCAL_PROVIDER=ollama \
   HEPTA_AGENT_MODEL=<local-model> npm run automation:agent-smoke
-HEPTA_AGENT_MODEL=<local-model> npm run automation:campaign-smoke
+HEPTA_AGENT_MODEL=<local-model> \
+  HEPTA_SMOKE_MAX_ROUNDS=2 npm run automation:campaign-smoke
 npm run paper:campaign -- --help
 npm run hepta-paper -- operator autonomous-research -- --help
 ```
 
 The autonomous command can machine-select a bounded, versioned agenda and run a
 persisted research-to-package DAG without research-time human checkpoints. It
-separates the empirical hypothesis from a non-circular Lean support theorem,
-uses independent author/reviewer principals, performs original plus replay
-experiments, independently recomputes their raw events, binds trusted
-tables/figures/captions, rebuilds the PDF from source in a fresh sandbox,
-revises against fresh referee evidence, and can request a signed qualification
-from an external machine service. It does not claim universal
-scientific novelty or natural-language-to-Lean equivalence, and it never
-self-signs missing dataset, provider-account or release trust.
+can generate an evidence-bound manuscript IR, emit a bounded dynamic Lean claim,
+retrieve structured snapshot-bound prior art, use signed reviewers from distinct
+machine trust domains, perform local and off-host replay, independently recompute
+typed numeric oracles, rebuild the PDF from source in a fresh sandbox, revise
+against fresh referee evidence, and submit only after venue, metadata, source,
+PDF and page-limit compliance passes. These capabilities require preprovisioned
+machine services and credentials, but no per-campaign human checkpoint. The
+system does not claim universal scientific novelty, exhaustive prior art,
+natural-language-to-Lean equivalence, scientific truth, or venue acceptance,
+and it never self-signs missing dataset, provider-account or release trust.
 
 Budget-stopped campaigns can be continued in place only after an explicit
 budget increase. If strict referee convergence exhausts the configured rounds,
@@ -251,20 +254,23 @@ a content-addressed recovery store and independently restore-drilled. Release
 verification never treats a missing volume or absent CAS manifest as
 operational proof.
 
-Schema migrations 021–023 add generation fencing for jobs, attempt/revision
-fencing plus recoverable prepared results for campaign nodes, and restore-proof
-qualification for workspace retention. Workflow projection and its effective
-ledger receipt now commit atomically. Backup deletion requires trusted backup
-and restore-drill evidence, retains at least two generations, and records a
-durable intent before deletion.
+Schema migrations 021–025 add generation fencing for jobs, attempt/revision
+fencing plus recoverable prepared results for campaign nodes, restore-proof
+qualification for workspace retention, explicit submission-delivery ownership,
+and an immutable cutover authority for the dedicated autonomous-submission
+handoff database. Workflow projection and its effective ledger receipt now
+commit atomically. Backup deletion requires trusted backup and restore-drill
+evidence, retains at least two generations, and records a durable intent before
+deletion.
 
-Deploy 021–023 as an offline cutover: stop all old job/campaign/submission
+Deploy 021–025 as an offline cutover: stop all old job/campaign/submission
 workers, expire or recover/clear every outstanding job, campaign, delivery,
 and response-consumption lease marker, checkpoint and close the old store, then
 run `npm run store:migrate`. The migration command checks the old schema and
 lease state through a read-only connection before opening the database for
 upgrade; live leases or an active WAL reject the cutover without changing its
-schema or bytes. Verify schema version 23 and the hash-matched 021–023 history
+schema or bytes. Verify native-store schema version 25 and the hash-matched
+021–025 history
 with `npm run store:status`, then restart only new workers. Rolling mixed
 old/new workers are unsupported. Scoped production roots refuse startup
 against an older or mismatched schema. No writable runtime root, including the
@@ -323,3 +329,9 @@ an independent signed referee acceptance, and a dual-signed, single-use live
 authorization scoped to the current package, venue, provider, and account. A
 fully verified fixture may make the controlled-executor handoff ready, but the
 overlay still performs no upload, email, portal mutation, or live submission.
+
+Universal submission connector coverage is documented in
+`paper-core/docs/universal-submission-system.md`. The repository currently has
+explicit dispositions for all 97 target profiles and candidate-family
+prototypes covering all 60 journal targets, while verified portal bindings,
+sandbox qualification and live authorization remain fail-closed.

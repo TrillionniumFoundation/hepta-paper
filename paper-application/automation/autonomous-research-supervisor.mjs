@@ -1,13 +1,6 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
-  autonomousResearchSupervisorDispatchDecision,
-  autonomousResearchSupervisorNextSchedule, autonomousResearchSupervisorPausedRecoveryDecision,
-  qualificationBindsCurrentRuntime,
-  qualificationMetrics,
-} from './autonomous-research-supervisor-readiness-policy.mjs';
-import {
   createAutonomousResearchMachineIntakeCycleProcessor,
-  inspectAutonomousResearchMachineIntakeCampaignBinding,
 } from './autonomous-research-machine-intake-supervision.mjs';
 import {
   assertAutonomousResearchResidentInstanceConfiguration,
@@ -15,43 +8,31 @@ import {
 } from './autonomous-research-resident-lifecycle.mjs';
 import {
   buildAutonomousResearchAutonomyBlockedCycleReceipt,
+  buildAutonomousResearchAuthorityEvidenceDeferredCycleReceipt,
+  buildAutonomousResearchStateRecoverabilityDeferredCycleReceipt,
   buildAutonomousResearchStartupReconciliationReceipt,
   buildAutonomousResearchMachineIntakeBlockedCycleReceipt,
   buildAutonomousResearchMachineIntakeReconciliationProgress,
-  buildAutonomousResearchDispatchFailureOutcome,
-  compactAutonomousResearchSupervisorOutcome,
 } from './autonomous-research-supervisor-progress.mjs';
 import {
   createAutonomousResearchSupervisorAutonomyFence,
 } from './autonomous-research-supervisor-autonomy-fence.mjs';
 import {
+  assertAutonomousResearchStateRecoverabilityReady,
+} from './autonomous-research-state-recoverability-controller.mjs';
+import {
   discoverAutonomousResearchCampaignWindow,
+  supervisorNowDate as nowDate,
 } from './autonomous-research-supervisor-cycle.mjs';
 import {
-  executeAutonomousResearchSupervisorProviderCanary,
-} from './autonomous-research-supervisor-provider-canary-dispatch.mjs';
+  createAutonomousResearchSupervisorCampaignProcessor,
+} from './autonomous-research-supervisor-campaign-processor.mjs';
+
 export { selectFairAutonomousCampaignWindow } from './autonomous-research-supervisor-cycle.mjs';
 export {
   inspectAutonomousResearchMachineIntakeCampaignBinding,
   verifyAutonomousResearchMachineIntakeEnqueueCommit,
 } from './autonomous-research-machine-intake-supervision.mjs';
-
-function nowDate(clock) {
-  const value = clock?.now ? clock.now() : new Date();
-  const date = value instanceof Date ? value : new Date(value);
-  if (!Number.isFinite(date.getTime())) throw new Error('autonomous_research_supervisor_clock_invalid');
-  return date;
-}
-
-function backoffMilliseconds(policy, failures, random) {
-  const exponent = Math.max(0, Math.min(20, Number(failures || 0)));
-  const base = Math.min(
-    policy.maximumCooldownMs,
-    policy.baseCooldownMs * (2 ** exponent),
-  );
-  const jitter = Math.floor(base * 0.2 * Math.max(0, Math.min(1, Number(random()))));
-  return Math.min(policy.maximumCooldownMs, base + jitter);
-}
 
 function requireDependencies(value) {
   if (!value?.campaignStore || typeof value.campaignStore.listCampaigns !== 'function'
@@ -90,12 +71,17 @@ export function createAutonomousResearchSupervisor({
   ensureRuntimeReproducibility,
   runProviderCanary,
   renewQualification,
+  recoverAutonomousSubmission = null,
+  onlineAuthorityEvidenceController = null,
+  stateRecoverabilityController = null,
+  externalActionRecoveryController = null,
   reconcileRuntime = async () => null,
   machineIntake = null,
   requireFullyAutonomous = false,
   inspectFullyAutonomousPrerequisites = null,
   machineIntakeLeaseMs = 5 * 60 * 1000,
   residentInstanceRepository = null,
+  residentCycleIntentRepository = null,
   residentInstanceLeaseMs = 15 * 60 * 1000,
   residentInstanceHeartbeatMs = 30_000,
   lifecyclePolicy = {},
@@ -119,6 +105,27 @@ export function createAutonomousResearchSupervisor({
     machineIntake,
     scheduler,
   });
+  if (recoverAutonomousSubmission !== null
+    && typeof recoverAutonomousSubmission !== 'function') {
+    throw new Error('autonomous_research_supervisor_submission_recovery_invalid');
+  }
+  if (onlineAuthorityEvidenceController !== null
+    && (typeof onlineAuthorityEvidenceController.reconcile !== 'function'
+      || typeof onlineAuthorityEvidenceController.assertCurrent !== 'function')) {
+    throw new Error('autonomous_research_supervisor_online_authority_evidence_invalid');
+  }
+  if (stateRecoverabilityController !== null
+    && (typeof stateRecoverabilityController.reconcile !== 'function'
+      || typeof stateRecoverabilityController.assertCurrent !== 'function'
+      || typeof stateRecoverabilityController.markMutationFinalized !== 'function'
+      || typeof stateRecoverabilityController.epochStatus !== 'function')) {
+    throw new Error('autonomous_research_supervisor_state_recoverability_invalid');
+  }
+  if (externalActionRecoveryController !== null
+    && (typeof externalActionRecoveryController.reconcile !== 'function'
+      || typeof externalActionRecoveryController.inspectStatus !== 'function')) {
+    throw new Error('autonomous_research_supervisor_external_action_recovery_invalid');
+  }
   if (!ownerId || typeof ownerId !== 'string') {
     throw new Error('autonomous_research_supervisor_owner_id_invalid');
   }
@@ -137,6 +144,22 @@ export function createAutonomousResearchSupervisor({
   const autonomyFence = createAutonomousResearchSupervisorAutonomyFence({
     required: requireFullyAutonomous,
     inspectPrerequisites: inspectFullyAutonomousPrerequisites,
+    assertDynamicInfrastructureCurrent: onlineAuthorityEvidenceController
+      ? ({ action, residentLeaseContext }) => {
+        const requiredValidityMs =
+          onlineAuthorityEvidenceController.policy?.renewalLeadMs || 0;
+        if (residentLeaseContext) {
+          const reconciled = onlineAuthorityEvidenceController.reconcile({
+            residentLeaseContext,
+            requiredValidityMs,
+          });
+          if (reconciled?.ready === true) return reconciled;
+        }
+        return onlineAuthorityEvidenceController.assertCurrent({
+          requiredValidityMs,
+          action,
+        });
+      } : null,
     clock,
   });
   const residentCycleAuthority = Object.freeze({});
@@ -154,11 +177,71 @@ export function createAutonomousResearchSupervisor({
   let startupReconciliationPublished = false;
   let discoveryCursor = null;
 
+  async function reconcileOnlineAuthorityEvidence(onResidentProgress, action) {
+    if (!onlineAuthorityEvidenceController) return null;
+    const residentLeaseContext = await onResidentProgress?.({
+      stage: `before_online_authority_evidence:${action}`,
+    });
+    const receipt = onlineAuthorityEvidenceController.reconcile({
+      residentLeaseContext,
+      requiredValidityMs:
+        onlineAuthorityEvidenceController.policy?.renewalLeadMs || 0,
+    });
+    await onResidentProgress?.({
+      stage: `after_online_authority_evidence:${action}`,
+    });
+    return receipt;
+  }
+
+  async function reconcileStateRecoverability({
+    residentLeaseContext,
+    action,
+    requiredValidityMs = 0,
+  } = {}) {
+    if (onlineAuthorityEvidenceController) {
+      const authorityValidityMs = Math.max(
+        requiredValidityMs,
+        onlineAuthorityEvidenceController.policy?.renewalLeadMs || 0,
+      );
+      const authority = onlineAuthorityEvidenceController.reconcile({
+        residentLeaseContext,
+        requiredValidityMs: authorityValidityMs,
+      });
+      if (authority?.ready !== true) {
+        onlineAuthorityEvidenceController.assertCurrent({
+          requiredValidityMs: authorityValidityMs,
+          action,
+        });
+      }
+    }
+    if (!stateRecoverabilityController) return null;
+    const recovery = await stateRecoverabilityController.reconcile({
+      residentLeaseContext,
+      requiredValidityMs,
+    });
+    return assertAutonomousResearchStateRecoverabilityReady(recovery, { action });
+  }
+
+  function assertStateRecoverabilityCurrent(action) {
+    onlineAuthorityEvidenceController?.assertCurrent({
+      requiredValidityMs: 0,
+      action,
+    });
+    return stateRecoverabilityController?.assertCurrent({ action }) || null;
+  }
+
   async function startupReconciliation(onResidentProgress = null) {
     if (startupReconciled) return null;
-    await onResidentProgress?.({ stage: 'before_startup_reconciliation' });
+    const residentLeaseContext = await onResidentProgress?.({
+      stage: 'before_startup_reconciliation',
+    });
     const now = nowDate(clock);
-    const supervisorLeaseRecovery = stateRepository.reconcileStaleLeases({ now });
+    const supervisorLeaseRecovery = externalActionRecoveryController
+      ? await externalActionRecoveryController.reconcile({
+        residentLeaseContext,
+        signal: executionSignal,
+      })
+      : stateRepository.reconcileStaleLeases({ now });
     const machineIntakeLeaseRecovery = machineIntake
       ? machineIntake.repository.reconcileExpiredIntakeLeases({ now }) : null;
     const runtime = await reconcileRuntime({ now });
@@ -190,356 +273,31 @@ export function createAutonomousResearchSupervisor({
     maximumCampaignsPerCycle,
     pollMs,
     signal: executionSignal,
+    reconcileStateRecoverability,
+    assertStateRecoverabilityCurrent,
   });
-
-  async function processCampaign(campaign, onResidentProgress = null) {
-    const intakeId = campaign?.spec?.autonomousResearchMachineIntakeAdmission?.intakeId;
-    const machineRecord = machineIntake && intakeId
-      ? machineIntake.repository.readIntake(intakeId) : null;
-    const machineBinding = inspectAutonomousResearchMachineIntakeCampaignBinding({
-      campaign,
-      ...(machineIntake && intakeId ? { record: machineRecord, requireRecord: true } : {}),
-    });
-    if (!machineBinding.ready) {
-      return Object.freeze({
-        campaignId: campaign.campaignId,
-        status: 'machine_intake_binding_blocked',
-        reason: machineBinding.reason,
-      });
-    }
-    const pausedRecovery = autonomousResearchSupervisorPausedRecoveryDecision(campaign);
-    if (pausedRecovery) return Object.freeze({ campaignId: campaign.campaignId,
-      status: 'blocked', reason: pausedRecovery.reason });
-    const now = nowDate(clock);
-    let lifecycle;
-    try {
-      lifecycle = stateRepository.registerCampaign({
-        campaignId: campaign.campaignId,
-        paperId: campaign.paperId,
-        policy: lifecyclePolicy,
-        now,
-      });
-    } catch (error) {
-      return Object.freeze({ campaignId: campaign.campaignId, status: 'registration_blocked', error: error.message });
-    }
-    const lease = stateRepository.tryAcquireCampaignLease({
-      campaignId: campaign.campaignId,
-      ownerId,
-      leaseMs: lifecycle.policy.leaseMs,
-      now,
-    });
-    if (!lease) return Object.freeze({ campaignId: campaign.campaignId, status: 'not_due_or_leased' });
-    lifecycle = stateRepository.getCampaign(campaign.campaignId);
-    const localController = new AbortController();
-    const onAbort = () => localController.abort(
-      executionSignal.reason || 'supervisor_process_shutdown',
-    );
-    if (executionSignal.aborted) onAbort();
-    else executionSignal.addEventListener?.('abort', onAbort, { once: true });
-    let leaseLost = false;
-    const heartbeat = scheduler.setInterval(() => {
-      try {
-        const renewed = stateRepository.renewCampaignLease({
-          lease,
-          leaseMs: lifecycle.policy.leaseMs,
-          now: nowDate(clock),
-        });
-        if (!renewed) leaseLost = true;
-      } catch { leaseLost = true; }
-      if (leaseLost) localController.abort('supervisor_lease_lost');
-    }, Math.max(250, Math.floor(lifecycle.policy.leaseMs / 3)));
-    scheduler.unref?.(heartbeat);
-    const publishCampaignProgress = (stage) => {
-      let renewed = null;
-      try {
-        renewed = stateRepository.renewCampaignLease({
-          lease,
-          leaseMs: lifecycle.policy.leaseMs,
-          now: nowDate(clock),
-        });
-      } catch { /* handled by the common fence-loss path below */ }
-      if (!renewed) {
-        leaseLost = true;
-        localController.abort('supervisor_lease_lost');
-        throw new Error('supervisor_lease_lost');
-      }
-      const residentLeaseContext = onResidentProgress?.({ stage });
-      if (typeof residentLeaseContext?.then === 'function') {
-        throw new Error('autonomous_research_resident_progress_must_be_synchronous');
-      }
-      autonomyFence.assertCurrent({
-        campaign,
-        record: machineRecord,
-        residentLeaseContext,
-        action: `campaign_progress:${stage}`,
-      });
-      return residentLeaseContext;
-    };
-    let finalized = false;
-    try {
-      let residentLeaseContext = await publishCampaignProgress(
-        'before_runtime_reproducibility',
-      );
-      autonomyFence.assertCurrent({ campaign, record: machineRecord, residentLeaseContext });
-      const runtimeReadiness = await ensureRuntimeReproducibility({
-        campaign, lifecycle, ownerId, signal: localController.signal,
-      });
-      residentLeaseContext = await publishCampaignProgress(
-        'after_runtime_reproducibility',
-      ) || residentLeaseContext;
-      if (runtimeReadiness?.ready !== true) {
-        const final = stateRepository.finishDispatch({
-          lease,
-          successful: runtimeReadiness?.terminal !== true,
-          terminalReason: runtimeReadiness?.terminal ? runtimeReadiness.reason : null,
-          nextDispatchAt: runtimeReadiness?.deferUntil || now,
-          observedCampaignCostUsd: campaign.costKnown ? Number(campaign.costUsd || 0) : 0,
-          observedQualificationReservedCostUsd: 0,
-          costKnown: campaign.costKnown,
-          outcome: { status: runtimeReadiness?.reason || 'runtime_reproducibility_refresh_deferred' },
-          now: nowDate(clock),
-        });
-        finalized = true;
-        return Object.freeze({ campaignId: campaign.campaignId, status: final.disposition,
-          reason: runtimeReadiness?.reason || 'runtime_reproducibility_refresh_deferred' });
-      }
-      const qualificationBefore = await readQualificationState(campaign);
-      const decision = autonomousResearchSupervisorDispatchDecision({
-        campaign,
-        lifecycle,
-        qualificationState: qualificationBefore,
-        runtimeReadiness,
-        now,
-      });
-      if (decision.settle || decision.block || decision.deferUntil) {
-        const result = stateRepository.finishDispatch({
-          lease,
-          successful: Boolean(decision.settle || decision.deferUntil),
-          settled: decision.settle,
-          terminalReason: decision.block ? decision.reason : null,
-          nextDispatchAt: decision.deferUntil || now,
-          observedCampaignCostUsd: campaign.costKnown ? Number(campaign.costUsd || 0) : 0,
-          observedQualificationReservedCostUsd:
-            qualificationMetrics(qualificationBefore).reservedCostUsd,
-          costKnown: campaign.costKnown,
-          outcome: { status: decision.reason },
-          now,
-        });
-        finalized = true;
-        return Object.freeze({ campaignId: campaign.campaignId, status: result.disposition, reason: decision.reason });
-      }
-      const dispatchAuthorization = stateRepository.beginDispatch({
-        lease,
-        campaignCostLimitUsd: Number(campaign.spec?.budgets?.maxCostUsd),
-        now,
-      });
-      if (!dispatchAuthorization.authorized) {
-        finalized = true;
-        return Object.freeze({
-          campaignId: campaign.campaignId,
-          status: 'blocked',
-          reason: dispatchAuthorization.blocker,
-        });
-      }
-      const canaryStep = await executeAutonomousResearchSupervisorProviderCanary({
-        stateRepository, lease, campaign, qualificationState: qualificationBefore,
-        runtimeReadiness, decision, runProviderCanary, publishCampaignProgress,
-        autonomyFence, machineRecord, residentLeaseContext,
-        signal: localController.signal, now: () => nowDate(clock),
-      });
-      residentLeaseContext = canaryStep.residentLeaseContext;
-      if (canaryStep.blocked) {
-        finalized = true;
-        return Object.freeze({
-          campaignId: campaign.campaignId,
-          status: 'blocked',
-          reason: canaryStep.reason,
-        });
-      }
-      let qualificationCurrent = qualificationBefore;
-      let qualificationRenewal = null;
-      if (decision.qualificationRenewalRequired) {
-        residentLeaseContext = await publishCampaignProgress(
-          'before_qualification_renewal',
-        ) || residentLeaseContext;
-        autonomyFence.assertCurrent({ campaign, record: machineRecord, residentLeaseContext });
-        qualificationRenewal = await renewQualification({
-          campaign,
-          runtimeReadiness,
-          requiredQualificationValidityMs: decision.requiredQualificationValidityMs,
-          qualificationRetry: decision.qualificationRetry,
-          supervisorLease: lease,
-          signal: localController.signal,
-          onProgress: ({ stage = 'qualification_renewal' } = {}) =>
-            publishCampaignProgress(`qualification:${stage}`),
-          onSynchronousProgress: ({ stage = 'qualification_synchronous_operation' } = {}) =>
-            publishCampaignProgress(`qualification:${stage}`),
-        });
-        residentLeaseContext = await publishCampaignProgress(
-          'after_qualification_renewal',
-        ) || residentLeaseContext;
-        qualificationCurrent = await readQualificationState(campaign);
-        if (qualificationRenewal?.ready !== true) {
-          const persistedNext = Date.parse(
-            qualificationCurrent?.recovery?.nextAttemptAt || '',
-          );
-          const renewalNow = nowDate(clock);
-          const final = stateRepository.finishDispatch({
-            lease,
-            successful: qualificationRenewal?.terminal !== true,
-            terminalReason: qualificationRenewal?.terminal
-              ? qualificationRenewal.reason : null,
-            nextDispatchAt: new Date(Math.max(
-              renewalNow.getTime() + pollMs,
-              Number.isFinite(persistedNext) ? persistedNext : 0,
-            )),
-            observedCampaignCostUsd: campaign.costKnown
-              ? Number(campaign.costUsd || 0) : 0,
-            observedQualificationReservedCostUsd:
-              qualificationMetrics(qualificationCurrent).reservedCostUsd,
-            costKnown: campaign.costKnown,
-            outcome: {
-              status: qualificationRenewal?.reason || 'qualification_renewal_deferred',
-            },
-            now: renewalNow,
-          });
-          finalized = true;
-          return Object.freeze({
-            campaignId: campaign.campaignId,
-            status: final.disposition,
-            reason: qualificationRenewal?.reason || 'qualification_renewal_deferred',
-          });
-        }
-      }
-      const dispatchNow = nowDate(clock);
-      stateRepository.assertCampaignLease({ lease, now: dispatchNow });
-      if (qualificationRenewal?.preReleaseExecutionAuthorized !== true
-        && !qualificationBindsCurrentRuntime({
-        qualificationState: qualificationCurrent,
-        runtimeReadiness,
-        requiredValidityMs: decision.requiredQualificationValidityMs,
-        now: dispatchNow,
-        })) {
-        throw new Error('supervisor_qualification_runtime_binding_not_current');
-      }
-      const providerCanaryState = stateRepository.getCampaign(campaign.campaignId);
-      if (localController.signal.aborted) throw new Error(String(localController.signal.reason));
-      residentLeaseContext = await publishCampaignProgress(
-        'before_campaign_dispatch',
-      ) || residentLeaseContext;
-      autonomyFence.assertCurrent({ campaign, record: machineRecord, residentLeaseContext });
-      const report = await dispatchCampaign({
-        campaign,
-        action: decision.action,
-        qualificationRetry: decision.qualificationRetry,
-        supervisorDispatchEvidence: Object.freeze({
-          campaignLease: lease,
-          providerCanaryState,
-          residentLeaseContext,
-        }),
-        signal: localController.signal,
-      });
-      await publishCampaignProgress('after_campaign_dispatch');
-      if (leaseLost) throw new Error('supervisor_lease_lost');
-      const currentCampaign = campaignStore.getCampaign(campaign.campaignId);
-      const qualificationAfter = await readQualificationState(currentCampaign || campaign);
-      const schedule = autonomousResearchSupervisorNextSchedule({
-        report,
-        campaign: currentCampaign || campaign,
-        qualificationState: qualificationAfter,
-        runtimeReadiness,
-        lifecycle,
-        now: nowDate(clock),
-        pollMs,
-      });
-      const currentCostKnown = currentCampaign?.costKnown !== false;
-      const final = stateRepository.finishDispatch({
-        lease,
-        outcome: compactAutonomousResearchSupervisorOutcome(report),
-        observedCampaignCostUsd: currentCostKnown ? Number(currentCampaign?.costUsd || 0) : 0,
-        observedQualificationReservedCostUsd:
-          qualificationMetrics(qualificationAfter).reservedCostUsd,
-        costKnown: currentCostKnown,
-        successful: true,
-        settled: schedule.settled,
-        terminalReason: schedule.terminalReason || null,
-        nextDispatchAt: schedule.nextAt,
-        now: nowDate(clock),
-      });
-      finalized = true;
-      return Object.freeze({
-        campaignId: campaign.campaignId,
-        status: final.disposition,
-        reason: schedule.reason,
-        outcome: compactAutonomousResearchSupervisorOutcome(report),
-      });
-    } catch (error) {
-      if (leaseLost) {
-        return Object.freeze({ campaignId: campaign.campaignId, status: 'lease_lost' });
-      }
-      const latest = stateRepository.getCampaign(campaign.campaignId);
-      const cooldown = backoffMilliseconds(latest.policy, latest.consecutiveFailures, random);
-      const failureOutcome = buildAutonomousResearchDispatchFailureOutcome(error);
-      try {
-        const currentCampaign = campaignStore.getCampaign(campaign.campaignId) || campaign;
-        const qualification = await readQualificationState(currentCampaign);
-        const final = stateRepository.finishDispatch({
-          lease,
-          observedCampaignCostUsd: currentCampaign.costKnown
-            ? Number(currentCampaign.costUsd || 0) : 0,
-          observedQualificationReservedCostUsd:
-            qualificationMetrics(qualification).reservedCostUsd,
-          costKnown: currentCampaign.costKnown,
-          successful: false,
-          nextDispatchAt: new Date(nowDate(clock).getTime() + cooldown),
-          error: error?.message || error,
-          outcome: failureOutcome,
-          now: nowDate(clock),
-        });
-        finalized = true;
-        return Object.freeze({
-          campaignId: campaign.campaignId,
-          status: final.disposition === 'blocked' ? 'blocked' : 'cooldown',
-          error: String(error?.message || error),
-          cooldownMs: cooldown,
-        });
-      } catch (finalizeError) {
-        try {
-          const final = stateRepository.finishDispatchFailureFallback({
-            lease,
-            outcome: failureOutcome,
-            nextDispatchAt: new Date(nowDate(clock).getTime() + cooldown),
-            error: `${String(error?.message || error)};fallback_after:${String(
-              finalizeError?.message || finalizeError,
-            )}`,
-            now: nowDate(clock),
-          });
-          finalized = true;
-          return Object.freeze({
-            campaignId: campaign.campaignId,
-            status: final.disposition === 'blocked' ? 'blocked' : 'cooldown',
-            error: String(error?.message || error),
-            finalizationFallback: true,
-            cooldownMs: cooldown,
-          });
-        } catch (fallbackError) {
-          return Object.freeze({
-            campaignId: campaign.campaignId,
-            status: 'finalization_failed',
-            error: String(fallbackError?.message || fallbackError),
-            originalFinalizationError: String(finalizeError?.message || finalizeError),
-          });
-        }
-      }
-    } finally {
-      scheduler.clearInterval(heartbeat);
-      executionSignal.removeEventListener?.('abort', onAbort);
-      if (!finalized && !leaseLost) {
-        try { stateRepository.releaseCampaignLease({ lease, now: nowDate(clock) }); }
-        catch { /* stale leases are reconciled on the next startup/cycle */ }
-      }
-    }
-  }
+  const processCampaign = createAutonomousResearchSupervisorCampaignProcessor({
+    machineIntake,
+    requireFullyAutonomous,
+    stateRepository,
+    lifecyclePolicy,
+    ownerId,
+    clock,
+    scheduler,
+    executionSignal,
+    autonomyFence,
+    reconcileStateRecoverability,
+    assertStateRecoverabilityCurrent,
+    recoverAutonomousSubmission,
+    pollMs,
+    ensureRuntimeReproducibility,
+    readQualificationState,
+    runProviderCanary,
+    renewQualification,
+    dispatchCampaign,
+    campaignStore,
+    random,
+  });
 
   async function runCycle({
     cycleAuthority = null,
@@ -551,15 +309,83 @@ export function createAutonomousResearchSupervisor({
     if (requireFullyAutonomous && cycleAuthority !== residentCycleAuthority) {
       throw new Error('autonomous_research_supervisor_resident_cycle_authority_required');
     }
-    const reconciliation = await startupReconciliation(onResidentProgress);
+    let reconciliation;
+    try { reconciliation = await startupReconciliation(onResidentProgress); }
+    catch (error) {
+      if (error?.externalActionRecoveryFatal === true) throw error;
+      if (error?.externalActionRecoveryDeferred !== true) throw error;
+      return buildAutonomousResearchStateRecoverabilityDeferredCycleReceipt({
+        stateRecoverability: Object.freeze({
+          status: 'autonomous_research_supervisor_external_action_recovery_deferred',
+          blockers: Object.freeze([String(error.message)]),
+          nextAttemptAt: error.retryAt || null,
+        }),
+        ownerId,
+        startupReconciliation: null,
+        startupReconciliationReceipt: null,
+        now: nowDate(clock),
+      });
+    }
     if (startupReconciliationReceipt && !startupReconciliationPublished
       && typeof onStartupReconciled === 'function') {
       await onStartupReconciled(startupReconciliationReceipt);
       startupReconciliationPublished = true;
     }
+    const authorityEvidence = await reconcileOnlineAuthorityEvidence(
+      onResidentProgress,
+      'cycle',
+    );
+    if (authorityEvidence && authorityEvidence.ready !== true) {
+      return buildAutonomousResearchAuthorityEvidenceDeferredCycleReceipt({
+        authorityEvidence,
+        ownerId,
+        startupReconciliation: reconciliation,
+        startupReconciliationReceipt,
+        now: nowDate(clock),
+      });
+    }
     const residentLeaseContext = await onResidentProgress?.({
       stage: 'before_autonomy_prerequisite_reconciliation',
     });
+    try {
+      await externalActionRecoveryController?.reconcile({
+        residentLeaseContext,
+        signal: executionSignal,
+      });
+      await reconcileStateRecoverability({
+        residentLeaseContext,
+        action: 'supervisor_cycle_quiet_point',
+      });
+      assertStateRecoverabilityCurrent('supervisor_cycle_side_effect_gate');
+    } catch (error) {
+      if (error?.externalActionRecoveryFatal === true) throw error;
+      if (error?.externalActionRecoveryDeferred === true) {
+        return buildAutonomousResearchStateRecoverabilityDeferredCycleReceipt({
+          stateRecoverability: Object.freeze({
+            status: 'autonomous_research_supervisor_external_action_recovery_deferred',
+            blockers: Object.freeze([String(error.message)]),
+            nextAttemptAt: error.retryAt || null,
+          }),
+          ownerId,
+          startupReconciliation: reconciliation,
+          startupReconciliationReceipt,
+          now: nowDate(clock),
+        });
+      }
+      if (error?.stateRecoverabilityFatal === true) throw error;
+      if (error?.stateRecoverabilityDeferred !== true) throw error;
+      return buildAutonomousResearchStateRecoverabilityDeferredCycleReceipt({
+        stateRecoverability: error.recoverabilityReceipt || Object.freeze({
+          status: 'autonomous_research_state_recoverability_deferred',
+          blockers: error.blockers || Object.freeze([String(error.message)]),
+          nextAttemptAt: error.retryAt || null,
+        }),
+        ownerId,
+        startupReconciliation: reconciliation,
+        startupReconciliationReceipt,
+        now: nowDate(clock),
+      });
+    }
     const autonomyInspection = autonomyFence.inspectCurrent({ residentLeaseContext });
     if (!autonomyInspection.ready) {
       await onMachineIntakeReconciliationFailed?.(
@@ -616,7 +442,41 @@ export function createAutonomousResearchSupervisor({
     const results = [];
     for (const campaign of discovered) {
       if (executionSignal.aborted) break;
-      await onResidentProgress?.({ stage: `before_campaign:${campaign.campaignId}` });
+      const campaignAuthorityEvidence = await reconcileOnlineAuthorityEvidence(
+        onResidentProgress,
+        `campaign:${campaign.campaignId}`,
+      );
+      if (campaignAuthorityEvidence && campaignAuthorityEvidence.ready !== true) {
+        results.push(Object.freeze({
+          campaignId: campaign.campaignId,
+          status: 'infrastructure_deferred',
+          reason: campaignAuthorityEvidence.reason,
+          retryAt: campaignAuthorityEvidence.retryAt || null,
+          externalSubmissionPerformed: false,
+        }));
+        break;
+      }
+      const campaignResidentLeaseContext = await onResidentProgress?.({
+        stage: `before_campaign:${campaign.campaignId}`,
+      });
+      try {
+        await reconcileStateRecoverability({
+          residentLeaseContext: campaignResidentLeaseContext,
+          action: `campaign_quiet_point:${campaign.campaignId}`,
+        });
+        assertStateRecoverabilityCurrent(`campaign_entry:${campaign.campaignId}`);
+      } catch (error) {
+        if (error?.stateRecoverabilityFatal === true) throw error;
+        if (error?.stateRecoverabilityDeferred !== true) throw error;
+        results.push(Object.freeze({
+          campaignId: campaign.campaignId,
+          status: 'infrastructure_deferred',
+          reason: String(error?.message || error),
+          retryAt: error?.retryAt || null,
+          externalSubmissionPerformed: false,
+        }));
+        break;
+      }
       results.push(await processCampaign(campaign, onResidentProgress));
       await onResidentProgress?.({ stage: `after_campaign:${campaign.campaignId}` });
     }
@@ -638,7 +498,8 @@ export function createAutonomousResearchSupervisor({
       processedCampaignCount: results.length,
       results: Object.freeze(results),
       observedAt: nowDate(clock).toISOString(),
-      externalSubmissionPerformed: false,
+      externalSubmissionPerformed: results.some((result) =>
+        result?.externalSubmissionPerformed === true),
       automaticBudgetExpansionPerformed: false,
     };
     return Object.freeze({
@@ -654,6 +515,7 @@ export function createAutonomousResearchSupervisor({
     runCycle,
     run: () => runAutonomousResearchResident({
       residentInstanceRepository,
+      residentCycleIntentRepository,
       residentInstanceLeaseMs,
       residentInstanceHeartbeatMs,
       requireFullyAutonomous,

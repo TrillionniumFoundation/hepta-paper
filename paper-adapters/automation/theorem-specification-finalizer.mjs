@@ -21,12 +21,17 @@ const CLAIM_KEYS = Object.freeze([
   'manuscriptIntent',
   'negativeBoundaries',
   'proofObligations',
+  'proofDependencyClaimKeys',
   'proposalClaimId',
   'quantifiers',
   'statement',
   'title',
 ]);
 const CLAIM_KEYS_WITHOUT_PROPOSAL = Object.freeze(CLAIM_KEYS.filter((key) => key !== 'proposalClaimId'));
+const LEGACY_CLAIM_KEYS = Object.freeze(CLAIM_KEYS.filter((key) => key !== 'proofDependencyClaimKeys'));
+const LEGACY_CLAIM_KEYS_WITHOUT_PROPOSAL = Object.freeze(
+  LEGACY_CLAIM_KEYS.filter((key) => key !== 'proposalClaimId'),
+);
 const PROPOSAL_SCOPE_FIELDS = Object.freeze([
   'assumptions',
   'quantifiers',
@@ -204,11 +209,13 @@ export function finalizeTheoremSpecification({
     scientificClaimAuthority: selectedClaimAuthority(scientificClaimAuthority, approvedProposalSeed),
     paperId,
   });
-  for (const claim of draft.claims) exactKeys(
-    claim,
-    proposalAuthority ? CLAIM_KEYS : CLAIM_KEYS_WITHOUT_PROPOSAL,
-    'theorem_specification_draft_claim_schema_invalid',
-  );
+  for (const claim of draft.claims) {
+    const expected = proposalAuthority ? CLAIM_KEYS : CLAIM_KEYS_WITHOUT_PROPOSAL;
+    const legacy = proposalAuthority ? LEGACY_CLAIM_KEYS : LEGACY_CLAIM_KEYS_WITHOUT_PROPOSAL;
+    if (!hasExactObjectKeys(claim, expected) && !hasExactObjectKeys(claim, legacy)) {
+      throw new Error('theorem_specification_draft_claim_schema_invalid');
+    }
+  }
   const formalClaimUniverse = readFormalClaimUniverse({ sourceRoot: draftFile.root, manuscriptPath });
   if (formalClaimUniverse.status !== 'formal_claim_universe_verified') {
     throw new Error(`theorem_specification_claim_universe_invalid:${formalClaimUniverse.blockers.join(',')}`);
@@ -242,6 +249,7 @@ export function finalizeTheoremSpecification({
     }
     return {
       ...draftClaim,
+      proofDependencyClaimKeys: draftClaim.proofDependencyClaimKeys || [],
       ...(proposalAuthority ? {
         claimKey: authoritativeProposalClaim.scientificClaimKey,
         ...Object.fromEntries(PROPOSAL_SCOPE_FIELDS.map((field) => [

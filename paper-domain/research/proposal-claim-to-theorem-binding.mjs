@@ -4,6 +4,11 @@ import {
   AUTONOMOUS_FORMAL_SUPPORT_TEMPLATE_REGISTRY,
   selectAutonomousFormalSupportTemplate,
 } from '../automation/autonomous-formal-support-registry.mjs';
+import {
+  dynamicFormalLeanTypeSourceValid,
+  verifyDynamicFormalClaimSeed,
+} from './dynamic-formal-claim-seed-contract.mjs';
+import { leanTypeIdentity } from './lean-type-identity.mjs';
 
 const SHA256 = /^sha256:[a-f0-9]{64}$/i;
 const RELATIONS = new Set(['equivalent']);
@@ -164,7 +169,8 @@ function verifyAutonomousResearchSeedLineageAuthority({
     || (binding.blockers || []).length) {
     blockers.push('autonomous_theorem_seed_binding_invalid');
   }
-  if (bundle.version !== 1 || bundle.kind !== 'AutonomousResearchSeedContractBundle'
+  const dynamicFormal = bundle.version === 2;
+  if (![1, 2].includes(bundle.version) || bundle.kind !== 'AutonomousResearchSeedContractBundle'
     || bundle.status !== 'autonomous_research_seed_contracts_ready'
     || bundle.claimAuthorityType !== 'machine-policy-authorized'
     || !claimedBundleHash
@@ -189,9 +195,6 @@ function verifyAutonomousResearchSeedLineageAuthority({
     || rawClaims.some((claim) => !['formal_kernel', 'empirical_protocol'].includes(claim?.verificationMode))) {
     blockers.push('autonomous_theorem_formal_claims_invalid');
   }
-  let formalTemplate = null;
-  try { formalTemplate = selectAutonomousFormalSupportTemplate(bundle?.protocolFamily); }
-  catch { blockers.push('autonomous_theorem_formal_template_family_invalid'); }
   const formalClaim = formalClaims[0];
   const formalScope = formalClaim ? {
     statement: formalClaim.text,
@@ -200,13 +203,50 @@ function verifyAutonomousResearchSeedLineageAuthority({
     negativeBoundaries: formalClaim.negativeBoundaries,
     proofObligations: formalClaim.proofObligations,
   } : null;
-  if (!formalTemplate
-    || bundle?.formalSupportRegistryHash
-      !== AUTONOMOUS_FORMAL_SUPPORT_TEMPLATE_REGISTRY.autonomousFormalSupportTemplateRegistryHash
-    || bundle?.formalSupportTemplateId !== formalTemplate?.templateId
-    || bundle?.formalSupportTemplateHash !== formalTemplate?.autonomousFormalSupportTemplateHash
-    || JSON.stringify(formalScope) !== JSON.stringify(formalTemplate?.scope)) {
-    blockers.push('autonomous_theorem_formal_template_lineage_invalid');
+  if (dynamicFormal) {
+    const dynamicVerification = verifyDynamicFormalClaimSeed(bundle?.dynamicFormalClaimSeed, {
+      claimKey: formalClaim?.scientificClaimKey,
+    });
+    if (bundle?.formalSupportMode !== 'dynamic-lean-type-v1'
+      || bundle?.dynamicFormalClaimSeedHash
+        !== bundle?.dynamicFormalClaimSeed?.dynamicFormalClaimSeedHash
+      || bundle?.formalSupportRegistryHash !== null
+      || bundle?.formalSupportTemplateId !== null
+      || bundle?.formalSupportTemplateHash !== null
+      || !dynamicVerification.valid
+      || JSON.stringify(formalScope) !== JSON.stringify({
+        statement: bundle?.dynamicFormalClaimSeed?.statement,
+        assumptions: bundle?.dynamicFormalClaimSeed?.assumptions,
+        quantifiers: bundle?.dynamicFormalClaimSeed?.quantifiers,
+        negativeBoundaries: bundle?.dynamicFormalClaimSeed?.negativeBoundaries,
+        proofObligations: bundle?.dynamicFormalClaimSeed?.proofObligations,
+      })
+      || formalClaim?.dynamicFormalClaimSeedHash !== bundle?.dynamicFormalClaimSeedHash
+      || formalClaim?.leanDeclarationName !== bundle?.dynamicFormalClaimSeed?.leanDeclarationName
+      || formalClaim?.leanTypeSource !== bundle?.dynamicFormalClaimSeed?.leanTypeSource
+      || formalClaim?.leanTypeSourceHash !== bundle?.dynamicFormalClaimSeed?.leanTypeSourceHash
+      || formalClaim?.leanNormalizedTypeHash
+        !== bundle?.dynamicFormalClaimSeed?.leanNormalizedTypeHash
+      || JSON.stringify(formalClaim?.allowedImports)
+        !== JSON.stringify(bundle?.dynamicFormalClaimSeed?.allowedImports)
+      || formalClaim?.formalClaimCapabilityScopeManifestHash
+        !== bundle?.dynamicFormalClaimSeed?.capabilityScopeManifestHash
+      || formalClaim?.formalClaimGeneratorReceiptHash
+        !== bundle?.dynamicFormalClaimSeed?.generatorReceiptHash) {
+      blockers.push('autonomous_theorem_dynamic_formal_lineage_invalid');
+    }
+  } else {
+    let formalTemplate = null;
+    try { formalTemplate = selectAutonomousFormalSupportTemplate(bundle?.protocolFamily); }
+    catch { blockers.push('autonomous_theorem_formal_template_family_invalid'); }
+    if (!formalTemplate
+      || bundle?.formalSupportRegistryHash
+        !== AUTONOMOUS_FORMAL_SUPPORT_TEMPLATE_REGISTRY.autonomousFormalSupportTemplateRegistryHash
+      || bundle?.formalSupportTemplateId !== formalTemplate?.templateId
+      || bundle?.formalSupportTemplateHash !== formalTemplate?.autonomousFormalSupportTemplateHash
+      || JSON.stringify(formalScope) !== JSON.stringify(formalTemplate?.scope)) {
+      blockers.push('autonomous_theorem_formal_template_lineage_invalid');
+    }
   }
   const claims = [];
   for (let index = 0; index < formalClaims.length; index += 1) {
@@ -236,6 +276,17 @@ function verifyAutonomousResearchSeedLineageAuthority({
         proposalClaimRecordHash: hashRecord('AutonomousResearchClaimRecord', raw),
         proposalSeedContractBundleHash: null,
         approvedProposalSeedBindingHash: null,
+        ...(dynamicFormal ? {
+          dynamicFormalClaimSeedHash: raw.dynamicFormalClaimSeedHash,
+          leanDeclarationName: raw.leanDeclarationName,
+          leanTypeSource: raw.leanTypeSource,
+          leanTypeSourceHash: raw.leanTypeSourceHash,
+          leanNormalizedTypeHash: raw.leanNormalizedTypeHash,
+          allowedImports: Object.freeze([...raw.allowedImports]),
+          formalClaimCapabilityScopeManifestHash:
+            raw.formalClaimCapabilityScopeManifestHash,
+          formalClaimGeneratorReceiptHash: raw.formalClaimGeneratorReceiptHash,
+        } : {}),
       }));
     } catch (error) {
       blockers.push(`${error?.message || 'autonomous_theorem_claim_invalid'}:${index + 1}`);
@@ -278,6 +329,7 @@ export function verifyScientificClaimLineageAuthority({
 }
 
 export function proposalClaimSourceFromAuthority(authorityClaim) {
+  const dynamicFormal = Boolean(authorityClaim?.dynamicFormalClaimSeedHash);
   const source = {
     claimAuthorityType: requiredText(authorityClaim?.claimAuthorityType, 'proposal_claim_source_authority_type_invalid', 100).trim(),
     claimAuthorityBindingHash: String(authorityClaim?.claimAuthorityBindingHash || '').toLowerCase(),
@@ -295,6 +347,31 @@ export function proposalClaimSourceFromAuthority(authorityClaim) {
       ? String(authorityClaim.proposalSeedContractBundleHash).toLowerCase() : null,
     approvedProposalSeedBindingHash: authorityClaim?.approvedProposalSeedBindingHash
       ? String(authorityClaim.approvedProposalSeedBindingHash).toLowerCase() : null,
+    ...(dynamicFormal ? {
+      dynamicFormalClaimSeedHash: String(authorityClaim.dynamicFormalClaimSeedHash || '').toLowerCase(),
+      leanDeclarationName: requiredText(
+        authorityClaim.leanDeclarationName,
+        'proposal_claim_source_lean_declaration_name_invalid',
+        160,
+      ).trim(),
+      leanTypeSource: requiredText(
+        authorityClaim.leanTypeSource,
+        'proposal_claim_source_lean_type_source_invalid',
+        16_000,
+      ).trim(),
+      leanTypeSourceHash: String(authorityClaim.leanTypeSourceHash || '').toLowerCase(),
+      leanNormalizedTypeHash: String(authorityClaim.leanNormalizedTypeHash || '').toLowerCase(),
+      allowedImports: requiredTextList(
+        authorityClaim.allowedImports,
+        'proposal_claim_source_allowed_imports_invalid',
+      ),
+      formalClaimCapabilityScopeManifestHash: String(
+        authorityClaim.formalClaimCapabilityScopeManifestHash || '',
+      ).toLowerCase(),
+      formalClaimGeneratorReceiptHash: String(
+        authorityClaim.formalClaimGeneratorReceiptHash || '',
+      ).toLowerCase(),
+    } : {}),
   };
   if (!['operator-signed', 'machine-policy-authorized'].includes(source.claimAuthorityType)
     || ![source.claimAuthorityBindingHash, source.claimAuthorityBundleHash,
@@ -305,7 +382,21 @@ export function proposalClaimSourceFromAuthority(authorityClaim) {
     || (source.claimAuthorityType === 'machine-policy-authorized'
       && (source.proposalSeedContractBundleHash !== null
         || source.approvedProposalSeedBindingHash !== null))
-    || source.proposalClaimTextHash !== hashBytes(Buffer.from(source.proposalClaimText, 'utf8'))) {
+    || source.proposalClaimTextHash !== hashBytes(Buffer.from(source.proposalClaimText, 'utf8'))
+    || (dynamicFormal && (
+      !/^[A-Za-z_][A-Za-z0-9_'.]*$/.test(source.leanDeclarationName)
+      || !dynamicFormalLeanTypeSourceValid(source.leanTypeSource)
+      || ![
+        source.dynamicFormalClaimSeedHash,
+        source.leanTypeSourceHash,
+        source.leanNormalizedTypeHash,
+        source.formalClaimCapabilityScopeManifestHash,
+        source.formalClaimGeneratorReceiptHash,
+      ].every((hash) => SHA256.test(hash))
+      || source.leanTypeSourceHash !== hashBytes(Buffer.from(source.leanTypeSource, 'utf8'))
+      || source.leanNormalizedTypeHash
+        !== leanTypeIdentity(source.leanTypeSource).normalizedTypeHash
+    ))) {
     throw new Error('proposal_claim_source_hash_invalid');
   }
   return Object.freeze(source);

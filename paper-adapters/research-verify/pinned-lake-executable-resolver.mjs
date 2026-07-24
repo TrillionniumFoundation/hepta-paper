@@ -4,12 +4,16 @@ import { spawnSync } from 'node:child_process';
 import { PRODUCTION_LEAN_TOOLCHAIN } from '../../paper-domain/research/formal-verifier-policy.mjs';
 import { isPathWithin } from '../../workflow-kernel/runtime/path-utils.mjs';
 
-function elanHome() {
-  return path.resolve(process.env.ELAN_HOME || path.join(process.env.HOME || '', '.elan'));
+function elanHome(environment = process.env) {
+  return path.resolve(environment.ELAN_HOME || path.join(environment.HOME || '', '.elan'));
 }
 
-export function resolvePinnedLakeExecutable({ toolchain = PRODUCTION_LEAN_TOOLCHAIN } = {}) {
-  const home = elanHome();
+export function resolvePinnedLakeExecutable({
+  toolchain = PRODUCTION_LEAN_TOOLCHAIN,
+  environment = process.env,
+  spawnSyncImpl = spawnSync,
+} = {}) {
+  const home = elanHome(environment);
   const elan = path.join(home, 'bin', 'elan');
   const toolchainsRoot = path.join(home, 'toolchains');
   const blockers = [];
@@ -19,17 +23,17 @@ export function resolvePinnedLakeExecutable({ toolchain = PRODUCTION_LEAN_TOOLCH
   try {
     const elanStat = fs.lstatSync(elan);
     if (!elanStat.isFile()) blockers.push('formal_elan_launcher_not_regular_file');
-    const result = blockers.length ? null : spawnSync(elan, ['which', 'lake'], {
+    const result = blockers.length ? null : spawnSyncImpl(elan, ['which', 'lake'], {
       encoding: 'utf8',
-      env: { ...process.env, ELAN_HOME: home, ELAN_TOOLCHAIN: toolchain },
+      env: { ...environment, ELAN_HOME: home, ELAN_TOOLCHAIN: toolchain },
       timeout: 10000,
       windowsHide: true,
     });
     if (!result || result.status !== 0 || result.error) blockers.push('formal_pinned_lake_resolution_failed');
     else executable = path.resolve(String(result.stdout || '').trim());
-    const leanResult = blockers.length ? null : spawnSync(elan, ['which', 'lean'], {
+    const leanResult = blockers.length ? null : spawnSyncImpl(elan, ['which', 'lean'], {
       encoding: 'utf8',
-      env: { ...process.env, ELAN_HOME: home, ELAN_TOOLCHAIN: toolchain },
+      env: { ...environment, ELAN_HOME: home, ELAN_TOOLCHAIN: toolchain },
       timeout: 10000,
       windowsHide: true,
     });

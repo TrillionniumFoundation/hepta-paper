@@ -25,7 +25,7 @@ export const SYSTEM_DATASET_ACCESS_RUNTIME_IMAGES = Object.freeze({
   }),
   r: Object.freeze({
     image: 'hepta/r-scientific:0.14.0',
-    imageDigest: 'sha256:6ef972701f396de1d4af46e4850a4e07c466db3f9e1936739e99c334e4ef33c8',
+    imageDigest: 'sha256:8fb19fecb75e13e74a7c2fc1e4c9c9e53bd0621be1e4cc62a8bd660e76ce3c03',
     containerExecutable: 'Rscript',
     tracerSha256: 'sha256:28f957c227012de0b18d1bd7fff2d396cb693ea60ed8013be68de071e84b5001',
     setprivSha256: 'sha256:96b083b79c32fd2f0c29657e88e20c7495839349fc64ad5d0503f32d26bf8733',

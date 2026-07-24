@@ -58,6 +58,11 @@ export function executeSystemBenchmarkEmpiricalRun({
     memoryBytes: spec.memoryBytes,
     maximumProcesses: spec.maximumProcesses,
     requiresGpu: Boolean(spec.requiresGpu),
+    maximumWallTimeMs: spec.timeoutMs,
+    cpuCount: Number(spec.cpuCount || 1),
+    executionEnvironment: executionIdentity.runtimeType === 'container'
+      ? 'signed-docker-runtime-v1' : 'signed-bubblewrap-runtime-v1',
+    researchContext: spec.experimentResearchContext || null,
     runArmBatch({ batch, outputDirectory }) {
       const batchIdentity = firstExecutionIdentity || prepareRuntimeIdentity(command, runtimeImage);
       firstExecutionIdentity = null;
@@ -77,6 +82,13 @@ export function executeSystemBenchmarkEmpiricalRun({
         HEPTA_EXPERIMENT_ARM_ADAPTER_HASH: batch.armAdapter.sourceHash,
         HEPTA_EXPERIMENT_ARM_ADAPTER_SET_HASH: resolvedAdapters.adapterSet.systemBenchmarkArmAdapterSetHash,
         HEPTA_PRE_DATA_ACCESS_FREEZE_HASH: batch.empiricalPreDataAccessFreezeHash,
+        HEPTA_EXPERIMENT_IR_HASH: batch.versionedExperimentIrHash,
+        ...(batch.experimentResearchBindingHash ? {
+          HEPTA_EXPERIMENT_RESEARCH_BINDING_HASH:
+            batch.experimentResearchBindingHash,
+          HEPTA_DATASET_RESEARCH_COMPATIBILITY_HASH:
+            batch.datasetResearchCompatibilityHash,
+        } : {}),
         ...systemBenchmarkArmBatchChallengeEnvironment(batch.challenge),
       };
       delete batchEnv.HEPTA_SEED;
@@ -134,6 +146,8 @@ export function executeSystemBenchmarkEmpiricalRun({
       failedAttemptLineageHashes: spec.failedAttemptLineageHashes || [],
       preDataAccessFreeze: harnessReceipt.preDataAccessFreeze || null,
       empiricalPreDataAccessFreezeHash: harnessReceipt.empiricalPreDataAccessFreezeHash || null,
+      experimentIr: harnessReceipt.experimentIr || null,
+      versionedExperimentIrHash: harnessReceipt.versionedExperimentIrHash || null,
       runnerReceiptHash: harnessReceipt.systemBenchmarkHarnessExecutionReceiptHash || null,
       runnerReceipt: null,
       harnessExecutionReceipt: harnessReceipt,

@@ -70,7 +70,10 @@ test('campaign application consumes canonical camelCase DTOs only', () => {
   const persistenceSources = [
     'sqlite-campaign-store.mjs',
     'sqlite-campaign-lifecycle-operations.mjs',
+    'sqlite-campaign-lifecycle-terminal-operations.mjs',
     'sqlite-campaign-lease-operations.mjs',
+    'sqlite-campaign-node-attempt-operations.mjs',
+    'sqlite-campaign-node-infrastructure-operations.mjs',
     'sqlite-campaign-prepared-integration-operations.mjs',
   ].map((file) => fs.readFileSync(path.join(workspaceRoot, 'paper-adapters/persistence', file), 'utf8')).join('\n');
   assert.equal(persistenceSources.includes('selectReadyCampaignNodes'), true);

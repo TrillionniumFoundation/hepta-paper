@@ -82,6 +82,12 @@ export function normalizeDatasetMounts(mounts = []) {
       ...(mount?.operatorAuthorizationHash ? { operatorAuthorizationHash: mount.operatorAuthorizationHash } : {}),
       ...(mount?.operatorDatasetAuthorityDocumentHash ? { operatorDatasetAuthorityDocumentHash: mount.operatorDatasetAuthorityDocumentHash } : {}),
       ...(mount?.operatorDatasetAuthority ? { operatorDatasetAuthority: mount.operatorDatasetAuthority } : {}),
+      ...(mount?.operatorDatasetResearchSemantics ? {
+        operatorDatasetResearchSemantics: mount.operatorDatasetResearchSemantics,
+      } : {}),
+      ...(mount?.operatorDatasetResearchSemanticsHash ? {
+        operatorDatasetResearchSemanticsHash: mount.operatorDatasetResearchSemanticsHash,
+      } : {}),
       ...(mount?.operatorDatasetHarnessHandle ? { operatorDatasetHarnessHandle: mount.operatorDatasetHarnessHandle } : {}),
       ...(mount?.splitManifestHash ? { splitManifestHash: mount.splitManifestHash } : {}),
       ...(mount?.benchmarkHarnessDocumentHash ? { benchmarkHarnessDocumentHash: mount.benchmarkHarnessDocumentHash } : {}),
@@ -102,7 +108,7 @@ export function normalizeDatasetMounts(mounts = []) {
     if (normalized.operatorDatasetAuthorityDocumentHash
       && normalized.operatorAuthorizationHash !== normalized.operatorDatasetAuthorityDocumentHash) blockers.push('dataset_operator_authority_identity_mismatch');
     if (normalized.splitManifestHash && !/^sha256:[0-9a-f]{64}$/i.test(String(normalized.splitManifestHash))) blockers.push('dataset_split_manifest_hash_invalid');
-    for (const field of ['operatorDatasetHarnessHandle', 'operatorDatasetAuthorityDocumentHash', 'benchmarkHarnessDocumentHash', 'benchmarkHarnessDefinitionHash', 'analysisProtocolHash']) {
+    for (const field of ['operatorDatasetHarnessHandle', 'operatorDatasetAuthorityDocumentHash', 'operatorDatasetResearchSemanticsHash', 'benchmarkHarnessDocumentHash', 'benchmarkHarnessDefinitionHash', 'analysisProtocolHash']) {
       if (normalized[field] && !/^sha256:[0-9a-f]{64}$/i.test(String(normalized[field]))) blockers.push(`dataset_${field}_invalid`);
     }
     if (normalized.benchmarkSeedSchedule && (normalized.benchmarkSeedSchedule.length < 1

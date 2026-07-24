@@ -15,24 +15,87 @@ spec:
     metadata:
       labels:
         app: hepta-autonomous-research-supervisor
+        hepta.paper/submission-dispatch-capability: "denied"
+        hepta.paper/portal-egress-capability: "denied"
+        # A cluster admission policy must reject this label unless it has
+        # independently verified the signed qualification receipt named below.
+        hepta.paper/nested-runtime-admission: required
+      annotations:
+        hepta.paper/nested-runtime-contract: hepta-nested-container-runtime-v1
+        hepta.paper/nested-runtime-profile-id: REPLACE_WITH_EXTERNALLY_QUALIFIED_PROFILE_ID
+        hepta.paper/nested-runtime-qualification-receipt-sha256: REPLACE_WITH_SHA256_OF_SIGNED_QUALIFICATION_RECEIPT
+        hepta.paper/nested-runtime-qualification-signer: REPLACE_WITH_INDEPENDENT_QUALIFIER_KEY_ID
+        hepta.paper/nested-runtime-conformance: bind-rw-uid-gid-network-none-memory-cpu-pids-parent-pod-v1
     spec:
+      serviceAccountName: hepta-autonomous-research-supervisor
       restartPolicy: Always
       terminationGracePeriodSeconds: 900
+      automountServiceAccountToken: false
+      # RuntimeClass is only a selector; its name is not evidence of nested
+      # container isolation. Admission must bind this exact profile and node to
+      # the independently signed receipt in the pod annotations. The canonical
+      # manifest remains deliberately No-Go through the blocking init below.
+      runtimeClassName: REPLACE_WITH_EXTERNALLY_QUALIFIED_NESTED_CONTAINER_RUNTIME_CLASS
+      nodeSelector:
+        hepta.paper/dedicated-autonomous-research-node: "true"
+        hepta.paper/nested-runtime-profile-id: REPLACE_WITH_EXTERNALLY_QUALIFIED_PROFILE_ID
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
         runAsGroup: 10001
-        # Provision writable PVCs for uid/gid 10001 out of band. A pod fsGroup
-        # is intentionally absent: it must not rewrite the root-owned external
-        # intake-authority anchor or make any authority file group-writable.
+        # GID 20001 is dedicated only to the submission-handoff PVC. Provision
+        # that PVC root as root:20001 mode 3770. Pre-provision
+        # dispatcher-challenges as 10001:20001 mode 2750 and dispatcher-cycles
+        # as 10002:20001 mode 2750. Do not use fsGroup: it could
+        # rewrite the root-owned external authority PVCs mounted by this Pod.
+        supplementalGroups: [20001]
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+        # CANONICAL TEMPLATE SAFETY GUARD: this manifest is not a runnable
+        # nested-container deployment. A site-specific, separately reviewed
+        # overlay must replace this one guard with BOTH (1) a verifier for the
+        # independently signed qualification receipt pinned above and (2) a
+        # startup conformance runner. The runner must execute the fixed-digest
+        # worker from the supervisor-visible namespace and prove shared bind RW,
+        # uid/gid ownership, network=none, memory/CPU/PID limits, and the parent
+        # Pod resource ceiling. Merely deleting this init is not qualification.
+        - name: deployment-no-go-until-nested-runtime-qualified
+          image: REPLACE_WITH_PINNED_QUALIFICATION_GUARD_IMAGE_DIGEST
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              echo >&2 'NO-GO: install a signed, externally qualified nested-container runtime overlay'
+              exit 78
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
       containers:
         - name: supervisor
           image: REPLACE_WITH_PINNED_HEPTA_IMAGE_DIGEST
           imagePullPolicy: IfNotPresent
-          command: ["node", "paper-core/bin/hepta-paper.mjs"]
+          command: ["/bin/sh", "-ec"]
           args:
+            - |
+              test -w /hepta/runtime
+              test -w /hepta/runtime/hepta-paper.sqlite
+              test "$(stat -c %g /hepta/runtime/autonomous-research/submission-handoff)" = "20001"
+              test "$(stat -c %u /hepta/runtime/autonomous-research/submission-handoff)" = "0"
+              test "$(stat -c %a /hepta/runtime/autonomous-research/submission-handoff)" = "3770"
+              test -w /hepta/runtime/autonomous-research/submission-handoff
+              test "$(stat -c %u /hepta/runtime/autonomous-research/submission-handoff/dispatcher-challenges)" = "10001"
+              test "$(stat -c %a /hepta/runtime/autonomous-research/submission-handoff/dispatcher-challenges)" = "2750"
+              test -w /hepta/runtime/autonomous-research/submission-handoff/dispatcher-challenges
+              test ! -w /hepta/runtime/autonomous-research/submission-handoff/dispatcher-cycles
+              umask 0007
+              exec node paper-core/bin/hepta-paper.mjs "$@"
+            - hepta-autonomous-research-supervisor
             - operator
             - autonomous-supervisor
             - "--"
@@ -64,6 +127,14 @@ spec:
               value: /hepta/assets
             - name: HEPTA_PAPER_RUNTIME_ROOT
               value: /hepta/runtime
+            # The canonical No-Go template does not provision this socket. A
+            # qualified overlay must provide the pod-local endpoint and share
+            # both qualified-runtime-run and tmp with its daemon/conformance
+            # containers; node sockets and remote endpoints remain forbidden.
+            - name: DOCKER_HOST
+              value: unix:///var/run/docker.sock
+            - name: TMPDIR
+              value: /tmp
             - name: HEPTA_RESEARCH_AUTHOR_CODEX_HOME
               value: /hepta/credentials/research-author
             - name: HEPTA_FORMAL_REVIEW_CODEX_HOME
@@ -80,6 +151,59 @@ spec:
               value: /hepta/release-attestor/config.json
             - name: HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG
               value: /hepta/runtime-reproducibility/process-config.json
+            - name: HEPTA_AUTONOMOUS_RESEARCH_ONLINE_MUTATION_AUTHORITY_PROCESS_CONFIG
+              value: /hepta/online-mutation-authority/process-config.json
+            - name: HEPTA_AUTONOMOUS_RESEARCH_ONLINE_MUTATION_AUTHORITY_CONFIG
+              value: /hepta/online-mutation-authority/authority-config.json
+            - name: HEPTA_AUTONOMOUS_SUBMISSION_HANDOFF_MUTATION_AUTHORITY_PROCESS_CONFIG
+              value: /hepta/submission-handoff-authority/process-config.json
+            - name: HEPTA_AUTONOMOUS_RESEARCH_STATE_BACKUP_AUTHORITY_CONFIG
+              value: /hepta/state-backup-authority/process-config.json
+            # The fully-autonomous claim is admitted only for this strong,
+            # fail-closed content profile. Every referenced path is supplied
+            # as a regular file on the immutable capabilities PVC.
+            - name: HEPTA_AUTONOMOUS_RESEARCH_CONTENT_MODE
+              value: agent-evidence-bound
+            - name: HEPTA_DYNAMIC_FORMAL_CLAIMS_ENABLED
+              value: "1"
+            - name: HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG
+              value: /hepta/capabilities-public/research-author-identity.json
+            - name: HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG_HASH
+              valueFrom:
+                configMapKeyRef:
+                  name: hepta-autonomous-research-supervisor
+                  key: research-author-identity-configuration-hash
+            - name: HEPTA_REVIEWER_PRINCIPAL_POOL_CONFIG
+              value: /hepta/capabilities-public/reviewer-principals.json
+            - name: HEPTA_PRIOR_ART_SERVICE_CONFIG
+              value: /hepta/capabilities-public/prior-art-service.json
+            - name: HEPTA_EXTERNAL_REPLAY_CONFIG
+              value: /hepta/capabilities-public/external-replay-service.json
+            - name: HEPTA_AUTONOMOUS_VENUE_PROFILE_CONFIG
+              value: /hepta/capabilities-public/venue-profiles.json
+            - name: HEPTA_AUTONOMOUS_VENUE_PROFILE_CONFIG_HASH
+              valueFrom:
+                configMapKeyRef:
+                  name: hepta-autonomous-research-supervisor
+                  key: venue-profile-configuration-hash
+            # The research principal receives only the public descriptor. It
+            # has no portal endpoint, token-variable name, or dispatch config.
+            - name: HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_CONFIG
+              value: /hepta/capabilities-public/submission-portal-descriptor.json
+            - name: HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIGURATION_HASH
+              valueFrom:
+                configMapKeyRef:
+                  name: hepta-autonomous-research-supervisor
+                  key: submission-portal-configuration-hash
+            - name: HEPTA_SUBMISSION_DISPATCHER_IDENTITY_CONFIG_PATH
+              value: /hepta/capabilities-public/submission-dispatcher-identity.json
+            - name: HEPTA_AUTONOMOUS_SUBMISSION_METADATA_CONFIG
+              value: /hepta/capabilities-public/submission-metadata.json
+            - name: HEPTA_AUTONOMOUS_SUBMISSION_METADATA_CONFIG_HASH
+              valueFrom:
+                configMapKeyRef:
+                  name: hepta-autonomous-research-supervisor
+                  key: submission-metadata-configuration-hash
             # These are explicit fail-closed operational budgets. Keep the
             # cost and lead values synchronized with the mounted verifier
             # configuration; they are intentionally not inferred at runtime.
@@ -101,6 +225,11 @@ spec:
             # Models and other non-secret pinned provider settings only.
             - configMapRef:
                 name: hepta-autonomous-research-supervisor
+            # Research-only provider credentials. Admission must reject the
+            # portal token key from this Secret; submission uses a different
+            # principal and Secret below.
+            - secretRef:
+                name: hepta-autonomous-research-provider-tokens
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -141,6 +270,11 @@ spec:
           volumeMounts:
             - name: runtime
               mountPath: /hepta/runtime
+            # This independently provisioned PVC is the only storage shared
+            # with the dispatcher principal. The native runtime PVC remains
+            # mounted by the research principal alone.
+            - name: submission-handoff
+              mountPath: /hepta/runtime/autonomous-research/submission-handoff
             - name: assets
               mountPath: /hepta/assets
               readOnly: true
@@ -169,15 +303,39 @@ spec:
             - name: runtime-reproducibility
               mountPath: /hepta/runtime-reproducibility
               readOnly: true
+            # These immutable volumes contain public trust documents, pinned
+            # process configurations, and (when referenced by commandPath)
+            # dedicated broker client executables. They must not contain the
+            # independently administered brokers' private signing keys.
+            - name: online-mutation-authority
+              mountPath: /hepta/online-mutation-authority
+              readOnly: true
+            - name: submission-handoff-authority
+              mountPath: /hepta/submission-handoff-authority
+              readOnly: true
+            - name: state-backup-authority
+              mountPath: /hepta/state-backup-authority
+              readOnly: true
             - name: intake
               mountPath: /hepta/intake
               readOnly: true
+            # Must contain nlink=1 regular files, not projected ..data
+            # symlinks. Use an immutable PVC or a CSI driver that materializes
+            # regular files with owner-only permissions.
+            - name: capabilities
+              mountPath: /hepta/capabilities-public
+              readOnly: true
+            - name: qualified-runtime-run
+              mountPath: /var/run
             - name: tmp
               mountPath: /tmp
       volumes:
         - name: runtime
           persistentVolumeClaim:
             claimName: hepta-runtime
+        - name: submission-handoff
+          persistentVolumeClaim:
+            claimName: hepta-autonomous-submission-handoff
         - name: assets
           persistentVolumeClaim:
             claimName: hepta-assets
@@ -199,9 +357,245 @@ spec:
         - name: runtime-reproducibility
           persistentVolumeClaim:
             claimName: hepta-runtime-reproducibility-config
+        - name: online-mutation-authority
+          persistentVolumeClaim:
+            claimName: hepta-autonomous-research-online-mutation-authority
+        - name: submission-handoff-authority
+          persistentVolumeClaim:
+            claimName: hepta-autonomous-submission-handoff-mutation-authority
+        - name: state-backup-authority
+          persistentVolumeClaim:
+            claimName: hepta-autonomous-research-state-backup-authority
         - name: intake
           persistentVolumeClaim:
             claimName: hepta-autonomous-research-intake-config
+        - name: capabilities
+          persistentVolumeClaim:
+            claimName: hepta-autonomous-research-public-capability-config
+        # Reserved for the site-qualified overlay's pod-local daemon socket. The
+        # canonical manifest has no daemon and is blocked above. Never replace
+        # this emptyDir with a node socket, hostPath, or remote Docker endpoint.
+        - name: qualified-runtime-run
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+        # A qualified daemon and conformance runner must mount this same volume
+        # at /tmp so daemon-side bind resolution sees supervisor-created paths.
         - name: tmp
           emptyDir:
             sizeLimit: 1Gi
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hepta-autonomous-research-supervisor
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: hepta-autonomous-submission-dispatcher
+  labels:
+    hepta.paper/submission-dispatch-capability: "allowed"
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hepta-autonomous-submission-dispatcher
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: hepta-autonomous-submission-dispatcher
+  template:
+    metadata:
+      labels:
+        app: hepta-autonomous-submission-dispatcher
+        hepta.paper/submission-dispatch-capability: "allowed"
+        hepta.paper/portal-egress-capability: "allowed"
+    spec:
+      serviceAccountName: hepta-autonomous-submission-dispatcher
+      automountServiceAccountToken: false
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 120
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10002
+        runAsGroup: 10002
+        # Same dedicated handoff GID as the supervisor; the principals retain
+        # distinct UIDs and primary groups. Only the handoff PVC uses this GID.
+        supplementalGroups: [20001]
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: dispatcher
+          image: REPLACE_WITH_PINNED_HEPTA_IMAGE_DIGEST
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              test ! -e /hepta/runtime/hepta-paper.sqlite
+              test "$(stat -c %g /hepta/runtime/autonomous-research/submission-handoff)" = "20001"
+              test "$(stat -c %u /hepta/runtime/autonomous-research/submission-handoff)" = "0"
+              test "$(stat -c %a /hepta/runtime/autonomous-research/submission-handoff)" = "3770"
+              test -w /hepta/runtime/autonomous-research/submission-handoff
+              test -w /hepta/runtime/autonomous-research/submission-handoff/submission-handoff.sqlite
+              test ! -w /hepta/runtime/autonomous-research/submission-handoff/dispatcher-challenges
+              test "$(stat -c %u /hepta/runtime/autonomous-research/submission-handoff/dispatcher-cycles)" = "10002"
+              test "$(stat -c %a /hepta/runtime/autonomous-research/submission-handoff/dispatcher-cycles)" = "2750"
+              test -w /hepta/runtime/autonomous-research/submission-handoff/dispatcher-cycles
+              umask 0007
+              exec node paper-core/bin/hepta-paper.mjs "$@"
+            - hepta-autonomous-submission-dispatcher
+            - operator
+            - autonomous-submission-dispatcher
+            - "--"
+            - --resident
+            - --root
+            - /hepta/assets
+            - --runtime-root
+            - /hepta/runtime
+            - --poll-ms
+            - "30000"
+            - --limit
+            - "100"
+          env:
+            - name: HEPTA_PAPER_ASSET_ROOT
+              value: /hepta/assets
+            - name: HEPTA_PAPER_RUNTIME_ROOT
+              value: /hepta/runtime
+            - name: HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIG
+              value: /hepta/submission-portal/config.json
+            - name: HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_CONFIG
+              value: /hepta/capabilities-public/submission-portal-descriptor.json
+            - name: HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIGURATION_HASH
+              valueFrom:
+                configMapKeyRef:
+                  name: hepta-autonomous-submission-dispatcher
+                  key: submission-portal-configuration-hash
+            - name: HEPTA_SUBMISSION_DISPATCHER_IDENTITY_CONFIG_PATH
+              value: /hepta/capabilities-public/submission-dispatcher-identity.json
+            # This external-signer process configuration is resident-only.
+            # The research Deployment has neither this environment variable
+            # nor the signer configuration PVC.
+            - name: HEPTA_SUBMISSION_DISPATCHER_CYCLE_SIGNING_CONFIG
+              value: /hepta/submission-dispatcher-signer/config.json
+            - name: HEPTA_AUTONOMOUS_VENUE_PROFILE_CONFIG
+              value: /hepta/capabilities-public/venue-profiles.json
+            - name: HEPTA_AUTONOMOUS_VENUE_PROFILE_CONFIG_HASH
+              valueFrom:
+                configMapKeyRef:
+                  name: hepta-autonomous-submission-dispatcher
+                  key: venue-profile-configuration-hash
+            - name: HEPTA_AUTONOMOUS_SUBMISSION_METADATA_CONFIG
+              value: /hepta/capabilities-public/submission-metadata.json
+            - name: HEPTA_AUTONOMOUS_SUBMISSION_METADATA_CONFIG_HASH
+              valueFrom:
+                configMapKeyRef:
+                  name: hepta-autonomous-submission-dispatcher
+                  key: submission-metadata-configuration-hash
+            - name: HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG
+              value: /hepta/release-attestor/config.json
+            - name: HEPTA_AUTONOMOUS_SUBMISSION_HANDOFF_MUTATION_AUTHORITY_PROCESS_CONFIG
+              value: /hepta/submission-handoff-authority/process-config.json
+          envFrom:
+            - configMapRef:
+                name: hepta-autonomous-submission-dispatcher
+            - secretRef:
+                name: hepta-autonomous-submission-portal-token
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            # Empty private base: this Pod receives no native runtime PVC.
+            - name: runtime-base
+              mountPath: /hepta/runtime
+              readOnly: true
+            # Only the externalized handoff database is writable.
+            - name: submission-handoff
+              mountPath: /hepta/runtime/autonomous-research/submission-handoff
+            - name: assets
+              mountPath: /hepta/assets
+              readOnly: true
+            - name: public-capabilities
+              mountPath: /hepta/capabilities-public
+              readOnly: true
+            - name: submission-portal-config
+              mountPath: /hepta/submission-portal
+              readOnly: true
+            - name: submission-dispatcher-signer
+              mountPath: /hepta/submission-dispatcher-signer
+              readOnly: true
+            - name: release-attestor
+              mountPath: /hepta/release-attestor
+              readOnly: true
+            - name: submission-handoff-authority
+              mountPath: /hepta/submission-handoff-authority
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: runtime-base
+          emptyDir:
+            sizeLimit: 1Mi
+        - name: submission-handoff
+          persistentVolumeClaim:
+            claimName: hepta-autonomous-submission-handoff
+        - name: assets
+          persistentVolumeClaim:
+            claimName: hepta-assets
+        - name: public-capabilities
+          persistentVolumeClaim:
+            claimName: hepta-autonomous-research-public-capability-config
+        # A regular-file PVC is used because the configuration loader rejects
+        # projected Secret/ConfigMap symlinks. Only this Pod mounts it.
+        - name: submission-portal-config
+          persistentVolumeClaim:
+            claimName: hepta-autonomous-submission-portal-config
+        - name: submission-dispatcher-signer
+          persistentVolumeClaim:
+            claimName: hepta-autonomous-submission-dispatcher-signer-config
+        - name: release-attestor
+          persistentVolumeClaim:
+            claimName: hepta-release-attestor-config
+        - name: submission-handoff-authority
+          persistentVolumeClaim:
+            claimName: hepta-autonomous-submission-handoff-mutation-authority
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: hepta-autonomous-submission-dispatcher-egress
+spec:
+  podSelector:
+    matchLabels:
+      app: hepta-autonomous-submission-dispatcher
+      hepta.paper/portal-egress-capability: "allowed"
+  policyTypes: ["Ingress", "Egress"]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # Canonical template remains fail-closed. A reviewed overlay must replace
+    # this documentation-only address with the portal's pinned egress CIDR.
+    - to:
+        - ipBlock:
+            cidr: 192.0.2.1/32
+      ports:
+        - { protocol: TCP, port: 443 }

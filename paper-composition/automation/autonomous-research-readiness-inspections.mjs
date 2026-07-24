@@ -1,4 +1,7 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  verifyAutonomousResearchAgendaProductionReceipt,
+} from '../../paper-domain/automation/autonomous-research-agenda-production-contract.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{2,159}$/;
@@ -197,7 +200,19 @@ export function evaluateUnattendedCampaignLaunchReadiness({
   providerConfigurationHash = null,
   releaseAttestorInspection = null,
 } = {}) {
+  const capabilityScope = loopPreparation?.capabilityScopeManifest || null;
+  const machineAgendaReady = capabilityScope?.agendaMode !== 'machine-generated'
+    || (verifyAutonomousResearchAgendaProductionReceipt(
+      loopPreparation?.researchAgendaProducerReceipt,
+    ).valid
+      && capabilityScope.empiricalFamilies.includes(
+        loopPreparation.researchAgendaProducerReceipt.selectedProtocolFamily,
+      )
+      && JSON.stringify(
+        loopPreparation.researchAgendaProducerReceipt.allowedProtocolFamilies,
+      ) === JSON.stringify(capabilityScope.empiricalFamilies));
   return loopPreparation?.autonomousExecutionLaunchReady === true
+    && machineAgendaReady
     && runtimePrincipalPreflight?.status === 'autonomous_research_runtime_principals_ready'
     && Array.isArray(runtimePrincipalPreflight?.blockers)
     && runtimePrincipalPreflight.blockers.length === 0
@@ -242,6 +257,10 @@ export function externalQualificationProcessConfigurationInspectionReady(inspect
     && inspection?.status === 'external_research_qualification_process_configuration_ready'
     && inspection?.ready === true
     && inspection?.independentVerifierConfigured === true
+    && inspection?.authoritativeLookupSupported === true
+    && inspection?.authoritativeLookupVerifierConfigured === true
+    && inspection?.authoritativeLookupVerificationTrustSetHash
+      === inspection?.trustedSignerTrustSetHash
     && inspection?.independentVerifierResponseAttestationRequired === true
     && inspection?.privateSigningKeyLoaded === false
     && qualificationCostAuthorityValid
@@ -265,6 +284,7 @@ export function externalQualificationProcessConfigurationInspectionReady(inspect
       inspection.clientServiceIdentityHash,
       inspection.verifierServiceIdentityHash,
       inspection.trustedSignerTrustSetHash,
+      inspection.authoritativeLookupVerificationTrustSetHash,
       inspection.trustedSignerPublicKeySpkiHash,
       inspection.verifierAttestorPublicKeySpkiHash,
     ].every((value) => SHA256.test(String(value || '')))
@@ -422,7 +442,9 @@ function commandInspectionHash(inspection, prefix) {
 function injectedPairReady(client, verifier) {
   return client?.kind === 'ExternalResearchQualificationClient'
     && typeof client?.requestQualification === 'function'
+    && typeof client?.lookupQualification === 'function'
     && verifier?.kind === 'IndependentExternalResearchQualificationVerifier'
+    && typeof verifier?.verifyLookup === 'function'
     && typeof verifier?.verify === 'function'
     && [
       client.configurationIdentityHash,

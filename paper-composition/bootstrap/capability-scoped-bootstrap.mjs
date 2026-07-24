@@ -9,7 +9,6 @@ import { createSqliteCampaignReleaseAuthorityRepository } from '../../paper-adap
 import { createInventoryRepository } from '../../paper-adapters/inventory/inventory-repository.mjs';
 import { composeTrustedReceiptLedgers } from './receipt-ledger-composition.mjs';
 import { buildExecutionContext, composeScopedFoundationServices, exposeScopedFoundationServices } from './context-foundation-composition.mjs';
-import { composeCompatibilityStagePorts } from '../compat/legacy-stage-adapter-registry.mjs';
 import { createOperatorDatasetHarnessAuthorityReceiptVerifier } from '../../paper-adapters/automation/operator-dataset-harness-authority-receipt-verifier.mjs';
 import { loadOperatorDatasetAuthorityTrustStoreSync } from '../../paper-adapters/automation/operator-dataset-harness-reader.mjs';
 
@@ -77,18 +76,11 @@ export function composeBatchServices({
         operatorDatasetAuthorityTrustStoreProvider,
       }))
     : null;
-  const composedStagePorts = composeCompatibilityStagePorts({
-    store,
-    campaignReleaseAuthorityRepository,
-    includeSubmission: includeSubmissionPolicy,
-  });
   const services = {
     ...exposeScopedFoundationServices(foundation, { schemaVersion }),
     ...(exposeRawStore ? { store } : {}),
     artifactRepositoryFactory,
     authorityVerifier: serviceOverrides.authorityVerifier || createAuthorityVerifier(),
-    stageExecution: serviceOverrides.stageExecution || composedStagePorts.stageExecution,
-    journalPolicy: serviceOverrides.journalPolicy || composedStagePorts.journalPolicy,
     trustedResearchReceiptWriters: trustedLedgers.research,
     jobReceiptStore,
     nativeResearchWorkerJobReceiptStore,

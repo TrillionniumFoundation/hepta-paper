@@ -12,6 +12,7 @@ export function composeCampaignCommandService({ runtimeRoot, services = {} } = {
     workspaceRegistry: services.workspaceRegistry,
     receiptLedger: services.receiptLedger,
     runtimeRetentionReceiptLedger: services.runtimeRetentionReceiptLedger,
+    runtimeRetentionReachabilityProvider: services.runtimeRetentionReachabilityProvider,
     buildRuntimeRetentionPlan,
     executeRuntimeRetentionPlan,
     reconcileRuntimeRetentionIntents,

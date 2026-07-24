@@ -6,6 +6,9 @@ import { createSqliteCampaignReleaseQueryRepository } from './sqlite-campaign-re
 import { createExperimentRegistryAuthorityVerifier } from '../../paper-domain/research/experiment-registry-authority.mjs';
 import { verifyArtifactWriteReceiptSource } from '../artifacts/artifact-write-receipt-verifier.mjs';
 import { createIndependentRawEventArtifactRecomputationVerifier } from '../research-verify/raw-event-artifact-recomputation-verifier.mjs';
+import {
+  NATIVE_STORE_QUALITY_RELEASE_STATEMENT_IDS,
+} from './native-store-quality-release-mutation-plan.mjs';
 
 export function createSqliteCampaignReleaseAuthorityRepository({
   store,
@@ -75,7 +78,52 @@ export function createSqliteCampaignReleaseAuthorityRepository({
       };
       const promotedAt = row.integrated_at || row.updated_at || clock.nowIso();
       const promotion = createCampaignReleasePromotionReceipt({ campaign, packageNode, packageResult, promotedAt, experimentRegistryAuthorityVerifier });
-      const insert = store.execute(`BEGIN IMMEDIATE;
+      let insert;
+      if (typeof store.mutate === 'function') {
+        insert = store.mutate({
+          databaseRole: 'native-store',
+          operationId:
+            'native-store.campaign-release-authority-repository.promoteCompletedRelease.v1',
+          authorizationReceiptHashes: [],
+          sideEffectReservationHashes: [],
+          mutate: (transaction) => transaction.run(
+            NATIVE_STORE_QUALITY_RELEASE_STATEMENT_IDS
+              .insertCurrentCampaignRelease,
+            promotion.campaignId,
+            promotion.paperId,
+            promotion.campaignPlanHash,
+            promotion.packageNodeId,
+            promotion.packageAttemptId,
+            promotion.leaseGeneration,
+            promotion.packageResultHash,
+            promotion.integrationDescriptorHash,
+            promotion.integrationReceiptHash,
+            promotion.campaignReleaseBundleHash,
+            promotion.materializationReceiptHash,
+            JSON.stringify(packageResult.releaseBundle),
+            JSON.stringify(promotion),
+            promotion.campaignReleasePromotionReceiptHash,
+            promotion.packageCompletedAt,
+            promotion.promotedAt,
+            promotion.packageNodeId,
+            promotion.campaignId,
+            promotion.packageAttemptId,
+            promotion.leaseGeneration,
+            promotion.packageResultHash,
+            promotion.integrationDescriptorHash,
+            promotion.integrationReceiptHash,
+            promotion.paperId,
+            promotion.campaignPlanHash,
+          ).changes,
+        });
+        if (![
+          'externally_fenced_sqlite_mutation_finalized',
+          'externally_fenced_sqlite_mutation_no_change',
+        ].includes(insert?.status) || ![0, 1].includes(insert.value)) {
+          throw new Error('campaign_release_authority_external_mutation_receipt_invalid');
+        }
+      } else {
+        insert = store.execute(`BEGIN IMMEDIATE;
         INSERT OR IGNORE INTO campaign_current_releases(
           campaign_id,paper_id,campaign_plan_hash,package_node_id,package_attempt_id,lease_generation,
           package_result_hash,integration_descriptor_hash,integration_receipt_hash,campaign_release_bundle_hash,
@@ -96,7 +144,8 @@ export function createSqliteCampaignReleaseAuthorityRepository({
             AND c.status='completed' AND c.paper_id=${sqlText(promotion.paperId)}
             AND json_extract(c.spec_json,'$.campaignPlanHash')=${sqlText(promotion.campaignPlanHash)});
         COMMIT;`);
-      if (!insert.ok) throw new Error(insert.error || 'campaign_release_authority_promotion_failed');
+        if (!insert.ok) throw new Error(insert.error || 'campaign_release_authority_promotion_failed');
+      }
       const promoted = repository.getCurrentRelease({ campaignId });
       if (!promoted) throw new Error('campaign_release_authority_promotion_not_current');
       return promoted;

@@ -1,0 +1,44 @@
+[Unit]
+Description=Hepta Paper fresh-host identities and durable parent bootstrap
+After=local-fs.target
+Before=autonomous-submission-handoff-layout-provision.path autonomous-submission-handoff-layout-provision.service autonomous-research-supervisor.service autonomous-submission-dispatcher.service strict-full-auto-acceptance.service
+RequiresMountsFor=/etc /var/lib
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/bin/env -i PATH=/usr/sbin:/usr/bin /usr/bin/systemd-sysusers /usr/lib/sysusers.d/hepta-paper.conf
+ExecStart=/usr/bin/env -i PATH=/usr/sbin:/usr/bin /usr/bin/systemd-tmpfiles --create /usr/lib/tmpfiles.d/hepta-paper.conf
+ExecStart=/usr/bin/env -i PATH=/usr/sbin:/usr/bin /usr/libexec/hepta-paper/autonomous-submission-handoff-layout-provision --verify-identities
+RemainAfterExit=yes
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER
+AmbientCapabilities=
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectHostname=yes
+ProtectClock=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+ReadWritePaths=/etc /var/lib
+InaccessiblePaths=-/etc/hepta-paper -/run/hepta -/run/hepta-authority
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

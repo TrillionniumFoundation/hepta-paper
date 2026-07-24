@@ -3,6 +3,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import {
+  finalizeTheoremSpecification,
+  readFinalizedTheoremSpecification,
+} from '../../paper-adapters/automation/theorem-specification-finalizer.mjs';
 import { canonicalClaimsFromWorkerPlan } from '../../paper-adapters/research-verify/canonical-claim-registry-reader.mjs';
 import { readFormalClaimUniverse } from '../../paper-adapters/research-verify/formal-claim-universe-reader.mjs';
 import { hashBytes } from '../../workflow-kernel/record-hash.mjs';
@@ -30,6 +34,87 @@ function claimBinding(source, body, claimId) {
     },
   };
 }
+
+function recursiveSourceOrderFixture(t) {
+  const expected = [
+    ['Main opening claim.', 'main.tex', 'main.tex#formal-theorem=1'],
+    ['Z opening claim.', 'sections/z.tex', 'sections/z.tex#formal-theorem=1'],
+    ['Nested first claim.', 'sections/nested/inner.tex', 'sections/nested/inner.tex#formal-theorem=1'],
+    ['Nested second claim.', 'sections/nested/inner.tex', 'sections/nested/inner.tex#formal-theorem=2'],
+    ['Z closing claim.', 'sections/z.tex', 'sections/z.tex#formal-theorem=2'],
+    ['A claim.', 'sections/a.tex', 'sections/a.tex#formal-theorem=1'],
+    ['Main closing claim.', 'main.tex', 'main.tex#formal-theorem=2'],
+  ];
+  const theorem = (statement) => [
+    `\\begin{theorem}${statement}\\end{theorem}`,
+    '\\begin{proof}By construction.\\end{proof}',
+  ].join('\n');
+  const root = writeWorkspace(t, {
+    'main.tex': [
+      theorem('Main opening claim.'),
+      '\\input{sections/z}',
+      '\\input{sections/a}',
+      theorem('Main closing claim.'),
+    ].join('\n'),
+    'sections/z.tex': [
+      theorem('Z opening claim.'),
+      '\\include{nested/inner}',
+      theorem('Z closing claim.'),
+    ].join('\n'),
+    'sections/nested/inner.tex': [
+      theorem('Nested first claim.'),
+      theorem('Nested second claim.'),
+    ].join('\n'),
+    'sections/a.tex': theorem('A claim.'),
+  });
+  return { root, expected };
+}
+
+function theoremSpecificationDraftClaim(statement, index) {
+  return {
+    claimKey: `source-order-${index + 1}`,
+    title: `Source-order claim ${index + 1}`,
+    statement,
+    assumptions: [],
+    quantifiers: [],
+    negativeBoundaries: ['No stronger claim is made.'],
+    proofObligations: [`Prove source-order claim ${index + 1}.`],
+    evidenceObligations: [],
+    manuscriptIntent: 'existing',
+  };
+}
+
+test('formal claims follow recursive TeX source order across non-lexical and nested includes', (t) => {
+  const { root, expected } = recursiveSourceOrderFixture(t);
+  const universe = readFormalClaimUniverse({ sourceRoot: root });
+  assert.equal(universe.status, 'formal_claim_universe_verified', JSON.stringify(universe.blockers));
+  assert.deepEqual(universe.theorems.map((entry) => [entry.text, entry.manuscriptPath, entry.theoremId]), expected);
+});
+
+test('theorem specification finalization retains recursive source-order claim alignment', (t) => {
+  const { root, expected } = recursiveSourceOrderFixture(t);
+  fs.writeFileSync(path.join(root, 'THEOREM_SPEC_DRAFT.json'), `${JSON.stringify({
+    version: 1,
+    kind: 'TheoremSpecificationDraft',
+    claims: expected.map(([statement], index) => theoremSpecificationDraftClaim(statement, index)),
+  }, null, 2)}\n`);
+
+  const receipt = finalizeTheoremSpecification({
+    workspace: root,
+    manuscriptPath: 'main.tex',
+    paperId: 'source-order-paper',
+    campaignId: 'source-order-campaign',
+  });
+  assert.equal(receipt.status, 'theorem_specification_finalized');
+  const specification = readFinalizedTheoremSpecification({
+    workspace: root,
+    manuscriptPath: 'main.tex',
+    paperId: 'source-order-paper',
+    campaignId: 'source-order-campaign',
+  });
+  assert.deepEqual(specification.claims.map((claim) => [claim.statement, claim.manuscriptSource.path]),
+    expected.map(([statement, manuscriptPath]) => [statement, manuscriptPath]));
+});
 
 test('canonical registry blocks a second standard theorem omitted from author bindings', (t) => {
   const first = 'Every first fixture is deterministic.';

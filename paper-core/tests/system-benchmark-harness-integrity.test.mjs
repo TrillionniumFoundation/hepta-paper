@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { executeSystemBenchmarkHarness } from '../../paper-adapters/automation/system-benchmark-harness.mjs';
+import { signAuthorityDocument } from '../../paper-adapters/authority/authority-signatures.mjs';
+import { authorizeOperatorDatasetMount } from '../../paper-adapters/automation/operator-dataset-harness-reader.mjs';
 import { createMultiLanguageEmpiricalExecutor } from '../../paper-adapters/automation/multi-language-empirical-executor.mjs';
+import { inspectStrictDatasetManifest } from '../../paper-adapters/runtime/execution-snapshot.mjs';
 import { createOsSandboxedWorkerRunner } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
 import { selectAndValidateWorkerEnvironment } from '../../paper-adapters/runtime/worker-environment-policy.mjs';
 import { buildCampaignBenchmarkSelector, verifyCampaignBenchmarkSelector } from '../../paper-domain/automation/campaign-benchmark-selector.mjs';
@@ -23,6 +27,11 @@ import {
 } from '../../paper-domain/automation/system-benchmark-harness-identity.mjs';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { buildEmpiricalEnvironmentBom } from '../../paper-domain/automation/environment-bom-contract.mjs';
+import { buildCanonicalAnalysisProtocol } from '../../paper-domain/automation/analysis-protocol-contract.mjs';
+import {
+  validateOperatorDatasetHarnessDefinition,
+  validateOperatorDatasetSplitManifest,
+} from '../../paper-domain/automation/operator-dataset-harness-contract.mjs';
 
 const REPOSITORY_ROOT = process.cwd();
 const IDENTITY_EXCLUSIONS = new Set([
@@ -41,6 +50,8 @@ const REQUIRED_ROOTS = Object.freeze([
   'paper-adapters/runtime/dataset-runtime-access-receipt.mjs',
   'paper-adapters/research-verify/raw-event-artifact-recomputation-verifier.mjs',
   'paper-adapters/research-verify/system-benchmark-primitive-fixture-resolver.mjs',
+  'paper-adapters/research-verify/independent-system-benchmark-recomputation-worker.mjs',
+  'paper-adapters/research-verify/independent-typed-numeric-oracle-recomputation-worker.mjs',
   'paper-adapters/automation/operator-dataset-harness-reader.mjs',
   'paper-adapters/artifacts/artifact-write-receipt-verifier.mjs',
   'paper-domain/research/experiment-registry-authority.mjs',
@@ -75,17 +86,17 @@ function implementationClosure() {
   return [...visited].sort();
 }
 
-function workerReceipt({ batch, content }) {
+function workerReceipt({ batch, content, datasetMounts = [], processOrdinal = null }) {
   const artifacts = [{ path: 'observation.json', sha256: hashBytes(content), bytes: content.length }];
-  const datasetMounts = [];
-  const authorizationSet = buildDatasetAuthorizationSet(datasetMounts);
+  const receiptDatasetMounts = datasetMounts.map((mount) => ({ ...mount, target: `/datasets/${mount.name}` }));
+  const authorizationSet = buildDatasetAuthorizationSet(receiptDatasetMounts);
   const bindings = {
     HEPTA_BENCHMARK_ID: batch.benchmarkId,
     HEPTA_BENCHMARK_SELECTOR_HASH: batch.selectorHash,
     HEPTA_EXPERIMENT_DESIGN_HASH: batch.designHash,
     HEPTA_BENCHMARK_HARNESS_HASH: batch.harnessHash,
-    HEPTA_EXPERIMENT_RUN_ID: batch.runId,
-    HEPTA_EXPERIMENT_ATTEMPT_ID: `${batch.runId}:arm:${batch.arm}`,
+    HEPTA_EXPERIMENT_RUN_ID: batch.experimentAttemptId,
+    HEPTA_EXPERIMENT_ATTEMPT_ID: batch.executionAttemptId,
     HEPTA_EXPERIMENT_ARM: batch.arm,
     HEPTA_EXPERIMENT_ARM_PROTOCOL_ID: batch.armProtocol.protocolId,
     HEPTA_EXPERIMENT_ARM_PROTOCOL_HASH: batch.systemBenchmarkArmProtocolHash,
@@ -94,6 +105,14 @@ function workerReceipt({ batch, content }) {
     HEPTA_EXPERIMENT_ARM_ADAPTER_HASH: batch.armAdapter.sourceHash,
     HEPTA_EXPERIMENT_ARM_ADAPTER_SET_HASH: batch.armAdapterSetHash,
     HEPTA_PRE_DATA_ACCESS_FREEZE_HASH: batch.empiricalPreDataAccessFreezeHash,
+    HEPTA_EXPERIMENT_IR_HASH: batch.versionedExperimentIrHash,
+    ...(batch.executionMode === 'academic-per-cell-process-v1' ? {
+      HEPTA_EXPERIMENT_SEED: String(batch.cells[0].seed),
+      HEPTA_EXPERIMENT_REPETITION: String(batch.cells[0].repetition),
+      HEPTA_HARNESS_CELL_ID: batch.cells[0].cellId,
+      HEPTA_SEED: String(batch.cells[0].seed),
+      PYTHONHASHSEED: String(batch.cells[0].seed),
+    } : {}),
     ...systemBenchmarkArmBatchChallengeEnvironment(batch.challenge),
     HEPTA_DATASET_AUTHORIZATION_SET_HASH: authorizationSet.datasetAuthorizationSetHash,
   };
@@ -123,6 +142,43 @@ function workerReceipt({ batch, content }) {
     observedClaims: ['fixture-runtime-identity'],
     unobservedClaims: ['package-closure'],
   });
+  const executionProcessIdentity = processOrdinal === null ? null : {
+    version: 1,
+    kind: 'OsSandboxWorkerProcessIdentity',
+    processInvocationId: hashRecord('SystemBenchmarkFixtureProcessInvocation', {
+      executionAttemptId: batch.executionAttemptId,
+      processOrdinal,
+    }),
+    launcherPid: 10_000 + processOrdinal,
+  };
+  const datasetAccessPayload = receiptDatasetMounts.length ? {
+    version: 2,
+    kind: 'DatasetRuntimeAccessReceipt',
+    status: 'dataset_runtime_access_verified',
+    tracer: 'host-supervisor-strace-open-read-v2',
+    traceAuthority: 'host-supervisor-outside-child-mount-namespace-v1',
+    readObservationAssurance: 'positive-return-byte-observation-not-computational-use-proof-v1',
+    traceSha256: hashRecord('SystemBenchmarkFixtureDatasetTrace', {
+      executionAttemptId: batch.executionAttemptId,
+    }),
+    datasets: receiptDatasetMounts.map((mount) => ({
+      name: mount.name,
+      target: `/datasets/${mount.name}`,
+      manifestHash: mount.manifestHash,
+      operatorAuthorizationHash: mount.operatorAuthorizationHash || null,
+      workerExposureManifestHash: mount.splitManifestHash || null,
+      hostOnlyHarnessMounted: false,
+      forbiddenReadObserved: false,
+      readObserved: true,
+      positiveReadObservationEventCount: 1,
+      positiveReadBytesObserved: 1,
+      positiveReadObservationHash: hashRecord('SystemBenchmarkFixturePositiveRead', {
+        executionAttemptId: batch.executionAttemptId,
+        datasetName: mount.name,
+      }),
+    })),
+    blockers: [],
+  } : null;
   const payload = {
     version: 4,
     kind: 'OsSandboxWorkerReceipt',
@@ -138,13 +194,20 @@ function workerReceipt({ batch, content }) {
     limits,
     runtimeIdentityType: 'host',
     runtimeIdentityHash: `sha256:${'3'.repeat(64)}`,
+    ...(executionProcessIdentity ? {
+      executionProcessIdentity,
+      executionProcessIdentityHash: hashRecord('OsSandboxWorkerProcessIdentity', executionProcessIdentity),
+    } : {}),
     environmentBom,
     environmentBomHash: environmentBom.environmentBomHash,
     environmentBindingHash: hashRecord('WorkerEnvironmentBinding', bindings),
     executionBindings: bindings,
     datasetAuthorizationSetHash: authorizationSet.datasetAuthorizationSetHash,
-    datasetMounts,
-    datasetAccessReceipt: null,
+    datasetMounts: receiptDatasetMounts,
+    datasetAccessReceipt: datasetAccessPayload ? {
+      ...datasetAccessPayload,
+      datasetRuntimeAccessReceiptHash: hashRecord('DatasetRuntimeAccessReceipt', datasetAccessPayload),
+    } : null,
     artifacts,
     artifactManifestHash: hashRecord('OsSandboxWorkerArtifactManifest', artifacts),
     isolation: { kernelNetworkIsolationVerified: true, sourceReadOnlyVerified: true, ephemeralWorkRootVerified: true, separateOutputRootVerified: true, gpuAccessRequested: false },
@@ -188,6 +251,142 @@ function adapterSet(protocolSet, { identical = false } = {}) {
   return { ...payload, systemBenchmarkArmAdapterSetHash: hashRecord('SystemBenchmarkArmAdapterSet', payload) };
 }
 
+function academicHarnessFixture(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-system-benchmark-academic-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const datasetRoot = path.join(root, 'dataset');
+  const runtimeRoot = path.join(root, 'runtime');
+  const outputDirectory = path.join(root, 'output');
+  fs.mkdirSync(datasetRoot);
+  fs.mkdirSync(runtimeRoot);
+  fs.mkdirSync(outputDirectory);
+  fs.writeFileSync(path.join(datasetRoot, 'train.csv'), 'feature,label\n1,1\n');
+  const inspection = inspectStrictDatasetManifest(datasetRoot, datasetRoot);
+  assert.deepEqual(inspection.blockers, []);
+
+  const benchmarkId = 'academic-system-harness-coverage';
+  const seedSchedule = [17, 23, 31, 43];
+  const minimumRepetitions = 8;
+  const cells = seedSchedule.flatMap((seed) => Array.from(
+    { length: minimumRepetitions },
+    (_, repetitionIndex) => ({
+      seed,
+      repetition: repetitionIndex + 1,
+      cases: Array.from({ length: 8 }, (_, caseIndex) => {
+        const primary = caseIndex < 4 ? -1 : 1;
+        const secondary = repetitionIndex % 2 ? -0.2 : 0.2;
+        const label = primary + (0.35 * secondary) >= 0 ? 1 : 0;
+        return {
+          caseId: hashRecord('AcademicSystemHarnessCoverageCase', {
+            seed,
+            repetition: repetitionIndex + 1,
+            caseIndex,
+          }),
+          input: { primary, secondary },
+          ablationInput: { secondary },
+          referenceResponse: 0,
+          oracle: { label, robustLabel: label },
+        };
+      }),
+    }),
+  ));
+  const definition = {
+    version: 1,
+    kind: 'OperatorAuthorizedDatasetBenchmarkHarness',
+    benchmarkId,
+    benchmarkFamily: 'ml_algorithm_benchmark',
+    seedSchedule,
+    minimumRepetitions,
+    cells,
+  };
+  const definitionHash = validateOperatorDatasetHarnessDefinition(definition, { benchmarkId })
+    .operatorDatasetHarnessDefinitionHash;
+  const splitManifest = {
+    version: 1,
+    kind: 'OperatorDatasetSplitManifest',
+    datasetName: benchmarkId,
+    datasetManifestHash: inspection.hash,
+    entries: inspection.entries.filter((entry) => entry.type === 'file').map((entry) => ({
+      path: entry.relative,
+      sha256: entry.hash,
+      split: 'train',
+    })),
+  };
+  const splitManifestHash = validateOperatorDatasetSplitManifest(splitManifest, {
+    datasetName: benchmarkId,
+    datasetManifestHash: inspection.hash,
+  }).operatorDatasetSplitManifestHash;
+  const familyDesign = buildCampaignBenchmarkSelector({
+    benchmarkId: definition.benchmarkFamily,
+    datasetMounts: [],
+  }).experimentDesign;
+  const builtAnalysisProtocol = buildCanonicalAnalysisProtocol({
+    benchmarkId,
+    benchmarkFamily: definition.benchmarkFamily,
+    requiredMetrics: familyDesign.requiredMetrics,
+    metricSpecs: familyDesign.metricSpecs,
+  });
+  const { analysisProtocolHash, ...analysisProtocol } = builtAnalysisProtocol;
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
+  const now = new Date();
+  const authority = signAuthorityDocument({
+    version: 2,
+    kind: 'OperatorDatasetHarnessAuthority',
+    datasetName: benchmarkId,
+    datasetManifestHash: inspection.hash,
+    datasetLicenseId: 'CC-BY-4.0',
+    datasetSplitManifestHash: splitManifestHash,
+    benchmarkHarnessDefinitionHash: definitionHash,
+    benchmarkFamily: definition.benchmarkFamily,
+    seedSchedule,
+    minimumRepetitions,
+    analysisProtocolHash,
+    workerExposurePolicy: 'signed-complete-dataset-file-manifest-v1',
+    signedAt: new Date(now.getTime() - 60_000).toISOString(),
+    expiresAt: new Date(now.getTime() + (24 * 60 * 60 * 1000)).toISOString(),
+  }, {
+    privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }),
+    keyId: 'academic-system-harness-key',
+    role: 'dataset_harness_operator',
+  });
+  const trustStore = {
+    version: 1,
+    kind: 'AuthorityTrustStore',
+    keys: [{
+      keyId: 'academic-system-harness-key',
+      subjectId: 'academic-system-harness-operator',
+      algorithm: 'ed25519',
+      publicKeyPem: publicKey.export({ type: 'spki', format: 'pem' }),
+      roles: ['dataset_harness_operator'],
+      status: 'active',
+    }],
+  };
+  const envelopePath = path.join(root, 'host-only-envelope.json');
+  fs.writeFileSync(envelopePath, `${JSON.stringify({
+    version: 2,
+    kind: 'OperatorDatasetHarnessEnvelope',
+    authority,
+    splitManifest,
+    harnessDefinition: definition,
+    analysisProtocol,
+  })}\n`, { mode: 0o600 });
+  const mount = authorizeOperatorDatasetMount({
+    name: benchmarkId,
+    source: datasetRoot,
+    readOnly: true,
+    manifestHash: inspection.hash,
+    licenseId: 'CC-BY-4.0',
+  }, {
+    envelopePath,
+    authorityTrustStore: trustStore,
+    runtimeRoot,
+    persistPrivateEnvelope: true,
+    now,
+  });
+  const selector = buildCampaignBenchmarkSelector({ benchmarkId, datasetMounts: [mount] });
+  return { benchmarkId, mount, outputDirectory, runtimeRoot, selector, trustStore };
+}
+
 function runFixtureHarness(t, { ignoreArm = false, dropLastCell = false, tamperProtocol = false, identicalAdapters = false, runId = 'fixture-experiment-attempt', attemptVersion = 1, failedAttemptLineageHashes = [], absoluteDeadlineEpochMs, aggregateCpuSeconds, nowEpochMs } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-system-benchmark-integrity-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -216,7 +415,6 @@ function runFixtureHarness(t, { ignoreArm = false, dropLastCell = false, tamperP
         selectorHash: selector.campaignBenchmarkSelectorHash,
         designHash: selector.experimentDesignHash,
         harnessHash: selector.experimentDesign.benchmarkHarnessHash,
-        runId,
         resourceBudget: batch.resourceBudget,
       };
       if (tamperProtocol && batch.arm === 'baseline') effectiveBatch.systemBenchmarkArmProtocolHash = `sha256:${'f'.repeat(64)}`;
@@ -237,6 +435,51 @@ test('benchmark harness fails before dispatch when its absolute deadline or aggr
   const cpuExhausted = runFixtureHarness(t, { aggregateCpuSeconds: 2 });
   assert.equal(cpuExhausted.invocationCount, 0);
   assert.ok(cpuExhausted.receipt.blockers.includes('benchmark_harness_aggregate_cpu_budget_exhausted'));
+});
+
+test('academic harness proves signed dataset use and one observed process per evaluation cell', (t) => {
+  const fixture = academicHarnessFixture(t);
+  const adapters = adapterSet(fixture.selector.experimentDesign.benchmarkHarness.armProtocolSet);
+  let invocationCount = 0;
+  const receipt = executeSystemBenchmarkHarness({
+    benchmarkSelector: fixture.selector,
+    datasetMounts: [fixture.mount],
+    experimentAttemptId: 'academic-system-harness-attempt',
+    sourceLineageHash: `sha256:${'c'.repeat(64)}`,
+    sourceMerkleHash: `sha256:${'1'.repeat(64)}`,
+    sourceWorkspaceManifestHash: `sha256:${'2'.repeat(64)}`,
+    outputDirectory: fixture.outputDirectory,
+    armAdapterSet: adapters,
+    operatorDatasetAuthorityTrustStore: fixture.trustStore,
+    runtimeRoot: fixture.runtimeRoot,
+    runArmBatch({ batch, outputDirectory }) {
+      invocationCount += 1;
+      const effectiveBatch = {
+        ...batch,
+        benchmarkId: fixture.selector.benchmarkId,
+        selectorHash: fixture.selector.campaignBenchmarkSelectorHash,
+        designHash: fixture.selector.experimentDesignHash,
+        harnessHash: fixture.selector.experimentDesign.benchmarkHarnessHash,
+      };
+      const content = responseDocument(batch);
+      fs.mkdirSync(outputDirectory, { recursive: true });
+      fs.writeFileSync(path.join(outputDirectory, 'observation.json'), content);
+      return workerReceipt({
+        batch: effectiveBatch,
+        content,
+        datasetMounts: [fixture.mount],
+        processOrdinal: invocationCount,
+      });
+    },
+  });
+  assert.equal(receipt.status, 'system_benchmark_harness_verified', JSON.stringify(receipt.blockers));
+  assert.equal(receipt.executionIsolationMode, 'academic-per-cell-process-v1');
+  assert.equal(invocationCount, receipt.scheduleCellCount);
+  assert.equal(receipt.processExecutionCount, receipt.scheduleCellCount);
+  assert.equal(receipt.datasetEvaluationDependencyReceipt.status, 'dataset_evaluation_dependency_verified');
+  assert.equal(new Set(receipt.armBatchExecutions.map((batch) => batch.executionProcessIdentityHash)).size,
+    receipt.scheduleCellCount);
+  assert.equal(verifySystemBenchmarkHarnessExecutionReceipt(receipt), true);
 });
 
 test('implementation manifest is the exact byte-hashed transitive empirical promotion closure', () => {
@@ -327,6 +570,13 @@ test('repository-owned challenges and hidden oracles bind candidate arm response
       verified.empiricalPreDataAccessFreezeHash);
   }
   assert.equal(verifySystemBenchmarkHarnessExecutionReceipt(verified), true);
+  const cachedHashTamper = structuredClone(verified);
+  cachedHashTamper.rawEventArtifactHash = `sha256:${'d'.repeat(64)}`;
+  assert.equal(
+    verifySystemBenchmarkHarnessExecutionReceipt(cachedHashTamper),
+    false,
+    'receipt self-hash must be recomputed before a verified-hash cache lookup',
+  );
   assert.equal(new Set(verified.cells.map((cell) => cell.systemBenchmarkArmProtocolHash)).size, 3);
   assert.equal(new Set(verified.cells.map((cell) => cell.systemBenchmarkArmProtocolExecutionReceiptHash)).size, verified.cells.length);
   assert.equal(new Set(verified.cells.map((cell) => cell.armBatchExecutionReceiptHash)).size, 3);
@@ -334,6 +584,41 @@ test('repository-owned challenges and hidden oracles bind candidate arm response
   assert.equal(verified.cells.every((cell) => cell.rawEvents === undefined && /^sha256:[0-9a-f]{64}$/.test(cell.rawEventArtifactHash)), true);
   assert.equal(verified.artifacts.some((artifact) => artifact.path === 'raw-events.ndjson'
     && artifact.sha256 === verified.rawEventArtifactHash && artifact.bytes === verified.rawEventArtifactBytes), true);
+  assert.equal(
+    verified.independentRawEventRecomputationAssurance.status,
+    'independent_raw_event_recomputation_assurance_verified',
+  );
+  assert.equal(
+    verified.independentRawEventRecomputationAssurance.assuranceScope,
+    'process-isolated-independent-implementation-v1',
+  );
+  assert.equal(
+    verified.independentRawEventRecomputationAssurance.processIndependent,
+    true,
+  );
+  assert.notEqual(
+    verified.independentRawEventRecomputationAssurance.processIsolatedWorkerPid,
+    process.pid,
+  );
+  assert.equal(
+    verified.independentRawEventRecomputationAssurance
+      .processIsolatedRawEventRecomputationAssurance.processIndependent,
+    true,
+  );
+  assert.notEqual(
+    verified.independentRawEventRecomputationAssurance.producerImplementationHash,
+    verified.independentRawEventRecomputationAssurance.verifierImplementationHash,
+  );
+  assert.equal(
+    verified.analysisObservationAuthority.independentResidualRecomputationVerified,
+    true,
+  );
+  assert.equal(
+    verified.datasetEvaluationDependencyReceipt,
+    null,
+    'synthetic conformance runs must not claim operator-dataset evaluation dependency',
+  );
+  assert.equal(verified.resultDocument.datasetEvaluationDependencyReceipt, null);
 
   const rawTamper = structuredClone(verified);
   rawTamper.rawEventArtifactHash = `sha256:${'e'.repeat(64)}`;
@@ -351,6 +636,35 @@ test('repository-owned challenges and hidden oracles bind candidate arm response
   void ignoredRecomputationOuterHash;
   recomputationTamper.systemBenchmarkHarnessExecutionReceiptHash = hashRecord('SystemBenchmarkHarnessExecutionReceipt', recomputationOuterPayload);
   assert.equal(verifySystemBenchmarkHarnessExecutionReceipt(recomputationTamper), false, 'raw-event recomputation manifest tamper must fail');
+
+  const independentAssuranceTamper = structuredClone(verified);
+  independentAssuranceTamper.independentRawEventRecomputationAssurance
+    .verifierImplementationHash = independentAssuranceTamper
+      .independentRawEventRecomputationAssurance.producerImplementationHash;
+  const {
+    independentRawEventRecomputationAssuranceHash: ignoredIndependentAssuranceHash,
+    ...independentAssurancePayload
+  } = independentAssuranceTamper.independentRawEventRecomputationAssurance;
+  void ignoredIndependentAssuranceHash;
+  independentAssuranceTamper.independentRawEventRecomputationAssurance
+    .independentRawEventRecomputationAssuranceHash = hashRecord(
+      'IndependentRawEventRecomputationAssurance',
+      independentAssurancePayload,
+    );
+  const {
+    systemBenchmarkHarnessExecutionReceiptHash: ignoredIndependentOuterHash,
+    ...independentOuterPayload
+  } = independentAssuranceTamper;
+  void ignoredIndependentOuterHash;
+  independentAssuranceTamper.systemBenchmarkHarnessExecutionReceiptHash = hashRecord(
+    'SystemBenchmarkHarnessExecutionReceipt',
+    independentOuterPayload,
+  );
+  assert.equal(
+    verifySystemBenchmarkHarnessExecutionReceipt(independentAssuranceTamper),
+    false,
+    'same producer/verifier implementation cannot claim independent recomputation',
+  );
 
   const batchTamper = structuredClone(verified);
   batchTamper.armBatchExecutions[0].cellIds = batchTamper.armBatchExecutions[0].cellIds.slice(1);

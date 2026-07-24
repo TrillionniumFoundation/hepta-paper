@@ -1,4 +1,3 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createCodexAgentExecutor } from '../../paper-adapters/automation/codex-agent-executor.mjs';
@@ -7,44 +6,44 @@ import { createOllamaStructuredAgentExecutor } from '../../paper-adapters/automa
 import { createOpenClawAgentExecutor } from '../../paper-adapters/automation/openclaw-agent-executor.mjs';
 import { createAgentBackendRouter } from '../../paper-adapters/automation/agent-backend-router.mjs';
 import { createIsolatedAgentExecutor } from '../../paper-adapters/automation/isolated-agent-executor.mjs';
-import { createMultiLanguageEmpiricalExecutor } from '../../paper-adapters/automation/multi-language-empirical-executor.mjs';
-import { createFilesystemEmpiricalCacheRepository } from '../../paper-adapters/automation/empirical-cache-repository.mjs';
 import {
   authorizeOperatorDatasetMount,
   loadOperatorDatasetAuthorityTrustStoreSync,
 } from '../../paper-adapters/automation/operator-dataset-harness-reader.mjs';
 import {
-  createOsSandboxedWorkerRunner,
-  directoryMerkleHash,
-  fileSha256Hash,
-} from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
-import {
   buildRuntimeRetentionPlan,
   executeRuntimeRetentionPlan,
   reconcileRuntimeRetentionIntents,
 } from '../../paper-adapters/automation/runtime-retention.mjs';
-import { runtimeImagesForCampaign } from '../../paper-adapters/automation/runtime-image-registry.mjs';
 import { createCampaignNodeExecutor } from './campaign-node-execution-composition.mjs';
 import { isCampaignRefereeNode } from '../../paper-application/automation/campaign-node-kind-policy.mjs';
 import { resolveCampaignAgentProviderPolicy } from '../../paper-domain/automation/research-agent-provider-policy.mjs';
 import {
   requireAutonomousResearchProviderConfiguration,
 } from './autonomous-research-provider-configuration.mjs';
+import {
+  composeReviewerPrincipalExecutorPool,
+} from './reviewer-principal-pool-composition.mjs';
+import {
+  inspectConfiguredAutonomousResearchAuthorIdentity,
+} from './autonomous-research-runtime-principal-preflight.mjs';
+import {
+  inspectCampaignPreparationPrincipalAuthorityBindings,
+  requireCurrentCampaignWorkerPrincipalAuthority,
+} from './campaign-worker-principal-authority-binding.mjs';
+import {
+  campaignDatasetContentHash,
+  composeCampaignWorkerEmpiricalExecution,
+} from './campaign-worker-empirical-composition.mjs';
 
 export {
   authorizeOperatorDatasetMount,
   buildRuntimeRetentionPlan,
+  campaignDatasetContentHash,
   executeRuntimeRetentionPlan,
   loadOperatorDatasetAuthorityTrustStoreSync,
   reconcileRuntimeRetentionIntents,
 };
-
-export function campaignDatasetContentHash(source) {
-  const resolved = path.resolve(source);
-  return fs.statSync(resolved).isDirectory()
-    ? directoryMerkleHash(resolved)
-    : fileSha256Hash(resolved);
-}
 
 function discoverOllamaModel(options, spawnSyncImpl) {
   let model = options['ollama-model'] || (options['agent-provider'] === 'ollama' ? options.model : null) || null;
@@ -82,6 +81,10 @@ export function composeCampaignWorkerExecution({
   environment = {},
   providerConfiguration = null,
   expectedProviderConfigurationHash = null,
+  reviewerPrincipalExecutorPool = null,
+  preflightResearchAuthor = preflightCodexResearchAuthor,
+  reviewerPrincipalPoolComposer = composeReviewerPrincipalExecutorPool,
+  assertExternalSideEffectReady = null,
 } = {}) {
   if (!runtimeRoot || !campaignExecutionContext || !services) {
     throw new Error('campaign_worker_composition_inputs_required');
@@ -108,37 +111,15 @@ export function composeCampaignWorkerExecution({
   if (expectedHash && !boundProviderConfiguration) {
     throw new Error('autonomous_research_provider_configuration_required');
   }
-  const requiresGpu = Boolean(options.gpu) || plans.some((plan) => plan.requiresGpu);
-  const runtimeImages = runtimeImagesForCampaign({
-    gpu: requiresGpu,
-    requireTrustedDatasetAccess: datasetMounts.length > 0,
-  });
-  const workerRunner = createOsSandboxedWorkerRunner({
-    allowedExecutables: ['python3', process.execPath, 'Rscript', 'julia', 'lake', 'latexmk'],
-    allowedRoots: plans.map((plan) => plan.sourceWorkspace),
-    allowedOutputRoots: [path.join(runtimeRoot, 'automation-artifacts')],
-    allowedDatasetRoots: datasetMounts.map((mount) => mount.source),
-    allowedContainerImages: Object.values(runtimeImages).map((item) => item.image),
-    trustedDatasetSupervisorImages: Object.values(runtimeImages)
-      .filter((item) => item.datasetAccessSupervisor)
-      .map((item) => ({
-        image: item.image,
-        imageDigest: item.imageDigest,
-        containerExecutable: item.executable,
-        supervisor: item.datasetAccessSupervisor,
-      })),
-    allowGpu: requiresGpu,
-    maximumTimeoutMs: Number(options['max-wall-ms'] || 6 * 60 * 60 * 1000),
-    maximumMemoryBytes: Number(options['worker-memory-mib'] || 4096) * 1024 * 1024,
-    maximumCpuSeconds: Number(options['worker-cpu-seconds'] || 3600),
-  });
-  const empiricalExecutor = createMultiLanguageEmpiricalExecutor({
-    workerRunner,
-    runtimeImages,
-    cache: createFilesystemEmpiricalCacheRepository({ root: path.join(runtimeRoot, 'automation-cache', 'empirical') }),
-    operatorDatasetAuthorityTrustStore: loadOperatorDatasetAuthorityTrustStoreSync({ runtimeRoot }),
-    runtimeRoot,
-  });
+  const { empiricalExecutor, workerRunner, runtimeImages } =
+    composeCampaignWorkerEmpiricalExecution({
+      options,
+      plans,
+      runtimeRoot,
+      datasetMounts,
+      operatorDatasetAuthorityTrustStore:
+        loadOperatorDatasetAuthorityTrustStoreSync({ runtimeRoot }),
+    });
   const researchAuthorProviderPolicy = resolveCampaignAgentProviderPolicy({
     requestedProvider: boundProviderConfiguration?.researchAuthor.provider
       || configuredValue(
@@ -176,7 +157,7 @@ export function composeCampaignWorkerExecution({
       'codex',
     );
   const researchAuthorPreflight = researchAuthorProviderPolicy.researchGradeRequired && provider === 'codex'
-    ? preflightCodexResearchAuthor({
+    ? preflightResearchAuthor({
       codexBinary: primaryCodexBinary,
       codexHome: primaryCodexHome,
       model: primaryCodexModel,
@@ -203,12 +184,78 @@ export function composeCampaignWorkerExecution({
     keepWorkspaces: false,
     keepFailedWorkspaces: true,
     workspaceRegistry,
+    assertExternalSideEffectReady,
   });
   const authorAgentId = provider === 'codex' ? primaryCodexPrincipal : primaryOpenClawAgentId;
   const independentReviewRequested = plans.some((plan) => (plan.nodes || []).some((node) => (
     node.kind === 'formal-verify' || isCampaignRefereeNode(node.kind)
   )));
+  const autonomousPreparations = plans.map((plan) => (
+    plan?.autonomousResearchPreparation || null
+  )).filter(Boolean);
+  const expectedPrincipalAuthority =
+    inspectCampaignPreparationPrincipalAuthorityBindings(autonomousPreparations);
+  const expectedRuntimePrincipalBinding =
+    expectedPrincipalAuthority.runtimePrincipalBinding;
+  const expectedReviewerPoolHashes = [...new Set(plans.map((plan) => (
+    plan?.autonomousResearchPreparation?.researchPrincipalPoolHash
+  )).filter(Boolean))];
+  if (expectedReviewerPoolHashes.length > 1) {
+    throw new Error('reviewer_principal_pool_hash_mismatch');
+  }
+  const reviewerPoolConfigPath = String(
+    environment.HEPTA_REVIEWER_PRINCIPAL_POOL_CONFIG || '',
+  ).trim();
+  const reviewerClock = typeof services.clock?.now === 'function'
+    ? services.clock : undefined;
+  const authorIdentityAttestation = independentReviewRequested
+    && (reviewerPoolConfigPath || expectedRuntimePrincipalBinding)
+    ? inspectConfiguredAutonomousResearchAuthorIdentity({
+      environment,
+      author: researchAuthorPreflight,
+      ...(reviewerClock ? { clock: reviewerClock } : {}),
+    }) : null;
+  let effectiveReviewerPrincipalExecutorPool = reviewerPrincipalExecutorPool;
+  let reviewerPrincipalPoolComposition = null;
+  if (!effectiveReviewerPrincipalExecutorPool && independentReviewRequested
+    && reviewerPoolConfigPath) {
+    reviewerPrincipalPoolComposition = reviewerPrincipalPoolComposer({
+      configPath: reviewerPoolConfigPath,
+      authorProvider: provider,
+      authorCodexHome: provider === 'codex'
+        ? researchAuthorPreflight?.codexHome || primaryCodexHome : null,
+      runtimeRoot,
+      workspaceRegistry,
+      environment,
+      spawnSyncImpl,
+      authorIdentityAttestation,
+      assertExternalSideEffectReady,
+      ...(reviewerClock ? { clock: reviewerClock } : {}),
+    });
+    effectiveReviewerPrincipalExecutorPool = reviewerPrincipalPoolComposition.executorPool;
+  }
+  const actualReviewerPoolHash = effectiveReviewerPrincipalExecutorPool?.pool
+    ?.researchPrincipalPoolHash || null;
+  if (expectedReviewerPoolHashes[0]
+    && expectedReviewerPoolHashes[0] !== actualReviewerPoolHash) {
+    throw new Error('reviewer_principal_pool_execution_binding_invalid');
+  }
+  requireCurrentCampaignWorkerPrincipalAuthority({
+    expectedRuntimePrincipalBinding,
+    expectedProductionAuthorityBinding:
+      expectedPrincipalAuthority.productionAuthorityBinding,
+    providerConfiguration: boundProviderConfiguration,
+    researchAuthorPreflight,
+    authorIdentityAttestation,
+    researchPrincipalPoolHash: actualReviewerPoolHash,
+    reviewerTrustSetHash: reviewerPrincipalPoolComposition?.trustSetHash
+      || effectiveReviewerPrincipalExecutorPool?.trustSetHash,
+    reviewerSignatureVerificationPolicyHash:
+      reviewerPrincipalPoolComposition?.signatureVerificationPolicyHash
+      || effectiveReviewerPrincipalExecutorPool?.signatureVerificationPolicyHash,
+  });
   const formalReviewAgentExecutor = independentReviewRequested
+    && !effectiveReviewerPrincipalExecutorPool
     ? campaignExecutionContext.createFormalReviewAgentExecutor({
       authorAgentId,
       model: boundProviderConfiguration
@@ -253,6 +300,7 @@ export function composeCampaignWorkerExecution({
     nodeExecutor: createCampaignNodeExecutor({
       agentExecutor,
       formalReviewAgentExecutor,
+      reviewerPrincipalExecutorPool: effectiveReviewerPrincipalExecutorPool,
       empiricalExecutor,
       runtimeRoot,
       artifactRepositoryFactory: services.artifactRepositoryFactory,
@@ -260,9 +308,17 @@ export function composeCampaignWorkerExecution({
       releasePackager: services.releasePackager,
       researchVerifier: services.researchVerifier,
       experimentRegistryAuthorityVerifier: services.experimentRegistryAuthorityVerifier,
+      assertExternalSideEffectReady,
+      environment,
+      spawnSyncImpl,
+      dynamicFormalExecutionAuthority: services.dynamicFormalExecutionAuthority,
     }),
     agentExecutor,
     formalReviewAgentExecutor,
+    reviewerPrincipalExecutorPool: effectiveReviewerPrincipalExecutorPool,
+    researchPrincipalPool: effectiveReviewerPrincipalExecutorPool?.pool || null,
+    reviewerPrincipalPoolConfigurationHash:
+      reviewerPrincipalPoolComposition?.configuration.configurationHash || null,
     empiricalExecutor,
     workerRunner,
     runtimeImages,

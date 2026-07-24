@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,6 +7,7 @@ import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { prepareAutonomousResearchLoop } from '../../paper-application/automation/autonomous-research-readiness.mjs';
 import {
   buildAutonomousResearchCampaignPlan,
+  enqueuePreparedAutonomousResearchCampaign,
   executeAutonomousResearchCampaign,
 } from '../../paper-application/automation/autonomous-research-campaign.mjs';
 import { createAutonomousResearchWorkspaceRepository } from '../../paper-adapters/automation/autonomous-research-workspace-repository.mjs';
@@ -20,14 +20,23 @@ import { createSqliteCampaignStore } from '../../paper-adapters/persistence/sqli
 import { createSystemClock } from '../../paper-adapters/runtime/system-clock.mjs';
 import { createSystemScheduler } from '../../paper-adapters/runtime/system-scheduler.mjs';
 import { createRandomIdGenerator } from '../../paper-adapters/runtime/random-id-generator.mjs';
-import { createAutonomousResearchReleaseBinding } from '../../paper-domain/automation/autonomous-research-release-binding-contract.mjs';
-import { signAuthorityDocument } from '../../paper-adapters/authority/authority-signatures.mjs';
-import { buildCampaignBenchmarkSelector } from '../../paper-domain/automation/campaign-benchmark-selector.mjs';
-import { buildCanonicalAnalysisProtocol } from '../../paper-domain/automation/analysis-protocol-contract.mjs';
+import {
+  MANUSCRIPT_RELEASE_PROOF_FIELDS,
+} from '../../paper-domain/automation/full-research-release-qualification-inspection.mjs';
+import {
+  createAutonomousResearchReleaseBinding,
+} from '../../paper-domain/automation/autonomous-research-release-binding-contract.mjs';
+import {
+  createFormalMutationFenceTracker,
+} from './support/formal-mutation-fence-tracker.mjs';
 import { buildPaperCampaignPlan } from '../../paper-domain/automation/campaign-plan.mjs';
-import { validateOperatorDatasetAuthorityDocument } from '../../paper-domain/automation/operator-dataset-harness-contract.mjs';
 import { readEmpiricalClaimUniverse } from '../../paper-adapters/research-verify/empirical-claim-universe-reader.mjs';
 import { renderAutonomousEmpiricalClaimStatement } from '../../paper-domain/automation/autonomous-empirical-claim-lineage-contract.mjs';
+import {
+  authorizedDatasetMount,
+  machineDispatchOptions,
+  qualifiedGoldenContext,
+} from './support/autonomous-research-campaign-test-builders.mjs';
 
 const H = (label) => hashRecord('AutonomousCampaignTestHash', { label });
 
@@ -172,65 +181,6 @@ function trustedDatasetAuthorityReceipt(mount) {
   });
 }
 
-function authorizedDatasetMount(base, name = 'autonomous-dataset') {
-  const source = path.join(base, name);
-  fs.mkdirSync(source, { recursive: true });
-  fs.writeFileSync(path.join(source, 'dataset.json'), '{}\n');
-  const benchmarkFamily = 'ml_algorithm_benchmark';
-  const repositoryDesign = buildCampaignBenchmarkSelector({ benchmarkId: benchmarkFamily })
-    .experimentDesign;
-  const builtProtocol = buildCanonicalAnalysisProtocol({
-    benchmarkId: name,
-    benchmarkFamily,
-    requiredMetrics: repositoryDesign.requiredMetrics,
-    metricSpecs: repositoryDesign.metricSpecs,
-  });
-  const { analysisProtocolHash, ...analysisProtocol } = builtProtocol;
-  const datasetManifestHash = H(`dataset-manifest:${name}`);
-  const splitManifestHash = H(`dataset-split:${name}`);
-  const benchmarkHarnessDefinitionHash = H(`dataset-harness:${name}`);
-  const signed = signAuthorityDocument({
-    version: 2,
-    kind: 'OperatorDatasetHarnessAuthority',
-    datasetName: name,
-    datasetManifestHash,
-    datasetLicenseId: 'CC-BY-4.0',
-    datasetSplitManifestHash: splitManifestHash,
-    benchmarkHarnessDefinitionHash,
-    analysisProtocolHash,
-    benchmarkFamily,
-    seedSchedule: [17, 23, 31, 43, 59],
-    minimumRepetitions: 7,
-    workerExposurePolicy: 'signed-complete-dataset-file-manifest-v1',
-    signedAt: '2026-07-01T00:00:00.000Z',
-    expiresAt: '2026-08-01T00:00:00.000Z',
-  }, {
-    privateKeyPem: crypto.generateKeyPairSync('ed25519').privateKey
-      .export({ type: 'pkcs8', format: 'pem' }),
-    keyId: `dataset-key:${name}`,
-    role: 'dataset_harness_operator',
-  });
-  const validated = validateOperatorDatasetAuthorityDocument(signed);
-  return Object.freeze({
-    name,
-    source,
-    readOnly: true,
-    manifestHash: datasetManifestHash,
-    licenseId: 'CC-BY-4.0',
-    operatorAuthorizationHash: validated.operatorDatasetAuthorityDocumentHash,
-    operatorDatasetAuthorityDocumentHash: validated.operatorDatasetAuthorityDocumentHash,
-    operatorDatasetAuthority: validated.authority,
-    splitManifestHash,
-    benchmarkHarnessDocumentHash: H(`dataset-document:${name}`),
-    benchmarkHarnessDefinitionHash,
-    analysisProtocol,
-    analysisProtocolHash,
-    benchmarkFamily,
-    benchmarkSeedSchedule: [17, 23, 31, 43, 59],
-    benchmarkMinimumRepetitions: 7,
-  });
-}
-
 function testWorkspace(t) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-autonomous-campaign-'));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
@@ -248,13 +198,19 @@ function testWorkspace(t) {
   };
 }
 
-function fakeExecutor({ failWriterOnce = false, forbidden = false } = {}) {
+function fakeExecutor({
+  failWriterOnce = false,
+  forbidden = false,
+  assertFormalMutationFences = false,
+} = {}) {
   const calls = [];
   let writerFailed = false;
+  const formalMutationFence = assertFormalMutationFences
+    ? createFormalMutationFenceTracker() : null;
   return {
     calls,
     executor: {
-      async execute({ node }) {
+      async execute({ node, allNodes }) {
         if (forbidden) throw new Error('completed_campaign_reexecuted');
         calls.push(node.kind);
         if (failWriterOnce && node.kind === 'writer' && !writerFailed) {
@@ -263,11 +219,13 @@ function fakeExecutor({ failWriterOnce = false, forbidden = false } = {}) {
           error.retryable = true;
           throw error;
         }
+        formalMutationFence?.beforeExecute({ node, allNodes });
         return {
           version: 1,
           kind: 'FakeAutonomousNodeReceipt',
           status: 'fake_autonomous_node_completed',
           nodeKind: node.kind,
+          ...(formalMutationFence?.resultFor(node) || {}),
           ...(node.kind === 'convergence' ? {
             qualityGates: [],
             thresholds: {},
@@ -307,11 +265,13 @@ function releaseAuthority(campaignId, paperId, preparationReport) {
     campaignPlanHash,
     preparation: preparationReport,
   });
+  const campaignReleaseBundleHash = H(`release:${campaignId}`);
   return {
     status: 'current_completed_release', campaignStatus: 'completed', packageNodeStatus: 'completed',
-    campaignId, paperId, campaignReleaseBundleHash: H(`release:${campaignId}`),
+    campaignId, paperId, campaignReleaseBundleHash,
     releaseBundle: {
       campaignPlanHash,
+      campaignReleaseBundleHash,
       autonomousResearchReleaseBindingHash:
         autonomousResearchReleaseBinding.autonomousResearchReleaseBindingHash,
       autonomousResearchReleaseBinding,
@@ -321,6 +281,7 @@ function releaseAuthority(campaignId, paperId, preparationReport) {
 }
 
 function verifiedQualificationInspection({ campaignId, prepared, authority, label }) {
+  const releaseBinding = authority.releaseBundle.autonomousResearchReleaseBinding;
   return {
     kind: 'FullResearchQualificationInspection',
     status: 'full_research_qualification_verified',
@@ -339,6 +300,11 @@ function verifiedQualificationInspection({ campaignId, prepared, authority, labe
     policyAuthorizationHash:
       prepared.policyAuthorization.autonomousResearchPolicyAuthorizationHash,
     seedBindingHash: prepared.seedBinding.autonomousResearchSeedBindingHash,
+    qualificationScope: releaseBinding.qualificationScope,
+    genericContentCanaryVerified: releaseBinding.genericContentCanaryVerified,
+    ...Object.fromEntries(MANUSCRIPT_RELEASE_PROOF_FIELDS.map((field) => (
+      [field, releaseBinding[field]]
+    ))),
     fullDomainVerificationReady: true,
     independentHypothesisPriorArtReviewVerified: true,
     independentHypothesisPriorArtReceiptHash: H(`${label}:prior-art`),
@@ -414,7 +380,7 @@ test('verified unique dataset authority constrains automatic family selection wi
   ));
 });
 
-test('one launch crosses qualification epochs automatically, then repeat launch is idempotent', async (t) => {
+test('one launch crosses qualification epochs and fails closed on a non-generic release', async (t) => {
   const fixture = testWorkspace(t);
   const datasetMount = authorizedDatasetMount(fixture.runtimeRoot, 'launch-dataset');
   const prepared = await preparation('launch-paper', [datasetMount]);
@@ -430,9 +396,17 @@ test('one launch crosses qualification epochs automatically, then repeat launch 
     paperId: prepared.proposal.paperId,
   });
   const campaignId = 'autonomous-research:launch-paper';
-  const fake = fakeExecutor({ failWriterOnce: true });
+  const fake = fakeExecutor({ failWriterOnce: true, assertFormalMutationFences: true });
   let qualificationRequests = 0;
   let qualificationVerifications = 0;
+  const qualificationFenceActions = [];
+  const qualificationSynchronousFenceActions = [];
+  const assertExternalSideEffectReady = async ({ action }) => {
+    qualificationFenceActions.push(action);
+  };
+  assertExternalSideEffectReady.assertCurrent = ({ action }) => {
+    qualificationSynchronousFenceActions.push(action);
+  };
   const qualificationIdentities = qualificationServiceIdentities('launch');
   const externalQualificationClient = {
     kind: 'ExternalResearchQualificationClient',
@@ -453,22 +427,12 @@ test('one launch crosses qualification epochs automatically, then repeat launch 
     async verify({ receipt, campaignReleaseAuthority }) {
       qualificationVerifications += 1;
       assert.equal(receipt.signature, 'external-service-signature');
-      return {
-        kind: 'FullResearchQualificationInspection', status: 'full_research_qualification_verified',
-        ready: true, receiptAccepted: true, campaignId, paperId: prepared.proposal.paperId,
-        campaignReleaseBundleHash: campaignReleaseAuthority.campaignReleaseBundleHash,
-        qualificationReceiptHash: H('external-qualification'),
-        qualificationSignatureVerified: true, qualificationTimeWindowVerified: true,
-        releasePointerVerified: true, independentVerifierVerified: true,
-        externalVerificationRequestHash: H('external-verification-request'), blockers: [],
-        proposalHash: prepared.proposal.machineProposedScientificClaimSetHash,
-        policyAuthorizationHash:
-          prepared.policyAuthorization.autonomousResearchPolicyAuthorizationHash,
-        seedBindingHash: prepared.seedBinding.autonomousResearchSeedBindingHash,
-        fullDomainVerificationReady: true,
-        independentHypothesisPriorArtReviewVerified: true,
-        independentHypothesisPriorArtReceiptHash: H('independent-prior-art-review'),
-      };
+      return verifiedQualificationInspection({
+        campaignId,
+        prepared,
+        authority: campaignReleaseAuthority,
+        label: 'external-qualification',
+      });
     },
   };
   const common = {
@@ -487,8 +451,13 @@ test('one launch crosses qualification epochs automatically, then repeat launch 
       initialBackoffMs: 0,
       epochCooldownMs: 0,
       deadlineMs: 5000,
+      onProgress({ stage }) { assert.equal(typeof stage, 'string'); },
+      onSynchronousProgress({ stage }) { assert.equal(typeof stage, 'string'); },
     },
-    runtime: runtime(fixture.clock),
+    runtime: {
+      ...runtime(fixture.clock),
+      assertExternalSideEffectReady,
+    },
   };
   const launched = await executeAutonomousResearchCampaign({
     ...common,
@@ -496,14 +465,33 @@ test('one launch crosses qualification epochs automatically, then repeat launch 
     executor: fake.executor,
     preparedMaterialization: materialization,
   });
-  assert.equal(launched.status, 'autonomous_research_campaign_completed_and_qualified',
+  assert.equal(launched.status,
+    'autonomous_research_campaign_completed_qualification_blocked',
     JSON.stringify(launched));
-  assert.equal(launched.campaignFullyQualified, true);
-  assert.equal(launched.fullAutomaticResearchWritingReady, launched.campaignFullyQualified);
+  assert.equal(launched.campaignFullyQualified, false);
+  assert.equal(launched.fullAutomaticResearchWritingReady, false);
+  assert.equal(launched.qualificationEligibility
+    .boundedGoldenCapabilityQualificationVerified, false);
+  assert.ok(launched.qualificationEligibility.qualificationBlockers.includes(
+    'autonomous_research_release_qualification_scope_not_eligible',
+  ));
   assert.equal(qualificationRequests, 2);
   assert.equal(qualificationVerifications, 1);
+  assert.ok(qualificationFenceActions.length > 0);
+  assert.ok(qualificationSynchronousFenceActions.length > 0);
   assert.ok(fake.calls.includes('formal-verify'));
   assert.ok(fake.calls.includes('empirical-reproduce'));
+  const initialIntegrateIndex = fake.calls.indexOf('manuscript-integrate');
+  const preRenderFormalIndex = fake.calls.indexOf('formal-verify');
+  const postIntegrateFormalIndex = fake.calls.indexOf('formal-verify', initialIntegrateIndex + 1);
+  const initialCompileIndex = fake.calls.indexOf('compile');
+  assert.ok(preRenderFormalIndex >= 0 && preRenderFormalIndex < initialIntegrateIndex);
+  assert.ok(initialIntegrateIndex < postIntegrateFormalIndex);
+  assert.ok(postIntegrateFormalIndex < initialCompileIndex);
+  const revisionIndex = fake.calls.indexOf('revise');
+  const postRevisionFormalIndex = fake.calls.indexOf('formal-verify', revisionIndex + 1);
+  assert.ok(fake.calls.lastIndexOf('formal-verify', revisionIndex - 1) < revisionIndex);
+  assert.ok(revisionIndex < postRevisionFormalIndex);
   const terminalFormalIndex = fake.calls.lastIndexOf('formal-verify');
   const sourceClosureEmpiricalIndex = fake.calls.indexOf('revalidate-empirical-source-seal');
   const sourceClosureReplayIndex = fake.calls.indexOf('revalidate-empirical-reproduce-source-seal');
@@ -533,16 +521,45 @@ test('one launch crosses qualification epochs automatically, then repeat launch 
     action: 'launch',
     executor: fakeExecutor({ forbidden: true }).executor,
   });
-  assert.equal(repeated.status, 'autonomous_research_campaign_completed_and_qualified');
-  assert.equal(repeated.externalQualification.status, 'qualification_cached_verified_locally');
+  assert.equal(repeated.status,
+    'autonomous_research_campaign_completed_qualification_blocked');
+  assert.equal(repeated.externalQualification.status,
+    'qualification_external_service_terminal_blocked');
   assert.equal(qualificationRequests, 2);
   assert.equal(qualificationVerifications, 1);
+
+  let goldenFinalizations = 0;
+  const golden = await executeAutonomousResearchCampaign({
+    ...common,
+    action: 'launch',
+    executor: fakeExecutor({ forbidden: true }).executor,
+    goldenQualificationController: Object.freeze({
+      kind: 'GoldenCampaignQualificationController',
+      async finalize({ externalQualification, evaluateEligibility }) {
+        goldenFinalizations += 1;
+        const eligibility = evaluateEligibility(externalQualification.inspection);
+        assert.equal(eligibility.campaignFullyQualified, false);
+        assert.equal(eligibility.boundedGoldenCapabilityQualificationVerified, false);
+        return Object.freeze({
+          status: 'golden_campaign_qualification_published',
+          ready: true,
+          pointerPublished: true,
+          inspection: externalQualification.inspection,
+        });
+      },
+    }),
+  });
+  assert.equal(golden.status,
+    'autonomous_research_campaign_completed_qualification_blocked');
+  assert.equal(golden.boundedGoldenQualificationPublished, false);
+  assert.equal(goldenFinalizations, 1);
   const qualificationState = qualificationStateStore.readExternalQualificationState();
   assert.equal(qualificationState.version, 4);
+  assert.equal(qualificationState.recovery.status, 'qualification_terminal_blocked');
   assert.equal(qualificationState.recovery.epoch, 2);
   assert.equal(qualificationState.recovery.attemptCount, 1);
   assert.equal(qualificationState.recovery.totalAttemptCount, 2);
-  assert.equal(qualificationState.verifiedInspection.ready, true);
+  assert.equal(qualificationState.verifiedInspection, null);
   assert.equal(fs.existsSync(path.join(repository.sourceWorkspace,
     'AUTONOMOUS_EXTERNAL_QUALIFICATION_STATE.json')), false);
 });
@@ -550,15 +567,13 @@ test('one launch crosses qualification epochs automatically, then repeat launch 
 test('qualification exhaustion enters cooldown, restart opens a new epoch, and cached receipt is reverified', async (t) => {
   const fixture = testWorkspace(t);
   const datasetMount = authorizedDatasetMount(fixture.runtimeRoot, 'qualification-restart-dataset');
-  const prepared = await preparation('qualification-restart-paper', [datasetMount]);
-  const campaignId = 'autonomous-research:qualification-restart-paper';
-  const authority = releaseAuthority(campaignId, prepared.proposal.paperId, prepared);
-  const campaign = {
+  const basePreparation = await preparation('qualification-restart-paper', [datasetMount]);
+  const {
+    preparation: prepared,
+    authority,
+    campaign,
     campaignId,
-    paperId: prepared.proposal.paperId,
-    status: 'completed',
-    spec: { autonomousResearchPreparation: prepared },
-  };
+  } = qualifiedGoldenContext({ basePreparation, datasetMount });
   const campaignStore = {
     createCampaign() { throw new Error('unexpected create'); },
     getCampaign() { return campaign; },
@@ -596,29 +611,12 @@ test('qualification exhaustion enters cooldown, restart opens a new epoch, and c
     async verify({ receipt }) {
       verifications += 1;
       assert.equal(receipt.signature, 'externally-signed-receipt');
-      return {
-        kind: 'FullResearchQualificationInspection',
-        status: 'full_research_qualification_verified',
-        ready: true,
-        receiptAccepted: true,
+      return verifiedQualificationInspection({
         campaignId,
-        paperId: prepared.proposal.paperId,
-        campaignReleaseBundleHash: authority.campaignReleaseBundleHash,
-        qualificationReceiptHash: H('restart-qualification-receipt'),
-        qualificationSignatureVerified: true,
-        qualificationTimeWindowVerified: true,
-        releasePointerVerified: true,
-        independentVerifierVerified: true,
-        externalVerificationRequestHash: H('restart-independent-verification'),
-        proposalHash: prepared.proposal.machineProposedScientificClaimSetHash,
-        policyAuthorizationHash:
-          prepared.policyAuthorization.autonomousResearchPolicyAuthorizationHash,
-        seedBindingHash: prepared.seedBinding.autonomousResearchSeedBindingHash,
-        fullDomainVerificationReady: true,
-        independentHypothesisPriorArtReviewVerified: true,
-        independentHypothesisPriorArtReceiptHash: H('restart-prior-art-review'),
-        blockers: [],
-      };
+        prepared,
+        authority,
+        label: 'restart-qualification',
+      });
     },
   };
   let nowMs = Date.parse('2026-07-15T12:00:00.000Z');
@@ -634,6 +632,7 @@ test('qualification exhaustion enters cooldown, restart opens a new epoch, and c
   await assert.rejects(() => executeAutonomousResearchCampaign({
     ...common,
     action: 'launch',
+    ...machineDispatchOptions(campaign, 'launch'),
     qualificationRetry: {
       maximumAttempts: 1,
       maximumEpochs: 3,
@@ -660,6 +659,7 @@ test('qualification exhaustion enters cooldown, restart opens a new epoch, and c
   const resumed = await executeAutonomousResearchCampaign({
     ...common,
     action: 'resume',
+    ...machineDispatchOptions(campaign, 'resume'),
     qualificationRetry: {
       maximumAttempts: 1,
       maximumEpochs: 3,
@@ -671,7 +671,9 @@ test('qualification exhaustion enters cooldown, restart opens a new epoch, and c
       scheduler: { async sleep(milliseconds) { nowMs += milliseconds; } },
     },
   });
-  assert.equal(resumed.status, 'autonomous_research_campaign_completed_and_qualified');
+  assert.equal(resumed.status,
+    'autonomous_research_campaign_completed_external_qualification_eligible',
+    JSON.stringify(resumed.qualificationEligibility));
   assert.equal(requests, 2);
   assert.equal(verifications, 1);
   assert.equal(state.recovery.status, 'qualification_verified');
@@ -690,15 +692,13 @@ test('qualification exhaustion enters cooldown, restart opens a new epoch, and c
 test('a terminal bad-signature receipt stays blocked for one trust configuration but rotates automatically', async (t) => {
   const fixture = testWorkspace(t);
   const datasetMount = authorizedDatasetMount(fixture.runtimeRoot, 'qualification-rotation-dataset');
-  const prepared = await preparation('qualification-rotation-paper', [datasetMount]);
-  const campaignId = 'autonomous-research:qualification-rotation-paper';
-  const authority = releaseAuthority(campaignId, prepared.proposal.paperId, prepared);
-  const campaign = {
+  const basePreparation = await preparation('qualification-rotation-paper', [datasetMount]);
+  const {
+    preparation: prepared,
+    authority,
+    campaign,
     campaignId,
-    paperId: prepared.proposal.paperId,
-    status: 'completed',
-    spec: { autonomousResearchPreparation: prepared },
-  };
+  } = qualifiedGoldenContext({ basePreparation, datasetMount });
   const campaignStore = {
     createCampaign() { throw new Error('unexpected create'); },
     getCampaign() { return campaign; },
@@ -744,6 +744,7 @@ test('a terminal bad-signature receipt stays blocked for one trust configuration
   };
   const first = await executeAutonomousResearchCampaign({
     ...common,
+    ...machineDispatchOptions(campaign, 'launch'),
     externalQualificationClient: oldClient,
     externalQualificationVerifier: oldVerifier,
   });
@@ -758,6 +759,7 @@ test('a terminal bad-signature receipt stays blocked for one trust configuration
 
   const sameConfiguration = await executeAutonomousResearchCampaign({
     ...common,
+    ...machineDispatchOptions(campaign, 'launch'),
     externalQualificationClient: oldClient,
     externalQualificationVerifier: oldVerifier,
   });
@@ -783,38 +785,22 @@ test('a terminal bad-signature receipt stays blocked for one trust configuration
     kind: 'IndependentExternalResearchQualificationVerifier',
     ...newIdentities.verifier,
     async verify() {
-      return {
-        kind: 'FullResearchQualificationInspection',
-        status: 'full_research_qualification_verified',
-        ready: true,
-        receiptAccepted: true,
+      return verifiedQualificationInspection({
         campaignId,
-        paperId: prepared.proposal.paperId,
-        campaignReleaseBundleHash: authority.campaignReleaseBundleHash,
-        qualificationReceiptHash: H('rotation-qualification-receipt'),
-        qualificationSignatureVerified: true,
-        qualificationTimeWindowVerified: true,
-        releasePointerVerified: true,
-        independentVerifierVerified: true,
-        externalVerificationRequestHash: H('rotation-verification-request'),
-        proposalHash: prepared.proposal.machineProposedScientificClaimSetHash,
-        policyAuthorizationHash:
-          prepared.policyAuthorization.autonomousResearchPolicyAuthorizationHash,
-        seedBindingHash: prepared.seedBinding.autonomousResearchSeedBindingHash,
-        fullDomainVerificationReady: true,
-        independentHypothesisPriorArtReviewVerified: true,
-        independentHypothesisPriorArtReceiptHash: H('rotation-prior-art'),
-        failureCodes: [],
-        blockers: [],
-      };
+        prepared,
+        authority,
+        label: 'rotation-qualification',
+      });
     },
   };
   const rotated = await executeAutonomousResearchCampaign({
     ...common,
+    ...machineDispatchOptions(campaign, 'launch'),
     externalQualificationClient: newClient,
     externalQualificationVerifier: newVerifier,
   });
-  assert.equal(rotated.status, 'autonomous_research_campaign_completed_and_qualified');
+  assert.equal(rotated.status,
+    'autonomous_research_campaign_completed_external_qualification_eligible');
   assert.equal(rotated.externalQualification.status, 'qualification_external_service_verified');
   assert.equal(newRequests, 1);
   assert.equal(state.recovery.status, 'qualification_verified');
@@ -826,15 +812,13 @@ test('a terminal bad-signature receipt stays blocked for one trust configuration
 test('qualification requires durable state, rejects corrupt state, and policy growth re-arms exhaustion', async (t) => {
   const fixture = testWorkspace(t);
   const datasetMount = authorizedDatasetMount(fixture.runtimeRoot, 'qualification-policy-dataset');
-  const prepared = await preparation('qualification-policy-paper', [datasetMount]);
-  const campaignId = 'autonomous-research:qualification-policy-paper';
-  const authority = releaseAuthority(campaignId, prepared.proposal.paperId, prepared);
-  const campaign = {
+  const basePreparation = await preparation('qualification-policy-paper', [datasetMount]);
+  const {
+    preparation: prepared,
+    authority,
+    campaign,
     campaignId,
-    paperId: prepared.proposal.paperId,
-    status: 'completed',
-    spec: { autonomousResearchPreparation: prepared },
-  };
+  } = qualifiedGoldenContext({ basePreparation, datasetMount });
   const campaignStore = {
     createCampaign() { throw new Error('unexpected create'); },
     getCampaign() { return campaign; },
@@ -874,13 +858,17 @@ test('qualification requires durable state, rejects corrupt state, and policy gr
     externalQualificationClient: client,
     externalQualificationVerifier: verifier,
   };
-  const missingStore = await executeAutonomousResearchCampaign(common);
+  const missingStore = await executeAutonomousResearchCampaign({
+    ...common,
+    ...machineDispatchOptions(campaign, 'resume'),
+  });
   assert.equal(missingStore.externalQualification.status,
     'qualification_durable_state_store_required');
   assert.equal(requests, 0);
 
   const corrupt = await executeAutonomousResearchCampaign({
     ...common,
+    ...machineDispatchOptions(campaign, 'resume'),
     qualificationStateStore: {
       ...qualificationStateStore,
       readExternalQualificationState() { return { version: 4, nextAttemptAt: '2099-01-01' }; },
@@ -891,6 +879,7 @@ test('qualification requires durable state, rejects corrupt state, and policy gr
 
   const first = await executeAutonomousResearchCampaign({
     ...common,
+    ...machineDispatchOptions(campaign, 'resume'),
     qualificationStateStore,
     qualificationRetry: {
       maximumAttempts: 1,
@@ -907,6 +896,7 @@ test('qualification requires durable state, rejects corrupt state, and policy gr
   assert.equal(requests, 1);
   const cooling = await executeAutonomousResearchCampaign({
     ...common,
+    ...machineDispatchOptions(campaign, 'resume'),
     qualificationStateStore,
     qualificationRetry: {
       maximumAttempts: 1,
@@ -924,6 +914,7 @@ test('qualification requires durable state, rejects corrupt state, and policy gr
   succeed = true;
   const rearmed = await executeAutonomousResearchCampaign({
     ...common,
+    ...machineDispatchOptions(campaign, 'resume'),
     qualificationStateStore,
     qualificationRetry: {
       maximumAttempts: 2,
@@ -934,7 +925,8 @@ test('qualification requires durable state, rejects corrupt state, and policy gr
       clock: { now: () => new Date(nowMs) },
     },
   });
-  assert.equal(rearmed.status, 'autonomous_research_campaign_completed_and_qualified');
+  assert.equal(rearmed.status,
+    'autonomous_research_campaign_completed_external_qualification_eligible');
   assert.equal(requests, 2);
   assert.notEqual(state.recovery.retryPolicyIdentityHash,
     first.externalQualification.retryPolicyIdentityHash);
@@ -943,15 +935,13 @@ test('qualification requires durable state, rejects corrupt state, and policy gr
 test('qualification attempt lease prevents concurrent resume from duplicating an external call', async (t) => {
   const fixture = testWorkspace(t);
   const datasetMount = authorizedDatasetMount(fixture.runtimeRoot, 'qualification-lease-dataset');
-  const prepared = await preparation('qualification-lease-paper', [datasetMount]);
-  const campaignId = 'autonomous-research:qualification-lease-paper';
-  const authority = releaseAuthority(campaignId, prepared.proposal.paperId, prepared);
-  const campaign = {
+  const basePreparation = await preparation('qualification-lease-paper', [datasetMount]);
+  const {
+    preparation: prepared,
+    authority,
+    campaign,
     campaignId,
-    paperId: prepared.proposal.paperId,
-    status: 'completed',
-    spec: { autonomousResearchPreparation: prepared },
-  };
+  } = qualifiedGoldenContext({ basePreparation, datasetMount });
   const campaignStore = {
     createCampaign() { throw new Error('unexpected create'); },
     getCampaign() { return campaign; },
@@ -992,15 +982,22 @@ test('qualification attempt lease prevents concurrent resume from duplicating an
     qualificationStateStore,
     qualificationRetry: { maximumAttempts: 1, maximumEpochs: 1, attemptLeaseMs: 60_000 },
   };
-  const first = executeAutonomousResearchCampaign(common);
+  const first = executeAutonomousResearchCampaign({
+    ...common,
+    ...machineDispatchOptions(campaign, 'resume'),
+  });
   await new Promise((resolve) => { setImmediate(resolve); });
-  const concurrent = await executeAutonomousResearchCampaign(common);
+  const concurrent = await executeAutonomousResearchCampaign({
+    ...common,
+    ...machineDispatchOptions(campaign, 'resume'),
+  });
   assert.equal(concurrent.externalQualification.status,
     'qualification_external_service_attempt_in_progress');
   assert.equal(requests, 1);
   releaseRequest({ expiresAt: '2099-01-01T00:00:00.000Z', signature: 'valid' });
   const completed = await first;
-  assert.equal(completed.status, 'autonomous_research_campaign_completed_and_qualified');
+  assert.equal(completed.status,
+    'autonomous_research_campaign_completed_external_qualification_eligible');
   assert.equal(requests, 1);
 });
 
@@ -1048,7 +1045,8 @@ test('resume uses persisted fencing state and completes a paused campaign withou
     }),
     runtime: runtime(fixture.clock),
   });
-  assert.equal(result.status, 'autonomous_research_campaign_completed_external_qualification_eligible', JSON.stringify(result));
+  assert.equal(result.status, 'autonomous_research_campaign_completed_qualification_blocked',
+    JSON.stringify(result));
   assert.equal(result.campaignFullyQualified, false);
   assert.equal(result.fullAutomaticResearchWritingReady, result.campaignFullyQualified);
   assert.equal(result.externalQualification.status, 'qualification_pending_external_service');
@@ -1226,7 +1224,7 @@ test('proposal A cannot be replaced by empirical claim B after recomputing manus
   }), /autonomous_research_empirical_claim_lineage_invalid/);
 });
 
-test('converge idempotently launches, settles, and obtains external machine qualification', async (t) => {
+test('converge idempotently caches external inspection without overpromoting bounded preparation', async (t) => {
   const fixture = testWorkspace(t);
   const datasetMount = authorizedDatasetMount(fixture.runtimeRoot, 'converge-dataset');
   const prepared = await preparation('converge-paper', [datasetMount]);
@@ -1292,7 +1290,7 @@ test('converge idempotently launches, settles, and obtains external machine qual
     executor: fakeExecutor().executor,
     preparedMaterialization: materialization,
   });
-  assert.equal(first.status, 'autonomous_research_campaign_completed_and_qualified',
+  assert.equal(first.status, 'autonomous_research_campaign_completed_qualification_blocked',
     JSON.stringify(first));
   assert.equal(first.action, 'converge');
   assert.equal(first.automaticBudgetExpansionPerformed, false);
@@ -1301,8 +1299,9 @@ test('converge idempotently launches, settles, and obtains external machine qual
   assert.equal(qualificationRequests, 1);
 
   const repeated = await executeAutonomousResearchCampaign(common);
-  assert.equal(repeated.status, 'autonomous_research_campaign_completed_and_qualified');
-  assert.equal(repeated.externalQualification.status, 'qualification_cached_verified_locally');
+  assert.equal(repeated.status, 'autonomous_research_campaign_completed_qualification_blocked');
+  assert.equal(repeated.externalQualification.status,
+    'qualification_external_service_terminal_blocked');
   assert.equal(qualificationRequests, 1);
 });
 
@@ -1359,7 +1358,7 @@ test('converge never resumes paused or stopped campaigns without caller budget c
     budgets: { maxWallTimeMs: existingBudget },
   });
   assert.equal(resumed.status,
-    'autonomous_research_campaign_completed_external_qualification_eligible');
+    'autonomous_research_campaign_completed_qualification_blocked');
   assert.equal(resumed.automaticBudgetExpansionPerformed, false);
   const resumeEvent = fixture.campaignStore.listEvents(campaignId)
     .find((event) => event.kind === 'campaign_resumed');
@@ -1396,4 +1395,45 @@ test('converge never resumes paused or stopped campaigns without caller budget c
     campaignStore: fixture.campaignStore,
   }), /autonomous_research_converge_resume_budget_configuration_required/);
   assert.equal(fixture.campaignStore.getCampaign(stoppedCampaignId).status, 'stopped');
+});
+
+test('prepared campaign enqueue is idempotent and binds the persisted plan identity', async (t) => {
+  const fixture = testWorkspace(t);
+  const datasetMount = authorizedDatasetMount(fixture.runtimeRoot, 'enqueue-dataset');
+  const prepared = await preparation('enqueue-paper', [datasetMount]);
+  const repository = createAutonomousResearchWorkspaceRepository({
+    runtimeRoot: fixture.runtimeRoot,
+    paperId: prepared.proposal.paperId,
+  });
+  const materialization = materializeAutonomousResearchWorkspace({
+    repository,
+    loopPreparation: prepared,
+    datasetMounts: [datasetMount],
+  });
+  const first = enqueuePreparedAutonomousResearchCampaign({
+    readinessReport: {
+      kind: 'AutonomousResearchReadinessCompositionReport',
+      loopPreparation: prepared,
+    },
+    datasetMounts: [datasetMount],
+    campaignStore: fixture.campaignStore,
+    preparedMaterialization: materialization,
+  });
+  assert.equal(first.status, 'autonomous_research_campaign_enqueued');
+  assert.equal(first.created, true);
+  assert.equal(first.admissionOnly, false);
+  assert.equal(first.initialCampaignStatus, first.campaign.status);
+  assert.equal(first.autonomousResearchMachineIntakeHash, null);
+  assert.equal(first.autonomousResearchMachineIntakeAdmissionHash, null);
+
+  const repeated = enqueuePreparedAutonomousResearchCampaign({
+    readinessReport: prepared,
+    campaignId: first.campaignId,
+    datasetMounts: [datasetMount],
+    campaignStore: fixture.campaignStore,
+    preparedMaterialization: materialization,
+  });
+  assert.equal(repeated.status, 'autonomous_research_campaign_already_enqueued');
+  assert.equal(repeated.created, false);
+  assert.equal(repeated.campaign.campaignId, first.campaign.campaignId);
 });

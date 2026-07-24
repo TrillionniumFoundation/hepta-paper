@@ -11,10 +11,12 @@ import {
   issueFormalVerifierWriter,
   issueNativeResearchWorkerWriter,
   issueRuntimeRetentionWriter,
+  issuePackageLifecycleWriter,
   issueLedgerAdministratorWriter,
   issueStoreAdministratorWriter,
   issueWorkspaceSnapshotVerifierWriter,
   issueWorkflowStateProjectorWriter,
+  issueAutonomousSubmissionHandoffWriter,
 } from '../../paper-adapters/persistence/receipt-writer-broker.mjs';
 
 function composeIssuerLedger({ store, clock, issuerCapability }) {
@@ -28,6 +30,10 @@ export function composeStoreAdministratorReceiptLedger({ store, clock } = {}) {
 
 export function composeRuntimeRetentionReceiptLedger({ store, clock } = {}) {
   return composeIssuerLedger({ store, clock, issuerCapability: issueRuntimeRetentionWriter() });
+}
+
+export function composePackageLifecycleReceiptLedger({ store, clock } = {}) {
+  return composeIssuerLedger({ store, clock, issuerCapability: issuePackageLifecycleWriter() });
 }
 
 export function composeAutomationReconcilerReceiptLedger({ store, clock } = {}) {
@@ -50,6 +56,14 @@ export function composeWorkspaceSnapshotVerifierReceiptLedger({ store, clock } =
 
 export function composeArtifactReceiptLedger({ store, clock } = {}) {
   return composeIssuerLedger({ store, clock, issuerCapability: issueArtifactRepositoryWriter() });
+}
+
+export function composeAutonomousSubmissionHandoffReceiptLedger({ store, clock } = {}) {
+  return composeIssuerLedger({
+    store,
+    clock,
+    issuerCapability: issueAutonomousSubmissionHandoffWriter(),
+  });
 }
 
 export function composeTrustedReceiptLedgers({ store, clock, overrides = {} } = {}) {

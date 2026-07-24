@@ -10,9 +10,16 @@ import {
   classifyNpmScriptSurface,
   heptaPaperCommandUsage,
 } from '../src/command-registry.mjs';
-import { EXPLICIT_NPM_SCRIPTS } from '../src/npm-command-surface-manifest.mjs';
+import {
+  EXPLICIT_NPM_SCRIPTS,
+  ROUTED_NPM_SCRIPT_CLASSIFICATION,
+} from '../src/npm-command-surface-manifest.mjs';
 import { parseStrictCliArguments } from '../src/strict-cli-arguments.mjs';
-import { DECLARED_TEST_SUITES, declaredTestSuite } from '../src/test-suite-manifest.mjs';
+import {
+  DECLARED_TEST_SUITES,
+  declaredTestSuite,
+  isOnlineMutationAutomationTest,
+} from '../src/test-suite-manifest.mjs';
 
 const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
 const packageJson = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
@@ -63,6 +70,8 @@ test('root package declares the vendored reference and a non-duplicated verifica
   assert.deepEqual([...commands.values()].filter((names) => names.length > 1), []);
   assert.match(scripts['ci:inner'], /npm run safety:all/);
   assert.match(scripts['ci:selftest'], /^npm run static:check/);
+  assert.match(scripts['static:check'], /paper-core\/tests\/architecture-conformance\.test\.mjs/);
+  assert.match(scripts['static:check'], /paper-core\/tests\/repository-module-imports\.test\.mjs/);
   assert.match(scripts['test:inner'], /npm run safety:all/);
   assert.match(scripts.test, /^npm run static:check/);
   assert.match(scripts['release:verify'], /^npm run static:check/);
@@ -82,6 +91,22 @@ test('root package declares the vendored reference and a non-duplicated verifica
   assert.match(scripts['coverage:system-inner'], /--test-coverage-branches=54/);
   assert.match(scripts['coverage:system-inner'], /--test-skip-pattern='\^academic-docker-operational:'/);
   assert.equal(scripts['test:academic-docker-operational'], 'node paper-core/bin/academic-docker-operational.mjs');
+  assert.equal(
+    scripts['test:typed-numeric-process-operational'],
+    'node --test --test-concurrency=1 paper-core/tests/typed-numeric-oracle-production.test.mjs',
+  );
+  assert.equal(
+    scripts['test:dynamic-formal-kernel-operational'],
+    'node paper-core/bin/dynamic-formal-kernel-operational.mjs',
+  );
+  const dynamicFormalOperationalRunner = fs.readFileSync(
+    path.join(root, 'paper-core/bin/dynamic-formal-kernel-operational.mjs'),
+    'utf8',
+  );
+  assert.match(dynamicFormalOperationalRunner,
+    /HEPTA_DYNAMIC_FORMAL_KERNEL_OPERATIONAL_MODE: 'strict'/);
+  assert.match(dynamicFormalOperationalRunner,
+    /dynamic_formal_kernel_operational_skip_count_invalid/);
   for (const required of [
     'paper-core/tests/academic-docker-operational-prerequisites.test.mjs',
     'paper-core/tests/hepta-store-restore-drill-exit.test.mjs',
@@ -93,6 +118,29 @@ test('root package declares the vendored reference and a non-duplicated verifica
     'utf8',
   );
   assert.equal((academicDockerTests.match(/test\('academic-docker-operational:/g) || []).length, 2);
+});
+
+test('dynamic formal operational runner fails non-zero instead of skipping a missing runtime', () => {
+  const isolatedElanHome = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-missing-elan-'));
+  try {
+    const standaloneEnvironment = { ...process.env };
+    delete standaloneEnvironment.NODE_TEST_CONTEXT;
+    const result = spawnSync(process.execPath, [
+      'paper-core/bin/dynamic-formal-kernel-operational.mjs',
+    ], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...standaloneEnvironment, ELAN_HOME: isolatedElanHome },
+      timeout: 30_000,
+    });
+    assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(
+      `${result.stdout}\n${result.stderr}`,
+      /dynamic_formal_kernel_operational_prerequisite_failed/,
+    );
+  } finally {
+    fs.rmSync(isolatedElanHome, { recursive: true, force: true });
+  }
 });
 
 test('test:inner expands to a deduplicated test-file DAG', () => {
@@ -136,12 +184,35 @@ test('full and deduplicated test suites are derived from one declarative manifes
     'paper-core/tests/autonomous-research-machine-intake-migration.test.mjs',
     'paper-core/tests/autonomous-research-machine-intake.test.mjs',
     'paper-core/tests/autonomous-research-qualification-progress.test.mjs',
+    'paper-core/tests/autonomous-research-state-backup-journal-replay.test.mjs',
+    'paper-core/tests/autonomous-research-state-backup-renewal.test.mjs',
+    'paper-core/tests/autonomous-research-state-recoverability-controller.test.mjs',
+    'paper-core/tests/autonomous-research-resident-cycle-intent.test.mjs',
+    'paper-core/tests/autonomous-research-resident-deployment-identity.test.mjs',
+    'paper-core/tests/autonomous-submission-handoff-layout-provision.test.mjs',
+    'paper-core/tests/autonomous-submission-handoff-storage.test.mjs',
+    'paper-core/tests/autonomous-submission-request-verifier-composition.test.mjs',
     'paper-core/tests/autonomous-research-topic-producer.test.mjs',
     'paper-core/tests/fully-autonomous-research-system-status.test.mjs',
+    'paper-core/tests/full-research-qualification-prior-art-lineage.test.mjs',
+    'paper-core/tests/http-prior-art-retrieval-adapter-v2.test.mjs',
+    'paper-core/tests/prior-art-evidence-v2-contract.test.mjs',
+    'paper-core/tests/experiment-replay-receipt-contract.test.mjs',
   ]) assert.ok(DECLARED_TEST_SUITES.automation.full.includes(required), required);
+  const discoveredOnlineMutationTests = fs.readdirSync(path.join(root, 'paper-core', 'tests'))
+    .filter(isOnlineMutationAutomationTest)
+    .map((name) => `paper-core/tests/${name}`)
+    .sort();
+  assert.deepEqual(
+    discoveredOnlineMutationTests.filter((candidate) => (
+      !DECLARED_TEST_SUITES.automation.full.includes(candidate)
+    )),
+    [],
+  );
 });
 
 test('one declarative registry owns supported routes and npm command classification', () => {
+  assert.equal(ROUTED_NPM_SCRIPT_CLASSIFICATION.maintenance, 'maintenance');
   const result = spawnSync(process.execPath, ['paper-core/bin/command-surface.mjs'], {
     cwd: root,
     encoding: 'utf8',
@@ -191,7 +262,11 @@ test('one declarative registry owns supported routes and npm command classificat
   }
   for (const name of [
     'assets:cold-volume-cas-import',
+    'automation:autonomous-research-online-schema-transition',
     'automation:runtime-build',
+    'automation:runtime-bootstrap:python',
+    'automation:runtime-bootstrap:r',
+    'automation:runtime-image-bundle-load',
     'conformance:replay',
     'core:baseline',
     'migration:matrix-refresh-hashes',
@@ -222,7 +297,22 @@ test('one declarative registry owns supported routes and npm command classificat
   const help = spawnSync(process.execPath, ['paper-core/bin/hepta-paper.mjs', '--help'], { cwd: root, encoding: 'utf8' });
   assert.equal(help.status, 0, help.stderr);
   assert.deepEqual(JSON.parse(help.stdout), heptaPaperCommandUsage());
-  assert.equal(JSON.parse(help.stdout).version, 3);
+  assert.equal(JSON.parse(help.stdout).version, 4);
+  assert.deepEqual(
+    HEPTA_PAPER_COMMAND_REGISTRY.maintenance['autonomous-online-schema-transition'].effects,
+    {
+      localMutation: 'argument-dependent',
+      externalAction: 'argument-dependent',
+      networkUse: 'argument-dependent',
+      credentialUse: 'argument-dependent',
+      providerCost: 'none',
+    },
+  );
+  assert.equal(
+    HEPTA_PAPER_COMMAND_REGISTRY.maintenance['autonomous-online-schema-transition']
+      .forwardingPolicy,
+    'registry',
+  );
   assert.equal(JSON.parse(help.stdout).commands.operator['research-readiness'].effects.externalAction, 'required');
   assert.ok(HEPTA_PAPER_COMMAND_REGISTRY.operator['submission-handoff']);
   assert.deepEqual(HEPTA_PAPER_COMMAND_REGISTRY.operator['research-readiness'].effects, {
@@ -286,6 +376,11 @@ test('one declarative registry owns supported routes and npm command classificat
     HEPTA_PAPER_COMMAND_REGISTRY.operator.automation.forwardedArgumentSchema.booleanFlags
       .includes('require-fully-autonomous'),
     true,
+  );
+  assert.deepEqual(
+    HEPTA_PAPER_COMMAND_REGISTRY.operator['generic-domain-capability-evidence']
+      .forwardedArgumentSchema.valueFlags,
+    ['action', 'paper-id', 'root', 'runtime-root'],
   );
   assert.deepEqual(HEPTA_PAPER_COMMAND_REGISTRY.operator.batch.unsupportedModes, [
     'journal-manage',
@@ -390,6 +485,20 @@ test('shared strict argument parser rejects unknown, missing, duplicate, and pos
   ], { cwd: root, encoding: 'utf8' });
   assert.equal(automationRoute.status, 0, automationRoute.stderr);
   assert.match(automationRoute.stdout, /AutomationStatusUsage/);
+
+  const genericEvidenceRoute = spawnSync(process.execPath, [
+    'paper-core/bin/hepta-paper.mjs',
+    'operator',
+    'generic-domain-capability-evidence',
+    '--',
+    '--action',
+    'status',
+    '--paper-id',
+    'strict-route-paper',
+    '--help',
+  ], { cwd: root, encoding: 'utf8' });
+  assert.equal(genericEvidenceRoute.status, 0, genericEvidenceRoute.stderr);
+  assert.match(genericEvidenceRoute.stdout, /generic-domain-capability-evidence/);
 
   for (const argv of [
     ['paper-core/bin/automation-status.mjs', '--require-fully-autonomus'],

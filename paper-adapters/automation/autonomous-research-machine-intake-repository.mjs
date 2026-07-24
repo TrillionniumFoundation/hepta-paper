@@ -7,26 +7,30 @@ import {
   buildAutonomousResearchMachineIntakeAdmission,
 } from '../../paper-domain/automation/autonomous-research-machine-intake-admission-contract.mjs';
 import {
-  assertMachineIntakeAuthorityState,
-  readAuthorizedMachineProducerProfileHash,
-  readConfiguredSourceAuthorityHash,
-  readMachineIntakeAuthorityGeneration,
+  assertMachineIntakeAuthorityEvidence,
 } from './autonomous-research-machine-intake-authority.mjs';
 import {
   SELECT_RECORD,
-  begin,
   canonicalSource,
   identity,
   leaseDuration,
   observedDate,
   parseRow,
   recurringEpochCurrent,
-  rollback,
   utcDayStart,
 } from './autonomous-research-machine-intake-repository-support.mjs';
 import {
   openAutonomousResearchMachineIntakeRepository,
 } from './autonomous-research-machine-intake-repository-open.mjs';
+import {
+  AUTONOMOUS_RESEARCH_MACHINE_INTAKE_DATABASE_INSTANCE_ID,
+  AUTONOMOUS_RESEARCH_MACHINE_INTAKE_SCHEMA_CONTRACT_ID,
+  AUTONOMOUS_RESEARCH_MACHINE_INTAKE_WRITER_ID,
+  createOfflineMachineIntakeMutationCoordinator,
+} from './autonomous-research-machine-intake-mutation-plan.mjs';
+import {
+  assertExternallyFencedSqliteMutationCoordinatorPort,
+} from '../../paper-ports/autonomous-research-online-mutation-port.mjs';
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,255}$/;
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
@@ -58,7 +62,38 @@ export function createAutonomousResearchMachineIntakeRepository({
   authorizedMachineProducerProfileHash = null,
   machineProducerAppendAuthority = null,
   migrationHooks = {},
+  offlineProvision = create,
+  mutationCoordinator = null,
+  databaseInstanceId = AUTONOMOUS_RESEARCH_MACHINE_INTAKE_DATABASE_INSTANCE_ID,
+  schemaContractId = AUTONOMOUS_RESEARCH_MACHINE_INTAKE_SCHEMA_CONTRACT_ID,
+  writerId = AUTONOMOUS_RESEARCH_MACHINE_INTAKE_WRITER_ID,
+  requireExternallyFencedMutations = false,
 } = {}) {
+  if (typeof offlineProvision !== 'boolean'
+    || typeof requireExternallyFencedMutations !== 'boolean'
+    || !SAFE_ID.test(String(databaseInstanceId || ''))
+    || !SAFE_ID.test(String(schemaContractId || ''))
+    || !SAFE_ID.test(String(writerId || ''))) {
+    throw new Error('autonomous_research_machine_intake_repository_configuration_invalid');
+  }
+  let coordinator = mutationCoordinator;
+  if (coordinator !== null) assertExternallyFencedSqliteMutationCoordinatorPort(coordinator);
+  if (requireExternallyFencedMutations) {
+    const status = coordinator?.inspectStatus();
+    if (!create || offlineProvision || coordinator?.implemented !== true
+      || status?.implemented !== true
+      || status.status !== 'externally_fenced_sqlite_mutation_coordinator_ready'
+      || !Array.isArray(status.blockers) || status.blockers.length !== 0
+      || !coordinator.coveredDatabaseRoles?.includes('machine-intake')
+      || !status.coveredDatabaseRoles?.includes('machine-intake')) {
+      throw new Error('autonomous_research_machine_intake_external_mutation_coordinator_required');
+    }
+  }
+  coordinator ||= createOfflineMachineIntakeMutationCoordinator({
+    databaseInstanceId,
+    schemaContractId,
+    writerId,
+  });
   const {
     database,
     databasePath,
@@ -66,6 +101,7 @@ export function createAutonomousResearchMachineIntakeRepository({
     configuredSourceAuthorityHash,
     configuredMachineProducerProfileHash,
     configuredAuthorityGeneration,
+    offlineProvisioningPerformed,
   } = openAutonomousResearchMachineIntakeRepository({
     runtimeRoot,
     create,
@@ -74,6 +110,7 @@ export function createAutonomousResearchMachineIntakeRepository({
     authorizedMachineProducerProfileHash,
     machineProducerAppendAuthority,
     migrationHooks,
+    offlineProvision,
   });
   let closed = false;
 
@@ -89,33 +126,55 @@ export function createAutonomousResearchMachineIntakeRepository({
     return database;
   }
 
-  function assertCurrentRepositoryAuthority(db) {
-    assertMachineIntakeAuthorityState(db);
-    if (readConfiguredSourceAuthorityHash(db) !== configuredSourceAuthorityHash
-      || readAuthorizedMachineProducerProfileHash(db)
+  function assertCurrentTransactionAuthority(transaction) {
+    const metadata = transaction.get('authority.metadata.current.get.v1');
+    const persisted = assertMachineIntakeAuthorityEvidence({
+      configuredSourceAuthorityHash: metadata?.configured_source_authority_hash,
+      authorizedMachineProducerProfileHash:
+        metadata?.authorized_machine_producer_profile_hash ?? null,
+      authorityGeneration: Number(metadata?.authority_generation),
+      lastAuthorityRotationReceiptHash:
+        metadata?.last_authority_rotation_receipt_hash ?? null,
+      journal: transaction.all('authority.rotation.all.v1'),
+      genesis: transaction.all('authority.genesis.all.v1'),
+    });
+    if (persisted.configuredSourceAuthorityHash !== configuredSourceAuthorityHash
+      || persisted.authorizedMachineProducerProfileHash
         !== configuredMachineProducerProfileHash
-      || readMachineIntakeAuthorityGeneration(db) !== configuredAuthorityGeneration) {
+      || persisted.authorityGeneration !== configuredAuthorityGeneration) {
       throw new Error('autonomous_research_machine_intake_repository_authority_stale');
     }
+    return persisted;
   }
 
-  function supersedePriorRecurringEpochs(db, intake, timestamp) {
+  function mutationValue(receipt) {
+    if (!receipt || !Object.prototype.hasOwnProperty.call(receipt, 'value')) {
+      throw new Error('autonomous_research_machine_intake_mutation_receipt_invalid');
+    }
+    return receipt.value;
+  }
+
+  function mutationInput(mutate, authorizationReceiptHashes = []) {
+    return {
+      database,
+      databaseInstanceId,
+      schemaContractId,
+      writerId,
+      authorizationReceiptHashes,
+      sideEffectReservationHashes: [],
+      mutate(transaction) {
+        assertCurrentTransactionAuthority(transaction);
+        return mutate(transaction);
+      },
+    };
+  }
+
+  function supersedePriorRecurringEpochs(transaction, intake, timestamp) {
     const templatePrefix = `${intake.recurringGoldenProvenance.templateId}@`;
-    db.prepare(`UPDATE autonomous_research_machine_intake SET
-      disposition='superseded',updated_at=?
-      WHERE disposition='pending' AND source_kind='recurring-golden'
-      AND substr(source_ref,1,?)=? AND intake_id<>?
-      AND NOT EXISTS(
-        SELECT 1 FROM autonomous_research_machine_intake_lease l
-        WHERE l.intake_id=autonomous_research_machine_intake.intake_id AND l.expires_at>?
-      )`).run(
+    transaction.run('append.recurring-supersede.apply.v1',
       timestamp, templatePrefix.length, templatePrefix, intake.intakeId, timestamp,
     );
-    db.prepare(`DELETE FROM autonomous_research_machine_intake_lease
-      WHERE intake_id IN (
-        SELECT intake_id FROM autonomous_research_machine_intake
-        WHERE disposition='superseded'
-      )`).run();
+    transaction.run('append.recurring-lease-retire.apply.v1');
   }
 
   function readIntake(intakeId) {
@@ -163,7 +222,7 @@ export function createAutonomousResearchMachineIntakeRepository({
     topicProducerAppendAuthorization = null,
     now = new Date(),
   } = {}) {
-    const db = requireDatabase({ writable: true });
+    requireDatabase({ writable: true });
     if (!verifyAutonomousResearchMachineIntake(intake)) {
       throw new Error('autonomous_research_machine_intake_invalid');
     }
@@ -213,20 +272,16 @@ export function createAutonomousResearchMachineIntakeRepository({
         throw new Error('autonomous_research_recurring_golden_epoch_not_current');
       }
     }
-    try {
-      begin(db);
-      assertCurrentRepositoryAuthority(db);
-      if (sourceKind === 'recurring-golden') {
-        // Run this before the idempotent early return as well. If a previous epoch was
-        // actively leased when the current epoch first appeared, the next current-epoch
-        // replay must retire it after that lease expires.
-        supersedePriorRecurringEpochs(db, intake, timestamp);
-      }
-      const byIdentity = db.prepare(`SELECT intake_id,intake_hash,campaign_id,
-        source_kind,source_ref,source_authority_hash,admission_hash
-        FROM autonomous_research_machine_intake
-        WHERE intake_id=? OR campaign_id=? OR intake_hash=?`)
-        .all(intake.intakeId, intake.campaignId, intake.intakeHash);
+    return mutationValue(coordinator.executeMutation({
+      databaseRole: 'machine-intake', operationId: 'machine-intake.machine-intake-repository.appendIntake.v1',
+      ...mutationInput((transaction) => {
+        if (sourceKind === 'recurring-golden') {
+          // A replay of the current epoch retires any older epoch once its lease expires.
+          supersedePriorRecurringEpochs(transaction, intake, timestamp);
+        }
+        const byIdentity = transaction.all(
+          'append.identity.all.v1', intake.intakeId, intake.campaignId, intake.intakeHash,
+        );
       if (byIdentity.length) {
         const idempotent = byIdentity.length === 1
           && byIdentity[0].intake_id === intake.intakeId
@@ -240,14 +295,16 @@ export function createAutonomousResearchMachineIntakeRepository({
         if (!idempotent) {
           throw new Error('autonomous_research_machine_intake_identity_conflict');
         }
-        db.exec('COMMIT;');
-        return Object.freeze({ inserted: false, idempotent: true, record: readIntake(intake.intakeId) });
+          return Object.freeze({
+            inserted: false,
+            idempotent: true,
+            record: parseRow(transaction.get('append.record-current.get.v1', intake.intakeId)),
+          });
       }
-      const pendingCount = Number(db.prepare(`SELECT COUNT(*) AS count
-        FROM autonomous_research_machine_intake WHERE disposition='pending'`).get().count);
-      const pendingNonRecurringCount = Number(db.prepare(`SELECT COUNT(*) AS count
-        FROM autonomous_research_machine_intake
-        WHERE disposition='pending' AND source_kind<>'recurring-golden'`).get().count);
+        const pendingCount = Number(transaction.get('append.pending-count.get.v1').count);
+        const pendingNonRecurringCount = Number(
+          transaction.get('append.pending-non-recurring-count.get.v1').count,
+        );
       const limits = AUTONOMOUS_RESEARCH_MACHINE_INTAKE_ADMISSION_LIMITS;
       if (pendingCount >= limits.maximumPendingIntakes
         || (sourceKind !== 'recurring-golden'
@@ -256,12 +313,10 @@ export function createAutonomousResearchMachineIntakeRepository({
       }
       if (sourceKind === 'machine') {
         const epochStart = utcDayStart(observedAt);
-        db.prepare(`INSERT OR IGNORE INTO autonomous_research_machine_intake_daily_admission(
-          epoch_start,machine_append_count,reserved_cost_usd,reserved_agent_calls,
-          reserved_gpu_jobs,updated_at
-        ) VALUES(?,?,?,?,?,?)`).run(epochStart, 0, 0, 0, 0, timestamp);
-        const daily = db.prepare(`SELECT * FROM autonomous_research_machine_intake_daily_admission
-          WHERE epoch_start=?`).get(epochStart);
+          transaction.run(
+            'append.daily-create.apply.v1', epochStart, 0, 0, 0, 0, timestamp,
+          );
+          const daily = transaction.get('append.daily-current.get.v1', epochStart);
         const next = Object.freeze({
           count: Number(daily.machine_append_count) + 1,
           cost: Number(daily.reserved_cost_usd) + intake.budgets.maxCostUsd,
@@ -274,29 +329,28 @@ export function createAutonomousResearchMachineIntakeRepository({
           || next.gpu > limits.maximumMachineReservedGpuJobsPerUtcDay) {
           throw new Error('autonomous_research_machine_intake_daily_admission_budget_exhausted');
         }
-        db.prepare(`UPDATE autonomous_research_machine_intake_daily_admission SET
-          machine_append_count=?,reserved_cost_usd=?,reserved_agent_calls=?,reserved_gpu_jobs=?,
-          updated_at=? WHERE epoch_start=?`).run(
-          next.count, next.cost, next.calls, next.gpu, timestamp, epochStart,
-        );
+          transaction.run(
+            'append.daily-update.apply.v1',
+            next.count, next.cost, next.calls, next.gpu, timestamp, epochStart,
+          );
       }
-      db.prepare(`INSERT INTO autonomous_research_machine_intake(
-        intake_id,intake_hash,paper_id,campaign_id,intake_json,admission_json,admission_hash,
-        source_kind,source_ref,
-        source_authority_hash,disposition,lease_generation,failure_count,next_attempt_at,
-        created_at,updated_at
-      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-        intake.intakeId, intake.intakeHash, intake.paperId, intake.campaignId, serialized,
-        serializedAdmission, admission.autonomousResearchMachineIntakeAdmissionHash,
-        source.sourceKind, source.sourceRef, source.sourceAuthorityHash, 'pending', 0, 0,
-        timestamp, timestamp, timestamp,
-      );
-      db.exec('COMMIT;');
-      return Object.freeze({ inserted: true, idempotent: false, record: readIntake(intake.intakeId) });
-    } catch (error) {
-      rollback(db);
-      throw error;
-    }
+        transaction.run(
+          'append.intake-create.apply.v1',
+          intake.intakeId, intake.intakeHash, intake.paperId, intake.campaignId, serialized,
+          serializedAdmission, admission.autonomousResearchMachineIntakeAdmissionHash,
+          source.sourceKind, source.sourceRef, source.sourceAuthorityHash, 'pending', 0, 0,
+          timestamp, timestamp, timestamp,
+        );
+        return Object.freeze({
+          inserted: true,
+          idempotent: false,
+          record: parseRow(transaction.get('append.record-current.get.v1', intake.intakeId)),
+        });
+      },
+      sourceKind === 'machine' && topicProducerAppendAuthorization?.capabilityHash
+        ? [topicProducerAppendAuthorization.capabilityHash] : [],
+      ),
+    }));
   }
 
   return Object.freeze({
@@ -308,6 +362,12 @@ export function createAutonomousResearchMachineIntakeRepository({
     configuredMachineProducerProfileHash,
     configuredAuthorityGeneration,
     schemaMigration,
+    offlineProvisioningPerformed,
+    externallyFencedMutations: coordinator.implemented === true,
+    externallyFencedMutationsRequired: requireExternallyFencedMutations,
+    databaseInstanceId,
+    schemaContractId,
+    writerId,
     durable: true,
     sqliteCompareAndSwap: true,
     leaseFencing: true,
@@ -364,84 +424,67 @@ export function createAutonomousResearchMachineIntakeRepository({
       });
     },
     tryAcquireIntakeLease({ intakeId, ownerId, leaseMs, now = new Date() } = {}) {
-      const db = requireDatabase({ writable: true });
+      requireDatabase({ writable: true });
       if (![intakeId, ownerId].every((value) => SAFE_ID.test(String(value || '')))) {
         throw new Error('autonomous_research_machine_intake_lease_owner_invalid');
       }
       const observedAt = observedDate(now);
       const duration = leaseDuration(leaseMs);
-      try {
-        begin(db);
-        assertCurrentRepositoryAuthority(db);
-        const intakeRow = db.prepare(`SELECT disposition,lease_generation,next_attempt_at,
-          source_kind,intake_json
-          FROM autonomous_research_machine_intake WHERE intake_id=?`).get(intakeId);
+      return mutationValue(coordinator.executeMutation({
+        databaseRole: 'machine-intake', operationId: 'machine-intake.machine-intake-repository.tryAcquireIntakeLease.v1',
+        ...mutationInput((transaction) => {
+          const intakeRow = transaction.get('acquire.intake-current.get.v1', intakeId);
         if (!intakeRow || intakeRow.disposition !== 'pending'
           || intakeRow.next_attempt_at > observedAt.toISOString()) {
-          db.exec('COMMIT;');
           return null;
         }
         if (!recurringEpochCurrent(intakeRow, observedAt)) {
-          db.prepare(`UPDATE autonomous_research_machine_intake SET
-            disposition='superseded',updated_at=?
-            WHERE intake_id=? AND disposition='pending'`).run(observedAt.toISOString(), intakeId);
-          db.prepare(`DELETE FROM autonomous_research_machine_intake_lease
-            WHERE intake_id=?`).run(intakeId);
-          db.exec('COMMIT;');
+            transaction.run(
+              'acquire.intake-supersede.apply.v1', observedAt.toISOString(), intakeId,
+            );
+            transaction.run('acquire.lease-delete.apply.v1', intakeId);
           return null;
         }
-        const current = db.prepare(`SELECT expires_at FROM autonomous_research_machine_intake_lease
-          WHERE intake_id=?`).get(intakeId);
+          const current = transaction.get('acquire.lease-current.get.v1', intakeId);
         if (current && Date.parse(current.expires_at) > observedAt.getTime()) {
-          db.exec('COMMIT;');
           return null;
         }
         const leaseGeneration = Number(intakeRow.lease_generation) + 1;
         const leaseToken = `intake-lease:${crypto.randomUUID()}`;
         const expiresAt = new Date(observedAt.getTime() + duration).toISOString();
-        db.prepare(`UPDATE autonomous_research_machine_intake
-          SET lease_generation=?,updated_at=? WHERE intake_id=? AND disposition='pending'`)
-          .run(leaseGeneration, observedAt.toISOString(), intakeId);
-        db.prepare(`INSERT INTO autonomous_research_machine_intake_lease(
-          intake_id,owner_id,lease_token,lease_generation,acquired_at,renewed_at,expires_at
-        ) VALUES(?,?,?,?,?,?,?) ON CONFLICT(intake_id) DO UPDATE SET
-          owner_id=excluded.owner_id,lease_token=excluded.lease_token,
-          lease_generation=excluded.lease_generation,acquired_at=excluded.acquired_at,
-          renewed_at=excluded.renewed_at,expires_at=excluded.expires_at`).run(
+          const updated = transaction.run(
+            'acquire.intake-generation-update.apply.v1',
+            leaseGeneration, observedAt.toISOString(), intakeId,
+          );
+          if (Number(updated.changes) !== 1) {
+            throw new Error('autonomous_research_machine_intake_lease_fence_conflict');
+          }
+          transaction.run('acquire.lease-upsert.apply.v1',
           intakeId, ownerId, leaseToken, leaseGeneration, observedAt.toISOString(),
           observedAt.toISOString(), expiresAt,
         );
-        db.exec('COMMIT;');
         return Object.freeze({ ownerId, leaseToken, leaseGeneration, expiresAt });
-      } catch (error) {
-        rollback(db);
-        throw error;
-      }
+        }),
+      }));
     },
     renewIntakeLease({ intakeId, ownerId, leaseToken, leaseGeneration, leaseMs, now = new Date() } = {}) {
-      const db = requireDatabase({ writable: true });
+      requireDatabase({ writable: true });
       const lease = identity({ intakeId, ownerId, leaseToken, leaseGeneration });
       const observedAt = observedDate(now);
       const duration = leaseDuration(leaseMs);
-      const intakeRow = db.prepare(`SELECT source_kind,intake_json
-        FROM autonomous_research_machine_intake WHERE intake_id=?`).get(lease.intakeId);
-      if (!intakeRow || !recurringEpochCurrent(intakeRow, observedAt)) return null;
       const expiresAt = new Date(observedAt.getTime() + duration).toISOString();
-      try {
-        begin(db);
-        assertCurrentRepositoryAuthority(db);
-        const result = db.prepare(`UPDATE autonomous_research_machine_intake_lease
-          SET renewed_at=?,expires_at=? WHERE intake_id=? AND owner_id=? AND lease_token=?
-          AND lease_generation=? AND expires_at>?`).run(
+      return mutationValue(coordinator.executeMutation({
+        databaseRole: 'machine-intake', operationId: 'machine-intake.machine-intake-repository.renewIntakeLease.v1',
+        ...mutationInput((transaction) => {
+          const intakeRow = transaction.get('renew.intake-current.get.v1', lease.intakeId);
+          if (!intakeRow || !recurringEpochCurrent(intakeRow, observedAt)) return null;
+          const result = transaction.run('renew.lease-update.apply.v1',
           observedAt.toISOString(), expiresAt, lease.intakeId, lease.ownerId, lease.leaseToken,
           lease.leaseGeneration, observedAt.toISOString(),
         );
-        db.exec('COMMIT;');
         return Number(result.changes) === 1 ? Object.freeze({ ...lease, expiresAt }) : null;
-      } catch (error) {
-        rollback(db);
-        throw error;
-      }
+        }),
+      }));
     },
     assertIntakeLease({ intakeId, ownerId, leaseToken, leaseGeneration, now = new Date() } = {}) {
       const db = requireDatabase();
@@ -462,21 +505,17 @@ export function createAutonomousResearchMachineIntakeRepository({
       return Object.freeze({ ...lease, expiresAt: active.expires_at });
     },
     releaseIntakeLease(leaseValue = {}) {
-      const db = requireDatabase({ writable: true });
+      requireDatabase({ writable: true });
       const lease = identity(leaseValue);
-      try {
-        begin(db);
-        assertCurrentRepositoryAuthority(db);
-        const result = db.prepare(`DELETE FROM autonomous_research_machine_intake_lease
-          WHERE intake_id=? AND owner_id=? AND lease_token=? AND lease_generation=?`).run(
+      return mutationValue(coordinator.executeMutation({
+        databaseRole: 'machine-intake', operationId: 'machine-intake.machine-intake-repository.releaseIntakeLease.v1',
+        ...mutationInput((transaction) => {
+          const result = transaction.run('release.lease-delete.apply.v1',
           lease.intakeId, lease.ownerId, lease.leaseToken, lease.leaseGeneration,
         );
-        db.exec('COMMIT;');
         return Number(result.changes) === 1;
-      } catch (error) {
-        rollback(db);
-        throw error;
-      }
+        }),
+      }));
     },
     deferIntake({
       intakeId,
@@ -487,7 +526,7 @@ export function createAutonomousResearchMachineIntakeRepository({
       retryAfterMs,
       now = new Date(),
     } = {}) {
-      const db = requireDatabase({ writable: true });
+      requireDatabase({ writable: true });
       const lease = identity({ intakeId, ownerId, leaseToken, leaseGeneration });
       if (!Number.isSafeInteger(retryAfterMs) || retryAfterMs < 1000
         || retryAfterMs > MAXIMUM_DEFER_MS) {
@@ -500,14 +539,10 @@ export function createAutonomousResearchMachineIntakeRepository({
       const observedAt = observedDate(now);
       const timestamp = observedAt.toISOString();
       const nextAttemptAt = new Date(observedAt.getTime() + retryAfterMs).toISOString();
-      try {
-        begin(db);
-        assertCurrentRepositoryAuthority(db);
-        const active = db.prepare(`SELECT i.disposition,i.lease_generation,l.owner_id,
-          l.lease_token,l.lease_generation AS active_lease_generation,l.expires_at
-          FROM autonomous_research_machine_intake i
-          JOIN autonomous_research_machine_intake_lease l ON l.intake_id=i.intake_id
-          WHERE i.intake_id=?`).get(lease.intakeId);
+      return mutationValue(coordinator.executeMutation({
+        databaseRole: 'machine-intake', operationId: 'machine-intake.machine-intake-repository.deferIntake.v1',
+        ...mutationInput((transaction) => {
+          const active = transaction.get('defer.active.get.v1', lease.intakeId);
         if (!active || active.disposition !== 'pending'
           || Number(active.lease_generation) !== lease.leaseGeneration
           || active.owner_id !== lease.ownerId || active.lease_token !== lease.leaseToken
@@ -515,24 +550,18 @@ export function createAutonomousResearchMachineIntakeRepository({
           || active.expires_at <= timestamp) {
           throw new Error('autonomous_research_machine_intake_lease_fence_conflict');
         }
-        const updated = db.prepare(`UPDATE autonomous_research_machine_intake SET
-          failure_count=failure_count+1,next_attempt_at=?,last_error=?,updated_at=?
-          WHERE intake_id=? AND disposition='pending' AND lease_generation=?`).run(
+          const updated = transaction.run('defer.intake-update.apply.v1',
           nextAttemptAt, errorText, timestamp, lease.intakeId, lease.leaseGeneration,
         );
         if (Number(updated.changes) !== 1) {
           throw new Error('autonomous_research_machine_intake_lease_fence_conflict');
         }
-        db.prepare(`DELETE FROM autonomous_research_machine_intake_lease
-          WHERE intake_id=? AND owner_id=? AND lease_token=? AND lease_generation=?`).run(
+          transaction.run('defer.lease-delete.apply.v1',
           lease.intakeId, lease.ownerId, lease.leaseToken, lease.leaseGeneration,
         );
-        db.exec('COMMIT;');
-        return readIntake(lease.intakeId);
-      } catch (caught) {
-        rollback(db);
-        throw caught;
-      }
+          return parseRow(transaction.get('defer.record-current.get.v1', lease.intakeId));
+        }),
+      }));
     },
     markIntakeEnqueued({
       intakeId,
@@ -544,7 +573,7 @@ export function createAutonomousResearchMachineIntakeRepository({
       autonomousResearchLoopPreparationReportHash,
       now = new Date(),
     } = {}) {
-      const db = requireDatabase({ writable: true });
+      requireDatabase({ writable: true });
       const lease = identity({ intakeId, ownerId, leaseToken, leaseGeneration });
       if (![
         autonomousResearchMachineIntakeAdmissionHash,
@@ -554,14 +583,10 @@ export function createAutonomousResearchMachineIntakeRepository({
         throw new Error('autonomous_research_machine_intake_enqueue_binding_invalid');
       }
       const timestamp = observedDate(now).toISOString();
-      try {
-        begin(db);
-        assertCurrentRepositoryAuthority(db);
-        const active = db.prepare(`SELECT l.owner_id,l.lease_token,l.lease_generation,l.expires_at,
-          i.source_kind,i.intake_json,i.admission_hash
-          FROM autonomous_research_machine_intake_lease l
-          JOIN autonomous_research_machine_intake i ON i.intake_id=l.intake_id
-          WHERE l.intake_id=?`).get(lease.intakeId);
+      return mutationValue(coordinator.executeMutation({
+        databaseRole: 'machine-intake', operationId: 'machine-intake.machine-intake-repository.markIntakeEnqueued.v1',
+        ...mutationInput((transaction) => {
+          const active = transaction.get('enqueue.active.get.v1', lease.intakeId);
         if (!active || active.owner_id !== lease.ownerId || active.lease_token !== lease.leaseToken
           || Number(active.lease_generation) !== lease.leaseGeneration
           || active.admission_hash !== autonomousResearchMachineIntakeAdmissionHash
@@ -569,26 +594,25 @@ export function createAutonomousResearchMachineIntakeRepository({
           || !recurringEpochCurrent(active, observedDate(now))) {
           throw new Error('autonomous_research_machine_intake_lease_fence_conflict');
         }
-        const result = db.prepare(`UPDATE autonomous_research_machine_intake SET
-          disposition='enqueued',campaign_plan_hash=?,preparation_hash=?,enqueued_at=?,updated_at=?
-          WHERE intake_id=? AND disposition='pending' AND lease_generation=?
-          AND admission_hash=?`).run(
+          const result = transaction.run('enqueue.intake-update.apply.v1',
           campaignPlanHash, autonomousResearchLoopPreparationReportHash, timestamp, timestamp,
           lease.intakeId, lease.leaseGeneration, autonomousResearchMachineIntakeAdmissionHash,
         );
         if (Number(result.changes) !== 1) {
           throw new Error('autonomous_research_machine_intake_lease_fence_conflict');
         }
-        db.prepare(`DELETE FROM autonomous_research_machine_intake_lease
-          WHERE intake_id=? AND owner_id=? AND lease_token=? AND lease_generation=?`).run(
+          transaction.run('enqueue.lease-delete.apply.v1',
           lease.intakeId, lease.ownerId, lease.leaseToken, lease.leaseGeneration,
         );
-        db.exec('COMMIT;');
-        return readIntake(lease.intakeId);
-      } catch (error) {
-        rollback(db);
-        throw error;
-      }
+          return parseRow(transaction.get('enqueue.record-current.get.v1', lease.intakeId));
+        },
+        [
+          autonomousResearchMachineIntakeAdmissionHash,
+          campaignPlanHash,
+          autonomousResearchLoopPreparationReportHash,
+        ],
+        ),
+      }));
     },
     markEnqueuedIntakeInvalid({
       intakeId,
@@ -596,7 +620,7 @@ export function createAutonomousResearchMachineIntakeRepository({
       reason,
       now = new Date(),
     } = {}) {
-      const db = requireDatabase({ writable: true });
+      requireDatabase({ writable: true });
       if (!SAFE_ID.test(String(intakeId || ''))
         || !SHA256.test(String(autonomousResearchMachineIntakeAdmissionHash || ''))) {
         throw new Error('autonomous_research_machine_intake_invalid_transition_identity_invalid');
@@ -606,48 +630,40 @@ export function createAutonomousResearchMachineIntakeRepository({
         throw new Error('autonomous_research_machine_intake_invalid_transition_reason_invalid');
       }
       const timestamp = observedDate(now).toISOString();
-      try {
-        begin(db);
-        assertCurrentRepositoryAuthority(db);
-        const result = db.prepare(`UPDATE autonomous_research_machine_intake SET
-          disposition='invalid',invalid_reason=?,updated_at=?
-          WHERE intake_id=? AND disposition='enqueued' AND admission_hash=?`).run(
+      return mutationValue(coordinator.executeMutation({
+        databaseRole: 'machine-intake', operationId: 'machine-intake.machine-intake-repository.markEnqueuedIntakeInvalid.v1',
+        ...mutationInput((transaction) => {
+          const result = transaction.run('invalid.intake-update.apply.v1',
           reasonText,
           timestamp,
           intakeId,
           autonomousResearchMachineIntakeAdmissionHash,
         );
         if (Number(result.changes) === 1) {
-          db.exec('COMMIT;');
-          return readIntake(intakeId);
+            return parseRow(transaction.get('invalid.record-current.get.v1', intakeId));
         }
-        const current = readIntake(intakeId);
+          const current = parseRow(transaction.get('invalid.record-current.get.v1', intakeId));
         if (current?.disposition === 'invalid'
           && current.admissionHash === autonomousResearchMachineIntakeAdmissionHash
           && current.invalidReason === reasonText) {
-          db.exec('COMMIT;');
           return current;
         }
         throw new Error('autonomous_research_machine_intake_invalid_transition_conflict');
-      } catch (error) {
-        rollback(db);
-        throw error;
-      }
+        },
+        [autonomousResearchMachineIntakeAdmissionHash],
+        ),
+      }));
     },
     reconcileExpiredIntakeLeases({ now = new Date() } = {}) {
-      const db = requireDatabase({ writable: true });
+      requireDatabase({ writable: true });
       const reconciledAt = observedDate(now).toISOString();
-      try {
-        begin(db);
-        assertCurrentRepositoryAuthority(db);
-        const result = db.prepare(`DELETE FROM autonomous_research_machine_intake_lease
-          WHERE expires_at<=?`).run(reconciledAt);
-        db.exec('COMMIT;');
-        return Object.freeze({ recoveredLeaseCount: Number(result.changes), reconciledAt });
-      } catch (error) {
-        rollback(db);
-        throw error;
-      }
+      return mutationValue(coordinator.executeMutation({
+        databaseRole: 'machine-intake', operationId: 'machine-intake.machine-intake-repository.reconcileExpiredIntakeLeases.v1',
+        ...mutationInput((transaction) => {
+          const result = transaction.run('reconcile.lease-delete.apply.v1', reconciledAt);
+          return Object.freeze({ recoveredLeaseCount: Number(result.changes), reconciledAt });
+        }),
+      }));
     },
     close() {
       if (!closed) database?.close();

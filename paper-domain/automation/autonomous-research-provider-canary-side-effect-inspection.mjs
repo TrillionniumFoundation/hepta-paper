@@ -1,4 +1,5 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hasExactPlainObjectKeys as exactKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const SAFE_CODE = /^[a-z][a-z0-9_.:-]{0,159}$/;
@@ -27,12 +28,6 @@ const JOURNAL_KEYS = Object.freeze([
   'currentRole', 'failurePhase', 'kind', 'providerConfigurationHash',
   'reservation', 'version',
 ].sort());
-
-function exactKeys(value, keys) {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    && Object.getPrototypeOf(value) === Object.prototype
-    && JSON.stringify(Object.keys(value).sort()) === JSON.stringify(keys);
-}
 
 function canonicalInstant(value) {
   const milliseconds = Date.parse(String(value || ''));

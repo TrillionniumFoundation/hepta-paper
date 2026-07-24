@@ -34,6 +34,15 @@ function fixture(t, name) {
   return { root, clock, store, campaigns };
 }
 
+function reopenCampaignStore(t, { root, clock, store } = {}) {
+  store.close?.();
+  const reopenedStore = createDefaultPaperStore({ root, runtimeRoot: root });
+  t.after(() => reopenedStore.close?.());
+  const campaigns = createSqliteCampaignStore({ store: reopenedStore, clock });
+  campaignClocks.set(campaigns, clock);
+  return { store: reopenedStore, campaigns };
+}
+
 function plan(campaignId, nodes = [{ nodeId: `${campaignId}:writer`, kind: 'writer', dependencies: [] }]) {
   return {
     version: 2,
@@ -46,7 +55,13 @@ function plan(campaignId, nodes = [{ nodeId: `${campaignId}:writer`, kind: 'writ
   };
 }
 
-function claimAndStart(campaigns, campaignId, workerId, leaseSeconds = 60) {
+function claimAndStart(
+  campaigns,
+  campaignId,
+  workerId,
+  leaseSeconds = 60,
+  usageDelta = {},
+) {
   const [claimed] = campaigns.claimReady({ campaignId, workerId, leaseSeconds });
   assert.ok(claimed?.attemptId);
   return campaigns.startNode({
@@ -54,6 +69,7 @@ function claimAndStart(campaigns, campaignId, workerId, leaseSeconds = 60) {
     workerId,
     attemptId: claimed.attemptId,
     leaseGeneration: claimed.leaseGeneration,
+    usageDelta,
   });
 }
 
@@ -325,6 +341,144 @@ test('prepared results survive recovery and are integrated without a second exte
   assert.equal(completed.status, 'completed');
   assert.deepEqual(completed.result, { status: 'prepared', usage: { totalTokens: 7 } });
   assert.equal(campaigns.getCampaign('prepared-recovery').tokenCount, 7);
+});
+
+test('stale pre-action attempt is exactly refunded after database reopen', (t) => {
+  const state = fixture(t, 'campaign-reopen-pre-action-refund');
+  state.campaigns.createCampaign(plan('reopen-pre-action-refund'));
+  const running = claimAndStart(
+    state.campaigns,
+    'reopen-pre-action-refund',
+    'worker-before-reopen',
+    1,
+    { agentCalls: 1 },
+  );
+  state.campaigns.reserveNodeInfrastructureUsage({
+    nodeId: running.nodeId,
+    workerId: 'worker-before-reopen',
+    attemptId: running.attemptId,
+    leaseGeneration: running.leaseGeneration,
+    usageDelta: { cpuJobs: 1 },
+  });
+  state.campaigns.recordUsage(
+    'reopen-pre-action-refund',
+    { agentCalls: 5 },
+    { enforceBudget: true },
+  );
+  state.clock.advance(2000);
+
+  const reopened = reopenCampaignStore(t, state);
+  const [recovered] = reopened.campaigns.recoverExpiredLeases(
+    'reopen-pre-action-refund',
+  );
+  assert.equal(recovered.status, 'queued');
+  assert.equal(recovered.attemptCount, 0);
+  assert.equal(reopened.campaigns.getCampaign('reopen-pre-action-refund').agentCallCount, 5);
+  assert.equal(reopened.campaigns.getCampaign('reopen-pre-action-refund').cpuJobCount, 0);
+  const recovery = reopened.campaigns.listEvents('reopen-pre-action-refund')
+    .find((item) => item.kind === 'campaign_node_lease_recovered');
+  assert.equal(recovery.event.detail.recoveryDisposition,
+    'pre_external_action_refund_requeue');
+  assert.deepEqual(recovery.event.detail.refundedUsage, {
+    agentCalls: 1,
+    cpuJobs: 1,
+    gpuJobs: 0,
+  });
+});
+
+test('stale post-marker attempt becomes durable uncertain after database reopen', (t) => {
+  const state = fixture(t, 'campaign-reopen-post-marker');
+  state.campaigns.createCampaign(plan('reopen-post-marker'));
+  const running = claimAndStart(
+    state.campaigns,
+    'reopen-post-marker',
+    'worker-before-reopen',
+    1,
+    { agentCalls: 1 },
+  );
+  state.campaigns.markNodeExternalActionStarted({
+    nodeId: running.nodeId,
+    workerId: 'worker-before-reopen',
+    attemptId: running.attemptId,
+    leaseGeneration: running.leaseGeneration,
+    action: 'provider_request',
+  });
+  state.campaigns.recordUsage(
+    'reopen-post-marker',
+    { agentCalls: 5 },
+    { enforceBudget: true },
+  );
+  state.clock.advance(2000);
+
+  const reopened = reopenCampaignStore(t, state);
+  const [recovered] = reopened.campaigns.recoverExpiredLeases(
+    'reopen-post-marker',
+  );
+  assert.equal(recovered.status, 'external_outcome_uncertain');
+  assert.equal(recovered.attemptCount, 1);
+  assert.equal(recovered.attemptId, running.attemptId);
+  assert.equal(reopened.campaigns.getCampaign('reopen-post-marker').agentCallCount, 6);
+  assert.deepEqual(reopened.campaigns.claimReady({
+    campaignId: 'reopen-post-marker',
+    workerId: 'worker-after-reopen',
+  }), []);
+  const uncertain = reopened.campaigns.listEvents('reopen-post-marker')
+    .find((item) => item.kind === 'campaign_node_external_outcome_uncertain');
+  assert.equal(uncertain.event.detail.recoveryDisposition,
+    'external_outcome_uncertain');
+  assert.equal(uncertain.event.detail.budgetReservationRefunded, false);
+  assert.equal(uncertain.event.detail.unresolvedExternalActions.length, 1);
+  assert.equal(uncertain.event.detail.unresolvedExternalActions[0].action,
+    'provider_request');
+});
+
+test('stale post-result attempt is memoized by prepared recovery after database reopen', async (t) => {
+  const state = fixture(t, 'campaign-reopen-post-result');
+  state.campaigns.createCampaign(plan('reopen-post-result'));
+  const running = claimAndStart(
+    state.campaigns,
+    'reopen-post-result',
+    'worker-before-reopen',
+    1,
+    { agentCalls: 1 },
+  );
+  state.campaigns.markNodeExternalActionStarted({
+    nodeId: running.nodeId,
+    workerId: 'worker-before-reopen',
+    attemptId: running.attemptId,
+    leaseGeneration: running.leaseGeneration,
+    action: 'provider_request',
+  });
+  state.campaigns.prepareNodeResult({
+    nodeId: running.nodeId,
+    workerId: 'worker-before-reopen',
+    attemptId: running.attemptId,
+    leaseGeneration: running.leaseGeneration,
+    result: { status: 'durable-provider-result' },
+  });
+  state.clock.advance(2000);
+
+  const reopened = reopenCampaignStore(t, state);
+  let executionCount = 0;
+  const result = await runPaperCampaign({
+    campaignId: 'reopen-post-result',
+    campaignStore: reopened.campaigns,
+    concurrency: 1,
+    pollMs: 1,
+    executor: {
+      execute: async () => {
+        executionCount += 1;
+        return { status: 'duplicate-provider-call' };
+      },
+    },
+  });
+  assert.equal(executionCount, 0);
+  assert.equal(result.campaign.status, 'completed');
+  assert.deepEqual(result.nodes[0].result, { status: 'durable-provider-result' });
+  const recovery = reopened.campaigns.listEvents('reopen-post-result')
+    .find((item) => item.kind === 'campaign_node_lease_recovered');
+  assert.equal(recovery.event.detail.recoveryDisposition,
+    'prepared_result_recovery');
 });
 
 test('campaign engine integrates a recovered prepared result without invoking the executor again', async (t) => {

@@ -12,6 +12,7 @@ import {
   SYSTEM_BENCHMARK_EVALUATOR_REGISTRY,
   compileSystemBenchmarkEvaluatorRegistry,
   systemBenchmarkEvaluatorDescriptorFor,
+  verifySystemBenchmarkEvaluatorRegistry,
 } from '../../paper-domain/automation/system-benchmark-evaluator-abi.mjs';
 import { independentlyAggregateSystemBenchmarkEvents } from '../../paper-adapters/research-verify/independent-system-benchmark-recomputation.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
@@ -39,6 +40,7 @@ function customDescriptor(overrides = {}) {
       baseline: 'reference-quality-system',
       ablation: 'candidate-without-quality-component',
     },
+    oracleFields: ['referenceTarget', 'target'],
     rawEventFields: ['referenceScore', 'score'],
     metrics: [
       { metric: 'mean_score', expression: { operator: 'arithmetic_mean', operands: ['score'] } },
@@ -75,7 +77,7 @@ test('compile-time evaluator registry is hash-bound data with a closed operator 
     'arithmetic_mean_difference',
     'sample_standard_error',
   ]);
-  assert.equal(SYSTEM_BENCHMARK_EVALUATOR_REGISTRY.profiles.length, 5);
+  assert.equal(SYSTEM_BENCHMARK_EVALUATOR_REGISTRY.profiles.length, 6);
   assert.equal(SYSTEM_BENCHMARK_EVALUATOR_REGISTRY.systemBenchmarkEvaluatorRegistryHash,
     hashRecord('SystemBenchmarkEvaluatorRegistry', {
       version: 1,
@@ -88,13 +90,14 @@ test('compile-time evaluator registry is hash-bound data with a closed operator 
       hashRecord('SystemBenchmarkEvaluatorDescriptor', payload));
     assert.equal(systemBenchmarkEvaluatorDescriptorFor(profile.benchmarkFamily), profile);
     assert.equal(Object.isFrozen(profile), true);
+    assert.equal(Object.isFrozen(profile.oracleFields), true);
     assert.equal(Object.isFrozen(profile.metrics), true);
     assert.equal(profile.metrics.some((metric) => typeof metric.expression.operator !== 'string'), false);
   }
   assert.equal(systemBenchmarkEvaluatorDescriptorFor('unregistered_benchmark'), null);
 });
 
-test('strict descriptor compilation adds a data-only profile without enabling runtime registry substitution', () => {
+test('strict descriptor compilation adds a data-only profile through a verified immutable registry', () => {
   const extension = customDescriptor();
   const compiled = compileSystemBenchmarkEvaluatorRegistry([
     ...SYSTEM_BENCHMARK_EVALUATOR_DESCRIPTORS,
@@ -108,13 +111,30 @@ test('strict descriptor compilation adds a data-only profile without enabling ru
     'sample_standard_error',
     'arithmetic_mean_difference',
   ]);
-  assert.equal(systemBenchmarkEvaluatorDescriptorFor(extension.benchmarkFamily, compiled), null,
-    'the production lookup accepts only the module-evaluated registry');
+  assert.equal(verifySystemBenchmarkEvaluatorRegistry(compiled), true);
+  assert.equal(systemBenchmarkEvaluatorDescriptorFor(extension.benchmarkFamily, compiled), profile,
+    'verified registries expose data-only evaluator profiles without callbacks');
   assert.throws(
     () => buildSystemBenchmarkArmProtocolSet({ benchmarkId: extension.benchmarkFamily }),
     /system_benchmark_arm_protocol_unsupported/,
     'an unreviewed runtime descriptor cannot register a production evaluator',
   );
+});
+
+test('custom registries remain fail-closed after compilation-time tampering', () => {
+  const compiled = compileSystemBenchmarkEvaluatorRegistry([customDescriptor()]);
+  const tampered = clone(compiled);
+  tampered.profiles[0].rawEventFields[0] = 'forgedScore';
+  assert.equal(verifySystemBenchmarkEvaluatorRegistry(tampered), false);
+  assert.equal(systemBenchmarkEvaluatorDescriptorFor('custom_quality_benchmark', tampered), null);
+
+  const forgedRegistryHash = clone(compiled);
+  forgedRegistryHash.systemBenchmarkEvaluatorRegistryHash = `sha256:${'f'.repeat(64)}`;
+  assert.equal(verifySystemBenchmarkEvaluatorRegistry(forgedRegistryHash), false);
+  assert.equal(systemBenchmarkEvaluatorDescriptorFor(
+    'custom_quality_benchmark',
+    forgedRegistryHash,
+  ), null);
 });
 
 test('descriptor compiler rejects callbacks, shape drift, duplicates, and unknown operators', () => {
@@ -182,6 +202,18 @@ test('descriptor compiler rejects callbacks, shape drift, duplicates, and unknow
   assert.throws(
     () => compileSystemBenchmarkEvaluatorRegistry([fieldOrderDrift]),
     /system_benchmark_evaluator_descriptor_event_fields_not_canonical/,
+  );
+  const duplicateOracleField = customDescriptor({ oracleFields: ['target', 'target'] });
+  assert.throws(
+    () => compileSystemBenchmarkEvaluatorRegistry([duplicateOracleField]),
+    /system_benchmark_evaluator_descriptor_oracle_fields_invalid/,
+  );
+  const oracleFieldOrderDrift = customDescriptor({
+    oracleFields: ['target', 'referenceTarget'],
+  });
+  assert.throws(
+    () => compileSystemBenchmarkEvaluatorRegistry([oracleFieldOrderDrift]),
+    /system_benchmark_evaluator_descriptor_oracle_fields_not_canonical/,
   );
   const unknownOperand = customDescriptor();
   unknownOperand.metrics[0].expression.operands = ['unregisteredField'];

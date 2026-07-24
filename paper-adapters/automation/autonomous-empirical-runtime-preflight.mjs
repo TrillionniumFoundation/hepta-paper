@@ -2,8 +2,19 @@ import { spawnSync } from 'node:child_process';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { inspectDockerRuntimeImageManifest } from './docker-runtime-image-manifest-inspection.mjs';
 import { AUTOMATION_RUNTIME_IMAGES } from './runtime-image-registry.mjs';
+import {
+  AUTONOMOUS_EMPIRICAL_PLUGIN_RUNTIME_LANGUAGES,
+} from '../../paper-domain/automation/autonomous-empirical-family-plugin-registry.mjs';
+import {
+  AUTONOMOUS_LANGUAGE_RUNTIME_KERNEL_REGISTRY,
+  autonomousLanguageRuntimeRegistryEntryFor,
+} from '../../paper-domain/automation/autonomous-language-runtime-kernel-registry.mjs';
 
-function inspectImage(runtime, spawnSyncImpl) {
+function inspectImage(language, runtime, spawnSyncImpl) {
+  const registryEntry = autonomousLanguageRuntimeRegistryEntryFor({ language });
+  if (!registryEntry) {
+    throw new Error(`autonomous_empirical_runtime_registry_entry_missing:${language}`);
+  }
   const manifestInspection = inspectDockerRuntimeImageManifest({
     image: runtime.image,
     expectedManifestDigest: runtime.imageDigest,
@@ -17,7 +28,7 @@ function inspectImage(runtime, spawnSyncImpl) {
       && runtime.datasetAccessSupervisor?.protocol,
   );
   return Object.freeze({
-    language: runtime === AUTOMATION_RUNTIME_IMAGES.r ? 'r' : 'python',
+    language,
     runtimeType: 'container',
     image: runtime.image,
     expectedDigest: runtime.imageDigest,
@@ -30,27 +41,46 @@ function inspectImage(runtime, spawnSyncImpl) {
       workloadUid: runtime.datasetAccessSupervisor?.workloadUid || null,
     }),
     trustedDatasetSupervisorConfigured,
-    available: exactDigestVerified && trustedDatasetSupervisorConfigured,
+    runtimeRegistryEntryHash: registryEntry.runtimeRegistryEntryHash,
+    toolchainIdentityHash: registryEntry.toolchainIdentityHash,
+    analysisKernelAbiHash: registryEntry.analysisKernelAbiHash,
+    compatiblePluginProfileHashes: Object.freeze(
+      registryEntry.allowedEmpiricalPluginProfiles.map((profile) => profile.profileHash),
+    ),
+    available: exactDigestVerified && trustedDatasetSupervisorConfigured
+      && runtime.image === registryEntry.image
+      && runtime.imageDigest === registryEntry.imageManifestDigest
+      && runtime.executable === registryEntry.containerExecutable,
   });
 }
 
 export function preflightAutonomousEmpiricalRuntimes({
   spawnSyncImpl = spawnSync,
 } = {}) {
-  const languages = Object.freeze({
-    python: inspectImage(AUTOMATION_RUNTIME_IMAGES.python, spawnSyncImpl),
-    r: inspectImage(AUTOMATION_RUNTIME_IMAGES.r, spawnSyncImpl),
-  });
+  if (AUTONOMOUS_EMPIRICAL_PLUGIN_RUNTIME_LANGUAGES.length === 0) {
+    throw new Error('autonomous_empirical_runtime_active_language_required');
+  }
+  const languages = Object.freeze(Object.fromEntries(
+    AUTONOMOUS_EMPIRICAL_PLUGIN_RUNTIME_LANGUAGES.map((language) => [
+      language,
+      inspectImage(language, AUTOMATION_RUNTIME_IMAGES[language], spawnSyncImpl),
+    ]),
+  ));
   const unavailableLanguages = Object.freeze(Object.entries(languages)
     .filter(([, capability]) => !capability.available)
     .map(([language]) => language));
   const payload = {
-    version: 1,
+    version: 2,
     kind: 'AutonomousEmpiricalRuntimeCapabilityInspection',
     status: unavailableLanguages.length
       ? 'autonomous_empirical_runtime_capability_partial_or_blocked'
       : 'autonomous_empirical_runtime_capability_ready',
-    assuranceScope: 'local-pinned-container-runtime-preflight-v1',
+    assuranceScope: 'registry-bound-local-pinned-container-runtime-preflight-v2',
+    languageRuntimeKernelRegistryHash:
+      AUTONOMOUS_LANGUAGE_RUNTIME_KERNEL_REGISTRY
+        .autonomousLanguageRuntimeKernelRegistryHash,
+    analysisKernelAbiHash:
+      AUTONOMOUS_LANGUAGE_RUNTIME_KERNEL_REGISTRY.analysisKernelAbiHash,
     languages,
     unavailableLanguages,
     runtimeFallbackAllowed: false,

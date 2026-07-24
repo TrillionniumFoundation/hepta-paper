@@ -1,10 +1,22 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  deriveVerifiedSignedReviewerSemanticReview,
+} from '../research/reviewer-semantic-evidence-contract.mjs';
 
 function variance(values, mean) {
   return values.reduce((sum, value) => sum + ((value - mean) ** 2), 0) / Math.max(1, values.length);
 }
 
+function canonicalExpectedReviewerContexts(contexts) {
+  return (Array.isArray(contexts) ? contexts : []).map((context) => Object.freeze({
+    nodeId: String(context?.nodeId || ''),
+    reviewAttemptId: String(context?.reviewAttemptId || ''),
+  }));
+}
+
 export function evaluateRefereeConvergence({
+  campaignId = null,
+  campaignPlanHash = null,
   paperId,
   roundIndex,
   reviews = [],
@@ -13,11 +25,49 @@ export function evaluateRefereeConvergence({
   minimumAcceptRatio = 2 / 3,
   maximumVariance = 0.04,
   expectedManuscriptHash = null,
+  expectedReviewerContexts = [],
   minimumRoundIndex = 1,
   qualityGates = [],
   revisionMaterialization = null,
+  minimumIndependentTrustDomains = 1,
+  requireSignedReviewerReceipts = false,
+  signedReviewerReceiptVerifier = null,
 } = {}) {
-  const normalized = reviews.map((review) => ({
+  const strictPrincipalEvidence = Number(minimumIndependentTrustDomains) > 1
+    || requireSignedReviewerReceipts === true;
+  const canonicalReviewerContexts = canonicalExpectedReviewerContexts(
+    expectedReviewerContexts,
+  );
+  const expectedReviewerContextsBound = requireSignedReviewerReceipts === true
+    && canonicalReviewerContexts.length === reviews.length
+    && canonicalReviewerContexts.every((context) => (
+      context.nodeId && context.reviewAttemptId
+    ))
+    && new Set(canonicalReviewerContexts.map((context) => context.nodeId)).size
+      === canonicalReviewerContexts.length
+    && new Set(canonicalReviewerContexts.map((context) => context.reviewAttemptId)).size
+      === canonicalReviewerContexts.length
+    && JSON.stringify(canonicalReviewerContexts)
+      === JSON.stringify(expectedReviewerContexts);
+  const semanticReviews = requireSignedReviewerReceipts === true
+    ? reviews.map((review, index) => {
+      const expectedReviewerContext = canonicalReviewerContexts[index] || {};
+      try {
+        return deriveVerifiedSignedReviewerSemanticReview(review, {
+          expected: {
+            campaignId,
+            campaignPlanHash,
+            paperId,
+            roundIndex: Number(roundIndex || 1),
+            manuscriptHash: expectedManuscriptHash,
+            nodeId: expectedReviewerContext.nodeId,
+            reviewAttemptId: expectedReviewerContext.reviewAttemptId,
+          },
+          cryptographicVerifier: signedReviewerReceiptVerifier,
+        });
+      } catch { return null; }
+    }) : [];
+  const normalized = reviews.map((review, index) => semanticReviews[index] || ({
     reviewerId: String(review.reviewerId || 'unknown'),
     verdict: review.verdict === 'accept' ? 'accept' : 'revise',
     score: Math.max(0, Math.min(1, Number(review.score || 0))),
@@ -27,6 +77,23 @@ export function evaluateRefereeConvergence({
     childSessionId: review.childSessionId || review.sessionKey || null,
     promptHash: review.promptHash || null,
     resolvedModel: review.resolvedModel || null,
+    reviewPrincipalId: review.reviewPrincipalId
+      || (strictPrincipalEvidence ? null : review.reviewerId) || null,
+    reviewPrincipalDescriptorHash: review.reviewPrincipalDescriptorHash || null,
+    reviewerProviderAccountIdentityHash:
+      review.reviewerProviderAccountIdentityHash || null,
+    reviewerCredentialRootIdentityHash:
+      review.reviewerCredentialRootIdentityHash || null,
+    reviewerTrustDomainIdentityHash:
+      review.reviewerTrustDomainIdentityHash || null,
+    reviewerSignerIdentityHash: review.reviewerSignerIdentityHash || null,
+    signedReviewerReceiptHash: review.signedReviewerReceiptHash || null,
+    signedReviewerReceipt: review.signedReviewerReceipt || null,
+    unsignedAgentExecutionReceiptHash:
+      review.unsignedAgentExecutionReceiptHash || null,
+    signatureVerificationReceiptHash:
+      review.signatureVerificationReceiptHash || null,
+    researchPrincipalPoolHash: review.researchPrincipalPoolHash || null,
   }));
   const scores = normalized.map((review) => review.score);
   const meanScore = scores.reduce((sum, score) => sum + score, 0) / Math.max(1, scores.length);
@@ -40,7 +107,31 @@ export function evaluateRefereeConvergence({
   const reviewerIdentityUnique = uniqueNonEmpty(normalized.map((review) => review.reviewerId === 'unknown' ? null : review.reviewerId));
   const reviewerSessionUnique = uniqueNonEmpty(normalized.map((review) => review.childSessionId));
   const reviewHashUnique = uniqueNonEmpty(normalized.map((review) => review.reviewHash));
-  const evidenceIdentityBound = reviewerIdentityUnique && reviewerSessionUnique && reviewHashUnique;
+  const reviewPrincipalIdentityUnique = uniqueNonEmpty(
+    normalized.map((review) => review.reviewPrincipalId),
+  );
+  const trustDomainIdentities = normalized.map((review) => review.reviewerTrustDomainIdentityHash)
+    .filter(Boolean);
+  const providerAccountIdentities = normalized
+    .map((review) => review.reviewerProviderAccountIdentityHash).filter(Boolean);
+  const credentialRootIdentities = normalized
+    .map((review) => review.reviewerCredentialRootIdentityHash).filter(Boolean);
+  const reviewerTrustDomainCount = new Set(trustDomainIdentities).size;
+  const reviewerProviderAccountCount = new Set(providerAccountIdentities).size;
+  const reviewerCredentialRootCount = new Set(credentialRootIdentities).size;
+  const reviewerPrincipalSeparationBound = !strictPrincipalEvidence || (
+    reviewPrincipalIdentityUnique
+    && reviewerTrustDomainCount >= Number(minimumIndependentTrustDomains)
+    && reviewerProviderAccountCount >= Number(minimumIndependentTrustDomains)
+    && reviewerCredentialRootCount >= Number(minimumIndependentTrustDomains)
+  );
+  const reviewSemanticEvidenceBound = requireSignedReviewerReceipts === true
+    && expectedReviewerContextsBound
+    && semanticReviews.length === reviews.length && semanticReviews.every(Boolean);
+  const signedReviewerReceiptsVerified = requireSignedReviewerReceipts !== true
+    || reviewSemanticEvidenceBound;
+  const evidenceIdentityBound = reviewerIdentityUnique && reviewerSessionUnique && reviewHashUnique
+    && reviewerPrincipalSeparationBound && signedReviewerReceiptsVerified;
   const normalizedQualityGates = (Array.isArray(qualityGates) ? qualityGates : []).map((gate) => ({
     kind: gate?.kind || 'UnknownQualityGate',
     status: gate?.status || null,
@@ -60,8 +151,10 @@ export function evaluateRefereeConvergence({
     && evidenceIdentityBound
     && qualityGatesPassed;
   const payload = {
-    version: 1,
+    version: requireSignedReviewerReceipts === true ? 2 : 1,
     kind: 'RefereeConvergenceDecision',
+    campaignId,
+    campaignPlanHash,
     paperId,
     roundIndex: Number(roundIndex || 1),
     status: accepted ? 'referee_convergence_reached' : 'referee_revision_required',
@@ -77,6 +170,23 @@ export function evaluateRefereeConvergence({
     reviewerIdentityUnique,
     reviewerSessionUnique,
     reviewHashUnique,
+    reviewPrincipalIdentityUnique,
+    reviewerTrustDomainCount,
+    reviewerProviderAccountCount,
+    reviewerCredentialRootCount,
+    minimumIndependentTrustDomains: Number(minimumIndependentTrustDomains),
+    reviewerPrincipalSeparationBound,
+    requireSignedReviewerReceipts: requireSignedReviewerReceipts === true,
+    signedReviewerReceiptsVerified,
+    reviewSemanticEvidenceBound,
+    ...(requireSignedReviewerReceipts === true ? {
+      expectedReviewerContextsBound,
+      expectedReviewerContextsHash: hashRecord(
+        'ExpectedReviewerExecutionContexts',
+        canonicalReviewerContexts,
+      ),
+      expectedReviewerContexts: canonicalReviewerContexts,
+    } : {}),
     evidenceIdentityBound,
     qualityGatesPassed,
     qualityGateBlockers,
@@ -84,7 +194,15 @@ export function evaluateRefereeConvergence({
     revisionMaterialization: revisionMaterialization && typeof revisionMaterialization === 'object'
       ? Object.freeze({ ...revisionMaterialization }) : null,
     reviews: normalized,
-    thresholds: { minimumReviewers, minimumMeanScore, minimumAcceptRatio, maximumVariance, minimumRoundIndex: Math.max(1, Number(minimumRoundIndex || 1)) },
+    thresholds: {
+      minimumReviewers,
+      minimumMeanScore,
+      minimumAcceptRatio,
+      maximumVariance,
+      minimumRoundIndex: Math.max(1, Number(minimumRoundIndex || 1)),
+      minimumIndependentTrustDomains: Number(minimumIndependentTrustDomains),
+      requireSignedReviewerReceipts: requireSignedReviewerReceipts === true,
+    },
     academicAcceptanceGranted: false,
     externalActionPerformed: false,
   };

@@ -8,6 +8,7 @@ import {
   verifyAutonomousResearchRecurringGoldenTemplate,
 } from '../../paper-domain/automation/autonomous-research-machine-intake-contract.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hasExactPlainObjectKeys as exactKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const MAXIMUM_FILE_BYTES = 1024 * 1024;
@@ -28,17 +29,11 @@ export const AUTONOMOUS_RESEARCH_MACHINE_INTAKE_CONFIGURATION_LIMITS = Object.fr
   maximumRecurringGoldenCampaignsPerUtcDay: 24,
   maximumRecurringGoldenReservedCostUsdPerUtcDay: 2400,
   maximumRecurringGoldenReservedAgentCallsPerUtcDay: 1152,
-  maximumRecurringGoldenReservedCpuJobsPerUtcDay: 3072,
-  maximumRecurringGoldenReservedGpuJobsPerUtcDay: 384,
+  maximumRecurringGoldenReservedCpuJobsPerUtcDay: 65_536,
+  maximumRecurringGoldenReservedGpuJobsPerUtcDay: 65_536,
   maximumRecurringGoldenReservedTokenCountPerUtcDay: 7_200_000,
   maximumRecurringGoldenReservedWallTimeMsPerUtcDay: 48 * 60 * 60 * 1000,
 });
-
-function exactKeys(value, keys) {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    && Object.getPrototypeOf(value) === Object.prototype
-    && JSON.stringify(Object.keys(value).sort()) === JSON.stringify(keys);
-}
 
 function secureJsonFile(candidate, label) {
   const absolute = path.resolve(candidate);

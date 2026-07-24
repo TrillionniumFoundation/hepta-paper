@@ -7,7 +7,12 @@ function nonRetryable(message) {
   return error;
 }
 
-export function createCampaignReleasePrimitivesAdapter({ releasePackager = null, researchVerifier = null, runtimeRoot } = {}) {
+export function createCampaignReleasePrimitivesAdapter({
+  releasePackager = null,
+  researchVerifier = null,
+  runtimeRoot,
+  assertExternalSideEffectReady = null,
+} = {}) {
   const packager = releasePackager ? assertCampaignReleasePackagerPort(releasePackager) : null;
   const verifier = researchVerifier ? assertCampaignResearchVerifierPort(researchVerifier) : null;
   return Object.freeze({
@@ -15,15 +20,30 @@ export function createCampaignReleasePrimitivesAdapter({ releasePackager = null,
     kind: 'CampaignReleasePrimitivesAdapter',
     verifyFormal(input) {
       if (!verifier) throw nonRetryable('campaign_research_verifier_required');
-      return verifier.verify({ ...input, verificationScope: 'formal-only' });
+      return verifier.verify({
+        ...input,
+        verificationScope: 'formal-only',
+        assertExternalSideEffectReady:
+          input.assertExternalSideEffectReady || assertExternalSideEffectReady,
+      });
     },
     verifyResearch(input) {
       if (!verifier) throw nonRetryable('campaign_research_verifier_required');
-      return verifier.verify({ ...input, verificationScope: 'aggregate-research' });
+      return verifier.verify({
+        ...input,
+        verificationScope: 'aggregate-research',
+        assertExternalSideEffectReady:
+          input.assertExternalSideEffectReady || assertExternalSideEffectReady,
+      });
     },
     packageRelease(input) {
       if (!packager) throw nonRetryable('campaign_release_packager_required');
-      return packager.packageRelease({ runtimeRoot, ...input });
+      return packager.packageRelease({
+        runtimeRoot,
+        ...input,
+        assertExternalSideEffectReady:
+          input.assertExternalSideEffectReady || assertExternalSideEffectReady,
+      });
     },
   });
 }

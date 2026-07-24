@@ -28,8 +28,12 @@ import {
 import {
   createAutonomousResearchQualificationRenewal,
 } from '../../paper-application/automation/autonomous-research-qualification-renewal.mjs';
+import {
+  closeAutonomousResearchResourceBudgets,
+} from './autonomous-research-resource-budget-composition.mjs';
 
 export {
+  closeAutonomousResearchResourceBudgets,
   requireAutonomousResearchProviderConfiguration,
   resolveAutonomousResearchProviderConfiguration,
 };
@@ -105,9 +109,22 @@ async function reportQualificationProgress(onProgress, stage) {
   }
   try { await onProgress(Object.freeze({ stage })); }
   catch (error) {
-    throw new Error('autonomous_research_qualification_progress_fence_lost', {
+    if (error?.stateRecoverabilityFatal === true
+      || error?.stateRecoverabilityDeferred === true
+      || error?.authorityEvidenceRenewalFatal === true
+      || error?.authorityEvidenceRenewalDeferred === true
+      || error?.residentReactivationRequired === true) throw error;
+    const fenceError = new Error('autonomous_research_qualification_progress_fence_lost', {
       cause: error,
     });
+    if (error?.authorityEvidenceRenewalFatal === true) {
+      fenceError.authorityEvidenceRenewalFatal = true;
+    }
+    if (error?.authorityEvidenceRenewalDeferred === true) {
+      fenceError.authorityEvidenceRenewalDeferred = true;
+      fenceError.retryAt = error.retryAt || null;
+    }
+    throw fenceError;
   }
 }
 
@@ -244,7 +261,13 @@ export async function composeAutonomousResearchQualificationRenewal({
   requiredQualificationValidityMs,
   supervisorLease,
   assertSupervisorLease,
+  qualificationStateMutationCoordinator = null,
+  requireExternallyFencedQualificationState = false,
   receiptPointerRepository: suppliedReceiptPointerRepository = null,
+  receiptPointerMutationCoordinator = null,
+  requireExternallyFencedQualificationPublication = false,
+  nativeStoreMutationCoordinator = null,
+  requireExternallyFencedNativeStore = false,
   productionReadinessInspector = queryAutomationReadiness,
   serviceOverrides = {},
   runtimeSignal = null,
@@ -252,6 +275,12 @@ export async function composeAutonomousResearchQualificationRenewal({
   onProgress = null,
   onSynchronousProgress = null,
 } = {}) {
+  if (requireExternallyFencedQualificationPublication
+    && suppliedReceiptPointerRepository !== null) {
+    throw new Error(
+      'autonomous_research_qualification_publication_external_repository_override_forbidden',
+    );
+  }
   if (!campaign?.campaignId || !campaign?.paperId
     || campaign?.spec?.autonomousResearchPreparation?.proposal?.paperId !== campaign.paperId
     || typeof assertSupervisorLease !== 'function'
@@ -259,6 +288,16 @@ export async function composeAutonomousResearchQualificationRenewal({
     || (onSynchronousProgress !== null && typeof onSynchronousProgress !== 'function')) {
     throw new Error('autonomous_research_qualification_renewal_campaign_invalid');
   }
+  // Validate the activated publication authority before bootstrapping any
+  // persistence session or configured external qualification process. Strict
+  // mode must fail closed without touching the runtime or invoking a broker.
+  const strictReceiptPointerRepository = requireExternallyFencedQualificationPublication
+    ? createFullResearchQualificationReceiptPointerRepository({
+      runtimeRoot,
+      offlineProvision: false,
+      mutationCoordinator: receiptPointerMutationCoordinator,
+      requireExternallyFencedMutations: true,
+    }) : null;
   const dispatchPolicy = resolvePersistedAutonomousResearchLaunchMode({ campaign });
   if (!Object.values(AUTONOMOUS_RESEARCH_LAUNCH_MODES).includes(dispatchPolicy.launchMode)) {
     throw new Error('autonomous_research_qualification_renewal_launch_mode_invalid');
@@ -288,11 +327,16 @@ export async function composeAutonomousResearchQualificationRenewal({
     mode: 'autonomous-research-supervisor-qualification-renewal',
     execute: true,
     serviceOverrides,
+    nativeStoreMutationCoordinator,
+    requireExternallyFencedNativeStore,
   });
   const { context } = execution;
   const qualificationStateStore = createAutonomousResearchQualificationStateRepository({
     runtimeRoot,
     paperId: campaign.paperId,
+    offlineProvision: !requireExternallyFencedQualificationState,
+    mutationCoordinator: qualificationStateMutationCoordinator,
+    requireExternallyFencedMutations: requireExternallyFencedQualificationState,
   });
   try {
     const configuredQualification = injectedQualificationServices ? null
@@ -372,7 +416,8 @@ export async function composeAutonomousResearchQualificationRenewal({
         || globalResult || null;
       const globalQualification = globalReadiness?.fullResearchQualification || null;
       if (globalReadiness?.fullAutomaticResearchWritingReady !== true
-        || globalReadiness?.campaignFullyQualified !== true
+        || globalReadiness?.boundedGoldenInfrastructureQualificationReady !== true
+        || globalReadiness?.campaignFullyQualified === true
         || globalQualification?.runtimeImageReproducibilityReceiptHash
           !== runtimeReadiness?.receiptHash
         || Number(globalQualification?.remainingValidityMs)
@@ -395,7 +440,10 @@ export async function composeAutonomousResearchQualificationRenewal({
       });
     }
     const receiptPointerRepository = suppliedReceiptPointerRepository
-      || createFullResearchQualificationReceiptPointerRepository({ runtimeRoot });
+      || strictReceiptPointerRepository
+      || createFullResearchQualificationReceiptPointerRepository({
+        runtimeRoot,
+      });
     const renewal = createAutonomousResearchQualificationRenewal({
       externalQualificationClient: effectiveQualificationClient,
       externalQualificationVerifier: effectiveQualificationVerifier,
@@ -422,6 +470,7 @@ export async function composeAutonomousResearchQualificationRenewal({
       supervisorLease,
       signal: runtimeSignal,
       onProgress,
+      onSynchronousProgress,
     });
   } finally {
     qualificationStateStore.close();

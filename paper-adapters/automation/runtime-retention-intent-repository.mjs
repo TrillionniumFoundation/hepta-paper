@@ -1,19 +1,15 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { receiptIssuerPolicies } from '../persistence/receipt-issuer-policy.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { pathWithin } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { writeDurableJsonSync } from '../runtime/durable-json-repository.mjs';
 import { readRegularJsonFileSync } from '../runtime/pinned-file-reader.mjs';
 import { verifyWorkspaceRetentionEvidence } from './workspace-retention-evidence.mjs';
-import {
-  trustedRetentionIssuerRow,
-  verifyBackupDeletionMinimum,
-  verifyBackupRetentionEvidence,
-} from './runtime-retention-evidence-policy.mjs';
+import { verifyBackupDeletionMinimum, verifyBackupRetentionEvidence } from './runtime-retention-evidence-policy.mjs';
 import {
   DEFAULT_RETENTION_POLICIES,
+  REACHABILITY_GOVERNED_RETENTION_CATEGORIES,
   openPinnedRetentionCategory,
   pinnedRetentionMemberPath,
   retentionEntryHash,
@@ -21,9 +17,25 @@ import {
   retentionMemberPaths,
   retentionPathExists,
   retentionRemovalMembers,
+  runtimeRetentionCategoryRoot,
+  verifyRuntimeRetentionDeletionEvidence,
 } from './runtime-retention-scope-repository.mjs';
+import { assertIntentReachabilityManifest, freshReachabilityManifestForIntent } from './runtime-retention-live-authority.mjs';
+import {
+  bindRetentionQuarantineMembers,
+  removeRetentionEntryThroughQuarantine,
+  restoreRetentionQuarantines,
+  verifyRetentionQuarantineMemberBinding,
+} from './runtime-retention-quarantine-repository.mjs';
+import {
+  assertRuntimeRetentionTrustedLedger,
+  assertTrustedRetentionReceipt,
+  findUniqueTrustedRetentionTombstone,
+  recordTrustedRetentionReceipt,
+} from './runtime-retention-trusted-receipt-repository.mjs';
+import { buildRuntimeRetentionReceipt } from './runtime-retention-receipt-builder.mjs';
 
-const RUNTIME_RETENTION_POLICY = receiptIssuerPolicies()['runtime-retention'];
+const REACHABILITY_GOVERNED = new Set(REACHABILITY_GOVERNED_RETENTION_CATEGORIES);
 
 function currentWorkspaceRetentionRecord(entry, workspaceRegistry) {
   const records = workspaceRegistry?.retentionRecords?.() || [];
@@ -31,7 +43,6 @@ function currentWorkspaceRetentionRecord(entry, workspaceRegistry) {
     || entry.workspaceRecord
     || null;
 }
-
 function verifyCurrentWorkspaceRemoval(entry, receiptLedger, workspaceRegistry) {
   const record = currentWorkspaceRetentionRecord(entry, workspaceRegistry);
   const verification = record ? verifyWorkspaceRetentionEvidence(record, receiptLedger) : null;
@@ -45,9 +56,29 @@ function verifyCurrentWorkspaceRemoval(entry, receiptLedger, workspaceRegistry) 
   return Object.freeze({ record, verification, blockers: [...new Set(blockers)] });
 }
 
-function preflightRemoval(plan, entry, receiptLedger, workspaceRegistry) {
+function currentReachabilityRemoval(plan, entry, reachabilityManifest) {
+  const verification = verifyRuntimeRetentionDeletionEvidence({
+    runtimeRoot: plan.runtimeRoot,
+    category: entry.category,
+    entryPath: entry.path,
+    contentHash: entry.contentHash,
+    reachabilityManifest,
+  });
+  const blockers = [...verification.blockers];
+  if (verification.reachabilityManifestHash !== entry.reachabilityManifestHash
+    || verification.reachabilityManifestHash !== plan.reachabilityManifestHash) {
+    blockers.push('retention_reachability_manifest_changed_after_plan');
+  }
+  if (verification.evidence?.runtimeRetentionDeletionEvidenceHash
+    !== entry.retentionDeletionEvidence?.runtimeRetentionDeletionEvidenceHash) {
+    blockers.push('retention_deletion_evidence_changed_after_plan');
+  }
+  return Object.freeze({ verification, blockers: [...new Set(blockers)] });
+}
+
+function preflightRemoval(plan, entry, receiptLedger, workspaceRegistry, reachabilityManifest) {
   const blockers = [];
-  const categoryRoot = path.join(plan.runtimeRoot, entry.category);
+  const categoryRoot = runtimeRetentionCategoryRoot(plan.runtimeRoot, entry.category);
   let pinned = null;
   let members = retentionMemberPaths(entry).map((candidate) => ({ path: candidate, contentHash: null }));
   try {
@@ -91,6 +122,14 @@ function preflightRemoval(plan, entry, receiptLedger, workspaceRegistry) {
       entry.minimumRecoverableGenerations,
     ).blockers);
   }
+  let retentionDeletionEvidence = entry.retentionDeletionEvidence || null;
+  let reachabilityManifestHash = entry.reachabilityManifestHash || null;
+  if (!blockers.length && REACHABILITY_GOVERNED.has(entry.category)) {
+    const current = currentReachabilityRemoval(plan, entry, reachabilityManifest);
+    retentionDeletionEvidence = current.verification.evidence;
+    reachabilityManifestHash = current.verification.reachabilityManifestHash;
+    blockers.push(...current.blockers);
+  }
   const result = Object.freeze({
     category: entry.category,
     path: path.resolve(entry.path),
@@ -101,6 +140,8 @@ function preflightRemoval(plan, entry, receiptLedger, workspaceRegistry) {
     backupEvidence: entry.backupEvidence || null,
     workspaceRecord: entry.workspaceRecord || null,
     workspaceEvidence,
+    retentionDeletionEvidence,
+    reachabilityManifestHash,
     minimumRecoverableGenerations: Number(entry.minimumRecoverableGenerations || 0),
     categoryScope: entry.categoryScope || null,
     authorized: blockers.length === 0,
@@ -111,49 +152,8 @@ function preflightRemoval(plan, entry, receiptLedger, workspaceRegistry) {
   return result;
 }
 
-function retentionLedgerIdentity(retentionReceiptLedger, receipt, evidenceClass) {
-  if (!retentionReceiptLedger || typeof retentionReceiptLedger.prepare !== 'function') throw new Error('runtime_retention_trusted_ledger_required');
-  const prepared = retentionReceiptLedger.prepare(receipt, {
-    stream: 'runtime-retention',
-    environment: 'administrative',
-    evidenceClass,
-  });
-  if (prepared.writerTrusted !== true
-    || prepared.issuerPolicyId !== 'runtime-retention'
-    || prepared.issuerPolicyHash !== RUNTIME_RETENTION_POLICY.issuerPolicyHash) {
-    throw new Error('runtime_retention_trusted_ledger_required');
-  }
-  return prepared;
-}
-
-function assertTrustedRetentionReceipt(retentionReceiptLedger, receipt, evidenceClass) {
-  const identity = retentionLedgerIdentity(retentionReceiptLedger, receipt, evidenceClass);
-  const row = retentionReceiptLedger.get(identity.receiptId);
-  const trusted = trustedRetentionIssuerRow(row, {
-    policyId: 'runtime-retention',
-    policy: RUNTIME_RETENTION_POLICY,
-    stream: 'runtime-retention',
-    evidenceClass,
-    kind: receipt.kind,
-    receiptId: identity.receiptId,
-    receiptHash: identity.receiptHash,
-    status: receipt.status,
-  });
-  if (!trusted) throw new Error('runtime_retention_trusted_receipt_missing_or_invalid');
-  return Object.freeze({ receiptId: identity.receiptId, receiptHash: identity.receiptHash });
-}
-
-function recordTrustedRetentionReceipt(retentionReceiptLedger, receipt, evidenceClass) {
-  retentionLedgerIdentity(retentionReceiptLedger, receipt, evidenceClass);
-  retentionReceiptLedger.record(receipt, {
-    stream: 'runtime-retention',
-    environment: 'administrative',
-    evidenceClass,
-  });
-  return assertTrustedRetentionReceipt(retentionReceiptLedger, receipt, evidenceClass);
-}
-
 function buildRetentionIntent(plan, entries, { operationId, createdAt }) {
+  const quarantineBoundEntries = bindRetentionQuarantineMembers(entries, operationId);
   const payload = {
     version: 2,
     kind: 'RuntimeRetentionIntent',
@@ -161,7 +161,7 @@ function buildRetentionIntent(plan, entries, { operationId, createdAt }) {
     operationId,
     runtimeRoot: path.resolve(plan.runtimeRoot),
     planHash: plan.runtimeRetentionPlanHash,
-    entries,
+    entries: quarantineBoundEntries,
     createdAt,
   };
   return Object.freeze({ ...payload, runtimeRetentionIntentReceiptHash: hashRecord('RuntimeRetentionIntent', payload) });
@@ -177,15 +177,22 @@ function verifyRetentionIntent(intent, runtimeRoot) {
     || hashRecord('RuntimeRetentionIntent', payload) !== runtimeRetentionIntentReceiptHash) {
     throw new Error('runtime_retention_intent_invalid');
   }
-  for (const entry of intent.entries) {
-    const categoryRoot = path.join(runtimeRoot, entry.category || '');
+  for (let entryIndex = 0; entryIndex < intent.entries.length; entryIndex += 1) {
+    const entry = intent.entries[entryIndex];
+    const categoryRoot = runtimeRetentionCategoryRoot(runtimeRoot, entry.category || '');
     if (!DEFAULT_RETENTION_POLICIES[entry.category]
       || !entry.categoryScope?.runtimeRoot
       || !entry.categoryScope?.categoryRoot
       || !pathWithin(categoryRoot, entry.path)
       || !Array.isArray(entry.members)
-      || entry.members.some((member) => !member?.path
+      || entry.members.some((member, memberIndex) => !member?.path
         || (entry.authorized && !member.contentHash)
+        || (entry.authorized && !verifyRetentionQuarantineMemberBinding(
+          intent.operationId,
+          member,
+          entryIndex,
+          memberIndex,
+        ))
         || path.dirname(path.resolve(member.path)) !== path.resolve(categoryRoot))) {
       throw new Error('runtime_retention_intent_scope_invalid');
     }
@@ -193,7 +200,12 @@ function verifyRetentionIntent(intent, runtimeRoot) {
   return intent;
 }
 
-function inspectRetentionIntentEntry(intent, entry, { workspaceRegistry = null, receiptLedger = null } = {}) {
+function inspectRetentionIntentEntry(intent, entry, {
+  workspaceRegistry = null,
+  receiptLedger = null,
+  reachabilityManifest = null,
+  freshReachabilityManifest = null,
+} = {}) {
   const blockers = [...(entry.blockers || [])];
   let pinned = null;
   let existingMembers = [];
@@ -229,6 +241,33 @@ function inspectRetentionIntentEntry(intent, entry, { workspaceRegistry = null, 
           blockers.push('workspace_retention_evidence_changed_after_intent');
         }
       }
+      if (!blockers.length && REACHABILITY_GOVERNED.has(entry.category)) {
+        const current = verifyRuntimeRetentionDeletionEvidence({
+          runtimeRoot: intent.runtimeRoot,
+          category: entry.category,
+          entryPath: entry.path,
+          contentHash: entry.contentHash,
+          reachabilityManifest,
+        });
+        blockers.push(...current.blockers);
+        if (current.reachabilityManifestHash !== entry.reachabilityManifestHash
+          || current.evidence?.runtimeRetentionDeletionEvidenceHash
+            !== entry.retentionDeletionEvidence?.runtimeRetentionDeletionEvidenceHash) {
+          blockers.push('retention_reachability_evidence_changed_after_intent');
+        }
+        const fresh = verifyRuntimeRetentionDeletionEvidence({
+          runtimeRoot: intent.runtimeRoot,
+          category: entry.category,
+          entryPath: entry.path,
+          contentHash: entry.contentHash,
+          reachabilityManifest: freshReachabilityManifest,
+        });
+        blockers.push(...fresh.blockers);
+        if (fresh.evidence?.runtimeRetentionDeletionEvidenceHash
+          !== entry.retentionDeletionEvidence?.runtimeRetentionDeletionEvidenceHash) {
+          blockers.push('retention_live_reachability_authority_changed');
+        }
+      }
     }
   } catch (error) {
     blockers.push(String(error?.message || error));
@@ -236,20 +275,56 @@ function inspectRetentionIntentEntry(intent, entry, { workspaceRegistry = null, 
   return { pinned, existingMembers, blockers: [...new Set(blockers)] };
 }
 
-function applyRetentionIntent(intent, { workspaceRegistry = null, receiptLedger = null, faultInjector = null } = {}) {
+function reachabilityManifestForIntent(intent, suppliedManifest, provider) {
+  const hashes = [...new Set(intent.entries
+    .filter((entry) => entry.authorized && REACHABILITY_GOVERNED.has(entry.category))
+    .map((entry) => entry.reachabilityManifestHash)
+    .filter(Boolean))];
+  if (!hashes.length) return suppliedManifest;
+  if (hashes.length !== 1) throw new Error('runtime_retention_intent_reachability_manifest_ambiguous');
+  if (suppliedManifest?.runtimeRetentionReachabilityManifestHash === hashes[0]) return suppliedManifest;
+  return provider?.loadManifest?.({ manifestHash: hashes[0] }) || suppliedManifest;
+}
+
+function applyRetentionIntent(intent, {
+  workspaceRegistry = null,
+  receiptLedger = null,
+  reachabilityManifest = null,
+  freshReachabilityManifest = null,
+  reachabilityManifestProvider = null,
+  activeNodeIds = [],
+  faultInjector = null,
+} = {}) {
   const removed = [];
   for (let entryIndex = 0; entryIndex < intent.entries.length; entryIndex += 1) {
     const entry = intent.entries[entryIndex];
-    const inspection = inspectRetentionIntentEntry(intent, entry, { workspaceRegistry, receiptLedger });
-    const { existingMembers, blockers } = inspection;
+    const inspection = inspectRetentionIntentEntry(intent, entry, {
+      workspaceRegistry,
+      receiptLedger,
+      reachabilityManifest,
+      freshReachabilityManifest,
+    });
+    const { blockers } = inspection;
     try {
       if (entry.authorized && !blockers.length) {
-        for (let memberIndex = 0; memberIndex < entry.members.length; memberIndex += 1) {
-          const member = entry.members[memberIndex];
-          const descriptorPath = pinnedRetentionMemberPath(inspection.pinned, intent.runtimeRoot, entry.category, member.path);
-          if (retentionPathExists(descriptorPath)) fs.rmSync(descriptorPath, { recursive: true, force: true });
-          faultInjector?.({ stage: 'after_member_removed', intent, entry, entryIndex, member, memberIndex });
-        }
+        removeRetentionEntryThroughQuarantine(
+          intent,
+          entry,
+          entryIndex,
+          inspection.pinned,
+          {
+            faultInjector,
+            revalidateAuthority: REACHABILITY_GOVERNED.has(entry.category)
+              ? () => freshReachabilityManifestForIntent({
+                intent,
+                originalManifest: reachabilityManifest,
+                provider: reachabilityManifestProvider,
+                activeNodeIds,
+                entries: [entry],
+              })
+              : null,
+          },
+        );
       }
     } finally {
       inspection.pinned?.close();
@@ -262,37 +337,23 @@ function applyRetentionIntent(intent, { workspaceRegistry = null, receiptLedger 
       contentHash: entry.contentHash,
       reason: entry.reason,
       removed: Boolean(entry.authorized && blockers.length === 0),
-      alreadyAbsent: Boolean(entry.authorized && blockers.length === 0 && existingMembers.length === 0),
+      alreadyAbsent: false,
       blockers,
     });
   }
   return removed;
 }
 
-function buildRetentionReceipt(intent, removed, { intentPath, createdAt }) {
-  const payload = {
-    version: 2,
-    kind: 'RuntimeRetentionReceipt',
-    status: removed.some((entry) => entry.blockers.length) ? 'runtime_retention_partially_blocked' : 'runtime_retention_applied',
-    planHash: intent.planHash,
-    intentHash: intent.runtimeRetentionIntentReceiptHash,
-    intentReceiptId: `runtime-retention:${intent.runtimeRetentionIntentReceiptHash}`,
-    removed,
-    bytesEligible: removed.reduce((total, entry) => total + entry.bytes, 0),
-    bytesRemoved: removed.filter((entry) => entry.removed).reduce((total, entry) => total + entry.bytes, 0),
-    applied: true,
-    externalActionPerformed: false,
-    intentPath,
-    createdAt,
-  };
-  return Object.freeze({ ...payload, runtimeRetentionReceiptHash: hashRecord('RuntimeRetentionReceipt', payload) });
-}
-
 function sameJson(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-function assertRetentionReceiptDerivedFromIntent(intent, receipt, intentPath, { workspaceRegistry = null, receiptLedger = null } = {}) {
+function assertRetentionReceiptDerivedFromIntent(intent, receipt, intentPath, {
+  workspaceRegistry = null,
+  receiptLedger = null,
+  reachabilityManifest = null,
+  freshReachabilityManifest = reachabilityManifest,
+} = {}) {
   const { runtimeRetentionReceiptHash = null, ...payload } = receipt || {};
   const exactReceiptKeys = [
     'applied', 'bytesEligible', 'bytesRemoved', 'createdAt', 'externalActionPerformed', 'intentHash',
@@ -323,7 +384,12 @@ function assertRetentionReceiptDerivedFromIntent(intent, receipt, intentPath, { 
   for (let index = 0; index < intent.entries.length; index += 1) {
     const entry = intent.entries[index];
     const result = receipt.removed[index];
-    const inspection = inspectRetentionIntentEntry(intent, entry, { workspaceRegistry, receiptLedger });
+    const inspection = inspectRetentionIntentEntry(intent, entry, {
+      workspaceRegistry,
+      receiptLedger,
+      reachabilityManifest,
+      freshReachabilityManifest,
+    });
     try {
       const expectedMetadata = {
         category: entry.category,
@@ -374,20 +440,53 @@ function assertRetentionReceiptDerivedFromIntent(intent, receipt, intentPath, { 
 function tombstonePathForIntent(intentPath) {
   return String(intentPath).replace(/\.intent\.json$/, '.tombstone.json');
 }
-
 function completeRetentionIntent(intent, intentPath, {
   workspaceRegistry = null,
   receiptLedger = null,
+  reachabilityManifest = null,
+  freshReachabilityManifest = reachabilityManifest,
+  reachabilityManifestProvider = null,
+  activeNodeIds = [],
   retentionReceiptLedger,
   faultInjector = null,
 } = {}) {
-  const removed = applyRetentionIntent(intent, { workspaceRegistry, receiptLedger, faultInjector });
+  const receiptPath = tombstonePathForIntent(intentPath);
+  const alreadyCommitted = findUniqueTrustedRetentionTombstone(retentionReceiptLedger, intent);
+  if (alreadyCommitted) {
+    assertRetentionReceiptDerivedFromIntent(intent, alreadyCommitted, intentPath, {
+      workspaceRegistry,
+      receiptLedger,
+      reachabilityManifest,
+      freshReachabilityManifest,
+    });
+    writeDurableJsonSync(receiptPath, alreadyCommitted);
+    return Object.freeze({ ...alreadyCommitted, receiptPath });
+  }
+  const removed = applyRetentionIntent(intent, {
+    workspaceRegistry,
+    receiptLedger,
+    reachabilityManifest,
+    freshReachabilityManifest,
+    reachabilityManifestProvider,
+    activeNodeIds,
+    faultInjector,
+  });
   if (removed.some((entry) => entry.removed && entry.category === 'automation-workspaces')) workspaceRegistry?.reconcileMissingEligible?.();
   faultInjector?.({ stage: 'before_tombstone', intent, removed });
-  const receipt = buildRetentionReceipt(intent, removed, { intentPath, createdAt: new Date().toISOString() });
-  const receiptPath = tombstonePathForIntent(intentPath);
-  assertRetentionReceiptDerivedFromIntent(intent, receipt, intentPath, { workspaceRegistry, receiptLedger });
-  recordTrustedRetentionReceipt(retentionReceiptLedger, receipt, 'retention_tombstone');
+  const committedDuringApply = findUniqueTrustedRetentionTombstone(retentionReceiptLedger, intent);
+  const receipt = committedDuringApply
+    || buildRuntimeRetentionReceipt(intent, removed, { intentPath, createdAt: intent.createdAt });
+  assertRetentionReceiptDerivedFromIntent(intent, receipt, intentPath, {
+    workspaceRegistry,
+    receiptLedger,
+    reachabilityManifest,
+    freshReachabilityManifest,
+  });
+  if (!committedDuringApply) recordTrustedRetentionReceipt(retentionReceiptLedger, receipt, 'retention_tombstone');
+  const uniqueCommitted = findUniqueTrustedRetentionTombstone(retentionReceiptLedger, intent);
+  if (uniqueCommitted?.runtimeRetentionReceiptHash !== receipt.runtimeRetentionReceiptHash) {
+    throw new Error('runtime_retention_tombstone_ledger_identity_conflict');
+  }
   faultInjector?.({ stage: 'after_trusted_tombstone_recorded', intent, receipt });
   writeDurableJsonSync(receiptPath, receipt);
   return Object.freeze({ ...receipt, receiptPath });
@@ -397,6 +496,9 @@ export function reconcileRuntimeRetentionIntents({
   runtimeRoot,
   workspaceRegistry = null,
   receiptLedger = null,
+  reachabilityManifest = null,
+  reachabilityManifestProvider = null,
+  activeNodeIds = [],
   retentionReceiptLedger,
   faultInjector = null,
 } = {}) {
@@ -422,18 +524,64 @@ export function reconcileRuntimeRetentionIntents({
         continue;
       }
       const intent = verifyRetentionIntent(rawIntent, root);
+      const intentReachabilityManifest = reachabilityManifestForIntent(
+        intent,
+        reachabilityManifest,
+        reachabilityManifestProvider,
+      );
+      assertIntentReachabilityManifest(intent, intentReachabilityManifest);
       const intentIdentity = assertTrustedRetentionReceipt(retentionReceiptLedger, intent, 'retention_intent');
       if (intentIdentity.receiptHash !== intent.runtimeRetentionIntentReceiptHash) throw new Error('runtime_retention_intent_ledger_hash_mismatch');
       const existingReceipt = readRegularJsonFileSync(receiptPath);
+      const committedReceipt = findUniqueTrustedRetentionTombstone(retentionReceiptLedger, intent);
       if (existingReceipt) {
-        assertRetentionReceiptDerivedFromIntent(intent, existingReceipt, intentPath, { workspaceRegistry, receiptLedger });
+        assertRetentionReceiptDerivedFromIntent(intent, existingReceipt, intentPath, {
+          workspaceRegistry,
+          receiptLedger,
+          reachabilityManifest: intentReachabilityManifest,
+          freshReachabilityManifest: intentReachabilityManifest,
+        });
         assertTrustedRetentionReceipt(retentionReceiptLedger, existingReceipt, 'retention_tombstone');
+        if (committedReceipt?.runtimeRetentionReceiptHash !== existingReceipt.runtimeRetentionReceiptHash) {
+          throw new Error('runtime_retention_tombstone_ledger_identity_conflict');
+        }
         recovered.push(Object.freeze({ intentPath, receiptPath, status: 'runtime_retention_already_converged' }));
         continue;
       }
+      if (committedReceipt) {
+        assertRetentionReceiptDerivedFromIntent(intent, committedReceipt, intentPath, {
+          workspaceRegistry,
+          receiptLedger,
+          reachabilityManifest: intentReachabilityManifest,
+          freshReachabilityManifest: intentReachabilityManifest,
+        });
+        writeDurableJsonSync(receiptPath, committedReceipt);
+        recovered.push(Object.freeze({
+          intentPath,
+          receiptPath,
+          status: 'runtime_retention_already_converged',
+        }));
+        continue;
+      }
+      restoreRetentionQuarantines(intent, { faultInjector });
+      const governedDeletionPending = intent.entries.some((entry) => entry.authorized
+        && REACHABILITY_GOVERNED.has(entry.category)
+        && entry.members.some((member) => retentionPathExists(member.path)));
+      const freshReachabilityManifest = governedDeletionPending
+        ? freshReachabilityManifestForIntent({
+          intent,
+          originalManifest: intentReachabilityManifest,
+          provider: reachabilityManifestProvider,
+          activeNodeIds,
+        })
+        : intentReachabilityManifest;
       const receipt = completeRetentionIntent(intent, intentPath, {
         workspaceRegistry,
         receiptLedger,
+        reachabilityManifest: intentReachabilityManifest,
+        freshReachabilityManifest,
+        reachabilityManifestProvider,
+        activeNodeIds,
         retentionReceiptLedger,
         faultInjector,
       });
@@ -453,6 +601,9 @@ export function executeRuntimeRetentionPlan(plan, {
   apply = false,
   workspaceRegistry = null,
   receiptLedger = null,
+  reachabilityManifest = null,
+  reachabilityManifestProvider = null,
+  activeNodeIds = [],
   retentionReceiptLedger = null,
   faultInjector = null,
 } = {}) {
@@ -484,20 +635,36 @@ export function executeRuntimeRetentionPlan(plan, {
     };
     return Object.freeze({ ...payload, runtimeRetentionReceiptHash: hashRecord('RuntimeRetentionReceipt', payload), receiptPath: null });
   }
-  retentionLedgerIdentity(retentionReceiptLedger, { kind: 'RuntimeRetentionIntent' }, 'retention_intent');
+  assertRuntimeRetentionTrustedLedger(retentionReceiptLedger);
   const createdAt = new Date().toISOString();
   const operationId = crypto.randomUUID();
   const receiptRoot = path.join(plan.runtimeRoot, 'retention');
   const intentPath = path.join(receiptRoot, `runtime-retention-${createdAt.replace(/[:.]/g, '-')}-${operationId}.intent.json`);
-  const entries = (plan.removals || []).map((entry) => preflightRemoval(plan, entry, receiptLedger, workspaceRegistry));
+  const entries = (plan.removals || []).map((entry) => preflightRemoval(
+    plan,
+    entry,
+    receiptLedger,
+    workspaceRegistry,
+    reachabilityManifest,
+  ));
   const intent = buildRetentionIntent(plan, entries, { operationId, createdAt });
   writeDurableJsonSync(intentPath, intent);
   const recordedIntent = recordTrustedRetentionReceipt(retentionReceiptLedger, intent, 'retention_intent');
   if (recordedIntent.receiptHash !== intent.runtimeRetentionIntentReceiptHash) throw new Error('runtime_retention_intent_ledger_hash_mismatch');
   faultInjector?.({ stage: 'after_intent_recorded', intent, intentPath });
+  const freshReachabilityManifest = freshReachabilityManifestForIntent({
+    intent,
+    originalManifest: reachabilityManifest,
+    provider: reachabilityManifestProvider,
+    activeNodeIds,
+  });
   return completeRetentionIntent(intent, intentPath, {
     workspaceRegistry,
     receiptLedger,
+    reachabilityManifest,
+    freshReachabilityManifest,
+    reachabilityManifestProvider,
+    activeNodeIds,
     retentionReceiptLedger,
     faultInjector,
   });

@@ -174,8 +174,17 @@ function rehashSeedBundle(value) {
   };
 }
 
-test('all five protocol families bind one distinct formal template through proposal, policy, seed, lineage, and manuscript surface', () => {
-  assert.deepEqual(AUTONOMOUS_FORMAL_SUPPORT_TEMPLATE_REGISTRY.protocolFamilies, FAMILIES);
+test('all production protocol families bind one distinct formal template through proposal, policy, seed, lineage, and manuscript surface', () => {
+  assert.deepEqual(
+    AUTONOMOUS_FORMAL_SUPPORT_TEMPLATE_REGISTRY.protocolFamilies
+      .filter((protocolFamily) => FAMILIES.includes(protocolFamily)),
+    FAMILIES,
+  );
+  assert.equal(
+    AUTONOMOUS_FORMAL_SUPPORT_TEMPLATE_REGISTRY.protocolFamilies
+      .includes('registered_scalar_response_benchmark'),
+    true,
+  );
   const templateIds = new Set();
   const templateHashes = new Set();
   for (const protocolFamily of FAMILIES) {

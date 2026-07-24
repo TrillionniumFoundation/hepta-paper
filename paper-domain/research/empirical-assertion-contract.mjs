@@ -17,6 +17,14 @@ function safeSegment(value) {
   return String(value || 'unknown').replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 180) || 'unknown';
 }
 
+function printableUnitText(value) {
+  if (typeof value !== 'string' || !value.length || value.length > 128) return false;
+  return [...value].every((character) => {
+    const codePoint = character.codePointAt(0);
+    return codePoint > 31 && codePoint !== 127;
+  });
+}
+
 export function empiricalResultMaterializedPath(nodeId, artifactName = 'results.json') {
   if (!['results.json', 'results.csv'].includes(artifactName)) {
     throw new Error('empirical_assertion_result_artifact_name_invalid');
@@ -36,7 +44,7 @@ function identifierHex(value) {
 export function canonicalEmpiricalAssertionManuscriptBody(entry) {
   const body = [
     `Registered empirical assertion ${String(entry?.assertionId || '')} reports claim hex ${identifierHex(entry?.claimId || '')} and hypothesis hex ${identifierHex(entry?.hypothesisId || '')} for experiment hex ${identifierHex(entry?.experimentId || '')}.`,
-    `Predicate metric hex ${identifierHex(entry?.predicate?.metric || '')}, comparator ${String(entry?.predicate?.comparator || '')}, alternative ${String(entry?.predicate?.alternative || '')}, minimum effect ${finiteNumberText(entry?.predicate?.minimumEffect)}, acceptance required ${entry?.predicate?.acceptanceRequired === true ? 'true' : 'false'}.`,
+    `Predicate metric hex ${identifierHex(entry?.predicate?.metric || '')}, metric unit hex ${identifierHex(entry?.predicate?.metricUnit || '')}, paired unit hex ${identifierHex(entry?.predicate?.pairedUnit || '')}, comparator ${String(entry?.predicate?.comparator || '')}, alternative ${String(entry?.predicate?.alternative || '')}, minimum effect ${finiteNumberText(entry?.predicate?.minimumEffect)}, acceptance required ${entry?.predicate?.acceptanceRequired === true ? 'true' : 'false'}.`,
     `Original registered result: ${canonicalResultText(entry?.original?.result)}.`,
     `Isolated deterministic rerun registered result: ${canonicalResultText(entry?.replay?.result)}.`,
     `The registry-bound scientific verdict is ${String(entry?.scientificVerdict || '')}. Scope is limited to this registered predicate, original run, and same-code-image-data-harness rerun, not independent scientific replication.`,
@@ -52,6 +60,20 @@ function canonicalManuscriptBodyValid(entry) {
     return entry?.canonicalManuscriptBody === canonicalEmpiricalAssertionManuscriptBody(entry)
       && entry?.canonicalManuscriptBodyHash === hashBytes(entry.canonicalManuscriptBody);
   } catch { return false; }
+}
+
+function empiricalAssertionPredicateValid(predicate) {
+  return hasExactObjectKeys(predicate, [
+    'acceptanceRequired', 'alternative', 'comparator', 'metric', 'metricUnit',
+    'minimumEffect', 'pairedUnit',
+  ])
+    && IDENTIFIER.test(String(predicate?.metric || ''))
+    && printableUnitText(predicate?.metricUnit)
+    && printableUnitText(predicate?.pairedUnit)
+    && ['baseline', 'ablation'].includes(predicate?.comparator)
+    && ['greater', 'less'].includes(predicate?.alternative)
+    && Number.isFinite(predicate?.minimumEffect) && predicate.minimumEffect >= 0
+    && typeof predicate?.acceptanceRequired === 'boolean';
 }
 
 function latexText(value) {
@@ -171,19 +193,33 @@ function authorityEntry({ paperId, campaignId, experiment, binding, original, re
   }
   const originalResult = resultFacts(original);
   const replayResult = resultFacts(replay);
+  const originalProtocol = experiment.originalEvaluation?.analysisProtocol;
+  const replayProtocol = experiment.replayEvaluation?.analysisProtocol;
+  const originalMetricSpec = originalProtocol?.metricSpecs?.[original.metric];
+  const replayMetricSpec = replayProtocol?.metricSpecs?.[replay.metric];
+  const metricUnit = String(originalMetricSpec?.unit || '').normalize('NFKC').trim();
+  const pairedUnit = String(originalProtocol?.pairedUnit || '').normalize('NFKC').trim();
   if (originalResult.scientificVerdict !== replayResult.scientificVerdict
     || JSON.stringify(originalResult.scientificUncertaintyReasons)
-      !== JSON.stringify(replayResult.scientificUncertaintyReasons)) {
+      !== JSON.stringify(replayResult.scientificUncertaintyReasons)
+    || !metricUnit || metricUnit.length > 128
+    || !pairedUnit || pairedUnit.length > 128
+    || replayMetricSpec?.unit !== metricUnit
+    || replayProtocol?.pairedUnit !== pairedUnit) {
     throw new Error('empirical_assertion_replay_verdict_mismatch');
   }
   const predicate = Object.freeze({
     metric: String(original.metric),
+    metricUnit,
+    pairedUnit,
     comparator: String(original.comparator),
     alternative: String(original.alternative),
     minimumEffect: Number(original.minimumEffect),
     acceptanceRequired: original.acceptanceRequired === true,
   });
   if (!IDENTIFIER.test(predicate.metric)
+    || !printableUnitText(predicate.metricUnit)
+    || !printableUnitText(predicate.pairedUnit)
     || !['baseline', 'ablation'].includes(predicate.comparator)
     || !['greater', 'less'].includes(predicate.alternative)
     || !Number.isFinite(predicate.minimumEffect) || predicate.minimumEffect < 0) {
@@ -323,6 +359,7 @@ export function verifyEmpiricalAssertionAuthority(authority, expected = {}) {
       || !IDENTIFIER.test(String(entry?.assertionId || '')) || ids.has(entry.assertionId)
       || !SHA256.test(String(entryHash || ''))
       || hashRecord('EmpiricalAssertionAuthorityEntry', entryPayload) !== entryHash
+      || !empiricalAssertionPredicateValid(entry?.predicate)
       || !empiricalAssertionResultFactsValid(entry?.original?.result)
       || !empiricalAssertionResultFactsValid(entry?.replay?.result)
       || entry?.scientificVerdict !== entry?.original?.result?.scientificVerdict

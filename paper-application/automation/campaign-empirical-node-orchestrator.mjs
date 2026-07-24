@@ -1,11 +1,5 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { requiredRevalidationForChanges } from '../../paper-domain/automation/referee-convergence.mjs';
-import { buildDatasetAuthorizationSet } from '../../paper-domain/automation/experiment-run-contract.mjs';
-import {
-  buildCampaignBenchmarkSelector,
-  verifyCampaignBenchmarkSelector,
-} from '../../paper-domain/automation/campaign-benchmark-selector.mjs';
-import { datasetEnvironmentName } from '../../paper-domain/automation/empirical-contract.mjs';
 import {
   buildDatasetConsumptionRepairRequest,
   buildEmpiricalArtifactRepairRequest,
@@ -14,15 +8,21 @@ import {
 } from './campaign-agent-policy.mjs';
 import {
   advanceEmpiricalTechnicalRepairSpec,
+  assertLatexTechnicalRepairPreservesScientificContent,
+  assertConfirmatoryWritableRepairAllowed,
   buildEmpiricalFailedAttemptRecord,
+  buildEmpiricalOutcomeBlindExecutionDiagnostic,
+  buildEmpiricalOutcomeBlindResultContractDiagnostic,
   empiricalResultContractTechnicalRepairEligible,
   empiricalTechnicalRepairEligible,
 } from './campaign-empirical-repair-policy.mjs';
-import { campaignEmpiricalNodeClassification } from './campaign-node-kind-policy.mjs';
 import {
-  assertOutcomeBoundBenchmarkSourceUnchanged,
-  empiricalPreDataFreezeFromResult,
-} from './campaign-confirmatory-lineage-policy.mjs';
+  assertAutonomousEmpiricalRuntimeKernelExecutionBinding,
+} from '../../paper-domain/automation/autonomous-empirical-runtime-kernel-execution-binding.mjs';
+import {
+  attachCampaignEmpiricalAuthority,
+} from './campaign-empirical-authority-materialization.mjs';
+import { buildCampaignEmpiricalSpec } from './campaign-empirical-spec-builder.mjs';
 
 export { empiricalResultContractTechnicalRepairEligible, empiricalTechnicalRepairEligible };
 
@@ -41,152 +41,12 @@ function requireRevalidation(campaign, node, context) {
   return required ? true : skipped(node, changedPaths);
 }
 
-function confirmatoryAnchorFreeze({ node, context, language }) {
-  if (context.empirical.reproduction) {
-    return empiricalPreDataFreezeFromResult(context.empiricalBaselineNode?.result);
-  }
-  if (!(context.empirical.revalidate || context.empirical.revalidateCode)) return null;
-  const anchor = [...(context.campaignNodes || [])]
-    .filter((candidate) => candidate?.nodeId !== node?.nodeId && candidate?.status === 'completed'
-      && (candidate?.spec?.language || candidate?.language || 'python') === language
-      && (() => {
-        const classification = campaignEmpiricalNodeClassification(candidate?.kind);
-        return classification.primary || classification.revalidate;
-      })()
-      && empiricalPreDataFreezeFromResult(candidate?.result))
-    .sort((left, right) => Number(right.roundIndex || 0) - Number(left.roundIndex || 0)
-      || String(right.nodeId || '').localeCompare(String(left.nodeId || '')))[0];
-  return empiricalPreDataFreezeFromResult(anchor?.result);
-}
-
 async function runRepair({ primitives, executionResources, requestBuilder, executionSignal }) {
   const repair = ({ remainingTokenCount = 4096, signal = executionSignal } = {}) => primitives.agent.execute({
     principal: 'default',
     request: requestBuilder({ remainingTokenCount, signal }),
   });
   return executionResources?.runNestedAgent ? executionResources.runNestedAgent(repair) : repair();
-}
-
-function buildEmpiricalSpec({ primitives, campaign, node, context, workspace, manuscript, executionBudget, executionSignal, executionResources }) {
-  const language = context.empirical.compile ? 'latex' : (node.spec?.language || node.language || 'python');
-  const entrypoint = primitives.workspace.findEmpiricalEntrypoint({ workspace, language });
-  const outputDirectory = primitives.workspace.outputDirectory({
-    campaignId: campaign.campaignId,
-    nodeId: node.nodeId,
-    attemptId: node.attemptId || 'direct',
-  });
-  const datasetMounts = campaign.spec.datasetMounts || [];
-  const datasetAuthorizationSet = buildDatasetAuthorizationSet(datasetMounts);
-  const benchmarkSelectorTemplate = campaign.spec.benchmarkSelector || null;
-  let benchmarkSelector = benchmarkSelectorTemplate;
-  if (campaign.spec.benchmarkId || benchmarkSelectorTemplate) {
-    const templateVerification = verifyCampaignBenchmarkSelector(benchmarkSelectorTemplate, {
-      benchmarkId: campaign.spec.benchmarkId,
-      datasetMounts,
-    });
-    if (!templateVerification.valid) {
-      const error = new Error(`campaign_empirical_benchmark_selector_invalid:${templateVerification.blockers.join(',')}`);
-      error.retryable = false;
-      throw error;
-    }
-    const empiricalClaimUniverse = primitives.empirical.readEmpiricalClaimUniverse({
-      sourceRoot: workspace,
-      manuscriptPath: manuscript,
-    });
-    if (empiricalClaimUniverse.status !== 'empirical_claim_universe_verified') {
-      const error = new Error(`campaign_empirical_claim_authority_invalid:${(empiricalClaimUniverse.blockers || []).join(',')}`);
-      error.retryable = false;
-      throw error;
-    }
-    try {
-      benchmarkSelector = buildCampaignBenchmarkSelector({
-        benchmarkId: campaign.spec.benchmarkId,
-        datasetMounts,
-        empiricalClaimUniverse,
-      });
-    } catch (cause) {
-      const error = new Error(`campaign_empirical_claim_bound_selector_invalid:${cause?.message || 'unknown'}`);
-      error.retryable = false;
-      throw error;
-    }
-    const intentHash = node.spec?.executionIntent?.benchmarkSelectorHash;
-    const templateAuthorityHash = benchmarkSelectorTemplate?.benchmarkSelectorTemplateHash
-      || benchmarkSelectorTemplate?.campaignBenchmarkSelectorHash;
-    if (intentHash !== benchmarkSelectorTemplate?.campaignBenchmarkSelectorHash
-      || benchmarkSelector.benchmarkSelectorTemplateHash !== templateAuthorityHash) {
-      const error = new Error('campaign_empirical_benchmark_selector_template_binding_mismatch');
-      error.retryable = false;
-      throw error;
-    }
-    const anchorFreeze = confirmatoryAnchorFreeze({ node, context, language });
-    if (anchorFreeze) {
-      const resolvedAdapters = primitives.empirical.resolveBenchmarkArmAdapterSet?.({
-        sourceRoot: workspace,
-        entrypoint,
-        protocolSet: benchmarkSelector.experimentDesign.benchmarkHarness.armProtocolSet,
-      });
-      assertOutcomeBoundBenchmarkSourceUnchanged({
-        anchorFreeze,
-        analysisProtocolHash: benchmarkSelector.experimentDesign.analysisProtocolHash,
-        systemBenchmarkArmProtocolSetHash:
-          benchmarkSelector.experimentDesign.benchmarkHarness.systemBenchmarkArmProtocolSetHash,
-        systemBenchmarkArmAdapterSetHash: resolvedAdapters?.status === 'system_benchmark_arm_adapters_verified'
-          ? resolvedAdapters.adapterSet.systemBenchmarkArmAdapterSetHash : null,
-      });
-    }
-  }
-  const datasetEnvironment = Object.fromEntries(datasetMounts.map((mount) => [datasetEnvironmentName(mount.name), `/datasets/${mount.name}`]));
-  const empiricalAttemptRootId = `${campaign.campaignId || campaign.campaign_id}:${node.nodeId || node.node_id}:${node.attemptId || node.attempt_id || 'direct'}`;
-  const spec = {
-    language,
-    entrypoint,
-    cwd: workspace,
-    sourceRoot: workspace,
-    outputDirectory,
-    outputPaths: (context.empirical.primary || context.empirical.reproduction || context.empirical.revalidate)
-      ? ['results.json', 'results.csv']
-      : (language === 'latex' ? [manuscript.replace(/\.tex$/i, '.pdf')] : []),
-    timeoutMs: Math.min(20 * 60 * 1000, Number(executionBudget.remainingWallTimeMs || 20 * 60 * 1000)),
-    absoluteDeadlineEpochMs: Number(executionBudget.absoluteDeadlineEpochMs || (Date.now() + Math.min(20 * 60 * 1000, Number(executionBudget.remainingWallTimeMs || 20 * 60 * 1000)))),
-    requiresGpu: Boolean((node.spec?.requiresGpu || node.requiresGpu || campaign.spec.requiresGpu) && language !== 'latex'),
-    datasetMounts,
-    benchmarkSelector,
-    env: {
-      HEPTA_SEED: String(campaign.spec.seed || benchmarkSelector?.experimentDesign?.seedSchedule?.[0] || 42),
-      HEPTA_OUTPUT_DIR: '/output',
-      PYTHONHASHSEED: String(campaign.spec.seed || 42),
-      OMP_NUM_THREADS: String(campaign.spec.ompThreads || 1),
-      OPENBLAS_NUM_THREADS: String(campaign.spec.ompThreads || 1),
-      MKL_NUM_THREADS: String(campaign.spec.ompThreads || 1),
-      NUMEXPR_NUM_THREADS: String(campaign.spec.ompThreads || 1),
-      BLIS_NUM_THREADS: String(campaign.spec.ompThreads || 1),
-      VECLIB_MAXIMUM_THREADS: String(campaign.spec.ompThreads || 1),
-      OMP_DYNAMIC: 'FALSE',
-      MKL_DYNAMIC: 'FALSE',
-      ...(benchmarkSelector ? {
-        HEPTA_BENCHMARK_ID: benchmarkSelector.benchmarkId,
-        HEPTA_BENCHMARK_SELECTOR_HASH: benchmarkSelector.campaignBenchmarkSelectorHash,
-        HEPTA_EXPERIMENT_DESIGN_HASH: benchmarkSelector.experimentDesignHash,
-        HEPTA_EXPERIMENT_DESIGN_JSON: JSON.stringify(benchmarkSelector.experimentDesign),
-        HEPTA_BENCHMARK_HARNESS_HASH: benchmarkSelector.experimentDesign.benchmarkHarnessHash,
-        HEPTA_DATASET_AUTHORIZATION_SET_HASH: datasetAuthorizationSet.datasetAuthorizationSetHash,
-        HEPTA_EXPERIMENT_ATTEMPT_ID: empiricalAttemptRootId,
-      } : {}),
-      ...datasetEnvironment,
-    },
-    memoryBytes: Number(campaign.spec.workerMemoryBytes || 4 * 1024 * 1024 * 1024),
-    cpuSeconds: Number(campaign.spec.workerCpuSeconds || 3600),
-    maximumProcesses: Number(campaign.spec.workerMaximumProcesses || 128),
-    requireSeparateOutputRoot: Boolean(context.empirical.primary || context.empirical.reproduction || context.empirical.revalidate),
-    cachePolicy: context.empirical.reproduction ? 'bypass' : 'default',
-    sourceLineageHash: primitives.workspace.hashFile({ workspace, relative: manuscript }),
-    empiricalAttemptRootId,
-    empiricalAttemptVersion: 1,
-    failedAttemptLineageHashes: Object.freeze([]),
-    signal: executionSignal || null,
-    runEmpiricalCell: executionResources?.runEmpiricalCell || null,
-  };
-  return { language, entrypoint, outputDirectory, datasetMounts, benchmarkSelector, spec };
 }
 
 function sourceMutationRepairAllowed(node) {
@@ -236,6 +96,7 @@ async function enforceDatasetConsumption({ primitives, campaign, node, context, 
 async function executeWithRepair({ primitives, campaign, node, workspace, manuscript, executionResources, executionSignal, language, entrypoint, spec, initialRepairReceipt, allowSourceRepair }) {
   let repairReceipt = initialRepairReceipt;
   let sanitizerReceipt = null;
+  let latexRepairContentPreservationReceipt = null;
   let executionSpec = spec;
   const failedAttemptLineage = [];
   let result = await primitives.empirical.execute(executionSpec);
@@ -250,14 +111,25 @@ async function executeWithRepair({ primitives, campaign, node, workspace, manusc
     }
     if (result.status !== 'empirical_execution_completed'
       && empiricalTechnicalRepairEligible(result, { language })) {
+      const diagnostic = buildEmpiricalOutcomeBlindExecutionDiagnostic(result, { language });
+      const manuscriptBeforeRepair = primitives.workspace.readTextIfPresent({
+        workspace,
+        relative: manuscript,
+      });
       repairReceipt = await runRepair({
         primitives,
         executionResources,
         executionSignal,
         requestBuilder: ({ remainingTokenCount, signal }) => buildLatexRepairRequest({
-          campaign, workspace, manuscript, nodeKind: node.kind, diagnostics: result.stderrTail || '', remainingTokenCount, signal,
+          campaign, workspace, manuscript, nodeKind: node.kind, diagnostic, remainingTokenCount, signal,
         }),
       });
+      latexRepairContentPreservationReceipt =
+        assertLatexTechnicalRepairPreservesScientificContent({
+          before: manuscriptBeforeRepair,
+          after: primitives.workspace.readTextIfPresent({ workspace, relative: manuscript }),
+          repairReceipt,
+        });
       const failed = buildEmpiricalFailedAttemptRecord({ spec: executionSpec, result });
       failedAttemptLineage.push(failed);
       executionSpec = advanceEmpiricalTechnicalRepairSpec(executionSpec, failed);
@@ -266,13 +138,15 @@ async function executeWithRepair({ primitives, campaign, node, workspace, manusc
   }
   if (result.status !== 'empirical_execution_completed'
     && empiricalTechnicalRepairEligible(result, { language }) && language !== 'latex' && allowSourceRepair) {
+    assertConfirmatoryWritableRepairAllowed({ spec: executionSpec, language, nodeKind: node.kind, stage: 'empirical-code', receipt: result });
+    const diagnostic = buildEmpiricalOutcomeBlindExecutionDiagnostic(result, { language });
     repairReceipt = await runRepair({
       primitives,
       executionResources,
       executionSignal,
       requestBuilder: ({ remainingTokenCount, signal }) => buildEmpiricalCodeRepairRequest({
         campaign, workspace, entrypoint, language, nodeKind: node.kind,
-        diagnostics: result.stderrTail || result.stdoutTail || '', remainingTokenCount, signal,
+        diagnostic, remainingTokenCount, signal,
       }),
     });
     const failed = buildEmpiricalFailedAttemptRecord({ spec: executionSpec, result });
@@ -291,7 +165,14 @@ async function executeWithRepair({ primitives, campaign, node, workspace, manusc
     error.receipt = result;
     throw error;
   }
-  return { result, repairReceipt, sanitizerReceipt, executionSpec, failedAttemptLineage };
+  return {
+    result,
+    repairReceipt,
+    sanitizerReceipt,
+    latexRepairContentPreservationReceipt,
+    executionSpec,
+    failedAttemptLineage,
+  };
 }
 
 async function enforceResultContract({ primitives, campaign, node, context, workspace, executionResources, executionSignal, language, entrypoint, outputDirectory, datasetMounts, benchmarkSelector, datasetConsumptionContract, spec, result, repairReceipt, failedAttemptLineage = [], allowSourceRepair }) {
@@ -319,13 +200,15 @@ async function enforceResultContract({ primitives, campaign, node, context, work
   const repairLineage = [...failedAttemptLineage];
   if (contract.blockers.length && !context.empirical.reproduction && allowSourceRepair
     && empiricalResultContractTechnicalRepairEligible(contract)) {
+    assertConfirmatoryWritableRepairAllowed({ spec: repairedSpec, language, nodeKind: node.kind, stage: 'empirical-artifact-contract', receipt: contract });
+    const diagnostic = buildEmpiricalOutcomeBlindResultContractDiagnostic(contract);
     repairedReceipt = await runRepair({
       primitives,
       executionResources,
       executionSignal,
       requestBuilder: ({ remainingTokenCount, signal }) => buildEmpiricalArtifactRepairRequest({
         campaign, workspace, entrypoint, language, nodeKind: node.kind,
-        blockers: contract.blockers, remainingTokenCount, signal,
+        diagnostic, remainingTokenCount, signal,
       }),
     });
     const failed = buildEmpiricalFailedAttemptRecord({ spec: repairedSpec, result: repairedResult, contract });
@@ -353,48 +236,30 @@ async function enforceResultContract({ primitives, campaign, node, context, work
   };
 }
 
-function attachAuthority({ primitives, node, context, workspace, outputDirectory, benchmarkSelector, datasetConsumptionContract, result, contract }) {
-  const evidenceArtifact = context.empirical.reproduction && contract?.experimentReplayReceipt
-    ? primitives.empirical.writeEvidenceBundle({
-      outputDirectory,
-      experimentRunReceipt: contract.experimentRunReceipt
-        && contract.experimentReplayReceipt.originalExperimentRunReceiptHash === context.empiricalBaselineNode?.result?.experimentRunReceipt?.experimentRunReceiptHash
-        ? context.empiricalBaselineNode.result.experimentRunReceipt
-        : null,
-      experimentReplayReceipt: contract.experimentReplayReceipt,
-    })
-    : null;
-  const materializationResult = evidenceArtifact
-    ? { ...result, artifacts: context.empirical.reproduction ? [evidenceArtifact] : [...(result.artifacts || []), evidenceArtifact] }
-    : result;
-  const materialization = context.empirical.reproduction && !evidenceArtifact
-    ? { materializedPaths: [], automationArtifactMaterializationReceiptHash: null }
-    : primitives.workspace.materializeArtifacts({ result: materializationResult, outputDirectory, workspace, nodeId: node.nodeId });
-  return {
-    evidenceArtifact,
-    materialization,
-    result: Object.freeze({
-      ...result,
-      metricSnapshot: contract?.metrics || [],
-      empiricalResultContractReceiptHash: contract?.empiricalResultContractReceiptHash || null,
-      empiricalResultContractStatus: contract?.status || null,
-      experimentRunReceipt: contract?.experimentRunReceipt || null,
-      experimentReplayReceipt: contract?.experimentReplayReceipt || null,
-      experimentEvidenceBundleHash: evidenceArtifact?.sha256 || null,
-      datasetConsumptionContractReceiptHash: datasetConsumptionContract?.datasetConsumptionContractReceiptHash || null,
-      datasetConsumptionStatus: datasetConsumptionContract?.status || null,
-      benchmarkSelector,
-      campaignBenchmarkSelectorHash: benchmarkSelector?.campaignBenchmarkSelectorHash || null,
-    }),
-  };
-}
-
 export async function executeCampaignEmpiricalNode({ primitives, campaign, node, context, workspace, manuscript, executionBudget = {}, executionSignal = null, executionResources = null } = {}) {
   if (!context.empirical.empirical) throw new Error(`campaign_empirical_node_kind_invalid:${node.kind}`);
   const required = requireRevalidation(campaign, node, context);
   if (required !== true) return required;
   const allowSourceRepair = sourceMutationRepairAllowed(node);
-  const built = buildEmpiricalSpec({ primitives, campaign, node, context, workspace, manuscript, executionBudget, executionSignal, executionResources });
+  const built = buildCampaignEmpiricalSpec({ primitives, campaign, node, context, workspace, manuscript, executionBudget, executionSignal, executionResources });
+  const preparation = campaign?.spec?.autonomousResearchPreparation || null;
+  const runtimeKernelExecutionBinding = built.language !== 'latex'
+    ? assertAutonomousEmpiricalRuntimeKernelExecutionBinding({
+      launchMode: preparation?.launchMode || 'golden-bootstrap',
+      protocolFamily: preparation?.proposal?.protocolFamily
+        || built.benchmarkSelector?.experimentDesign?.benchmarkFamily || null,
+      language: built.language,
+      datasetMounts: built.datasetMounts,
+      benchmarkSelector: built.benchmarkSelector,
+      empiricalExecutionProfileSelection:
+        preparation?.empiricalExecutionProfileSelection || null,
+      empiricalRuntimeCapabilityInspection:
+        preparation?.empiricalRuntimeCapabilityInspection || null,
+      runtimeImageReproducibilityInspection:
+        preparation?.runtimeImageReproducibilityInspection || null,
+      observedAt: new Date(),
+      minimumRemainingValidityMs: Number(executionBudget.remainingWallTimeMs || 0),
+    }) : null;
   const consumption = await enforceDatasetConsumption({
     primitives, campaign, node, context, workspace, executionResources, executionSignal,
     language: built.language, entrypoint: built.entrypoint, datasetMounts: built.datasetMounts,
@@ -430,10 +295,11 @@ export async function executeCampaignEmpiricalNode({ primitives, campaign, node,
       throw error;
     }
   }
-  const authority = attachAuthority({
-    primitives, node, context, workspace, outputDirectory: built.outputDirectory,
+  const authority = attachCampaignEmpiricalAuthority({
+    primitives, campaign, node, context, workspace, outputDirectory: built.outputDirectory,
     benchmarkSelector: built.benchmarkSelector, datasetConsumptionContract: consumption.contract,
     result: contracted.result, contract: contracted.contract,
+    runtimeKernelExecutionBinding,
   });
   if (!contracted.repairReceipt && !execution.sanitizerReceipt?.changed) {
     return Object.freeze({
@@ -448,6 +314,9 @@ export async function executeCampaignEmpiricalNode({ primitives, campaign, node,
     nodeKind: node.kind,
     repairAgentReceiptHash: contracted.repairReceipt?.agentExecutionReceiptHash || null,
     generatedLatexSanitizerReceiptHash: execution.sanitizerReceipt?.generatedLatexSanitizerReceiptHash || null,
+    latexTechnicalRepairContentPreservationReceiptHash:
+      execution.latexRepairContentPreservationReceipt
+        ?.latexTechnicalRepairContentPreservationReceiptHash || null,
     repairedExecutionReceiptHash: authority.result.multiLanguageEmpiricalReceiptHash,
     empiricalAttemptVersion: Number(contracted.executionSpec?.empiricalAttemptVersion || 1),
     experimentAttemptId: contracted.executionSpec?.env?.HEPTA_EXPERIMENT_ATTEMPT_ID || null,
@@ -473,8 +342,14 @@ export async function executeCampaignEmpiricalNode({ primitives, campaign, node,
     experimentRunReceipt: authority.result.experimentRunReceipt,
     experimentReplayReceipt: authority.result.experimentReplayReceipt,
     experimentEvidenceBundleHash: authority.result.experimentEvidenceBundleHash,
+    experimentIrExecutionAuthorityReceipt:
+      authority.result.experimentIrExecutionAuthorityReceipt || null,
+    experimentIrExecutionAuthorityReceiptHash:
+      authority.result.experimentIrExecutionAuthorityReceiptHash || null,
     datasetConsumptionContractReceiptHash: authority.result.datasetConsumptionContractReceiptHash,
     datasetConsumptionStatus: authority.result.datasetConsumptionStatus,
+    autonomousEmpiricalRuntimeKernelExecutionBindingHash:
+      authority.result.autonomousEmpiricalRuntimeKernelExecutionBindingHash || null,
     materializedPaths: authority.materialization.materializedPaths,
     automationArtifactMaterializationReceiptHash: authority.materialization.automationArtifactMaterializationReceiptHash,
     status: 'automation_repair_execution_completed',

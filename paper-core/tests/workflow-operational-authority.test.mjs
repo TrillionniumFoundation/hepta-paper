@@ -7,6 +7,9 @@ import { createDefaultPaperStore, createReadOnlyPaperStore } from '../../paper-a
 import { runPaperBatch } from '../../paper-composition/batch/paper-batch-application.mjs';
 import { runLegacyWorkflowProjectionBatch } from '../../paper-composition/compat/legacy-paper-batch-application.mjs';
 import {
+  convergeAutonomousSubmissionHandoff,
+} from '../../paper-composition/bootstrap/autonomous-submission-handoff-migration-composition.mjs';
+import {
   WORKFLOW_OPERATIONAL_AUTHORITY,
   assertLegacyWorkflowProjectionAuthorized,
   buildCanonicalPaperStatusReadProjection,
@@ -14,6 +17,26 @@ import {
 } from '../../paper-domain/workflow/operational-authority-policy.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
+
+function testHandoffMutationCoordinator() {
+  const coveredDatabaseRoles = Object.freeze(['submission-handoff']);
+  return Object.freeze({
+    implemented: true,
+    coveredDatabaseRoles,
+    executeMutation() {
+      throw new Error('workflow_authority_test_handoff_mutation_unexpected');
+    },
+    recoverPendingMutations() { return Object.freeze([]); },
+    inspectStatus() {
+      return Object.freeze({
+        status: 'externally_fenced_sqlite_mutation_coordinator_ready',
+        implemented: true,
+        coveredDatabaseRoles,
+        blockers: Object.freeze([]),
+      });
+    },
+  });
+}
 
 function fixture(t, suffix = '') {
   const parent = fs.mkdtempSync(path.join(os.tmpdir(), `hepta-batch-authority-${suffix}`));
@@ -41,8 +64,14 @@ function fixture(t, suffix = '') {
     ['paper-1', 'Paper One', 'draft', 'Test Venue', 'drafts/paper-1', 'drafts/paper-1'],
   );
   assert.equal(registered.ok, true, registered.error);
+  convergeAutonomousSubmissionHandoff({ nativeStore: store, runtimeRoot });
   store.close();
-  return { root, runtimeRoot, dbPath };
+  return {
+    root,
+    runtimeRoot,
+    dbPath,
+    submissionHandoffMutationCoordinator: testHandoffMutationCoordinator(),
+  };
 }
 
 function inspectDatabase(roots, callback) {

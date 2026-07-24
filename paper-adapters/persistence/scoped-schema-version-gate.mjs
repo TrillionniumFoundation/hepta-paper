@@ -1,16 +1,14 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { assertStoreQueryResult } from '../../paper-ports/store-port.mjs';
+import {
+  REQUIRED_SCOPED_SCHEMA_MIGRATIONS,
+  REQUIRED_SCOPED_SCHEMA_VERSIONS,
+} from '../../paper-domain/automation/scoped-schema-version-contract.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { sha256FileSync } from '../../workflow-kernel/runtime/file-utils.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const REQUIRED = Object.freeze([
-  Object.freeze({ version: 21, name: '021_job_lease_fencing' }),
-  Object.freeze({ version: 22, name: '022_campaign_attempt_fencing' }),
-  Object.freeze({ version: 23, name: '023_workspace_retention_qualification' }),
-]);
-
 function expectedMigration(item) {
   const file = path.join(workspaceRoot, 'store', 'migrations', `${item.name}.sql`);
   const migrationSha256 = sha256FileSync(file);
@@ -25,14 +23,17 @@ export function assertScopedSchemaVersion({ store, allowUnavailable = false, roo
       kind: 'ScopedSchemaVersionGateReceipt',
       status: 'scoped_schema_gate_unavailable_read_only_store',
       rootKind,
-      requiredVersions: [21, 22, 23],
+      requiredVersions: REQUIRED_SCOPED_SCHEMA_VERSIONS,
       observedVersions: [],
       blockers: [],
     };
     return Object.freeze({ ...payload, scopedSchemaVersionGateReceiptHash: hashRecord('ScopedSchemaVersionGateReceipt', payload) });
   }
-  const result = assertStoreQueryResult(store.query('SELECT version,name,migration_sha256 FROM schema_migrations WHERE version IN (21,22,23) ORDER BY version;'));
-  const expected = REQUIRED.map(expectedMigration);
+  const result = assertStoreQueryResult(store.query(`SELECT version,name,migration_sha256
+    FROM schema_migrations
+    WHERE version IN (${REQUIRED_SCOPED_SCHEMA_VERSIONS.join(',')})
+    ORDER BY version;`));
+  const expected = REQUIRED_SCOPED_SCHEMA_MIGRATIONS.map(expectedMigration);
   const rows = result.rows || [];
   const blockers = [];
   for (const migration of expected) {

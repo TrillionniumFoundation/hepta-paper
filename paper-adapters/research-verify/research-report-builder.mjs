@@ -1,6 +1,5 @@
-import { pathWithin, relativePath } from '../../workflow-kernel/runtime/file-utils.mjs';
+import { relativePath } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
-import { resolveRepoPath } from '../../workflow-kernel/runtime/path-utils.mjs';
 import {
   buildPaperResearchVerifyReceipt,
   createClaimScopeContract,
@@ -10,19 +9,30 @@ import {
   hashPaperRecord,
 } from '../../paper-domain/contracts/index.mjs';
 import { buildClaimRegistry } from '../../paper-domain/research/claim-registry.mjs';
-import { buildEvidenceIntake } from '../../paper-domain/research/evidence-ingestor.mjs';
 import { buildEvidenceQualityGate } from '../../paper-domain/research/evidence-quality-gate.mjs';
 import { buildExperimentRegistry } from '../../paper-domain/research/experiment-registry.mjs';
 import { verifyExperimentRegistry } from '../../paper-domain/research/experiment-registry-verifier.mjs';
 import { createExperimentRegistryAuthorityVerifier } from '../../paper-domain/research/experiment-registry-authority.mjs';
 import { buildFormalVerifierRegistry } from '../../paper-domain/research/formal-verifier-registry.mjs';
-import { buildGenericFormalCertificateIntake } from '../../paper-domain/research/formal-certificate-intake.mjs';
+import {
+  buildGenericFormalCertificateIntake,
+  formalClosureClaimBindingsFromProposalBinding,
+} from '../../paper-domain/research/formal-certificate-intake.mjs';
 import { buildResearchChangeProposal } from '../../paper-domain/research/change-proposal.mjs';
 import { buildResearchGapPlan } from '../../paper-domain/research/gap-planner.mjs';
 import { buildPromotionInputSnapshot, buildResearchGapClosureReceipt } from '../../paper-domain/quality/promotion-input-snapshot.mjs';
 import { verifyArtifactWriteReceiptSource } from '../artifacts/artifact-write-receipt-verifier.mjs';
 import { verifyIndependentRawEventArtifactRecomputation } from './raw-event-artifact-recomputation-verifier.mjs';
 import { buildEmpiricalAssertionReportCapability } from './empirical-assertion-report-capability.mjs';
+import {
+  verifyExternalResearchReplayReceipt,
+} from '../../paper-domain/research/external-research-replay-contract.mjs';
+import {
+  buildEvidenceVerificationCandidates,
+  buildResearchEvidenceIntake,
+} from './research-evidence-candidates.mjs';
+
+export { buildEvidenceVerificationCandidates };
 
 export function buildResearchContractContext({
   row,
@@ -90,55 +100,6 @@ export function buildResearchContractContext({
   };
 }
 
-export function buildEvidenceVerificationCandidates({ root, sourceRoot, structured } = {}) {
-  return structured.evidenceItems.map((item) => ({
-    id: item.id,
-    path: resolveRepoPath(root, item.sourceLocator || item.evidenceRefs?.[0]?.ref || null),
-    hash: item.evidenceRefs?.find((ref) => ref.hash)?.hash || null,
-    provenance: item.kind || 'observed_evidence',
-  })).filter((item) => item.path && item.hash && sourceRoot && pathWithin(sourceRoot, item.path));
-}
-
-function buildAttestedEvidenceItems({ academicEvidenceAttestation, now }) {
-  if (!academicEvidenceAttestation.academicEvidenceEligible) return [];
-  return (academicEvidenceAttestation.verifiedArtifacts || [])
-    .filter((item) => item.verified === true)
-    .map((item, index) => ({
-      id: `attested:${index + 1}:${item.path}`,
-      kind: item.kind || 'attested_academic_evidence',
-      claimIds: item.claimIds || [],
-      path: `${item.scope || 'source'}:${item.path}`,
-      hash: item.currentHash,
-      verificationStatus: 'evidence_artifact_verified',
-      verifiedHash: item.currentHash,
-      provenanceReceiptHash: academicEvidenceAttestation.academicEvidenceAttestationVerificationHash,
-      createdAt: now.toISOString(),
-      verificationReceipt: {
-        kind: 'EvidenceArtifactVerificationReceipt',
-        status: 'evidence_artifact_verified',
-        hash: academicEvidenceAttestation.academicEvidenceAttestationVerificationHash,
-        createdAt: now.toISOString(),
-        claimIds: item.claimIds || [],
-        path: `${item.scope || 'source'}:${item.path}`,
-      },
-    }));
-}
-
-function buildCandidateEvidenceItems({ structured, evidenceVerificationReceipts }) {
-  const verificationById = new Map(evidenceVerificationReceipts.map((receipt) => [receipt.evidenceId, receipt]));
-  return structured.evidenceItems.map((item) => ({
-    ...item,
-    claimIds: item.claimIds || item.claim_ids || [],
-    path: item.sourceLocator || item.evidenceRefs?.[0]?.ref || null,
-    hash: item.evidenceRefs?.find((ref) => ref.hash)?.hash || null,
-    verificationStatus: verificationById.get(item.id)?.status || 'unverified',
-    verifiedHash: verificationById.get(item.id)?.verifiedHash || null,
-    provenanceReceiptHash: verificationById.get(item.id)?.provenanceReceiptHash || null,
-    createdAt: verificationById.get(item.id)?.createdAt || null,
-    verificationReceipt: verificationById.get(item.id) || null,
-  }));
-}
-
 export function buildResearchCapabilityState({
   row,
   structured,
@@ -150,20 +111,26 @@ export function buildResearchCapabilityState({
   revisionRequests,
   receiptLedger,
   campaignEvidenceContext,
+  researchSourceSnapshotHash = null,
+  formalReviewEnvelope = null,
   operatorDatasetHarnessAuthorityVerifier,
   rawEventRecomputationVerifier = verifyIndependentRawEventArtifactRecomputation,
+  externalReplayRequired = false,
+  externalReplayRequest = null,
+  externalReplayReceipt = null,
+  externalReplayReceiptVerifier = null,
   now,
 } = {}) {
   const paperQualityProfiles = new Set([
     ...(Array.isArray(row.task.paperQualityProfiles) ? row.task.paperQualityProfiles : []),
     row.task.paperQualityProfile,
   ].filter(Boolean));
-  const attestedEvidenceItems = buildAttestedEvidenceItems({ academicEvidenceAttestation, now });
-  const candidateEvidenceItems = buildCandidateEvidenceItems({ structured, evidenceVerificationReceipts });
-  const evidenceIntake = buildEvidenceIntake({
+  const evidenceIntake = buildResearchEvidenceIntake({
     paperTask: row.task,
-    evidenceItems: attestedEvidenceItems.length ? attestedEvidenceItems : candidateEvidenceItems,
-    nowMs: now.getTime(),
+    structured,
+    academicEvidenceAttestation,
+    evidenceVerificationReceipts,
+    now,
   });
   const experimentRegistry = buildExperimentRegistry({
     paperTask: row.task,
@@ -209,8 +176,15 @@ export function buildResearchCapabilityState({
     adapterReceipts: [...structured.formalAdapterReceipts, ...producedAdapterReceipts],
     receiptLedger,
   });
+  const expectedFormalClaimBindings = formalClosureClaimBindingsFromProposalBinding(
+    formalReviewEnvelope?.proposalClaimToTheoremBinding,
+  );
   const formalCertificateIntakes = [...structured.formalCertificateRequests, ...producedCertificateRequests]
     .map((request) => buildGenericFormalCertificateIntake({
+      paperId: request.paperId || request.paper_id || null,
+      campaignId: request.campaignId || request.campaign_id || null,
+      researchSourceSnapshotHash:
+        request.researchSourceSnapshotHash || request.research_source_snapshot_hash || null,
       verifierKind: request.verifierKind || request.verifier_kind,
       certificate: request.certificate,
       sourceRecords: request.sourceRecords || request.source_records || [],
@@ -219,6 +193,15 @@ export function buildResearchCapabilityState({
       verifierRegistry: formalVerifierRegistry,
       receiptLedger,
       artifactVerifier: verifyArtifactWriteReceiptSource,
+    }, {
+      expectedPaperId: row.task.paperId,
+      expectedCampaignId: campaignEvidenceContext?.campaignId || null,
+      expectedResearchSourceSnapshotHash: researchSourceSnapshotHash,
+      expectedClaimBindings: expectedFormalClaimBindings,
+      expectedTaskKey: row.task.taskKey,
+      expectedProposalBinding:
+        formalReviewEnvelope?.proposalClaimToTheoremBinding || null,
+      nativeResearchWorkerExecution,
     }));
   const evidenceQualityGate = buildEvidenceQualityGate({
     paperTask: row.task,
@@ -228,6 +211,12 @@ export function buildResearchCapabilityState({
     receiptLedger,
     experimentEvidenceBindings: experimentRegistry.experiments.map((experiment) => experiment.evidenceBinding),
     formalCertificateIntakes,
+    campaignId: campaignEvidenceContext?.campaignId || null,
+    researchSourceSnapshotHash,
+    expectedFormalClaimBindings,
+    proposalClaimToTheoremBinding:
+      formalReviewEnvelope?.proposalClaimToTheoremBinding || null,
+    nativeResearchWorkerExecution,
   });
   const researchGapPlan = buildResearchGapPlan({
     paperTask: row.task,
@@ -249,6 +238,11 @@ export function buildResearchCapabilityState({
   const formalReplayReceipts = formalWorkerReceipts
     .map((receipt) => receipt.result?.replayReceipt || null)
     .filter(Boolean);
+  const externalReplayVerified = externalReplayRequired === true
+    && verifyExternalResearchReplayReceipt(externalReplayReceipt, {
+      request: externalReplayRequest,
+      cryptographicVerifier: externalReplayReceiptVerifier,
+    });
   const claimById = new Map(contractContext.claimRegistry.claims.map((claim) => [claim.claimId, claim]));
   const formalClaimLineageBlockers = formalWorkerReceipts.flatMap((receipt) => {
     const bindings = receipt.result?.claimBindingReport?.bindings || [];
@@ -275,6 +269,8 @@ export function buildResearchCapabilityState({
       .map((receipt) => `formal_claim_replay_required:${receipt.workerId || receipt.workerType}`),
     ...formalClaimLineageBlockers,
     ...empiricalAssertionCapability.blockers,
+    ...(externalReplayRequired && !externalReplayVerified
+      ? ['external_research_replay_required'] : []),
   ];
   const researchChangeProposal = buildResearchChangeProposal({
     paperTask: row.task,
@@ -295,6 +291,10 @@ export function buildResearchCapabilityState({
     formalVerifierRegistry,
     formalCertificateIntakes,
     formalReplayReceipts,
+    externalReplayRequired: externalReplayRequired === true,
+    externalReplayVerified,
+    externalReplayRequest,
+    externalReplayReceipt,
     researchChangeProposal,
     promotionBlockers,
   };
@@ -321,6 +321,9 @@ export function buildResearchVerifyReport({
   executeResearchWorkers,
   campaignResearchSourceSnapshot = null,
   formalReviewEnvelope = null,
+  externalReplayRequired = false,
+  externalReplayRequest = null,
+  externalReplayReceipt = null,
 } = {}) {
   const legacyCatalogReferences = [];
   const researchWorkers = [];
@@ -373,6 +376,12 @@ export function buildResearchVerifyReport({
       capabilityState.empiricalAssertionUniverse?.manuscriptCorpusHash || null,
     proposalClaimToTheoremBindingHash:
       formalReviewEnvelope?.proposalClaimToTheoremBindingHash || null,
+    ...(externalReplayRequired ? {
+      externalReplayRequestHash: externalReplayRequest?.requestHash || null,
+      externalResearchReplayReceiptHash:
+        externalReplayReceipt?.externalResearchReplayReceiptHash || null,
+      externalReplayVerified: capabilityState.externalReplayVerified === true,
+    } : {}),
     evidenceProvenance: {
       sourceCandidateRecordCount: sourceEvidence.length,
       operationalLogRecordCount: logEvidence.length,
@@ -396,6 +405,10 @@ export function buildResearchVerifyReport({
       formalVerifierRegistry: capabilityState.formalVerifierRegistry,
       formalCertificateIntakes: capabilityState.formalCertificateIntakes,
       formalReplayReceipts: capabilityState.formalReplayReceipts,
+      ...(externalReplayRequired ? {
+        externalReplayRequest,
+        externalReplayReceipt,
+      } : {}),
       proposalClaimToTheoremBinding:
         formalReviewEnvelope?.proposalClaimToTheoremBinding || null,
       trustedFormalEvidence,

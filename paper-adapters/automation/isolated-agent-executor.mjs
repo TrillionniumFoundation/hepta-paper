@@ -3,6 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { assertAgentExecutorPort } from '../../paper-ports/agent-executor-port.mjs';
 import { buildExecutorCapabilities, capabilityRequestFromExecution, evaluateExecutorCapabilityRequest } from '../../paper-ports/executor-capabilities.mjs';
+import { buildAgentWorkspacePostimageBinding } from '../../paper-domain/evidence/agent-execution-receipt-contract.mjs';
+import {
+  buildIsolatedAgentMergeReceipt,
+  buildIsolatedAgentWorkspaceContentPolicy,
+} from '../../paper-domain/evidence/isolated-agent-merge-receipt-contract.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { isPathWithin } from '../../workflow-kernel/runtime/path-utils.mjs';
 import {
@@ -34,6 +39,9 @@ const RESEARCH_DATA_SUFFIXES = Object.freeze([
   '.nii', '.nii.gz', '.mgz', '.mgh', '.gii', '.mat', '.npy', '.npz', '.h5', '.hdf5',
   '.pkl', '.pickle', '.rds', '.rdata', '.parquet', '.feather', '.arrow', '.dcm', '.edf',
   '.tck', '.trk', '.sqlite', '.sqlite3', '.db', '.zip', '.tar', '.tgz', '.7z',
+]);
+const OUTCOME_BEARING_WORKSPACE_PATHS = Object.freeze([
+  'automation-results', 'results.json', 'results.csv', 'observation.json',
 ]);
 
 function excludedEntry(entry, candidate = null) {
@@ -137,14 +145,37 @@ function baseline(root, excludedRoots = []) {
   return rows;
 }
 
-function delta(before, root) {
+function workspaceDelta(before, root) {
   const after = baseline(root);
-  return changedWorkspacePaths(before, after);
+  return Object.freeze({ after, changedPaths: changedWorkspacePaths(before, after) });
 }
 
-export function createIsolatedAgentExecutor({ delegate, isolationRoot, keepWorkspaces = false, keepFailedWorkspaces = true, workspaceRegistry = null } = {}) {
+function retryableContainedMutationPolicyViolation({ readOnlyBlockers, mutationPolicyBlockers }) {
+  return readOnlyBlockers.length === 0
+    && mutationPolicyBlockers.length > 0
+    && mutationPolicyBlockers.every((blocker) => blocker.startsWith('workspace_mutation_not_allowlisted:'));
+}
+
+function snapshotRows(snapshot) {
+  return [...snapshot.entries()].filter(([, hash]) => /^sha256:[0-9a-f]{64}$/.test(hash))
+    .map(([relative, hash]) => ({ path: relative, hash }))
+    .sort((left, right) => left.path.localeCompare(right.path));
+}
+
+export function createIsolatedAgentExecutor({
+  delegate,
+  isolationRoot,
+  keepWorkspaces = false,
+  keepFailedWorkspaces = true,
+  workspaceRegistry = null,
+  assertExternalSideEffectReady = null,
+} = {}) {
   assertAgentExecutorPort(delegate);
   if (!isolationRoot) throw new Error('isolationRoot is required');
+  if (assertExternalSideEffectReady !== null
+    && typeof assertExternalSideEffectReady !== 'function') {
+    throw new Error('isolated_agent_external_side_effect_gate_invalid');
+  }
   const resolvedIsolationRoot = path.resolve(isolationRoot);
   fs.mkdirSync(resolvedIsolationRoot, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
   fs.chmodSync(resolvedIsolationRoot, PRIVATE_DIRECTORY_MODE);
@@ -161,13 +192,30 @@ export function createIsolatedAgentExecutor({ delegate, isolationRoot, keepWorks
     executorId,
     capabilities: () => capabilities,
     async execute(input = {}) {
+      const executionSideEffectGate = input.assertExternalSideEffectReady
+        || assertExternalSideEffectReady;
+      if (executionSideEffectGate !== null
+        && executionSideEffectGate !== undefined
+        && typeof executionSideEffectGate !== 'function') {
+        throw new Error('isolated_agent_external_side_effect_gate_invalid');
+      }
       const preflight = evaluateExecutorCapabilityRequest({ capabilities, request: capabilityRequestFromExecution(input) });
       if (preflight.blockers.length) throw new Error(preflight.blockers.join(','));
       const source = path.resolve(input.workspacePath || '');
+      const outcomeBlind = input.isolationPolicy?.outcomeBlind === true;
+      if (outcomeBlind && !input.workspaceMutationPolicy) {
+        const error = new Error('outcome_blind_writable_agent_mutation_policy_required');
+        error.retryable = false;
+        throw error;
+      }
       recoverScopedMaterializationIntentsSync({ scopeRoot: source });
       const declaredExcludes = (input.isolationExcludes || []).map((candidate) => path.resolve(String(candidate))).filter((candidate) => candidate !== source && isPathWithin(source, candidate));
-      const largeDirectoryExcludes = oversizedTopLevelDirectories(source, declaredExcludes);
-      const isolationExcludes = [...new Set([...declaredExcludes, ...largeDirectoryExcludes])];
+      const outcomeBearingExcludes = outcomeBlind
+        ? OUTCOME_BEARING_WORKSPACE_PATHS.map((relative) => path.resolve(source, relative))
+        : [];
+      const explicitExcludes = [...new Set([...declaredExcludes, ...outcomeBearingExcludes])];
+      const largeDirectoryExcludes = oversizedTopLevelDirectories(source, explicitExcludes);
+      const isolationExcludes = [...new Set([...explicitExcludes, ...largeDirectoryExcludes])];
       const skipSourceSymlinks = input.isolationPolicy?.skipSourceSymlinks === true;
       const context = input.context || {};
       const nodeKey = `${String(context.campaignId || 'campaign')}-${String(context.nodeId || input.role || 'node')}-${crypto.randomUUID()}`.replace(/[^A-Za-z0-9_.-]/g, '_');
@@ -194,14 +242,40 @@ export function createIsolatedAgentExecutor({ delegate, isolationRoot, keepWorks
       let receipt;
       let succeeded = false;
       let failure = null;
+      let delegateStarted = false;
       try {
+        const delegatedInput = { ...input };
+        const outcomeBlindContext = { ...context };
+        if (outcomeBlind) {
+          delete delegatedInput.isolationExcludes;
+          delete outcomeBlindContext.sourceWorkspace;
+        }
+        if (executionSideEffectGate) {
+          await executionSideEffectGate({
+            action: `isolated_agent_execute:${context.nodeId || input.role || 'agent'}`,
+            campaignId: context.campaignId || null,
+            nodeId: context.nodeId || null,
+          });
+          executionSideEffectGate.assertCurrent?.({
+            action: `isolated_agent_execute:${context.nodeId || input.role || 'agent'}`,
+            campaignId: context.campaignId || null,
+            nodeId: context.nodeId || null,
+          });
+        }
+        await executionSideEffectGate?.markStarted?.({
+          action: `isolated_agent_execute:${context.nodeId || input.role || 'agent'}`,
+        });
+        delegateStarted = true;
         receipt = await delegate.execute({
-          ...input,
+          ...delegatedInput,
           workspacePath: isolated,
           requiredCapabilities: { ...(input.requiredCapabilities || {}), workspaceIsolation: false },
-          context: { ...context, sourceWorkspace: source, isolatedWorkspace: isolated },
+          context: outcomeBlind
+            ? { ...outcomeBlindContext, outcomeBlindWorkspace: true, isolatedWorkspace: isolated }
+            : { ...context, sourceWorkspace: source, isolatedWorkspace: isolated },
         });
-        const changedPaths = delta(isolatedBaseline, isolated);
+        const isolatedDelta = workspaceDelta(isolatedBaseline, isolated);
+        const changedPaths = isolatedDelta.changedPaths;
         if (changedPaths.length > MAX_AGENT_WORKSPACE_CHANGED_PATHS) {
           const error = new Error(`isolated_workspace_change_limit_exceeded:${changedPaths.length}:${MAX_AGENT_WORKSPACE_CHANGED_PATHS}`);
           error.retryable = false;
@@ -215,6 +289,16 @@ export function createIsolatedAgentExecutor({ delegate, isolationRoot, keepWorks
         });
         if (readOnlyBlockers.length || mutationPolicyBlockers.length) {
           const error = new Error([...readOnlyBlockers, ...mutationPolicyBlockers].join(','));
+          error.retryable = retryableContainedMutationPolicyViolation({
+            readOnlyBlockers,
+            mutationPolicyBlockers,
+          });
+          error.receipt = receipt;
+          throw error;
+        }
+        if (JSON.stringify([...(receipt?.changedPaths || [])].map(String).sort())
+          !== JSON.stringify(changedPaths)) {
+          const error = new Error('isolated_workspace_delegate_changed_paths_mismatch');
           error.retryable = false;
           error.receipt = receipt;
           throw error;
@@ -295,36 +379,57 @@ export function createIsolatedAgentExecutor({ delegate, isolationRoot, keepWorks
         } finally {
           for (const change of prepared) abortStagedScopedFileSync(change.staged);
         }
-        const mergePayload = {
-          version: 1,
-          kind: 'IsolatedAgentMergeReceipt',
-          delegateExecutorId: delegate.executorId,
-          sourceWorkspace: source,
-          isolatedWorkspace: isolated,
+        const agentWorkspacePostimageBinding = buildAgentWorkspacePostimageBinding({
           changedPaths,
-          conflictPaths: [],
-          status: 'isolated_agent_changes_merged',
-          workspaceContentPolicy: {
-            maximumFileBytes: MAX_AGENT_WORKSPACE_FILE_BYTES,
-            maximumTopLevelDirectoryBytes: MAX_AGENT_WORKSPACE_DIRECTORY_BYTES,
-            maximumChangedPaths: MAX_AGENT_WORKSPACE_CHANGED_PATHS,
-            directoryMode: '0700',
-            regularFileMode: '0600',
-            executableFileMode: '0700',
-            researchDataBinaryExcluded: true,
-            oversizedTopLevelDirectories: largeDirectoryExcludes.map((candidate) => path.relative(source, candidate).replace(/\\/g, '/')).sort(),
-          },
-          externalActionPerformed: false,
-        };
+          files: changedPaths.map((relative) => ({
+            path: relative,
+            hash: isolatedDelta.after.get(relative) ?? null,
+          })),
+        });
+        const workspaceContentPolicy = buildIsolatedAgentWorkspaceContentPolicy({
+          outcomeBlindWorkspace: outcomeBlind,
+          oversizedTopLevelDirectories: largeDirectoryExcludes
+            .map((candidate) => path.relative(source, candidate).replace(/\\/g, '/'))
+            .sort(),
+        });
+        const sourcePostimage = baseline(source, isolationExcludes);
+        const isolatedAgentMergeReceipt = buildIsolatedAgentMergeReceipt({
+          delegateExecutorId: receipt.executorId,
+          delegateAgentExecutionReceipt: receipt,
+          changedPaths,
+          agentWorkspacePostimageBinding,
+          sourcePreimage: snapshotRows(sourceBaseline),
+          isolatedPreimage: snapshotRows(isolatedBaseline),
+          isolatedPostimage: snapshotRows(isolatedDelta.after),
+          sourcePostimage: snapshotRows(sourcePostimage),
+          workspaceContentPolicy,
+        });
         succeeded = true;
         workspaceRegistry?.transition(registryEntry.workspaceId, {
           status: 'merged',
           retentionState: 'protected',
           retentionReason: keepWorkspaces ? 'operator_retained' : 'merged_pending_removal',
         });
-        return Object.freeze({ ...receipt, changedPaths, isolatedWorkspaceRetained: Boolean(keepWorkspaces), workspaceContentPolicy: mergePayload.workspaceContentPolicy, isolatedAgentMergeReceiptHash: hashRecord('IsolatedAgentMergeReceipt', mergePayload) });
+        return Object.freeze({
+          ...receipt,
+          changedPaths,
+          agentWorkspacePostimageBinding,
+          isolatedAgentMergeReceipt,
+          isolatedWorkspaceRetained: Boolean(keepWorkspaces),
+          workspaceContentPolicy,
+          isolatedAgentMergeReceiptHash:
+            isolatedAgentMergeReceipt.isolatedAgentMergeReceiptHash,
+        });
       } catch (error) {
         failure = error;
+        if ((error?.stateRecoverabilityFatal === true
+          || error?.stateRecoverabilityDeferred === true
+          || error?.authorityEvidenceRenewalFatal === true
+          || error?.authorityEvidenceRenewalDeferred === true
+          || error?.residentReactivationRequired === true) && !delegateStarted) {
+          error.externalSideEffectNotStarted = true;
+          throw error;
+        }
         workspaceRegistry?.transition(registryEntry.workspaceId, {
           status: error?.conflicts?.length ? 'conflict' : 'failed',
           failureClass: error?.code || error?.message || 'isolated_agent_failed',

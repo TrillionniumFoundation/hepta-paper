@@ -11,17 +11,23 @@ const ignoredDirectories = new Set([
   '.nyc_output',
   'coverage',
   'node_modules',
-  'runtime',
 ]);
 
-function moduleFilesUnder(directory) {
+function moduleFilesUnder(directory, ignoredPaths) {
   return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
-    if (entry.isDirectory() && ignoredDirectories.has(entry.name)) return [];
     const absolute = path.join(directory, entry.name);
-    if (entry.isDirectory()) return moduleFilesUnder(absolute);
+    if (entry.isDirectory()
+      && (ignoredDirectories.has(entry.name) || ignoredPaths.has(absolute))) return [];
+    if (entry.isDirectory()) return moduleFilesUnder(absolute, ignoredPaths);
     if (!entry.isFile() || !entry.name.endsWith('.mjs')) return [];
     return [absolute];
   });
+}
+
+export function discoverMjsModuleFiles(root = workspaceRoot) {
+  const resolvedRoot = path.resolve(root);
+  const ignoredPaths = new Set([path.join(resolvedRoot, 'runtime')]);
+  return moduleFilesUnder(resolvedRoot, ignoredPaths).sort();
 }
 
 function checkModule(file) {
@@ -58,20 +64,31 @@ async function runBounded(items, concurrency, operation) {
   return results;
 }
 
-const files = moduleFilesUnder(workspaceRoot).sort();
-const failures = (await runBounded(files, Math.max(2, Math.min(8, os.availableParallelism())), checkModule))
-  .filter(Boolean);
+export async function runMjsSyntaxCheck({ root = workspaceRoot } = {}) {
+  const files = discoverMjsModuleFiles(root);
+  const failures = (await runBounded(
+    files,
+    Math.max(2, Math.min(8, os.availableParallelism())),
+    checkModule,
+  )).filter(Boolean);
+  return Object.freeze({ files, failures });
+}
 
-if (failures.length) {
-  for (const failure of failures) {
-    process.stderr.write(`${path.relative(workspaceRoot, failure.file)}\n${failure.error}\n`);
+const invokedAsEntrypoint = process.argv[1]
+  && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (invokedAsEntrypoint) {
+  const { files, failures } = await runMjsSyntaxCheck();
+  if (failures.length) {
+    for (const failure of failures) {
+      process.stderr.write(`${path.relative(workspaceRoot, failure.file)}\n${failure.error}\n`);
+    }
+    process.exitCode = 1;
+  } else {
+    process.stdout.write(`${JSON.stringify({
+      ok: true,
+      kind: 'MjsSyntaxCheck',
+      filesChecked: files.length,
+      checker: process.execPath,
+    })}\n`);
   }
-  process.exitCode = 1;
-} else {
-  process.stdout.write(`${JSON.stringify({
-    ok: true,
-    kind: 'MjsSyntaxCheck',
-    filesChecked: files.length,
-    checker: process.execPath,
-  })}\n`);
 }

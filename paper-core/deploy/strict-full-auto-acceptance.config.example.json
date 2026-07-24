@@ -1,0 +1,137 @@
+{
+  "version": 1,
+  "kind": "StrictFullAutoAcceptanceConfiguration",
+  "controlRoot": "/var/lib/hepta-paper/strict-full-auto-acceptance-control",
+  "runtimeRoot": "/var/lib/hepta-paper/runtime",
+  "assetRoot": "/srv/hepta-paper/assets",
+  "datasetRoot": "/srv/hepta-paper/datasets",
+  "operationalEnvironment": {
+    "HEPTA_RESEARCH_AUTHOR_PROVIDER": "codex",
+    "HEPTA_RESEARCH_AUTHOR_CODEX_BINARY": "/usr/local/bin/codex",
+    "HEPTA_RESEARCH_AUTHOR_MODEL": "gpt-5.2",
+    "HEPTA_FORMAL_REVIEW_PROVIDER": "codex",
+    "HEPTA_FORMAL_REVIEW_CODEX_BINARY": "/usr/local/bin/codex",
+    "HEPTA_FORMAL_REVIEW_MODEL": "gpt-5.2",
+    "HEPTA_RESEARCH_AUTHOR_MAXIMUM_COST_PER_CALL_USD": "25",
+    "HEPTA_FORMAL_REVIEWER_MAXIMUM_COST_PER_CALL_USD": "25",
+    "HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_RECEIPT": "/run/hepta/runtime-reproducibility-receipt.json",
+    "HEPTA_AUTONOMOUS_EMPIRICAL_PLUGIN_ACTIVATION_POINTER": "/run/hepta/empirical-plugin-activation-pointer.json",
+    "HEPTA_AUTONOMOUS_RESEARCH_CONTENT_MODE": "agent-evidence-bound",
+    "HEPTA_DYNAMIC_FORMAL_CLAIMS_ENABLED": "true",
+    "HEPTA_AUTONOMOUS_RESEARCH_DATASET_ROOT": "/srv/hepta-paper/datasets"
+  },
+  "references": {
+    "research-author-principal": { "kind": "public-reference", "path": "/run/hepta/research-author-identity.json", "subjectId": "research-author-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
+    "research-author-credential-root": { "kind": "opaque-directory-reference", "path": "/var/lib/hepta-paper/principals/research-author/codex-home", "subjectId": "research-author-credential-root-production" },
+    "formal-reviewer-principal": { "kind": "public-reference", "path": "/run/hepta/formal-reviewer-identity.json", "subjectId": "formal-reviewer-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
+    "formal-reviewer-credential-root": { "kind": "opaque-directory-reference", "path": "/var/lib/hepta-paper/principals/formal-reviewer/codex-home", "subjectId": "formal-reviewer-credential-root-production" },
+    "online-state-authority-principal": { "kind": "public-reference", "path": "/run/hepta/online-state-authority.json", "subjectId": "online-state-authority-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
+    "online-state-authority-process-config": { "kind": "public-reference", "path": "/run/hepta/online-state-authority-process.json", "subjectId": "online-state-authority-process-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
+    "runtime-reproducibility-principal": { "kind": "public-reference", "path": "/run/hepta/runtime-reproducibility-authority.json", "subjectId": "runtime-reproducibility-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
+    "formal-sandbox-runtime-config": { "kind": "public-reference", "path": "/run/hepta/formal-sandbox-runtime.json", "subjectId": "formal-sandbox-runtime-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
+    "production-mathlib-build-authority-config": { "kind": "public-reference", "path": "/run/hepta-authority/production-mathlib-build-authority.json", "subjectId": "production-mathlib-build-authority", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
+    "empirical-plugin-signing-config": { "kind": "private-configuration-reference", "path": "/run/hepta/empirical-plugin-signing-authority.json", "subjectId": "empirical-plugin-signing-authority-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
+    "empirical-plugin-trust-store": { "kind": "public-reference", "path": "/run/hepta/empirical-plugin-trust-store.json", "subjectId": "empirical-plugin-trust-store-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
+    "empirical-plugin-signer-command": { "kind": "public-reference", "path": "/usr/local/libexec/hepta-empirical-plugin-signer", "subjectId": "empirical-plugin-signer-command-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
+    "external-qualifier-principal": { "kind": "public-reference", "path": "/run/hepta/external-qualification.json", "subjectId": "external-qualifier-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
+    "prior-art-service-config": { "kind": "public-reference", "path": "/run/hepta/prior-art-service.json", "subjectId": "prior-art-service-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
+    "prior-art-service-credential-reference": { "kind": "opaque-secret-reference", "path": "/run/hepta/secrets/prior-art-service-token", "subjectId": "prior-art-service-credential-production" },
+    "external-replay-config": { "kind": "public-reference", "path": "/run/hepta/external-replay.json", "subjectId": "external-replay-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
+    "external-replay-credential-reference": { "kind": "opaque-secret-reference", "path": "/run/hepta/secrets/external-replay-service-token", "subjectId": "external-replay-service-credential-production" },
+    "release-attestor-config": { "kind": "private-configuration-reference", "path": "/run/hepta/research-execution-release-attestor.json", "subjectId": "release-attestor-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
+    "release-attestor-signer-credential-root": { "kind": "opaque-directory-reference", "path": "/var/lib/hepta-paper/principals/release-attestor-signer", "subjectId": "release-attestor-signer-credential-root-production" },
+    "release-attestor-probe-credential-root": { "kind": "opaque-directory-reference", "path": "/var/lib/hepta-paper/principals/release-attestor-probe", "subjectId": "release-attestor-probe-credential-root-production" },
+    "release-attestor-signer-command": { "kind": "public-reference", "path": "/usr/local/libexec/hepta-release-attestor-sign", "subjectId": "release-attestor-signer-command-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
+    "release-attestor-probe-command": { "kind": "public-reference", "path": "/usr/local/libexec/hepta-release-attestor-probe", "subjectId": "release-attestor-probe-command-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
+    "machine-intake-principal": { "kind": "public-reference", "path": "/run/hepta/machine-intake.json", "subjectId": "machine-intake-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
+    "topic-producer-profile": { "kind": "public-reference", "path": "/run/hepta/topic-producer.json", "subjectId": "topic-producer-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
+    "backup-restore-authority-principal": { "kind": "public-reference", "path": "/run/hepta/backup-restore-authority.json", "subjectId": "backup-restore-authority-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
+    "submission-dispatcher-principal": { "kind": "public-reference", "path": "/run/hepta/submission-dispatcher-identity.json", "subjectId": "submission-dispatcher-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
+    "autonomous-venue-profile-config": { "kind": "public-reference", "path": "/run/hepta/autonomous-venue-profile.json", "subjectId": "autonomous-venue-profile-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
+    "autonomous-submission-metadata-config": { "kind": "public-reference", "path": "/run/hepta/autonomous-submission-metadata.json", "subjectId": "autonomous-submission-metadata-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
+    "submission-portal-descriptor-config": { "kind": "public-reference", "path": "/run/hepta/autonomous-submission-portal-descriptor.json", "subjectId": "submission-portal-descriptor-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" }
+  },
+  "steps": {
+    "migration": {
+      "idempotencyKey": "sha256:1000000000000000000000000000000000000000000000000000000000000000",
+      "execute": { "command": "store", "arguments": ["migrate"], "environmentReferences": {}, "assertions": [{ "path": "/status", "equals": "hepta_native_store_ready" }] },
+      "verify": { "command": "store", "arguments": ["status", "--require-trust-clean", "--allow-isolated-verification-evidence"], "environmentReferences": {}, "assertions": [{ "path": "/status", "equals": "hepta_native_store_ready" }] }
+    },
+    "state-provisioning": {
+      "idempotencyKey": "sha256:2000000000000000000000000000000000000000000000000000000000000000",
+      "execute": { "command": "autonomous-state-provision", "arguments": ["--action", "execute", "--execute", "--plan-id", "sha256:2000000000000000000000000000000000000000000000000000000000000000", "--machine-intake-config", "/run/hepta/machine-intake.json", "--topic-producer-profile", "/run/hepta/topic-producer.json", "--dataset-root", "/srv/hepta-paper/datasets", "--provider-canary-pair-maximum-cost-usd", "25", "--runtime-reproducibility-maximum-attempts-per-epoch", "3", "--runtime-reproducibility-maximum-cost-usd-per-epoch", "75"], "environmentReferences": { "HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG": "research-author-principal", "HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG_HASH": "research-author-principal", "HEPTA_RESEARCH_AUTHOR_CODEX_HOME": "research-author-credential-root", "HEPTA_REVIEWER_PRINCIPAL_POOL_CONFIG": "formal-reviewer-principal", "HEPTA_FORMAL_REVIEW_CODEX_HOME": "formal-reviewer-credential-root", "HEPTA_AUTONOMOUS_RESEARCH_INTAKE_CONFIG": "machine-intake-principal" }, "assertions": [{ "path": "/status", "equals": "autonomous_research_state_business_schemas_provisioned" }] },
+      "verify": { "command": "autonomous-online-transition", "arguments": ["--action", "plan", "--authority-process-config", "/run/hepta/online-state-authority-process.json"], "environmentReferences": {}, "assertions": [{ "path": "/ready", "equals": true }, { "path": "/plan/transitionId", "equals": "sha256:3000000000000000000000000000000000000000000000000000000000000000" }] }
+    },
+    "online-transition": {
+      "idempotencyKey": "sha256:3000000000000000000000000000000000000000000000000000000000000000",
+      "execute": { "command": "autonomous-online-transition", "arguments": ["--action", "execute", "--execute", "--transition-id", "sha256:3000000000000000000000000000000000000000000000000000000000000000", "--authority-process-config", "/run/hepta/online-state-authority-process.json"], "environmentReferences": {}, "assertions": [{ "path": "/status", "equals": "autonomous_research_online_schema_transition_ready" }] },
+      "verify": { "command": "automation-status", "arguments": [], "environmentReferences": { "@profile": "readiness" }, "assertions": [{ "path": "/autonomousStateDatabaseInventoryReady", "equals": true }, { "path": "/autonomousStateOnlineAntiRollbackReady", "equals": true }] }
+    },
+    "runtime-reproducibility": {
+      "idempotencyKey": "sha256:4000000000000000000000000000000000000000000000000000000000000000",
+      "execute": { "command": "runtime-image-reproducibility", "arguments": ["--action", "publish", "--config", "/run/hepta/runtime-reproducibility-authority.json", "--receipt", "/run/hepta/runtime-reproducibility-receipt.json"], "environmentReferences": {}, "assertions": [{ "path": "/status", "equals": "runtime_image_reproducibility_verified" }] },
+      "verify": { "command": "runtime-image-reproducibility", "arguments": ["--action", "status", "--config", "/run/hepta/runtime-reproducibility-authority.json", "--receipt", "/run/hepta/runtime-reproducibility-receipt.json"], "environmentReferences": {}, "assertions": [{ "path": "/status", "equals": "runtime_image_reproducibility_verified" }] }
+    },
+    "advanced-numeric-activation": {
+      "idempotencyKey": "sha256:5000000000000000000000000000000000000000000000000000000000000000",
+      "execute": { "command": "autonomous-empirical-plugin-release", "arguments": ["--action", "publish", "--activation", "/run/hepta/empirical-plugin-activation-pointer.json", "--signing-config", "/run/hepta/empirical-plugin-signing-authority.json", "--install-root", "/var/lib/hepta-paper/empirical-plugin-releases", "--package-version", "1.0.0", "--benchmark-family", "econometrics_panel_benchmark", "--benchmark-family", "finance_asset_pricing_benchmark", "--benchmark-family", "ml_algorithm_benchmark", "--benchmark-family", "operations_optimization_benchmark", "--benchmark-family", "registered_scalar_response_benchmark", "--benchmark-family", "rl_stochastic_control_benchmark"], "environmentReferences": {}, "assertions": [{ "path": "/status", "equals": "autonomous_empirical_plugin_release_published" }, { "path": "/strictProductionAdvancedNumericalFamilySetVerified", "equals": true }] },
+      "verify": { "command": "autonomous-empirical-plugin-release", "arguments": ["--action", "inspect", "--activation", "/run/hepta/empirical-plugin-activation-pointer.json"], "environmentReferences": {}, "assertions": [{ "path": "/status", "equals": "autonomous_empirical_plugin_installed_release_ready" }, { "path": "/activationPointerVerified", "equals": true }, { "path": "/strictProductionAdvancedNumericalFamilySetVerified", "equals": true }] }
+    },
+    "provider-canaries": {
+      "idempotencyKey": "sha256:6000000000000000000000000000000000000000000000000000000000000000",
+      "execute": { "command": "automation-status", "arguments": ["--live-provider-canary"], "environmentReferences": { "@profile": "readiness" }, "assertions": [{ "path": "/liveProviderCanaryReady", "equals": true }] },
+      "verify": { "command": "automation-status", "arguments": ["--live-provider-canary"], "environmentReferences": { "@profile": "readiness" }, "assertions": [{ "path": "/liveProviderCanaryReady", "equals": true }] }
+    },
+    "external-qualifier": {
+      "idempotencyKey": "sha256:7000000000000000000000000000000000000000000000000000000000000000",
+      "execute": { "command": "autonomous-research", "arguments": ["--action", "prepare", "--launch-mode", "golden-bootstrap", "--paper-id", "strict-acceptance-golden-paper", "--external-qualification-config", "/run/hepta/external-qualification.json"], "environmentReferences": { "@profile": "readiness" }, "assertions": [{ "path": "/externalQualificationServiceReady", "equals": true }, { "path": "/campaign/paperId", "equals": "strict-acceptance-golden-paper" }] },
+      "verify": { "command": "autonomous-research", "arguments": ["--action", "prepare", "--launch-mode", "golden-bootstrap", "--paper-id", "strict-acceptance-golden-paper", "--external-qualification-config", "/run/hepta/external-qualification.json"], "environmentReferences": { "@profile": "readiness" }, "assertions": [{ "path": "/externalQualificationServiceReady", "equals": true }, { "path": "/campaign/paperId", "equals": "strict-acceptance-golden-paper" }] }
+    },
+    "release-attestor-challenge": {
+      "idempotencyKey": "sha256:8000000000000000000000000000000000000000000000000000000000000000",
+      "execute": { "command": "automation-status", "arguments": ["--live-release-attestor"], "environmentReferences": { "@profile": "readiness" }, "assertions": [{ "path": "/researchExecutionReleaseAttestorProductionReady", "equals": true }] },
+      "verify": { "command": "automation-status", "arguments": ["--live-release-attestor"], "environmentReferences": { "@profile": "readiness" }, "assertions": [{ "path": "/researchExecutionReleaseAttestorProductionReady", "equals": true }] }
+    },
+    "machine-intake": {
+      "idempotencyKey": "sha256:9000000000000000000000000000000000000000000000000000000000000000",
+      "execute": { "command": "autonomous-supervisor", "arguments": ["--request-resident-cycle", "--publish-strict-machine-intake-reconciliation"], "environmentReferences": {}, "assertions": [{ "path": "/status", "equals": "autonomous_research_resident_cycle_completed" }] },
+      "verify": { "command": "autonomous-supervisor-health", "arguments": ["--require-strict-machine-intake-reconciliation"], "environmentReferences": { "@profile": "readiness" }, "assertions": [{ "path": "/strictMachineIntakeReconciliationReady", "equals": true }] }
+    },
+    "resident-supervisor": {
+      "idempotencyKey": "sha256:a000000000000000000000000000000000000000000000000000000000000000",
+      "execute": { "command": "autonomous-supervisor-health", "arguments": ["--require-startup-reconciliation"], "environmentReferences": {}, "assertions": [{ "path": "/status", "equals": "autonomous_research_supervisor_instance_ready" }] },
+      "verify": { "command": "autonomous-supervisor-health", "arguments": ["--require-startup-reconciliation"], "environmentReferences": {}, "assertions": [{ "path": "/status", "equals": "autonomous_research_supervisor_instance_ready" }] }
+    },
+    "golden-qualification": {
+      "idempotencyKey": "sha256:b000000000000000000000000000000000000000000000000000000000000000",
+      "execute": { "command": "autonomous-research", "arguments": ["--action", "converge", "--launch-mode", "golden-bootstrap", "--paper-id", "strict-acceptance-golden-paper", "--external-qualification-config", "/run/hepta/external-qualification.json", "--require-bounded-golden-ready"], "environmentReferences": { "@profile": "readiness" }, "assertions": [{ "path": "/boundedGoldenQualificationPublished", "equals": true }, { "path": "/campaign/paperId", "equals": "strict-acceptance-golden-paper" }] },
+      "verify": { "command": "automation-status", "arguments": [], "environmentReferences": { "@profile": "readiness" }, "assertions": [{ "path": "/boundedGoldenInfrastructureQualificationReady", "equals": true }, { "path": "/fullResearchQualification/paperId", "equals": "strict-acceptance-golden-paper" }] }
+    },
+    "production-campaign-qualification": {
+      "idempotencyKey": "sha256:e000000000000000000000000000000000000000000000000000000000000000",
+      "execute": { "command": "autonomous-supervisor", "arguments": ["--request-resident-cycle"], "environmentReferences": {}, "assertions": [{ "path": "/status", "equals": "autonomous_research_resident_cycle_completed" }] },
+      "verify": { "command": "automation-status", "arguments": [], "environmentReferences": { "@profile": "readiness" }, "assertions": [{ "path": "/autonomousResearchAgendaAuthorityInspection/ready", "equals": true }, { "path": "/autonomousResearchAgendaAuthorityInspection/priorArtClaimAlignmentReady", "equals": true }, { "path": "/autonomousResearchAgendaAuthorityInspection/paperId", "equals": "strict-acceptance-production-paper" }, { "path": "/experimentIrExecutionAuthorityInspection/ready", "equals": true }, { "path": "/experimentIrExecutionAuthorityInspection/paperId", "equals": "strict-acceptance-production-paper" }, { "path": "/autonomousResearchVenueRequirementAuthorityInspection/ready", "equals": true }, { "path": "/autonomousResearchVenueRequirementAuthorityInspection/paperId", "equals": "strict-acceptance-production-paper" }, { "path": "/autonomousResearchAssuranceAuthorityInspection/ready", "equals": true }, { "path": "/autonomousResearchAssuranceAuthorityInspection/paperId", "equals": "strict-acceptance-production-paper" }] }
+    },
+    "generic-domain-capability-convergence": {
+      "idempotencyKey": "sha256:f000000000000000000000000000000000000000000000000000000000000000",
+      "execute": { "command": "generic-domain-capability-evidence", "arguments": ["--action", "converge", "--paper-id", "strict-acceptance-production-paper"], "environmentReferences": { "@profile": "readiness" }, "assertions": [{ "path": "/ready", "equals": true }, { "path": "/paperId", "equals": "strict-acceptance-production-paper" }] },
+      "verify": { "command": "generic-domain-capability-evidence", "arguments": ["--action", "status", "--paper-id", "strict-acceptance-production-paper"], "environmentReferences": { "@profile": "readiness" }, "assertions": [{ "path": "/ready", "equals": true }, { "path": "/paperBound", "equals": true }, { "path": "/paperId", "equals": "strict-acceptance-production-paper" }] }
+    },
+    "restore-drill": {
+      "idempotencyKey": "sha256:c000000000000000000000000000000000000000000000000000000000000000",
+      "execute": { "command": "autonomous-state-backup", "arguments": ["--action", "restore-drill", "--authority-config", "/run/hepta/backup-restore-authority.json", "--bundle", "/var/lib/hepta-paper/backups/strict-acceptance-bundle"], "environmentReferences": {}, "assertions": [{ "path": "/status", "equals": "autonomous_research_state_restore_drill_passed" }] },
+      "verify": { "command": "automation-status", "arguments": [], "environmentReferences": { "@profile": "readiness" }, "assertions": [{ "path": "/autonomousStateLatestValidRestoreDrillReady", "equals": true }] }
+    },
+    "submission-dispatcher": {
+      "idempotencyKey": "sha256:d000000000000000000000000000000000000000000000000000000000000000",
+      "execute": { "command": "autonomous-submission-dispatcher-challenge", "arguments": ["--action", "publish", "--plan-hash", "@acceptance-plan-hash", "--idempotency-key", "sha256:d000000000000000000000000000000000000000000000000000000000000000", "--portal-id", "production-portal", "--portal-configuration-hash", "sha256:0000000000000000000000000000000000000000000000000000000000000000", "--portal-descriptor-hash", "sha256:0000000000000000000000000000000000000000000000000000000000000000"], "environmentReferences": {}, "assertions": [{ "path": "/ready", "equals": true }] },
+      "verify": { "command": "autonomous-submission-dispatcher-challenge", "arguments": ["--action", "status", "--plan-hash", "@acceptance-plan-hash", "--idempotency-key", "sha256:d000000000000000000000000000000000000000000000000000000000000000", "--portal-id", "production-portal", "--portal-configuration-hash", "sha256:0000000000000000000000000000000000000000000000000000000000000000", "--portal-descriptor-hash", "sha256:0000000000000000000000000000000000000000000000000000000000000000"], "environmentReferences": { "HEPTA_SUBMISSION_DISPATCHER_IDENTITY_CONFIG_PATH": "submission-dispatcher-principal" }, "assertions": [{ "path": "/ready", "equals": true }, { "path": "/portalBindingVerified", "equals": true }, { "path": "/livePortalCanaryVerified", "equals": true }] }
+    }
+  },
+  "finalVerification": {
+    "command": "automation-status",
+    "arguments": ["--live-provider-canary", "--live-release-attestor", "--require-fully-autonomous"],
+    "environmentReferences": { "@profile": "readiness" },
+    "assertions": [{ "path": "/fullyAutonomousResearchSystemStatus", "equals": "generic_domain_autonomous_research_system_ready" }, { "path": "/fullResearchQualification/paperId", "equals": "strict-acceptance-golden-paper" }]
+  }
+}

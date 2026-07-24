@@ -7,6 +7,9 @@ import {
 } from '../../paper-domain/automation/dataset-access-supervisor-policy.mjs';
 import { buildRuntimeImageReproducibilityAssessment } from '../../paper-domain/automation/runtime-build-reproducibility-contract.mjs';
 import { verifyRRuntimeSourceCas } from './r-runtime-source-cas.mjs';
+import {
+  AUTONOMOUS_EMPIRICAL_PLUGIN_RUNTIME_LANGUAGES,
+} from '../../paper-domain/automation/autonomous-empirical-family-plugin-registry.mjs';
 
 function assertGpuScientificInputMirror(fileName) {
   const canonical = fs.readFileSync(fileURLToPath(new URL(
@@ -161,8 +164,12 @@ export function runtimeCapabilityForCampaign({ gpu = false, requireTrustedDatase
 export function runtimeImagesForCampaign({ gpu = false, requireTrustedDatasetAccess = false } = {}) {
   const capability = runtimeCapabilityForCampaign({ gpu, requireTrustedDatasetAccess });
   if (!capability.ready) return Object.freeze({});
-  return Object.freeze({
-    python: gpu ? AUTOMATION_RUNTIME_IMAGES.pythonGpu : AUTOMATION_RUNTIME_IMAGES.python,
-    r: AUTOMATION_RUNTIME_IMAGES.r,
-  });
+  return Object.freeze(Object.fromEntries(
+    AUTONOMOUS_EMPIRICAL_PLUGIN_RUNTIME_LANGUAGES.map((language) => [
+      language,
+      language === 'python' && gpu
+        ? AUTOMATION_RUNTIME_IMAGES.pythonGpu
+        : AUTOMATION_RUNTIME_IMAGES[language],
+    ]),
+  ));
 }

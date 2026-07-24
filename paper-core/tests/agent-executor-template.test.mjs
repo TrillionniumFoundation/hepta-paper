@@ -588,6 +588,7 @@ test('Ollama receipt golden preserves structured edits and token accounting', as
   });
   assert.equal(providerRequest.options.num_predict, 444);
   assert.equal(providerRequest.model, 'fixture-ollama');
+  assert.ok(providerRequest.prompt.includes('encode every literal backslash as \\\\;'));
   assert.deepEqual(verifyAndNormalizeReceipt(receipt), {
     version: 1,
     kind: 'AgentExecutionReceipt',
@@ -620,6 +621,33 @@ test('Ollama receipt golden preserves structured edits and token accounting', as
     agentExecutionReceiptHash: '<receipt-hash>',
   });
   assert.equal(fs.readFileSync(path.join(root, 'main.tex'), 'utf8'), 'after\n');
+});
+
+test('Ollama receipts omit content-identical no-op edits', async (t) => {
+  const root = temporary(t, 'hepta-ollama-template-noop-');
+  fs.writeFileSync(path.join(root, 'main.tex'), 'unchanged\n');
+  const stdout = JSON.stringify({
+    status: 'completed',
+    summary: 'no-op',
+    edits: [{ path: 'main.tex', content: 'unchanged\n' }],
+    checks: [],
+    blockers: [],
+  });
+  const executor = createOllamaStructuredAgentExecutor({
+    model: 'fixture-ollama',
+    timeoutMs: 5000,
+    fetchImpl: async () => ({
+      ok: true,
+      json: async () => ({ response: stdout, done_reason: 'stop', eval_count: 7 }),
+    }),
+  });
+  const receipt = await executor.execute({
+    role: 'writer',
+    workspacePath: root,
+    instructions: 'leave the fixture unchanged',
+  });
+  assert.deepEqual(receipt.changedPaths, []);
+  assert.equal(fs.readFileSync(path.join(root, 'main.tex'), 'utf8'), 'unchanged\n');
 });
 
 test('shared preflight and workspace validation retain provider error codes', async (t) => {

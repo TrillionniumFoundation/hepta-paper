@@ -37,6 +37,7 @@ test('theorem readiness detects unresolved proof semantics from manuscript sourc
 test('theorem readiness is enforced by convergence and package boundaries', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-theorem-integration-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, 'runtime'), { recursive: true });
   writeTheoremWorkspace(root, { blocked: true });
   const executor = createCampaignNodeExecutor({
     runtimeRoot: path.join(root, 'runtime'),

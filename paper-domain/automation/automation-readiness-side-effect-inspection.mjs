@@ -1,4 +1,5 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hasExactPlainObjectKeys as exactKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const INSPECTION_KEYS = Object.freeze([
@@ -21,12 +22,6 @@ const ENDPOINTS = new Set([
   'local_process', 'local_unix_daemon', 'local_endpoint', 'remote_endpoint',
   'external_provider', 'external_release_backend',
 ]);
-
-function exactKeys(value, keys) {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    && Object.getPrototypeOf(value) === Object.prototype
-    && JSON.stringify(Object.keys(value).sort()) === JSON.stringify(keys);
-}
 
 function nonnegativeInteger(value) {
   return Number.isSafeInteger(value) && value >= 0;

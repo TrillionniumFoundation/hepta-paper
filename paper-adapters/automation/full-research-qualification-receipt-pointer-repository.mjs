@@ -2,231 +2,38 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-
+import { validateExternallyFencedSqliteMutationCoordinatorConfiguration } from './externally-fenced-sqlite-mutation-coordinator-configuration.mjs';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
-import { writeDurableJsonSync } from '../runtime/durable-json-repository.mjs';
+import {
+  fullResearchQualificationCommittedMirrorPending,
+  fullResearchQualificationMirrorReservationHash,
+  reconcileFullResearchQualificationMirror,
+} from './full-research-qualification-publication-mirror.mjs';
+import {
+  FULL_RESEARCH_QUALIFICATION_PUBLICATION_DATABASE_INSTANCE_ID,
+  FULL_RESEARCH_QUALIFICATION_PUBLICATION_DATABASE_ROLE,
+  FULL_RESEARCH_QUALIFICATION_PUBLICATION_SCHEMA_CONTRACT_ID,
+  FULL_RESEARCH_QUALIFICATION_PUBLICATION_WRITER_ID,
+  createOfflineFullResearchQualificationPublicationMutationCoordinator,
+} from './full-research-qualification-publication-mutation-plan.mjs';
+import {
+  MAXIMUM_AGE_MS,
+  SAFE_ID,
+  SHA256,
+  ensureDatabaseFile,
+  ensureSchema,
+  fencedLease,
+  leaseIdentity,
+  monotonicSuccessor,
+  receiptBytes,
+  receiptHashValid,
+  receiptTimeWindowValid,
+  safeFile,
+  safeReadMirror,
+  validatedAuthority,
+} from './full-research-qualification-receipt-pointer-repository-support.mjs';
 
-const SHA256 = /^sha256:[0-9a-f]{64}$/i;
-const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,255}$/;
-const MAXIMUM_RECEIPT_BYTES = 16 * 1024 * 1024;
-const MAXIMUM_AGE_MS = 24 * 60 * 60 * 1000;
 const POINTER_FILE = 'HEPTA_FULL_RESEARCH_QUALIFICATION_RECEIPT.json';
-
-function receiptHashValid(receipt) {
-  if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)
-    || !SHA256.test(String(receipt.fullResearchQualificationReceiptHash || ''))
-    || !SHA256.test(String(receipt.runtimeImageReproducibilityReceiptHash || ''))
-    || JSON.stringify(receipt.runtimeImageReproducibilityRequiredProfiles)
-      !== JSON.stringify(['python', 'pythonGpu', 'r'])
-    || JSON.stringify(Object.keys(
-      receipt.runtimeImageReproducibilityDefinitionManifestHashes || {},
-    )) !== JSON.stringify(['python', 'pythonGpu', 'r'])
-    || Object.values(receipt.runtimeImageReproducibilityDefinitionManifestHashes || {})
-      .some((value) => !SHA256.test(String(value || '')))) return false;
-  const { fullResearchQualificationReceiptHash, ...payload } = receipt;
-  return hashRecord('FullResearchGoldenMicroCampaignQualificationReceipt', payload)
-    === fullResearchQualificationReceiptHash;
-}
-
-function canonicalTimestamp(value) {
-  const milliseconds = Date.parse(String(value || ''));
-  return Number.isFinite(milliseconds) && new Date(milliseconds).toISOString() === value
-    ? milliseconds : null;
-}
-
-function receiptTimeWindowValid(receipt, now) {
-  const nowMs = now instanceof Date ? now.getTime() : Date.parse(String(now));
-  const issuedAt = canonicalTimestamp(receipt?.issuedAt);
-  const expiresAt = canonicalTimestamp(receipt?.expiresAt);
-  return Number.isFinite(nowMs) && issuedAt !== null && expiresAt !== null
-    && expiresAt > issuedAt && expiresAt - issuedAt <= MAXIMUM_AGE_MS
-    && nowMs >= issuedAt && nowMs < expiresAt;
-}
-
-function receiptBytes(receipt) {
-  return Buffer.from(`${JSON.stringify(receipt, null, 2)}\n`);
-}
-
-function safeFile(candidate, { minimumBytes = 1, maximumBytes = MAXIMUM_RECEIPT_BYTES } = {}) {
-  const requested = path.resolve(candidate);
-  const stat = fs.lstatSync(requested);
-  const currentUid = typeof process.getuid === 'function' ? process.getuid() : stat.uid;
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.uid !== currentUid
-    || (stat.mode & 0o022) !== 0 || stat.size < minimumBytes || stat.size > maximumBytes
-    || fs.realpathSync(requested) !== requested) {
-    throw new Error('full_research_qualification_pointer_file_invalid');
-  }
-  return requested;
-}
-
-function parseReceiptBytes(bytes) {
-  let receipt;
-  try { receipt = JSON.parse(bytes.toString('utf8')); }
-  catch { throw new Error('full_research_qualification_pointer_json_invalid'); }
-  if (!receiptHashValid(receipt)) {
-    throw new Error('full_research_qualification_pointer_receipt_hash_invalid');
-  }
-  return Object.freeze(receipt);
-}
-
-function safeReadMirror(candidate) {
-  const bytes = fs.readFileSync(safeFile(candidate));
-  return Object.freeze({ receipt: parseReceiptBytes(bytes), bytes });
-}
-
-function ensureDatabaseFile(candidate) {
-  fs.mkdirSync(path.dirname(candidate), { recursive: true, mode: 0o700 });
-  fs.chmodSync(path.dirname(candidate), 0o700);
-  try {
-    const descriptor = fs.openSync(
-      candidate,
-      fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_EXCL
-        | (fs.constants.O_NOFOLLOW || 0),
-      0o600,
-    );
-    try { fs.fsyncSync(descriptor); } finally { fs.closeSync(descriptor); }
-  } catch (error) {
-    if (error?.code !== 'EEXIST') throw error;
-    safeFile(candidate, { minimumBytes: 0, maximumBytes: 256 * 1024 * 1024 });
-  }
-}
-
-function ensureSchema(database) {
-  // DELETE journaling keeps status/read() side-effect free. Opening a read-only
-  // WAL database can materialize `-shm`/`-wal` sidecars even without a query mutation.
-  database.exec('PRAGMA journal_mode=DELETE;');
-  database.exec('PRAGMA synchronous=FULL;');
-  database.exec(`CREATE TABLE IF NOT EXISTS full_research_qualification_pointer_authority (
-    singleton_id INTEGER PRIMARY KEY CHECK(singleton_id=1),
-    receipt_json TEXT NOT NULL,
-    receipt_content_hash TEXT NOT NULL,
-    receipt_hash TEXT NOT NULL,
-    runtime_receipt_hash TEXT NOT NULL,
-    qualification_state_hash TEXT NOT NULL,
-    qualification_state_generation INTEGER NOT NULL CHECK(qualification_state_generation>=1),
-    publisher_scope TEXT NOT NULL,
-    publisher_owner_id TEXT NOT NULL,
-    publisher_lease_generation INTEGER NOT NULL CHECK(publisher_lease_generation>=1),
-    issued_at TEXT NOT NULL,
-    expires_at TEXT NOT NULL,
-    publication_generation INTEGER NOT NULL CHECK(publication_generation>=1),
-    updated_at TEXT NOT NULL
-  ) STRICT;
-  CREATE TABLE IF NOT EXISTS full_research_qualification_pointer_lease (
-    singleton_id INTEGER PRIMARY KEY CHECK(singleton_id=1),
-    lease_owner TEXT,
-    lease_token TEXT,
-    lease_generation INTEGER NOT NULL DEFAULT 0 CHECK(lease_generation>=0),
-    lease_expires_at TEXT,
-    recovered_lease_count INTEGER NOT NULL DEFAULT 0 CHECK(recovered_lease_count>=0),
-    updated_at TEXT NOT NULL
-  ) STRICT;`);
-  database.prepare(`INSERT OR IGNORE INTO full_research_qualification_pointer_lease(
-    singleton_id,lease_generation,recovered_lease_count,updated_at
-  ) VALUES(1,0,0,?)`).run(new Date(0).toISOString());
-}
-
-function authorityRow(database) {
-  return database.prepare('SELECT * FROM full_research_qualification_pointer_authority WHERE singleton_id=1').get() || null;
-}
-
-function validatedAuthority(database) {
-  const row = authorityRow(database);
-  if (!row) return null;
-  const bytes = Buffer.from(String(row.receipt_json));
-  const receipt = parseReceiptBytes(bytes);
-  if (hashBytes(bytes) !== row.receipt_content_hash
-    || receipt.fullResearchQualificationReceiptHash !== row.receipt_hash
-    || receipt.runtimeImageReproducibilityReceiptHash !== row.runtime_receipt_hash
-    || receipt.issuedAt !== row.issued_at || receipt.expiresAt !== row.expires_at
-    || !SHA256.test(String(row.qualification_state_hash || ''))
-    || !Number.isSafeInteger(Number(row.qualification_state_generation))
-    || Number(row.qualification_state_generation) < 1
-    || !SAFE_ID.test(String(row.publisher_scope || ''))
-    || !SAFE_ID.test(String(row.publisher_owner_id || ''))
-    || !Number.isSafeInteger(Number(row.publisher_lease_generation))
-    || Number(row.publisher_lease_generation) < 1
-    || !Number.isSafeInteger(Number(row.publication_generation))
-    || Number(row.publication_generation) < 1) {
-    throw new Error('full_research_qualification_pointer_authority_state_invalid');
-  }
-  return Object.freeze({ row, bytes, receipt });
-}
-
-function rollback(database) {
-  if (database.isTransaction) {
-    try { database.exec('ROLLBACK;'); } catch { /* preserve original failure */ }
-  }
-}
-
-function leaseIdentity(value = {}) {
-  if (!SAFE_ID.test(String(value.ownerId || ''))
-    || !SAFE_ID.test(String(value.leaseToken || ''))
-    || !Number.isSafeInteger(Number(value.leaseGeneration))
-    || Number(value.leaseGeneration) < 1) {
-    throw new Error('full_research_qualification_pointer_lease_identity_invalid');
-  }
-  return Object.freeze({
-    ownerId: String(value.ownerId),
-    leaseToken: String(value.leaseToken),
-    leaseGeneration: Number(value.leaseGeneration),
-  });
-}
-
-function fencedLease(database, rawLease, nowMs) {
-  const lease = leaseIdentity(rawLease);
-  const row = database.prepare('SELECT * FROM full_research_qualification_pointer_lease WHERE singleton_id=1').get();
-  if (!row || row.lease_owner !== lease.ownerId || row.lease_token !== lease.leaseToken
-    || Number(row.lease_generation) !== lease.leaseGeneration
-    || Date.parse(row.lease_expires_at || '') <= nowMs) {
-    throw new Error('full_research_qualification_pointer_lease_lost');
-  }
-  return lease;
-}
-
-function monotonicSuccessor(current, receipt, qualificationStateGeneration) {
-  if (!current) return true;
-  if (receipt.fullResearchQualificationReceiptHash === current.receipt_hash) {
-    return Number(qualificationStateGeneration) === Number(current.qualification_state_generation);
-  }
-  const currentIssuedAt = Date.parse(current.issued_at);
-  const currentExpiresAt = Date.parse(current.expires_at);
-  const nextIssuedAt = Date.parse(receipt.issuedAt);
-  const nextExpiresAt = Date.parse(receipt.expiresAt);
-  return Number.isFinite(currentIssuedAt) && Number.isFinite(currentExpiresAt)
-    && Number.isFinite(nextIssuedAt) && Number.isFinite(nextExpiresAt)
-    && nextIssuedAt > currentIssuedAt && nextExpiresAt > currentExpiresAt
-    && Number(qualificationStateGeneration) > Number(current.qualification_state_generation);
-}
-
-function reconcileMirrorWithDatabase(database, qualificationReceiptPath) {
-  let committed = false;
-  try {
-    database.exec('BEGIN IMMEDIATE;');
-    const authority = validatedAuthority(database);
-    if (!authority) {
-      database.exec('COMMIT;');
-      committed = true;
-      return null;
-    }
-    writeDurableJsonSync(qualificationReceiptPath, authority.receipt, { mode: 0o400 });
-    const mirror = safeReadMirror(qualificationReceiptPath);
-    if (hashBytes(mirror.bytes) !== authority.row.receipt_content_hash
-      || JSON.stringify(mirror.receipt) !== JSON.stringify(authority.receipt)) {
-      throw new Error('full_research_qualification_pointer_mirror_reconciliation_failed');
-    }
-    database.exec('COMMIT;');
-    committed = true;
-    return Object.freeze({
-      qualificationReceiptHash: authority.row.receipt_hash,
-      receiptContentHash: authority.row.receipt_content_hash,
-      publicationGeneration: Number(authority.row.publication_generation),
-    });
-  } catch (error) {
-    if (!committed) rollback(database);
-    throw error;
-  }
-}
 
 export function fullResearchQualificationReceiptPointerPath({ runtimeRoot } = {}) {
   if (!runtimeRoot) throw new Error('full_research_qualification_pointer_runtime_root_required');
@@ -242,21 +49,79 @@ export function createFullResearchQualificationReceiptPointerRepository({
   runtimeRoot,
   busyTimeoutMs = 10_000,
   afterAuthorityCommit = null,
+  offlineProvision = true,
+  mutationCoordinator = null,
+  databaseInstanceId = FULL_RESEARCH_QUALIFICATION_PUBLICATION_DATABASE_INSTANCE_ID,
+  schemaContractId = FULL_RESEARCH_QUALIFICATION_PUBLICATION_SCHEMA_CONTRACT_ID,
+  writerId = FULL_RESEARCH_QUALIFICATION_PUBLICATION_WRITER_ID,
+  requireExternallyFencedMutations = false,
 } = {}) {
   const qualificationReceiptPath = fullResearchQualificationReceiptPointerPath({ runtimeRoot });
   const databasePath = `${qualificationReceiptPath}.publication.sqlite`;
   const timeout = Number(busyTimeoutMs);
-  if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 60_000) {
+  if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 60_000
+    || typeof offlineProvision !== 'boolean'
+    || typeof requireExternallyFencedMutations !== 'boolean'
+    || (afterAuthorityCommit !== null && typeof afterAuthorityCommit !== 'function')
+    || !SAFE_ID.test(String(databaseInstanceId || ''))
+    || !SAFE_ID.test(String(schemaContractId || ''))
+    || !SAFE_ID.test(String(writerId || ''))) {
     throw new Error('full_research_qualification_pointer_busy_timeout_invalid');
+  }
+  let coordinator = validateExternallyFencedSqliteMutationCoordinatorConfiguration({
+    mutationCoordinator,
+    requireExternallyFencedMutations,
+    offlineProvision,
+    databaseRole: FULL_RESEARCH_QUALIFICATION_PUBLICATION_DATABASE_ROLE,
+    requiredErrorCode:
+      'full_research_qualification_publication_external_mutation_coordinator_required',
+  });
+  coordinator ||= createOfflineFullResearchQualificationPublicationMutationCoordinator({
+    databaseInstanceId,
+    schemaContractId,
+    writerId,
+  });
+
+  function provisionDatabase() {
+    if (!offlineProvision) {
+      throw new Error('full_research_qualification_publication_offline_provisioning_required');
+    }
+    ensureDatabaseFile(databasePath);
+    const database = new DatabaseSync(databasePath);
+    try {
+      database.exec(`PRAGMA busy_timeout=${timeout};`);
+      ensureSchema(database);
+      fs.chmodSync(databasePath, 0o600);
+    } finally { database.close(); }
+    return databasePath;
   }
 
   function writableDatabase() {
-    ensureDatabaseFile(databasePath);
+    if (offlineProvision) provisionDatabase();
+    else if (!fs.existsSync(databasePath)) {
+      throw new Error('full_research_qualification_publication_offline_provisioning_required');
+    }
+    safeFile(databasePath, { maximumBytes: 256 * 1024 * 1024 });
     const database = new DatabaseSync(databasePath);
     database.exec(`PRAGMA busy_timeout=${timeout};`);
-    ensureSchema(database);
-    fs.chmodSync(databasePath, 0o600);
     return database;
+  }
+
+  function mutationValue(receipt) {
+    if (!receipt || !Object.prototype.hasOwnProperty.call(receipt, 'value')) {
+      throw new Error('full_research_qualification_publication_mutation_receipt_invalid');
+    }
+    return receipt.value;
+  }
+
+  function validatedRecoveryReceipt(receipt) {
+    if (receipt?.version !== 1
+      || receipt.kind !== 'ExternallyFencedSqliteMutationRecoveryReceipt'
+      || receipt.status !== 'externally_fenced_sqlite_mutation_recovery_complete'
+      || !Array.isArray(receipt.recoveredReservationIds)) {
+      throw new Error('full_research_qualification_publication_recovery_receipt_invalid');
+    }
+    return receipt;
   }
 
   function read() {
@@ -296,17 +161,60 @@ export function createFullResearchQualificationReceiptPointerRepository({
     derivedJsonMirrorCrashRecoverable: true,
     statusReadOnly: true,
     crossResourceAtomicPublicationClaimed: false,
+    offlineProvisioningEnabled: offlineProvision,
+    externallyFencedMutations: coordinator.implemented === true,
+    externallyFencedMutationsRequired: requireExternallyFencedMutations,
+    databaseInstanceId,
+    schemaContractId,
+    writerId,
     qualificationReceiptPath,
     databasePath,
     read,
+    provision: provisionDatabase,
+    recoverPendingPublication() {
+      if (!requireExternallyFencedMutations) {
+        throw new Error(
+          'full_research_qualification_publication_external_mutation_coordinator_required',
+        );
+      }
+      const database = writableDatabase();
+      try {
+        const recovery = validatedRecoveryReceipt(
+          coordinator.recoverPendingMutations({ database }),
+        );
+        const mirror = reconcileFullResearchQualificationMirror({
+          database,
+          qualificationReceiptPath,
+          databaseInstanceId,
+          requirePermit: true,
+          onlyIfNeeded: true,
+          validatedAuthority,
+          safeReadMirror,
+        });
+        return Object.freeze({
+          version: 1,
+          kind: 'FullResearchQualificationPendingPublicationRecovery',
+          status: 'full_research_qualification_pending_publication_recovered',
+          recoveredReservationIds: Object.freeze([
+            ...recovery.recoveredReservationIds,
+          ]),
+          mirror,
+        });
+      } finally { database.close(); }
+    },
     reconcileMirror() {
       if (!fs.existsSync(databasePath)) return null;
       safeFile(databasePath, { maximumBytes: 256 * 1024 * 1024 });
-      const database = new DatabaseSync(databasePath);
-      database.exec(`PRAGMA busy_timeout=${timeout};`);
+      const database = new DatabaseSync(databasePath, { readOnly: true });
       try {
-        ensureSchema(database);
-        return reconcileMirrorWithDatabase(database, qualificationReceiptPath);
+        return reconcileFullResearchQualificationMirror({
+          database,
+          qualificationReceiptPath,
+          databaseInstanceId,
+          requirePermit: requireExternallyFencedMutations,
+          validatedAuthority,
+          safeReadMirror,
+        });
       } finally { database.close(); }
     },
     tryAcquirePublicationLease({ ownerId, leaseMs = 5 * 60 * 1000, now = new Date() } = {}) {
@@ -321,35 +229,50 @@ export function createFullResearchQualificationReceiptPointerRepository({
       }
       const database = writableDatabase();
       try {
-        database.exec('BEGIN IMMEDIATE;');
-        const current = database.prepare('SELECT * FROM full_research_qualification_pointer_lease WHERE singleton_id=1').get();
-        const activeUntil = Date.parse(current.lease_expires_at || '');
-        if (Number.isFinite(activeUntil) && activeUntil > nowMs) {
-          database.exec('COMMIT;');
-          return null;
-        }
-        const recovered = Boolean(current.lease_expires_at);
-        const lease = Object.freeze({
-          ownerId: String(ownerId),
-          leaseToken: `qualification-pointer:${crypto.randomUUID()}`,
-          leaseGeneration: Number(current.lease_generation) + 1,
-          expiresAt: new Date(nowMs + duration).toISOString(),
-        });
-        const updated = database.prepare(`UPDATE full_research_qualification_pointer_lease SET
-          lease_owner=?,lease_token=?,lease_generation=?,lease_expires_at=?,
-          recovered_lease_count=recovered_lease_count+?,updated_at=?
-          WHERE singleton_id=1 AND lease_generation=?`).run(
-          lease.ownerId, lease.leaseToken, lease.leaseGeneration, lease.expiresAt,
-          recovered ? 1 : 0, new Date(nowMs).toISOString(), current.lease_generation,
-        );
-        if (Number(updated.changes) !== 1) {
-          throw new Error('full_research_qualification_pointer_lease_fence_conflict');
-        }
-        database.exec('COMMIT;');
-        return lease;
-      } catch (error) {
-        rollback(database);
-        throw error;
+        return mutationValue(coordinator.executeMutation({
+          database,
+          databaseRole: 'full-research-qualification-publication',
+          databaseInstanceId,
+          schemaContractId,
+          writerId,
+          operationId:
+            'full-research-qualification-publication.receipt-pointer-repository.tryAcquirePublicationLease.v1',
+          authorizationReceiptHashes: [],
+          sideEffectReservationHashes: [],
+          mutate(transaction) {
+            const current = transaction.get(
+              'qualification-publication.acquire.lease-current.get.v1',
+            );
+            if (!current) {
+              throw new Error(
+                'full_research_qualification_publication_offline_provisioning_required',
+              );
+            }
+            const activeUntil = Date.parse(current.lease_expires_at || '');
+            if (Number.isFinite(activeUntil) && activeUntil > nowMs) return null;
+            const recovered = Boolean(current.lease_expires_at);
+            const nextLease = Object.freeze({
+              ownerId: String(ownerId),
+              leaseToken: `qualification-pointer:${crypto.randomUUID()}`,
+              leaseGeneration: Number(current.lease_generation) + 1,
+              expiresAt: new Date(nowMs + duration).toISOString(),
+            });
+            const updated = transaction.run(
+              'qualification-publication.acquire.lease-update.apply.v1',
+              nextLease.ownerId,
+              nextLease.leaseToken,
+              nextLease.leaseGeneration,
+              nextLease.expiresAt,
+              recovered ? 1 : 0,
+              new Date(nowMs).toISOString(),
+              current.lease_generation,
+            );
+            if (Number(updated.changes) !== 1) {
+              throw new Error('full_research_qualification_pointer_lease_fence_conflict');
+            }
+            return nextLease;
+          },
+        }));
       } finally { database.close(); }
     },
     renewPublicationLease({ lease, leaseMs = 5 * 60 * 1000, now = new Date() } = {}) {
@@ -363,13 +286,30 @@ export function createFullResearchQualificationReceiptPointerRepository({
       const database = writableDatabase();
       try {
         const expiresAt = new Date(nowMs + duration).toISOString();
-        const updated = database.prepare(`UPDATE full_research_qualification_pointer_lease SET
-          lease_expires_at=?,updated_at=? WHERE singleton_id=1 AND lease_owner=?
-          AND lease_token=? AND lease_generation=? AND julianday(lease_expires_at)>julianday(?)`).run(
-          expiresAt, new Date(nowMs).toISOString(), identity.ownerId, identity.leaseToken,
-          identity.leaseGeneration, new Date(nowMs).toISOString(),
-        );
-        return Number(updated.changes) === 1 ? Object.freeze({ ...identity, expiresAt }) : null;
+        return mutationValue(coordinator.executeMutation({
+          database,
+          databaseRole: 'full-research-qualification-publication',
+          databaseInstanceId,
+          schemaContractId,
+          writerId,
+          operationId:
+            'full-research-qualification-publication.receipt-pointer-repository.renewPublicationLease.v1',
+          authorizationReceiptHashes: [],
+          sideEffectReservationHashes: [],
+          mutate(transaction) {
+            const updated = transaction.run(
+              'qualification-publication.renew.lease-update.apply.v1',
+              expiresAt,
+              new Date(nowMs).toISOString(),
+              identity.ownerId,
+              identity.leaseToken,
+              identity.leaseGeneration,
+              new Date(nowMs).toISOString(),
+            );
+            return Number(updated.changes) === 1
+              ? Object.freeze({ ...identity, expiresAt }) : null;
+          },
+        }));
       } finally { database.close(); }
     },
     releasePublicationLease({ lease, now = new Date() } = {}) {
@@ -378,13 +318,27 @@ export function createFullResearchQualificationReceiptPointerRepository({
       if (!Number.isFinite(nowMs)) throw new Error('full_research_qualification_pointer_clock_invalid');
       const database = writableDatabase();
       try {
-        const result = database.prepare(`UPDATE full_research_qualification_pointer_lease SET
-          lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=?
-          WHERE singleton_id=1 AND lease_owner=? AND lease_token=? AND lease_generation=?`).run(
-          new Date(nowMs).toISOString(), identity.ownerId, identity.leaseToken,
-          identity.leaseGeneration,
-        );
-        return Number(result.changes) === 1;
+        return mutationValue(coordinator.executeMutation({
+          database,
+          databaseRole: 'full-research-qualification-publication',
+          databaseInstanceId,
+          schemaContractId,
+          writerId,
+          operationId:
+            'full-research-qualification-publication.receipt-pointer-repository.releasePublicationLease.v1',
+          authorizationReceiptHashes: [],
+          sideEffectReservationHashes: [],
+          mutate(transaction) {
+            const result = transaction.run(
+              'qualification-publication.release.lease-update.apply.v1',
+              new Date(nowMs).toISOString(),
+              identity.ownerId,
+              identity.leaseToken,
+              identity.leaseGeneration,
+            );
+            return Number(result.changes) === 1;
+          },
+        }));
       } finally { database.close(); }
     },
     publish({
@@ -414,54 +368,125 @@ export function createFullResearchQualificationReceiptPointerRepository({
         || Number(publisherFence.leaseGeneration) < 1) {
         throw new Error('full_research_qualification_pointer_verified_binding_required');
       }
+      const bytes = receiptBytes(receipt);
+      const contentHash = hashBytes(bytes);
+      const reservationHash = fullResearchQualificationMirrorReservationHash({
+        databaseInstanceId,
+        qualificationReceiptPath,
+        receiptHash: receipt.fullResearchQualificationReceiptHash,
+        receiptContentHash: contentHash,
+      });
       const database = writableDatabase();
-      let authorityCommitted = false;
       try {
-        database.exec('BEGIN IMMEDIATE;');
-        const identity = fencedLease(database, lease, nowMs);
-        const current = authorityRow(database);
-        if (!monotonicSuccessor(current, receipt, qualificationStateGeneration)) {
-          throw new Error('full_research_qualification_pointer_monotonic_cas_rejected');
-        }
-        const bytes = receiptBytes(receipt);
-        const contentHash = hashBytes(bytes);
-        const same = current?.receipt_hash === receipt.fullResearchQualificationReceiptHash;
-        const generation = same
-          ? Number(current.publication_generation) : Number(current?.publication_generation || 0) + 1;
-        if (!same) {
-          database.prepare(`INSERT INTO full_research_qualification_pointer_authority(
-            singleton_id,receipt_json,receipt_content_hash,receipt_hash,runtime_receipt_hash,
-            qualification_state_hash,qualification_state_generation,publisher_scope,
-            publisher_owner_id,publisher_lease_generation,issued_at,expires_at,
-            publication_generation,updated_at
-          ) VALUES(1,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(singleton_id) DO UPDATE SET
-            receipt_json=excluded.receipt_json,
-            receipt_content_hash=excluded.receipt_content_hash,
-            receipt_hash=excluded.receipt_hash,
-            runtime_receipt_hash=excluded.runtime_receipt_hash,
-            qualification_state_hash=excluded.qualification_state_hash,
-            qualification_state_generation=excluded.qualification_state_generation,
-            publisher_scope=excluded.publisher_scope,
-            publisher_owner_id=excluded.publisher_owner_id,
-            publisher_lease_generation=excluded.publisher_lease_generation,
-            issued_at=excluded.issued_at,
-            expires_at=excluded.expires_at,
-            publication_generation=excluded.publication_generation,
-            updated_at=excluded.updated_at`).run(
-            bytes.toString('utf8'), contentHash,
+        const mutationReceipt = coordinator.executeMutation({
+          database,
+          databaseRole: 'full-research-qualification-publication',
+          databaseInstanceId,
+          schemaContractId,
+          writerId,
+          operationId:
+            'full-research-qualification-publication.receipt-pointer-repository.publish.v1',
+          authorizationReceiptHashes: [...new Set([
+            qualificationStateHash,
             receipt.fullResearchQualificationReceiptHash,
             receipt.runtimeImageReproducibilityReceiptHash,
-            qualificationStateHash, Number(qualificationStateGeneration),
-            publisherFence.scope, publisherFence.ownerId,
-            Number(publisherFence.leaseGeneration), receipt.issuedAt, receipt.expiresAt,
-            generation, new Date(nowMs).toISOString(),
+          ])].sort(),
+          sideEffectReservationHashes: [reservationHash],
+          mutate(transaction) {
+            const identity = fencedLease(transaction.get(
+              'qualification-publication.publish.lease-assert.get.v1',
+            ), lease, nowMs);
+            const current = transaction.get(
+              'qualification-publication.publish.authority-current.get.v1',
+            ) || null;
+            if (!monotonicSuccessor(current, receipt, qualificationStateGeneration)) {
+              throw new Error('full_research_qualification_pointer_monotonic_cas_rejected');
+            }
+            const same = current?.receipt_hash
+              === receipt.fullResearchQualificationReceiptHash;
+            const generation = same
+              ? Number(current.publication_generation)
+              : Number(current?.publication_generation || 0) + 1;
+            if (same && (current.receipt_content_hash !== contentHash
+              || current.runtime_receipt_hash
+                !== receipt.runtimeImageReproducibilityReceiptHash
+              || current.qualification_state_hash !== qualificationStateHash
+              || Number(current.qualification_state_generation)
+                !== Number(qualificationStateGeneration))) {
+              throw new Error('full_research_qualification_pointer_monotonic_cas_rejected');
+            }
+            if (!same) {
+              transaction.run(
+                'qualification-publication.publish.authority-upsert.apply.v1',
+                bytes.toString('utf8'),
+                contentHash,
+                receipt.fullResearchQualificationReceiptHash,
+                receipt.runtimeImageReproducibilityReceiptHash,
+                qualificationStateHash,
+                Number(qualificationStateGeneration),
+                publisherFence.scope,
+                publisherFence.ownerId,
+                Number(publisherFence.leaseGeneration),
+                receipt.issuedAt,
+                receipt.expiresAt,
+                generation,
+                new Date(nowMs).toISOString(),
+              );
+            }
+            fencedLease(transaction.get(
+              'qualification-publication.publish.lease-assert.get.v1',
+            ), identity, nowMs);
+            return Object.freeze({
+              authorityChanged: !same,
+              pointerLeaseGeneration: identity.leaseGeneration,
+              publicationGeneration: generation,
+              receiptHash: receipt.fullResearchQualificationReceiptHash,
+              receiptContentHash: contentHash,
+              reservationHash,
+            });
+          },
+        });
+        const value = mutationReceipt?.value;
+        if (!value
+          || value.receiptHash !== receipt.fullResearchQualificationReceiptHash
+          || value.receiptContentHash !== contentHash
+          || value.reservationHash !== reservationHash
+          || typeof value.authorityChanged !== 'boolean'
+          || !Number.isSafeInteger(value.pointerLeaseGeneration)
+          || value.pointerLeaseGeneration < 1
+          || !Number.isSafeInteger(value.publicationGeneration)
+          || value.publicationGeneration < 1) {
+          throw fullResearchQualificationCommittedMirrorPending(
+            new Error('full_research_qualification_publication_mutation_receipt_invalid'),
+            mutationReceipt,
           );
         }
-        fencedLease(database, identity, nowMs);
-        database.exec('COMMIT;');
-        authorityCommitted = true;
-        afterAuthorityCommit?.({ receipt, generation });
-        const mirror = reconcileMirrorWithDatabase(database, qualificationReceiptPath);
+        if (requireExternallyFencedMutations && value.authorityChanged
+          && (mutationReceipt.status !== 'externally_fenced_sqlite_mutation_finalized'
+            || !SHA256.test(String(mutationReceipt.sideEffectPermitHash || '')))) {
+          throw fullResearchQualificationCommittedMirrorPending(
+            new Error('full_research_qualification_pointer_side_effect_permit_required'),
+            mutationReceipt,
+          );
+        }
+        let mirror;
+        try {
+          afterAuthorityCommit?.({ receipt, generation: value.publicationGeneration });
+          mirror = reconcileFullResearchQualificationMirror({
+            database,
+            qualificationReceiptPath,
+            databaseInstanceId,
+            requirePermit: requireExternallyFencedMutations,
+            ephemeralPermit: mutationReceipt.sideEffectPermitHash ? {
+              ...value,
+              sideEffectPermitHash: mutationReceipt.sideEffectPermitHash,
+            } : null,
+            validatedAuthority,
+            safeReadMirror,
+          });
+        } catch (error) {
+          throw fullResearchQualificationCommittedMirrorPending(error, mutationReceipt);
+        }
         const payload = Object.freeze({
           version: 2,
           kind: 'FullResearchQualificationReceiptPointerPublication',
@@ -478,8 +503,8 @@ export function createFullResearchQualificationReceiptPointerRepository({
           publisherScope: publisherFence.scope,
           publisherOwnerId: publisherFence.ownerId,
           publisherLeaseGeneration: Number(publisherFence.leaseGeneration),
-          pointerLeaseGeneration: identity.leaseGeneration,
-          publicationGeneration: generation,
+          pointerLeaseGeneration: value.pointerLeaseGeneration,
+          publicationGeneration: value.publicationGeneration,
           issuedAt: receipt.issuedAt,
           expiresAt: receipt.expiresAt,
           maximumReceiptAgeMs: MAXIMUM_AGE_MS,
@@ -490,6 +515,7 @@ export function createFullResearchQualificationReceiptPointerRepository({
           derivedJsonMirror: true,
           derivedJsonMirrorCrashRecoverable: true,
           crossResourceAtomicPublicationClaimed: false,
+          mirrorSideEffectPermitHash: mirror?.sideEffectPermitHash || null,
           mirrorReconciledToReceiptHash: mirror?.qualificationReceiptHash || null,
           receiptRemainedCurrentAtMirrorReconciliation:
             mirror?.qualificationReceiptHash === receipt.fullResearchQualificationReceiptHash,
@@ -503,9 +529,6 @@ export function createFullResearchQualificationReceiptPointerRepository({
             payload,
           ),
         });
-      } catch (error) {
-        if (!authorityCommitted) rollback(database);
-        throw error;
       } finally { database.close(); }
     },
   });

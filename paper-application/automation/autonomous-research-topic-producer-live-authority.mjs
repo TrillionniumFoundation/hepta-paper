@@ -60,12 +60,17 @@ export function createAutonomousResearchTopicProducerLiveAuthority({
     assertAutonomyCurrent,
     plannedGeneration,
     expected,
+    reconcileStateRecoverability = null,
+    assertStateRecoverabilityCurrent = null,
     beginProviderCanaryAction,
+    assertProviderCanaryActionPermit = null,
     finishProviderCanaryAction,
     signal = null,
   } = {}) {
     if (typeof beginProviderCanaryAction !== 'function'
-      || typeof finishProviderCanaryAction !== 'function') {
+      || typeof finishProviderCanaryAction !== 'function'
+      || (assertProviderCanaryActionPermit !== null
+        && typeof assertProviderCanaryActionPermit !== 'function')) {
       throw new Error('autonomous_research_topic_producer_provider_canary_journal_required');
     }
     const before = remeasureAuthorities(expected);
@@ -95,23 +100,78 @@ export function createAutonomousResearchTopicProducerLiveAuthority({
     let failurePhase = 'provider_canary_runner_unattributed';
     const durableActionJournalTransitions = [];
     const durableActions = [];
+    const pendingCanaryCallbacks = [];
+    const trackedCallback = (callback) => (...args) => {
+      const completion = Promise.resolve().then(() => callback(...args));
+      // Injectable runners written before the callbacks became async may not
+      // await them. Track every invocation so reconciliation and journal errors
+      // are still joined here rather than escaping as unhandled rejections.
+      pendingCanaryCallbacks.push(completion);
+      completion.catch(() => {});
+      return completion;
+    };
     try {
       providerCanaryPairReceipt = await runProviderCanary({
         expectedProviderConfigurationHash: expected.providerConfigurationHash,
         providerCanaryReservation,
         signal,
-        beforeCanaryAction({ role, failurePhase: actionFailurePhase }) {
-          beginProviderCanaryAction({
+        beforePreflightAction: trackedCallback(async ({ role = 'unspecified' } = {}) => {
+          await reconcileStateRecoverability?.({
+            residentLeaseContext,
+            action: `topic_producer_provider_canary_${role}`,
+          });
+          assertStateRecoverabilityCurrent?.(
+            `topic_producer_provider_canary_${role}_side_effect`,
+          );
+        }),
+        beforeCanaryAction: trackedCallback(async ({
+          role,
+          failurePhase: actionFailurePhase,
+        }) => {
+          const actionNow = clock.now();
+          assertProducerLease({ lease: producerLease, now: actionNow });
+          assertSynchronousAutonomyCurrent({
+            assertAutonomyCurrent,
+            residentLeaseContext,
+            now: actionNow,
+            action: `topic_producer_provider_canary_${role}_side_effect_permit`,
+          });
+          const journal = beginProviderCanaryAction({
             lease: producerLease,
             generationSequence: plannedGeneration.generationSequence,
             reservation: providerCanaryReservation,
             role,
             failurePhase: actionFailurePhase,
-            now: clock.now(),
+            now: actionNow,
           });
           durableActionJournalTransitions.push(`begin:${role}`);
-        },
-        afterCanaryAction({ action, failurePhase: actionFailurePhase }) {
+          await reconcileStateRecoverability?.({
+            residentLeaseContext,
+            action: `topic_producer_provider_canary_${role}_journal`,
+          });
+          assertStateRecoverabilityCurrent?.(
+            `topic_producer_provider_canary_${role}_side_effect`,
+          );
+          if (assertProviderCanaryActionPermit) {
+            const permitted = assertProviderCanaryActionPermit({
+              journal,
+              lease: producerLease,
+              generationSequence: plannedGeneration.generationSequence,
+              reservation: providerCanaryReservation,
+              role,
+              failurePhase: actionFailurePhase,
+            });
+            if (typeof permitted?.then === 'function' || permitted !== true) {
+              throw new Error(
+                'autonomous_research_topic_producer_provider_canary_side_effect_permit_invalid',
+              );
+            }
+          }
+        }),
+        afterCanaryAction: trackedCallback(async ({
+          action,
+          failurePhase: actionFailurePhase,
+        }) => {
           finishProviderCanaryAction({
             lease: producerLease,
             generationSequence: plannedGeneration.generationSequence,
@@ -122,8 +182,8 @@ export function createAutonomousResearchTopicProducerLiveAuthority({
           });
           durableActionJournalTransitions.push(`finish:${action.role}`);
           durableActions.push(action);
-        },
-        betweenCanaryChecks() {
+        }),
+        betweenCanaryChecks: trackedCallback(async () => {
           const betweenNow = clock.now();
           assertProducerLease({ lease: producerLease, now: betweenNow });
           assertSynchronousAutonomyCurrent({
@@ -132,8 +192,16 @@ export function createAutonomousResearchTopicProducerLiveAuthority({
             now: betweenNow,
             action: 'topic_producer_provider_canary_between_roles',
           });
-        },
+          await reconcileStateRecoverability?.({
+            residentLeaseContext,
+            action: 'topic_producer_provider_canary_between_roles',
+          });
+          assertStateRecoverabilityCurrent?.(
+            'topic_producer_provider_canary_between_roles',
+          );
+        }),
       });
+      await Promise.all(pendingCanaryCallbacks);
       if (durableActionJournalTransitions.join(',')
         !== 'begin:research_author,finish:research_author,'
           + 'begin:formal_reviewer,finish:formal_reviewer'

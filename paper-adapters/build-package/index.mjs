@@ -328,7 +328,14 @@ export async function runPackageAdapter({
   receiptLedger = null,
   operatorDatasetAuthorityTrustStore = null,
   researchExecutionReleaseAttestor = null,
+  assertExternalSideEffectReady = null,
   independentPdfRebuild = null,
+  evidenceEntailmentReviewReceipt = null,
+  requireEvidenceEntailmentReview = false,
+  expectedManuscriptHash = null,
+  expectedEvidenceEntailmentContractHash = null,
+  expectedEvidenceBoundManuscriptIrHash = null,
+  expectedManuscriptAuthorPrincipalId = null,
 } = {}) {
   const packageObservedAt = createdAt || new Date().toISOString();
   const sourceDir = resolveRepoPath(root, row.task.sourceWorkspace);
@@ -492,7 +499,7 @@ export async function runPackageAdapter({
         ...(Array.isArray(row.task.paperQualityProfiles) ? row.task.paperQualityProfiles : []),
         row.task.paperQualityProfile,
       ].filter(Boolean));
-      researchEvidenceCapsule = materializeCampaignReleaseEvidenceCapsule({
+      researchEvidenceCapsule = await materializeCampaignReleaseEvidenceCapsule({
         packageDir,
         researchReport,
         campaignId: expectedCampaignId,
@@ -500,6 +507,7 @@ export async function runPackageAdapter({
         receiptLedger,
         operatorDatasetAuthorityTrustStore,
         researchExecutionReleaseAttestor,
+        assertExternalSideEffectReady,
         academicEvidenceRequired: profiles.has('empirical_or_experiment'),
         createdAt: packageObservedAt,
       });
@@ -579,6 +587,12 @@ export async function runPackageAdapter({
     boundary: 'package',
     experimentRegistryAuthorityVerifier,
     expectedCampaignId,
+    evidenceEntailmentReviewReceipt,
+    requireEvidenceEntailmentReview,
+    expectedManuscriptHash,
+    expectedEvidenceEntailmentContractHash,
+    expectedEvidenceBoundManuscriptIrHash,
+    expectedManuscriptAuthorPrincipalId,
   });
   if (manuscriptPromotionGate.status !== 'manuscript_promotion_ready') {
     blockers.push(...manuscriptPromotionGate.blockers.map((blocker) => `promotion:${blocker}`));

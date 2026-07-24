@@ -136,6 +136,103 @@ test('formal full campaign creates a system-finalized theorem spec and an atomic
   assert.equal(intentionallyBounded.budgets.maxAgentCalls, 7);
 });
 
+test('formal full DAG brackets every trusted manuscript mutation and closes release over the final source', () => {
+  const nodes = buildCampaignModeNodes({
+    campaignId: 'campaign-formal-render-fence',
+    mode: 'full-campaign',
+    rounds: 2,
+    reviewers: 2,
+    executionProfiles: [],
+    executionIntent: { kind: 'DynamicFormalFullDagFixture' },
+    empiricalRequested: false,
+    applyManuscript: true,
+    formalRequested: true,
+    researchVerificationRequired: true,
+  });
+  const byId = new Map(nodes.map((node) => [node.nodeId, node]));
+  const renderAuthorityFormal = nodes.find((node) => (
+    node.kind === 'formal-verify' && node.nodeId.endsWith(':render-authority-formal-verify')
+  ));
+  const integrate = nodes.find((node) => node.kind === 'manuscript-integrate');
+  assert.ok(renderAuthorityFormal && integrate);
+  assert.ok(integrate.dependencies.includes(renderAuthorityFormal.nodeId));
+  assert.equal(byId.get(renderAuthorityFormal.dependencies[0]).kind, 'theorem-spec');
+
+  const completedNodes = nodes.map((node) => ({
+    ...node,
+    status: node.kind === 'formal-verify' ? 'completed' : 'queued',
+    result: node.kind === 'formal-verify'
+      ? { kind: 'CampaignFormalVerificationReceipt', nodeId: node.nodeId }
+      : null,
+  }));
+  const integrateContext = deriveCampaignNodeExecutionContext({
+    node: integrate,
+    allNodes: completedNodes,
+  });
+  assert.equal(integrateContext.formalVerificationNode.nodeId, renderAuthorityFormal.nodeId);
+
+  const integratedTheorem = nodes.find((node) => (
+    node.kind === 'theorem-spec' && node.dependencies.includes(integrate.nodeId)
+  ));
+  const integratedFormal = nodes.find((node) => (
+    node.kind === 'formal-verify' && node.dependencies.includes(integratedTheorem?.nodeId)
+  ));
+  const initialCompile = nodes.find((node) => node.kind === 'compile');
+  assert.ok(integratedTheorem && integratedFormal && initialCompile);
+  assert.deepEqual(initialCompile.dependencies, [integratedFormal.nodeId]);
+
+  let latestPostMutationFormal = integratedFormal;
+  const revisions = nodes.filter((node) => node.kind === 'revise')
+    .sort((left, right) => left.roundIndex - right.roundIndex);
+  assert.equal(revisions.length, 2);
+  for (const revision of revisions) {
+    assert.ok(revision.dependencies.includes(latestPostMutationFormal.nodeId));
+    const revisionContext = deriveCampaignNodeExecutionContext({
+      node: revision,
+      allNodes: completedNodes,
+    });
+    assert.equal(revisionContext.formalVerificationNode.nodeId, latestPostMutationFormal.nodeId);
+    const theoremSpecification = nodes.find((node) => (
+      node.kind === 'theorem-spec' && node.dependencies.includes(revision.nodeId)
+    ));
+    const postRevisionFormal = nodes.find((node) => (
+      node.kind === 'formal-verify'
+        && node.dependencies.includes(theoremSpecification?.nodeId)
+    ));
+    assert.ok(theoremSpecification && postRevisionFormal);
+    latestPostMutationFormal = postRevisionFormal;
+  }
+
+  const sourceClosureFormal = nodes.find((node) => (
+    node.kind === 'formal-verify' && node.sourceClosureTerminal === true
+  ));
+  const finalCompile = nodes.find((node) => node.kind === 'final-compile');
+  const researchVerify = nodes.find((node) => node.kind === 'research-verify');
+  assert.ok(sourceClosureFormal && finalCompile && researchVerify);
+  assert.ok(finalCompile.dependencies.includes(sourceClosureFormal.nodeId));
+  assert.equal(deriveCampaignNodeExecutionContext({
+    node: finalCompile,
+    allNodes: completedNodes,
+  }).formalVerificationNode.nodeId, sourceClosureFormal.nodeId);
+  assert.equal(deriveCampaignNodeExecutionContext({
+    node: researchVerify,
+    allNodes: completedNodes,
+  }).formalVerificationNode.nodeId, sourceClosureFormal.nodeId);
+  for (const formal of nodes.filter((node) => node.kind === 'formal-verify')) {
+    assert.ok(researchVerify.dependencies.includes(formal.nodeId), formal.nodeId);
+  }
+  assert.equal(evaluateCampaignReleaseTopology({ nodes }).status,
+    'campaign_release_topology_verified');
+
+  const visited = new Set();
+  while (visited.size < nodes.length) {
+    const ready = nodes.filter((node) => !visited.has(node.nodeId)
+      && node.dependencies.every((dependency) => visited.has(dependency)));
+    assert.ok(ready.length > 0, 'full campaign graph must remain acyclic');
+    ready.forEach((node) => visited.add(node.nodeId));
+  }
+});
+
 test('release graph closes formal, empirical replay, and final compile over one immutable terminal source', () => {
   const nodes = buildCampaignModeNodes({
     campaignId: 'campaign-source-closure',

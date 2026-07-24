@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { buildCampaignBenchmarkSelector, verifyCampaignBenchmarkSelector } from '../../paper-domain/automation/campaign-benchmark-selector.mjs';
-import { buildDatasetAuthorizationSet, buildExperimentReplayReceipt, verifyExperimentRunReceipt, verifyOsSandboxWorkerReceipt, verifySystemBenchmarkHarnessExecutionReceipt } from '../../paper-domain/automation/experiment-run-contract.mjs';
+import { buildDatasetAuthorizationSet, buildExperimentReplayReceipt, verifyExperimentReplayReceipt, verifyExperimentRunReceipt, verifyOsSandboxWorkerReceipt, verifySystemBenchmarkHarnessExecutionReceipt } from '../../paper-domain/automation/experiment-run-contract.mjs';
 import { SYSTEM_BENCHMARK_HARNESS_IMPLEMENTATION, SYSTEM_BENCHMARK_HARNESS_ROOTS, SYSTEM_BENCHMARK_HARNESS_TARGETS } from '../../paper-domain/automation/system-benchmark-harness-identity.mjs';
 import { buildExperimentRegistry } from '../../paper-domain/research/experiment-registry.mjs';
 import { verifyExperimentRegistry } from '../../paper-domain/research/experiment-registry-verifier.mjs';
@@ -446,6 +446,7 @@ test('host-supervised dataset trace and system-owned cells reject child spoofing
   const executionIntent = { benchmarkSelectorHash: roots.selector.campaignBenchmarkSelectorHash };
   const primaryNode = { nodeId: `${campaignId}:0:empirical`, campaignId, kind: 'empirical', dependencies: [], attemptId: 'attempt-primary', leaseGeneration: 1, spec: { executionIntent } };
   const replayNode = { nodeId: `${campaignId}:0:empirical-reproduce`, campaignId, kind: 'empirical-reproduce', dependencies: [primaryNode.nodeId], attemptId: 'attempt-replay', leaseGeneration: 1, spec: { executionIntent } };
+  fs.mkdirSync(path.join(roots.root, 'campaign-runtime'), { recursive: true });
   const campaignExecutor = createCampaignNodeExecutor({
     runtimeRoot: path.join(roots.root, 'campaign-runtime'),
     agentExecutor: { async execute() { throw new Error('system_harness_must_not_delegate_result_generation'); } },
@@ -572,6 +573,17 @@ test('host-supervised dataset trace and system-owned cells reject child spoofing
     campaignNodeLeaseGeneration: authoritativeReplayNode.leaseGeneration,
     campaignNodeResultHash: authoritativeReplayNode.resultSha256,
   };
+  assert.equal(verifyExperimentReplayReceipt(campaignArtifact.reproducibilityReceipt), true);
+  for (const mutate of [
+    (receipt) => { receipt.comparisons[0].consistent = false; },
+    (receipt) => { receipt.analysisProtocolReplayBinding.blockers = ['stale_outer_hash']; },
+    (receipt) => { receipt.blockers = ['stale_outer_hash']; },
+    (receipt) => { receipt.unrecognizedField = 'stale_outer_hash'; },
+  ]) {
+    const changedReplayReceipt = structuredClone(campaignArtifact.reproducibilityReceipt);
+    mutate(changedReplayReceipt);
+    assert.equal(verifyExperimentReplayReceipt(changedReplayReceipt), false);
+  }
   const authoritativeRegistry = buildExperimentRegistry({
     paperTask: { paperId: campaign.paperId },
     artifacts: [campaignArtifact],

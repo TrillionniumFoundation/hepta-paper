@@ -38,8 +38,8 @@ function machineExecutionPlan(launchMode, suffix = launchMode) {
   }];
   const budgets = {
     maxWallTimeMs: 60 * 60 * 1000,
-    maxAgentCalls: 10,
-    maxCpuJobs: 10,
+    maxAgentCalls: 111,
+    maxCpuJobs: 4725,
     maxGpuJobs: 0,
     maxTokenCount: 10_000,
     maxCostUsd: 10,
@@ -330,6 +330,39 @@ test('non-machine application execution remains compatible without resident auth
   assert.equal(runnerCalls, 1);
 });
 
+test('machine dispatch normalizes string clocks and rejects invalid instants', async () => {
+  const executeWithClock = (fixture, authorization, observedAt) => (
+    executeAutonomousResearchCampaign({
+      action: 'launch',
+      campaignId: fixture.read().campaignId,
+      campaignStore: fixture.store,
+      executor: Object.freeze({ async execute() {} }),
+      campaignRunner: async () => Object.freeze({ externalActionPerformed: true }),
+      supervisorDispatchAuthorization: authorization,
+      runtime: Object.freeze({
+        clock: Object.freeze({ now: () => observedAt }),
+      }),
+    })
+  );
+
+  const normalized = campaignFixture({ status: 'running' });
+  await executeWithClock(
+    normalized,
+    authorizationFixture(normalized.read(), { action: 'launch' }),
+    NOW.toISOString(),
+  );
+
+  const invalid = campaignFixture({ status: 'running' });
+  await assert.rejects(
+    () => executeWithClock(
+      invalid,
+      authorizationFixture(invalid.read(), { action: 'launch' }),
+      'not-an-instant',
+    ),
+    /autonomous_research_supervisor_dispatch_authorization_clock_invalid/,
+  );
+});
+
 test('tampered persisted machine markers cannot bypass dispatch authorization', async () => {
   const fixture = campaignFixture({ status: 'running' });
   const tampered = structuredClone(fixture.read().spec);
@@ -390,7 +423,7 @@ test('machine intake create is atomically persisted paused and admitted-not-auth
   const plan = admittedPlan();
   const operations = createCampaignLifecycleOperations({
     clock: Object.freeze({ nowIso: () => NOW.toISOString() }),
-    transaction(statements) { transactions.push(statements); },
+    mutation({ statements }) { transactions.push(statements); },
     guarded: (sql) => sql,
     eventStatement: () => Object.freeze({ sql: 'INSERT EVENT;' }),
     readCampaignDefinitionSnapshot: () => Object.freeze({ campaign: null, nodes: [] }),

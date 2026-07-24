@@ -17,6 +17,15 @@ function parseStructuredOutput(text) {
   return null;
 }
 
+function codexRuntimeMatchesCapability(runtime, capability) {
+  return runtime?.codexBinaryIdentityHash === capability?.codexBinaryIdentityHash
+    && runtime?.credentialRootIdentityHash === capability?.credentialRootIdentityHash
+    && runtime?.credentialConfigIdentityHash === capability?.credentialConfigIdentityHash
+    && runtime?.codexVersion === capability?.codexVersion
+    && runtime?.authenticationStatus === capability?.authenticationStatus
+    && runtime?.model === capability?.model;
+}
+
 export function createCodexAgentExecutor({
   codexBinary = 'codex',
   codexHome = null,
@@ -99,28 +108,25 @@ export function createCodexAgentExecutor({
       outputTokenBudget,
       requestedTimeout,
       signal,
+      workspaceMutationPolicy,
       workspace,
       promptHash,
       changedWorkspacePaths,
     }) {
       let verifiedCodexBinary = codexBinary;
       const capabilityReceipt = formalReviewerCapabilityReceipt || researchAuthorCapabilityReceipt;
+      const capabilityPrefix = formalReviewerCapabilityReceipt
+        ? 'formal_review_codex' : 'research_author_codex';
       if (capabilityReceipt) {
-        const prefix = formalReviewerCapabilityReceipt ? 'formal_review_codex' : 'research_author_codex';
         const freshRuntime = preflightCodexRuntime({
           codexBinary,
           codexHome,
           model,
-          errorPrefix: prefix,
+          errorPrefix: capabilityPrefix,
           spawnSyncImpl,
         });
-        if (freshRuntime.codexBinaryIdentityHash !== capabilityReceipt.codexBinaryIdentityHash
-          || freshRuntime.credentialRootIdentityHash !== capabilityReceipt.credentialRootIdentityHash
-          || freshRuntime.credentialConfigIdentityHash !== capabilityReceipt.credentialConfigIdentityHash
-          || freshRuntime.codexVersion !== capabilityReceipt.codexVersion
-          || freshRuntime.authenticationStatus !== capabilityReceipt.authenticationStatus
-          || freshRuntime.model !== capabilityReceipt.model) {
-          const error = new Error(`${prefix}_capability_runtime_identity_changed`);
+        if (!codexRuntimeMatchesCapability(freshRuntime, capabilityReceipt)) {
+          const error = new Error(`${capabilityPrefix}_capability_runtime_identity_changed`);
           error.retryable = false;
           throw error;
         }
@@ -131,6 +137,9 @@ export function createCodexAgentExecutor({
         principalId ? `Your runtime principal is ${principalId}. Do not impersonate another campaign principal.` : '',
         'Work only inside the provided workspace. Do not submit externally, send messages, or access credentials.',
         String(instructions),
+        workspaceMutationPolicy
+          ? `The runtime enforces this exact workspace mutation policy: ${JSON.stringify(workspaceMutationPolicy)}`
+          : '',
         `Structured context: ${JSON.stringify(context)}`,
         requiredChecks.length ? `Before finishing run these checks when applicable: ${requiredChecks.join(' ; ')}` : '',
         outputTokenBudget ? `Keep the final response within ${Math.max(128, Number(outputTokenBudget))} output tokens. Prefer editing files with tools over returning file bodies.` : '',
@@ -168,6 +177,24 @@ export function createCodexAgentExecutor({
       if (!cancelled && (processResult.exitCode !== 0 || processResult.error)) blockers.push('codex_agent_process_failed');
       if (processResult.outputTruncated) blockers.push('codex_agent_output_truncated');
       blockers.push(...readOnlyMutationBlockers({ sandbox, changedPaths: changes }));
+      if (capabilityReceipt) {
+        try {
+          const postflightRuntime = preflightCodexRuntime({
+            codexBinary,
+            codexHome,
+            model,
+            errorPrefix: capabilityPrefix,
+            spawnSyncImpl,
+          });
+          if (!codexRuntimeMatchesCapability(postflightRuntime, capabilityReceipt)) {
+            blockers.push(
+              `${capabilityPrefix}_capability_runtime_identity_changed_during_execution`,
+            );
+          }
+        } catch {
+          blockers.push(`${capabilityPrefix}_capability_runtime_postflight_failed`);
+        }
+      }
       const structuredOutput = processResult.outputTruncated
         ? null
         : parseStructuredOutput(processResult.stdout);
@@ -223,7 +250,11 @@ export function createCodexAgentExecutor({
       return {
         payload,
         failureMessage: blockers.join(',') || payload.error || `agent exited ${payload.exitCode}`,
-        retryable: !cancelled && !blockers.includes('read_only_agent_modified_workspace'),
+        retryable: !cancelled && !blockers.includes('read_only_agent_modified_workspace')
+          && !blockers.some((blocker) => (
+            blocker === `${capabilityPrefix}_capability_runtime_identity_changed_during_execution`
+            || blocker === `${capabilityPrefix}_capability_runtime_postflight_failed`
+          )),
       };
     },
   });

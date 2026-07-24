@@ -8,60 +8,34 @@ import {
 import {
   verifyExternalQualificationReleaseSignerAuthority,
 } from './external-qualification-release-signer-authority.mjs';
+import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  buildIndependentExternalResearchQualificationVerificationPolicy,
+  independentExternalResearchQualificationEnvelopeOptions,
+  verifyIndependentExternalResearchQualificationVerificationPolicy,
+} from '../../paper-domain/automation/external-research-qualification-verification-policy-contract.mjs';
+import {
+  verifyIndependentExternalResearchQualificationVerificationEvidence,
+} from './external-research-qualification-verifier-attestation.mjs';
 
-const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 const FULL_DOMAIN_CRYPTOGRAPHIC_BLOCKERS = new Set([
   'golden_micro_campaign_qualification_receipt_hash_invalid',
   'golden_micro_campaign_qualification_signature_invalid',
   'golden_micro_campaign_release_pointer_mismatch',
   'golden_micro_campaign_release_attestation_signer_mismatch',
   'golden_micro_campaign_release_attestation_signature_invalid',
+  'golden_micro_campaign_reviewer_evidence_invalid',
 ]);
 
-function independentInspectionBound({
+function verifiedInspection({
+  fullVerification,
   independentInspection,
-  envelope,
-  receipt,
-  preparation,
   configuration,
+  qualificationReceipt,
+  verificationPolicy,
+  independentVerificationEvidence,
 }) {
-  return independentInspection?.kind === 'FullResearchQualificationInspection'
-    && independentInspection?.status === 'full_research_qualification_verified'
-    && independentInspection?.ready === true
-    && independentInspection?.receiptAccepted === true
-    && independentInspection?.independentVerifierVerified === true
-    && independentInspection?.externalVerifierId === configuration.verifier.serviceId
-    && SHA256.test(String(independentInspection?.externalVerificationRequestHash || ''))
-    && independentInspection?.configurationIdentityHash
-      === configuration.configurationIdentityHash
-    && independentInspection?.trustIdentityHash === configuration.trustIdentityHash
-    && independentInspection?.clientServiceIdentityHash
-      === configuration.clientServiceIdentityHash
-    && independentInspection?.verifierServiceIdentityHash
-      === configuration.verifierServiceIdentityHash
-    && independentInspection?.campaignId === envelope.campaignId
-    && independentInspection?.paperId === envelope.paperId
-    && independentInspection?.campaignReleaseBundleHash === envelope.campaignReleaseBundleHash
-    && independentInspection?.qualificationReceiptHash === envelope.qualificationReceiptHash
-    && independentInspection?.runtimeImageReproducibilityReceiptHash
-      === envelope.runtimeImageReproducibilityReceiptHash
-    && JSON.stringify(independentInspection?.runtimeImageReproducibilityRequiredProfiles)
-      === JSON.stringify(envelope.runtimeImageReproducibilityRequiredProfiles)
-    && JSON.stringify(independentInspection?.runtimeImageReproducibilityDefinitionManifestHashes)
-      === JSON.stringify(envelope.runtimeImageReproducibilityDefinitionManifestHashes)
-    && independentInspection?.proposalHash
-      === preparation?.proposal?.machineProposedScientificClaimSetHash
-    && independentInspection?.policyAuthorizationHash
-      === preparation?.policyAuthorization?.autonomousResearchPolicyAuthorizationHash
-    && independentInspection?.seedBindingHash
-      === preparation?.seedBinding?.autonomousResearchSeedBindingHash
-    && independentInspection?.independentHypothesisPriorArtReviewVerified === true
-    && independentInspection?.independentHypothesisPriorArtReceiptHash
-      === receipt?.independentHypothesisPriorArtReceiptHash;
-}
-
-function verifiedInspection({ fullVerification, independentInspection, configuration }) {
-  return Object.freeze({
+  const payload = {
     ...fullVerification,
     kind: 'FullResearchQualificationInspection',
     qualificationSignatureVerified: true,
@@ -69,7 +43,8 @@ function verifiedInspection({ fullVerification, independentInspection, configura
     releasePointerVerified: true,
     independentVerifierVerified: true,
     externalVerifierId: configuration.verifier.serviceId,
-    externalVerificationRequestHash: independentInspection.externalVerificationRequestHash,
+    externalVerificationRequestHash:
+      independentVerificationEvidence.request.requestHash,
     configurationIdentityHash: configuration.configurationIdentityHash,
     trustIdentityHash: configuration.trustIdentityHash,
     clientServiceIdentityHash: configuration.clientServiceIdentityHash,
@@ -77,6 +52,27 @@ function verifiedInspection({ fullVerification, independentInspection, configura
     proposalHash: independentInspection.proposalHash,
     policyAuthorizationHash: independentInspection.policyAuthorizationHash,
     seedBindingHash: independentInspection.seedBindingHash,
+    qualificationScope: independentInspection.qualificationScope,
+    genericContentCanaryVerified:
+      independentInspection.genericContentCanaryVerified === true,
+    verificationPolicy,
+    verificationPolicyHash:
+      verificationPolicy
+        .independentExternalResearchQualificationVerificationPolicyHash,
+    independentVerificationEvidence,
+    independentVerificationEvidenceHash:
+      independentVerificationEvidence
+        .independentExternalResearchQualificationVerificationEvidenceHash,
+    structuredPriorArtEvidenceVerified: true,
+    nativeFormalCertificateIntakeV3Verified: true,
+    releaseBindingVersion: verificationPolicy.releaseBindingVersion,
+    launchMode: verificationPolicy.launchMode,
+    recursiveReleaseClosureRequired:
+      verificationPolicy.recursiveReleaseClosureRequired,
+    recursiveReleaseClosureRequirementSatisfied: true,
+    allowBoundedGoldenCapability:
+      verificationPolicy.allowBoundedGoldenCapability,
+    qualificationReceipt,
     fullDomainVerificationReady: true,
     independentHypothesisPriorArtReviewVerified:
       fullVerification.independentHypothesisPriorArtReviewVerified,
@@ -84,6 +80,11 @@ function verifiedInspection({ fullVerification, independentInspection, configura
       fullVerification.independentHypothesisPriorArtReceiptHash,
     failureCodes: Object.freeze([]),
     blockers: Object.freeze([]),
+  };
+  return Object.freeze({
+    ...payload,
+    fullResearchQualificationInspectionHash:
+      hashRecord('FullResearchQualificationInspection', payload),
   });
 }
 
@@ -91,7 +92,7 @@ export async function verifyExternalResearchQualificationLocally({
   receipt,
   campaignReleaseAuthority,
   preparation,
-  independentInspection,
+  independentVerificationEvidence,
   observedAt,
   configuration,
   fullVerificationContextProvider,
@@ -103,6 +104,11 @@ export async function verifyExternalResearchQualificationLocally({
   verifyReleaseAttestation,
   onSynchronousProgress = null,
 } = {}) {
+  const envelopeOptions =
+    independentExternalResearchQualificationEnvelopeOptions({
+      campaignReleaseAuthority,
+      preparation,
+    });
   const envelope = verifyFullResearchQualificationReceiptEnvelope(receipt, {
     now: observedAt,
     campaignReleaseAuthority,
@@ -115,6 +121,8 @@ export async function verifyExternalResearchQualificationLocally({
     verifyQualificationSignature: (input) => verifyDetachedSignature(
       input, configuration, observedAt,
     ),
+    allowBoundedGoldenCapability:
+      envelopeOptions.allowBoundedGoldenCapability,
   });
   if (!envelope.ready) {
     return blockedInspection(
@@ -125,15 +133,57 @@ export async function verifyExternalResearchQualificationLocally({
       configuration,
     );
   }
-  if (!independentInspectionBound({
-    independentInspection, envelope, receipt, preparation, configuration,
-  })) {
+  let verificationPolicy;
+  try {
+    verificationPolicy =
+      buildIndependentExternalResearchQualificationVerificationPolicy({
+        receipt,
+        campaignReleaseAuthority,
+        preparation,
+      });
+  } catch {
     return blockedInspection([
-      'external_qualification_independent_verification_binding_invalid',
+      'external_qualification_independent_verification_policy_invalid',
     ], envelope, configuration.verifier.serviceId, [
-      FAILURE.INDEPENDENT_VERIFICATION_BINDING_INVALID,
+      FAILURE.INDEPENDENT_VERIFICATION_POLICY_INVALID,
     ], configuration);
   }
+  const policyVerification =
+    verifyIndependentExternalResearchQualificationVerificationPolicy(
+      verificationPolicy,
+      { receipt, campaignReleaseAuthority, preparation },
+    );
+  if (!policyVerification.valid) {
+    return blockedInspection([
+      'external_qualification_independent_verification_policy_invalid',
+    ], envelope, configuration.verifier.serviceId, [
+      FAILURE.INDEPENDENT_VERIFICATION_POLICY_INVALID,
+    ], configuration);
+  }
+  const evidenceVerification =
+    verifyIndependentExternalResearchQualificationVerificationEvidence(
+      independentVerificationEvidence,
+      {
+        receipt,
+        campaignReleaseAuthority,
+        preparation,
+        configuration,
+        verificationTime: observedAt,
+      },
+    );
+  if (!evidenceVerification.valid) {
+    const attestationInvalid =
+      evidenceVerification.structureVerified === true;
+    return blockedInspection([
+      'external_qualification_independent_verification_binding_invalid',
+      ...evidenceVerification.blockers,
+    ], envelope, configuration.verifier.serviceId, [
+      attestationInvalid
+        ? FAILURE.INDEPENDENT_VERIFIER_ATTESTATION_INVALID
+        : FAILURE.INDEPENDENT_VERIFICATION_BINDING_INVALID,
+    ], configuration);
+  }
+  const independentInspection = evidenceVerification.inspection;
   let fullVerificationContext;
   try {
     fullVerificationContext = typeof fullVerificationContextProvider === 'function'
@@ -194,6 +244,8 @@ export async function verifyExternalResearchQualificationLocally({
     verifyQualificationSignature: (input) => verifyDetachedSignature(
       input, configuration, fullVerificationObservedAt,
     ),
+    requireGlobalGoldenAuthority:
+      verificationPolicy.requireGlobalGoldenAuthority,
   });
   if (!fullVerification.ready) {
     const cryptographicIntegrityInvalid = fullVerification.blockers
@@ -207,5 +259,12 @@ export async function verifyExternalResearchQualificationLocally({
         : FAILURE.FULL_DOMAIN_NOT_READY,
     ], configuration);
   }
-  return verifiedInspection({ fullVerification, independentInspection, configuration });
+  return verifiedInspection({
+    fullVerification,
+    independentInspection,
+    configuration,
+    qualificationReceipt: receipt,
+    verificationPolicy,
+    independentVerificationEvidence,
+  });
 }

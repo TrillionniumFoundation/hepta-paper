@@ -48,7 +48,7 @@ const BUDGET_KEYS = Object.freeze([
   'maxMemoryMiB',
 ]);
 
-const GOLDEN_BOOTSTRAP_HARD_BUDGETS = Object.freeze({
+const GOLDEN_BOOTSTRAP_DEFAULT_BUDGETS = Object.freeze({
   maxWallTimeMs: 2 * 60 * 60 * 1000,
   maxAgentCalls: 48,
   maxCpuJobs: 128,
@@ -56,6 +56,14 @@ const GOLDEN_BOOTSTRAP_HARD_BUDGETS = Object.freeze({
   maxTokenCount: 300_000,
   maxCostUsd: 100,
   maxMemoryMiB: 8192,
+});
+
+const GOLDEN_BOOTSTRAP_HARD_BUDGETS = Object.freeze({
+  ...GOLDEN_BOOTSTRAP_DEFAULT_BUDGETS,
+  maxAgentCalls: 512,
+  maxCpuJobs: 32_768,
+  maxGpuJobs: 32_768,
+  maxTokenCount: 4_000_000,
 });
 
 const PRODUCTION_DEFAULT_HARD_BUDGETS = Object.freeze({
@@ -87,14 +95,15 @@ function normalizedMode(value) {
 }
 
 function normalizedBudgets(mode, budgets) {
-  const defaults = mode === AUTONOMOUS_RESEARCH_LAUNCH_MODES.GOLDEN_BOOTSTRAP
-    ? GOLDEN_BOOTSTRAP_HARD_BUDGETS : PRODUCTION_DEFAULT_HARD_BUDGETS;
+  const golden = mode === AUTONOMOUS_RESEARCH_LAUNCH_MODES.GOLDEN_BOOTSTRAP;
+  const defaults = golden
+    ? GOLDEN_BOOTSTRAP_DEFAULT_BUDGETS : PRODUCTION_DEFAULT_HARD_BUDGETS;
   const source = budgets && typeof budgets === 'object' && !Array.isArray(budgets) ? budgets : {};
   const normalized = Object.fromEntries(BUDGET_KEYS.map((key) => {
     const value = source[key] === undefined ? defaults[key] : finiteNonNegative(source[key]);
     if (value === null) throw new Error(`autonomous_research_launch_budget_invalid:${key}`);
-    return [key, mode === AUTONOMOUS_RESEARCH_LAUNCH_MODES.GOLDEN_BOOTSTRAP
-      ? Math.min(value, defaults[key]) : value];
+    return [key, golden
+      ? Math.min(value, GOLDEN_BOOTSTRAP_HARD_BUDGETS[key]) : value];
   }));
   return normalized;
 }
@@ -174,15 +183,22 @@ export function evaluateAutonomousResearchLaunchModeGate({
   const qualificationValidityWindowReady = !production || !providerOrMutationRequested
     || (qualificationRemainingValidityMs !== null
       && qualificationRemainingValidityMs > requiredValidityMs);
+  const productionGenericCapabilityReady = !production || !providerOrMutationRequested
+    || fullResearchReadiness?.productionGenericCapabilityReady === true
+    || fullResearchReadiness?.fullyAutonomousResearchSystemReady === true;
   const fullReadinessVerified = !production || !providerOrMutationRequested
     || ((admissionOnly === true
       ? fullResearchReadiness?.productionEnqueueAdmissionReady === true
       : fullResearchReadiness?.fullResearchQualificationReady === true
-        && fullResearchReadiness?.campaignFullyQualified === true
+        && (fullResearchReadiness?.boundedGoldenInfrastructureQualificationReady === true
+          || fullResearchReadiness?.productionGenericResearchQualificationReady === true)
         && fullResearchReadiness?.fullAutomaticResearchWritingReady === true
         && fullResearchReadiness?.researchExecutionReleaseAttestorProductionReady === true)
       && fullResearchReadiness?.runtimeImageReproducibilityReady === true
       && runtimeValidityWindowReady && qualificationValidityWindowReady);
+  if (!productionGenericCapabilityReady) {
+    blockers.push('autonomous_research_production_generic_capability_required');
+  }
   if (!fullReadinessVerified) {
     blockers.push('autonomous_research_production_full_readiness_required');
   }
@@ -243,6 +259,7 @@ export function evaluateAutonomousResearchLaunchModeGate({
       fullResearchReadiness?.researchExecutionReleaseAttestorProductionReady === true,
     productionEnqueueAdmissionReady:
       fullResearchReadiness?.productionEnqueueAdmissionReady === true,
+    productionGenericCapabilityReady,
     runtimeImageReproducibilityReady:
       fullResearchReadiness?.runtimeImageReproducibilityReady === true,
     requiredReceiptValidityMs: requiredValidityMs,

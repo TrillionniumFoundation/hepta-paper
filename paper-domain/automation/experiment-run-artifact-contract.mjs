@@ -63,6 +63,11 @@ export function buildDatasetAuthorizationSet(datasetMounts = []) {
     operatorAuthorizationHash: mount?.operatorAuthorizationHash || null,
     operatorDatasetAuthorityDocumentHash: mount?.operatorDatasetAuthorityDocumentHash || null,
     operatorDatasetAuthority: mount?.operatorDatasetAuthority || null,
+    ...(mount?.operatorDatasetResearchSemantics ? {
+      operatorDatasetResearchSemantics: mount.operatorDatasetResearchSemantics,
+      operatorDatasetResearchSemanticsHash:
+        mount.operatorDatasetResearchSemanticsHash || null,
+    } : {}),
     splitManifestHash: mount?.splitManifestHash || null,
     readOnly: mount?.readOnly === true,
     benchmarkHarnessDocumentHash: mount?.benchmarkHarnessDocumentHash || null,

@@ -3,15 +3,23 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createDefaultPaperStore, createSqliteCampaignStore } from '../../paper-composition/bootstrap/operator-persistence-composition.mjs';
-import { createOllamaStructuredAgentExecutor, createMultiLanguageEmpiricalExecutor } from '../../paper-composition/bootstrap/operator-automation-composition.mjs';
+import { createIsolatedAgentExecutor, createOllamaStructuredAgentExecutor } from '../../paper-composition/bootstrap/operator-automation-composition.mjs';
 import { createCampaignNodeExecutor } from '../../paper-composition/automation/campaign-node-execution-composition.mjs';
-import { createOsSandboxedWorkerRunner, createSystemScheduler, createRandomIdGenerator } from '../../paper-composition/bootstrap/operator-runtime-composition.mjs';
+import { composeCampaignWorkerEmpiricalExecution } from '../../paper-composition/automation/campaign-worker-empirical-composition.mjs';
+import { createSystemScheduler, createRandomIdGenerator } from '../../paper-composition/bootstrap/operator-runtime-composition.mjs';
 import { buildPaperCampaignPlan } from '../../paper-domain/automation/campaign-plan.mjs';
 import { runPaperCampaign } from '../../paper-application/automation/campaign-engine.mjs';
 
 const model = process.env.HEPTA_AGENT_MODEL;
-const maximumOutputTokens = Number(process.env.HEPTA_AGENT_MAX_OUTPUT_TOKENS || 1536);
+const maximumOutputTokens = Number(process.env.HEPTA_AGENT_MAX_OUTPUT_TOKENS || 8192);
+const maximumRounds = Number(process.env.HEPTA_SMOKE_MAX_ROUNDS || 1);
 if (!model) throw new Error('HEPTA_AGENT_MODEL is required');
+if (!Number.isSafeInteger(maximumOutputTokens) || maximumOutputTokens < 8192) {
+  throw new Error('HEPTA_AGENT_MAX_OUTPUT_TOKENS must be an integer of at least 8192');
+}
+if (!Number.isSafeInteger(maximumRounds) || maximumRounds < 1 || maximumRounds > 10) {
+  throw new Error('HEPTA_SMOKE_MAX_ROUNDS must be an integer from 1 through 10');
+}
 const resumeRoot = process.env.HEPTA_SMOKE_RESUME_ROOT ? path.resolve(process.env.HEPTA_SMOKE_RESUME_ROOT) : null;
 const root = resumeRoot || fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-real-campaign-smoke-'));
 let removeWorkspace = false;
@@ -29,13 +37,27 @@ try {
   const existingId = resumeRoot ? store.query('SELECT campaign_id FROM paper_campaigns ORDER BY created_at LIMIT 1;').rows[0]?.campaign_id : null;
   const plan = existingId
     ? campaignStore.getCampaign(existingId).spec
-    : buildPaperCampaignPlan({ paperId: 'automation-smoke-paper', sourceWorkspace: paperRoot, campaignId: `automation-smoke-${Date.now()}`, maxRounds: 1, refereeCount: 3 });
+    : buildPaperCampaignPlan({ paperId: 'automation-smoke-paper', sourceWorkspace: paperRoot, campaignId: `automation-smoke-${Date.now()}`, maxRounds: maximumRounds, refereeCount: 3 });
   const campaignId = existingId || plan.campaignId;
   if (!existingId) campaignStore.createCampaign(plan);
-  const workerRunner = createOsSandboxedWorkerRunner({ allowedExecutables: ['python3', 'latexmk'], allowedRoots: [paperRoot], allowedOutputRoots: [path.join(runtimeRoot, 'automation-artifacts')] });
+  const { empiricalExecutor } = composeCampaignWorkerEmpiricalExecution({
+    plans: [plan],
+    runtimeRoot,
+  });
+  const createLocalAgentExecutor = (principal) => createIsolatedAgentExecutor({
+    delegate: createOllamaStructuredAgentExecutor({
+      model,
+      maximumOutputTokens,
+      timeoutMs: 20 * 60 * 1000,
+    }),
+    isolationRoot: path.join(runtimeRoot, 'automation-workspaces', principal),
+    keepWorkspaces: false,
+    keepFailedWorkspaces: true,
+  });
   const executor = createCampaignNodeExecutor({
-    agentExecutor: createOllamaStructuredAgentExecutor({ model, maximumOutputTokens, timeoutMs: 5 * 60 * 1000 }),
-    empiricalExecutor: createMultiLanguageEmpiricalExecutor({ workerRunner }),
+    agentExecutor: createLocalAgentExecutor('author'),
+    formalReviewAgentExecutor: createLocalAgentExecutor('reviewer'),
+    empiricalExecutor,
     runtimeRoot,
   });
   let lastProgress = '';
@@ -62,6 +84,7 @@ try {
     skipped: result.nodes.filter((node) => node.status === 'skipped').length,
     failed: result.nodes.filter((node) => node.status === 'failed_terminal').length,
     retries: result.retryCount,
+    configuredMaximumRounds: maximumRounds,
     maximumObservedConcurrency: result.maximumObservedConcurrency,
     finalManuscriptPresent: fs.existsSync(path.join(paperRoot, 'main.tex')),
     externalActionPerformed: false,

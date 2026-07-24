@@ -8,13 +8,16 @@ import {
   evaluateSystemBenchmarkArmRawObservation,
 } from '../../paper-domain/automation/system-benchmark-arm-protocol.mjs';
 import {
+  buildSystemBenchmarkArmBatchChallenge,
   buildSystemBenchmarkCellChallenge,
   evaluateSystemBenchmarkCellResponses,
+  systemBenchmarkArmBatchChallengeEnvironment,
 } from '../../paper-domain/automation/system-benchmark-challenge.mjs';
 import {
   RAW_EVENT_RECOMPUTATION_INDEPENDENCE_CONTRACT,
   buildIndependentRawEventRecomputationManifest,
   buildIndependentSystemBenchmarkCellFixture,
+  decodeIndependentSystemBenchmarkArmBatchChallenge,
   independentlyAggregateSystemBenchmarkEvents,
   independentlyEvaluateSystemBenchmarkCellResponses,
   verifyIndependentFixtureBinding,
@@ -167,6 +170,53 @@ test('signed private fixture source is interpreted without the producer oracle b
     assert.deepEqual(independent.challenge, producer.challenge);
     assert.deepEqual(independent.oracle, producer.oracle);
   }
+});
+
+test('independent decoder accepts every producer-authorized challenge chunk', () => {
+  const seedSchedule = [11, 23, 37, 41];
+  const minimumRepetitions = 8;
+  const definition = {
+    version: 1,
+    kind: 'OperatorAuthorizedDatasetBenchmarkHarness',
+    benchmarkId: 'large-operator-dataset',
+    benchmarkFamily: 'ml_algorithm_benchmark',
+    seedSchedule,
+    minimumRepetitions,
+    cells: seedSchedule.flatMap((seed) => Array.from({ length: minimumRepetitions }, (_, index) => ({
+      seed,
+      repetition: index + 1,
+      cases: Array.from({ length: 8 }, (__, caseIndex) => ({
+        caseId: hashRecord('LargeIndependentPrivateFixtureCase', {
+          seed, repetition: index + 1, caseIndex,
+        }),
+        input: seed === seedSchedule[0] && index === 0
+          ? { blob: 'x'.repeat(40_000), caseIndex } : { caseIndex },
+        ablationInput: { caseIndex },
+        referenceResponse: 0,
+        oracle: { label: caseIndex % 2, robustLabel: caseIndex % 2 },
+      })),
+    }))),
+  };
+  const protocol = buildSystemBenchmarkArmProtocolSet({
+    benchmarkId: definition.benchmarkId,
+    datasetBacked: true,
+    benchmarkFamily: definition.benchmarkFamily,
+  }).protocols.find((item) => item.arm === 'treatment');
+  const built = buildSystemBenchmarkArmBatchChallenge({
+    protocol,
+    cells: [{
+      cellId: hashRecord('LargeIndependentChallengeCell', { seed: seedSchedule[0] }),
+      seed: seedSchedule[0],
+      repetition: 1,
+    }],
+    operatorDatasetHarnessDefinition: definition,
+  });
+  const environment = systemBenchmarkArmBatchChallengeEnvironment(built.challenge);
+  assert.ok(Number(environment.HEPTA_BENCHMARK_CHALLENGE_PART_COUNT) > 4);
+  assert.deepEqual(
+    decodeIndependentSystemBenchmarkArmBatchChallenge(environment),
+    built.challenge,
+  );
 });
 
 test('oracle and common-mode event-plus-metric tampering stop at independent boundaries', () => {

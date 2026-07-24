@@ -1,13 +1,34 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
+export function compensatedSum(values) {
+  let sum = 0;
+  let correction = 0;
+  for (const value of values) {
+    const next = sum + value;
+    correction += Math.abs(sum) >= Math.abs(value)
+      ? (sum - next) + value
+      : (value - next) + sum;
+    sum = next;
+  }
+  return sum + correction;
+}
+
 export function arithmeticMean(values) {
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
+  return values.length ? compensatedSum(values) / values.length : Number.NaN;
 }
 
 export function sampleStandardDeviation(values) {
   if (values.length < 2) return Number.NaN;
-  const mean = arithmeticMean(values);
-  return Math.sqrt(values.reduce((sum, value) => sum + ((value - mean) ** 2), 0) / (values.length - 1));
+  let count = 0;
+  let mean = 0;
+  let secondMoment = 0;
+  for (const value of values) {
+    count += 1;
+    const delta = value - mean;
+    mean += delta / count;
+    secondMoment += delta * (value - mean);
+  }
+  return Math.sqrt(Math.max(0, secondMoment) / (count - 1));
 }
 
 export function sampleStandardError(values) {
@@ -46,11 +67,11 @@ export function deterministicPairedBootstrap(values, {
   const random = seededGenerator(seed, salt);
   const means = [];
   for (let draw = 0; draw < resamples; draw += 1) {
-    let sum = 0;
+    const sample = [];
     for (let index = 0; index < values.length; index += 1) {
-      sum += values[Math.floor(random() * values.length)];
+      sample.push(values[Math.floor(random() * values.length)]);
     }
-    means.push(sum / values.length);
+    means.push(arithmeticMean(sample));
   }
   const tail = (1 - confidenceLevel) / 2;
   return Object.freeze({
@@ -63,16 +84,46 @@ export function deterministicPairedBootstrap(values, {
   });
 }
 
-export function deterministicSignFlipPValue(values, { draws, seed, salt } = {}) {
+export function deterministicSignFlipInference(values, {
+  draws,
+  seed,
+  salt,
+  exactMaximumObservations = 16,
+} = {}) {
   const observed = arithmeticMean(values);
+  if (values.length <= exactMaximumObservations) {
+    const exactDraws = 2 ** values.length;
+    let atLeastObserved = 0;
+    for (let mask = 0; mask < exactDraws; mask += 1) {
+      const randomized = values.map((value, index) => (
+        (mask & (2 ** index)) === 0 ? -value : value
+      ));
+      if (arithmeticMean(randomized) >= observed) atLeastObserved += 1;
+    }
+    return Object.freeze({
+      method: 'exact-paired-sign-flip-enumeration-v1',
+      pValue: atLeastObserved / exactDraws,
+      draws: exactDraws,
+      monteCarloStandardError: 0,
+    });
+  }
   const random = seededGenerator(seed, salt);
   let atLeastObserved = 0;
   for (let draw = 0; draw < draws; draw += 1) {
-    let randomized = 0;
-    for (const value of values) randomized += (random() < 0.5 ? -value : value);
-    if ((randomized / values.length) >= observed) atLeastObserved += 1;
+    const randomized = values.map((value) => (random() < 0.5 ? -value : value));
+    if (arithmeticMean(randomized) >= observed) atLeastObserved += 1;
   }
-  return (atLeastObserved + 1) / (draws + 1);
+  const pValue = (atLeastObserved + 1) / (draws + 1);
+  return Object.freeze({
+    method: 'deterministic-monte-carlo-sign-flip-v1',
+    pValue,
+    draws,
+    monteCarloStandardError: Math.sqrt((pValue * (1 - pValue)) / draws),
+  });
+}
+
+export function deterministicSignFlipPValue(values, options = {}) {
+  return deterministicSignFlipInference(values, options).pValue;
 }
 
 export function winsorizedValues(values, lowerProbability, upperProbability) {

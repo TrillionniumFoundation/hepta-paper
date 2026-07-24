@@ -24,6 +24,7 @@ export function assertCampaignAgentPrimitivesPort(port) {
   return assertMethods(port, 'CampaignAgentPrimitivesPort', [
     'execute',
     'buildFormalReviewEnvelope',
+    'executeFormalProofSearchOperations',
   ]);
 }
 

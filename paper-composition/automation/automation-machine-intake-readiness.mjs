@@ -17,6 +17,16 @@ import {
 import {
   inspectConfiguredAutonomousResearchTopicProducer,
 } from './autonomous-research-machine-intake-composition.mjs';
+import {
+  evaluateAutonomousResearchCapabilityRequestCoverage,
+  verifyAutonomousResearchCapabilityScopeManifest,
+} from '../../paper-domain/automation/autonomous-research-capability-scope-manifest.mjs';
+import {
+  verifyAutonomousResearchAgendaProductionReceipt,
+} from '../../paper-domain/automation/autonomous-research-agenda-production-contract.mjs';
+import {
+  inspectGenericDomainCapabilityEvidenceBindings,
+} from './generic-domain-capability-evidence-publication.mjs';
 
 export { inspectAutonomousResearchSupervisorInstanceStatus };
 export {
@@ -244,6 +254,13 @@ export function evaluateFullyAutonomousResearchSystemReadiness({
   machineIntake,
   residentSupervisor,
   residentPrerequisites,
+  autonomousStateSafety,
+  capabilityScopeManifest = null,
+  capabilityScopeInspection = null,
+  capabilityRequest = null,
+  researchAgendaProducerReceipt = null,
+  genericDomainCapabilityEvidence = null,
+  genericDomainCapabilityVerificationContext = null,
 } = {}) {
   const currentMachineIntakeConfigurationHash = machineIntake?.configurationHash || null;
   const reconciledMachineIntakeConfigurationHash =
@@ -268,13 +285,88 @@ export function evaluateFullyAutonomousResearchSystemReadiness({
       && currentResidentPrerequisiteIdentityHash
         === reconciledResidentPrerequisiteIdentityHash,
   );
-  const ready = fullAutomaticResearchWritingReady === true
+  const boundedProfileReady = fullAutomaticResearchWritingReady === true
     && machineIntake?.coldStartAutonomyReady === true
     && residentSupervisor?.ready === true
     && machineIntakeConfigurationReconciled
     && topicProducerDatasetSnapshotReconciled
     && residentPrerequisites?.ready === true
-    && residentPrerequisiteIdentityReconciled;
+    && residentPrerequisiteIdentityReconciled
+    && autonomousStateSafety?.ready === true;
+  const capabilityScopeManifestValid = capabilityScopeManifest
+    ? verifyAutonomousResearchCapabilityScopeManifest(capabilityScopeManifest) : false;
+  const machineGeneratedAgendaReceiptValid = capabilityScopeManifest?.agendaMode
+    === 'machine-generated'
+    && verifyAutonomousResearchAgendaProductionReceipt(researchAgendaProducerReceipt).valid
+    && capabilityScopeManifest.empiricalFamilies.includes(
+      researchAgendaProducerReceipt?.selectedProtocolFamily,
+    )
+    && JSON.stringify(researchAgendaProducerReceipt?.allowedProtocolFamilies)
+      === JSON.stringify(capabilityScopeManifest.empiricalFamilies);
+  const capabilityCoverage = capabilityScopeManifestValid
+    ? evaluateAutonomousResearchCapabilityRequestCoverage({
+      manifest: capabilityScopeManifest,
+      ...(capabilityRequest || {}),
+    })
+    : Object.freeze({
+      ready: false,
+      status: 'autonomous_research_capability_request_not_covered',
+      scopeManifestHash: null,
+      blockers: Object.freeze(['autonomous_research_capability_scope_manifest_required']),
+    });
+  const legacyScopeUnspecified = capabilityScopeManifest === null;
+  const capabilityScopeInspectionReady = capabilityScopeInspection === null
+    || (capabilityScopeInspection.authorIdentityAttestationReady === true
+      && Array.isArray(capabilityScopeInspection.blockers)
+      && capabilityScopeInspection.blockers.length === 0);
+  const configuredScopeReady = capabilityScopeManifestValid
+    && capabilityScopeManifest?.configuredScopeReady === true
+    && capabilityScopeManifest?.genericDeclaredCapability === true
+    && capabilityScopeInspectionReady;
+  const semanticEvidence = genericDomainCapabilityEvidence || {};
+  const semanticEvidenceInspection = inspectGenericDomainCapabilityEvidenceBindings({
+    evidence: semanticEvidence,
+    researchAgendaProducerReceipt,
+    genericDomainCapabilityVerificationContext,
+  });
+  const {
+    researchAgendaIrValid,
+    experimentIrExecutionAuthorityValid,
+    priorArtClaimAlignmentValid,
+    venueRequirementIrValid,
+    dynamicFormalExecutionAuthorityValid,
+    formalDomainCoverageReceiptValid,
+    formalDomainCoverageExternallyReplayed,
+    formalDomainIndependentReviewValid,
+    externalResearchReplayReceiptValid,
+    independentFormalReviewReceiptValid,
+  } = semanticEvidenceInspection;
+  const genericDomainCapabilityBlockers = Object.freeze([
+    ...(dynamicFormalExecutionAuthorityValid && formalDomainCoverageReceiptValid
+      ? [] : ['autonomous_research_formal_domain_coverage_receipt_required']),
+    ...(formalDomainCoverageExternallyReplayed
+      ? [] : ['autonomous_research_formal_domain_coverage_external_replay_required']),
+    ...(formalDomainIndependentReviewValid
+      ? [] : ['autonomous_research_formal_domain_coverage_independent_review_required']),
+    ...(experimentIrExecutionAuthorityValid
+      ? [] : ['autonomous_research_experiment_ir_execution_authority_receipt_required']),
+    ...(researchAgendaIrValid
+      ? [] : ['autonomous_research_research_agenda_ir_receipt_required']),
+    ...(priorArtClaimAlignmentValid
+      ? [] : ['autonomous_research_prior_art_claim_alignment_receipt_required']),
+    ...(venueRequirementIrValid
+      ? [] : ['autonomous_research_venue_requirement_ir_receipt_required']),
+    ...(externalResearchReplayReceiptValid
+      ? [] : ['autonomous_research_external_research_replay_receipt_required']),
+    ...(independentFormalReviewReceiptValid
+      ? [] : ['autonomous_research_independent_formal_review_receipt_required']),
+  ]);
+  const genericDomainCapabilityReady = genericDomainCapabilityBlockers.length === 0;
+  const ready = boundedProfileReady
+    && configuredScopeReady
+    && machineGeneratedAgendaReceiptValid
+    && capabilityCoverage.ready === true
+    && genericDomainCapabilityReady;
   const blockers = [
     ...(fullAutomaticResearchWritingReady === true
       ? [] : ['full_automatic_research_writing_not_ready']),
@@ -291,12 +383,53 @@ export function evaluateFullyAutonomousResearchSystemReadiness({
       || ['autonomous_research_resident_full_prerequisites_not_ready']),
     ...(!residentPrerequisiteIdentityReconciled
       ? ['autonomous_research_resident_prerequisite_identity_mismatch'] : []),
+    ...(autonomousStateSafety?.blockers
+      || ['autonomous_research_state_safety_inspection_required']),
+    ...(!capabilityScopeManifestValid
+      ? ['autonomous_research_capability_scope_manifest_required'] : []),
+    ...(capabilityScopeManifestValid && !configuredScopeReady
+      ? ['autonomous_research_configured_scope_not_ready'] : []),
+    ...(capabilityScopeInspection?.blockers || []),
+    ...(capabilityScopeInspection !== null
+      && capabilityScopeInspection.authorIdentityAttestationReady !== true
+      ? ['autonomous_research_author_identity_attestation_required'] : []),
+    ...(capabilityScopeManifest?.agendaMode === 'machine-generated'
+      && !machineGeneratedAgendaReceiptValid
+      ? ['autonomous_research_machine_generated_agenda_receipt_required'] : []),
+    ...(capabilityCoverage.blockers || []),
+    ...(configuredScopeReady ? genericDomainCapabilityBlockers : []),
   ];
   return Object.freeze({
     ready,
     status: ready
-      ? 'fully_autonomous_research_system_ready'
-      : 'fully_autonomous_research_system_blocked',
+      ? 'generic_domain_autonomous_research_system_ready'
+      : boundedProfileReady
+        ? 'bounded_profile_autonomous_research_system_ready'
+        : 'autonomous_research_system_blocked',
+    boundedProfileReady,
+    configuredScopeReady,
+    genericDomainCapabilityReady,
+    genericDomainCapabilityBlockers,
+    genericDomainCapabilityEvidenceInspection: Object.freeze({
+      dynamicFormalExecutionAuthorityValid,
+      formalDomainCoverageReceiptValid,
+      formalDomainCoverageExternallyReplayed,
+      experimentIrExecutionAuthorityValid,
+      researchAgendaIrValid,
+      priorArtClaimAlignmentValid,
+      venueRequirementIrValid,
+      externalResearchReplayReceiptValid,
+      independentFormalReviewReceiptValid,
+    }),
+    capabilityScopeManifestValid,
+    capabilityScopeInspectionReady,
+    legacyScopeUnspecified,
+    capabilityScopeManifestHash:
+      capabilityScopeManifest?.autonomousResearchCapabilityScopeManifestHash || null,
+    machineGeneratedAgendaReceiptValid,
+    researchAgendaProductionReceiptHash:
+      researchAgendaProducerReceipt?.autonomousResearchAgendaProductionReceiptHash || null,
+    capabilityCoverage,
     currentMachineIntakeConfigurationHash,
     reconciledMachineIntakeConfigurationHash,
     machineIntakeConfigurationReconciled,
@@ -306,6 +439,7 @@ export function evaluateFullyAutonomousResearchSystemReadiness({
     currentResidentPrerequisiteIdentityHash,
     reconciledResidentPrerequisiteIdentityHash,
     residentPrerequisiteIdentityReconciled,
+    autonomousStateSafetyReady: autonomousStateSafety?.ready === true,
     blockers: Object.freeze([...new Set(blockers)]),
   });
 }

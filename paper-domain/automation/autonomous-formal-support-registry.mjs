@@ -1,5 +1,8 @@
 import { hasExactObjectKeys as exactKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  verifyFormalReadableProofExplanationBundle,
+} from '../research/formal-readable-proof-contract.mjs';
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}$/;
 const FAMILY_IDS = Object.freeze([
@@ -7,6 +10,7 @@ const FAMILY_IDS = Object.freeze([
   'finance_asset_pricing_benchmark',
   'ml_algorithm_benchmark',
   'operations_optimization_benchmark',
+  'registered_scalar_response_benchmark',
   'rl_stochastic_control_benchmark',
 ]);
 
@@ -76,6 +80,18 @@ const PROOF_EXPOSITION_STEPS = Object.freeze({
       stepId: 'joint-bounds',
       statement: 'Whichever input is selected, reflexivity gives one bound and the branch comparison gives the other, establishing the conjunction.',
       leanReferences: Object.freeze(['Nat.le_refl', 'Nat.le_of_lt', 'Nat.lt_of_not_ge']),
+    }),
+  ]),
+  registered_scalar_interval_preservation: Object.freeze([
+    Object.freeze({
+      stepId: 'registered-lower-bound',
+      statement: 'Use the preregistered lower-bound premise for the scalar response without weakening or estimating it.',
+      leanReferences: Object.freeze(['And.intro']),
+    }),
+    Object.freeze({
+      stepId: 'registered-upper-bound',
+      statement: 'Use the preregistered upper-bound premise and combine both premises into the required interval conjunction.',
+      leanReferences: Object.freeze(['And.intro']),
     }),
   ]),
   trajectory_prefix_length_safety: Object.freeze([
@@ -216,6 +232,19 @@ const TEMPLATES = Object.freeze({
     proofObligation: 'feasible_allocation_bounds',
     leanType: '∀ (demand capacity : Nat), Nat.min demand capacity ≤ demand ∧ Nat.min demand capacity ≤ capacity',
   }),
+  registered_scalar_response_benchmark: rawTemplate({
+    protocolFamily: 'registered_scalar_response_benchmark',
+    templateId: 'hepta.formal.registered-scalar-interval-preservation.v1',
+    canonicalTheoremName: 'registered_scalar_interval_preservation',
+    statement: 'For every preregistered lower bound, scalar response, and preregistered upper bound, the two verified bound premises imply that the response belongs to the registered interval.',
+    assumptions: [
+      'The scalar response and preregistered interval endpoints are represented by real numbers.',
+      'The lower-bound and upper-bound premises are supplied as explicit proof obligations rather than inferred from empirical outcomes.',
+    ],
+    quantifiers: ['For every real-valued lower endpoint, scalar response, and upper endpoint.'],
+    proofObligation: 'registered_scalar_interval_preservation',
+    leanType: '∀ (lower response upper : Real), lower ≤ response → response ≤ upper → lower ≤ response ∧ response ≤ upper',
+  }),
   rl_stochastic_control_benchmark: rawTemplate({
     protocolFamily: 'rl_stochastic_control_benchmark',
     templateId: 'hepta.formal.trajectory-prefix-length-safety.v1',
@@ -321,7 +350,144 @@ function renderAutonomousFormalProofExposition(template) {
   ].join('\n');
 }
 
-export function buildAutonomousFormalSupportSurfaceAuthority({ proposal, seedBundle } = {}) {
+function dynamicFormalProofBody({ seed, claimBinding } = {}) {
+  return [
+    AUTONOMOUS_FORMAL_MANUSCRIPT_PROOF,
+    `\\paragraph{Bound dynamic formal obligation.} The machine-declared Lean type is bound by dynamic seed hash \\texttt{${latexEscape(seed.dynamicFormalClaimSeedHash)}} and normalized type hash \\texttt{${latexEscape(seed.leanNormalizedTypeHash)}}.`,
+    `The exact declaration \\texttt{${latexEscape(seed.leanDeclarationName)}} is bound to formal claim contract \\texttt{${latexEscape(claimBinding.formalClaimContract.formalClaimContractHash)}}.`,
+    'Admission requires an exact-type kernel check, axiom audit, and fresh replay. Their content-addressed certificates remain in the release evidence bundle instead of being copied into proof prose, so a post-render verification does not make the exposition self-referential. The natural-language/Lean equivalence remains an independently reviewed semantic assertion rather than a kernel theorem.',
+  ].join('\n');
+}
+
+function readableDynamicFormalProofBody({ seed, claimBinding, explanation } = {}) {
+  const proofPrint = latexEscape(explanation.proofPrintText)
+    .replace(/\^/g, '\\textasciicircum{}')
+    .replace(/~/g, '\\textasciitilde{}')
+    .replace(/\r?\n/g, '\\\\\n');
+  return [
+    AUTONOMOUS_FORMAL_MANUSCRIPT_PROOF,
+    `\\paragraph{Exact dynamic formal goal.} Declaration \\texttt{${latexEscape(seed.leanDeclarationName)}} was checked against the exact Lean goal \\texttt{${latexEscape(explanation.theoremTypeSource)}}.`,
+    '\\begin{enumerate}',
+    ...explanation.readableSteps.map((step) => `\\item ${latexEscape(step)}`),
+    '\\end{enumerate}',
+    '\\paragraph{Kernel-elaborated declaration projection.}',
+    `\\begin{flushleft}\\ttfamily ${proofPrint}\\end{flushleft}`,
+    `The explanation DAG is bound to formal claim contract \\texttt{${latexEscape(claimBinding.formalClaimContract.formalClaimContractHash)}} and dynamic seed \\texttt{${latexEscape(seed.dynamicFormalClaimSeedHash)}}. It is a deterministic projection of Lean's elaborated declaration printout, not a machine proof that this prose is mathematically equivalent to the proof term or to the natural-language theorem.`,
+  ].join('\n');
+}
+
+function buildDynamicFormalSupportSurfaceAuthority({
+  proposal,
+  seedBundle,
+  formalVerificationReceipt,
+} = {}) {
+  const formalSeedClaims = (seedBundle?.claims || []).filter(
+    (claim) => claim?.verificationMode === 'formal_kernel',
+  );
+  const seedClaim = formalSeedClaims[0];
+  const seed = seedBundle?.dynamicFormalClaimSeed;
+  const formalWorkerReceipts = formalVerificationReceipt?.nativeResearchWorkerExecution
+    ?.workerReceipts?.filter((receipt) => receipt?.workerType === 'formal_verifier_lake') || [];
+  const certificateBundle = formalWorkerReceipts.length === 1
+    ? formalWorkerReceipts[0].result : null;
+  const claimBindings = certificateBundle?.claimBindings || [];
+  const claimBinding = claimBindings.find((binding) => (
+    binding?.formalClaimContract?.dynamicFormalClaimAuthority?.dynamicFormalClaimSeedHash
+      === seed?.dynamicFormalClaimSeedHash
+  )) || null;
+  const replayReceipt = certificateBundle?.replayReceipt || null;
+  const readableProofBundle = certificateBundle?.readableProofExplanationBundle || null;
+  const readableProofVerification = readableProofBundle
+    ? verifyFormalReadableProofExplanationBundle(readableProofBundle) : null;
+  const readableProofExplanation = readableProofVerification?.valid
+    ? readableProofBundle.explanations.find((item) => (
+      item?.claimId === claimBinding?.claimId
+      && item?.theoremName === seed?.leanDeclarationName
+      && item?.theoremTypeHash === seed?.leanNormalizedTypeHash
+    )) || null : null;
+  if (!proposalHashValid(proposal) || proposal?.version !== 2
+    || proposal?.formalSupportMode !== 'dynamic-lean-type-v1'
+    || !seedBundleHashValid(seedBundle) || seedBundle?.version !== 2
+    || seedBundle?.formalSupportMode !== 'dynamic-lean-type-v1'
+    || formalSeedClaims.length !== 1
+    || seedBundle?.dynamicFormalClaimSeedHash !== seed?.dynamicFormalClaimSeedHash
+    || seedClaim?.dynamicFormalClaimSeedHash !== seed?.dynamicFormalClaimSeedHash
+    || seedClaim?.leanDeclarationName !== seed?.leanDeclarationName
+    || seedClaim?.leanNormalizedTypeHash !== seed?.leanNormalizedTypeHash
+    || formalVerificationReceipt?.status !== 'campaign_formal_verification_completed'
+    || (formalVerificationReceipt?.blockers || []).length !== 0
+    || formalWorkerReceipts.length !== 1
+    || certificateBundle?.status !== 'formal_claim_verified'
+    || !claimBinding
+    || claimBinding.theoremName !== seed?.leanDeclarationName
+    || claimBinding.expectedTypeHash !== seed?.leanNormalizedTypeHash
+    || claimBinding.formalClaimContract?.status !== 'formal_claim_contract_verified'
+    || replayReceipt?.status !== 'formal_claim_replay_verified'
+    || !replayReceipt?.formalCertificateReplayReceiptHash) {
+    throw new Error('autonomous_dynamic_formal_support_surface_authority_invalid');
+  }
+  const theoremBody = latexEscape(seedClaim.text);
+  const proofBody = readableProofExplanation
+    ? readableDynamicFormalProofBody({ seed, claimBinding, explanation: readableProofExplanation })
+    : dynamicFormalProofBody({ seed, claimBinding });
+  const proofExpositionHash = hashBytes(Buffer.from(proofBody, 'utf8'));
+  const payload = Object.freeze({
+    version: readableProofExplanation ? 3 : 2,
+    kind: 'AutonomousFormalSupportSurfaceAuthority',
+    status: 'autonomous_formal_support_surface_authorized',
+    paperId: proposal.paperId,
+    protocolFamily: proposal.protocolFamily,
+    formalSupportMode: 'dynamic-lean-type-v1',
+    formalSupportRegistryHash: null,
+    formalSupportTemplateId: null,
+    formalSupportTemplateHash: null,
+    leanTypeContractHash: seed.leanNormalizedTypeHash,
+    proofExpositionHash,
+    dynamicFormalClaimSeedHash: seed.dynamicFormalClaimSeedHash,
+    formalClaimContractHash: claimBinding.formalClaimContract.formalClaimContractHash,
+    kernelCertificateBundleHash: certificateBundle.certificateBundleHash,
+    kernelReplayReceiptHash: replayReceipt.formalCertificateReplayReceiptHash,
+    ...(readableProofExplanation ? {
+      readableProofExplanationBundleHash:
+        readableProofBundle.formalReadableProofExplanationBundleHash,
+      readableProofExplanationHash:
+        readableProofExplanation.formalReadableProofExplanationHash,
+      readableProofExplanationDagHash: readableProofExplanation.explanationDagHash,
+      readableProofScope: readableProofExplanation.machineVerificationScope,
+      productionReadableProofReady: true,
+    } : {
+      productionReadableProofReady: false,
+    }),
+    proposalHash: proposal.machineProposedScientificClaimSetHash,
+    seedBundleHash: seedBundle.autonomousResearchSeedContractBundleHash,
+    proposalClaimId: seedClaim.id,
+    proposalClaimRecordHash: hashRecord('AutonomousResearchClaimRecord', seedClaim),
+    theoremBody,
+    theoremBodyHash: hashBytes(Buffer.from(theoremBody, 'utf8')),
+    proofBody,
+    proofBodyHash: hashBytes(Buffer.from(proofBody, 'utf8')),
+    empiricalOutcomeClaimed: false,
+    naturalLanguageToLeanEquivalenceMachineProven: false,
+  });
+  return Object.freeze({
+    ...payload,
+    autonomousFormalSupportSurfaceAuthorityHash:
+      hashRecord('AutonomousFormalSupportSurfaceAuthority', payload),
+  });
+}
+
+export function buildAutonomousFormalSupportSurfaceAuthority({
+  proposal,
+  seedBundle,
+  formalVerificationReceipt = null,
+} = {}) {
+  if (proposal?.version === 2) {
+    return buildDynamicFormalSupportSurfaceAuthority({
+      proposal,
+      seedBundle,
+      formalVerificationReceipt,
+    });
+  }
   const template = selectAutonomousFormalSupportTemplate(proposal?.protocolFamily);
   const formalProposalClaims = (proposal?.claims || []).filter(
     (claim) => claim?.verificationMode === 'formal_kernel',
@@ -411,21 +577,64 @@ export function autonomousFormalSupportMarkerDeclaration(authority) {
   }
   return Object.freeze({
     version: 1,
-    surfaceId: `formal-support:${authority.formalSupportTemplateId}`,
+    surfaceId: [2, 3].includes(authority.version)
+      ? `formal-support:dynamic:${authority.dynamicFormalClaimSeedHash.slice('sha256:'.length)}`
+      : `formal-support:${authority.formalSupportTemplateId}`,
     authorityHash: authority.autonomousFormalSupportSurfaceAuthorityHash,
     templateHash: authority.formalSupportTemplateHash,
     proofExpositionHash: authority.proofExpositionHash,
     proposalClaimRecordHash: authority.proposalClaimRecordHash,
     theoremBodyHash: authority.theoremBodyHash,
     proofBodyHash: authority.proofBodyHash,
+    ...([2, 3].includes(authority.version) ? {
+      dynamicFormalClaimSeedHash: authority.dynamicFormalClaimSeedHash,
+      formalClaimContractHash: authority.formalClaimContractHash,
+      kernelReplayReceiptHash: authority.kernelReplayReceiptHash,
+      ...(authority.version === 3 ? {
+        readableProofExplanationHash: authority.readableProofExplanationHash,
+        readableProofExplanationDagHash: authority.readableProofExplanationDagHash,
+      } : {}),
+    } : {}),
   });
 }
 
 export function verifyAutonomousFormalSupportSurfaceAuthority(value) {
-  if (!value || value.version !== 1 || value.kind !== 'AutonomousFormalSupportSurfaceAuthority'
+  if (!value || ![1, 2, 3].includes(value.version) || value.kind !== 'AutonomousFormalSupportSurfaceAuthority'
     || value.status !== 'autonomous_formal_support_surface_authorized'
     || value.empiricalOutcomeClaimed !== false
     || value.naturalLanguageToLeanEquivalenceMachineProven !== false) return false;
+  if ([2, 3].includes(value.version)) {
+    const { autonomousFormalSupportSurfaceAuthorityHash: claimedHash, ...payload } = value;
+    return value.formalSupportMode === 'dynamic-lean-type-v1'
+      && value.formalSupportRegistryHash === null
+      && value.formalSupportTemplateId === null
+      && value.formalSupportTemplateHash === null
+      && value.productionReadableProofReady === (value.version === 3)
+      && [
+        value.leanTypeContractHash,
+        value.proofExpositionHash,
+        value.dynamicFormalClaimSeedHash,
+        value.formalClaimContractHash,
+        value.kernelCertificateBundleHash,
+        value.kernelReplayReceiptHash,
+        value.proposalHash,
+        value.seedBundleHash,
+        value.proposalClaimRecordHash,
+        value.theoremBodyHash,
+        value.proofBodyHash,
+        ...(value.version === 3 ? [
+          value.readableProofExplanationBundleHash,
+          value.readableProofExplanationHash,
+          value.readableProofExplanationDagHash,
+        ] : []),
+      ].every((hash) => /^sha256:[0-9a-f]{64}$/.test(String(hash || '')))
+      && (value.version !== 3 || value.readableProofScope
+        === 'exact-type-source-and-kernel-elaborated-declaration-reference-dag-v1')
+      && value.theoremBodyHash === hashBytes(Buffer.from(value.theoremBody, 'utf8'))
+      && value.proofExpositionHash === hashBytes(Buffer.from(value.proofBody, 'utf8'))
+      && value.proofBodyHash === hashBytes(Buffer.from(value.proofBody, 'utf8'))
+      && claimedHash === hashRecord('AutonomousFormalSupportSurfaceAuthority', payload);
+  }
   let template;
   try { template = selectAutonomousFormalSupportTemplate(value.protocolFamily); }
   catch { return false; }
@@ -449,6 +658,12 @@ export function autonomousFormalSupportMarkerDeclarationValid(declaration, autho
     || !exactKeys(declaration, [
       'version', 'surfaceId', 'authorityHash', 'templateHash', 'proposalClaimRecordHash',
       'proofExpositionHash', 'theoremBodyHash', 'proofBodyHash',
+      ...([2, 3].includes(authority?.version) ? [
+        'dynamicFormalClaimSeedHash', 'formalClaimContractHash', 'kernelReplayReceiptHash',
+        ...(authority.version === 3 ? [
+          'readableProofExplanationHash', 'readableProofExplanationDagHash',
+        ] : []),
+      ] : []),
     ])) return false;
   try {
     return JSON.stringify(declaration)

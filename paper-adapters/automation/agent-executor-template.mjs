@@ -28,6 +28,7 @@ function normalizeExecutionInput(input = {}) {
     outputTokenBudget = null,
     timeoutMs: requestedTimeout = null,
     signal = null,
+    workspaceMutationPolicy = null,
   } = input;
   return {
     input,
@@ -40,6 +41,7 @@ function normalizeExecutionInput(input = {}) {
     outputTokenBudget,
     requestedTimeout,
     signal,
+    workspaceMutationPolicy,
   };
 }
 

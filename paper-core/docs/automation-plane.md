@@ -143,9 +143,12 @@ natural-language equivalence.
 Codex configuration preflight proves only the selected executable identity,
 private credential/config filesystem identity, authentication state and an
 explicit model selection. It does not claim the selected model is available.
-`automation:research-status` therefore opts into a separate live, read-only,
-ephemeral model canary for both author and reviewer. The full readiness bit
-also requires a healthy campaign store and no operational-integrity blockers.
+`automation:research-status` therefore opts into separate live, ephemeral model
+canaries for both author and reviewer and an active production release-attestor
+probe/challenge. Plain `automation:status` keeps both provider canaries and the
+release-attestor backend passive unless their corresponding live flags are
+supplied. The full readiness bit also requires a healthy campaign store and no
+operational-integrity blockers.
 Every campaign invocation repeats the local runtime/authentication preflight
 and compares it with the capability receipt before launching the already
 resolved executable; replacing the binary, config or credential root after
@@ -264,8 +267,11 @@ independent formal reviewer configuration preflights and live model canaries,
 Lean, the academic empirical dataset backend, a readable campaign store and a
 clean operational-integrity report. It also requires a current version-2
 research-execution release-attestor configuration whose external KMS/HSM
-backend has passed the independent challenge probe; a locally loaded file key
-is reported usable for Golden/local packaging but is not production-ready.
+backend has passed the independent challenge probe and fresh active-key
+signature challenge. This route explicitly supplies both
+`--live-provider-canary` and `--live-release-attestor`; the plain status route
+does not. A locally loaded file key is reported usable for Golden/local
+packaging but is not production-ready.
 Full readiness also loads the path in
 `HEPTA_FULL_RESEARCH_QUALIFICATION_RECEIPT` and validates its attestor signature,
 24-hour window, exact worktree/config/schema/image bindings, independently

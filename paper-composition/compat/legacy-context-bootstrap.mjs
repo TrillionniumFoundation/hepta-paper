@@ -74,6 +74,11 @@ export function bootstrapLegacyPaperExecutionContext({
     options,
     serviceProfile: 'legacy',
     capabilities: ['legacy-full-service-facade'],
-    services: Object.freeze({ ...scopedServices, paperStageAdapters }),
+    services: Object.freeze({
+      ...scopedServices,
+      stageExecution: typedCompatibilityOverrides.stageExecution,
+      journalPolicy: typedCompatibilityOverrides.journalPolicy,
+      paperStageAdapters,
+    }),
   });
 }

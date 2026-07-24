@@ -14,37 +14,21 @@ import {
   createAutonomousResearchMachineIntakeCycleProcessor,
 } from '../../paper-application/automation/autonomous-research-machine-intake-supervision.mjs';
 import {
+  ResidentReactivationRequired,
+  isResidentReactivationRequired,
+} from '../../paper-application/automation/autonomous-research-resident-reactivation-required.mjs';
+import {
   buildAutonomousResearchMachineIntakeAdmission,
 } from '../../paper-domain/automation/autonomous-research-machine-intake-admission-contract.mjs';
-import {
-  buildAutonomousResearchMachineIntake,
-} from '../../paper-domain/automation/autonomous-research-machine-intake-contract.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
+  buildSupervisorMachineIntake as machineIntake,
   fullyAutonomousConstructorDependencies,
   fullyAutonomousResidentInstanceRepository,
+  machineIntakeResidentLeaseContext as residentLeaseContext,
+  machineIntakeTestScheduler as scheduler,
+  supervisorMachineIntakeTestHash as H,
 } from './autonomous-research-supervisor-machine-intake-test-support.mjs';
-
-const H = (label) => hashRecord('SupervisorMachineIntakeTestHash', { label });
-
-function scheduler() {
-  return Object.freeze({
-    async sleep() {},
-    setInterval() { return {}; },
-    clearInterval() {},
-    unref() {},
-  });
-}
-
-function residentLeaseContext() {
-  const lease = Object.freeze({
-    ownerId: 'resident:test',
-    leaseToken: 'resident-lease:test',
-    leaseGeneration: 1,
-    expiresAt: '2099-01-01T00:00:00.000Z',
-  });
-  return Object.freeze({ lease, assertCurrent() { return lease; } });
-}
 
 test('fully autonomous cycles require the private resident singleton authority', async () => {
   const dependencies = fullyAutonomousConstructorDependencies(scheduler());
@@ -56,39 +40,6 @@ test('fully autonomous cycles require the private resident singleton authority',
   });
   await assert.rejects(supervisor.runCycle(), /resident_cycle_authority_required/);
 });
-
-function machineIntake(label, now) {
-  return buildAutonomousResearchMachineIntake({
-    intakeId: `intake:${label}`,
-    paperId: `paper:${label}`,
-    campaignId: `autonomous-research:paper:${label}`,
-    launchMode: 'production-run',
-    admissionCreatedAt: now.toISOString(),
-    objective: `Evaluate the bounded ${label} supervisor intake.`,
-    protocolFamily: 'ml_algorithm_benchmark',
-    datasetMounts: [{
-      name: `dataset-${label}`,
-      source: `/datasets/${label}`,
-      readOnly: true,
-      manifestHash: H(`dataset:${label}`),
-      licenseId: 'CC0-1.0',
-      benchmarkFamily: 'ml_algorithm_benchmark',
-    }],
-    budgets: {
-      maxWallTimeMs: 60 * 60 * 1000,
-      maxAgentCalls: 10,
-      maxCpuJobs: 10,
-      maxGpuJobs: 0,
-      maxTokenCount: 10_000,
-      maxCostUsd: 10,
-      maxMemoryMiB: 2048,
-    },
-    providerConfigurationHash: H('provider'),
-    recurringGoldenProvenance: null,
-    revisionRounds: 1,
-    refereeCount: 2,
-  });
-}
 
 function enqueuedAuthority(label, now) {
   const intake = machineIntake(label, now);
@@ -356,4 +307,95 @@ test('dynamic full-to-bootstrap downgrade prevents pending production enqueue', 
   assert.equal(result.processedCount, 1);
   assert.equal(result.results[0].status, 'machine_intake_deferred');
   assert.match(result.results[0].error, /dynamic_global_qualification_downgrade/);
+});
+
+test('machine-intake rotation escapes load and enqueue without defer or failure-budget mutation', async () => {
+  const now = new Date('2026-07-20T01:10:00.000Z');
+  const rotation = () => new ResidentReactivationRequired({
+    source: 'machine_intake_configuration',
+    reason: 'autonomous_research_machine_intake_configuration_rotated',
+    startupIdentityHash: H('machine-intake-startup'),
+    observedIdentityHash: H('machine-intake-rotated'),
+  });
+  let pendingReads = 0;
+  let deferred = 0;
+  const loadProcessor = createAutonomousResearchMachineIntakeCycleProcessor({
+    machineIntake: {
+      repository: {
+        listPendingIntakes() { pendingReads += 1; return []; },
+        deferIntake() { deferred += 1; },
+      },
+      async loadConfiguredIntakes() { throw rotation(); },
+    },
+    campaignStore: { getCampaign() { return null; } },
+    clock: { now: () => new Date(now) }, scheduler: scheduler(),
+    ownerId: 'supervisor:machine-rotation-load',
+    machineIntakeLeaseMs: 5 * 60 * 1000,
+    maximumCampaignsPerCycle: 10,
+    pollMs: 1000,
+    assertAutonomyCurrent() { return { ready: true, operationMode: 'full' }; },
+  });
+  await assert.rejects(() => loadProcessor({
+    operationMode: 'full', onProgress: () => residentLeaseContext(),
+  }), isResidentReactivationRequired);
+  assert.equal(pendingReads, 0);
+  assert.equal(deferred, 0);
+
+  const intake = machineIntake('configuration-rotation', now);
+  const admission = buildAutonomousResearchMachineIntakeAdmission({
+    intake,
+    sourceKind: 'machine',
+    sourceAuthorityHash: H('configuration-rotation-source'),
+  });
+  const record = {
+    intake,
+    admission,
+    intakeId: intake.intakeId,
+    intakeHash: intake.intakeHash,
+    campaignId: intake.campaignId,
+    admissionHash: admission.autonomousResearchMachineIntakeAdmissionHash,
+    disposition: 'pending',
+    sourceKind: 'machine',
+    sourceRef: 'machine-api',
+    sourceAuthorityHash: admission.sourceAuthorityHash,
+  };
+  const lease = Object.freeze({
+    ownerId: 'supervisor:machine-rotation-enqueue',
+    leaseToken: 'intake-lease:machine-rotation-enqueue',
+    leaseGeneration: 1,
+    expiresAt: '2099-01-01T00:00:00.000Z',
+  });
+  let releases = 0;
+  const enqueueRepository = {
+    reconcileExpiredIntakeLeases() { return { recoveredLeaseCount: 0 }; },
+    listEnqueuedIntakes() { return []; },
+    listPendingIntakes() { return [record]; },
+    tryAcquireIntakeLease() { return lease; },
+    renewIntakeLease() { return lease; },
+    assertIntakeLease() { return lease; },
+    deferIntake() { deferred += 1; },
+    releaseIntakeLease() { releases += 1; },
+  };
+  const enqueueProcessor = createAutonomousResearchMachineIntakeCycleProcessor({
+    machineIntake: {
+      repository: enqueueRepository,
+      async loadConfiguredIntakes() {
+        return { configurationHash: H('machine-intake-startup'), attemptedCount: 0,
+          insertedCount: 0, idempotentCount: 0, errorCount: 0 };
+      },
+      async enqueueIntake() { throw rotation(); },
+    },
+    campaignStore: { getCampaign() { return null; } },
+    clock: { now: () => new Date(now) }, scheduler: scheduler(),
+    ownerId: lease.ownerId,
+    machineIntakeLeaseMs: 5 * 60 * 1000,
+    maximumCampaignsPerCycle: 10,
+    pollMs: 1000,
+    assertAutonomyCurrent() { return { ready: true, operationMode: 'full' }; },
+  });
+  await assert.rejects(() => enqueueProcessor({
+    operationMode: 'full', onProgress: () => residentLeaseContext(),
+  }), isResidentReactivationRequired);
+  assert.equal(deferred, 0);
+  assert.equal(releases, 1);
 });

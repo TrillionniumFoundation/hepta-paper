@@ -11,6 +11,15 @@ returns exit code 4 until full research qualification, current machine intake,
 and the resident supervisor are all ready. It performs no provider canary unless
 that separate live-canary flag is explicitly requested.
 
+The resident independently repeats the passive autonomous-state safety
+inspection when `--require-fully-autonomous` is present. This inspection runs
+before the qualification-pointer repository, campaign execution context, or
+supervisor state repositories are constructed. A blocked inventory, restore
+drill, external authority head, or writer-coverage inspection terminates startup
+with `autonomous_research_supervisor_state_safety_required`; it cannot fall
+through to migration, reconciliation, or dispatch. Non-strict recovery mode is
+not admitted as fully autonomous and does not apply this startup gate.
+
 `npm run automation:autonomous-research-supervisor -- ...` is the equivalent
 package surface. The command stays in the foreground: it does not fork, write a
 PID file, or daemonize. `SIGTERM` and `SIGINT` stop new dispatch, abort the active
@@ -30,6 +39,19 @@ is repaired from it while locked; the status operation itself never writes or
 repairs state. A restarted process discovers persisted
 `autonomous-research:*` campaigns and resumes running, paused, or explicitly
 supervisor-stopped campaigns. It never increases a campaign budget.
+
+Before the resident process starts, the canonical systemd `ExecStartPre` holds
+the state-backup renewal lock and runs the single fail-closed
+`reconcile-and-renew` action. It resolves all ten canonical databases against
+the pinned online-mutation authority, finalizes committed pending markers
+without replaying their business DML, requires an unchanged exact scope and
+zero remaining pending finalizations, and only then performs the atomic
+backup-to-exact-restore-drill renewal. A reserve-only crash is automatically
+aborted only when the absent marker and exact unchanged local database
+sequence/hash/schema/state prove that no local commit occurred. Ambiguous
+markers, tampering, unknown operations, local-head or scope drift, and
+finalization failure prevent backup and resident startup. The periodic backup
+timer continues to use ordinary `renew`.
 
 The resident separates non-renewable infrastructure from renewable global
 qualification. Invalid external-qualification configuration/trust/cost identity,
@@ -65,6 +87,17 @@ forced to `unix:///var/run/docker.sock`; Docker contexts and remote Docker,
 Ollama, or OpenClaw endpoints are rejected before any child process. The
 canonical enqueue receipt separately records local-process and local-daemon
 activity while keeping network and external action false.
+
+The systemd unit may realize that fixed socket with a host-local daemon only on
+a dedicated machine: possession of its Unix socket is root-equivalent even when
+granted through a group. `PrivateTmp=yes` remains enabled, while
+`TMPDIR=/run/hepta-paper-worker` names a service-owned `RuntimeDirectory`
+visible to the host daemon for worker bind sources. The canonical Kubernetes
+file does **not** claim an equivalent runtime. It never mounts a node
+`docker.sock`, and its blocking init deliberately prevents the supervisor from
+starting until a separately reviewed site overlay supplies an externally
+qualified nested-container implementation.
+
 The canonical deployment uses `--require-fully-autonomous`, so a missing intake
 configuration fails closed. Without that flag, the supervisor may recover
 existing campaigns, but reports `machineIntakeConfigured=false` and
@@ -74,10 +107,13 @@ intakes.
 
 Supervisor lifecycle state is stored at
 `runtimeRoot/autonomous-research/supervisor/supervisor-state.sqlite`.
-Qualification state and its renewable attempt lease are stored per paper at
-`runtimeRoot/autonomous-research/<paperId>/system-state/external-qualification-state.sqlite`.
-Both use SQLite transactions and generation fences; an expired owner can be
-replaced, while a stale owner cannot commit or release the replacement lease.
+Qualification state and its renewable attempt lease are keyed by canonical
+`paper:<paperId>` scope rows in the fixed singleton database at
+`runtimeRoot/autonomous-research/qualification/external-qualification-state.sqlite`.
+Creating a new paper never creates or onboards another trust database. Both
+state stores use SQLite transactions and generation fences; an expired owner
+can be replaced, while a stale owner cannot commit or release the replacement
+lease.
 
 The resident process itself owns a separate fenced instance lease at
 `runtimeRoot/autonomous-research/supervisor/resident-instance.sqlite`. Only the
@@ -109,6 +145,14 @@ the process starts. A crash, cancellation, failed build, expired lease, new
 campaign, or supervisor restart does not refund or reset that reservation.
 Expired owners are fenced from publication and completion; bounded backoff and
 startup lease recovery permit a new generation to continue.
+
+The independently published full-research qualification pointer and runtime-image
+reproducibility receipt also own monotonic SQLite publication state at
+`runtimeRoot/autonomous-research/qualification/qualification-receipt.json.publication.sqlite`
+and
+`runtimeRoot/autonomous-research/runtime-image-reproducibility/receipt.json.publication.sqlite`.
+They are trust-bearing databases and are included in whole-runtime backup scope;
+copying only their JSON mirrors is not a recoverable substitute.
 
 Dispatch count, provider-canary count, reserved canary cost, qualification
 attempt count and reserved qualification cost, observed campaign cost, and the
@@ -248,8 +292,77 @@ The Kubernetes authority volume must be a preprovisioned immutable PVC or a CSI
 volume that exposes the four documents as real regular files and does not apply
 pod `fsGroup` permission rewrites. Do not use a projected ConfigMap or Secret:
 their `..data` and per-key symlinks intentionally fail the production realpath
-and symlink checks. The template therefore omits pod `fsGroup`; provision the
-writable runtime PVC for uid/gid `10001` separately. With systemd,
+and symlink checks. The template therefore omits pod `fsGroup`. Provision the
+writable submission-handoff PVC as `root:20001`, mode `3770`; both Pods receive
+only that GID through `supplementalGroups`, while retaining distinct UIDs and
+primary groups. Pre-provision `dispatcher-challenges` as `10001:20001` mode
+`2750` and `dispatcher-cycles` as `10002:20001` mode `2750`. The dispatcher
+mounts no native runtime PVC: it receives an empty read-only runtime base plus
+the dedicated handoff PVC at the canonical nested path.
+
+For systemd, first provision the referenced public configuration, private
+provider/dispatcher environment files, authority roots, and immutable assets.
+Then run the checked-in machine installer:
+
+```sh
+sudo paper-core/deploy/install-hepta-paper-systemd-host.sh
+```
+
+The installer clears the compiler environment, snapshots an exact regular-file
+allowlist into a root-only build directory, builds the native C helper with the
+checked hardening and warning-as-error flags, records source/compiler/binary
+hashes, installs and re-hashes every fragment/unit/binary, verifies all units,
+reloads systemd, and enables the complete resident chain. A non-mutating host
+image test uses
+`install-hepta-paper-systemd-host.sh --root DESTDIR --no-systemctl`; the
+installed manifest can be verified from that root with `sha256sum -c`.
+
+`hepta-paper-host-bootstrap.service` runs before every secret-bearing service.
+With an empty environment, private network, bounded capabilities, and the
+secret configuration root hidden, it explicitly applies the installed
+sysusers/tmpfiles fragments and invokes the native identity verifier. The
+declaration owns the named systemd principals and adds only the research and
+dispatcher principals to the handoff group; the supervisor receives Docker
+membership only through its systemd unit, never through a persistent
+`/etc/group` edit. Exact passwd/group/shadow/gshadow names, IDs, primary
+groups, homes, shells, locks, and exclusive handoff membership fail closed.
+Tmpfiles creates `/var/lib/hepta-paper` as
+`hepta-paper:hepta-runtime-handoff` mode `0710` and never pre-creates the
+runtime root.
+
+The state provisioner atomically installs the fresh runtime.
+`autonomous-submission-handoff-layout-provision.path` observes the existing
+offline handoff database and starts a separate root oneshot with no
+`EnvironmentFile`. The native helper uses openat2/dirfd operations and
+converges the handoff root to
+`root:hepta-runtime-handoff` mode `3770`, the existing database to
+`hepta-paper:hepta-runtime-handoff` mode `0660`, `dispatcher-challenges` to
+`hepta-paper:hepta-runtime-handoff` mode `2750`, and `dispatcher-cycles` to
+`hepta-submission-dispatcher:hepta-runtime-handoff` mode `2750`. It requires
+the offline-provisioned database to exist, rejects
+symlinks/hard links and unexpected owners, opens the database read-only, and
+proves its pre/post SHA-256 is unchanged. It atomically publishes a
+`root:hepta-paper` mode `0440` historical receipt below a root-owned `/run`
+directory. Before state provisioning returns or online transition can begin,
+the unprivileged native verifier reopens the full chain with openat2, validates
+the root receipt and stable dev/inode/uid/gid/mode matrix, and requires the
+database link count to remain one. Later legitimate SQLite or exchange-file
+writes do not invalidate that historical no-content attestation. Residents
+contain only unprivileged metadata preflights and restart until this oneshot
+completes; they never inherit secrets into a privileged `ExecStartPre`.
+
+The tmpfiles fragment creates only `/var/lib/hepta-paper` and the private
+strict-acceptance control root. It deliberately does not create `runtime`, so
+the fresh-state atomic-install precondition remains intact. Deployment
+automation uses the installer to update both fragments, and the explicit
+host-bootstrap unit reapplies those exact installed files on every boot or
+upgrade before any secret-bearing consumer starts.
+
+Keep `/var/lib/hepta-paper/runtime` non-setgid and native files in the
+`hepta-paper` primary group. Both units verify the resulting matrix and use
+`UMask=0007`. The dispatcher refuses to start unless native writes are
+unavailable and the handoff database is writable, so it cannot silently create
+a divergent private store.
 `ProtectSystem=strict` and the explicit `ReadOnlyPaths` entry make the fixed
 anchor read-only to the resident, so external governance must stage or replace
 it before starting the service, not from inside the unit.
@@ -286,18 +399,123 @@ validate mutations or require an authorization unavailable to the database
 writer. A local caller-controlled sequence service is not an independent
 authority.
 
-Startup and crash recovery must compare every locally bound database with the
-broker, replay an exact reserved changeset when it was not committed, finalize
-an already committed reservation idempotently, and reject a missing, old or
-divergent local state against a finalized remote head. Provider or KMS actions
-may run only after their marker transaction is externally finalized. Until that
-whole-runtime reserve → apply → finalize/startup-compare protocol is integrated
-for every registered trust database, do not describe this command or the fixed
-root files as same-UID whole-database anti-rollback protection. A WORM export
-remains useful audit evidence, but is not a substitute for that online
-monotonic-head gate.
+The operational backup surface is `automation:autonomous-research-state-backup`.
+Its versioned database manifest is
+`paper-core/config/autonomous-research-state-databases.v1.json`; unregistered
+SQLite state below `runtimeRoot/autonomous-research` blocks backup. `status`
+checks the main store, machine intake, topic producer, supervisor, resident,
+runtime-refresh, both monotonic publication databases, and the singleton
+external-qualification database. `backup` requires an external broker process
+configuration whose executable and Ed25519 public-key document are pinned by
+SHA-256. There is no local `--force` or boolean substitute.
+
+The broker must return a signed reservation over the exact database inventory
+and scope, a linearizable authority head, and an expiring mutation fence. The
+backup implementation re-inspects that inventory after reservation, uses the
+SQLite backup API for every database, verifies quick-check, foreign keys,
+schema and content hashes, then re-inspects every source before requesting a
+signed finalization over the complete snapshot-content hash. Only that
+finalization can publish an `autonomous_research_state_backup_recorded` bundle.
+Partial staging after an externally finalized publication failure is retained
+for explicit recovery and is never reported as a successful backup.
+
+`restore-drill` copies every bundle database into a temporary root and repeats
+all integrity checks without mutating production state. It additionally
+requires a fresh signed external restore-validation fence. A missing signature,
+incomplete scope, expired fence, tampered database, foreign-key violation, or a
+live authority head newer or different from the bundle blocks the drill. A
+stale bundle is therefore recoverable evidence, but cannot be presented as a
+currently authorized full-state restore.
+
+`offhost:worm-snapshot` consumes the newest restore-drill-passed whole-state
+bundle and archives its bundle manifest, restore receipt (including the full
+signed current-head response and its request), and every database object. A
+newer pending or invalid directory cannot shadow an older valid bundle; skipped
+candidates are reported with non-sensitive audit codes and hashed directory
+names. It fails closed when no valid bundle exists; the former raw-main-store
+source is not treated as a complete autonomous-system snapshot. Source
+resolution requires the pinned authority configuration and re-verifies all
+three external signatures without calling the broker; the WORM command accepts
+`--authority-config` or
+`HEPTA_AUTONOMOUS_RESEARCH_STATE_BACKUP_AUTHORITY_CONFIG`.
+
+This backup protocol does not by itself establish the transaction-time global
+reserve/apply/finalize boundary described above. The strict production graph
+now registers all ten trust-state roles through sixteen writer entries and
+202 coordinator-integrated online DML operations. Production nevertheless
+remains No-Go for same-UID whole-database anti-rollback until the deployed
+databases have the signed schema-transition receipt, all ten roles reconcile
+through the configured external broker, runtime activation verifies the
+current signed head and scope, and a current restore-drill receipt is present.
+Signed backup fencing cannot be used as a local readiness bypass. Explicit
+offline maintenance and non-strict compatibility factories remain outside this
+claim and require quiescence/deployment isolation.
+
+Startup and crash recovery compare every locally bound database with the broker
+and idempotently finalize an already committed, cryptographically bound local
+marker. A broker reservation with no local marker is never replayed. It is
+automatically aborted only under a database write lock after its signature and
+manifest binding are verified and the exact local database
+sequence/hash/schema/state still equal the signed pre-commit head. The signed
+abort is then confirmed by a second unresolved-reservation observation. Any
+head drift or commit ambiguity preserves the remote evidence and blocks
+startup. Missing, old, or divergent local state against a finalized remote head
+is also rejected. Provider or KMS actions may run only after their marker
+transaction is externally finalized. Code-level
+strict-profile writer coverage is necessary but not sufficient: without
+successful production activation and current external evidence, do not
+describe the deployment, this backup command, or fixed root files as same-UID
+whole-database anti-rollback protection. A WORM export remains useful audit
+evidence, but is not a substitute for the online monotonic-head gate.
+
+The separately registered `autonomous-state-backup` operator command closes the
+backup *scope* over the canonical trust-database inventory and can validate a
+restore drill against a fresh signed head. It intentionally cannot mint that
+head and does not weaken the No-Go statement above: the external broker may
+attest a write fence only after all registered writers participate in the
+online protocol (or an equivalent external write freeze is active). See
+[`autonomous-research-state-backup.md`](autonomous-research-state-backup.md).
 
 ## Filesystem and secret boundary
+
+### Experimental public deployment identity inspection
+
+The repository includes a passive, public-only deployment identity inspector
+for configuration-rotation design. It is deliberately **not** part of resident
+startup admission or the reactivation fence yet. The inspector reads only
+regular public configuration files, executable bytes, and Ed25519 public keys;
+it never opens credential roots, reads environment values, invokes a provider,
+or opens a private key. Because the current process schemas do not classify
+command arguments as public, every non-empty `args` array is rejected rather
+than copied or hashed. Literal tokens and private-key material in argv therefore
+cannot become an identity input.
+
+External qualification, runtime reproducibility, and release-attestor transport
+credentials currently have no independently signed public generation or public
+fingerprint in their schemas. Their public identity inspections consequently
+return explicit blockers, and the aggregate cannot produce an adoptable
+resident deployment identity. A site must first provide a reviewed, signed
+public credential-generation/fingerprint contract that binds the relevant
+service principal without exposing credential contents. Only after that
+contract and its verification tests exist may the aggregate identity be folded
+into `AutonomousResearchResidentPrerequisiteIdentity` and used to trigger the
+typed exit-75 resident reactivation path. Treating this experimental inspection
+as ready, hashing secret values, or wiring its blocked result into startup would
+be incorrect and would leave canonical startup permanently unavailable.
+
+The passive diagnostic is reachable only through the explicitly experimental
+architecture graph:
+
+```sh
+node paper-core/experimental/inspect-autonomous-research-public-deployment-identity.mjs \
+  --external-qualification-config /etc/hepta-paper/qualification/config.json \
+  --runtime-reproducibility-config /etc/hepta-paper/reproducibility/config.json \
+  --release-attestor-config /etc/hepta-paper/release-attestor/config.json
+```
+
+Its report is evidence about public configuration only. It is not a readiness
+receipt, mutation permit, credential proof, or authorization to adopt a rotated
+identity.
 
 The code/image, asset root, and dataset root are read-only. `runtimeRoot` is the
 only writable persistent mount. Every `datasetMounts[].source` in the registered
@@ -325,7 +543,23 @@ minimum refresh lead.
 Deployments must explicitly set all of the following (the example values are
 templates, not permission to infer missing values):
 
+- `HEPTA_AUTONOMOUS_RESEARCH_CONTENT_MODE=agent-evidence-bound`
+- `HEPTA_DYNAMIC_FORMAL_CLAIMS_ENABLED=1`
+- `HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG`
+- `HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG_HASH`
+- `HEPTA_REVIEWER_PRINCIPAL_POOL_CONFIG`
+- `HEPTA_PRIOR_ART_SERVICE_CONFIG`
+- `HEPTA_EXTERNAL_REPLAY_CONFIG`
+- `HEPTA_AUTONOMOUS_VENUE_PROFILE_CONFIG`
+- `HEPTA_AUTONOMOUS_VENUE_PROFILE_CONFIG_HASH`
+- `HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_CONFIG`
+- `HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIGURATION_HASH`
+- `HEPTA_AUTONOMOUS_SUBMISSION_METADATA_CONFIG`
+- `HEPTA_AUTONOMOUS_SUBMISSION_METADATA_CONFIG_HASH`
 - `HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG`
+- `HEPTA_AUTONOMOUS_RESEARCH_ONLINE_MUTATION_AUTHORITY_PROCESS_CONFIG`
+- `HEPTA_AUTONOMOUS_RESEARCH_ONLINE_MUTATION_AUTHORITY_CONFIG`
+- `HEPTA_AUTONOMOUS_RESEARCH_STATE_BACKUP_AUTHORITY_CONFIG`
 - `HEPTA_AUTONOMOUS_RESEARCH_INTAKE_CONFIG`
 - `HEPTA_AUTONOMOUS_RESEARCH_TOPIC_PRODUCER_PROFILE`
 - `HEPTA_AUTONOMOUS_RESEARCH_DATASET_ROOT`
@@ -336,15 +570,59 @@ templates, not permission to infer missing values):
 - `--qualification-action-safety-margin-ms` (at least `900000`)
 - `--require-fully-autonomous`
 
+The author identity hash is an out-of-band deployment pin over the exact
+regular-file configuration, including its trust store and signed identity
+envelope. It must equal that document's `configurationHash`; replacing the
+document and embedded trust root together therefore fails before the first
+provider call. The pinned subject binds the active author principal, provider,
+credential root, provider account, and platform identity. Composition passes
+that same canonical subject and envelope to reviewer independence and prior-art
+authority verification.
+
+The venue and submission-metadata hashes are independent out-of-band pins over
+signed configuration documents. Strong production accepts only venue registry
+version 2 and metadata receipts carrying current Ed25519 authority proofs. The
+venue selector derives scope and constraint fit locally from the signed
+profiles, the verified proposal protocol/objective, and non-empty signed
+metadata fields; it never accepts a provider- or model-reported fit flag.
+
 The process configuration, qualification configuration, release-attestor
-configuration, and provider credential roots are separate read-only mounts. The
-runtime root is the single writable persistent mount and must survive restarts;
-an ephemeral runtime root invalidates the lease and budget guarantees.
+configuration, declared-capability configuration, and provider credential
+roots are separate read-only mounts. Configuration readers require regular
+files and reject projected symlinks. The research supervisor receives only the
+public submission portal descriptor and its out-of-band configuration-hash
+pin. That descriptor deliberately omits the endpoint and token-variable name.
+It never mounts the complete portal configuration or the portal-token Secret.
+
+Live submission is owned by a second OS/Kubernetes principal running
+`autonomous-submission-dispatcher`. Only that principal mounts the complete
+portal configuration, loads the dedicated portal-token environment file or
+Secret, and has the portal egress capability. Before creating the HTTP adapter,
+it deterministically derives the public descriptor from the complete
+configuration and requires an exact match with the descriptor and hash used by
+research. Research composition explicitly disables private-configuration
+fallback even if a private portal environment variable is accidentally
+inherited. Research-only provider tokens and submission tokens must be kept in
+different Secret objects/files. The runtime root is the shared durable handoff
+boundary and must survive restarts; an ephemeral runtime root invalidates the
+lease and outbox guarantees. The two principals share only the dedicated
+runtime handoff group. The native runtime root is not setgid; only the handoff
+root is setgid, so its SQLite, WAL and SHM files inherit the shared group and
+remain inaccessible to all other users.
 
 The auditable templates are:
 
 - `paper-core/deploy/autonomous-research-supervisor.service`
 - `paper-core/deploy/autonomous-research-supervisor.env.example`
+- `paper-core/deploy/autonomous-submission-dispatcher.service`
+- `paper-core/deploy/autonomous-submission-dispatcher.env.example`
+- `paper-core/deploy/hepta-paper.sysusers.conf`
+- `paper-core/deploy/hepta-paper.tmpfiles.conf`
+- `paper-core/deploy/hepta-paper-host-bootstrap.service`
+- `paper-core/deploy/autonomous-submission-handoff-layout-provision.c`
+- `paper-core/deploy/autonomous-submission-handoff-layout-provision.service`
+- `paper-core/deploy/autonomous-submission-handoff-layout-provision.path`
+- `paper-core/deploy/install-hepta-paper-systemd-host.sh`
 - `paper-core/deploy/autonomous-research-supervisor.k8s.yaml`
 
 The systemd unit uses `Restart=always`, `KillSignal=SIGTERM`, `KillMode=mixed`
@@ -356,6 +634,48 @@ read-only root filesystem, a single SQLite writer with `Recreate`, separate
 read-only asset, dataset, config and credential mounts, and one writable runtime
 PVC. Replace image, PVC, model, and path placeholders in deployment automation; never place secret
 values in the manifest or environment example.
+
+The checked-in Kubernetes manifest is intentionally **No-Go**. Its
+`deployment-no-go-until-nested-runtime-qualified` init always exits 78, so
+replacing image, PVC, model, RuntimeClass, label, or annotation placeholders
+cannot accidentally turn an unproved platform into a runnable deployment. The
+manifest contains no rootless daemon and no image-loader init. This is
+deliberate: the previously proposed rootless layout could not make the socket
+and UID mapping claims required by the worker boundary.
+
+A site-specific overlay may replace that single blocking init only after an
+independent qualifier has signed a receipt for one exact nested-container
+profile. The profile identity and receipt digest/signer are pinned in pod
+annotations, a cluster admission policy must verify the signature and reject
+placeholder or mismatched values, and the pod is constrained to a dedicated
+node label and exact RuntimeClass handler. A RuntimeClass name alone is only a
+CRI selector. Descriptions such as “Sysbox-like” or “Kata-like” do not prove the
+required mount, UID, cgroup, LSM, or nested-daemon behavior; the receipt must
+bind the exact CRI, handler/runtime, kernel, node image, cgroup mode, security
+policy, and GPU integration when GPU execution is declared.
+
+That overlay must provide a pod-local rootful daemon through the reserved
+`qualified-runtime-run` `emptyDir` and mount the same `tmp` `emptyDir` as the
+supervisor. It must not use a privileged or unconfined container, a node
+`hostPath`/Docker socket, or a remote Docker endpoint. Before the supervisor is
+allowed to start, its qualification verifier must validate the signed receipt,
+and a startup conformance init must actually launch a fixed-digest worker from
+the supervisor-visible namespace. The conformance receipt must prove all of:
+
+- supervisor-created bind sources are visible and writable by the worker;
+- result paths have the exact expected uid/gid and remain inside the shared
+  scratch root;
+- `network=none` is effective;
+- memory, CPU, and PID limits are effective inside the worker; and
+- nested workloads remain bounded by the declared parent Pod resource ceiling.
+
+The current repository has no CLI that verifies this platform receipt and
+conformance set. Consequently, deleting the guard or trusting annotations by
+themselves is not qualification, and Kubernetes remains deployment **No-Go**
+until a reviewed overlay and its independent signed evidence are supplied. The
+local runtime-image bundle loader remains available as an installation
+mechanism for such an overlay, but loading images or running `docker info`
+cannot substitute for the conformance receipt.
 
 Kubernetes startup, readiness, and liveness probes call only zero-write
 inspectors. The startup probe requires startup reconciliation. The readiness
@@ -376,6 +696,14 @@ bounded local hashing of current configuration, dataset manifests, code
 identity, and cached receipts. It performs no network/provider/KMS action, but
 its local I/O and CPU cost is non-zero; the deployment therefore uses a
 25-second probe timeout and a 30-second period rather than a tight polling loop.
+With `--require-fully-autonomous`, the read-only health report embeds the
+autonomous-state safety inspection and its blockers, and readiness also requires
+that inspection to be ready. Heartbeat-only liveness remains independent, so a
+blocked safety prerequisite makes the resident unready without representing it
+as a crashed process.
+This resident health probe is distinct from the operator-invoked
+`automation:research-status` command, which explicitly opts into live provider
+canaries and release-attestor backend/signature challenges.
 
 The resident and campaign lifecycle leases default to fifteen minutes with a
 30-second resident heartbeat. This covers the release-attestor's declared

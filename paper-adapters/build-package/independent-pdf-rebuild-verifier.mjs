@@ -20,6 +20,10 @@ import {
   buildIndependentPdfRebuildToolIdentity,
   buildIndependentPdfRebuildVerificationReceipt,
 } from '../../paper-domain/automation/independent-pdf-rebuild-contract.mjs';
+import {
+  BOUNDED_PDF_PAGE_TREE_LIMITS,
+  inspectDeterministicPdfPageTree,
+} from '../../paper-domain/automation/deterministic-pdf-page-tree-parser.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 
@@ -200,13 +204,60 @@ export function createIndependentPdfRebuildVerifier({
       const outputRead = readScopedFileSync({
         scopeRoot: outputRoot,
         candidate: path.join(outputRoot, outputName),
-        maximumBytes: limits.maximumOutputBytes,
+        maximumBytes: Math.min(
+          limits.maximumOutputBytes,
+          BOUNDED_PDF_PAGE_TREE_LIMITS.maximumPdfBytes,
+        ),
       });
       const artifact = workerReceipt.artifacts[0];
       if (outputRead.status !== 'scoped_file_read_verified' || outputRead.hash !== artifact.sha256
-        || Number(outputRead.bytes) !== Number(artifact.bytes)
-        || !outputRead.content?.subarray(0, 5).equals(Buffer.from('%PDF-'))) {
+        || Number(outputRead.bytes) !== Number(artifact.bytes)) {
         return blocked(['independent_pdf_rebuild_output_invalid']);
+      }
+      const authoritativePath = path.resolve(
+        resolvedSourceWorkspace,
+        String(authoritativePdf?.path || ''),
+      );
+      if (!isPathWithin(resolvedSourceWorkspace, authoritativePath)
+        || authoritativePath === resolvedSourceWorkspace) {
+        return blocked(['independent_pdf_rebuild_authoritative_pdf_invalid']);
+      }
+      const authoritativeRead = readScopedFileSync({
+        scopeRoot: resolvedSourceWorkspace,
+        candidate: authoritativePath,
+        maximumBytes: BOUNDED_PDF_PAGE_TREE_LIMITS.maximumPdfBytes,
+      });
+      const authoritativeBytes = Number(
+        authoritativePdf?.sizeBytes ?? authoritativePdf?.bytes,
+      );
+      if (authoritativeRead.status !== 'scoped_file_read_verified'
+        || authoritativeRead.hash !== authoritativePdf?.hash
+        || !Number.isSafeInteger(authoritativeBytes) || authoritativeBytes < 32
+        || authoritativeBytes !== Number(authoritativeRead.bytes)) {
+        return blocked(['independent_pdf_rebuild_authoritative_pdf_invalid']);
+      }
+      let rebuiltPdfInspection;
+      let authoritativePdfInspection;
+      try {
+        rebuiltPdfInspection = inspectDeterministicPdfPageTree(outputRead.content);
+      } catch (error) {
+        return blocked([
+          'independent_pdf_rebuild_rebuilt_pdf_semantic_invalid',
+          error?.message,
+        ]);
+      }
+      try {
+        authoritativePdfInspection = inspectDeterministicPdfPageTree(
+          authoritativeRead.content,
+        );
+      } catch (error) {
+        return blocked([
+          'independent_pdf_rebuild_authoritative_pdf_semantic_invalid',
+          error?.message,
+        ]);
+      }
+      if (rebuiltPdfInspection.pageCount !== authoritativePdfInspection.pageCount) {
+        return blocked(['independent_pdf_rebuild_page_count_mismatch']);
       }
       const toolIdentity = buildIndependentPdfRebuildToolIdentity({
         runnerId: workerReceipt.runnerId,
@@ -231,8 +282,14 @@ export function createIndependentPdfRebuildVerifier({
         workerReceiptHash: workerReceipt.receiptHash,
         executionProcessIdentityHash: workerReceipt.executionProcessIdentityHash,
         limits: workerReceipt.limits,
-        rebuiltPdf: { path: outputName, hash: outputRead.hash, bytes: outputRead.bytes },
+        rebuiltPdf: {
+          path: outputName,
+          hash: outputRead.hash,
+          bytes: outputRead.bytes,
+          pageCount: rebuiltPdfInspection.pageCount,
+        },
         authoritativePdfHash: authoritativePdf?.hash,
+        authoritativePdfPageCount: authoritativePdfInspection.pageCount,
         createdAt: observedAt,
       });
       return Object.freeze({

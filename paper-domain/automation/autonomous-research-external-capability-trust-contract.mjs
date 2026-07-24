@@ -1,0 +1,104 @@
+import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+
+const SHA256 = /^sha256:[0-9a-f]{64}$/;
+
+const COMPONENTS = Object.freeze([
+  'priorArt',
+  'reviewerPool',
+  'externalReplay',
+  'submissionPortal',
+]);
+
+function canonicalHash(value) {
+  const candidate = String(value || '').toLowerCase();
+  return SHA256.test(candidate) ? candidate : null;
+}
+function componentInspection(componentId, value, {
+  requiredEvidenceProfile = null,
+} = {}) {
+  const cryptographicAuthorityReady = value?.cryptographicAuthorityReady === true;
+  const identityIndependenceReady = value?.identityIndependenceReady === true;
+  const trustSetHash = canonicalHash(value?.trustSetHash);
+  const signatureVerificationPolicyHash = canonicalHash(
+    value?.signatureVerificationPolicyHash,
+  );
+  const evidenceProfile = requiredEvidenceProfile
+    ? String(value?.evidenceProfile || '') || null : null;
+  const blockers = [];
+  if (requiredEvidenceProfile && evidenceProfile !== requiredEvidenceProfile) {
+    blockers.push(`autonomous_research_${componentId}_evidence_profile_not_ready`);
+  }
+  if (!cryptographicAuthorityReady) {
+    blockers.push(`autonomous_research_${componentId}_cryptographic_authority_not_ready`);
+  }
+  if (!identityIndependenceReady) {
+    blockers.push(`autonomous_research_${componentId}_identity_independence_not_ready`);
+  }
+  if (!trustSetHash) {
+    blockers.push(`autonomous_research_${componentId}_trust_set_not_bound`);
+  }
+  if (!signatureVerificationPolicyHash) {
+    blockers.push(`autonomous_research_${componentId}_signature_policy_not_bound`);
+  }
+  const uniqueBlockers = Object.freeze([...new Set(blockers)]);
+  return Object.freeze({
+    componentId,
+    evidenceProfile,
+    requiredEvidenceProfile,
+    cryptographicAuthorityReady,
+    identityIndependenceReady,
+    trustSetHash,
+    signatureVerificationPolicyHash,
+    ready: uniqueBlockers.length === 0,
+    blockers: uniqueBlockers,
+  });
+}
+
+export function buildAutonomousResearchExternalCapabilityTrustInspection({
+  priorArt = null,
+  reviewerPool = null,
+  externalReplay = null,
+  submissionPortal = null,
+} = {}) {
+  const components = Object.freeze({
+    priorArt: componentInspection('prior_art', priorArt, {
+      requiredEvidenceProfile: 'structured-ranked-deduplicated-v2',
+    }),
+    reviewerPool: componentInspection('reviewer_pool', reviewerPool),
+    externalReplay: componentInspection('external_replay', externalReplay),
+    submissionPortal: componentInspection('submission_portal', submissionPortal),
+  });
+  const blockers = Object.freeze(COMPONENTS.flatMap((component) => (
+    components[component].blockers
+  )));
+  const payload = Object.freeze({
+    version: 1,
+    kind: 'AutonomousResearchExternalCapabilityTrustInspection',
+    status: blockers.length
+      ? 'autonomous_research_external_capability_trust_blocked'
+      : 'autonomous_research_external_capability_trust_ready',
+    ready: blockers.length === 0,
+    components,
+    blockers,
+  });
+  return Object.freeze({
+    ...payload,
+    autonomousResearchExternalCapabilityTrustInspectionHash: hashRecord(
+      'AutonomousResearchExternalCapabilityTrustInspection',
+      payload,
+    ),
+  });
+}
+
+export function verifyAutonomousResearchExternalCapabilityTrustInspection(inspection) {
+  let rebuilt = null;
+  try {
+    rebuilt = buildAutonomousResearchExternalCapabilityTrustInspection({
+      priorArt: inspection?.components?.priorArt,
+      reviewerPool: inspection?.components?.reviewerPool,
+      externalReplay: inspection?.components?.externalReplay,
+      submissionPortal: inspection?.components?.submissionPortal,
+    });
+  } catch { return false; }
+  return JSON.stringify(rebuilt) === JSON.stringify(inspection);
+}

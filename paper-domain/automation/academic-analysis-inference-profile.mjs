@@ -1,24 +1,16 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { hasExactObjectKeys as exactKeys } from '../../workflow-kernel/exact-object-keys.mjs';
+import {
+  autonomousEmpiricalFamilyPluginProfileFor,
+} from './autonomous-empirical-family-plugin-registry.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
-
-const CLUSTER_FAMILIES = new Set([
-  'rl_stochastic_control_benchmark',
-  'econometrics_panel_benchmark',
-  'finance_asset_pricing_benchmark',
-]);
-
-const CELL_FAMILIES = new Set([
-  'ml_algorithm_benchmark',
-  'operations_optimization_benchmark',
-]);
 
 export const ACADEMIC_ANALYSIS_INFERENCE_PROFILE_VERSION = 1;
 
 function familyMode(benchmarkFamily) {
-  if (CLUSTER_FAMILIES.has(benchmarkFamily)) return 'seed-cluster';
-  if (CELL_FAMILIES.has(benchmarkFamily)) return 'seed-repetition-cell';
+  const profile = autonomousEmpiricalFamilyPluginProfileFor(benchmarkFamily);
+  if (profile) return profile.inferenceMode;
   throw new Error('academic_analysis_inference_profile_family_unsupported');
 }
 

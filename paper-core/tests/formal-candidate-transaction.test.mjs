@@ -185,6 +185,14 @@ function fixture(t, { completeAfterIteration = null } = {}) {
         }),
         formalVerificationIteration: input.formalVerificationIteration,
         formalRepairHistory: input.formalRepairHistory,
+        typedTheoremObligationBundleHash:
+          input.typedTheoremObligationBundle.typedTheoremObligationBundleHash,
+        formalProofSearchPlanHash: input.formalProofSearchPlan.formalProofSearchPlanHash,
+        formalProofSearchCandidateId: input.formalProofSearchCandidate.candidateId,
+        formalProofSearchOperationReceiptHash:
+          input.formalProofSearchOperationReceipt.formalProofSearchOperationReceiptHash,
+        formalProofSearchOperationReceipt: input.formalProofSearchOperationReceipt,
+        formalProofSearchAttempts: input.formalProofSearchAttempts,
         blockers: completed ? [] : [`fixture_lake_failure:${input.formalVerificationIteration}`],
       };
       return Object.freeze({
@@ -222,10 +230,23 @@ test('a failed bounded formal candidate never pollutes the source workspace', as
       deferWorkspaceIntegration: true,
       executionBudget: { remainingTokenCount: 100_000, remainingWallTimeMs: 60_000 },
     }),
-    /campaign_formal_verification_blocked:fixture_lake_failure:2/,
+    (error) => {
+      assert.match(error.message, /campaign_formal_verification_blocked:fixture_lake_failure:2/);
+      assert.equal(error.receipt.kind, 'FormalProofSearchFailureCertificate');
+      assert.equal(error.receipt.status, 'formal_proof_search_exhausted');
+      assert.equal(error.receipt.attempts.length, 3);
+      assert.equal(error.receipt.kernelProofStatus, 'not_established');
+      assert.equal(error.receipt.counterexampleStatus, 'not_established');
+      assert.match(error.receipt.formalProofSearchFailureCertificateHash, /^sha256:/);
+      return true;
+    },
   );
   assert.equal(fs.readFileSync(path.join(value.workspace, 'Main.lean'), 'utf8'), 'before\n');
   assert.deepEqual(value.verifierInputs.map((input) => input.formalVerificationIteration), [0, 1, 2]);
+  assert.deepEqual(value.verifierInputs.map((input) => input.formalProofSearchCandidate.strategy), [
+    'direct_elaboration', 'mathlib_retrieval', 'bounded_refutation_or_synthesis',
+  ]);
+  assert.deepEqual(value.verifierInputs.map((input) => input.formalProofSearchAttempts.length), [0, 1, 2]);
   assert.equal(new Set(value.reviewerReceiptHashes).size, 3);
   assert.deepEqual(value.counts(), { authorCalls: 3, reviewerCalls: 3 });
 });
@@ -240,6 +261,9 @@ test('repair gets a new independent review and iteration-scoped verification bef
   assert.equal(result.status, 'campaign_formal_verification_completed');
   assert.equal(fs.readFileSync(path.join(value.workspace, 'Main.lean'), 'utf8'), 'before\n');
   assert.deepEqual(value.verifierInputs.map((input) => input.formalVerificationIteration), [0, 1]);
+  assert.deepEqual(value.verifierInputs.map((input) => input.formalProofSearchCandidate.strategy), [
+    'direct_elaboration', 'mathlib_retrieval',
+  ]);
   assert.equal(new Set(value.reviewerReceiptHashes).size, 2);
   assert.notEqual(
     value.verifierInputs[0].formalReviewEnvelope.formalSemanticReviewEnvelopeHash,

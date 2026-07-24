@@ -150,6 +150,7 @@ export function createOllamaStructuredAgentExecutor({
       outputTokenBudget,
       requestedTimeout,
       signal,
+      workspaceMutationPolicy,
       workspace,
       promptHash,
     }) {
@@ -168,9 +169,13 @@ export function createOllamaStructuredAgentExecutor({
         String(instructions),
         'Return JSON only. Do not claim tools were used. Schema:',
         '{"status":"completed|blocked","summary":"...","edits":[{"path":"relative/path","content":"complete replacement content"}],"checks":["..."],"blockers":["..."]}',
+        'Inside JSON string values, encode every literal backslash as \\\\; this is mandatory for TeX, code, and paths.',
         'Include any additional role-specific fields requested in the instructions at the top level.',
         `Keep the complete JSON response within ${effectiveOutputTokens} output tokens. Be concise.`,
         sandbox === 'read-only' ? 'This is read-only review: edits MUST be an empty array.' : 'Every edit must contain complete file content and use a relative path inside the workspace.',
+        workspaceMutationPolicy
+          ? `The runtime enforces this exact workspace mutation policy: ${JSON.stringify(workspaceMutationPolicy)}`
+          : '',
         `Required checks for later pipeline stages: ${JSON.stringify(requiredChecks)}`,
         `Context: ${JSON.stringify(context)}`,
         `Files: ${JSON.stringify(sources)}`,
@@ -219,10 +224,7 @@ export function createOllamaStructuredAgentExecutor({
               fs.writeFileSync(path.join(stagingRoot, sourceRelative), edit.content);
               const destination = inspectScopedRegularFileWithRecoverySync({ scopeRoot: workspace, relative: edit.relative });
               const postimageHash = `sha256:${crypto.createHash('sha256').update(edit.content).digest('hex')}`;
-              if (destination.hash === postimageHash) {
-                changedPaths.push(edit.relative);
-                continue;
-              }
+              if (destination.hash === postimageHash) continue;
               const staged = stageScopedRegularFileCopySync({
                 sourceRoot: stagingRoot,
                 destinationRoot: workspace,

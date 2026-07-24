@@ -1,29 +1,22 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { createAutonomousResearchSupervisor } from '../../paper-application/automation/autonomous-research-supervisor.mjs';
-import { createAutonomousResearchRuntimeRefresh } from '../../paper-application/automation/autonomous-research-runtime-refresh.mjs';
 import {
-  createAutonomousResearchQualificationStateRepository,
-} from '../../paper-adapters/automation/autonomous-research-qualification-state-repository.mjs';
+  ResidentReactivationRequired,
+} from '../../paper-application/automation/autonomous-research-resident-reactivation-required.mjs';
+import {
+  createAutonomousResearchOnlineAuthorityEvidenceRenewalController,
+} from '../../paper-application/automation/autonomous-research-online-authority-evidence-renewal-controller.mjs';
+import { createAutonomousResearchQualificationStateRepository } from '../../paper-adapters/automation/autonomous-research-qualification-state-repository.mjs';
+import {
+  createAutonomousResearchResidentCycleIntentRepository,
+} from '../../paper-adapters/automation/autonomous-research-resident-cycle-intent-repository.mjs';
 import {
   loadConfiguredAutonomousResearchMachineIntakes,
   readAutonomousResearchMachineIntakeConfiguration,
 } from '../../paper-adapters/automation/autonomous-research-machine-intake-loader.mjs';
+import { HEPTA_WORKSPACE_ROOT } from '../../paper-adapters/runtime/workspace-layout.mjs';
 import {
-  createFullResearchQualificationReceiptPointerRepository,
-} from '../../paper-adapters/automation/full-research-qualification-receipt-pointer-repository.mjs';
-import {
-  readExternalResearchQualificationProcessConfiguration,
-} from '../../paper-adapters/automation/external-research-qualification-process-identity.mjs';
-import {
-  executeAutomationRuntimeReconciliation,
-} from '../../paper-adapters/automation/automation-runtime-reconciler.mjs';
-import { openExistingWritablePaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
-import { bootstrapCampaignExecutionContext } from '../bootstrap/campaign-execution-context-bootstrap.mjs';
-import { composeAutomationReconcilerReceiptLedger } from '../bootstrap/receipt-ledger-composition.mjs';
-import {
-  resolveAutonomousResearchProviderConfiguration,
-} from './autonomous-research-provider-configuration.mjs';
+  bootstrapCampaignExecutionContext,
+} from '../bootstrap/campaign-execution-context-bootstrap.mjs';
 import {
   composeAutonomousResearchCampaignAction,
   composeAutonomousResearchMachineIntakeEnqueue,
@@ -31,181 +24,58 @@ import {
   issueAutonomousResearchSupervisorDispatchAuthorization,
 } from './autonomous-research-campaign-composition.mjs';
 import {
+  createAutonomousResearchSubmissionHandoffInspection,
+} from './autonomous-research-submission-composition.mjs';
+import {
+  createFencedAutonomousResearchProviderCanary,
   runAutonomousResearchProviderCanaryPair,
 } from './autonomous-research-provider-canary.mjs';
-import {
-  resolvePersistedAutonomousResearchLaunchMode,
-  resolveAutonomousResearchProviderPricing,
-} from '../../paper-domain/automation/autonomous-research-launch-mode-policy.mjs';
-import {
-  createRuntimeImageReproducibilityReceiptRepository,
-  composeRuntimeImageReproducibilityStatus,
-  composeRuntimeImageReproducibilityVerification,
-} from './runtime-image-reproducibility-composition.mjs';
 import {
   evaluateAutonomousResearchMachineIntakeConfigurationReadiness,
   inspectAutonomousResearchResidentPrerequisites,
 } from './automation-machine-intake-readiness.mjs';
+import { composeAutonomousResearchSupervisorState } from './autonomous-research-supervisor-state-composition.mjs';
 import {
-  composeAutonomousResearchSupervisorState,
-} from './autonomous-research-supervisor-state-composition.mjs';
+  assertAutonomousResearchSupervisorMachineIntakeConfiguration,
+  assertAutonomousResearchSupervisorStrictOverridePolicy,
+  assertAutonomousResearchSupervisorStateSafety,
+  AUTONOMOUS_RESEARCH_SUPERVISOR_STATE_SAFETY_CLOCK,
+  prepareAutonomousResearchSupervisorQualificationPrerequisites,
+} from './autonomous-research-supervisor-prerequisites.mjs';
 import {
   composeAutonomousResearchMachineIntakePlane,
   createAutonomousResearchSupervisorMachineIntakeAdapter,
   createLegacyAutonomousResearchMachineIntakeRepository,
   inspectConfiguredAutonomousResearchTopicProducer,
 } from './autonomous-research-machine-intake-composition.mjs';
+import {
+  composeAutonomousResearchSupervisorRuntime,
+  resolveAutonomousResearchSupervisorRuntimeRefreshPolicy,
+} from './autonomous-research-supervisor-runtime-composition.mjs';
+import {
+  composeAutonomousResearchCampaignExternalSideEffectControl,
+  createAutonomousResearchStateRecoverabilityReconciler,
+} from './autonomous-research-campaign-external-side-effect-composition.mjs';
+import {
+  prepareAutonomousResearchSupervisorProvider,
+  resolveAutonomousResearchSupervisorDispatchPolicy,
+  resolveAutonomousResearchSupervisorLifecycleCostEnvelope,
+} from './autonomous-research-supervisor-provider-preparation.mjs';
+import {
+  composeAutonomousResearchSupervisorExternalActionRecovery,
+} from './autonomous-research-supervisor-external-action-recovery-composition.mjs';
 
-export function resolveAutonomousResearchSupervisorDispatchPolicy(campaign) {
-  return resolvePersistedAutonomousResearchLaunchMode({ campaign });
-}
+export { resolveAutonomousResearchSupervisorDispatchPolicy };
 
-export function createFencedAutonomousResearchProviderCanary({
-  stateRepository,
-  providerConfiguration,
-  environment,
-  clock,
-  providerCanaryRunner = runAutonomousResearchProviderCanaryPair,
-} = {}) {
-  if (typeof stateRepository?.assertCampaignLease !== 'function'
-    || typeof stateRepository?.renewCampaignLease !== 'function'
-    || typeof stateRepository?.recordExternalActionProgress !== 'function'
-    || typeof providerCanaryRunner !== 'function'
-    || typeof clock?.now !== 'function') {
-    throw new Error('autonomous_research_supervisor_provider_canary_dependencies_invalid');
-  }
-  return async function fencedProviderCanary({
-    campaign,
-    supervisorLease,
-    providerCanaryReservation,
-    externalActionAttempt,
-    signal: canarySignal,
-  } = {}) {
-    const persistedHash = campaign?.spec?.autonomousResearchPreparation
-      ?.autonomousResearchProviderConfigurationHash || null;
-    if (!persistedHash
-      || persistedHash !== providerConfiguration?.autonomousResearchProviderConfigurationHash) {
-      throw new Error('autonomous_research_provider_configuration_hash_mismatch');
-    }
-    stateRepository.assertCampaignLease({ lease: supervisorLease, now: clock.now() });
-    if (!stateRepository.renewCampaignLease({
-      lease: supervisorLease,
-      leaseMs: 15 * 60 * 1000,
-      now: clock.now(),
-    })) throw new Error('autonomous_research_supervisor_lease_lost');
-    const receipt = await providerCanaryRunner({
-      providerConfiguration,
-      expectedProviderConfigurationHash: persistedHash,
-      environment,
-      signal: canarySignal,
-      clock,
-      providerCanaryReservation,
-      betweenCanaryChecks({ authorCanary } = {}) {
-        stateRepository.assertCampaignLease({ lease: supervisorLease, now: clock.now() });
-        if (!stateRepository.renewCampaignLease({
-          lease: supervisorLease,
-          leaseMs: 15 * 60 * 1000,
-          now: clock.now(),
-        })) throw new Error('autonomous_research_supervisor_lease_lost');
-        stateRepository.recordExternalActionProgress({
-          lease: supervisorLease,
-          attempt: externalActionAttempt,
-          evidence: Object.freeze({
-            version: 1,
-            kind: 'AutonomousResearchSupervisorProviderCanaryProgress',
-            role: 'research_author',
-            providerConfigurationHash: persistedHash,
-            providerCanaryReceiptHash:
-              authorCanary?.codexModelAvailabilityCanaryReceiptHash || null,
-          }),
-          now: clock.now(),
-        });
-      },
-    });
-    stateRepository.assertCampaignLease({ lease: supervisorLease, now: clock.now() });
-    return receipt;
-  };
-}
-
-function workerOptions(worker = {}) {
-  return Object.freeze({
-    concurrency: Number(worker.concurrency || 8),
-    agentSlots: Number(worker.agentSlots || 4),
-    cpuSlots: Number(worker.cpuSlots || 4),
-    gpuSlots: Number(worker.gpuSlots || 1),
-    memoryMiB: Number(worker.memoryMiB || 8192),
-    agentProvider: worker.agentProvider,
-    model: worker.model,
-    formalReviewProvider: worker.formalReviewProvider,
-    formalReviewModel: worker.formalReviewModel,
-    formalReviewCodexBinary: worker.formalReviewCodexBinary,
-    formalReviewCodexHome: worker.formalReviewCodexHome,
-    codexHome: worker.codexHome,
-    codexBinary: worker.codexBinary,
-  });
-}
-
-function configuredMaximumCost(environment, role) {
-  return environment[`HEPTA_${role}_MAXIMUM_COST_PER_CALL_USD`]
-    ?? environment[`HEPTA_${role}_MAX_COST_PER_CALL_USD`]
-    ?? null;
-}
-
-function runtimeRefreshPolicy(environment, supplied = {}) {
-  const configured = (field, name) => supplied[field]
-    ?? environment[`HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_${name}`];
-  return Object.freeze({
-    maximumAttemptsPerEpoch: configured(
-      'maximumAttemptsPerEpoch', 'MAXIMUM_REFRESH_ATTEMPTS_PER_EPOCH',
-    ),
-    maximumCostUsdPerEpoch: configured(
-      'maximumCostUsdPerEpoch', 'MAXIMUM_REFRESH_COST_USD_PER_EPOCH',
-    ),
-    budgetEpochMs: configured('budgetEpochMs', 'REFRESH_BUDGET_EPOCH_MS'),
-    leaseMs: configured('leaseMs', 'REFRESH_LEASE_MS'),
-    baseBackoffMs: configured('baseBackoffMs', 'REFRESH_BASE_BACKOFF_MS'),
-    maximumBackoffMs: configured('maximumBackoffMs', 'REFRESH_MAXIMUM_BACKOFF_MS'),
-    renewalLeadMs: configured('renewalLeadMs', 'REFRESH_RENEWAL_LEAD_MS'),
-    actionSafetyMarginMs: configured(
-      'actionSafetyMarginMs', 'REFRESH_ACTION_SAFETY_MARGIN_MS',
-    ),
-  });
-}
-
-function canonicalQualificationPointerEnvironment(environment, repository) {
-  const canonicalPath = path.resolve(repository.qualificationReceiptPath);
-  const configured = environment.HEPTA_FULL_RESEARCH_QUALIFICATION_RECEIPT || null;
-  if (configured) {
-    const requested = path.resolve(String(configured));
-    let requestedRealPath = requested;
-    try { requestedRealPath = fs.realpathSync(requested); }
-    catch (error) {
-      if (error?.code !== 'ENOENT') {
-        throw new Error('autonomous_research_supervisor_qualification_pointer_path_invalid');
-      }
-    }
-    let canonicalRealPath = canonicalPath;
-    try { canonicalRealPath = fs.realpathSync(canonicalPath); }
-    catch (error) {
-      if (error?.code !== 'ENOENT') {
-        throw new Error('autonomous_research_supervisor_qualification_pointer_path_invalid');
-      }
-    }
-    if (requested !== canonicalPath || requestedRealPath !== canonicalRealPath) {
-      throw new Error('autonomous_research_supervisor_qualification_pointer_path_mismatch');
-    }
-  }
-  return Object.freeze({
-    ...environment,
-    HEPTA_FULL_RESEARCH_QUALIFICATION_RECEIPT: canonicalPath,
-  });
-}
+export { createFencedAutonomousResearchProviderCanary };
 
 export function composeAutonomousResearchSupervisor({
   root,
   runtimeRoot,
+  workspaceRoot = HEPTA_WORKSPACE_ROOT,
   environment = process.env,
   externalQualificationConfigPath = null,
+  externalActionRecoveryConfigPath = null,
   machineIntakeConfigPath = null,
   topicProducerProfilePath = null,
   requireFullyAutonomous = false,
@@ -228,40 +98,68 @@ export function composeAutonomousResearchSupervisor({
   readQualificationStateOverride = null,
   reconcileRuntimeOverride = null,
   runtimeReproducibilityOverrides = {},
+  stateSafetyInspector = undefined,
+  stateSafetyActiveAuthorityRefresh = undefined,
+  composeStateSafetyBackupService = undefined,
+  stateSafetyClock = AUTONOMOUS_RESEARCH_SUPERVISOR_STATE_SAFETY_CLOCK,
+  createQualificationPointerRepository = undefined,
+  bootstrapExecutionContext = bootstrapCampaignExecutionContext,
+  composeSupervisorState = composeAutonomousResearchSupervisorState,
 } = {}) {
-  const receiptPointerRepository = createFullResearchQualificationReceiptPointerRepository({
+  assertAutonomousResearchSupervisorStrictOverridePolicy({
+    required: requireFullyAutonomous,
+    serviceOverrides,
+    runtimeReproducibilityOverrides,
+    dispatchCampaignOverride,
+    providerCanaryOverride,
+    renewQualificationOverride,
+    readQualificationStateOverride,
+    reconcileRuntimeOverride,
+    stateSafetyInspector,
+    stateSafetyActiveAuthorityRefresh,
+    composeStateSafetyBackupService,
+    stateSafetyClock,
+    createQualificationPointerRepository,
+    bootstrapExecutionContextIsDefault: bootstrapExecutionContext === bootstrapCampaignExecutionContext,
+    composeSupervisorStateIsDefault:
+      composeSupervisorState === composeAutonomousResearchSupervisorState,
+  });
+  const stateSafetyActivation = assertAutonomousResearchSupervisorStateSafety({
+    required: requireFullyAutonomous,
+    workspaceRoot,
     runtimeRoot,
-  });
-  const effectiveEnvironment = canonicalQualificationPointerEnvironment(
     environment,
-    receiptPointerRepository,
-  );
-  const options = workerOptions(worker);
-  const providerConfiguration = resolveAutonomousResearchProviderConfiguration({
-    options: Object.fromEntries(Object.entries({
-      'agent-provider': options.agentProvider,
-      model: options.model,
-      'formal-review-provider': options.formalReviewProvider,
-      'formal-review-model': options.formalReviewModel,
-      'formal-review-codex-binary': options.formalReviewCodexBinary,
-      'formal-review-codex-home': options.formalReviewCodexHome,
-      'codex-home': options.codexHome,
-      'codex-binary': options.codexBinary,
-    }).filter(([, value]) => value !== undefined && value !== null)),
-    environment: effectiveEnvironment,
+    inspector: stateSafetyInspector,
+    activeAuthorityRefresh: stateSafetyActiveAuthorityRefresh,
+    composeStateBackupService: composeStateSafetyBackupService,
+    clock: stateSafetyClock,
   });
-  const configuredExternalQualificationPath = externalQualificationConfigPath
-    || effectiveEnvironment.HEPTA_AUTONOMOUS_EXTERNAL_QUALIFICATION_CONFIG || null;
-  const externalQualificationConfiguration = configuredExternalQualificationPath
-    ? readExternalResearchQualificationProcessConfiguration({
-      configPath: configuredExternalQualificationPath,
+  const qualificationPrerequisites =
+    prepareAutonomousResearchSupervisorQualificationPrerequisites({
+      runtimeRoot,
+      environment,
+      externalQualificationConfigPath,
+      publicationMutationCoordinator:
+        stateSafetyActivation?.mutationCoordinator || null,
+      requireExternallyFencedPublication: requireFullyAutonomous,
+      createQualificationPointerRepository,
+    });
+  const {
+    receiptPointerRepository,
+    effectiveEnvironment,
+    configuredExternalQualificationPath,
+    externalQualificationConfiguration,
+  } = qualificationPrerequisites;
+  const { options, providerConfiguration } =
+    prepareAutonomousResearchSupervisorProvider({
+      worker,
       environment: effectiveEnvironment,
-    }) : null;
+    });
   const configuredMachineIntakePath = machineIntakeConfigPath
     || effectiveEnvironment.HEPTA_AUTONOMOUS_RESEARCH_INTAKE_CONFIG || null;
-  if (requireFullyAutonomous && !configuredMachineIntakePath) {
-    throw new Error('autonomous_research_supervisor_machine_intake_configuration_required');
-  }
+  assertAutonomousResearchSupervisorMachineIntakeConfiguration({
+    required: requireFullyAutonomous, configuredPath: configuredMachineIntakePath,
+  });
   const initialMachineIntakeConfiguration = configuredMachineIntakePath
     ? readAutonomousResearchMachineIntakeConfiguration({
       configPath: configuredMachineIntakePath,
@@ -285,105 +183,103 @@ export function composeAutonomousResearchSupervisor({
   if (requireFullyAutonomous && !coldStartAutonomyReady) {
     throw new Error('autonomous_research_supervisor_fully_autonomous_intake_required');
   }
-  const execution = bootstrapCampaignExecutionContext({
+  const execution = bootstrapExecutionContext({
     root,
     runtimeRoot,
     mode: 'autonomous-research-supervisor',
     execute: true,
     serviceOverrides,
+    environment: effectiveEnvironment,
+    nativeStoreMutationCoordinator: stateSafetyActivation?.mutationCoordinator || null,
+    requireExternallyFencedNativeStore: requireFullyAutonomous,
   });
   const { context } = execution;
   const services = context.services;
-  const supervisorState = composeAutonomousResearchSupervisorState({
+  const onlineAuthorityEvidenceController = stateSafetyActivation
+    ?.authorityEvidenceRenewalAdapter
+    ? createAutonomousResearchOnlineAuthorityEvidenceRenewalController({
+      adapter: stateSafetyActivation.authorityEvidenceRenewalAdapter,
+      clock: services.clock,
+      random,
+      requireResidentFence: true,
+      residentLeaseMs: residentInstanceLeaseMs,
+      pollMs,
+      residentHeartbeatMs: residentInstanceHeartbeatMs,
+    }) : null;
+  const stateRecoverabilityController =
+    stateSafetyActivation?.stateRecoverabilityController || null;
+  if (requireFullyAutonomous && !onlineAuthorityEvidenceController) {
+    throw new Error(
+      'autonomous_research_supervisor_online_authority_evidence_renewal_required',
+    );
+  }
+  if (requireFullyAutonomous && !stateRecoverabilityController) {
+    throw new Error(
+      'autonomous_research_supervisor_state_recoverability_required',
+    );
+  }
+  const reconcileStateRecoverability =
+    createAutonomousResearchStateRecoverabilityReconciler({
+      onlineAuthorityEvidenceController,
+      stateRecoverabilityController,
+    });
+  const recoverAutonomousSubmission = createAutonomousResearchSubmissionHandoffInspection({
+    environment: effectiveEnvironment,
+    autonomousSubmissionOutbox: services.autonomousSubmissionOutbox,
+    autonomousSubmissionRequestVerifier:
+      services.autonomousSubmissionRequestVerifier,
+  });
+  const supervisorState = composeSupervisorState({
     runtimeRoot,
     runtimeRefreshStateRepository: runtimeReproducibilityOverrides.stateRepository,
-    runtimeRefreshPolicy: runtimeRefreshPolicy(
+    runtimeRefreshPolicy: resolveAutonomousResearchSupervisorRuntimeRefreshPolicy(
       effectiveEnvironment,
       runtimeReproducibilityPolicy,
     ),
+    supervisorStateMutationCoordinator: stateSafetyActivation?.mutationCoordinator || null,
+    requireExternallyFencedSupervisorState: requireFullyAutonomous,
+    residentInstanceMutationCoordinator: stateSafetyActivation?.mutationCoordinator || null, requireExternallyFencedResidentInstance: requireFullyAutonomous,
+    runtimeRefreshMutationCoordinator: stateSafetyActivation?.mutationCoordinator || null, requireExternallyFencedRuntimeRefresh: requireFullyAutonomous,
   });
   const stateRepository = supervisorState.lifecycle;
   const residentInstanceRepository = supervisorState.residentInstance;
+  const residentCycleIntentRepository =
+    createAutonomousResearchResidentCycleIntentRepository({ runtimeRoot });
   let machineIntakeRepository = null;
   let machineIntakePlane = null;
   const runtimeRefreshStateRepository = supervisorState.runtimeRefresh;
-  const readRuntimeReproducibilityStatus = runtimeReproducibilityOverrides.readStatus
-    || (({ now }) => composeRuntimeImageReproducibilityStatus({
-      runtimeRoot,
-      repositoryRoot: root,
-      environment: effectiveEnvironment,
-      now,
-    }));
-  const publishRuntimeReproducibility = runtimeReproducibilityOverrides.publish
-    || (({ signal: refreshSignal }) => composeRuntimeImageReproducibilityVerification({
-      action: 'publish',
-      runtimeRoot,
-      repositoryRoot: root,
-      environment: effectiveEnvironment,
-      clock: services.clock,
-      signal: refreshSignal,
-    }));
-  const runtimeRefresh = createAutonomousResearchRuntimeRefresh({
-    stateRepository: runtimeRefreshStateRepository,
-    readStatus: readRuntimeReproducibilityStatus,
-    publish: publishRuntimeReproducibility,
+  const {
+    externalActionRecoveryPort,
+    externalActionRecoveryController,
+  } = composeAutonomousResearchSupervisorExternalActionRecovery({
+    configPath: externalActionRecoveryConfigPath,
+    environment: effectiveEnvironment,
+    clock: services.clock,
+    requireFullyAutonomous,
+    stateRepository,
+    providerConfiguration,
+  });
+  const { runtimeRefresh, reconcileRuntime } = composeAutonomousResearchSupervisorRuntime({
+    root,
+    runtimeRoot,
+    environment: effectiveEnvironment,
     clock: services.clock,
     scheduler: services.scheduler,
     random,
+    runtimeRefreshStateRepository,
+    runtimeReproducibilityOverrides,
+    mutationCoordinator: stateSafetyActivation?.mutationCoordinator || null,
+    requireFullyAutonomous,
+    receiptPointerRepository,
+    reconcileRuntimeOverride,
   });
-  const pricing = resolveAutonomousResearchProviderPricing({
-    researchAuthorProvider: providerConfiguration.researchAuthor.provider,
-    researchAuthorModel: providerConfiguration.researchAuthor.model,
-    formalReviewerProvider: providerConfiguration.formalReviewer.provider,
-    formalReviewerModel: providerConfiguration.formalReviewer.model,
-    researchAuthorMaximumCostPerCallUsd:
-      configuredMaximumCost(effectiveEnvironment, 'RESEARCH_AUTHOR'),
-    formalReviewerMaximumCostPerCallUsd:
-      configuredMaximumCost(effectiveEnvironment, 'FORMAL_REVIEWER'),
-  });
-  if (pricing.pricingKnown !== true) {
-    throw new Error('autonomous_research_supervisor_provider_pricing_required');
-  }
-  const pairMaximum = Number(pricing.providerCanaryPairMaximumCostUsd);
-  const qualificationMaximumTotalCostUsd = Number(
-    lifecyclePolicy.qualificationMaximumTotalCostUsd ?? 25,
-  );
-  const configuredQualificationAttemptMaximumCostUsd = Number(
-    externalQualificationConfiguration?.maximumQualificationCostUsd ?? 0,
-  );
-  if (!Number.isFinite(pairMaximum) || pairMaximum <= 0) {
-    throw new Error('autonomous_research_supervisor_provider_canary_pricing_invalid');
-  }
-  if (!Number.isFinite(configuredQualificationAttemptMaximumCostUsd)
-    || configuredQualificationAttemptMaximumCostUsd < 0
-    || !Number.isFinite(qualificationMaximumTotalCostUsd)
-    || qualificationMaximumTotalCostUsd < configuredQualificationAttemptMaximumCostUsd) {
-    throw new Error('autonomous_research_supervisor_qualification_cost_envelope_insufficient');
-  }
-  const maximumLifecycleCostUsd = Number(lifecyclePolicy.maximumLifecycleCostUsd ?? 150);
-  const requestedMaximumProviderCanaries = Number(
-    lifecyclePolicy.maximumProviderCanaries ?? 64,
-  );
-  const affordableProviderCanaries = Math.floor(
-    (maximumLifecycleCostUsd - qualificationMaximumTotalCostUsd) / pairMaximum,
-  );
-  if (!Number.isFinite(maximumLifecycleCostUsd) || maximumLifecycleCostUsd <= 0
-    || !Number.isSafeInteger(requestedMaximumProviderCanaries)
-    || requestedMaximumProviderCanaries < 1 || affordableProviderCanaries < 1) {
-    throw new Error('autonomous_research_supervisor_provider_canary_cost_envelope_insufficient');
-  }
-  const effectiveLifecyclePolicy = Object.freeze({
-    ...lifecyclePolicy,
-    maximumProviderCanaries: Math.min(
-      requestedMaximumProviderCanaries,
-      affordableProviderCanaries,
-    ),
-    providerCanaryReservationCostUsd: pairMaximum,
-    qualificationAttemptReservationCostUsd: Math.max(
-      Number(lifecyclePolicy.qualificationAttemptReservationCostUsd || 0),
-      configuredQualificationAttemptMaximumCostUsd,
-    ),
-  });
+  const { pairMaximum, effectiveLifecyclePolicy } =
+    resolveAutonomousResearchSupervisorLifecycleCostEnvelope({
+      environment: effectiveEnvironment,
+      lifecyclePolicy,
+      externalQualificationConfiguration,
+      providerConfiguration,
+    });
 
   if (configuredMachineIntakePath && initialMachineIntakeConfiguration.version === 2) {
     machineIntakePlane = composeAutonomousResearchMachineIntakePlane({
@@ -398,6 +294,12 @@ export function composeAutonomousResearchSupervisor({
       clock: services.clock,
       ownerId: ownerId || `supervisor:${process.pid}`,
       signal,
+      topicProducerMutationCoordinator:
+        stateSafetyActivation?.mutationCoordinator || null,
+      requireExternallyFencedTopicProducer: requireFullyAutonomous,
+      machineIntakeMutationCoordinator:
+        stateSafetyActivation?.mutationCoordinator || null,
+      requireExternallyFencedMachineIntake: requireFullyAutonomous,
     });
     machineIntakeRepository = machineIntakePlane.machineIntakeRepository;
   } else if (configuredMachineIntakePath) {
@@ -405,6 +307,9 @@ export function composeAutonomousResearchSupervisor({
       runtimeRoot,
       create: true,
       authorizedSourceAuthorityHash: initialMachineIntakeConfiguration.configurationHash,
+      offlineProvision: !requireFullyAutonomous,
+      mutationCoordinator: stateSafetyActivation?.mutationCoordinator || null,
+      requireExternallyFencedMutations: requireFullyAutonomous,
     });
   }
 
@@ -413,6 +318,9 @@ export function composeAutonomousResearchSupervisor({
       runtimeRoot,
       paperId: campaign.paperId,
       create: true,
+      offlineProvision: !requireFullyAutonomous,
+      mutationCoordinator: stateSafetyActivation?.mutationCoordinator || null,
+      requireExternallyFencedMutations: requireFullyAutonomous,
     });
     try {
       repository.reconcileStaleQualificationAttemptLease({ now: services.clock.now() });
@@ -427,6 +335,8 @@ export function composeAutonomousResearchSupervisor({
       providerConfiguration,
       environment: effectiveEnvironment,
       clock: services.clock,
+      stateRecoverabilityController,
+      onlineAuthorityEvidenceController,
     });
 
   const renewQualification = renewQualificationOverride || (({
@@ -455,7 +365,13 @@ export function composeAutonomousResearchSupervisor({
       lease,
       now,
     }),
+    qualificationStateMutationCoordinator:
+      stateSafetyActivation?.mutationCoordinator || null,
+    requireExternallyFencedQualificationState: requireFullyAutonomous,
     receiptPointerRepository,
+    nativeStoreMutationCoordinator:
+      stateSafetyActivation?.mutationCoordinator || null,
+    requireExternallyFencedNativeStore: requireFullyAutonomous,
     serviceOverrides,
     runtimeSignal: renewalSignal,
     worker: options,
@@ -490,32 +406,20 @@ export function composeAutonomousResearchSupervisor({
         }),
         readCampaignState: (campaignId) => stateRepository.getCampaign(campaignId),
       }) : null;
-    const supervisorExternalActionJournal = supervisorDispatchAuthorization
-      ? Object.freeze({
-        begin({ actionKind, reservation, now }) {
-          return stateRepository.beginExternalActionAttempt({
-            lease: supervisorDispatchEvidence.campaignLease,
-            actionKind,
-            reservation,
-            now,
-          });
-        },
-        finish({
-          attempt, successful, evidence, actionAccountingComplete,
-          externalActionPerformed, blocker, now,
-        }) {
-          return stateRepository.finishExternalActionAttempt({
-            lease: supervisorDispatchEvidence.campaignLease,
-            attempt,
-            successful,
-            evidence,
-            actionAccountingComplete,
-            externalActionPerformed,
-            blocker,
-            now,
-          });
-        },
-      }) : null;
+    const {
+      assertCampaignExternalSideEffectReady,
+      supervisorExternalActionJournal,
+    } = composeAutonomousResearchCampaignExternalSideEffectControl({
+      stateRepository,
+      supervisorDispatchEvidence,
+      supervisorDispatchAuthorization,
+      onlineAuthorityEvidenceController,
+      stateRecoverabilityController,
+      reconcileStateRecoverability,
+      clock: services.clock,
+      boundedQualificationRetry,
+      externalActionRecoveryPort,
+    });
     return composeAutonomousResearchCampaignAction({
       action,
       launchMode: dispatchPolicy.launchMode,
@@ -531,43 +435,23 @@ export function composeAutonomousResearchSupervisor({
         ...qualificationRetry,
         ...boundedQualificationRetry,
       },
+      qualificationStateMutationCoordinator:
+        stateSafetyActivation?.mutationCoordinator || null,
+      requireExternallyFencedQualificationState: requireFullyAutonomous,
+      nativeStoreMutationCoordinator:
+        stateSafetyActivation?.mutationCoordinator || null,
+      requireExternallyFencedNativeStore: requireFullyAutonomous,
+      qualificationPublicationMutationCoordinator:
+        stateSafetyActivation?.mutationCoordinator || null,
+      requireExternallyFencedQualificationPublication: requireFullyAutonomous,
       supervisorDispatchAuthorization,
       supervisorExternalActionJournal,
+      assertExternalSideEffectReady: assertCampaignExternalSideEffectReady,
       readinessClock: services.clock,
       runtimeSignal: dispatchSignal,
       worker: options,
     });
   });
-
-  const reconcileAutomationRuntime = reconcileRuntimeOverride || (() => {
-    const reconciliationStore = openExistingWritablePaperStore({ root, runtimeRoot });
-    try {
-      return executeAutomationRuntimeReconciliation({
-        store: reconciliationStore,
-        clock: services.clock,
-        receiptLedger: composeAutomationReconcilerReceiptLedger({
-          store: reconciliationStore,
-          clock: services.clock,
-        }),
-      });
-    } finally { reconciliationStore.close(); }
-  });
-  const reconcileRuntimeMirror = runtimeReproducibilityOverrides.reconcileMirror
-    || (() => createRuntimeImageReproducibilityReceiptRepository({
-      runtimeRoot,
-      receiptPath: effectiveEnvironment.HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_RECEIPT || null,
-    }).reconcileMirror());
-  const reconcileRuntime = async ({ now } = {}) => {
-    const fullResearchQualificationMirror = receiptPointerRepository.reconcileMirror();
-    const runtimeReproducibilityMirror = await reconcileRuntimeMirror();
-    return Object.freeze({
-      fullResearchQualificationMirror,
-      runtimeReproducibilityMirror,
-      automationRuntime: await reconcileAutomationRuntime({ now }),
-      runtimeReproducibility: runtimeRefreshStateRepository
-        .reconcileStaleRefreshLease({ now: now || services.clock.now() }),
-    });
-  };
 
   const machineIntake = createAutonomousResearchSupervisorMachineIntakeAdapter({
     repository: machineIntakeRepository,
@@ -578,6 +462,15 @@ export function composeAutonomousResearchSupervisor({
         environment: effectiveEnvironment,
         validateStaticContent: false,
       }).configuration;
+      if (configuration.configurationHash
+        !== initialMachineIntakeConfiguration.configurationHash) {
+        throw new ResidentReactivationRequired({
+          source: 'machine_intake_configuration',
+          reason: 'autonomous_research_machine_intake_configuration_rotated',
+          startupIdentityHash: initialMachineIntakeConfiguration.configurationHash,
+          observedIdentityHash: configuration.configurationHash,
+        });
+      }
       return loadConfiguredAutonomousResearchMachineIntakes({
         configuration,
         repository: machineIntakeRepository,
@@ -602,6 +495,12 @@ export function composeAutonomousResearchSupervisor({
         environment: effectiveEnvironment,
         externalQualificationConfigPath,
         serviceOverrides,
+        nativeStoreMutationCoordinator:
+          stateSafetyActivation?.mutationCoordinator || null,
+        requireExternallyFencedNativeStore: requireFullyAutonomous,
+        qualificationPublicationMutationCoordinator:
+          stateSafetyActivation?.mutationCoordinator || null,
+        requireExternallyFencedQualificationPublication: requireFullyAutonomous,
         worker: options,
         now,
         clock: services.clock,
@@ -622,6 +521,10 @@ export function composeAutonomousResearchSupervisor({
     ensureRuntimeReproducibility: (input) => runtimeRefresh.ensureReady(input),
     runProviderCanary,
     renewQualification,
+    recoverAutonomousSubmission,
+    onlineAuthorityEvidenceController,
+    stateRecoverabilityController,
+    externalActionRecoveryController,
     machineIntake,
     requireFullyAutonomous,
     inspectFullyAutonomousPrerequisites: ({ now }) => (
@@ -629,11 +532,13 @@ export function composeAutonomousResearchSupervisor({
         runtimeRoot,
         environment: effectiveEnvironment,
         externalQualificationConfigPath: configuredExternalQualificationPath,
+        externalActionRecoveryConfigPath,
         now,
       })
     ),
     reconcileRuntime,
     residentInstanceRepository,
+    residentCycleIntentRepository,
     residentInstanceLeaseMs,
     residentInstanceHeartbeatMs,
     lifecyclePolicy: effectiveLifecyclePolicy,

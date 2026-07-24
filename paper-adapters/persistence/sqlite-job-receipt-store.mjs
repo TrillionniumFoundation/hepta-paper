@@ -6,6 +6,12 @@ import {
   resolveReceiptHashPolicy,
 } from '../../paper-domain/evidence/receipt-hash-policy.mjs';
 import { parseJsonOrThrow } from '../../workflow-kernel/runtime/data-utils.mjs';
+import {
+  NATIVE_STORE_LEDGER_STATEMENT_IDS,
+} from './native-store-ledger-mutation-plan.mjs';
+import {
+  preparedSqliteReceiptLedgerMutation,
+} from './sqlite-receipt-ledger.mjs';
 
 function parse(row) {
   if (!row) return null;
@@ -52,6 +58,20 @@ function requiredLeaseGeneration(value) {
 function recordedLedger(prepared) {
   const { sql: _sql, ...recorded } = prepared;
   return Object.freeze(recorded);
+}
+
+function externalMutationValue(receipt, {
+  allowNoChange = false,
+  errorCode = 'job_external_mutation_receipt_invalid',
+} = {}) {
+  if (receipt?.status === 'externally_fenced_sqlite_mutation_finalized') {
+    return receipt.value;
+  }
+  if (allowNoChange
+    && receipt?.status === 'externally_fenced_sqlite_mutation_no_change') {
+    return receipt.value;
+  }
+  throw new Error(errorCode);
 }
 
 const NATIVE_RESEARCH_WORKER_RECEIPT_KIND = 'NativeResearchWorkerExecutionReceipt';
@@ -148,13 +168,17 @@ export function createSqliteJobReceiptStore({ store: suppliedStore, receiptLedge
     }
   };
 
-  const persistReceipt = (receipt, paperId) => {
+  const prepareReceipt = (receipt, paperId) => {
     assertReceiptKindAllowed(receipt);
-    const prepared = receiptLedger.prepare(receipt, {
+    return receiptLedger.prepare(receipt, {
       stream: 'jobs',
       paperId: paperId || null,
       strictInsert: true,
     });
+  };
+
+  const persistReceipt = (receipt, paperId) => {
+    const prepared = prepareReceipt(receipt, paperId);
     const inserted = store.execute(prepared.sql);
     if (!inserted.ok) throw resultError(inserted, 'job_receipt_ledger_write_failed');
     return recordedLedger(prepared);
@@ -166,25 +190,121 @@ export function createSqliteJobReceiptStore({ store: suppliedStore, receiptLedge
     return rows[0];
   };
 
-  const settleJob = ({ jobId, attemptId, workerId, leaseGeneration: rawGeneration, status, failureClass = null, receipt = null }) => {
+  const validateSettlementReceipt = ({
+    receipt,
+    active,
+    jobId,
+    attemptId,
+    workerId,
+    leaseGeneration,
+    status,
+  }) => {
+    if (!receipt) return;
+    assertReceiptKindAllowed(receipt);
+    assertNativeSettlementReceiptContext({
+      receipt,
+      active,
+      jobId,
+      attemptId,
+      workerId,
+      leaseGeneration,
+      status,
+    });
+    assertSettlementReceiptIntegrity({ receipt, active, jobId, attemptId });
+  };
+
+  const settleJobInMutation = (transaction, {
+    jobId,
+    attemptId,
+    workerId,
+    leaseGeneration: rawGeneration,
+    status,
+    failureClass = null,
+    receipt = null,
+  }) => {
+    if (!jobId || !attemptId || !workerId) {
+      throw new Error('jobId, attemptId and workerId are required');
+    }
+    const leaseGeneration = requiredLeaseGeneration(rawGeneration);
+    const now = clock.nowIso();
+    const active = transaction.get(
+      NATIVE_STORE_LEDGER_STATEMENT_IDS.selectActiveJobAttempt,
+      attemptId,
+      jobId,
+      workerId,
+      leaseGeneration,
+      workerId,
+      leaseGeneration,
+      now,
+    );
+    if (!active) throw new Error('active_job_attempt_lease_fence_required');
+    validateSettlementReceipt({
+      receipt,
+      active,
+      jobId,
+      attemptId,
+      workerId,
+      leaseGeneration,
+      status,
+    });
+    let ledger = null;
+    if (receipt) {
+      const prepared = prepareReceipt(receipt, active.paper_id);
+      const ledgerMutation = preparedSqliteReceiptLedgerMutation(prepared);
+      if (ledgerMutation.strictInsert !== true) {
+        throw new Error('job_receipt_ledger_strict_insert_required');
+      }
+      const inserted = transaction.run(
+        NATIVE_STORE_LEDGER_STATEMENT_IDS.insertReceipt,
+        ...ledgerMutation.parameters,
+      ).changes;
+      if (inserted !== 1) throw new Error('job_receipt_ledger_write_ambiguous');
+      ledger = recordedLedger(prepared);
+    }
+    const attemptChanges = transaction.run(
+      NATIVE_STORE_LEDGER_STATEMENT_IDS.settleJobAttempt,
+      status,
+      failureClass,
+      ledger?.receiptId || null,
+      now,
+      attemptId,
+      jobId,
+      workerId,
+      leaseGeneration,
+    ).changes;
+    if (attemptChanges !== 1) throw new Error('job_attempt_settlement_fence_lost');
+    const jobChanges = transaction.run(
+      NATIVE_STORE_LEDGER_STATEMENT_IDS.settleJob,
+      status,
+      failureClass,
+      ledger?.receiptId || null,
+      now,
+      jobId,
+      workerId,
+      leaseGeneration,
+      now,
+    ).changes;
+    if (jobChanges !== 1) throw new Error('job_settlement_fence_lost');
+    const job = transaction.get(NATIVE_STORE_LEDGER_STATEMENT_IDS.getJob, jobId);
+    if (!job) throw new Error('job_settlement_result_missing');
+    return Object.freeze({ ...parse(job), ledgerReceipt: ledger });
+  };
+
+  const settleJobOffline = ({ jobId, attemptId, workerId, leaseGeneration: rawGeneration, status, failureClass = null, receipt = null }) => {
     if (!jobId || !attemptId || !workerId) throw new Error('jobId, attemptId and workerId are required');
     const leaseGeneration = requiredLeaseGeneration(rawGeneration);
     const now = clock.nowIso();
     return immediateTransaction(store, () => {
       const active = activeAttempt({ jobId, attemptId, workerId, leaseGeneration, now });
-      if (receipt) {
-        assertReceiptKindAllowed(receipt);
-        assertNativeSettlementReceiptContext({
-          receipt,
-          active,
-          jobId,
-          attemptId,
-          workerId,
-          leaseGeneration,
-          status,
-        });
-        assertSettlementReceiptIntegrity({ receipt, active, jobId, attemptId });
-      }
+      validateSettlementReceipt({
+        receipt,
+        active,
+        jobId,
+        attemptId,
+        workerId,
+        leaseGeneration,
+        status,
+      });
       const ledger = receipt ? persistReceipt(receipt, active.paper_id) : null;
       const attemptRows = queryRows(store, `UPDATE job_attempts SET status=${sqlText(status)},failure_class=${failureClass ? sqlText(failureClass) : 'NULL'},receipt_id=${ledger ? sqlText(ledger.receiptId) : 'NULL'},completed_at=${sqlText(now)} WHERE attempt_id=${sqlText(attemptId)} AND job_id=${sqlText(jobId)} AND worker_id=${sqlText(workerId)} AND lease_generation=${leaseGeneration} AND status='running' RETURNING *;`, 'job_attempt_settlement_failed');
       if (attemptRows.length !== 1) throw new Error('job_attempt_settlement_fence_lost');
@@ -202,6 +322,38 @@ export function createSqliteJobReceiptStore({ store: suppliedStore, receiptLedge
       const now = clock.nowIso();
       const environment = spec.environment || process.env.HEPTA_EVIDENCE_ENVIRONMENT || 'production';
       const evidenceClass = spec.evidenceClass || process.env.HEPTA_EVIDENCE_CLASS || 'runtime_unclassified';
+      if (typeof store.mutate === 'function') {
+        const coordinated = store.mutate({
+          databaseRole: 'native-store',
+          operationId: 'native-store.job-receipt-store.createJob.v1',
+          authorizationReceiptHashes: [],
+          sideEffectReservationHashes: [],
+          mutate(transaction) {
+            return transaction.run(
+              NATIVE_STORE_LEDGER_STATEMENT_IDS.createJob,
+              spec.jobId,
+              spec.deduplicationKey,
+              spec.paperId || null,
+              spec.kind,
+              Number(spec.priority || 100),
+              JSON.stringify(spec),
+              now,
+              now,
+              environment,
+              evidenceClass,
+            ).changes;
+          },
+        });
+        const changes = externalMutationValue(coordinated, {
+          allowNoChange: true,
+          errorCode: 'job_create_external_mutation_receipt_invalid',
+        });
+        if (![0, 1].includes(changes)) {
+          throw new Error('job_create_external_mutation_receipt_invalid');
+        }
+        return api.get(spec.jobId)
+          || api.list({ deduplicationKey: spec.deduplicationKey, limit: 1 })[0];
+      }
       const result = store.execute(`INSERT OR IGNORE INTO jobs(job_id,deduplication_key,paper_id,kind,status,priority,spec_json,created_at,updated_at,environment,evidence_class) VALUES(${sqlText(spec.jobId)},${sqlText(spec.deduplicationKey)},${spec.paperId ? sqlText(spec.paperId) : 'NULL'},${sqlText(spec.kind)},'queued',${Number(spec.priority || 100)},${sqlJson(spec)},${sqlText(now)},${sqlText(now)},${sqlText(environment)},${sqlText(evidenceClass)});`);
       if (!result.ok) throw resultError(result, 'job_create_failed');
       return api.get(spec.jobId) || api.list({ deduplicationKey: spec.deduplicationKey, limit: 1 })[0];
@@ -210,6 +362,40 @@ export function createSqliteJobReceiptStore({ store: suppliedStore, receiptLedge
       if (!jobId || !workerId) throw new Error('jobId and workerId are required');
       const now = clock.nowIso();
       const expires = new Date(clock.now().getTime() + Math.max(1, Number(leaseSeconds)) * 1000).toISOString();
+      if (typeof store.mutate === 'function') {
+        const coordinated = store.mutate({
+          databaseRole: 'native-store',
+          operationId: 'native-store.job-receipt-store.acquireLease.v1',
+          authorizationReceiptHashes: [],
+          sideEffectReservationHashes: [],
+          mutate(transaction) {
+            const changes = transaction.run(
+              NATIVE_STORE_LEDGER_STATEMENT_IDS.acquireJobLease,
+              workerId,
+              expires,
+              now,
+              jobId,
+              now,
+            ).changes;
+            if (changes === 0) return null;
+            if (changes !== 1) throw new Error('job_lease_update_ambiguous');
+            const row = transaction.get(NATIVE_STORE_LEDGER_STATEMENT_IDS.getJob, jobId);
+            if (!row) throw new Error('job_lease_result_missing');
+            const job = parse(row);
+            transaction.run(
+              NATIVE_STORE_LEDGER_STATEMENT_IDS.fenceStaleJobAttempts,
+              now,
+              jobId,
+              job.leaseGeneration,
+            );
+            return Object.freeze(job);
+          },
+        });
+        return externalMutationValue(coordinated, {
+          allowNoChange: true,
+          errorCode: 'job_lease_external_mutation_receipt_invalid',
+        });
+      }
       return immediateTransaction(store, () => {
         const rows = queryRows(store, `UPDATE jobs SET status='leased',lease_owner=${sqlText(workerId)},lease_expires_at=${sqlText(expires)},lease_generation=lease_generation+1,failure_class=NULL,updated_at=${sqlText(now)} WHERE job_id=${sqlText(jobId)} AND (status IN ('queued','failed_retryable') OR (status IN ('leased','running') AND lease_expires_at<=${sqlText(now)})) RETURNING *;`, 'job_lease_failed');
         if (!rows.length) return null;
@@ -224,6 +410,54 @@ export function createSqliteJobReceiptStore({ store: suppliedStore, receiptLedge
       if (status !== 'running') throw new Error('job_attempt_initial_status_invalid');
       const leaseGeneration = requiredLeaseGeneration(rawGeneration);
       const startedAt = clock.nowIso();
+      if (typeof store.mutate === 'function') {
+        const coordinated = store.mutate({
+          databaseRole: 'native-store',
+          operationId: 'native-store.job-receipt-store.recordAttempt.v1',
+          authorizationReceiptHashes: [],
+          sideEffectReservationHashes: [],
+          mutate(transaction) {
+            const changes = transaction.run(
+              NATIVE_STORE_LEDGER_STATEMENT_IDS.startJobAttempt,
+              startedAt,
+              jobId,
+              workerId,
+              leaseGeneration,
+              startedAt,
+            ).changes;
+            if (changes !== 1) throw new Error('active_job_lease_fence_required');
+            const row = transaction.get(NATIVE_STORE_LEDGER_STATEMENT_IDS.getJob, jobId);
+            if (!row) throw new Error('job_attempt_job_result_missing');
+            const job = parse(row);
+            const attemptNumber = job.attemptCount;
+            const attemptId = `${jobId}:attempt:${attemptNumber}`;
+            const inserted = transaction.run(
+              NATIVE_STORE_LEDGER_STATEMENT_IDS.insertJobAttempt,
+              attemptId,
+              jobId,
+              attemptNumber,
+              workerId,
+              startedAt,
+              job.environment || 'legacy_unclassified',
+              job.evidence_class || 'legacy_unclassified',
+              leaseGeneration,
+            ).changes;
+            if (inserted !== 1) throw new Error('job_attempt_insert_ambiguous');
+            return Object.freeze({
+              attemptId,
+              attemptNumber,
+              jobId,
+              workerId,
+              leaseGeneration,
+              startedAt,
+              leaseExpiresAt: job.lease_expires_at,
+            });
+          },
+        });
+        return externalMutationValue(coordinated, {
+          errorCode: 'job_attempt_external_mutation_receipt_invalid',
+        });
+      }
       return immediateTransaction(store, () => {
         const jobs = queryRows(store, `UPDATE jobs SET attempt_count=attempt_count+1,status='running',updated_at=${sqlText(startedAt)} WHERE job_id=${sqlText(jobId)} AND status='leased' AND lease_owner=${sqlText(workerId)} AND lease_generation=${leaseGeneration} AND lease_expires_at>${sqlText(startedAt)} RETURNING *;`, 'job_attempt_lease_validation_failed');
         if (jobs.length !== 1) throw new Error('active_job_lease_fence_required');
@@ -240,17 +474,76 @@ export function createSqliteJobReceiptStore({ store: suppliedStore, receiptLedge
       const leaseGeneration = requiredLeaseGeneration(rawGeneration);
       const now = clock.nowIso();
       const expires = new Date(clock.now().getTime() + Math.max(1, Number(leaseSeconds)) * 1000).toISOString();
+      if (typeof store.mutate === 'function') {
+        const coordinated = store.mutate({
+          databaseRole: 'native-store',
+          operationId: 'native-store.job-receipt-store.renewAttemptLease.v1',
+          authorizationReceiptHashes: [],
+          sideEffectReservationHashes: [],
+          mutate(transaction) {
+            const changes = transaction.run(
+              NATIVE_STORE_LEDGER_STATEMENT_IDS.renewJobAttemptLease,
+              expires,
+              now,
+              jobId,
+              workerId,
+              leaseGeneration,
+              now,
+              attemptId,
+              workerId,
+              leaseGeneration,
+            ).changes;
+            if (changes !== 1) {
+              throw new Error('active_job_attempt_lease_fence_required');
+            }
+            const row = transaction.get(NATIVE_STORE_LEDGER_STATEMENT_IDS.getJob, jobId);
+            if (!row) throw new Error('job_attempt_lease_renewal_result_missing');
+            return Object.freeze(parse(row));
+          },
+        });
+        return externalMutationValue(coordinated, {
+          errorCode: 'job_attempt_lease_external_mutation_receipt_invalid',
+        });
+      }
       const rows = queryRows(store, `UPDATE jobs SET lease_expires_at=${sqlText(expires)},updated_at=${sqlText(now)} WHERE job_id=${sqlText(jobId)} AND status='running' AND lease_owner=${sqlText(workerId)} AND lease_generation=${leaseGeneration} AND lease_expires_at>${sqlText(now)} AND EXISTS(SELECT 1 FROM job_attempts a WHERE a.attempt_id=${sqlText(attemptId)} AND a.job_id=jobs.job_id AND a.worker_id=${sqlText(workerId)} AND a.lease_generation=${leaseGeneration} AND a.status='running') RETURNING *;`, 'job_attempt_lease_renewal_failed');
       if (rows.length !== 1) throw new Error('active_job_attempt_lease_fence_required');
       return parse(rows[0]);
     },
     completeJob({ jobId, attemptId, workerId, leaseGeneration, receipt } = {}) {
       if (!receipt) throw new Error('job completion receipt is required');
-      return settleJob({ jobId, attemptId, workerId, leaseGeneration, status: 'completed', receipt });
+      if (typeof store.mutate === 'function') {
+        const coordinated = store.mutate({
+          databaseRole: 'native-store',
+          operationId: 'native-store.job-receipt-store.completeJob.v1',
+          authorizationReceiptHashes: [],
+          sideEffectReservationHashes: [],
+          mutate(transaction) {
+            return settleJobInMutation(transaction, {
+              jobId,
+              attemptId,
+              workerId,
+              leaseGeneration,
+              status: 'completed',
+              receipt,
+            });
+          },
+        });
+        return externalMutationValue(coordinated, {
+          errorCode: 'job_completion_external_mutation_receipt_invalid',
+        });
+      }
+      return settleJobOffline({
+        jobId,
+        attemptId,
+        workerId,
+        leaseGeneration,
+        status: 'completed',
+        receipt,
+      });
     },
     failJob({ jobId, attemptId, workerId, leaseGeneration, failureClass, retryable = false, receipt = null } = {}) {
       if (!failureClass) throw new Error('job failure class is required');
-      return settleJob({
+      const settlement = {
         jobId,
         attemptId,
         workerId,
@@ -258,7 +551,22 @@ export function createSqliteJobReceiptStore({ store: suppliedStore, receiptLedge
         status: retryable ? 'failed_retryable' : 'failed_terminal',
         failureClass,
         receipt,
-      });
+      };
+      if (typeof store.mutate === 'function') {
+        const coordinated = store.mutate({
+          databaseRole: 'native-store',
+          operationId: 'native-store.job-receipt-store.failJob.v1',
+          authorizationReceiptHashes: [],
+          sideEffectReservationHashes: [],
+          mutate(transaction) {
+            return settleJobInMutation(transaction, settlement);
+          },
+        });
+        return externalMutationValue(coordinated, {
+          errorCode: 'job_failure_external_mutation_receipt_invalid',
+        });
+      }
+      return settleJobOffline(settlement);
     },
     get(jobId) {
       return parse(queryRows(store, `SELECT * FROM jobs WHERE job_id=${sqlText(jobId)} LIMIT 1;`, 'job_read_failed')[0]);

@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hasExactObjectKeys as exactKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 import {
   matchesRuntimeImageReproducibilityCanonicalBuild,
 } from '../../paper-domain/automation/runtime-image-reproducibility-build-policy.mjs';
@@ -22,11 +23,6 @@ const VERIFICATION_COST_AUTHORITIES = new Set([
   'operator_declared_worst_case_usd',
   'externally_operated_zero_cost',
 ]);
-
-function exactKeys(value, expected) {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    && Object.keys(value).sort().join('\0') === [...expected].sort().join('\0');
-}
 
 function fileContentHash(candidate) {
   const descriptor = fs.openSync(candidate, 'r');

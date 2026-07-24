@@ -29,6 +29,18 @@ import {
   verifySystemBenchmarkHarnessExecutionReceipt,
 } from '../../paper-domain/automation/experiment-run-contract.mjs';
 import {
+  buildExperimentIrExecutionAuthorityReceipt,
+  verifyExperimentIrExecutionAuthorityReceipt,
+} from '../../paper-domain/automation/experiment-ir-execution-authority-contract.mjs';
+import {
+  buildAutonomousResearchAgendaProductionReceipt,
+  buildAutonomousResearchAgendaProductionRequest,
+} from '../../paper-domain/automation/autonomous-research-agenda-production-contract.mjs';
+import { buildResearchAgendaIr } from '../../paper-domain/automation/research-agenda-ir.mjs';
+import {
+  inspectPersistedExperimentIrExecutionAuthority,
+} from '../../paper-composition/automation/automation-readiness-experiment-ir-authority-inspection.mjs';
+import {
   validateOperatorDatasetHarnessDefinition,
   validateOperatorDatasetSplitManifest,
 } from '../../paper-domain/automation/operator-dataset-harness-contract.mjs';
@@ -946,6 +958,9 @@ test('academic-docker-operational: actual Python and R academic dataset harnesse
     ['python', AUTOMATION_RUNTIME_IMAGES.python, 'run.py'],
     ['r', AUTOMATION_RUNTIME_IMAGES.r, 'run.R'],
   ].filter(([language]) => !languageFilter || language === languageFilter)) {
+    const campaignId = `academic-supervisor-${language}-campaign`;
+    const primaryNodeId = `${campaignId}:0:empirical`;
+    const replayNodeId = `${campaignId}:0:empirical-reproduce`;
     const outputDirectory = path.join(f.outputRoot, language);
     fs.mkdirSync(outputDirectory);
     const workerRunner = academicHarnessWorkerRunner(f, runtime);
@@ -957,7 +972,8 @@ test('academic-docker-operational: actual Python and R academic dataset harnesse
     });
     const sourceLineageHash = hashBytes(`academic-supervisor-${language}`);
     const execute = (role) => {
-      const attemptId = `academic-supervisor-${language}-${role}`;
+      const nodeId = role === 'primary' ? primaryNodeId : replayNodeId;
+      const attemptId = `${campaignId}:${nodeId}:attempt-${role}`;
       const attemptOutput = path.join(outputDirectory, role);
       fs.mkdirSync(attemptOutput);
       return { attemptId, receipt: executor.execute({
@@ -1011,6 +1027,137 @@ test('academic-docker-operational: actual Python and R academic dataset harnesse
     assert.equal(verifyExperimentRunReceipt(replayRun), true);
     const replayReceipt = buildExperimentReplayReceipt({ originalRunReceipt: originalRun, replayRunReceipt: replayRun });
     assert.equal(verifyExperimentReplayReceipt(replayReceipt), true, JSON.stringify(replayReceipt.blockers));
+    const paperId = `academic-supervisor-${language}-paper`;
+    const agendaRequest = buildAutonomousResearchAgendaProductionRequest({
+      paperId,
+      allowedProtocolFamilies: [f.selector.experimentDesign.benchmarkFamily],
+    });
+    const agentPayload = {
+      version: 1,
+      kind: 'AgentExecutionReceipt',
+      status: 'agent_execution_completed',
+      agentId: 'academic-supervisor-agenda-producer',
+      providerMode: 'fixture-provider',
+      resolvedModel: 'fixture-model',
+      promptHash: hashRecord('AcademicSupervisorAgendaPrompt', { language }),
+    };
+    const agendaProducerReceipt = buildAutonomousResearchAgendaProductionReceipt({
+      request: agendaRequest,
+      selectedObjective: 'Evaluate the registered treatment against the signed baseline.',
+      selectedProtocolFamily: f.selector.experimentDesign.benchmarkFamily,
+      agentExecutionReceipt: {
+        ...agentPayload,
+        agentExecutionReceiptHash: hashRecord('AgentExecutionReceipt', agentPayload),
+      },
+      producerId: 'academic-supervisor-agenda-producer',
+      generatedAt: '2026-07-22T00:00:00.000Z',
+    });
+    const researchAgendaIr = buildResearchAgendaIr({
+      agendaProductionReceipt: agendaProducerReceipt,
+      researchQuestion: 'Does the registered treatment improve the signed primary metric?',
+      primaryClaim: 'The treatment is evaluated against the registered baseline.',
+      dataRequirements: {
+        population: 'Rows admitted by the signed dataset contract.',
+        intervention: 'Registered treatment.',
+        comparator: 'Registered baseline.',
+        estimand: 'Paired primary-metric difference.',
+        requiredVariables: ['feature', 'label'],
+        datasetConstraints: ['read-only signed mount'],
+      },
+      falsifiers: ['A non-positive paired difference.'],
+      negativeBoundaries: ['No population-wide causal claim.'],
+      formalTargets: ['Check the aggregation invariant.'],
+      priorArtQueryPlan: ['Search the registered treatment and estimand.'],
+      venueConstraints: {
+        paperType: 'research_article',
+        requiredSections: ['methods', 'results', 'limitations'],
+        artifactRequired: true,
+        anonymousReviewRequired: true,
+      },
+      resourceFeasibility: {
+        maximumWallTimeMs: 3_600_000,
+        maximumMemoryBytes: 4_294_967_296,
+        maximumCpuCount: 4,
+        executionEnvironment: 'signed-docker-runtime-v1',
+      },
+    });
+    const campaignPlanPayload = {
+      version: 4,
+      kind: 'PaperCampaignPlan',
+      campaignId,
+      paperId,
+      executionIntent: {
+        benchmarkSelectorHash: f.selector.campaignBenchmarkSelectorHash,
+      },
+      benchmarkSelector: f.selector,
+      autonomousResearchPreparation: {
+        researchAgendaProducerReceipt: agendaProducerReceipt,
+        researchAgendaIr,
+      },
+    };
+    const campaignPlanHash = hashRecord('PaperCampaignPlan', campaignPlanPayload);
+    const campaignPlan = { ...campaignPlanPayload, campaignPlanHash };
+    const authorityInput = {
+      campaignId,
+      paperId,
+      campaignPlanHash,
+      nodeId: replayNodeId,
+      nodeKind: 'empirical-reproduce',
+      researchAgendaIr,
+      researchAgendaProducerReceipt: agendaProducerReceipt,
+      experimentReplayReceipt: replayReceipt,
+    };
+    const executionAuthority = buildExperimentIrExecutionAuthorityReceipt(authorityInput);
+    assert.equal(verifyExperimentIrExecutionAuthorityReceipt(
+      executionAuthority, authorityInput,
+    ), true);
+    assert.equal(executionAuthority.originalVersionedExperimentIrHash,
+      original.receipt.versionedExperimentIrHash);
+    assert.equal(executionAuthority.replayVersionedExperimentIrHash,
+      replay.receipt.versionedExperimentIrHash);
+    assert.equal(verifyExperimentIrExecutionAuthorityReceipt(executionAuthority, {
+      ...authorityInput,
+      campaignId: `${campaignId}-other`,
+    }), false);
+    const persistedResult = {
+      experimentIrExecutionAuthorityReceipt: executionAuthority,
+      experimentIrExecutionAuthorityReceiptHash:
+        executionAuthority.experimentIrExecutionAuthorityReceiptHash,
+      experimentReplayReceipt: replayReceipt,
+      experimentRunReceipt: replayRun,
+      harnessExecutionReceipt: replay.receipt.harnessExecutionReceipt,
+      experimentIr: replay.receipt.experimentIr,
+      versionedExperimentIrHash: replay.receipt.versionedExperimentIrHash,
+    };
+    const persisted = inspectPersistedExperimentIrExecutionAuthority({
+      store: { query: () => ({
+        ok: true,
+        rows: [{
+          campaign_id: campaignId,
+          paper_id: paperId,
+          spec_json: JSON.stringify(campaignPlan),
+          node_id: replayNodeId,
+          node_kind: 'empirical-reproduce',
+          node_status: 'completed',
+          result_json: JSON.stringify(persistedResult),
+          result_sha256: hashRecord('PaperCampaignNodeResult', persistedResult),
+          node_updated_at: '2026-07-22T00:00:00.000Z',
+        }],
+      }) },
+      agendaAuthorityInspection: {
+        campaignId,
+        paperId,
+        campaignPlanHash,
+        researchAgendaIr,
+        researchAgendaProducerReceipt: agendaProducerReceipt,
+      },
+    });
+    assert.equal(persisted.ready, true, JSON.stringify(persisted.blockers));
+    assert.equal(persisted.receipt.experimentIrExecutionAuthorityReceiptHash,
+      executionAuthority.experimentIrExecutionAuthorityReceiptHash);
+    assert.equal(persisted.experimentHarnessExecutionReceipt
+      .systemBenchmarkHarnessExecutionReceiptHash,
+    executionAuthority.replaySystemBenchmarkHarnessExecutionReceiptHash);
   }
 });
 

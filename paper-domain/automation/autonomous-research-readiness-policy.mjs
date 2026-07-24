@@ -4,6 +4,12 @@ import { buildCampaignBenchmarkSelector } from './campaign-benchmark-selector.mj
 import {
   verifyAutonomousEmpiricalExecutionProfileSelection,
 } from './autonomous-empirical-execution-profile-policy.mjs';
+import {
+  BOUNDED_CAPABILITY_QUALIFICATION_SCOPE,
+  PRODUCTION_AGENT_AUTHORED_QUALIFICATION_SCOPE,
+  verifyAutonomousResearchGlobalGoldenQualificationAuthority,
+  verifyAutonomousResearchReleaseBinding,
+} from './autonomous-research-release-binding-contract.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 
@@ -266,6 +272,15 @@ export function evaluateAutonomousResearchQualificationEligibility({
   datasetLaunchInspection = null,
   empiricalRuntimeCapabilityInspection = null,
   empiricalExecutionProfileSelection = null,
+  runtimeImageReproducibilityInspection = null,
+  capabilityScopeManifest = null,
+  externalCapabilityTrustInspection = null,
+  researchAgendaProducerReceipt = null,
+  autonomousResearchProviderConfigurationHash = null,
+  autonomousResearchLoopPreparationReportHash = null,
+  autonomousResearchMachineIntakeAdmissionHash = null,
+  launchMode = null,
+  observedAt = null,
   campaignReleaseAuthority = null,
   fullResearchQualificationInspection = null,
 } = {}) {
@@ -317,6 +332,9 @@ export function evaluateAutonomousResearchQualificationEligibility({
       requireReady: true,
       runtimeCapabilityInspection: empiricalRuntimeCapabilityInspection,
       requireRuntimeCapabilityInspection: true,
+      runtimeReproducibilityInspection: runtimeImageReproducibilityInspection,
+      requireRegisteredRuntime: launchMode === 'production-run',
+      observedAt,
     },
   )) {
     launchBlockers.push('autonomous_research_qualification_empirical_runtime_profile_not_ready');
@@ -329,19 +347,69 @@ export function evaluateAutonomousResearchQualificationEligibility({
   const expectedSeedBindingHash = seedBinding?.autonomousResearchSeedBindingHash || null;
   const releaseBinding = campaignReleaseAuthority?.releaseBundle
     ?.autonomousResearchReleaseBinding || null;
-  const releaseBindingValid = recordHashValid(
-    releaseBinding,
-    'AutonomousResearchReleaseBinding',
-    'autonomousResearchReleaseBindingHash',
-  )
+  const releaseBindingVerification = verifyAutonomousResearchReleaseBinding(releaseBinding);
+  const expectedExternalCapabilityTrustInspection =
+    externalCapabilityTrustInspection || null;
+  const expectedResearchAgendaProducerReceipt =
+    researchAgendaProducerReceipt || null;
+  const preparationEvidenceBound = releaseBinding
+    && releaseBinding.capabilityScopeManifestHash
+      === capabilityScopeManifest?.autonomousResearchCapabilityScopeManifestHash
+    && JSON.stringify(releaseBinding.capabilityScopeManifest)
+      === JSON.stringify(capabilityScopeManifest)
+    && releaseBinding.externalCapabilityTrustInspectionHash
+      === (expectedExternalCapabilityTrustInspection
+        ?.autonomousResearchExternalCapabilityTrustInspectionHash || null)
+    && JSON.stringify(releaseBinding.externalCapabilityTrustInspection)
+      === JSON.stringify(expectedExternalCapabilityTrustInspection)
+    && releaseBinding.researchAgendaProductionReceiptHash
+      === (expectedResearchAgendaProducerReceipt
+        ?.autonomousResearchAgendaProductionReceiptHash || null)
+    && JSON.stringify(releaseBinding.researchAgendaProductionReceipt)
+      === JSON.stringify(expectedResearchAgendaProducerReceipt);
+  const releaseBindingValid = releaseBindingVerification.valid
     && campaignReleaseAuthority?.releaseBundle?.autonomousResearchReleaseBindingHash
       === releaseBinding?.autonomousResearchReleaseBindingHash
     && releaseBinding?.campaignId === campaignReleaseAuthority?.campaignId
     && releaseBinding?.paperId === proposal?.paperId
     && releaseBinding?.campaignPlanHash === campaignReleaseAuthority?.releaseBundle?.campaignPlanHash
+    && releaseBinding?.launchMode === launchMode
     && releaseBinding?.proposalHash === expectedProposalHash
     && releaseBinding?.policyAuthorizationHash === expectedPolicyAuthorizationHash
-    && releaseBinding?.seedBindingHash === expectedSeedBindingHash;
+    && releaseBinding?.seedBindingHash === expectedSeedBindingHash
+    && preparationEvidenceBound;
+  const globalGoldenPreparationAuthorityVerification =
+    verifyAutonomousResearchGlobalGoldenQualificationAuthority(
+      releaseBinding?.globalGoldenQualificationAuthority,
+      {
+        campaignId: campaignReleaseAuthority?.campaignId,
+        paperId: proposal?.paperId,
+        campaignPlanHash: campaignReleaseAuthority?.releaseBundle?.campaignPlanHash,
+        launchMode,
+        providerConfigurationHash:
+          autonomousResearchProviderConfigurationHash,
+        autonomousResearchLoopPreparationReportHash,
+        capabilityScopeManifestHash:
+          capabilityScopeManifest?.autonomousResearchCapabilityScopeManifestHash,
+        autonomousResearchMachineIntakeAdmissionHash,
+      },
+    );
+  const productionQualificationRelease = releaseBindingValid
+    && releaseBinding.qualificationScope === PRODUCTION_AGENT_AUTHORED_QUALIFICATION_SCOPE
+    && releaseBinding.fullResearchQualificationEligible === true;
+  const boundedGoldenQualificationRelease = releaseBindingValid
+    && releaseBinding.qualificationScope === BOUNDED_CAPABILITY_QUALIFICATION_SCOPE
+    && releaseBinding.launchMode === 'golden-bootstrap'
+    && releaseBinding.fullResearchQualificationEligible === false
+    && releaseBinding.genericContentCanaryVerified === true
+    && Boolean(releaseBinding.globalGoldenQualificationAuthorityHash)
+    && globalGoldenPreparationAuthorityVerification.valid === true;
+  if (releaseBindingValid
+    && !productionQualificationRelease && !boundedGoldenQualificationRelease) {
+    qualificationBlockers.push(
+      'autonomous_research_release_qualification_scope_not_eligible',
+    );
+  }
   if (campaignReleaseAuthority?.status !== 'current_completed_release'
     || campaignReleaseAuthority?.campaignStatus !== 'completed'
     || campaignReleaseAuthority?.packageNodeStatus !== 'completed'
@@ -371,6 +439,8 @@ export function evaluateAutonomousResearchQualificationEligibility({
     && fullResearchQualificationInspection?.policyAuthorizationHash
       === expectedPolicyAuthorizationHash
     && fullResearchQualificationInspection?.seedBindingHash === expectedSeedBindingHash
+    && fullResearchQualificationInspection?.qualificationScope
+      === releaseBinding?.qualificationScope
     && fullResearchQualificationInspection?.fullDomainVerificationReady === true;
   if (!qualificationReady) {
     qualificationBlockers.push('autonomous_research_external_full_research_qualification_required');
@@ -388,8 +458,13 @@ export function evaluateAutonomousResearchQualificationEligibility({
   const uniqueQualificationBlockers = Object.freeze([...new Set(qualificationBlockers)]);
   const launchReady = uniqueLaunchBlockers.length === 0;
   const qualificationRequestEligible = launchReady
-    && !uniqueQualificationBlockers.includes('autonomous_research_current_promotable_release_required');
+    && !uniqueQualificationBlockers.includes('autonomous_research_current_promotable_release_required')
+    && (productionQualificationRelease || boundedGoldenQualificationRelease);
   const campaignFullyQualified = qualificationRequestEligible
+    && productionQualificationRelease
+    && qualificationReady && uniqueQualificationBlockers.length === 0;
+  const boundedGoldenCapabilityQualificationVerified = qualificationRequestEligible
+    && boundedGoldenQualificationRelease
     && qualificationReady && uniqueQualificationBlockers.length === 0;
   const fullAutomaticResearchWritingReady = campaignFullyQualified;
   const payload = {
@@ -405,6 +480,7 @@ export function evaluateAutonomousResearchQualificationEligibility({
     autonomousExecutionLaunchReady: launchReady,
     qualificationRequestEligible,
     campaignFullyQualified,
+    boundedGoldenCapabilityQualificationVerified,
     fullAutomaticResearchWritingReady,
     launchBlockers: uniqueLaunchBlockers,
     qualificationBlockers: uniqueQualificationBlockers,

@@ -18,6 +18,10 @@ import {
   fullResearchQualificationSigningPayloadHash,
   FULL_RESEARCH_QUALIFICATION_MAXIMUM_AGE_MS,
 } from '../../paper-domain/automation/full-research-qualification-contract.mjs';
+import {
+  REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES,
+  RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE,
+} from '../../paper-domain/automation/runtime-image-reproducibility-receipt-contract.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
   externalQualificationProcessConfigurationInspectionReady,
@@ -25,9 +29,11 @@ import {
 import {
   composeRuntimeImageReproducibilityStatus,
 } from './runtime-image-reproducibility-composition.mjs';
+import {
+  inspectAutonomousResearchSupervisorExternalActionRecoveryConfiguration,
+} from '../../paper-adapters/automation/autonomous-research-supervisor-external-action-recovery-process-adapter.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
-const REQUIRED_RUNTIME_PROFILES = Object.freeze(['python', 'pythonGpu', 'r']);
 
 function canonicalTimestamp(value) {
   const parsed = Date.parse(String(value || ''));
@@ -44,12 +50,25 @@ function qualificationReceiptHashValid(receipt) {
     || !SHA256.test(String(receipt.fullResearchQualificationReceiptHash || ''))
     || !SHA256.test(String(receipt.runtimeImageReproducibilityReceiptHash || ''))
     || JSON.stringify(receipt.runtimeImageReproducibilityRequiredProfiles)
-      !== JSON.stringify(REQUIRED_RUNTIME_PROFILES)
+      !== JSON.stringify(REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES)
     || JSON.stringify(Object.keys(
       receipt.runtimeImageReproducibilityDefinitionManifestHashes || {},
-    )) !== JSON.stringify(REQUIRED_RUNTIME_PROFILES)
+    )) !== JSON.stringify(REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES)
     || Object.values(receipt.runtimeImageReproducibilityDefinitionManifestHashes || {})
-      .some((value) => !SHA256.test(String(value || '')))) return false;
+      .some((value) => !SHA256.test(String(value || '')))
+    || receipt.empiricalFamilyPluginPackageHash
+      !== RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE.empiricalFamilyPluginPackageHash
+    || receipt.empiricalFamilyPluginRegistryHash
+      !== RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE.empiricalFamilyPluginRegistryHash
+    || receipt.empiricalFamilyPluginStartupInspectionHash
+      !== RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE
+        .empiricalFamilyPluginStartupInspectionHash
+    || JSON.stringify(receipt.activeEmpiricalProductionProfileHashes)
+      !== JSON.stringify(RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE
+        .activeProductionProfileHashes)
+    || receipt.runtimeImageReproducibilityActivePluginScopeHash
+      !== RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE
+        .runtimeImageReproducibilityActivePluginScopeHash) return false;
   const { fullResearchQualificationReceiptHash, ...payload } = receipt;
   return hashRecord('FullResearchGoldenMicroCampaignQualificationReceipt', payload)
     === fullResearchQualificationReceiptHash;
@@ -103,6 +122,7 @@ export function evaluateAutonomousResearchResidentPrerequisites({
   qualificationPointer = null,
   qualificationState = null,
   runtimeReproducibilityStatus = null,
+  externalActionRecoveryInspection = null,
   codeProvenance = null,
   now = new Date(),
   inputBlockers = [],
@@ -216,6 +236,16 @@ export function evaluateAutonomousResearchResidentPrerequisites({
     || !SHA256.test(String(codeProvenance?.worktreeStateHash || ''))) {
     infrastructureBlockers.push('autonomous_research_current_code_identity_unavailable');
   }
+  if (externalActionRecoveryInspection?.ready !== true
+    || externalActionRecoveryInspection.signedCapabilityVerified !== true
+    || !SHA256.test(String(
+      externalActionRecoveryInspection.configurationIdentityHash || '',
+    ))) {
+    infrastructureBlockers.push(
+      externalActionRecoveryInspection?.blocker
+        || 'autonomous_research_supervisor_external_action_recovery_required',
+    );
+  }
   const uniqueInfrastructureBlockers = Object.freeze([
     ...new Set(infrastructureBlockers.filter(
       (value) => typeof value === 'string' && value,
@@ -245,6 +275,8 @@ export function evaluateAutonomousResearchResidentPrerequisites({
       runtimeReproducibilityStatus?.configuration?.configurationIdentityHash || null,
     runtimeImageReproducibilityTrustIdentityHash:
       runtimeReproducibilityStatus?.configuration?.trustIdentityHash || null,
+    externalActionRecoveryConfigurationIdentityHash:
+      externalActionRecoveryInspection?.configurationIdentityHash || null,
     codeWorktreeStateHash: codeProvenance?.worktreeStateHash || null,
   });
   const infrastructureReady = uniqueInfrastructureBlockers.length === 0;
@@ -299,6 +331,7 @@ export function inspectAutonomousResearchResidentPrerequisites({
   repositoryRoot = HEPTA_WORKSPACE_ROOT,
   environment = process.env,
   externalQualificationConfigPath = null,
+  externalActionRecoveryConfigPath = null,
   now = new Date(),
 } = {}) {
   if (!runtimeRoot) {
@@ -362,6 +395,12 @@ export function inspectAutonomousResearchResidentPrerequisites({
   catch {
     infrastructureInputBlockers.push('autonomous_research_current_code_identity_unavailable');
   }
+  const externalActionRecoveryInspection =
+    inspectAutonomousResearchSupervisorExternalActionRecoveryConfiguration({
+      configPath: externalActionRecoveryConfigPath,
+      environment,
+      now,
+    });
   return evaluateAutonomousResearchResidentPrerequisites({
     configurationInspection,
     configuration,
@@ -369,6 +408,7 @@ export function inspectAutonomousResearchResidentPrerequisites({
     qualificationState,
     runtimeReproducibilityStatus,
     codeProvenance,
+    externalActionRecoveryInspection,
     now,
     infrastructureInputBlockers,
     globalQualificationInputBlockers,

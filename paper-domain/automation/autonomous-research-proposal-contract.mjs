@@ -3,16 +3,26 @@ import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text
 import { hasExactObjectKeys as exactKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 import { ANALYSIS_PROTOCOL_FAMILY_PROFILES } from './analysis-protocol-contract.mjs';
 import {
+  AUTONOMOUS_EMPIRICAL_PLUGIN_PROTOCOL_FAMILIES,
+} from './autonomous-empirical-family-plugin-registry.mjs';
+import {
   AUTONOMOUS_FORMAL_MANUSCRIPT_PROOF,
   AUTONOMOUS_FORMAL_SUPPORT_TEMPLATE_REGISTRY,
   resolveAutonomousFormalSupportTemplateForClaim,
   selectAutonomousFormalSupportTemplate,
 } from './autonomous-formal-support-registry.mjs';
+import {
+  verifyDynamicFormalClaimSeed,
+} from '../research/dynamic-formal-claim-seed-contract.mjs';
+import {
+  verifyAutonomousResearchAgendaProductionReceipt,
+} from './autonomous-research-agenda-production-contract.mjs';
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/;
+const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const PLACEHOLDER = /\b(?:TODO|TBD|placeholder|fill[ -]?in)\b/i;
 const AGENDA_VERSION = 1;
-const AGENDA_FAMILIES = Object.freeze(Object.keys(ANALYSIS_PROTOCOL_FAMILY_PROFILES).sort());
+const AGENDA_FAMILIES = AUTONOMOUS_EMPIRICAL_PLUGIN_PROTOCOL_FAMILIES;
 // Compatibility-only export. Autonomous selection always uses the exact protocol family.
 export const AUTONOMOUS_FORMAL_SUPPORT_TEMPLATE =
   selectAutonomousFormalSupportTemplate('ml_algorithm_benchmark');
@@ -72,8 +82,6 @@ function normalizedDraft(draft) {
       proofObligations: requiredList(draft.formalSupportClaim.proofObligations, 'formal_claim_obligations'),
     }),
   });
-  try { resolveAutonomousFormalSupportTemplateForClaim(normalized.formalSupportClaim); }
-  catch { throw new Error('autonomous_research_formal_support_template_not_audited'); }
   return normalized;
 }
 
@@ -133,12 +141,56 @@ export function selectDeterministicAutonomousResearchAgenda({
   });
 }
 
+export function selectMachineGeneratedAutonomousResearchAgenda({
+  paperId,
+  researchAgendaProducerReceipt,
+  selectedAt = null,
+} = {}) {
+  const normalizedPaperId = requiredText(paperId, 'paper_id', 160);
+  if (!IDENTIFIER.test(normalizedPaperId)
+    || !verifyAutonomousResearchAgendaProductionReceipt(researchAgendaProducerReceipt).valid
+    || researchAgendaProducerReceipt.paperId !== normalizedPaperId) {
+    throw new Error('autonomous_research_machine_agenda_receipt_invalid');
+  }
+  const payload = {
+    version: 2,
+    kind: 'AutonomousResearchAgendaSelectionReceipt',
+    status: 'autonomous_research_agenda_selected',
+    agendaId: 'hepta-machine-generated-research-agenda-v1',
+    agendaVersion: 1,
+    paperId: normalizedPaperId,
+    selectedObjective: requiredText(
+      researchAgendaProducerReceipt.selectedObjective,
+      'objective',
+    ),
+    selectedProtocolFamily: researchAgendaProducerReceipt.selectedProtocolFamily,
+    objectiveOverrideUsed: false,
+    protocolFamilyOverrideUsed: false,
+    datasetAuthorityConstrainedSelection:
+      Boolean(researchAgendaProducerReceipt.datasetAuthorityProtocolFamily),
+    machineSelectionPerformed: true,
+    scientificNoveltyVerified: false,
+    agendaMode: 'machine-generated',
+    researchAgendaProducerReceipt,
+    selectedAt: selectedAt || researchAgendaProducerReceipt.generatedAt,
+  };
+  if (!AGENDA_FAMILIES.includes(payload.selectedProtocolFamily)) {
+    throw new Error('autonomous_research_protocol_family_unsupported');
+  }
+  return Object.freeze({
+    ...payload,
+    autonomousResearchAgendaSelectionReceiptHash:
+      hashRecord('AutonomousResearchAgendaSelectionReceipt', payload),
+  });
+}
+
 export function buildDeterministicAutonomousHypothesisDraft({
   objective,
   protocolFamily,
 } = {}) {
   const normalizedObjective = requiredText(objective, 'objective');
-  if (!Object.hasOwn(ANALYSIS_PROTOCOL_FAMILY_PROFILES, protocolFamily)) {
+  if (!AGENDA_FAMILIES.includes(protocolFamily)
+    || !Object.hasOwn(ANALYSIS_PROTOCOL_FAMILY_PROFILES, protocolFamily)) {
     throw new Error('autonomous_research_protocol_family_unsupported');
   }
   const profile = ANALYSIS_PROTOCOL_FAMILY_PROFILES[protocolFamily];
@@ -211,25 +263,31 @@ export function createMachineProposedScientificClaimSet({
   draft,
   generationReceipt,
   agendaSelectionReceipt,
+  dynamicFormalClaimSeed = null,
+  researchContentProducerReceipt = null,
   createdAt = null,
 } = {}) {
   const normalizedPaperId = requiredText(paperId, 'paper_id', 160);
   if (!IDENTIFIER.test(normalizedPaperId)) throw new Error('autonomous_research_paper_id_invalid');
   const normalizedObjective = requiredText(objective, 'objective');
-  if (!Object.hasOwn(ANALYSIS_PROTOCOL_FAMILY_PROFILES, protocolFamily)) {
+  if (!AGENDA_FAMILIES.includes(protocolFamily)
+    || !Object.hasOwn(ANALYSIS_PROTOCOL_FAMILY_PROFILES, protocolFamily)) {
     throw new Error('autonomous_research_protocol_family_unsupported');
   }
   const {
     autonomousResearchAgendaSelectionReceiptHash: agendaSelectionReceiptHash,
     ...agendaPayload
   } = agendaSelectionReceipt || {};
+  const machineGeneratedAgenda = agendaSelectionReceipt?.version === 2;
   if (!exactKeys(agendaSelectionReceipt, [
     'version', 'kind', 'status', 'agendaId', 'agendaVersion', 'paperId', 'selectedObjective',
     'selectedProtocolFamily', 'objectiveOverrideUsed', 'protocolFamilyOverrideUsed',
     'datasetAuthorityConstrainedSelection', 'machineSelectionPerformed',
     'scientificNoveltyVerified', 'selectedAt',
+    ...(machineGeneratedAgenda ? ['agendaMode', 'researchAgendaProducerReceipt'] : []),
     'autonomousResearchAgendaSelectionReceiptHash',
-  ]) || agendaSelectionReceipt?.status !== 'autonomous_research_agenda_selected'
+  ]) || ![1, 2].includes(agendaSelectionReceipt?.version)
+    || agendaSelectionReceipt?.status !== 'autonomous_research_agenda_selected'
     || agendaSelectionReceipt?.paperId !== normalizedPaperId
     || agendaSelectionReceipt?.selectedObjective !== normalizedObjective
     || agendaSelectionReceipt?.selectedProtocolFamily !== protocolFamily
@@ -237,6 +295,17 @@ export function createMachineProposedScientificClaimSet({
     || (agendaSelectionReceipt?.datasetAuthorityConstrainedSelection
       && agendaSelectionReceipt?.protocolFamilyOverrideUsed)
     || agendaSelectionReceipt?.scientificNoveltyVerified !== false
+    || (machineGeneratedAgenda && (
+      agendaSelectionReceipt.agendaMode !== 'machine-generated'
+      || !verifyAutonomousResearchAgendaProductionReceipt(
+        agendaSelectionReceipt.researchAgendaProducerReceipt,
+      ).valid
+      || agendaSelectionReceipt.researchAgendaProducerReceipt.paperId !== normalizedPaperId
+      || agendaSelectionReceipt.researchAgendaProducerReceipt.selectedObjective
+        !== normalizedObjective
+      || agendaSelectionReceipt.researchAgendaProducerReceipt.selectedProtocolFamily
+        !== protocolFamily
+    ))
     || hashRecord('AutonomousResearchAgendaSelectionReceipt', agendaPayload)
       !== agendaSelectionReceiptHash) {
     throw new Error('autonomous_research_agenda_selection_receipt_invalid');
@@ -256,9 +325,46 @@ export function createMachineProposedScientificClaimSet({
     throw new Error('autonomous_research_generation_receipt_hash_invalid');
   }
   const sourceDraft = normalizedDraft(draft);
-  const formalTemplate = resolveAutonomousFormalSupportTemplateForClaim(sourceDraft.formalSupportClaim);
-  if (formalTemplate.protocolFamily !== protocolFamily) {
-    throw new Error('autonomous_research_formal_support_protocol_family_mismatch');
+  const dynamicFormal = dynamicFormalClaimSeed !== null;
+  let formalTemplate = null;
+  if (dynamicFormal) {
+    const dynamicVerification = verifyDynamicFormalClaimSeed(dynamicFormalClaimSeed, {
+      claimKey: `${normalizedPaperId}:formal-support:1`,
+    });
+    const {
+      autonomousResearchContentProductionReceiptHash: contentReceiptHash,
+      ...contentReceiptPayload
+    } = researchContentProducerReceipt || {};
+    const dynamicScope = {
+      statement: dynamicFormalClaimSeed?.statement,
+      assumptions: dynamicFormalClaimSeed?.assumptions,
+      quantifiers: dynamicFormalClaimSeed?.quantifiers,
+      negativeBoundaries: dynamicFormalClaimSeed?.negativeBoundaries,
+      proofObligations: dynamicFormalClaimSeed?.proofObligations,
+    };
+    if (!dynamicVerification.valid
+      || JSON.stringify(dynamicScope) !== JSON.stringify(sourceDraft.formalSupportClaim)
+      || !SHA256.test(String(contentReceiptHash || ''))
+      || hashRecord('AutonomousResearchContentProductionReceipt', contentReceiptPayload)
+        !== contentReceiptHash
+      || researchContentProducerReceipt?.status
+        !== 'autonomous_research_content_production_verified'
+      || researchContentProducerReceipt?.paperId !== normalizedPaperId
+      || researchContentProducerReceipt?.protocolFamily !== protocolFamily
+      || researchContentProducerReceipt?.outputHash !== generationReceipt.outputHash
+      || researchContentProducerReceipt?.principalId !== generationReceipt.generatorPrincipalId
+      || researchContentProducerReceipt?.dynamicFormalClaimSeedHash
+        !== dynamicFormalClaimSeed.dynamicFormalClaimSeedHash
+      || dynamicFormalClaimSeed.generatorReceiptHash
+        !== researchContentProducerReceipt.agentExecutionReceiptHash) {
+      throw new Error('autonomous_research_dynamic_formal_claim_lineage_invalid');
+    }
+  } else {
+    try { formalTemplate = resolveAutonomousFormalSupportTemplateForClaim(sourceDraft.formalSupportClaim); }
+    catch { throw new Error('autonomous_research_formal_support_template_not_audited'); }
+    if (formalTemplate.protocolFamily !== protocolFamily) {
+      throw new Error('autonomous_research_formal_support_protocol_family_mismatch');
+    }
   }
   const empirical = sourceDraft.empiricalHypothesis;
   const formal = sourceDraft.formalSupportClaim;
@@ -285,16 +391,21 @@ export function createMachineProposedScientificClaimSet({
     }),
   ]);
   const payload = {
-    version: 1,
+    version: dynamicFormal ? 2 : 1,
     kind: 'MachineProposedScientificClaimSet',
     status: 'machine_scientific_claim_set_proposed',
     paperId: normalizedPaperId,
     objective: normalizedObjective,
     protocolFamily,
-    formalSupportRegistryHash:
-      AUTONOMOUS_FORMAL_SUPPORT_TEMPLATE_REGISTRY.autonomousFormalSupportTemplateRegistryHash,
-    formalSupportTemplateId: formalTemplate.templateId,
-    formalSupportTemplateHash: formalTemplate.autonomousFormalSupportTemplateHash,
+    formalSupportRegistryHash: dynamicFormal ? null
+      : AUTONOMOUS_FORMAL_SUPPORT_TEMPLATE_REGISTRY.autonomousFormalSupportTemplateRegistryHash,
+    formalSupportTemplateId: formalTemplate?.templateId || null,
+    formalSupportTemplateHash: formalTemplate?.autonomousFormalSupportTemplateHash || null,
+    ...(dynamicFormal ? {
+      formalSupportMode: 'dynamic-lean-type-v1',
+      dynamicFormalClaimSeed,
+      researchContentProducerReceipt,
+    } : {}),
     claimAuthorityType: 'machine-proposed-untrusted',
     agendaSelectionReceipt,
     agendaSelectionReceiptHash,
@@ -322,55 +433,118 @@ export function createMachineProposedScientificClaimSet({
 
 export function verifyMachineProposedScientificClaimSet(value) {
   const blockers = [];
-  if (value?.version !== 1 || value?.kind !== 'MachineProposedScientificClaimSet'
+  const dynamicFormal = value?.version === 2;
+  if (![1, 2].includes(value?.version) || value?.kind !== 'MachineProposedScientificClaimSet'
     || value?.status !== 'machine_scientific_claim_set_proposed'
     || value?.claimAuthorityType !== 'machine-proposed-untrusted') {
     blockers.push('autonomous_research_machine_claim_set_shape_invalid');
   }
   if (!IDENTIFIER.test(String(value?.paperId || ''))
     || !normalizeText(value?.objective)
+    || !AGENDA_FAMILIES.includes(value?.protocolFamily)
     || !Object.hasOwn(ANALYSIS_PROTOCOL_FAMILY_PROFILES, value?.protocolFamily)) {
     blockers.push('autonomous_research_machine_claim_set_scope_invalid');
   }
-  if (!exactKeys(value, [
+  const expectedKeys = [
     'version', 'kind', 'status', 'paperId', 'objective', 'protocolFamily', 'claimAuthorityType',
     'formalSupportRegistryHash', 'formalSupportTemplateId', 'formalSupportTemplateHash',
     'agendaSelectionReceipt', 'agendaSelectionReceiptHash', 'sourceDraft', 'generationReceipt',
     'claims', 'generationReceiptHash', 'generatorPrincipalId',
     'limitations', 'createdAt', 'machineProposedScientificClaimSetHash',
-  ]) || !Array.isArray(value?.claims) || value.claims.length !== 2) {
+    ...(dynamicFormal ? [
+      'formalSupportMode', 'dynamicFormalClaimSeed', 'researchContentProducerReceipt',
+    ] : []),
+  ];
+  if (!exactKeys(value, expectedKeys) || !Array.isArray(value?.claims) || value.claims.length !== 2) {
     blockers.push('autonomous_research_machine_claim_count_invalid');
   }
   let canonicalDraft = null;
   try { canonicalDraft = normalizedDraft(value?.sourceDraft); }
   catch { blockers.push('autonomous_research_machine_claim_draft_invalid'); }
-  let formalTemplate = null;
-  try {
-    formalTemplate = canonicalDraft
-      ? resolveAutonomousFormalSupportTemplateForClaim(canonicalDraft.formalSupportClaim) : null;
-  } catch { blockers.push('autonomous_research_machine_claim_formal_template_invalid'); }
-  if (!formalTemplate || formalTemplate.protocolFamily !== value?.protocolFamily
-    || value?.formalSupportRegistryHash
-      !== AUTONOMOUS_FORMAL_SUPPORT_TEMPLATE_REGISTRY.autonomousFormalSupportTemplateRegistryHash
-    || value?.formalSupportTemplateId !== formalTemplate?.templateId
-    || value?.formalSupportTemplateHash !== formalTemplate?.autonomousFormalSupportTemplateHash) {
-    blockers.push('autonomous_research_machine_claim_formal_template_lineage_invalid');
+  if (dynamicFormal) {
+    const dynamicVerification = verifyDynamicFormalClaimSeed(value?.dynamicFormalClaimSeed, {
+      claimKey: `${value?.paperId}:formal-support:1`,
+    });
+    const dynamicScope = {
+      statement: value?.dynamicFormalClaimSeed?.statement,
+      assumptions: value?.dynamicFormalClaimSeed?.assumptions,
+      quantifiers: value?.dynamicFormalClaimSeed?.quantifiers,
+      negativeBoundaries: value?.dynamicFormalClaimSeed?.negativeBoundaries,
+      proofObligations: value?.dynamicFormalClaimSeed?.proofObligations,
+    };
+    const contentReceipt = value?.researchContentProducerReceipt;
+    const {
+      autonomousResearchContentProductionReceiptHash: contentReceiptHash,
+      ...contentReceiptPayload
+    } = contentReceipt || {};
+    if (value?.formalSupportMode !== 'dynamic-lean-type-v1'
+      || value?.formalSupportRegistryHash !== null
+      || value?.formalSupportTemplateId !== null
+      || value?.formalSupportTemplateHash !== null
+      || !dynamicVerification.valid
+      || (canonicalDraft
+        && JSON.stringify(dynamicScope) !== JSON.stringify(canonicalDraft.formalSupportClaim))
+      || !SHA256.test(String(contentReceiptHash || ''))
+      || hashRecord('AutonomousResearchContentProductionReceipt', contentReceiptPayload)
+        !== contentReceiptHash
+      || contentReceipt?.status !== 'autonomous_research_content_production_verified'
+      || contentReceipt?.paperId !== value?.paperId
+      || contentReceipt?.protocolFamily !== value?.protocolFamily
+      || contentReceipt?.outputHash !== value?.generationReceipt?.outputHash
+      || contentReceipt?.principalId !== value?.generatorPrincipalId
+      || contentReceipt?.dynamicFormalClaimSeedHash
+        !== value?.dynamicFormalClaimSeed?.dynamicFormalClaimSeedHash
+      || value?.dynamicFormalClaimSeed?.generatorReceiptHash
+        !== contentReceipt?.agentExecutionReceiptHash) {
+      blockers.push('autonomous_research_machine_claim_dynamic_formal_lineage_invalid');
+    }
+  } else {
+    let formalTemplate = null;
+    try {
+      formalTemplate = canonicalDraft
+        ? resolveAutonomousFormalSupportTemplateForClaim(canonicalDraft.formalSupportClaim) : null;
+    } catch {
+      blockers.push('autonomous_research_machine_claim_formal_template_invalid');
+      blockers.push('autonomous_research_machine_claim_draft_invalid');
+    }
+    if (!formalTemplate || formalTemplate.protocolFamily !== value?.protocolFamily
+      || value?.formalSupportRegistryHash
+        !== AUTONOMOUS_FORMAL_SUPPORT_TEMPLATE_REGISTRY.autonomousFormalSupportTemplateRegistryHash
+      || value?.formalSupportTemplateId !== formalTemplate?.templateId
+      || value?.formalSupportTemplateHash !== formalTemplate?.autonomousFormalSupportTemplateHash) {
+      blockers.push('autonomous_research_machine_claim_formal_template_lineage_invalid');
+      blockers.push('autonomous_research_machine_claim_draft_invalid');
+    }
   }
   const agenda = value?.agendaSelectionReceipt;
   const { autonomousResearchAgendaSelectionReceiptHash: agendaHash, ...agendaPayload } = agenda || {};
+  const machineGeneratedAgenda = agenda?.version === 2;
   if (!exactKeys(agenda, [
     'version', 'kind', 'status', 'agendaId', 'agendaVersion', 'paperId', 'selectedObjective',
     'selectedProtocolFamily', 'objectiveOverrideUsed', 'protocolFamilyOverrideUsed',
     'datasetAuthorityConstrainedSelection', 'machineSelectionPerformed',
     'scientificNoveltyVerified', 'selectedAt',
+    ...(machineGeneratedAgenda ? ['agendaMode', 'researchAgendaProducerReceipt'] : []),
     'autonomousResearchAgendaSelectionReceiptHash',
-  ]) || agenda?.kind !== 'AutonomousResearchAgendaSelectionReceipt'
+  ]) || ![1, 2].includes(agenda?.version)
+    || agenda?.kind !== 'AutonomousResearchAgendaSelectionReceipt'
     || agenda?.status !== 'autonomous_research_agenda_selected'
-    || agenda?.agendaId !== 'hepta-bounded-research-agenda-v1' || agenda?.agendaVersion !== AGENDA_VERSION
+    || agenda?.agendaId !== (machineGeneratedAgenda
+      ? 'hepta-machine-generated-research-agenda-v1' : 'hepta-bounded-research-agenda-v1')
+    || agenda?.agendaVersion !== AGENDA_VERSION
     || agenda?.paperId !== value?.paperId || agenda?.selectedObjective !== value?.objective
     || agenda?.selectedProtocolFamily !== value?.protocolFamily
     || typeof agenda?.datasetAuthorityConstrainedSelection !== 'boolean'
     || (agenda?.datasetAuthorityConstrainedSelection && agenda?.protocolFamilyOverrideUsed)
+    || (machineGeneratedAgenda && (
+      agenda?.agendaMode !== 'machine-generated'
+      || !verifyAutonomousResearchAgendaProductionReceipt(
+        agenda?.researchAgendaProducerReceipt,
+      ).valid
+      || agenda.researchAgendaProducerReceipt.paperId !== value?.paperId
+      || agenda.researchAgendaProducerReceipt.selectedObjective !== value?.objective
+      || agenda.researchAgendaProducerReceipt.selectedProtocolFamily !== value?.protocolFamily
+    ))
     || agenda?.scientificNoveltyVerified !== false || value?.agendaSelectionReceiptHash !== agendaHash
     || hashRecord('AutonomousResearchAgendaSelectionReceipt', agendaPayload) !== agendaHash) {
     blockers.push('autonomous_research_machine_claim_agenda_lineage_invalid');

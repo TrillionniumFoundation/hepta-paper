@@ -1,8 +1,12 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hasExactPlainObjectKeys as exactKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 import {
   buildAutonomousResearchMachineIntakeAdmission,
   verifyAutonomousResearchMachineIntakeAdmission,
 } from '../../paper-domain/automation/autonomous-research-machine-intake-admission-contract.mjs';
+import {
+  isResidentReactivationRequired,
+} from './autonomous-research-resident-reactivation-required.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const MACHINE_ENQUEUE_RECEIPT_KEYS = Object.freeze([
@@ -39,12 +43,6 @@ const ADMISSION_PREFLIGHT_INSPECTION_KEYS = Object.freeze([
   'sandbox',
   'version',
 ].sort());
-
-function exactKeys(value, keys) {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    && Object.getPrototypeOf(value) === Object.prototype
-    && JSON.stringify(Object.keys(value).sort()) === JSON.stringify(keys);
-}
 
 function nowDate(clock) {
   const value = clock?.now ? clock.now() : new Date();
@@ -263,6 +261,8 @@ export function createAutonomousResearchMachineIntakeCycleProcessor({
   pollMs,
   signal,
   assertAutonomyCurrent,
+  reconcileStateRecoverability = null,
+  assertStateRecoverabilityCurrent = null,
 } = {}) {
   return async function processMachineIntakes({
     onProgress = null,
@@ -282,6 +282,11 @@ export function createAutonomousResearchMachineIntakeCycleProcessor({
     let loaded;
     try {
       const residentLeaseContext = await onProgress?.({ stage: 'before_machine_intake_load' });
+      await reconcileStateRecoverability?.({
+        residentLeaseContext,
+        action: 'machine_intake_load_quiet_point',
+      });
+      assertStateRecoverabilityCurrent?.('machine_intake_load_entry');
       assertSynchronousAutonomyCurrent({
         assertAutonomyCurrent,
         residentLeaseContext,
@@ -293,9 +298,16 @@ export function createAutonomousResearchMachineIntakeCycleProcessor({
         residentLeaseContext,
         operationMode,
         assertAutonomyCurrent,
+        reconcileStateRecoverability,
+        assertStateRecoverabilityCurrent,
       });
       await onProgress?.({ stage: 'after_machine_intake_load' });
     } catch (error) {
+      if (isResidentReactivationRequired(error)) throw error;
+      if (error?.stateRecoverabilityFatal === true
+        || error?.stateRecoverabilityDeferred === true) throw error;
+      if (error?.authorityEvidenceRenewalFatal === true
+        || error?.authorityEvidenceRenewalDeferred === true) throw error;
       return Object.freeze({
         configured: true,
         loaded: null,
@@ -400,6 +412,13 @@ export function createAutonomousResearchMachineIntakeCycleProcessor({
         const residentLeaseContext = await onProgress?.({
           stage: `before_machine_intake_enqueue:${record.intakeId}`,
         });
+        await reconcileStateRecoverability?.({
+          residentLeaseContext,
+          action: `machine_intake_enqueue_quiet_point:${record.intakeId}`,
+        });
+        assertStateRecoverabilityCurrent?.(
+          `machine_intake_enqueue_entry:${record.intakeId}`,
+        );
         const mutationNow = nowDate(clock);
         machineIntake.repository.assertIntakeLease({
           intakeId: record.intakeId,
@@ -453,6 +472,11 @@ export function createAutonomousResearchMachineIntakeCycleProcessor({
           admissionHash: persisted.admissionHash,
         }));
       } catch (error) {
+        if (isResidentReactivationRequired(error)) throw error;
+        if (error?.stateRecoverabilityFatal === true
+          || error?.stateRecoverabilityDeferred === true) throw error;
+        if (error?.authorityEvidenceRenewalFatal === true
+          || error?.authorityEvidenceRenewalDeferred === true) throw error;
         if (!leaseLost) {
           try {
             machineIntake.repository.deferIntake({

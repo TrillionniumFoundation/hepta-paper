@@ -1,0 +1,315 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+
+import {
+  createCodexAgentExecutor,
+} from '../../paper-adapters/automation/codex-agent-executor.mjs';
+import {
+  createMultiLanguageEmpiricalExecutor,
+} from '../../paper-adapters/automation/multi-language-empirical-executor.mjs';
+import {
+  AUTOMATION_RUNTIME_IMAGES,
+} from '../../paper-adapters/automation/runtime-image-registry.mjs';
+import {
+  evaluateAcademicEmpiricalReadiness,
+  probeOsSandbox,
+} from '../../paper-adapters/runtime/sandbox-backend-probe.mjs';
+import {
+  buildCampaignAgentInstructions,
+} from '../../paper-application/automation/campaign-agent-policy.mjs';
+import {
+  buildCampaignWorkerAllowedRoots,
+  buildCampaignWorkerRuntimeImageConfiguration,
+  prepareCampaignAttemptWorkspaceRoot,
+  prepareCampaignAutomationArtifactRoot,
+} from '../../paper-composition/automation/campaign-worker-empirical-composition.mjs';
+
+function trustedDatasetSupervisorProfile(runtime) {
+  return {
+    image: runtime.image,
+    imageDigest: runtime.imageDigest,
+    containerExecutable: runtime.executable,
+    supervisor: runtime.datasetAccessSupervisor,
+  };
+}
+
+function trustedDockerImageInspection(runtime) {
+  return {
+    status: 0,
+    stdout: JSON.stringify([{
+      Descriptor: {
+        digest: runtime.imageDigest,
+        mediaType: 'application/vnd.oci.image.manifest.v1+json',
+      },
+      Os: 'linux',
+      Architecture: 'amd64',
+      Config: { Labels: {
+        'io.hepta.dataset-supervisor.protocol':
+          runtime.datasetAccessSupervisor.protocol,
+        'io.hepta.dataset-supervisor.sha256':
+          runtime.datasetAccessSupervisor.sha256,
+      } },
+    }]),
+    stderr: '',
+  };
+}
+
+test('campaign coder contract writes canonical metric artifacts only through HEPTA_OUTPUT_DIR', () => {
+  const instructions = buildCampaignAgentInstructions({
+    kind: 'coder-python',
+    manuscript: 'main.tex',
+    language: 'python',
+  });
+  assert.match(instructions, /HEPTA_OUTPUT_DIR\/results\.json/);
+  assert.match(instructions, /HEPTA_OUTPUT_DIR\/results\.csv/);
+  assert.match(instructions, /exact header metric,value/);
+  assert.match(instructions, /do not fall back to the working directory/i);
+  const executor = createMultiLanguageEmpiricalExecutor({
+    workerRunner: { availability: {}, run() { throw new Error('must not execute'); } },
+  });
+  const blocked = executor.execute({
+    language: 'python', requireSeparateOutputRoot: true, env: {},
+  });
+  assert.equal(blocked.status, 'empirical_output_contract_invalid');
+  assert.deepEqual(blocked.blockers, ['empirical_output_directory_binding_invalid']);
+});
+
+test('generic campaign writers cannot invent research evidence or scholarly identities', () => {
+  const instructions = buildCampaignAgentInstructions({
+    kind: 'writer',
+    manuscript: 'main.tex',
+  });
+  assert.match(instructions, /Do not invent results, datasets, benchmark names, citations/);
+  assert.match(instructions, /omit empirical findings and citations/);
+  assert.match(instructions, /state the evidence limitations/);
+});
+
+test('academic empirical readiness is distinct from a generic Docker sandbox', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-academic-empirical-readiness-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const tracer = path.join(root, 'strace');
+  fs.writeFileSync(tracer, 'fixture\n');
+  fs.chmodSync(tracer, 0o755);
+  const dockerFallback = evaluateAcademicEmpiricalReadiness({
+    bubblewrapProbe: {
+      available: false, backend: 'bubblewrap', detail: 'Operation not permitted',
+    },
+    datasetAccessTracer: tracer,
+  });
+  assert.equal(dockerFallback.academicEmpiricalReady, false);
+  assert.equal(
+    dockerFallback.academicEmpiricalReadinessReason,
+    'academic_empirical_bubblewrap_backend_unavailable',
+  );
+  assert.match(dockerFallback.academicEmpiricalReadinessDetail, /Operation not permitted/);
+
+  const missingTracer = evaluateAcademicEmpiricalReadiness({
+    bubblewrapProbe: { available: true, backend: 'bubblewrap' },
+    datasetAccessTracer: path.join(root, 'missing-strace'),
+  });
+  assert.equal(missingTracer.academicEmpiricalReady, false);
+  assert.equal(
+    missingTracer.academicEmpiricalReadinessReason,
+    'academic_empirical_dataset_access_tracer_unavailable',
+  );
+
+  const ready = evaluateAcademicEmpiricalReadiness({
+    bubblewrapProbe: { available: true, backend: 'bubblewrap' },
+    datasetAccessTracer: tracer,
+  });
+  assert.equal(ready.academicEmpiricalReady, true);
+  assert.equal(
+    ready.academicEmpiricalDatasetProofBackend,
+    'bubblewrap-host-supervised-strace-v2',
+  );
+
+  const dockerSupervisorFailed = evaluateAcademicEmpiricalReadiness({
+    bubblewrapProbe: { available: true, backend: 'bubblewrap' },
+    datasetAccessTracer: tracer,
+    dockerSupervisorProbe: {
+      available: false,
+      backend: null,
+      detail: 'trusted_dataset_supervisor_image_digest_mismatch',
+    },
+  });
+  assert.equal(dockerSupervisorFailed.academicEmpiricalReady, false);
+  assert.equal(dockerSupervisorFailed.academicEmpiricalDatasetProofBackend, null);
+  assert.equal(
+    dockerSupervisorFailed.academicEmpiricalReadinessReason,
+    'trusted_dataset_supervisor_image_digest_mismatch',
+  );
+
+  const dockerSupervisorReady = evaluateAcademicEmpiricalReadiness({
+    bubblewrapProbe: { available: true, backend: 'bubblewrap' },
+    datasetAccessTracer: tracer,
+    dockerSupervisorProbe: {
+      available: true,
+      backend: 'docker',
+      detail: 'all_trusted_dataset_supervisors_end_to_end_verified',
+    },
+  });
+  assert.equal(dockerSupervisorReady.academicEmpiricalReady, true);
+  assert.equal(
+    dockerSupervisorReady.academicEmpiricalDatasetProofBackend,
+    'docker-trusted-container-supervisor-v1',
+  );
+});
+
+test('sandbox Docker fallback uses the trusted fixed runtime image instead of Alpine', () => {
+  const runtime = AUTOMATION_RUNTIME_IMAGES.python;
+  const calls = [];
+  let imageInspectionCount = 0;
+  const probe = probeOsSandbox({
+    refresh: true,
+    dockerImage: 'alpine:3.20',
+    trustedDatasetSupervisorImages: [trustedDatasetSupervisorProfile(runtime)],
+    environment: { PATH: process.env.PATH || '' },
+    spawnSyncImpl(executable, args, options) {
+      calls.push({ executable, args, options });
+      if (executable === 'bwrap') {
+        return { status: 1, stdout: '', stderr: 'bubblewrap unavailable' };
+      }
+      if (executable === 'which') return { status: 1, stdout: '', stderr: '' };
+      if (executable === 'docker' && args[0] === 'image') {
+        imageInspectionCount += 1;
+        return imageInspectionCount === 1
+          ? trustedDockerImageInspection(runtime)
+          : { status: 1, stdout: '', stderr: 'supervisor image unavailable' };
+      }
+      if (executable === 'docker' && args[0] === 'info') {
+        return { status: 0, stdout: '27.0.0\n', stderr: '' };
+      }
+      if (executable === 'docker' && args[0] === 'ps') {
+        return { status: 0, stdout: '', stderr: '' };
+      }
+      throw new Error(`unexpected_sandbox_probe_command:${executable}:${args.join(' ')}`);
+    },
+  });
+  assert.equal(probe.available, true);
+  assert.equal(probe.backend, 'docker');
+  assert.equal(probe.image, runtime.image);
+  assert.equal(probe.academicEmpiricalReady, false);
+  assert.equal(probe.dockerDatasetSupervisorReady, false);
+  const inspectedImages = calls
+    .filter(({ executable, args }) => executable === 'docker'
+      && args[0] === 'image' && args[1] === 'inspect')
+    .map(({ args }) => args[2]);
+  assert.deepEqual(inspectedImages, [runtime.image, runtime.image]);
+  assert.equal(calls.some(({ args }) => args.includes('alpine:3.20')), false);
+});
+
+test('available bubblewrap does not suppress the required Docker supervisor probe', {
+  skip: typeof process.geteuid === 'function' && process.geteuid() === 0,
+}, () => {
+  const runtime = AUTOMATION_RUNTIME_IMAGES.python;
+  const calls = [];
+  const probe = probeOsSandbox({
+    refresh: true,
+    trustedDatasetSupervisorImages: [trustedDatasetSupervisorProfile(runtime)],
+    environment: { PATH: process.env.PATH || '' },
+    spawnSyncImpl(executable, args, options) {
+      calls.push({ executable, args, options });
+      if (executable === 'bwrap') return { status: 0, stdout: '', stderr: '' };
+      if (executable === 'which') {
+        return { status: 0, stdout: '/virtual/prlimit\n', stderr: '' };
+      }
+      if (executable === '/virtual/prlimit') {
+        return { status: 0, stdout: '17 17\n', stderr: '' };
+      }
+      if (executable === 'docker' && args[0] === 'ps') {
+        return { status: 0, stdout: '', stderr: '' };
+      }
+      if (executable === 'docker' && args[0] === 'image') {
+        return { status: 1, stdout: '', stderr: 'supervisor image unavailable' };
+      }
+      throw new Error(`unexpected_sandbox_probe_command:${executable}:${args.join(' ')}`);
+    },
+  });
+  assert.equal(probe.available, true);
+  assert.equal(probe.backend, 'bubblewrap');
+  assert.equal(probe.academicEmpiricalReady, false);
+  assert.equal(probe.dockerDatasetSupervisorReady, false);
+  assert.ok(calls.some(({ executable, args }) => (
+    executable === 'docker' && args[0] === 'ps'
+  )));
+  assert.ok(calls.some(({ executable, args }) => (
+    executable === 'docker' && args[0] === 'image'
+      && args[1] === 'inspect' && args[2] === runtime.image
+  )));
+  assert.equal(calls.some(({ executable, args }) => (
+    executable === 'docker' && args[0] === 'info'
+  )), false);
+});
+
+test('campaign worker pins Docker readiness to its selected Python runtime profile', () => {
+  const cpu = buildCampaignWorkerRuntimeImageConfiguration();
+  assert.equal(cpu.dockerImage, AUTOMATION_RUNTIME_IMAGES.python.image);
+  assert.ok(cpu.allowedContainerImages.includes(cpu.dockerImage));
+  assert.ok(cpu.trustedDatasetSupervisorImages.some((profile) => (
+    profile.image === cpu.dockerImage
+      && profile.imageDigest === AUTOMATION_RUNTIME_IMAGES.python.imageDigest
+  )));
+
+  const gpu = buildCampaignWorkerRuntimeImageConfiguration({ requiresGpu: true });
+  assert.equal(gpu.dockerImage, AUTOMATION_RUNTIME_IMAGES.pythonGpu.image);
+  assert.ok(gpu.allowedContainerImages.includes(gpu.dockerImage));
+});
+
+test('campaign worker prepares private artifact and attempt workspace roots', (t) => {
+  const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-campaign-artifacts-'));
+  t.after(() => fs.rmSync(runtimeRoot, { recursive: true, force: true }));
+  const artifactRoot = prepareCampaignAutomationArtifactRoot(runtimeRoot);
+  const artifactIdentity = fs.lstatSync(artifactRoot);
+  assert.equal(artifactRoot, path.join(runtimeRoot, 'automation-artifacts'));
+  assert.equal(artifactIdentity.isDirectory(), true);
+  assert.equal(artifactIdentity.isSymbolicLink(), false);
+  assert.equal(artifactIdentity.mode & 0o777, 0o700);
+
+  const sourceWorkspace = path.join(runtimeRoot, 'source-paper');
+  fs.mkdirSync(sourceWorkspace);
+  const attemptRoot = prepareCampaignAttemptWorkspaceRoot(runtimeRoot);
+  const attemptIdentity = fs.lstatSync(attemptRoot);
+  assert.equal(attemptRoot, path.join(runtimeRoot, 'campaign-attempt-workspaces'));
+  assert.equal(attemptIdentity.isDirectory(), true);
+  assert.equal(attemptIdentity.isSymbolicLink(), false);
+  assert.equal(attemptIdentity.mode & 0o777, 0o700);
+  assert.deepEqual(buildCampaignWorkerAllowedRoots({
+    plans: [{ sourceWorkspace }],
+    runtimeRoot,
+  }), [sourceWorkspace, attemptRoot]);
+});
+
+test('campaign smoke uses the production empirical runtime composition', () => {
+  const source = fs.readFileSync(
+    path.resolve(import.meta.dirname, '../bin/automation-campaign-smoke.mjs'),
+    'utf8',
+  );
+  assert.match(source, /composeCampaignWorkerEmpiricalExecution\(\{/);
+  assert.match(source, /createIsolatedAgentExecutor\(\{/);
+  assert.match(source, /HEPTA_SMOKE_MAX_ROUNDS/);
+  assert.doesNotMatch(source, /createMultiLanguageEmpiricalExecutor\(\{ workerRunner \}\)/);
+});
+
+test('Codex agent adapter executes a real process and records workspace changes', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-agent-executor-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const shim = path.join(root, 'codex-shim.sh');
+  fs.writeFileSync(
+    shim,
+    '#!/bin/sh\ncat >/dev/null\nprintf "changed\\n" > agent-output.txt\nprintf \'{"status":"completed","summary":"ok","checksRun":[],"blockers":[]}\\n\'\n',
+  );
+  fs.chmodSync(shim, 0o755);
+  const executor = createCodexAgentExecutor({ codexBinary: shim, timeoutMs: 5000 });
+  const receipt = await executor.execute({
+    role: 'writer',
+    workspacePath: root,
+    instructions: 'write a fixture',
+    sandbox: 'workspace-write',
+  });
+  assert.equal(receipt.status, 'agent_execution_completed');
+  assert.deepEqual(receipt.changedPaths, ['agent-output.txt']);
+  assert.equal(receipt.externalActionPerformed, false);
+});

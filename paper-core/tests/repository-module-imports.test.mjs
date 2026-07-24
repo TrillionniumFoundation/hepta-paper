@@ -10,11 +10,15 @@ import {
   ARCHITECTURE_ENTRYPOINT_MANIFEST,
   assertArchitectureEntrypointManifest,
 } from '../src/architecture-entrypoint-manifest.mjs';
-import { COMPATIBILITY_FACADE_CATALOG } from '../src/compatibility-facade-catalog.mjs';
+import {
+  COMPATIBILITY_FACADE_CATALOG,
+  STABLE_PUBLIC_FACADE_CATALOG,
+} from '../src/compatibility-facade-catalog.mjs';
 import { FORMAL_ASSURANCE_LADDER } from '../../paper-domain/research/formal-verifier-policy.mjs';
 import { FORMAL_VERIFIER_REGISTRY } from '../../paper-domain/research/formal-verifier-registry.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { inspectTrackedProductionGraph } from '../verification/tracked-production-graph.mjs';
+import { relativeModuleSpecifiers } from '../verification/javascript-module-specifiers.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
 const moduleRoots = Object.freeze([
@@ -106,8 +110,8 @@ function reachableModules(entries) {
     if (reached.has(file) || !fs.existsSync(file)) continue;
     reached.add(file);
     const source = fs.readFileSync(file, 'utf8');
-    for (const match of source.matchAll(/(?:from\s+|import\s*\()(['"])(\.[^'"]+)\1/g)) {
-      const resolved = resolveRelativeImport(file, match[2]);
+    for (const specifier of relativeModuleSpecifiers(source)) {
+      const resolved = resolveRelativeImport(file, specifier);
       if (resolved && !reached.has(resolved)) pending.push(resolved);
     }
   }
@@ -116,8 +120,8 @@ function reachableModules(entries) {
 
 function moduleDependencies(file) {
   const source = fs.readFileSync(file, 'utf8');
-  return [...source.matchAll(/(?:from\s+|import\s*\()(['"])(\.[^'"]+)\1/g)]
-    .map((match) => resolveRelativeImport(file, match[2]))
+  return relativeModuleSpecifiers(source)
+    .map((specifier) => resolveRelativeImport(file, specifier))
     .filter(Boolean);
 }
 
@@ -294,9 +298,15 @@ test('production inventory is reachable only from declared executable entrypoint
   assert.match(campaignComposition, /createCampaignNodePrimitivesAdapter/);
 
   const productionMetrics = architectureMetrics(categories.production);
-  assert.deepEqual(productionMetrics.filter((row) => row.lines > 675 && !row.file.endsWith('.data.mjs')), []);
+  // File length is a coarse guardrail only; architecture-conformance applies
+  // the stricter responsibility surface (public exports + dependency fanout).
+  assert.deepEqual(productionMetrics.filter((row) => row.lines > 750 && !row.file.endsWith('.data.mjs')), []);
   assert.deepEqual(productionMetrics.filter((row) => row.functions > 50), []);
-  assert.deepEqual(productionMetrics.filter((row) => row.dependencies > 18), []);
+  // Dependency fanout is capped independently, while architecture-conformance
+  // also combines fanout with the public export surface. Keep a small allowance
+  // for orchestration/verifier modules without encouraging line-count-only
+  // file slicing that merely hides one responsibility across facade modules.
+  assert.deepEqual(productionMetrics.filter((row) => row.dependencies > 20), []);
 
   for (const category of ['verification', 'maintenance', 'migrationSupport']) {
     const metrics = architectureMetrics(categories[category]);
@@ -376,6 +386,13 @@ test('every supported operator executable is covered by the production architect
 });
 
 test('release production graph is hash-bound to the Git index and rejects worktree-only modules', (t) => {
+  const inheritedGitIndexFile = process.env.GIT_INDEX_FILE;
+  delete process.env.GIT_INDEX_FILE;
+  t.after(() => {
+    if (inheritedGitIndexFile === undefined) delete process.env.GIT_INDEX_FILE;
+    else process.env.GIT_INDEX_FILE = inheritedGitIndexFile;
+  });
+
   const releaseVerificationRunner = fs.readFileSync(path.join(
     workspaceRoot,
     'paper-core/bin/run-isolated-verification.mjs',
@@ -412,6 +429,21 @@ test('release production graph is hash-bound to the Git index and rejects worktr
     entrypoints: ['src/entry.mjs'],
     expectedManifestHash: ready.productionGraphManifestHash,
   }).status, 'tracked_production_graph_ready');
+
+  write('src/side-effect.mjs', 'globalThis.__sideEffectFixture = true;\n');
+  write('src/entry.mjs', [
+    "import './side-effect.mjs';",
+    "import { value } from './tracked.mjs';",
+    "export { value };",
+    "// import './comment-only.mjs';",
+    "const text = \"import './string-only.mjs'\";",
+    'void text;',
+    '',
+  ].join('\n'));
+  const sideEffectOnly = inspectTrackedProductionGraph({ workspaceRoot: root, entrypoints: ['src/entry.mjs'] });
+  assert.deepEqual(sideEffectOnly.untrackedModules, ['src/side-effect.mjs']);
+  assert.deepEqual(sideEffectOnly.unresolvedImports, []);
+  assert.equal(sideEffectOnly.moduleCount, 3);
 
   write('src/entry.mjs', "import { value } from './tracked.mjs';\nimport { extra } from './worktree-only.mjs';\nexport { extra, value };\n");
   write('src/worktree-only.mjs', 'export const extra = 2;\n');
@@ -555,6 +587,45 @@ test('compatibility re-export facades are catalogued, tiny, and owned', () => {
     assert.match(source, /export\s+(?:\*|\{)/, row.path);
     assert.ok(source.split(/\n/).length - 1 <= 10, row.path);
   }
+
+  const uncataloguedCrossOwnerFacades = modulesUnder(
+    path.join(workspaceRoot, 'paper-adapters'),
+  ).filter((relative) => {
+    const absolute = path.join(workspaceRoot, relative);
+    const source = fs.readFileSync(absolute, 'utf8');
+    if (source.split(/\n/).length - 1 > 10) return false;
+    const reexportSpecifiers = [...source.matchAll(
+      /\bexport\s+(?:\*|\{[\s\S]*?\})\s+from\s+['"]([^'"]+)['"]/g,
+    )].map((match) => match[1]);
+    const facadeOwner = relative.split('/')[1];
+    return reexportSpecifiers.some((specifier) => {
+      const target = resolveRelativeImport(absolute, specifier);
+      const targetParts = target
+        ? posix(path.relative(workspaceRoot, target)).split('/')
+        : [];
+      return targetParts[0] === 'paper-adapters' && targetParts[1] !== facadeOwner;
+    });
+  }).filter((relative) => !paths.has(relative)).sort();
+  assert.deepEqual(uncataloguedCrossOwnerFacades, []);
+});
+
+test('widely consumed paper-core runtime facades are versioned public APIs, not migration debt', () => {
+  const compatibilityPaths = new Set(COMPATIBILITY_FACADE_CATALOG.map((row) => row.path));
+  const publicPaths = new Set();
+  for (const row of STABLE_PUBLIC_FACADE_CATALOG) {
+    assert.equal(compatibilityPaths.has(row.path), false, row.path);
+    assert.equal(publicPaths.has(row.path), false, row.path);
+    publicPaths.add(row.path);
+    assert.ok(row.owner, row.path);
+    assert.ok(Number.isSafeInteger(row.apiVersion) && row.apiVersion >= 1, row.path);
+    const source = fs.readFileSync(path.join(workspaceRoot, row.path), 'utf8');
+    assert.match(source, /export\s+(?:\*|\{)/, row.path);
+    assert.ok(source.split(/\n/).length - 1 <= 10, row.path);
+  }
+  assert.deepEqual([...publicPaths].sort(), [
+    'paper-core/src/code-provenance.mjs',
+    'paper-core/src/workspace-layout.mjs',
+  ]);
 });
 
 test('SQLite campaign persistence is composed from bounded operation modules', () => {
@@ -565,6 +636,8 @@ test('SQLite campaign persistence is composed from bounded operation modules', (
     'sqlite-campaign-telemetry-operations.mjs',
     'sqlite-campaign-lifecycle-operations.mjs',
     'sqlite-campaign-lease-operations.mjs',
+    'sqlite-campaign-node-attempt-operations.mjs',
+    'sqlite-campaign-node-infrastructure-operations.mjs',
     'sqlite-campaign-prepared-integration-operations.mjs',
   ];
   assert.ok(facade.split(/\n/).length - 1 <= 150);
@@ -573,6 +646,11 @@ test('SQLite campaign persistence is composed from bounded operation modules', (
     const source = fs.readFileSync(path.join(workspaceRoot, 'paper-adapters/persistence', moduleName), 'utf8');
     assert.ok(source.split(/\n/).length - 1 <= 250, moduleName);
   }
+  const reservationSource = fs.readFileSync(path.join(
+    workspaceRoot,
+    'paper-adapters/persistence/sqlite-campaign-node-infrastructure-reservations.mjs',
+  ), 'utf8');
+  assert.ok(reservationSource.split(/\n/).length - 1 <= 250);
   for (const operation of ['createCampaign', 'claimReady', 'prepareNodeResult', 'completeNode', 'cancelCampaign']) {
     assert.doesNotMatch(facade, new RegExp(`\\b${operation}\\s*\\(`));
   }

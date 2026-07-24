@@ -16,6 +16,10 @@ import {
   writeDurableJsonSync,
 } from '../../paper-composition/bootstrap/operator-runtime-composition.mjs';
 import { composeStoreAdministratorReceiptLedger } from '../../paper-composition/bootstrap/receipt-ledger-composition.mjs';
+import {
+  convergeAutonomousSubmissionHandoff,
+  inspectAutonomousSubmissionHandoff,
+} from '../../paper-composition/bootstrap/autonomous-submission-handoff-migration-composition.mjs';
 import { assertWorkspaceLayoutPhysicallyDecoupled, resolveWorkspaceLayout } from '../src/workspace-layout.mjs';
 import { pathWithin } from '../../workflow-kernel/runtime/file-utils.mjs';
 
@@ -114,7 +118,11 @@ function resolveBackupReceipt(requestedPath = null) {
 }
 
 function initialize() {
-  writableStore({ migrate: true });
+  const store = writableStore({ migrate: true });
+  convergeAutonomousSubmissionHandoff({
+    nativeStore: store,
+    runtimeRoot: layout.runtimeRoot,
+  });
   return status();
 }
 
@@ -161,10 +169,29 @@ AND NOT EXISTS (
   const quickRows = JSON.parse(runSql(store, 'PRAGMA quick_check;', { json: true }) || '[]');
   const quickCheck = String(quickRows[0]?.quick_check || quickRows[0]?.integrity_check || 'unknown');
   const schemaVersion = Number(JSON.parse(runSql(store, 'SELECT coalesce(max(version),0) AS version FROM schema_migrations;', { json: true }) || '[]')[0]?.version || 0);
+  let submissionHandoff;
+  try {
+    submissionHandoff = inspectAutonomousSubmissionHandoff({
+      nativeStore: store,
+      runtimeRoot: layout.runtimeRoot,
+    });
+  } catch (error) {
+    submissionHandoff = Object.freeze({
+      ready: false,
+      databasePath: path.join(layout.runtimeRoot, 'autonomous-research',
+        'submission-handoff', 'submission-handoff.sqlite'),
+      blockers: Object.freeze([String(error?.message || error)]),
+    });
+  }
+  const ready = quickCheck === 'ok'
+    && unresolvedContaminatedReceiptCount === 0
+    && schemaVersion >= 25
+    && submissionHandoff.ready === true;
   return {
     version: 3,
     kind: 'HeptaNativeStoreStatus',
-    status: quickCheck === 'ok' && unresolvedContaminatedReceiptCount === 0 ? 'hepta_native_store_ready' : 'hepta_native_store_blocked',
+    status: ready ? 'hepta_native_store_ready' : 'hepta_native_store_blocked',
+    ready,
     dbPath,
     schemaVersion,
     quickCheck,
@@ -178,6 +205,7 @@ AND NOT EXISTS (
       rawEvidenceClassificationsPreserved: true,
     },
     jobClassifications,
+    autonomousSubmissionHandoff: submissionHandoff,
     legacyDefaultDependency: false,
   };
 }

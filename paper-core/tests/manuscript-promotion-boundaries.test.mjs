@@ -347,6 +347,48 @@ test('independent formal review is assembled from a canonical manuscript range a
   });
   assert.ok(wrongPaper.blockers.includes('formal_semantic_review_envelope_paper_mismatch'));
   assert.equal(wrongPaper.workers[0].parameters.claimBindings[0].formalClaimContract, undefined);
+
+  const signedPayload = {
+    ...envelopePayload,
+    reviewerIndependenceAssuranceScope:
+      'signed_configured_identity_credential_root_and_signer_separation',
+    providerAccountIndependenceVerified: false,
+    reviewPrincipalDescriptorHash: hashRecord('ReviewPrincipalDescriptor', { id: 'reviewer' }),
+    reviewerProviderAccountIdentityHash: hashRecord('ReviewerProviderAccount', { id: 'reviewer' }),
+    reviewerCredentialRootIdentityHash: hashRecord('ReviewerCredentialRoot', { id: 'reviewer' }),
+    reviewerTrustDomainIdentityHash: hashRecord('ReviewerTrustDomain', { id: 'reviewer' }),
+    researchPrincipalPoolHash: hashRecord('ResearchPrincipalPool', { id: 'pool' }),
+    signedReviewerReceiptHash: hashRecord('SignedReviewerReceipt', { id: 'reviewer' }),
+  };
+  const signedEnvelope = {
+    ...signedPayload,
+    formalSemanticReviewEnvelopeHash:
+      hashPaperRecord('FormalClaimSemanticReviewEnvelope', signedPayload),
+  };
+  const signedBound = bindFormalReviewsToWorkers({
+    workers: [worker],
+    formalReviewEnvelope: signedEnvelope,
+    paperId: 'paper',
+    canonicalClaimRegistry,
+    workerPlanHash: 'sha256:worker-plan',
+  });
+  assert.deepEqual(signedBound.blockers, []);
+  const incompleteSignedPayload = { ...signedPayload, reviewerTrustDomainIdentityHash: null };
+  const incompleteSignedEnvelope = {
+    ...incompleteSignedPayload,
+    formalSemanticReviewEnvelopeHash:
+      hashPaperRecord('FormalClaimSemanticReviewEnvelope', incompleteSignedPayload),
+  };
+  const incompleteSigned = bindFormalReviewsToWorkers({
+    workers: [worker],
+    formalReviewEnvelope: incompleteSignedEnvelope,
+    paperId: 'paper',
+    canonicalClaimRegistry,
+    workerPlanHash: 'sha256:worker-plan',
+  });
+  assert.ok(incompleteSigned.blockers.includes(
+    'formal_semantic_review_envelope_assurance_scope_invalid',
+  ));
 });
 
 test('caller-owned qualityEvidence cannot satisfy an enforced paper profile', () => {

@@ -7,6 +7,9 @@ const MAXIMUM_FIELDS = 64;
 const MAXIMUM_METRICS = 64;
 const ARMS = Object.freeze(['treatment', 'baseline', 'ablation']);
 
+export const REGISTERED_SCALAR_RESPONSE_BENCHMARK_FAMILY =
+  'registered_scalar_response_benchmark';
+
 export const SYSTEM_BENCHMARK_EVALUATOR_OPERATORS = Object.freeze({
   arithmetic_mean: Object.freeze({ operandCount: 1 }),
   sample_standard_error: Object.freeze({ operandCount: 1 }),
@@ -24,6 +27,7 @@ const DESCRIPTORS = Object.freeze([
       baseline: 'zero-action-reference-policy',
       ablation: 'candidate-without-constraint-penalty',
     }),
+    oracleFields: Object.freeze(['constraintLimit', 'disturbance', 'target']),
     rawEventFields: Object.freeze(['constraintViolation', 'return', 'robustnessReturn', 'tailReturn']),
     metrics: Object.freeze([
       Object.freeze({ metric: 'mean_return', expression: Object.freeze({ operator: 'arithmetic_mean', operands: Object.freeze(['return']) }) }),
@@ -42,6 +46,7 @@ const DESCRIPTORS = Object.freeze([
       baseline: 'majority-class-reference-model',
       ablation: 'candidate-without-primary-feature-group',
     }),
+    oracleFields: Object.freeze(['label', 'robustLabel']),
     rawEventFields: Object.freeze(['referenceScore', 'robustnessScore', 'score']),
     metrics: Object.freeze([
       Object.freeze({ metric: 'mean_score', expression: Object.freeze({ operator: 'arithmetic_mean', operands: Object.freeze(['score']) }) }),
@@ -60,6 +65,7 @@ const DESCRIPTORS = Object.freeze([
       baseline: 'pooled-ols-reference-estimator',
       ablation: 'candidate-with-placebo-outcome',
     }),
+    oracleFields: Object.freeze(['robustEffect', 'trueEffect']),
     rawEventFields: Object.freeze(['effect', 'placeboEffect', 'robustnessEffect']),
     metrics: Object.freeze([
       Object.freeze({ metric: 'mean_effect', expression: Object.freeze({ operator: 'arithmetic_mean', operands: Object.freeze(['effect']) }) }),
@@ -78,6 +84,7 @@ const DESCRIPTORS = Object.freeze([
       baseline: 'equal-weight-reference-strategy',
       ablation: 'candidate-without-primary-factor',
     }),
+    oracleFields: Object.freeze(['futureReturn', 'robustReturn']),
     rawEventFields: Object.freeze(['return', 'robustnessReturn', 'tailReturn']),
     metrics: Object.freeze([
       Object.freeze({ metric: 'mean_return', expression: Object.freeze({ operator: 'arithmetic_mean', operands: Object.freeze(['return']) }) }),
@@ -96,11 +103,31 @@ const DESCRIPTORS = Object.freeze([
       baseline: 'greedy-feasible-reference-solver',
       ablation: 'candidate-without-primary-constraint-family',
     }),
+    oracleFields: Object.freeze(['capacity', 'demand', 'unitCost']),
     rawEventFields: Object.freeze(['constraintViolation', 'robustnessScore', 'score']),
     metrics: Object.freeze([
       Object.freeze({ metric: 'mean_score', expression: Object.freeze({ operator: 'arithmetic_mean', operands: Object.freeze(['score']) }) }),
       Object.freeze({ metric: 'constraint_violation_rate', expression: Object.freeze({ operator: 'arithmetic_mean', operands: Object.freeze(['constraintViolation']) }) }),
       Object.freeze({ metric: 'standard_error', expression: Object.freeze({ operator: 'sample_standard_error', operands: Object.freeze(['score']) }) }),
+      Object.freeze({ metric: 'robustness_gap', expression: Object.freeze({ operator: 'arithmetic_mean_difference', operands: Object.freeze(['score', 'robustnessScore']) }) }),
+    ]),
+  }),
+  Object.freeze({
+    version: 1,
+    kind: 'SystemBenchmarkEvaluatorDescriptor',
+    profileId: 'registered-scalar-response-event-metrics-v1',
+    benchmarkFamily: REGISTERED_SCALAR_RESPONSE_BENCHMARK_FAMILY,
+    armOperations: Object.freeze({
+      treatment: 'candidate-scalar-response',
+      baseline: 'operator-registered-reference-response',
+      ablation: 'candidate-scalar-response-on-operator-redacted-input',
+    }),
+    oracleFields: Object.freeze(['lowerBound', 'robustTarget', 'target', 'upperBound']),
+    rawEventFields: Object.freeze(['constraintViolation', 'robustnessScore', 'score']),
+    metrics: Object.freeze([
+      Object.freeze({ metric: 'mean_score', expression: Object.freeze({ operator: 'arithmetic_mean', operands: Object.freeze(['score']) }) }),
+      Object.freeze({ metric: 'standard_error', expression: Object.freeze({ operator: 'sample_standard_error', operands: Object.freeze(['score']) }) }),
+      Object.freeze({ metric: 'constraint_violation_rate', expression: Object.freeze({ operator: 'arithmetic_mean', operands: Object.freeze(['constraintViolation']) }) }),
       Object.freeze({ metric: 'robustness_gap', expression: Object.freeze({ operator: 'arithmetic_mean_difference', operands: Object.freeze(['score', 'robustnessScore']) }) }),
     ]),
   }),
@@ -141,7 +168,8 @@ function canonicalUniqueStrings(values, { maximum, error }) {
 
 function compileDescriptor(value) {
   if (!exactKeys(value, [
-    'version', 'kind', 'profileId', 'benchmarkFamily', 'armOperations', 'rawEventFields', 'metrics',
+    'version', 'kind', 'profileId', 'benchmarkFamily', 'armOperations', 'oracleFields',
+    'rawEventFields', 'metrics',
   ]) || value.version !== 1 || value.kind !== 'SystemBenchmarkEvaluatorDescriptor') {
     throw new Error('system_benchmark_evaluator_descriptor_shape_invalid');
   }
@@ -167,6 +195,13 @@ function compileDescriptor(value) {
   });
   if (rawEventFields.join('\0') !== [...rawEventFields].sort().join('\0')) {
     throw new Error('system_benchmark_evaluator_descriptor_event_fields_not_canonical');
+  }
+  const oracleFields = canonicalUniqueStrings(value.oracleFields, {
+    maximum: MAXIMUM_FIELDS,
+    error: 'system_benchmark_evaluator_descriptor_oracle_fields_invalid',
+  });
+  if (oracleFields.join('\0') !== [...oracleFields].sort().join('\0')) {
+    throw new Error('system_benchmark_evaluator_descriptor_oracle_fields_not_canonical');
   }
   if (!denseDataArray(value.metrics) || value.metrics.length < 1 || value.metrics.length > MAXIMUM_METRICS) {
     throw new Error('system_benchmark_evaluator_descriptor_metrics_invalid');
@@ -204,6 +239,7 @@ function compileDescriptor(value) {
     profileId,
     benchmarkFamily,
     armOperations: Object.freeze(Object.fromEntries(ARMS.map((arm) => [arm, value.armOperations[arm]]))),
+    oracleFields,
     rawEventFields,
     metrics: Object.freeze(metrics),
   });
@@ -239,12 +275,42 @@ export function compileSystemBenchmarkEvaluatorRegistry(descriptors) {
 
 export const SYSTEM_BENCHMARK_EVALUATOR_DESCRIPTORS = DESCRIPTORS;
 export const SYSTEM_BENCHMARK_EVALUATOR_REGISTRY = compileSystemBenchmarkEvaluatorRegistry(DESCRIPTORS);
+const SYSTEM_BENCHMARK_EVALUATOR_BY_FAMILY = new Map(
+  SYSTEM_BENCHMARK_EVALUATOR_REGISTRY.profiles.map(
+    (profile) => [profile.benchmarkFamily, profile],
+  ),
+);
+
+export function verifySystemBenchmarkEvaluatorRegistry(registry) {
+  if (registry === SYSTEM_BENCHMARK_EVALUATOR_REGISTRY) return true;
+  if (!exactKeys(registry, [
+    'version', 'kind', 'profiles', 'systemBenchmarkEvaluatorRegistryHash',
+  ]) || registry.version !== 1 || registry.kind !== 'SystemBenchmarkEvaluatorRegistry'
+    || !denseDataArray(registry.profiles)) return false;
+  try {
+    const rebuilt = compileSystemBenchmarkEvaluatorRegistry(registry.profiles.map((profile) => {
+      const { systemBenchmarkEvaluatorDescriptorHash, ...descriptor } = profile || {};
+      if (typeof systemBenchmarkEvaluatorDescriptorHash !== 'string'
+        || hashRecord('SystemBenchmarkEvaluatorDescriptor', descriptor)
+          !== systemBenchmarkEvaluatorDescriptorHash) {
+        throw new Error('system_benchmark_evaluator_descriptor_hash_invalid');
+      }
+      return descriptor;
+    }));
+    return JSON.stringify(rebuilt) === JSON.stringify(registry);
+  } catch {
+    return false;
+  }
+}
 
 export function systemBenchmarkEvaluatorDescriptorFor(
   benchmarkFamily,
   registry = SYSTEM_BENCHMARK_EVALUATOR_REGISTRY,
 ) {
-  if (registry !== SYSTEM_BENCHMARK_EVALUATOR_REGISTRY
-    || typeof benchmarkFamily !== 'string' || !IDENTIFIER.test(benchmarkFamily)) return null;
+  if (typeof benchmarkFamily !== 'string' || !IDENTIFIER.test(benchmarkFamily)) return null;
+  if (registry === SYSTEM_BENCHMARK_EVALUATOR_REGISTRY) {
+    return SYSTEM_BENCHMARK_EVALUATOR_BY_FAMILY.get(benchmarkFamily) || null;
+  }
+  if (!verifySystemBenchmarkEvaluatorRegistry(registry)) return null;
   return registry.profiles.find((profile) => profile.benchmarkFamily === benchmarkFamily) || null;
 }

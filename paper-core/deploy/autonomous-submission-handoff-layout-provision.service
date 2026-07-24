@@ -1,0 +1,42 @@
+[Unit]
+Description=Hepta Paper native submission-handoff DAC convergence
+Requires=hepta-paper-host-bootstrap.service
+After=hepta-paper-host-bootstrap.service
+ConditionPathExists=/var/lib/hepta-paper/runtime/autonomous-research/submission-handoff/submission-handoff.sqlite
+RequiresMountsFor=/var/lib/hepta-paper
+
+[Service]
+Type=oneshot
+User=root
+Group=hepta-paper
+RuntimeDirectory=hepta-paper-handoff-layout
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+ExecStart=/usr/bin/env -i PATH=/usr/sbin:/usr/bin /usr/libexec/hepta-paper/autonomous-submission-handoff-layout-provision --runtime-root /var/lib/hepta-paper/runtime --receipt-path /run/hepta-paper-handoff-layout/autonomous-submission-handoff-layout.receipt.json
+RemainAfterExit=yes
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_FSETID
+AmbientCapabilities=
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectHostname=yes
+ProtectClock=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX
+IPAddressDeny=any
+ReadWritePaths=-/var/lib/hepta-paper/runtime /run/hepta-paper-handoff-layout
+InaccessiblePaths=-/etc/hepta-paper -/run/hepta -/run/hepta-authority
+UMask=0077

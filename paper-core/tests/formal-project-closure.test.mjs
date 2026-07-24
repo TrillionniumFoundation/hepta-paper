@@ -3,7 +3,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { readFormalProjectClosure } from '../../paper-adapters/research-verify/formal-project-closure-reader.mjs';
+import {
+  DEFAULT_MAXIMUM_FORMAL_PROJECT_FILES,
+  readFormalProjectClosure,
+} from '../../paper-adapters/research-verify/formal-project-closure-reader.mjs';
 import { createFormalProjectSnapshotRepository } from '../../paper-adapters/research-verify/formal-project-snapshot-repository.mjs';
 import { createLakeFormalVerifier } from '../../paper-adapters/research-verify/lake-formal-verifier.mjs';
 import {
@@ -41,9 +44,14 @@ function formalDependencyFixture(t) {
   writeFile(path.join(mathlibRoot, 'Mathlib.lean'), 'theorem dependencyFixture : True := by trivial\n');
   writeFile(path.join(mathlibRoot, 'scripts', 'generate.sh'), '#!/bin/sh\nexit 0\n', 0o777);
   writeFile(path.join(mathlibRoot, '.lake', 'build', 'stale.olean'), 'stale build output\n');
+  writeFile(path.join(mathlibRoot, '.lake', 'lakefile.olean'), 'nested lake metadata\n');
   writeFile(path.join(localDependencyRoot, 'Local.lean'), 'theorem localFixture : True := by trivial\n', 0o640);
   return { scopeRoot, projectRoot, executable: path.join(mathlibRoot, 'scripts', 'generate.sh') };
 }
+
+test('formal closure default file ceiling admits an official Mathlib-sized workspace while remaining bounded', () => {
+  assert.equal(DEFAULT_MAXIMUM_FORMAL_PROJECT_FILES, 150000);
+});
 
 test('formal closure binds .lake package and external dependency modes while snapshots preserve only safe authority', async (t) => {
   if (process.platform === 'win32') {
@@ -62,7 +70,15 @@ test('formal closure binds .lake package and external dependency modes while sna
   assert.equal(packageScript?.posixMode, 0o777);
   assert.equal(externalDependency?.role, 'external_lake_dependency');
   assert.equal(externalDependency?.posixMode, 0o640);
-  assert.equal(closure.files.some((file) => file.sourcePath.endsWith('stale.olean')), false);
+  const compiledDependency = closure.files.find((file) => (
+    file.sourcePath.endsWith('/.lake/build/stale.olean')
+  ));
+  assert.equal(compiledDependency?.role, 'lake_build_artifact');
+  assert.equal(closure.lakeBuildArtifactFileCount, 1);
+  const nestedLakefile = closure.files.find((file) => (
+    file.sourcePath.endsWith('/mathlib/.lake/lakefile.olean')
+  ));
+  assert.equal(nestedLakefile?.role, 'lake_runtime_metadata');
 
   const repository = createFormalProjectSnapshotRepository();
   const snapshot = repository.materialize({
@@ -73,8 +89,24 @@ test('formal closure binds .lake package and external dependency modes while sna
   try {
     const snapshotExecutable = path.join(snapshot.root, '.lake', 'packages', 'mathlib', 'scripts', 'generate.sh');
     const snapshotExternal = path.join(snapshot.scopeRoot, 'local-dependency', 'Local.lean');
-    assert.equal(fs.statSync(snapshotExecutable).mode & 0o777, 0o755, 'group/other write authority must be stripped');
-    assert.equal(fs.statSync(snapshotExternal).mode & 0o777, 0o640, 'safe source mode must be preserved exactly');
+    assert.equal(fs.statSync(snapshotExecutable).mode & 0o777, 0o555,
+      'all baseline write authority must be stripped');
+    assert.equal(fs.statSync(snapshotExternal).mode & 0o777, 0o440,
+      'external dependency snapshots must be read-only');
+    assert.equal(fs.readFileSync(path.join(
+      snapshot.root,
+      '.lake/packages/mathlib/.lake/build/stale.olean',
+    ), 'utf8'), 'stale build output\n');
+    assert.ok(fs.statSync(path.join(
+      snapshot.root,
+      '.lake/packages/mathlib/.lake/lakefile.olean',
+    )).mtimeMs > fs.statSync(path.join(
+      snapshot.root,
+      '.lake/packages/mathlib/Mathlib.lean',
+    )).mtimeMs, 'compiled metadata must have a deterministic later mtime');
+    const seal = snapshot.seal();
+    assert.equal(seal.writableFileCount, 0);
+    assert.equal(seal.writableDirectoryCount, 0);
   } finally {
     snapshot.cleanup();
   }
@@ -94,6 +126,18 @@ test('formal closure binds .lake package and external dependency modes while sna
     dependencyScopeRoot: fixture.scopeRoot,
     projectFiles: closure.files,
   }), /formal_project_snapshot_mode_mismatch/);
+
+  writeFile(path.join(
+    fixture.projectRoot,
+    '.lake/packages/mathlib/.lake/build/stale.olean',
+  ), 'changed compiled dependency\n');
+  const changedBuildClosure = await readFormalProjectClosure({
+    projectRoot: fixture.projectRoot,
+    dependencyScopeRoot: fixture.scopeRoot,
+  });
+  assert.notEqual(changedBuildClosure.manifestHash, changedModeClosure.manifestHash);
+  assert.notEqual(changedBuildClosure.formalProjectClosureHash,
+    changedModeClosure.formalProjectClosureHash);
 });
 
 test('Lake formal build timeout has a Mathlib-sized default, a hard ceiling, and fail-closed parsing', () => {

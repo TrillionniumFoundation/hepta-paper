@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { buildRuntimeRetentionPlan, executeRuntimeRetentionPlan, reconcileRuntimeRetentionIntents } from '../../paper-adapters/automation/runtime-retention.mjs';
 import { createWorkspaceRegistry } from '../../paper-adapters/automation/workspace-registry.mjs';
@@ -20,6 +20,27 @@ function trustedRetentionLedger(store, clock) {
 
 function trustedStoreAdminLedger(store, clock) {
   return createSqliteReceiptLedger({ store, clock, issuerCapability: issueStoreAdministratorWriter() });
+}
+
+function reportRetentionFixture(t, prefix) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const store = createDefaultPaperStore({ root, runtimeRoot: root, dbPath: path.join(root, 'ledger.sqlite') });
+  t.after(() => store.close());
+  const reports = path.join(root, 'reports');
+  const target = path.join(reports, 'old-report.json');
+  fs.mkdirSync(reports);
+  fs.writeFileSync(target, 'authorized-original\n');
+  return {
+    root,
+    reports,
+    target,
+    retentionReceiptLedger: trustedRetentionLedger(store, { nowIso: () => '2026-07-14T00:00:00.000Z' }),
+    plan: buildRuntimeRetentionPlan({
+      runtimeRoot: root,
+      policies: { reports: { maxBytes: 1, maxAgeMs: 0, keepNewest: 0 } },
+    }),
+  };
 }
 
 function createQualifiedWorkspaceFixture({ root, store, clock, names }) {
@@ -410,6 +431,77 @@ test('retention rejects a symlink category root and a parent swap without touchi
   assert.equal(fs.existsSync(path.join(pinnedOriginalReports, 'after-intent.json')), true);
 });
 
+test('retention quarantines but never deletes a source replacement introduced at rename time', (t) => {
+  const fixture = reportRetentionFixture(t, 'hepta-retention-source-swap-');
+  const saved = path.join(fixture.reports, 'authorized-original.saved');
+  let quarantine = null;
+  assert.throws(() => executeRuntimeRetentionPlan(fixture.plan, {
+    apply: true,
+    retentionReceiptLedger: fixture.retentionReceiptLedger,
+    faultInjector(event) {
+      if (event.stage !== 'before_member_quarantined') return;
+      quarantine = path.join(fixture.reports, event.member.quarantineName);
+      fs.renameSync(fixture.target, saved);
+      fs.writeFileSync(fixture.target, 'replacement-must-survive\n');
+    },
+  }), /member_preimage_changed/);
+  assert.equal(fs.readFileSync(saved, 'utf8'), 'authorized-original\n');
+  assert.equal(fs.readFileSync(quarantine, 'utf8'), 'replacement-must-survive\n');
+  const recovery = reconcileRuntimeRetentionIntents({
+    runtimeRoot: fixture.root,
+    retentionReceiptLedger: fixture.retentionReceiptLedger,
+  });
+  assert.equal(recovery.status, 'runtime_retention_recovery_blocked');
+  assert.equal(fs.readFileSync(quarantine, 'utf8'), 'replacement-must-survive\n');
+});
+
+test('retention rechecks the quarantine after the final pre-remove hook and retains a swap', (t) => {
+  const fixture = reportRetentionFixture(t, 'hepta-retention-quarantine-swap-');
+  const saved = path.join(fixture.reports, 'authorized-quarantine.saved');
+  let quarantine = null;
+  assert.throws(() => executeRuntimeRetentionPlan(fixture.plan, {
+    apply: true,
+    retentionReceiptLedger: fixture.retentionReceiptLedger,
+    faultInjector(event) {
+      if (event.stage !== 'before_quarantined_member_removed') return;
+      quarantine = path.join(fixture.reports, event.member.quarantineName);
+      fs.renameSync(quarantine, saved);
+      fs.writeFileSync(quarantine, 'replacement-must-survive\n');
+    },
+  }), /member_preimage_changed/);
+  assert.equal(fs.readFileSync(saved, 'utf8'), 'authorized-original\n');
+  assert.equal(fs.readFileSync(quarantine, 'utf8'), 'replacement-must-survive\n');
+  const recovery = reconcileRuntimeRetentionIntents({
+    runtimeRoot: fixture.root,
+    retentionReceiptLedger: fixture.retentionReceiptLedger,
+  });
+  assert.equal(recovery.status, 'runtime_retention_recovery_blocked');
+  assert.equal(fs.readFileSync(quarantine, 'utf8'), 'replacement-must-survive\n');
+});
+
+test('retention restores an exact quarantined member after a crash and then converges', (t) => {
+  const fixture = reportRetentionFixture(t, 'hepta-retention-quarantine-recovery-');
+  let quarantine = null;
+  assert.throws(() => executeRuntimeRetentionPlan(fixture.plan, {
+    apply: true,
+    retentionReceiptLedger: fixture.retentionReceiptLedger,
+    faultInjector(event) {
+      if (event.stage !== 'after_member_quarantined') return;
+      quarantine = path.join(fixture.reports, event.member.quarantineName);
+      throw new Error('simulated_quarantine_crash');
+    },
+  }), /simulated_quarantine_crash/);
+  assert.equal(fs.existsSync(fixture.target), false);
+  assert.equal(fs.readFileSync(quarantine, 'utf8'), 'authorized-original\n');
+  const recovery = reconcileRuntimeRetentionIntents({
+    runtimeRoot: fixture.root,
+    retentionReceiptLedger: fixture.retentionReceiptLedger,
+  });
+  assert.equal(recovery.status, 'runtime_retention_recovery_complete');
+  assert.equal(fs.existsSync(fixture.target), false);
+  assert.equal(fs.existsSync(quarantine), false);
+});
+
 test('workspace retention revalidates archive evidence after intent recording', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-retention-workspace-apply-race-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -531,6 +623,8 @@ test('retention recovery converges after the trusted tombstone commits but befor
   const retentionRoot = path.join(root, 'retention');
   assert.equal(fs.readdirSync(retentionRoot).filter((name) => name.endsWith('.tombstone.json')).length, 0);
   assert.equal(retentionReceiptLedger.listRawForAudit({ stream: 'runtime-retention' }).filter((row) => row.kind === 'RuntimeRetentionReceipt').length, 1);
+  const committedReceiptId = retentionReceiptLedger.listRawForAudit({ stream: 'runtime-retention' })
+    .find((row) => row.kind === 'RuntimeRetentionReceipt').receipt_id;
   const recovered = reconcileRuntimeRetentionIntents({
     runtimeRoot: root,
     workspaceRegistry: qualified.registry,
@@ -539,6 +633,110 @@ test('retention recovery converges after the trusted tombstone commits but befor
   });
   assert.equal(recovered.status, 'runtime_retention_recovery_complete');
   assert.equal(fs.readdirSync(retentionRoot).filter((name) => name.endsWith('.tombstone.json')).length, 1);
+  const receiptsAfterRecovery = retentionReceiptLedger.listRawForAudit({ stream: 'runtime-retention' })
+    .filter((row) => row.kind === 'RuntimeRetentionReceipt');
+  assert.equal(receiptsAfterRecovery.length, 1);
+  assert.equal(receiptsAfterRecovery[0].receipt_id, committedReceiptId);
+});
+
+test('retention recovery blocks multiple trusted tombstones for one intent', (t) => {
+  const fixture = reportRetentionFixture(t, 'hepta-retention-tombstone-conflict-');
+  assert.throws(() => executeRuntimeRetentionPlan(fixture.plan, {
+    apply: true,
+    retentionReceiptLedger: fixture.retentionReceiptLedger,
+    faultInjector(event) {
+      if (event.stage === 'after_trusted_tombstone_recorded') throw new Error('crash_before_local_tombstone');
+    },
+  }), /crash_before_local_tombstone/);
+  const originalRow = fixture.retentionReceiptLedger.list({
+    stream: 'runtime-retention',
+    environment: 'administrative',
+    evidenceClass: 'retention_tombstone',
+    includeQualified: true,
+  })[0];
+  const original = JSON.parse(originalRow.receipt_json);
+  const { runtimeRetentionReceiptHash: _hash, ...payload } = original;
+  payload.createdAt = new Date(Date.parse(payload.createdAt) + 1000).toISOString();
+  const conflict = {
+    ...payload,
+    runtimeRetentionReceiptHash: hashRecord('RuntimeRetentionReceipt', payload),
+  };
+  fixture.retentionReceiptLedger.record(conflict, {
+    stream: 'runtime-retention',
+    environment: 'administrative',
+    evidenceClass: 'retention_tombstone',
+  });
+  const recovery = reconcileRuntimeRetentionIntents({
+    runtimeRoot: fixture.root,
+    retentionReceiptLedger: fixture.retentionReceiptLedger,
+  });
+  assert.equal(recovery.status, 'runtime_retention_recovery_blocked');
+  assert.match(recovery.blockers[0].blocker, /tombstone_ledger_ambiguous/);
+});
+
+test('concurrent recovery of one intent converges on one deterministic trusted tombstone', async (t) => {
+  const fixture = reportRetentionFixture(t, 'hepta-retention-concurrent-tombstone-');
+  assert.throws(() => executeRuntimeRetentionPlan(fixture.plan, {
+    apply: true,
+    retentionReceiptLedger: fixture.retentionReceiptLedger,
+    faultInjector(event) {
+      if (event.stage === 'after_intent_recorded') throw new Error('leave_intent_for_concurrent_recovery');
+    },
+  }), /leave_intent_for_concurrent_recovery/);
+  const readyPath = path.join(fixture.root, 'recovery-a.ready');
+  const releasePath = path.join(fixture.root, 'recovery-a.release');
+  const runner = `
+    import fs from 'node:fs';
+    import path from 'node:path';
+    import { reconcileRuntimeRetentionIntents } from './paper-adapters/automation/runtime-retention.mjs';
+    import { issueRuntimeRetentionWriter } from './paper-adapters/persistence/receipt-writer-broker.mjs';
+    import { createDefaultPaperStore } from './paper-adapters/persistence/store-provider.mjs';
+    import { createSqliteReceiptLedger } from './paper-adapters/persistence/sqlite-receipt-ledger.mjs';
+    const root = ${JSON.stringify(fixture.root)};
+    const store = createDefaultPaperStore({ root, runtimeRoot: root, dbPath: path.join(root, 'ledger.sqlite') });
+    const ledger = createSqliteReceiptLedger({ store, clock: { nowIso: () => '2026-07-21T00:00:00.000Z' }, issuerCapability: issueRuntimeRetentionWriter() });
+    try {
+      const result = reconcileRuntimeRetentionIntents({ runtimeRoot: root, retentionReceiptLedger: ledger,
+        faultInjector: process.env.HEPTA_RETENTION_A === '1' ? (event) => {
+          if (event.stage !== 'before_tombstone') return;
+          fs.writeFileSync(${JSON.stringify(readyPath)}, 'ready');
+          const wait = new Int32Array(new SharedArrayBuffer(4));
+          while (!fs.existsSync(${JSON.stringify(releasePath)})) Atomics.wait(wait, 0, 0, 10);
+        } : null });
+      process.stdout.write(JSON.stringify(result));
+    } finally { store.close(); }
+  `;
+  const runChild = (isA) => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['--input-type=module', '--eval', runner], {
+      cwd: path.resolve('.'),
+      env: { ...process.env, HEPTA_RETENTION_A: isA ? '1' : '0' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.on('error', reject);
+    child.on('exit', (code) => code === 0
+      ? resolve(JSON.parse(stdout))
+      : reject(new Error(`retention child failed ${code}: ${stderr}`)));
+  });
+  const recoveryA = runChild(true);
+  for (let attempts = 0; attempts < 500 && !fs.existsSync(readyPath); attempts += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(fs.existsSync(readyPath), true);
+  const recoveryB = await runChild(false);
+  fs.writeFileSync(releasePath, 'release');
+  const recoveredA = await recoveryA;
+  assert.equal(recoveryB.status, 'runtime_retention_recovery_complete');
+  assert.equal(recoveredA.status, 'runtime_retention_recovery_complete');
+  const tombstones = fixture.retentionReceiptLedger.listRawForAudit({
+    stream: 'runtime-retention',
+    evidenceClass: 'retention_tombstone',
+  }).filter((row) => row.kind === 'RuntimeRetentionReceipt');
+  assert.equal(tombstones.length, 1);
+  assert.equal(new Set(tombstones.map((row) => JSON.parse(row.receipt_json).intentHash)).size, 1);
 });
 
 test('recovery refuses to promote a locally forged self-hashed tombstone into the trusted ledger', (t) => {

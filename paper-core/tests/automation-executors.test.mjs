@@ -9,15 +9,21 @@ import { createCodexAgentExecutor } from '../../paper-adapters/automation/codex-
 import { createOllamaStructuredAgentExecutor } from '../../paper-adapters/automation/ollama-structured-agent-executor.mjs';
 import { createCampaignNodeExecutor } from '../../paper-composition/automation/campaign-node-execution-composition.mjs';
 import { createIsolatedAgentExecutor } from '../../paper-adapters/automation/isolated-agent-executor.mjs';
-import { sanitizeGeneratedLatex } from '../../paper-adapters/automation/generated-latex-sanitizer.mjs';
 import { createMultiLanguageEmpiricalExecutor } from '../../paper-adapters/automation/multi-language-empirical-executor.mjs';
 import { createFilesystemEmpiricalCacheRepository } from '../../paper-adapters/automation/empirical-cache-repository.mjs';
+import { AUTOMATION_RUNTIME_IMAGES } from '../../paper-adapters/automation/runtime-image-registry.mjs';
 import { createOsSandboxedWorkerRunner, directoryMerkleHash, fileSha256Hash } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
-import { evaluateAcademicEmpiricalReadiness } from '../../paper-adapters/runtime/sandbox-backend-probe.mjs';
 import { buildExecutorCapabilities } from '../../paper-ports/executor-capabilities.mjs';
 import { runBoundedChildProcess } from '../../paper-adapters/automation/bounded-child-process.mjs';
+import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
-  buildCampaignAgentInstructions,
+  verifyIsolatedAgentMergeReceipt,
+} from '../../paper-domain/evidence/isolated-agent-merge-receipt-contract.mjs';
+import {
+  buildAgentWorkspacePostimageBinding,
+} from '../../paper-domain/evidence/agent-execution-receipt-contract.mjs';
+import {
+  empiricalCodeWorkspaceMutationPolicy,
   formalWorkspaceMutationPolicy,
 } from '../../paper-application/automation/campaign-agent-policy.mjs';
 import { evaluateEmpiricalCacheReproducibility } from '../../paper-domain/automation/empirical-cache-reproducibility-policy.mjs';
@@ -28,64 +34,37 @@ import {
   withFixtureEnvironmentBom,
 } from './empirical-environment-test-support.mjs';
 
-test('campaign coder contract writes canonical metric artifacts only through HEPTA_OUTPUT_DIR', () => {
-  const instructions = buildCampaignAgentInstructions({
-    kind: 'coder-python',
-    manuscript: 'main.tex',
-    language: 'python',
+function fixtureAgentReceipt(executorId, changedPaths) {
+  const payload = {
+    status: 'agent_execution_completed',
+    executorId,
+    changedPaths: Object.freeze([...changedPaths].sort()),
+  };
+  return Object.freeze({
+    ...payload,
+    agentExecutionReceiptHash: hashRecord('AgentExecutionReceipt', payload),
   });
-  assert.match(instructions, /HEPTA_OUTPUT_DIR\/results\.json/);
-  assert.match(instructions, /HEPTA_OUTPUT_DIR\/results\.csv/);
-  assert.match(instructions, /exact header metric,value/);
-  assert.match(instructions, /do not fall back to the working directory/i);
-  const executor = createMultiLanguageEmpiricalExecutor({
-    workerRunner: { availability: {}, run() { throw new Error('must not execute'); } },
-  });
-  const blocked = executor.execute({ language: 'python', requireSeparateOutputRoot: true, env: {} });
-  assert.equal(blocked.status, 'empirical_output_contract_invalid');
-  assert.deepEqual(blocked.blockers, ['empirical_output_directory_binding_invalid']);
-});
+}
 
-test('academic empirical readiness is distinct from a generic Docker sandbox', (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-academic-empirical-readiness-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const tracer = path.join(root, 'strace');
-  fs.writeFileSync(tracer, 'fixture\n');
-  fs.chmodSync(tracer, 0o755);
-  const dockerFallback = evaluateAcademicEmpiricalReadiness({
-    bubblewrapProbe: { available: false, backend: 'bubblewrap', detail: 'Operation not permitted' },
-    datasetAccessTracer: tracer,
-  });
-  assert.equal(dockerFallback.academicEmpiricalReady, false);
-  assert.equal(dockerFallback.academicEmpiricalReadinessReason, 'academic_empirical_bubblewrap_backend_unavailable');
-  assert.match(dockerFallback.academicEmpiricalReadinessDetail, /Operation not permitted/);
-
-  const missingTracer = evaluateAcademicEmpiricalReadiness({
-    bubblewrapProbe: { available: true, backend: 'bubblewrap' },
-    datasetAccessTracer: path.join(root, 'missing-strace'),
-  });
-  assert.equal(missingTracer.academicEmpiricalReady, false);
-  assert.equal(missingTracer.academicEmpiricalReadinessReason, 'academic_empirical_dataset_access_tracer_unavailable');
-
-  const ready = evaluateAcademicEmpiricalReadiness({
-    bubblewrapProbe: { available: true, backend: 'bubblewrap' },
-    datasetAccessTracer: tracer,
-  });
-  assert.equal(ready.academicEmpiricalReady, true);
-  assert.equal(ready.academicEmpiricalDatasetProofBackend, 'bubblewrap-host-supervised-strace-v2');
-});
-
-test('Codex agent adapter executes a real process and records workspace changes', async (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-agent-executor-'));
+test('policy-bound coder requests cannot execute through an unisolated provider backend', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-unisolated-coder-blocked-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const shim = path.join(root, 'codex-shim.sh');
-  fs.writeFileSync(shim, '#!/bin/sh\ncat >/dev/null\nprintf "changed\\n" > agent-output.txt\nprintf \'{"status":"completed","summary":"ok","checksRun":[],"blockers":[]}\\n\'\n');
+  fs.writeFileSync(shim, '#!/bin/sh\nprintf "unexpected\\n" > escaped.txt\n');
   fs.chmodSync(shim, 0o755);
   const executor = createCodexAgentExecutor({ codexBinary: shim, timeoutMs: 5000 });
-  const receipt = await executor.execute({ role: 'writer', workspacePath: root, instructions: 'write a fixture', sandbox: 'workspace-write' });
-  assert.equal(receipt.status, 'agent_execution_completed');
-  assert.deepEqual(receipt.changedPaths, ['agent-output.txt']);
-  assert.equal(receipt.externalActionPerformed, false);
+  await assert.rejects(
+    () => executor.execute({
+      role: 'coder-python',
+      workspacePath: root,
+      instructions: 'write code',
+      sandbox: 'workspace-write',
+      requiredCapabilities: { workspaceIsolation: true },
+      workspaceMutationPolicy: empiricalCodeWorkspaceMutationPolicy({ language: 'python' }),
+    }),
+    /executor_workspace_isolation_required/,
+  );
+  assert.equal(fs.existsSync(path.join(root, 'escaped.txt')), false);
 });
 
 test('Codex and isolated wrappers fail closed when a read-only agent mutates files', async (t) => {
@@ -111,7 +90,7 @@ test('Codex and isolated wrappers fail closed when a read-only agent mutates fil
     capabilities: () => buildExecutorCapabilities({ executorId: 'fixture-read-only-liar', sandboxModes: ['read-only'], networkPolicy: 'none', receiptKinds: ['AgentExecutionReceipt'] }),
     async execute(input) {
       fs.writeFileSync(path.join(input.workspacePath, 'main.tex'), 'mutated\n');
-      return { status: 'agent_execution_completed', agentExecutionReceiptHash: 'sha256:fixture' };
+      return fixtureAgentReceipt('fixture-read-only-liar', ['main.tex']);
     },
   };
   const isolated = createIsolatedAgentExecutor({ delegate, isolationRoot: path.join(root, 'isolated'), keepFailedWorkspaces: false });
@@ -140,7 +119,7 @@ test('formal author mutation policy rejects manuscript or canonical-spec edits b
     async execute(input) {
       fs.writeFileSync(path.join(input.workspacePath, 'Main.lean'), 'theorem valid : True := by trivial\n');
       fs.writeFileSync(path.join(input.workspacePath, 'main.tex'), 'weakened manuscript\n');
-      return { status: 'agent_execution_completed', agentExecutionReceiptHash: 'sha256:fixture' };
+      return fixtureAgentReceipt('fixture-formal-author-policy', ['Main.lean', 'main.tex']);
     },
   };
   const isolated = createIsolatedAgentExecutor({
@@ -172,7 +151,7 @@ test('isolated merge fails closed before staging an unbounded descriptor batch',
       for (let index = 0; index < 129; index += 1) {
         fs.writeFileSync(path.join(input.workspacePath, `generated-${index}.txt`), `${index}\n`);
       }
-      return { status: 'agent_execution_completed', agentExecutionReceiptHash: 'sha256:fixture' };
+      return fixtureAgentReceipt('fixture-agent', ['main.tex']);
     },
   };
   const isolated = createIsolatedAgentExecutor({ delegate, isolationRoot: path.join(root, 'isolated'), keepFailedWorkspaces: false });
@@ -309,7 +288,7 @@ test('isolated agent workspace excludes research-data binaries and oversized fil
       assert.equal(fs.existsSync(path.join(input.workspacePath, 'large.csv')), false);
       assert.equal(fs.existsSync(path.join(input.workspacePath, 'derived-data')), false);
       fs.writeFileSync(path.join(input.workspacePath, 'main.tex'), 'after\n');
-      return { status: 'agent_execution_completed', agentExecutionReceiptHash: 'sha256:fixture' };
+      return fixtureAgentReceipt('fixture-agent', ['main.tex']);
     },
   };
   const executor = createIsolatedAgentExecutor({ delegate, isolationRoot: path.join(root, 'isolated'), keepFailedWorkspaces: false });
@@ -318,6 +297,112 @@ test('isolated agent workspace excludes research-data binaries and oversized fil
   assert.equal(fs.statSync(path.join(root, 'isolated')).mode & 0o777, 0o700);
   assert.equal(receipt.workspaceContentPolicy.researchDataBinaryExcluded, true);
   assert.deepEqual(receipt.workspaceContentPolicy.oversizedTopLevelDirectories, ['derived-data']);
+  assert.equal(verifyIsolatedAgentMergeReceipt(receipt.isolatedAgentMergeReceipt, {
+    delegateAgentExecutionReceipt: receipt,
+  }), true);
+  const { isolatedAgentMergeReceiptHash: _mergeHash, ...mergePayload } =
+    receipt.isolatedAgentMergeReceipt;
+  const executorTamperPayload = { ...mergePayload, delegateExecutorId: 'attacker-executor' };
+  const executorTamper = {
+    ...executorTamperPayload,
+    isolatedAgentMergeReceiptHash:
+      hashRecord('IsolatedAgentMergeReceipt', executorTamperPayload),
+  };
+  assert.equal(verifyIsolatedAgentMergeReceipt(executorTamper, {
+    delegateAgentExecutionReceipt: receipt,
+  }), false);
+  const pathTamperPayload = {
+    ...mergePayload,
+    sourcePostimage: [{ ...mergePayload.sourcePostimage[0], path: '../main.tex' }],
+  };
+  const pathTamper = {
+    ...pathTamperPayload,
+    isolatedAgentMergeReceiptHash:
+      hashRecord('IsolatedAgentMergeReceipt', pathTamperPayload),
+  };
+  assert.equal(verifyIsolatedAgentMergeReceipt(pathTamper, {
+    delegateAgentExecutionReceipt: receipt,
+  }), false);
+
+  const rehashMerge = ({ delegateReceipt, changedPaths, postimage, before, after }) => {
+    const rows = (values) => [...values].sort((left, right) => left.path.localeCompare(right.path));
+    const sourcePreimage = rows(before);
+    const isolatedPreimage = rows(before);
+    const isolatedPostimage = rows(after);
+    const sourcePostimage = rows(after);
+    const sourcePreimageManifestHash = hashRecord(
+      'IsolatedAgentWorkspaceSnapshot', sourcePreimage,
+    );
+    const isolatedPreimageManifestHash = hashRecord(
+      'IsolatedAgentWorkspaceSnapshot', isolatedPreimage,
+    );
+    const isolatedPostimageManifestHash = hashRecord(
+      'IsolatedAgentWorkspaceSnapshot', isolatedPostimage,
+    );
+    const sourcePostimageManifestHash = hashRecord(
+      'IsolatedAgentWorkspaceSnapshot', sourcePostimage,
+    );
+    const identity = {
+      delegateAgentExecutionReceiptHash: delegateReceipt.agentExecutionReceiptHash,
+      changedPaths,
+      agentWorkspacePostimageBindingHash: postimage.agentWorkspacePostimageBindingHash,
+      sourcePreimageManifestHash,
+      isolatedPreimageManifestHash,
+      isolatedPostimageManifestHash,
+      sourcePostimageManifestHash,
+    };
+    const payload = {
+      ...mergePayload,
+      delegateExecutorId: delegateReceipt.executorId,
+      delegateAgentExecutionReceiptHash: delegateReceipt.agentExecutionReceiptHash,
+      changedPaths,
+      agentWorkspacePostimageBinding: postimage,
+      agentWorkspacePostimageBindingHash: postimage.agentWorkspacePostimageBindingHash,
+      sourcePreimage,
+      sourcePreimageManifestHash,
+      isolatedPreimage,
+      isolatedPreimageManifestHash,
+      isolatedPostimage,
+      isolatedPostimageManifestHash,
+      sourcePostimage,
+      sourcePostimageManifestHash,
+      mergeIdentityHash: hashRecord('IsolatedAgentMergeIdentity', identity),
+    };
+    return {
+      ...payload,
+      isolatedAgentMergeReceiptHash: hashRecord('IsolatedAgentMergeReceipt', payload),
+    };
+  };
+  const ghostDelegate = fixtureAgentReceipt('fixture-agent', ['ghost.tex']);
+  const ghostPostimage = buildAgentWorkspacePostimageBinding({
+    changedPaths: ['ghost.tex'],
+    files: [{ path: 'ghost.tex', hash: null }],
+  });
+  const ghost = rehashMerge({
+    delegateReceipt: ghostDelegate,
+    changedPaths: ['ghost.tex'],
+    postimage: ghostPostimage,
+    before: mergePayload.sourcePreimage,
+    after: mergePayload.sourcePreimage,
+  });
+  assert.equal(verifyIsolatedAgentMergeReceipt(ghost, {
+    delegateAgentExecutionReceipt: ghostDelegate,
+  }), false);
+
+  const unlistedHash = hashRecord('UnlistedIsolatedAgentFile', { value: 'attacker' });
+  const unlisted = rehashMerge({
+    delegateReceipt: receipt,
+    changedPaths: mergePayload.changedPaths,
+    postimage: mergePayload.agentWorkspacePostimageBinding,
+    before: mergePayload.sourcePreimage,
+    after: [
+      ...mergePayload.sourcePostimage,
+      { path: 'unlisted.tex', hash: unlistedHash },
+    ],
+  });
+  assert.equal(verifyIsolatedAgentMergeReceipt(unlisted, {
+    delegateAgentExecutionReceipt: receipt,
+  }), false);
 });
 
 test('isolated agent clone and diff exclude materialization recovery state', async (t) => {
@@ -340,7 +425,7 @@ test('isolated agent clone and diff exclude materialization recovery state', asy
       fs.mkdirSync(isolatedRecovery);
       fs.writeFileSync(path.join(isolatedRecovery, 'agent-operation.tombstone'), 'agent recovery state\n');
       fs.writeFileSync(path.join(input.workspacePath, 'main.tex'), 'after\n');
-      return { status: 'agent_execution_completed', agentExecutionReceiptHash: 'sha256:fixture' };
+      return fixtureAgentReceipt('fixture-recovery-exclusion', ['main.tex']);
     },
   };
   const executor = createIsolatedAgentExecutor({ delegate, isolationRoot: path.join(root, 'isolated'), keepFailedWorkspaces: false });
@@ -360,7 +445,11 @@ test('multi-language empirical executor runs Python in kernel sandbox and persis
   fs.mkdirSync(source);
   fs.mkdirSync(output);
   fs.writeFileSync(path.join(source, 'run.py'), 'import json\njson.dump({"metric": 0.91}, open("results.json", "w"))\n');
-  const runner = createOsSandboxedWorkerRunner({ allowedExecutables: ['python3'], allowedRoots: [source], allowedOutputRoots: [output] });
+  const runner = createOsSandboxedWorkerRunner({
+    allowedExecutables: ['python3'], allowedRoots: [source], allowedOutputRoots: [output],
+    dockerImage: AUTOMATION_RUNTIME_IMAGES.python.image,
+  });
+  if (!runner.availability.available) { t.skip('pinned Python sandbox runtime unavailable'); return; }
   const executor = createMultiLanguageEmpiricalExecutor({ workerRunner: runner });
   const receipt = executor.execute({ language: 'python', entrypoint: 'run.py', cwd: source, sourceRoot: source, outputDirectory: output, outputPaths: ['results.json'], timeoutMs: 120000 });
   assert.equal(receipt.status, 'empirical_execution_completed', JSON.stringify({ blockers: receipt.blockers, exitCode: receipt.exitCode, stderrTail: receipt.stderrTail }));
@@ -1345,6 +1434,7 @@ test('every campaign repair path forwards the nested lease AbortSignal and stops
   for (const fixture of cases) {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), `hepta-${fixture.name}-repair-abort-`));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    fs.mkdirSync(path.join(root, 'runtime'), { recursive: true });
     fs.writeFileSync(path.join(root, 'main.tex'), fixture.language === 'latex' ? fixture.source : 'fixture\n');
     if (fixture.language === 'python') fs.writeFileSync(path.join(root, 'run.py'), fixture.source);
     if (fixture.language === 'r') fs.writeFileSync(path.join(root, 'run.R'), fixture.source);
@@ -1394,17 +1484,4 @@ test('every campaign repair path forwards the nested lease AbortSignal and stops
     assert.equal(agentAbortCount, 1, fixture.name);
     assert.equal(empiricalCalls, fixture.expectedEmpiricalCalls, fixture.name);
   }
-});
-
-test('generated LaTeX sanitizer converts model newline tokens and table row endings', (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-latex-sanitizer-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  fs.writeFileSync(path.join(root, 'main.tex'), '\\begin{tabular}{cc}\nA & B\\n \\hline\n\\end{tabular}\n**Observed**\\n\\end{document}\n');
-  const receipt = sanitizeGeneratedLatex({ workspacePath: root, manuscriptPath: 'main.tex' });
-  const source = fs.readFileSync(path.join(root, 'main.tex'), 'utf8');
-  assert.equal(receipt.tableRowTerminatorReplacements, 1);
-  assert.equal(receipt.literalNewlineReplacements, 1);
-  assert.equal(receipt.markdownBoldReplacements, 1);
-  assert.match(source, /A & B\\\\\n \\hline/);
-  assert.match(source, /\\textbf\{Observed\}/);
 });

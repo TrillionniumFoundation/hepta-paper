@@ -1,19 +1,29 @@
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { deepFreezeJsonValue } from '../../workflow-kernel/deep-freeze-json-value.mjs';
 import { verifyCampaignBenchmarkSelector } from './campaign-benchmark-selector.mjs';
 import { SYSTEM_BENCHMARK_HARNESS_IMPLEMENTATION } from './system-benchmark-harness-identity.mjs';
 import { evaluateSystemBenchmarkStatisticalPolicy, verifySystemBenchmarkArmAdapterSet, verifySystemBenchmarkArmProtocolSet, verifySystemBenchmarkStatisticalCompatibilityEvidence } from './system-benchmark-arm-protocol.mjs';
 import { buildSystemBenchmarkArmBatchChallenge, buildSystemBenchmarkCellChallenge, decodeSystemBenchmarkArmBatchChallengeEnvironment } from './system-benchmark-challenge.mjs';
 import { verifyOperatorDatasetHarnessAuthorityReceiptStructure } from './operator-dataset-harness-contract.mjs';
-import { analysisProtocolResultDocumentFields, buildExperimentReplayAnalysisProtocolBinding, buildExperimentRunAnalysisProtocolBinding, verifyExperimentReplayAnalysisProtocolBinding, verifyExperimentRunAnalysisProtocolBinding, verifyHarnessAnalysisProtocolBinding } from './analysis-protocol-run-binding.mjs';
+import { analysisProtocolResultDocumentFields, buildExperimentRunAnalysisProtocolBinding, verifyExperimentRunAnalysisProtocolBinding, verifyHarnessAnalysisProtocolBinding } from './analysis-protocol-run-binding.mjs';
 import { verifyDatasetRuntimeAccessReceiptAgainstWorkerReceipt } from './dataset-runtime-access-contract.mjs';
 import { buildDatasetAuthorizationSet, parseExperimentObservationCsv, verifyExperimentRawArtifactWriteReceipt } from './experiment-run-artifact-contract.mjs';
 import { verifyOsSandboxWorkerReceipt } from './os-sandbox-worker-receipt-contract.mjs';
 import { buildCampaignBenchmarkSchedule, REQUIRED_SYSTEM_BENCHMARK_ARMS as REQUIRED_ARMS } from './system-benchmark-schedule.mjs';
 import { verifyWorkerProcessExecutionIdentity } from './worker-process-execution-contract.mjs';
-import { buildExperimentRunEnvironmentBomBinding, experimentReplayEnvironmentBomFields, verifyExperimentReplayEnvironmentBomBinding, verifyExperimentRunEnvironmentBomBinding, verifyHarnessEnvironmentBomBinding } from './experiment-environment-bom-binding.mjs';
+import { buildExperimentRunEnvironmentBomBinding, verifyExperimentRunEnvironmentBomBinding, verifyHarnessEnvironmentBomBinding } from './experiment-environment-bom-binding.mjs';
 import { verifySystemBenchmarkArmBatchResourceBudget, verifySystemBenchmarkHarnessResourceBudget } from './system-benchmark-resource-budget-contract.mjs';
 import { verifyEmpiricalPreDataAccessFreeze } from './empirical-pre-data-access-freeze.mjs';
 import { aggregateExperimentObservations as aggregateObservations, canonicalExperimentObservation as canonicalObservation, csvExperimentObservation as csvObservation, experimentObservationKey as observationKey, finiteExperimentMetrics as finiteMetrics } from './experiment-observation-contract.mjs';
+import { verifyDatasetEvaluationDependencyReceipt } from './dataset-evaluation-dependency-contract.mjs';
+import { createExperimentReplayReceiptContract } from './experiment-replay-receipt-contract.mjs';
+import {
+  experimentRunObservationScheduleComplete,
+  inspectSystemBenchmarkExperimentIrBinding,
+  verifiedExperimentRunReceiptHashes,
+  verifiedHarnessReceiptHashes,
+  verifiedReceiptPreflight,
+} from './experiment-run-receipt-verification-helpers.mjs';
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 const utf8Bytes = (value) => new TextEncoder().encode(value).byteLength;
 
@@ -23,10 +33,10 @@ export {
   verifyDatasetRuntimeAccessReceiptAgainstWorkerReceipt,
   verifyOsSandboxWorkerReceipt,
 };
-
 export function verifySystemBenchmarkHarnessExecutionReceipt(receipt) {
-  if (!receipt || receipt.version !== 3 || receipt.kind !== 'SystemBenchmarkHarnessExecutionReceipt') return false;
-  const { systemBenchmarkHarnessExecutionReceiptHash, ...payload } = receipt;
+  if (!receipt || receipt.version !== 4 || receipt.kind !== 'SystemBenchmarkHarnessExecutionReceipt') return false;
+  const preflight = verifiedReceiptPreflight(receipt, 'SystemBenchmarkHarnessExecutionReceipt', 'systemBenchmarkHarnessExecutionReceiptHash', verifiedHarnessReceiptHashes);
+  if (!preflight || preflight.cached) return preflight?.cached === true;
   const selector = verifyCampaignBenchmarkSelector(receipt.benchmarkSelector, {
     benchmarkId: receipt.benchmarkId,
     datasetMounts: receipt.datasetAuthorizations,
@@ -61,6 +71,12 @@ export function verifySystemBenchmarkHarnessExecutionReceipt(receipt) {
       selector: selector.expected,
     })
     : operatorDatasetHarnessAuthority !== null) return false;
+  const experimentIrBinding = inspectSystemBenchmarkExperimentIrBinding(
+    receipt,
+    { operatorDatasetHarnessAuthority },
+  );
+  if (!experimentIrBinding.valid) return false;
+  const { researchResolved } = experimentIrBinding;
   const executionIsolationMode = datasetBacked ? 'academic-per-cell-process-v1' : 'synthetic-per-arm-batch-process-v1';
   const executionUnits = datasetBacked
     ? expected.map((cell) => [cell])
@@ -86,7 +102,13 @@ export function verifySystemBenchmarkHarnessExecutionReceipt(receipt) {
     const expectedAdapter = receipt.armAdapterSet.adapters.find((candidate) => candidate.arm === arm);
     let fixture = null;
     if (!datasetBacked) {
-      try { fixture = buildSystemBenchmarkArmBatchChallenge({ protocol, cells: scheduledCells }); }
+      try {
+        fixture = buildSystemBenchmarkArmBatchChallenge({
+          protocol,
+          cells: scheduledCells,
+          versionedExperimentIrHash: receipt.versionedExperimentIrHash,
+        });
+      }
       catch { return false; }
     }
     const boundChallenge = decodeSystemBenchmarkArmBatchChallengeEnvironment(batchReceipt?.runnerReceipt?.executionBindings || {});
@@ -94,7 +116,7 @@ export function verifySystemBenchmarkHarnessExecutionReceipt(receipt) {
     const executionAttemptId = datasetBacked
       ? `${receipt.experimentAttemptId}:arm:${arm}:cell:${scheduledCells[0].cellId}`
       : `${receipt.experimentAttemptId}:arm:${arm}`;
-    if (!batchReceipt || batchReceipt.version !== 1 || batchReceipt.kind !== 'SystemBenchmarkArmBatchExecutionReceipt'
+    if (!batchReceipt || batchReceipt.version !== 2 || batchReceipt.kind !== 'SystemBenchmarkArmBatchExecutionReceipt'
       || batchReceipt.arm !== arm || batchReceipt.systemBenchmarkArmProtocolHash !== protocol?.systemBenchmarkArmProtocolHash
       || batchReceipt.executionMode !== executionIsolationMode
       || batchReceipt.executionAttemptId !== executionAttemptId
@@ -108,6 +130,8 @@ export function verifySystemBenchmarkHarnessExecutionReceipt(receipt) {
       || boundChallenge.scheduleCellCount !== scheduledCells.length
       || JSON.stringify(boundChallenge.cells.map((cell) => cell.cellId)) !== JSON.stringify(scheduledCells.map((cell) => cell.cellId))
       || batchReceipt.systemBenchmarkArmBatchChallengeHash !== expectedBatchChallengeHash
+      || batchReceipt.versionedExperimentIrHash !== receipt.versionedExperimentIrHash
+      || boundChallenge.versionedExperimentIrHash !== receipt.versionedExperimentIrHash
       || !verifyOsSandboxWorkerReceipt(batchReceipt.runnerReceipt)
       || (datasetBacked && !verifyWorkerProcessExecutionIdentity(batchReceipt.runnerReceipt, { requireObservedProcess: true }))
       || batchReceipt.runnerReceiptHash !== batchReceipt.runnerReceipt.receiptHash
@@ -134,6 +158,13 @@ export function verifySystemBenchmarkHarnessExecutionReceipt(receipt) {
       || bindings.HEPTA_EXPERIMENT_ARM_ADAPTER_HASH !== expectedAdapter?.sourceHash
       || bindings.HEPTA_EXPERIMENT_ARM_ADAPTER_SET_HASH !== receipt.systemBenchmarkArmAdapterSetHash
       || bindings.HEPTA_PRE_DATA_ACCESS_FREEZE_HASH !== receipt.empiricalPreDataAccessFreezeHash
+      || bindings.HEPTA_EXPERIMENT_IR_HASH !== receipt.versionedExperimentIrHash
+      || (researchResolved && (
+        bindings.HEPTA_EXPERIMENT_RESEARCH_BINDING_HASH
+          !== receipt.experimentIr.researchBinding.experimentResearchBindingHash
+        || bindings.HEPTA_DATASET_RESEARCH_COMPATIBILITY_HASH
+          !== receipt.experimentIr.researchBinding.datasetResearchCompatibilityHash
+      ))
       || bindings.HEPTA_BENCHMARK_ID !== receipt.benchmarkId
       || bindings.HEPTA_BENCHMARK_SELECTOR_HASH !== receipt.campaignBenchmarkSelectorHash
       || bindings.HEPTA_EXPERIMENT_DESIGN_HASH !== receipt.experimentDesignHash
@@ -181,7 +212,13 @@ export function verifySystemBenchmarkHarnessExecutionReceipt(receipt) {
     if (!batchReceipt || batchReceipt.arm !== cell.arm || !batchReceipt.cellIds.includes(cell.cellId)) return false;
     let fixture = null;
     if (!datasetBacked) {
-      try { fixture = buildSystemBenchmarkCellChallenge({ protocol: cell.armProtocol, seed: cell.seed, repetition: cell.repetition }); }
+      try {
+        fixture = buildSystemBenchmarkCellChallenge({
+          protocol: cell.armProtocol,
+          seed: cell.seed,
+          repetition: cell.repetition,
+        });
+      }
       catch { return false; }
     }
     const boundBatchChallenge = decodeSystemBenchmarkArmBatchChallengeEnvironment(batchReceipt.runnerReceipt.executionBindings || {});
@@ -199,12 +236,14 @@ export function verifySystemBenchmarkHarnessExecutionReceipt(receipt) {
       rawEventArtifactHash: cellReceipt.rawEventArtifactHash,
       rawEventCount: cellReceipt.rawEventCount,
       metrics: cellReceipt.metrics,
+      versionedExperimentIrHash: receipt.versionedExperimentIrHash,
     });
     if (cellReceipt.systemBenchmarkArmProtocolHash !== cell.systemBenchmarkArmProtocolHash
       || !boundCellChallenge
       || cellReceipt.systemBenchmarkCellChallengeHash !== expectedChallengeHash
       || !SHA256.test(String(expectedOracleHash || ''))
       || !SHA256.test(String(cellReceipt.rawEventArtifactHash || ''))
+      || cellReceipt.versionedExperimentIrHash !== receipt.versionedExperimentIrHash
       || !Number.isSafeInteger(cellReceipt.rawEventCount) || cellReceipt.rawEventCount < 2 || cellReceipt.rawEventCount > 64
       || cellReceipt.systemBenchmarkArmProtocolExecutionReceiptHash !== expectedArmProtocolExecutionReceiptHash) return false;
     const expectedAdapter = receipt.armAdapterSet.adapters.find((candidate) => candidate.arm === cell.arm);
@@ -228,11 +267,20 @@ export function verifySystemBenchmarkHarnessExecutionReceipt(receipt) {
     || receipt.preDataAccessFreeze.campaignBenchmarkSelectorHash !== receipt.campaignBenchmarkSelectorHash
     || receipt.preDataAccessFreeze.experimentDesignHash !== receipt.experimentDesignHash
     || receipt.preDataAccessFreeze.analysisProtocolHash !== receipt.analysisProtocolHash
+    || receipt.preDataAccessFreeze.versionedExperimentIrHash
+      !== receipt.versionedExperimentIrHash
     || receipt.preDataAccessFreeze.systemBenchmarkArmProtocolSetHash !== receipt.systemBenchmarkArmProtocolSetHash
     || receipt.preDataAccessFreeze.systemBenchmarkArmAdapterSetHash !== receipt.systemBenchmarkArmAdapterSetHash
     || receipt.preDataAccessFreeze.sourceMerkleHash !== receipt.sourceMerkleHash
     || receipt.preDataAccessFreeze.sourceWorkspaceManifestHash !== receipt.sourceWorkspaceManifestHash
-    || receipt.preDataAccessFreeze.sourceLineageHash !== receipt.sourceLineageHash) return false;
+    || receipt.preDataAccessFreeze.sourceLineageHash !== receipt.sourceLineageHash
+    || (researchResolved && (
+      receipt.preDataAccessFreeze.version !== 3
+      || receipt.preDataAccessFreeze.experimentResearchBindingHash
+        !== receipt.experimentIr.researchBinding.experimentResearchBindingHash
+      || receipt.preDataAccessFreeze.datasetResearchCompatibilityHash
+        !== receipt.experimentIr.researchBinding.datasetResearchCompatibilityHash
+    ))) return false;
   const observations = receipt.cells.map((cell) => ({ seed: cell.seed, repetition: cell.repetition, arm: cell.arm, metrics: cell.metrics }));
   const rawEventManifest = receipt.cells.map((cell) => ({
     cellId: cell.cellId,
@@ -252,14 +300,39 @@ export function verifySystemBenchmarkHarnessExecutionReceipt(receipt) {
   if (!verifySystemBenchmarkStatisticalCompatibilityEvidence(receipt.statisticalEvaluation)
     || hashRecord('SystemBenchmarkStatisticalEvaluationExpected', statisticalEvaluation)
       !== hashRecord('SystemBenchmarkStatisticalEvaluationExpected', receipt.statisticalEvaluation)) return false;
+  const workerDatasetPositiveByteReadObserved = datasetBacked
+    && receipt.armBatchExecutions.every((batch) => authorizationSet.datasets.every((dataset) => {
+      const access = batch.runnerReceipt?.datasetAccessReceipt?.datasets
+        ?.find((candidate) => candidate.name === dataset.name);
+      return access?.readObserved === true
+        && Number.isSafeInteger(access.positiveReadBytesObserved)
+        && access.positiveReadBytesObserved > 0;
+    }));
+  if (datasetBacked
+    ? !verifyDatasetEvaluationDependencyReceipt(
+      receipt.datasetEvaluationDependencyReceipt,
+      {
+        operatorDatasetHarnessAuthority,
+        preDataAccessFreeze: receipt.preDataAccessFreeze,
+        cells: receipt.cells,
+        rawEventManifestHash: receipt.rawEventManifestHash,
+        rawEventArtifactHash: receipt.rawEventArtifactHash,
+        analysisObservationAuthority: receipt.analysisObservationAuthority,
+        analysisProtocolEvaluation: receipt.analysisProtocolEvaluation,
+        workerDatasetPositiveByteReadObserved,
+      },
+    )
+    : receipt.datasetEvaluationDependencyReceipt !== null) return false;
   const expectedResultDocument = {
-    version: 4, kind: 'SystemBenchmarkRunObservations',
+    version: 5, kind: 'SystemBenchmarkRunObservations',
     executionStatus: 'system_benchmark_execution_completed',
     integrityStatus: 'system_benchmark_integrity_verified',
     scientificVerdict: receipt.analysisProtocolEvaluation.scientificVerdict,
     scientificFindings: receipt.analysisProtocolEvaluation.scientificFindings,
     preDataAccessFreeze: receipt.preDataAccessFreeze,
     empiricalPreDataAccessFreezeHash: receipt.empiricalPreDataAccessFreezeHash,
+    experimentIr: receipt.experimentIr,
+    versionedExperimentIrHash: receipt.versionedExperimentIrHash,
     experimentDesignHash: selector.expected.experimentDesignHash,
     benchmarkHarnessHash: selector.expected.experimentDesign.benchmarkHarnessHash,
     armProtocolSet: selector.expected.experimentDesign.benchmarkHarness.armProtocolSet,
@@ -269,6 +342,7 @@ export function verifySystemBenchmarkHarnessExecutionReceipt(receipt) {
     systemBenchmarkHarnessImplementationHash: SYSTEM_BENCHMARK_HARNESS_IMPLEMENTATION.systemBenchmarkHarnessImplementationHash,
     datasetAuthorizationSetHash: authorizationSet.datasetAuthorizationSetHash,
     operatorDatasetHarnessAuthority,
+    datasetEvaluationDependencyReceipt: receipt.datasetEvaluationDependencyReceipt,
     assuranceScope: selector.expected.assuranceScope,
     academicPromotionEligible: selector.expected.assuranceScope === 'operator-authorized-hidden-evaluation-v1',
     rawEventManifestHash: receipt.rawEventManifestHash,
@@ -276,6 +350,8 @@ export function verifySystemBenchmarkHarnessExecutionReceipt(receipt) {
     rawEventArtifactBytes: receipt.rawEventArtifactBytes,
     rawEventArtifact: receipt.rawEventArtifact,
     rawEventRecomputationManifest: receipt.rawEventRecomputationManifest,
+    independentRawEventRecomputationAssurance:
+      receipt.independentRawEventRecomputationAssurance,
     statisticalEvaluation,
     ...analysisProtocolResultDocumentFields(receipt),
     observations,
@@ -288,7 +364,7 @@ export function verifySystemBenchmarkHarnessExecutionReceipt(receipt) {
     { path: 'results.csv', sha256: hashBytes(expectedCsvDocument), bytes: utf8Bytes(expectedCsvDocument) },
     { path: 'raw-events.ndjson', sha256: receipt.rawEventArtifactHash, bytes: receipt.rawEventArtifactBytes },
   ];
-  return receipt.status === 'system_benchmark_harness_verified'
+  const valid = receipt.status === 'system_benchmark_harness_verified'
     && receipt.executionStatus === 'system_benchmark_execution_completed'
     && receipt.integrityStatus === 'system_benchmark_integrity_verified'
     && receipt.scientificVerdict === receipt.analysisProtocolEvaluation.scientificVerdict
@@ -301,8 +377,9 @@ export function verifySystemBenchmarkHarnessExecutionReceipt(receipt) {
     && receipt.resultJsonHash === expectedArtifacts[0].sha256 && receipt.resultCsvHash === expectedArtifacts[1].sha256
     && JSON.stringify(receipt.artifacts) === JSON.stringify(expectedArtifacts)
     && SHA256.test(String(receipt.sourceLineageHash || ''))
-    && verifyHarnessAnalysisProtocolBinding(receipt, selector.expected.experimentDesign)
-    && hashRecord('SystemBenchmarkHarnessExecutionReceipt', payload) === systemBenchmarkHarnessExecutionReceiptHash;
+    && verifyHarnessAnalysisProtocolBinding(receipt, selector.expected.experimentDesign);
+  preflight.rememberIf(valid);
+  return valid;
 }
 
 export function buildExperimentRunReceipt({
@@ -484,12 +561,16 @@ export function buildExperimentRunReceipt({
     blockers: [...new Set(blockers)].slice(0, 2048),
     externalActionPerformed: false,
   };
-  return Object.freeze({ ...payload, experimentRunReceiptHash: hashRecord('ExperimentRunReceipt', payload) });
+  return deepFreezeJsonValue({
+    ...payload,
+    experimentRunReceiptHash: hashRecord('ExperimentRunReceipt', payload),
+  });
 }
 
 export function verifyExperimentRunReceipt(receipt) {
   if (!receipt || receipt.kind !== 'ExperimentRunReceipt' || receipt.version !== 1) return false;
-  const { experimentRunReceiptHash, ...payload } = receipt;
+  const preflight = verifiedReceiptPreflight(receipt, 'ExperimentRunReceipt', 'experimentRunReceiptHash', verifiedExperimentRunReceiptHashes);
+  if (!preflight || preflight.cached) return preflight?.cached === true;
   const selectorVerification = verifyCampaignBenchmarkSelector(receipt.benchmarkSelector, {
     benchmarkId: receipt.benchmarkId,
     datasetMounts: receipt.datasetAuthorizations,
@@ -499,28 +580,16 @@ export function verifyExperimentRunReceipt(receipt) {
   const recomputedAuthorizationSet = buildDatasetAuthorizationSet(receipt.datasetAuthorizations || []);
   const design = selectorVerification.expected?.experimentDesign || null;
   const recomputedStatisticalEvaluation = evaluateSystemBenchmarkStatisticalPolicy({ observations: receipt.observations || [], experimentDesign: design });
-  const expectedSchedule = new Set();
-  for (const seed of design?.seedSchedule || []) for (let repetition = 1; repetition <= Number(design?.minimumRepetitions || 0); repetition += 1) {
-    for (const arm of REQUIRED_ARMS) expectedSchedule.add(`${seed}\0${repetition}\0${arm}`);
-  }
-  const observedSchedule = new Set();
-  const observationsValid = Array.isArray(receipt.observations)
-    && receipt.observations.every((item) => {
-      const canonical = canonicalObservation(item, receipt.requiredMetrics || []);
-      if (!canonical) return false;
-      const key = observationKey(canonical);
-      if (observedSchedule.has(key)) return false;
-      observedSchedule.add(key);
-      return expectedSchedule.has(key);
-    });
-  const scheduleComplete = observationsValid
-    && observedSchedule.size === expectedSchedule.size
-    && [...expectedSchedule].every((key) => observedSchedule.has(key));
+  const scheduleComplete = experimentRunObservationScheduleComplete({
+    observations: receipt.observations,
+    requiredMetrics: receipt.requiredMetrics,
+    design,
+  });
   const systemHarnessVerified = receipt.harnessExecutionReceipt
     ? verifySystemBenchmarkHarnessExecutionReceipt(receipt.harnessExecutionReceipt)
     : false;
   const runnerArtifacts = new Map((receipt.runnerReceipt?.artifacts || []).map((artifact) => [artifact.path, artifact.sha256]));
-  return receipt.status === 'experiment_run_receipt_verified'
+  const valid = receipt.status === 'experiment_run_receipt_verified'
     && receipt.executionStatus === 'system_benchmark_execution_completed'
     && receipt.integrityStatus === 'experiment_integrity_verified'
     && receipt.scientificVerdict === receipt.analysisProtocolEvaluation?.scientificVerdict
@@ -586,86 +655,12 @@ export function verifyExperimentRunReceipt(receipt) {
       === hashRecord('SystemBenchmarkStatisticalEvaluationExpected', receipt.statisticalEvaluation)
     && verifyExperimentRunAnalysisProtocolBinding(receipt, design)
     && recomputedAuthorizationSet.datasetAuthorizationSetHash === receipt.datasetAuthorizationSetHash
-    && receipt.rawObservationCount === (receipt.observations || []).length
-    && hashRecord('ExperimentRunReceipt', payload) === experimentRunReceiptHash;
+    && receipt.rawObservationCount === (receipt.observations || []).length;
+  preflight.rememberIf(valid);
+  return valid;
 }
 
-export function buildExperimentReplayReceipt({ originalRunReceipt, replayRunReceipt, absoluteTolerance = 1e-9, relativeTolerance = 1e-6 } = {}) {
-  const blockers = [];
-  if (!verifyExperimentRunReceipt(originalRunReceipt)) blockers.push('experiment_original_run_receipt_invalid');
-  if (!verifyExperimentRunReceipt(replayRunReceipt)) blockers.push('experiment_replay_run_receipt_invalid');
-  for (const field of ['campaignBenchmarkSelectorHash', 'experimentDesignHash', 'benchmarkHarnessHash', 'systemBenchmarkHarnessImplementationHash', 'datasetAuthorizationSetHash', 'datasetAccessSupervisorIdentityHash', 'sourceMerkleHash', 'sourceWorkspaceManifestHash', 'sourceLineageHash', 'assuranceProfile', 'assuranceScope', 'evidenceClass', 'promotionScope', 'academicPromotionEligible']) {
-    if (originalRunReceipt?.[field] !== replayRunReceipt?.[field]) blockers.push(`experiment_replay_identity_mismatch:${field}`);
-  }
-  if (originalRunReceipt?.executionReceiptHash === replayRunReceipt?.executionReceiptHash
-    || originalRunReceipt?.experimentAttemptId === replayRunReceipt?.experimentAttemptId
-    || (originalRunReceipt?.harnessExecutionReceipt?.environmentBindingHash || originalRunReceipt?.runnerReceipt?.environmentBindingHash)
-      === (replayRunReceipt?.harnessExecutionReceipt?.environmentBindingHash || replayRunReceipt?.runnerReceipt?.environmentBindingHash)) blockers.push('experiment_replay_execution_not_independent');
-  if (originalRunReceipt?.rawEventManifestHash !== replayRunReceipt?.rawEventManifestHash
-    || originalRunReceipt?.rawEventArtifactHash !== replayRunReceipt?.rawEventArtifactHash
-    || originalRunReceipt?.rawEventArtifactBytes !== replayRunReceipt?.rawEventArtifactBytes) {
-    blockers.push('experiment_replay_raw_event_artifact_mismatch');
-  }
-  if (!originalRunReceipt?.rawArtifactWriteReceipt || !replayRunReceipt?.rawArtifactWriteReceipt
-    || originalRunReceipt.rawArtifactWriteReceipt.writeReceiptHash === replayRunReceipt.rawArtifactWriteReceipt.writeReceiptHash
-    || originalRunReceipt.rawArtifactWriteReceipt.ledgerReceiptId === replayRunReceipt.rawArtifactWriteReceipt.ledgerReceiptId
-    || originalRunReceipt.rawArtifactWriteReceipt.role === replayRunReceipt.rawArtifactWriteReceipt.role) {
-    blockers.push('experiment_replay_raw_artifact_authority_not_independent');
-  }
-  const analysisProtocolReplayBinding = buildExperimentReplayAnalysisProtocolBinding({ originalRunReceipt, replayRunReceipt });
-  blockers.push(...analysisProtocolReplayBinding.blockers);
-  const comparisons = [];
-  const replayObservations = new Map((replayRunReceipt?.observations || []).map((item) => [observationKey(item), item]));
-  for (const original of originalRunReceipt?.observations || []) for (const metric of originalRunReceipt?.requiredMetrics || []) {
-    const replay = replayObservations.get(observationKey(original));
-    const expected = Number(original.metrics?.[metric]);
-    const observed = Number(replay?.metrics?.[metric]);
-    const delta = Math.abs(expected - observed);
-    const allowed = Math.max(Number(absoluteTolerance), Number(relativeTolerance) * Math.max(Math.abs(expected), Math.abs(observed)));
-    const consistent = Number.isFinite(expected) && Number.isFinite(observed) && delta <= allowed;
-    comparisons.push({ seed: original.seed, repetition: original.repetition, arm: original.arm, metric, expected, observed, delta, allowed, consistent });
-    if (!consistent) blockers.push(`experiment_replay_observation_inconsistent:${original.seed}:${original.repetition}:${original.arm}:${metric}`);
-  }
-  const payload = {
-    version: 1,
-    kind: 'ExperimentReplayReceipt',
-    status: blockers.length ? 'experiment_replay_blocked' : 'experiment_replay_verified',
-    originalExperimentRunReceiptHash: originalRunReceipt?.experimentRunReceiptHash || null,
-    replayExperimentRunReceiptHash: replayRunReceipt?.experimentRunReceiptHash || null,
-    originalRunReceipt,
-    replayRunReceipt,
-    originalExecutionReceiptHash: originalRunReceipt?.executionReceiptHash || null,
-    replayExecutionReceiptHash: replayRunReceipt?.executionReceiptHash || null,
-    ...experimentReplayEnvironmentBomFields(originalRunReceipt, replayRunReceipt),
-    absoluteTolerance: Number(absoluteTolerance),
-    relativeTolerance: Number(relativeTolerance),
-    comparisons,
-    analysisProtocolReplayBinding,
-    blockers: [...new Set(blockers)],
-    externalActionPerformed: false,
-  };
-  return Object.freeze({ ...payload, experimentReplayReceiptHash: hashRecord('ExperimentReplayReceipt', payload) });
-}
-
-export function verifyExperimentReplayReceipt(receipt) {
-  if (!receipt || receipt.kind !== 'ExperimentReplayReceipt' || receipt.version !== 1) return false;
-  const rebuilt = buildExperimentReplayReceipt({
-    originalRunReceipt: receipt.originalRunReceipt,
-    replayRunReceipt: receipt.replayRunReceipt,
-    absoluteTolerance: receipt.absoluteTolerance,
-    relativeTolerance: receipt.relativeTolerance,
-  });
-  return receipt.status === 'experiment_replay_verified'
-    && verifyExperimentRunReceipt(receipt.originalRunReceipt)
-    && verifyExperimentRunReceipt(receipt.replayRunReceipt)
-    && receipt.originalExperimentRunReceiptHash === receipt.originalRunReceipt.experimentRunReceiptHash
-    && receipt.replayExperimentRunReceiptHash === receipt.replayRunReceipt.experimentRunReceiptHash
-    && receipt.originalRunReceipt.experimentAttemptId !== receipt.replayRunReceipt.experimentAttemptId
-    && receipt.originalRunReceipt.executionReceiptHash !== receipt.replayRunReceipt.executionReceiptHash
-    && verifyExperimentReplayEnvironmentBomBinding(receipt)
-    && (receipt.originalRunReceipt.harnessExecutionReceipt?.environmentBindingHash || receipt.originalRunReceipt.runnerReceipt?.environmentBindingHash)
-      !== (receipt.replayRunReceipt.harnessExecutionReceipt?.environmentBindingHash || receipt.replayRunReceipt.runnerReceipt?.environmentBindingHash)
-    && verifyExperimentReplayAnalysisProtocolBinding(receipt)
-    && rebuilt.status === 'experiment_replay_verified'
-    && rebuilt.experimentReplayReceiptHash === receipt.experimentReplayReceiptHash;
-}
+export const {
+  buildExperimentReplayReceipt,
+  verifyExperimentReplayReceipt,
+} = createExperimentReplayReceiptContract({ verifyExperimentRunReceipt });

@@ -511,3 +511,107 @@ test('a successful fenced publish produces the only readiness result that can pr
   assert.equal(repository.listAttempts()[0].status, 'succeeded');
   assert.equal(repository.readState().status, 'refresh_verified');
 });
+
+test('runtime refresh auto-recovers a committed publication before retrying status', async (t) => {
+  const runtimeRoot = fs.mkdtempSync(path.join(
+    os.tmpdir(),
+    'hepta-runtime-refresh-publication-recovery-',
+  ));
+  t.after(() => fs.rmSync(runtimeRoot, { recursive: true, force: true }));
+  const repository = createAutonomousResearchRuntimeRefreshStateRepository({
+    runtimeRoot, policy: policy(),
+  });
+  t.after(() => repository.close());
+  let nowMs = Date.parse('2026-07-16T05:50:00.000Z');
+  let pendingFinalization = false;
+  let publishedAuthority = false;
+  let recoveryCalls = 0;
+  let statusCalls = 0;
+  let publicationDmlCalls = 0;
+  const refresh = createAutonomousResearchRuntimeRefresh({
+    stateRepository: repository,
+    recoverPendingPublication() {
+      recoveryCalls += 1;
+      if (pendingFinalization) {
+        pendingFinalization = false;
+        publishedAuthority = true;
+      }
+    },
+    readStatus() {
+      statusCalls += 1;
+      return publishedAuthority
+        ? currentStatus(new Date(nowMs)) : missingStatus();
+    },
+    async publish() {
+      publicationDmlCalls += 1;
+      pendingFinalization = true;
+      const error = new Error(
+        'externally_fenced_sqlite_mutation_committed_finalization_pending',
+      );
+      error.committed = true;
+      throw error;
+    },
+    clock: { now: () => new Date(nowMs) },
+    scheduler: scheduler(),
+    random: () => 0,
+  });
+  const campaign = Object.freeze({
+    campaignId: 'autonomous-research:publication-recovery',
+    spec: Object.freeze({ budgets: Object.freeze({ maxWallTimeMs: 60 * 60 * 1000 }) }),
+  });
+  const first = await refresh.ensureReady({
+    campaign,
+    ownerId: 'supervisor:publication-recovery',
+  });
+  assert.equal(first.ready, false);
+  assert.equal(publicationDmlCalls, 1);
+  assert.equal(pendingFinalization, true);
+  nowMs += 101;
+  const recovered = await refresh.ensureReady({
+    campaign,
+    ownerId: 'supervisor:publication-recovery',
+  });
+  assert.equal(recovered.ready, true);
+  assert.equal(recovered.refreshed, false);
+  assert.equal(publicationDmlCalls, 1);
+  assert.equal(recoveryCalls, 3);
+  assert.equal(statusCalls, 3);
+});
+
+test('runtime publication recovery failure defers within the configured bound', async (t) => {
+  const runtimeRoot = fs.mkdtempSync(path.join(
+    os.tmpdir(),
+    'hepta-runtime-refresh-publication-recovery-failure-',
+  ));
+  t.after(() => fs.rmSync(runtimeRoot, { recursive: true, force: true }));
+  const repository = createAutonomousResearchRuntimeRefreshStateRepository({
+    runtimeRoot, policy: policy(),
+  });
+  t.after(() => repository.close());
+  const now = new Date('2026-07-16T06:00:00.000Z');
+  let statusCalls = 0;
+  const refresh = createAutonomousResearchRuntimeRefresh({
+    stateRepository: repository,
+    recoverPendingPublication() { throw new Error('authority_temporarily_unavailable'); },
+    readStatus() { statusCalls += 1; return missingStatus(); },
+    async publish() { throw new Error('publish_must_not_run'); },
+    clock: { now: () => new Date(now) },
+    scheduler: scheduler(),
+    random: () => 0,
+  });
+  const result = await refresh.ensureReady({
+    campaign: Object.freeze({ campaignId: 'autonomous-research:recovery-failure' }),
+    ownerId: 'supervisor:recovery-failure',
+  });
+  assert.equal(result.ready, false);
+  assert.equal(result.terminal, false);
+  assert.equal(
+    result.reason,
+    'runtime_reproducibility_pending_publication_recovery_failed',
+  );
+  assert.equal(
+    result.deferUntil,
+    new Date(now.getTime() + policy().maximumBackoffMs).toISOString(),
+  );
+  assert.equal(statusCalls, 0);
+});

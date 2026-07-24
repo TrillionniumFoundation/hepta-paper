@@ -31,6 +31,9 @@ import {
   buildAutonomousResearchSupervisorExternalActionAttemptMarker,
   buildAutonomousResearchSupervisorExternalActionAttemptReceipt,
 } from '../../paper-domain/automation/autonomous-research-supervisor-external-action-journal.mjs';
+import {
+  createReadOnlyAutonomousSubmissionHandoffOutboxFixture,
+} from './support/autonomous-submission-handoff-fixture.mjs';
 
 const H = (label) => hashRecord('SupervisorDispatchAuthorizationTestHash', { label });
 const NOW = new Date('2026-07-17T04:00:00.000Z');
@@ -262,6 +265,9 @@ async function runComposition(t, fixtureValue, {
   campaignSpec = fixtureValue.campaignSpec,
   readinessSideEffectInspection = null,
   environment = ENVIRONMENT,
+  journalSideEffectMode = 'offline',
+  journalEvents = [],
+  releaseAttestorCalls = [],
 } = {}) {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-supervisor-dispatch-auth-'));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
@@ -280,9 +286,11 @@ async function runComposition(t, fixtureValue, {
   }
   let journalSequence = 0;
   const supervisorExternalActionJournal = Object.freeze({
+    sideEffectPermitRequired: journalSideEffectMode !== 'offline',
     begin({ actionKind, reservation, now: startedAt }) {
+      journalEvents.push('begin');
       journalSequence += 1;
-      return buildAutonomousResearchSupervisorExternalActionAttemptMarker({
+      const marker = buildAutonomousResearchSupervisorExternalActionAttemptMarker({
         attemptId: `external-action:test:${journalSequence}`,
         campaignId: reservation.campaignId,
         actionKind,
@@ -292,6 +300,55 @@ async function runComposition(t, fixtureValue, {
         leaseGeneration: fixtureValue.campaignLease.leaseGeneration,
         startedAt: startedAt.toISOString(),
       });
+      if (['pending', 'no-permit'].includes(journalSideEffectMode)) {
+        const error = new Error(journalSideEffectMode === 'pending'
+          ? 'externally_fenced_sqlite_mutation_committed_finalization_pending'
+          : 'autonomous_research_supervisor_external_action_side_effect_permit_required');
+        error.committed = true;
+        error.reservationId = 'reservation:readiness-test';
+        error.sideEffectPermitHash = null;
+        throw error;
+      }
+      const attempt = Object.freeze({
+        attemptId: marker.attemptId,
+        campaignId: marker.campaignId,
+        actionKind: marker.actionKind,
+        reservationHash: marker.reservationHash,
+        idempotencyKey: marker.idempotencyKey,
+        leaseGeneration: marker.leaseGeneration,
+        dispatchCount: marker.dispatchCount,
+        providerCanaryCount: marker.providerCanaryCount,
+        status: 'in_progress',
+        marker,
+        progress: null,
+        receipt: null,
+        startedAt: marker.startedAt,
+        completedAt: null,
+        recoveryResult: null,
+        recoveryResultHash: null,
+      });
+      return journalSideEffectMode === 'forged-value'
+        ? Object.freeze({ ...attempt, sideEffectPermitHash: H('forged-permit') })
+        : attempt;
+    },
+    async reconcileAfterBegin() {
+      journalEvents.push('reconcile-after-begin');
+      if (journalSideEffectMode === 'reconcile-deferred') {
+        const error = new Error('autonomous_research_state_recoverability_deferred');
+        error.stateRecoverabilityDeferred = true;
+        throw error;
+      }
+      return true;
+    },
+    cancelInfrastructureDeferred() {
+      journalEvents.push('cancel-infrastructure-deferred');
+      return Object.freeze({ cancelled: true });
+    },
+    assertSideEffectPermit() {
+      if (['offline', 'finalized'].includes(journalSideEffectMode)) return true;
+      throw new Error(
+        'autonomous_research_supervisor_external_action_side_effect_permit_invalid',
+      );
     },
     finish({
       attempt, successful, evidence, actionAccountingComplete,
@@ -299,7 +356,7 @@ async function runComposition(t, fixtureValue, {
     }) {
       return Object.freeze({
         receipt: buildAutonomousResearchSupervisorExternalActionAttemptReceipt({
-          marker: attempt,
+          marker: attempt.marker,
           status: successful ? 'completed' : 'failed',
           evidence,
           completedAt: completedAt.toISOString(),
@@ -322,7 +379,15 @@ async function runComposition(t, fixtureValue, {
     readinessClock: { now: () => now },
     supervisorDispatchAuthorization: authorization,
     supervisorExternalActionJournal,
-    serviceOverrides: { store },
+    releaseAttestorSpawnSyncImpl(executable, args) {
+      releaseAttestorCalls.push({ executable, args });
+      return { status: 0, stdout: '', stderr: '' };
+    },
+    serviceOverrides: {
+      store,
+      autonomousSubmissionOutbox:
+        createReadOnlyAutonomousSubmissionHandoffOutboxFixture(),
+    },
     productionReadinessInspector(input) {
       readinessCalls.push(input);
       return { report: {
@@ -333,6 +398,27 @@ async function runComposition(t, fixtureValue, {
     },
   });
 }
+
+test('readiness post-begin infrastructure deferral cancels before any action', async (t) => {
+  const resident = fixture();
+  const readinessCalls = [];
+  const journalEvents = [];
+  await assert.rejects(
+    () => runComposition(t, resident, {
+      readinessCalls,
+      journalEvents,
+      journalSideEffectMode: 'reconcile-deferred',
+    }),
+    (error) => error.stateRecoverabilityDeferred === true
+      && error.dispatchInfrastructureReservationCancelled === true,
+  );
+  assert.deepEqual(journalEvents, [
+    'begin',
+    'reconcile-after-begin',
+    'cancel-infrastructure-deferred',
+  ]);
+  assert.equal(readinessCalls.length, 0);
+});
 
 test('resident authorization reuses one fenced canary pair without a second live provider call', async (t) => {
   const resident = fixture();
@@ -407,6 +493,52 @@ test('Golden machine dispatch reserves authorization before release-attestor ver
   );
   assert.equal(readinessCalls.length, 0);
 });
+
+for (const journalSideEffectMode of ['pending', 'no-permit', 'forged-value']) {
+  test(`production readiness ${journalSideEffectMode} permit state performs zero readiness actions`, async (t) => {
+    const resident = fixture();
+    const readinessCalls = [];
+    const releaseAttestorCalls = [];
+    await assert.rejects(() => runComposition(t, resident, {
+      readinessCalls,
+      releaseAttestorCalls,
+      journalSideEffectMode,
+    }), journalSideEffectMode === 'pending'
+      ? /committed_finalization_pending/
+      : journalSideEffectMode === 'no-permit'
+        ? /side_effect_permit_required/
+        : /side_effect_permit_invalid/);
+    assert.equal(readinessCalls.length, 0);
+    assert.equal(releaseAttestorCalls.length, 0);
+  });
+
+  test(`Golden release-attestor ${journalSideEffectMode} permit state performs zero KMS actions`, async (t) => {
+    const golden = fixture({ launchMode: 'golden-bootstrap' });
+    const readinessCalls = [];
+    const releaseAttestorCalls = [];
+    const configRoot = fs.mkdtempSync(path.join(
+      os.tmpdir(), `hepta-golden-${journalSideEffectMode}-`,
+    ));
+    t.after(() => fs.rmSync(configRoot, { recursive: true, force: true }));
+    const invalidConfigPath = path.join(configRoot, 'release-attestor.json');
+    fs.writeFileSync(invalidConfigPath, '{invalid-json', { mode: 0o600 });
+    await assert.rejects(() => runComposition(t, golden, {
+      readinessCalls,
+      releaseAttestorCalls,
+      journalSideEffectMode,
+      environment: {
+        ...ENVIRONMENT,
+        HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG: invalidConfigPath,
+      },
+    }), journalSideEffectMode === 'pending'
+      ? /committed_finalization_pending/
+      : journalSideEffectMode === 'no-permit'
+        ? /side_effect_permit_required/
+        : /side_effect_permit_invalid/);
+    assert.equal(readinessCalls.length, 0);
+    assert.equal(releaseAttestorCalls.length, 0);
+  });
+}
 
 test('stale, mismatched, forged, and fence-replaced resident authorizations fail closed', async (t) => {
   {

@@ -2,13 +2,18 @@ const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 
 export function outcomeBoundManuscriptMutationPolicy({ manuscript = 'main.tex' } = {}) {
   return Object.freeze({
-    allowedPaths: Object.freeze([manuscript, 'proof_status.md', 'evidence_manifest.md']),
+    allowedPaths: Object.freeze([
+      manuscript,
+      'AUTONOMOUS_MANUSCRIPT_IR_DRAFT.json',
+      'proof_status.md',
+      'evidence_manifest.md',
+    ]),
     allowedPrefixes: Object.freeze([]),
     allowedExtensions: Object.freeze(['.tex', '.bib']),
     forbiddenPaths: Object.freeze([]),
     forbiddenExtensions: Object.freeze([
       '.py', '.r', '.jl', '.js', '.mjs', '.cjs', '.ts', '.tsx', '.ipynb', '.sh',
-      '.json', '.jsonl', '.yaml', '.yml', '.toml', '.csv', '.tsv', '.lean',
+      '.jsonl', '.yaml', '.yml', '.toml', '.csv', '.tsv', '.lean',
     ]),
   });
 }
@@ -21,9 +26,10 @@ export function assertOutcomeBoundManuscriptMutationAllowed({ changedPaths = [],
   const invalid = (Array.isArray(changedPaths) ? changedPaths : []).map((value) => String(value || '')
     .replace(/\\/g, '/').replace(/^\.\//, '')).find((relative) => {
     const extension = relative.includes('.') ? `.${relative.split('.').at(-1).toLowerCase()}` : '';
-    return !relative || relative.startsWith('/') || relative.split('/').some((part) => !part || part === '..')
-      || forbiddenExtensions.has(extension)
-      || (!allowedPaths.has(relative) && !allowedExtensions.has(extension));
+    if (!relative || relative.startsWith('/')
+      || relative.split('/').some((part) => !part || part === '..')) return true;
+    if (allowedPaths.has(relative)) return false;
+    return forbiddenExtensions.has(extension) || !allowedExtensions.has(extension);
   });
   if (invalid) {
     const error = new Error(`campaign_outcome_informed_empirical_mutation_forbidden:${invalid}`);

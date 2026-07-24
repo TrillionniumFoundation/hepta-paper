@@ -10,23 +10,38 @@ import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { sha256FileSync } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { capabilityTargetBindings } from '../../paper-composition/bootstrap/operator-governance-composition.mjs';
 import { fileURLToPath } from 'node:url';
+import { parseStrictCliArguments } from '../src/strict-cli-arguments.mjs';
 
-process.env.HEPTA_EVIDENCE_ENVIRONMENT = 'administrative';
-process.env.HEPTA_EVIDENCE_CLASS = 'external_intake';
-const runtimeRoot = defaultPaperRuntimeRoot();
-const root = defaultPaperAssetRoot();
-const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const matrix = buildLegacyCapabilityMatrixV3({ runtimeRoot });
-const provenance = currentCodeProvenance();
-const context = bootstrapBatchInventoryContext({
-  root,
-  runtimeRoot,
-  mode: 'external-intake-generation',
-  execute: false,
-  writeReport: true,
-  readOnly: false,
-  allowMissingReadOnlyStore: false,
+const args = parseStrictCliArguments(process.argv.slice(2), {
+  booleanFlags: ['help'],
+  positional: false,
 });
+
+if (args.help) {
+  process.stdout.write([
+    'Usage: node paper-core/bin/generate-external-intake.mjs',
+    '',
+    'Generates external authority, owner-acceptance, operational-proof,',
+    'production-chain, and off-host WORM onboarding packets.',
+    'No packet grants authority or authorizes an external action.',
+  ].join('\n') + '\n');
+} else {
+  process.env.HEPTA_EVIDENCE_ENVIRONMENT = 'administrative';
+  process.env.HEPTA_EVIDENCE_CLASS = 'external_intake';
+  const runtimeRoot = defaultPaperRuntimeRoot();
+  const root = defaultPaperAssetRoot();
+  const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const matrix = buildLegacyCapabilityMatrixV3({ runtimeRoot });
+  const provenance = currentCodeProvenance();
+  const context = bootstrapBatchInventoryContext({
+    root,
+    runtimeRoot,
+    mode: 'external-intake-generation',
+    execute: false,
+    writeReport: true,
+    readOnly: false,
+    allowMissingReadOnlyStore: false,
+  });
 
 function sha256File(file) {
   return fs.existsSync(file) ? sha256FileSync(file) : null;
@@ -37,7 +52,7 @@ function boundRuntimeDocument(relative) {
   return { relative, present: fs.existsSync(file), sha256: sha256File(file) };
 }
 
-await withArtifactWriteContext(context.services, async () => {
+  await withArtifactWriteContext(context.services, async () => {
   const outputRoot = path.join(runtimeRoot, 'external-intake');
   const repository = context.services.artifactRepositoryFactory(outputRoot);
   const ownerPayload = {
@@ -232,6 +247,7 @@ await withArtifactWriteContext(context.services, async () => {
     operationallyProven: matrix.summary.operationallyProven,
     writeReceiptHashes: outputs.map((receipt) => receipt.writeReceiptHash),
   }, null, 2)}\n`);
-}).finally(() => {
-  context.services.persistenceSession.close?.();
-});
+  }).finally(() => {
+    context.services.persistenceSession.close?.();
+  });
+}

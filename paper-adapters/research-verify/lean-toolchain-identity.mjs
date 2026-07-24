@@ -147,6 +147,7 @@ export function createLeanToolchainIdentityProvider({
   leanExecutable,
   lakeExecutable,
   expectedToolchainRootMerkleHash = null,
+  inspectExternalRuntime = externalDynamicRuntimeClosure,
 } = {}) {
   const root = path.resolve(toolchainRoot || '.');
   const leanPath = relativeExecutable(root, leanExecutable);
@@ -166,7 +167,9 @@ export function createLeanToolchainIdentityProvider({
       const cacheKey = `${toolchain}\0${root}\0${expectedToolchainRootMerkleHash || ''}`;
       const cached = identityCache.get(cacheKey);
       if (!forceContentRehash && cached?.metadataManifestHash === metadata.metadataManifestHash) {
-        const externalRuntime = externalDynamicRuntimeClosure({ root, executables: [leanExecutable, lakeExecutable] });
+        const externalRuntime = inspectExternalRuntime({
+          root, executables: [leanExecutable, lakeExecutable],
+        });
         if (!externalRuntime.blockers.length
           && externalRuntime.records.length > 0
           && externalRuntime.metadataManifestHash === cached.identity.externalDynamicRuntimeMetadataManifestHash
@@ -206,7 +209,9 @@ export function createLeanToolchainIdentityProvider({
           blockers: ['formal_toolchain_trust_anchor_mismatch'],
         });
       }
-      const externalRuntime = externalDynamicRuntimeClosure({ root, executables: [leanExecutable, lakeExecutable] });
+      const externalRuntime = inspectExternalRuntime({
+        root, executables: [leanExecutable, lakeExecutable],
+      });
       if (externalRuntime.blockers.length || !externalRuntime.records.length) {
         return Object.freeze({ status: 'lean_toolchain_identity_blocked', blockers: [...new Set(externalRuntime.blockers)] });
       }

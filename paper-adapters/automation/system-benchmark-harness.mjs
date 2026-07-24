@@ -3,125 +3,104 @@ import path from 'node:path';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
 import { verifyCampaignBenchmarkSelector } from '../../paper-domain/automation/campaign-benchmark-selector.mjs';
+import {
+  autonomousEmpiricalFamilyPluginProfileFor,
+} from '../../paper-domain/automation/autonomous-empirical-family-plugin-registry.mjs';
+import {
+  buildResolvedVersionedExperimentIr,
+} from '../../paper-domain/automation/versioned-experiment-ir.mjs';
 import { SYSTEM_BENCHMARK_HARNESS_IMPLEMENTATION } from '../../paper-domain/automation/system-benchmark-harness-identity.mjs';
 import {
-  evaluateSystemBenchmarkArmRawObservation,
   evaluateSystemBenchmarkStatisticalPolicy,
   verifySystemBenchmarkArmAdapterSet,
 } from '../../paper-domain/automation/system-benchmark-arm-protocol.mjs';
 import {
   buildSystemBenchmarkArmBatchChallenge,
-  decodeSystemBenchmarkArmBatchChallengeEnvironment,
-  evaluateSystemBenchmarkArmBatchResponses,
 } from '../../paper-domain/automation/system-benchmark-challenge.mjs';
 import {
   buildCampaignBenchmarkSchedule,
   buildDatasetAuthorizationSet,
-  verifyDatasetRuntimeAccessReceiptAgainstWorkerReceipt,
-  verifyOsSandboxWorkerReceipt,
   verifySystemBenchmarkHarnessExecutionReceipt,
 } from '../../paper-domain/automation/experiment-run-contract.mjs';
 import { writeSystemBenchmarkResults } from './system-benchmark-result-repository.mjs';
 import { readOperatorDatasetHarness } from './operator-dataset-harness-reader.mjs';
 import { academicAnalysisPromotionBlockers, evaluateAnalysisProtocol } from '../../paper-domain/automation/analysis-protocol-evaluator.mjs';
 import { buildHarnessAnalysisObservationAuthority, buildRawEventRecomputationManifest } from '../../paper-domain/automation/analysis-protocol-run-binding.mjs';
-import { verifyWorkerProcessExecutionIdentity } from '../../paper-domain/automation/worker-process-execution-contract.mjs';
 import { verifyEmpiricalEnvironmentBom } from '../../paper-domain/automation/environment-bom-contract.mjs';
 import { buildEmpiricalPreDataAccessFreeze } from '../../paper-domain/automation/empirical-pre-data-access-freeze.mjs';
+import {
+  PROCESS_ISOLATED_RAW_EVENT_RECOMPUTATION_ASSURANCE_SCOPE,
+  runProcessIsolatedRawEventRecomputation,
+  verifyProcessIsolatedRawEventRecomputationAssurance,
+} from '../research-verify/process-isolated-system-benchmark-recomputation.mjs';
+import {
+  runSystemBenchmarkTypedNumericProcess,
+} from './system-benchmark-typed-numeric-process.mjs';
+import { buildDatasetEvaluationDependencyReceipt } from '../../paper-domain/automation/dataset-evaluation-dependency-contract.mjs';
+import {
+  buildSystemBenchmarkObservationCsv,
+  parseSystemBenchmarkArmBatchObservation,
+  verifySystemBenchmarkArmBatchExecution,
+} from './system-benchmark-harness-batch-verification.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 const ARMS = Object.freeze(['treatment', 'baseline', 'ablation']);
 const MAXIMUM_RAW_EVENT_BYTES = 16 * 1024 * 1024;
 const MAXIMUM_RAW_EVENTS_PER_CELL = 64;
 
-function parseArmBatchObservation(content, requiredMetrics, metricSpecs, batch, operatorDatasetHarnessDefinition = null) {
-  let document = null;
-  try { document = JSON.parse(content.toString('utf8')); } catch { return { observations: null, blockers: ['benchmark_arm_batch_observation_json_invalid'] }; }
-  const responses = evaluateSystemBenchmarkArmBatchResponses({
-    protocol: batch.armProtocol,
-    batchChallenge: batch.challenge,
-    fixtures: batch.fixtures,
-    document,
-    operatorDatasetHarnessDefinition,
+function buildIndependentRecomputationAssurance({
+  producerManifest,
+  processAssurance,
+  recomputationInput,
+  versionedExperimentIrHash,
+} = {}) {
+  const processAssuranceVerified = verifyProcessIsolatedRawEventRecomputationAssurance(
+    processAssurance,
+    recomputationInput,
+  );
+  const independentManifest = processAssurance?.workerReceipt?.manifest || null;
+  const sameManifest = JSON.stringify(producerManifest) === JSON.stringify(independentManifest);
+  const blockers = Object.freeze([
+    ...(processAssuranceVerified
+      && independentManifest?.status === 'raw_event_recomputation_verified'
+      && Array.isArray(independentManifest.blockers)
+      && independentManifest.blockers.length === 0
+      ? [] : ['independent_raw_event_recomputation_blocked']),
+    ...(sameManifest ? [] : ['independent_raw_event_recomputation_manifest_mismatch']),
+  ]);
+  const payload = {
+    version: 2,
+    kind: 'IndependentRawEventRecomputationAssurance',
+    status: blockers.length
+      ? 'independent_raw_event_recomputation_assurance_blocked'
+      : 'independent_raw_event_recomputation_assurance_verified',
+    assuranceScope: PROCESS_ISOLATED_RAW_EVENT_RECOMPUTATION_ASSURANCE_SCOPE,
+    producerManifestHash: producerManifest?.rawEventRecomputationManifestHash || null,
+    independentManifestHash:
+      independentManifest?.rawEventRecomputationManifestHash || null,
+    producerImplementationHash:
+      SYSTEM_BENCHMARK_HARNESS_IMPLEMENTATION.systemBenchmarkHarnessImplementationHash,
+    verifierImplementationHash:
+      processAssurance?.workerImplementationHash || null,
+    independenceContractHash:
+      processAssurance?.processIsolatedRawEventRecomputationAssuranceHash || null,
+    maximumAbsoluteResidual: Number(independentManifest?.maximumAbsoluteResidual),
+    processIndependent: processAssuranceVerified,
+    processIsolatedRawEventRecomputationAssurance: processAssurance || null,
+    processIsolatedWorkerReceiptHash: processAssurance?.workerReceiptHash || null,
+    processIsolatedWorkerImplementationSourceHash:
+      processAssurance?.workerImplementationSourceHash || null,
+    processIsolatedWorkerPid: processAssurance?.workerPid || null,
+    versionedExperimentIrHash,
+    blockers,
+  };
+  return Object.freeze({
+    ...payload,
+    independentRawEventRecomputationAssuranceHash: hashRecord(
+      'IndependentRawEventRecomputationAssurance',
+      payload,
+    ),
   });
-  if (responses.status !== 'system_benchmark_arm_batch_response_evaluated') {
-    return { observations: null, blockers: responses.blockers };
-  }
-  const blockers = [];
-  const observations = responses.evaluations.map((response, index) => {
-    const evaluated = evaluateSystemBenchmarkArmRawObservation({
-      protocol: batch.armProtocol,
-      document: { version: 1, kind: 'CampaignBenchmarkCellRawEvents', events: response.events },
-      requiredMetrics,
-      metricSpecs,
-    });
-    if (evaluated.status !== 'system_benchmark_arm_observation_computed') blockers.push(...evaluated.blockers.map((blocker) => `${blocker}:${response.cellId}`));
-    const fixture = batch.fixtures[index];
-    return evaluated.status === 'system_benchmark_arm_observation_computed'
-      ? Object.freeze({
-        cellId: response.cellId,
-        metrics: evaluated.metrics,
-        eventCount: evaluated.eventCount,
-        computation: evaluated.computation,
-        rawEvents: response.events,
-        candidateResponses: response.responses,
-        systemBenchmarkCellChallengeHash: fixture.challenge.systemBenchmarkCellChallengeHash,
-        systemBenchmarkCellOracleHash: fixture.oracle.systemBenchmarkCellOracleHash,
-      })
-      : null;
-  });
-  return { observations: blockers.length ? null : Object.freeze(observations), blockers };
-}
-
-function buildCsv(observations, requiredMetrics) {
-  const header = ['seed', 'repetition', 'arm', ...requiredMetrics];
-  return `${[header.join(','), ...observations.map((item) => [
-    item.seed,
-    item.repetition,
-    item.arm,
-    ...requiredMetrics.map((metric) => item.metrics[metric]),
-  ].join(','))].join('\n')}\n`;
-}
-
-function verifiedArmBatch({ batch, runnerReceipt, datasetRequired }) {
-  const blockers = [];
-  if (!verifyOsSandboxWorkerReceipt(runnerReceipt)) blockers.push(`benchmark_arm_batch_runner_receipt_invalid:${batch.arm}`);
-  blockers.push(...(runnerReceipt?.blockers || []).map((blocker) => `benchmark_arm_batch_runner:${batch.arm}:${blocker}`));
-  const bindings = runnerReceipt?.executionBindings || {};
-  const boundChallenge = decodeSystemBenchmarkArmBatchChallengeEnvironment(bindings);
-  if (!boundChallenge || hashRecord('SystemBenchmarkArmBatchChallengeExpected', boundChallenge)
-      !== hashRecord('SystemBenchmarkArmBatchChallengeExpected', batch.challenge)
-    || bindings.HEPTA_EXPERIMENT_ARM !== batch.arm
-    || bindings.HEPTA_EXPERIMENT_ARM_PROTOCOL_ID !== batch.armProtocol?.protocolId
-    || bindings.HEPTA_EXPERIMENT_ARM_PROTOCOL_HASH !== batch.systemBenchmarkArmProtocolHash
-    || bindings.HEPTA_EXPERIMENT_ARM_PROTOCOL_SET_HASH !== batch.armProtocolSetHash
-    || bindings.HEPTA_EXPERIMENT_ARM_ADAPTER_PATH !== batch.armAdapter?.relativePath
-    || bindings.HEPTA_EXPERIMENT_ARM_ADAPTER_HASH !== batch.armAdapter?.sourceHash
-    || bindings.HEPTA_EXPERIMENT_ARM_ADAPTER_SET_HASH !== batch.armAdapterSetHash
-    || bindings.HEPTA_PRE_DATA_ACCESS_FREEZE_HASH !== batch.empiricalPreDataAccessFreezeHash
-    || bindings.HEPTA_EXPERIMENT_ATTEMPT_ID !== batch.executionAttemptId
-    || bindings.HEPTA_EXPERIMENT_RUN_ID !== batch.experimentAttemptId) {
-    blockers.push(`benchmark_arm_batch_identity_binding_invalid:${batch.arm}`);
-  }
-  if (batch.executionMode === 'academic-per-cell-process-v1'
-    && !verifyWorkerProcessExecutionIdentity(runnerReceipt, { requireObservedProcess: true })) {
-    blockers.push(`benchmark_cell_process_identity_invalid:${batch.cells[0]?.cellId || batch.arm}`);
-  }
-  if (Number(runnerReceipt?.limits?.timeoutMs) !== Number(batch.resourceBudget?.timeoutMs)
-    || Number(runnerReceipt?.limits?.memoryBytes) !== Number(batch.resourceBudget?.memoryBytes)
-    || Number(runnerReceipt?.limits?.cpuSeconds) !== Number(batch.resourceBudget?.cpuSeconds)
-    || Number(runnerReceipt?.limits?.maximumPids) !== Number(batch.resourceBudget?.maximumProcesses)
-    || Boolean(runnerReceipt?.isolation?.gpuAccessRequested) !== Boolean(batch.resourceBudget?.requiresGpu)) {
-    blockers.push(`benchmark_arm_batch_resource_budget_binding_invalid:${batch.arm}`);
-  }
-  const artifact = (runnerReceipt?.artifacts || []).find((item) => item.path === 'observation.json') || null;
-  if (!artifact || !SHA256.test(String(artifact.sha256 || ''))) blockers.push(`benchmark_arm_batch_artifact_missing:${batch.arm}`);
-  if (datasetRequired && (!verifyDatasetRuntimeAccessReceiptAgainstWorkerReceipt(runnerReceipt?.datasetAccessReceipt, runnerReceipt)
-    || runnerReceipt.datasetAccessReceipt.datasets.some((item) => item.readObserved !== true
-      || item.hostOnlyHarnessMounted !== false || item.forbiddenReadObserved !== false))) {
-    blockers.push(`benchmark_arm_batch_dataset_access_unverified:${batch.arm}`);
-  }
-  return { blockers, artifact };
 }
 
 export function executeSystemBenchmarkHarness({
@@ -143,6 +122,10 @@ export function executeSystemBenchmarkHarness({
   memoryBytes = 4 * 1024 * 1024 * 1024,
   maximumProcesses = 128,
   requiresGpu = false,
+  maximumWallTimeMs = null,
+  cpuCount = 1,
+  executionEnvironment = null,
+  researchContext = null,
   nowEpochMs = () => Date.now(),
 } = {}) {
   const selector = verifyCampaignBenchmarkSelector(benchmarkSelector, {
@@ -162,7 +145,13 @@ export function executeSystemBenchmarkHarness({
     || !Number.isSafeInteger(Number(aggregateCpuSeconds)) || Number(aggregateCpuSeconds) < 1
     || !Number.isSafeInteger(Number(memoryBytes)) || Number(memoryBytes) < 1
     || !Number.isSafeInteger(Number(maximumProcesses)) || Number(maximumProcesses) < 1
-    || typeof nowEpochMs !== 'function') {
+    || typeof nowEpochMs !== 'function'
+    || (researchContext !== null && (
+      !Number.isSafeInteger(Number(maximumWallTimeMs)) || Number(maximumWallTimeMs) < 1
+      || Number(absoluteDeadlineEpochMs) - Number(nowEpochMs()) > Number(maximumWallTimeMs)
+      || Number(cpuCount) !== 1
+      || !String(executionEnvironment || '')
+    ))) {
     return Object.freeze({
       status: 'system_benchmark_harness_blocked',
       blockers: [
@@ -181,6 +170,12 @@ export function executeSystemBenchmarkHarness({
         ...(!Number.isSafeInteger(Number(aggregateCpuSeconds)) || Number(aggregateCpuSeconds) < 1 ? ['benchmark_harness_aggregate_cpu_budget_invalid'] : []),
         ...(!Number.isSafeInteger(Number(memoryBytes)) || Number(memoryBytes) < 1 ? ['benchmark_harness_memory_budget_invalid'] : []),
         ...(!Number.isSafeInteger(Number(maximumProcesses)) || Number(maximumProcesses) < 1 ? ['benchmark_harness_process_budget_invalid'] : []),
+        ...(researchContext !== null && (
+          !Number.isSafeInteger(Number(maximumWallTimeMs)) || Number(maximumWallTimeMs) < 1
+          || typeof nowEpochMs !== 'function'
+          || Number(absoluteDeadlineEpochMs) - Number(nowEpochMs()) > Number(maximumWallTimeMs)
+          || Number(cpuCount) !== 1 || !String(executionEnvironment || '')
+        ) ? ['benchmark_harness_research_resource_budget_invalid'] : []),
       ],
     });
   }
@@ -188,16 +183,63 @@ export function executeSystemBenchmarkHarness({
     !== SYSTEM_BENCHMARK_HARNESS_IMPLEMENTATION.systemBenchmarkHarnessImplementationHash) {
     return Object.freeze({ status: 'system_benchmark_harness_blocked', blockers: ['benchmark_harness_implementation_identity_mismatch'] });
   }
-  const schedule = buildCampaignBenchmarkSchedule(selector.expected);
   const requiredMetrics = [...selector.expected.experimentDesign.requiredMetrics];
   const metricSpecs = selector.expected.experimentDesign.metricSpecs;
   const authorizations = buildDatasetAuthorizationSet(datasetMounts);
+  const analysisProtocol = Object.freeze({
+    ...selector.expected.experimentDesign.analysisProtocol,
+    analysisProtocolHash: selector.expected.experimentDesign.analysisProtocolHash,
+  });
+  let experimentIr;
+  try {
+    const pluginProfile = autonomousEmpiricalFamilyPluginProfileFor(
+      selector.expected.experimentDesign.benchmarkFamily,
+    );
+    experimentIr = buildResolvedVersionedExperimentIr(pluginProfile, {
+      selector: selector.expected,
+      armAdapterSet,
+      datasetAuthorizationSet: authorizations,
+      experimentAttemptId,
+      attemptVersion: Number(attemptVersion),
+      failedAttemptLineageHashes,
+      sourceLineageHash,
+      sourceMerkleHash,
+      sourceWorkspaceManifestHash,
+      absoluteDeadlineEpochMs,
+      aggregateCpuSeconds,
+      memoryBytes,
+      maximumProcesses,
+      requiresGpu,
+      maximumWallTimeMs,
+      cpuCount,
+      executionEnvironment,
+      researchContext,
+    });
+  } catch (error) {
+    return Object.freeze({
+      status: 'system_benchmark_harness_blocked',
+      executionStatus: 'system_benchmark_execution_not_started',
+      integrityStatus: 'system_benchmark_integrity_blocked',
+      scientificVerdict: 'not_evaluable',
+      blockers: [`benchmark_experiment_ir:${String(error?.message || error)}`],
+    });
+  }
+  // The resolved IR is fixed before schedule construction, any hidden dataset
+  // harness is read, or the first arm-batch callback can be invoked.
+  const schedule = buildCampaignBenchmarkSchedule(selector.expected);
   let preDataAccessFreeze;
   try {
     preDataAccessFreeze = buildEmpiricalPreDataAccessFreeze({
       experimentAttemptId,
       attemptVersion: Number(attemptVersion),
       failedAttemptLineageHashes,
+      versionedExperimentIrHash: experimentIr.versionedExperimentIrHash,
+      ...(experimentIr.version === 3 ? {
+        experimentResearchBindingHash:
+          experimentIr.researchBinding.experimentResearchBindingHash,
+        datasetResearchCompatibilityHash:
+          experimentIr.researchBinding.datasetResearchCompatibilityHash,
+      } : {}),
       campaignBenchmarkSelectorHash: selector.expected.campaignBenchmarkSelectorHash,
       experimentDesignHash: selector.expected.experimentDesignHash,
       analysisProtocolHash: selector.expected.experimentDesign.analysisProtocolHash,
@@ -234,7 +276,11 @@ export function executeSystemBenchmarkHarness({
 
   const consume = (batch, batchOutput, runnerReceipt) => {
     const blockerCountBeforeBatch = blockers.length;
-    const checked = verifiedArmBatch({ batch, runnerReceipt, datasetRequired: datasetMounts.length > 0 });
+    const checked = verifySystemBenchmarkArmBatchExecution({
+      batch,
+      runnerReceipt,
+      datasetRequired: datasetMounts.length > 0,
+    });
     blockers.push(...checked.blockers);
     const read = readScopedFileSync({
       scopeRoot: batchOutput,
@@ -243,14 +289,20 @@ export function executeSystemBenchmarkHarness({
     });
     if (read.status !== 'scoped_file_read_verified') blockers.push(`benchmark_arm_batch_observation_unreadable:${batch.arm}`);
     const parsed = read.status === 'scoped_file_read_verified'
-      ? parseArmBatchObservation(read.content, requiredMetrics, metricSpecs, batch, operatorDatasetHarnessDefinition)
+      ? parseSystemBenchmarkArmBatchObservation(
+        read.content,
+        requiredMetrics,
+        metricSpecs,
+        batch,
+        operatorDatasetHarnessDefinition,
+      )
       : { observations: null, blockers: [] };
     blockers.push(...parsed.blockers.map((blocker) => `${blocker}:${batch.arm}`));
     const observationHash = read.status === 'scoped_file_read_verified' ? hashBytes(read.content) : null;
     if (checked.artifact?.sha256 !== observationHash) blockers.push(`benchmark_arm_batch_observation_artifact_mismatch:${batch.arm}`);
     if (blockers.length !== blockerCountBeforeBatch || !parsed.observations) return;
-    const batchPayload = {
-      version: 1,
+      const batchPayload = {
+      version: 2,
       kind: 'SystemBenchmarkArmBatchExecutionReceipt',
       arm: batch.arm,
       systemBenchmarkArmProtocolHash: batch.systemBenchmarkArmProtocolHash,
@@ -265,6 +317,7 @@ export function executeSystemBenchmarkHarness({
       observationArtifactHash: observationHash,
       runnerReceiptHash: runnerReceipt.receiptHash,
       runnerReceipt,
+      versionedExperimentIrHash: experimentIr.versionedExperimentIrHash,
     };
     const batchExecution = Object.freeze({
       ...batchPayload,
@@ -302,6 +355,7 @@ export function executeSystemBenchmarkHarness({
         rawEventArtifactHash,
         rawEventCount: observation.eventCount,
         metrics: observation.metrics,
+        versionedExperimentIrHash: experimentIr.versionedExperimentIrHash,
       });
       cellsById.set(cell.cellId, Object.freeze({
         ...cell,
@@ -314,6 +368,7 @@ export function executeSystemBenchmarkHarness({
         metricComputation: observation.computation,
         armBatchExecutionReceiptHash: batchExecution.systemBenchmarkArmBatchExecutionReceiptHash,
         systemBenchmarkArmProtocolExecutionReceiptHash: armProtocolExecutionReceiptHash,
+        versionedExperimentIrHash: experimentIr.versionedExperimentIrHash,
       }));
     }
   };
@@ -347,27 +402,71 @@ export function executeSystemBenchmarkHarness({
         bytes: rawEventArtifactBytes,
         manifestHash: rawEventManifestHash,
       });
-      const analysisProtocol = Object.freeze({
-        ...selector.expected.experimentDesign.analysisProtocol,
-        analysisProtocolHash: selector.expected.experimentDesign.analysisProtocolHash,
-      });
       const rawEventRecomputationManifest = buildRawEventRecomputationManifest({
         cells,
         rawEventRows: rawEventRows.map((row) => ({ cellId: row.document.cellId, document: row.document, line: row.line })),
         requiredMetrics,
         metricSpecs,
+        versionedExperimentIrHash: experimentIr.versionedExperimentIrHash,
       });
       blockers.push(...rawEventRecomputationManifest.blockers);
-      const analysisObservationAuthority = buildHarnessAnalysisObservationAuthority({
+      const independentRecomputationInput = Object.freeze({
         cells,
-        scheduleCellCount: schedule.length,
-        rawEventManifestHash,
-        rawEventArtifactHash,
-        systemBenchmarkHarnessImplementationHash: SYSTEM_BENCHMARK_HARNESS_IMPLEMENTATION.systemBenchmarkHarnessImplementationHash,
-        experimentAttemptId,
-        sourceLineageHash,
-        rawEventRecomputationManifest,
+        rawEventRows: rawEventRows.map((row) => ({
+          cellId: row.document.cellId,
+          document: row.document,
+          line: row.line,
+        })),
+        requiredMetrics,
+        metricSpecs,
+        versionedExperimentIrHash: experimentIr.versionedExperimentIrHash,
       });
+      const processIsolatedRawEventRecomputationAssurance =
+        runProcessIsolatedRawEventRecomputation(independentRecomputationInput);
+      const independentRawEventRecomputationAssurance =
+        buildIndependentRecomputationAssurance({
+          producerManifest: rawEventRecomputationManifest,
+          processAssurance: processIsolatedRawEventRecomputationAssurance,
+          recomputationInput: independentRecomputationInput,
+          versionedExperimentIrHash: experimentIr.versionedExperimentIrHash,
+        });
+      blockers.push(...independentRawEventRecomputationAssurance.blockers);
+      const typedNumericProcess = runSystemBenchmarkTypedNumericProcess({
+        benchmarkFamily: selector.expected.experimentDesign.benchmarkFamily,
+        observations,
+        analysisProtocol,
+        independentRawEventRecomputationAssurance,
+        experimentIr,
+      });
+      blockers.push(...typedNumericProcess.blockers);
+      let analysisObservationAuthority = null;
+      try {
+        analysisObservationAuthority = buildHarnessAnalysisObservationAuthority({
+          cells,
+          benchmarkFamily: selector.expected.experimentDesign.benchmarkFamily,
+          analysisProtocolHash: analysisProtocol.analysisProtocolHash,
+          analysisProtocol,
+          numericResidualMaximum:
+            analysisProtocol.numericValidation.residual.maximumAbsoluteResidual,
+          scheduleCellCount: schedule.length,
+          rawEventManifestHash,
+          rawEventArtifactHash,
+          systemBenchmarkHarnessImplementationHash: SYSTEM_BENCHMARK_HARNESS_IMPLEMENTATION.systemBenchmarkHarnessImplementationHash,
+          versionedExperimentIrHash: experimentIr.versionedExperimentIrHash,
+          experimentAttemptId,
+          sourceLineageHash,
+          rawEventRecomputationManifest,
+          independentRawEventRecomputationAssurance,
+          typedNumericOracleProduction: typedNumericProcess.typedNumericOracleProduction,
+          typedNumericOracleRecomputationReceipt:
+            typedNumericProcess.typedNumericOracleRecomputationReceipt,
+          experimentIr,
+        });
+      } catch (error) {
+        blockers.push(`benchmark_analysis_observation_authority:${String(
+          error?.message || error,
+        )}`);
+      }
       const analysisProtocolEvaluationInputs = Object.freeze({
         analysisProtocol,
         observations,
@@ -382,8 +481,33 @@ export function executeSystemBenchmarkHarness({
         analysisProtocolEvaluation,
         analysisProtocolEvaluationInputs,
       ));
+      const workerDatasetPositiveByteReadObserved = academicPerCell
+        && armBatchExecutions.length === expectedProcessExecutionCount
+        && armBatchExecutions.every((batch) => authorizations.datasets.every((dataset) => {
+          const access = batch.runnerReceipt?.datasetAccessReceipt?.datasets
+            ?.find((candidate) => candidate.name === dataset.name);
+          return access?.readObserved === true
+            && Number.isSafeInteger(access.positiveReadBytesObserved)
+            && access.positiveReadBytesObserved > 0;
+        }));
+      const datasetEvaluationDependencyReceipt = academicPerCell
+        ? buildDatasetEvaluationDependencyReceipt({
+          operatorDatasetHarnessAuthority,
+          preDataAccessFreeze,
+          cells,
+          rawEventManifestHash,
+          rawEventArtifactHash,
+          analysisObservationAuthority,
+          analysisProtocolEvaluation,
+          workerDatasetPositiveByteReadObserved,
+        })
+        : null;
+      if (academicPerCell && datasetEvaluationDependencyReceipt.status
+        !== 'dataset_evaluation_dependency_verified') {
+        blockers.push(...datasetEvaluationDependencyReceipt.blockers);
+      }
       const resultDocument = {
-        version: 4,
+        version: 5,
         kind: 'SystemBenchmarkRunObservations',
         executionStatus: 'system_benchmark_execution_completed',
         integrityStatus: blockers.length ? 'system_benchmark_integrity_blocked' : 'system_benchmark_integrity_verified',
@@ -391,6 +515,8 @@ export function executeSystemBenchmarkHarness({
         scientificFindings: blockers.length ? [] : analysisProtocolEvaluation.scientificFindings,
         preDataAccessFreeze,
         empiricalPreDataAccessFreezeHash: preDataAccessFreeze.empiricalPreDataAccessFreezeHash,
+        experimentIr,
+        versionedExperimentIrHash: experimentIr.versionedExperimentIrHash,
         experimentDesignHash: selector.expected.experimentDesignHash,
         benchmarkHarnessHash: selector.expected.experimentDesign.benchmarkHarnessHash,
         armProtocolSet: selector.expected.experimentDesign.benchmarkHarness.armProtocolSet,
@@ -400,6 +526,7 @@ export function executeSystemBenchmarkHarness({
         systemBenchmarkHarnessImplementationHash: SYSTEM_BENCHMARK_HARNESS_IMPLEMENTATION.systemBenchmarkHarnessImplementationHash,
         datasetAuthorizationSetHash: authorizations.datasetAuthorizationSetHash,
         operatorDatasetHarnessAuthority,
+        datasetEvaluationDependencyReceipt,
         assuranceScope: selector.expected.assuranceScope,
         academicPromotionEligible: selector.expected.assuranceScope === 'operator-authorized-hidden-evaluation-v1',
         rawEventManifestHash,
@@ -407,6 +534,7 @@ export function executeSystemBenchmarkHarness({
         rawEventArtifactBytes,
         rawEventArtifact,
         rawEventRecomputationManifest,
+        independentRawEventRecomputationAssurance,
         statisticalEvaluation,
         analysisProtocol,
         analysisProtocolHash: analysisProtocol.analysisProtocolHash,
@@ -414,7 +542,7 @@ export function executeSystemBenchmarkHarness({
         analysisProtocolEvaluation,
         observations,
       };
-      const csvDocument = buildCsv(observations, requiredMetrics);
+      const csvDocument = buildSystemBenchmarkObservationCsv(observations, requiredMetrics);
       let resultJsonHash = null;
       let resultCsvHash = null;
       let resultArtifacts = [];
@@ -456,7 +584,7 @@ export function executeSystemBenchmarkHarness({
         blockers.push('benchmark_harness_per_cell_process_isolation_unverified');
       }
       const payload = {
-        version: 3,
+        version: 4,
         kind: 'SystemBenchmarkHarnessExecutionReceipt',
         status: blockers.length ? 'system_benchmark_harness_blocked' : 'system_benchmark_harness_verified',
         executionStatus: armBatchExecutions.length === expectedProcessExecutionCount
@@ -466,6 +594,8 @@ export function executeSystemBenchmarkHarness({
         scientificFindings: blockers.length ? [] : analysisProtocolEvaluation.scientificFindings,
         preDataAccessFreeze,
         empiricalPreDataAccessFreezeHash: preDataAccessFreeze.empiricalPreDataAccessFreezeHash,
+        experimentIr,
+        versionedExperimentIrHash: experimentIr.versionedExperimentIrHash,
         benchmarkId: selector.expected.benchmarkId,
         benchmarkSelector: selector.expected,
         campaignBenchmarkSelectorHash: selector.expected.campaignBenchmarkSelectorHash,
@@ -478,6 +608,7 @@ export function executeSystemBenchmarkHarness({
         systemBenchmarkHarnessImplementationHash: SYSTEM_BENCHMARK_HARNESS_IMPLEMENTATION.systemBenchmarkHarnessImplementationHash,
         datasetAuthorizationSetHash: authorizations.datasetAuthorizationSetHash,
         operatorDatasetHarnessAuthority,
+        datasetEvaluationDependencyReceipt,
         assuranceScope: selector.expected.assuranceScope,
         academicPromotionEligible: selector.expected.assuranceScope === 'operator-authorized-hidden-evaluation-v1',
         datasetAuthorizations: authorizations.datasets,
@@ -511,6 +642,7 @@ export function executeSystemBenchmarkHarness({
         rawEventArtifactBytes,
         rawEventArtifact,
         rawEventRecomputationManifest,
+        independentRawEventRecomputationAssurance,
         statisticalEvaluation,
         analysisProtocol,
         analysisProtocolHash: analysisProtocol.analysisProtocolHash,
@@ -554,7 +686,14 @@ export function executeSystemBenchmarkHarness({
     const armProtocol = scheduledCells[0]?.armProtocol || null;
     const armAdapter = armAdapterSet.adapters.find((candidate) => candidate.arm === arm);
     let fixture = null;
-    try { fixture = buildSystemBenchmarkArmBatchChallenge({ protocol: armProtocol, cells: scheduledCells, operatorDatasetHarnessDefinition }); }
+    try {
+      fixture = buildSystemBenchmarkArmBatchChallenge({
+        protocol: armProtocol,
+        cells: scheduledCells,
+        operatorDatasetHarnessDefinition,
+        versionedExperimentIrHash: experimentIr.versionedExperimentIrHash,
+      });
+    }
     catch (error) { blockers.push(`benchmark_repository_owned_arm_batch_unavailable:${arm}:${error?.message || 'unknown'}`); return finalize(); }
     const batch = Object.freeze({
       arm,
@@ -564,6 +703,13 @@ export function executeSystemBenchmarkHarness({
       armAdapter,
       armAdapterSetHash: armAdapterSet.systemBenchmarkArmAdapterSetHash,
       empiricalPreDataAccessFreezeHash: preDataAccessFreeze.empiricalPreDataAccessFreezeHash,
+      versionedExperimentIrHash: experimentIr.versionedExperimentIrHash,
+      ...(experimentIr.version === 3 ? {
+        experimentResearchBindingHash:
+          experimentIr.researchBinding.experimentResearchBindingHash,
+        datasetResearchCompatibilityHash:
+          experimentIr.researchBinding.datasetResearchCompatibilityHash,
+      } : {}),
       experimentAttemptId,
       executionMode,
       executionAttemptId: academicPerCell

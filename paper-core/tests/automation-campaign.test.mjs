@@ -11,6 +11,10 @@ import { runPaperCampaign as executePaperCampaign } from '../../paper-applicatio
 import { createResourceGovernor } from '../../paper-application/automation/resource-governor.mjs';
 import { createSystemScheduler } from '../../paper-adapters/runtime/system-scheduler.mjs';
 import { createRandomIdGenerator } from '../../paper-adapters/runtime/random-id-generator.mjs';
+import { createMultiLanguageEmpiricalExecutor } from '../../paper-adapters/automation/multi-language-empirical-executor.mjs';
+import { executeIndependentCampaignPdfRebuild } from '../../paper-adapters/automation/campaign-release-independent-pdf-rebuild.mjs';
+import { createIndependentPdfRebuildVerifierCapability } from '../../paper-ports/independent-pdf-rebuild-verifier-port.mjs';
+import { attestResearchEvidenceCapsuleManifest } from '../../paper-adapters/build-package/research-evidence-capsule-attestation.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 const campaignClocks = new WeakMap();
@@ -177,7 +181,19 @@ test('expired running lease is recovered after a simulated crash', async (t) => 
     pollMs: 1,
   });
   assert.equal(result.campaign.status, 'completed');
-  assert.ok(result.nodes.some((node) => node.failureClass === null && node.attemptCount >= 2));
+  const recovered = result.nodes.find((node) => node.nodeId === leased.nodeId);
+  assert.equal(recovered?.status, 'completed');
+  assert.equal(recovered?.failureClass, null);
+  assert.equal(recovered?.attemptCount, 1,
+    'a pre-external-action crash refunds the abandoned attempt');
+  assert.ok(recovered.leaseGeneration > leased.leaseGeneration);
+  const recovery = campaignStore.listEvents(plan.campaignId).find((event) => (
+    event.kind === 'campaign_node_lease_recovered'
+      && event.event.detail.previousAttemptId === leased.attemptId
+  ));
+  assert.equal(recovery?.event.detail.recoveryDisposition,
+    'pre_external_action_refund_requeue');
+  assert.equal(recovery?.event.detail.budgetReservationRefunded, true);
 });
 
 test('operator cancellation aborts an active agent node and leaves campaign cancelled', async (t) => {
@@ -595,6 +611,212 @@ test('benchmark cell dispatch fails before exceeding its campaign process budget
   assert.equal(result.campaign.status, 'stopped');
   assert.equal(result.campaign.stopReason, 'campaign_cpu_job_budget_exhausted');
   assert.equal(result.campaign.cpuJobCount, 1);
+});
+
+function infrastructureDeferredError(message) {
+  const error = new Error(message);
+  error.stateRecoverabilityDeferred = true;
+  return error;
+}
+
+function externalActionFailpointExecutor({ actionKind, root, onExternalCall }) {
+  if (actionKind === 'ordinary-empirical') {
+    fs.writeFileSync(path.join(root, 'run.mjs'), 'process.exit(0);\n');
+    const empiricalExecutor = createMultiLanguageEmpiricalExecutor({
+      workerRunner: {
+        availability: { available: true, backend: 'fixture' },
+        run() {
+          onExternalCall();
+          throw infrastructureDeferredError(`${actionKind}_post_call_pre_result`);
+        },
+      },
+    });
+    return {
+      targetAction: 'campaign_empirical_cell_execute:',
+      expectedReservedCpuJobs: 2,
+      executor: {
+        execute: ({ executionResources }) => empiricalExecutor.execute({
+          language: 'node',
+          entrypoint: 'run.mjs',
+          cwd: root,
+          sourceRoot: root,
+          runEmpiricalCell: executionResources.runEmpiricalCell,
+        }),
+      },
+    };
+  }
+  if (actionKind === 'independent-pdf-rebuild') {
+    const verifier = createIndependentPdfRebuildVerifierCapability(async () => {
+      onExternalCall();
+      throw infrastructureDeferredError(`${actionKind}_post_call_pre_result`);
+    });
+    return {
+      targetAction: 'campaign_independent_pdf_rebuild',
+      expectedReservedCpuJobs: 1,
+      executor: {
+        execute: ({ campaign, executionResources }) => executeIndependentCampaignPdfRebuild({
+          verifier,
+          sourceWorkspace: root,
+          sourceArchiveDefinition: {},
+          campaignId: campaign.campaignId,
+          rebuildRoot: root,
+          paperId: campaign.paperId,
+          mainTex: 'main.tex',
+          authoritativePdf: { hash: `sha256:${'a'.repeat(64)}` },
+          createdAt: '2026-07-11T00:00:00.000Z',
+          assertExternalSideEffectReady: executionResources.assertExternalSideEffectReady,
+        }),
+      },
+    };
+  }
+  return {
+    targetAction: 'campaign_release_attestor_sign',
+    expectedReservedCpuJobs: 1,
+    executor: {
+      execute: ({ campaign, executionResources }) => attestResearchEvidenceCapsuleManifest({
+        researchExecutionReleaseAttestor: {
+          attestCapsuleManifest() {
+            onExternalCall();
+            throw infrastructureDeferredError(`${actionKind}_post_call_pre_result`);
+          },
+        },
+        assertExternalSideEffectReady: executionResources.assertExternalSideEffectReady,
+        manifest: {},
+        manifestFileHash: `sha256:${'b'.repeat(64)}`,
+        campaignId: campaign.campaignId,
+        paperId: campaign.paperId,
+        signedAt: '2026-07-11T00:00:00.000Z',
+      }),
+    },
+  };
+}
+
+function failpointCampaignPlan({ root, campaignId }) {
+  return {
+    version: 4,
+    kind: 'PaperCampaignPlan',
+    campaignId,
+    paperId: `${campaignId}-paper`,
+    sourceWorkspace: root,
+    maxRounds: 1,
+    budgets: {
+      maxWallTimeMs: 60_000,
+      maxAgentCalls: 10,
+      maxCpuJobs: 20,
+      maxGpuJobs: 2,
+      maxTokenCount: 1_000,
+      maxCostUsd: 10,
+      maxMemoryMiB: 4_096,
+    },
+    nodes: [{
+      nodeId: `${campaignId}:0:empirical`,
+      kind: 'empirical',
+      roundIndex: 0,
+      dependencies: [],
+      priority: 10,
+      maxAttempts: 2,
+    }],
+  };
+}
+
+test('external worker gates refund the exact persisted reservation before call', async (t) => {
+  for (const actionKind of [
+    'ordinary-empirical',
+    'independent-pdf-rebuild',
+    'release-attestor-sign',
+  ]) {
+    const { root, campaignStore } = fixture(t);
+    const campaignId = `pre-call-refund-${actionKind}`;
+    campaignStore.createCampaign(failpointCampaignPlan({ root, campaignId }));
+    campaignStore.recordUsage(campaignId, { cpuJobs: 2 }, { enforceBudget: true });
+    let externalCalls = 0;
+    const failpoint = externalActionFailpointExecutor({
+      actionKind,
+      root,
+      onExternalCall: () => { externalCalls += 1; },
+    });
+    const assertReady = async ({ action }) => {
+      if (String(action).startsWith(failpoint.targetAction)) {
+        throw infrastructureDeferredError(`${actionKind}_pre_call`);
+      }
+    };
+    assertReady.assertCurrent = () => true;
+    assertReady.markStarted = async () => true;
+    let observedError = null;
+    await assert.rejects(
+      () => runPaperCampaign({
+        campaignId,
+        campaignStore,
+        concurrency: 1,
+        pollMs: 1,
+        executor: failpoint.executor,
+        assertExternalSideEffectReady: assertReady,
+      }),
+      (error) => {
+        observedError = error;
+        return error.stateRecoverabilityDeferred === true
+          && error.message === `${actionKind}_pre_call`;
+      },
+    );
+    assert.equal(externalCalls, 0, actionKind);
+    assert.equal(observedError.campaignNodeInfrastructureReservationCancelled, true, actionKind);
+    assert.equal(campaignStore.getCampaign(campaignId).cpuJobCount, 2, actionKind);
+    const [node] = campaignStore.listNodes(campaignId);
+    assert.equal(node.status, 'queued', actionKind);
+    assert.equal(node.attemptCount, 0, actionKind);
+    assert.equal(campaignStore.listEvents(campaignId).filter(
+      (event) => event.kind === 'campaign_node_external_action_started',
+    ).length, 0, actionKind);
+  }
+});
+
+test('external worker post-call pre-result failures retain reservations after durable start', async (t) => {
+  for (const actionKind of [
+    'ordinary-empirical',
+    'independent-pdf-rebuild',
+    'release-attestor-sign',
+  ]) {
+    const { root, campaignStore } = fixture(t);
+    const campaignId = `post-call-no-refund-${actionKind}`;
+    campaignStore.createCampaign(failpointCampaignPlan({ root, campaignId }));
+    campaignStore.recordUsage(campaignId, { cpuJobs: 2 }, { enforceBudget: true });
+    let externalCalls = 0;
+    const failpoint = externalActionFailpointExecutor({
+      actionKind,
+      root,
+      onExternalCall: () => { externalCalls += 1; },
+    });
+    const assertReady = async () => true;
+    assertReady.assertCurrent = () => true;
+    assertReady.markStarted = async () => true;
+    await assert.rejects(
+      () => runPaperCampaign({
+        campaignId,
+        campaignStore,
+        concurrency: 1,
+        pollMs: 1,
+        executor: failpoint.executor,
+        assertExternalSideEffectReady: assertReady,
+      }),
+      (error) => error.stateRecoverabilityDeferred === true
+        && error.message === `${actionKind}_post_call_pre_result`,
+    );
+    assert.equal(externalCalls, 1, actionKind);
+    assert.equal(
+      campaignStore.getCampaign(campaignId).cpuJobCount,
+      2 + failpoint.expectedReservedCpuJobs,
+      actionKind,
+    );
+    const [node] = campaignStore.listNodes(campaignId);
+    assert.equal(node.status, 'running', actionKind);
+    assert.equal(node.attemptCount, 1, actionKind);
+    const startedEvents = campaignStore.listEvents(campaignId).filter(
+      (event) => event.kind === 'campaign_node_external_action_started',
+    );
+    assert.equal(startedEvents.length, 1, actionKind);
+    assert.ok(String(startedEvents[0].event?.detail?.action || '')
+      .startsWith(failpoint.targetAction), actionKind);
+  }
 });
 
 test('nested repair lease loss aborts dataset, LaTeX, empirical, and artifact repair before result integration', async (t) => {

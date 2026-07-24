@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { fileRecord, pathWithin, readJsonIfExists, sha256File } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { inspectScopedPathSync, inspectScopedWriteTargetSync, readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
 import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
+import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { computeReceiptHash, sealReceiptHash } from '../../paper-domain/evidence/receipt-hash-policy.mjs';
 import { buildFormalClaimContract } from '../../paper-domain/research/formal-claim-contract.mjs';
 import { normalizeFormalProofObligationMappings } from '../../paper-domain/research/formal-proof-obligation-mapping.mjs';
@@ -14,17 +15,21 @@ import { canonicalClaimsFromWorkerPlan } from './canonical-claim-registry-reader
 import { executeNativeResearchWorker, NATIVE_RESEARCH_WORKER_TYPES } from './native-research-worker-execution.mjs';
 import { NATIVE_RESEARCH_WORKER_JOB_LEASE_SECONDS, withJobAttemptLeaseHeartbeat } from './job-attempt-lease-heartbeat.mjs';
 import { formalAcademicPromotionBlockers } from './formal-academic-promotion-policy.mjs';
-
+import { formalReviewEnvelopeBlockers } from './formal-review-envelope-verifier.mjs';
+import {
+  independentlyVerifyFormalReadableProofWorkerResult,
+} from './formal-readable-proof-verifier.mjs';
+import {
+  verifyDynamicFormalExecutionAuthority,
+} from './dynamic-formal-project-closure-readiness.mjs';
+import {
+  verifyFormalExecutionSnapshotReceipt,
+} from './formal-proof-search-workspace-repository.mjs';
 export { NATIVE_RESEARCH_WORKER_TYPES };
 export { formalAcademicPromotionBlockers } from './formal-academic-promotion-policy.mjs';
-
 const WORKER_TYPE_SET = new Set(NATIVE_RESEARCH_WORKER_TYPES);
-
-function safeWorkerId(value) {
-  const id = String(value || '');
-  return /^[a-z0-9][a-z0-9_-]{0,63}$/i.test(id) ? id : null;
-}
-
+const safeWorkerId = (value) => (/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(String(value || ''))
+  ? String(value || '') : null);
 async function validateInputs({ sourceRoot, worker }) {
   const blockers = [];
   const inputSpecs = Array.isArray(worker.inputs) ? worker.inputs : [];
@@ -55,7 +60,6 @@ async function validateInputs({ sourceRoot, worker }) {
   }
   return { records, blockers };
 }
-
 function normalizedWorkerDefinition(worker) {
   return {
     id: String(worker.id || ''),
@@ -72,14 +76,13 @@ function normalizedWorkerDefinition(worker) {
     parameters: worker.parameters || {},
   };
 }
-
 function validatePersistedReceipt({ persisted, expected }) {
   const blockers = [];
   if (!persisted) blockers.push('native_research_worker_execution_receipt_missing');
   if (persisted && computeReceiptHash(persisted) !== persisted.nativeResearchWorkerExecutionReceiptHash) {
     blockers.push('native_research_worker_execution_receipt_hash_invalid');
   }
-  for (const key of ['paperId', 'taskKey', 'workerId', 'workerType', 'jobId', 'attemptId', 'leaseGeneration', 'planHash', 'theoremSpecificationHash', 'workerDefinitionHash', 'engineHash', 'resultHash']) {
+  for (const key of ['paperId', 'taskKey', 'workerId', 'workerType', 'jobId', 'attemptId', 'leaseGeneration', 'planHash', 'theoremSpecificationHash', 'dynamicFormalExecutionAuthorityHash', 'workerDefinitionHash', 'engineHash', 'resultHash']) {
     if (persisted && persisted[key] !== expected[key]) blockers.push(`native_research_worker_receipt_${key}_mismatch`);
   }
   if (persisted && JSON.stringify(persisted.inputs) !== JSON.stringify(expected.inputs)) {
@@ -90,12 +93,12 @@ function validatePersistedReceipt({ persisted, expected }) {
   }
   return blockers;
 }
-
 export function verifyNativeResearchWorkerExecutionReport(report, {
   paperId = null,
   taskKey = null,
   requireFormalWorkers = false,
   theoremSpecificationHash = null,
+  dynamicFormalExecutionAuthorityHash = null,
 } = {}) {
   const blockers = [];
   const { nativeResearchWorkerExecutionReportHash: claimedHash, ...payload } = report || {};
@@ -109,6 +112,15 @@ export function verifyNativeResearchWorkerExecutionReport(report, {
   if (taskKey && report?.taskKey !== taskKey) blockers.push('native_research_worker_execution_report_task_mismatch');
   if (theoremSpecificationHash && report?.theoremSpecificationHash !== theoremSpecificationHash) {
     blockers.push('native_research_worker_execution_report_theorem_specification_mismatch');
+  }
+  if (dynamicFormalExecutionAuthorityHash) {
+    if (!verifyDynamicFormalExecutionAuthority(report?.dynamicFormalExecutionAuthority)
+      || report.dynamicFormalExecutionAuthority.dynamicFormalExecutionAuthorityHash
+        !== dynamicFormalExecutionAuthorityHash) {
+      blockers.push('native_research_worker_dynamic_formal_authority_invalid');
+    }
+  } else if (report?.dynamicFormalExecutionAuthority != null) {
+    blockers.push('native_research_worker_dynamic_formal_authority_unexpected');
   }
   if (report?.status !== 'native_research_workers_verified') blockers.push('native_research_workers_not_verified');
   if (Array.isArray(report?.blockers) && report.blockers.length) blockers.push('native_research_worker_execution_report_has_blockers');
@@ -156,54 +168,60 @@ export function verifyNativeResearchWorkerExecutionReport(report, {
       || !receipt?.result?.formalCertificateReplayReceiptHash) {
       blockers.push(`formal_lake_worker_receipt_incomplete:${receipt?.workerId || 'missing'}`);
     }
+    const workerAuthorityMismatch = dynamicFormalExecutionAuthorityHash
+      ? receipt?.dynamicFormalExecutionAuthorityHash
+          !== dynamicFormalExecutionAuthorityHash
+        || receipt?.result?.dynamicFormalExecutionAuthority
+          ?.dynamicFormalExecutionAuthorityHash !== dynamicFormalExecutionAuthorityHash
+      : receipt?.dynamicFormalExecutionAuthorityHash != null
+        || receipt?.result?.dynamicFormalExecutionAuthority != null;
+    if (workerAuthorityMismatch) {
+      blockers.push(`formal_lake_worker_dynamic_formal_authority_mismatch:${receipt?.workerId || 'missing'}`);
+    }
+    if (dynamicFormalExecutionAuthorityHash) {
+      const authority = report.dynamicFormalExecutionAuthority;
+      if (!verifyFormalExecutionSnapshotReceipt(
+        receipt?.result?.initialFormalExecutionSnapshotReceipt,
+        {
+          formalProjectClosureHash: authority.formalProjectClosureHash,
+          formalProjectManifestHash: authority.formalProjectManifestHash,
+        },
+      ) || !verifyFormalExecutionSnapshotReceipt(
+        receipt?.result?.finalFormalExecutionSnapshotReceipt,
+        {
+          formalProjectClosureHash: authority.formalProjectClosureHash,
+          formalProjectManifestHash: authority.formalProjectManifestHash,
+        },
+      )) {
+        blockers.push(`formal_lake_worker_execution_snapshot_invalid:${receipt?.workerId || 'missing'}`);
+      }
+      if (receipt?.result?.executionIdentity?.containerImageDigest
+          !== authority.formalSandboxRuntimeImageDigest
+        || receipt?.result?.replayReceipt?.executionIdentity?.containerImageDigest
+          !== authority.formalSandboxRuntimeImageDigest
+        || receipt?.result?.isolation?.immutableWorkRootVerified !== true) {
+        blockers.push(`formal_lake_worker_sandbox_identity_mismatch:${receipt?.workerId || 'missing'}`);
+      }
+      const seal = receipt?.result?.formalProjectSnapshotSealReceipt;
+      const { formalProjectSnapshotSealReceiptHash, ...sealPayload } = seal || {};
+      if (!seal || formalProjectSnapshotSealReceiptHash
+          !== hashRecord('FormalProjectSnapshotSealReceipt', sealPayload)
+        || receipt?.result?.formalProjectSnapshotSealReceiptHash
+          !== formalProjectSnapshotSealReceiptHash
+        || seal.writableFileCount !== 0 || seal.writableDirectoryCount !== 0) {
+        blockers.push(`formal_lake_worker_inner_snapshot_not_sealed:${receipt?.workerId || 'missing'}`);
+      }
+    }
+    const readableProofVerification = independentlyVerifyFormalReadableProofWorkerResult(
+      receipt?.result,
+      { required: false },
+    );
+    blockers.push(...readableProofVerification.blockers.map((blocker) => (
+      `formal_readable_proof:${receipt?.workerId || 'missing'}:${blocker}`
+    )));
   }
   return Object.freeze({ valid: blockers.length === 0, blockers: Object.freeze([...new Set(blockers)]) });
 }
-
-function verifyFormalReviewEnvelope(envelope, {
-  paperId,
-  manuscriptHash,
-  workerPlanHash,
-  formalClaimUniverseHash,
-  canonicalClaimRegistryHash,
-  theoremSpecificationHash,
-} = {}) {
-  const blockers = [];
-  const { formalSemanticReviewEnvelopeHash, workspaceAttemptIntegration: _workspaceAttemptIntegration, ...payload } = envelope || {};
-  if (!envelope || envelope.kind !== 'FormalClaimSemanticReviewEnvelope'
-    || hashPaperRecord('FormalClaimSemanticReviewEnvelope', payload) !== formalSemanticReviewEnvelopeHash) {
-    blockers.push('formal_semantic_review_envelope_hash_invalid');
-  }
-  if (envelope?.status !== 'formal_semantic_review_envelope_verified') blockers.push('formal_semantic_review_envelope_not_verified');
-  if (envelope?.paperId !== paperId) blockers.push('formal_semantic_review_envelope_paper_mismatch');
-  if (envelope?.manuscriptHash !== manuscriptHash) blockers.push('formal_semantic_review_envelope_manuscript_mismatch');
-  if (envelope?.workerPlanHash !== workerPlanHash) blockers.push('formal_semantic_review_envelope_plan_mismatch');
-  if (!formalClaimUniverseHash || envelope?.formalClaimUniverseHash !== formalClaimUniverseHash) {
-    blockers.push('formal_semantic_review_envelope_claim_universe_mismatch');
-  }
-  if (!canonicalClaimRegistryHash || envelope?.canonicalClaimRegistryHash !== canonicalClaimRegistryHash) {
-    blockers.push('formal_semantic_review_envelope_claim_registry_mismatch');
-  }
-  if (theoremSpecificationHash !== undefined
-    && (!theoremSpecificationHash || envelope?.theoremSpecificationHash !== theoremSpecificationHash)) {
-    blockers.push('formal_semantic_review_envelope_theorem_specification_mismatch');
-  }
-  for (const field of ['reviewNodeId', 'reviewAttemptId', 'reviewAgentReceiptHash', 'authorNodeId', 'authorAgentReceiptHash', 'reviewerPrincipalId', 'authorPrincipalId']) {
-    if (!envelope?.[field]) blockers.push(`formal_semantic_review_envelope_${field}_missing`);
-  }
-  if (envelope?.reviewNodeId === envelope?.authorNodeId
-    || envelope?.reviewAgentReceiptHash === envelope?.authorAgentReceiptHash
-    || envelope?.reviewerPrincipalId === envelope?.authorPrincipalId) {
-    blockers.push('formal_semantic_review_envelope_independence_invalid');
-  }
-  if (!['filesystem_credential_root_and_principal_separation', 'configured_principal_and_process_separation']
-    .includes(envelope?.reviewerIndependenceAssuranceScope)
-    || envelope?.providerAccountIndependenceVerified !== false) {
-    blockers.push('formal_semantic_review_envelope_assurance_scope_invalid');
-  }
-  return [...new Set(blockers)];
-}
-
 export function bindFormalReviewsToWorkers({
   workers = [],
   formalReviewEnvelope = null,
@@ -216,7 +234,7 @@ export function bindFormalReviewsToWorkers({
   const specificationVerification = specificationRequired
     ? verifyTheoremSpecification(theoremSpecification, { paperId })
     : Object.freeze({ valid: false, blockers: Object.freeze([]) });
-  const envelopeBlockers = verifyFormalReviewEnvelope(formalReviewEnvelope, {
+  const envelopeBlockers = formalReviewEnvelopeBlockers(formalReviewEnvelope, {
     paperId,
     manuscriptHash: canonicalClaimRegistry?.manuscriptHash || null,
     workerPlanHash,
@@ -303,8 +321,20 @@ export function bindFormalReviewsToWorkers({
         && JSON.stringify([...(specificationClaim.proofObligations || [])].map(String).sort())
           === JSON.stringify([...(binding.proofObligations || binding.obligationNames || [])].map(String).sort())
         && obligationMapping.valid);
+      const dynamicFormalAuthority = specificationClaim?.proposalClaimSource
+        ?.dynamicFormalClaimSeedHash
+        ? specificationClaim.proposalClaimSource
+        : null;
+      const dynamicFormalBindingValid = !dynamicFormalAuthority || (
+        binding?.theoremName === dynamicFormalAuthority.leanDeclarationName
+        && binding?.expectedTypeHash === dynamicFormalAuthority.leanNormalizedTypeHash
+      );
       if (!specificationBindingValid) {
         bindingBlockers.push(`formal_theorem_specification_binding_mismatch:${binding?.claimId || 'missing'}`);
+        return binding;
+      }
+      if (!dynamicFormalBindingValid) {
+        bindingBlockers.push(`formal_dynamic_claim_type_binding_mismatch:${binding?.claimId || 'missing'}`);
         return binding;
       }
       const exactReviewFields = [
@@ -351,6 +381,7 @@ export function bindFormalReviewsToWorkers({
         },
         theoremSpecificationHash: specificationClaim ? theoremSpecification.theoremSpecificationHash : null,
         theoremSpecificationClaimHash: specificationClaim?.theoremSpecificationClaimHash || null,
+        dynamicFormalClaimAuthority: dynamicFormalAuthority,
         semanticReview: {
           status: review.status,
           reviewerId: formalReviewEnvelope.reviewerPrincipalId,
@@ -393,6 +424,10 @@ export function bindFormalReviewsToWorkers({
         proposalClaimRecordHash: specificationClaim?.proposalClaimSource?.proposalClaimRecordHash || null,
         proofObligationContracts: obligationMapping.contracts,
         proofObligationMappings: obligationMapping.mappings,
+        ...(dynamicFormalAuthority ? {
+          dynamicFormalClaimSeedHash: dynamicFormalAuthority.dynamicFormalClaimSeedHash,
+          allowedImports: dynamicFormalAuthority.allowedImports,
+        } : {}),
         formalClaimContract,
       };
     });
@@ -413,6 +448,9 @@ export async function runNativeResearchWorkers({
   theoremSpecification = null,
   campaignEvidenceContext = null,
   workerTypes = null,
+  trustedFormalSandboxRuntime = null,
+  dynamicFormalExecutionAuthority = null,
+  dynamicFormalExecutionEnvironment = process.env,
 } = {}) {
   const planPath = sourceRoot ? path.join(sourceRoot, 'RESEARCH_WORKER_PLAN.json') : null;
   const plan = planPath ? await readJsonIfExists(planPath) : null;
@@ -449,6 +487,10 @@ export async function runNativeResearchWorkers({
   const workers = bound.workers;
   if (workers.some((worker) => worker.type === 'formal_verifier_lake')) {
     reportBlockers.push(...(canonicalClaimRegistry?.blockers || ['canonical_claim_registry_required']), ...bound.blockers);
+  }
+  if (dynamicFormalExecutionAuthority
+    && !verifyDynamicFormalExecutionAuthority(dynamicFormalExecutionAuthority)) {
+    reportBlockers.push('native_research_worker_dynamic_formal_authority_invalid');
   }
   if (plan && (!declaredWorkers.length || declaredWorkers.length > 16)) reportBlockers.push('research_worker_plan_worker_count_invalid');
   if (selectedWorkerTypes && !workers.length) reportBlockers.push('native_research_worker_type_filter_empty');
@@ -528,7 +570,13 @@ export async function runNativeResearchWorkers({
         const sourceMerkleHashBefore = sourceRoot ? directoryMerkleHash(sourceRoot) : null;
         const result = blockers.length
           ? { status: 'native_research_worker_blocked', blockers }
-          : await executeNativeResearchWorker(worker, inputValidation.records, { sourceRoot, signal });
+          : await executeNativeResearchWorker(worker, inputValidation.records, {
+            sourceRoot,
+            signal,
+            trustedFormalSandboxRuntime,
+            dynamicFormalExecutionAuthority,
+            dynamicFormalExecutionEnvironment,
+          });
         const sourceMerkleHashAfter = sourceRoot ? directoryMerkleHash(sourceRoot) : null;
         return { result, sourceMerkleHashBefore, sourceMerkleHashAfter };
       },
@@ -557,6 +605,9 @@ export async function runNativeResearchWorkers({
         : 'native_research_worker_execution_verified',
       planHash: planRecord?.hash || null,
       theoremSpecificationHash: theoremSpecification?.theoremSpecificationHash || null,
+      dynamicFormalExecutionAuthorityHash: worker.type === 'formal_verifier_lake'
+        ? dynamicFormalExecutionAuthority?.dynamicFormalExecutionAuthorityHash || null
+        : null,
       workerDefinitionHash,
       engineHash,
       inputs: inputValidation.records.map(({ absolutePath: _absolutePath, ...record }) => record),
@@ -635,6 +686,7 @@ export async function runNativeResearchWorkers({
     theoremSpecificationHash: theoremSpecification?.theoremSpecificationHash || null,
     theoremSpecificationClaimHashes: Object.freeze((theoremSpecification?.claims || [])
       .map((claim) => claim.theoremSpecificationClaimHash)),
+    dynamicFormalExecutionAuthority,
     engineHash,
     workerTypeFilter: selectedWorkerTypes ? [...selectedWorkerTypes].sort() : null,
     plannedResearchWorkerCount: workers.length,

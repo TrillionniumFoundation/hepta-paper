@@ -45,8 +45,9 @@ import {
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { createSqliteCampaignStore } from '../../paper-adapters/persistence/sqlite-campaign-store.mjs';
 import {
-  createAutonomousResearchReleaseBinding,
-} from '../../paper-domain/automation/autonomous-research-release-binding-contract.mjs';
+  REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES,
+  RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE,
+} from '../../paper-domain/automation/runtime-image-reproducibility-receipt-contract.mjs';
 import {
   buildAutonomousResearchRecurringGoldenTemplate,
 } from '../../paper-domain/automation/autonomous-research-machine-intake-contract.mjs';
@@ -70,6 +71,10 @@ import {
 import {
   buildCanonicalAdmissionPreflightExecutionInspection,
 } from './autonomous-research-supervisor-enqueue-test-support.mjs';
+import {
+  bindGenericGoldenPreparationFixture,
+  genericManuscriptReleaseFixture,
+} from './support/autonomous-research-generalization-fixture.mjs';
 
 test('empty-runtime recurring intake survives restart and publishes only its bound Golden pointer', async (t) => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-autonomous-cold-start-e2e-'));
@@ -99,7 +104,7 @@ test('empty-runtime recurring intake survives restart and publishes only its bou
   const configPath = path.join(base, 'machine-intake.json');
   fs.writeFileSync(configPath, `${JSON.stringify(configuration, null, 2)}\n`, { mode: 0o600 });
   fs.chmodSync(configPath, 0o600);
-  let observedAt = new Date('2026-07-15T12:00:00.000Z');
+  let observedAt = new Date('2026-07-19T00:00:00.000Z');
   const clock = {
     now: () => new Date(observedAt),
     nowIso: () => observedAt.toISOString(),
@@ -138,7 +143,7 @@ test('empty-runtime recurring intake survives restart and publishes only its bou
       });
     },
     async enqueueIntake({ intake, machineIntakeAdmission }) {
-      const prepared = await prepareAutonomousResearchLoop({
+      const basePreparation = await prepareAutonomousResearchLoop({
         paperId: intake.paperId,
         objective: intake.objective,
         protocolFamily: intake.protocolFamily,
@@ -153,6 +158,11 @@ test('empty-runtime recurring intake survives restart and publishes only its bou
         revisionRounds: intake.revisionRounds,
         refereeCount: intake.refereeCount,
         createdAt: intake.admissionCreatedAt,
+      });
+      const prepared = bindGenericGoldenPreparationFixture({
+        basePreparation,
+        machineIntake: intake,
+        machineIntakeAdmission,
       });
       const workspaceRepository = createAutonomousResearchWorkspaceRepository({
         runtimeRoot,
@@ -260,6 +270,7 @@ test('empty-runtime recurring intake survives restart and publishes only its bou
   const runtimeReceiptHash = H('cold-start-e2e-runtime');
   const fake = fakeExecutor();
   const pricedFakeExecutor = {
+    verifySignedReviewerReceipt: fake.executor.verifySignedReviewerReceipt,
     async execute(input) {
       return Object.freeze({
         ...await fake.executor.execute(input),
@@ -267,6 +278,7 @@ test('empty-runtime recurring intake survives restart and publishes only its bou
       });
     },
   };
+  let lastReleaseBinding = null;
   const readPersistedQualificationState = async (campaign) => {
     const repository = createAutonomousResearchQualificationStateRepository({
       runtimeRoot,
@@ -312,6 +324,8 @@ test('empty-runtime recurring intake survives restart and publishes only its bou
       const receiptFor = () => {
         const preparation = replacementStore.campaignStore.getCampaign(campaignId)
           .spec.autonomousResearchPreparation;
+        const releaseBinding = currentAuthority.releaseBundle
+          .autonomousResearchReleaseBinding;
         const payload = {
           version: 1,
           kind: 'FullResearchGoldenMicroCampaignQualificationReceipt',
@@ -320,16 +334,31 @@ test('empty-runtime recurring intake survives restart and publishes only its bou
           paperId: enqueuedRecord.paperId,
           campaignReleaseBundleHash: currentAuthority.campaignReleaseBundleHash,
           runtimeImageReproducibilityReceiptHash: runtimeReceiptHash,
-          runtimeImageReproducibilityRequiredProfiles: ['python', 'pythonGpu', 'r'],
-          runtimeImageReproducibilityDefinitionManifestHashes: {
-            python: H('cold-start-e2e-python'),
-            pythonGpu: H('cold-start-e2e-python-gpu'),
-            r: H('cold-start-e2e-r'),
-          },
+          runtimeImageReproducibilityRequiredProfiles:
+            REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES,
+          runtimeImageReproducibilityDefinitionManifestHashes: Object.fromEntries(
+            REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES.map((profile) => (
+              [profile, H(`cold-start-e2e-${profile}`)]
+            )),
+          ),
+          empiricalFamilyPluginPackageHash:
+            RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE.empiricalFamilyPluginPackageHash,
+          empiricalFamilyPluginRegistryHash:
+            RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE.empiricalFamilyPluginRegistryHash,
+          empiricalFamilyPluginStartupInspectionHash:
+            RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE
+              .empiricalFamilyPluginStartupInspectionHash,
+          activeEmpiricalProductionProfileHashes:
+            RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE.activeProductionProfileHashes,
+          runtimeImageReproducibilityActivePluginScopeHash:
+            RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE
+              .runtimeImageReproducibilityActivePluginScopeHash,
           proposalHash: preparation.proposal.machineProposedScientificClaimSetHash,
           policyAuthorizationHash:
             preparation.policyAuthorization.autonomousResearchPolicyAuthorizationHash,
           seedBindingHash: preparation.seedBinding.autonomousResearchSeedBindingHash,
+          qualificationScope: releaseBinding.qualificationScope,
+          genericContentCanaryVerified: releaseBinding.genericContentCanaryVerified,
           independentHypothesisPriorArtReviewVerified: true,
           independentHypothesisPriorArtReceiptHash: H('cold-start-e2e-prior-art'),
           signer: {
@@ -420,14 +449,23 @@ test('empty-runtime recurring intake survives restart and publishes only its bou
           executor: pricedFakeExecutor,
           campaignReleaseAuthorityReader() {
             const completed = replacementStore.campaignStore.getCampaign(campaignId);
-            const binding = createAutonomousResearchReleaseBinding({
+            const preparation = completed.spec.autonomousResearchPreparation;
+            const binding = genericManuscriptReleaseFixture({
               campaignId,
               paperId: completed.paperId,
+              launchMode: 'golden-bootstrap',
               campaignPlanHash: completed.spec.campaignPlanHash,
-              preparation: completed.spec.autonomousResearchPreparation,
+              objective: preparation.proposal.objective,
+              protocolFamily: preparation.proposal.protocolFamily,
+              policyAuthorizationHash:
+                preparation.policyAuthorization.autonomousResearchPolicyAuthorizationHash,
+              seedBindingHash: preparation.seedBinding.autonomousResearchSeedBindingHash,
+              externalSubmission: true,
+              bindingPreparation: preparation,
               machineIntake: completed.spec.autonomousResearchMachineIntake,
               machineIntakeAdmission: completed.spec.autonomousResearchMachineIntakeAdmission,
-            });
+            }).releaseBinding;
+            lastReleaseBinding = binding;
             currentAuthority = Object.freeze({
               status: 'current_completed_release',
               campaignStatus: 'completed',
@@ -472,8 +510,34 @@ test('empty-runtime recurring intake survives restart and publishes only its bou
   });
   const replacementCycle = await replacementSupervisor.runCycle();
   const settled = replacementCycle.results.find((result) => result.campaignId === campaignId);
-  assert.equal(settled.status, 'settled', JSON.stringify(settled));
-  assert.equal(settled.outcome.campaignFullyQualified, true);
+  const persistedPreparation = replacementStore.campaignStore.getCampaign(campaignId)
+    .spec.autonomousResearchPreparation;
+  assert.equal(settled.status, 'settled', JSON.stringify({
+    settled,
+    lastReleaseBinding: lastReleaseBinding && {
+      launchMode: lastReleaseBinding.launchMode,
+      qualificationScope: lastReleaseBinding.qualificationScope,
+      fullResearchQualificationEligible:
+        lastReleaseBinding.fullResearchQualificationEligible,
+      genericContentCanaryVerified: lastReleaseBinding.genericContentCanaryVerified,
+      globalGoldenQualificationAuthorityHash:
+        lastReleaseBinding.globalGoldenQualificationAuthorityHash,
+    },
+    preparationCapability: {
+      agendaMode: persistedPreparation.capabilityScopeManifest.agendaMode,
+      manuscriptMode: persistedPreparation.capabilityScopeManifest.manuscriptMode,
+      genericDeclaredCapability:
+        persistedPreparation.capabilityScopeManifest.genericDeclaredCapability,
+      externalCapabilityTrustReady:
+        persistedPreparation.externalCapabilityTrustInspection?.ready === true,
+    },
+  }));
+  assert.equal(lastReleaseBinding.genericContentCanaryVerified, true);
+  assert.match(lastReleaseBinding.globalGoldenQualificationAuthorityHash,
+    /^sha256:[0-9a-f]{64}$/);
+  assert.equal(settled.outcome.boundedGoldenQualificationPublished, true);
+  assert.equal(settled.outcome.campaignFullyQualified, false);
+  assert.equal(settled.outcome.fullAutomaticResearchWritingReady, false);
   assert.equal(providerCanaries, 1);
   const pointer = pointerRepository.read();
   assert.equal(pointer.receipt.campaignId, campaignId);

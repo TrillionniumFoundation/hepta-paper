@@ -12,8 +12,18 @@ import { createPaperTask } from '../../paper-domain/contracts/workflow-contracts
 import { verifyCampaignReleaseBundle } from '../../paper-domain/automation/campaign-release-contracts.mjs';
 import { manuscriptClaimHash } from '../../paper-domain/research/formal-claim-contract.mjs';
 import { leanSourceDeclarationRecords } from '../../paper-adapters/research-verify/lean-source-contracts.mjs';
+import { createPinnedFormalSandboxRuntime } from '../../paper-adapters/research-verify/lake-formal-worker.mjs';
 import { bootstrapAutomationContext } from '../../paper-composition/bootstrap/automation-context-bootstrap.mjs';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  createReadOnlyAutonomousSubmissionHandoffOutboxFixture,
+} from './support/autonomous-submission-handoff-fixture.mjs';
+
+const FORMAL_SANDBOX_IMAGE_DIGEST = 'sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc';
+const FORMAL_SANDBOX_RUNTIME = createPinnedFormalSandboxRuntime({
+  image: `alpine@${FORMAL_SANDBOX_IMAGE_DIGEST}`,
+  imageDigest: FORMAL_SANDBOX_IMAGE_DIGEST,
+});
 
 function stableAgentReceipt({ agentId, role, structuredOutput = null, changedPaths = [] } = {}) {
   const payload = {
@@ -38,6 +48,11 @@ function stableAgentReceipt({ agentId, role, structuredOutput = null, changedPat
 }
 
 test('approved proposal seed closes through writer theorem, system spec, Lean replay, aggregate verification, and release', async (t) => {
+  assert.throws(() => createPinnedFormalSandboxRuntime({
+    image: 'alpine:3.20',
+    imageDigest: FORMAL_SANDBOX_IMAGE_DIGEST,
+  }), /formal_sandbox_runtime_image_reference_not_digest_pinned/);
+  assert.equal(FORMAL_SANDBOX_RUNTIME.imageDigest, FORMAL_SANDBOX_IMAGE_DIGEST);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-formal-campaign-release-'));
   const workspace = path.join(root, 'source');
   const runtimeRoot = path.join(root, 'runtime');
@@ -118,13 +133,18 @@ test('approved proposal seed closes through writer theorem, system spec, Lean re
     files: packageFiles.map((file) => ({ path: file, role: file === 'main.tex' ? 'main_tex' : 'source_file', required: true })),
   }, null, 2)}\n`);
 
-  const store = createDefaultPaperStore({ root: workspace, runtimeRoot, targetVersion: 23 });
+  const store = createDefaultPaperStore({ root: workspace, runtimeRoot, targetVersion: 25 });
   const context = bootstrapAutomationContext({
     root: workspace,
     runtimeRoot,
     mode: 'formal-campaign-release-test',
     execute: true,
-    serviceOverrides: { store },
+    serviceOverrides: {
+      store,
+      trustedFormalSandboxRuntime: FORMAL_SANDBOX_RUNTIME,
+      autonomousSubmissionOutbox:
+        createReadOnlyAutonomousSubmissionHandoffOutboxFixture(),
+    },
   });
   t.after(() => context.services.persistenceSession.close());
   const paperTask = createPaperTask({

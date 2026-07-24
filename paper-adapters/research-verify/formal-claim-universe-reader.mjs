@@ -33,7 +33,11 @@ function literalIncludes(masked, relative) {
     if (!included) {
       blockers.push(`formal_claim_universe_include_path_invalid:${relative}:${String(value || '').trim()}`);
     } else {
-      includes.push(included);
+      includes.push(Object.freeze({
+        manuscriptPath: included,
+        byteStart: match.index,
+        byteEnd: end + 1,
+      }));
     }
     INCLUDE_COMMAND.lastIndex = end + 1;
   }
@@ -174,11 +178,11 @@ export function readFormalClaimUniverse({ sourceRoot, manuscriptPath = 'main.tex
       return;
     }
     files.push(Object.freeze({ path: relative, hash: read.hash, bytes: read.bytes }));
-    fileReads.push(Object.freeze({ relative, read }));
     const macroSyntax = analyzeTheoremEnvironmentMacroDefinitions(read.content.toString('latin1'));
     const includeSyntax = literalIncludes(macroSyntax.maskedSource, relative);
+    fileReads.push(Object.freeze({ relative, read, includes: includeSyntax.includes }));
     blockers.push(...includeSyntax.blockers);
-    for (const included of includeSyntax.includes) visit(included, depth + 1);
+    for (const included of includeSyntax.includes) visit(included.manuscriptPath, depth + 1);
   };
 
   if (!rootManuscript) blockers.push('formal_claim_universe_manuscript_path_invalid');
@@ -249,17 +253,39 @@ export function readFormalClaimUniverse({ sourceRoot, manuscriptPath = 'main.tex
     ...STANDARD_THEOREM_ENVIRONMENTS,
     ...declarationByEnvironment.keys(),
   ]);
+  const extractedByPath = new Map();
   for (const { relative, read } of fileReads) {
     const extracted = extractFileUniverse({ relative, read, formalEnvironmentSet });
-    theorems.push(...extracted.theorems);
+    extractedByPath.set(relative, extracted);
     blockers.push(...extracted.blockers);
   }
+  const fileReadByPath = new Map(fileReads.map((entry) => [entry.relative, entry]));
+  const traversed = new Set();
+  const appendInSourceOrder = (relative) => {
+    if (traversed.has(relative)) return;
+    traversed.add(relative);
+    const fileRead = fileReadByPath.get(relative);
+    const extracted = extractedByPath.get(relative);
+    if (!fileRead || !extracted) return;
+    let theoremIndex = 0;
+    let includeIndex = 0;
+    while (theoremIndex < extracted.theorems.length || includeIndex < fileRead.includes.length) {
+      const theorem = extracted.theorems[theoremIndex] || null;
+      const included = fileRead.includes[includeIndex] || null;
+      if (theorem && (!included || theorem.environmentByteStart < included.byteStart)) {
+        theorems.push(theorem);
+        theoremIndex += 1;
+      } else {
+        appendInSourceOrder(included.manuscriptPath);
+        includeIndex += 1;
+      }
+    }
+  };
+  if (rootManuscript) appendInSourceOrder(rootManuscript);
   const sortedFiles = files.sort((left, right) => left.path.localeCompare(right.path));
   const sortedEnvironmentDeclarations = environmentDeclarations.sort((left, right) => (
     left.manuscriptPath.localeCompare(right.manuscriptPath) || left.byteStart - right.byteStart
   ));
-  const sortedTheorems = theorems.sort((left, right) => left.manuscriptPath.localeCompare(right.manuscriptPath)
-    || left.environmentByteStart - right.environmentByteStart);
   const manuscriptHash = hashRecord('FormalManuscriptCorpus', sortedFiles);
   const payload = {
     version: 1,
@@ -269,7 +295,7 @@ export function readFormalClaimUniverse({ sourceRoot, manuscriptPath = 'main.tex
     manuscriptHash,
     files: sortedFiles,
     environmentDeclarations: sortedEnvironmentDeclarations,
-    theorems: sortedTheorems,
+    theorems,
     blockers: [...new Set(blockers)],
   };
   return Object.freeze({ ...payload, formalClaimUniverseHash: hashRecord('FormalClaimUniverse', payload) });

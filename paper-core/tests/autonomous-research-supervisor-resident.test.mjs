@@ -16,12 +16,61 @@ import {
   createAutonomousResearchSupervisor,
 } from '../../paper-application/automation/autonomous-research-supervisor.mjs';
 import {
-  createAutomationReadinessSideEffectLedger,
-} from '../../paper-composition/automation/automation-readiness-runtime-probes.mjs';
+  ResidentReactivationRequired,
+  autonomousResearchResidentExitCode,
+  isResidentReactivationRequired,
+} from '../../paper-application/automation/autonomous-research-resident-reactivation-required.mjs';
 import { createSystemClock } from '../../paper-adapters/runtime/system-clock.mjs';
 import { createSystemScheduler } from '../../paper-adapters/runtime/system-scheduler.mjs';
 
 const H = (label) => hashRecord('AutonomousSupervisorTestHash', { label });
+
+function residentPrerequisiteReceipt(now, identityLabel) {
+  const identity = Object.freeze({
+    externalQualificationConfigurationInspectionHash: H(`inspection:${identityLabel}`),
+    externalQualificationConfigurationIdentityHash: H(`configuration:${identityLabel}`),
+    externalQualificationTrustIdentityHash: H(`external-trust:${identityLabel}`),
+    externalQualificationMaximumCostUsd: 1,
+    externalQualificationCostAuthority: 'operator_declared_worst_case_usd',
+    runtimeImageReproducibilityConfigurationIdentityHash: H(`runtime:${identityLabel}`),
+    runtimeImageReproducibilityTrustIdentityHash: H(`runtime-trust:${identityLabel}`),
+    externalActionRecoveryConfigurationIdentityHash:
+      H(`external-action-recovery:${identityLabel}`),
+    codeWorktreeStateHash: H(`worktree:${identityLabel}`),
+  });
+  const payload = Object.freeze({
+    version: 1,
+    kind: 'AutonomousResearchResidentPrerequisiteReceipt',
+    status: 'autonomous_research_resident_prerequisites_ready',
+    ready: true,
+    infrastructureReady: true,
+    globalQualificationReady: true,
+    operationMode: 'full',
+    inspectedAt: now.toISOString(),
+    ...identity,
+    autonomousResearchResidentPrerequisiteIdentityHash: hashRecord(
+      'AutonomousResearchResidentPrerequisiteIdentity', identity,
+    ),
+    zeroCostAuthorityEvidenceScope: null,
+    fullResearchQualificationExpiresAt:
+      new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
+    runtimeImageReproducibilityExpiresAt:
+      new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString(),
+    externalActionPerformed: false,
+    networkActionPerformed: false,
+    providerCanaryPerformed: false,
+    releaseSignerChallengePerformed: false,
+    infrastructureBlockers: Object.freeze([]),
+    globalQualificationBlockers: Object.freeze([]),
+    blockers: Object.freeze([]),
+  });
+  return Object.freeze({
+    ...payload,
+    autonomousResearchResidentPrerequisiteReceiptHash: hashRecord(
+      'AutonomousResearchResidentPrerequisiteReceipt', payload,
+    ),
+  });
+}
 
 function campaign(campaignId, status, stopReason = null) {
   return {
@@ -193,6 +242,80 @@ test('resident run owns a heartbeat lease and clears health immediately on grace
   assert.match(status.blockers.join(','), /instance_stopped/);
 });
 
+test('valid prerequisite rotation exits 75, releases the resident, and replacement reruns startup', async (t) => {
+  const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-supervisor-reactivate-'));
+  t.after(() => fs.rmSync(runtimeRoot, { recursive: true, force: true }));
+  const stateRepository = createAutonomousResearchSupervisorStateRepository({ runtimeRoot });
+  const instanceRepository = createAutonomousResearchSupervisorInstanceRepository({ runtimeRoot });
+  t.after(() => { stateRepository.close(); instanceRepository.close(); });
+  const now = new Date('2026-07-20T01:00:00.000Z');
+  const receipts = {
+    startup: residentPrerequisiteReceipt(now, 'startup'),
+    rotated: residentPrerequisiteReceipt(now, 'rotated'),
+  };
+  let startupReconciliations = 0;
+  let prerequisiteInspections = 0;
+  const effects = { provider: 0, qualification: 0, submission: 0, topic: 0 };
+  const scheduler = {
+    async sleep() {}, setInterval() { return {}; }, clearInterval() {}, unref() {},
+  };
+  const dependencies = {
+    campaignStore: { listCampaigns() { return []; }, getCampaign() { return null; } },
+    stateRepository,
+    residentInstanceRepository: instanceRepository,
+    residentInstanceLeaseMs: 15 * 60 * 1000,
+    residentInstanceHeartbeatMs: 30_000,
+    requireFullyAutonomous: true,
+    async reconcileRuntime() { startupReconciliations += 1; return { status: 'reconciled' }; },
+    async ensureRuntimeReproducibility() { effects.topic += 1; throw new Error('unexpected'); },
+    async readQualificationState() { effects.qualification += 1; throw new Error('unexpected'); },
+    async runProviderCanary() { effects.provider += 1; throw new Error('unexpected'); },
+    async renewQualification() { effects.qualification += 1; throw new Error('unexpected'); },
+    async dispatchCampaign() { effects.submission += 1; throw new Error('unexpected'); },
+    clock: { now: () => new Date(now) },
+    scheduler,
+    pollMs: 1000,
+  };
+  const first = createAutonomousResearchSupervisor({
+    ...dependencies,
+    ownerId: 'supervisor:reactivation:first',
+    inspectFullyAutonomousPrerequisites() {
+      prerequisiteInspections += 1;
+      return prerequisiteInspections === 1 ? receipts.startup : receipts.rotated;
+    },
+  });
+  let thrown = null;
+  await assert.rejects(() => first.run(), (error) => {
+    thrown = error;
+    return isResidentReactivationRequired(error)
+      && error instanceof ResidentReactivationRequired
+      && error.source === 'resident_prerequisite'
+      && error.startupIdentityHash
+        === receipts.startup.autonomousResearchResidentPrerequisiteIdentityHash
+      && error.observedIdentityHash
+        === receipts.rotated.autonomousResearchResidentPrerequisiteIdentityHash;
+  });
+  assert.equal(autonomousResearchResidentExitCode(thrown), 75);
+  assert.deepEqual(effects, { provider: 0, qualification: 0, submission: 0, topic: 0 });
+  const stopped = instanceRepository.readInstance();
+  assert.equal(stopped.status, 'stopped');
+  assert.match(stopped.stopReason, /resident_reactivation_required/);
+  assert.match(stopped.stopReason, /resident_prerequisite/);
+
+  const replacementController = new AbortController();
+  const replacement = createAutonomousResearchSupervisor({
+    ...dependencies,
+    ownerId: 'supervisor:reactivation:replacement',
+    signal: replacementController.signal,
+    inspectFullyAutonomousPrerequisites() { return receipts.rotated; },
+    onCycle() { replacementController.abort('replacement_test_complete'); },
+  });
+  const replacementReceipt = await replacement.run();
+  assert.equal(replacementReceipt.cycleCount, 1);
+  assert.equal(startupReconciliations, 2);
+  assert.deepEqual(effects, { provider: 0, qualification: 0, submission: 0, topic: 0 });
+});
+
 test('startup reconciliation marks startup ready before a long first dispatch completes', async (t) => {
   const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-supervisor-long-first-cycle-'));
   t.after(() => fs.rmSync(runtimeRoot, { recursive: true, force: true }));
@@ -328,233 +451,4 @@ test('resident aborts fail-closed when its instance heartbeat fence is lost', as
   });
   await assert.rejects(() => supervisor.run(), /instance_lease_lost/);
   assert.equal(releases, 1);
-});
-
-test('crash cooldown is durably requeued and a replacement supervisor resumes without a machine command', async (t) => {
-  const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-supervisor-cooldown-restart-'));
-  t.after(() => fs.rmSync(runtimeRoot, { recursive: true, force: true }));
-  let repository = createAutonomousResearchSupervisorStateRepository({ runtimeRoot });
-  t.after(() => repository.close());
-  let value = campaign(
-    'autonomous-research:cooldown-restart-paper',
-    'paused',
-    'supervisor_transient_failure',
-  );
-  let nowMs = Date.parse('2026-07-16T03:20:00.000Z');
-  const clock = { now: () => new Date(nowMs) };
-  const runtimeReceiptHash = H('cooldown-restart-runtime');
-  const qualification = {
-    recovery: {
-      status: 'qualification_verified',
-      totalAttemptCount: 1,
-      reservedCostUsd: 0.05,
-    },
-    receipt: {
-      expiresAt: new Date(nowMs + 8 * 60 * 60 * 1000).toISOString(),
-      runtimeImageReproducibilityReceiptHash: runtimeReceiptHash,
-    },
-  };
-  const lifecyclePolicy = {
-    maximumLifetimeMs: 60 * 60 * 1000,
-    baseCooldownMs: 1000,
-    maximumCooldownMs: 1000,
-  };
-  const common = {
-    campaignStore: {
-      listCampaigns() { return [value]; },
-      getCampaign() { return value; },
-    },
-    async reconcileRuntime() { return null; },
-    async ensureRuntimeReproducibility() {
-      return {
-        ready: true,
-        receiptHash: runtimeReceiptHash,
-        expiresAt: new Date(nowMs + 8 * 60 * 60 * 1000).toISOString(),
-        renewAt: new Date(nowMs + 7 * 60 * 60 * 1000).toISOString(),
-      };
-    },
-    async readQualificationState() { return qualification; },
-    async runProviderCanary() {
-      return { verified: true, providerCanaryPairReceiptHash: H('cooldown-restart-canary') };
-    },
-    async renewQualification() { throw new Error('qualification already current'); },
-    lifecyclePolicy,
-    clock,
-    scheduler: {
-      async sleep() {}, setInterval() { return {}; }, clearInterval() {}, unref() {},
-    },
-    random: () => 0,
-    pollMs: 100,
-  };
-  const crashing = createAutonomousResearchSupervisor({
-    ...common,
-    stateRepository: repository,
-    ownerId: 'supervisor:before-crash',
-    async dispatchCampaign({ action }) {
-      assert.equal(action, 'resume');
-      const ledger = createAutomationReadinessSideEffectLedger({
-        environment: {},
-        spawnSyncImpl: () => ({ status: 1, stdout: '', stderr: 'unavailable' }),
-      });
-      ledger.spawnSyncFor('provider-readiness')('codex', ['login', 'status']);
-      const error = new Error('simulated_supervisor_process_crash');
-      error.automationReadinessSideEffectInspection = ledger.inspection({
-        failureCode: error.message,
-      });
-      throw error;
-    },
-  });
-  const failed = await crashing.runCycle();
-  assert.equal(failed.results[0].status, 'cooldown');
-  const persistedFailure = repository.getCampaign(value.campaignId);
-  assert.equal(persistedFailure.nextDispatchAt,
-    new Date(nowMs + 1000).toISOString());
-  assert.equal(
-    persistedFailure.lastOutcome.readinessAttemptReceipt.kind,
-    'AutomationReadinessSideEffectInspection',
-  );
-  assert.equal(
-    persistedFailure.lastOutcome.readinessAttemptReceipt.failedProcessActionCount,
-    1,
-  );
-  repository.close();
-  repository = createAutonomousResearchSupervisorStateRepository({ runtimeRoot });
-
-  let replacementDispatches = 0;
-  const replacement = createAutonomousResearchSupervisor({
-    ...common,
-    stateRepository: repository,
-    ownerId: 'supervisor:replacement',
-    async dispatchCampaign({ action }) {
-      replacementDispatches += 1;
-      assert.equal(action, 'resume');
-      value = { ...value, status: 'completed', effectiveStatus: 'completed' };
-      return {
-        status: 'autonomous_research_campaign_completed_and_qualified',
-        campaign: { status: 'completed' },
-        campaignFullyQualified: true,
-        fullAutomaticResearchWritingReady: true,
-        autonomousResearchCampaignExecutionReportHash: H('cooldown-restart-report'),
-      };
-    },
-  });
-  nowMs += 999;
-  const cooling = await replacement.runCycle();
-  assert.equal(cooling.results[0].status, 'not_due_or_leased');
-  assert.equal(replacementDispatches, 0);
-  nowMs += 2;
-  const resumed = await replacement.runCycle();
-  assert.equal(replacementDispatches, 1);
-  assert.equal(resumed.results[0].status, 'settled');
-});
-
-test('qualification cooldown survives resident replacement and resumes automatically when due', async (t) => {
-  const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-qualification-resident-restart-'));
-  t.after(() => fs.rmSync(runtimeRoot, { recursive: true, force: true }));
-  let repository = createAutonomousResearchSupervisorStateRepository({ runtimeRoot });
-  t.after(() => repository.close());
-  let value = campaign(
-    'autonomous-research:qualification-resident-restart',
-    'paused',
-    'supervisor_transient_failure',
-  );
-  let nowMs = Date.parse('2026-07-16T03:25:00.000Z');
-  const runtimeReceiptHash = H('qualification-resident-runtime');
-  let qualification = {
-    recovery: {
-      status: 'qualification_recovery_budget_exhausted',
-      nextAttemptAt: new Date(nowMs + 2000).toISOString(),
-      totalAttemptCount: 1,
-      reservedCostUsd: 0.05,
-    },
-    receipt: null,
-  };
-  let renewalCalls = 0;
-  let dispatches = 0;
-  const options = {
-    campaignStore: {
-      listCampaigns() { return [value]; },
-      getCampaign() { return value; },
-    },
-    async reconcileRuntime() { return null; },
-    async ensureRuntimeReproducibility() {
-      return {
-        ready: true,
-        receiptHash: runtimeReceiptHash,
-        expiresAt: new Date(nowMs + 8 * 60 * 60 * 1000).toISOString(),
-        renewAt: new Date(nowMs + 7 * 60 * 60 * 1000).toISOString(),
-      };
-    },
-    async readQualificationState() { return qualification; },
-    async runProviderCanary() {
-      return { verified: true, providerCanaryPairReceiptHash: H('qualification-resident-canary') };
-    },
-    async renewQualification() {
-      renewalCalls += 1;
-      if (nowMs < Date.parse(qualification.recovery.nextAttemptAt || '')) {
-        return {
-          ready: false,
-          terminal: false,
-          reason: 'qualification_external_service_recovery_cooldown',
-        };
-      }
-      qualification = {
-        recovery: {
-          status: 'qualification_verified',
-          totalAttemptCount: 2,
-          reservedCostUsd: 0.1,
-        },
-        receipt: {
-          expiresAt: new Date(nowMs + 8 * 60 * 60 * 1000).toISOString(),
-          runtimeImageReproducibilityReceiptHash: runtimeReceiptHash,
-        },
-      };
-      return { ready: true };
-    },
-    async dispatchCampaign({ action }) {
-      dispatches += 1;
-      assert.equal(action, 'resume');
-      value = { ...value, status: 'completed', effectiveStatus: 'completed' };
-      return {
-        status: 'autonomous_research_campaign_completed_and_qualified',
-        campaign: { status: 'completed' },
-        campaignFullyQualified: true,
-        fullAutomaticResearchWritingReady: true,
-        autonomousResearchCampaignExecutionReportHash: H('qualification-resident-report'),
-      };
-    },
-    lifecyclePolicy: { maximumLifetimeMs: 60 * 60 * 1000 },
-    clock: { now: () => new Date(nowMs) },
-    scheduler: {
-      async sleep() {}, setInterval() { return {}; }, clearInterval() {}, unref() {},
-    },
-    pollMs: 100,
-  };
-  const first = createAutonomousResearchSupervisor({
-    ...options,
-    stateRepository: repository,
-    ownerId: 'supervisor:qualification-before-restart',
-  });
-  const deferred = await first.runCycle();
-  assert.equal(deferred.results[0].reason,
-    'qualification_external_service_recovery_cooldown');
-  assert.equal(repository.getCampaign(value.campaignId).nextDispatchAt,
-    qualification.recovery.nextAttemptAt);
-  assert.equal(dispatches, 0);
-  repository.close();
-  repository = createAutonomousResearchSupervisorStateRepository({ runtimeRoot });
-
-  const replacement = createAutonomousResearchSupervisor({
-    ...options,
-    stateRepository: repository,
-    ownerId: 'supervisor:qualification-replacement',
-  });
-  nowMs += 1999;
-  const stillCooling = await replacement.runCycle();
-  assert.equal(stillCooling.results[0].status, 'not_due_or_leased');
-  nowMs += 2;
-  const resumed = await replacement.runCycle();
-  assert.equal(resumed.results[0].status, 'settled');
-  assert.equal(renewalCalls, 2);
-  assert.equal(dispatches, 1);
 });

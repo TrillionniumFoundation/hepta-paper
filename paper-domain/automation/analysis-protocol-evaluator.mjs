@@ -8,7 +8,7 @@ import {
 import {
   arithmeticMean,
   deterministicPairedBootstrap,
-  deterministicSignFlipPValue,
+  deterministicSignFlipInference,
   holmBonferroni,
   requiredPairedObservations,
   sampleStandardDeviation,
@@ -19,6 +19,13 @@ import {
   ANALYSIS_SCIENTIFIC_VERDICTS as SCIENTIFIC_VERDICTS,
   deriveAnalysisScientificOutcome as scientificOutcome,
 } from './analysis-scientific-outcome.mjs';
+import {
+  analysisObservationManifestHash,
+  buildRepositoryAnalysisObservationAuthority,
+  verifyRepositoryAnalysisObservationAuthority,
+} from './analysis-observation-authority.mjs';
+
+export { buildRepositoryAnalysisObservationAuthority };
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 const ARMS = Object.freeze(['treatment', 'baseline', 'ablation']);
@@ -72,91 +79,6 @@ function normalizedObservations(observations, protocol, blockers) {
     left.seed - right.seed || left.repetition - right.repetition || ARMS.indexOf(left.arm) - ARMS.indexOf(right.arm)
   ));
   return Object.freeze(normalized);
-}
-
-function observationManifestHash(observations) {
-  return hashRecord('AnalysisProtocolObservationManifest', observations);
-}
-
-function canonicalAuthorityObservations(observations) {
-  return (Array.isArray(observations) ? observations : []).map((observation) => ({
-    seed: Number(observation?.seed),
-    repetition: Number(observation?.repetition),
-    arm: String(observation?.arm || ''),
-    metrics: Object.fromEntries(Object.entries(observation?.metrics || {}).map(([key, value]) => [key, Number(value)])),
-  })).sort((left, right) => (
-    left.seed - right.seed || left.repetition - right.repetition || ARMS.indexOf(left.arm) - ARMS.indexOf(right.arm)
-  ));
-}
-
-export function buildRepositoryAnalysisObservationAuthority({
-  observations = [],
-  rawEventManifestHash,
-  rawEventArtifactHash,
-  propertyOracleVerified = true,
-  rawObservationRecomputationVerified = true,
-  rawEventRecomputationManifestHash = null,
-  aggregateResidual = 0,
-  toleranceSatisfied = true,
-  candidateConvergenceClaim = null,
-  candidateConditionNumber = null,
-  experimentAttemptId = null,
-  sourceLineageHash = null,
-} = {}) {
-  const payload = {
-    version: 1,
-    kind: 'RepositoryAnalysisObservationAuthority',
-    observationManifestHash: observationManifestHash(canonicalAuthorityObservations(observations)),
-    rawEventManifestHash: rawEventManifestHash || null,
-    rawEventArtifactHash: rawEventArtifactHash || null,
-    propertyOracleVerified,
-    rawObservationRecomputationVerified,
-    rawEventRecomputationManifestHash,
-    aggregateResidual: Number(aggregateResidual),
-    toleranceSatisfied,
-    candidateConvergenceClaim,
-    candidateConditionNumber,
-    experimentAttemptId: experimentAttemptId || null,
-    sourceLineageHash: sourceLineageHash || null,
-    agentAggregatesAccepted: false,
-  };
-  return Object.freeze({
-    ...payload,
-    analysisObservationAuthorityHash: hashRecord('RepositoryAnalysisObservationAuthority', payload),
-  });
-}
-
-function verifyObservationAuthority(authority, observations, protocol, blockers) {
-  if (!authority || authority.version !== 1 || authority.kind !== 'RepositoryAnalysisObservationAuthority') {
-    blockers.push('analysis_observation_authority_required');
-    return;
-  }
-  const { analysisObservationAuthorityHash, ...payload } = authority;
-  if (!SHA256.test(String(analysisObservationAuthorityHash || ''))
-    || hashRecord('RepositoryAnalysisObservationAuthority', payload) !== analysisObservationAuthorityHash) {
-    blockers.push('analysis_observation_authority_hash_invalid');
-  }
-  if (authority.observationManifestHash !== observationManifestHash(observations)) {
-    blockers.push('analysis_observation_authority_manifest_mismatch');
-  }
-  if (!SHA256.test(String(authority.rawEventManifestHash || ''))
-    || !SHA256.test(String(authority.rawEventArtifactHash || ''))) {
-    blockers.push('analysis_observation_raw_event_authority_missing');
-  }
-  if (!String(authority.experimentAttemptId || '') || !SHA256.test(String(authority.sourceLineageHash || ''))) {
-    blockers.push('analysis_observation_execution_lineage_missing');
-  }
-  if (authority.propertyOracleVerified !== true) blockers.push('analysis_property_oracle_unverified');
-  if (authority.rawObservationRecomputationVerified !== true) blockers.push('analysis_raw_observation_recomputation_unverified');
-  if (!SHA256.test(String(authority.rawEventRecomputationManifestHash || ''))) blockers.push('analysis_raw_event_recomputation_manifest_missing');
-  if (!Number.isFinite(Number(authority.aggregateResidual))
-    || Math.abs(Number(authority.aggregateResidual)) > protocol.numericValidation.residual.maximumAbsoluteResidual) {
-    blockers.push('analysis_numeric_residual_tolerance_exceeded');
-  }
-  if (authority.toleranceSatisfied !== true) blockers.push('analysis_numeric_tolerance_unsatisfied');
-  if (authority.candidateConvergenceClaim !== null) blockers.push('analysis_candidate_convergence_claim_not_authoritative');
-  if (authority.candidateConditionNumber !== null) blockers.push('analysis_candidate_condition_claim_not_authoritative');
-  if (authority.agentAggregatesAccepted !== false) blockers.push('analysis_agent_aggregate_authority_forbidden');
 }
 
 function pairedCells(observations, blockers) {
@@ -282,11 +204,12 @@ function hypothesisEvaluation(hypothesis, cells, protocol) {
     method: protocol.uncertainty.method,
     salt: `${protocol.analysisProtocolHash}:${hypothesis.hypothesisId}:bootstrap`,
   });
-  const pValue = deterministicSignFlipPValue(differences, {
+  const signFlip = deterministicSignFlipInference(differences, {
     draws: protocol.uncertainty.testDraws,
     seed: protocol.uncertainty.seed,
     salt: `${protocol.analysisProtocolHash}:${hypothesis.hypothesisId}:sign-flip`,
   });
+  const pValue = signFlip.pValue;
   const winsorizedMean = arithmeticMean(winsorizedValues(
     differences,
     protocol.outlierSensitivity.lowerQuantile,
@@ -313,6 +236,7 @@ function hypothesisEvaluation(hypothesis, cells, protocol) {
     standardError: sampleStandardError(differences),
     standardizedEffect,
     bootstrap,
+    signFlip,
     pValue,
     skewness,
     assumptionAccepted,
@@ -337,7 +261,14 @@ export function evaluateAnalysisProtocol({
   if (!resolved) blockers.push('analysis_protocol_invalid');
   const protocol = resolved ? Object.freeze({ ...resolved.analysisProtocol, analysisProtocolHash: resolved.analysisProtocolHash }) : null;
   const normalized = protocol ? normalizedObservations(observations, protocol, blockers) : Object.freeze([]);
-  if (protocol) verifyObservationAuthority(observationAuthority, normalized, protocol, blockers);
+  if (protocol) {
+    verifyRepositoryAnalysisObservationAuthority(
+      observationAuthority,
+      normalized,
+      protocol,
+      blockers,
+    );
+  }
   const cells = protocol ? pairedCells(normalized, blockers) : [];
   const topology = protocol
     ? analysisUnitTopology(cells, protocol, blockers)
@@ -389,7 +320,7 @@ export function evaluateAnalysisProtocol({
     analysisProtocolHash: protocol?.analysisProtocolHash || null,
     inferenceProfileHash: protocol?.inferenceProfileHash || null,
     analysisObservationAuthorityHash: observationAuthority?.analysisObservationAuthorityHash || null,
-    observationManifestHash: normalized.length ? observationManifestHash(normalized) : null,
+    observationManifestHash: normalized.length ? analysisObservationManifestHash(normalized) : null,
     observationCount: normalized.length,
     pairedUnitCount: cells.length,
     rawCellCount: cells.length,
@@ -417,6 +348,12 @@ export function evaluateAnalysisProtocol({
       toleranceSatisfied: observationAuthority?.toleranceSatisfied === true,
       candidateConvergenceClaimAccepted: false,
       candidateConditionClaimAccepted: false,
+      typedNumericOracleCertificateSetHash:
+        observationAuthority?.typedNumericOracleCertificateSet
+          ?.typedNumericOracleCertificateSetHash || null,
+      typedNumericOracleTypes: Object.freeze(
+        observationAuthority?.typedNumericOracleCertificateSet?.verifiedOracleTypes || [],
+      ),
     }) : null,
     blockers: unique(blockers),
   };

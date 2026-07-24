@@ -181,6 +181,7 @@ export async function executePaperCampaignCommand({
     clock: context.services.clock,
     scheduler: context.services.scheduler,
     idGenerator: context.services.idGenerator,
+    packageLifecycleAuthority: context.services.packageLifecycleAuthority,
   })));
   return Object.freeze({
     status: workAction ? 'paper_campaign_worker_batch_completed' : 'paper_campaigns_completed',

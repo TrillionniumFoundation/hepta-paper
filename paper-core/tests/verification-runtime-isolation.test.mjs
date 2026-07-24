@@ -5,7 +5,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
-import { createDefaultPaperStore, createReadOnlyPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
+import {
+  createDefaultPaperStore,
+  createReadOnlyPaperStore,
+  preflightStoreMigrations,
+} from '../../paper-adapters/persistence/store-provider.mjs';
 import { prepareIsolatedRuntimeStore } from '../bin/isolated-runtime-store.mjs';
 
 function sha(file) {
@@ -44,7 +48,11 @@ test('read-only StorePort rejects writes and preserves database bytes', (t) => {
   createDefaultPaperStore({ root, runtimeRoot: root, dbPath });
   const before = sha(dbPath);
   const store = createReadOnlyPaperStore({ root, runtimeRoot: root, dbPath });
-  assert.equal(store.query('SELECT count(*) AS count FROM schema_migrations;').rows[0].count, 23);
+  const migrationPreflight = preflightStoreMigrations(store);
+  assert.equal(
+    store.query('SELECT count(*) AS count FROM schema_migrations;').rows[0].count,
+    migrationPreflight.targetVersion,
+  );
   assert.equal(store.execute("DELETE FROM schema_migrations;").ok, false);
   assert.equal(store.execute("DELETE FROM schema_migrations;").error, 'sqlite_readonly_store_execute_forbidden');
   assert.equal(sha(dbPath), before);

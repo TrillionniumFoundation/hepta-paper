@@ -1,6 +1,15 @@
 import { normalizeDatasetMounts } from './empirical-contract.mjs';
 import { AUTONOMOUS_RESEARCH_POLICY_PROFILE } from './autonomous-research-policy-contract.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hasExactPlainObjectKeys as exactKeys } from '../../workflow-kernel/exact-object-keys.mjs';
+import {
+  autonomousEmpiricalFamilyPluginProfileFor,
+} from './autonomous-empirical-family-plugin-registry.mjs';
+import {
+  assertAutonomousResearchProfileResourceBudgetClosure,
+  completeAutonomousResearchResourceBudgets,
+  inspectAutonomousResearchProfileResourceBudgetClosure,
+} from './autonomous-research-resource-budget-policy.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:@-]{0,191}$/;
@@ -37,7 +46,7 @@ function hasControlCharacters(value) {
   });
 }
 
-export const AUTONOMOUS_RESEARCH_GOLDEN_RECURRING_HARD_BUDGETS = Object.freeze({
+const AUTONOMOUS_RESEARCH_GOLDEN_RECURRING_DEFAULT_BUDGETS = Object.freeze({
   maxWallTimeMs: 2 * 60 * 60 * 1000,
   maxAgentCalls: 48,
   maxCpuJobs: 128,
@@ -47,11 +56,13 @@ export const AUTONOMOUS_RESEARCH_GOLDEN_RECURRING_HARD_BUDGETS = Object.freeze({
   maxMemoryMiB: 8192,
 });
 
-function exactKeys(value, keys) {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    && Object.getPrototypeOf(value) === Object.prototype
-    && JSON.stringify(Object.keys(value).sort()) === JSON.stringify(keys);
-}
+export const AUTONOMOUS_RESEARCH_GOLDEN_RECURRING_HARD_BUDGETS = Object.freeze({
+  ...AUTONOMOUS_RESEARCH_GOLDEN_RECURRING_DEFAULT_BUDGETS,
+  maxAgentCalls: 512,
+  maxCpuJobs: 32_768,
+  maxGpuJobs: 32_768,
+  maxTokenCount: 4_000_000,
+});
 
 function canonicalId(value, field) {
   const id = String(value || '');
@@ -134,13 +145,57 @@ function goldenBudgets(value = {}) {
   }
   const clamped = Object.fromEntries(BUDGET_KEYS.map((key) => {
     const ceiling = AUTONOMOUS_RESEARCH_GOLDEN_RECURRING_HARD_BUDGETS[key];
-    const candidate = value[key] === undefined ? ceiling : value[key];
+    const candidate = value[key] === undefined
+      ? AUTONOMOUS_RESEARCH_GOLDEN_RECURRING_DEFAULT_BUDGETS[key] : value[key];
     if (typeof candidate !== 'number' || !Number.isFinite(candidate) || candidate < 0) {
       throw new Error('autonomous_research_recurring_golden_budgets_invalid');
     }
     return [key, Math.min(candidate, ceiling)];
   }));
   return canonicalBudgets(clamped);
+}
+
+function resourceClosedGoldenBudgets({
+  templateId,
+  family,
+  revisionRounds,
+  refereeCount,
+  budgets,
+}) {
+  const profile = autonomousEmpiricalFamilyPluginProfileFor(family);
+  if (!profile?.executionProfile) {
+    throw new Error('autonomous_research_recurring_golden_profile_invalid');
+  }
+  const benchmarkSelector = Object.freeze({
+    selectorType: 'authorized_dataset_mount',
+    benchmarkSelectorHash: profile.autonomousEmpiricalFamilyPluginProfileHash,
+    experimentDesign: Object.freeze({
+      seedSchedule: profile.seedSchedule,
+      minimumRepetitions: profile.minimumRepetitions,
+    }),
+  });
+  const initial = goldenBudgets(budgets);
+  const inspectionInput = {
+    campaignId: `autonomous-research:golden-template:${templateId}`,
+    revisionRounds,
+    refereeCount,
+    executionProfile: profile.executionProfile,
+    empiricalExecutionProfileSelectionHash:
+      profile.autonomousEmpiricalFamilyPluginProfileHash,
+    benchmarkSelector,
+  };
+  const preview = inspectAutonomousResearchProfileResourceBudgetClosure({
+    ...inspectionInput, budgets: initial,
+  });
+  const completed = goldenBudgets(completeAutonomousResearchResourceBudgets({
+    requestedBudgets: budgets,
+    effectiveBudgets: initial,
+    requiredBudgets: preview.requiredBudgets,
+  }));
+  assertAutonomousResearchProfileResourceBudgetClosure({
+    ...inspectionInput, budgets: completed,
+  });
+  return completed;
 }
 
 function canonicalDatasetMounts(value, protocolFamily) {
@@ -224,6 +279,11 @@ export function buildAutonomousResearchMachineIntake({
     }
   }
   const family = canonicalProtocolFamily(protocolFamily);
+  const canonicalMounts = canonicalDatasetMounts(datasetMounts, family);
+  const canonicalRevisionRounds = canonicalCount(
+    revisionRounds, 'revision_rounds', 1, 10,
+  );
+  const canonicalRefereeCount = canonicalCount(refereeCount, 'referee_count', 2, 7);
   if (!SHA256.test(String(providerConfigurationHash || ''))) {
     throw new Error('autonomous_research_machine_intake_provider_configuration_hash_invalid');
   }
@@ -237,12 +297,12 @@ export function buildAutonomousResearchMachineIntake({
     admissionCreatedAt: admittedAt,
     objective: canonicalObjective(objective),
     protocolFamily: family,
-    datasetMounts: canonicalDatasetMounts(datasetMounts, family),
+    datasetMounts: canonicalMounts,
     budgets: canonicalBudgets(budgets),
     providerConfigurationHash,
     recurringGoldenProvenance: provenance,
-    revisionRounds: canonicalCount(revisionRounds, 'revision_rounds', 1, 10),
-    refereeCount: canonicalCount(refereeCount, 'referee_count', 2, 7),
+    revisionRounds: canonicalRevisionRounds,
+    refereeCount: canonicalRefereeCount,
   });
   return Object.freeze({
     ...payload,
@@ -276,6 +336,11 @@ export function buildAutonomousResearchRecurringGoldenTemplate({
     throw new Error('autonomous_research_recurring_golden_epoch_invalid');
   }
   const family = canonicalProtocolFamily(protocolFamily);
+  const canonicalMounts = canonicalDatasetMounts(datasetMounts, family);
+  const canonicalRevisionRounds = canonicalCount(
+    revisionRounds, 'revision_rounds', 1, 10,
+  );
+  const canonicalRefereeCount = canonicalCount(refereeCount, 'referee_count', 2, 7);
   if (!SHA256.test(String(providerConfigurationHash || ''))) {
     throw new Error('autonomous_research_machine_intake_provider_configuration_hash_invalid');
   }
@@ -286,11 +351,17 @@ export function buildAutonomousResearchRecurringGoldenTemplate({
     epochDurationMs,
     objective: canonicalObjective(objective),
     protocolFamily: family,
-    datasetMounts: canonicalDatasetMounts(datasetMounts, family),
-    budgets: goldenBudgets(budgets),
+    datasetMounts: canonicalMounts,
+    budgets: resourceClosedGoldenBudgets({
+      templateId,
+      family,
+      revisionRounds: canonicalRevisionRounds,
+      refereeCount: canonicalRefereeCount,
+      budgets,
+    }),
     providerConfigurationHash,
-    revisionRounds: canonicalCount(revisionRounds, 'revision_rounds', 1, 10),
-    refereeCount: canonicalCount(refereeCount, 'referee_count', 2, 7),
+    revisionRounds: canonicalRevisionRounds,
+    refereeCount: canonicalRefereeCount,
   });
   return Object.freeze({
     ...payload,

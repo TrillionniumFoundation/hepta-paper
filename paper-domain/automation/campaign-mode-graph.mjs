@@ -99,6 +99,7 @@ function appendReviewRounds({
   const empiricalReplayNodeIds = [...initialEmpiricalReplayNodeIds];
   const formalVerifyNodeIds = initialFormalVerifyNodeId ? [initialFormalVerifyNodeId] : [];
   const convergenceNodeIds = [];
+  let latestFormalVerifyNodeId = initialFormalVerifyNodeId;
   for (let roundIndex = 1; roundIndex <= rounds; roundIndex += 1) {
     const refereeNodes = Array.from({ length: reviewers }, (_, index) => node(
       campaignId,
@@ -106,7 +107,15 @@ function appendReviewRounds({
       [previousNodeId],
       { roundIndex, priority: 60, role: `referee-${index + 1}`, executionIntent },
     ));
-    const revise = node(campaignId, 'revise', refereeNodes.map((item) => item.nodeId), {
+    // A trusted dynamic-formal render needs a completed kernel/replay receipt,
+    // while the revision itself must subsequently be verified against its new
+    // source identity.  Carry the last post-mutation formal result as a direct
+    // render authority dependency, then mint a new result below.
+    const reviseDependencies = [
+      ...refereeNodes.map((item) => item.nodeId),
+      ...(formalRequested && latestFormalVerifyNodeId ? [latestFormalVerifyNodeId] : []),
+    ];
+    const revise = node(campaignId, 'revise', reviseDependencies, {
       roundIndex,
       priority: 70,
       role: 'reviser',
@@ -177,7 +186,10 @@ function appendReviewRounds({
     );
     previousNodeId = convergence.nodeId;
     latestEmpiricalReplayNodeIds = revalidationChains.map((chain) => chain.reproduce.nodeId);
-    if (formalVerify) formalVerifyNodeIds.push(formalVerify.nodeId);
+    if (formalVerify) {
+      formalVerifyNodeIds.push(formalVerify.nodeId);
+      latestFormalVerifyNodeId = formalVerify.nodeId;
+    }
     empiricalReplayNodeIds.push(...latestEmpiricalReplayNodeIds);
     convergenceNodeIds.push(convergence.nodeId);
   }
@@ -197,8 +209,23 @@ function appendFullCampaign({ nodes, campaignId, rounds, reviewers, executionPro
   // reads and hashes that post-writer corpus before constructing its protocol.
   const chains = empiricalChains({ campaignId, dependencies: [writer.nodeId], executionProfiles, executionIntent });
   const manuscriptDependencies = [writer.nodeId, ...chains.map((chain) => chain.reproduce.nodeId)];
+  // Dynamic formal support cannot be rendered before a successful kernel and
+  // fresh-replay receipt exists.  This pre-render chain verifies the writer's
+  // current theorem surface.  The ordinary chain below runs after integration
+  // and therefore binds the mutated manuscript consumed by compile/review.
+  const renderAuthorityFormal = formalRequested && integrateManuscript
+    ? formalVerificationChain({
+      campaignId,
+      dependencies: manuscriptDependencies,
+      executionIntent,
+      priority: 38,
+      nodeIdPrefix: 'render-authority-',
+    }) : null;
   const integrate = integrateManuscript
-    ? node(campaignId, 'manuscript-integrate', manuscriptDependencies, { priority: 40, role: 'writer', executionIntent })
+    ? node(campaignId, 'manuscript-integrate', [
+      ...manuscriptDependencies,
+      ...(renderAuthorityFormal ? [renderAuthorityFormal.formalVerify.nodeId] : []),
+    ], { priority: 40, role: 'writer', executionIntent })
     : null;
   const formal = formalRequested ? formalVerificationChain({
     campaignId,
@@ -214,6 +241,9 @@ function appendFullCampaign({ nodes, campaignId, rounds, reviewers, executionPro
     research,
     writer,
     ...chains.flatMap((chain) => [chain.coder, chain.empirical, chain.reproduce]),
+    ...(renderAuthorityFormal
+      ? [renderAuthorityFormal.theoremSpecification, renderAuthorityFormal.formalVerify]
+      : []),
     ...(integrate ? [integrate] : []),
     ...(formal ? [formal.theoremSpecification, formal.formalVerify] : []),
     initialCompile,
@@ -259,6 +289,7 @@ function appendFullCampaign({ nodes, campaignId, rounds, reviewers, executionPro
     } : {}),
   });
   const releaseFormalVerifyNodeIds = [
+    ...(renderAuthorityFormal ? [renderAuthorityFormal.formalVerify.nodeId] : []),
     ...review.formalVerifyNodeIds,
     ...(sourceClosureFormal ? [sourceClosureFormal.formalVerify.nodeId] : []),
   ];

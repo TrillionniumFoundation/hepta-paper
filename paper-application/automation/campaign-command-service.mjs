@@ -57,6 +57,7 @@ export class CampaignCommandService {
     workspaceRegistry = null,
     receiptLedger = null,
     runtimeRetentionReceiptLedger = null,
+    runtimeRetentionReachabilityProvider = null,
     runtimeRoot,
     buildRuntimeRetentionPlan,
     executeRuntimeRetentionPlan,
@@ -67,22 +68,38 @@ export class CampaignCommandService {
     this.workspaceRegistry = workspaceRegistry;
     this.receiptLedger = receiptLedger;
     this.runtimeRetentionReceiptLedger = runtimeRetentionReceiptLedger;
+    this.runtimeRetentionReachabilityProvider = runtimeRetentionReachabilityProvider;
     this.runtimeRoot = runtimeRoot;
     this.buildRuntimeRetentionPlan = buildRuntimeRetentionPlan;
     this.executeRuntimeRetentionPlan = executeRuntimeRetentionPlan;
     this.reconcileRuntimeRetentionIntents = reconcileRuntimeRetentionIntents;
   }
 
-  retentionPlan(nodes) {
+  retentionAuthority(nodes, { persist = false } = {}) {
     if (typeof this.buildRuntimeRetentionPlan !== 'function') {
       throw new Error('campaign_runtime_retention_planner_required');
     }
-    return this.buildRuntimeRetentionPlan({
+    const activeNodeIds = nodes.filter((node) => ['leased', 'running'].includes(node.status))
+      .map((node) => node.nodeId);
+    let reachabilityManifest = null;
+    try {
+      reachabilityManifest = this.runtimeRetentionReachabilityProvider?.createManifest?.({
+        activeNodeIds,
+        persist,
+      }) || null;
+    } catch { /* an unavailable authority must protect every governed entry */ }
+    const plan = this.buildRuntimeRetentionPlan({
       runtimeRoot: this.runtimeRoot,
-      activeNodeIds: nodes.filter((node) => ['leased', 'running'].includes(node.status)).map((node) => node.nodeId),
+      activeNodeIds,
       workspaceRecords: this.workspaceRegistry?.retentionRecords() || [],
       receiptLedger: this.receiptLedger,
+      reachabilityManifest,
     });
+    return Object.freeze({ plan, reachabilityManifest });
+  }
+
+  retentionPlan(nodes) {
+    return this.retentionAuthority(nodes).plan;
   }
 
   selectWorkerBatch({ campaignId = null, limit = 100 } = {}) {
@@ -156,18 +173,21 @@ export class CampaignCommandService {
       || (apply && typeof this.reconcileRuntimeRetentionIntents !== 'function')) {
       throw new Error('campaign_runtime_retention_executor_required');
     }
+    const activeNodes = this.campaignStore.listCampaigns({ status: 'running', limit: 1000 })
+      .flatMap((campaign) => this.campaignStore.listNodes(campaign.campaignId));
+    const activeNodeIds = activeNodes.map((node) => node.nodeId);
     const recovery = apply ? this.reconcileRuntimeRetentionIntents({
       runtimeRoot: this.runtimeRoot,
       workspaceRegistry: this.workspaceRegistry,
       receiptLedger: this.receiptLedger,
       retentionReceiptLedger: this.runtimeRetentionReceiptLedger,
+      reachabilityManifestProvider: this.runtimeRetentionReachabilityProvider,
+      activeNodeIds,
     }) : null;
     if (recovery?.status === 'runtime_retention_recovery_blocked') {
       throw new Error(`runtime_retention_recovery_blocked:${JSON.stringify(recovery.blockers)}`);
     }
-    const activeNodes = this.campaignStore.listCampaigns({ status: 'running', limit: 1000 })
-      .flatMap((campaign) => this.campaignStore.listNodes(campaign.campaignId));
-    const plan = this.retentionPlan(activeNodes);
+    const { plan, reachabilityManifest } = this.retentionAuthority(activeNodes, { persist: apply });
     return {
       recovery,
       plan,
@@ -175,6 +195,9 @@ export class CampaignCommandService {
         apply,
         workspaceRegistry: this.workspaceRegistry,
         receiptLedger: this.receiptLedger,
+        reachabilityManifest,
+        reachabilityManifestProvider: this.runtimeRetentionReachabilityProvider,
+        activeNodeIds,
         retentionReceiptLedger: apply ? this.runtimeRetentionReceiptLedger : null,
       }),
     };

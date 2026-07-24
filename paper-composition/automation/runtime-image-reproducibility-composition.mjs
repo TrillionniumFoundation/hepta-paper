@@ -298,10 +298,34 @@ export async function composeRuntimeImageReproducibilityVerification({
   randomUUID = crypto.randomUUID,
   runProcess = runBoundedChildProcess,
   signal = null,
+  publicationMutationCoordinator = null,
+  publicationOfflineProvision = true,
+  requireExternallyFencedPublication = false,
+  publicationDatabaseInstanceId = undefined,
+  publicationSchemaContractId = undefined,
+  publicationWriterId = undefined,
 } = {}) {
   if (!['verify', 'publish'].includes(action)) {
     throw new Error(`runtime_reproducibility_action_invalid:${action}`);
   }
+  let context = null;
+  const publicationRepository = action === 'publish'
+    ? createRuntimeImageReproducibilityReceiptRepository({
+      runtimeRoot,
+      receiptPath: receiptPath || environment.HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_RECEIPT || null,
+      receiptVerifier: (candidate, verificationTime) => (
+        verifyRuntimeImageReproducibilityReceipt(
+          candidate,
+          currentVerificationContext(context, verificationTime),
+        )
+      ),
+      mutationCoordinator: publicationMutationCoordinator,
+      offlineProvision: publicationOfflineProvision,
+      requireExternallyFencedMutations: requireExternallyFencedPublication,
+      databaseInstanceId: publicationDatabaseInstanceId,
+      schemaContractId: publicationSchemaContractId,
+      writerId: publicationWriterId,
+    }) : null;
   const generated = composeRuntimeImageReproducibilityRequest({
     repositoryRoot,
     configPath,
@@ -310,7 +334,8 @@ export async function composeRuntimeImageReproducibilityVerification({
     clock,
     randomUUID,
   });
-  const { context, request } = generated;
+  ({ context } = generated);
+  const { request } = generated;
   const responses = await Promise.all(context.configuration.verifiers.map((verifier) => (
     invokeRuntimeImageReproducibilityVerifier(verifier.command, request, {
       cwd: fs.realpathSync(path.resolve(repositoryRoot)),
@@ -336,17 +361,7 @@ export async function composeRuntimeImageReproducibilityVerification({
   );
   let publication = null;
   if (action === 'publish') {
-    const repository = createRuntimeImageReproducibilityReceiptRepository({
-      runtimeRoot,
-      receiptPath: receiptPath || environment.HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_RECEIPT || null,
-      receiptVerifier: (candidate, verificationTime) => (
-        verifyRuntimeImageReproducibilityReceipt(
-          candidate,
-          currentVerificationContext(context, verificationTime),
-        )
-      ),
-    });
-    publication = repository.publish({ receipt, now: issuedAt });
+    publication = publicationRepository.publish({ receipt, now: issuedAt });
   }
   return Object.freeze({
     version: 2,

@@ -18,6 +18,9 @@ import {
   bootstrapSubmissionContext,
 } from '../../paper-composition/bootstrap/capability-scoped-bootstrap.mjs';
 import { bootstrapSubmissionHandoffContext } from '../../paper-composition/bootstrap/submission-handoff-context-bootstrap.mjs';
+import {
+  convergeAutonomousSubmissionHandoff,
+} from '../../paper-composition/bootstrap/autonomous-submission-handoff-migration-composition.mjs';
 import { bootstrapLegacyPaperExecutionContext } from '../../paper-composition/compat/legacy-context-bootstrap.mjs';
 import { resolveCampaignWorkerModelConfiguration } from '../../paper-composition/automation/campaign-worker-composition.mjs';
 import {
@@ -25,8 +28,13 @@ import {
   inspectFullResearchQualification,
 } from '../../paper-composition/automation/automation-status-inspection.mjs';
 import { defaultPaperRuntimeRoot, resolveWorkspaceLayout } from '../../paper-adapters/runtime/workspace-layout.mjs';
+import { relativeModuleSpecifiers } from '../verification/javascript-module-specifiers.mjs';
+import {
+  REQUIRED_SCOPED_SCHEMA_VERSIONS,
+} from '../../paper-domain/automation/scoped-schema-version-contract.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
+const latestScopedSchemaVersion = REQUIRED_SCOPED_SCHEMA_VERSIONS.at(-1);
 
 function relativeImportReachability(entry) {
   const pending = [path.resolve(entry)];
@@ -36,8 +44,8 @@ function relativeImportReachability(entry) {
     if (reached.has(file)) continue;
     reached.add(file);
     const source = fs.readFileSync(file, 'utf8');
-    for (const match of source.matchAll(/(?:from\s+|import\s*\()(['"])(\.[^'"]+)\1/g)) {
-      const candidate = path.resolve(path.dirname(file), match[2]);
+    for (const specifier of relativeModuleSpecifiers(source)) {
+      const candidate = path.resolve(path.dirname(file), specifier);
       const resolved = path.extname(candidate) ? candidate : `${candidate}.mjs`;
       if (fs.existsSync(resolved)) pending.push(resolved);
     }
@@ -58,9 +66,42 @@ function closeContext(context) {
   context?.services?.persistenceSession?.close?.();
 }
 
-function migrateStore(roots, { targetVersion = 23 } = {}) {
+function testHandoffMutationCoordinator() {
+  const coveredDatabaseRoles = Object.freeze(['submission-handoff']);
+  return Object.freeze({
+    implemented: true,
+    coveredDatabaseRoles,
+    executeMutation() {
+      throw new Error('composition_context_test_handoff_mutation_unexpected');
+    },
+    recoverPendingMutations() { return Object.freeze([]); },
+    inspectStatus() {
+      return Object.freeze({
+        status: 'externally_fenced_sqlite_mutation_coordinator_ready',
+        implemented: true,
+        coveredDatabaseRoles,
+        blockers: Object.freeze([]),
+      });
+    },
+  });
+}
+
+function bootstrapTestAutomationContext(options) {
+  return bootstrapAutomationContext({
+    ...options,
+    submissionHandoffMutationCoordinator: testHandoffMutationCoordinator(),
+  });
+}
+
+function migrateStore(roots, { targetVersion = latestScopedSchemaVersion } = {}) {
   const store = createDefaultPaperStore({ ...roots, targetVersion });
   const dbPath = store.dbPath;
+  if (targetVersion === latestScopedSchemaVersion) {
+    convergeAutonomousSubmissionHandoff({
+      nativeStore: store,
+      runtimeRoot: roots.runtimeRoot,
+    });
+  }
   store.close();
   return dbPath;
 }
@@ -147,7 +188,7 @@ test('execution contexts require an explicit service profile instead of falling 
 test('automation bootstrap exposes only automation persistence and no submission authority or delivery capability', (t) => {
   const { root, runtimeRoot } = temporaryRoots(t, 'hepta-automation-context-');
   migrateStore({ root, runtimeRoot });
-  const context = bootstrapAutomationContext({
+  const context = bootstrapTestAutomationContext({
     root,
     runtimeRoot,
     mode: 'paper-campaign',
@@ -202,7 +243,7 @@ test('mutable scoped bootstrap rejects direct and symlinked runtime-root overlap
   const directRoot = path.join(directParent, 'assets');
   const nestedRuntime = path.join(directRoot, 'runtime');
   fs.mkdirSync(directRoot, { recursive: true });
-  assert.throws(() => bootstrapAutomationContext({
+  assert.throws(() => bootstrapTestAutomationContext({
     root: directRoot,
     runtimeRoot: nestedRuntime,
     execute: true,
@@ -241,7 +282,7 @@ test('mutable scoped bootstrap rejects direct and symlinked runtime-root overlap
   const runtimeAlias = path.join(aliasParent, 'runtime-alias');
   fs.mkdirSync(internalRuntime, { recursive: true });
   fs.symlinkSync(internalRuntime, runtimeAlias, 'dir');
-  assert.throws(() => bootstrapAutomationContext({
+  assert.throws(() => bootstrapTestAutomationContext({
     root: aliasRoot,
     runtimeRoot: runtimeAlias,
     execute: true,
@@ -259,16 +300,25 @@ test('mutable scoped bootstrap rejects direct and symlinked runtime-root overlap
 
 test('execution contexts validate service overrides and factory products at the composition boundary', (t) => {
   const roots = temporaryRoots(t, 'hepta-invalid-context-service-');
-  const store = createDefaultPaperStore({ ...roots, targetVersion: 23 });
+  const store = createDefaultPaperStore({
+    ...roots,
+    targetVersion: latestScopedSchemaVersion,
+  });
+  convergeAutonomousSubmissionHandoff({
+    nativeStore: store,
+    runtimeRoot: roots.runtimeRoot,
+  });
   t.after(() => store.close());
   for (const forbiddenOverride of [
     'experimentRegistryAuthorityVerifier',
     'operatorDatasetHarnessAuthorityVerifier',
+    'independentPdfRebuildVerifier',
+    'independentPdfRebuildWorkerRunner',
     'researchExecutionReleaseAttestor',
     'releasePackager',
   ]) {
     assert.throws(
-      () => bootstrapAutomationContext({
+      () => bootstrapTestAutomationContext({
         ...roots,
         execute: true,
         serviceOverrides: { store, [forbiddenOverride]: () => ({ verified: true }) },
@@ -277,7 +327,7 @@ test('execution contexts validate service overrides and factory products at the 
     );
   }
   assert.throws(
-    () => bootstrapAutomationContext({
+    () => bootstrapTestAutomationContext({
       ...roots,
       execute: true,
       serviceOverrides: { store, campaignStore: { version: 2 } },
@@ -285,7 +335,7 @@ test('execution contexts validate service overrides and factory products at the 
     /CampaignStorePort\.createCampaign is required/,
   );
 
-  const context = bootstrapAutomationContext({
+  const context = bootstrapTestAutomationContext({
     ...roots,
     execute: true,
     serviceOverrides: { store, artifactRepositoryFactory: () => ({ kind: 'invalid-artifact-repository' }) },
@@ -380,8 +430,8 @@ test('submission bootstrap owns delivery persistence and submission policies', (
   assert.equal(context.services.submissionDeliveryStore.kind, 'SqliteSubmissionDeliveryStore');
   assert.equal(Object.hasOwn(context.services, 'store'), false);
   assertNoRawStoreReachable(context.services);
-  assert.equal(typeof context.services.stageExecution.buildSubmissionLifecycle, 'function');
-  assert.equal(typeof context.services.stageExecution.prepareSubmissionAuthorities, 'function');
+  assert.equal(Object.hasOwn(context.services, 'stageExecution'), false);
+  assert.equal(Object.hasOwn(context.services, 'journalPolicy'), false);
   assert.equal(Object.hasOwn(context.services, 'paperStageAdapters'), false);
   assert.equal(assertExecutionServices(context), context.services);
 });
@@ -464,7 +514,8 @@ test('batch bootstrap selects submission capability by mode and execute flag', (
   assert.equal(inventory.services.schemaVersion.status, 'scoped_schema_gate_unavailable_read_only_store');
   assert.equal(Object.hasOwn(inventory.services, 'submissionDeliveryStore'), false);
   assert.equal(Object.hasOwn(inventory.services, 'submissionExecutorDescriptor'), false);
-  assert.equal(Object.hasOwn(inventory.services.stageExecution, 'buildSubmissionLifecycle'), false);
+  assert.equal(Object.hasOwn(inventory.services, 'stageExecution'), false);
+  assert.equal(Object.hasOwn(inventory.services, 'journalPolicy'), false);
   assert.equal(Object.hasOwn(inventory.services, 'paperStageAdapters'), false);
   assert.equal(Object.hasOwn(inventory.services, 'workflowStateStore'), false);
   assert.equal(fs.existsSync(inventoryRoots.runtimeRoot), false);
@@ -481,7 +532,8 @@ test('batch bootstrap selects submission capability by mode and execute flag', (
   assert.equal(dryRun.serviceProfile, 'batch');
   assert.equal(dryRun.capabilities.includes('submission-policy'), true);
   assert.equal(dryRun.capabilities.includes('submission-delivery'), false);
-  assert.equal(typeof dryRun.services.stageExecution.buildSubmissionLifecycle, 'function');
+  assert.equal(Object.hasOwn(dryRun.services, 'stageExecution'), false);
+  assert.equal(Object.hasOwn(dryRun.services, 'journalPolicy'), false);
   assert.equal(Object.hasOwn(dryRun.services, 'paperStageAdapters'), false);
   assert.equal(Object.hasOwn(dryRun.services, 'workflowStateStore'), false);
   assert.equal(Object.hasOwn(dryRun.services, 'submissionDeliveryStore'), false);
@@ -526,14 +578,14 @@ test('workflow_states is composed only for the explicit legacy compatibility pro
 
 test('uninitialized writable roots fail closed without creating a database', (t) => {
   const roots = temporaryRoots(t, 'hepta-uninitialized-scoped-root-');
-  assert.throws(() => bootstrapAutomationContext({ ...roots, execute: true }), /Read-only paper store missing/);
+  assert.throws(() => bootstrapTestAutomationContext({ ...roots, execute: true }), /Read-only paper store missing/);
   assert.throws(() => bootstrapBatchContext({ ...roots, mode: 'local-build', execute: true }), /Read-only paper store missing/);
   assert.throws(() => bootstrapSubmissionContext({ ...roots, execute: true }), /Read-only paper store missing/);
   assert.throws(() => bootstrapLegacyPaperExecutionContext({ ...roots, mode: 'legacy-uninitialized' }), /paper_store_not_initialized/);
   assert.equal(fs.existsSync(roots.runtimeRoot), false);
 });
 
-test('campaign CLI plans without a store but writable execution requires an explicit migration', (t) => {
+test('campaign CLI plans without a store but writable execution requires migration and handoff authority', (t) => {
   const roots = temporaryRoots(t, 'hepta-campaign-cli-schema-');
   const planned = runCampaignCli(roots);
   assert.equal(planned.status, 0, planned.stderr);
@@ -554,8 +606,9 @@ test('campaign CLI plans without a store but writable execution requires an expl
 
   migrateStore(roots);
   const initializedExecution = runCampaignCli(roots, ['--execute']);
-  assert.equal(initializedExecution.status, 0, initializedExecution.stderr);
-  assert.equal(JSON.parse(initializedExecution.stdout).status, 'paper_campaign_worker_idle');
+  assert.notEqual(initializedExecution.status, 0);
+  assert.match(initializedExecution.stderr,
+    /autonomous_submission_handoff_external_mutation_coordinator_required/);
 });
 
 test('scoped writable roots reject schema 20 read-only and leave database bytes unchanged', (t) => {
@@ -563,7 +616,7 @@ test('scoped writable roots reject schema 20 read-only and leave database bytes 
   const dbPath = migrateStore(roots, { targetVersion: 20 });
   const before = storeSnapshot(dbPath);
   assert.equal(schemaVersion(roots), 20);
-  assert.throws(() => bootstrapAutomationContext({ ...roots, execute: true }), /scoped_schema_migration_21_required/);
+  assert.throws(() => bootstrapTestAutomationContext({ ...roots, execute: true }), /scoped_schema_migration_21_required/);
   assert.throws(() => bootstrapBatchContext({ ...roots, mode: 'local-build', execute: true }), /scoped_schema_migration_21_required/);
   assert.throws(() => bootstrapSubmissionContext({ ...roots, execute: true }), /scoped_schema_migration_21_required/);
   for (const command of [
@@ -579,7 +632,7 @@ test('scoped writable roots reject schema 20 read-only and leave database bytes 
 
   migrateStore(roots);
   for (const createContext of [
-    () => bootstrapAutomationContext({ ...roots, execute: true }),
+    () => bootstrapTestAutomationContext({ ...roots, execute: true }),
     () => bootstrapBatchContext({ ...roots, mode: 'local-build', execute: true }),
     () => bootstrapSubmissionContext({ ...roots, execute: true }),
   ]) {
@@ -623,7 +676,7 @@ UPDATE submission_outbox SET status='pending',claimed_by=NULL,lease_token=NULL,l
   drained.close();
   const migrated = runStoreCli(roots);
   assert.equal(migrated.status, 0, migrated.stderr);
-  assert.equal(schemaVersion(roots), 23);
+  assert.equal(schemaVersion(roots), latestScopedSchemaVersion);
 });
 
 test('offline migration rejects an active WAL before opening the database for upgrade', (t) => {
@@ -639,7 +692,7 @@ test('offline migration rejects an active WAL before opening the database for up
   activeStore.close();
   const migrated = runStoreCli(roots);
   assert.equal(migrated.status, 0, migrated.stderr);
-  assert.equal(schemaVersion(roots), 23);
+  assert.equal(schemaVersion(roots), latestScopedSchemaVersion);
 });
 
 test('campaign worker model composition resolves author and reviewer models from environment without CLI flags', () => {

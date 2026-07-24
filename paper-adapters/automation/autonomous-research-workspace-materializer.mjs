@@ -14,6 +14,25 @@ import { readEmpiricalClaimUniverse } from '../research-verify/empirical-claim-u
 import {
   verifyAutonomousEmpiricalExecutionProfileSelection,
 } from '../../paper-domain/automation/autonomous-empirical-execution-profile-policy.mjs';
+import {
+  verifyPriorArtEvidenceReceipt,
+} from '../../paper-domain/research/prior-art-evidence-contract.mjs';
+import {
+  buildDefaultAutonomousManuscriptIrDraft,
+} from './autonomous-manuscript-ir-materialization.mjs';
+import {
+  verifyAutonomousVenueProfileSelection,
+} from '../../paper-domain/automation/autonomous-venue-profile-contract.mjs';
+import {
+  verifyAutonomousSubmissionMetadataReceipt,
+} from '../../paper-domain/automation/autonomous-submission-metadata-contract.mjs';
+import {
+  verifyResearchAgendaClaimBindingReceipt,
+} from '../../paper-domain/automation/research-agenda-claim-binding-contract.mjs';
+import { verifyVenueRequirementIr } from '../../paper-domain/automation/venue-requirement-ir.mjs';
+import {
+  verifyAutonomousVenueTemplateAssetRecord,
+} from '../../paper-domain/automation/autonomous-venue-template-asset-contract.mjs';
 
 function latexEscape(value) {
   return String(value || '').replace(/\\/g, '\\textbackslash{}').replace(/([#$%&_{}])/g, '\\$1');
@@ -60,10 +79,81 @@ export function materializeAutonomousResearchWorkspace({
   const policyAuthorization = loopPreparation?.policyAuthorization;
   const seedBundle = loopPreparation?.seedBundle;
   const seedBinding = loopPreparation?.seedBinding;
+  const priorArtReceipt = loopPreparation?.priorArtReceipt;
+  const researchAgendaIr = loopPreparation?.researchAgendaIr || null;
+  const agendaClaimBindingReceipt = loopPreparation?.agendaClaimBindingReceipt || null;
+  const venueProfileSelection = loopPreparation?.venueProfileSelection || null;
+  const venueRequirementIr = loopPreparation?.venueRequirementIr || null;
+  const venueTemplateAsset = loopPreparation?.venueTemplateAsset || null;
+  const venueTemplateAssetBundleHash =
+    loopPreparation?.venueTemplateAssetBundleHash || null;
+  const venueTemplateAssetAuthorityConfigurationHash =
+    loopPreparation?.venueTemplateAssetAuthorityConfigurationHash || null;
+  const submissionMetadataReceipt = loopPreparation?.submissionMetadataReceipt || null;
   const proposalVerification = verifyMachineProposedScientificClaimSet(proposal);
   const policyVerification = verifyAutonomousResearchPolicyAuthorization(policyAuthorization, { proposal });
+  const priorArtVerification = verifyPriorArtEvidenceReceipt(priorArtReceipt, {
+    paperId: proposal?.paperId,
+    agendaSelectionReceiptHash:
+      proposal?.agendaSelectionReceipt?.autonomousResearchAgendaSelectionReceiptHash,
+  });
+  const agendaClaimBindingVerification = researchAgendaIr
+    ? verifyResearchAgendaClaimBindingReceipt(agendaClaimBindingReceipt, {
+      researchAgendaIr,
+      proposal,
+    }) : Object.freeze({ valid: agendaClaimBindingReceipt === null });
+  const venueRequirementIrRequired = venueProfileSelection?.profile?.version === 3;
+  const venueRequirementIrValid = venueRequirementIrRequired
+    ? Boolean(researchAgendaIr && verifyVenueRequirementIr(venueRequirementIr, {
+      researchAgendaIr,
+      venueProfile: venueProfileSelection.profile,
+      venueProfileSelection,
+      expectedVenueProfileRegistryHash: venueProfileSelection.registryHash || null,
+      expectedVenueAuthorityConfigurationHash:
+        venueProfileSelection.venueAuthorityConfigurationHash || null,
+    }))
+    : venueRequirementIr === null;
+  const venueTemplateAssetValid = venueRequirementIrRequired ? (
+    verifyAutonomousVenueTemplateAssetRecord(venueTemplateAsset)
+    && JSON.stringify(venueTemplateAsset)
+      === JSON.stringify(venueProfileSelection?.venueTemplateAsset)
+    && venueTemplateAsset.venueId === venueProfileSelection.venueId
+    && venueTemplateAsset.templateAssetHash === venueRequirementIr?.templateAssetHash
+    && venueTemplateAssetBundleHash
+      === venueProfileSelection?.venueTemplateAssetBundleHash
+    && venueTemplateAssetBundleHash
+      === venueProfileSelection?.rankingReceipt?.venueTemplateAssetBundleHash
+    && venueTemplateAssetBundleHash
+      === venueProfileSelection?.registryAuthorityProof?.subjectHash
+    && venueTemplateAssetAuthorityConfigurationHash
+      === venueProfileSelection?.venueAuthorityConfigurationHash
+    && venueTemplateAssetAuthorityConfigurationHash
+      === venueProfileSelection?.registryAuthorityProof?.configurationHash
+    && venueProfileSelection?.registryAuthorityProof?.subjectKind
+      === 'AutonomousVenueTemplateAssetBundle'
+  ) : venueTemplateAsset === null
+    && venueTemplateAssetBundleHash === null
+    && venueTemplateAssetAuthorityConfigurationHash === null;
   if (loopPreparation?.autonomousExecutionLaunchReady !== true
     || !proposalVerification.valid || !policyVerification.valid
+    || !priorArtVerification.valid
+    || !agendaClaimBindingVerification.valid
+    || !venueRequirementIrValid
+    || !venueTemplateAssetValid
+    || (venueProfileSelection && !verifyAutonomousVenueProfileSelection(
+      venueProfileSelection,
+      { authorityObservedAt: loopPreparation?.createdAt },
+    ))
+    || (submissionMetadataReceipt && !verifyAutonomousSubmissionMetadataReceipt(
+      submissionMetadataReceipt,
+      {
+        paperId: proposal?.paperId,
+        protocolFamily: proposal?.protocolFamily,
+        authorityObservedAt: loopPreparation?.createdAt,
+      },
+    ))
+    || (venueProfileSelection?.profile?.externalSubmissionEnabled === true
+      && !submissionMetadataReceipt)
     || seedBundle?.status !== 'autonomous_research_seed_contracts_ready'
     || seedBinding?.status !== 'autonomous_research_seed_bound'
     || seedBinding?.seedBundleHash !== seedBundle?.autonomousResearchSeedContractBundleHash
@@ -77,6 +167,10 @@ export function materializeAutonomousResearchWorkspace({
       requireReady: true,
       runtimeCapabilityInspection: loopPreparation?.empiricalRuntimeCapabilityInspection,
       requireRuntimeCapabilityInspection: true,
+      runtimeReproducibilityInspection:
+        loopPreparation?.runtimeImageReproducibilityInspection,
+      requireRegisteredRuntime: loopPreparation?.launchMode === 'production-run',
+      observedAt: loopPreparation?.createdAt,
     },
   )) {
     throw new Error('autonomous_research_workspace_empirical_execution_profile_invalid');
@@ -113,6 +207,50 @@ export function materializeAutonomousResearchWorkspace({
       'AUTONOMOUS_HYPOTHESIS_GENERATION_RECEIPT.json',
       loopPreparation.generationReceipt,
     ),
+    priorArtEvidence: repository.writeJsonOnce(
+      'AUTONOMOUS_PRIOR_ART_EVIDENCE.json',
+      priorArtReceipt,
+    ),
+    ...(researchAgendaIr ? {
+      researchAgendaIr: repository.writeJsonOnce(
+        'AUTONOMOUS_RESEARCH_AGENDA_IR.json',
+        researchAgendaIr,
+      ),
+      agendaClaimBinding: repository.writeJsonOnce(
+        'AUTONOMOUS_RESEARCH_AGENDA_CLAIM_BINDING.json',
+        agendaClaimBindingReceipt,
+      ),
+    } : {}),
+    ...(venueProfileSelection ? {
+      venueProfileSelection: repository.writeJsonOnce(
+        'AUTONOMOUS_VENUE_PROFILE_SELECTION.json',
+        venueProfileSelection,
+      ),
+    } : {}),
+    ...(venueRequirementIr ? {
+      venueRequirementIr: repository.writeJsonOnce(
+        'AUTONOMOUS_VENUE_REQUIREMENT_IR.json',
+        venueRequirementIr,
+      ),
+      venueTemplateAsset: repository.writeVenueTemplateAssetOnce(
+        venueTemplateAsset,
+      ),
+    } : {}),
+    ...(submissionMetadataReceipt ? {
+      submissionMetadata: repository.writeJsonOnce(
+        'AUTONOMOUS_SUBMISSION_METADATA.json',
+        submissionMetadataReceipt,
+      ),
+    } : {}),
+    manuscriptIrDraft: repository.writeJsonOnce(
+      'AUTONOMOUS_MANUSCRIPT_IR_DRAFT.json',
+      buildDefaultAutonomousManuscriptIrDraft({
+        proposal,
+        policyAuthorization,
+        seedBundle,
+        priorArtReceipt,
+      }),
+    ),
     mainTex: repository.writeTextOnce('main.tex', manuscriptSkeleton({
       proposal,
       empiricalMaterialization,
@@ -137,7 +275,7 @@ export function materializeAutonomousResearchWorkspace({
     empiricalClaimLineage,
   );
   const payload = {
-    version: 2,
+    version: venueRequirementIr ? 3 : 2,
     kind: 'AutonomousResearchWorkspaceMaterializationReceipt',
     status: 'autonomous_research_workspace_materialized',
     paperId: proposal.paperId,
@@ -154,6 +292,28 @@ export function materializeAutonomousResearchWorkspace({
       loopPreparation.empiricalExecutionProfileSelection.policyHash,
     empiricalClaimUniverse,
     empiricalClaimLineage,
+    ...(agendaClaimBindingReceipt ? {
+      researchAgendaIrHash: researchAgendaIr.researchAgendaIrHash,
+      researchAgendaClaimBindingReceiptHash:
+        agendaClaimBindingReceipt.researchAgendaClaimBindingReceiptHash,
+    } : {}),
+    ...(venueProfileSelection ? {
+      venueProfileSelectionHash:
+        venueProfileSelection.autonomousVenueProfileSelectionReceiptHash,
+    } : {}),
+    ...(venueRequirementIr ? {
+      venueRequirementIrHash: venueRequirementIr.venueRequirementIrHash,
+      venueTemplateAssetHash: venueTemplateAsset.templateAssetHash,
+      venueTemplateAssetApplicationMode: venueTemplateAsset.applicationMode,
+      venueTemplateAssetPath: venueTemplateAsset.relativePath,
+      venueTemplateAssetFileHash: records.venueTemplateAsset,
+      venueTemplateAssetBundleHash,
+      venueTemplateAssetAuthorityConfigurationHash,
+    } : {}),
+    ...(submissionMetadataReceipt ? {
+      submissionMetadataReceiptHash:
+        submissionMetadataReceipt.autonomousSubmissionMetadataReceiptHash,
+    } : {}),
     records: Object.freeze(records),
     sourceMutationOutsideWorkspace: false,
     externalActionPerformed: false,

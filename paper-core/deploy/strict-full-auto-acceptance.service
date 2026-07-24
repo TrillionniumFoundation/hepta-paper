@@ -1,0 +1,43 @@
+[Unit]
+Description=Hepta Paper unattended strict full-auto acceptance convergence
+Requires=hepta-paper-host-bootstrap.service
+After=hepta-paper-host-bootstrap.service autonomous-submission-handoff-layout-provision.path network-online.target docker.service autonomous-research-supervisor.service autonomous-submission-dispatcher.service
+Wants=autonomous-submission-handoff-layout-provision.path network-online.target docker.service autonomous-research-supervisor.service autonomous-submission-dispatcher.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+User=hepta-paper
+Group=hepta-paper
+# Docker access is root-equivalent. Install this unit only on the dedicated
+# research host described by OPERATIONS.md.
+SupplementaryGroups=docker hepta-runtime-handoff
+WorkingDirectory=/opt/hepta-paper
+RuntimeDirectory=hepta-paper-acceptance
+RuntimeDirectoryMode=0700
+Environment=TMPDIR=/run/hepta-paper-acceptance
+EnvironmentFile=/etc/hepta-paper/strict-full-auto-acceptance.env
+# Research-provider credentials are available to provider canaries only. The
+# submission portal token remains isolated in the dispatcher principal.
+EnvironmentFile=/etc/hepta-paper/autonomous-research-provider.secrets.env
+ExecStartPre=/usr/bin/test -r ${HEPTA_STRICT_FULL_AUTO_ACCEPTANCE_CONFIGURATION}
+ExecStart=/usr/bin/node paper-core/bin/hepta-paper.mjs operator strict-full-auto-acceptance -- --action converge --configuration ${HEPTA_STRICT_FULL_AUTO_ACCEPTANCE_CONFIGURATION} --execute --require-accepted
+RemainAfterExit=yes
+Restart=on-failure
+RestartSec=1min
+TimeoutStartSec=24h
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadOnlyPaths=/srv/hepta-paper/assets /srv/hepta-paper/datasets /run/hepta-authority /etc/hepta-paper/authority-rotation /etc/hepta-paper/capabilities-public /etc/hepta-paper/online-mutation-authority /etc/hepta-paper/state-backup-authority /etc/hepta-paper/release-attestor
+InaccessiblePaths=/etc/hepta-paper/submission-portal /etc/hepta-paper/submission-dispatcher-signer /etc/hepta-paper/autonomous-submission-dispatcher.secrets.env
+ReadWritePaths=/var/lib/hepta-paper /run/hepta /run/hepta-paper-acceptance
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

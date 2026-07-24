@@ -1,5 +1,6 @@
 import { verifyCampaignReleaseAuthorityRecord } from '../../paper-domain/automation/campaign-release-contracts.mjs';
 import { assertCampaignReleaseQueryPort } from '../../paper-ports/campaign-release-query-port.mjs';
+import { deepFreezeJsonValue } from '../../workflow-kernel/deep-freeze-json-value.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { parseJsonOrThrow } from '../../workflow-kernel/runtime/data-utils.mjs';
 import { createExperimentRegistryAuthorityVerifier } from '../../paper-domain/research/experiment-registry-authority.mjs';
@@ -30,7 +31,7 @@ function authorityFromRow(row, experimentRegistryAuthorityVerifier) {
     || packageResult.campaignReleaseBundleMaterializationReceiptHash !== row.materialization_receipt_hash) {
     throw new Error('campaign_release_authority_result_binding_invalid');
   }
-  const record = Object.freeze({
+  const record = deepFreezeJsonValue({
     version: 1,
     kind: 'CurrentCampaignReleaseAuthority',
     status: row.release_status,

@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hasExactObjectKeys as exactKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 import { FULL_RESEARCH_QUALIFICATION_ATTESTOR_ROLE } from '../../paper-domain/automation/full-research-qualification-contract.mjs';
 import { restrictedChildEnvironment } from './bounded-child-process.mjs';
 
@@ -14,6 +15,8 @@ const MAXIMUM_PROTOCOL_BYTES = 16 * 1024 * 1024;
 const INDEPENDENT_VERIFIER_ROLE = 'external_qualification_independent_verifier';
 const MAXIMUM_CREDENTIAL_FILES = 10_000;
 const MAXIMUM_CREDENTIAL_BYTES = 256 * 1024 * 1024;
+const MAXIMUM_FILE_CONTENT_HASH_CACHE_ENTRIES = 256;
+const fileContentHashCache = new Map();
 const QUALIFICATION_COST_AUTHORITIES = new Set([
   'operator_declared_worst_case_usd',
   'externally_operated_zero_cost',
@@ -32,11 +35,6 @@ const SIGNER_KEYS = Object.freeze([
 ]);
 const TRUST_SET_KEYS = Object.freeze(['keys', 'kind', 'version']);
 
-function exactKeys(value, expected) {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
-    && JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...expected].sort());
-}
-
 function canonicalTimestamp(value) {
   const timestamp = typeof value === 'string' ? Date.parse(value) : Number.NaN;
   return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value
@@ -49,18 +47,52 @@ function organizationIdentity(value) {
     : null;
 }
 
+function fileStatIdentity(stat) {
+  return [
+    stat.dev,
+    stat.ino,
+    stat.mode,
+    stat.nlink,
+    stat.uid,
+    stat.gid,
+    stat.rdev,
+    stat.size,
+    stat.mtimeNs,
+    stat.ctimeNs,
+  ].join(':');
+}
+
 function fileContentHash(candidate) {
   const descriptor = fs.openSync(candidate, 'r');
-  const digest = crypto.createHash('sha256');
-  const buffer = Buffer.allocUnsafe(1024 * 1024);
   try {
+    const before = fs.fstatSync(descriptor, { bigint: true });
+    if (!before.isFile()) {
+      throw new Error('external_qualification_integrity_file_invalid');
+    }
+    const identity = fileStatIdentity(before);
+    const cached = fileContentHashCache.get(identity);
+    if (cached) {
+      fileContentHashCache.delete(identity);
+      fileContentHashCache.set(identity, cached);
+      return cached;
+    }
+    const digest = crypto.createHash('sha256');
+    const buffer = Buffer.allocUnsafe(1024 * 1024);
     let bytesRead;
     do {
       bytesRead = fs.readSync(descriptor, buffer, 0, buffer.length, null);
       if (bytesRead > 0) digest.update(buffer.subarray(0, bytesRead));
     } while (bytesRead > 0);
+    if (fileStatIdentity(fs.fstatSync(descriptor, { bigint: true })) !== identity) {
+      throw new Error('external_qualification_integrity_file_changed_during_hash');
+    }
+    const contentHash = `sha256:${digest.digest('hex')}`;
+    fileContentHashCache.set(identity, contentHash);
+    if (fileContentHashCache.size > MAXIMUM_FILE_CONTENT_HASH_CACHE_ENTRIES) {
+      fileContentHashCache.delete(fileContentHashCache.keys().next().value);
+    }
+    return contentHash;
   } finally { fs.closeSync(descriptor); }
-  return `sha256:${digest.digest('hex')}`;
 }
 
 function directoryContentsIdentity(root) {
@@ -455,6 +487,7 @@ export function readExternalResearchQualificationProcessConfiguration({ configPa
     role: INDEPENDENT_VERIFIER_ROLE,
     label: 'verifier_attestor',
     configPath: resolvedConfigPath,
+    permittedStatuses: ['active'],
     organizationRequired: true,
   });
   if (trusted.keys.some((key) => (

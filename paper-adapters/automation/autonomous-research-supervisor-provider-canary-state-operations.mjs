@@ -46,6 +46,81 @@ function providerCanaryVerifiedSummary({ marker, receiptHash }) {
   });
 }
 
+function providerCanaryActionPlan({
+  current,
+  identity,
+  providerConfigurationHash,
+  observedAt,
+} = {}) {
+  const providerCanaryCount = current.providerCanaryCount + 1;
+  const plannedGenerationHash = hashRecord(
+    'AutonomousResearchSupervisorProviderCanaryPlannedAttempt',
+    {
+      campaignId: current.campaignId,
+      dispatchCount: current.dispatchCount,
+      providerCanaryCount,
+      leaseGeneration: identity.leaseGeneration,
+      providerConfigurationHash,
+      providerCanaryReservedCostUsd:
+        current.policy.providerCanaryReservationCostUsd,
+      startedAt: observedAt.toISOString(),
+    },
+  );
+  const providerCanaryReservation = Object.freeze({
+    generationSequence: providerCanaryCount,
+    plannedGenerationHash,
+    budgetReservationId: `supervisor-canary:${plannedGenerationHash.slice(7)}`,
+    budgetEpochStart: current.lifecycleStartedAt,
+    providerCanaryReservedAttemptCount: 1,
+    providerCanaryReservedCostUsd:
+      current.policy.providerCanaryReservationCostUsd,
+  });
+  const reservation = Object.freeze({
+    version: 1,
+    kind: 'AutonomousResearchSupervisorProviderCanaryReservation',
+    campaignId: current.campaignId,
+    dispatchCount: current.dispatchCount,
+    providerConfigurationHash,
+    externalActionConfigurationIdentityHash: providerConfigurationHash,
+    providerCanaryReservation,
+    priorProviderCanaryState: Object.freeze({
+      providerCanaryCount: current.providerCanaryCount,
+      providerCanaryReservedCostUsd: current.providerCanaryReservedCostUsd,
+      lastProviderCanaryAt: current.lastProviderCanaryAt,
+      lastProviderCanaryStatus: current.lastProviderCanaryStatus,
+      lastProviderCanaryReceiptHash: current.lastProviderCanaryReceiptHash,
+    }),
+  });
+  const reservationHash = hashRecord(
+    'AutonomousResearchSupervisorExternalActionReservation',
+    {
+      campaignId: current.campaignId,
+      actionKind: AUTONOMOUS_RESEARCH_SUPERVISOR_EXTERNAL_ACTION_KINDS.PROVIDER_CANARY,
+      reservation,
+    },
+  );
+  return Object.freeze({
+    providerCanaryCount,
+    providerCanaryReservation,
+    reservation,
+    reservationHash,
+  });
+}
+
+function assertFinalizedSideEffectPermit({ receipt, required, reservationHash } = {}) {
+  if (!required) return;
+  if (receipt?.status === 'externally_fenced_sqlite_mutation_finalized'
+    && SHA256.test(String(receipt.sideEffectPermitHash || ''))) return;
+  const error = new Error(
+    'autonomous_research_supervisor_provider_canary_side_effect_permit_required',
+  );
+  error.committed = true;
+  error.reservationId = receipt?.reservationId || null;
+  error.sideEffectPermitHash = receipt?.sideEffectPermitHash || null;
+  error.sideEffectReservationHash = reservationHash;
+  throw error;
+}
+
 export function autonomousResearchSupervisorProviderCanarySuccessEvidenceValid(value, marker) {
   if (providerCanaryPairReceiptValid(value)) {
     return value.autonomousResearchProviderConfigurationHash
@@ -72,43 +147,82 @@ export function autonomousResearchSupervisorProviderCanarySuccessEvidenceValid(v
 
 export function autonomousResearchSupervisorProviderCanaryProgressEvidenceValid(
   evidence,
-  reservation,
+  marker,
 ) {
+  const reservation = marker?.reservation || marker;
+  if (evidence?.kind === 'AutonomousResearchSupervisorExternalActionMayHaveStarted') {
+    return evidence?.version === 1
+      && evidence?.actionKind
+        === AUTONOMOUS_RESEARCH_SUPERVISOR_EXTERNAL_ACTION_KINDS.PROVIDER_CANARY
+      && evidence?.attemptId === marker?.attemptId
+      && evidence?.reservationHash === marker?.reservationHash
+      && evidence?.externalActionMayHaveStarted === true;
+  }
   return evidence?.kind === 'AutonomousResearchSupervisorProviderCanaryProgress'
     && evidence?.role === 'research_author'
     && SHA256.test(String(evidence?.providerCanaryReceiptHash || ''))
-    && evidence?.providerConfigurationHash === reservation.providerConfigurationHash;
+    && evidence?.providerConfigurationHash === reservation?.providerConfigurationHash;
 }
 
 export function createAutonomousResearchSupervisorProviderCanaryStateOperations({
   database,
+  mutationCoordinator,
+  databaseInstanceId,
+  schemaContractId,
+  writerId,
   journalSupport,
   requireOpen,
-  beginTransaction,
-  rollback,
   row,
   fencedRow,
   leaseIdentity,
   timestamp,
+  requireExternallyFencedMutations = false,
 } = {}) {
+  const providerCanaryActionPermits = new WeakMap();
+  function mutationValue(receipt) {
+    if (!receipt || !Object.prototype.hasOwnProperty.call(receipt, 'value')) {
+      throw new Error('autonomous_research_supervisor_state_mutation_receipt_invalid');
+    }
+    return receipt.value;
+  }
+
+  const mutationInput = Object.freeze({
+      database,
+      databaseInstanceId,
+      schemaContractId,
+      writerId,
+      authorizationReceiptHashes: Object.freeze([]),
+      sideEffectReservationHashes: Object.freeze([]),
+  });
+
   return Object.freeze({
     beginProviderCanary({ lease, providerConfigurationHash, now = new Date() } = {}) {
       requireOpen();
       const identity = leaseIdentity(lease);
       const observedAt = timestamp(now);
-      try {
-        beginTransaction();
-        const current = fencedRow(identity, observedAt);
+      if (!SHA256.test(String(providerConfigurationHash || ''))) {
+        throw new Error('autonomous_research_supervisor_provider_configuration_hash_required');
+      }
+      const actionPlan = providerCanaryActionPlan({
+        current: fencedRow(identity, observedAt),
+        identity,
+        providerConfigurationHash,
+        observedAt,
+      });
+      const mutationReceipt = mutationCoordinator.executeMutation({
+        ...mutationInput,
+        databaseRole: 'supervisor-state',
+        operationId:
+          'supervisor-state.supervisor-provider-canary-state-operations.beginProviderCanary.v1',
+        sideEffectReservationHashes: [actionPlan.reservationHash],
+        mutate(transaction) {
+        const current = fencedRow(identity, observedAt, transaction);
         const lastAt = Date.parse(current.lastProviderCanaryAt || '');
         if (Number.isFinite(lastAt)
           && lastAt + current.policy.providerCanaryIntervalMs > observedAt.getTime()
           && current.lastProviderCanaryStatus === 'verified'
           && SHA256.test(String(current.lastProviderCanaryReceiptHash || ''))) {
-          database.exec('COMMIT;');
           return Object.freeze({ authorized: true, required: false });
-        }
-        if (!SHA256.test(String(providerConfigurationHash || ''))) {
-          throw new Error('autonomous_research_supervisor_provider_configuration_hash_required');
         }
         const nextCost = current.providerCanaryReservedCostUsd
           + current.policy.providerCanaryReservationCostUsd;
@@ -121,71 +235,148 @@ export function createAutonomousResearchSupervisorProviderCanaryStateOperations(
           blocker = 'supervisor_lifecycle_cost_budget_exhausted';
         }
         if (blocker) {
-          database.prepare(`UPDATE autonomous_research_supervisor_campaign
-            SET disposition='blocked',terminal_reason=?,lease_owner=NULL,lease_token=NULL,
-              lease_expires_at=NULL,updated_at=? WHERE campaign_id=?`).run(
+          transaction.run(
+            'supervisor-state.campaign-block.apply.v1',
             blocker, observedAt.toISOString(), current.campaignId,
           );
-          database.exec('COMMIT;');
           return Object.freeze({ authorized: false, required: true, blocker });
         }
-        database.prepare(`UPDATE autonomous_research_supervisor_campaign SET
-          provider_canary_count=provider_canary_count+1,
-          provider_canary_reserved_cost_usd=?,last_provider_canary_at=?,
-          last_provider_canary_status='in_progress',last_provider_canary_receipt_hash=NULL,
-          updated_at=? WHERE campaign_id=?`).run(
+        transaction.run(
+          'supervisor-state.campaign-canary-reserve.apply.v1',
           nextCost, observedAt.toISOString(), observedAt.toISOString(), current.campaignId,
         );
-        const reserved = row(current.campaignId);
-        const plannedGenerationHash = hashRecord(
-          'AutonomousResearchSupervisorProviderCanaryPlannedAttempt',
-          {
-            campaignId: reserved.campaignId,
-            dispatchCount: reserved.dispatchCount,
-            providerCanaryCount: reserved.providerCanaryCount,
-            leaseGeneration: identity.leaseGeneration,
-            providerConfigurationHash,
-            providerCanaryReservedCostUsd:
-              reserved.policy.providerCanaryReservationCostUsd,
-            startedAt: observedAt.toISOString(),
-          },
-        );
-        const providerCanaryReservation = Object.freeze({
-          generationSequence: reserved.providerCanaryCount,
-          plannedGenerationHash,
-          budgetReservationId: `supervisor-canary:${plannedGenerationHash.slice(7)}`,
-          budgetEpochStart: reserved.lifecycleStartedAt,
-          providerCanaryReservedAttemptCount: 1,
-          providerCanaryReservedCostUsd:
-            reserved.policy.providerCanaryReservationCostUsd,
-        });
-        const reservation = Object.freeze({
-          version: 1,
-          kind: 'AutonomousResearchSupervisorProviderCanaryReservation',
-          campaignId: reserved.campaignId,
-          dispatchCount: reserved.dispatchCount,
-          providerConfigurationHash,
-          providerCanaryReservation,
-        });
+        const reserved = row(current.campaignId, transaction);
+        if (reserved.campaignId !== actionPlan.reservation.campaignId
+          || reserved.dispatchCount !== actionPlan.reservation.dispatchCount
+          || reserved.providerCanaryCount !== actionPlan.providerCanaryCount
+          || reserved.lifecycleStartedAt
+            !== actionPlan.providerCanaryReservation.budgetEpochStart
+          || reserved.policy.providerCanaryReservationCostUsd
+            !== actionPlan.providerCanaryReservation.providerCanaryReservedCostUsd) {
+          throw new Error('autonomous_research_supervisor_provider_canary_fence_conflict');
+        }
         const attempt = journalSupport.insertInTransaction({
-          identity,
+          transaction, identity,
           current: reserved,
           actionKind:
             AUTONOMOUS_RESEARCH_SUPERVISOR_EXTERNAL_ACTION_KINDS.PROVIDER_CANARY,
-          reservation,
+          reservation: actionPlan.reservation,
           observedAt,
         });
-        database.exec('COMMIT;');
+        if (attempt.reservationHash !== actionPlan.reservationHash) {
+          throw new Error('autonomous_research_supervisor_provider_canary_fence_conflict');
+        }
         return Object.freeze({
           authorized: true,
           required: true,
-          providerCanaryReservation,
+          providerCanaryReservation: actionPlan.providerCanaryReservation,
           externalActionAttempt: attempt,
         });
-      } catch (error) {
-        rollback();
-        throw error;
+        },
+      });
+      const authorization = mutationValue(mutationReceipt);
+      if (authorization?.authorized === true && authorization?.required === true) {
+        assertFinalizedSideEffectPermit({
+          receipt: mutationReceipt,
+          required: requireExternallyFencedMutations,
+          reservationHash: actionPlan.reservationHash,
+        });
+        providerCanaryActionPermits.set(authorization, Object.freeze({
+          required: requireExternallyFencedMutations,
+          reservationHash: actionPlan.reservationHash,
+          sideEffectPermitHash: mutationReceipt.sideEffectPermitHash || null,
+        }));
       }
+      return authorization;
+    },
+    assertProviderCanarySideEffectPermit({ authorization } = {}) {
+      const permit = providerCanaryActionPermits.get(authorization);
+      providerCanaryActionPermits.delete(authorization);
+      if (!permit
+        || permit.reservationHash
+          !== authorization?.externalActionAttempt?.reservationHash
+        || (permit.required && !SHA256.test(String(permit.sideEffectPermitHash || '')))) {
+        throw new Error(
+          'autonomous_research_supervisor_provider_canary_side_effect_permit_invalid',
+        );
+      }
+      return true;
+    },
+    cancelProviderCanaryInfrastructureDeferred({
+      lease,
+      authorization,
+      now = new Date(),
+    } = {}) {
+      requireOpen();
+      const identity = leaseIdentity(lease);
+      const observedAt = timestamp(now);
+      const attempt = authorization?.externalActionAttempt || null;
+      const cancelled = mutationValue(mutationCoordinator.executeMutation({
+        ...mutationInput,
+        databaseRole: 'supervisor-state',
+        operationId:
+          'supervisor-state.supervisor-provider-canary-state-operations.cancelProviderCanaryInfrastructureDeferred.v1',
+        mutate(transaction) {
+          const externalAction = journalSupport.requireFencedAttempt(
+            identity, attempt, observedAt, transaction,
+          );
+          if (externalAction.actionKind
+            !== AUTONOMOUS_RESEARCH_SUPERVISOR_EXTERNAL_ACTION_KINDS.PROVIDER_CANARY
+            || externalAction.progress !== null) {
+            throw new Error(
+              'autonomous_research_supervisor_provider_canary_infrastructure_cancel_fence_lost',
+            );
+          }
+          const current = fencedRow(identity, observedAt, transaction);
+          const reservation = externalAction.marker.reservation;
+          const prior = reservation.priorProviderCanaryState;
+          if (!prior
+            || current.dispatchCount !== reservation.dispatchCount
+            || current.providerCanaryCount
+              !== reservation.providerCanaryReservation.generationSequence
+            || current.providerCanaryReservedCostUsd
+              !== prior.providerCanaryReservedCostUsd
+                + reservation.providerCanaryReservation.providerCanaryReservedCostUsd) {
+            throw new Error(
+              'autonomous_research_supervisor_provider_canary_infrastructure_cancel_fence_lost',
+            );
+          }
+          journalSupport.finishInTransaction({
+            transaction,
+            identity,
+            attempt,
+            observedAt,
+            successful: false,
+            evidence: null,
+            actionAccountingComplete: false,
+            externalActionPerformed: false,
+            blocker: 'autonomous_research_state_recoverability_deferred_before_provider_action',
+          });
+          const result = transaction.run(
+            'supervisor-state.campaign-canary-infrastructure-cancel.apply.v1',
+            prior.providerCanaryCount,
+            prior.providerCanaryReservedCostUsd,
+            prior.lastProviderCanaryAt,
+            prior.lastProviderCanaryStatus,
+            prior.lastProviderCanaryReceiptHash,
+            observedAt.toISOString(),
+            identity.campaignId,
+            identity.ownerId,
+            identity.leaseToken,
+            identity.leaseGeneration,
+            reservation.dispatchCount,
+            reservation.providerCanaryReservation.generationSequence,
+          );
+          if (Number(result.changes) !== 1) {
+            throw new Error(
+              'autonomous_research_supervisor_provider_canary_infrastructure_cancel_fence_lost',
+            );
+          }
+          return row(identity.campaignId, transaction);
+        },
+      }));
+      providerCanaryActionPermits.delete(authorization);
+      return cancelled;
     },
     finishProviderCanary({
       lease,
@@ -203,10 +394,14 @@ export function createAutonomousResearchSupervisorProviderCanaryStateOperations(
       if (verified && !SHA256.test(String(receiptHash || ''))) {
         throw new Error('autonomous_research_supervisor_provider_canary_receipt_required');
       }
-      try {
-        beginTransaction();
+      return mutationValue(mutationCoordinator.executeMutation({
+        ...mutationInput,
+        databaseRole: 'supervisor-state',
+        operationId:
+          'supervisor-state.supervisor-provider-canary-state-operations.finishProviderCanary.v1',
+        mutate(transaction) {
         const externalAction = journalSupport.requireFencedAttempt(
-          identity, attempt, observedAt,
+          identity, attempt, observedAt, transaction,
         );
         if (externalAction.actionKind
           !== AUTONOMOUS_RESEARCH_SUPERVISOR_EXTERNAL_ACTION_KINDS.PROVIDER_CANARY) {
@@ -246,7 +441,7 @@ export function createAutonomousResearchSupervisorProviderCanaryStateOperations(
           externalActionPerformed = sideEffectInspection.externalActionPerformed;
         }
         journalSupport.finishInTransaction({
-          identity,
+          transaction, identity,
           attempt,
           observedAt,
           successful: Boolean(verified),
@@ -256,10 +451,8 @@ export function createAutonomousResearchSupervisorProviderCanaryStateOperations(
           blocker: verified ? null : String(error?.message || error
             || 'autonomous_research_supervisor_provider_canary_failed'),
         });
-        const result = database.prepare(`UPDATE autonomous_research_supervisor_campaign SET
-          last_provider_canary_status=?,last_provider_canary_receipt_hash=?,last_error=?,
-          updated_at=? WHERE campaign_id=?
-          AND lease_owner=? AND lease_token=? AND lease_generation=?`).run(
+        const result = transaction.run(
+          'supervisor-state.campaign-canary-finish.apply.v1',
           verified ? 'verified' : 'failed',
           verified ? String(receiptHash) : null,
           error ? String(error).slice(0, 1000) : null,
@@ -269,12 +462,9 @@ export function createAutonomousResearchSupervisorProviderCanaryStateOperations(
         if (Number(result.changes) !== 1) {
           throw new Error('autonomous_research_supervisor_lease_lost');
         }
-        database.exec('COMMIT;');
-        return row(identity.campaignId);
-      } catch (caught) {
-        rollback();
-        throw caught;
-      }
+        return row(identity.campaignId, transaction);
+        },
+      }));
     },
   });
 }

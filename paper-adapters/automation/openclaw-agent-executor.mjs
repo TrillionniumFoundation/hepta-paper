@@ -140,6 +140,7 @@ export function createOpenClawAgentExecutor({
       outputTokenBudget,
       requestedTimeout,
       signal,
+      workspaceMutationPolicy,
       workspace,
       promptHash,
       changedWorkspacePaths,
@@ -169,6 +170,9 @@ export function createOpenClawAgentExecutor({
         sandbox === 'read-only' ? 'Read and review only. Do not modify any file.' : 'Make only the requested changes inside that workspace.',
         'Do not submit papers, send messages, use credentials, or perform external mutations.',
         String(instructions),
+        workspaceMutationPolicy
+          ? `The runtime enforces this exact workspace mutation policy: ${JSON.stringify(workspaceMutationPolicy)}`
+          : '',
         `Structured context: ${JSON.stringify({ ...context, workspacePath: workspace })}`,
         requiredChecks.length ? `Run applicable checks before finishing: ${requiredChecks.join(' ; ')}` : '',
         outputTokenBudget ? `Keep the final response within ${Math.max(128, Number(outputTokenBudget))} output tokens. Prefer editing files with tools over returning file bodies.` : '',

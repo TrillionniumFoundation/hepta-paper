@@ -1,6 +1,9 @@
 import { failClosedStoreQueries, sqlJson, sqlText } from '../../paper-ports/store-port.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { resolveReceiptWriterCapability } from './receipt-issuer-policy.mjs';
+import {
+  NATIVE_STORE_LEDGER_STATEMENT_IDS,
+} from './native-store-ledger-mutation-plan.mjs';
 
 const DISPOSITIONS = new Set(['superseded', 'invalid', 'administrative_exported', 'retention_tombstone']);
 
@@ -45,6 +48,33 @@ export function createSqliteReceiptLedgerQualificationStore({ store: suppliedSto
       };
       const qualificationHash = hashRecord('ReceiptLedgerQualification', payload);
       const qualificationId = `qualification:${qualificationHash}`;
+      if (typeof store.mutate === 'function') {
+        const coordinated = store.mutate({
+          databaseRole: 'native-store',
+          operationId: 'native-store.receipt-ledger-qualification.qualify.v1',
+          authorizationReceiptHashes: [],
+          sideEffectReservationHashes: [],
+          mutate(transaction) {
+            return transaction.run(
+              NATIVE_STORE_LEDGER_STATEMENT_IDS.qualifyReceipt,
+              qualificationId,
+              receiptId,
+              disposition,
+              reason,
+              replacementReceiptId,
+              JSON.stringify(payload),
+              qualificationHash,
+              issuer.policyId,
+              payload.createdAt,
+            ).changes;
+          },
+        });
+        if (coordinated?.status !== 'externally_fenced_sqlite_mutation_finalized'
+          || coordinated.value !== 1) {
+          throw new Error('receipt_qualification_external_mutation_receipt_invalid');
+        }
+        return Object.freeze({ ...payload, qualificationId, qualificationHash });
+      }
       const result = store.execute(`INSERT INTO receipt_ledger_qualifications(qualification_id,receipt_id,disposition,reason,replacement_receipt_id,qualification_json,qualification_sha256,issuer_policy_id,created_at) VALUES(${sqlText(qualificationId)},${sqlText(receiptId)},${sqlText(disposition)},${sqlText(reason)},${replacementReceiptId ? sqlText(replacementReceiptId) : 'NULL'},${sqlJson(payload)},${sqlText(qualificationHash)},${sqlText(issuer.policyId)},${sqlText(payload.createdAt)});`);
       if (!result.ok) throw new Error(result.error || result.stderr || 'receipt_qualification_write_failed');
       return Object.freeze({ ...payload, qualificationId, qualificationHash });

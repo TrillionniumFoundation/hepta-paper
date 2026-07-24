@@ -27,6 +27,8 @@ import {
 import {
   buildRuntimeImageReproducibilityReceipt,
   buildRuntimeImageReproducibilityRequest,
+  REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES,
+  RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE,
   runtimeImageReproducibilityResponseSigningPayloadHash,
   verifyRuntimeImageReproducibilityReceipt,
 } from '../../paper-domain/automation/runtime-image-reproducibility-receipt-contract.mjs';
@@ -203,7 +205,7 @@ function fixture(t, mutateConfiguration = undefined) {
   const inputs = inspectRuntimeImageBuildInputClosures({
     repositoryRoot: REPOSITORY_ROOT,
     definitions: AUTOMATION_RUNTIME_IMAGE_BUILD_DEFINITIONS,
-    profiles: ['python', 'pythonGpu', 'r'],
+    profiles: REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES,
     platform: configuration.platform,
     buildArgs: configuration.buildArgs,
     sourceDateEpoch: configuration.sourceDateEpoch,
@@ -284,7 +286,7 @@ function fixture(t, mutateConfiguration = undefined) {
     expiresAt: '2026-07-17T08:00:45.000Z',
   });
   const profilePolicies = Object.freeze(Object.fromEntries(
-    ['python', 'pythonGpu', 'r'].map((profile) => [profile, Object.freeze({
+    REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES.map((profile) => [profile, Object.freeze({
       dependencyArtifactsContentHashed: true,
       sourceArchivesContentHashed: true,
     })]),
@@ -325,7 +327,12 @@ test('two independent Ed25519 verifier responses bind identical complete OCI dig
   assert.equal(inspection.ready, true, JSON.stringify(inspection.blockers));
   assert.equal(inspection.ociIndexManifestConfigAndLayerBlobDigestsCompared, true);
   assert.equal(inspection.canonicalContextTarMetadataAttested, true);
-  assert.deepEqual(inspection.requiredProfiles, ['python', 'pythonGpu', 'r']);
+  assert.deepEqual(inspection.requiredProfiles, ['python', 'r']);
+  assert.equal(inspection.runtimeImageReproducibilityActivePluginScopeHash,
+    RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE
+      .runtimeImageReproducibilityActivePluginScopeHash);
+  assert.deepEqual(inspection.activeProductionProfileHashes,
+    RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE.activeProductionProfileHashes);
   assert.equal(Date.parse(value.request.expiresAt) - Date.parse(value.request.requestedAt), 120_000);
   assert.equal(Date.parse(value.receipt.expiresAt) - Date.parse(value.receipt.issuedAt),
     24 * 60 * 60 * 1000);

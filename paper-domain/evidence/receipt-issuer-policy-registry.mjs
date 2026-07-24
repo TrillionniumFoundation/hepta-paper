@@ -107,6 +107,18 @@ const DEFINITIONS = Object.freeze({
     allowedKinds: ['RuntimeRetentionIntent', 'RuntimeRetentionReceipt'],
     allowedStreams: ['runtime-retention'],
   }),
+  'package-lifecycle-authority': Object.freeze({
+    writerId: 'package-lifecycle-authority',
+    writerKind: 'append-only-package-lifecycle-authority',
+    assurance: 'in_process_registered_administrator',
+    allowedKinds: [
+      'PackageLifecycleRecordingIntent',
+      'PackageLifecycleReceipt',
+      'PackageSupersessionReceipt',
+      'PackageRetentionLegalHoldReceipt',
+    ],
+    allowedStreams: ['package-lifecycle-intents', 'package-lifecycle'],
+  }),
   'workspace-snapshot-verifier': Object.freeze({
     writerId: 'workspace-snapshot-restore-verifier',
     writerKind: 'workspace-snapshot-verifier',
@@ -120,6 +132,13 @@ const DEFINITIONS = Object.freeze({
     assurance: 'in_process_registered_issuer',
     allowedKinds: ['PaperWorkflowStateProjectionReceipt'],
     allowedStreams: ['workflow-state'],
+  }),
+  'autonomous-submission-handoff': Object.freeze({
+    writerId: 'autonomous-submission-handoff-state-writer',
+    writerKind: 'autonomous-submission-handoff-state-machine',
+    assurance: 'in_process_registered_issuer',
+    allowedKinds: ['AutonomousSubmissionDeliveryStateReceipt'],
+    allowedStreams: ['autonomous-submission-delivery'],
   }),
 });
 

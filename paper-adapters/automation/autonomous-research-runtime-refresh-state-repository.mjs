@@ -2,17 +2,21 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-
 import {
   normalizeRuntimeReproducibilityRefreshPolicy,
   runtimeReproducibilityBudgetEpoch,
   runtimeReproducibilityReservation,
 } from '../../paper-domain/automation/runtime-reproducibility-refresh-policy.mjs';
-
+import { validateExternallyFencedSqliteMutationCoordinatorConfiguration } from './externally-fenced-sqlite-mutation-coordinator-configuration.mjs';
+import {
+  AUTONOMOUS_RESEARCH_RUNTIME_REFRESH_DATABASE_INSTANCE_ID,
+  AUTONOMOUS_RESEARCH_RUNTIME_REFRESH_SCHEMA_CONTRACT_ID,
+  AUTONOMOUS_RESEARCH_RUNTIME_REFRESH_WRITER_ID,
+  createOfflineRuntimeRefreshMutationCoordinator,
+} from './autonomous-research-runtime-refresh-mutation-plan.mjs';
 const SCOPE_ID = 'resident-runtime-image-reproducibility';
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,255}$/;
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
-
 function observedDate(value) {
   const date = value instanceof Date ? value : new Date(value);
   if (!Number.isFinite(date.getTime())) {
@@ -20,7 +24,6 @@ function observedDate(value) {
   }
   return date;
 }
-
 function leaseIdentity(value = {}) {
   if (!SAFE_ID.test(String(value.ownerId || ''))
     || !SAFE_ID.test(String(value.leaseToken || ''))
@@ -34,7 +37,6 @@ function leaseIdentity(value = {}) {
     leaseGeneration: Number(value.leaseGeneration),
   });
 }
-
 function mapState(row) {
   if (!row) return null;
   return Object.freeze({
@@ -57,50 +59,73 @@ function mapState(row) {
     updatedAt: row.updated_at,
   });
 }
-
 function mapEpoch(row) {
   return Object.freeze({
-    epochStart: row.epoch_start,
-    epochEnd: row.epoch_end,
-    policyHash: row.policy_hash,
-    attemptCount: Number(row.attempt_count),
+    epochStart: row.epoch_start, epochEnd: row.epoch_end,
+    policyHash: row.policy_hash, attemptCount: Number(row.attempt_count),
     reservedCostUsd: Number(row.reserved_cost_usd),
   });
 }
-
 function mapAttempt(row) {
   return Object.freeze({
     leaseGeneration: Number(row.lease_generation),
-    ownerId: row.owner_id,
-    campaignId: row.campaign_id,
+    ownerId: row.owner_id, campaignId: row.campaign_id,
     epochStart: row.epoch_start,
     configurationIdentityHash: row.configuration_identity_hash,
     reservedCostUsd: Number(row.reserved_cost_usd),
     costAuthority: row.cost_authority,
-    status: row.status,
-    error: row.error || null,
+    status: row.status, error: row.error || null,
     receiptHash: row.receipt_hash || null,
-    reservedAt: row.reserved_at,
-    completedAt: row.completed_at || null,
+    reservedAt: row.reserved_at, completedAt: row.completed_at || null,
   });
 }
-
 export function createAutonomousResearchRuntimeRefreshStateRepository({
   runtimeRoot,
   policy: suppliedPolicy,
   busyTimeoutMs = 10_000,
+  offlineProvision = true,
+  mutationCoordinator = null,
+  databaseInstanceId = AUTONOMOUS_RESEARCH_RUNTIME_REFRESH_DATABASE_INSTANCE_ID,
+  schemaContractId = AUTONOMOUS_RESEARCH_RUNTIME_REFRESH_SCHEMA_CONTRACT_ID,
+  writerId = AUTONOMOUS_RESEARCH_RUNTIME_REFRESH_WRITER_ID,
+  requireExternallyFencedMutations = false,
 } = {}) {
   if (!runtimeRoot) throw new Error('runtime_reproducibility_refresh_runtime_root_required');
+  if (!Number.isSafeInteger(busyTimeoutMs) || busyTimeoutMs < 1 || busyTimeoutMs > 60_000
+    || typeof offlineProvision !== 'boolean'
+    || typeof requireExternallyFencedMutations !== 'boolean'
+    || !SAFE_ID.test(String(databaseInstanceId || ''))
+    || !SAFE_ID.test(String(schemaContractId || ''))
+    || !SAFE_ID.test(String(writerId || ''))) {
+    throw new Error('runtime_reproducibility_refresh_repository_configuration_invalid');
+  }
+  let coordinator = validateExternallyFencedSqliteMutationCoordinatorConfiguration({
+    mutationCoordinator,
+    requireExternallyFencedMutations,
+    offlineProvision,
+    databaseRole: 'runtime-reproducibility-refresh',
+    requiredErrorCode: 'runtime_reproducibility_refresh_external_mutation_coordinator_required',
+  });
+  coordinator ||= createOfflineRuntimeRefreshMutationCoordinator({
+    databaseInstanceId,
+    schemaContractId,
+    writerId,
+  });
   const policy = normalizeRuntimeReproducibilityRefreshPolicy(suppliedPolicy);
   const stateRoot = path.join(path.resolve(runtimeRoot), 'autonomous-research', 'supervisor');
   const databasePath = path.join(stateRoot, 'runtime-reproducibility-refresh.sqlite');
-  fs.mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
-  fs.chmodSync(stateRoot, 0o700);
+  if (offlineProvision) {
+    fs.mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
+    fs.chmodSync(stateRoot, 0o700);
+  } else if (!fs.existsSync(databasePath)) {
+    throw new Error('runtime_reproducibility_refresh_offline_provisioning_required');
+  }
   const database = new DatabaseSync(databasePath);
-  database.exec(`PRAGMA busy_timeout=${Math.max(1, Number(busyTimeoutMs || 10_000))};`);
-  database.exec('PRAGMA journal_mode=WAL;');
-  database.exec('PRAGMA synchronous=FULL;');
-  database.exec(`CREATE TABLE IF NOT EXISTS runtime_reproducibility_refresh_state (
+  database.exec(`PRAGMA busy_timeout=${busyTimeoutMs};`);
+  if (offlineProvision) {
+    database.exec('PRAGMA journal_mode=WAL;');
+    database.exec('PRAGMA synchronous=FULL;');
+    database.exec(`CREATE TABLE IF NOT EXISTS runtime_reproducibility_refresh_state (
     scope_id TEXT PRIMARY KEY,
     status TEXT NOT NULL,
     consecutive_failures INTEGER NOT NULL DEFAULT 0 CHECK(consecutive_failures >= 0),
@@ -143,17 +168,18 @@ export function createAutonomousResearchRuntimeRefreshStateRepository({
     reserved_at TEXT NOT NULL,
     completed_at TEXT
   ) STRICT;`);
-  const initializedAt = new Date(0).toISOString();
-  database.prepare(`INSERT OR IGNORE INTO runtime_reproducibility_refresh_state(
-    scope_id,status,next_attempt_at,created_at,updated_at
-  ) VALUES(?,?,?,?,?)`).run(
-    SCOPE_ID,
-    'refresh_unobserved',
-    initializedAt,
-    initializedAt,
-    initializedAt,
-  );
-  fs.chmodSync(databasePath, 0o600);
+    const initializedAt = new Date(0).toISOString();
+    database.prepare(`INSERT OR IGNORE INTO runtime_reproducibility_refresh_state(
+      scope_id,status,next_attempt_at,created_at,updated_at
+    ) VALUES(?,?,?,?,?)`).run(
+      SCOPE_ID,
+      'refresh_unobserved',
+      initializedAt,
+      initializedAt,
+      initializedAt,
+    );
+    fs.chmodSync(databasePath, 0o600);
+  }
   let closed = false;
 
   function requireOpen() {
@@ -167,16 +193,8 @@ export function createAutonomousResearchRuntimeRefreshStateRepository({
     ).get(SCOPE_ID));
   }
 
-  function begin() { database.exec('BEGIN IMMEDIATE;'); }
-  function rollback() {
-    if (database.isTransaction) {
-      try { database.exec('ROLLBACK;'); } catch { /* retain original failure */ }
-    }
-  }
-
-  function fencedState(rawLease, now) {
+  function fencedState(rawLease, now, current = state()) {
     const lease = leaseIdentity(rawLease);
-    const current = state();
     if (current.leaseOwner !== lease.ownerId
       || current.leaseToken !== lease.leaseToken
       || current.leaseGeneration !== lease.leaseGeneration
@@ -186,16 +204,11 @@ export function createAutonomousResearchRuntimeRefreshStateRepository({
     return Object.freeze({ lease, current });
   }
 
-  function clearLease({ status, nextAttemptAt, error, now }) {
-    database.prepare(`UPDATE runtime_reproducibility_refresh_state SET
-      status=?,next_attempt_at=?,last_error=?,lease_owner=NULL,lease_token=NULL,
-      lease_expires_at=NULL,updated_at=? WHERE scope_id=?`).run(
-      status,
-      nextAttemptAt,
-      error ? String(error).slice(0, 1000) : null,
-      now.toISOString(),
-      SCOPE_ID,
-    );
+  function mutationValue(receipt) {
+    if (!receipt || !Object.prototype.hasOwnProperty.call(receipt, 'value')) {
+      throw new Error('runtime_reproducibility_refresh_mutation_receipt_invalid');
+    }
+    return receipt.value;
   }
 
   return Object.freeze({
@@ -204,6 +217,12 @@ export function createAutonomousResearchRuntimeRefreshStateRepository({
     durable: true,
     globalSingletonLease: true,
     fixedBudgetEpoch: true,
+    offlineProvisioningPerformed: offlineProvision,
+    externallyFencedMutations: coordinator.implemented === true,
+    externallyFencedMutationsRequired: requireExternallyFencedMutations,
+    databaseInstanceId,
+    schemaContractId,
+    writerId,
     databasePath,
     policy,
     readState: state,
@@ -222,32 +241,42 @@ export function createAutonomousResearchRuntimeRefreshStateRepository({
     reconcileStaleRefreshLease({ now = new Date() } = {}) {
       requireOpen();
       const observedAt = observedDate(now);
-      try {
-        begin();
-        const current = state();
-        const expired = current.leaseExpiresAt
-          && Date.parse(current.leaseExpiresAt) <= observedAt.getTime();
-        if (expired) {
-          database.prepare(`UPDATE runtime_reproducibility_refresh_attempt SET
-            status='failed',error='runtime_reproducibility_refresh_lease_expired',completed_at=?
-            WHERE lease_generation=? AND status='reserved'`).run(
-            observedAt.toISOString(), current.leaseGeneration,
-          );
-          clearLease({
-            status: 'refresh_retry_scheduled',
-            nextAttemptAt: observedAt.toISOString(),
-            error: 'runtime_reproducibility_refresh_lease_expired',
-            now: observedAt,
+      return mutationValue(coordinator.executeMutation({
+        database,
+        databaseRole: 'runtime-reproducibility-refresh',
+        databaseInstanceId,
+        schemaContractId,
+        writerId,
+        operationId:
+          'runtime-reproducibility-refresh.runtime-refresh-state-repository.reconcileStaleRefreshLease.v1',
+        authorizationReceiptHashes: [],
+        sideEffectReservationHashes: [],
+        mutate(transaction) {
+          const current = mapState(transaction.get(
+            'runtime-refresh.reconcile.state-current.get.v1',
+            SCOPE_ID,
+          ));
+          const expired = current.leaseExpiresAt
+            && Date.parse(current.leaseExpiresAt) <= observedAt.getTime();
+          if (expired) {
+            transaction.run(
+              'runtime-refresh.reconcile.attempt-expire.apply.v1',
+              observedAt.toISOString(),
+              current.leaseGeneration,
+            );
+            transaction.run(
+              'runtime-refresh.reconcile.state-recover.apply.v1',
+              observedAt.toISOString(),
+              observedAt.toISOString(),
+              SCOPE_ID,
+            );
+          }
+          return Object.freeze({
+            recoveredLeaseCount: expired ? 1 : 0,
+            reconciledAt: observedAt.toISOString(),
           });
-          database.prepare(`UPDATE runtime_reproducibility_refresh_state SET
-            recovered_lease_count=recovered_lease_count+1 WHERE scope_id=?`).run(SCOPE_ID);
-        }
-        database.exec('COMMIT;');
-        return Object.freeze({ recoveredLeaseCount: expired ? 1 : 0, reconciledAt: observedAt.toISOString() });
-      } catch (error) {
-        rollback();
-        throw error;
-      }
+        },
+      }));
     },
     tryAcquireRefreshLease({ ownerId, leaseMs = policy.leaseMs, now = new Date() } = {}) {
       requireOpen();
@@ -259,56 +288,67 @@ export function createAutonomousResearchRuntimeRefreshStateRepository({
       if (!Number.isSafeInteger(duration) || duration < 1000 || duration > 4 * 60 * 60 * 1000) {
         throw new Error('runtime_reproducibility_refresh_lease_invalid');
       }
-      try {
-        begin();
-        const current = state();
-        const activeExpiry = Date.parse(current.leaseExpiresAt || '');
-        if (Number.isFinite(activeExpiry) && activeExpiry > observedAt.getTime()) {
-          database.exec('COMMIT;');
-          return Object.freeze({
-            acquired: false,
-            reason: 'runtime_reproducibility_refresh_leased',
-            nextAttemptAt: current.leaseExpiresAt,
+      return mutationValue(coordinator.executeMutation({
+        database,
+        databaseRole: 'runtime-reproducibility-refresh',
+        databaseInstanceId,
+        schemaContractId,
+        writerId,
+        operationId:
+          'runtime-reproducibility-refresh.runtime-refresh-state-repository.tryAcquireRefreshLease.v1',
+        authorizationReceiptHashes: [],
+        sideEffectReservationHashes: [],
+        mutate(transaction) {
+          const current = mapState(transaction.get(
+            'runtime-refresh.acquire.state-current.get.v1',
+            SCOPE_ID,
+          ));
+          const activeExpiry = Date.parse(current.leaseExpiresAt || '');
+          if (Number.isFinite(activeExpiry) && activeExpiry > observedAt.getTime()) {
+            return Object.freeze({
+              acquired: false,
+              reason: 'runtime_reproducibility_refresh_leased',
+              nextAttemptAt: current.leaseExpiresAt,
+            });
+          }
+          if (Date.parse(current.nextAttemptAt) > observedAt.getTime()) {
+            return Object.freeze({
+              acquired: false,
+              reason: 'runtime_reproducibility_refresh_backoff_active',
+              nextAttemptAt: current.nextAttemptAt,
+            });
+          }
+          const recovered = Boolean(current.leaseExpiresAt);
+          if (recovered) {
+            transaction.run(
+              'runtime-refresh.acquire.attempt-expire.apply.v1',
+              observedAt.toISOString(),
+              current.leaseGeneration,
+            );
+          }
+          const lease = Object.freeze({
+            ownerId: String(ownerId),
+            leaseToken: `refresh:${crypto.randomUUID()}`,
+            leaseGeneration: current.leaseGeneration + 1,
+            expiresAt: new Date(observedAt.getTime() + duration).toISOString(),
           });
-        }
-        if (Date.parse(current.nextAttemptAt) > observedAt.getTime()) {
-          database.exec('COMMIT;');
-          return Object.freeze({
-            acquired: false,
-            reason: 'runtime_reproducibility_refresh_backoff_active',
-            nextAttemptAt: current.nextAttemptAt,
-          });
-        }
-        const recovered = Boolean(current.leaseExpiresAt);
-        if (recovered) {
-          database.prepare(`UPDATE runtime_reproducibility_refresh_attempt SET
-            status='failed',error='runtime_reproducibility_refresh_lease_expired',completed_at=?
-            WHERE lease_generation=? AND status='reserved'`).run(
-            observedAt.toISOString(), current.leaseGeneration,
+          const update = transaction.run(
+            'runtime-refresh.acquire.state-apply.v1',
+            lease.ownerId,
+            lease.leaseToken,
+            lease.leaseGeneration,
+            lease.expiresAt,
+            recovered ? 1 : 0,
+            observedAt.toISOString(),
+            SCOPE_ID,
+            current.leaseGeneration,
           );
-        }
-        const lease = Object.freeze({
-          ownerId: String(ownerId),
-          leaseToken: `refresh:${crypto.randomUUID()}`,
-          leaseGeneration: current.leaseGeneration + 1,
-          expiresAt: new Date(observedAt.getTime() + duration).toISOString(),
-        });
-        const update = database.prepare(`UPDATE runtime_reproducibility_refresh_state SET
-          status='refresh_leased',lease_owner=?,lease_token=?,lease_generation=?,
-          lease_expires_at=?,recovered_lease_count=recovered_lease_count+?,updated_at=?
-          WHERE scope_id=? AND lease_generation=?`).run(
-          lease.ownerId, lease.leaseToken, lease.leaseGeneration, lease.expiresAt,
-          recovered ? 1 : 0, observedAt.toISOString(), SCOPE_ID, current.leaseGeneration,
-        );
-        if (Number(update.changes) !== 1) {
-          throw new Error('runtime_reproducibility_refresh_lease_fence_conflict');
-        }
-        database.exec('COMMIT;');
-        return Object.freeze({ acquired: true, lease });
-      } catch (error) {
-        rollback();
-        throw error;
-      }
+          if (Number(update.changes) !== 1) {
+            throw new Error('runtime_reproducibility_refresh_lease_fence_conflict');
+          }
+          return Object.freeze({ acquired: true, lease });
+        },
+      }));
     },
     assertRefreshLease({ lease, now = new Date() } = {}) {
       requireOpen();
@@ -320,26 +360,59 @@ export function createAutonomousResearchRuntimeRefreshStateRepository({
       const identity = leaseIdentity(lease);
       const observedAt = observedDate(now);
       const expiresAt = new Date(observedAt.getTime() + Number(leaseMs)).toISOString();
-      const result = database.prepare(`UPDATE runtime_reproducibility_refresh_state SET
-        lease_expires_at=?,updated_at=? WHERE scope_id=? AND lease_owner=? AND lease_token=?
-        AND lease_generation=? AND julianday(lease_expires_at)>julianday(?)`).run(
-        expiresAt, observedAt.toISOString(), SCOPE_ID, identity.ownerId,
-        identity.leaseToken, identity.leaseGeneration, observedAt.toISOString(),
-      );
-      return Number(result.changes) === 1 ? Object.freeze({ ...identity, expiresAt }) : null;
+      return mutationValue(coordinator.executeMutation({
+        database,
+        databaseRole: 'runtime-reproducibility-refresh',
+        databaseInstanceId,
+        schemaContractId,
+        writerId,
+        operationId:
+          'runtime-reproducibility-refresh.runtime-refresh-state-repository.renewRefreshLease.v1',
+        authorizationReceiptHashes: [],
+        sideEffectReservationHashes: [],
+        mutate(transaction) {
+          const result = transaction.run(
+            'runtime-refresh.renew.state-apply.v1',
+            expiresAt,
+            observedAt.toISOString(),
+            SCOPE_ID,
+            identity.ownerId,
+            identity.leaseToken,
+            identity.leaseGeneration,
+            observedAt.toISOString(),
+          );
+          return Number(result.changes) === 1
+            ? Object.freeze({ ...identity, expiresAt }) : null;
+        },
+      }));
     },
     releaseRefreshLease({ lease, now = new Date() } = {}) {
       requireOpen();
       const identity = leaseIdentity(lease);
       const observedAt = observedDate(now);
-      const result = database.prepare(`UPDATE runtime_reproducibility_refresh_state SET
-        status='refresh_observation_current',lease_owner=NULL,lease_token=NULL,
-        lease_expires_at=NULL,next_attempt_at=?,updated_at=? WHERE scope_id=?
-        AND lease_owner=? AND lease_token=? AND lease_generation=?`).run(
-        observedAt.toISOString(), observedAt.toISOString(), SCOPE_ID,
-        identity.ownerId, identity.leaseToken, identity.leaseGeneration,
-      );
-      return Number(result.changes) === 1;
+      return mutationValue(coordinator.executeMutation({
+        database,
+        databaseRole: 'runtime-reproducibility-refresh',
+        databaseInstanceId,
+        schemaContractId,
+        writerId,
+        operationId:
+          'runtime-reproducibility-refresh.runtime-refresh-state-repository.releaseRefreshLease.v1',
+        authorizationReceiptHashes: [],
+        sideEffectReservationHashes: [],
+        mutate(transaction) {
+          const result = transaction.run(
+            'runtime-refresh.release.state-apply.v1',
+            observedAt.toISOString(),
+            observedAt.toISOString(),
+            SCOPE_ID,
+            identity.ownerId,
+            identity.leaseToken,
+            identity.leaseGeneration,
+          );
+          return Number(result.changes) === 1;
+        },
+      }));
     },
     reserveRefreshAttempt({
       lease,
@@ -353,91 +426,118 @@ export function createAutonomousResearchRuntimeRefreshStateRepository({
       }
       const reservation = runtimeReproducibilityReservation(configuration);
       const observedAt = observedDate(now);
-      try {
-        begin();
-        const { lease: identity } = fencedState(lease, observedAt);
-        const epochIdentity = runtimeReproducibilityBudgetEpoch(policy, observedAt.getTime());
-        const epochStart = new Date(epochIdentity.epochStartEpochMs).toISOString();
-        const epochEnd = new Date(epochIdentity.epochEndEpochMs).toISOString();
-        let epoch = database.prepare(`SELECT * FROM runtime_reproducibility_refresh_budget_epoch
-          WHERE epoch_start=?`).get(epochStart);
-        if (!epoch) {
-          database.prepare(`INSERT INTO runtime_reproducibility_refresh_budget_epoch(
-            epoch_start,epoch_end,policy_json,policy_hash,created_at,updated_at
-          ) VALUES(?,?,?,?,?,?)`).run(
-            epochStart, epochEnd, JSON.stringify(policy),
-            policy.runtimeReproducibilityRefreshPolicyHash,
-            observedAt.toISOString(), observedAt.toISOString(),
+      return mutationValue(coordinator.executeMutation({
+        database,
+        databaseRole: 'runtime-reproducibility-refresh',
+        databaseInstanceId,
+        schemaContractId,
+        writerId,
+        operationId:
+          'runtime-reproducibility-refresh.runtime-refresh-state-repository.reserveRefreshAttempt.v1',
+        authorizationReceiptHashes: [],
+        sideEffectReservationHashes: [],
+        mutate(transaction) {
+          const current = mapState(transaction.get(
+            'runtime-refresh.reserve.state-current.get.v1',
+            SCOPE_ID,
+          ));
+          const { lease: identity } = fencedState(lease, observedAt, current);
+          const epochIdentity = runtimeReproducibilityBudgetEpoch(
+            policy,
+            observedAt.getTime(),
           );
-          epoch = database.prepare(`SELECT * FROM runtime_reproducibility_refresh_budget_epoch
-            WHERE epoch_start=?`).get(epochStart);
-        }
-        if (epoch.policy_hash !== policy.runtimeReproducibilityRefreshPolicyHash) {
-          clearLease({
-            status: 'refresh_configuration_blocked',
-            nextAttemptAt: epoch.epoch_end,
-            error: 'runtime_reproducibility_refresh_budget_policy_immutable',
-            now: observedAt,
-          });
-          database.exec('COMMIT;');
+          const epochStart = new Date(epochIdentity.epochStartEpochMs).toISOString();
+          const epochEnd = new Date(epochIdentity.epochEndEpochMs).toISOString();
+          let epoch = transaction.get(
+            'runtime-refresh.reserve.epoch-current.get.v1',
+            epochStart,
+          );
+          if (!epoch) {
+            transaction.run(
+              'runtime-refresh.reserve.epoch-create.apply.v1',
+              epochStart,
+              epochEnd,
+              JSON.stringify(policy),
+              policy.runtimeReproducibilityRefreshPolicyHash,
+              observedAt.toISOString(),
+              observedAt.toISOString(),
+            );
+            epoch = transaction.get(
+              'runtime-refresh.reserve.epoch-current.get.v1',
+              epochStart,
+            );
+          }
+          if (epoch.policy_hash !== policy.runtimeReproducibilityRefreshPolicyHash) {
+            transaction.run(
+              'runtime-refresh.reserve.state-block.apply.v1',
+              'refresh_configuration_blocked',
+              epoch.epoch_end,
+              'runtime_reproducibility_refresh_budget_policy_immutable',
+              observedAt.toISOString(),
+              SCOPE_ID,
+            );
+            return Object.freeze({
+              authorized: false,
+              terminal: true,
+              blocker: 'runtime_reproducibility_refresh_budget_policy_immutable',
+              deferUntil: epoch.epoch_end,
+            });
+          }
+          const nextAttemptCount = Number(epoch.attempt_count) + 1;
+          const nextCostUsd = Number(epoch.reserved_cost_usd)
+            + reservation.maximumVerificationCostUsd;
+          if (nextAttemptCount > policy.maximumAttemptsPerEpoch
+            || nextCostUsd > policy.maximumCostUsdPerEpoch + Number.EPSILON) {
+            transaction.run(
+              'runtime-refresh.reserve.state-block.apply.v1',
+              'refresh_budget_deferred',
+              epoch.epoch_end,
+              'runtime_reproducibility_refresh_epoch_budget_exhausted',
+              observedAt.toISOString(),
+              SCOPE_ID,
+            );
+            return Object.freeze({
+              authorized: false,
+              terminal: false,
+              blocker: 'runtime_reproducibility_refresh_epoch_budget_exhausted',
+              deferUntil: epoch.epoch_end,
+            });
+          }
+          transaction.run(
+            'runtime-refresh.reserve.attempt-create.apply.v1',
+            identity.leaseGeneration,
+            identity.ownerId,
+            String(campaignId),
+            epoch.epoch_start,
+            reservation.configurationIdentityHash,
+            reservation.maximumVerificationCostUsd,
+            reservation.verificationCostAuthority,
+            observedAt.toISOString(),
+          );
+          transaction.run(
+            'runtime-refresh.reserve.epoch-reserve.apply.v1',
+            nextAttemptCount,
+            nextCostUsd,
+            observedAt.toISOString(),
+            epoch.epoch_start,
+          );
+          transaction.run(
+            'runtime-refresh.reserve.state-progress.apply.v1',
+            reservation.configurationIdentityHash,
+            observedAt.toISOString(),
+            SCOPE_ID,
+          );
           return Object.freeze({
-            authorized: false,
-            terminal: true,
-            blocker: 'runtime_reproducibility_refresh_budget_policy_immutable',
-            deferUntil: epoch.epoch_end,
+            authorized: true,
+            leaseGeneration: identity.leaseGeneration,
+            epochStart: epoch.epoch_start,
+            epochEnd: epoch.epoch_end,
+            reservedCostUsd: reservation.maximumVerificationCostUsd,
+            epochAttemptCount: nextAttemptCount,
+            epochReservedCostUsd: nextCostUsd,
           });
-        }
-        const nextAttemptCount = Number(epoch.attempt_count) + 1;
-        const nextCostUsd = Number(epoch.reserved_cost_usd)
-          + reservation.maximumVerificationCostUsd;
-        if (nextAttemptCount > policy.maximumAttemptsPerEpoch
-          || nextCostUsd > policy.maximumCostUsdPerEpoch + Number.EPSILON) {
-          clearLease({
-            status: 'refresh_budget_deferred',
-            nextAttemptAt: epoch.epoch_end,
-            error: 'runtime_reproducibility_refresh_epoch_budget_exhausted',
-            now: observedAt,
-          });
-          database.exec('COMMIT;');
-          return Object.freeze({
-            authorized: false,
-            terminal: false,
-            blocker: 'runtime_reproducibility_refresh_epoch_budget_exhausted',
-            deferUntil: epoch.epoch_end,
-          });
-        }
-        database.prepare(`INSERT INTO runtime_reproducibility_refresh_attempt(
-          lease_generation,owner_id,campaign_id,epoch_start,configuration_identity_hash,
-          reserved_cost_usd,cost_authority,status,reserved_at
-        ) VALUES(?,?,?,?,?,?,?,'reserved',?)`).run(
-          identity.leaseGeneration, identity.ownerId, String(campaignId),
-          epoch.epoch_start, reservation.configurationIdentityHash,
-          reservation.maximumVerificationCostUsd, reservation.verificationCostAuthority,
-          observedAt.toISOString(),
-        );
-        database.prepare(`UPDATE runtime_reproducibility_refresh_budget_epoch SET
-          attempt_count=?,reserved_cost_usd=?,updated_at=? WHERE epoch_start=?`).run(
-          nextAttemptCount, nextCostUsd, observedAt.toISOString(), epoch.epoch_start,
-        );
-        database.prepare(`UPDATE runtime_reproducibility_refresh_state SET
-          status='refresh_in_progress',last_configuration_identity_hash=?,last_error=NULL,
-          updated_at=? WHERE scope_id=?`).run(
-          reservation.configurationIdentityHash, observedAt.toISOString(), SCOPE_ID,
-        );
-        database.exec('COMMIT;');
-        return Object.freeze({
-          authorized: true,
-          leaseGeneration: identity.leaseGeneration,
-          epochStart: epoch.epoch_start,
-          epochEnd: epoch.epoch_end,
-          reservedCostUsd: reservation.maximumVerificationCostUsd,
-          epochAttemptCount: nextAttemptCount,
-          epochReservedCostUsd: nextCostUsd,
-        });
-      } catch (error) {
-        rollback();
-        throw error;
-      }
+        },
+      }));
     },
     completeRefreshAttempt({
       lease,
@@ -458,31 +558,48 @@ export function createAutonomousResearchRuntimeRefreshStateRepository({
       if (expires.getTime() <= issued.getTime()) {
         throw new Error('runtime_reproducibility_refresh_receipt_window_invalid');
       }
-      try {
-        begin();
-        const { lease: identity } = fencedState(lease, observedAt);
-        const attempt = database.prepare(`UPDATE runtime_reproducibility_refresh_attempt SET
-          status='succeeded',receipt_hash=?,completed_at=? WHERE lease_generation=?
-          AND owner_id=? AND status='reserved'`).run(
-          receiptHash, observedAt.toISOString(), identity.leaseGeneration, identity.ownerId,
-        );
-        if (Number(attempt.changes) !== 1) {
-          throw new Error('runtime_reproducibility_refresh_attempt_fence_conflict');
-        }
-        database.prepare(`UPDATE runtime_reproducibility_refresh_state SET
-          status='refresh_verified',consecutive_failures=0,next_attempt_at=?,last_error=NULL,
-          last_receipt_hash=?,last_receipt_content_hash=?,last_issued_at=?,last_expires_at=?,
-          lease_owner=NULL,lease_token=NULL,lease_expires_at=NULL,updated_at=?
-          WHERE scope_id=?`).run(
-          observedAt.toISOString(), receiptHash, receiptContentHash, issued.toISOString(),
-          expires.toISOString(), observedAt.toISOString(), SCOPE_ID,
-        );
-        database.exec('COMMIT;');
-        return state();
-      } catch (error) {
-        rollback();
-        throw error;
-      }
+      return mutationValue(coordinator.executeMutation({
+        database,
+        databaseRole: 'runtime-reproducibility-refresh',
+        databaseInstanceId,
+        schemaContractId,
+        writerId,
+        operationId:
+          'runtime-reproducibility-refresh.runtime-refresh-state-repository.completeRefreshAttempt.v1',
+        authorizationReceiptHashes: [],
+        sideEffectReservationHashes: [],
+        mutate(transaction) {
+          const current = mapState(transaction.get(
+            'runtime-refresh.complete.state-current.get.v1',
+            SCOPE_ID,
+          ));
+          const { lease: identity } = fencedState(lease, observedAt, current);
+          const attempt = transaction.run(
+            'runtime-refresh.complete.attempt-apply.v1',
+            receiptHash,
+            observedAt.toISOString(),
+            identity.leaseGeneration,
+            identity.ownerId,
+          );
+          if (Number(attempt.changes) !== 1) {
+            throw new Error('runtime_reproducibility_refresh_attempt_fence_conflict');
+          }
+          transaction.run(
+            'runtime-refresh.complete.state-apply.v1',
+            observedAt.toISOString(),
+            receiptHash,
+            receiptContentHash,
+            issued.toISOString(),
+            expires.toISOString(),
+            observedAt.toISOString(),
+            SCOPE_ID,
+          );
+          return mapState(transaction.get(
+            'runtime-refresh.complete.state-current.get.v1',
+            SCOPE_ID,
+          ));
+        },
+      }));
     },
     failRefreshAttempt({
       lease,
@@ -494,31 +611,47 @@ export function createAutonomousResearchRuntimeRefreshStateRepository({
       requireOpen();
       const observedAt = observedDate(now);
       const retryAt = observedDate(nextAttemptAt);
-      try {
-        begin();
-        const { lease: identity } = fencedState(lease, observedAt);
-        const attempt = database.prepare(`UPDATE runtime_reproducibility_refresh_attempt SET
-          status=?,error=?,completed_at=? WHERE lease_generation=? AND owner_id=?
-          AND status='reserved'`).run(
-          cancelled ? 'cancelled' : 'failed', String(error || 'refresh_failed').slice(0, 1000),
-          observedAt.toISOString(), identity.leaseGeneration, identity.ownerId,
-        );
-        if (Number(attempt.changes) !== 1) {
-          throw new Error('runtime_reproducibility_refresh_attempt_fence_conflict');
-        }
-        database.prepare(`UPDATE runtime_reproducibility_refresh_state SET
-          status='refresh_retry_scheduled',consecutive_failures=consecutive_failures+1,
-          next_attempt_at=?,last_error=?,lease_owner=NULL,lease_token=NULL,
-          lease_expires_at=NULL,updated_at=? WHERE scope_id=?`).run(
-          retryAt.toISOString(), String(error || 'refresh_failed').slice(0, 1000),
-          observedAt.toISOString(), SCOPE_ID,
-        );
-        database.exec('COMMIT;');
-        return state();
-      } catch (failure) {
-        rollback();
-        throw failure;
-      }
+      const failure = String(error || 'refresh_failed').slice(0, 1000);
+      return mutationValue(coordinator.executeMutation({
+        database,
+        databaseRole: 'runtime-reproducibility-refresh',
+        databaseInstanceId,
+        schemaContractId,
+        writerId,
+        operationId:
+          'runtime-reproducibility-refresh.runtime-refresh-state-repository.failRefreshAttempt.v1',
+        authorizationReceiptHashes: [],
+        sideEffectReservationHashes: [],
+        mutate(transaction) {
+          const current = mapState(transaction.get(
+            'runtime-refresh.fail.state-current.get.v1',
+            SCOPE_ID,
+          ));
+          const { lease: identity } = fencedState(lease, observedAt, current);
+          const attempt = transaction.run(
+            'runtime-refresh.fail.attempt-apply.v1',
+            cancelled ? 'cancelled' : 'failed',
+            failure,
+            observedAt.toISOString(),
+            identity.leaseGeneration,
+            identity.ownerId,
+          );
+          if (Number(attempt.changes) !== 1) {
+            throw new Error('runtime_reproducibility_refresh_attempt_fence_conflict');
+          }
+          transaction.run(
+            'runtime-refresh.fail.state-apply.v1',
+            retryAt.toISOString(),
+            failure,
+            observedAt.toISOString(),
+            SCOPE_ID,
+          );
+          return mapState(transaction.get(
+            'runtime-refresh.fail.state-current.get.v1',
+            SCOPE_ID,
+          ));
+        },
+      }));
     },
     close() {
       if (!closed) database.close();

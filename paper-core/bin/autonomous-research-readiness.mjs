@@ -11,6 +11,7 @@ import {
 const args = parseStrictCliArguments(process.argv.slice(2), {
   booleanFlags: [
     'help', 'human-subjects', 'private-data', 'require-launch-ready', 'require-full-ready',
+    'require-bounded-golden-ready',
   ],
   valueFlags: [
     'action', 'launch-mode', 'paper-id', 'campaign-id', 'objective', 'protocol-family', 'revision-rounds',
@@ -176,9 +177,11 @@ async function main() {
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   const exitCode = autonomousResearchCommandExitCode({
     action,
+    launchMode,
     report,
     requireFullReady: Boolean(args['require-full-ready']),
     requireLaunchReady: Boolean(args['require-launch-ready']),
+    requireBoundedGoldenReady: Boolean(args['require-bounded-golden-ready']),
   });
   if (exitCode !== 0) process.exitCode = exitCode;
 }

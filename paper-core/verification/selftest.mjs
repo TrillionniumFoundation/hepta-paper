@@ -15,6 +15,8 @@ import { discoverInventory } from '../../paper-adapters/inventory/index.mjs';
 import { runPaperBatch } from '../src/paper-batch-runner.mjs';
 import { runPaperProposalAdapter } from '../../paper-adapters/proposal/index.mjs';
 import { runEmpiricalAnalysisAdapter } from '../../paper-adapters/empirical-analysis/index.mjs';
+import { AUTOMATION_RUNTIME_IMAGES } from '../../paper-adapters/automation/runtime-image-registry.mjs';
+import { createOsSandboxedWorkerRunner } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
 import { runResearchVerifyAdapter } from '../../paper-adapters/research-verify/index.mjs';
 import {
   runLatexBuildAdapter,
@@ -439,6 +441,18 @@ async function main() {
     ? stagedInventory.rows[0].task.mainTex
     : path.join(paperFactoryRoot, stagedInventory.rows[0].task.mainTex);
   const stagedMainTexBeforeEmpirical = await fs.readFile(stagedMainTexPath, 'utf8');
+  const stagedEmpiricalRunDir = path.join(
+    stagedRuntimeRoot,
+    'empirical-analysis',
+    stagedPaperId,
+  );
+  const stagedEmpiricalWorkerRunner = createOsSandboxedWorkerRunner({
+    allowedExecutables: [process.execPath],
+    allowedRoots: [stagedEmpiricalRunDir],
+    allowedOutputRoots: [stagedEmpiricalRunDir],
+    allowedDatasetRoots: [authorizedDatasetRoot],
+    dockerImage: AUTOMATION_RUNTIME_IMAGES.python.imageDigest,
+  });
   const stagedEmpiricalReport = await runEmpiricalAnalysisAdapter({
     root: paperFactoryRoot,
     runtimeRoot: stagedRuntimeRoot,
@@ -448,6 +462,7 @@ async function main() {
     datasetLicenseId: 'CC0-1.0',
     applyManuscript: true,
     execute: true,
+    workerRunner: stagedEmpiricalWorkerRunner,
   });
   assert.equal(stagedEmpiricalReport.kind, 'EmpiricalAnalysisAdapterReport');
   assert.equal(stagedEmpiricalReport.status, 'empirical_analysis_smoke_ready', JSON.stringify({

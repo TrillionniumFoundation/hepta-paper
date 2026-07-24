@@ -6,9 +6,26 @@ import { isPathWithin } from '../../workflow-kernel/runtime/path-utils.mjs';
 
 const IGNORED_DIRECTORIES = new Set(['.git', 'node_modules']);
 
+// A clean, official Mathlib v4.30 workspace (including the resolved Lake
+// packages and compiled dependency closure) contains about 120k files. Keep a
+// finite ceiling, but size the default so that the production verifier can
+// close over that dependency graph instead of failing before hashing it.
+export const DEFAULT_MAXIMUM_FORMAL_PROJECT_FILES = 150000;
+
 function normalizedRelative(root, candidate) {
   const relative = path.relative(root, candidate).replace(/\\/g, '/');
   return relative && relative !== '..' && !relative.startsWith('../') && !path.isAbsolute(relative) ? relative : null;
+}
+
+function formalClosureFileRole(sourcePath, projectPath) {
+  if (/(?:^|\/)\.lake\/build\//.test(sourcePath)) return 'lake_build_artifact';
+  if (/(?:^|\/)\.lake\/(?!packages\/|build\/)/.test(sourcePath)) {
+    return 'lake_runtime_metadata';
+  }
+  if (/(?:^|\/)\.lake\/packages\//.test(sourcePath)) {
+    return 'lake_package_dependency';
+  }
+  return projectPath ? 'project' : 'external_lake_dependency';
 }
 
 function dependencyManifestDirectories(dependencyRoot, scopeRoot, blockers) {
@@ -27,7 +44,15 @@ function dependencyManifestDirectories(dependencyRoot, scopeRoot, blockers) {
   }
   const directories = [];
   for (const entry of Array.isArray(manifest?.packages) ? manifest.packages : []) {
-    const declared = String(entry?.dir || '');
+    let declared = String(entry?.dir || '');
+    if (!declared && entry?.type === 'git') {
+      const packagesDir = String(manifest?.packagesDir || '');
+      const packageName = String(entry?.name || '');
+      const subDirectory = entry?.subDir == null ? '' : String(entry.subDir);
+      if (packagesDir && packageName) {
+        declared = path.join(packagesDir, packageName, subDirectory);
+      }
+    }
     if (!declared) {
       blockers.push(`formal_dependency_manifest_package_dir_missing:${String(entry?.name || 'missing')}`);
       continue;
@@ -52,34 +77,31 @@ function dependencyManifestDirectories(dependencyRoot, scopeRoot, blockers) {
 }
 
 function dependencyRoots(projectRoot, scopeRoot, blockers) {
-  const roots = [];
-  const queued = [projectRoot];
-  const seen = new Set();
-  while (queued.length) {
-    const current = queued.shift();
-    const canonical = fs.realpathSync.native(current);
-    if (seen.has(canonical)) continue;
-    seen.add(canonical);
-    roots.push(current);
-    for (const dependency of dependencyManifestDirectories(current, scopeRoot, blockers)) queued.push(dependency);
+  // Lake's workspace manifest is the resolved, flattened dependency graph.
+  // Recursing into a package's own source manifest would resolve its
+  // `packagesDir` relative to the wrong workspace and can silently omit the
+  // actual root-level package closure. Dependencies already below the project
+  // root are covered by the project walk; only explicitly external path
+  // dependencies need additional roots.
+  const roots = [projectRoot];
+  for (const dependency of dependencyManifestDirectories(
+    projectRoot, scopeRoot, blockers,
+  )) {
+    if (!isPathWithin(projectRoot, dependency)) roots.push(dependency);
     if (roots.length > 256) {
       blockers.push('formal_dependency_package_count_exceeded');
       break;
     }
   }
-  return roots;
+  return [...new Map(roots.map((candidate) => (
+    [fs.realpathSync.native(candidate), candidate]
+  ))).values()];
 }
 
-function lakePackagesDirectory(directory) {
-  const packages = path.join(directory, '.lake', 'packages');
-  try { return fs.lstatSync(packages).isDirectory() ? packages : null; }
-  catch { return null; }
-}
-
-export async function readFormalProjectClosure({
+export function readFormalProjectClosureSync({
   projectRoot,
   dependencyScopeRoot = projectRoot,
-  maximumFiles = 100000,
+  maximumFiles = DEFAULT_MAXIMUM_FORMAL_PROJECT_FILES,
   maximumBytes = 8 * 1024 * 1024 * 1024,
 } = {}) {
   const root = path.resolve(projectRoot || '.');
@@ -92,7 +114,11 @@ export async function readFormalProjectClosure({
   const roots = dependencyRoots(root, scopeRoot, blockers);
   const fileCandidates = new Map();
 
-  const visit = (directory, { insideLakePackages = false } = {}) => {
+  const visit = (directory, {
+    insideLakeDirectory = false,
+    insideLakePackages = false,
+    insideLakeBuild = false,
+  } = {}) => {
     const entries = fs.readdirSync(directory, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name));
     for (const entry of entries) {
       if (IGNORED_DIRECTORIES.has(entry.name)) continue;
@@ -109,13 +135,27 @@ export async function readFormalProjectClosure({
       }
       if (stat.isDirectory()) {
         if (entry.name === '.lake') {
-          if (insideLakePackages) continue;
-          const packages = lakePackagesDirectory(directory);
-          if (packages) visit(packages, { insideLakePackages: true });
+          visit(absolute, {
+            insideLakeDirectory: true,
+            insideLakePackages,
+            insideLakeBuild,
+          });
           continue;
         }
-        visit(absolute, { insideLakePackages });
+        visit(absolute, {
+          insideLakeDirectory,
+          insideLakePackages: insideLakePackages || (
+            insideLakeDirectory && entry.name === 'packages'
+          ),
+          insideLakeBuild: insideLakeBuild || (
+            insideLakeDirectory && entry.name === 'build'
+          ),
+        });
       } else if (stat.isFile()) {
+        if (insideLakeDirectory
+          && /(?:\.lock|\.tmp|\.pending)(?:\.[A-Za-z0-9_-]+)?$/.test(entry.name)) {
+          continue;
+        }
         fileCandidates.set(relative, absolute);
       } else blockers.push(`formal_project_special_file_forbidden:${relative}`);
       if (fileCandidates.size > maximumFiles) throw new Error('formal_project_file_count_exceeded');
@@ -161,7 +201,7 @@ export async function readFormalProjectClosure({
       path: projectPath || `@external/${sourcePath}`,
       sourcePath,
       projectPath,
-      role: projectPath ? (projectPath.startsWith('.lake/packages/') ? 'lake_package_dependency' : 'project') : 'external_lake_dependency',
+      role: formalClosureFileRole(sourcePath, projectPath),
       hash: read.hash,
       bytes: read.bytes,
       posixMode,
@@ -179,8 +219,14 @@ export async function readFormalProjectClosure({
     totalBytes,
     externalDependencyFileCount: files.filter((file) => !file.projectPath).length,
     lakePackageFileCount: files.filter((file) => file.role === 'lake_package_dependency').length,
+    lakeBuildArtifactFileCount:
+      files.filter((file) => file.role === 'lake_build_artifact').length,
     manifestHash: hashRecord('FormalProjectClosureManifest', manifestRecords),
     blockers: sortedBlockers,
   };
   return Object.freeze({ ...payload, files: Object.freeze(files), formalProjectClosureHash: hashRecord('FormalProjectClosure', payload) });
+}
+
+export async function readFormalProjectClosure(options = {}) {
+  return readFormalProjectClosureSync(options);
 }

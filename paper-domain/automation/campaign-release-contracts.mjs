@@ -8,6 +8,7 @@ export { createAutonomousResearchReleaseBinding };
 import {
   verifyCampaignReleaseEvidenceCapsuleManifest,
 } from './campaign-release-evidence-capsule-contract.mjs';
+import { manuscriptPromotionEvidenceEntailmentValid } from '../research/manuscript-promotion-entailment-release-policy.mjs';
 import { verifyCampaignReleaseExecutionAttestationManifestBinding } from './campaign-release-execution-attestation-contract.mjs';
 import { verifyCampaignReleasePackageBinding } from './campaign-release-package-binding-policy.mjs';
 import {
@@ -33,6 +34,17 @@ function empiricalAssertionReleaseHashes(record) {
 
 function empiricalAssertionReleaseHashesMatch(left, right) {
   return EMPIRICAL_ASSERTION_RELEASE_HASH_FIELDS.every((field) => (left?.[field] || null) === (right?.[field] || null));
+}
+
+function autonomousManuscriptSourceRowsMatch(binding, sourceTreeManifest) {
+  if (!binding) return true;
+  const rows = new Map((sourceTreeManifest?.rows || []).map((row) => [row.path, row]));
+  const expected = [
+    [binding.manuscriptPath, binding.renderedManuscriptHash],
+    ['AUTONOMOUS_MANUSCRIPT_IR.json', binding.manuscriptIrFileHash],
+    ['AUTONOMOUS_MANUSCRIPT_IR_DRAFT.json', binding.agentAuthoredSourceDraftFileHash],
+  ].filter(([, hash]) => hash);
+  return expected.every(([path, hash]) => rows.get(path)?.hash === hash);
 }
 
 export function createAutomationPromotionCandidate({
@@ -98,6 +110,12 @@ export function createAutomationPromotionCandidate({
     );
     if (!autonomousBindingVerification.valid) {
       throw new Error(`automation_promotion_autonomous_research_binding_invalid:${autonomousBindingVerification.blockers.join(',')}`);
+    }
+    if (!autonomousManuscriptSourceRowsMatch(
+      autonomousResearchReleaseBinding,
+      sourceTreeManifest,
+    )) {
+      throw new Error('automation_promotion_autonomous_manuscript_source_binding_invalid');
     }
   }
   if (researchVerifyNode) {
@@ -239,7 +257,8 @@ export function createCampaignReleaseBundle({
   if (!matchesRecordHash(manuscriptPromotionGate, 'ManuscriptPromotionGate', 'manuscriptPromotionGateHash')
     || manuscriptPromotionGate.status !== 'manuscript_promotion_ready'
     || artifactPackage.manuscriptPromotionGateHash !== manuscriptPromotionGate.manuscriptPromotionGateHash
-    || manuscriptPromotionGate.experimentRegistryHash !== promotionCandidate.experimentRegistryHash) {
+    || manuscriptPromotionGate.experimentRegistryHash !== promotionCandidate.experimentRegistryHash
+    || !manuscriptPromotionEvidenceEntailmentValid(manuscriptPromotionGate)) {
     throw new Error('campaign_release_manuscript_promotion_binding_invalid');
   }
   if (promotionCandidate.researchReportHash) {
@@ -380,6 +399,10 @@ export function verifyCampaignReleaseBundle(bundle, expected = {}, { experimentR
         !== candidate?.autonomousResearchReleaseBindingHash) {
       blockers.push('campaign_release_autonomous_research_binding_invalid');
     }
+    if (!autonomousManuscriptSourceRowsMatch(
+      bundle?.autonomousResearchReleaseBinding,
+      candidate?.sourceTreeManifest,
+    )) blockers.push('campaign_release_autonomous_manuscript_source_binding_invalid');
   }
   if (['campaignPlanHash', 'campaignId', 'paperId', 'venueTarget', 'packageNodeId', 'packageAttemptId', 'sourceSnapshotHash', 'sourceTreeManifestHash',
     'verifiedSourceMerkleHash', 'verifiedSourceWorkspaceManifestHash', 'campaignResearchSourceSnapshotHash',
@@ -411,7 +434,8 @@ export function verifyCampaignReleaseBundle(bundle, expected = {}, { experimentR
   if (!matchesRecordHash(promotionGate, 'ManuscriptPromotionGate', 'manuscriptPromotionGateHash')
     || promotionGate?.status !== 'manuscript_promotion_ready'
     || bundle?.manuscriptPromotionGateHash !== promotionGate?.manuscriptPromotionGateHash
-    || artifactPackage?.manuscriptPromotionGateHash !== promotionGate?.manuscriptPromotionGateHash) blockers.push('campaign_release_manuscript_promotion_binding_invalid');
+    || artifactPackage?.manuscriptPromotionGateHash !== promotionGate?.manuscriptPromotionGateHash
+    || !manuscriptPromotionEvidenceEntailmentValid(promotionGate)) blockers.push('campaign_release_manuscript_promotion_binding_invalid');
   if (promotionGate?.experimentRegistryHash !== bundle?.experimentRegistryHash
     || promotionGate?.experimentRegistryHash !== candidate?.experimentRegistryHash) {
     blockers.push('campaign_release_promotion_gate_experiment_registry_binding_invalid');

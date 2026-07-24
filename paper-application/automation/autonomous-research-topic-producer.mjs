@@ -7,6 +7,9 @@ import {
   providerCanaryAction,
   verifyAutonomousResearchProviderCanarySideEffectInspection,
 } from '../../paper-domain/automation/autonomous-research-provider-canary-side-effect-inspection.mjs';
+import {
+  isResidentReactivationRequired,
+} from './autonomous-research-resident-reactivation-required.mjs';
 
 function nowDate(clock) {
   const value = clock?.now ? clock.now() : new Date();
@@ -89,6 +92,7 @@ export function createAutonomousResearchTopicProducer({
     || configuration.machineProducerProfileHash !== producerProfile?.producerProfileHash
     || typeof producerRepository?.tryAcquireLease !== 'function'
     || typeof producerRepository?.beginProviderCanaryAction !== 'function'
+    || typeof producerRepository?.assertProviderCanaryActionPermit !== 'function'
     || typeof producerRepository?.finishProviderCanaryAction !== 'function'
     || typeof machineIntakeRepository?.appendMachineIntake !== 'function'
     || typeof liveMutationAuthority?.authorize !== 'function'
@@ -100,6 +104,8 @@ export function createAutonomousResearchTopicProducer({
   async function reconcile({
     residentLeaseContext,
     assertAutonomyCurrent,
+    reconcileStateRecoverability = null,
+    assertStateRecoverabilityCurrent = null,
     signal = null,
   } = {}) {
     if (!residentLeaseContext?.lease || typeof residentLeaseContext.assertCurrent !== 'function'
@@ -203,6 +209,11 @@ export function createAutonomousResearchTopicProducer({
           state,
         });
       }
+      await reconcileStateRecoverability?.({
+        residentLeaseContext,
+        action: 'topic_producer_after_generation_reservation',
+      });
+      assertStateRecoverabilityCurrent?.('topic_producer_provider_canary_entry');
       const expected = Object.freeze({
         machineIntakeConfigurationHash: configuration.configurationHash,
         producerProfileHash: producerProfile.producerProfileHash,
@@ -217,7 +228,11 @@ export function createAutonomousResearchTopicProducer({
         plannedGeneration: plan.plannedGeneration,
         expected,
         beginProviderCanaryAction: producerRepository.beginProviderCanaryAction,
+        assertProviderCanaryActionPermit:
+          producerRepository.assertProviderCanaryActionPermit,
         finishProviderCanaryAction: producerRepository.finishProviderCanaryAction,
+        reconcileStateRecoverability,
+        assertStateRecoverabilityCurrent,
         signal,
       });
       const capability = buildAutonomousResearchTopicProducerCapabilityReceipt({
@@ -285,6 +300,11 @@ export function createAutonomousResearchTopicProducer({
         generation,
       });
     } catch (error) {
+      if (isResidentReactivationRequired(error)) throw error;
+      if (error?.stateRecoverabilityFatal === true
+        || error?.stateRecoverabilityDeferred === true) throw error;
+      if (error?.authorityEvidenceRenewalFatal === true
+        || error?.authorityEvidenceRenewalDeferred === true) throw error;
       const recordedError = attachCompletedCanaryFailure(
         error,
         live,

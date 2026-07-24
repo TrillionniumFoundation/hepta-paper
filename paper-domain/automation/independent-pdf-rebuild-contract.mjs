@@ -1,4 +1,8 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  DETERMINISTIC_PDF_PAGE_TREE_PARSER_POLICY,
+  DETERMINISTIC_PDF_PAGE_TREE_PARSER_POLICY_HASH,
+} from './deterministic-pdf-page-inspection-contract.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 const SAFE_RELATIVE = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9_.\/-]{1,512}$/;
@@ -81,6 +85,7 @@ export function buildIndependentPdfRebuildVerificationReceipt({
   limits,
   rebuiltPdf,
   authoritativePdfHash,
+  authoritativePdfPageCount,
   createdAt,
 } = {}) {
   const payload = {
@@ -110,9 +115,16 @@ export function buildIndependentPdfRebuildVerificationReceipt({
       path: String(rebuiltPdf?.path || ''),
       hash: rebuiltPdf?.hash || null,
       bytes: Number(rebuiltPdf?.bytes),
+      pageCount: Number(rebuiltPdf?.pageCount),
     }),
     authoritativePdfHash,
-    comparisonPolicy: 'record-both-content-hashes-no-bitwise-equality-requirement-v1',
+    authoritativePdfPageCount: Number(authoritativePdfPageCount),
+    parserPolicy: DETERMINISTIC_PDF_PAGE_TREE_PARSER_POLICY,
+    parserPolicyHash: DETERMINISTIC_PDF_PAGE_TREE_PARSER_POLICY_HASH,
+    comparisonPolicy: 'bounded-page-tree-parse-and-page-count-equality-no-bitwise-equality-v1',
+    authoritativePdfPageTreeParseVerified: true,
+    rebuiltPdfPageTreeParseVerified: true,
+    pageCountEqualityVerified: true,
     bitwiseEqualityAssessed: false,
     bitwiseEqualityClaimed: false,
     rebuildOperation: 'forced-latexmk-source-compilation-in-isolated-workspace-v1',
@@ -125,6 +137,7 @@ export function buildIndependentPdfRebuildVerificationReceipt({
     transitiveTexToolchainClosureVerified: false,
     unverifiedClaims: Object.freeze([
       'bitwise_pdf_equality',
+      'rendered_page_content_equality',
       'transitive_tex_toolchain_closure',
     ]),
     createdAt: new Date(createdAt).toISOString(),
@@ -176,11 +189,22 @@ export function verifyIndependentPdfRebuildVerificationReceipt(receipt, expected
   const rebuilt = receipt?.rebuiltPdf;
   if (!SAFE_RELATIVE.test(String(rebuilt?.path || '')) || relativeBasename(rebuilt?.path)
       !== `${relativeBasename(receipt?.mainTex, '.tex')}.pdf`
-    || !SHA256.test(String(rebuilt?.hash || '')) || !Number.isSafeInteger(rebuilt?.bytes) || rebuilt.bytes < 5) {
+    || !SHA256.test(String(rebuilt?.hash || '')) || !Number.isSafeInteger(rebuilt?.bytes)
+    || rebuilt.bytes < 32 || !Number.isSafeInteger(rebuilt?.pageCount)
+    || rebuilt.pageCount < 1 || rebuilt.pageCount > 100_000) {
     blockers.push('independent_pdf_rebuild_pdf_invalid');
   }
   if (!SHA256.test(String(receipt?.authoritativePdfHash || ''))
-    || receipt?.comparisonPolicy !== 'record-both-content-hashes-no-bitwise-equality-requirement-v1'
+    || !Number.isSafeInteger(receipt?.authoritativePdfPageCount)
+    || receipt.authoritativePdfPageCount < 1 || receipt.authoritativePdfPageCount > 100_000
+    || receipt?.parserPolicy !== DETERMINISTIC_PDF_PAGE_TREE_PARSER_POLICY
+    || receipt?.parserPolicyHash !== DETERMINISTIC_PDF_PAGE_TREE_PARSER_POLICY_HASH
+    || receipt?.comparisonPolicy
+      !== 'bounded-page-tree-parse-and-page-count-equality-no-bitwise-equality-v1'
+    || receipt?.authoritativePdfPageTreeParseVerified !== true
+    || receipt?.rebuiltPdfPageTreeParseVerified !== true
+    || receipt?.pageCountEqualityVerified !== true
+    || rebuilt?.pageCount !== receipt?.authoritativePdfPageCount
     || receipt?.bitwiseEqualityAssessed !== false || receipt?.bitwiseEqualityClaimed !== false
     || receipt?.rebuildOperation !== 'forced-latexmk-source-compilation-in-isolated-workspace-v1'
     || receipt?.finalCompileArtifactUsedAsRebuildOutputSource !== false
@@ -188,7 +212,11 @@ export function verifyIndependentPdfRebuildVerificationReceipt(receipt, expected
     || receipt?.sourceReadOnlyVerified !== true || receipt?.networkIsolationVerified !== true
     || receipt?.separateOutputRootVerified !== true || receipt?.resourceLimitsVerified !== true
     || receipt?.transitiveTexToolchainClosureVerified !== false
-    || JSON.stringify(receipt?.unverifiedClaims) !== JSON.stringify(['bitwise_pdf_equality', 'transitive_tex_toolchain_closure'])
+    || JSON.stringify(receipt?.unverifiedClaims) !== JSON.stringify([
+      'bitwise_pdf_equality',
+      'rendered_page_content_equality',
+      'transitive_tex_toolchain_closure',
+    ])
     || receipt?.externalActionPerformed !== false || (receipt?.blockers || []).length !== 0
     || !Number.isFinite(Date.parse(receipt?.createdAt))) blockers.push('independent_pdf_rebuild_assurance_scope_invalid');
   const { independentPdfRebuildVerificationReceiptHash: claimedHash, ...payload } = receipt || {};

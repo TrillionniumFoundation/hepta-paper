@@ -19,6 +19,12 @@ import {
 import {
   inspectAutonomousResearchCampaignExecutionAdmission,
 } from '../../paper-domain/automation/autonomous-research-campaign-execution-admission.mjs';
+import {
+  resolveAutonomousResearchCampaignSubmission,
+} from './autonomous-research-campaign-submission.mjs';
+import {
+  assertAutonomousResearchResourceBudgetClosure,
+} from '../../paper-domain/automation/autonomous-research-resource-budget-policy.mjs';
 
 const SETTLED = new Set(['completed', 'failed', 'cancelled']);
 const MUTATING_ACTIONS = new Set(['launch', 'resume', 'converge']);
@@ -126,7 +132,11 @@ function requireMachineIntakeDispatchAuthorization({
   return true;
 }
 
-function qualificationFor({ preparation, campaignReleaseAuthority, inspection = null } = {}) {
+function qualificationFor({
+  preparation,
+  campaignReleaseAuthority,
+  inspection = null,
+} = {}) {
   return evaluateAutonomousResearchQualificationEligibility({
     proposal: preparation?.proposal,
     policyAuthorization: preparation?.policyAuthorization,
@@ -137,6 +147,21 @@ function qualificationFor({ preparation, campaignReleaseAuthority, inspection = 
     datasetLaunchInspection: preparation?.datasetLaunchInspection,
     empiricalRuntimeCapabilityInspection: preparation?.empiricalRuntimeCapabilityInspection,
     empiricalExecutionProfileSelection: preparation?.empiricalExecutionProfileSelection,
+    runtimeImageReproducibilityInspection:
+      preparation?.runtimeImageReproducibilityInspection,
+    capabilityScopeManifest: preparation?.capabilityScopeManifest,
+    externalCapabilityTrustInspection:
+      preparation?.externalCapabilityTrustInspection,
+    researchAgendaProducerReceipt:
+      preparation?.researchAgendaProducerReceipt,
+    autonomousResearchProviderConfigurationHash:
+      preparation?.autonomousResearchProviderConfigurationHash,
+    autonomousResearchLoopPreparationReportHash:
+      preparation?.autonomousResearchLoopPreparationReportHash,
+    autonomousResearchMachineIntakeAdmissionHash:
+      preparation?.autonomousResearchMachineIntakeAdmissionHash,
+    launchMode: preparation?.launchMode,
+    observedAt: preparation?.createdAt,
     campaignReleaseAuthority,
     fullResearchQualificationInspection: inspection,
   });
@@ -187,6 +212,10 @@ export function buildAutonomousResearchCampaignPlan({
     requireReady: true,
     runtimeCapabilityInspection: loopPreparation?.empiricalRuntimeCapabilityInspection,
     requireRuntimeCapabilityInspection: true,
+    runtimeReproducibilityInspection:
+      loopPreparation?.runtimeImageReproducibilityInspection,
+    requireRegisteredRuntime: loopPreparation?.launchMode === 'production-run',
+    observedAt: loopPreparation?.createdAt,
   }) || loopPreparation?.topologyTemplate?.empiricalExecutionProfileSelectionHash
     !== empiricalProfileSelection.autonomousEmpiricalExecutionProfileSelectionHash
     || JSON.stringify(loopPreparation?.topologyTemplate?.empiricalExecutionProfile)
@@ -209,13 +238,15 @@ export function buildAutonomousResearchCampaignPlan({
   } = materialization;
   const templateSelector = buildCampaignBenchmarkSelector({
     benchmarkId: datasetMounts[0].name,
+    venueTarget: loopPreparation?.venueProfileSelection?.venueId || null,
     datasetMounts,
   });
   const analysisProtocolTemplate = Object.freeze({
     ...templateSelector.experimentDesign.analysisProtocol,
     analysisProtocolHash: templateSelector.experimentDesign.analysisProtocolHash,
   });
-  if (materialization.version !== 2
+  const expectedMaterializationVersion = loopPreparation?.venueRequirementIr ? 3 : 2;
+  if (materialization.version !== expectedMaterializationVersion
     || hashRecord('AutonomousResearchWorkspaceMaterializationReceipt', materializationPayload)
       !== materializationHash
     || materialization.analysisProtocolTemplateHash !== analysisProtocolTemplate.analysisProtocolHash
@@ -251,6 +282,9 @@ export function buildAutonomousResearchCampaignPlan({
     autonomousResearchMachineIntake: machineIntake,
     autonomousResearchMachineIntakeAdmission: machineIntakeAdmission,
     budgets,
+  });
+  assertAutonomousResearchResourceBudgetClosure({
+    campaignId: plan.campaignId, loopPreparation, datasetMounts, budgets: plan.budgets,
   });
   const topology = evaluateAutonomousCampaignTopology({ nodes: plan.nodes });
   if (topology.status !== 'autonomous_research_campaign_topology_ready') {
@@ -383,6 +417,11 @@ async function executionReport({
   providerConfigurationBinding = null,
   launchModeGate = null,
   goldenQualificationController = null,
+  autonomousSubmissionPortal = null,
+  autonomousSubmissionOutbox = null,
+  autonomousVenueComplianceInspector = null,
+  autonomousSubmissionRequestVerifier = null,
+  runtime = {},
 } = {}) {
   const campaign = campaignStore.getCampaign(campaignId);
   const nodes = campaignStore.listNodes(campaignId);
@@ -391,6 +430,21 @@ async function executionReport({
   if (campaign?.status === 'completed' && typeof campaignReleaseAuthorityReader === 'function') {
     campaignReleaseAuthority = await campaignReleaseAuthorityReader({ campaignId, paperId: campaign.paperId });
   }
+  const qualificationFenceProgress = runtime?.assertExternalSideEffectReady
+    ? async ({ stage = 'qualification_recovery' } = {}) => {
+      await qualificationRetry?.onProgress?.({ stage });
+      await runtime.assertExternalSideEffectReady({
+        action: `qualification:${stage}`,
+      });
+    } : qualificationRetry?.onProgress || null;
+  const qualificationSynchronousFence = runtime?.assertExternalSideEffectReady
+    ?.assertCurrent
+    ? ({ stage = 'qualification_synchronous_operation' } = {}) => {
+      qualificationRetry?.onSynchronousProgress?.({ stage });
+      return runtime.assertExternalSideEffectReady.assertCurrent({
+        action: `qualification:${stage}`,
+      });
+    } : qualificationRetry?.onSynchronousProgress || null;
   const externalQualification = preparation ? await requestExternalQualification({
     externalQualificationClient,
     externalQualificationVerifier,
@@ -399,7 +453,11 @@ async function executionReport({
     qualificationStateStore,
     allowRequest: action === 'launch' || action === 'resume' || action === 'converge'
       || Boolean(executionResult),
-    retry: qualificationRetry,
+    retry: {
+      ...qualificationRetry,
+      onProgress: qualificationFenceProgress,
+      onSynchronousProgress: qualificationSynchronousFence,
+    },
   }) : Object.freeze({ status: 'qualification_preparation_unavailable', inspection: null });
   const goldenQualificationPublication = action !== 'status'
     && preparation && campaignReleaseAuthority
@@ -426,17 +484,36 @@ async function executionReport({
     campaignReleaseAuthority,
     inspection: effectiveQualificationInspection,
   }) : null;
-  const campaignFullyQualified = qualificationEligibility?.campaignFullyQualified === true;
+  const boundedGoldenQualificationPublished =
+    goldenQualificationPublication?.status === 'golden_campaign_qualification_published'
+    && goldenQualificationPublication?.ready === true
+    && goldenQualificationPublication?.pointerPublished === true
+    && qualificationEligibility?.boundedGoldenCapabilityQualificationVerified === true
+    && qualificationEligibility?.campaignFullyQualified !== true
+    && qualificationEligibility?.fullAutomaticResearchWritingReady !== true;
+  const submission = await resolveAutonomousResearchCampaignSubmission({
+    action,
+    campaign,
+    campaignId,
+    preparation,
+    campaignReleaseAuthority,
+    qualificationEligibility,
+    qualificationInspection: effectiveQualificationInspection,
+    autonomousSubmissionPortal,
+    autonomousSubmissionOutbox,
+    autonomousVenueComplianceInspector,
+    autonomousSubmissionRequestVerifier,
+    requestedAt: action === 'status'
+      ? null : dispatchAuthorizationTime(runtime).toISOString(),
+    signal: runtime?.signal || null,
+    assertExternalSideEffectReady:
+      runtime?.assertExternalSideEffectReady || null,
+  });
+  const campaignFullyQualified = submission.researchQualificationReady;
   const payload = {
     version: 1,
     kind: 'AutonomousResearchCampaignExecutionReport',
-    status: campaign?.status === 'completed'
-      ? qualificationEligibility?.fullAutomaticResearchWritingReady
-        ? 'autonomous_research_campaign_completed_and_qualified'
-        : qualificationEligibility?.qualificationRequestEligible
-          ? 'autonomous_research_campaign_completed_external_qualification_eligible'
-          : 'autonomous_research_campaign_completed_qualification_blocked'
-      : `autonomous_research_campaign_${campaign?.status || 'unavailable'}`,
+    status: submission.campaignExecutionStatus,
     action,
     campaignId,
     campaign: presentCampaignStatus(campaign, nodes),
@@ -445,14 +522,21 @@ async function executionReport({
     externalQualification,
     goldenQualificationPublication,
     qualificationEligibility,
+    boundedGoldenQualificationPublished,
     autonomousExecutionLaunchReady:
       qualificationEligibility?.autonomousExecutionLaunchReady === true,
     campaignFullyQualified,
-    fullAutomaticResearchWritingReady: campaignFullyQualified,
+    researchQualificationReady: submission.researchQualificationReady,
+    submissionRequired: submission.submissionRequired,
+    submissionReady: submission.submissionReady,
+    submissionTerminalFailure: submission.submissionTerminalFailure,
+    fullAutomaticResearchWritingReady: submission.fullAutomaticResearchWritingReady,
     providerConfigurationBinding,
     launchModeGate,
     operatorApprovalClaimed: false,
-    externalSubmissionPerformed: false,
+    autonomousSubmission: submission.autonomousSubmission,
+    externalSubmissionPerformed:
+      submission.autonomousSubmission?.receipt?.externalActionPerformed === true,
     selfSignedExternalQualification: false,
     automaticBudgetExpansionPerformed: false,
   };
@@ -483,6 +567,10 @@ export async function executeAutonomousResearchCampaign({
   launchModeGate = null,
   supervisorDispatchAuthorization = null,
   goldenQualificationController = null,
+  autonomousSubmissionPortal = null,
+  autonomousSubmissionOutbox = null,
+  autonomousVenueComplianceInspector = null,
+  autonomousSubmissionRequestVerifier = null,
   runtime = {},
 } = {}) {
   const store = requireCampaignStore(campaignStore);
@@ -597,5 +685,10 @@ export async function executeAutonomousResearchCampaign({
     providerConfigurationBinding,
     launchModeGate,
     goldenQualificationController,
+    autonomousSubmissionPortal,
+    autonomousSubmissionOutbox,
+    autonomousVenueComplianceInspector,
+    autonomousSubmissionRequestVerifier,
+    runtime,
   });
 }

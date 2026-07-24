@@ -1,4 +1,5 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hasExactPlainObjectKeys as exactKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 import {
   createAutonomousResearchReleaseBinding,
   verifyAutonomousResearchReleaseBinding,
@@ -10,6 +11,9 @@ import {
 import {
   inspectAutonomousResearchMachineIntakeCampaignBinding,
 } from './autonomous-research-machine-intake-supervision.mjs';
+import {
+  ResidentReactivationRequired,
+} from './autonomous-research-resident-reactivation-required.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 const PREREQUISITE_RECEIPT_KEYS = Object.freeze([
@@ -21,6 +25,7 @@ const PREREQUISITE_RECEIPT_KEYS = Object.freeze([
   'externalQualificationConfigurationIdentityHash',
   'externalQualificationConfigurationInspectionHash',
   'externalQualificationCostAuthority',
+  'externalActionRecoveryConfigurationIdentityHash',
   'externalQualificationMaximumCostUsd',
   'externalQualificationTrustIdentityHash',
   'fullResearchQualificationExpiresAt',
@@ -42,12 +47,6 @@ const PREREQUISITE_RECEIPT_KEYS = Object.freeze([
   'version',
   'zeroCostAuthorityEvidenceScope',
 ].sort());
-
-function exactKeys(value, keys) {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    && Object.getPrototypeOf(value) === Object.prototype
-    && JSON.stringify(Object.keys(value).sort()) === JSON.stringify(keys);
-}
 
 function canonicalTimestamp(value) {
   const parsed = Date.parse(String(value || ''));
@@ -113,6 +112,7 @@ function prerequisiteReceiptValid(receipt, { now } = {}) {
     receipt.externalQualificationTrustIdentityHash,
     receipt.runtimeImageReproducibilityConfigurationIdentityHash,
     receipt.runtimeImageReproducibilityTrustIdentityHash,
+    receipt.externalActionRecoveryConfigurationIdentityHash,
     receipt.codeWorktreeStateHash,
   ];
   const identity = Object.freeze({
@@ -130,6 +130,8 @@ function prerequisiteReceiptValid(receipt, { now } = {}) {
       receipt.runtimeImageReproducibilityConfigurationIdentityHash,
     runtimeImageReproducibilityTrustIdentityHash:
       receipt.runtimeImageReproducibilityTrustIdentityHash,
+    externalActionRecoveryConfigurationIdentityHash:
+      receipt.externalActionRecoveryConfigurationIdentityHash,
     codeWorktreeStateHash: receipt.codeWorktreeStateHash,
   });
   return receipt?.version === 1
@@ -240,8 +242,13 @@ function goldenBootstrapCampaignBlockers({ campaign, record } = {}) {
 export function createAutonomousResearchSupervisorAutonomyFence({
   required = false,
   inspectPrerequisites = null,
+  assertDynamicInfrastructureCurrent = null,
   clock,
 } = {}) {
+  if (assertDynamicInfrastructureCurrent !== null
+    && typeof assertDynamicInfrastructureCurrent !== 'function') {
+    throw new Error('autonomous_research_supervisor_dynamic_infrastructure_fence_invalid');
+  }
   let startupIdentityHash = null;
 
   function inspectReceipt() {
@@ -277,11 +284,12 @@ export function createAutonomousResearchSupervisorAutonomyFence({
       });
     }
     if (startupIdentityHash && identityHash !== startupIdentityHash) {
-      return Object.freeze({
-        ready: false,
-        operationMode: 'blocked',
-        reason: 'autonomous_research_supervisor_infrastructure_identity_drift',
-        receipt,
+      throw new ResidentReactivationRequired({
+        source: 'resident_prerequisite',
+        reason: 'autonomous_research_supervisor_infrastructure_identity_rotated',
+        startupIdentityHash,
+        observedIdentityHash: identityHash,
+        receiptHash: receipt.autonomousResearchResidentPrerequisiteReceiptHash,
       });
     }
     return Object.freeze({
@@ -311,6 +319,26 @@ export function createAutonomousResearchSupervisorAutonomyFence({
     if (!required) return Object.freeze({ ready: true, operationMode: 'unrestricted' });
     const inspection = inspectReceipt();
     if (!inspection.ready) return inspection;
+    if (assertDynamicInfrastructureCurrent) {
+      try {
+        const dynamic = assertDynamicInfrastructureCurrent({
+          action: action || 'autonomous_research_supervisor_dynamic_infrastructure_check',
+          residentLeaseContext,
+        });
+        if (typeof dynamic?.then === 'function' || dynamic?.ready !== true) {
+          throw new Error('autonomous_research_supervisor_dynamic_infrastructure_not_current');
+        }
+      } catch (error) {
+        if (error?.authorityEvidenceRenewalFatal === true) throw error;
+        return Object.freeze({
+          ...inspection,
+          ready: false,
+          operationMode: 'blocked',
+          reason: String(error?.message || error),
+          dynamicInfrastructureError: error,
+        });
+      }
+    }
     if (residentLeaseContext) {
       let instance;
       try { instance = residentLeaseContext.assertCurrent({ now: clock.now() }); }
@@ -341,8 +369,23 @@ export function createAutonomousResearchSupervisorAutonomyFence({
   }
 
   function inspectCampaign({ campaign, record, operationMode } = {}) {
-    if (!required || operationMode === 'full') {
+    if (!required) {
       return Object.freeze({ ready: true, reason: null, blockers: Object.freeze([]) });
+    }
+    if (operationMode === 'full') {
+      const binding = inspectAutonomousResearchMachineIntakeCampaignBinding({
+        campaign,
+        record,
+        requireRecord: true,
+      });
+      const blockers = Object.freeze(binding.ready && binding.machineBound === true
+        ? [] : [binding.reason
+          || 'autonomous_research_machine_intake_campaign_missing']);
+      return Object.freeze({
+        ready: blockers.length === 0,
+        reason: blockers[0] || null,
+        blockers,
+      });
     }
     if (operationMode !== 'bootstrap-only') {
       const blockers = Object.freeze([
@@ -373,6 +416,9 @@ export function createAutonomousResearchSupervisorAutonomyFence({
   function assertCurrent(input = {}) {
     const inspection = inspectCurrent(input);
     if (!inspection.ready) {
+      if (inspection.dynamicInfrastructureError) {
+        throw inspection.dynamicInfrastructureError;
+      }
       throw new Error(`autonomous_research_supervisor_autonomy_fence_blocked:${
         inspection.reason}:action=${input.action || 'unspecified'}`);
     }

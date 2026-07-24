@@ -19,6 +19,16 @@ import {
 import {
   verifyAutonomousResearchMachineIntakeAdmission,
 } from './autonomous-research-machine-intake-admission-contract.mjs';
+import {
+  verifyAutonomousResearchAgendaProductionReceipt,
+} from './autonomous-research-agenda-production-contract.mjs';
+import {
+  inspectAutonomousResearchProductionProfilePreparation,
+} from './autonomous-research-production-profile-contract.mjs';
+import { verifyVenueRequirementIr } from './venue-requirement-ir.mjs';
+import {
+  verifyResearchAgendaClaimBindingReceipt,
+} from './research-agenda-claim-binding-contract.mjs';
 
 const FULL_CAMPAIGN_MODE = 'full-campaign';
 const ACADEMIC_EMPIRICAL_ASSURANCE_SCOPE = 'operator-authorized-hidden-evaluation-v1';
@@ -89,6 +99,28 @@ function autonomousScientificClaimAuthority(value, paperId) {
 function autonomousPreparation(value, { paperId, scientificClaimAuthority } = {}) {
   if (value === null || value === undefined) return null;
   const { autonomousResearchLoopPreparationReportHash: claimedHash, ...payload } = value || {};
+  const capabilityScope = value?.capabilityScopeManifest || null;
+  const machineGeneratedAgendaValid = capabilityScope?.agendaMode !== 'machine-generated'
+    || (verifyAutonomousResearchAgendaProductionReceipt(
+      value?.researchAgendaProducerReceipt,
+    ).valid
+      && capabilityScope.empiricalFamilies.includes(
+        value.researchAgendaProducerReceipt.selectedProtocolFamily,
+      ));
+  const productionProfileInspection =
+    inspectAutonomousResearchProductionProfilePreparation(value);
+  const venueRequirementIrValid = value?.venueRequirementIr === undefined
+    || verifyVenueRequirementIr(value.venueRequirementIr, {
+      researchAgendaIr: value.researchAgendaIr,
+      venueProfile: value.venueProfileSelection?.profile || null,
+      venueProfileSelection: value.venueProfileSelection || null,
+    });
+  const agendaClaimBindingValid = value?.researchAgendaIr === undefined
+    ? value?.agendaClaimBindingReceipt === undefined
+    : verifyResearchAgendaClaimBindingReceipt(value?.agendaClaimBindingReceipt, {
+      researchAgendaIr: value.researchAgendaIr,
+      proposal: value.proposal,
+    }).valid;
   if (value?.version !== 1 || value?.kind !== 'AutonomousResearchLoopPreparationReport'
     || value?.paperId !== undefined
     || value?.proposal?.paperId !== paperId
@@ -96,6 +128,12 @@ function autonomousPreparation(value, { paperId, scientificClaimAuthority } = {}
     || value?.autonomousExecutionLaunchReady !== true
     || value?.seedBinding?.autonomousResearchSeedBindingHash
       !== scientificClaimAuthority?.autonomousResearchSeedBindingHash
+    || !machineGeneratedAgendaValid
+    || !agendaClaimBindingValid
+    || !venueRequirementIrValid
+    || !productionProfileInspection.ready
+    || (capabilityScope?.genericDeclaredCapability === true
+      && capabilityScope?.manuscriptMode !== 'agent-authored-evidence-bound-ir-v1')
     || !verifyAutonomousEmpiricalExecutionProfileSelection(
       value?.empiricalExecutionProfileSelection,
       {
@@ -103,6 +141,10 @@ function autonomousPreparation(value, { paperId, scientificClaimAuthority } = {}
         requireReady: true,
         runtimeCapabilityInspection: value?.empiricalRuntimeCapabilityInspection,
         requireRuntimeCapabilityInspection: true,
+        runtimeReproducibilityInspection:
+          value?.runtimeImageReproducibilityInspection,
+        requireRegisteredRuntime: value?.launchMode === 'production-run',
+        observedAt: value?.createdAt,
       },
     )
     || hashRecord('AutonomousResearchLoopPreparationReport', payload) !== claimedHash) {

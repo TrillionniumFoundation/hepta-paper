@@ -37,12 +37,17 @@ export function normalizeFormalProofObligationMappings({
   }
 
   const legacyMigrated = !Array.isArray(proofObligationMappings);
-  const rawMappings = legacyMigrated
+  const stableContracts = contracts.length > 0
+    && contracts.every((contract) => OBLIGATION_ID.test(contract.obligationId));
+  if (legacyMigrated && stableContracts) {
+    blockers.push('formal_proof_obligation_mappings_required');
+  }
+  const rawMappings = legacyMigrated && !stableContracts
     ? contracts.map((contract) => ({
       ...contract,
       leanDeclarations: theoremName ? [String(theoremName)] : [],
     }))
-    : proofObligationMappings;
+    : (proofObligationMappings || []);
   const mappings = (Array.isArray(rawMappings) ? rawMappings : []).map((mapping) => Object.freeze({
     obligationId: String(mapping?.obligationId || ''),
     displayText: String(mapping?.displayText || '').trim(),

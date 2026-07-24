@@ -7,8 +7,6 @@ import {
   bindAuthorizedMachineProducerProfileHash,
   bindConfiguredSourceAuthorityHash,
   bindMachineIntakeAuthorityGenesis,
-  readAuthorizedMachineProducerProfileHash,
-  readConfiguredSourceAuthorityHash,
   readMachineIntakeAuthorityGeneration,
 } from './autonomous-research-machine-intake-authority.mjs';
 import {
@@ -50,6 +48,7 @@ function isUninitializedDatabase(database) {
 function validateOpenOptions({
   runtimeRoot,
   create,
+  offlineProvision,
   busyTimeoutMs,
   authorizedSourceAuthorityHash,
   authorizedMachineProducerProfileHash,
@@ -57,6 +56,10 @@ function validateOpenOptions({
   migrationHooks,
 }) {
   if (!runtimeRoot) throw new Error('autonomous_research_machine_intake_runtime_root_required');
+  if (typeof create !== 'boolean' || typeof offlineProvision !== 'boolean'
+    || (offlineProvision && !create)) {
+    throw new Error('autonomous_research_machine_intake_open_mode_invalid');
+  }
   if (!Number.isSafeInteger(busyTimeoutMs) || busyTimeoutMs < 1 || busyTimeoutMs > 60_000) {
     throw new Error('autonomous_research_machine_intake_busy_timeout_invalid');
   }
@@ -83,6 +86,7 @@ function validateOpenOptions({
 export function openAutonomousResearchMachineIntakeRepository({
   runtimeRoot,
   create,
+  offlineProvision,
   busyTimeoutMs,
   authorizedSourceAuthorityHash,
   authorizedMachineProducerProfileHash,
@@ -92,6 +96,7 @@ export function openAutonomousResearchMachineIntakeRepository({
   validateOpenOptions({
     runtimeRoot,
     create,
+    offlineProvision,
     busyTimeoutMs,
     authorizedSourceAuthorityHash,
     authorizedMachineProducerProfileHash,
@@ -100,12 +105,15 @@ export function openAutonomousResearchMachineIntakeRepository({
   });
   const stateRoot = path.join(path.resolve(runtimeRoot), 'autonomous-research', 'machine-intake');
   const databasePath = path.join(stateRoot, 'machine-intake.sqlite');
-  if (create) {
+  if (offlineProvision) {
     fs.mkdirSync(stateRoot, { recursive: true, mode: 0o700 });
     fs.chmodSync(stateRoot, 0o700);
     if (!fs.existsSync(databasePath)) {
       fs.closeSync(fs.openSync(databasePath, 'wx', 0o600));
     }
+  }
+  if (create && !offlineProvision && !fs.existsSync(databasePath)) {
+    throw new Error('autonomous_research_machine_intake_offline_provisioning_required');
   }
   if (fs.existsSync(databasePath)) {
     const stat = fs.lstatSync(databasePath);
@@ -124,7 +132,7 @@ export function openAutonomousResearchMachineIntakeRepository({
   let configuredSourceAuthorityHash = null;
   let configuredMachineProducerProfileHash = null;
   let configuredAuthorityGeneration = null;
-  if (database && create) {
+  if (database && offlineProvision) {
     try {
       database.exec('PRAGMA synchronous=FULL;');
       const journalMode = String(database.prepare('PRAGMA journal_mode').get().journal_mode);
@@ -202,10 +210,32 @@ export function openAutonomousResearchMachineIntakeRepository({
       throw error;
     }
   } else if (database) {
-    configuredSourceAuthorityHash = readConfiguredSourceAuthorityHash(database);
-    configuredMachineProducerProfileHash = readAuthorizedMachineProducerProfileHash(database);
-    configuredAuthorityGeneration = readMachineIntakeAuthorityGeneration(database);
-    assertMachineIntakeAuthorityState(database);
+    try {
+      if (create) {
+        database.exec('PRAGMA synchronous=FULL;');
+        const journalMode = String(database.prepare('PRAGMA journal_mode').get().journal_mode);
+        if (journalMode !== 'delete') {
+          throw new Error('autonomous_research_machine_intake_database_journal_mode_invalid');
+        }
+      }
+      if (legacySchemaRequiresMigration(database)) {
+        throw new Error('autonomous_research_machine_intake_schema_migration_required');
+      }
+      const persisted = assertMachineIntakeAuthorityState(database);
+      configuredSourceAuthorityHash = persisted.configuredSourceAuthorityHash;
+      configuredMachineProducerProfileHash = persisted.authorizedMachineProducerProfileHash;
+      configuredAuthorityGeneration = persisted.authorityGeneration;
+      if (create && configuredSourceAuthorityHash !== authorizedSourceAuthorityHash) {
+        throw new Error('autonomous_research_machine_intake_configuration_authority_mismatch');
+      }
+      if (create
+        && configuredMachineProducerProfileHash !== authorizedMachineProducerProfileHash) {
+        throw new Error('autonomous_research_machine_intake_producer_authority_mismatch');
+      }
+    } catch (error) {
+      database.close();
+      throw error;
+    }
   }
   return Object.freeze({
     database,
@@ -214,5 +244,6 @@ export function openAutonomousResearchMachineIntakeRepository({
     configuredSourceAuthorityHash,
     configuredMachineProducerProfileHash,
     configuredAuthorityGeneration,
+    offlineProvisioningPerformed: offlineProvision,
   });
 }

@@ -30,6 +30,13 @@ import {
 } from '../../paper-domain/automation/analysis-protocol-run-binding.mjs';
 import { validateOperatorDatasetHarnessDefinition } from '../../paper-domain/automation/operator-dataset-harness-contract.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  buildTypedNumericOracleCertificate,
+  buildTypedNumericOracleCertificateSet,
+} from '../../paper-domain/research/typed-numeric-oracle-certificate.mjs';
+import {
+  autonomousEmpiricalFamilyPluginProfileFor,
+} from '../../paper-domain/automation/autonomous-empirical-family-plugin-registry.mjs';
 
 const FAMILIES = Object.freeze([
   'rl_stochastic_control_benchmark',
@@ -92,15 +99,79 @@ function observationsForSchedule(protocol, { seedCount, repetitionCount, seedOff
   )).flat(2);
 }
 
+const authorityFixtureMetadata = new WeakMap();
+
 function authorityFor(observations, run = 'original', overrides = {}) {
-  return buildRepositoryAnalysisObservationAuthority({
+  const authority = buildRepositoryAnalysisObservationAuthority({
     observations,
     rawEventManifestHash: hashRecord('AnalysisProtocolTestRawEventManifest', { run }),
     rawEventArtifactHash: hashRecord('AnalysisProtocolTestRawEventArtifact', { run }),
     rawEventRecomputationManifestHash: hashRecord('AnalysisProtocolTestRawEventRecomputationManifest', { run }),
     experimentAttemptId: `attempt-${run}`,
     sourceLineageHash: hashRecord('AnalysisProtocolTestSourceLineage', { fixture: true }),
+    allowLegacyNonProduction: true,
     ...overrides,
+  });
+  authorityFixtureMetadata.set(authority, { run, overrides });
+  return authority;
+}
+
+function canonicalAuthorityFor(fixture, observations, authority) {
+  if (authority?.version !== 1) return authority;
+  const { run = 'canonical', overrides = {} } = authorityFixtureMetadata.get(authority) || {};
+  const profile = autonomousEmpiricalFamilyPluginProfileFor(fixture.protocol.benchmarkFamily);
+  const producer = hashRecord('AnalysisProtocolTestProducer', { run });
+  const verifier = hashRecord('AnalysisProtocolTestVerifier', { run });
+  const assurance = hashRecord('AnalysisProtocolTestAssurance', { run });
+  const certificates = profile.typedOracleKinds.map((oracleType) => (
+    buildTypedNumericOracleCertificate({
+      certificateId: `${oracleType}:${run}`,
+      oracleType,
+      subjectHash: oracleType === 'property-oracle-v1'
+        ? authority.rawEventManifestHash : authority.rawEventRecomputationManifestHash,
+      quantity: oracleType === 'property-oracle-v1'
+        ? 'property_oracle_verified' : 'maximum_absolute_residual',
+      observedValue: oracleType === 'property-oracle-v1' ? 1 : 0,
+      relation: oracleType === 'property-oracle-v1' ? 'interval' : 'less-than-or-equal',
+      lowerBound: oracleType === 'property-oracle-v1' ? 1 : null,
+      upperBound: oracleType === 'property-oracle-v1' ? 1 : 0,
+      unit: oracleType === 'property-oracle-v1'
+        ? 'boolean-indicator' : 'absolute-metric-unit',
+      verifierId: `analysis-protocol-test-${oracleType}`,
+      producerImplementationHash: producer,
+      verifierImplementationHash: oracleType === 'property-oracle-v1' ? producer : verifier,
+      verificationReceiptHash: assurance,
+      evidenceHashes: [assurance],
+      assuranceScope: oracleType === 'property-oracle-v1'
+        ? 'producer-bound-self-check-v1' : 'process-isolated-independent-implementation-v1',
+    })
+  ));
+  const certificateSet = buildTypedNumericOracleCertificateSet({
+    analysisProtocolHash: fixture.protocol.analysisProtocolHash,
+    experimentAttemptId: authority.experimentAttemptId,
+    sourceLineageHash: authority.sourceLineageHash,
+    requiredOracleTypes: profile.typedOracleKinds,
+    certificates,
+  });
+  return buildRepositoryAnalysisObservationAuthority({
+    observations,
+    rawEventManifestHash: authority.rawEventManifestHash,
+    rawEventArtifactHash: authority.rawEventArtifactHash,
+    rawEventRecomputationManifestHash: authority.rawEventRecomputationManifestHash,
+    propertyOracleVerified: overrides.propertyOracleVerified ?? true,
+    rawObservationRecomputationVerified:
+      overrides.rawObservationRecomputationVerified ?? true,
+    aggregateResidual: overrides.aggregateResidual ?? 0,
+    toleranceSatisfied: overrides.toleranceSatisfied ?? true,
+    candidateConvergenceClaim: overrides.candidateConvergenceClaim ?? null,
+    candidateConditionNumber: overrides.candidateConditionNumber ?? null,
+    independentResidualRecomputationVerified: true,
+    independentRecomputationAssuranceHash: assurance,
+    independentVerifierImplementationHash: verifier,
+    typedNumericOracleCertificateSet: certificateSet,
+    experimentAttemptId: authority.experimentAttemptId,
+    sourceLineageHash: authority.sourceLineageHash,
+    analysisProtocol: fixture.protocol,
   });
 }
 
@@ -136,7 +207,7 @@ function evaluationInputs(fixture, observations, authority = authorityFor(observ
   return Object.freeze({
     analysisProtocol: fixture.protocol,
     observations,
-    observationAuthority: authority,
+    observationAuthority: canonicalAuthorityFor(fixture, observations, authority),
     benchmarkId: fixture.protocol.benchmarkId,
     benchmarkFamily: fixture.protocol.benchmarkFamily,
     requiredMetrics: fixture.protocol.requiredMetrics,
@@ -198,7 +269,7 @@ test('all five canonical families have exact fail-closed protocols and authority
     assert.equal(verifyAnalysisProtocolEvaluation(evaluated, {
       analysisProtocol: fixture.protocol,
       observations,
-      observationAuthority: authority,
+      observationAuthority: canonicalAuthorityFor(fixture, observations, authority),
       benchmarkId: family,
       benchmarkFamily: family,
       requiredMetrics: fixture.protocol.requiredMetrics,
@@ -342,6 +413,23 @@ test('protocol absence, payload tamper, unknown methods, and false power claims 
   delete falsePower.analysisProtocolHash;
   falsePower.power.requiredPairedObservations = 2;
   assert.throws(() => validateAnalysisProtocol(falsePower), /analysis_protocol_power_design_mismatch/);
+});
+
+test('canonical core profile rejects legacy v1 observation authority', () => {
+  const fixture = protocolFixture('ml_algorithm_benchmark');
+  const observations = observationsFor(fixture.protocol);
+  const legacy = authorityFor(observations, 'canonical-core-v1');
+  const evaluated = evaluateAnalysisProtocol({
+    ...evaluationInputs(fixture, observations, legacy),
+    observationAuthority: legacy,
+  });
+  assert.ok(evaluated.blockers.includes('analysis_canonical_numeric_authority_v3_required'));
+  assert.throws(() => buildRepositoryAnalysisObservationAuthority({
+    observations,
+    experimentAttemptId: 'canonical-core-omission',
+    sourceLineageHash: hashRecord('CanonicalCoreOmission', {}),
+    analysisProtocol: fixture.protocol,
+  }), /analysis_observation_canonical_numeric_evidence_required/);
 });
 
 test('Holm correction supports more than two predeclared hypotheses and is recomputed by authority', () => {

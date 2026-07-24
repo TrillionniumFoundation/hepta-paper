@@ -47,6 +47,10 @@ export async function runResearchVerifyAdapter({
   nativeResearchWorkerExecutionOverride = null,
   operatorDatasetHarnessAuthorityVerifier: suppliedDatasetAuthorityVerifier = null,
   rawEventRecomputationVerifier: suppliedRawEventRecomputationVerifier = null,
+  externalReplayRequired = false,
+  externalReplayRequest = null,
+  externalReplayReceipt = null,
+  externalReplayReceiptVerifier = null,
 } = {}) {
   if (campaignResearchSourceSnapshot) {
     const snapshotVerification = verifyCampaignResearchSourceSnapshot(campaignResearchSourceSnapshot, {
@@ -98,6 +102,9 @@ export async function runResearchVerifyAdapter({
         root,
         runtimeRoot: resolvedRuntimeRoot,
         paperTask: row.task,
+        campaignId: campaignEvidenceContext?.campaignId || null,
+        researchSourceSnapshotHash:
+          campaignResearchSourceSnapshot?.campaignResearchSourceSnapshotHash || null,
         request,
         artifactRepositoryFactory,
         receiptWriters: trustedResearchReceiptWriters,
@@ -161,8 +168,15 @@ export async function runResearchVerifyAdapter({
     revisionRequests,
     receiptLedger,
     campaignEvidenceContext,
+    researchSourceSnapshotHash:
+      campaignResearchSourceSnapshot?.campaignResearchSourceSnapshotHash || null,
+    formalReviewEnvelope,
     operatorDatasetHarnessAuthorityVerifier,
     rawEventRecomputationVerifier,
+    externalReplayRequired,
+    externalReplayRequest,
+    externalReplayReceipt,
+    externalReplayReceiptVerifier,
     now,
   });
   const researchGapPlanBinding = executeResearchWorkers && jobReceiptStore && receiptLedger && clock
@@ -192,5 +206,8 @@ export async function runResearchVerifyAdapter({
     executeResearchWorkers,
     campaignResearchSourceSnapshot,
     formalReviewEnvelope,
+    externalReplayRequired,
+    externalReplayRequest,
+    externalReplayReceipt,
   });
 }

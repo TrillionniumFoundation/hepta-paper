@@ -114,6 +114,13 @@ const {
   '../../paper-adapters/automation/autonomous-research-machine-intake-repository.mjs'
 );
 const {
+  bindAuthorizedMachineProducerProfileHash,
+  bindConfiguredSourceAuthorityHash,
+  readAuthorizedMachineProducerProfileHash,
+  readConfiguredSourceAuthorityHash,
+  readMachineIntakeAuthorityGeneration,
+} = await import(AUTHORITY_STATE_MODULE.href);
+const {
   buildAutonomousResearchIntakeRotationIntentTemplate:
     buildProductionAutonomousResearchIntakeRotationIntentTemplate,
   loadAutonomousResearchIntakeRotationAuthorizationAtRootForTest,
@@ -395,6 +402,131 @@ function persistedRows(databasePath) {
     };
   } finally { database.close(); }
 }
+
+test('authority metadata readers and binders fail closed across legacy and conflicting state', () => {
+  const empty = new DatabaseSync(':memory:');
+  try {
+    assert.equal(readConfiguredSourceAuthorityHash(empty), null);
+    assert.equal(readAuthorizedMachineProducerProfileHash(empty), null);
+    assert.equal(readMachineIntakeAuthorityGeneration(empty), null);
+
+    empty.exec(`CREATE TABLE autonomous_research_machine_intake_metadata (
+      singleton INTEGER PRIMARY KEY,
+      configured_source_authority_hash TEXT NOT NULL
+    ) STRICT;`);
+    empty.prepare(`INSERT INTO autonomous_research_machine_intake_metadata(
+      singleton,configured_source_authority_hash
+    ) VALUES(1,?)`).run(H('legacy-source'));
+    assert.equal(readConfiguredSourceAuthorityHash(empty), H('legacy-source'));
+    assert.equal(readAuthorizedMachineProducerProfileHash(empty), null);
+    assert.equal(readMachineIntakeAuthorityGeneration(empty), 1);
+    empty.prepare(`UPDATE autonomous_research_machine_intake_metadata
+      SET configured_source_authority_hash='not-a-hash' WHERE singleton=1`).run();
+    assert.throws(
+      () => readConfiguredSourceAuthorityHash(empty),
+      /autonomous_research_machine_intake_state_invalid/,
+    );
+  } finally { empty.close(); }
+
+  const database = new DatabaseSync(':memory:');
+  try {
+    createMachineIntakeSchema(database);
+    assert.throws(
+      () => bindConfiguredSourceAuthorityHash(database, 'not-a-hash'),
+      /source_authority_required/,
+    );
+    assert.throws(
+      () => bindAuthorizedMachineProducerProfileHash(database, 'not-a-hash'),
+      /producer_profile_hash_invalid/,
+    );
+
+    const configured = H('configured-source');
+    const profile = H('producer-profile');
+    assert.equal(bindConfiguredSourceAuthorityHash(database, configured), configured);
+    assert.equal(bindConfiguredSourceAuthorityHash(database, configured), configured);
+    assert.throws(
+      () => bindConfiguredSourceAuthorityHash(database, H('different-source')),
+      /configuration_authority_mismatch/,
+    );
+    assert.equal(bindAuthorizedMachineProducerProfileHash(database, profile), profile);
+    assert.equal(bindAuthorizedMachineProducerProfileHash(database, profile), profile);
+    assert.throws(
+      () => bindAuthorizedMachineProducerProfileHash(database, H('different-profile')),
+      /producer_authority_mismatch/,
+    );
+
+    database.prepare(`UPDATE autonomous_research_machine_intake_metadata
+      SET authorized_machine_producer_profile_hash='invalid' WHERE singleton=1`).run();
+    assert.throws(
+      () => readAuthorizedMachineProducerProfileHash(database),
+      /autonomous_research_machine_intake_state_invalid/,
+    );
+    database.exec('PRAGMA ignore_check_constraints=ON;');
+    database.prepare(`UPDATE autonomous_research_machine_intake_metadata
+      SET authority_generation=0 WHERE singleton=1`).run();
+    assert.throws(
+      () => readMachineIntakeAuthorityGeneration(database),
+      /autonomous_research_machine_intake_state_invalid/,
+    );
+  } finally { database.close(); }
+
+  const insertIntake = (database, {
+    id, sourceAuthorityHash, admission,
+  }) => database.prepare(`INSERT INTO autonomous_research_machine_intake(
+    intake_id,intake_hash,paper_id,campaign_id,intake_json,admission_json,
+    admission_hash,source_kind,source_ref,source_authority_hash,disposition,
+    next_attempt_at,created_at,updated_at
+  ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+    id, H(`intake:${id}`), `paper:${id}`, `campaign:${id}`, '{}',
+    JSON.stringify(admission), H(`admission:${id}`), 'machine', 'machine-api',
+    sourceAuthorityHash, 'pending', BASE.toISOString(), BASE.toISOString(),
+    BASE.toISOString(),
+  );
+
+  const ambiguous = new DatabaseSync(':memory:');
+  try {
+    createMachineIntakeSchema(ambiguous);
+    insertIntake(ambiguous, {
+      id: 'one', sourceAuthorityHash: H('source-one'), admission: {},
+    });
+    insertIntake(ambiguous, {
+      id: 'two', sourceAuthorityHash: H('source-two'), admission: {},
+    });
+    assert.throws(
+      () => bindConfiguredSourceAuthorityHash(ambiguous, H('source-one')),
+      /configuration_authority_ambiguous/,
+    );
+  } finally { ambiguous.close(); }
+
+  const legacy = new DatabaseSync(':memory:');
+  try {
+    createMachineIntakeSchema(legacy);
+    insertIntake(legacy, {
+      id: 'legacy', sourceAuthorityHash: H('legacy-source'), admission: {},
+    });
+    assert.throws(
+      () => bindConfiguredSourceAuthorityHash(legacy, H('new-source')),
+      /configuration_authority_mismatch/,
+    );
+    assert.equal(
+      bindConfiguredSourceAuthorityHash(legacy, H('legacy-source')),
+      H('legacy-source'),
+    );
+    assert.throws(
+      () => bindAuthorizedMachineProducerProfileHash(legacy, H('new-profile')),
+      /legacy_machine_admission_quarantine_required/,
+    );
+    legacy.prepare(`UPDATE autonomous_research_machine_intake
+      SET admission_json=? WHERE intake_id='legacy'`).run(JSON.stringify({
+      version: 2,
+      topicProducerCapabilityReceipt: { producerProfileHash: H('new-profile') },
+    }));
+    assert.equal(
+      bindAuthorizedMachineProducerProfileHash(legacy, H('new-profile')),
+      H('new-profile'),
+    );
+  } finally { legacy.close(); }
+});
 
 test('production rotation authorization loads an isolated authority root and verifies intent',
   (t) => {

@@ -13,11 +13,12 @@ test('empty claim and evidence graphs cannot become promotion-ready', () => {
   assert.equal(claimRegistry.status, 'claim_graph_blocked');
   assert.equal(evidenceIntake.status, 'evidence_intake_blocked');
   assert.equal(quality.status, 'evidence_quality_blocked');
-  assert.equal(quality.version, 6);
+  assert.equal(quality.version, 7);
   assert.equal(quality.evidenceIntakeRequired, false);
   assert.ok(quality.blockers.includes('claim_registry_empty'));
   assert.equal(quality.blockers.includes('evidence_intake_not_verified'), false);
 });
+
 
 test('a registered evidence-required claim cannot bypass a blocked evidence intake', () => {
   const paperTask = { paperId: 'paper' };

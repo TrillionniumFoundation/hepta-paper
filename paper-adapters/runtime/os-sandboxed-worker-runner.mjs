@@ -23,8 +23,36 @@ import { buildDatasetRuntimeAccessReceipt, buildRuntimeDatasetAuthorizationSet, 
 import { selectAndValidateWorkerEnvironment } from './worker-environment-policy.mjs';
 import { createWorkerEnvironmentBomPreparer } from './worker-environment-bom-binding.mjs';
 import { beginWorkerProcessIdentity, bubblewrapRuntimeResourceMounts, buildBubblewrapWorkerCommand, buildDockerWorkerCommand, completeWorkerProcessIdentity, createDatasetSupervisorEvidenceFiles, datasetRuntimePreflightBlockers, dockerSystemMounts, executableRuntimePathSupported, explicitContainerRuntimeIdentityPayload, normalizeTrustedDatasetSupervisorImage, prepareUnprivilegedDatasetWorkspace } from './os-sandbox-worker-runtime-support.mjs';
+
+function removePrivateSandboxRoot(sandboxRoot) {
+  const candidate = path.resolve(String(sandboxRoot || ''));
+  const temporaryRoot = path.resolve(os.tmpdir());
+  if (!isPathWithin(temporaryRoot, candidate)
+    || !path.basename(candidate).startsWith('hepta-os-sandbox-')) {
+    throw new Error('os_sandbox_cleanup_root_invalid');
+  }
+  const restoreDirectoryWrite = (directory) => {
+    let identity = null;
+    try { identity = fs.lstatSync(directory); } catch (error) {
+      if (error?.code === 'ENOENT') return;
+      throw error;
+    }
+    if (!identity.isDirectory() || identity.isSymbolicLink()) return;
+    fs.chmodSync(directory, 0o700);
+    for (const entry of fs.readdirSync(directory)) {
+      const child = path.join(directory, entry);
+      const childIdentity = fs.lstatSync(child);
+      if (childIdentity.isDirectory() && !childIdentity.isSymbolicLink()) {
+        restoreDirectoryWrite(child);
+      }
+    }
+  };
+  restoreDirectoryWrite(candidate);
+  fs.rmSync(candidate, { recursive: true, force: true });
+}
+
 export function createOsSandboxedWorkerRunner({
-  allowedExecutables = [], allowedRoots = [], allowedOutputRoots = [], allowGpu = false, bubblewrap = 'bwrap', prlimit = 'prlimit', docker = 'docker', dockerImage = 'alpine:3.20',
+  allowedExecutables = [], allowedRoots = [], allowedOutputRoots = [], allowGpu = false, bubblewrap = 'bwrap', prlimit = 'prlimit', docker = 'docker', dockerImage = null,
   allowedContainerImages = [], allowedDatasetRoots = [], trustedDatasetSupervisorImages = [],
   maximumTimeoutMs = 120000, maximumMemoryBytes = 1024 * 1024 * 1024, maximumCpuSeconds = 120, maximumPids = 128, maximumOutputBytes = 256 * 1024 * 1024, maximumCapturedBytes = 4 * 1024 * 1024,
   executor = spawnSync, probe = null, imageDigestResolver = null, datasetSnapshotObserver = null, runtimeExecutableSnapshotObserver = null, workspaceSnapshotObserver = null,
@@ -159,7 +187,7 @@ export function createOsSandboxedWorkerRunner({
           isolation: { kernelNetworkIsolationVerified: false, filesystemNamespaceVerified: false, sourceReadOnlyVerified: false, resourceLimitsVerified: false },
         };
       }
-      const { executable, args = [], cwd, sourceRoot = null, timeoutMs = 30000, outputPaths = [], outputDirectory = null, requiresGpu = false, env = {}, executionIdentity: suppliedExecutionIdentity = null, containerImage = null, containerExecutable = null, datasetMounts = [], requireDatasetAccessProof = false, requireSeparateOutputRoot = false, memoryBytes = null, cpuSeconds = null, maximumProcesses = null, requestedMaximumOutputBytes = null, language = 'unknown', determinismPolicy = 'unknown', deterministicSeed = null, runtimePackageClosure = null, runtimeBuildReproducibility = null, expectedSourceMerkleHash = null, expectedSourceWorkspaceManifestHash = null, signal = null } = spec;
+      const { executable, args = [], cwd, sourceRoot = null, timeoutMs = 30000, outputPaths = [], outputDirectory = null, requiresGpu = false, env = {}, executionIdentity: suppliedExecutionIdentity = null, containerImage = null, containerExecutable = null, datasetMounts = [], requireDatasetAccessProof = false, requireSeparateOutputRoot = false, requireImmutableWorkRoot = false, memoryBytes = null, cpuSeconds = null, maximumProcesses = null, requestedMaximumOutputBytes = null, language = 'unknown', determinismPolicy = 'unknown', deterministicSeed = null, runtimePackageClosure = null, runtimeBuildReproducibility = null, expectedSourceMerkleHash = null, expectedSourceWorkspaceManifestHash = null, signal = null } = spec;
       const capabilityPreflight = evaluateExecutorCapabilityRequest({
         capabilities,
         request: { sandbox: 'kernel-isolated', requiresGpu, requiresWorkspaceIsolation: true, requiresNetworkIsolation: true, timeoutMs },
@@ -328,7 +356,7 @@ export function createOsSandboxedWorkerRunner({
         try {
           runtimeExecutableSnapshot = materializeRuntimeExecutableSnapshot({ source: expectedExecutablePath, expectedHash: expectedExecutableHash, invocationName: activeExecutionIdentity.executableInvocationName, sandboxRoot });
         } catch (error) {
-          fs.rmSync(sandboxRoot, { recursive: true, force: true });
+          removePrivateSandboxRoot(sandboxRoot);
           return {
             ok: false,
             status: 'os_sandbox_worker_blocked',
@@ -349,7 +377,7 @@ export function createOsSandboxedWorkerRunner({
         datasetSnapshotObserver?.(Object.freeze({ phase: 'before_dataset_snapshot', datasets: Object.freeze(normalizedDatasets.map((mount) => Object.freeze({ name: mount.name, source: mount.source, manifestHashBefore: mount.manifestHashBefore }))) }));
         mountedDatasets = normalizedDatasets.map((mount) => materializeDatasetSnapshot(mount, sandboxRoot));
       } catch (error) {
-        fs.rmSync(sandboxRoot, { recursive: true, force: true });
+        removePrivateSandboxRoot(sandboxRoot);
         return {
           ok: false,
           status: 'os_sandbox_worker_blocked',
@@ -361,7 +389,7 @@ export function createOsSandboxedWorkerRunner({
       const invalidSnapshots = mountedDatasets.filter((mount) => mount.snapshotBlockers.length || mount.snapshotManifestHash !== mount.manifestHashBefore || mount.snapshotManifestHash !== mount.manifestHash);
       if (invalidSnapshots.length) {
         const failedDatasetNames = invalidSnapshots.map((mount) => mount.name);
-        fs.rmSync(sandboxRoot, { recursive: true, force: true });
+        removePrivateSandboxRoot(sandboxRoot);
         return {
           ok: false,
           status: 'os_sandbox_worker_blocked',
@@ -383,7 +411,7 @@ export function createOsSandboxedWorkerRunner({
         });
         workspaceSnapshotObserver?.(Object.freeze({ phase: 'after_workspace_copy', sourceRoot: resolvedSourceRoot, workRoot, sourceMerkleHashBefore, sourceWorkspaceManifestHashBefore }));
       } catch (error) {
-        fs.rmSync(sandboxRoot, { recursive: true, force: true });
+        removePrivateSandboxRoot(sandboxRoot);
         return {
           ok: false,
           status: 'os_sandbox_worker_blocked',
@@ -407,7 +435,7 @@ export function createOsSandboxedWorkerRunner({
         if (workExecutableHash !== runtimeExecutableSnapshot.hash) workspaceSnapshotBlockers.push('worker_workspace_executable_snapshot_mismatch');
       }
       if (workspaceSnapshotBlockers.length) {
-        fs.rmSync(sandboxRoot, { recursive: true, force: true });
+        removePrivateSandboxRoot(sandboxRoot);
         return {
           ok: false,
           status: 'os_sandbox_worker_blocked',
@@ -439,7 +467,7 @@ export function createOsSandboxedWorkerRunner({
         datasetAuthorizationSetHash: datasetAuthorizationSet.datasetAuthorizationSetHash,
       });
       if (environmentBlockers.length) {
-        fs.rmSync(sandboxRoot, { recursive: true, force: true });
+        removePrivateSandboxRoot(sandboxRoot);
         return {
           ok: false,
           status: 'os_sandbox_worker_blocked',
@@ -449,7 +477,7 @@ export function createOsSandboxedWorkerRunner({
         };
       }
       const environmentBomBinding = prepareEnvironmentBom({ executionIdentity: activeExecutionIdentity, language, executable: containerImage ? containerExecutable : resolvedExecutable, requiresGpu, determinismPolicy, deterministicSeed: deterministicSeed ?? env.HEPTA_EXPERIMENT_SEED ?? env.HEPTA_SEED ?? env.PYTHONHASHSEED ?? null, timeoutMs, memoryBytes, cpuSeconds, maximumProcesses, requestedMaximumOutputBytes, env: Object.fromEntries(permittedEnvironment), runtimePackageClosure, runtimeBuildReproducibility });
-      if (environmentBomBinding.blockers.length) { fs.rmSync(sandboxRoot, { recursive: true, force: true }); return { ok: false, status: 'os_sandbox_worker_blocked', blockers: environmentBomBinding.blockers, availability: executionAvailability, isolation: { kernelNetworkIsolationVerified: false, filesystemNamespaceVerified: false, sourceReadOnlyVerified: false, resourceLimitsVerified: false } }; }
+      if (environmentBomBinding.blockers.length) { removePrivateSandboxRoot(sandboxRoot); return { ok: false, status: 'os_sandbox_worker_blocked', blockers: environmentBomBinding.blockers, availability: executionAvailability, isolation: { kernelNetworkIsolationVerified: false, filesystemNamespaceVerified: false, sourceReadOnlyVerified: false, resourceLimitsVerified: false } }; }
       const { timeoutMs: boundedTimeout, memoryBytes: boundedMemory, cpuSeconds: boundedCpu, maximumPids: boundedPids, maximumOutputBytes: boundedOutput } = environmentBomBinding.limits;
       let launcher = prlimit;
       let command = buildBubblewrapWorkerCommand({
@@ -459,6 +487,7 @@ export function createOsSandboxedWorkerRunner({
         runtimeExecutableSnapshot, runtimeExecutableOverlayTarget, relativeCwd, mountedDatasets,
         requiresGpu, gpuDevices, environment: permittedEnvironment, executable: runtimeExecutableInvocationTarget,
         arguments: args.map((argument) => mapWorkArgument(argument, resolvedSourceRoot)),
+        immutableWorkRoot: requireImmutableWorkRoot,
       });
       if (executionBackend === 'docker') {
         launcher = docker;
@@ -473,11 +502,33 @@ export function createOsSandboxedWorkerRunner({
           workRoot, outputRoot, supervisorRoot, runtimeExecutableSnapshot, runtimeExecutableOverlayTarget,
           mountedDatasets, relativeCwd, containerImageDigest, datasetSupervisor, executable: dockerExecutable,
           arguments: args.map((argument) => mapWorkArgument(argument, resolvedSourceRoot)),
+          immutableWorkRoot: requireImmutableWorkRoot,
         });
       }
       if (requireDatasetAccessProof && executionBackend === 'bubblewrap') {
         command = ['-f', '-qq', '-yy', '-e', 'trace=open,openat,read', '-o', datasetAccessTracePath, '--', launcher, ...command];
         launcher = DATASET_ACCESS_SUPERVISOR_TRACER;
+      }
+      const immutableWorkRootMountVerified = requireImmutableWorkRoot === true
+        && (executionBackend === 'docker'
+          ? command.some((argument) => argument === `${workRoot}:/work:ro`)
+          : command.some((argument, index) => argument === '--ro-bind'
+            && command[index + 1] === workRoot && command[index + 2] === '/work'));
+      if (requireImmutableWorkRoot && !immutableWorkRootMountVerified) {
+        removePrivateSandboxRoot(sandboxRoot);
+        return {
+          ok: false,
+          status: 'os_sandbox_worker_blocked',
+          blockers: ['worker_immutable_work_root_mount_unverified'],
+          availability: executionAvailability,
+          isolation: {
+            kernelNetworkIsolationVerified: false,
+            filesystemNamespaceVerified: false,
+            sourceReadOnlyVerified: false,
+            immutableWorkRootVerified: false,
+            resourceLimitsVerified: false,
+          },
+        };
       }
       const finalize = (result) => {
         const sourceExecutionSnapshotAfter = inspectWorkspaceExecutionSnapshot(resolvedSourceRoot, { excludeRoots: sourceDatasetRoots, excludeNames: sourceExcludedNames });
@@ -628,6 +679,7 @@ export function createOsSandboxedWorkerRunner({
             sourceReadOnlyVerified: !sourceMutationDetected,
             sourceReadOnlyMount: true,
             ephemeralWorkRootVerified: true,
+            immutableWorkRootVerified: immutableWorkRootMountVerified,
             workspaceExecutionSnapshotVerified: true,
             separateOutputRootVerified: requireSeparateOutputRoot
               ? outputPaths.every((declared) => artifacts.some((artifact) => artifact.path === String(declared)))
@@ -651,14 +703,14 @@ export function createOsSandboxedWorkerRunner({
           },
           externalActionPerformed: false,
         };
-        fs.rmSync(sandboxRoot, { recursive: true, force: true });
+        removePrivateSandboxRoot(sandboxRoot);
         return { ok: passed, ...receiptPayload, receiptHash: hashRecord('OsSandboxWorkerReceipt', receiptPayload), blockers: [...(result.aborted ? ['os_sandbox_command_aborted'] : []), ...(result.timedOut ? ['os_sandbox_command_timed_out'] : []), ...(!commandPassed && !result.aborted && !result.timedOut ? ['os_sandbox_command_failed'] : []), ...(sourceMutationDetected ? ['source_mutation_detected', ...sourceExecutionSnapshotAfter.blockers] : []), ...(datasetMutationDetected ? ['worker_dataset_manifest_changed_during_execution'] : []), ...(datasetSnapshotMutationDetected ? ['worker_dataset_snapshot_changed_during_execution'] : []), ...datasetAccessBlockers, ...(!runtimeExecutableSnapshotVerified ? ['worker_runtime_executable_snapshot_changed_during_execution'] : []), ...artifactBlockers] };
       };
       if (signal) {
         return runBoundedChildProcess({ executable: launcher, args: command, cwd: resolvedCwd, timeoutMs: boundedTimeout, signal, maximumCapturedBytes })
           .then(
             (result) => finalize({ ...result, status: result.exitCode, signal: result.signal }),
-            (error) => { fs.rmSync(sandboxRoot, { recursive: true, force: true }); throw error; },
+            (error) => { removePrivateSandboxRoot(sandboxRoot); throw error; },
           );
       }
       return finalize(executor(launcher, command, { encoding: 'utf8', timeout: boundedTimeout, maxBuffer: maximumCapturedBytes }));

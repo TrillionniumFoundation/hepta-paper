@@ -14,6 +14,8 @@ import { createFilesystemArtifactRepository } from '../../paper-adapters/artifac
 import { verifyArtifactWriteReceiptSource } from '../../paper-adapters/artifacts/artifact-write-receipt-verifier.mjs';
 import { verifyTrustedLedgerReceipt } from '../../paper-domain/evidence/trusted-ledger-receipt.mjs';
 import { buildVenueObservationSubject } from '../../paper-adapters/submission/venue-observation-verification.mjs';
+import { createSqliteDeliveryPersistence } from '../../paper-adapters/submission/sqlite-delivery-persistence.mjs';
+import { createSqliteDeliveryResponseOperations } from '../../paper-adapters/submission/sqlite-delivery-response-operations.mjs';
 import { createSqliteSubmissionDeliveryStore } from '../../paper-adapters/submission/sqlite-delivery-store.mjs';
 import { buildExecutorCapabilities } from '../../paper-ports/executor-capabilities.mjs';
 import { submissionExecutorDescriptor } from '../../paper-ports/submission-executor-port.mjs';
@@ -164,6 +166,68 @@ test('response state and persisted receipt are one atomic transaction', (t) => {
   assert.equal(delivery.getOutbox(message.message_id).status, 'pending');
 });
 
+test('response transaction rolls back and releases the connection when the clock throws after BEGIN', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-response-clock-failure-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const store = createDefaultPaperStore({ root, runtimeRoot: root }); t.after(() => store.close());
+  const fixedNow = '2026-07-13T00:00:00.000Z';
+  const stableClock = { now: () => new Date(fixedNow), nowIso: () => fixedNow };
+  const ledger = createSqliteReceiptLedger({ store, clock: stableClock });
+  const delivery = createSqliteSubmissionDeliveryStore({ store, receiptLedger: ledger, clock: stableClock });
+  const authorization = { status: 'submission_dispatch_authorization_ready', submissionDispatchAuthorizationHash: 'clock-fault-dispatch', provider: 'p', accountId: 'a', nonce: 'clock-fault-nonce', attempt: 1 };
+  const message = delivery.enqueue({ paperId: 'clock-fault-paper', dispatchAuthorization: authorization, payload: {} });
+  assert.equal(store.execute(`UPDATE submission_outbox SET status='in_flight',claimed_by='clock-worker',lease_token='clock-lease',lease_expires_at='2026-07-13T01:00:00.000Z' WHERE message_id='${message.message_id}';`).ok, true);
+  let nowCalls = 0;
+  const failingClock = {
+    nowIso: () => fixedNow,
+    now() {
+      nowCalls += 1;
+      if (nowCalls === 2) throw new Error('simulated-post-begin-clock-failure');
+      return new Date(fixedNow);
+    },
+  };
+  const failingDelivery = createSqliteSubmissionDeliveryStore({ store, receiptLedger: ledger, clock: failingClock });
+  const response = { responseId: 'clock-fault-response', outcome: 'failed', dispatchAuthorizationHash: authorization.submissionDispatchAuthorizationHash, provider: 'p', accountId: 'a', performedAt: fixedNow, attempt: 1 };
+
+  assert.throws(() => failingDelivery.recordResponse({ messageId: message.message_id, response, leaseToken: 'clock-lease' }), /simulated-post-begin-clock-failure/);
+  assert.equal(nowCalls, 2);
+  assert.equal(delivery.getOutbox(message.message_id).status, 'in_flight');
+  assert.equal(store.query("SELECT count(*) AS count FROM submission_inbox WHERE response_id='clock-fault-response';").rows[0].count, 0);
+  assert.equal(store.query("SELECT count(*) AS count FROM receipt_ledger WHERE kind='SubmissionResponsePersistedReceipt';").rows[0].count, 0);
+  assert.doesNotThrow(() => store.transaction((transactionStore) => transactionStore.query('SELECT 1 AS connection_reusable;')));
+  delivery.recordResponse({ messageId: message.message_id, response, leaseToken: 'clock-lease' });
+  assert.equal(delivery.getOutbox(message.message_id).status, 'retryable_failure');
+});
+
+test('response state failure closes its transaction before a quarantining API throws', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-response-api-failure-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const store = createDefaultPaperStore({ root, runtimeRoot: root }); t.after(() => store.close());
+  const clock = { now: () => new Date('2026-07-13T00:00:00.000Z'), nowIso: () => '2026-07-13T00:00:00.000Z' };
+  const ledger = createSqliteReceiptLedger({ store, clock });
+  const persistence = createSqliteDeliveryPersistence({ store });
+  const message = {
+    message_id: 'missing-locked-row',
+    paper_id: 'api-fault-paper',
+    dispatch_hash: 'api-fault-dispatch',
+    provider: 'p',
+    account_id: 'a',
+    status: 'pending',
+    claimed_by: null,
+    payload_json: '{}',
+  };
+  const api = {
+    getOutbox: (messageId) => (messageId === message.message_id ? message : null),
+    quarantineInvalidIntake() { throw new Error('simulated-post-begin-get-api-failure'); },
+  };
+  const operations = createSqliteDeliveryResponseOperations({ persistence, receiptLedger: ledger, clock, getApi: () => api });
+  const response = { responseId: 'api-fault-response', outcome: 'failed', dispatchAuthorizationHash: message.dispatch_hash, provider: 'p', accountId: 'a', performedAt: clock.nowIso(), attempt: 1 };
+
+  assert.throws(() => operations.recordResponse({ messageId: message.message_id, response }), /simulated-post-begin-get-api-failure/);
+  assert.equal(store.query("SELECT count(*) AS count FROM receipt_ledger WHERE kind='SubmissionResponsePersistedReceipt';").rows[0].count, 0);
+  assert.doesNotThrow(() => store.transaction((transactionStore) => transactionStore.query('SELECT 1 AS connection_reusable;')));
+});
+
 test('redrive, dead-letter and quarantine state roll back when ledger persistence fails', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-delivery-ledger-rollback-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -308,6 +372,7 @@ test('provider capability gates atomic claim lease heartbeat and response cursor
   const prepareFailureDelivery = createSqliteSubmissionDeliveryStore({ store, receiptLedger: { ...ledger, prepare() { throw new Error('simulated-claim-prepare-failure'); } }, clock });
   assert.throws(() => prepareFailureDelivery.claimPending({ workerId: 'prepare-failing-worker', provider: descriptor.provider, accountId: descriptor.accountId, executorDescriptorHash: descriptor.submissionExecutorDescriptorHash, leaseSeconds: 60 }), /simulated-claim-prepare-failure/);
   assert.equal(delivery.getOutbox(message.message_id).status, 'pending');
+  assert.doesNotThrow(() => store.transaction((transactionStore) => transactionStore.query('SELECT 1 AS connection_reusable;')));
   assert.throws(() => failingDelivery.claimPending({ workerId: 'failing-worker', provider: descriptor.provider, accountId: descriptor.accountId, executorDescriptorHash: descriptor.submissionExecutorDescriptorHash, leaseSeconds: 60 }), /simulated_missing_receipt_ledger_table/);
   assert.equal(delivery.getOutbox(message.message_id).status, 'pending');
   const claim = delivery.claimPending({ workerId: 'worker-1', provider: descriptor.provider, accountId: descriptor.accountId, executorDescriptorHash: descriptor.submissionExecutorDescriptorHash, leaseSeconds: 60 });

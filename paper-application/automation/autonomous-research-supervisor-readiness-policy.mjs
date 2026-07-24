@@ -5,6 +5,9 @@ import {
   inspectAutonomousResearchCampaignExecutionAdmission,
 } from '../../paper-domain/automation/autonomous-research-campaign-execution-admission.mjs';
 import { elapsedRunMs } from './campaign-execution-budget-policy.mjs';
+import {
+  verifyAutonomousResearchScientificDispositionReceipt,
+} from '../../paper-domain/automation/autonomous-research-scientific-disposition-contract.mjs';
 
 const CAMPAIGN_TERMINAL = new Set(['failed', 'cancelled']);
 const AUTOMATIC_SUPERVISOR_RECOVERY_REASONS = new Set([
@@ -13,6 +16,26 @@ const AUTOMATIC_SUPERVISOR_RECOVERY_REASONS = new Set([
   'supervisor_lease_lost',
 ]);
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
+
+export function autonomousResearchCampaignRequiresExternalSubmission(campaign) {
+  return campaign?.spec?.autonomousResearchPreparation?.venueProfileSelection
+    ?.requireExternalSubmission === true;
+}
+
+function submissionRecoveryDisposition({ campaign, submissionRecovery }) {
+  if (!autonomousResearchCampaignRequiresExternalSubmission(campaign)) {
+    return Object.freeze({ required: false, ready: true, terminalFailure: false });
+  }
+  const delivery = submissionRecovery?.delivery || null;
+  return Object.freeze({
+    required: true,
+    ready: delivery?.status === 'autonomous_submission_delivery_completed'
+      && delivery?.terminal === true,
+    terminalFailure:
+      delivery?.status === 'autonomous_submission_delivery_explicit_failure'
+      && delivery?.terminal === true,
+  });
+}
 
 export function remainingAutonomousCampaignWallTimeMs(campaign, nowEpochMs) {
   if (campaign?.status === 'completed') return 0;
@@ -103,8 +126,25 @@ export function autonomousResearchSupervisorDispatchDecision({
   lifecycle,
   qualificationState,
   runtimeReadiness,
+  submissionRecovery = null,
+  scientificDispositionReceipt = null,
   now,
 } = {}) {
+  if (scientificDispositionReceipt) {
+    if (!verifyAutonomousResearchScientificDispositionReceipt(scientificDispositionReceipt)
+      || scientificDispositionReceipt.source.campaignId !== campaign?.campaignId
+      || scientificDispositionReceipt.source.paperId !== campaign?.paperId) {
+      return Object.freeze({
+        block: true,
+        reason: 'autonomous_research_scientific_disposition_receipt_invalid',
+      });
+    }
+    return Object.freeze({
+      settle: true,
+      reason: scientificDispositionReceipt.settlementReason,
+      scientificDispositionReceipt,
+    });
+  }
   if (CAMPAIGN_TERMINAL.has(campaign.status)) {
     return Object.freeze({ settle: true, reason: `campaign_${campaign.status}` });
   }
@@ -132,7 +172,14 @@ export function autonomousResearchSupervisorDispatchDecision({
       reason: 'supervisor_qualification_campaign_window_uncoverable',
     });
   }
-  if (campaign.status === 'completed' && window.verified) {
+  const submission = submissionRecoveryDisposition({ campaign, submissionRecovery });
+  if (submission.terminalFailure) {
+    return Object.freeze({
+      block: true,
+      reason: 'autonomous_submission_delivery_explicit_failure',
+    });
+  }
+  if (campaign.status === 'completed' && window.verified && submission.ready) {
     const expiresAt = Date.parse(qualificationState.receipt.expiresAt);
     const renewAt = Math.min(
       expiresAt - window.requiredValidity,
@@ -145,6 +192,24 @@ export function autonomousResearchSupervisorDispatchDecision({
         deferUntil: new Date(renewAt),
         reason: 'qualification_renewal_scheduled',
       });
+  }
+  if (campaign.status === 'completed' && window.verified && submission.required) {
+    return Object.freeze({
+      action: 'resume',
+      qualificationRenewalRequired: false,
+      requiredQualificationValidityMs: window.requiredValidity,
+      qualificationRetry: Object.freeze({
+        maximumTotalAttempts: lifecycle.policy.qualificationMaximumTotalAttempts,
+        maximumTotalCostUsd: lifecycle.policy.qualificationMaximumTotalCostUsd,
+        attemptReservationCostUsd: lifecycle.policy.qualificationAttemptReservationCostUsd,
+        renewalLeadMs: window.requiredValidity,
+        globalDeadlineMs: Math.max(
+          1000,
+          Date.parse(lifecycle.absoluteDeadlineAt) - now.getTime(),
+        ),
+      }),
+      reason: 'autonomous_submission_delivery_required',
+    });
   }
   const remainingMs = Date.parse(lifecycle.absoluteDeadlineAt) - now.getTime();
   const qualification = qualificationMetrics(qualificationState);
@@ -176,7 +241,26 @@ export function autonomousResearchSupervisorNextSchedule({
   lifecycle,
   now,
   pollMs,
+  scientificDispositionReceipt = null,
 } = {}) {
+  if (scientificDispositionReceipt) {
+    if (!verifyAutonomousResearchScientificDispositionReceipt(scientificDispositionReceipt)
+      || scientificDispositionReceipt.source.campaignId !== campaign?.campaignId
+      || scientificDispositionReceipt.source.paperId !== campaign?.paperId) {
+      return Object.freeze({
+        settled: false,
+        nextAt: now,
+        reason: 'autonomous_research_scientific_disposition_receipt_invalid',
+        terminalReason: 'autonomous_research_scientific_disposition_receipt_invalid',
+      });
+    }
+    return Object.freeze({
+      settled: true,
+      nextAt: now,
+      reason: scientificDispositionReceipt.settlementReason,
+      scientificDispositionReceipt,
+    });
+  }
   const window = qualificationWindow({
     campaign, lifecycle, qualificationState, runtimeReadiness, now,
   });
@@ -189,14 +273,44 @@ export function autonomousResearchSupervisorNextSchedule({
     });
   }
   const deadlineMs = Date.parse(lifecycle.absoluteDeadlineAt);
-  if (report?.fullAutomaticResearchWritingReady === true && window.verified) {
+  const submission = submissionRecoveryDisposition({
+    campaign,
+    submissionRecovery: { delivery: report?.autonomousSubmission?.delivery || null },
+  });
+  if (submission.terminalFailure) {
+    return Object.freeze({
+      settled: false,
+      nextAt: now,
+      reason: 'autonomous_submission_delivery_explicit_failure',
+      terminalReason: 'autonomous_submission_delivery_explicit_failure',
+    });
+  }
+  if (submission.required && !submission.ready) {
+    return Object.freeze({
+      settled: false,
+      nextAt: new Date(Math.min(deadlineMs, now.getTime() + pollMs)),
+      reason: 'autonomous_submission_recovery_scheduled',
+    });
+  }
+  const boundedGoldenQualificationPublished = campaign?.status === 'completed'
+    && report?.boundedGoldenQualificationPublished === true;
+  const completedQualificationOutcome = report?.fullAutomaticResearchWritingReady === true
+    ? 'qualified_beyond_lifecycle'
+    : boundedGoldenQualificationPublished
+      ? 'bounded_golden_qualification_published_beyond_lifecycle'
+      : null;
+  if (completedQualificationOutcome && window.verified) {
     const expiresAt = Date.parse(qualificationState.receipt.expiresAt);
     const renewAt = Math.min(
       expiresAt - window.requiredValidity,
       runtimeRenewalAt(runtimeReadiness),
     );
     if (renewAt >= deadlineMs) {
-      return Object.freeze({ settled: true, nextAt: now, reason: 'qualified_beyond_lifecycle' });
+      return Object.freeze({
+        settled: true,
+        nextAt: now,
+        reason: completedQualificationOutcome,
+      });
     }
     return Object.freeze({
       settled: false,

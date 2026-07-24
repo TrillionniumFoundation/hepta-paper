@@ -14,6 +14,7 @@ import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-
 import { createSqliteCampaignStore } from '../../paper-adapters/persistence/sqlite-campaign-store.mjs';
 import { buildPaperCampaignPlan } from '../../paper-domain/automation/campaign-plan.mjs';
 import { buildExecutorCapabilities } from '../../paper-ports/executor-capabilities.mjs';
+import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 function fixtureCapabilities(executorId, overrides = {}) {
   return () => buildExecutorCapabilities({
@@ -22,6 +23,19 @@ function fixtureCapabilities(executorId, overrides = {}) {
     networkPolicy: 'none',
     receiptKinds: ['AgentExecutionReceipt'],
     ...overrides,
+  });
+}
+
+function fixtureAgentReceipt(executorId, changedPaths, extra = {}) {
+  const payload = {
+    status: 'agent_execution_completed',
+    executorId,
+    changedPaths: Object.freeze([...changedPaths].sort()),
+    ...extra,
+  };
+  return Object.freeze({
+    ...payload,
+    agentExecutionReceiptHash: hashRecord('AgentExecutionReceipt', payload),
   });
 }
 
@@ -119,7 +133,7 @@ test('isolated executor merges non-conflicting changes and backend router falls 
   const paper = path.join(root, 'paper');
   fs.mkdirSync(paper);
   fs.writeFileSync(path.join(paper, 'main.tex'), 'before\n');
-  const fallback = { executorId: 'fallback', capabilities: fixtureCapabilities('fallback'), async execute(input) { fs.writeFileSync(path.join(input.workspacePath, 'main.tex'), 'after\n'); fs.writeFileSync(path.join(input.workspacePath, 'NEW.md'), 'new\n'); fs.mkdirSync(path.join(input.workspacePath, '__pycache__')); fs.writeFileSync(path.join(input.workspacePath, '__pycache__', 'generated.pyc'), 'cache'); return { status: 'agent_execution_completed', changedPaths: ['main.tex', 'NEW.md', '__pycache__/generated.pyc'], agentExecutionReceiptHash: 'sha256:fallback' }; } };
+  const fallback = { executorId: 'fallback', capabilities: fixtureCapabilities('fallback'), async execute(input) { fs.writeFileSync(path.join(input.workspacePath, 'main.tex'), 'after\n'); fs.writeFileSync(path.join(input.workspacePath, 'NEW.md'), 'new\n'); fs.mkdirSync(path.join(input.workspacePath, '__pycache__')); fs.writeFileSync(path.join(input.workspacePath, '__pycache__', 'generated.pyc'), 'cache'); return fixtureAgentReceipt('fallback', ['main.tex', 'NEW.md']); } };
   const router = createAgentBackendRouter({ primary: { executorId: 'primary', capabilities: fixtureCapabilities('primary'), async execute() { const error = new Error('offline'); error.retryable = true; throw error; } }, fallbacks: [fallback] });
   const executor = createIsolatedAgentExecutor({ delegate: router, isolationRoot: isolation, keepWorkspaces: false });
   const receipt = await executor.execute({ role: 'writer', workspacePath: paper, instructions: 'edit', context: { campaignId: 'c', nodeId: 'n' } });
@@ -183,7 +197,7 @@ test('isolated merge rejects a delegate-created symlink and preserves the source
     async execute(input) {
       fs.rmSync(path.join(input.workspacePath, 'main.tex'));
       fs.symlinkSync(outside, path.join(input.workspacePath, 'main.tex'));
-      return { status: 'agent_execution_completed', agentExecutionReceiptHash: 'sha256:symlink' };
+      return fixtureAgentReceipt('symlink-delegate', ['main.tex']);
     },
   };
   const isolated = createIsolatedAgentExecutor({ delegate, isolationRoot: path.join(root, 'isolated'), keepFailedWorkspaces: false });
@@ -208,7 +222,7 @@ test('isolated merge rejects a symlinked destination parent even when source lin
     async execute(input) {
       fs.mkdirSync(path.join(input.workspacePath, 'linked'));
       fs.writeFileSync(path.join(input.workspacePath, 'linked', 'new.txt'), 'agent\n');
-      return { status: 'agent_execution_completed', agentExecutionReceiptHash: 'sha256:parent-link' };
+      return fixtureAgentReceipt('parent-link-delegate', ['linked/new.txt']);
     },
   };
   const isolated = createIsolatedAgentExecutor({ delegate, isolationRoot: path.join(root, 'isolated'), keepFailedWorkspaces: false });
@@ -227,7 +241,7 @@ test('isolated merge conflicts retain delegate usage receipts for hard budgets',
   const delegate = { executorId: 'conflicting-delegate', capabilities: fixtureCapabilities('conflicting-delegate'), async execute(input) {
     fs.writeFileSync(path.join(input.workspacePath, 'main.tex'), 'agent\n');
     fs.writeFileSync(path.join(input.context.sourceWorkspace, 'main.tex'), 'concurrent\n');
-    return { status: 'agent_execution_completed', agentExecutionReceiptHash: 'sha256:conflict', usage: { total: 7 } };
+    return fixtureAgentReceipt('conflicting-delegate', ['main.tex'], { usage: { total: 7 } });
   } };
   const isolated = createIsolatedAgentExecutor({ delegate, isolationRoot: path.join(root, 'isolated') });
   await assert.rejects(

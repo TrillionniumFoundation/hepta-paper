@@ -11,6 +11,16 @@ function resultReceipt(jobId, attemptId, status = 'completed') {
   return { ...payload, jobReceiptHash: hashRecord(payload.kind, payload) };
 }
 
+function operationalReceipt(overrides = {}) {
+  const payload = {
+    version: 1,
+    kind: 'OperationalJobResultReceipt',
+    status: 'completed',
+    ...overrides,
+  };
+  return { ...payload, jobReceiptHash: hashRecord(payload.kind, payload) };
+}
+
 function mutableClock(iso) {
   let value = new Date(iso);
   return {
@@ -151,4 +161,288 @@ test('runtime.job-receipt-store renews only a still-active fenced attempt', asyn
   clock.advance(1_001);
   assert.throws(() => jobs.renewAttemptLease({ ...staleAttempt, leaseSeconds: 3 }), /active_job_attempt_lease_fence_required/);
   assert.throws(() => jobs.renewAttemptLease({ ...staleAttempt, workerId: 'forged', leaseSeconds: 3 }), /active_job_attempt_lease_fence_required/);
+});
+
+test('runtime.job-receipt-store binds optional operational receipt context and preserves legacy defaults', async (t) => {
+  const root = await temporaryDirectory(t);
+  const store = temporaryStore(root);
+  const clock = fixedClock();
+  const ledger = createSqliteReceiptLedger({ store, clock });
+  const jobs = createSqliteJobReceiptStore({ store, receiptLedger: ledger, clock });
+
+  jobs.createJob({
+    jobId: 'bound',
+    deduplicationKey: 'bound-dedupe',
+    kind: 'research',
+    paperId: 'paper-bound',
+    priority: 7,
+    environment: 'fixture',
+    evidenceClass: 'fixture_evidence',
+  });
+  const boundLease = jobs.acquireLease({ jobId: 'bound', workerId: 'worker' });
+  const boundAttempt = jobs.recordAttempt({
+    jobId: 'bound',
+    workerId: 'worker',
+    leaseGeneration: boundLease.leaseGeneration,
+  });
+  const exactContext = {
+    jobId: 'bound',
+    attemptId: boundAttempt.attemptId,
+    paperId: 'paper-bound',
+  };
+  for (const [overrides, expected] of [
+    [{ ...exactContext, jobId: 'other-job' }, /job_settlement_receipt_job_id_mismatch/],
+    [{ ...exactContext, attemptId: 'other-attempt' }, /job_settlement_receipt_attempt_id_mismatch/],
+    [{ ...exactContext, paperId: 'other-paper' }, /job_settlement_receipt_paper_id_mismatch/],
+  ]) {
+    assert.throws(() => jobs.completeJob({
+      ...boundAttempt,
+      receipt: operationalReceipt(overrides),
+    }), expected);
+  }
+  assert.throws(() => jobs.completeJob({
+    ...boundAttempt,
+    receipt: {},
+  }), /job receipt kind forbidden:missing/);
+  assert.equal(jobs.completeJob({
+    ...boundAttempt,
+    receipt: operationalReceipt(exactContext),
+  }).status, 'completed');
+
+  jobs.createJob({
+    jobId: 'legacy-defaults',
+    deduplicationKey: 'legacy-defaults-dedupe',
+    kind: 'research',
+  });
+  assert.equal(store.execute(
+    "UPDATE jobs SET spec_json='',environment='',evidence_class='' WHERE job_id='legacy-defaults';",
+  ).ok, true);
+  assert.deepEqual(jobs.get('legacy-defaults').spec, {});
+  const legacyLease = jobs.acquireLease({
+    jobId: 'legacy-defaults',
+    workerId: 'legacy-worker',
+  });
+  const legacyAttempt = jobs.recordAttempt({
+    jobId: 'legacy-defaults',
+    workerId: 'legacy-worker',
+    leaseGeneration: legacyLease.leaseGeneration,
+  });
+  assert.equal(jobs.completeJob({
+    ...legacyAttempt,
+    receipt: operationalReceipt(),
+  }).status, 'completed');
+  assert.equal(ledger.listRawForAudit({ stream: 'jobs' }).length, 2);
+});
+
+test('runtime.job-receipt-store rolls back begin, commit, and receipt write failures', async (t) => {
+  const root = await temporaryDirectory(t);
+  const store = temporaryStore(root);
+  const clock = fixedClock();
+  const ledger = createSqliteReceiptLedger({ store, clock });
+  const jobs = createSqliteJobReceiptStore({ store, receiptLedger: ledger, clock });
+  const wrappedStore = (execute) => Object.freeze({
+    query: (sql, parameters = []) => store.query(sql, parameters),
+    execute,
+  });
+
+  jobs.createJob({
+    jobId: 'transaction-failure',
+    deduplicationKey: 'transaction-failure-dedupe',
+    kind: 'research',
+  });
+  const beginFailureJobs = createSqliteJobReceiptStore({
+    store: wrappedStore((sql) => (
+      sql === 'BEGIN IMMEDIATE;'
+        ? { ok: false, error: 'injected_begin_failure' }
+        : store.execute(sql)
+    )),
+    receiptLedger: ledger,
+    clock,
+  });
+  assert.throws(
+    () => beginFailureJobs.acquireLease({
+      jobId: 'transaction-failure',
+      workerId: 'worker',
+    }),
+    /injected_begin_failure/,
+  );
+
+  const commitFailureJobs = createSqliteJobReceiptStore({
+    store: wrappedStore((sql) => (
+      sql === 'COMMIT;'
+        ? { ok: false, stderr: 'injected_commit_failure' }
+        : store.execute(sql)
+    )),
+    receiptLedger: ledger,
+    clock,
+  });
+  assert.throws(
+    () => commitFailureJobs.acquireLease({
+      jobId: 'transaction-failure',
+      workerId: 'worker',
+    }),
+    /injected_commit_failure/,
+  );
+  assert.equal(jobs.get('transaction-failure').status, 'queued');
+
+  const lease = jobs.acquireLease({
+    jobId: 'transaction-failure',
+    workerId: 'worker',
+  });
+  const attempt = jobs.recordAttempt({
+    jobId: 'transaction-failure',
+    workerId: 'worker',
+    leaseGeneration: lease.leaseGeneration,
+  });
+  let transactionActive = false;
+  const receiptWriteFailureJobs = createSqliteJobReceiptStore({
+    store: wrappedStore((sql) => {
+      if (sql === 'BEGIN IMMEDIATE;') {
+        transactionActive = true;
+        return store.execute(sql);
+      }
+      if (sql === 'ROLLBACK;') {
+        transactionActive = false;
+        return store.execute(sql);
+      }
+      if (transactionActive && sql !== 'COMMIT;') return { ok: false };
+      return store.execute(sql);
+    }),
+    receiptLedger: ledger,
+    clock,
+  });
+  assert.throws(
+    () => receiptWriteFailureJobs.completeJob({
+      ...attempt,
+      receipt: operationalReceipt({
+        jobId: 'transaction-failure',
+        attemptId: attempt.attemptId,
+      }),
+    }),
+    /job_receipt_ledger_write_failed/,
+  );
+  assert.equal(jobs.get('transaction-failure').status, 'running');
+  assert.equal(ledger.listRawForAudit({ stream: 'jobs' }).length, 0);
+});
+
+test('runtime.job-receipt-store rejects every malformed public command before persistence', async (t) => {
+  const root = await temporaryDirectory(t);
+  const store = temporaryStore(root);
+  const clock = fixedClock();
+  const ledger = createSqliteReceiptLedger({ store, clock });
+
+  assert.throws(
+    () => createSqliteJobReceiptStore(),
+    /Job store requires store, receiptLedger and clock/,
+  );
+  assert.throws(
+    () => createSqliteJobReceiptStore({ store, receiptLedger: ledger }),
+    /Job store requires store, receiptLedger and clock/,
+  );
+  assert.throws(
+    () => createSqliteJobReceiptStore({
+      store,
+      receiptLedger: {},
+      clock,
+    }),
+    /Job store requires atomic receipt ledger prepare/,
+  );
+
+  const jobs = createSqliteJobReceiptStore({
+    store,
+    receiptLedger: ledger,
+    clock,
+    deniedReceiptKinds: null,
+  });
+  for (const spec of [
+    {},
+    { jobId: 'missing-deduplication', kind: 'research' },
+    { jobId: 'missing-kind', deduplicationKey: 'dedupe' },
+  ]) {
+    assert.throws(
+      () => jobs.createJob(spec),
+      /jobId, deduplicationKey and kind are required/,
+    );
+  }
+  for (const input of [
+    {},
+    { jobId: 'missing-worker' },
+    { workerId: 'missing-job' },
+  ]) {
+    assert.throws(
+      () => jobs.acquireLease(input),
+      /jobId and workerId are required/,
+    );
+  }
+  for (const input of [
+    {},
+    { jobId: 'missing-worker', leaseGeneration: 1 },
+    { workerId: 'missing-job', leaseGeneration: 1 },
+  ]) {
+    assert.throws(
+      () => jobs.recordAttempt(input),
+      /jobId and workerId are required/,
+    );
+  }
+  assert.throws(
+    () => jobs.recordAttempt({
+      jobId: 'job',
+      workerId: 'worker',
+      leaseGeneration: 1,
+      status: 'queued',
+    }),
+    /job_attempt_initial_status_invalid/,
+  );
+  for (const leaseGeneration of [undefined, 0, -1, 1.5, Number.NaN]) {
+    assert.throws(
+      () => jobs.recordAttempt({
+        jobId: 'job',
+        workerId: 'worker',
+        leaseGeneration,
+      }),
+      /job_lease_generation_required/,
+    );
+  }
+  for (const input of [
+    {},
+    { jobId: 'job', attemptId: 'attempt', leaseGeneration: 1 },
+    { jobId: 'job', workerId: 'worker', leaseGeneration: 1 },
+    { attemptId: 'attempt', workerId: 'worker', leaseGeneration: 1 },
+  ]) {
+    assert.throws(
+      () => jobs.renewAttemptLease(input),
+      /jobId, attemptId and workerId are required/,
+    );
+  }
+  assert.throws(
+    () => jobs.renewAttemptLease({
+      jobId: 'job',
+      attemptId: 'attempt',
+      workerId: 'worker',
+      leaseGeneration: 0,
+    }),
+    /job_lease_generation_required/,
+  );
+  assert.throws(
+    () => jobs.completeJob(),
+    /job completion receipt is required/,
+  );
+  assert.throws(
+    () => jobs.failJob(),
+    /job failure class is required/,
+  );
+  for (const input of [
+    { attemptId: 'attempt', workerId: 'worker', leaseGeneration: 1 },
+    { jobId: 'job', workerId: 'worker', leaseGeneration: 1 },
+    { jobId: 'job', attemptId: 'attempt', leaseGeneration: 1 },
+  ]) {
+    assert.throws(
+      () => jobs.failJob({ ...input, failureClass: 'fixture_failure' }),
+      /jobId, attemptId and workerId are required/,
+    );
+  }
+
+  assert.deepEqual(jobs.list({ status: 'queued', limit: 0 }), []);
+  assert.deepEqual(jobs.list({ deduplicationKey: 'missing', limit: 5000 }), []);
+  assert.equal(jobs.get('missing'), null);
 });

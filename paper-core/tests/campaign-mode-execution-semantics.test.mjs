@@ -5,7 +5,10 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { createCampaignNodeExecutor } from '../../paper-composition/automation/campaign-node-execution-composition.mjs';
-import { createCampaignResearchVerifier } from '../../paper-adapters/automation/campaign-research-verifier.mjs';
+import {
+  createCampaignResearchVerifier,
+  runFencedFormalNativeResearchWorkers,
+} from '../../paper-adapters/automation/campaign-research-verifier.mjs';
 import { createMultiLanguageEmpiricalExecutor } from '../../paper-adapters/automation/multi-language-empirical-executor.mjs';
 import { executeSystemBenchmarkHarness } from '../../paper-adapters/automation/system-benchmark-harness.mjs';
 import { createFilesystemArtifactRepository } from '../../paper-adapters/artifacts/filesystem-artifact-repository.mjs';
@@ -25,6 +28,7 @@ function fixture(t, prefix) {
   const workspace = path.join(root, 'paper');
   const runtimeRoot = path.join(root, 'runtime');
   fs.mkdirSync(workspace, { recursive: true });
+  fs.mkdirSync(runtimeRoot, { recursive: true });
   fs.writeFileSync(path.join(workspace, 'main.tex'), '\\documentclass{article}\n\\begin{document}Fixture\\end{document}\n');
   const paperTask = createPaperTask({
     paperId: 'paper-1',
@@ -50,6 +54,50 @@ function campaignFor(command) {
     spec: command.campaignPlan,
   });
 }
+
+test('formal native worker rechecks the current side-effect fence after reviewer time', async () => {
+  let nowMs = 61_000;
+  let expiresAtMs = 60_000;
+  let workerCalls = 0;
+  let durableStarts = 0;
+  const gate = async () => true;
+  gate.assertCurrent = () => {
+    if (nowMs >= expiresAtMs) {
+      const error = new Error('authority_evidence_expired_after_reviewer');
+      error.authorityEvidenceRenewalDeferred = true;
+      throw error;
+    }
+    return true;
+  };
+  gate.markStarted = async () => {
+    gate.assertCurrent();
+    durableStarts += 1;
+  };
+  const run = () => runFencedFormalNativeResearchWorkers({
+    assertExternalSideEffectReady: gate,
+    campaignId: 'campaign:formal-fence',
+    paperId: 'paper:formal-fence',
+    nodeId: 'campaign:formal-fence:formal-verify',
+    attemptId: 'attempt:formal-fence',
+    workerInput: {},
+    runWorkers() {
+      workerCalls += 1;
+      return { status: 'fixture-worker-completed' };
+    },
+  });
+  await assert.rejects(run, (error) => (
+    error.authorityEvidenceRenewalDeferred === true
+      && error.message === 'authority_evidence_expired_after_reviewer'
+  ));
+  assert.equal(workerCalls, 0);
+  assert.equal(durableStarts, 0);
+
+  expiresAtMs = 120_000;
+  nowMs = 62_000;
+  assert.deepEqual(await run(), { status: 'fixture-worker-completed' });
+  assert.equal(durableStarts, 1);
+  assert.equal(workerCalls, 1);
+});
 
 function fixtureRunnerReceipt({ spec, outputDirectory, requiredMetrics, datasetMounts = [], resourceBudget = null }) {
   void requiredMetrics;
@@ -194,6 +242,7 @@ function fixtureHarnessExecution(spec, selector, datasetMounts = []) {
             HEPTA_EXPERIMENT_ARM_ADAPTER_HASH: batch.armAdapter.sourceHash,
             HEPTA_EXPERIMENT_ARM_ADAPTER_SET_HASH: batch.armAdapterSetHash,
             HEPTA_PRE_DATA_ACCESS_FREEZE_HASH: batch.empiricalPreDataAccessFreezeHash,
+            HEPTA_EXPERIMENT_IR_HASH: batch.versionedExperimentIrHash,
             ...systemBenchmarkArmBatchChallengeEnvironment(batch.challenge),
           },
         },

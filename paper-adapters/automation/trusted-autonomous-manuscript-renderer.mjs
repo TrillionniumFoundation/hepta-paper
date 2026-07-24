@@ -1,22 +1,21 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  verifyMachineProposedScientificClaimSet,
-} from '../../paper-domain/automation/autonomous-research-proposal-contract.mjs';
-import {
   autonomousFormalSupportMarkerDeclaration,
   autonomousFormalSupportSurfaceBody,
-  buildAutonomousFormalSupportSurfaceAuthority,
 } from '../../paper-domain/automation/autonomous-formal-support-registry.mjs';
 import {
-  buildAutonomousResearchSeedContractBundle,
-  verifyAutonomousResearchPolicyAuthorization,
-} from '../../paper-domain/automation/autonomous-research-policy-contract.mjs';
+  EVIDENCE_BOUND_MANUSCRIPT_IR_DRAFT_PATH,
+  evidenceBoundManuscriptBlockBody,
+  evidenceBoundManuscriptMarkerDeclaration,
+  latexEscapeEvidenceBoundText,
+  verifyEvidenceBoundManuscriptIr,
+} from '../../paper-domain/research/evidence-bound-manuscript-ir.mjs';
 import {
-  TRUSTED_AUTONOMOUS_MANUSCRIPT_PROSE,
-  TRUSTED_AUTONOMOUS_MANUSCRIPT_SECTIONS,
-  TRUSTED_AUTONOMOUS_MANUSCRIPT_TITLE,
-} from '../../paper-domain/automation/trusted-autonomous-manuscript-prose.mjs';
+  buildEvidenceEntailmentContract,
+  EVIDENCE_ENTAILMENT_CONTRACT_PATH,
+  verifyEvidenceEntailmentContract,
+} from '../../paper-domain/research/evidence-entailment-contract.mjs';
 import { renderAutonomousEmpiricalClaimStatement } from '../../paper-domain/automation/autonomous-empirical-claim-lineage-contract.mjs';
 import {
   bindEmpiricalAssertionUniverse,
@@ -32,53 +31,17 @@ import {
   readScopedFileSync,
 } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
 import { writeDurableTextSync } from '../runtime/durable-text-repository.mjs';
+import { writeDurableJsonSync } from '../runtime/durable-json-repository.mjs';
 import { readEmpiricalAssertionUniverse } from '../research-verify/empirical-assertion-universe-reader.mjs';
 import { readEmpiricalClaimUniverse } from '../research-verify/empirical-claim-universe-reader.mjs';
-
-const PROPOSAL_PATH = 'AUTONOMOUS_RESEARCH_PROPOSAL.json';
-const POLICY_PATH = 'AUTONOMOUS_RESEARCH_POLICY_AUTHORIZATION.json';
-const SEED_PATH = 'AUTONOMOUS_RESEARCH_SEED_CONTRACTS.json';
-
-function readJson(root, relative) {
-  const read = readScopedFileSync({ scopeRoot: root, candidate: path.join(root, relative) });
-  if (read.status !== 'scoped_file_read_verified' || read.bytes > 4 * 1024 * 1024) {
-    throw new Error(`trusted_autonomous_manuscript_source_invalid:${relative}`);
-  }
-  try { return JSON.parse(read.content.toString('utf8')); }
-  catch { throw new Error(`trusted_autonomous_manuscript_json_invalid:${relative}`); }
-}
-
-function verifiedAuthorityRecords(root) {
-  const proposal = readJson(root, PROPOSAL_PATH);
-  const policyAuthorization = readJson(root, POLICY_PATH);
-  const seedBundle = readJson(root, SEED_PATH);
-  const proposalVerification = verifyMachineProposedScientificClaimSet(proposal);
-  const policyVerification = verifyAutonomousResearchPolicyAuthorization(policyAuthorization, { proposal });
-  const rebuiltSeed = buildAutonomousResearchSeedContractBundle({
-    proposal,
-    policyAuthorization,
-    evidencePlan: seedBundle.evidence,
-    reproducibilityPlan: seedBundle.reproducibility,
-    createdAt: seedBundle.createdAt,
-  });
-  if (!proposalVerification.valid || !policyVerification.valid
-    || rebuiltSeed.autonomousResearchSeedContractBundleHash
-      !== seedBundle.autonomousResearchSeedContractBundleHash
-    || JSON.stringify(rebuiltSeed) !== JSON.stringify(seedBundle)) {
-    throw new Error('trusted_autonomous_manuscript_seed_authority_invalid');
-  }
-  const empiricalClaims = seedBundle.claims.filter((claim) => claim.verificationMode === 'empirical_protocol');
-  const formalClaims = seedBundle.claims.filter((claim) => claim.verificationMode === 'formal_kernel');
-  if (empiricalClaims.length !== 1 || formalClaims.length !== 1) {
-    throw new Error('trusted_autonomous_manuscript_claim_authority_invalid');
-  }
-  const formalSupportAuthority = buildAutonomousFormalSupportSurfaceAuthority({ proposal, seedBundle });
-  return {
-    seedBundle,
-    empiricalClaim: empiricalClaims[0],
-    formalSupportAuthority,
-  };
-}
+import {
+  autonomousManuscriptEvidenceSourceDocuments,
+  finalizeAutonomousManuscriptIrInWorkspace,
+} from './autonomous-manuscript-ir-materialization.mjs';
+import {
+  readVerifiedAutonomousManuscriptAuthorityRecords,
+  VENUE_REQUIREMENT_IR_PATH,
+} from './trusted-autonomous-manuscript-authority-reader.mjs';
 
 function empiricalClaimsFromAuthority(authority, empiricalClaim) {
   const proposalClaimRecordHash = hashRecord('AutonomousResearchClaimRecord', empiricalClaim);
@@ -138,6 +101,15 @@ function formalSupportBlock(authority) {
   ];
 }
 
+function evidenceBoundProseBlock(block, priorArtReceipt) {
+  const declaration = evidenceBoundManuscriptMarkerDeclaration(block);
+  return [
+    `% HEPTA_EVIDENCE_BOUND_PROSE_BEGIN ${JSON.stringify(declaration)}`,
+    evidenceBoundManuscriptBlockBody(block, { priorArtReceipt }),
+    `% HEPTA_EVIDENCE_BOUND_PROSE_END ${declaration.blockId}`,
+  ];
+}
+
 function preparePresentationArtifactTarget(root, artifactPath) {
   const destination = path.resolve(root, artifactPath);
   const before = inspectScopedWriteTargetSync({ scopeRoot: root, candidate: destination });
@@ -153,49 +125,94 @@ function preparePresentationArtifactTarget(root, artifactPath) {
 }
 
 function renderSource({
+  manuscriptIr,
   claims,
   formalSupportAuthority,
   authority,
   presentationAuthority,
+  priorArtReceipt,
+  venueProfileSelection,
+  venueRequirementIr,
+  venueTemplateAsset,
+  submissionMetadataReceipt,
 }) {
   const claimLines = claims.flatMap(({ declaration, text }) => [
     `% HEPTA_EMPIRICAL_CLAIM_BEGIN ${JSON.stringify(declaration)}`,
     text,
     `% HEPTA_EMPIRICAL_CLAIM_END ${declaration.claimId}`,
   ]);
+  const sectionLines = manuscriptIr.sections.flatMap((section) => [
+    `\\section{${latexEscapeEvidenceBoundText(section.heading)}}`,
+    ...section.blocks.flatMap((block) => {
+      if (block.type !== 'slot') return evidenceBoundProseBlock(block, priorArtReceipt);
+      if (block.slot === 'empirical_claims') return claimLines;
+      if (block.slot === 'formal_support') return formalSupportBlock(formalSupportAuthority);
+      if (block.slot === 'empirical_results') return [
+        ...authority.entries.flatMap(assertionBlock),
+        ...presentationAuthority.entries.flatMap(presentationBlock),
+      ];
+      throw new Error(`trusted_autonomous_manuscript_slot_unsupported:${block.slot}`);
+    }),
+  ]);
+  const bibliographyStyle = venueProfileSelection?.profile?.bibliographyStyle
+    || 'inline-evidence-v1';
+  const citationStyle = venueProfileSelection?.profile?.citationStyle
+    || 'evidence-inline-v1';
+  const metadataProfile = submissionMetadataReceipt?.profile || null;
+  const authors = metadataProfile?.authors || [];
+  const anonymousReview = venueRequirementIr?.anonymousReview === true;
+  const automatedAuthorshipDisclosureRequired = (
+    venueRequirementIr?.disclosureRequirements || []
+  ).some((requirement) => (
+    /(?:automated|autonomous|machine|\bai\b|model).*(?:author|authorship|use)/iu
+      .test(String(requirement || ''))
+    || /(?:author|authorship).*(?:automated|autonomous|machine|\bai\b|model)/iu
+      .test(String(requirement || ''))
+  ));
+  const authorLine = anonymousReview
+    ? '\\author{Anonymous submission}'
+    : authors.length
+    ? `\\author{${authors.map((author) => (
+      latexEscapeEvidenceBoundText(author.displayName)
+    )).join(' \\and ')}}`
+    : '\\author{}';
+  const submissionMetadataLines = metadataProfile ? [
+    '\\section*{Keywords}',
+    submissionMetadataReceipt.keywords
+      .map((keyword) => latexEscapeEvidenceBoundText(keyword)).join('; '),
+    ...(!anonymousReview ? [
+      '\\section*{Author affiliations}',
+      ...authors.map((author) => `${latexEscapeEvidenceBoundText(author.displayName)}: ${
+        author.affiliations.map((value) => latexEscapeEvidenceBoundText(value)).join('; ')
+      }`),
+    ] : []),
+    ...(automatedAuthorshipDisclosureRequired ? [
+      '\\section*{Automated authorship and model use}',
+      'This manuscript was produced by the registered autonomous research system and its bound model executions.',
+    ] : []),
+    '\\section*{Conflict of interest}',
+    latexEscapeEvidenceBoundText(metadataProfile.conflictOfInterestStatement),
+    '\\section*{Funding}',
+    latexEscapeEvidenceBoundText(metadataProfile.fundingStatement),
+    '\\section*{Data availability}',
+    latexEscapeEvidenceBoundText(metadataProfile.dataAvailabilityStatement),
+    '\\section*{Code availability}',
+    latexEscapeEvidenceBoundText(metadataProfile.codeAvailabilityStatement),
+  ] : [];
   return [
-    '\\documentclass[11pt]{article}',
+    `\\documentclass[11pt]{${venueProfileSelection?.profile?.documentClass || 'article'}}`,
+    ...(venueTemplateAsset ? [`\\input{${venueTemplateAsset.relativePath}}`] : []),
+    `% HEPTA_BIBLIOGRAPHY_STYLE ${bibliographyStyle}`,
+    `% HEPTA_CITATION_STYLE ${citationStyle}`,
     '\\usepackage{amsmath,amssymb,amsthm,graphicx}',
     '\\newtheorem{theorem}{Theorem}',
-    `\\title{${TRUSTED_AUTONOMOUS_MANUSCRIPT_TITLE}}`,
-    '\\author{}',
+    `\\title{${latexEscapeEvidenceBoundText(manuscriptIr.title)}}`,
+    authorLine,
     '\\date{}',
     '\\begin{document}',
     '\\maketitle',
-    '\\section{Abstract}',
-    TRUSTED_AUTONOMOUS_MANUSCRIPT_PROSE.abstract,
-    '\\section{Research scope}',
-    TRUSTED_AUTONOMOUS_MANUSCRIPT_PROSE.scope,
-    '\\section{Related-work boundary}',
-    TRUSTED_AUTONOMOUS_MANUSCRIPT_PROSE.relatedWork,
-    '\\section{Methods}',
-    TRUSTED_AUTONOMOUS_MANUSCRIPT_PROSE.methods,
-    '\\section{Preregistered claims}',
-    ...claimLines,
-    '\\section{Formal assurance}',
-    TRUSTED_AUTONOMOUS_MANUSCRIPT_PROSE.formal,
-    ...formalSupportBlock(formalSupportAuthority),
-    '\\section{Results}',
-    ...authority.entries.flatMap(assertionBlock),
-    ...presentationAuthority.entries.flatMap(presentationBlock),
-    '\\section{Discussion}',
-    TRUSTED_AUTONOMOUS_MANUSCRIPT_PROSE.discussion,
-    '\\section{Reproducibility and audit trail}',
-    TRUSTED_AUTONOMOUS_MANUSCRIPT_PROSE.reproducibility,
-    '\\section{Limitations}',
-    TRUSTED_AUTONOMOUS_MANUSCRIPT_PROSE.limitations,
-    '\\section{Conclusion}',
-    TRUSTED_AUTONOMOUS_MANUSCRIPT_PROSE.conclusion,
+    ...sectionLines,
+    ...submissionMetadataLines,
     '\\end{document}',
     '',
   ].join('\n');
@@ -207,7 +224,20 @@ export function renderTrustedAutonomousManuscript({
   paperId,
   campaignId,
   authority,
+  formalVerificationReceipt = null,
+  agentExecutionReceipt = null,
+  agentExecutionReceipts = [],
+  requireAgentAuthoredProse = false,
+  manuscriptProductionMode = requireAgentAuthoredProse
+    ? 'agent-authored-evidence-bound-ir-v1'
+    : 'minimal-report-evidence-bound-ir-v1',
 } = {}) {
+  if (!['agent-authored-evidence-bound-ir-v1', 'minimal-report-evidence-bound-ir-v1']
+    .includes(manuscriptProductionMode)
+    || requireAgentAuthoredProse
+      !== (manuscriptProductionMode === 'agent-authored-evidence-bound-ir-v1')) {
+    throw new Error('trusted_autonomous_manuscript_production_mode_invalid');
+  }
   const root = fs.realpathSync(path.resolve(workspace || ''));
   const manuscript = path.resolve(root, manuscriptPath);
   const existing = readScopedFileSync({ scopeRoot: root, candidate: manuscript });
@@ -217,18 +247,94 @@ export function renderTrustedAutonomousManuscript({
     throw new Error('trusted_autonomous_manuscript_render_input_invalid');
   }
   const {
+    proposal,
+    policyAuthorization,
     seedBundle,
     empiricalClaim,
     formalSupportAuthority,
-  } = verifiedAuthorityRecords(root);
+    priorArtReceipt,
+    empiricalClaimLineage,
+    venueProfileSelection,
+    venueRequirementIr,
+    venueRequirementIrFileHash,
+    venueTemplateAsset,
+    venueTemplateAssetFileHash,
+    submissionMetadataReceipt,
+  } = readVerifiedAutonomousManuscriptAuthorityRecords(
+    root,
+    formalVerificationReceipt,
+  );
   const claims = empiricalClaimsFromAuthority(authority, empiricalClaim);
   const presentationAuthority = buildEmpiricalPresentationAuthority(authority);
   const presentationArtifacts = empiricalPresentationArtifactContents(authority);
+  const manuscriptIrFinalization = finalizeAutonomousManuscriptIrInWorkspace({
+    workspace: root,
+    proposal,
+    policyAuthorization,
+    seedBundle,
+    priorArtReceipt,
+    empiricalClaimLineage,
+    empiricalAssertionAuthority: authority,
+    formalSupportAuthority,
+    formalVerificationReceipt,
+    agentExecutionReceipt,
+    agentExecutionReceipts,
+    requireAgentAuthoredProse,
+  });
+  const manuscriptIr = manuscriptIrFinalization.ir;
+  const selectedAgentExecutionReceipt = manuscriptIrFinalization.agentExecutionReceipt;
+  const substantiveProseInspection = manuscriptIrFinalization.substantiveProseInspection;
+  const manuscriptIrVerification = verifyEvidenceBoundManuscriptIr(manuscriptIr, {
+    paperId,
+    authorityBindings: manuscriptIrFinalization.authorityBindings,
+    priorArtReceipt,
+    agentExecutionReceipt: selectedAgentExecutionReceipt,
+    requireAgentAuthoredProse,
+  });
+  if (!manuscriptIrVerification.valid) {
+    throw new Error(`trusted_autonomous_manuscript_ir_invalid:${manuscriptIrVerification.blockers.join(',')}`);
+  }
+  const sourceEvidenceDocuments = autonomousManuscriptEvidenceSourceDocuments({
+    proposal,
+    policyAuthorization,
+    seedBundle,
+    empiricalClaimLineage,
+    empiricalAssertionAuthority: authority,
+    formalSupportAuthority,
+    formalVerificationReceipt,
+    priorArtReceipt,
+  });
+  const evidenceEntailmentContract = buildEvidenceEntailmentContract({
+    manuscriptIr,
+    sourceEvidenceDocuments,
+  });
+  const evidenceEntailmentVerification = verifyEvidenceEntailmentContract(
+    evidenceEntailmentContract,
+    {
+      paperId,
+      evidenceBoundManuscriptIrHash: manuscriptIr.evidenceBoundManuscriptIrHash,
+    },
+  );
+  if (!evidenceEntailmentVerification.valid) {
+    throw new Error(`trusted_autonomous_manuscript_entailment_invalid:${
+      evidenceEntailmentVerification.blockers.join(',')}`);
+  }
+  const evidenceEntailmentPath = path.resolve(root, EVIDENCE_ENTAILMENT_CONTRACT_PATH);
+  if (!isPathWithin(root, evidenceEntailmentPath)) {
+    throw new Error('trusted_autonomous_manuscript_entailment_path_invalid');
+  }
+  writeDurableJsonSync(evidenceEntailmentPath, evidenceEntailmentContract);
   const source = renderSource({
+    manuscriptIr,
     claims,
     formalSupportAuthority,
     authority,
     presentationAuthority,
+    priorArtReceipt,
+    venueProfileSelection,
+    venueRequirementIr,
+    venueTemplateAsset,
+    submissionMetadataReceipt,
   });
   for (const artifact of presentationArtifacts) {
     const destination = preparePresentationArtifactTarget(root, artifact.path);
@@ -241,6 +347,9 @@ export function renderTrustedAutonomousManuscript({
     manuscriptPath,
     trustedEmpiricalClaimUniverse: claimUniverse,
     trustedFormalSupportAuthority: formalSupportAuthority,
+    trustedManuscriptIr: manuscriptIr,
+    trustedManuscriptIrAgentExecutionReceipt: selectedAgentExecutionReceipt,
+    trustedPriorArtReceipt: priorArtReceipt,
   });
   const assertionBinding = bindEmpiricalAssertionUniverse({
     authority,
@@ -265,8 +374,17 @@ export function renderTrustedAutonomousManuscript({
       ...claimUniverse.blockers, ...assertionUniverse.blockers, ...assertionBinding.blockers,
     ].join(',')}`);
   }
+  const manuscriptIrFileHash = hashBytes(fs.readFileSync(
+    path.resolve(root, manuscriptIrFinalization.irPath || 'AUTONOMOUS_MANUSCRIPT_IR.json'),
+  ));
+  const manuscriptIrDraftFileHash = hashBytes(fs.readFileSync(
+    path.resolve(root, EVIDENCE_BOUND_MANUSCRIPT_IR_DRAFT_PATH),
+  ));
+  const evidenceEntailmentContractFileHash = hashBytes(
+    fs.readFileSync(evidenceEntailmentPath),
+  );
   const payload = {
-    version: 2,
+    version: 6,
     kind: 'TrustedAutonomousManuscriptRenderReceipt',
     status: 'trusted_autonomous_manuscript_rendered',
     paperId,
@@ -275,21 +393,88 @@ export function renderTrustedAutonomousManuscript({
     priorManuscriptHash: existing.hash,
     manuscriptHash: hashBytes(Buffer.from(source, 'utf8')),
     seedBundleHash: seedBundle.autonomousResearchSeedContractBundleHash,
+    priorArtEvidenceReceiptHash: priorArtReceipt.priorArtEvidenceReceiptHash,
+    evidenceBoundManuscriptIrHash: manuscriptIr.evidenceBoundManuscriptIrHash,
+    manuscriptIrFileHash,
+    manuscriptIrPath: 'AUTONOMOUS_MANUSCRIPT_IR.json',
+    authorityBindingSetHash: manuscriptIr.authorityBindingSetHash,
+    evidenceEntailmentContractHash:
+      evidenceEntailmentContract.evidenceEntailmentContractHash,
+    evidenceEntailmentContract,
+    evidenceEntailmentContractPath: EVIDENCE_ENTAILMENT_CONTRACT_PATH,
+    evidenceEntailmentContractFileHash,
+    typedEvidenceEntailmentBlockCount: evidenceEntailmentContract.blockCount,
+    typedEvidenceSourceDocumentCount:
+      evidenceEntailmentContract.sourceEvidenceDocumentCount,
+    machineEvidenceVerificationScope:
+      evidenceEntailmentContract.machineVerificationScope,
+    untypedRenderedBlockCount: evidenceEntailmentContract.untypedRenderedBlockCount,
     formalSupportRegistryHash: formalSupportAuthority.formalSupportRegistryHash,
     formalSupportTemplateId: formalSupportAuthority.formalSupportTemplateId,
     formalSupportTemplateHash: formalSupportAuthority.formalSupportTemplateHash,
     formalSupportSurfaceAuthorityHash:
       formalSupportAuthority.autonomousFormalSupportSurfaceAuthorityHash,
     formalSupportSurfaceHash: assertionUniverse.formalSupports[0].formalSupportSurfaceHash,
+    productionReadableProofExplanationReady:
+      formalSupportAuthority.productionReadableProofReady === true,
+    formalReadableProofExplanationBundleHash:
+      formalSupportAuthority.readableProofExplanationBundleHash || null,
+    formalReadableProofExplanationHash:
+      formalSupportAuthority.readableProofExplanationHash || null,
+    formalReadableProofExplanationDagHash:
+      formalSupportAuthority.readableProofExplanationDagHash || null,
     empiricalAssertionAuthorityHash: authority.empiricalAssertionAuthorityHash,
     empiricalClaimUniverseHash: claimUniverse.empiricalClaimUniverseHash,
     empiricalAssertionUniverseHash: assertionUniverse.empiricalAssertionUniverseHash,
     empiricalAssertionUniverseBindingHash: assertionBinding.empiricalAssertionUniverseBindingHash,
     empiricalPresentationAuthorityHash: presentationAuthority.empiricalPresentationAuthorityHash,
     presentationArtifacts: presentationAuthority.artifacts,
-    sectionModel: 'trusted-evidence-bound-autonomous-manuscript-v2',
-    renderedSections: TRUSTED_AUTONOMOUS_MANUSCRIPT_SECTIONS,
-    agentAuthoredRenderedProseAccepted: false,
+    sectionModel: 'evidence-bound-manuscript-ir-v1',
+    manuscriptProductionMode,
+    requireAgentAuthoredProse,
+    renderedSections: Object.freeze(manuscriptIr.sections.map((section) => section.heading)),
+    agentAuthoredRenderedProseAccepted: manuscriptIr.authorship.agentModifiedDraft === true
+      && (!requireAgentAuthoredProse || substantiveProseInspection?.valid === true),
+    agentAuthoredRenderedProseReceiptHash:
+      manuscriptIr.authorship.agentExecutionReceiptHash,
+    agentAuthoredSourceDraft: manuscriptIr.authorship.agentModifiedDraft === true
+      ? manuscriptIrFinalization.agentDraft : null,
+    agentAuthoredSourceDraftHash: manuscriptIr.authorship.agentModifiedDraft === true
+      ? manuscriptIr.authorship.sourceDraftHash : null,
+    agentAuthoredSourceDraftFileHash: manuscriptIr.authorship.agentModifiedDraft === true
+      ? manuscriptIrDraftFileHash : null,
+    agentWorkspacePostimageBindingHash: manuscriptIr.authorship.agentModifiedDraft === true
+      ? manuscriptIr.authorship.agentWorkspacePostimageBindingHash : null,
+    systemSeedManuscriptIrDraft: manuscriptIr.authorship.agentModifiedDraft === true
+      ? manuscriptIrFinalization.systemSeedDraft : null,
+    systemSeedManuscriptIrDraftHash: manuscriptIr.authorship.agentModifiedDraft === true
+      ? substantiveProseInspection?.systemSeedDraftHash || null : null,
+    substantiveAgentProseInspection: manuscriptIr.authorship.agentModifiedDraft === true
+      ? substantiveProseInspection : null,
+    substantiveAgentProseVerified: substantiveProseInspection?.valid === true,
+    substantiveAgentProseInspectionHash:
+      substantiveProseInspection
+        ?.autonomousManuscriptSubstantiveAgentProseInspectionHash || null,
+    substantivelyRewrittenSectionCount:
+      substantiveProseInspection?.substantivelyRewrittenSectionCount || 0,
+    substantivelyRewrittenBlockCount:
+      substantiveProseInspection?.substantivelyRewrittenBlockCount || 0,
+    venueProfileSelectionHash:
+      venueProfileSelection?.autonomousVenueProfileSelectionReceiptHash || null,
+    venueRequirementIrHash: venueRequirementIr?.venueRequirementIrHash || null,
+    venueRequirementIrFileHash,
+    venueRequirementIrPath: venueRequirementIr ? VENUE_REQUIREMENT_IR_PATH : null,
+    anonymousReviewApplied: venueRequirementIr?.anonymousReview === true,
+    venueTemplateAssetApplicationMode: venueTemplateAsset?.applicationMode || null,
+    venueTemplateAssetPath: venueTemplateAsset?.relativePath || null,
+    venueTemplateAssetHash: venueTemplateAsset?.templateAssetHash || null,
+    venueTemplateAssetFileHash,
+    submissionMetadataReceiptHash:
+      submissionMetadataReceipt?.autonomousSubmissionMetadataReceiptHash || null,
+    bibliographyStyle: venueProfileSelection?.profile?.bibliographyStyle
+      || 'inline-evidence-v1',
+    citationStyle: venueProfileSelection?.profile?.citationStyle
+      || 'evidence-inline-v1',
     unboundScientificProseAccepted: false,
     externalActionPerformed: false,
   };

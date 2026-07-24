@@ -1,4 +1,8 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hasExactPlainObjectKeys as exactKeys } from '../../workflow-kernel/exact-object-keys.mjs';
+import {
+  autonomousResearchSupervisorExternalActionStableKey,
+} from './autonomous-research-supervisor-external-action-recovery-contract.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,255}$/;
@@ -10,7 +14,7 @@ const ACTION_KINDS = new Set([
 const FINAL_STATUSES = new Set(['completed', 'failed', 'recovered_incomplete']);
 const MARKER_KEYS = Object.freeze([
   'actionAccountingComplete', 'actionKind', 'attemptId', 'campaignId', 'dispatchCount',
-  'externalActionMayHaveOccurred', 'kind', 'leaseGeneration', 'providerCanaryCount',
+  'externalActionMayHaveOccurred', 'idempotencyKey', 'kind', 'leaseGeneration', 'providerCanaryCount',
   'reservation', 'reservationHash', 'startedAt', 'status',
   'autonomousResearchSupervisorExternalActionAttemptMarkerHash', 'version',
 ].sort());
@@ -27,12 +31,6 @@ const RECEIPT_KEYS = Object.freeze([
   'marker',
   'autonomousResearchSupervisorExternalActionAttemptReceiptHash', 'version',
 ].sort());
-
-function exactKeys(value, keys) {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    && Object.getPrototypeOf(value) === Object.prototype
-    && JSON.stringify(Object.keys(value).sort()) === JSON.stringify(keys);
-}
 
 function canonicalInstant(value) {
   const milliseconds = Date.parse(String(value || ''));
@@ -77,14 +75,34 @@ export function buildAutonomousResearchSupervisorExternalActionAttemptMarker({
   dispatchCount,
   providerCanaryCount,
   leaseGeneration,
+  idempotencyKey,
   startedAt,
 } = {}) {
   const canonicalReservation = plainSnapshot(reservation, 16 * 1024);
+  let effectiveIdempotencyKey = idempotencyKey;
+  if (!effectiveIdempotencyKey && canonicalReservation) {
+    effectiveIdempotencyKey = autonomousResearchSupervisorExternalActionStableKey({
+      campaignId,
+      actionKind,
+      dispatchCount,
+      providerCanaryCount,
+      providerConfigurationHash: canonicalReservation.providerConfigurationHash,
+      actionConfigurationIdentityHash:
+        canonicalReservation.externalActionConfigurationIdentityHash
+          || canonicalReservation.providerConfigurationHash,
+      attemptScopeHash:
+        canonicalReservation.providerCanaryReservation?.plannedGenerationHash
+          || canonicalReservation.dispatchAuthorizationHash,
+      action: canonicalReservation.action || null,
+      launchMode: canonicalReservation.launchMode || null,
+    });
+  }
   if (!SAFE_ID.test(String(attemptId || '')) || !SAFE_ID.test(String(campaignId || ''))
     || !ACTION_KINDS.has(actionKind)
     || !Number.isSafeInteger(dispatchCount) || dispatchCount < 1
     || !Number.isSafeInteger(providerCanaryCount) || providerCanaryCount < 0
     || !Number.isSafeInteger(leaseGeneration) || leaseGeneration < 1
+    || !SHA256.test(String(effectiveIdempotencyKey || ''))
     || !canonicalInstant(startedAt)) {
     throw new Error('autonomous_research_supervisor_external_action_marker_invalid');
   }
@@ -100,6 +118,7 @@ export function buildAutonomousResearchSupervisorExternalActionAttemptMarker({
     dispatchCount,
     providerCanaryCount,
     leaseGeneration,
+    idempotencyKey: effectiveIdempotencyKey,
     startedAt,
     actionAccountingComplete: false,
     externalActionMayHaveOccurred: false,
@@ -125,6 +144,7 @@ export function verifyAutonomousResearchSupervisorExternalActionAttemptMarker(va
     || !Number.isSafeInteger(value.dispatchCount) || value.dispatchCount < 1
     || !Number.isSafeInteger(value.providerCanaryCount) || value.providerCanaryCount < 0
     || !Number.isSafeInteger(value.leaseGeneration) || value.leaseGeneration < 1
+    || !SHA256.test(String(value.idempotencyKey || ''))
     || !canonicalInstant(value.startedAt)
     || value.actionAccountingComplete !== false
     || value.externalActionMayHaveOccurred !== false) return false;

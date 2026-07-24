@@ -2,9 +2,7 @@ import path from 'node:path';
 import { buildExecutionContext, composeScopedFoundationServices, exposeScopedFoundationServices } from './context-foundation-composition.mjs';
 import { createFilesystemArtifactRepository } from '../../paper-adapters/artifacts/filesystem-artifact-repository.mjs';
 import { composeArtifactReceiptLedger, composeRuntimeRetentionReceiptLedger, composeTrustedReceiptLedgers } from './receipt-ledger-composition.mjs';
-import { createSqliteCampaignStore } from '../../paper-adapters/persistence/sqlite-campaign-store.mjs';
 import { createInventoryRepository } from '../../paper-adapters/inventory/inventory-repository.mjs';
-import { createWorkspaceRegistry } from '../../paper-adapters/automation/workspace-registry.mjs';
 import {
   createCampaignReleasePackager,
   createResearchExecutionReleaseAttestor,
@@ -14,14 +12,27 @@ import { createSqliteResourceGovernor } from '../../paper-adapters/automation/sq
 import { createSystemScheduler } from '../../paper-adapters/runtime/system-scheduler.mjs';
 import { createRandomIdGenerator } from '../../paper-adapters/runtime/random-id-generator.mjs';
 import { createCampaignResearchVerifier } from '../../paper-adapters/automation/campaign-research-verifier.mjs';
+import {
+  createPinnedFormalSandboxRuntime,
+  configuredPinnedFormalSandboxRuntime,
+} from '../../paper-adapters/research-verify/pinned-formal-sandbox-runtime-configuration.mjs';
+import {
+  inspectConfiguredDynamicFormalExecutionAuthority,
+} from '../../paper-adapters/research-verify/dynamic-formal-project-closure-readiness.mjs';
 import { createSqliteJobReceiptStore } from '../../paper-adapters/persistence/sqlite-job-receipt-store.mjs';
 import { createOsSandboxedWorkerRunner } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
 import { createIndependentPdfRebuildVerifier } from '../../paper-adapters/build-package/independent-pdf-rebuild-verifier.mjs';
-import { composeAutomationResearchAuthority } from './automation-research-authority-composition.mjs';
+import {
+  composeAutomationResearchAuthority,
+} from './automation-research-authority-composition.mjs';
+import { composeAutomationCampaignState } from './automation-campaign-state-composition.mjs';
+import {
+  bootstrapAutonomousSubmissionHandoffContext,
+} from './autonomous-submission-handoff-context-bootstrap.mjs';
 
-// This module intentionally has no submission, provider-authority, stage-adapter,
-// or external-executor imports. Automation processes receive only their native
-// persistence and audit capabilities.
+// Automation processes receive no portal credentials or external executor. The
+// only submission capability exposed here is a durable local intent/outcome
+// journal; the network portal remains composition-scoped.
 export function bootstrapAutomationContext({
   root,
   runtimeRoot,
@@ -32,6 +43,10 @@ export function bootstrapAutomationContext({
   allowMissingReadOnlyStore = false,
   options = {},
   serviceOverrides = {},
+  environment = process.env,
+  autonomousSubmissionDispatchAuthority = null,
+  autonomousSubmissionHandoffOnly = true,
+  submissionHandoffMutationCoordinator = null,
 } = {}) {
   for (const forbiddenOverride of [
     'experimentRegistryAuthorityVerifier',
@@ -40,6 +55,9 @@ export function bootstrapAutomationContext({
     'independentPdfRebuildWorkerRunner',
     'researchExecutionReleaseAttestor',
     'releasePackager',
+    'autonomousSubmissionRequestVerifier',
+    'packageLifecycleAuthority',
+    'runtimeRetentionReachabilityProvider',
   ]) {
     if (Object.hasOwn(serviceOverrides, forbiddenOverride)) {
       throw new Error(`automation_${forbiddenOverride}_override_forbidden`);
@@ -56,6 +74,31 @@ export function bootstrapAutomationContext({
     rootKind: 'automation',
   });
   const { store, clock, receiptLedger } = foundation;
+  const configuredFormalSandboxRuntime = configuredPinnedFormalSandboxRuntime({ environment });
+  const trustedFormalSandboxRuntime = serviceOverrides.trustedFormalSandboxRuntime
+    ? createPinnedFormalSandboxRuntime(serviceOverrides.trustedFormalSandboxRuntime)
+    : configuredFormalSandboxRuntime
+      ? createPinnedFormalSandboxRuntime(configuredFormalSandboxRuntime)
+      : null;
+  const dynamicFormalExecutionAuthority =
+    inspectConfiguredDynamicFormalExecutionAuthority({ environment }).authority;
+  const submissionHandoffContext = bootstrapAutonomousSubmissionHandoffContext({
+    root,
+    runtimeRoot,
+    clock,
+    environment,
+    autonomousSubmissionDispatchAuthority,
+    handoffOnly: autonomousSubmissionHandoffOnly,
+    outboxOverride: serviceOverrides.autonomousSubmissionOutbox || null,
+    mutationCoordinator: submissionHandoffMutationCoordinator,
+    readOnly: Boolean(readOnly || !execute),
+    allowMissingReadOnlyStore,
+    requireExternallyFenced: Boolean(execute),
+  });
+  const {
+    autonomousSubmissionRequestVerifier,
+    autonomousSubmissionOutbox,
+  } = submissionHandoffContext.services;
   const artifactReceiptLedger = serviceOverrides.artifactReceiptLedger || composeArtifactReceiptLedger({
     store,
     clock,
@@ -79,13 +122,18 @@ export function bootstrapAutomationContext({
     operatorDatasetHarnessAuthorityVerifier,
     operatorDatasetAuthorityTrustStoreProvider,
     rawEventRecomputationVerifier,
-  } = composeAutomationResearchAuthority({ runtimeRoot, receiptLedger, clock });
+    externalResearchReplay,
+  } = composeAutomationResearchAuthority({ runtimeRoot, receiptLedger, clock, environment });
   const researchExecutionReleaseAttestor = createResearchExecutionReleaseAttestor({ runtimeRoot, clock });
   const independentPdfRebuildRoot = path.join(runtimeRoot, 'campaign-release-rebuilds');
   const independentPdfRebuildWorkerRunner = createOsSandboxedWorkerRunner({
     allowedExecutables: ['latexmk'],
     allowedRoots: [independentPdfRebuildRoot],
     allowedOutputRoots: [independentPdfRebuildRoot],
+    ...(trustedFormalSandboxRuntime ? {
+      dockerImage: trustedFormalSandboxRuntime.image,
+      allowedContainerImages: [trustedFormalSandboxRuntime.image],
+    } : {}),
     maximumTimeoutMs: 180_000,
     maximumMemoryBytes: 2 * 1024 * 1024 * 1024,
     maximumCpuSeconds: 180,
@@ -98,20 +146,37 @@ export function bootstrapAutomationContext({
     runtimeRoot,
     clock,
   });
-  const campaignStore = serviceOverrides.campaignStore || createSqliteCampaignStore({
+  const {
+    campaignStore,
+    workspaceRegistry,
+    packageLifecycleAuthority,
+    runtimeRetentionReachabilityProvider,
+  } = composeAutomationCampaignState({
+    runtimeRoot,
     store,
     clock,
+    receiptLedger,
+    campaignStoreOverride: serviceOverrides.campaignStore,
+    workspaceRegistryOverride: serviceOverrides.workspaceRegistry,
     experimentRegistryAuthorityVerifier,
+    externalResearchReplay: serviceOverrides.externalResearchReplay || externalResearchReplay,
+    operatorDatasetHarnessAuthorityVerifier,
+    rawEventRecomputationVerifier,
+    operatorDatasetAuthorityTrustStoreProvider,
   });
+  const nativeFoundationServices = exposeScopedFoundationServices(foundation, { schemaVersion });
   const automationServices = Object.freeze({
-    ...exposeScopedFoundationServices(foundation, { schemaVersion }),
+    ...nativeFoundationServices,
     artifactRepositoryFactory,
     idGenerator: serviceOverrides.idGenerator || createRandomIdGenerator(),
     campaignStore,
     inventoryRepository: serviceOverrides.inventoryRepository || createInventoryRepository({ store }),
-    workspaceRegistry: serviceOverrides.workspaceRegistry || createWorkspaceRegistry({ store, clock, receiptLedger }),
+    workspaceRegistry,
     runtimeRetentionReceiptLedger: serviceOverrides.runtimeRetentionReceiptLedger || composeRuntimeRetentionReceiptLedger({ store, clock }),
+    packageLifecycleAuthority,
+    runtimeRetentionReachabilityProvider,
     experimentRegistryAuthorityVerifier,
+    dynamicFormalExecutionAuthority,
     releasePackager: serviceOverrides.releasePackager || createCampaignReleasePackager({
       artifactRepositoryFactory,
       store,
@@ -122,6 +187,7 @@ export function bootstrapAutomationContext({
       clock,
       researchExecutionReleaseAttestor,
       independentPdfRebuildVerifier,
+      externalResearchReplay: serviceOverrides.externalResearchReplay || externalResearchReplay,
     }),
     researchVerifier: serviceOverrides.researchVerifier || createCampaignResearchVerifier({
       runtimeRoot,
@@ -134,10 +200,29 @@ export function bootstrapAutomationContext({
       campaignStore,
       operatorDatasetHarnessAuthorityVerifier,
       rawEventRecomputationVerifier,
+      externalResearchReplay: serviceOverrides.externalResearchReplay || externalResearchReplay,
+      trustedFormalSandboxRuntime,
+      dynamicFormalExecutionAuthority,
+      dynamicFormalExecutionEnvironment: environment,
     }),
     theoremQualityRevisionSink: serviceOverrides.theoremQualityRevisionSink || createTheoremQualityRevisionSink({ store, clock }),
     resourceGovernorFactory: serviceOverrides.resourceGovernorFactory || ((limits) => createSqliteResourceGovernor({ store, clock, limits })),
     scheduler: serviceOverrides.scheduler || createSystemScheduler(),
+    autonomousSubmissionRequestVerifier,
+    autonomousSubmissionOutbox,
+    persistenceSession: Object.freeze({
+      version: 1,
+      kind: 'ScopedPersistenceSessionPort',
+      available: () => nativeFoundationServices.persistenceSession.available(),
+      close() {
+        let failure = null;
+        try { submissionHandoffContext.services.persistenceSession.close(); }
+        catch (error) { failure = error; }
+        try { nativeFoundationServices.persistenceSession.close(); }
+        catch (error) { failure ||= error; }
+        if (failure) throw failure;
+      },
+    }),
   });
   return buildExecutionContext({
     root,
@@ -147,7 +232,10 @@ export function bootstrapAutomationContext({
     writeReport,
     options,
     serviceProfile: 'automation',
-    capabilities: ['artifact-repository', 'automation-coordination', 'receipt-ledger', 'typed-persistence'],
+    capabilities: [
+      'artifact-repository', 'automation-coordination',
+      'autonomous-submission-outbox', 'receipt-ledger', 'typed-persistence',
+    ],
     services: automationServices,
   });
 }

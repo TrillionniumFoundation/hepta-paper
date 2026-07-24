@@ -32,6 +32,29 @@ import {
 import {
   buildAutonomousResearchTopicProducerProfile,
 } from '../../paper-domain/automation/autonomous-research-topic-producer-contract.mjs';
+import {
+  buildAutonomousResearchCapabilityScopeManifest,
+} from '../../paper-domain/automation/autonomous-research-capability-scope-manifest.mjs';
+import {
+  buildAutonomousResearchAgendaProductionReceipt,
+  buildAutonomousResearchAgendaProductionRequest,
+} from '../../paper-domain/automation/autonomous-research-agenda-production-contract.mjs';
+import {
+  selectMachineGeneratedAutonomousResearchAgenda,
+} from '../../paper-domain/automation/autonomous-research-proposal-contract.mjs';
+import {
+  buildResearchAgendaIr,
+} from '../../paper-domain/automation/research-agenda-ir.mjs';
+import {
+  buildConservativePriorArtClaimAlignment,
+} from '../../paper-application/automation/prior-art-claim-alignment-production.mjs';
+import {
+  inspectPersistedAutonomousResearchAgendaAuthority,
+} from '../../paper-composition/automation/automation-readiness-agenda-authority-inspection.mjs';
+import {
+  genericManuscriptReleaseFixture,
+  productionPriorArtAuthorityFixture,
+} from './support/autonomous-research-generalization-fixture.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
   installMachineIntakeExternalGenesisAuthority,
@@ -191,7 +214,7 @@ function fileTree(root) {
   return Object.freeze(entries);
 }
 
-test('fully autonomous readiness requires both campaign readiness and cold-start autonomy', () => {
+test('configured scope remains bounded until generic domain evidence is independently verified', () => {
   const configurationHash = H('fully-autonomous-current-configuration');
   const datasetSnapshotHash = H('fully-autonomous-dataset-snapshot');
   const prerequisiteIdentityHash = H('fully-autonomous-prerequisite-identity');
@@ -216,34 +239,112 @@ test('fully autonomous readiness requires both campaign readiness and cold-start
     autonomousResearchResidentPrerequisiteIdentityHash: prerequisiteIdentityHash,
     blockers: [],
   };
+  const autonomousStateSafety = { ready: true, blockers: [] };
+  const capabilityScopeManifest = buildAutonomousResearchCapabilityScopeManifest({
+    agendaMode: 'machine-generated',
+    manuscriptMode: 'agent-authored-evidence-bound-ir-v1',
+    formalClaimClasses: ['dynamic-lean-type-v1'],
+    empiricalFamilies: ['ml_algorithm_benchmark'],
+    priorArtMode: 'structured-ranked-deduplicated-v2',
+    reviewerPrincipalCount: 3,
+    reviewerTrustDomainCount: 3,
+    replayMode: 'external-trust-domain-v1',
+    venueMode: 'submission-enabled-v1',
+    externalPrerequisites: [],
+  });
+  const agendaRequest = buildAutonomousResearchAgendaProductionRequest({
+    paperId: 'fully-autonomous-status-paper',
+    objectiveHint: 'Evaluate a bounded generated intervention.',
+    protocolFamilyHint: 'ml_algorithm_benchmark',
+    allowedProtocolFamilies: ['ml_algorithm_benchmark'],
+  });
+  const agendaAgentPayload = {
+    version: 1,
+    kind: 'AgentExecutionReceipt',
+    status: 'agent_execution_completed',
+    agentId: 'agenda-producer-1',
+    providerMode: 'fixture-agent',
+    resolvedModel: 'agenda-model-v1',
+    promptHash: H('agenda-prompt'),
+    changedPaths: [],
+    structuredOutput: {},
+  };
+  const agendaAgentReceipt = Object.freeze({
+    ...agendaAgentPayload,
+    agentExecutionReceiptHash: hashRecord('AgentExecutionReceipt', agendaAgentPayload),
+  });
+  const researchAgendaProducerReceipt = buildAutonomousResearchAgendaProductionReceipt({
+    request: agendaRequest,
+    selectedObjective: 'Measure a generated treatment against a fixed benchmark control.',
+    selectedProtocolFamily: 'ml_algorithm_benchmark',
+    agentExecutionReceipt: agendaAgentReceipt,
+    producerId: 'agenda-producer-1',
+    generatedAt: '2026-07-19T00:00:00.000Z',
+  });
   assert.equal(evaluateFullyAutonomousResearchSystemReadiness({
     fullAutomaticResearchWritingReady: false,
     machineIntake: coldReady,
     residentSupervisor: residentHealthy,
     residentPrerequisites,
+    autonomousStateSafety,
   }).ready, false);
   assert.equal(evaluateFullyAutonomousResearchSystemReadiness({
     fullAutomaticResearchWritingReady: true,
     machineIntake: { coldStartAutonomyReady: false, blockers: ['intake_missing'] },
     residentSupervisor: residentHealthy,
     residentPrerequisites,
+    autonomousStateSafety,
   }).ready, false);
   const noResident = evaluateFullyAutonomousResearchSystemReadiness({
     fullAutomaticResearchWritingReady: true,
     machineIntake: coldReady,
     residentPrerequisites,
+    autonomousStateSafety,
   });
   assert.equal(noResident.ready, false);
   assert.match(noResident.blockers.join(','), /supervisor_instance_health_required/);
-  const ready = evaluateFullyAutonomousResearchSystemReadiness({
+  const missingAgendaReceipt = evaluateFullyAutonomousResearchSystemReadiness({
+    fullAutomaticResearchWritingReady: true,
+    machineIntake: coldReady,
+    residentSupervisor: residentHealthy,
+    residentPrerequisites,
+    autonomousStateSafety,
+    capabilityScopeManifest,
+  });
+  assert.equal(missingAgendaReceipt.ready, false);
+  assert.match(missingAgendaReceipt.blockers.join(','), /machine_generated_agenda_receipt_required/);
+  const configured = evaluateFullyAutonomousResearchSystemReadiness({
+    fullAutomaticResearchWritingReady: true,
+    machineIntake: coldReady,
+    residentSupervisor: residentHealthy,
+    residentPrerequisites,
+    autonomousStateSafety,
+    capabilityScopeManifest,
+    researchAgendaProducerReceipt,
+  });
+  assert.equal(configured.ready, false);
+  assert.equal(configured.boundedProfileReady, true);
+  assert.equal(configured.configuredScopeReady, true);
+  assert.equal(configured.genericDomainCapabilityReady, false);
+  assert.equal(configured.status, 'bounded_profile_autonomous_research_system_ready');
+  assert.ok(configured.blockers.includes(
+    'autonomous_research_experiment_ir_execution_authority_receipt_required',
+  ));
+  assert.ok(configured.blockers.includes(
+    'autonomous_research_external_research_replay_receipt_required',
+  ));
+  assert.ok(configured.blockers.includes(
+    'autonomous_research_independent_formal_review_receipt_required',
+  ));
+  assert.equal(configured.machineIntakeConfigurationReconciled, true);
+  const missingStateSafety = evaluateFullyAutonomousResearchSystemReadiness({
     fullAutomaticResearchWritingReady: true,
     machineIntake: coldReady,
     residentSupervisor: residentHealthy,
     residentPrerequisites,
   });
-  assert.equal(ready.ready, true);
-  assert.equal(ready.status, 'fully_autonomous_research_system_ready');
-  assert.equal(ready.machineIntakeConfigurationReconciled, true);
+  assert.equal(missingStateSafety.ready, false);
+  assert.match(missingStateSafety.blockers.join(','), /state_safety_inspection_required/);
   const staleResident = evaluateFullyAutonomousResearchSystemReadiness({
     fullAutomaticResearchWritingReady: true,
     machineIntake: coldReady,
@@ -255,9 +356,299 @@ test('fully autonomous readiness requires both campaign readiness and cold-start
       },
     },
     residentPrerequisites,
+    autonomousStateSafety,
   });
   assert.equal(staleResident.ready, false);
   assert.match(staleResident.blockers.join(','), /machine_intake_configuration_mismatch/);
+});
+
+test('persisted agenda authority promotes only a hash-bound, machine-generated campaign receipt', () => {
+  const manifest = buildAutonomousResearchCapabilityScopeManifest({
+    agendaMode: 'machine-generated',
+    manuscriptMode: 'agent-authored-evidence-bound-ir-v1',
+    formalClaimClasses: ['dynamic-lean-type-v1'],
+    empiricalFamilies: ['ml_algorithm_benchmark'],
+    priorArtMode: 'structured-ranked-deduplicated-v2',
+    reviewerPrincipalCount: 3,
+    reviewerTrustDomainCount: 3,
+    replayMode: 'external-trust-domain-v1',
+    venueMode: 'submission-enabled-v1',
+    externalPrerequisites: [],
+  });
+  const request = buildAutonomousResearchAgendaProductionRequest({
+    paperId: 'agenda-authority-paper',
+    objectiveHint: 'Select a machine-generated research objective.',
+    protocolFamilyHint: 'ml_algorithm_benchmark',
+    allowedProtocolFamilies: ['ml_algorithm_benchmark'],
+  });
+  const agentPayload = {
+    version: 1,
+    kind: 'AgentExecutionReceipt',
+    status: 'agent_execution_completed',
+    agentId: 'agenda-authority-producer',
+    providerMode: 'fixture-agent',
+    resolvedModel: 'agenda-model-v1',
+    promptHash: H('agenda-authority-prompt'),
+    changedPaths: [],
+    structuredOutput: {},
+  };
+  const agentExecutionReceipt = Object.freeze({
+    ...agentPayload,
+    agentExecutionReceiptHash: hashRecord('AgentExecutionReceipt', agentPayload),
+  });
+  const receipt = buildAutonomousResearchAgendaProductionReceipt({
+    request,
+    selectedObjective: 'Compare a generated intervention with a fixed benchmark control.',
+    selectedProtocolFamily: 'ml_algorithm_benchmark',
+    agentExecutionReceipt,
+    producerId: 'agenda-authority-producer',
+    generatedAt: '2026-07-19T00:00:00.000Z',
+  });
+  const preparationPayload = {
+    version: 1,
+    kind: 'AutonomousResearchLoopPreparationReport',
+    proposal: {
+      objective: receipt.selectedObjective,
+      protocolFamily: receipt.selectedProtocolFamily,
+    },
+    capabilityScopeManifest: manifest,
+    researchAgendaProducerReceipt: receipt,
+  };
+  const preparation = {
+    ...preparationPayload,
+    autonomousResearchLoopPreparationReportHash:
+      hashRecord('AutonomousResearchLoopPreparationReport', preparationPayload),
+  };
+  const planPayload = {
+    version: 4,
+    kind: 'PaperCampaignPlan',
+    campaignId: 'agenda-authority-campaign',
+    paperId: request.paperId,
+    autonomousResearchPreparation: preparation,
+  };
+  const plan = {
+    ...planPayload,
+    campaignPlanHash: hashRecord('PaperCampaignPlan', planPayload),
+  };
+  const inspect = (candidate) => inspectPersistedAutonomousResearchAgendaAuthority({
+    store: {
+      query: () => ({
+        ok: true,
+        rows: [{
+          campaign_id: candidate.campaignId,
+          paper_id: candidate.paperId,
+          spec_json: JSON.stringify(candidate),
+          updated_at: '2026-07-19T00:01:00.000Z',
+        }],
+      }),
+    },
+  });
+  const authority = inspect(plan);
+  assert.equal(authority.ready, false);
+  assert.equal(authority.statusReadOnly, true);
+  assert.equal(authority.researchAgendaProducerReceipt, null);
+
+  const agendaSelectionReceipt = selectMachineGeneratedAutonomousResearchAgenda({
+    paperId: request.paperId,
+    researchAgendaProducerReceipt: receipt,
+  });
+  const researchAgendaIr = buildResearchAgendaIr({
+    agendaProductionReceipt: receipt,
+    researchQuestion: 'Does the generated intervention improve the registered metric?',
+    primaryClaim: 'The generated intervention improves the registered primary metric.',
+    dataRequirements: {
+      population: 'Rows admitted by the signed benchmark contract.',
+      intervention: 'Generated intervention.',
+      comparator: 'Fixed benchmark control.',
+      estimand: 'Paired primary-metric difference.',
+      requiredVariables: ['outcome', 'assignment'],
+      datasetConstraints: ['read-only signed dataset mount'],
+    },
+    falsifiers: ['A non-positive paired primary-metric difference.'],
+    negativeBoundaries: ['No claim outside the signed benchmark population.'],
+    formalTargets: ['Kernel-check the registered aggregation invariant.'],
+    priorArtQueryPlan: ['Search the intervention and estimand concepts together.'],
+    venueConstraints: {
+      paperType: 'research_article',
+      requiredSections: ['methods', 'results', 'limitations'],
+      artifactRequired: true,
+      anonymousReviewRequired: true,
+    },
+    resourceFeasibility: {
+      maximumWallTimeMs: 3_600_000,
+      maximumMemoryBytes: 8_589_934_592,
+      maximumCpuCount: 4,
+      executionEnvironment: 'signed-python-runtime-v1',
+    },
+  });
+  const priorArtAuthority = productionPriorArtAuthorityFixture({
+    paperId: request.paperId,
+    agendaSelectionReceiptHash:
+      agendaSelectionReceipt.autonomousResearchAgendaSelectionReceiptHash,
+    researchAgendaIr,
+  });
+  const priorArtClaimAlignmentReceipt = buildConservativePriorArtClaimAlignment({
+    researchAgendaIr,
+    agendaSelectionReceipt,
+    priorArtEvidenceReceipt: priorArtAuthority.priorArtReceipt,
+  });
+  const alignedPreparationPayload = {
+    ...preparationPayload,
+    proposal: {
+      ...preparationPayload.proposal,
+      agendaSelectionReceipt,
+      agendaSelectionReceiptHash:
+        agendaSelectionReceipt.autonomousResearchAgendaSelectionReceiptHash,
+    },
+    researchAgendaIr,
+    priorArtReceipt: priorArtAuthority.priorArtReceipt,
+    priorArtAuthorityVerificationBundle: priorArtAuthority.authorityBundle,
+    priorArtAuthorityTrustConfiguration: priorArtAuthority.trustConfiguration,
+    externalCapabilityTrustInspection:
+      priorArtAuthority.externalCapabilityTrustInspection,
+    priorArtClaimAlignmentReceipt,
+  };
+  const alignedPreparation = {
+    ...alignedPreparationPayload,
+    autonomousResearchLoopPreparationReportHash:
+      hashRecord('AutonomousResearchLoopPreparationReport', alignedPreparationPayload),
+  };
+  const alignedPlanPayload = {
+    ...planPayload,
+    autonomousResearchPreparation: alignedPreparation,
+  };
+  const alignedPlan = {
+    ...alignedPlanPayload,
+    campaignPlanHash: hashRecord('PaperCampaignPlan', alignedPlanPayload),
+  };
+  const alignedAuthority = inspect(alignedPlan);
+  assert.equal(alignedAuthority.ready, false);
+  assert.equal(alignedAuthority.priorArtClaimAlignmentReady, false);
+  assert.equal(alignedAuthority.priorArtEvidenceReceipt, null);
+  assert.equal(alignedAuthority.priorArtClaimAlignmentReceipt, null);
+
+  const tamperedAlignmentPreparationPayload = structuredClone(alignedPreparationPayload);
+  tamperedAlignmentPreparationPayload.priorArtClaimAlignmentReceipt.alignments[0]
+    .closestWorkGap = 'This finite corpus proves universal novelty.';
+  const tamperedAlignmentPreparation = {
+    ...tamperedAlignmentPreparationPayload,
+    autonomousResearchLoopPreparationReportHash: hashRecord(
+      'AutonomousResearchLoopPreparationReport', tamperedAlignmentPreparationPayload,
+    ),
+  };
+  const tamperedAlignmentPlanPayload = {
+    ...alignedPlanPayload,
+    autonomousResearchPreparation: tamperedAlignmentPreparation,
+  };
+  const tamperedAlignmentPlan = {
+    ...tamperedAlignmentPlanPayload,
+    campaignPlanHash: hashRecord('PaperCampaignPlan', tamperedAlignmentPlanPayload),
+  };
+  const rejectedAlignment = inspect(tamperedAlignmentPlan);
+  assert.equal(rejectedAlignment.ready, false);
+  assert.equal(rejectedAlignment.priorArtClaimAlignmentReady, false);
+  assert.equal(rejectedAlignment.priorArtEvidenceReceipt, null);
+  assert.equal(rejectedAlignment.priorArtClaimAlignmentReceipt, null);
+
+  const tamperedReceiptPlan = structuredClone(plan);
+  tamperedReceiptPlan.autonomousResearchPreparation.researchAgendaProducerReceipt
+    .selectedObjective = 'Tampered objective.';
+  assert.equal(inspect(tamperedReceiptPlan).ready, false);
+  const tamperedPreparationPlan = structuredClone(plan);
+  tamperedPreparationPlan.autonomousResearchPreparation.proposal.objective = 'Tampered proposal.';
+  assert.equal(inspect(tamperedPreparationPlan).ready, false);
+  const tamperedPlan = structuredClone(plan);
+  tamperedPlan.paperId = 'agenda-authority-other-paper';
+  assert.equal(inspect(tamperedPlan).ready, false);
+});
+
+test('persisted agenda authority accepts only a strong production-run agenda', () => {
+  const paperId = 'strong-agenda-authority-paper';
+  const campaignId = 'strong-agenda-authority-campaign';
+  const objective = 'Compare a generated intervention with a fixed benchmark control.';
+  const fixture = genericManuscriptReleaseFixture({
+    paperId,
+    campaignId,
+    objective,
+    protocolFamily: 'ml_algorithm_benchmark',
+  });
+  const {
+    autonomousResearchLoopPreparationReportHash: _fixturePreparationHash,
+    ...fixturePreparationPayload
+  } = fixture.preparation;
+  const preparationPayload = {
+    ...fixturePreparationPayload,
+    version: 1,
+    kind: 'AutonomousResearchLoopPreparationReport',
+  };
+  const preparation = {
+    ...preparationPayload,
+    autonomousResearchLoopPreparationReportHash:
+      hashRecord('AutonomousResearchLoopPreparationReport', preparationPayload),
+  };
+  const receipt = preparation.researchAgendaProducerReceipt;
+  const planPayload = {
+    version: 4,
+    kind: 'PaperCampaignPlan',
+    campaignId,
+    paperId,
+    autonomousResearchPreparation: preparation,
+  };
+  const plan = {
+    ...planPayload,
+    campaignPlanHash: hashRecord('PaperCampaignPlan', planPayload),
+  };
+  const inspect = (candidate, options = {}) =>
+    inspectPersistedAutonomousResearchAgendaAuthority({
+      store: {
+        query: () => ({
+          ok: true,
+          rows: [{
+            campaign_id: candidate.campaignId,
+            paper_id: candidate.paperId,
+            spec_json: JSON.stringify(candidate),
+            updated_at: fixture.preparation.observedAt,
+          }],
+        }),
+      },
+      currentPriorArtAuthorityTrustConfiguration:
+        fixture.preparation.priorArtAuthorityTrustConfiguration,
+      currentExternalCapabilityTrustInspection:
+        fixture.preparation.externalCapabilityTrustInspection,
+      now: new Date(fixture.preparation.observedAt),
+      ...options,
+    });
+  const authority = inspect(plan);
+  assert.equal(receipt.version, 3);
+  assert.equal(authority.ready, true);
+  assert.equal(authority.priorArtClaimAlignmentReady, true);
+  assert.deepEqual(authority.researchAgendaIr, preparation.researchAgendaIr);
+  assert.deepEqual(
+    authority.priorArtClaimAlignmentReceipt,
+    preparation.priorArtClaimAlignmentReceipt,
+  );
+
+  const {
+    autonomousResearchLoopPreparationReportHash: _oldPreparationHash,
+    ...productionPreparationPayload
+  } = preparation;
+  const goldenPayload = {
+    ...productionPreparationPayload,
+    launchMode: 'golden-bootstrap',
+  };
+  const goldenPreparation = {
+    ...goldenPayload,
+    autonomousResearchLoopPreparationReportHash:
+      hashRecord('AutonomousResearchLoopPreparationReport', goldenPayload),
+  };
+  const goldenPlanPayload = {
+    ...planPayload,
+    autonomousResearchPreparation: goldenPreparation,
+  };
+  assert.equal(inspect({
+    ...goldenPlanPayload,
+    campaignPlanHash: hashRecord('PaperCampaignPlan', goldenPlanPayload),
+  }).ready, false);
 });
 
 test('resident heartbeat status is zero-write, fenced, and stale-instance recoverable', (t) => {
@@ -441,6 +832,13 @@ test('health CLI separates heartbeat, startup, and machine-intake readiness', (t
   ], { encoding: 'utf8', timeout: 10_000 });
   const current = run();
   assert.equal(current.status, 0, `${current.stderr}\n${current.stdout}`);
+  const strict = run('--require-fully-autonomous');
+  assert.equal(strict.status, 1, `${strict.stderr}\n${strict.stdout}`);
+  const strictReport = JSON.parse(strict.stdout);
+  assert.equal(strictReport.fullyAutonomousReady, false);
+  assert.equal(strictReport.autonomousStateSafetyReady, false);
+  assert.equal(strictReport.autonomousStateSafety.ready, false);
+  assert.ok(strictReport.autonomousStateSafetyBlockers.length > 0);
   assert.equal(run('--require-startup-reconciliation').status, 1);
   now = new Date(now.getTime() + 1);
   repository.markStartupReconciled({

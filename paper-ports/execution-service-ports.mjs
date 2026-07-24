@@ -2,6 +2,7 @@ import { assertArtifactRepository } from './artifact-repository-port.mjs';
 import { assertCampaignStorePort } from './campaign-store-port.mjs';
 import { assertJobReceiptStorePort } from './job-receipt-store-port.mjs';
 import { assertReceiptLedgerPort } from './receipt-ledger-port.mjs';
+import { assertRuntimeRetentionReachabilityProvider } from './runtime-retention-reachability-provider-port.mjs';
 import { assertStorePort } from './store-port.mjs';
 
 function requireMethods(value, kind, methods) {
@@ -61,6 +62,16 @@ export function assertTheoremQualityRevisionSinkPort(sink) {
   return requireMethods(sink, 'TheoremQualityRevisionSinkPort', ['record']);
 }
 
+export function assertPackageLifecycleAuthorityPort(authority) {
+  if (Number(authority?.version || 0) < 1
+    || authority?.kind !== 'PackageLifecycleAuthorityService') {
+    throw new Error('PackageLifecycleAuthorityPort.version 1 is required');
+  }
+  return requireMethods(authority, 'PackageLifecycleAuthorityPort', [
+    'prepareCurrentReleaseRecording', 'reconcileCampaign', 'reconcile',
+  ]);
+}
+
 export function assertSubmissionDeliveryStorePort(store) {
   if (Number(store?.version || 0) < 1) throw new Error('SubmissionDeliveryStorePort.version 1 is required');
   return requireMethods(store, 'SubmissionDeliveryStorePort', [
@@ -95,4 +106,8 @@ export function assertLegacyStorePort(store) {
   return assertStorePort(store);
 }
 
-export { assertCampaignStorePort, assertJobReceiptStorePort };
+export {
+  assertCampaignStorePort,
+  assertJobReceiptStorePort,
+  assertRuntimeRetentionReachabilityProvider,
+};

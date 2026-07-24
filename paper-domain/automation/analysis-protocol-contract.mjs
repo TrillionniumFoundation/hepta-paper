@@ -10,27 +10,22 @@ import {
   empiricalClaimBindingsFromUniverse,
   verifyEmpiricalClaimUniverse,
 } from '../research/empirical-claim-contract.mjs';
+import {
+  AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_REGISTRY,
+} from './autonomous-empirical-family-plugin-registry.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/;
 
-export const ANALYSIS_PROTOCOL_FAMILY_PROFILES = Object.freeze({
-  rl_stochastic_control_benchmark: Object.freeze({
-    primaryMetric: 'mean_return', secondaryMetric: 'tail_return',
-  }),
-  ml_algorithm_benchmark: Object.freeze({
-    primaryMetric: 'mean_score', secondaryMetric: 'robustness_gap',
-  }),
-  econometrics_panel_benchmark: Object.freeze({
-    primaryMetric: 'mean_effect', secondaryMetric: 'robustness_gap',
-  }),
-  finance_asset_pricing_benchmark: Object.freeze({
-    primaryMetric: 'mean_return', secondaryMetric: 'tail_return',
-  }),
-  operations_optimization_benchmark: Object.freeze({
-    primaryMetric: 'mean_score', secondaryMetric: 'constraint_violation_rate',
-  }),
-});
+export const ANALYSIS_PROTOCOL_FAMILY_PROFILES = Object.freeze(Object.fromEntries(
+  AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_REGISTRY.profiles.map((profile) => [
+    profile.benchmarkFamily,
+    Object.freeze({
+      primaryMetric: profile.primaryMetric,
+      secondaryMetric: profile.secondaryMetric,
+    }),
+  ]),
+));
 
 const SUPPORTED_METHODS = Object.freeze({
   estimator: new Set([

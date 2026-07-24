@@ -15,7 +15,11 @@ import { createIndependentPdfRebuildVerifierCapability }
   from '../../paper-ports/independent-pdf-rebuild-verifier-port.mjs';
 import { buildCampaignResearchSourceSnapshot, verifyCampaignResearchSourceSnapshot } from '../../paper-domain/automation/campaign-research-contract.mjs';
 import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
-import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { inspectDeterministicPdfPageTree }
+  from '../../paper-domain/automation/deterministic-pdf-page-tree-parser.mjs';
+import { buildDeterministicPdfFixture }
+  from './support/deterministic-pdf-fixture.mjs';
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-release-source-lineage-'));
@@ -25,7 +29,10 @@ function fixture(t) {
   fs.mkdirSync(runtimeRoot, { recursive: true });
   fs.writeFileSync(path.join(workspace, 'main.tex'), '\\documentclass{article}\\begin{document}Lineage.\\end{document}\n');
   fs.writeFileSync(path.join(workspace, 'analysis-config.json'), '{"threshold":1}\n');
-  fs.writeFileSync(path.join(workspace, 'automation-results', 'final', 'main.pdf'), '%PDF-1.4\nlineage\n');
+  fs.writeFileSync(
+    path.join(workspace, 'automation-results', 'final', 'main.pdf'),
+    buildDeterministicPdfFixture({ marker: 'source-lineage-authoritative' }),
+  );
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   return { workspace, runtimeRoot };
 }
@@ -107,6 +114,7 @@ function profiledResearch({ profile, snapshot, finalCompileNodeId = 'campaign:fi
 
 function independentPdfRebuildVerifier() {
   return createIndependentPdfRebuildVerifierCapability(async ({
+    sourceWorkspace,
     sourceArchiveDefinition,
     rebuildRoot,
     paperId,
@@ -115,6 +123,16 @@ function independentPdfRebuildVerifier() {
     createdAt,
   }) => {
     const output = path.join(rebuildRoot, 'output', path.basename(mainTex, '.tex') + '.pdf');
+    const rebuiltPdfBytes = buildDeterministicPdfFixture({
+      marker: 'source-lineage-independent-rebuild',
+    });
+    fs.mkdirSync(path.dirname(output), { recursive: true });
+    fs.writeFileSync(output, rebuiltPdfBytes, { flag: 'wx' });
+    const rebuiltPdfInspection = inspectDeterministicPdfPageTree(rebuiltPdfBytes);
+    const authoritativePdfInspection = inspectDeterministicPdfPageTree(
+      fs.readFileSync(path.resolve(sourceWorkspace, authoritativePdf.path)),
+    );
+    assert.equal(rebuiltPdfInspection.pageCount, authoritativePdfInspection.pageCount);
     const receipt = buildIndependentPdfRebuildVerificationReceipt({
       paperId,
       sourcePackageContractHash: sourceArchiveDefinition.sourcePackageContractHash,
@@ -142,10 +160,12 @@ function independentPdfRebuildVerifier() {
       },
       rebuiltPdf: {
         path: path.basename(output),
-        hash: hashRecord('SourceLineageRebuiltPdf', {}),
-        bytes: 5,
+        hash: hashBytes(rebuiltPdfBytes),
+        bytes: rebuiltPdfBytes.length,
+        pageCount: rebuiltPdfInspection.pageCount,
       },
       authoritativePdfHash: authoritativePdf.hash,
+      authoritativePdfPageCount: authoritativePdfInspection.pageCount,
       createdAt,
     });
     return Object.freeze({

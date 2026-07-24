@@ -5,17 +5,71 @@ import {
   academicAnalysisIndependentUnitCount,
   buildAcademicAnalysisInferenceProfile,
 } from './academic-analysis-inference-profile.mjs';
+import {
+  systemBenchmarkEvaluatorDescriptorFor,
+} from './system-benchmark-evaluator-abi.mjs';
+import {
+  autonomousEmpiricalFamilyPluginProfileFor,
+} from './autonomous-empirical-family-plugin-registry.mjs';
 
-const FAMILIES = Object.freeze({
-  rl_stochastic_control_benchmark: Object.freeze(['constraintLimit', 'disturbance', 'target']),
-  ml_algorithm_benchmark: Object.freeze(['label', 'robustLabel']),
-  econometrics_panel_benchmark: Object.freeze(['robustEffect', 'trueEffect']),
-  finance_asset_pricing_benchmark: Object.freeze(['futureReturn', 'robustReturn']),
-  operations_optimization_benchmark: Object.freeze(['capacity', 'demand', 'unitCost']),
-});
 const SPLITS = new Set(['train', 'validation', 'test', 'public']);
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 const SAFE_RELATIVE_PATH = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9_.\/-]{1,512}$/;
+
+function semanticText(value, maximum = 2_000) {
+  const normalized = String(value || '').normalize('NFKC').replace(/\s+/g, ' ').trim();
+  return normalized && normalized.length <= maximum ? normalized : null;
+}
+
+function semanticList(value, { maximum = 128, sort = false } = {}) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > maximum) return null;
+  const normalized = value.map((item) => semanticText(item));
+  if (normalized.some((item) => !item) || new Set(normalized).size !== normalized.length) return null;
+  if (sort) normalized.sort((left, right) => left.localeCompare(right));
+  return Object.freeze(normalized);
+}
+
+export function validateOperatorDatasetResearchSemantics(value) {
+  if (!exactKeys(value, [
+    'version', 'kind', 'population', 'variables', 'intervention', 'comparator',
+    'estimands', 'datasetConstraints', 'eligibleSplits',
+  ]) || value.version !== 1 || value.kind !== 'OperatorDatasetResearchSemantics') {
+    throw new Error('operator_dataset_research_semantics_shape_invalid');
+  }
+  const variables = semanticList(value.variables, { sort: true });
+  const estimands = semanticList(value.estimands, { sort: true });
+  const datasetConstraints = semanticList(value.datasetConstraints, { sort: true });
+  const eligibleSplits = semanticList(value.eligibleSplits, { maximum: SPLITS.size, sort: true });
+  if (!variables || !estimands || !datasetConstraints || !eligibleSplits
+    || eligibleSplits.some((split) => !SPLITS.has(split) || split === 'test')) {
+    throw new Error('operator_dataset_research_semantics_invalid');
+  }
+  const normalized = Object.freeze({
+    version: 1,
+    kind: 'OperatorDatasetResearchSemantics',
+    population: semanticText(value.population),
+    variables,
+    intervention: semanticText(value.intervention),
+    comparator: semanticText(value.comparator),
+    estimands,
+    datasetConstraints,
+    eligibleSplits,
+  });
+  if (!normalized.population || !normalized.intervention || !normalized.comparator) {
+    throw new Error('operator_dataset_research_semantics_invalid');
+  }
+  return Object.freeze({
+    researchSemantics: normalized,
+    operatorDatasetResearchSemanticsHash: hashRecord(
+      'OperatorDatasetResearchSemantics', normalized,
+    ),
+  });
+}
+
+function activeEvaluatorForFamily(family) {
+  return autonomousEmpiricalFamilyPluginProfileFor(family)
+    ? systemBenchmarkEvaluatorDescriptorFor(family) : null;
+}
 
 function jsonObject(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
@@ -26,13 +80,22 @@ function jsonObject(value) {
 }
 
 function canonicalCase(value, family) {
+  const oracleFields = activeEvaluatorForFamily(family)?.oracleFields || null;
+  const oracleMaximum = family === 'registered_scalar_response_benchmark' ? 1e6 : 1e12;
   if (!exactKeys(value, ['caseId', 'input', 'ablationInput', 'referenceResponse', 'oracle'])
     || !SHA256.test(String(value.caseId || '')) || !jsonObject(value.input) || !jsonObject(value.ablationInput)
     || typeof value.referenceResponse !== 'number' || !Number.isFinite(value.referenceResponse)
     || Math.abs(value.referenceResponse) > 1e6
-    || !exactKeys(value.oracle, FAMILIES[family])
-    || FAMILIES[family].some((field) => typeof value.oracle[field] !== 'number'
-      || !Number.isFinite(value.oracle[field]) || Math.abs(value.oracle[field]) > 1e12)) {
+    || !oracleFields || !exactKeys(value.oracle, oracleFields)
+    || oracleFields.some((field) => typeof value.oracle[field] !== 'number'
+      || !Number.isFinite(value.oracle[field])
+      || Math.abs(value.oracle[field]) > oracleMaximum)
+    || (family === 'registered_scalar_response_benchmark'
+      && (value.oracle.lowerBound > value.oracle.upperBound
+        || value.oracle.target < value.oracle.lowerBound
+        || value.oracle.target > value.oracle.upperBound
+        || value.oracle.robustTarget < value.oracle.lowerBound
+        || value.oracle.robustTarget > value.oracle.upperBound))) {
     throw new Error('operator_dataset_harness_case_invalid');
   }
   return Object.freeze({
@@ -40,7 +103,7 @@ function canonicalCase(value, family) {
     input: Object.freeze(JSON.parse(JSON.stringify(value.input))),
     ablationInput: Object.freeze(JSON.parse(JSON.stringify(value.ablationInput))),
     referenceResponse: value.referenceResponse,
-    oracle: Object.freeze(Object.fromEntries(FAMILIES[family].map((field) => [field, value.oracle[field]]))),
+    oracle: Object.freeze(Object.fromEntries(oracleFields.map((field) => [field, value.oracle[field]]))),
   });
 }
 
@@ -52,7 +115,9 @@ export function validateOperatorDatasetHarnessDefinition(value, { benchmarkId = 
   const id = String(value.benchmarkId || '');
   const family = String(value.benchmarkFamily || '');
   if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(id) || (benchmarkId && id !== benchmarkId)
-    || !Object.hasOwn(FAMILIES, family)) throw new Error('operator_dataset_harness_identity_invalid');
+    || !activeEvaluatorForFamily(family)) {
+    throw new Error('operator_dataset_harness_identity_invalid');
+  }
   const seedSchedule = [...new Set((Array.isArray(value.seedSchedule) ? value.seedSchedule : []).map(Number))];
   const minimumRepetitions = Number(value.minimumRepetitions);
   const inferenceProfile = buildAcademicAnalysisInferenceProfile({ benchmarkFamily: family });
@@ -139,13 +204,15 @@ export function validateOperatorDatasetSplitManifest(value, { datasetName = null
 
 export function validateOperatorDatasetAuthorityDocument(value, { datasetName = null, datasetManifestHash = null } = {}) {
   const legacy = value?.version === 1;
+  const researchSemanticAuthority = value?.version === 3;
   const keys = [
     'version', 'kind', 'datasetName', 'datasetManifestHash', 'datasetLicenseId', 'datasetSplitManifestHash',
     'benchmarkHarnessDefinitionHash', 'benchmarkFamily', 'seedSchedule', 'minimumRepetitions',
     'workerExposurePolicy', 'signedAt', 'expiresAt', 'signatures',
     ...(!legacy ? ['analysisProtocolHash'] : []),
+    ...(researchSemanticAuthority ? ['researchSemantics'] : []),
   ];
-  if (!exactKeys(value, keys) || ![1, 2].includes(value.version) || value.kind !== 'OperatorDatasetHarnessAuthority') {
+  if (!exactKeys(value, keys) || ![1, 2, 3].includes(value.version) || value.kind !== 'OperatorDatasetHarnessAuthority') {
     throw new Error('operator_dataset_authority_document_shape_invalid');
   }
   const name = String(value.datasetName || '');
@@ -153,10 +220,18 @@ export function validateOperatorDatasetAuthorityDocument(value, { datasetName = 
   const family = String(value.benchmarkFamily || '');
   const seedSchedule = (Array.isArray(value.seedSchedule) ? value.seedSchedule : []).map(Number);
   const minimumRepetitions = Number(value.minimumRepetitions);
+  let researchSemantics = null;
+  if (researchSemanticAuthority) {
+    try {
+      researchSemantics = validateOperatorDatasetResearchSemantics(value.researchSemantics)
+        .researchSemantics;
+    } catch { throw new Error('operator_dataset_research_semantics_invalid'); }
+  }
   if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(name) || (datasetName && name !== datasetName)
     || !SHA256.test(manifestHash) || (datasetManifestHash && manifestHash !== String(datasetManifestHash).toLowerCase())
     || !String(value.datasetLicenseId || '') || !SHA256.test(String(value.datasetSplitManifestHash || ''))
-    || !SHA256.test(String(value.benchmarkHarnessDefinitionHash || '')) || !Object.hasOwn(FAMILIES, family)
+    || !SHA256.test(String(value.benchmarkHarnessDefinitionHash || ''))
+    || !activeEvaluatorForFamily(family)
     || (!legacy && !SHA256.test(String(value.analysisProtocolHash || '')))
     || seedSchedule.length < 1 || seedSchedule.some((seed) => !Number.isSafeInteger(seed))
     || !Number.isSafeInteger(minimumRepetitions) || minimumRepetitions < 1
@@ -174,6 +249,7 @@ export function validateOperatorDatasetAuthorityDocument(value, { datasetName = 
     datasetSplitManifestHash: String(value.datasetSplitManifestHash).toLowerCase(),
     benchmarkHarnessDefinitionHash: String(value.benchmarkHarnessDefinitionHash).toLowerCase(),
     ...(!legacy ? { analysisProtocolHash: String(value.analysisProtocolHash).toLowerCase() } : {}),
+    ...(researchSemanticAuthority ? { researchSemantics } : {}),
     benchmarkFamily: family,
     seedSchedule: Object.freeze(seedSchedule),
     minimumRepetitions,
@@ -194,7 +270,7 @@ export function validateOperatorDatasetAuthorityDocument(value, { datasetName = 
 export function validateOperatorDatasetHarnessEnvelope(value, { datasetName = null, datasetManifestHash = null } = {}) {
   const legacy = value?.version === 1;
   const keys = ['version', 'kind', 'authority', 'splitManifest', 'harnessDefinition', ...(!legacy ? ['analysisProtocol'] : [])];
-  if (!exactKeys(value, keys) || ![1, 2].includes(value.version) || value.kind !== 'OperatorDatasetHarnessEnvelope'
+  if (!exactKeys(value, keys) || ![1, 2, 3].includes(value.version) || value.kind !== 'OperatorDatasetHarnessEnvelope'
     || value.authority?.version !== value.version) {
     throw new Error('operator_dataset_harness_envelope_shape_invalid');
   }
@@ -223,6 +299,9 @@ export function validateOperatorDatasetHarnessEnvelope(value, { datasetName = nu
       minimumRepetitions: harness.definition.minimumRepetitions,
     }) < analysis.analysisProtocol.power.requiredPairedObservations)
     || harness.definition.benchmarkFamily !== authority.authority.benchmarkFamily
+    || (authority.authority.version === 3 && split.splitManifest.entries.some(
+      (entry) => !authority.authority.researchSemantics.eligibleSplits.includes(entry.split),
+    ))
     || JSON.stringify(harness.definition.seedSchedule) !== JSON.stringify(authority.authority.seedSchedule)
     || harness.definition.minimumRepetitions !== authority.authority.minimumRepetitions) {
     throw new Error('operator_dataset_harness_envelope_binding_invalid');
@@ -309,10 +388,20 @@ export function verifyOperatorDatasetHarnessAuthorityReceiptStructure(receipt, {
     && receipt.benchmarkFamily === authority.authority.benchmarkFamily
     && receipt.benchmarkFamily === dataset.benchmarkFamily
     && receipt.benchmarkFamily === selector.benchmarkFamily
+    && (authority.authority.version !== 3 || (
+      receipt.operatorDatasetResearchSemanticsHash
+        === hashRecord('OperatorDatasetResearchSemantics', authority.authority.researchSemantics)
+      && receipt.operatorDatasetResearchSemanticsHash
+        === dataset.operatorDatasetResearchSemanticsHash
+      && JSON.stringify(receipt.operatorDatasetResearchSemantics)
+        === JSON.stringify(authority.authority.researchSemantics)
+      && JSON.stringify(dataset.operatorDatasetResearchSemantics)
+        === JSON.stringify(authority.authority.researchSemantics)
+    ))
     && receipt.operatorAuthorizationHash === authority.operatorDatasetAuthorityDocumentHash
     && JSON.stringify(receipt.authority) === JSON.stringify(authority.authority));
 }
 
 export function isOperatorDatasetBenchmarkFamily(value) {
-  return Object.hasOwn(FAMILIES, String(value || ''));
+  return Boolean(activeEvaluatorForFamily(String(value || '')));
 }

@@ -20,7 +20,19 @@ function createRedriveHarness(initialMessages = {}) {
   const ledgerRecords = [];
   const preparedRecords = [];
   const deadLetterCalls = [];
+  const transactionEvents = [];
   const persistence = {
+    transaction(work) {
+      transactionEvents.push('begin');
+      try {
+        const result = work(persistence);
+        transactionEvents.push('commit');
+        return result;
+      } catch (error) {
+        transactionEvents.push('rollback');
+        throw error;
+      }
+    },
     execute(sql) {
       statements.push(sql);
       for (const match of String(sql).matchAll(/prepared-ledger-(\d+)/g)) {
@@ -65,7 +77,7 @@ function createRedriveHarness(initialMessages = {}) {
     nowIso: () => FIXED_NOW,
   };
   const operations = createSqliteDeliveryRedriveOperations({ persistence, receiptLedger, clock, getApi: () => api });
-  return { operations, persistence, receiptLedger, api, messages, statements, ledgerRecords, preparedRecords, deadLetterCalls };
+  return { operations, persistence, receiptLedger, api, messages, statements, transactionEvents, ledgerRecords, preparedRecords, deadLetterCalls };
 }
 
 function retryableMessage(overrides = {}) {
@@ -307,12 +319,12 @@ test('enqueueRedrive consumes fresh authorization in one transaction and rejects
   assert.equal(receipt.messageId, newMessageId);
   assert.equal(receipt.ledgerReceiptId, 'ledger-1');
   const transaction = harness.statements[0];
-  assert.match(transaction, /^BEGIN IMMEDIATE;/);
+  assert.deepEqual(harness.transactionEvents, ['begin', 'commit']);
+  assert.match(transaction, /^\/\* prepared-ledger-1 \*\//);
   assert.match(transaction, /status='superseded'/);
   assert.match(transaction, /INSERT INTO submission_outbox/);
   assert.match(transaction, /INSERT INTO submission_authorization_consumptions/);
   assert.match(transaction, /UPDATE submission_release_locks/);
-  assert.match(transaction, /COMMIT;$/);
 
   assert.throws(
     () => harness.operations.enqueueRedrive({ previousMessageId: previous.message_id, dispatchAuthorization: { ...authorization, nonce: previous.nonce }, payload: {} }),
@@ -334,6 +346,7 @@ test('enqueueRedrive consumes fresh authorization in one transaction and rejects
     /transaction aborted/,
   );
   assert.equal(transactionFailure.ledgerRecords.length, 0);
+  assert.deepEqual(transactionFailure.transactionEvents, ['begin', 'rollback']);
 });
 
 test('dead-letter writes are deterministic and use an idempotent transactional insert', () => {
@@ -345,10 +358,10 @@ test('dead-letter writes are deterministic and use an idempotent transactional i
   assert.deepEqual(second, first);
   assert.equal(first.status, 'submission_dead_letter_recorded');
   assert.equal(harness.statements.length, 2);
+  assert.deepEqual(harness.transactionEvents, ['begin', 'commit', 'begin', 'commit']);
   assert.equal(harness.statements[0], harness.statements[1]);
-  assert.match(harness.statements[0], /^BEGIN IMMEDIATE; \/\* prepared-ledger-\d+ \*\/ INSERT OR IGNORE INTO submission_dead_letters/);
+  assert.match(harness.statements[0], /^\/\* prepared-ledger-\d+ \*\/ INSERT OR IGNORE INTO submission_dead_letters/);
   assert.match(harness.statements[0], /UPDATE submission_outbox SET status='dead_letter'/);
-  assert.match(harness.statements[0], /COMMIT;$/);
   assert.equal(harness.ledgerRecords.length, 2);
   assert.equal(harness.ledgerRecords[0].receipt.receiptHash, harness.ledgerRecords[1].receipt.receiptHash);
   assert.throws(() => harness.operations.deadLetter({ messageId: 'missing', failureClass: 'unknown' }), /outbox message missing/);

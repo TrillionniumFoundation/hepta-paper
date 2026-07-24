@@ -23,6 +23,7 @@ import { LEGACY_CAPABILITY_MATRIX_V3 } from '../../migration/legacy-capability-m
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { APPLICATION_SERVICE_PORT_CATALOG } from '../../paper-ports/application-service-port-catalog.mjs';
 import { ARCHITECTURE_ENTRYPOINT_MANIFEST } from '../src/architecture-entrypoint-manifest.mjs';
+import { relativeModuleSpecifiers } from '../verification/javascript-module-specifiers.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
 
@@ -40,8 +41,8 @@ function architectureReachability(entries) {
     if (reached.has(file)) continue;
     reached.add(file);
     const source = fs.readFileSync(file, 'utf8');
-    for (const match of source.matchAll(/(?:from\s+|import\s*\()(['"])(\.[^'"]+)\1/g)) {
-      const resolved = resolveArchitectureImport(file, match[2]);
+    for (const specifier of relativeModuleSpecifiers(source)) {
+      const resolved = resolveArchitectureImport(file, specifier);
       if (resolved && !reached.has(resolved)) pending.push(resolved);
     }
   }
@@ -435,11 +436,54 @@ test('high-risk adapters remain split into bounded modules', () => {
     'paper-domain/automation/autonomous-research-campaign-execution-admission.mjs',
     'paper-domain/automation/campaign-research-contract.mjs',
   ];
-  const rows = boundedModules.map((relative) => ({
-    relative,
-    lines: fs.readFileSync(path.join(workspaceRoot, relative), 'utf8').split(/\n/).length - 1,
-  }));
+  const rows = boundedModules.map((relative) => {
+    const source = fs.readFileSync(path.join(workspaceRoot, relative), 'utf8');
+    const dependencyFanout = new Set([
+      ...source.matchAll(/(?:from\s+|import\s*\()(['"])(\.[^'"]+)\1/g),
+    ].map((match) => match[2])).size;
+    const declarationExports = [
+      ...source.matchAll(
+        /\bexport\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|let|var)\s+[A-Za-z_$][\w$]*/g,
+      ),
+    ].length;
+    const namedExports = [...source.matchAll(/\bexport\s*\{([^}]+)\}/g)]
+      .reduce((count, match) => count + match[1].split(',')
+        .map((entry) => entry.trim()).filter(Boolean).length, 0);
+    const starExports = (source.match(/\bexport\s*\*/g) || []).length;
+    const publicExportCount = declarationExports + namedExports + starExports;
+    const controlFlowPoints = (source.match(
+      /\b(?:if|for|while|switch|catch)\s*\(|\?\?|&&|\|\||\?[^?.]/g,
+    ) || []).length;
+    return {
+      relative,
+      lines: source.split(/\n/).length - 1,
+      dependencyFanout,
+      publicExportCount,
+      responsibilitySurface: dependencyFanout + publicExportCount,
+      controlFlowPoints,
+    };
+  });
   assert.equal(Math.max(...rows.map((row) => row.lines)) <= 700, true, JSON.stringify(rows));
+  assert.equal(
+    Math.max(...rows.map((row) => row.dependencyFanout)) <= 16,
+    true,
+    JSON.stringify(rows),
+  );
+  assert.equal(
+    Math.max(...rows.map((row) => row.publicExportCount)) <= 30,
+    true,
+    JSON.stringify(rows),
+  );
+  assert.equal(
+    Math.max(...rows.map((row) => row.responsibilitySurface)) <= 32,
+    true,
+    JSON.stringify(rows),
+  );
+  assert.equal(
+    Math.max(...rows.map((row) => row.controlFlowPoints)) <= 220,
+    true,
+    JSON.stringify(rows),
+  );
   for (const relative of [
     'paper-adapters/empirical-analysis/index.mjs',
     'paper-adapters/journal-manage/index.mjs',
@@ -569,7 +613,9 @@ test('automation plane stays independent from submission governance', () => {
     'paper-application/automation/campaign-node-executor.mjs',
     'paper-application/automation/campaign-node-execution-context.mjs',
     'paper-application/automation/campaign-node-kind-policy.mjs',
+    'paper-application/automation/campaign-agent-execution-boundary.mjs',
     'paper-application/automation/campaign-agent-node-orchestrator.mjs',
+    'paper-application/automation/campaign-formal-verification-node-orchestrator.mjs',
     'paper-application/automation/campaign-empirical-node-orchestrator.mjs',
     'paper-application/automation/campaign-quality-release-orchestrator.mjs',
     'paper-adapters/automation/campaign-node-primitives-adapter.mjs',
@@ -591,11 +637,37 @@ test('automation plane stays independent from submission governance', () => {
   assert.match(migration, /campaign_events/);
 });
 
+test('research executables cannot reach submission portal network authority', () => {
+  const research = architectureReachability([
+    'paper-composition/automation/autonomous-research-campaign-composition.mjs',
+    'paper-composition/automation/autonomous-research-supervisor-composition.mjs',
+    'paper-composition/automation/autonomous-research-machine-intake-enqueue-composition.mjs',
+    'paper-composition/automation/autonomous-research-readiness-composition.mjs',
+  ]);
+  const dispatcher = architectureReachability([
+    'paper-core/bin/autonomous-submission-dispatcher.mjs',
+  ]);
+  const networkAdapter =
+    'paper-adapters/automation/http-autonomous-submission-portal-adapter.mjs';
+  const dispatcherServices =
+    'paper-composition/automation/autonomous-submission-dispatcher-services-composition.mjs';
+  const dispatcherCycleSigner =
+    'paper-adapters/automation/autonomous-submission-dispatcher-cycle-signer.mjs';
+  assert.equal(research.includes(networkAdapter), false);
+  assert.equal(research.includes(dispatcherServices), false);
+  assert.equal(research.includes(dispatcherCycleSigner), false);
+  assert.equal(dispatcher.includes(networkAdapter), true);
+  assert.equal(dispatcher.includes(dispatcherServices), true);
+  assert.equal(dispatcher.includes(dispatcherCycleSigner), true);
+});
+
 test('campaign node orchestration policy stays in application and adapters remain narrow primitives', () => {
   const applicationPaths = [
     'paper-application/automation/campaign-node-executor.mjs',
     'paper-application/automation/campaign-node-execution-context.mjs',
+    'paper-application/automation/campaign-agent-execution-boundary.mjs',
     'paper-application/automation/campaign-agent-node-orchestrator.mjs',
+    'paper-application/automation/campaign-formal-verification-node-orchestrator.mjs',
     'paper-application/automation/campaign-empirical-node-orchestrator.mjs',
     'paper-application/automation/campaign-quality-release-orchestrator.mjs',
   ];
@@ -638,11 +710,16 @@ test('architecture production inventory follows declared executable reachability
   const operatorCli = architectureReachability(['paper-core/bin/paper-production-core.mjs']);
   const batchProduction = architectureReachability(['paper-composition/batch/paper-batch-application.mjs']);
   const operatorCliSource = fs.readFileSync(path.join(workspaceRoot, 'paper-core/bin/paper-production-core.mjs'), 'utf8');
+  const scopedBootstrapSource = fs.readFileSync(path.join(
+    workspaceRoot,
+    'paper-composition/bootstrap/capability-scoped-bootstrap.mjs',
+  ), 'utf8');
   assert.ok(automation.length > 20);
   assert.ok(compatibilityCapability.length > 100);
   assert.deepEqual(automation.filter((relative) => relative.startsWith('paper-adapters/submission/')), []);
   assert.equal(compatibilityCapability.includes('paper-composition/compat/legacy-stage-port-composition.mjs'), true);
   assert.equal(compatibilityCapability.includes('paper-composition/compat/legacy-stage-adapter-registry.mjs'), true);
+  assert.doesNotMatch(scopedBootstrapSource, /legacy-stage-(?:adapter-registry|port-composition)/);
   assert.equal(compatibilityCapability.includes('paper-adapters/experimental/taskflow/openclaw-taskflow-adapter.mjs'), false);
   assert.equal(operatorCli.includes('paper-composition/compat/legacy-context-bootstrap.mjs'), false);
   assert.equal(operatorCli.includes('paper-composition/compat/legacy-stage-adapter-registry.mjs'), false);

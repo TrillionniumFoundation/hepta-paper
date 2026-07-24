@@ -3,6 +3,9 @@ import { evaluatePaperQualityPolicy, PAPER_QUALITY_PROFILES } from './paper-qual
 import { evaluatePromotionDependencyClosure } from './promotion-dependency-closure.mjs';
 import { buildPaperProfileEvidenceContract } from './paper-profile-evidence-contract.mjs';
 import { verifyExperimentRegistry } from '../research/experiment-registry-verifier.mjs';
+import {
+  verifyIndependentEvidenceEntailmentReviewReceipt,
+} from '../research/evidence-entailment-review-receipt-contract.mjs';
 
 function values(value) {
   return Array.isArray(value) ? value : [];
@@ -135,6 +138,12 @@ export function evaluateManuscriptPromotion({
   boundary = 'package',
   experimentRegistryAuthorityVerifier = null,
   expectedCampaignId = null,
+  evidenceEntailmentReviewReceipt = null,
+  requireEvidenceEntailmentReview = false,
+  expectedManuscriptHash = null,
+  expectedEvidenceEntailmentContractHash = null,
+  expectedEvidenceBoundManuscriptIrHash = null,
+  expectedManuscriptAuthorPrincipalId = null,
 } = {}) {
   const effectiveProfiles = [...new Set([
     ...(Array.isArray(profiles) ? profiles : []),
@@ -194,6 +203,25 @@ export function evaluateManuscriptPromotion({
   for (const item of formal) {
     if (item.resultStatus !== 'formal_claim_verified') blockers.push(`formal_claim_binding_required:${item.workerId || item.workerType}`);
   }
+  const evidenceEntailmentReviewVerification = evidenceEntailmentReviewReceipt
+    ? verifyIndependentEvidenceEntailmentReviewReceipt(
+      evidenceEntailmentReviewReceipt,
+      {
+        paperId: paperTask?.paperId || null,
+        evidenceEntailmentContractHash: expectedEvidenceEntailmentContractHash,
+        evidenceBoundManuscriptIrHash: expectedEvidenceBoundManuscriptIrHash,
+        reviewedManuscriptHash: expectedManuscriptHash,
+        authorPrincipalId: expectedManuscriptAuthorPrincipalId,
+        requireSignedReviewerEvidence: requireEvidenceEntailmentReview,
+      },
+    ) : null;
+  if (requireEvidenceEntailmentReview
+    && evidenceEntailmentReviewVerification?.valid !== true) {
+    blockers.push('independent_evidence_entailment_review_required_for_promotion');
+    blockers.push(...values(evidenceEntailmentReviewVerification?.blockers).map((item) => (
+      `evidence_entailment_review:${item}`
+    )));
+  }
   const qualityEvidence = buildPaperQualityEvidence({
     paperTask,
     profiles: effectiveProfiles,
@@ -227,7 +255,7 @@ export function evaluateManuscriptPromotion({
   }
   const uniqueBlockers = [...new Set(blockers)];
   const payload = {
-    version: 1,
+    version: requireEvidenceEntailmentReview ? 2 : 1,
     kind: 'ManuscriptPromotionGate',
     paperId: paperTask?.paperId || null,
     boundary,
@@ -247,6 +275,15 @@ export function evaluateManuscriptPromotion({
     experimentRegistryHash: experimentRegistry?.experimentRegistryHash || null,
     formalWorkerResults: formal,
     packageVerificationReceiptHash: packageVerificationReceipt?.packageVerificationReceiptHash || null,
+    evidenceEntailmentReviewRequired: requireEvidenceEntailmentReview === true,
+    evidenceEntailmentContractHash:
+      evidenceEntailmentReviewReceipt?.evidenceEntailmentContractHash || null,
+    independentEvidenceEntailmentReviewReceiptHash:
+      evidenceEntailmentReviewReceipt
+        ?.independentEvidenceEntailmentReviewReceiptHash || null,
+    independentEvidenceEntailmentReviewReceipt:
+      evidenceEntailmentReviewReceipt || null,
+    evidenceEntailmentReviewVerification,
     blockers: uniqueBlockers,
     externalActionPerformed: false,
   };

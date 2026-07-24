@@ -70,11 +70,15 @@ function createReservedCampaign(t, suffix, {
     now: T0,
   });
   assert.ok(lease);
-  assert.deepEqual(repository.beginDispatch({
+  const dispatch = repository.beginDispatch({
     lease,
     campaignCostLimitUsd: 1,
     now: T0,
-  }), { authorized: true, dispatchCount: 1 });
+  });
+  assert.equal(dispatch.authorized, true);
+  assert.equal(dispatch.resumed, false);
+  assert.equal(dispatch.dispatchCount, 1);
+  assert.match(dispatch.dispatchReservationHash, /^sha256:[0-9a-f]{64}$/);
   return { runtimeRoot, repository, campaignId, lease };
 }
 
@@ -88,6 +92,8 @@ function readinessReservation({ campaignId, dispatchCount, launchMode }) {
     dispatchCount,
     dispatchAuthorizationHash: H(`${campaignId}:dispatch-authorization`),
     providerConfigurationHash: H(`${campaignId}:provider-configuration`),
+    externalActionConfigurationIdentityHash:
+      H(`${campaignId}:external-action-configuration`),
   });
 }
 
@@ -305,7 +311,7 @@ test('provider journal persists author success before reviewer failure and never
     fixture.authorization.externalActionAttempt.attemptId,
   );
   assert.equal(attempt.status, 'failed');
-  assert.equal(attempt.progress.sequence, 1);
+  assert.equal(attempt.progress.sequence, 2);
   assert.equal(attempt.progress.evidence.role, 'research_author');
   assert.equal(attempt.receipt.actionAccountingComplete, true);
   assert.equal(attempt.receipt.externalActionPerformed, true);
@@ -330,8 +336,10 @@ test('between-role fence failure preserves the author action without inventing r
   assert.equal(fixture.failureInspection.providerCanaryActionCount, 1);
   assert.equal(fixture.failureInspection.researchAuthorCanaryAttemptCount, 1);
   assert.equal(fixture.failureInspection.formalReviewerCanaryAttemptCount, 0);
-  assert.equal(attempt.progress, null,
-    'the durable author checkpoint is written only after the between-role fence passes');
+  assert.equal(attempt.progress.sequence, 1);
+  assert.equal(attempt.progress.evidence.kind,
+    'AutonomousResearchSupervisorExternalActionMayHaveStarted',
+    'the first external boundary is durably marked before the failing fence');
   assert.equal(attempt.receipt.externalActionPerformed, true);
   assert.equal(fixture.repository.getCampaign(fixture.campaignId).providerCanaryReservedCostUsd, 2);
 });
@@ -349,6 +357,10 @@ test('an uninterrupted resident next cycle recovers an expired active marker bef
     providerConfigurationHash: H('same-process-provider'),
     now: T0,
   });
+  const reconciliation = fixture.repository.reconcileStaleLeases({
+    now: new Date(T0.getTime() + 16 * 60 * 1000),
+  });
+  assert.equal(reconciliation.recoveredExternalActionCount, 1);
   const replacement = fixture.repository.tryAcquireCampaignLease({
     campaignId: fixture.campaignId,
     ownerId: 'supervisor:same-process-next-cycle',
@@ -359,14 +371,14 @@ test('an uninterrupted resident next cycle recovers an expired active marker bef
   const interrupted = fixture.repository.getExternalActionAttempt(
     authorization.externalActionAttempt.attemptId,
   );
-  assert.equal(interrupted.status, 'recovered_incomplete');
-  assert.equal(interrupted.receipt.actionAccountingComplete, false);
-  assert.equal(interrupted.receipt.externalActionMayHaveOccurred, true);
+  assert.equal(interrupted.status, 'failed');
+  assert.equal(interrupted.receipt.actionAccountingComplete, true);
+  assert.equal(interrupted.receipt.externalActionMayHaveOccurred, false);
   const state = fixture.repository.getCampaign(fixture.campaignId);
   assert.equal(state.externalActionInProgress, false);
-  assert.equal(state.lastProviderCanaryStatus, 'failed_unattributed');
-  assert.equal(state.providerCanaryCount, 1);
-  assert.equal(state.providerCanaryReservedCostUsd, 2);
+  assert.equal(state.lastProviderCanaryStatus, null);
+  assert.equal(state.providerCanaryCount, 0);
+  assert.equal(state.providerCanaryReservedCostUsd, 0);
   assert.equal(state.recoveredLeaseCount, 1);
   assert.equal(state.leaseOwner, replacement.ownerId);
   assert.throws(() => fixture.repository.beginExternalActionAttempt({
@@ -374,7 +386,7 @@ test('an uninterrupted resident next cycle recovers an expired active marker bef
     actionKind: AUTONOMOUS_RESEARCH_SUPERVISOR_EXTERNAL_ACTION_KINDS.PROVIDER_CANARY,
     reservation: authorization.externalActionAttempt.marker.reservation,
     now: new Date(T0.getTime() + 16 * 60 * 1000 + 1),
-  }), /UNIQUE|constraint/i);
+  }), /stable_key_invalid|UNIQUE|constraint/i);
 });
 
 test('SIGKILL-equivalent cold recovery conservatively closes an unfinished reservation and forbids replay', (t) => {
@@ -427,15 +439,15 @@ test('SIGKILL-equivalent cold recovery conservatively closes an unfinished reser
   });
   assert.equal(recovery.recoveredExternalActionCount, 1);
   const recovered = recovery.recoveredExternalActionReceipts[0];
-  assert.equal(recovered.status, 'recovered_incomplete');
-  assert.equal(recovered.actionAccountingComplete, false);
+  assert.equal(recovered.status, 'failed');
+  assert.equal(recovered.actionAccountingComplete, true);
   assert.equal(recovered.externalActionPerformed, false);
-  assert.equal(recovered.externalActionMayHaveOccurred, true);
+  assert.equal(recovered.externalActionMayHaveOccurred, false);
   assert.equal(verifyAutonomousResearchSupervisorExternalActionAttemptReceipt(recovered), true);
   state = repository.getCampaign(campaignId);
   assert.equal(state.externalActionInProgress, false);
-  assert.equal(state.providerCanaryCount, 1);
-  assert.equal(state.providerCanaryReservedCostUsd, 2);
+  assert.equal(state.providerCanaryCount, 0);
+  assert.equal(state.providerCanaryReservedCostUsd, 0);
 
   const replacementLease = repository.tryAcquireCampaignLease({
     campaignId,
@@ -443,22 +455,29 @@ test('SIGKILL-equivalent cold recovery conservatively closes an unfinished reser
     now: new Date(T0.getTime() + 16 * 60 * 1000 + 1),
   });
   assert.ok(replacementLease);
+  const replacementDispatch = repository.beginDispatch({
+    lease: replacementLease,
+    campaignCostLimitUsd: 1,
+    now: new Date(T0.getTime() + 16 * 60 * 1000 + 1),
+  });
+  assert.equal(replacementDispatch.authorized, true);
+  assert.equal(replacementDispatch.dispatchCount, 1);
   assert.throws(() => repository.beginExternalActionAttempt({
     lease: replacementLease,
     actionKind: AUTONOMOUS_RESEARCH_SUPERVISOR_EXTERNAL_ACTION_KINDS.PROVIDER_CANARY,
     reservation: interruptedAttempt.marker.reservation,
     now: new Date(T0.getTime() + 16 * 60 * 1000 + 2),
-  }), /UNIQUE|constraint/i);
+  }), /external_action_reservation_invalid/);
   const next = repository.beginProviderCanary({
     lease: replacementLease,
     providerConfigurationHash: H('sigkill-provider'),
     now: new Date(T0.getTime() + 16 * 60 * 1000 + 3),
   });
   assert.equal(next.authorized, true);
-  assert.equal(next.providerCanaryReservation.generationSequence, 2);
+  assert.equal(next.providerCanaryReservation.generationSequence, 1);
   state = repository.getCampaign(campaignId);
-  assert.equal(state.providerCanaryCount, 2);
-  assert.equal(state.providerCanaryReservedCostUsd, 4);
+  assert.equal(state.providerCanaryCount, 1);
+  assert.equal(state.providerCanaryReservedCostUsd, 2);
 
   const tamperedAttemptId = next.externalActionAttempt.attemptId;
   const databasePath = repository.databasePath;

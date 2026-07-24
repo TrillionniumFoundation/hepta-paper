@@ -9,6 +9,12 @@ import {
 import {
   verifyAutonomousResearchSupervisorDispatchAuthorization,
 } from '../../paper-application/automation/autonomous-research-supervisor-dispatch-authorization.mjs';
+import {
+  verifyAutonomousResearchCapabilityScopeManifest,
+} from '../../paper-domain/automation/autonomous-research-capability-scope-manifest.mjs';
+import {
+  verifyAutonomousResearchAgendaProductionReceipt,
+} from '../../paper-domain/automation/autonomous-research-agenda-production-contract.mjs';
 
 const LIVE_RELEASE_ATTESTOR_BLOCKERS = new Set([
   'research_execution_release_attestor_production_backend_not_ready',
@@ -179,6 +185,8 @@ export function verifyAutonomousResearchSupervisorReadinessAuthorization({
 export function buildAutonomousResearchProductionAdmissionReadiness({
   residentPrerequisites,
   releaseAttestorInspection,
+  capabilityScopeManifest = null,
+  researchAgendaProducerReceipt = null,
   now = new Date(),
 } = {}) {
   const nowMs = now instanceof Date ? now.getTime() : Date.parse(String(now));
@@ -194,6 +202,19 @@ export function buildAutonomousResearchProductionAdmissionReadiness({
     && residentPrerequisites?.externalActionPerformed === false
     && residentPrerequisites?.networkActionPerformed === false
     && Number.isFinite(nowMs) && fullExpiresAt > nowMs && runtimeExpiresAt > nowMs;
+  const capabilityScopeReady = verifyAutonomousResearchCapabilityScopeManifest(
+    capabilityScopeManifest,
+  ) && capabilityScopeManifest.genericDeclaredCapability === true
+    && capabilityScopeManifest.agendaMode === 'machine-generated';
+  const machineGeneratedAgendaReady = capabilityScopeReady
+    && verifyAutonomousResearchAgendaProductionReceipt(researchAgendaProducerReceipt).valid
+    && capabilityScopeManifest.empiricalFamilies.includes(
+      researchAgendaProducerReceipt?.selectedProtocolFamily,
+    )
+    && JSON.stringify(researchAgendaProducerReceipt?.allowedProtocolFamilies)
+      === JSON.stringify(capabilityScopeManifest.empiricalFamilies);
+  const productionGenericCapabilityReady = capabilityScopeReady
+    && machineGeneratedAgendaReady;
   const report = buildAutonomousResearchProductionEnqueueReadiness({
     automationOperationalReady: cachedQualificationReady,
     academicEmpiricalReady: cachedQualificationReady,
@@ -203,7 +224,16 @@ export function buildAutonomousResearchProductionAdmissionReadiness({
     liveProviderCanaryRequested: false,
     externalActionPerformed: false,
     researchExecutionReleaseAttestor: releaseAttestorInspection,
-    fullAutomaticResearchWritingBlockers: residentPrerequisites?.blockers || [],
+    fullAutomaticResearchWritingBlockers: [
+      ...(residentPrerequisites?.blockers || []),
+      ...(capabilityScopeReady
+        ? [] : ['autonomous_research_generic_declared_capability_scope_required']),
+      ...(machineGeneratedAgendaReady
+        ? [] : ['autonomous_research_machine_generated_agenda_receipt_required']),
+    ],
+    productionGenericCapabilityReady,
+    autonomousResearchCapabilityScopeManifest: capabilityScopeManifest,
+    researchAgendaProducerReceipt,
   });
   return Object.freeze({
     ...report,
@@ -214,6 +244,11 @@ export function buildAutonomousResearchProductionAdmissionReadiness({
     fullResearchQualification: Object.freeze({
       remainingValidityMs: cachedQualificationReady ? fullExpiresAt - nowMs : 0,
     }),
+    productionGenericCapabilityReady,
+    autonomousResearchCapabilityScopeManifestHash:
+      capabilityScopeManifest?.autonomousResearchCapabilityScopeManifestHash || null,
+    researchAgendaProductionReceiptHash:
+      researchAgendaProducerReceipt?.autonomousResearchAgendaProductionReceiptHash || null,
   });
 }
 
@@ -223,22 +258,29 @@ export function buildAutonomousResearchProductionEnqueueReadiness(report) {
   );
   const inspectionWasPure = report?.externalActionPerformed === false
     && report?.liveProviderCanaryRequested === false;
+  const productionGenericCapabilityReady =
+    report?.productionGenericCapabilityReady === true
+    || report?.fullyAutonomousResearchSystemReady === true;
   const blockers = Object.freeze([
     ...(report?.fullAutomaticResearchWritingBlockers || [])
       .filter((blocker) => !LIVE_RELEASE_ATTESTOR_BLOCKERS.has(blocker)),
     ...(staticAttestorReady
       ? [] : ['research_execution_release_attestor_static_production_config_not_ready']),
     ...(inspectionWasPure ? [] : ['production_enqueue_readiness_external_action_forbidden']),
+    ...(productionGenericCapabilityReady
+      ? [] : ['autonomous_research_production_generic_capability_required']),
   ]);
   const productionEnqueueAdmissionReady = blockers.length === 0
     && report?.automationOperationalReady === true
     && report?.academicEmpiricalReady === true
     && report?.researchExecutionReleaseAttestorReady === true
     && report?.runtimeImageReproducibilityReady === true
-    && report?.fullResearchQualificationReady === true;
+    && report?.fullResearchQualificationReady === true
+    && productionGenericCapabilityReady;
   return Object.freeze({
     ...report,
     productionEnqueueAdmissionReady,
+    productionGenericCapabilityReady,
     productionEnqueueAdmissionScope:
       'local-current-config-and-cached-qualification-only-no-live-provider-or-kms-action',
     productionEnqueueAdmissionBlockers: blockers,

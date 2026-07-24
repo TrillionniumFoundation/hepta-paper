@@ -23,8 +23,15 @@ import {
   buildAutonomousResearchMachineIntakeAdmission,
 } from '../../paper-domain/automation/autonomous-research-machine-intake-admission-contract.mjs';
 import {
-  createAutonomousResearchReleaseBinding,
-} from '../../paper-domain/automation/autonomous-research-release-binding-contract.mjs';
+  MANUSCRIPT_RELEASE_PROOF_FIELDS,
+} from '../../paper-domain/automation/full-research-release-qualification-inspection.mjs';
+import {
+  REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES,
+  RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE,
+} from '../../paper-domain/automation/runtime-image-reproducibility-receipt-contract.mjs';
+import {
+  genericManuscriptReleaseFixture,
+} from './support/autonomous-research-generalization-fixture.mjs';
 import {
   composeAutonomousResearchCampaignAction,
   requireExistingProductionPricingEnvelope,
@@ -44,7 +51,10 @@ function pricing(author = 2, reviewer = 3) {
 }
 
 const FULL_READY = Object.freeze({
+  productionGenericCapabilityReady: true,
   fullResearchQualificationReady: true,
+  boundedGoldenInfrastructureQualificationReady: true,
+  productionGenericResearchQualificationReady: false,
   campaignFullyQualified: true,
   fullAutomaticResearchWritingReady: true,
   researchExecutionReleaseAttestorProductionReady: true,
@@ -98,6 +108,21 @@ test('golden bootstrap fails closed on unknown pricing and clamps known-price ca
 });
 
 test('production mode requires full readiness, known provider price, and a precomputed ceiling', () => {
+  const boundedOnly = evaluateAutonomousResearchLaunchModeGate({
+    launchMode: 'production-run',
+    action: 'launch',
+    budgets: { maxCostUsd: 30, maxAgentCalls: 100 },
+    providerPricingInspection: pricing(),
+    fullResearchReadiness: {
+      ...FULL_READY,
+      productionGenericCapabilityReady: false,
+    },
+  });
+  assert.ok(boundedOnly.blockers.includes(
+    'autonomous_research_production_generic_capability_required',
+  ));
+  assert.equal(boundedOnly.providerExecutionPermitted, false);
+
   const missingCeiling = evaluateAutonomousResearchLaunchModeGate({
     launchMode: 'production-run',
     action: 'launch',
@@ -125,7 +150,12 @@ test('production mode requires full readiness, known provider price, and a preco
     action: 'launch',
     budgets: { maxCostUsd: 30, maxAgentCalls: 100 },
     providerPricingInspection: pricing(),
-    fullResearchReadiness: { ...FULL_READY, campaignFullyQualified: false },
+    fullResearchReadiness: {
+      ...FULL_READY,
+      boundedGoldenInfrastructureQualificationReady: false,
+      productionGenericResearchQualificationReady: false,
+      campaignFullyQualified: false,
+    },
   });
   assert.ok(unqualified.blockers.includes(
     'autonomous_research_production_full_readiness_required',
@@ -260,6 +290,7 @@ function qualificationReceipt({
   campaignId = 'golden-campaign',
   paperId = 'golden-paper',
   campaignReleaseBundleHash = `sha256:${'b'.repeat(64)}`,
+  releaseBinding = null,
 } = {}) {
   const payload = {
     version: 1,
@@ -268,13 +299,36 @@ function qualificationReceipt({
     campaignId,
     paperId,
     campaignReleaseBundleHash,
+    ...(releaseBinding ? {
+      proposalHash: releaseBinding.proposalHash,
+      policyAuthorizationHash: releaseBinding.policyAuthorizationHash,
+      seedBindingHash: releaseBinding.seedBindingHash,
+      qualificationScope: releaseBinding.qualificationScope,
+      genericContentCanaryVerified: releaseBinding.genericContentCanaryVerified,
+      ...Object.fromEntries(MANUSCRIPT_RELEASE_PROOF_FIELDS.map((field) => (
+        [field, releaseBinding[field]]
+      ))),
+    } : {}),
     runtimeImageReproducibilityReceiptHash: `sha256:${'c'.repeat(64)}`,
-    runtimeImageReproducibilityRequiredProfiles: ['python', 'pythonGpu', 'r'],
-    runtimeImageReproducibilityDefinitionManifestHashes: {
-      python: `sha256:${'d'.repeat(64)}`,
-      pythonGpu: `sha256:${'e'.repeat(64)}`,
-      r: `sha256:${'f'.repeat(64)}`,
-    },
+    runtimeImageReproducibilityRequiredProfiles:
+      REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES,
+    runtimeImageReproducibilityDefinitionManifestHashes: Object.fromEntries(
+      REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES.map((profile) => (
+        [profile, H(`runtime-definition:${profile}`)]
+      )),
+    ),
+    empiricalFamilyPluginPackageHash:
+      RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE.empiricalFamilyPluginPackageHash,
+    empiricalFamilyPluginRegistryHash:
+      RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE.empiricalFamilyPluginRegistryHash,
+    empiricalFamilyPluginStartupInspectionHash:
+      RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE
+        .empiricalFamilyPluginStartupInspectionHash,
+    activeEmpiricalProductionProfileHashes:
+      RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE.activeProductionProfileHashes,
+    runtimeImageReproducibilityActivePluginScopeHash:
+      RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE
+        .runtimeImageReproducibilityActivePluginScopeHash,
     issuedAt,
     expiresAt,
     externalActionPerformed: true,
@@ -399,6 +453,11 @@ function verifiedInspection(receipt) {
     paperId: receipt.paperId,
     campaignReleaseBundleHash: receipt.campaignReleaseBundleHash,
     qualificationReceiptHash: receipt.fullResearchQualificationReceiptHash,
+    qualificationScope: receipt.qualificationScope || null,
+    genericContentCanaryVerified: receipt.genericContentCanaryVerified === true,
+    ...Object.fromEntries(MANUSCRIPT_RELEASE_PROOF_FIELDS.map((field) => (
+      [field, receipt[field] || null]
+    ))),
     blockers: Object.freeze([]),
   });
 }
@@ -460,22 +519,48 @@ function qualificationAuthorityFixture({ launchMode = 'golden-bootstrap' } = {})
     sourceKind: launchMode === 'golden-bootstrap' ? 'recurring-golden' : 'machine',
     sourceAuthorityHash,
   });
-  const preparation = Object.freeze({
-    autonomousResearchLoopPreparationReportHash: H(`preparation:${launchMode}`),
+  const fixtureInputs = {
+    campaignId: intake.campaignId,
+    paperId: intake.paperId,
     launchMode,
-    autonomousResearchProviderConfigurationHash: providerConfigurationHash,
-    autonomousResearchMachineIntakeAdmissionHash:
-      admission.autonomousResearchMachineIntakeAdmissionHash,
-    proposal: Object.freeze({
-      machineProposedScientificClaimSetHash: H(`proposal:${launchMode}`),
-    }),
-    policyAuthorization: Object.freeze({
-      autonomousResearchPolicyAuthorizationHash: H(`policy:${launchMode}`),
-    }),
-    seedBinding: Object.freeze({
-      autonomousResearchSeedBindingHash: H(`seed:${launchMode}`),
-    }),
+    objective: intake.objective,
+    protocolFamily: intake.protocolFamily,
+    proposalHash: H(`proposal:${launchMode}`),
+    policyAuthorizationHash: H(`policy:${launchMode}`),
+    seedBindingHash: H(`seed:${launchMode}`),
+    machineIntake: intake,
+    machineIntakeAdmission: admission,
+  };
+  const draftPreparation = genericManuscriptReleaseFixture({
+    ...fixtureInputs,
+    campaignPlanHash: H(`pre-plan:${launchMode}`),
+  }).preparation;
+  const {
+    autonomousResearchLoopPreparationReportHash: _draftPreparationHash,
+    ...draftPreparationPayload
+  } = draftPreparation;
+  const preparationPayload = Object.freeze({
+    version: 1,
+    kind: 'AutonomousResearchLoopPreparationReport',
+    status: 'autonomous_research_launch_ready_qualification_pending',
+    ...draftPreparationPayload,
+    autonomousExecutionLaunchReady: true,
   });
+  const preparation = Object.freeze({
+    ...preparationPayload,
+    autonomousResearchLoopPreparationReportHash: hashRecord(
+      'AutonomousResearchLoopPreparationReport',
+      preparationPayload,
+    ),
+  });
+  const {
+    autonomousResearchLoopPreparationReportHash: preparationReportHash,
+    ...persistedPreparationPayload
+  } = preparation;
+  assert.equal(
+    hashRecord('AutonomousResearchLoopPreparationReport', persistedPreparationPayload),
+    preparationReportHash,
+  );
   const planPayload = Object.freeze({
     version: 4,
     kind: 'PaperCampaignPlan',
@@ -489,14 +574,12 @@ function qualificationAuthorityFixture({ launchMode = 'golden-bootstrap' } = {})
       admission.autonomousResearchMachineIntakeAdmissionHash,
   });
   const campaignPlanHash = hashRecord('PaperCampaignPlan', planPayload);
-  const releaseBinding = createAutonomousResearchReleaseBinding({
-    campaignId: intake.campaignId,
-    paperId: intake.paperId,
+  assert.equal(hashRecord('PaperCampaignPlan', planPayload), campaignPlanHash);
+  const releaseBinding = genericManuscriptReleaseFixture({
+    ...fixtureInputs,
     campaignPlanHash,
-    preparation,
-    machineIntake: intake,
-    machineIntakeAdmission: admission,
-  });
+    bindingPreparation: preparation,
+  }).releaseBinding;
   const campaignReleaseBundleHash = H(`release:${launchMode}`);
   const campaign = Object.freeze({
     campaignId: intake.campaignId,
@@ -504,6 +587,14 @@ function qualificationAuthorityFixture({ launchMode = 'golden-bootstrap' } = {})
     status: 'completed',
     spec: Object.freeze({ ...planPayload, campaignPlanHash }),
   });
+  const {
+    campaignPlanHash: persistedCampaignPlanHash,
+    ...persistedCampaignPlanPayload
+  } = campaign.spec;
+  assert.equal(
+    hashRecord('PaperCampaignPlan', persistedCampaignPlanPayload),
+    persistedCampaignPlanHash,
+  );
   const authority = Object.freeze({
     status: 'current_completed_release',
     campaignStatus: 'completed',
@@ -530,6 +621,7 @@ test('golden controller locally re-verifies current state before publishing and 
     campaignId: fixture.campaign.campaignId,
     paperId: fixture.campaign.paperId,
     campaignReleaseBundleHash: fixture.authority.campaignReleaseBundleHash,
+    releaseBinding: fixture.releaseBinding,
   });
   const inspection = verifiedInspection(receipt);
   const authority = fixture.authority;
@@ -570,9 +662,17 @@ test('golden controller locally re-verifies current state before publishing and 
     campaignReleaseAuthority: authority,
     preparation: fixture.preparation,
     qualificationStateStore: { readExternalQualificationState: () => state },
-    evaluateEligibility: () => ({ fullAutomaticResearchWritingReady: true }),
+    evaluateEligibility: () => ({
+      boundedGoldenCapabilityQualificationVerified: true,
+      fullAutomaticResearchWritingReady: false,
+      campaignFullyQualified: false,
+    }),
   });
-  assert.equal(result.status, 'golden_campaign_qualification_published');
+  assert.equal(
+    result.status,
+    'golden_campaign_qualification_published',
+    JSON.stringify(result.blockers),
+  );
   assert.deepEqual(calls.map(([name]) => name), ['verify', 'publish']);
 
   calls.length = 0;
@@ -626,6 +726,45 @@ test('global golden publication rejects production substitution and authority ta
   assert.match(productionResult.blockers.join(','), /recurring_machine_intake_required/);
 
   const golden = qualificationAuthorityFixture();
+  const {
+    autonomousResearchLoopPreparationReportHash: _goldenPreparationHash,
+    ...goldenPreparationPayload
+  } = golden.preparation;
+  const reboundPreparationPayload = Object.freeze({
+    ...goldenPreparationPayload,
+    capabilityScopeManifestHash: H('donor-capability-scope'),
+  });
+  const donorPreparations = [
+    Object.freeze({
+      ...reboundPreparationPayload,
+      autonomousResearchLoopPreparationReportHash: hashRecord(
+        'AutonomousResearchLoopPreparationReport',
+        reboundPreparationPayload,
+      ),
+    }),
+    Object.freeze({
+      ...golden.preparation,
+      capabilityScopeManifestHash: H('stale-capability-scope'),
+    }),
+  ];
+  for (const donorPreparation of donorPreparations) {
+    const donorResult = await controller.finalize({
+      externalQualification: { status: 'qualification_external_service_verified' },
+      campaign: golden.campaign,
+      campaignReleaseAuthority: golden.authority,
+      preparation: donorPreparation,
+      qualificationStateStore: {
+        readExternalQualificationState() {
+          throw new Error('donor_preparation_must_block_before_state_read');
+        },
+      },
+      evaluateEligibility: () => ({
+        boundedGoldenCapabilityQualificationVerified: true,
+      }),
+    });
+    assert.equal(donorResult.status, 'golden_campaign_global_authority_blocked');
+    assert.match(donorResult.blockers.join(','), /campaign_plan_invalid/);
+  }
   const {
     autonomousResearchGlobalGoldenQualificationAuthorityHash: _authorityHash,
     ...globalPayload

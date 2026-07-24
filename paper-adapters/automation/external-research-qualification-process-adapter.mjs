@@ -2,9 +2,17 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hasExactObjectKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 import {
   verifyFullResearchQualificationReceiptEnvelope,
 } from '../../paper-domain/automation/full-research-qualification-contract.mjs';
+import {
+  independentExternalResearchQualificationEnvelopeOptions,
+} from '../../paper-domain/automation/external-research-qualification-verification-policy-contract.mjs';
+import {
+  buildIndependentExternalResearchQualificationVerificationEvidence,
+  buildIndependentExternalResearchQualificationVerificationRequest,
+} from '../../paper-domain/automation/external-research-qualification-verification-evidence-contract.mjs';
 import {
   campaignReleaseExecutionAttestationSigningPayloadHash,
   verifyCampaignReleaseExecutionAttestationStructure,
@@ -22,6 +30,9 @@ import {
 import {
   verifyExternalResearchQualificationLocally,
 } from './external-research-qualification-local-verifier.mjs';
+import {
+  verifyIndependentExternalResearchQualificationVerificationEvidence,
+} from './external-research-qualification-verifier-attestation.mjs';
 
 export { verifyExternalQualificationReleaseSignerAuthority };
 
@@ -36,6 +47,10 @@ function envelopeFailureCodes(blockers) {
     ['external_qualification_independent_hypothesis_prior_art_qualification_invalid',
       FAILURE.PRIOR_ART_QUALIFICATION_INVALID],
     ['external_qualification_runtime_image_reproducibility_binding_invalid', FAILURE.RUNTIME_REPRODUCIBILITY_BINDING_INVALID],
+    ['external_qualification_release_scope_not_eligible',
+      FAILURE.RELEASE_SCOPE_NOT_ELIGIBLE],
+    ['external_qualification_manuscript_release_proof_mismatch',
+      FAILURE.MANUSCRIPT_RELEASE_PROOF_MISMATCH],
     ['external_qualification_signature_invalid', FAILURE.RECEIPT_SIGNATURE_INVALID],
   ]);
   return [...new Set((blockers || []).map((blocker) => mapping.get(blocker)).filter(Boolean))];
@@ -103,6 +118,10 @@ function configurationInspectionPayload(configuration, blockers = []) {
     clientServiceIdentityHash: configuration?.clientServiceIdentityHash || null,
     verifierServiceIdentityHash: configuration?.verifierServiceIdentityHash || null,
     independentVerifierConfigured: ready,
+    authoritativeLookupSupported: ready,
+    authoritativeLookupVerifierConfigured: ready,
+    authoritativeLookupVerificationTrustSetHash:
+      configuration?.trustedSignerTrustSetHash || null,
     independentVerifierResponseAttestationRequired: true,
     trustedSignerTrustSetVersion: configuration?.trustedSignerTrustSetVersion || null,
     trustedSignerTrustSetHash: configuration?.trustedSignerTrustSetHash || null,
@@ -279,35 +298,6 @@ function verifyReleaseAttestation(input, configuration, verificationTime) {
   } catch { return false; }
 }
 
-function externalVerifierResponseAttested(response, configuration) {
-  if (!response || typeof response !== 'object') return false;
-  const {
-    signature,
-    responseHash,
-    ...payload
-  } = response;
-  const signer = response.signer;
-  const trusted = configuration.verifierAttestor;
-  if (signer?.keyId !== trusted.keyId || signer?.subjectId !== trusted.subjectId
-    || signer?.keyVersion !== trusted.keyVersion
-    || (signer?.organization || null) !== trusted.organization
-    || signer?.role !== trusted.role || signer?.algorithm !== trusted.algorithm
-    || hashRecord('IndependentExternalResearchQualificationVerificationResponse', payload)
-      !== responseHash) return false;
-  const signingPayloadHash = hashRecord(
-    'IndependentExternalResearchQualificationVerificationResponseSigningPayload',
-    payload,
-  );
-  try {
-    return crypto.verify(
-      null,
-      Buffer.from(signingPayloadHash, 'utf8'),
-      configuration.verifierPublicKey,
-      Buffer.from(String(signature || ''), 'base64'),
-    );
-  } catch { return false; }
-}
-
 export function createExternalResearchQualificationProcessAdapter({
   configPath = null,
   cwd = process.cwd(),
@@ -328,6 +318,103 @@ export function createExternalResearchQualificationProcessAdapter({
     return observed instanceof Date ? observed : new Date(observed);
   };
   const freshlyIssuedReceipts = new WeakSet();
+  const LOOKUP_RESPONSE_KEYS = Object.freeze([
+    'clientServiceIdentityHash', 'configurationIdentityHash', 'idempotencyKey',
+    'kind', 'lookupStatusHash', 'observedAt', 'receipt', 'requestHash',
+    'serviceId', 'signature', 'signedAt', 'signer', 'status',
+    'terminalFailureCodes', 'trustIdentityHash', 'version',
+  ]);
+  const LOOKUP_CANDIDATE_KEYS = ['kind', 'request', 'response', 'version'];
+  const lookupStatuses = new Set(['qualification_found', 'qualification_in_progress',
+    'qualification_definitively_not_found', 'qualification_terminal']);
+  const verifyLookupCandidate = ({ candidate, expectedRequest } = {}) => {
+    const response = candidate?.response;
+    const requestBound = hashRecord(
+      'AutonomousExternalQualificationLookupRequest',
+      candidate?.request,
+    ) === hashRecord(
+      'AutonomousExternalQualificationLookupRequest',
+      expectedRequest,
+    );
+    const payload = Object.freeze({
+      version: 1,
+      kind: 'ExternalResearchQualificationLookupRequest',
+      serviceId: configuration.qualifier.serviceId,
+      configurationIdentityHash: configuration.configurationIdentityHash,
+      trustIdentityHash: configuration.trustIdentityHash,
+      clientServiceIdentityHash: configuration.clientServiceIdentityHash,
+      request: candidate?.request,
+    });
+    const requestHash = hashRecord(
+      'ExternalResearchQualificationLookupRequest',
+      payload,
+    );
+    const observedAt = canonicalTimestamp(response?.observedAt);
+    const signedAt = canonicalTimestamp(response?.signedAt);
+    const receiptValid = response?.status === 'qualification_found'
+      ? response?.receipt && typeof response.receipt === 'object'
+      : response?.receipt === null;
+    const terminalFailureCodesValid = Array.isArray(response?.terminalFailureCodes)
+      && response.terminalFailureCodes.length <= 64
+      && response.terminalFailureCodes.every((code) => (
+        typeof code === 'string' && code.length > 0 && code.length <= 256
+      ))
+      && (response?.status === 'qualification_terminal'
+        ? response.terminalFailureCodes.length > 0
+        : response.terminalFailureCodes.length === 0);
+    const { signature, lookupStatusHash, ...statusPayload } = response || {};
+    const expectedStatusHash = hashRecord(
+      'ExternalResearchQualificationLookupStatus',
+      statusPayload,
+    );
+    const signingPayloadHash = hashRecord(
+      'ExternalResearchQualificationLookupStatusSigningPayload',
+      { lookupStatusHash: expectedStatusHash },
+    );
+    if (!hasExactObjectKeys(candidate, LOOKUP_CANDIDATE_KEYS)
+      || candidate.version !== 1
+      || candidate.kind !== 'ExternalResearchQualificationLookupCandidate'
+      || !requestBound
+      || !hasExactObjectKeys(response, LOOKUP_RESPONSE_KEYS)
+      || response.version !== 1
+      || response.kind !== 'ExternalResearchQualificationLookupResponse'
+      || response.serviceId !== configuration.qualifier.serviceId
+      || response.requestHash !== requestHash
+      || response.idempotencyKey !== expectedRequest?.idempotencyKey
+      || response.configurationIdentityHash !== configuration.configurationIdentityHash
+      || response.trustIdentityHash !== configuration.trustIdentityHash
+      || response.clientServiceIdentityHash !== configuration.clientServiceIdentityHash
+      || !lookupStatuses.has(response.status)
+      || observedAt === null || signedAt === null || signedAt > observedAt
+      || !receiptValid || !terminalFailureCodesValid
+      || lookupStatusHash !== expectedStatusHash
+      || !verifyDetachedSignature({
+        signingPayloadHash,
+        signature,
+        signer: response.signer,
+        signedAt: response.signedAt,
+      }, configuration, now())) {
+      throw new Error('external_qualification_lookup_response_binding_invalid');
+    }
+    if (response.status === 'qualification_found') {
+      freshlyIssuedReceipts.add(response.receipt);
+    }
+    return Object.freeze({
+      authoritative: true,
+      signatureVerified: true,
+      requestDigestVerified: true,
+      status: response.status,
+      receipt: response.receipt,
+      terminalFailureCodes: Object.freeze([...response.terminalFailureCodes]),
+      idempotencyKey: response.idempotencyKey,
+      sideEffectPermitHash: expectedRequest.sideEffectPermitHash,
+      requestHash,
+      configurationIdentityHash: response.configurationIdentityHash,
+      trustIdentityHash: response.trustIdentityHash,
+      clientServiceIdentityHash: response.clientServiceIdentityHash,
+      lookupStatusHash,
+    });
+  };
   const client = Object.freeze({
     version: 1,
     kind: 'ExternalResearchQualificationClient',
@@ -360,6 +447,33 @@ export function createExternalResearchQualificationProcessAdapter({
       freshlyIssuedReceipts.add(response.receipt);
       return response.receipt;
     },
+    async lookupQualification(request, { signal = null, timeoutMs = null } = {}) {
+      const payload = Object.freeze({
+        version: 1,
+        kind: 'ExternalResearchQualificationLookupRequest',
+        serviceId: configuration.qualifier.serviceId,
+        configurationIdentityHash: configuration.configurationIdentityHash,
+        trustIdentityHash: configuration.trustIdentityHash,
+        clientServiceIdentityHash: configuration.clientServiceIdentityHash,
+        request,
+      });
+      const requestHash = hashRecord(
+        'ExternalResearchQualificationLookupRequest',
+        payload,
+      );
+      const response = await invokeExternalResearchQualificationProcess(
+        configuration.qualifier,
+        { ...payload, requestHash }, {
+          cwd: workingDirectory, environment, runProcess, signal, timeoutMs,
+        },
+      );
+      return Object.freeze({
+        version: 1,
+        kind: 'ExternalResearchQualificationLookupCandidate',
+        request,
+        response,
+      });
+    },
   });
   const verifyLocallyAfterIndependentVerification = (input = {}) => (
     verifyExternalResearchQualificationLocally({
@@ -384,17 +498,20 @@ export function createExternalResearchQualificationProcessAdapter({
     maximumQualificationCostUsd: configuration.maximumQualificationCostUsd,
     qualificationCostAuthority: configuration.qualificationCostAuthority,
     abortable: true,
+    verifyLookup({ candidate, expectedRequest } = {}) {
+      return verifyLookupCandidate({ candidate, expectedRequest });
+    },
     async verifyLocally({
       receipt,
       campaignReleaseAuthority,
       preparation,
-      independentInspection,
+      independentVerificationEvidence,
     } = {}, { onSynchronousProgress = null } = {}) {
       return verifyLocallyAfterIndependentVerification({
         receipt,
         campaignReleaseAuthority,
         preparation,
-        independentInspection,
+        independentVerificationEvidence,
         observedAt: now(),
         onSynchronousProgress,
       });
@@ -403,6 +520,11 @@ export function createExternalResearchQualificationProcessAdapter({
       signal = null, timeoutMs = null, onSynchronousProgress = null,
     } = {}) {
       const observedAt = now();
+      const envelopeOptions =
+        independentExternalResearchQualificationEnvelopeOptions({
+          campaignReleaseAuthority,
+          preparation,
+        });
       const envelope = verifyFullResearchQualificationReceiptEnvelope(receipt, {
         now: observedAt,
         campaignReleaseAuthority,
@@ -416,6 +538,8 @@ export function createExternalResearchQualificationProcessAdapter({
         verifyQualificationSignature: (input) => verifyDetachedSignature(
           input, configuration, observedAt,
         ),
+        allowBoundedGoldenCapability:
+          envelopeOptions.allowBoundedGoldenCapability,
       });
       if (!envelope.ready) {
         return blockedInspection(
@@ -426,30 +550,28 @@ export function createExternalResearchQualificationProcessAdapter({
           configuration,
         );
       }
-      const requestPayload = Object.freeze({
-        version: 1,
-        kind: 'IndependentExternalResearchQualificationVerificationRequest',
-        verifierId: configuration.verifier.serviceId,
-        verifiedAt: observedAt.toISOString(),
-        receipt,
-        campaignReleaseAuthority,
-        expectedBindings: Object.freeze({
-          paperId: preparation?.proposal?.paperId || null,
-          proposalHash: preparation?.proposal?.machineProposedScientificClaimSetHash || null,
-          policyAuthorizationHash:
-            preparation?.policyAuthorization?.autonomousResearchPolicyAuthorizationHash || null,
-          seedBindingHash: preparation?.seedBinding?.autonomousResearchSeedBindingHash || null,
-        }),
-      });
-      const requestHash = hashRecord(
-        'IndependentExternalResearchQualificationVerificationRequest',
-        requestPayload,
-      );
+      let verificationRequest;
+      try {
+        verificationRequest =
+          buildIndependentExternalResearchQualificationVerificationRequest({
+            receipt,
+            campaignReleaseAuthority,
+            preparation,
+            verifierId: configuration.verifier.serviceId,
+            verifiedAt: observedAt.toISOString(),
+          });
+      } catch {
+        return blockedInspection([
+          'external_qualification_independent_verification_policy_invalid',
+        ], envelope, configuration.verifier.serviceId, [
+          FAILURE.INDEPENDENT_VERIFICATION_POLICY_INVALID,
+        ], configuration);
+      }
       let response;
       try {
         response = await invokeExternalResearchQualificationProcess(
           configuration.verifier,
-          { ...requestPayload, requestHash }, {
+          verificationRequest, {
           cwd: workingDirectory, environment, runProcess, signal, timeoutMs,
           },
         );
@@ -460,63 +582,52 @@ export function createExternalResearchQualificationProcessAdapter({
           FAILURE.INDEPENDENT_VERIFIER_UNAVAILABLE,
         ], configuration);
       }
-      const external = response?.inspection;
-      const responseAttested = externalVerifierResponseAttested(response, configuration);
-      const responseBound = response?.version === 1
-        && response?.kind === 'IndependentExternalResearchQualificationVerificationResponse'
-        && response?.verifierId === configuration.verifier.serviceId
-        && response?.requestHash === requestHash
-        && external?.kind === 'FullResearchQualificationInspection'
-        && external?.status === 'full_research_qualification_verified'
-        && external?.ready === true && external?.receiptAccepted === true
-        && external?.campaignId === envelope.campaignId
-        && external?.paperId === envelope.paperId
-        && external?.campaignReleaseBundleHash === envelope.campaignReleaseBundleHash
-        && external?.qualificationReceiptHash === envelope.qualificationReceiptHash
-        && external?.runtimeImageReproducibilityReceiptHash === envelope.runtimeImageReproducibilityReceiptHash
-        && JSON.stringify(external?.runtimeImageReproducibilityRequiredProfiles)
-          === JSON.stringify(envelope.runtimeImageReproducibilityRequiredProfiles)
-        && JSON.stringify(external?.runtimeImageReproducibilityDefinitionManifestHashes) === JSON.stringify(envelope.runtimeImageReproducibilityDefinitionManifestHashes)
-        && external?.proposalHash === requestPayload.expectedBindings.proposalHash
-        && external?.policyAuthorizationHash
-          === requestPayload.expectedBindings.policyAuthorizationHash
-        && external?.seedBindingHash === requestPayload.expectedBindings.seedBindingHash;
-      const priorArtVerified = external?.independentHypothesisPriorArtReviewVerified === true
-        && /^sha256:[0-9a-f]{64}$/i.test(String(
-          external?.independentHypothesisPriorArtReceiptHash || '',
-        ))
-        && external.independentHypothesisPriorArtReceiptHash
-          === receipt?.independentHypothesisPriorArtReceiptHash;
-      if (!responseAttested || !responseBound || !priorArtVerified) {
-        const failureCodes = [];
-        if (!responseAttested) {
-          failureCodes.push(FAILURE.INDEPENDENT_VERIFIER_ATTESTATION_INVALID);
-        } else if (!responseBound) {
-          failureCodes.push(FAILURE.INDEPENDENT_VERIFICATION_BINDING_INVALID);
-        }
-        if (responseAttested && responseBound && !priorArtVerified) {
-          failureCodes.push(FAILURE.PRIOR_ART_QUALIFICATION_INVALID);
-        }
+      let independentVerificationEvidence = null;
+      try {
+        independentVerificationEvidence =
+          buildIndependentExternalResearchQualificationVerificationEvidence({
+            request: verificationRequest,
+            response,
+            configurationIdentityHash: configuration.configurationIdentityHash,
+            trustIdentityHash: configuration.trustIdentityHash,
+            verifierServiceIdentityHash:
+              configuration.verifierServiceIdentityHash,
+          });
+      } catch {
+        independentVerificationEvidence = null;
+      }
+      const responseObservedAt = now();
+      const evidenceVerification =
+        verifyIndependentExternalResearchQualificationVerificationEvidence(
+          independentVerificationEvidence,
+          {
+            receipt,
+            campaignReleaseAuthority,
+            preparation,
+            configuration,
+            verificationTime: responseObservedAt,
+          },
+        );
+      if (!evidenceVerification.valid) {
+        const attestationInvalid =
+          evidenceVerification.structureVerified === true;
         return blockedInspection([
-          ...(Array.isArray(external?.blockers) ? external.blockers : []),
+          ...(Array.isArray(response?.inspection?.blockers)
+            ? response.inspection.blockers : []),
           'external_qualification_independent_verification_failed',
-        ], envelope, configuration.verifier.serviceId, failureCodes, configuration);
+          ...evidenceVerification.blockers,
+        ], envelope, configuration.verifier.serviceId, [
+          attestationInvalid
+            ? FAILURE.INDEPENDENT_VERIFIER_ATTESTATION_INVALID
+            : FAILURE.INDEPENDENT_VERIFICATION_BINDING_INVALID,
+        ], configuration);
       }
       return verifyLocallyAfterIndependentVerification({
         receipt,
         campaignReleaseAuthority,
         preparation,
-        observedAt,
-        independentInspection: Object.freeze({
-          ...external,
-          independentVerifierVerified: true,
-          externalVerifierId: configuration.verifier.serviceId,
-          externalVerificationRequestHash: requestHash,
-          configurationIdentityHash: configuration.configurationIdentityHash,
-          trustIdentityHash: configuration.trustIdentityHash,
-          clientServiceIdentityHash: configuration.clientServiceIdentityHash,
-          verifierServiceIdentityHash: configuration.verifierServiceIdentityHash,
-        }),
+        observedAt: responseObservedAt,
+        independentVerificationEvidence,
         onSynchronousProgress,
       });
     },

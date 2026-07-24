@@ -69,6 +69,133 @@ function formalBinding({ claimId, theoremName, declaration, sourceFile = 'Advers
   };
 }
 
+function temporaryLakeProject(t, {
+  sourceFile = 'Main.lean',
+  source = 'theorem simpleIdentity : 1 = 1 := by rfl\n',
+  toolchain = 'leanprover/lean4:v4.30.0',
+} = {}) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-lake-coverage-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(root, 'lakefile.lean'), [
+    'import Lake',
+    'open Lake DSL',
+    'package heptaLakeCoverage where',
+    '@[default_target]',
+    'lean_lib Main where',
+    '',
+  ].join('\n'));
+  fs.writeFileSync(path.join(root, 'lean-toolchain'), `${toolchain}\n`);
+  fs.writeFileSync(path.join(root, 'lake-manifest.json'), `${JSON.stringify({
+    version: '1.1.0', packagesDir: '.lake/packages', packages: [],
+    name: 'heptaLakeCoverage', lakeDir: '.lake',
+  }, null, 2)}\n`);
+  fs.writeFileSync(path.join(root, sourceFile), source);
+  return root;
+}
+
+function trustedExecution({
+  ok = true,
+  stdout = '',
+  stderr = '',
+  blockers = [],
+  identitySuffix = 'fixture',
+} = {}) {
+  return {
+    ok,
+    stdout,
+    stderr,
+    blockers,
+    receiptHash: ok ? `sha256:execution-${identitySuffix}` : null,
+    runnerId: `lake-runner-${identitySuffix}`,
+    backend: 'host',
+    runtimeIdentityType: 'host-executable',
+    runtimeIdentityHash: `sha256:runtime-${identitySuffix}`,
+    runtimeExecutableSnapshotHash: `sha256:executable-${identitySuffix}`,
+    runtimeExecutableInvocationPath: '/trusted/lake',
+    containerImageDigest: null,
+    isolation: { kind: 'fixture-isolation' },
+  };
+}
+
+function resignFormalCertificate(certificate, mutate) {
+  const { certificateBundleHash: _ignored, ...payload } = certificate;
+  const nextPayload = mutate(payload);
+  return {
+    ...nextPayload,
+    certificateBundleHash: hashRecord('FormalCertificateBundle', nextPayload),
+  };
+}
+
+function formalProjectManifestHash(projectFiles) {
+  return hashRecord('FormalProjectManifest', projectFiles.map(({
+    path: filePath, sourcePath, projectPath, role, hash, bytes, posixMode,
+  }) => ({
+    path: filePath,
+    sourcePath: sourcePath || filePath,
+    projectPath: projectPath ?? filePath,
+    role: role || 'project',
+    hash,
+    bytes,
+    posixMode,
+  })));
+}
+
+function dynamicFormalBinding({
+  declaration,
+  allowedImports = ['Init'],
+  typeSource = '∀ n : Nat, n = n',
+  claimId = 'claim-dynamic-identity',
+  sourceFile = 'Main.lean',
+}) {
+  const leanTypeSourceHash = hashBytes(Buffer.from(typeSource, 'utf8'));
+  const dynamicAuthority = {
+    dynamicFormalClaimSeedHash: hashRecord('DynamicFormalClaimSeedFixture', {}),
+    leanDeclarationName: declaration.name,
+    leanTypeSource: typeSource,
+    leanTypeSourceHash,
+    leanNormalizedTypeHash: declaration.typeHash,
+    allowedImports,
+    formalClaimCapabilityScopeManifestHash: hashRecord('FormalClaimCapabilityScopeFixture', {}),
+    formalClaimGeneratorReceiptHash: hashRecord('FormalClaimGeneratorFixture', {}),
+  };
+  const base = formalBinding({
+    claimId,
+    theoremName: declaration.name,
+    declaration,
+    sourceFile,
+  });
+  const formalClaimContract = buildFormalClaimContract({
+    claimId: base.claimId,
+    claimText: `The manuscript claim is formally represented by ${declaration.name}.`,
+    sourceLocator: 'manuscript.tex#claim',
+    theoremName: declaration.name,
+    theoremTypeHash: declaration.typeHash,
+    sourceStatementHash: declaration.statementHash,
+    proofObligations: [declaration.name],
+    manuscriptSourceIdentity: {
+      path: 'manuscript.tex', byteStart: 0, byteEnd: 4,
+      contentHash: 'sha256:claim', fileHash: 'sha256:paper',
+    },
+    dynamicFormalClaimAuthority: dynamicAuthority,
+    semanticReview: {
+      status: 'formal_semantic_review_verified',
+      reviewerId: 'independent-formal-reviewer',
+      authorId: 'formal-author',
+      semanticEquivalenceVerified: true,
+      reviewReceiptHash: hashRecord('FormalSemanticReviewReceipt', { claimId: base.claimId }),
+      reviewEnvelopeHash: 'sha256:envelope',
+      reviewNodeId: 'review-node',
+      reviewAttemptId: 'review-attempt',
+      reviewAgentReceiptHash: 'sha256:review-agent',
+      authorNodeId: 'author-node',
+      authorAgentReceiptHash: 'sha256:author-agent',
+      reviewedManuscriptHash: 'sha256:paper',
+      reviewedWorkerPlanHash: 'sha256:plan',
+    },
+  });
+  return { ...base, formalClaimContract };
+}
+
 test('Lean source parser derives conclusion-as-premise without caller annotations', () => {
   const declarations = leanSourceDeclarationRecords(fs.readFileSync(path.join(fixtureRoot, 'Adversarial.lean'), 'utf8'));
   const adversarial = declarations.find((item) => item.name === 'conclusionFromPremise');
@@ -124,6 +251,8 @@ test('real Lake build cannot certify a theorem whose source assumes its conclusi
     ],
   });
   assert.equal(result.status, 'formal_claim_binding_blocked', `${JSON.stringify(result, null, 2)}`);
+  assert.equal(result.projectFiles.some((file) => file.path.startsWith('.lake/build/')), false);
+  assert.equal(result.projectFiles.some((file) => file.path.startsWith('.lake/config/')), false);
   assert.ok(result.blockers.includes('claim-adversarial:target_conclusion_assumed_as_premise'));
   assert.ok(result.blockers.includes('claim-wrapped-adversarial:target_conclusion_assumed_as_premise'));
   assert.equal(result.claimBindingReport.bindings[0].sourceStatementHash, declaration.statementHash);
@@ -420,4 +549,482 @@ test('Lake verifier rejects caller-supplied declaration and axiom authority', as
   assert.deepEqual((await verifier.verify({ declarationReports: [] })).blockers, ['formal_verifier_caller_authority_override_forbidden']);
   assert.deepEqual((await verifier.verify({ allowedAxioms: [] })).blockers, ['formal_verifier_caller_authority_override_forbidden']);
   assert.deepEqual((await verifier.verify({ claimBindings: [{ auditFile: 'Audit.lean' }] })).blockers, ['formal_verifier_caller_audit_override_forbidden']);
+});
+
+test('Lake verifier enumerates preflight and dynamic formal authority fail-closed branches', async (t) => {
+  const emptyRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-lake-empty-'));
+  t.after(() => fs.rmSync(emptyRoot, { recursive: true, force: true }));
+  const blockedPreflight = await createLakeFormalVerifier({
+    projectRoot: emptyRoot,
+    commandRunner: { run: async () => trustedExecution() },
+  }).verify({
+    expectedInputs: [{ path: 'Missing.lean', hash: 'sha256:missing' }],
+  });
+  assert.equal(blockedPreflight.status, 'formal_verifier_blocked');
+  for (const blocker of [
+    'formal_project_file_missing:lakefile.lean',
+    'formal_project_file_missing:lean-toolchain',
+    'formal_project_file_missing:lake-manifest.json',
+    'formal_input_missing:Missing.lean',
+    'formal_project_pinned_toolchain_invalid',
+    'formal_toolchain_runtime_identity_provider_required',
+  ]) assert.ok(blockedPreflight.blockers.includes(blocker), blocker);
+
+  const source = [
+    'import Init',
+    'theorem dynamicIdentity : ∀ n : Nat, n = n := by',
+    '  intro n',
+    '  rfl',
+    '',
+  ].join('\n');
+  const root = temporaryLakeProject(t, { source });
+  const declaration = leanSourceDeclarationRecords(source)
+    .find((item) => item.name === 'dynamicIdentity');
+  assert.ok(declaration);
+
+  const invalidIdentityProvider = Object.freeze({
+    inspect: () => ({
+      status: 'lean_toolchain_identity_blocked',
+      toolchain: 'leanprover/lean4:v0.0.0',
+      blockers: ['fixture_toolchain_identity_blocked'],
+    }),
+  });
+  const wrongExpectedHash = await createLakeFormalVerifier({
+    projectRoot: root,
+    commandRunner: { run: async () => trustedExecution() },
+    toolchainIdentityProvider: invalidIdentityProvider,
+  }).verify({ expectedInputs: [{ path: 'Main.lean', hash: 'sha256:wrong' }] });
+  for (const blocker of [
+    'formal_input_hash_mismatch:Main.lean',
+    'formal_toolchain_runtime_identity_invalid',
+    'fixture_toolchain_identity_blocked',
+    'formal_toolchain_runtime_version_mismatch',
+  ]) assert.ok(wrongExpectedHash.blockers.includes(blocker), blocker);
+  const missingExpectedPath = await createLakeFormalVerifier({
+    projectRoot: root,
+    commandRunner: { run: async () => trustedExecution() },
+    toolchainIdentityProvider: fixtureToolchainIdentityProvider,
+  }).verify({ expectedInputs: [{ hash: 'sha256:missing-path' }] });
+  assert.ok(missingExpectedPath.blockers.includes('formal_input_missing:undefined'));
+  const identityWithoutDetailedBlockers = await createLakeFormalVerifier({
+    projectRoot: root,
+    commandRunner: { run: async () => trustedExecution() },
+    toolchainIdentityProvider: {
+      inspect: () => ({
+        status: 'lean_toolchain_identity_blocked',
+        toolchain: 'leanprover/lean4:v4.30.0',
+      }),
+    },
+  }).verify();
+  assert.ok(identityWithoutDetailedBlockers.blockers.includes('formal_toolchain_runtime_identity_invalid'));
+
+  const dynamicBinding = dynamicFormalBinding({ declaration });
+  const auditStdout = [
+    `dynamicIdentity : ∀ n : Nat, n = n`,
+    "'dynamicIdentity' does not depend on any axioms",
+    '',
+  ].join('\n');
+  const verifier = createLakeFormalVerifier({
+    projectRoot: root,
+    commandRunner: { run: async () => trustedExecution({ stdout: auditStdout }) },
+    toolchainIdentityProvider: fixtureToolchainIdentityProvider,
+  });
+  const verified = await verifier.verify({ claimBindings: [dynamicBinding] });
+  assert.equal(verified.status, 'formal_claim_verified', JSON.stringify(verified, null, 2));
+
+  const authority = dynamicBinding.formalClaimContract.dynamicFormalClaimAuthority;
+  const mutateAuthority = (mutate, bindingMutate = (value) => value) => bindingMutate({
+    ...dynamicBinding,
+    formalClaimContract: {
+      ...dynamicBinding.formalClaimContract,
+      dynamicFormalClaimAuthority: mutate({ ...authority }),
+    },
+  });
+  const invalidBindings = [
+    mutateAuthority((value) => ({ ...value, leanDeclarationName: 'otherDeclaration' })),
+    mutateAuthority((value) => ({ ...value, leanTypeSource: 'by exact True.intro' })),
+    mutateAuthority((value) => ({ ...value, leanTypeSourceHash: 'sha256:wrong' })),
+    mutateAuthority((value) => ({ ...value, leanNormalizedTypeHash: 'sha256:wrong' })),
+    mutateAuthority((value) => value, (binding) => ({ ...binding, expectedTypeHash: 'sha256:wrong' })),
+    mutateAuthority((value) => value, (binding) => ({
+      ...binding,
+      formalClaimContract: { ...binding.formalClaimContract, theoremName: 'otherDeclaration' },
+    })),
+    mutateAuthority((value) => value, (binding) => ({
+      ...binding,
+      formalClaimContract: { ...binding.formalClaimContract, theoremTypeHash: 'sha256:wrong' },
+    })),
+    { ...dynamicBinding, sourceFile: '../Main.lean' },
+    { ...dynamicBinding, theoremName: 'not a theorem name' },
+    {
+      ...dynamicBinding,
+      proofObligations: [],
+      proofObligationContracts: [],
+      proofObligationMappings: [],
+    },
+  ];
+  for (const binding of invalidBindings) {
+    const result = await verifier.verify({ claimBindings: [binding] });
+    assert.ok(result.blockers.includes('formal_system_audit_contract_invalid'), JSON.stringify(result));
+  }
+
+  const missingDynamicSource = await verifier.verify({
+    claimBindings: [{ ...dynamicBinding, sourceFile: 'Missing.lean' }],
+  });
+  assert.ok(missingDynamicSource.blockers.includes('formal_dynamic_claim_source_invalid:claim-dynamic-identity'));
+  const anonymousMissingDynamicSource = await verifier.verify({
+    claimBindings: [{ ...dynamicBinding, claimId: null, sourceFile: 'Missing.lean' }],
+  });
+  assert.ok(anonymousMissingDynamicSource.blockers.includes('formal_dynamic_claim_source_invalid:missing'));
+
+  const disallowedImportBinding = mutateAuthority((value) => ({
+    ...value,
+    allowedImports: ['Mathlib'],
+  }));
+  const disallowedImport = await verifier.verify({ claimBindings: [disallowedImportBinding] });
+  assert.ok(disallowedImport.blockers.includes('formal_dynamic_claim_import_not_allowed:claim-dynamic-identity'));
+  const anonymousDisallowedImport = await verifier.verify({
+    claimBindings: [{ ...disallowedImportBinding, claimId: null }],
+  });
+  assert.ok(anonymousDisallowedImport.blockers.includes('formal_dynamic_claim_import_not_allowed:missing'));
+
+  const alternateTypeSource = '(n : Nat) → n = n';
+  const conflictingBinding = dynamicFormalBinding({
+    declaration: {
+      ...declaration,
+      typeHash: analyzeLeanTypeContract(alternateTypeSource).typeHash,
+    },
+    typeSource: alternateTypeSource,
+  });
+  const conflict = await verifier.verify({ claimBindings: [dynamicBinding, conflictingBinding] });
+  assert.ok(conflict.blockers.includes('formal_system_audit_contract_invalid'));
+});
+
+test('Lake verifier covers runner, snapshot, audit-output, and declaration binding failures', async (t) => {
+  const source = [
+    'theorem simpleIdentity : 1 = 1 := by rfl',
+    '',
+  ].join('\n');
+  const root = temporaryLakeProject(t, { source });
+  const declaration = leanSourceDeclarationRecords(source)
+    .find((item) => item.name === 'simpleIdentity');
+  const binding = formalBinding({
+    claimId: 'claim-simple-identity', theoremName: declaration.name, declaration,
+    sourceFile: 'Main.lean',
+  });
+  const verifierOptions = {
+    projectRoot: root,
+    toolchainIdentityProvider: fixtureToolchainIdentityProvider,
+  };
+
+  const snapshotFailure = await createLakeFormalVerifier({
+    ...verifierOptions,
+    commandRunner: { run: async () => trustedExecution() },
+    projectSnapshotRepository: {
+      materialize() { throw new Error('fixture_snapshot_materialization_failed'); },
+    },
+  }).verify();
+  assert.equal(snapshotFailure.status, 'formal_certificate_blocked');
+  assert.ok(snapshotFailure.blockers.includes('fixture_snapshot_materialization_failed'));
+  const anonymousSnapshotFailure = await createLakeFormalVerifier({
+    ...verifierOptions,
+    commandRunner: { run: async () => trustedExecution() },
+    projectSnapshotRepository: { materialize() { throw {}; } },
+  }).verify();
+  assert.ok(anonymousSnapshotFailure.blockers.includes('formal_fresh_project_execution_failed'));
+
+  const runnerFailure = await createLakeFormalVerifier({
+    ...verifierOptions,
+    commandRunner: { async run() { throw new Error('fixture_runner_failed'); } },
+  }).verify();
+  assert.equal(runnerFailure.status, 'formal_certificate_blocked');
+  assert.ok(runnerFailure.blockers.includes('fixture_runner_failed'));
+
+  const explicitFailure = await createLakeFormalVerifier({
+    ...verifierOptions,
+    commandRunner: {
+      run: async () => ({ ok: false, stderr: null, receiptHash: null }),
+    },
+  }).verify();
+  assert.equal(explicitFailure.status, 'formal_certificate_blocked');
+  assert.deepEqual(explicitFailure.blockers, ['lake_build_failed']);
+
+  for (const afterIdentity of [
+    { ...fixtureToolchainIdentity, status: 'lean_toolchain_identity_blocked' },
+    {
+      ...fixtureToolchainIdentity,
+      leanToolchainContentIdentityHash: hashRecord('ChangedLeanToolchainIdentity', {}),
+    },
+  ]) {
+    let inspections = 0;
+    const changingProvider = {
+      inspect() {
+        inspections += 1;
+        return inspections === 1 ? fixtureToolchainIdentity : afterIdentity;
+      },
+    };
+    const changed = await createLakeFormalVerifier({
+      ...verifierOptions,
+      commandRunner: { run: async () => ({ ...trustedExecution(), blockers: undefined }) },
+      toolchainIdentityProvider: changingProvider,
+    }).verify();
+    assert.equal(changed.status, 'formal_certificate_blocked');
+    assert.ok(changed.blockers.includes('formal_toolchain_changed_during_execution'));
+  }
+
+  const auditExecutions = [
+    trustedExecution({
+      stdout: [
+        'simpleIdentity : 1 = 1',
+        'simpleIdentity : 1 = 1',
+        "'simpleIdentity' does not depend on any axioms",
+        "'simpleIdentity' does not depend on any axioms",
+      ].join('\n'),
+      stderr: "declaration uses 'sorry'\nadmit",
+      identitySuffix: 'ambiguous',
+    }),
+    trustedExecution({
+      stdout: [
+        'warning: Main.lean:1:1: simpleIdentity : 1 = 1',
+        "'simpleIdentity' depends on axioms: [Classical.choice, propext]",
+      ].join('\n'),
+      stderr: '',
+      identitySuffix: 'axioms',
+    }),
+    trustedExecution({ stdout: null, stderr: null, identitySuffix: 'empty-audit' }),
+  ];
+  for (const execution of auditExecutions) {
+    const result = await createLakeFormalVerifier({
+      ...verifierOptions,
+      commandRunner: { run: async () => execution },
+    }).verify({ claimBindings: [binding] });
+    assert.equal(result.status, 'formal_claim_binding_blocked');
+  }
+
+  const ghostDeclaration = { ...declaration, name: 'ghostIdentity' };
+  const ghostBinding = formalBinding({
+    claimId: 'claim-ghost-identity',
+    theoremName: ghostDeclaration.name,
+    declaration: ghostDeclaration,
+    sourceFile: 'Main.lean',
+  });
+  const missingDeclaration = await createLakeFormalVerifier({
+    ...verifierOptions,
+    commandRunner: { run: async () => trustedExecution() },
+  }).verify({ claimBindings: [ghostBinding] });
+  assert.equal(missingDeclaration.status, 'formal_claim_binding_blocked');
+  assert.equal(missingDeclaration.claimBindingReport.status, 'formal_claim_binding_blocked');
+
+  const missingSource = await createLakeFormalVerifier({
+    ...verifierOptions,
+    commandRunner: { run: async () => trustedExecution() },
+  }).verify({ claimBindings: [{ ...binding, sourceFile: 'Missing.lean' }] });
+  assert.equal(missingSource.status, 'formal_claim_binding_blocked');
+
+  const obligationAlias = await createLakeFormalVerifier({
+    ...verifierOptions,
+    commandRunner: {
+      run: async () => trustedExecution({
+        stdout: [
+          'simpleIdentity : 1 = 1',
+          "'simpleIdentity' does not depend on any axioms",
+        ].join('\n'),
+      }),
+    },
+  }).verify({
+    claimBindings: [{
+      ...binding,
+      proofObligations: undefined,
+      obligationNames: binding.proofObligations,
+    }],
+  });
+  assert.ok(['formal_claim_verified', 'formal_claim_binding_blocked'].includes(obligationAlias.status));
+
+  const multiSource = [
+    'import Init',
+    'theorem dynamicAlpha : ∀ n : Nat, n = n := by intro n; rfl',
+    'theorem dynamicBeta : ∀ n : Nat, n = n := by intro n; rfl',
+    '',
+  ].join('\n');
+  fs.writeFileSync(path.join(root, 'Main.lean'), multiSource);
+  const secondSource = 'import Init\ntheorem dynamicGamma : ∀ n : Nat, n = n := by intro n; rfl\n';
+  fs.writeFileSync(path.join(root, 'Second.lean'), secondSource);
+  const mainDeclarations = leanSourceDeclarationRecords(multiSource);
+  const gamma = leanSourceDeclarationRecords(secondSource)[0];
+  const sortedBindings = [
+    dynamicFormalBinding({
+      declaration: mainDeclarations.find((item) => item.name === 'dynamicBeta'),
+      claimId: 'claim-dynamic-beta',
+    }),
+    dynamicFormalBinding({
+      declaration: mainDeclarations.find((item) => item.name === 'dynamicAlpha'),
+      claimId: 'claim-dynamic-alpha',
+    }),
+    dynamicFormalBinding({
+      declaration: gamma,
+      claimId: 'claim-dynamic-gamma',
+      sourceFile: 'Second.lean',
+    }),
+  ];
+  const sortedAudit = [
+    'dynamicAlpha : ∀ n : Nat, n = n',
+    "'dynamicAlpha' does not depend on any axioms",
+    'dynamicBeta : ∀ n : Nat, n = n',
+    "'dynamicBeta' does not depend on any axioms",
+    'dynamicGamma : ∀ n : Nat, n = n',
+    "'dynamicGamma' does not depend on any axioms",
+  ].join('\n');
+  const sorted = await createLakeFormalVerifier({
+    ...verifierOptions,
+    commandRunner: { run: async () => trustedExecution({ stdout: sortedAudit }) },
+  }).verify({ claimBindings: sortedBindings });
+  assert.equal(sorted.status, 'formal_claim_verified', JSON.stringify(sorted, null, 2));
+  assert.deepEqual(sorted.auditTargets, ['Main.lean', 'Second.lean']);
+});
+
+test('Lake replay rejects every project and authority identity divergence before promotion', async (t) => {
+  const root = temporaryLakeProject(t);
+  const stableRunner = { run: async () => trustedExecution({ identitySuffix: 'replay-matrix' }) };
+  const verifier = createLakeFormalVerifier({
+    projectRoot: root,
+    commandRunner: stableRunner,
+    toolchainIdentityProvider: fixtureToolchainIdentityProvider,
+  });
+  const certificate = await verifier.verify();
+  assert.equal(certificate.status, 'formal_build_verified');
+
+  assert.deepEqual((await verifier.replay()).blockers, ['certificate_bundle_not_verified']);
+  assert.deepEqual((await verifier.replay({ certificateBundle: { status: 'formal_certificate_blocked' } })).blockers,
+    ['certificate_bundle_not_verified']);
+
+  const invalidManifest = resignFormalCertificate(certificate, (payload) => ({
+    ...payload,
+    projectManifestHash: 'sha256:forged-manifest',
+  }));
+  assert.deepEqual((await verifier.replay({ certificateBundle: invalidManifest })).blockers,
+    ['formal_certificate_project_manifest_invalid']);
+  const missingProjectFileList = resignFormalCertificate(certificate, (payload) => ({
+    ...payload,
+    projectFiles: null,
+    projectManifestHash: formalProjectManifestHash([]),
+  }));
+  assert.ok((await verifier.replay({ certificateBundle: missingProjectFileList })).blockers
+    .some((blocker) => blocker.startsWith('formal_project_unlisted_input:')));
+  const omittedClaimBindings = resignFormalCertificate(certificate, (payload) => ({
+    ...payload,
+    claimBindings: null,
+  }));
+  assert.equal((await verifier.replay({ certificateBundle: omittedClaimBindings })).status,
+    'formal_build_replay_verified');
+
+  const mainPath = path.join(root, 'Main.lean');
+  const mainContent = fs.readFileSync(mainPath);
+  const mainMode = fs.statSync(mainPath).mode & 0o777;
+  fs.rmSync(mainPath);
+  const missing = await verifier.replay({ certificateBundle: certificate });
+  assert.ok(missing.blockers.includes('formal_input_missing:Main.lean'));
+  fs.writeFileSync(mainPath, mainContent, { mode: mainMode });
+
+  fs.writeFileSync(mainPath, `${mainContent.toString('utf8')}\n-- changed\n`);
+  const changed = await verifier.replay({ certificateBundle: certificate });
+  assert.ok(changed.blockers.includes('formal_input_hash_mismatch:Main.lean'));
+  fs.writeFileSync(mainPath, mainContent);
+  fs.chmodSync(mainPath, mainMode ^ 0o100);
+  const modeChanged = await verifier.replay({ certificateBundle: certificate });
+  assert.ok(modeChanged.blockers.includes('formal_input_mode_mismatch:Main.lean'));
+  fs.chmodSync(mainPath, mainMode);
+
+  const fallbackProjectFiles = certificate.projectFiles.map((file) => (
+    file.path === 'Main.lean'
+      ? (() => {
+        const { sourcePath: _sourcePath, projectPath: _projectPath, role: _role, ...fallback } = file;
+        return fallback;
+      })()
+      : file
+  ));
+  const fallbackMetadata = resignFormalCertificate(certificate, (payload) => ({
+    ...payload,
+    projectFiles: fallbackProjectFiles,
+    projectManifestHash: formalProjectManifestHash(fallbackProjectFiles),
+  }));
+  assert.equal((await verifier.replay({ certificateBundle: fallbackMetadata })).status,
+    'formal_build_replay_verified');
+
+  const mismatchedMetadataFiles = certificate.projectFiles.map((file) => (
+    file.path === 'Main.lean' ? { ...file, sourcePath: 'Other.lean' } : file
+  ));
+  const mismatchedMetadata = resignFormalCertificate(certificate, (payload) => ({
+    ...payload,
+    projectFiles: mismatchedMetadataFiles,
+    projectManifestHash: formalProjectManifestHash(mismatchedMetadataFiles),
+  }));
+  assert.ok((await verifier.replay({ certificateBundle: mismatchedMetadata })).blockers
+    .includes('formal_input_hash_mismatch:Main.lean'));
+
+  const identityMutations = [
+    (payload) => ({ ...payload, toolchainHash: 'sha256:forged-toolchain-file' }),
+    (payload) => ({
+      ...payload,
+      toolchainRuntimeIdentity: {
+        ...payload.toolchainRuntimeIdentity,
+        leanToolchainContentIdentityHash: 'sha256:forged-runtime-toolchain',
+      },
+    }),
+    (payload) => ({ ...payload, systemAuditHash: 'sha256:forged-system-audit' }),
+    (payload) => ({ ...payload, auditTargets: ['Injected.lean'] }),
+    (payload) => ({ ...payload, formalAuditInvocationHash: 'sha256:forged-invocation' }),
+    (payload) => {
+      const projectFiles = [...payload.projectFiles].reverse();
+      return { ...payload, projectFiles, projectManifestHash: formalProjectManifestHash(projectFiles) };
+    },
+    (payload) => ({ ...payload, formalProjectClosureHash: 'sha256:forged-closure' }),
+    (payload) => ({
+      ...payload,
+      claimBindingReport: { formalClaimBindingHash: 'sha256:forged-binding-report' },
+    }),
+  ];
+  for (const mutation of identityMutations) {
+    const forged = resignFormalCertificate(certificate, mutation);
+    const replay = await verifier.replay({ certificateBundle: forged });
+    assert.ok(replay.blockers.includes('formal_replay_authority_identity_mismatch'), JSON.stringify(replay));
+  }
+
+  const statusMismatch = resignFormalCertificate(certificate, (payload) => ({
+    ...payload,
+    status: 'formal_claim_verified',
+  }));
+  const mismatchedRerun = await verifier.replay({ certificateBundle: statusMismatch });
+  assert.ok(mismatchedRerun.blockers.includes('formal_project_reexecution_mismatch'));
+
+  fs.symlinkSync('Main.lean', path.join(root, 'ForbiddenLink.lean'));
+  const unsafeClosure = await verifier.replay({ certificateBundle: certificate });
+  assert.ok(unsafeClosure.blockers.includes('formal_project_symlink_forbidden:ForbiddenLink.lean'));
+  fs.rmSync(path.join(root, 'ForbiddenLink.lean'));
+
+  const dynamicSource = [
+    'import Init',
+    'theorem dynamicReplay : ∀ n : Nat, n = n := by intro n; rfl',
+    '',
+  ].join('\n');
+  fs.writeFileSync(mainPath, dynamicSource);
+  const dynamicDeclaration = leanSourceDeclarationRecords(dynamicSource)[0];
+  const dynamicBinding = dynamicFormalBinding({
+    declaration: dynamicDeclaration,
+    claimId: 'claim-dynamic-replay',
+  });
+  const dynamicAudit = [
+    'dynamicReplay : ∀ n : Nat, n = n',
+    "'dynamicReplay' does not depend on any axioms",
+  ].join('\n');
+  const dynamicVerifier = createLakeFormalVerifier({
+    projectRoot: root,
+    commandRunner: {
+      run: async () => trustedExecution({ stdout: dynamicAudit, identitySuffix: 'dynamic-replay' }),
+    },
+    toolchainIdentityProvider: fixtureToolchainIdentityProvider,
+  });
+  const dynamicCertificate = await dynamicVerifier.verify({ claimBindings: [dynamicBinding] });
+  assert.equal(dynamicCertificate.status, 'formal_claim_verified');
+  const dynamicReplay = await dynamicVerifier.replay({ certificateBundle: dynamicCertificate });
+  assert.equal(dynamicReplay.status, 'formal_claim_replay_verified', JSON.stringify(dynamicReplay, null, 2));
 });

@@ -2,7 +2,13 @@ import { assertWorkflowStatePort } from '../../paper-ports/workflow-state-port.m
 import { failClosedStoreQueries, sqlJson, sqlText } from '../../paper-ports/store-port.mjs';
 import { hasExactObjectKeys as exactKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  NATIVE_STORE_LEDGER_STATEMENT_IDS,
+} from './native-store-ledger-mutation-plan.mjs';
 import { receiptIssuerPolicies } from './receipt-issuer-policy.mjs';
+import {
+  preparedSqliteReceiptLedgerMutation,
+} from './sqlite-receipt-ledger.mjs';
 
 const WORKFLOW_STATE_STREAM = 'workflow-state';
 const WORKFLOW_STATE_ENVIRONMENT = 'administrative';
@@ -177,6 +183,56 @@ export function createSqliteWorkflowStateStore({ store: suppliedStore, clock, re
         || prepared.issuerPolicyHash !== WORKFLOW_STATE_POLICY.issuerPolicyHash
         || prepared.issuerAssurance !== WORKFLOW_STATE_POLICY.assurance) {
         throw new Error('workflow_state_trusted_writer_required');
+      }
+      if (typeof store.mutate === 'function') {
+        const ledgerMutation = preparedSqliteReceiptLedgerMutation(prepared);
+        if (ledgerMutation.strictInsert !== true) {
+          throw new Error('workflow_state_strict_receipt_insert_required');
+        }
+        const coordinated = store.mutate({
+          databaseRole: 'native-store',
+          operationId: 'native-store.workflow-state-store.put.v1',
+          authorizationReceiptHashes: [],
+          sideEffectReservationHashes: [],
+          mutate(transaction) {
+            const ledgerChanges = transaction.run(
+              NATIVE_STORE_LEDGER_STATEMENT_IDS.insertReceipt,
+              ...ledgerMutation.parameters,
+            ).changes;
+            if (ledgerChanges !== 1) {
+              throw new Error('workflow_state_receipt_insert_ambiguous');
+            }
+            const projectionChanges = transaction.run(
+              NATIVE_STORE_LEDGER_STATEMENT_IDS.upsertWorkflowState,
+              paperId,
+              JSON.stringify(projection),
+              projectionHash,
+              projection.recordedAt,
+              prepared.receiptId,
+              receipt.paperWorkflowStateProjectionReceiptHash,
+            ).changes;
+            if (projectionChanges !== 1) {
+              throw new Error('workflow_state_projection_write_ambiguous');
+            }
+            return Object.freeze({ ledgerChanges, projectionChanges });
+          },
+        });
+        if (coordinated?.status !== 'externally_fenced_sqlite_mutation_finalized'
+          || coordinated.value?.ledgerChanges !== 1
+          || coordinated.value?.projectionChanges !== 1) {
+          throw new Error('workflow_state_external_mutation_receipt_invalid');
+        }
+        return Object.freeze({
+          version: 1,
+          kind: 'PaperWorkflowStateProjectionWrite',
+          paperId,
+          status: 'workflow_state_projection_persisted',
+          persisted: true,
+          projectionHash,
+          receiptHash: receipt.paperWorkflowStateProjectionReceiptHash,
+          ledgerReceiptId: prepared.receiptId,
+          blockers: [],
+        });
       }
       const result = store.execute(`BEGIN IMMEDIATE;
 ${prepared.sql}

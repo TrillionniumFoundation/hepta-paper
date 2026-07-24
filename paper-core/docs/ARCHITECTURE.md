@@ -39,7 +39,10 @@ manifest classify executable graphs as:
 Every repository module covered by the architecture inventory belongs to
 exactly one category. There is no implicit `support` fallback: an orphan or a
 new unclassified module fails the architecture gate. Each executable graph is
-checked for dependency cycles, layer violations and bounded complexity.
+checked for dependency cycles and layer violations. High-risk modules are also
+bounded by dependency fanout, public export count, their combined responsibility
+surface and static control-flow points; line count remains only a final size
+backstop rather than the sole decomposition signal.
 
 ## Authority boundaries
 
@@ -68,6 +71,16 @@ Compatibility modules are explicit, owned and have retirement conditions.
 Experimental TaskFlow coordination is outside the production graph. Historical
 translation and migration modules may verify or preserve lineage but cannot
 enter the production authority graph.
+
+## Universal submission connectors
+
+The provider-neutral submission model, connector-family registry, versioned
+portal bindings and target coverage are documented in
+[`universal-submission-system.md`](universal-submission-system.md). Provider
+adapters run behind the independent signed submission service boundary; they
+are not imported into the research executable graph. The existing durable
+outbox remains the sole delivery authority and handles uncertain outcomes by
+remote reconciliation rather than blind retry.
 
 ## Architecture gates
 

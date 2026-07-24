@@ -4,7 +4,7 @@ import { createCampaignReleasePromotionReceipt } from '../../paper-domain/automa
 import { buildSqliteCampaignProjectionStatement } from './sqlite-campaign-projection.mjs';
 import { mapCampaignNodeRow as parseNode } from './sqlite-campaign-row-mappers.mjs';
 
-export function createCampaignPreparedIntegrationOperations({ store, clock, transaction, guarded, eventStatement, usageSql, assertLiveNodeAttempt, getApi, experimentRegistryAuthorityVerifier = null } = {}) {
+export function createCampaignPreparedIntegrationOperations({ store, clock, mutation, guarded, eventStatement, usageSql, assertLiveNodeAttempt, getApi, experimentRegistryAuthorityVerifier = null } = {}) {
   return {
     prepareNodeResult({ nodeId, workerId, attemptId, leaseGeneration, result = {}, requiresIntegration = false, integrationKey = null } = {}) {
       if (!attemptId || !Number.isInteger(Number(leaseGeneration))) throw new Error('campaign_node_attempt_fence_required');
@@ -21,11 +21,21 @@ export function createCampaignPreparedIntegrationOperations({ store, clock, tran
       if (requiresIntegration && !integrationKey) throw new Error('campaign_prepared_integration_key_required');
       const eventRow = eventStatement(node?.campaignId, nodeId, 'campaign_node_result_prepared', { resultHash, attemptId, leaseGeneration: Number(leaseGeneration) }, now);
       try {
-        transaction([
-          guarded(`UPDATE campaign_nodes SET prepared_result_json=${sqlJson(result)},prepared_result_sha256=${sqlText(resultHash)},prepared_attempt_id=${sqlText(attemptId)},prepared_at=${sqlText(now)},prepared_requires_integration=${requiresIntegration ? 1 : 0},prepared_integration_key=${integrationKey ? sqlText(integrationKey) : 'NULL'},prepared_integration_status=${sqlText(requiresIntegration ? 'pending' : 'none')},prepared_integration_started_at=NULL,prepared_integration_receipt_json=NULL,prepared_integration_receipt_sha256=NULL,prepared_integrated_at=NULL,node_revision=node_revision+1,updated_at=${sqlText(now)} WHERE node_id=${sqlText(nodeId)} AND status='running' AND lease_owner=${sqlText(workerId)} AND attempt_id=${sqlText(attemptId)} AND lease_generation=${Number(leaseGeneration)} AND julianday(lease_expires_at)>=julianday(${sqlText(now)}) AND prepared_result_sha256 IS NULL AND EXISTS(SELECT 1 FROM paper_campaigns c WHERE c.campaign_id=campaign_nodes.campaign_id AND c.status='running');`),
-          eventRow.sql,
-        ], 'campaign_node_result_prepare_failed');
-      } catch {
+        mutation({
+          databaseRole: 'native-store',
+          operationId: 'native-store.campaign-prepared-integration.prepareNodeResult.v1',
+          statements: [
+            guarded(`UPDATE campaign_nodes SET prepared_result_json=${sqlJson(result)},prepared_result_sha256=${sqlText(resultHash)},prepared_attempt_id=${sqlText(attemptId)},prepared_at=${sqlText(now)},prepared_requires_integration=${requiresIntegration ? 1 : 0},prepared_integration_key=${integrationKey ? sqlText(integrationKey) : 'NULL'},prepared_integration_status=${sqlText(requiresIntegration ? 'pending' : 'none')},prepared_integration_started_at=NULL,prepared_integration_receipt_json=NULL,prepared_integration_receipt_sha256=NULL,prepared_integrated_at=NULL,node_revision=node_revision+1,updated_at=${sqlText(now)} WHERE node_id=${sqlText(nodeId)} AND status='running' AND lease_owner=${sqlText(workerId)} AND attempt_id=${sqlText(attemptId)} AND lease_generation=${Number(leaseGeneration)} AND julianday(lease_expires_at)>=julianday(${sqlText(now)}) AND prepared_result_sha256 IS NULL AND EXISTS(SELECT 1 FROM paper_campaigns c WHERE c.campaign_id=campaign_nodes.campaign_id AND c.status='running');`),
+            eventRow.sql,
+          ],
+          fallback: 'campaign_node_result_prepare_failed',
+          input: {
+            result, resultHash, attemptId, now, requiresIntegration,
+            integrationKey, nodeId, workerId, leaseGeneration, eventRow,
+          },
+        });
+      } catch (error) {
+        if (error?.committed) throw error;
         throw new Error('campaign_node_lease_lost');
       }
       return parseNode(store.query(`SELECT * FROM campaign_nodes WHERE node_id=${sqlText(nodeId)} LIMIT 1;`).rows[0]);
@@ -41,17 +51,28 @@ export function createCampaignPreparedIntegrationOperations({ store, clock, tran
           attemptId,
           leaseGeneration,
           now,
-          extraCondition: `AND prepared_requires_integration=1 AND prepared_integration_status IN ('integrating','integrated') AND prepared_integration_key=${sqlText(integrationKey)} AND prepared_result_sha256 IS NOT NULL`,
+          integrationState: 'integrating',
+          integrationKey,
         });
       }
       const integrationExpires = new Date(clock.now().getTime() + Math.max(30, Number(integrationLeaseSeconds || 1800)) * 1000).toISOString();
       const eventRow = eventStatement(node?.campaignId, nodeId, 'campaign_node_result_integration_started', { integrationKey, preparedResultHash: node?.preparedResultHash, attemptId, leaseGeneration: Number(leaseGeneration) }, now);
       try {
-        transaction([
-          guarded(`UPDATE campaign_nodes SET prepared_integration_status='integrating',prepared_integration_started_at=${sqlText(now)},lease_expires_at=CASE WHEN julianday(lease_expires_at)<julianday(${sqlText(integrationExpires)}) THEN ${sqlText(integrationExpires)} ELSE lease_expires_at END,node_revision=node_revision+1,updated_at=${sqlText(now)} WHERE node_id=${sqlText(nodeId)} AND status='running' AND lease_owner=${sqlText(workerId)} AND attempt_id=${sqlText(attemptId)} AND lease_generation=${Number(leaseGeneration)} AND julianday(lease_expires_at)>=julianday(${sqlText(now)}) AND prepared_requires_integration=1 AND prepared_integration_status='pending' AND prepared_integration_key=${sqlText(integrationKey)} AND prepared_result_sha256 IS NOT NULL AND EXISTS(SELECT 1 FROM paper_campaigns c WHERE c.campaign_id=campaign_nodes.campaign_id AND c.status='running');`),
-          eventRow.sql,
-        ], 'campaign_node_result_integration_begin_failed');
-      } catch {
+        mutation({
+          databaseRole: 'native-store',
+          operationId: 'native-store.campaign-prepared-integration.beginNodeResultIntegration.v1',
+          statements: [
+            guarded(`UPDATE campaign_nodes SET prepared_integration_status='integrating',prepared_integration_started_at=${sqlText(now)},lease_expires_at=CASE WHEN julianday(lease_expires_at)<julianday(${sqlText(integrationExpires)}) THEN ${sqlText(integrationExpires)} ELSE lease_expires_at END,node_revision=node_revision+1,updated_at=${sqlText(now)} WHERE node_id=${sqlText(nodeId)} AND status='running' AND lease_owner=${sqlText(workerId)} AND attempt_id=${sqlText(attemptId)} AND lease_generation=${Number(leaseGeneration)} AND julianday(lease_expires_at)>=julianday(${sqlText(now)}) AND prepared_requires_integration=1 AND prepared_integration_status='pending' AND prepared_integration_key=${sqlText(integrationKey)} AND prepared_result_sha256 IS NOT NULL AND EXISTS(SELECT 1 FROM paper_campaigns c WHERE c.campaign_id=campaign_nodes.campaign_id AND c.status='running');`),
+            eventRow.sql,
+          ],
+          fallback: 'campaign_node_result_integration_begin_failed',
+          input: {
+            now, integrationExpires, nodeId, workerId, attemptId,
+            leaseGeneration, integrationKey, eventRow,
+          },
+        });
+      } catch (error) {
+        if (error?.committed) throw error;
         throw new Error('campaign_node_lease_lost');
       }
       return parseNode(store.query(`SELECT * FROM campaign_nodes WHERE node_id=${sqlText(nodeId)} LIMIT 1;`).rows[0]);
@@ -73,16 +94,28 @@ export function createCampaignPreparedIntegrationOperations({ store, clock, tran
           attemptId,
           leaseGeneration,
           now,
-          extraCondition: `AND prepared_requires_integration=1 AND prepared_integration_status='integrated' AND prepared_integration_key=${sqlText(integrationKey)} AND prepared_integration_receipt_sha256=${sqlText(receiptHash)}`,
+          integrationState: 'integrated',
+          integrationKey,
+          integrationReceiptHash: receiptHash,
         });
       }
       const eventRow = eventStatement(node?.campaignId, nodeId, 'campaign_node_result_integrated', { integrationKey, integrationReceiptHash: receiptHash, preparedResultHash: node?.preparedResultHash }, now);
       try {
-        transaction([
-          guarded(`UPDATE campaign_nodes SET prepared_integration_status='integrated',prepared_integration_receipt_json=${sqlJson(integrationReceipt)},prepared_integration_receipt_sha256=${sqlText(receiptHash)},prepared_integrated_at=${sqlText(now)},node_revision=node_revision+1,updated_at=${sqlText(now)} WHERE node_id=${sqlText(nodeId)} AND status='running' AND lease_owner=${sqlText(workerId)} AND attempt_id=${sqlText(attemptId)} AND lease_generation=${Number(leaseGeneration)} AND julianday(lease_expires_at)>=julianday(${sqlText(now)}) AND prepared_requires_integration=1 AND prepared_integration_status='integrating' AND prepared_integration_key=${sqlText(integrationKey)} AND prepared_result_sha256 IS NOT NULL AND prepared_integrated_at IS NULL AND EXISTS(SELECT 1 FROM paper_campaigns c WHERE c.campaign_id=campaign_nodes.campaign_id AND c.status='running');`),
-          eventRow.sql,
-        ], 'campaign_node_result_integration_mark_failed');
-      } catch {
+        mutation({
+          databaseRole: 'native-store',
+          operationId: 'native-store.campaign-prepared-integration.markNodeResultIntegrated.v1',
+          statements: [
+            guarded(`UPDATE campaign_nodes SET prepared_integration_status='integrated',prepared_integration_receipt_json=${sqlJson(integrationReceipt)},prepared_integration_receipt_sha256=${sqlText(receiptHash)},prepared_integrated_at=${sqlText(now)},node_revision=node_revision+1,updated_at=${sqlText(now)} WHERE node_id=${sqlText(nodeId)} AND status='running' AND lease_owner=${sqlText(workerId)} AND attempt_id=${sqlText(attemptId)} AND lease_generation=${Number(leaseGeneration)} AND julianday(lease_expires_at)>=julianday(${sqlText(now)}) AND prepared_requires_integration=1 AND prepared_integration_status='integrating' AND prepared_integration_key=${sqlText(integrationKey)} AND prepared_result_sha256 IS NOT NULL AND prepared_integrated_at IS NULL AND EXISTS(SELECT 1 FROM paper_campaigns c WHERE c.campaign_id=campaign_nodes.campaign_id AND c.status='running');`),
+            eventRow.sql,
+          ],
+          fallback: 'campaign_node_result_integration_mark_failed',
+          input: {
+            integrationReceipt, receiptHash, now, nodeId, workerId,
+            attemptId, leaseGeneration, integrationKey, eventRow,
+          },
+        });
+      } catch (error) {
+        if (error?.committed) throw error;
         throw new Error('campaign_node_lease_lost');
       }
       return parseNode(store.query(`SELECT * FROM campaign_nodes WHERE node_id=${sqlText(nodeId)} LIMIT 1;`).rows[0]);
@@ -141,14 +174,25 @@ export function createCampaignPreparedIntegrationOperations({ store, clock, tran
           AND json_extract(c.spec_json,'$.campaignPlanHash')=${sqlText(releasePromotionReceipt.campaignPlanHash)}
       );`) : '';
       try {
-        transaction([
-          guarded(`UPDATE campaign_nodes SET status='completed',result_json=prepared_result_json,result_sha256=prepared_result_sha256,lease_owner=NULL,lease_expires_at=NULL,failure_class=NULL,integrated_at=${sqlText(now)},node_revision=node_revision+1,updated_at=${sqlText(now)},role=${role ? sqlText(role) : 'role'},reviewer_id=${reviewerId ? sqlText(reviewerId) : 'NULL'},child_session_id=${childSessionId ? sqlText(childSessionId) : 'NULL'},review_hash=${reviewHash ? sqlText(reviewHash) : 'NULL'},prompt_hash=${promptHash ? sqlText(promptHash) : 'NULL'},resolved_model=${resolvedModel ? sqlText(resolvedModel) : 'NULL'} WHERE node_id=${sqlText(nodeId)} AND status='running' AND lease_owner=${sqlText(workerId)} AND attempt_id=${sqlText(attemptId)} AND lease_generation=${Number(leaseGeneration)} AND julianday(lease_expires_at)>=julianday(${sqlText(now)}) AND prepared_result_sha256=${sqlText(node.preparedResultHash)} AND (prepared_requires_integration=0 OR (prepared_integration_status='integrated' AND prepared_integration_receipt_sha256 IS NOT NULL)) AND EXISTS(SELECT 1 FROM paper_campaigns c WHERE c.campaign_id=campaign_nodes.campaign_id AND c.status='running');`),
-          `UPDATE paper_campaigns SET ${usageSql(usageDelta)},updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(node.campaignId)} AND status='running';`,
-          eventRow.sql,
-          buildSqliteCampaignProjectionStatement({ campaignId: node.campaignId, now }),
-          releaseAuthorityStatement,
-        ], 'campaign_node_complete_failed');
-      } catch {
+        mutation({
+          databaseRole: 'native-store',
+          operationId: 'native-store.campaign-prepared-integration.completeNode.v1',
+          statements: [
+            guarded(`UPDATE campaign_nodes SET status='completed',result_json=prepared_result_json,result_sha256=prepared_result_sha256,lease_owner=NULL,lease_expires_at=NULL,failure_class=NULL,integrated_at=${sqlText(now)},node_revision=node_revision+1,updated_at=${sqlText(now)},role=${role ? sqlText(role) : 'role'},reviewer_id=${reviewerId ? sqlText(reviewerId) : 'NULL'},child_session_id=${childSessionId ? sqlText(childSessionId) : 'NULL'},review_hash=${reviewHash ? sqlText(reviewHash) : 'NULL'},prompt_hash=${promptHash ? sqlText(promptHash) : 'NULL'},resolved_model=${resolvedModel ? sqlText(resolvedModel) : 'NULL'} WHERE node_id=${sqlText(nodeId)} AND status='running' AND lease_owner=${sqlText(workerId)} AND attempt_id=${sqlText(attemptId)} AND lease_generation=${Number(leaseGeneration)} AND julianday(lease_expires_at)>=julianday(${sqlText(now)}) AND prepared_result_sha256=${sqlText(node.preparedResultHash)} AND (prepared_requires_integration=0 OR (prepared_integration_status='integrated' AND prepared_integration_receipt_sha256 IS NOT NULL)) AND EXISTS(SELECT 1 FROM paper_campaigns c WHERE c.campaign_id=campaign_nodes.campaign_id AND c.status='running');`),
+            `UPDATE paper_campaigns SET ${usageSql(usageDelta)},updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(node.campaignId)} AND status='running';`,
+            eventRow.sql,
+            buildSqliteCampaignProjectionStatement({ campaignId: node.campaignId, now }),
+            releaseAuthorityStatement,
+          ],
+          fallback: 'campaign_node_complete_failed',
+          input: {
+            node, prepared, now, role, reviewerId, childSessionId, reviewHash,
+            promptHash, resolvedModel, nodeId, workerId, attemptId,
+            leaseGeneration, usageDelta, eventRow, releasePromotionReceipt,
+          },
+        });
+      } catch (error) {
+        if (error?.committed) throw error;
         throw new Error('campaign_node_lease_lost');
       }
       return parseNode(store.query(`SELECT * FROM campaign_nodes WHERE node_id=${sqlText(nodeId)} LIMIT 1;`).rows[0]);

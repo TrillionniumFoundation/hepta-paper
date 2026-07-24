@@ -13,9 +13,26 @@ import {
   probeCodexModelAvailability,
 } from '../bootstrap/operator-automation-composition.mjs';
 import { PRODUCTION_LEAN_TOOLCHAIN } from '../../paper-domain/research/formal-verifier-policy.mjs';
+import {
+  AUTONOMOUS_EMPIRICAL_PLUGIN_RUNTIME_LANGUAGES,
+} from '../../paper-domain/automation/autonomous-empirical-family-plugin-registry.mjs';
+import {
+  inspectConfiguredPinnedFormalSandboxRuntime,
+} from '../../paper-adapters/research-verify/pinned-formal-sandbox-runtime-configuration.mjs';
+import {
+  inspectConfiguredDynamicFormalProjectClosure,
+} from '../../paper-adapters/research-verify/dynamic-formal-project-closure-readiness.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 const LOCAL_DOCKER_HOST = 'unix:///var/run/docker.sock';
+
+export function inspectAutomationFormalSandboxRuntime(input = {}) {
+  return inspectConfiguredPinnedFormalSandboxRuntime(input);
+}
+
+export function inspectAutomationDynamicFormalProjectClosure(input = {}) {
+  return inspectConfiguredDynamicFormalProjectClosure(input);
+}
 
 function configuredEndpointLocality(value) {
   if (!value) return Object.freeze({ configured: false, local: null, remote: null });
@@ -299,7 +316,8 @@ export function buildAutomationRuntimeProbes({ configuration, spawnSyncImpl, env
       manifestInspection: inspection,
     };
   };
-  const trustedDatasetSupervisorImages = [AUTOMATION_RUNTIME_IMAGES.python, AUTOMATION_RUNTIME_IMAGES.r]
+  const trustedDatasetSupervisorImages = AUTONOMOUS_EMPIRICAL_PLUGIN_RUNTIME_LANGUAGES
+    .map((language) => AUTOMATION_RUNTIME_IMAGES[language])
     .map((item) => ({
       image: item.image,
       imageDigest: item.imageDigest,

@@ -12,6 +12,7 @@ import { restrictedChildEnvironment } from './bounded-child-process.mjs';
 const PREFLIGHT_TIMEOUT_MS = 5000;
 const MODEL_CANARY_TIMEOUT_MS = 120000;
 const MODEL_CANARY_RESPONSE_PREFIX = 'HEPTA_CODEX_CANARY_RESPONSE';
+const CODEX_CREDENTIAL_MATERIAL_PATHS = Object.freeze(['auth.json']);
 
 function fail(code) {
   const error = new Error(code);
@@ -102,20 +103,77 @@ function runCheck(spawnSyncImpl, executable, args, { cwd, env }) {
   });
 }
 
-function rootIdentity(root) {
+function credentialMaterialIdentity(root, relativePath, prefix) {
+  const requested = path.join(root.resolved, relativePath);
+  let linkStat;
+  try {
+    linkStat = fs.lstatSync(requested, { bigint: true });
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return Object.freeze({ relativePath, status: 'credential_material_absent' });
+    }
+    fail(code(prefix, 'credential_material_invalid'));
+  }
+  if (!linkStat.isFile() || linkStat.isSymbolicLink()) {
+    fail(code(prefix, 'credential_material_invalid'));
+  }
+  let resolved;
+  let stat;
+  try {
+    resolved = fs.realpathSync(requested);
+    stat = fs.statSync(requested, { bigint: true });
+  } catch {
+    fail(code(prefix, 'credential_material_invalid'));
+  }
+  if (resolved !== requested || !stat.isFile()
+    || stat.dev !== linkStat.dev || stat.ino !== linkStat.ino) {
+    fail(code(prefix, 'credential_material_invalid'));
+  }
+  assertPrivateOwner(stat, code(prefix, 'credential_material_permissions_invalid'));
+  if (stat.nlink !== 1n) fail(code(prefix, 'credential_material_links_invalid'));
+  return Object.freeze({
+    relativePath,
+    status: 'credential_material_present',
+    canonicalPathHash: hashBytes(resolved),
+    filesystemIdentity: Object.freeze({
+      ...statIdentity(stat),
+      linkCount: String(stat.nlink),
+    }),
+  });
+}
+
+function credentialMaterialIdentities(root, prefix) {
+  return Object.freeze(CODEX_CREDENTIAL_MATERIAL_PATHS.map(
+    (relativePath) => credentialMaterialIdentity(root, relativePath, prefix),
+  ));
+}
+
+function rootIdentity(
+  root,
+  prefix,
+  credentialMaterial = credentialMaterialIdentities(root, prefix),
+) {
   return hashRecord('CodexCredentialRootIdentity', {
     canonicalPathHash: hashBytes(root.resolved),
     filesystemIdentity: statIdentity(root.stat),
+    credentialMaterialIdentities: credentialMaterial,
   });
 }
 
 export function inspectCodexCredentialRootIdentity({ codexHome, errorPrefix = 'codex' } = {}) {
   const root = safeRealDirectory(codexHome, errorPrefix);
   assertPrivateOwner(root.stat, code(errorPrefix, 'home_permissions_invalid'));
-  return Object.freeze({ codexHome: root.resolved, credentialRootIdentityHash: rootIdentity(root) });
+  return Object.freeze({
+    codexHome: root.resolved,
+    credentialRootIdentityHash: rootIdentity(root, errorPrefix),
+  });
 }
 
-/** Read-only Codex runtime preflight. It never opens tokens, cookies or auth files. */
+/**
+ * Read-only Codex runtime preflight. It never opens tokens, cookies or auth
+ * files; only non-secret filesystem metadata for known credential material is
+ * bound into the credential-root identity.
+ */
 export function preflightCodexRuntime({
   codexBinary = 'codex',
   codexHome,
@@ -141,6 +199,11 @@ export function preflightCodexRuntime({
     fail(code(errorPrefix, 'config_required'));
   }
   assertPrivateOwner(configStat, code(errorPrefix, 'config_permissions_invalid'));
+  const credentialMaterialBeforeChecks = credentialMaterialIdentities(root, errorPrefix);
+  const credentialMaterialIdentityBeforeChecks = hashRecord(
+    'CodexCredentialMaterialIdentitySet',
+    credentialMaterialBeforeChecks,
+  );
   const binary = resolveExecutable(codexBinary, environment, errorPrefix);
   const childEnv = restrictedChildEnvironment({
     source: environment,
@@ -171,7 +234,19 @@ export function preflightCodexRuntime({
     || !/(?:\blogged\s+in\b|\bauthenticated\b)/i.test(loginStatus)) {
     fail(code(errorPrefix, 'authentication_required'));
   }
-  const credentialRootIdentityHash = rootIdentity(root);
+  const credentialMaterialAfterChecks = credentialMaterialIdentities(root, errorPrefix);
+  const credentialMaterialIdentityAfterChecks = hashRecord(
+    'CodexCredentialMaterialIdentitySet',
+    credentialMaterialAfterChecks,
+  );
+  if (credentialMaterialIdentityAfterChecks !== credentialMaterialIdentityBeforeChecks) {
+    fail(code(errorPrefix, 'credential_material_changed_during_preflight'));
+  }
+  const credentialRootIdentityHash = rootIdentity(
+    root,
+    errorPrefix,
+    credentialMaterialAfterChecks,
+  );
   const codexBinaryIdentityHash = hashRecord('CodexExecutableIdentity', {
     contentHash: hashBytes(fs.readFileSync(binary.resolved)),
     filesystemIdentity: statIdentity(binary.stat),

@@ -16,6 +16,9 @@ export function autonomousResearchCampaignRuntimeOptions(options) {
     scheduler: options.scheduler,
     idGenerator: options.idGenerator,
     signal: options.signal || null,
+    assertExternalSideEffectReady:
+      options.assertExternalSideEffectReady || null,
+    packageLifecycleAuthority: options.packageLifecycleAuthority || null,
   };
 }
 
@@ -33,7 +36,16 @@ export function trustedAutonomousResearchReadinessInspectionTime(clock) {
   return new Date(timestamp);
 }
 
-export function prepareAutonomousResearchSupervisorReadinessAction({
+function infrastructureControlError(error) {
+  return error?.committed === true
+    || error?.stateRecoverabilityFatal === true
+    || error?.stateRecoverabilityDeferred === true
+    || error?.authorityEvidenceRenewalFatal === true
+    || error?.authorityEvidenceRenewalDeferred === true
+    || error?.residentReactivationRequired === true;
+}
+
+export async function prepareAutonomousResearchSupervisorReadinessAction({
   dispatchMutation,
   productionMutation,
   supervisorDispatchAuthorization,
@@ -65,31 +77,138 @@ export function prepareAutonomousResearchSupervisorReadinessAction({
       : null;
   let attempt = null;
   let finalized = false;
+  let externalActionMayHaveStarted = false;
+  let recoveredResult = null;
   const receipts = [];
+  const cancelInfrastructureDeferred = (error = null) => {
+    if (!attempt || finalized || externalActionMayHaveStarted
+      || typeof supervisorExternalActionJournal?.cancelInfrastructureDeferred
+        !== 'function') {
+      return Object.freeze({ cancelled: false, externalActionMayHaveStarted });
+    }
+    const cancelled = supervisorExternalActionJournal
+      .cancelInfrastructureDeferred({ attempt });
+    if (cancelled?.cancelled === true) {
+      finalized = true;
+      if (error) error.dispatchInfrastructureReservationCancelled = true;
+    }
+    return cancelled;
+  };
   if (actionKind) {
     if (typeof supervisorExternalActionJournal?.begin !== 'function'
-      || typeof supervisorExternalActionJournal?.finish !== 'function') {
+      || typeof supervisorExternalActionJournal?.finish !== 'function'
+      || (supervisorExternalActionJournal?.sideEffectPermitRequired === true
+        && typeof supervisorExternalActionJournal?.assertSideEffectPermit !== 'function')) {
       throw new Error('autonomous_research_supervisor_external_action_journal_required');
     }
-    attempt = supervisorExternalActionJournal.begin({
-      actionKind,
-      reservation: Object.freeze({
-        version: 1,
-        kind: 'AutonomousResearchSupervisorReadinessActionReservation',
-        campaignId,
-        action,
-        launchMode,
-        dispatchCount: Number(supervisorDispatchAuthorization.dispatchCount),
-        dispatchAuthorizationHash:
-          supervisorDispatchAuthorization.autonomousResearchSupervisorDispatchAuthorizationHash,
-        providerConfigurationHash,
-      }),
-      now,
+    const reservation = Object.freeze({
+      version: 1,
+      kind: 'AutonomousResearchSupervisorReadinessActionReservation',
+      campaignId,
+      action,
+      launchMode,
+      dispatchCount: Number(supervisorDispatchAuthorization.dispatchCount),
+      dispatchAuthorizationHash:
+        supervisorDispatchAuthorization.autonomousResearchSupervisorDispatchAuthorizationHash,
+      providerConfigurationHash,
+      externalActionConfigurationIdentityHash:
+        supervisorExternalActionJournal?.actionConfigurationIdentityHashes?.[actionKind]
+          || providerConfigurationHash,
     });
+    try {
+      if (typeof supervisorExternalActionJournal.preBegin === 'function') {
+        await supervisorExternalActionJournal.preBegin({
+          actionKind,
+          reservation,
+        });
+      }
+      attempt = supervisorExternalActionJournal.begin({
+        actionKind,
+        reservation,
+        now,
+      });
+      if (attempt?.status !== 'in_progress') {
+        finalized = true;
+        externalActionMayHaveStarted = true;
+        recoveredResult = attempt?.recoveryResult || null;
+        if (attempt?.status !== 'completed' || !recoveredResult) {
+          const error = new Error(
+            'autonomous_research_supervisor_external_action_recovered_failure',
+          );
+          error.autonomousResearchRecoveredExternalActionAttempt = attempt;
+          throw error;
+        }
+        receipts.push(attempt.receipt);
+      }
+      if (!finalized && typeof supervisorExternalActionJournal.reconcileAfterBegin === 'function') {
+        await supervisorExternalActionJournal.reconcileAfterBegin({
+          attempt,
+          actionKind,
+          reservation,
+        });
+      } else if (!finalized
+        && supervisorExternalActionJournal.recoverabilityEpochFenceRequired === true) {
+        throw new Error(
+          'autonomous_research_supervisor_external_action_recoverability_required',
+        );
+      }
+      if (!finalized
+        && typeof supervisorExternalActionJournal.assertSideEffectPermit === 'function') {
+        const permitted = supervisorExternalActionJournal.assertSideEffectPermit({
+          attempt,
+          actionKind,
+          reservation,
+        });
+        if (typeof permitted?.then === 'function' || permitted !== true) {
+          throw new Error(
+            'autonomous_research_supervisor_external_action_side_effect_permit_invalid',
+          );
+        }
+      }
+    } catch (error) {
+      if (infrastructureControlError(error)) {
+        try {
+          cancelInfrastructureDeferred(error);
+        } catch (cancelError) {
+          const fatal = new Error(
+            'autonomous_research_supervisor_external_action_infrastructure_cancel_failed',
+            { cause: cancelError },
+          );
+          fatal.stateRecoverabilityFatal = true;
+          fatal.originalInfrastructureControlError = error;
+          throw fatal;
+        }
+      }
+      throw error;
+    }
   }
   return Object.freeze({
     authorized,
     actionKind,
+    recoveredResult,
+    recovered: recoveredResult !== null,
+    async markStarted() {
+      if (finalized || !attempt
+        || typeof supervisorExternalActionJournal.markStarted !== 'function') {
+        return null;
+      }
+      try {
+        const result = await supervisorExternalActionJournal.markStarted({
+          attempt,
+          actionKind,
+        });
+        externalActionMayHaveStarted = true;
+        return result;
+      } catch (error) {
+        if (error?.externalActionMayHaveStarted === true || error?.committed === true) {
+          externalActionMayHaveStarted = true;
+        }
+        throw error;
+      }
+    },
+    cancelInfrastructureDeferred({ error = null } = {}) {
+      return cancelInfrastructureDeferred(error);
+    },
     finalizeSuccess({ evidence, now: completedAt }) {
       if (!attempt || finalized) return null;
       const result = supervisorExternalActionJournal.finish({

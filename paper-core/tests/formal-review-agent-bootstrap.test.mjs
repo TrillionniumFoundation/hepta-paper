@@ -6,13 +6,14 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { preflightCodexFormalReviewer } from '../../paper-adapters/automation/codex-formal-reviewer-preflight.mjs';
 import { bootstrapFormalReviewAgentExecutor } from '../../paper-composition/bootstrap/formal-review-agent-bootstrap.mjs';
+import { relativeModuleSpecifiers } from '../verification/javascript-module-specifiers.mjs';
 
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 
 function directRelativeImports(file) {
   const source = fs.readFileSync(file, 'utf8');
-  return new Set([...source.matchAll(/(?:from\s+|import\s*\()(['"])(\.[^'"]+)\1/g)].map((match) => {
-    const candidate = path.resolve(path.dirname(file), match[2]);
+  return new Set(relativeModuleSpecifiers(source).map((specifier) => {
+    const candidate = path.resolve(path.dirname(file), specifier);
     return path.extname(candidate) ? candidate : `${candidate}.mjs`;
   }));
 }
@@ -28,16 +29,18 @@ function privateCodexHome(root, name, { config = true } = {}) {
   return codexHome;
 }
 
-function fakeCodexBinary(root, { loggedIn = true } = {}) {
+function fakeCodexBinary(root, { loggedIn = true, rotateAuthDuringExec = false } = {}) {
   const executable = path.join(root, loggedIn ? 'codex-reviewer' : 'codex-reviewer-logged-out');
   fs.writeFileSync(executable, [
     '#!/usr/bin/env node',
+    "const fs = require('node:fs');",
+    "const path = require('node:path');",
     "const args = process.argv.slice(2);",
     "if (args[0] === '--version') { process.stdout.write('codex-cli 99.0.0\\n'); process.exit(0); }",
     "if (args[0] === 'exec' && args[1] === '--help') { process.stdout.write('Usage: codex exec --model MODEL\\n'); process.exit(0); }",
     `if (args[0] === 'login' && args[1] === 'status') { process.stdout.write('${loggedIn ? 'Logged in using fixture identity' : 'Not logged in'}\\n'); process.exit(${loggedIn ? 0 : 1}); }`,
     "process.stdin.resume();",
-    "process.stdin.on('end', () => process.stdout.write(JSON.stringify({version:1,kind:'FormalClaimSemanticReview',reviews:[{claimId:'claim-1',theoremName:'verified',status:'formal_semantic_review_verified',semanticEquivalenceVerified:true,verdict:'equivalent'}]})));",
+    "process.stdin.on('end', () => { if (" + JSON.stringify(rotateAuthDuringExec) + ") fs.writeFileSync(path.join(process.env.CODEX_HOME, 'auth.json'), '{\"fixture\":\"after0\"}\\n', {mode:0o600}); process.stdout.write(JSON.stringify({version:1,kind:'FormalClaimSemanticReview',reviews:[{claimId:'claim-1',theoremName:'verified',status:'formal_semantic_review_verified',semanticEquivalenceVerified:true,verdict:'equivalent'}]})); });",
   ].join('\n'));
   fs.chmodSync(executable, 0o700);
   return executable;
@@ -175,6 +178,74 @@ test('formal reviewer positive path uses the real process-backed Codex compositi
   assert.equal(fs.readFileSync(path.join(workspace, 'main.tex'), 'utf8'), '\\begin{theorem}True.\\end{theorem}\n');
 });
 
+test('formal reviewer rejects credential rotation during the Codex call', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-formal-review-midflight-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const workspace = path.join(root, 'paper');
+  const runtimeRoot = path.join(root, 'runtime');
+  const codexHome = privateCodexHome(root, 'reviewer-codex-home');
+  fs.writeFileSync(path.join(codexHome, 'auth.json'), '{"fixture":"before"}\n', {
+    mode: 0o600,
+  });
+  fs.mkdirSync(workspace, { recursive: true });
+  fs.writeFileSync(path.join(workspace, 'main.tex'), 'unchanged\n');
+  const executable = fakeCodexBinary(root, { rotateAuthDuringExec: true });
+  const reviewer = bootstrapFormalReviewAgentExecutor({
+    authorAgentId: 'author-principal',
+    provider: 'codex',
+    codexBinary: executable,
+    codexHome,
+    model: 'formal-review-model',
+    authorProvider: 'openclaw',
+    runtimeRoot,
+  });
+  await assert.rejects(() => reviewer.execute({
+    role: 'formal-reviewer',
+    workspacePath: workspace,
+    instructions: 'Review without changing the workspace.',
+    context: { campaignId: 'campaign-midflight', nodeId: 'formal-review-midflight' },
+    sandbox: 'read-only',
+    timeoutMs: 5000,
+  }), (error) => {
+    assert.match(error.message,
+      /formal_review_codex_capability_runtime_identity_changed_during_execution/);
+    assert.equal(error.retryable, false);
+    return true;
+  });
+});
+
+test('formal reviewer identity changes when auth material is rotated in place without reading it', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-formal-review-auth-rotation-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const codexHome = privateCodexHome(root, 'reviewer-home');
+  const authPath = path.join(codexHome, 'auth.json');
+  fs.writeFileSync(authPath, '{"fixture":"AAAAAAAA"}\n', { mode: 0o600 });
+  fs.chmodSync(authPath, 0o600);
+  const executable = fakeCodexBinary(root);
+  const before = preflightCodexFormalReviewer({
+    codexBinary: executable,
+    codexHome,
+    model: 'formal-review-model',
+  });
+  const originalTimes = fs.statSync(authPath);
+  fs.writeFileSync(authPath, '{"fixture":"BBBBBBBB"}\n', { mode: 0o600 });
+  fs.utimesSync(authPath, originalTimes.atime, originalTimes.mtime);
+  const after = preflightCodexFormalReviewer({
+    codexBinary: executable,
+    codexHome,
+    model: 'formal-review-model',
+  });
+  assert.notEqual(
+    after.capabilityReceipt.credentialRootIdentityHash,
+    before.capabilityReceipt.credentialRootIdentityHash,
+  );
+  assert.notEqual(
+    after.capabilityReceipt.codexFormalReviewerCapabilityReceiptHash,
+    before.capabilityReceipt.codexFormalReviewerCapabilityReceiptHash,
+  );
+  assert.notEqual(after.effectivePrincipalId, before.effectivePrincipalId);
+});
+
 test('formal reviewer preflight rejects missing config, logged-out Codex and shared author credentials', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-formal-review-preflight-negative-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -221,6 +292,24 @@ test('formal reviewer preflight rejects missing config, logged-out Codex and sha
     authorCodexHome: authorHome,
   }), /formal_review_codex_author_home_permissions_invalid/);
   fs.chmodSync(authorHome, 0o700);
+  const reviewerAuthPath = path.join(reviewerHome, 'auth.json');
+  fs.writeFileSync(reviewerAuthPath, '{}\n', { mode: 0o600 });
+  fs.chmodSync(reviewerAuthPath, 0o600);
+  const linkedAuthPath = path.join(root, 'linked-auth.json');
+  fs.linkSync(reviewerAuthPath, linkedAuthPath);
+  assert.throws(() => preflightCodexFormalReviewer({
+    codexBinary: executable,
+    codexHome: reviewerHome,
+    model: 'formal-review-model',
+  }), /formal_review_codex_credential_material_links_invalid/);
+  fs.unlinkSync(linkedAuthPath);
+  fs.chmodSync(reviewerAuthPath, 0o644);
+  assert.throws(() => preflightCodexFormalReviewer({
+    codexBinary: executable,
+    codexHome: reviewerHome,
+    model: 'formal-review-model',
+  }), /formal_review_codex_credential_material_permissions_invalid/);
+  fs.chmodSync(reviewerAuthPath, 0o600);
   const independent = preflightCodexFormalReviewer({
     codexBinary: executable,
     codexHome: reviewerHome,

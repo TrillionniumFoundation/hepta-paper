@@ -5,13 +5,26 @@ import { evaluateFormalClaimBindings } from '../../paper-domain/research/formal-
 import { PRODUCTION_LEAN_TOOLCHAIN } from '../../paper-domain/research/formal-verifier-policy.mjs';
 import { normalizeFormalProofObligationMappings } from '../../paper-domain/research/formal-proof-obligation-mapping.mjs';
 import {
+  dynamicFormalLeanTypeSourceValid,
+} from '../../paper-domain/research/dynamic-formal-claim-seed-contract.mjs';
+import { leanTypeIdentity } from '../../paper-domain/research/lean-type-identity.mjs';
+import {
   autonomousFormalLeanTypeContractForObligation,
   autonomousFormalTypeAuditForObligation,
 } from '../../paper-domain/automation/autonomous-formal-support-registry.mjs';
-import { analyzeLeanTypeContract, leanSourceDeclarationRecords } from './lean-source-contracts.mjs';
+import {
+  analyzeLeanTypeContract,
+  leanSourceDeclarationRecords,
+  leanSourceImports,
+} from './lean-source-contracts.mjs';
 import { readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
 import { createFormalProjectSnapshotRepository } from './formal-project-snapshot-repository.mjs';
 import { readFormalProjectClosure } from './formal-project-closure-reader.mjs';
+import {
+  extractLeanReadableProofAudits,
+  leanReadableProofAuditSetHash,
+  readableProofAuditDirectives,
+} from './lean-readable-proof-audit.mjs';
 
 function projectManifestHash(projectFiles) {
   return hashRecord('FormalProjectManifest', projectFiles.map(({ path: filePath, sourcePath, projectPath, role, hash, bytes, posixMode }) => ({ path: filePath, sourcePath: sourcePath || filePath, projectPath: projectPath ?? filePath, role: role || 'project', hash, bytes, posixMode })));
@@ -19,6 +32,14 @@ function projectManifestHash(projectFiles) {
 
 function projectFile(projectFiles, relative) {
   return projectFiles.find((file) => (file.projectPath ?? file.path) === relative) || null;
+}
+
+function executableProjectFiles(projectFiles, { requireImmutableExecutionClosure }) {
+  if (requireImmutableExecutionClosure) return projectFiles;
+  return projectFiles.filter((file) => {
+    const projectPath = file.projectPath ?? file.path;
+    return !/^\.lake\/(?:build\/|(?!packages\/))/.test(String(projectPath || ''));
+  });
 }
 
 function safeSourceFile(sourceFile) {
@@ -37,6 +58,7 @@ function canonicalAuditPlan(claimBindings) {
   for (const claim of claimBindings) {
     const sourceFile = safeSourceFile(claim.sourceFile);
     const theoremName = safeTheoremName(claim.theoremName);
+    const dynamicAuthority = claim?.formalClaimContract?.dynamicFormalClaimAuthority || null;
     const obligationMapping = normalizeFormalProofObligationMappings({
       proofObligationContracts: claim.proofObligationContracts,
       proofObligations: claim.proofObligations || claim.obligationNames,
@@ -44,18 +66,35 @@ function canonicalAuditPlan(claimBindings) {
       theoremName,
     });
     if (!sourceFile || !theoremName || !obligationMapping.valid) return null;
+    if (dynamicAuthority && (
+      dynamicAuthority.leanDeclarationName !== theoremName
+      || !dynamicFormalLeanTypeSourceValid(dynamicAuthority.leanTypeSource)
+      || dynamicAuthority.leanTypeSourceHash
+        !== hashBytes(Buffer.from(dynamicAuthority.leanTypeSource, 'utf8'))
+      || dynamicAuthority.leanNormalizedTypeHash
+        !== leanTypeIdentity(dynamicAuthority.leanTypeSource).normalizedTypeHash
+      || claim.expectedTypeHash !== dynamicAuthority.leanNormalizedTypeHash
+      || claim.formalClaimContract?.theoremName !== theoremName
+      || claim.formalClaimContract?.theoremTypeHash !== dynamicAuthority.leanNormalizedTypeHash
+    )) return null;
     if (!bySource.has(sourceFile)) bySource.set(sourceFile, {
       names: new Set(),
       typeAuditsByName: new Map(),
     });
     const sourceAudit = bySource.get(sourceFile);
     sourceAudit.names.add(theoremName);
+    if (dynamicAuthority) {
+      const dynamicTypeAudit = `#check (${theoremName} : ${dynamicAuthority.leanTypeSource})`;
+      const existing = sourceAudit.typeAuditsByName.get(theoremName);
+      if (existing && existing !== dynamicTypeAudit) return null;
+      sourceAudit.typeAuditsByName.set(theoremName, dynamicTypeAudit);
+    }
     for (const declarationName of obligationMapping.verificationTargets) {
       sourceAudit.names.add(declarationName);
     }
     for (const mapping of obligationMapping.mappings) {
       for (const declarationName of mapping.leanDeclarations) {
-        const typeAudit = autonomousFormalTypeAuditForObligation({
+        const typeAudit = dynamicAuthority ? null : autonomousFormalTypeAuditForObligation({
           proofObligation: mapping.displayText,
           theoremName: declarationName,
         });
@@ -81,6 +120,7 @@ function canonicalAuditPlan(claimBindings) {
           .map((name) => `#check ${name}`),
         ...typeAudits.map(([, directive]) => directive),
         ...theoremNames.map((name) => `#print axioms ${name}`),
+        readableProofAuditDirectives(theoremNames),
       ].join('\n'),
     });
   });
@@ -109,6 +149,45 @@ function executionIdentity(receipt) {
     runtimeExecutableInvocationPath: receipt?.runtimeExecutableInvocationPath || null,
     containerImageDigest: receipt?.containerImageDigest || null,
   });
+}
+
+function immutableClosureFiles(closure) {
+  return (closure?.files || []).map((file) => ({
+    sourcePath: file.sourcePath,
+    projectPath: file.projectPath,
+    role: file.role,
+    hash: file.hash,
+    bytes: file.bytes,
+    posixMode: file.posixMode,
+  }));
+}
+
+function combineImmutableAuditExecutions(executions) {
+  if (executions.length === 1) return executions[0];
+  const first = executions[0] || {};
+  const identityFields = [
+    'runnerId', 'backend', 'runtimeIdentityType', 'runtimeIdentityHash',
+    'runtimeExecutableSnapshotHash', 'runtimeExecutableInvocationPath',
+    'containerImageDigest',
+  ];
+  const identityMismatch = executions.some((execution) => identityFields.some((field) => (
+    execution?.[field] !== first?.[field]
+  )));
+  const blockers = [
+    ...executions.flatMap((execution) => execution?.blockers || []),
+    ...(identityMismatch ? ['formal_immutable_audit_runtime_identity_mismatch'] : []),
+  ];
+  return {
+    ...first,
+    ok: executions.length > 0 && executions.every((execution) => execution?.ok === true)
+      && !identityMismatch,
+    stdout: executions.map((execution) => String(execution?.stdout || '')).join('\n'),
+    stderr: executions.map((execution) => String(execution?.stderr || '')).join('\n'),
+    blockers: [...new Set(blockers)],
+    receiptHash: hashRecord('FormalImmutableAuditExecutionSet', executions.map((execution) => (
+      execution?.receiptHash || null
+    ))),
+  };
 }
 
 function normalizedAuditOutputLine(value) {
@@ -165,7 +244,7 @@ function declarationFromAudit(
   };
 }
 
-export function createLakeFormalVerifier({ projectRoot, dependencyScopeRoot = projectRoot, commandRunner, commandRunnerFactory = null, projectSnapshotRepository = createFormalProjectSnapshotRepository(), executable = 'lake', trustedAllowedAxioms = [], toolchainIdentityProvider = null } = {}) {
+export function createLakeFormalVerifier({ projectRoot, dependencyScopeRoot = projectRoot, commandRunner, commandRunnerFactory = null, projectSnapshotRepository = createFormalProjectSnapshotRepository(), executable = 'lake', trustedAllowedAxioms = [], toolchainIdentityProvider = null, executionEnvironment: configuredExecutionEnvironment = process.env, requireImmutableExecutionClosure = false } = {}) {
   const replayAuthorityToken = Symbol('formal-certificate-replay-authority');
   const api = {
     version: 3,
@@ -185,7 +264,9 @@ export function createLakeFormalVerifier({ projectRoot, dependencyScopeRoot = pr
       let projectClosure = null;
       try {
         projectClosure = await readFormalProjectClosure({ projectRoot, dependencyScopeRoot });
-        projectFiles = [...(projectClosure.files || [])];
+        projectFiles = executableProjectFiles([...(projectClosure.files || [])], {
+          requireImmutableExecutionClosure,
+        });
         blockers.push(...(projectClosure.blockers || []));
       } catch (error) { blockers.push(...String(error.message || error).split(',')); }
       const byPath = new Map(projectFiles.filter((file) => file.projectPath !== null).map((file) => [file.projectPath ?? file.path, file]));
@@ -208,27 +289,102 @@ export function createLakeFormalVerifier({ projectRoot, dependencyScopeRoot = pr
       }
       const systemAuditPlan = claimBindings.length ? canonicalAuditPlan(claimBindings) : null;
       if (claimBindings.length && !systemAuditPlan) blockers.push('formal_system_audit_contract_invalid');
+      for (const claim of claimBindings) {
+        const dynamicAuthority = claim?.formalClaimContract?.dynamicFormalClaimAuthority || null;
+        if (!dynamicAuthority) continue;
+        const sourceFile = safeSourceFile(claim.sourceFile);
+        const sourceRead = sourceFile
+          ? readScopedFileSync({ scopeRoot: projectRoot, candidate: path.join(projectRoot, sourceFile) })
+          : null;
+        const imports = sourceRead?.status === 'scoped_file_read_verified'
+          ? leanSourceImports(sourceRead.content.toString('utf8'))
+          : [];
+        if (!sourceFile || sourceRead?.status !== 'scoped_file_read_verified') {
+          blockers.push(`formal_dynamic_claim_source_invalid:${claim?.claimId || 'missing'}`);
+        } else if (imports.some((moduleName) => !dynamicAuthority.allowedImports.includes(moduleName))) {
+          blockers.push(`formal_dynamic_claim_import_not_allowed:${claim?.claimId || 'missing'}`);
+        }
+      }
       if (blockers.length) return { status: 'formal_verifier_blocked', blockers };
       const executionEnvironment = {
-        ELAN_HOME: process.env.ELAN_HOME || `${process.env.HOME || ''}/.elan`,
+        ELAN_HOME: configuredExecutionEnvironment.ELAN_HOME
+          || `${configuredExecutionEnvironment.HOME || ''}/.elan`,
         ELAN_TOOLCHAIN: toolchain,
       };
       let projectSnapshot = null;
       let execution = null;
       let audit = null;
+      let formalProjectSnapshotSealReceipt = null;
       const auditTargets = systemAuditPlan?.entries.map((entry) => entry.sourceFile) || [];
-      const executionArgs = auditTargets.length ? ['build', ...auditTargets] : ['build'];
+      const executionInvocations = requireImmutableExecutionClosure
+        ? auditTargets.map((target) => ['env', 'lean', target])
+        : [auditTargets.length ? ['build', ...auditTargets] : ['build']];
       const formalAuditInvocationHash = hashRecord('FormalAuditInvocation', {
         executable: String(executable),
-        arguments: executionArgs,
+        ...(requireImmutableExecutionClosure
+          ? { invocations: executionInvocations }
+          : { arguments: executionInvocations[0] }),
         auditTargets,
         systemAuditHash: systemAuditPlan ? hashBytes(Buffer.from(systemAuditPlan.canonicalSource)) : null,
       });
       try {
         projectSnapshot = projectSnapshotRepository.materialize({ projectRoot, dependencyScopeRoot, projectFiles, systemAuditPlan });
+        if (requireImmutableExecutionClosure) {
+          formalProjectSnapshotSealReceipt = projectSnapshot.seal();
+          if (formalProjectSnapshotSealReceipt.writableFileCount !== 0
+            || formalProjectSnapshotSealReceipt.writableDirectoryCount !== 0) {
+            throw new Error('formal_immutable_execution_snapshot_not_sealed');
+          }
+        }
         const executionRoot = projectSnapshot.root;
-        const activeRunner = commandRunnerFactory ? commandRunnerFactory(executionRoot) : commandRunner;
-        execution = await activeRunner.run({ executable, args: executionArgs, cwd: executionRoot, sourceRoot: executionRoot, timeoutMs, outputPaths: [], env: executionEnvironment, signal });
+        if (requireImmutableExecutionClosure && !executionInvocations.length) {
+          throw new Error('formal_immutable_execution_audit_target_required');
+        }
+        const beforeExecutionClosure = requireImmutableExecutionClosure
+          ? await readFormalProjectClosure({
+            projectRoot: executionRoot,
+            dependencyScopeRoot: projectSnapshot.scopeRoot,
+          }) : null;
+        if (beforeExecutionClosure
+          && beforeExecutionClosure.status !== 'formal_project_closure_verified') {
+          throw new Error(`formal_immutable_execution_closure_invalid:${beforeExecutionClosure.blockers.join(',')}`);
+        }
+        const activeRunner = commandRunnerFactory
+          ? commandRunnerFactory(executionRoot, projectSnapshot.scopeRoot) : commandRunner;
+        const executions = [];
+        for (const args of executionInvocations) {
+          executions.push(await activeRunner.run({
+            executable,
+            args,
+            cwd: executionRoot,
+            sourceRoot: projectSnapshot.scopeRoot,
+            timeoutMs,
+            outputPaths: [],
+            env: executionEnvironment,
+            requireImmutableWorkRoot: requireImmutableExecutionClosure,
+            signal,
+          }));
+        }
+        execution = combineImmutableAuditExecutions(executions);
+        if (requireImmutableExecutionClosure) {
+          const afterExecutionClosure = await readFormalProjectClosure({
+            projectRoot: executionRoot,
+            dependencyScopeRoot: projectSnapshot.scopeRoot,
+          });
+          if (afterExecutionClosure.status !== 'formal_project_closure_verified'
+            || beforeExecutionClosure.manifestHash !== afterExecutionClosure.manifestHash
+            || JSON.stringify(immutableClosureFiles(beforeExecutionClosure))
+              !== JSON.stringify(immutableClosureFiles(afterExecutionClosure))) {
+            execution = {
+              ...execution,
+              ok: false,
+              blockers: [...new Set([
+                ...(execution?.blockers || []),
+                'formal_immutable_execution_snapshot_drift',
+              ])],
+            };
+          }
+        }
         if (execution.ok && claimBindings.length) audit = execution;
       } catch (error) {
         execution = { ok: false, blockers: [error?.message || 'formal_fresh_project_execution_failed'], receiptHash: null };
@@ -243,6 +399,7 @@ export function createLakeFormalVerifier({ projectRoot, dependencyScopeRoot = pr
       const effectiveDeclarations = [];
       if (execution.ok && claimBindings.length) {
         for (const claim of claimBindings) {
+          const dynamicAuthority = claim?.formalClaimContract?.dynamicFormalClaimAuthority || null;
           const sourceFile = String(claim.sourceFile || '');
           const sourceBound = sourceFile && projectFiles.some((file) => (file.projectPath ?? file.path) === sourceFile);
           const obligationMapping = normalizeFormalProofObligationMappings({
@@ -272,7 +429,12 @@ export function createLakeFormalVerifier({ projectRoot, dependencyScopeRoot = pr
               .filter((mapping) => mapping.leanDeclarations.includes(declarationName))
               .map((mapping) => autonomousFormalLeanTypeContractForObligation(mapping.displayText))
               .filter(Boolean);
-            const expectedLeanTypeContract = expectedLeanTypeContracts[0] || null;
+            const dynamicExpectedLeanTypeContract = dynamicAuthority
+              && declarationName === claim.theoremName
+              ? Object.freeze({ expectedType: dynamicAuthority.leanTypeSource })
+              : null;
+            const expectedLeanTypeContract = dynamicExpectedLeanTypeContract
+              || expectedLeanTypeContracts[0] || null;
             if ((sourceFile && !sourceBound) || (sourceFile && !sourceDeclaration)) {
               effectiveDeclarations.push({ name: declarationName, typeHash: sourceDeclaration?.typeHash || null, sourceStatementHash: sourceDeclaration?.statementHash || null, buildVerified: false, conditional: sourceDeclaration?.conditional === true, conclusionAssumedAsPremise: sourceDeclaration?.conclusionAssumedAsPremise === true, verifiedObligations: [], axioms: [], auditReceiptHash: null });
               continue;
@@ -291,6 +453,14 @@ export function createLakeFormalVerifier({ projectRoot, dependencyScopeRoot = pr
       const claimBindingReport = execution.ok && claimBindings.length
         ? evaluateFormalClaimBindings({ claims: claimBindings, declarations: effectiveDeclarations, allowedAxioms: trustedAllowedAxioms })
         : null;
+      const leanReadableProofPrintAudits = execution.ok && claimBindings.length
+        ? extractLeanReadableProofAudits({
+          stdout: execution.stdout,
+          claimBindings,
+          declarations: effectiveDeclarations,
+          projectFiles,
+          executionReceiptHash: execution.receiptHash || null,
+        }) : Object.freeze([]);
       const status = !execution.ok
         ? 'formal_certificate_blocked'
         : !claimBindingReport
@@ -314,6 +484,10 @@ export function createLakeFormalVerifier({ projectRoot, dependencyScopeRoot = pr
           lakePackageFileCount: projectClosure.lakePackageFileCount,
           manifestHash: projectClosure.manifestHash,
         }) : null,
+        formalProjectSnapshotSealReceipt,
+        formalProjectSnapshotSealReceiptHash:
+          formalProjectSnapshotSealReceipt
+            ?.formalProjectSnapshotSealReceiptHash || null,
         systemAuditHash: systemAuditPlan ? hashBytes(Buffer.from(systemAuditPlan.canonicalSource)) : null,
         auditTargets,
         formalAuditInvocationHash,
@@ -326,6 +500,14 @@ export function createLakeFormalVerifier({ projectRoot, dependencyScopeRoot = pr
         executionIdentity: executionIdentity(execution),
         isolation: execution.isolation || null,
         claimBindingReport,
+        leanReadableProofPrintAudits,
+        leanReadableProofPrintAuditSetHash:
+          leanReadableProofAuditSetHash(leanReadableProofPrintAudits),
+        productionReadableProofReady: Boolean(claimBindings.length)
+          && leanReadableProofPrintAudits.length === claimBindings.length
+          && leanReadableProofPrintAudits.every((item) => (
+            item.status === 'lean_readable_proof_print_verified'
+          )),
         blockers: execution.ok ? (claimBindingReport?.blockers || []) : ['lake_build_failed', ...(execution.blockers || [])],
         externalActionPerformed: false,
       };
@@ -387,6 +569,9 @@ export function createLakeFormalVerifier({ projectRoot, dependencyScopeRoot = pr
         || rerun.formalAuditInvocationHash !== certificateBundle.formalAuditInvocationHash
         || rerun.projectManifestHash !== certificateBundle.projectManifestHash
         || rerun.formalProjectClosureHash !== certificateBundle.formalProjectClosureHash
+        || rerun.leanReadableProofPrintAuditSetHash
+          !== certificateBundle.leanReadableProofPrintAuditSetHash
+        || rerun.productionReadableProofReady !== certificateBundle.productionReadableProofReady
         || rerun.claimBindingReport?.formalClaimBindingHash !== certificateBundle.claimBindingReport?.formalClaimBindingHash) {
         return { status: 'formal_certificate_replay_blocked', blockers: ['formal_replay_authority_identity_mismatch'], rerun };
       }
@@ -403,6 +588,8 @@ export function createLakeFormalVerifier({ projectRoot, dependencyScopeRoot = pr
         toolchain: rerun.toolchain,
         toolchainRuntimeIdentity: rerun.toolchainRuntimeIdentity,
         formalProjectClosureHash: rerun.formalProjectClosureHash,
+        leanReadableProofPrintAuditSetHash: rerun.leanReadableProofPrintAuditSetHash,
+        productionReadableProofReady: rerun.productionReadableProofReady,
         executionIdentity: rerun.executionIdentity,
         externalActionPerformed: false,
       };

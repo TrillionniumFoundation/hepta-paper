@@ -5,11 +5,22 @@ import path from 'node:path';
 import {
   composeAutonomousResearchSupervisor,
 } from '../../paper-composition/automation/autonomous-research-supervisor-composition.mjs';
+import {
+  autonomousResearchResidentExitCode,
+} from '../../paper-application/automation/autonomous-research-resident-reactivation-required.mjs';
+import {
+  publishStrictMachineIntakeReconciliation,
+  publishResidentCycleIntent,
+  queryResidentCycleReceipt,
+} from '../../paper-composition/automation/autonomous-research-supervisor-state-composition.mjs';
 import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 import { parseStrictCliArguments } from '../src/strict-cli-arguments.mjs';
 
 const args = parseStrictCliArguments(process.argv.slice(2), {
-  booleanFlags: ['help', 'once', 'require-fully-autonomous'],
+  booleanFlags: [
+    'help', 'once', 'publish-strict-machine-intake-reconciliation',
+    'request-resident-cycle', 'require-fully-autonomous',
+  ],
   valueFlags: [
     'root', 'runtime-root', 'poll-ms', 'maximum-campaigns-per-cycle',
     'external-qualification-config', 'concurrency', 'agent-slots', 'cpu-slots',
@@ -36,6 +47,7 @@ const args = parseStrictCliArguments(process.argv.slice(2), {
     'qualification-maximum-backoff-ms', 'qualification-deadline-ms',
     'qualification-epoch-cooldown-ms', 'qualification-exhausted-cooldown-ms',
     'qualification-attempt-lease-ms',
+    'resident-cycle-wait-ms', 'resident-cycle-poll-ms',
   ],
   positional: false,
 });
@@ -96,7 +108,7 @@ function usage() {
   return Object.freeze({
     version: 1,
     kind: 'AutonomousResearchSupervisorUsage',
-    usage: 'hepta-paper operator autonomous-supervisor -- [--once] [--require-fully-autonomous] [--machine-intake-config PATH] [--topic-producer-profile PATH] [bounded lifecycle/provider/qualification options]',
+    usage: 'hepta-paper operator autonomous-supervisor -- [--once | --request-resident-cycle] [--require-fully-autonomous] [--machine-intake-config PATH] [--topic-producer-profile PATH] [bounded lifecycle/provider/qualification options]',
     runtime: 'foreground resident process suitable for systemd Restart=always and a Kubernetes Deployment/StatefulSet',
     startup: 'atomically reconciles expired campaign/resource/supervisor/qualification leases before dispatch',
     recovery: 'resumes running, paused, and supervisor-stopped autonomous campaigns without expanding persisted campaign budgets',
@@ -116,10 +128,73 @@ function usage() {
   });
 }
 
+function wait(milliseconds, signal) {
+  if (signal?.aborted) return Promise.resolve();
+  return new Promise((resolve) => {
+    const finish = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener?.('abort', finish);
+      resolve();
+    };
+    const timer = setTimeout(finish, milliseconds);
+    signal?.addEventListener('abort', finish, { once: true });
+  });
+}
+
+export async function requestAutonomousResearchResidentCycle({
+  runtimeRoot,
+  acceptancePlanHash,
+  acceptanceStepIdempotencyKey,
+  purpose = 'production-campaign-qualification',
+  waitMs = 10 * 60 * 1000,
+  pollMs = 1000,
+  signal = null,
+  now = () => new Date(),
+} = {}) {
+  if (!Number.isSafeInteger(waitMs) || waitMs < 1 || waitMs > 60 * 60 * 1000
+    || !Number.isSafeInteger(pollMs) || pollMs < 10 || pollMs > 60_000) {
+    throw new Error('autonomous_research_resident_cycle_wait_policy_invalid');
+  }
+  publishResidentCycleIntent({
+    runtimeRoot,
+    acceptancePlanHash,
+    acceptanceStepIdempotencyKey,
+    purpose,
+    now: now(),
+  });
+  const deadline = Date.now() + waitMs;
+  do {
+    const inspection = queryResidentCycleReceipt({
+      runtimeRoot,
+      acceptancePlanHash,
+      acceptanceStepIdempotencyKey,
+      purpose,
+      now: now(),
+    });
+    if (inspection.ready === true) return inspection.receipt;
+    if (signal?.aborted) {
+      throw new Error('autonomous_research_resident_cycle_wait_aborted');
+    }
+    if (Date.now() >= deadline) {
+      throw new Error('autonomous_research_resident_cycle_wait_timed_out');
+    }
+    await wait(Math.min(pollMs, Math.max(1, deadline - Date.now())), signal);
+  } while (true);
+}
+
 async function main() {
   if (args.help) {
     process.stdout.write(`${JSON.stringify(usage(), null, 2)}\n`);
     return;
+  }
+  if (args.once && args['request-resident-cycle']) {
+    throw new Error('autonomous_research_supervisor_cycle_mode_conflict');
+  }
+  if (args['publish-strict-machine-intake-reconciliation']
+    && !args.once && !args['request-resident-cycle']) {
+    throw new Error(
+      'autonomous_research_strict_machine_intake_reconciliation_once_required',
+    );
   }
   const root = path.resolve(args.root || defaultPaperAssetRoot());
   const runtimeRoot = path.resolve(args['runtime-root'] || defaultPaperRuntimeRoot());
@@ -131,6 +206,31 @@ async function main() {
   const stopOnSigterm = () => stop('SIGTERM');
   process.on('SIGINT', stopOnSigint);
   process.on('SIGTERM', stopOnSigterm);
+  if (args['request-resident-cycle']) {
+    if (args['require-fully-autonomous'] || args['machine-intake-config']
+      || args['topic-producer-profile']) {
+      throw new Error('autonomous_research_resident_cycle_request_override_forbidden');
+    }
+    try {
+      const result = await requestAutonomousResearchResidentCycle({
+        runtimeRoot,
+        acceptancePlanHash:
+          process.env.HEPTA_STRICT_FULL_AUTO_ACCEPTANCE_PLAN_HASH,
+        acceptanceStepIdempotencyKey:
+          process.env.HEPTA_STRICT_FULL_AUTO_ACCEPTANCE_IDEMPOTENCY_KEY,
+        purpose: args['publish-strict-machine-intake-reconciliation']
+          ? 'machine-intake' : 'production-campaign-qualification',
+        waitMs: Number(args['resident-cycle-wait-ms'] || 10 * 60 * 1000),
+        pollMs: Number(args['resident-cycle-poll-ms'] || 1000),
+        signal: controller.signal,
+      });
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      return;
+    } finally {
+      process.removeListener('SIGINT', stopOnSigint);
+      process.removeListener('SIGTERM', stopOnSigterm);
+    }
+  }
   const ownerId = `supervisor:${os.hostname().replace(/[^A-Za-z0-9_.:-]/g, '_')}:${process.pid}:${crypto.randomUUID()}`;
   const composition = composeAutonomousResearchSupervisor({
     root,
@@ -175,7 +275,19 @@ async function main() {
     const result = args.once
       ? await composition.supervisor.runCycle()
       : await composition.supervisor.run();
-    process.stdout.write(`${JSON.stringify(result, null, args.once ? 2 : 0)}\n`);
+    const strictMachineIntakeReconciliation =
+      args['publish-strict-machine-intake-reconciliation']
+        ? publishStrictMachineIntakeReconciliation({
+          runtimeRoot,
+          acceptancePlanHash:
+            process.env.HEPTA_STRICT_FULL_AUTO_ACCEPTANCE_PLAN_HASH,
+          acceptanceStepIdempotencyKey:
+            process.env.HEPTA_STRICT_FULL_AUTO_ACCEPTANCE_IDEMPOTENCY_KEY,
+          cycleReceipt: result,
+        }) : null;
+    const report = strictMachineIntakeReconciliation
+      ? Object.freeze({ ...result, strictMachineIntakeReconciliation }) : result;
+    process.stdout.write(`${JSON.stringify(report, null, args.once ? 2 : 0)}\n`);
   } finally {
     composition.close();
     process.removeListener('SIGINT', stopOnSigint);
@@ -185,5 +297,5 @@ async function main() {
 
 main().catch((error) => {
   process.stderr.write(`${error?.stack || error}\n`);
-  process.exitCode = 1;
+  process.exitCode = autonomousResearchResidentExitCode(error, 1);
 });

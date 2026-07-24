@@ -26,6 +26,13 @@ import { verifyEmpiricalClaimUniverse } from '../../paper-domain/research/empiri
 import { deriveExperimentRegistrySummary, verifyExperimentRegistry } from '../../paper-domain/research/experiment-registry-verifier.mjs';
 import { evaluateManuscriptPromotion } from '../../paper-domain/quality/manuscript-promotion-gate.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  buildTypedNumericOracleCertificate,
+  buildTypedNumericOracleCertificateSet,
+} from '../../paper-domain/research/typed-numeric-oracle-certificate.mjs';
+import {
+  autonomousEmpiricalFamilyPluginProfileFor,
+} from '../../paper-domain/automation/autonomous-empirical-family-plugin-registry.mjs';
 
 const FAMILIES = [
   'rl_stochastic_control_benchmark',
@@ -34,6 +41,62 @@ const FAMILIES = [
   'finance_asset_pricing_benchmark',
   'operations_optimization_benchmark',
 ];
+
+function canonicalObservationAuthority({ observations, protocol, attemptId, run }) {
+  const profile = autonomousEmpiricalFamilyPluginProfileFor(protocol.benchmarkFamily);
+  const rawEventManifestHash = hashRecord('RawManifestFixture', {});
+  const rawEventArtifactHash = hashRecord('RawArtifactFixture', {});
+  const rawEventRecomputationManifestHash = hashRecord(
+    'RawRecomputationManifestFixture', { attempt: run },
+  );
+  const sourceLineageHash = hashRecord('SourceLineageFixture', {});
+  const producer = hashRecord('EmpiricalClaimTestProducer', { run });
+  const verifier = hashRecord('EmpiricalClaimTestVerifier', { run });
+  const assurance = hashRecord('EmpiricalClaimTestAssurance', { run });
+  const certificates = profile.typedOracleKinds.map((oracleType) => (
+    buildTypedNumericOracleCertificate({
+      certificateId: `${oracleType}:${run}`,
+      oracleType,
+      subjectHash: oracleType === 'property-oracle-v1'
+        ? rawEventManifestHash : rawEventRecomputationManifestHash,
+      quantity: oracleType === 'property-oracle-v1'
+        ? 'property_oracle_verified' : 'maximum_absolute_residual',
+      observedValue: oracleType === 'property-oracle-v1' ? 1 : 0,
+      relation: oracleType === 'property-oracle-v1' ? 'interval' : 'less-than-or-equal',
+      lowerBound: oracleType === 'property-oracle-v1' ? 1 : null,
+      upperBound: oracleType === 'property-oracle-v1' ? 1 : 0,
+      unit: oracleType === 'property-oracle-v1'
+        ? 'boolean-indicator' : 'absolute-metric-unit',
+      verifierId: `empirical-claim-test-${oracleType}`,
+      producerImplementationHash: producer,
+      verifierImplementationHash: oracleType === 'property-oracle-v1' ? producer : verifier,
+      verificationReceiptHash: assurance,
+      evidenceHashes: [assurance],
+      assuranceScope: oracleType === 'property-oracle-v1'
+        ? 'producer-bound-self-check-v1' : 'process-isolated-independent-implementation-v1',
+    })
+  ));
+  const typedNumericOracleCertificateSet = buildTypedNumericOracleCertificateSet({
+    analysisProtocolHash: protocol.analysisProtocolHash,
+    experimentAttemptId: attemptId,
+    sourceLineageHash,
+    requiredOracleTypes: profile.typedOracleKinds,
+    certificates,
+  });
+  return buildRepositoryAnalysisObservationAuthority({
+    observations,
+    rawEventManifestHash,
+    rawEventArtifactHash,
+    rawEventRecomputationManifestHash,
+    independentResidualRecomputationVerified: true,
+    independentRecomputationAssuranceHash: assurance,
+    independentVerifierImplementationHash: verifier,
+    typedNumericOracleCertificateSet,
+    experimentAttemptId: attemptId,
+    sourceLineageHash,
+    analysisProtocol: protocol,
+  });
+}
 
 function workspace(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-empirical-claim-authority-'));
@@ -202,17 +265,8 @@ function observationsFor(selector) {
 test('claim-bound v2 protocol survives original and independent replay evaluation', (t) => {
   const { selector, protocol } = boundFixture(t);
   const observations = observationsFor(selector);
-  const authority = buildRepositoryAnalysisObservationAuthority({
-    observations,
-    rawEventManifestHash: hashRecord('RawManifestFixture', {}),
-    rawEventArtifactHash: hashRecord('RawArtifactFixture', {}),
-    rawEventRecomputationManifestHash: hashRecord('RawRecomputationManifestFixture', { attempt: 'original' }),
-    propertyOracleVerified: true,
-    rawObservationRecomputationVerified: true,
-    aggregateResidual: 0,
-    toleranceSatisfied: true,
-    experimentAttemptId: 'attempt-original',
-    sourceLineageHash: hashRecord('SourceLineageFixture', {}),
+  const authority = canonicalObservationAuthority({
+    observations, protocol, attemptId: 'attempt-original', run: 'original',
   });
   const inputs = {
     analysisProtocol: protocol,
@@ -224,17 +278,11 @@ test('claim-bound v2 protocol survives original and independent replay evaluatio
     metricSpecs: selector.experimentDesign.metricSpecs,
   };
   const original = evaluateAnalysisProtocol(inputs);
-  const replayAuthority = buildRepositoryAnalysisObservationAuthority({
+  const replayAuthority = canonicalObservationAuthority({
     observations,
-    rawEventManifestHash: hashRecord('RawManifestFixture', {}),
-    rawEventArtifactHash: hashRecord('RawArtifactFixture', {}),
-    rawEventRecomputationManifestHash: hashRecord('RawRecomputationManifestFixture', { attempt: 'independent-replay' }),
-    propertyOracleVerified: true,
-    rawObservationRecomputationVerified: true,
-    aggregateResidual: 0,
-    toleranceSatisfied: true,
-    experimentAttemptId: 'attempt-independent-replay',
-    sourceLineageHash: hashRecord('SourceLineageFixture', {}),
+    protocol,
+    attemptId: 'attempt-independent-replay',
+    run: 'independent-replay',
   });
   const replay = evaluateAnalysisProtocol({ ...inputs, observationAuthority: replayAuthority });
   assert.equal(original.status, 'academic_analysis_protocol_verified');

@@ -1,18 +1,50 @@
 [Unit]
 Description=Hepta Paper autonomous research supervisor
-After=network-online.target
-Wants=network-online.target
+Requires=hepta-paper-host-bootstrap.service autonomous-submission-handoff-layout-provision.service
+After=hepta-paper-host-bootstrap.service autonomous-submission-handoff-layout-provision.service network-online.target docker.service
+Wants=autonomous-submission-handoff-layout-provision.path network-online.target docker.service
 StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 User=hepta-paper
 Group=hepta-paper
+# Docker access is root-equivalent. Install this unit only on a dedicated host.
+# systemd grants it at process launch; sysusers deliberately does not persist
+# Docker membership on the research account.
+SupplementaryGroups=docker hepta-runtime-handoff
 WorkingDirectory=/opt/hepta-paper
+# Worker bind sources must remain visible in the host mount namespace because
+# the fixed local Docker daemon resolves them. Keep PrivateTmp enabled for all
+# unrelated temporary files and place only bounded worker scratch below /run.
+RuntimeDirectory=hepta-paper-worker hepta-paper-state-backup
+RuntimeDirectoryMode=0700
+Environment=TMPDIR=/run/hepta-paper-worker
+# /var/run/docker.sock access is root-equivalent even when granted by a group.
+# Provision it only on a dedicated host and never point this unit at a remote
+# daemon.
 # This file contains paths and bounded policy values only. Provider credentials
-# remain in the two private credential roots referenced by that file.
+# remain in private credential roots. This research principal must never load
+# the submission portal configuration or portal-token environment file.
 EnvironmentFile=/etc/hepta-paper/autonomous-research-supervisor.env
+# Research/model/replay credentials only. Provisioning policy must reject the
+# token variable named by the submission portal configuration from this file.
+EnvironmentFile=/etc/hepta-paper/autonomous-research-provider.secrets.env
+ExecStartPre=/usr/bin/test -w /var/lib/hepta-paper/runtime
+ExecStartPre=/usr/bin/test -O /var/lib/hepta-paper/runtime
+ExecStartPre=/usr/bin/test ! -g /var/lib/hepta-paper/runtime
+ExecStartPre=/usr/bin/test -w /var/lib/hepta-paper/runtime/autonomous-research/submission-handoff
+ExecStartPre=/usr/bin/test -g /var/lib/hepta-paper/runtime/autonomous-research/submission-handoff
+ExecStartPre=/usr/bin/test -k /var/lib/hepta-paper/runtime/autonomous-research/submission-handoff
+ExecStartPre=/usr/bin/test -O /var/lib/hepta-paper/runtime/autonomous-research/submission-handoff/dispatcher-challenges
+ExecStartPre=/usr/bin/test -w /var/lib/hepta-paper/runtime/autonomous-research/submission-handoff/dispatcher-challenges
+ExecStartPre=/usr/bin/test ! -w /var/lib/hepta-paper/runtime/autonomous-research/submission-handoff/dispatcher-cycles
+ExecStartPre=/usr/bin/flock --exclusive --nonblock /run/hepta-paper-state-backup/renew.lock /usr/bin/node paper-core/bin/autonomous-research-state-backup.mjs --action reconcile-and-renew --runtime-root ${HEPTA_PAPER_RUNTIME_ROOT} --authority-config ${HEPTA_AUTONOMOUS_RESEARCH_STATE_BACKUP_AUTHORITY_CONFIG} --online-authority-process-config ${HEPTA_AUTONOMOUS_RESEARCH_ONLINE_MUTATION_AUTHORITY_PROCESS_CONFIG}
 ExecStart=/usr/bin/node paper-core/bin/hepta-paper.mjs operator autonomous-supervisor -- --require-fully-autonomous --machine-intake-config ${HEPTA_AUTONOMOUS_RESEARCH_INTAKE_CONFIG} --topic-producer-profile ${HEPTA_AUTONOMOUS_RESEARCH_TOPIC_PRODUCER_PROFILE} --root ${HEPTA_PAPER_ASSET_ROOT} --runtime-root ${HEPTA_PAPER_RUNTIME_ROOT} --poll-ms ${HEPTA_SUPERVISOR_POLL_MS} --resident-instance-lease-ms ${HEPTA_SUPERVISOR_INSTANCE_LEASE_MS} --resident-instance-heartbeat-ms ${HEPTA_SUPERVISOR_INSTANCE_HEARTBEAT_MS} --maximum-dispatches ${HEPTA_SUPERVISOR_MAXIMUM_DISPATCHES} --maximum-lifecycle-cost-usd ${HEPTA_SUPERVISOR_MAXIMUM_LIFECYCLE_COST_USD} --maximum-lifetime-ms ${HEPTA_SUPERVISOR_MAXIMUM_LIFETIME_MS} --qualification-action-safety-margin-ms ${HEPTA_SUPERVISOR_QUALIFICATION_ACTION_SAFETY_MARGIN_MS}
+# The bounded pre-start path may make two pinned authority observations for
+# each of ten databases before the exact backup/drill. Do not inherit the
+# host's commonly shorter DefaultTimeoutStartSec.
+TimeoutStartSec=1h
 Restart=always
 RestartSec=5s
 # A healthy process is rolled periodically as the systemd fallback for a hung
@@ -31,9 +63,12 @@ ProtectKernelModules=yes
 ProtectControlGroups=yes
 # systemd path sandbox directives support specifiers, not shell-style
 # environment expansion. Keep these concrete paths aligned with the env file.
-ReadOnlyPaths=/srv/hepta-paper/assets /srv/hepta-paper/datasets /etc/hepta-paper/authority-rotation
-ReadWritePaths=/var/lib/hepta-paper/runtime
-UMask=0077
+ReadOnlyPaths=/srv/hepta-paper/assets /srv/hepta-paper/datasets /etc/hepta-paper/authority-rotation /etc/hepta-paper/capabilities-public /etc/hepta-paper/online-mutation-authority /etc/hepta-paper/submission-handoff-authority /etc/hepta-paper/state-backup-authority
+InaccessiblePaths=/etc/hepta-paper/submission-portal /etc/hepta-paper/submission-dispatcher-signer
+ReadWritePaths=-/var/lib/hepta-paper/runtime /run/hepta-paper-worker /run/hepta-paper-state-backup
+# The primary group protects native files. Only files created below the setgid
+# handoff subtree inherit the dedicated shared group and become dispatcher-writable.
+UMask=0007
 
 [Install]
 WantedBy=multi-user.target

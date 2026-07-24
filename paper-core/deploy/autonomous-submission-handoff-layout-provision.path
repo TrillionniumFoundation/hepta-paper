@@ -1,0 +1,11 @@
+[Unit]
+Description=Watch for the atomically installed Hepta Paper handoff database
+Requires=hepta-paper-host-bootstrap.service
+After=hepta-paper-host-bootstrap.service
+
+[Path]
+PathExists=/var/lib/hepta-paper/runtime/autonomous-research/submission-handoff/submission-handoff.sqlite
+Unit=autonomous-submission-handoff-layout-provision.service
+
+[Install]
+WantedBy=multi-user.target

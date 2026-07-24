@@ -131,6 +131,7 @@ export async function runPaperBatch({
   legacyWorkflowProjection = false,
   compatibilityBoundary = null,
   serviceOverrides = {},
+  submissionHandoffMutationCoordinator = null,
 } = {}) {
   assertPaperMode(mode);
   if (execute && mode === PAPER_BATCH_MODES.INVENTORY) {
@@ -162,6 +163,7 @@ export async function runPaperBatch({
       writeReport,
       options: contextOptions,
       serviceOverrides,
+      submissionHandoffMutationCoordinator,
     })
     : bootstrapBatchInventoryContext({
       root: resolvedRoot,

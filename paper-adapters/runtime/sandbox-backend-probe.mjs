@@ -7,6 +7,9 @@ import {
   SYSTEM_DATASET_ACCESS_SUPERVISOR,
   trustedSystemDatasetAccessRuntimeImageByDigest,
 } from '../../paper-domain/automation/dataset-access-supervisor-policy.mjs';
+import {
+  normalizeTrustedDatasetSupervisorImage,
+} from './dataset-supervisor-policy-adapter.mjs';
 import { DATASET_ACCESS_SUPERVISOR_TRACER } from './dataset-runtime-access-receipt.mjs';
 import {
   createDockerDatasetSupervisorProbeWorkspace,
@@ -451,14 +454,17 @@ export function evaluateAcademicEmpiricalReadiness({
   const bubblewrapReady = bubblewrapProbe?.available === true && bubblewrapProbe?.backend === 'bubblewrap';
   const datasetAccessTracerReady = executableFileAvailable(datasetAccessTracer);
   const bubblewrapDatasetProofReady = bubblewrapReady && datasetAccessTracerReady;
+  const dockerDatasetProofRequired = dockerSupervisorProbe !== null;
   const dockerDatasetProofReady = dockerSupervisorProbe?.available === true && dockerSupervisorProbe?.backend === 'docker';
-  const academicEmpiricalReady = bubblewrapDatasetProofReady || dockerDatasetProofReady;
+  const academicEmpiricalReady = dockerDatasetProofRequired
+    ? dockerDatasetProofReady
+    : bubblewrapDatasetProofReady;
   const academicEmpiricalReadinessReason = academicEmpiricalReady
     ? 'academic_empirical_dataset_access_ready'
-    : bubblewrapReady && !datasetAccessTracerReady
-      ? 'academic_empirical_dataset_access_tracer_unavailable'
-      : dockerSupervisorProbe?.detail && dockerSupervisorProbe.detail !== 'trusted_dataset_supervisor_profiles_missing'
-        ? dockerSupervisorProbe.detail
+    : dockerDatasetProofRequired
+      ? dockerSupervisorProbe?.detail || 'trusted_dataset_supervisor_probe_failed'
+      : bubblewrapReady && !datasetAccessTracerReady
+        ? 'academic_empirical_dataset_access_tracer_unavailable'
         : 'academic_empirical_bubblewrap_backend_unavailable';
   return Object.freeze({
     academicEmpiricalReady,
@@ -466,8 +472,8 @@ export function evaluateAcademicEmpiricalReadiness({
     academicEmpiricalReadinessDetail: academicEmpiricalReady
       ? (dockerDatasetProofReady ? dockerSupervisorProbe.detail : 'bubblewrap_and_host_supervisor_tracer_verified')
       : `${String(bubblewrapProbe?.detail || 'bubblewrap_unavailable')};${String(dockerSupervisorProbe?.detail || 'docker_supervisor_unavailable')}`,
-    academicEmpiricalDatasetProofBackend: dockerDatasetProofReady
-      ? 'docker-trusted-container-supervisor-v1'
+    academicEmpiricalDatasetProofBackend: dockerDatasetProofRequired
+      ? dockerDatasetProofReady ? 'docker-trusted-container-supervisor-v1' : null
       : bubblewrapDatasetProofReady ? 'bubblewrap-host-supervised-strace-v2' : null,
     datasetAccessTracer,
     datasetAccessTracerReady,
@@ -481,6 +487,16 @@ export function probeDocker({
   spawnSyncImpl = spawnSync, environment = process.env,
 }) {
   controlledProbeEnvironment(environment, { docker: true });
+  if (!String(image || '').trim()) {
+    return Object.freeze({
+      available: false,
+      backend: 'docker',
+      status: 'os_sandbox_unavailable',
+      detail: 'sandbox_trusted_runtime_image_required',
+      image: null,
+      imageDigest: null,
+    });
+  }
   const cacheKey = `docker:${docker}:${image}`;
   const cacheAllowed = spawnSyncImpl === spawnSync;
   if (cacheAllowed && !refresh && PROBE_CACHE.has(cacheKey)) return PROBE_CACHE.get(cacheKey);
@@ -527,7 +543,7 @@ export function probeOsSandbox({
   bubblewrap = 'bwrap',
   prlimit = 'prlimit',
   docker = 'docker',
-  dockerImage = 'alpine:3.20',
+  dockerImage = null,
   datasetAccessTracer = DATASET_ACCESS_SUPERVISOR_TRACER,
   trustedDatasetSupervisorImages = [],
   refresh = false,
@@ -535,7 +551,13 @@ export function probeOsSandbox({
   environment = process.env,
 } = {}) {
   controlledProbeEnvironment(environment, { docker: true });
-  const cacheKey = `${bubblewrap}:${prlimit}:${docker}:${dockerImage}:${datasetAccessTracer}:${JSON.stringify(trustedDatasetSupervisorImages)}`;
+  const trustedDockerFallbackImage = trustedDatasetSupervisorImages
+    .map(normalizeTrustedDatasetSupervisorImage)
+    .find(Boolean)?.image || null;
+  const resolvedDockerImage = trustedDatasetSupervisorImages.length > 0
+    ? trustedDockerFallbackImage
+    : String(dockerImage || '').trim() || null;
+  const cacheKey = `${bubblewrap}:${prlimit}:${docker}:${resolvedDockerImage}:${datasetAccessTracer}:${JSON.stringify(trustedDatasetSupervisorImages)}`;
   const cacheAllowed = spawnSyncImpl === spawnSync;
   if (cacheAllowed && !refresh && PROBE_CACHE.has(cacheKey)) return PROBE_CACHE.get(cacheKey);
   const bubblewrapProbe = probeBubblewrap(bubblewrap, prlimit, {
@@ -544,15 +566,16 @@ export function probeOsSandbox({
   const selectedBackend = bubblewrapProbe.available
     ? bubblewrapProbe
     : { ...probeDocker({
-      docker, image: dockerImage, refresh, spawnSyncImpl, environment,
+      docker, image: resolvedDockerImage, refresh, spawnSyncImpl, environment,
     }), fallbackReason: bubblewrapProbe.detail || 'bubblewrap_unavailable' };
-  const dockerSupervisorProbe = bubblewrapProbe.available ? null : probeTrustedDockerDatasetSupervisors({
-    docker,
-    profiles: trustedDatasetSupervisorImages,
-    refresh,
-    spawnSyncImpl,
-    environment,
-  });
+  const dockerSupervisorProbe = trustedDatasetSupervisorImages.length > 0
+    ? probeTrustedDockerDatasetSupervisors({
+      docker,
+      profiles: trustedDatasetSupervisorImages,
+      refresh,
+      spawnSyncImpl,
+      environment,
+    }) : null;
   const result = Object.freeze({
     ...selectedBackend,
     ...evaluateAcademicEmpiricalReadiness({ bubblewrapProbe, datasetAccessTracer, dockerSupervisorProbe }),

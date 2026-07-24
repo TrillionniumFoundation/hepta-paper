@@ -29,7 +29,15 @@ function executeNoop(node) {
   return Object.freeze({ ...payload, receiptHash: hashRecord('CampaignNoopNodeReceipt', payload) });
 }
 
-async function executeOperation({ primitives, campaign, node, context, input, experimentRegistryAuthorityVerifier }) {
+async function executeOperation({
+  primitives,
+  campaign,
+  node,
+  context,
+  input,
+  experimentRegistryAuthorityVerifier,
+  reviewerEvidenceAuthority,
+}) {
   const { workspace, manuscript } = primitives.workspace.describe({ sourceWorkspace: campaign.spec.sourceWorkspace });
   const common = {
     primitives,
@@ -48,7 +56,9 @@ async function executeOperation({ primitives, campaign, node, context, input, ex
     case 'agent': return executeCampaignAgentNode(common);
     case 'convergence': return executeCampaignConvergenceNode(common);
     case 'quality-revalidation': return executeCampaignQualityRevalidationNode(common);
-    case 'package': return executeCampaignPackageNode({ ...common, experimentRegistryAuthorityVerifier });
+    case 'package': return executeCampaignPackageNode({
+      ...common, experimentRegistryAuthorityVerifier, reviewerEvidenceAuthority,
+    });
     case 'empirical': return executeCampaignEmpiricalNode(common);
     case 'noop': return executeNoop(node);
     default: throw new Error(`campaign_node_operation_invalid:${context.operation}`);
@@ -59,12 +69,19 @@ export function createCampaignNodeExecutor({
   nodePrimitives,
   workspaceAttempts,
   experimentRegistryAuthorityVerifier = null,
+  signedReviewerReceiptVerifier = null,
+  reviewerEvidenceAuthority = null,
 } = {}) {
+  if (signedReviewerReceiptVerifier !== null
+    && typeof signedReviewerReceiptVerifier !== 'function') {
+    throw new Error('signed_reviewer_receipt_verifier_invalid');
+  }
   const primitives = assertCampaignNodePrimitivesPort(nodePrimitives);
   const attempts = assertCampaignWorkspaceAttemptPort(workspaceAttempts);
   return Object.freeze({
     version: 1,
     kind: 'CampaignNodeExecutor',
+    verifySignedReviewerReceipt: signedReviewerReceiptVerifier,
     async execute(input = {}) {
       let campaign = input.campaign;
       const { node } = input;
@@ -85,6 +102,7 @@ export function createCampaignNodeExecutor({
         context,
         input,
         experimentRegistryAuthorityVerifier,
+        reviewerEvidenceAuthority,
       });
       if (!workspaceAttempt) return result;
       return Object.freeze({

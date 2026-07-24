@@ -1,4 +1,5 @@
 import { hashBytes } from '../../workflow-kernel/record-hash.mjs';
+import { normalizeLeanType } from '../../paper-domain/research/lean-type-identity.mjs';
 
 export function stripLeanComments(source) {
   const input = String(source || '');
@@ -34,20 +35,14 @@ export function stripLeanComments(source) {
   return output;
 }
 
-export function normalizeLeanType(value) {
-  let type = String(value || '').replace(/->/g, '→').replace(/\s+/g, ' ').trim();
-  while (type.startsWith('(') && type.endsWith(')')) {
-    let depth = 0;
-    let wraps = true;
-    for (let index = 0; index < type.length; index += 1) {
-      if (type[index] === '(') depth += 1;
-      if (type[index] === ')') depth -= 1;
-      if (depth === 0 && index < type.length - 1) { wraps = false; break; }
-    }
-    if (!wraps) break;
-    type = type.slice(1, -1).trim();
-  }
-  return type.replace(/\s*([,:→(){}\[\]])\s*/g, '$1');
+export { normalizeLeanType };
+
+export function leanSourceImports(source) {
+  const text = stripLeanComments(source);
+  const imports = [...text.matchAll(/^\s*import\s+([^\r\n]+)$/gm)]
+    .flatMap((match) => match[1].trim().split(/\s+/))
+    .filter(Boolean);
+  return Object.freeze([...new Set(imports)].sort());
 }
 
 function topLevelIndex(source, token) {

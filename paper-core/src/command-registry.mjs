@@ -292,6 +292,7 @@ const ROUTES = Object.freeze([
       positional: false,
     },
   }),
+  route({ group: 'operator', name: 'advanced-numerical-plugin', argv: ['node', 'paper-core/bin/advanced-numerical-plugin.mjs'], npmScript: 'automation:advanced-numerical-plugin', mutability: 'argument-dependent', forwardingPolicy: 'registry', forwardedArgumentSchema: { booleanFlags: ['help', 'require-runner-ready'], valueFlags: ['action', 'config', 'output-directory', 'request'], positional: false } }),
   route({
     group: 'operator',
     name: 'autonomous-submission-dispatcher',

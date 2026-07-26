@@ -24,6 +24,7 @@ const AUTOMATION_TESTS = Object.freeze([...new Set([
   'paper-core/tests/automation-readiness-policy.test.mjs',
   'paper-core/tests/analysis-protocol.test.mjs',
   'paper-core/tests/analysis-statistics.test.mjs',
+  'paper-core/tests/advanced-numerical-plugin-runner.test.mjs',
   'paper-core/tests/automation-runtime-smoke.test.mjs',
   'paper-core/tests/automation-python-runtime-bootstrap.test.mjs',
   'paper-core/tests/automation-r-runtime-bootstrap.test.mjs',

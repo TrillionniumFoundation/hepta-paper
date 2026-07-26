@@ -74,6 +74,7 @@
     "automation:autonomous-research-readiness": "node paper-core/bin/autonomous-research-readiness.mjs",
     "automation:strict-full-auto-acceptance": "node paper-core/bin/strict-full-auto-acceptance.mjs",
     "automation:autonomous-empirical-plugin-release": "node paper-core/bin/autonomous-empirical-plugin-release.mjs",
+    "automation:advanced-numerical-plugin": "node paper-core/bin/advanced-numerical-plugin.mjs",
     "automation:autonomous-submission-dispatcher": "node paper-core/bin/autonomous-submission-dispatcher.mjs",
     "automation:autonomous-submission-dispatcher-challenge": "node paper-core/bin/autonomous-submission-dispatcher-challenge.mjs",
     "automation:autonomous-research-supervisor": "node paper-core/bin/autonomous-research-supervisor.mjs",

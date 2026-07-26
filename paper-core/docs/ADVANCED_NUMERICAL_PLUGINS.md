@@ -1,0 +1,19 @@
+# Advanced numerical plugins
+
+The advanced numerical plugin boundary supports signed descriptors for causal
+inference, time-series, Bayesian, survival, optimization, ODE, and PDE
+computations. Descriptors pin the runtime executable, package closure,
+entrypoint, source tree, resource limits, and oracle/replay/uncertainty
+contracts.
+
+`hepta-paper operator advanced-numerical-plugin` composes the descriptor with
+the existing kernel-isolated worker runner. Execution is out of process,
+network-isolated, read-only at the source boundary, and CPU/memory/PID/output
+bounded. A successful execution receipt remains
+`advanced_numerical_plugin_execution_completed_unqualified`: it cannot promote
+a paper until independent oracle, replay, uncertainty, and scientific-review
+authorities qualify the result.
+
+No repository descriptor is treated as an external signature. Operators must
+provide an immutable runtime configuration pointing to a signed bundle, trust
+store, plugin root, and dedicated output root.

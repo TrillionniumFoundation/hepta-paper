@@ -19,6 +19,7 @@ export const ARCHITECTURE_ENTRYPOINT_MANIFEST = Object.freeze({
     'paper-core/bin/generic-domain-capability-evidence.mjs',
     'paper-core/bin/strict-full-auto-acceptance.mjs',
     'paper-core/bin/autonomous-empirical-plugin-release.mjs',
+    'paper-core/bin/advanced-numerical-plugin.mjs',
     'paper-core/bin/autonomous-research-supervisor.mjs',
     'paper-core/bin/autonomous-research-supervisor-health.mjs',
     'paper-core/bin/nested-runtime-platform-qualification.mjs',

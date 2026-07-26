@@ -31,10 +31,28 @@ test('generic Docker fallback accepts platform-verified indexes without weakenin
 test('runtime.sandboxed-worker-runner requires kernel namespaces and resource limits', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-sandbox-test-'));
   fs.writeFileSync(path.join(root, 'source.txt'), 'immutable\n');
+  const imageDigest = `sha256:${'1'.repeat(64)}`;
+  const dockerImage = `fixture/runtime@${imageDigest}`;
   let command = [];
-  const runner = createOsSandboxedWorkerRunner({ allowedExecutables: ['/usr/bin/true'], allowedRoots: [root], probe: { available: true, status: 'os_sandbox_available', backend: 'docker' }, executor: (_launcher, args) => { command = args; return { status: 0, stdout: '', stderr: '' }; } });
+  const runner = createOsSandboxedWorkerRunner({
+    allowedExecutables: ['/usr/bin/true'],
+    allowedRoots: [root],
+    dockerImage,
+    probe: {
+      available: true,
+      status: 'os_sandbox_available',
+      backend: 'docker',
+      image: dockerImage,
+      imageDigest,
+    },
+    executor: (_launcher, args) => {
+      command = args;
+      return { status: 0, stdout: '', stderr: '' };
+    },
+  });
   const receipt = runner.run({ executable: '/usr/bin/true', cwd: root, sourceRoot: root, outputPaths: [] });
   assert.equal(receipt.status, 'os_sandbox_worker_passed');
+  assert.equal(receipt.containerImageDigest, imageDigest);
   assert.equal(receipt.isolation.kernelNetworkIsolationVerified, true);
   assert.equal(receipt.isolation.sourceReadOnlyMount, true);
   assert.equal(receipt.sourceMerkleHashBefore, receipt.sourceMerkleHashAfter);

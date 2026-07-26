@@ -27,7 +27,8 @@
         "productionImportPolicy": "forbidden"
       }
     ],
-    "compatibilityManifest": "migration/compatibility-support.v1.json"
+    "compatibilityManifest": "migration/compatibility-support.v1.json",
+    "assetExternalizationManifest": "paper-core/config/repository-asset-externalization.v1.json"
   },
   "bin": {
     "paper-production-core": "./paper-core/bin/paper-production-core.mjs"
@@ -154,6 +155,7 @@
     "assets:cold-volume-cas-release-gate": "node paper-core/bin/cold-volume-cas.mjs status --require-ready",
     "assets:cold-volume-cas-import": "node paper-core/bin/cold-volume-cas.mjs import",
     "assets:cold-volume-cas-restore-drill": "node paper-core/bin/cold-volume-cas.mjs restore-drill",
+    "assets:repository-status": "node paper-core/bin/repository-asset-status.mjs",
     "reports:quarantine-stale": "node paper-core/bin/quarantine-stale-latest.mjs",
     "release:attest": "node paper-core/bin/release-evidence.mjs",
     "legacy:reference-verify": "node migration/bin/verify-retirement-source-snapshot.mjs",

@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "kind": "RepositoryAssetExternalizationManifest",
+  "assets": [
+    {
+      "assetId": "r-scientific-source-cas",
+      "sourcePath": "runtime-images/r-scientific/source-cas",
+      "identityFile": "runtime-images/r-scientific/source-cas/manifest.json",
+      "expectedIdentitySha256": "sha256:1c739e2c6330a87aa2d2e20fefc3787f27a1c7842dfe07d991e86634f18d3634",
+      "currentStorage": "git-tracked-content-addressed-source-closure",
+      "targetStorage": "oci-artifact-or-content-addressed-artifact-registry",
+      "migrationStatus": "pending-external-registry-reference",
+      "requiredExternalReferenceKind": "immutable-artifact-digest",
+      "retentionPolicy": "retain-until-remote-digest-and-restore-drill-verify"
+    },
+    {
+      "assetId": "design-production-core-reference",
+      "sourcePath": "core",
+      "identityFile": "core/CORE_BASELINE.json",
+      "expectedIdentitySha256": "sha256:54a375a885166678e10b61d9cdc721cb90d82559bd570e6245b8ab82437605a2",
+      "currentStorage": "git-tracked-vendored-reference",
+      "targetStorage": "immutable-release-artifact-or-read-only-submodule",
+      "migrationStatus": "pending-read-only-reference-release",
+      "requiredExternalReferenceKind": "signed-release-or-pinned-submodule-commit",
+      "retentionPolicy": "retain-until-reference-release-and-differential-fixture-verify"
+    }
+  ]
+}

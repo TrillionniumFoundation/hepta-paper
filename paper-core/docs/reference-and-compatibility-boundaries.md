@@ -15,6 +15,10 @@ Use `npm run reference:integrity`, `npm run reference:selftest`, and
 `npm run reference:runtime-dry-run` to verify the reference. Accepting a new
 baseline is a deliberate maintenance action via
 `npm run reference:baseline:accept`; it is never part of CI or release.
+The planned transition to a signed release artifact or read-only submodule is
+tracked by `paper-core/config/repository-asset-externalization.v1.json`.
+`npm run assets:repository-status` verifies the retained baseline identity and
+fails closed rather than claiming that an external release already exists.
 The production batch preview and execute paths neither import the integrity
 adapter nor walk the reference tree, and batch reports do not claim a reference
 integrity result. Verification and release commands own that evidence.

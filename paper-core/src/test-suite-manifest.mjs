@@ -128,6 +128,7 @@ const AUTOMATION_TESTS = Object.freeze([...new Set([
   'paper-core/tests/prior-art-evidence-v2-contract.test.mjs',
   'paper-core/tests/operator-dataset-harness-authority.test.mjs',
   'paper-core/tests/process-isolated-system-benchmark-recomputation.test.mjs',
+  'paper-core/tests/repository-asset-externalization.test.mjs',
   'paper-core/tests/runtime-image-reproducibility.test.mjs',
   'paper-core/tests/runtime-image-reproducibility-trust.test.mjs',
   'paper-core/tests/externally-fenced-sqlite-mutation-coordinator-configuration.test.mjs',

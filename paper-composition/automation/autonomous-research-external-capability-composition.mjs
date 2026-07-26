@@ -1,21 +1,13 @@
 import {
-  STRONG_PRIOR_ART_CAPABILITY_MODE,
   buildAutonomousResearchCapabilityScopeManifest,
   evaluateAutonomousResearchCapabilityRequestCoverage,
 } from '../../paper-domain/automation/autonomous-research-capability-scope-manifest.mjs';
-import {
-  AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_REGISTRY,
-  AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_STARTUP_INSPECTION,
-} from '../../paper-domain/automation/autonomous-empirical-family-plugin-registry.mjs';
 import {
   verifyAutonomousResearchAgendaProductionReceipt,
 } from '../../paper-domain/automation/autonomous-research-agenda-production-contract.mjs';
 import {
   readAutonomousVenueProfileRegistry,
 } from '../../paper-adapters/automation/autonomous-venue-profile-registry-reader.mjs';
-import {
-  verifyAutonomousVenueTemplateAssetBundle,
-} from '../../paper-domain/automation/autonomous-venue-template-asset-contract.mjs';
 import {
   createHttpPriorArtRetrievalAdapter,
   readPriorArtServiceConfiguration,
@@ -48,107 +40,19 @@ import {
 import {
   createReviewerReceiptVerificationAuthority,
 } from '../../paper-adapters/automation/reviewer-principal-executor-pool.mjs';
-
-function errorCode(error) {
-  return String(error?.message || error || 'unknown_error').slice(0, 512);
-}
-
-function submissionRequestVerifierReady(value) {
-  return value?.version === 1
-    && value?.kind === 'AutonomousSubmissionRequestVerifier'
-    && typeof value.verify === 'function';
-}
-
-function configuredPriorArtMode(port) {
-  if (!port) return 'opaque-hash-v1';
-  return port.evidenceProfile === STRONG_PRIOR_ART_CAPABILITY_MODE
-    ? STRONG_PRIOR_ART_CAPABILITY_MODE : 'structured-receipt-v1';
-}
-
-function reviewerTrustSurface(inspection) {
-  return inspection ? Object.freeze({
-    ...(inspection.pool || {}),
-    ...inspection,
-  }) : null;
-}
-
-function localOriginIdentitySubjectHashes(port) {
-  const subjects = port?.identitySeparationInspection?.localOriginIdentitySubjects
-    || port?.receiptVerifier?.identitySeparationInspection?.localOriginIdentitySubjects
-    || [];
-  return subjects.map((subject) => (
-    subject?.externalPrincipalIdentityAttestationSubjectHash || null
-  )).filter(Boolean);
-}
-
-function venueConfiguration(value) {
-  if (value?.kind === 'VerifiedAutonomousVenueProfileRegistryConfiguration') {
-    return Object.freeze({
-      registry: value.registry,
-      authority: value,
-      templateAssetBundle: value.templateAssetBundle || null,
-    });
-  }
-  return Object.freeze({
-    registry: value || null,
-    authority: null,
-    templateAssetBundle: null,
-  });
-}
-
-function venueTemplateAssetsReady(registry, templateAssetBundle) {
-  const required = registry?.profiles?.some((profile) => (
-    profile.version === 3 && profile.externalSubmissionEnabled === true
-  )) === true;
-  return !required || verifyAutonomousVenueTemplateAssetBundle(
-    templateAssetBundle,
-    { registry },
-  );
-}
-
-function metadataConfiguration(value) {
-  if (value?.kind === 'VerifiedAutonomousSubmissionMetadataProfileConfiguration') {
-    return Object.freeze({ profile: value.profile, authority: value });
-  }
-  return Object.freeze({ profile: value || null, authority: null });
-}
-
-function signedConfigurationReady(value) {
-  return value?.configurationPinned === true
-    && value?.cryptographicAuthorityReady === true
-    && /^sha256:[0-9a-f]{64}$/.test(String(value?.configurationHash || ''))
-    && /^sha256:[0-9a-f]{64}$/.test(String(value?.trustSetHash || ''))
-    && /^sha256:[0-9a-f]{64}$/.test(String(
-      value?.signatureVerificationPolicyHash || '',
-    ));
-}
-
-function externalReplayReceiptVerificationSurface(verifier) {
-  if (verifier?.kind !== 'ExternalResearchReplayReceiptVerifier'
-    || typeof verifier.verify !== 'function') return null;
-  return Object.freeze({
-    version: verifier.version,
-    kind: verifier.kind,
-    configurationHash: verifier.configurationHash,
-    cryptographicAuthorityReady: verifier.cryptographicAuthorityReady === true,
-    identityIndependenceReady: verifier.identityIndependenceReady === true,
-    trustSetHash: verifier.trustSetHash,
-    signatureVerificationPolicyHash: verifier.signatureVerificationPolicyHash,
-    verify: (input) => verifier.verify(input),
-  });
-}
-
-function activeProductionEmpiricalFamilies() {
-  const families = AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_REGISTRY.profiles
-    .filter((profile) => profile.productionExecutable === true)
-    .map((profile) => profile.benchmarkFamily)
-    .sort();
-  if (AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_STARTUP_INSPECTION.signatureVerified !== true
-    || families.length === 0 || new Set(families).size !== families.length) {
-    throw new Error('autonomous_research_active_empirical_family_registry_invalid');
-  }
-  return Object.freeze(families);
-}
+import {
+  activeAutonomousResearchProductionEmpiricalFamilies as activeProductionEmpiricalFamilies,
+  autonomousResearchExternalCapabilityErrorCode as errorCode,
+  autonomousResearchExternalReplayVerificationSurface as externalReplayReceiptVerificationSurface,
+  autonomousResearchLocalOriginIdentitySubjectHashes as localOriginIdentitySubjectHashes,
+  autonomousResearchMetadataConfiguration as metadataConfiguration,
+  autonomousResearchReviewerTrustSurface as reviewerTrustSurface,
+  autonomousResearchSignedConfigurationReady as signedConfigurationReady,
+  autonomousResearchVenueConfiguration as venueConfiguration,
+  autonomousResearchVenueTemplateAssetsReady as venueTemplateAssetsReady,
+  autonomousSubmissionRequestVerifierReady as submissionRequestVerifierReady,
+  configuredAutonomousResearchPriorArtMode as configuredPriorArtMode,
+} from './autonomous-research-external-capability-configuration.mjs';
 
 export function inspectConfiguredAutonomousResearchCapabilityScope({
   environment,

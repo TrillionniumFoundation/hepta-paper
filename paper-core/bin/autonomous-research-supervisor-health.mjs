@@ -132,5 +132,5 @@ if (args.help) {
         ? currentMachineIntakeReady
         : args['require-machine-intake-reconciliation'] ? status.ready
           : args['require-startup-reconciliation'] ? status.startupReady : status.healthy;
-  process.exitCode = passing ? 0 : 1;
+  process.exitCode = passing ? 0 : 2;
 }

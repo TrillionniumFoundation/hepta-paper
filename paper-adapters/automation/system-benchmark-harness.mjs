@@ -667,11 +667,13 @@ export function executeSystemBenchmarkHarness({
   const executionUnits = academicPerCell
     ? schedule.map((cell) => Object.freeze({ arm: cell.arm, cells: Object.freeze([cell]) }))
     : ARMS.map((arm) => Object.freeze({ arm, cells: Object.freeze(schedule.filter((cell) => cell.arm === arm)) }));
-  const perUnitWallTimeMs = Math.floor((Number(absoluteDeadlineEpochMs) - Number(nowEpochMs())) / executionUnits.length);
+  const perUnitWallTimeMs = Math.floor(
+    (Number(absoluteDeadlineEpochMs) - Number(nowEpochMs())) / executionUnits.length,
+  );
   const advance = (index) => {
     if (index >= executionUnits.length || blockers.length) return finalize();
     const remainingWallTimeMs = Math.floor(Number(absoluteDeadlineEpochMs) - Number(nowEpochMs()));
-    if (perUnitWallTimeMs < 1 || remainingWallTimeMs < perUnitWallTimeMs) {
+    if (perUnitWallTimeMs < 1 || remainingWallTimeMs < 1) {
       blockers.push('benchmark_harness_absolute_deadline_exhausted');
       return finalize();
     }

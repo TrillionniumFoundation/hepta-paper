@@ -21,6 +21,7 @@ export const ARCHITECTURE_ENTRYPOINT_MANIFEST = Object.freeze({
     'paper-core/bin/autonomous-empirical-plugin-release.mjs',
     'paper-core/bin/autonomous-research-supervisor.mjs',
     'paper-core/bin/autonomous-research-supervisor-health.mjs',
+    'paper-core/bin/nested-runtime-platform-qualification.mjs',
     'paper-core/bin/autonomous-research-state-backup.mjs',
     'paper-core/bin/autonomous-submission-dispatcher.mjs',
     'paper-core/bin/autonomous-submission-dispatcher-challenge.mjs',

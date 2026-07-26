@@ -19,6 +19,11 @@ import {
   AUTONOMOUS_RESEARCH_ONLINE_WRITER_OPERATION_MANIFEST,
 } from '../../paper-adapters/automation/autonomous-research-online-writer-operation-manifest.mjs';
 import {
+  AUTONOMOUS_RESEARCH_ONLINE_ANTI_ROLLBACK_COORDINATOR_DEPLOYMENT_BLOCKER,
+  AUTONOMOUS_RESEARCH_ONLINE_ANTI_ROLLBACK_COORDINATOR_LEGACY_BLOCKER,
+  AUTONOMOUS_RESEARCH_STATE_SAFETY_BLOCKER_CODE_COMPATIBILITY,
+} from '../../paper-domain/automation/autonomous-research-state-safety-contract.mjs';
+import {
   AUTONOMOUS_RESEARCH_STATE_DATABASE_ROLES,
 } from '../../paper-domain/automation/autonomous-research-state-backup-contract.mjs';
 import {
@@ -369,6 +374,34 @@ test('passive anti-rollback inspection verifies the scoped cache without externa
   assert.equal(
     inspection.journalSchemaContractHash,
     AUTONOMOUS_RESEARCH_ONLINE_AUTHORITY_EVIDENCE_CACHE_CONTRACT_HASH,
+  );
+  assert.deepEqual(inspection.blockers, []);
+  assert.equal(
+    inspection.blockerCodeCompatibility,
+    AUTONOMOUS_RESEARCH_STATE_SAFETY_BLOCKER_CODE_COMPATIBILITY,
+  );
+
+  const unavailableCoordinator = inspectAutonomousResearchOnlineMutationPassiveEvidence({
+    workspaceRoot: process.cwd(),
+    runtimeRoot,
+    inventory: inspectedInventory,
+    authorityConfigurationPath: '/authority-public.json',
+    now: new Date(NOW),
+    createReceiptVerifier: () => verifier,
+  });
+  assert.equal(
+    unavailableCoordinator.status,
+    'autonomous_research_online_anti_rollback_blocked',
+  );
+  assert.ok(unavailableCoordinator.blockers.includes(
+    AUTONOMOUS_RESEARCH_ONLINE_ANTI_ROLLBACK_COORDINATOR_DEPLOYMENT_BLOCKER,
+  ));
+  assert.ok(unavailableCoordinator.blockers.includes(
+    AUTONOMOUS_RESEARCH_ONLINE_ANTI_ROLLBACK_COORDINATOR_LEGACY_BLOCKER,
+  ));
+  assert.equal(
+    unavailableCoordinator.blockerCodeCompatibility,
+    AUTONOMOUS_RESEARCH_STATE_SAFETY_BLOCKER_CODE_COMPATIBILITY,
   );
 });
 

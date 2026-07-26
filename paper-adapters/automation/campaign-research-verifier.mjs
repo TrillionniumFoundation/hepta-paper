@@ -13,6 +13,9 @@ import {
   assertCompletedCampaignFormalNode,
   verifyCampaignFormalReceipt,
 } from './campaign-formal-verification-evidence.mjs';
+import {
+  issueTrustedFormalCampaignExecutionAuthority,
+} from '../research-verify/trusted-formal-producer-contract.mjs';
 import { recordCampaignExperimentReceipts } from './campaign-experiment-receipt-recorder.mjs';
 import { runCampaignExternalResearchReplay } from './campaign-external-research-replay.mjs';
 import { verifyCampaignFormalResearch } from './campaign-formal-research-verifier.mjs';
@@ -219,6 +222,8 @@ export function createCampaignResearchVerifier({
         directDependencies.has(candidate.nodeId) && candidate.kind === 'formal-verify'
       ));
       let authoritativeFormalReceipt = null;
+      let authoritativeFormalNode = null;
+      let trustedFormalExecutionAuthority = null;
       if (formalRequested) {
         const completedFormalDependencyNodes = formalDependencyNodes
           .filter((candidate) => candidate.status === 'completed')
@@ -244,6 +249,25 @@ export function createCampaignResearchVerifier({
           throw new Error(`campaign_research_formal_verification_invalid:${verification.blockers.join(',')}`);
         }
         authoritativeFormalReceipt = formalNode.result;
+        authoritativeFormalNode = formalNode;
+        trustedFormalExecutionAuthority =
+          issueTrustedFormalCampaignExecutionAuthority({
+            paperId: campaign.paperId,
+            campaignId: campaign.campaignId,
+            researchNodeId: authoritativeResearchNode.nodeId,
+            researchAttemptId: authoritativeResearchNode.attemptId,
+            researchLeaseGeneration: authoritativeResearchNode.leaseGeneration,
+            researchSourceSnapshotHash:
+              campaignResearchSourceSnapshot.campaignResearchSourceSnapshotHash,
+            formalNodeId: formalNode.nodeId,
+            formalAttemptId: formalNode.attemptId,
+            formalLeaseGeneration: formalNode.leaseGeneration,
+            formalNodeResultHash: formalNode.resultSha256,
+            formalVerificationReceiptHash:
+              authoritativeFormalReceipt.campaignFormalVerificationReceiptHash,
+            nativeResearchWorkerExecutionReportHash:
+              authoritativeFormalReceipt.nativeResearchWorkerExecutionReportHash,
+          });
       } else if (formalDependencyNodes.length || formalVerificationReceipt) {
         throw new Error('campaign_research_unrequested_formal_verification_dependency');
       }
@@ -343,6 +367,14 @@ export function createCampaignResearchVerifier({
         nativeResearchWorkerJobReceiptStore,
         trustedResearchReceiptWriters,
         receiptLedger,
+        trustedFormalSandboxRuntime,
+        trustedFormalExecutionAuthority,
+        campaign,
+        authoritativeFormalNode,
+        authoritativeTheoremSpecification,
+        authoritativeFormalReceipt,
+        assertExternalSideEffectReady,
+        executionSignal,
         store,
         clock,
         formalReviewEnvelope: authoritativeFormalReceipt?.formalReviewEnvelope || formalReviewEnvelope,

@@ -60,10 +60,11 @@ const ROUTING_GROUPS = Object.freeze([
     ]),
   }),
   Object.freeze({
-    discoveryLane: 'composite-venue-identity-requires-split',
-    venueIds: Object.freeze(['colt_alt']),
-    candidateConnectorFamilies: Object.freeze(['manual-handoff-v1']),
-    identityStatus: 'composite-identity-blocked',
+    discoveryLane: 'conference-platform-discovery',
+    venueIds: Object.freeze(['alt', 'colt']),
+    candidateConnectorFamilies: Object.freeze([
+      'playwright-assisted-draft-v1', 'manual-handoff-v1',
+    ]),
   }),
   Object.freeze({
     discoveryLane: 'journal-scholarone-organization-candidate',

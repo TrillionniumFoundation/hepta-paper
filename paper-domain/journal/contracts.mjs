@@ -2,13 +2,30 @@ import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text
 import { hashPaperRecord } from '../contracts/primitives.mjs';
 import { academicEvidenceReady, reviewAuthorityBlockers } from './review-authority.mjs';
 import { JOURNAL_PROFILES } from './journal-registry.mjs';
-import { resolveJournalProfile, profilePolicy, enrichProfile, buildAgentDeadlineRoutingDecision, rankProfiles } from './selection.mjs';
+import {
+  assertCanonicalJournalProfileSnapshot,
+  assertCurrentJournalProfileIdentity,
+  buildAgentDeadlineRoutingDecision,
+  conferenceDeadlineMetadataReady,
+  enrichProfile,
+  profilePolicy,
+  rankProfiles,
+  resolveJournalProfile,
+} from './selection.mjs';
 
 export function buildJournalConferenceRegistry({
   profiles = JOURNAL_PROFILES,
   createdAt = null,
 } = {}) {
   const enrichedProfiles = profiles.map((profile) => enrichProfile(profile));
+  if (enrichedProfiles.length !== JOURNAL_PROFILES.length
+    || new Set(enrichedProfiles.map((profile) => profile.id)).size
+      !== JOURNAL_PROFILES.length) {
+    throw new Error('journal_conference_registry_profile_set_invalid');
+  }
+  for (const profile of enrichedProfiles) {
+    assertCanonicalJournalProfileSnapshot(profile, 'journal_conference_registry_profile');
+  }
   const packet = {
     version: 1,
     kind: 'JournalConferenceRegistry',
@@ -41,17 +58,37 @@ export function buildTargetSelectionPolicy({
   fallbackId = 'neurips',
   createdAt = null,
 } = {}) {
+  const canonicalFallbackId = assertCurrentJournalProfileIdentity(fallbackId, 'fallback');
   const resolvedTarget = normalizeText(target || paperTask?.venueTarget || '');
   const blockers = [];
+  let explicitlyResolvedProfile = null;
+  if (resolvedTarget) {
+    try {
+      explicitlyResolvedProfile = resolveJournalProfile({
+        target: resolvedTarget,
+        fallbackId: canonicalFallbackId,
+      });
+    } catch (error) {
+      if (String(error?.message || '').startsWith('journal_profile_identity_ambiguous:')) {
+        throw error;
+      }
+      blockers.push('target_selection_explicit_identity_unresolved');
+    }
+  }
   const ranked = rankProfiles({
     target: resolvedTarget,
     hints: [paperTask?.title, paperTask?.paperType, paperTask?.paperId, ...(hints || [])],
     registry,
   });
-  const fallbackProfile = registry?.profiles?.find((profile) => profile.id === fallbackId)
-    || enrichProfile(JOURNAL_PROFILES.find((profile) => profile.id === fallbackId) || JOURNAL_PROFILES[0]);
+  const fallbackProfile = registry?.profiles?.find((profile) => (
+    profile.id === canonicalFallbackId
+  )) || enrichProfile(JOURNAL_PROFILES.find((profile) => profile.id === canonicalFallbackId));
   const primaryBeforeDeadline = ranked.find((item) => item.score > 0)
     || { profile: fallbackProfile, score: 0, fitScore: 35 };
+  if (explicitlyResolvedProfile
+    && primaryBeforeDeadline.profile.id !== explicitlyResolvedProfile.id) {
+    blockers.push('target_selection_explicit_identity_mismatch');
+  }
   const deadlineRoutingDecision = buildAgentDeadlineRoutingDecision({
     primaryItem: primaryBeforeDeadline,
     ranked,
@@ -61,6 +98,9 @@ export function buildTargetSelectionPolicy({
   });
   const primary = deadlineRoutingDecision.selectedItem || primaryBeforeDeadline;
   if (!primary?.profile?.id) blockers.push('target_selection_profile_missing');
+  if (!conferenceDeadlineMetadataReady(primaryBeforeDeadline.profile)) {
+    blockers.push('target_selection_conference_deadline_metadata_required');
+  }
   const backupTargets = ranked
     .filter((item) => item.profile.id !== primary.profile.id)
     .filter((item) => item.score > 0 || resolvedTarget)
@@ -149,10 +189,57 @@ export function buildJournalTargetProfile({
   );
   const blockers = [];
   if (!resolvedTarget) blockers.push('target_journal_required');
-  if (targetSelectionPolicy?.status && targetSelectionPolicy.status !== 'target_selection_policy_ready') {
+  if (!targetSelectionPolicy) {
+    blockers.push('target_selection_policy_required');
+  } else if (targetSelectionPolicy.status !== 'target_selection_policy_ready') {
     blockers.push('target_selection_policy_not_ready');
   }
-  const profile = targetSelectionPolicy?.primaryTarget?.profile
+  if (targetSelectionPolicy && !targetSelectionPolicy?.primaryTarget?.profile?.id) {
+    blockers.push('target_selection_policy_profile_missing');
+  }
+  const suppliedProfile = targetSelectionPolicy?.primaryTarget?.profile || null;
+  let suppliedProfileIdentityValid = false;
+  if (suppliedProfile) {
+    try {
+      assertCurrentJournalProfileIdentity(
+        suppliedProfile.id,
+        'target_selection_policy_profile',
+      );
+      suppliedProfileIdentityValid = true;
+    } catch {
+      blockers.push('target_selection_policy_profile_identity_invalid');
+    }
+  }
+  if (suppliedProfileIdentityValid) {
+    try {
+      assertCanonicalJournalProfileSnapshot(
+        suppliedProfile,
+        'target_selection_policy_profile',
+      );
+    } catch {
+      blockers.push('target_selection_policy_profile_snapshot_invalid');
+    }
+  }
+  if (suppliedProfile && resolvedTarget) {
+    try {
+      const expectedProfile = resolveJournalProfile({
+        target: resolvedTarget,
+        hints: [
+          paperTask?.title,
+          paperTask?.paperType,
+          paperTask?.paperId,
+          ...(hints || []),
+        ],
+        fallbackId,
+      });
+      if (expectedProfile.id !== suppliedProfile.id) {
+        blockers.push('target_selection_policy_profile_identity_mismatch');
+      }
+    } catch {
+      blockers.push('target_selection_policy_requested_identity_invalid');
+    }
+  }
+  const profile = suppliedProfile
     || enrichProfile(resolveJournalProfile({
       target: resolvedTarget,
       hints: [
@@ -163,6 +250,9 @@ export function buildJournalTargetProfile({
       ],
       fallbackId,
     }));
+  if (!conferenceDeadlineMetadataReady(profile)) {
+    blockers.push('target_profile_conference_deadline_metadata_required');
+  }
   const packet = {
     version: 1,
     kind: 'JournalTargetProfile',

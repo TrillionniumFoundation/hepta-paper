@@ -4,14 +4,22 @@ import {
   buildReviewerReceiptSignerServiceConfiguration,
   verifyReviewerReceiptSignerServiceConfiguration,
 } from './http-reviewer-receipt-signer-adapter.mjs';
+import {
+  buildRecoverableReviewerExecutorServiceConfiguration,
+  verifyRecoverableReviewerExecutorServiceConfiguration,
+} from './http-recoverable-reviewer-executor-adapter.mjs';
 import { hasExactObjectKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}$/;
-const PRINCIPAL_KEYS = Object.freeze([
+const PRINCIPAL_KEYS_V1 = Object.freeze([
   'codexBinary', 'codexHome', 'model', 'providerAccountIdentityHash', 'roles',
   'signerConfiguration', 'trustDomainIdentityHash',
+]);
+const PRINCIPAL_KEYS_V2 = Object.freeze([
+  ...PRINCIPAL_KEYS_V1,
+  'recoverableExecutorConfiguration',
 ]);
 const CONFIG_KEYS = Object.freeze([
   'configurationHash', 'kind', 'minimumReviewerTrustDomains', 'poolId',
@@ -26,8 +34,11 @@ function canonicalRoles(values) {
   return Object.freeze([...selected].sort());
 }
 
-function buildPrincipalConfiguration(value = {}) {
-  if (!hasExactObjectKeys(value, PRINCIPAL_KEYS)) {
+function buildPrincipalConfiguration(value = {}, { version }) {
+  if (!hasExactObjectKeys(
+    value,
+    version === 2 ? PRINCIPAL_KEYS_V2 : PRINCIPAL_KEYS_V1,
+  )) {
     throw new Error('reviewer_principal_configuration_shape_invalid');
   }
   const roles = canonicalRoles(value.roles);
@@ -39,10 +50,18 @@ function buildPrincipalConfiguration(value = {}) {
   const signerConfiguration = buildReviewerReceiptSignerServiceConfiguration(
     value.signerConfiguration,
   );
+  const recoverableExecutorConfiguration = version === 2
+    ? buildRecoverableReviewerExecutorServiceConfiguration(
+      value.recoverableExecutorConfiguration,
+    ) : null;
   if (!roles || !codexBinary || !model || !path.isAbsolute(codexHome)
     || !SHA256.test(providerAccountIdentityHash)
     || !SHA256.test(trustDomainIdentityHash)
-    || !verifyReviewerReceiptSignerServiceConfiguration(signerConfiguration)) {
+    || !verifyReviewerReceiptSignerServiceConfiguration(signerConfiguration)
+    || (version === 2
+      && !verifyRecoverableReviewerExecutorServiceConfiguration(
+        recoverableExecutorConfiguration,
+      ))) {
     throw new Error('reviewer_principal_configuration_invalid');
   }
   return Object.freeze({
@@ -53,6 +72,8 @@ function buildPrincipalConfiguration(value = {}) {
     providerAccountIdentityHash,
     trustDomainIdentityHash,
     signerConfiguration,
+    ...(recoverableExecutorConfiguration
+      ? { recoverableExecutorConfiguration } : {}),
   });
 }
 
@@ -69,7 +90,9 @@ export function buildReviewerPrincipalPoolConfiguration({
     || Number(minimumReviewerTrustDomains) > principals.length) {
     throw new Error('reviewer_principal_pool_configuration_invalid');
   }
-  const selected = Object.freeze(principals.map(buildPrincipalConfiguration)
+  const selected = Object.freeze(principals.map((principal) => (
+    buildPrincipalConfiguration(principal, { version: Number(version) })
+  ))
     .sort((left, right) => left.providerAccountIdentityHash.localeCompare(
       right.providerAccountIdentityHash,
     )));
@@ -83,8 +106,37 @@ export function buildReviewerPrincipalPoolConfiguration({
     throw new Error('reviewer_principal_pool_configuration_independence_invalid');
   }
   if (Number(version) === 2
-    && selected.some((item) => item.signerConfiguration.version !== 2)) {
+    && selected.some((item) => item.signerConfiguration.version < 2)) {
     throw new Error('reviewer_principal_pool_cryptographic_signer_required');
+  }
+  if (Number(version) === 2) {
+    const signerCredentialVariables = selected.map(
+      (item) => item.signerConfiguration.tokenEnvironmentVariable,
+    );
+    const executorCredentialVariables = selected.map(
+      (item) => item.recoverableExecutorConfiguration.tokenEnvironmentVariable,
+    );
+    const allCredentialVariables = [
+      ...signerCredentialVariables,
+      ...executorCredentialVariables,
+    ];
+    if (signerCredentialVariables.some((value) => !value.endsWith('_FILE'))
+      || executorCredentialVariables.some((value) => !value.endsWith('_FILE'))
+      || allCredentialVariables.length > 16
+      || new Set(allCredentialVariables).size !== allCredentialVariables.length
+      || new Set(selected.map((item) => (
+        item.recoverableExecutorConfiguration.serviceId
+      ))).size !== selected.length
+      || new Set(selected.map((item) => (
+        item.recoverableExecutorConfiguration.serviceIdentityHash
+      ))).size !== selected.length
+      || new Set(selected.map((item) => (
+        item.recoverableExecutorConfiguration.outcomeTrustStoreHash
+      ))).size !== selected.length) {
+      throw new Error(
+        'reviewer_principal_pool_service_credential_reference_independence_invalid',
+      );
+    }
   }
   const payload = {
     version: Number(version),

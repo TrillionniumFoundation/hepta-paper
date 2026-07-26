@@ -62,7 +62,7 @@
     "safety:p1": "node paper-core/bin/run-isolated-command.mjs npm run safety:p1:inner",
     "safety:p1:inner": "node --test --test-concurrency=1 paper-core/tests/campaign-release-handoff.test.mjs paper-core/tests/composition-context-profiles.test.mjs paper-core/tests/typed-persistence-ports.test.mjs",
     "safety:p2": "node paper-core/bin/run-isolated-command.mjs npm run safety:p2:inner",
-    "safety:p2:inner": "node --test --test-concurrency=1 paper-core/tests/architecture-conformance.test.mjs paper-core/tests/repository-module-imports.test.mjs paper-core/tests/domain-purity-identity.test.mjs paper-core/tests/workflow-operational-authority.test.mjs paper-core/tests/campaign-state-policy.test.mjs paper-core/tests/package-script-surface.test.mjs paper-core/tests/runtime-permissions.test.mjs",
+    "safety:p2:inner": "node --test --test-concurrency=1 paper-core/tests/architecture-conformance.test.mjs paper-core/tests/production-complexity.test.mjs paper-core/tests/repository-module-imports.test.mjs paper-core/tests/domain-purity-identity.test.mjs paper-core/tests/workflow-operational-authority.test.mjs paper-core/tests/campaign-state-policy.test.mjs paper-core/tests/package-script-surface.test.mjs paper-core/tests/runtime-permissions.test.mjs",
     "safety:all": "npm run safety:p0 && npm run safety:p1 && npm run safety:p2",
     "paper:batch": "node paper-core/bin/paper-production-core.mjs batch-run",
     "paper:campaign": "node paper-core/bin/paper-campaign.mjs",
@@ -80,6 +80,7 @@
     "automation:autonomous-submission-dispatcher-challenge": "node paper-core/bin/autonomous-submission-dispatcher-challenge.mjs",
     "automation:autonomous-research-supervisor": "node paper-core/bin/autonomous-research-supervisor.mjs",
     "automation:autonomous-research-supervisor-health": "node paper-core/bin/autonomous-research-supervisor-health.mjs",
+    "automation:nested-runtime-platform-qualification": "node paper-core/bin/nested-runtime-platform-qualification.mjs",
     "automation:autonomous-research-state-backup": "node paper-core/bin/autonomous-research-state-backup.mjs",
     "automation:autonomous-research-state-provision": "node paper-core/bin/autonomous-research-state-provision.mjs",
     "automation:autonomous-research-online-schema-transition": "node paper-core/bin/autonomous-research-online-schema-transition.mjs",
@@ -179,6 +180,7 @@
     "test:inner": "npm run reference:integrity && npm run reference:selftest && npm run reference:runtime-dry-run && npm run safety:all && npm run automation:selftest:deduplicated && npm run paper:salvage-hardening-selftest:deduplicated && npm run paper:selftest && npm run paper:remediation-selftest && npm run paper:authority-selftest && npm run paper:capability-conformance && npm run paper:governance-contracts && npm run migration:matrix-integrity && npm run migration:capability-matrix-v3 && npm run migration:salvage-selftest"
   },
   "devDependencies": {
-    "eslint": "10.7.0"
+    "eslint": "10.7.0",
+    "espree": "11.2.0"
   }
 }

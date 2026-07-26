@@ -54,7 +54,7 @@ export function verifyAutonomousSubmissionHandoffLayoutReceipt({
     resolvedReceiptPath,
   ], {
     encoding: 'utf8',
-    env: Object.freeze({ PATH: '/usr/sbin:/usr/bin' }),
+    env: { PATH: '/usr/sbin:/usr/bin' },
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: timeoutMs,
     maxBuffer: 64 * 1024,

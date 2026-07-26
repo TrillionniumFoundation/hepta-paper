@@ -83,7 +83,7 @@ async function main() {
         : action === 'renew'
           ? report.status === 'autonomous_research_state_backup_renewal_complete'
           : report.status === 'autonomous_research_state_reconcile_and_renew_complete';
-  if (!ready) process.exitCode = 1;
+  if (!ready) process.exitCode = 2;
 }
 
 main().catch((error) => {

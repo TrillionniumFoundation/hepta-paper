@@ -64,6 +64,10 @@ import {
   buildAutonomousVenueProfileRegistry,
 } from '../../paper-domain/automation/autonomous-venue-profile-contract.mjs';
 import {
+  buildAutonomousVenueTemplateAssetBundle,
+  buildAutonomousVenueTemplateAssetRecord,
+} from '../../paper-domain/automation/autonomous-venue-template-asset-contract.mjs';
+import {
   buildAutonomousSubmissionMetadataProfile,
 } from '../../paper-domain/automation/autonomous-submission-metadata-contract.mjs';
 import {
@@ -277,6 +281,11 @@ function verifiedConfiguration(kind, value, authorityProof) {
 }
 
 function venueFixtures(protocolFamily, observedAt) {
+  const templateBytes = Buffer.from(
+    '\\ProvidesFile{author-identity-test.tex}[fixture]\n',
+    'utf8',
+  );
+  const templateAssetHash = hashBytes(templateBytes);
   const profile = buildAutonomousVenueProfile({
     venueId: 'author-identity-test-venue',
     displayName: 'Author Identity Test Venue',
@@ -293,11 +302,40 @@ function venueFixtures(protocolFamily, observedAt) {
     externalSubmissionEnabled: true,
     profileAuthorityReceiptHash: H('venue-authority'),
     scopeTerms: [protocolFamily.replace(/_/g, ' '), 'bounded algorithm evidence'],
+    requirementSpecification: {
+      anonymousReview: true,
+      reviewMode: 'double_anonymous',
+      wordLimit: 8_000,
+      sectionLimits: [
+        { section: 'methods', maximumWords: 2_500 },
+        { section: 'results', maximumWords: 2_500 },
+        { section: 'limitations', maximumWords: 1_000 },
+      ],
+      templateAssetHash,
+      supplementPolicy: 'A hash-bound evidence supplement is accepted.',
+      artifactRequired: true,
+      artifactPolicy: 'The immutable source and evidence capsule are required.',
+      disclosureRequirements: [
+        'Automated authorship and model use must be disclosed.',
+        'Data, code, funding, and conflicts must be disclosed.',
+      ],
+    },
   });
   const registry = buildAutonomousVenueProfileRegistry({
       registryId: 'author-identity-test-venues',
       profiles: [profile],
     });
+  const templateAsset = buildAutonomousVenueTemplateAssetRecord({
+    venueId: profile.venueId,
+    relativePath: 'venue-assets/author-identity-test.tex',
+    bytesBase64: templateBytes.toString('base64'),
+    sizeBytes: templateBytes.length,
+    templateAssetHash,
+  });
+  const templateAssetBundle = buildAutonomousVenueTemplateAssetBundle({
+    registry,
+    assets: [templateAsset],
+  });
   const metadata = buildAutonomousSubmissionMetadataProfile({
       profileId: 'author-identity-test-metadata',
       authors: [{
@@ -315,8 +353,8 @@ function venueFixtures(protocolFamily, observedAt) {
       profileAuthorityReceiptHash: H('metadata-authority'),
     });
   const venueProof = signedConfigurationProof({
-    subjectKind: 'AutonomousVenueProfileRegistry',
-    subjectHash: registry.autonomousVenueProfileRegistryHash,
+    subjectKind: 'AutonomousVenueTemplateAssetBundle',
+    subjectHash: templateAssetBundle.autonomousVenueTemplateAssetBundleHash,
     role: 'venue_profile_authority',
     observedAt,
   });
@@ -328,9 +366,12 @@ function venueFixtures(protocolFamily, observedAt) {
   });
   return Object.freeze({
     registry,
+    templateAssetBundle,
     metadata,
     registryAuthority: verifiedConfiguration(
-      'VerifiedAutonomousVenueProfileRegistryConfiguration', { registry }, venueProof,
+      'VerifiedAutonomousVenueProfileRegistryConfiguration',
+      { registry, templateAssetBundle },
+      venueProof,
     ),
     metadataAuthority: verifiedConfiguration(
       'VerifiedAutonomousSubmissionMetadataProfileConfiguration', { profile: metadata },
@@ -691,7 +732,7 @@ test('production composition shares one pinned author identity with reviewer and
           },
           falsifiers: ['A non-positive paired bounded-score difference.'],
           negativeBoundaries: ['No claim outside the signed benchmark population.'],
-          formalTargets: ['Kernel-check the registered algorithm invariant.'],
+          formalTargets: ['Every natural number equals itself.'],
           priorArtQueryPlan: ['evidence-bound autonomous research systems'],
           venueConstraints: {
             paperType: 'research_article',
@@ -790,6 +831,7 @@ test('production composition shares one pinned author identity with reviewer and
     paperId,
     agendaSelectionReceiptHash:
       agendaSelection.autonomousResearchAgendaSelectionReceiptHash,
+    researchAgendaIr: producedAgenda.researchAgendaIr,
     observedAt,
   });
   const report = await composeAutonomousResearchReadiness({

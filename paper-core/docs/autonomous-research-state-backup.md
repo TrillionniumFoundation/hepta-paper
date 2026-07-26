@@ -204,8 +204,10 @@ a locally recomputed hash or a caller flag cannot substitute for it.
 
 This command does not by itself turn same-UID SQLite writers into an
 anti-rollback boundary. The strict production code graph covers all ten
-registered roles through sixteen writers and 202 coordinator-integrated online
-DML operations, but the broker may issue fencing attestations only after the
+registered roles through sixteen writers and 204 statically discovered
+mutation operations: 132 coordinator-integrated online DML operations plus 72
+explicitly offline schema/genesis or cross-database maintenance operations.
+The broker may issue fencing attestations only after the
 exact deployed manifest has reconciled and activated against its current
 signed head (or while an equivalent external write freeze is active). Explicit
 offline maintenance and non-strict compatibility factories are outside that

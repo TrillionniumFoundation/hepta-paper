@@ -136,6 +136,25 @@ const ROUTES = Object.freeze([
   }),
   route({
     group: 'operator',
+    name: 'nested-runtime-platform-qualification',
+    argv: ['node', 'paper-core/bin/nested-runtime-platform-qualification.mjs'],
+    npmScript: 'automation:nested-runtime-platform-qualification',
+    forwardingPolicy: 'registry',
+    forwardedArgumentSchema: {
+      booleanFlags: ['help'],
+      valueFlags: [
+        'config', 'config-content-hash', 'qualification-content-hash',
+        'conformance-content-hash', 'pod-uid', 'plan-hash', 'profile-id',
+        'runtime-class-name', 'parent-pod-cpu-millis', 'parent-pod-memory-bytes',
+        'parent-pod-pids', 'qualification-key-id', 'qualification-subject-id',
+        'qualification-public-key-spki-hash', 'conformance-key-id',
+        'conformance-subject-id', 'conformance-public-key-spki-hash',
+      ],
+      positional: false,
+    },
+  }),
+  route({
+    group: 'operator',
     name: 'autonomous-intake-authority-rotation',
     argv: [
       'node',

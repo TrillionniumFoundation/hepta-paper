@@ -16,9 +16,11 @@ export function buildEvidenceQualityGate({
   formalCertificateIntakes = [],
   campaignId = null,
   researchSourceSnapshotHash = null,
+  campaignResearchSourceSnapshot = null,
   expectedFormalClaimBindings = [],
   proposalClaimToTheoremBinding = null,
   nativeResearchWorkerExecution = null,
+  authoritativeFormalNode = null,
 } = {}) {
   const claimContractReadiness = evaluateClaimContractReadiness({ claimRegistry });
   const workerLedgerVerifications = nativeWorkerReceipts.map((receipt) => verifyTrustedLedgerReceipt({
@@ -48,6 +50,7 @@ export function buildEvidenceQualityGate({
       paperId: paperTask?.paperId || null,
       campaignId,
       researchSourceSnapshotHash,
+      campaignResearchSourceSnapshot,
       taskKey: paperTask?.taskKey || null,
       proposalBinding: proposalClaimToTheoremBinding,
       expectedClaimBindings: expectedFormalClaimBindings,
@@ -72,10 +75,12 @@ export function buildEvidenceQualityGate({
       paperId: paperTask?.paperId || null,
       campaignId,
       researchSourceSnapshotHash,
+      campaignResearchSourceSnapshot,
       taskKey: paperTask?.taskKey || null,
       expectedClaimBindings: expectedFormalClaimBindings,
       proposalBinding: proposalClaimToTheoremBinding,
       nativeResearchWorkerExecution,
+      authoritativeFormalNode,
       requireNativeFormalLedgerTrust: true,
       trustedNativeFormalReceiptHashes,
     })

@@ -186,15 +186,23 @@ export function buildFormalDomainQualificationExternalEvidence({
 }
 
 export function verifyFormalDomainQualificationExternalEvidence(evidence, options = {}) {
+  return formalDomainQualificationExternalEvidenceContentHash(evidence) !== null
+    && inspectFormalDomainQualificationExternalEvidence({
+      evidence,
+      ...options,
+    }).ready;
+}
+
+export function formalDomainQualificationExternalEvidenceContentHash(evidence) {
   if (!hasExactObjectKeys(evidence, EVIDENCE_KEYS)
     || evidence?.version !== 1
     || evidence?.kind !== 'FormalDomainQualificationExternalEvidence'
     || evidence?.status !== 'formal_domain_qualification_external_evidence_verified'
     || !Array.isArray(evidence?.blockers) || evidence.blockers.length !== 0
     || !SHA256.test(String(evidence?.formalDomainQualificationExternalEvidenceHash || ''))) {
-    return false;
+    return null;
   }
   const { formalDomainQualificationExternalEvidenceHash: claimedHash, ...payload } = evidence;
-  return hashRecord('FormalDomainQualificationExternalEvidence', payload) === claimedHash
-    && inspectFormalDomainQualificationExternalEvidence({ evidence, ...options }).ready;
+  return hashRecord('FormalDomainQualificationExternalEvidence', payload)
+    === claimedHash ? claimedHash : null;
 }

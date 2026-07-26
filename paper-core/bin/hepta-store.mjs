@@ -292,4 +292,4 @@ const blocked = (command === 'status'
     && process.argv.includes('--require-trust-clean')
     && output?.status !== 'hepta_native_store_ready')
   || (command === 'restore-drill' && output?.status !== 'hepta_store_restore_drill_passed');
-if (blocked) process.exitCode = 1;
+if (blocked) process.exitCode = 2;

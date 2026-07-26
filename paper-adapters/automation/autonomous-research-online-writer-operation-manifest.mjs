@@ -286,6 +286,9 @@ const GROUPS = Object.freeze([
     'markMachineIntakeReconciliationFailed', 'heartbeatInstanceLease',
     'releaseInstanceLease',
   ]),
+  group('resident-instance', 'paper-adapters/automation/autonomous-research-resident-cycle-intent-repository.mjs', [
+    'complete', 'completeAutonomousResearchResidentCycleIntent',
+  ], 'cross-database-maintenance'),
   group('runtime-reproducibility-refresh', 'paper-adapters/automation/autonomous-research-runtime-refresh-state-repository.mjs', [
     'createAutonomousResearchRuntimeRefreshStateRepository',
   ], 'schema-or-genesis-ddl'),

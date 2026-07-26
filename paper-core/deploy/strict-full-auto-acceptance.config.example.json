@@ -18,13 +18,19 @@
     "HEPTA_AUTONOMOUS_EMPIRICAL_PLUGIN_ACTIVATION_POINTER": "/run/hepta/empirical-plugin-activation-pointer.json",
     "HEPTA_AUTONOMOUS_RESEARCH_CONTENT_MODE": "agent-evidence-bound",
     "HEPTA_DYNAMIC_FORMAL_CLAIMS_ENABLED": "true",
+    "HEPTA_FORMAL_ELAN_HOME": "/opt/hepta-paper/elan",
+    "HEPTA_DYNAMIC_FORMAL_PROJECT_ROOT": "/srv/hepta-paper/formal/mathlib-project",
+    "HEPTA_DYNAMIC_FORMAL_PROJECT_SCOPE_ROOT": "/srv/hepta-paper/formal",
+    "HEPTA_DYNAMIC_FORMAL_PROJECT_CLOSURE_HASH": "sha256:64b07e1b11ec2f87168612b964d84e350ab9e6e88129397a21694689b24f8412",
+    "HEPTA_DYNAMIC_FORMAL_PROJECT_PROBE": "HeptaMathlibReadiness.lean",
     "HEPTA_AUTONOMOUS_RESEARCH_DATASET_ROOT": "/srv/hepta-paper/datasets"
   },
   "references": {
     "research-author-principal": { "kind": "public-reference", "path": "/run/hepta/research-author-identity.json", "subjectId": "research-author-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
     "research-author-credential-root": { "kind": "opaque-directory-reference", "path": "/var/lib/hepta-paper/principals/research-author/codex-home", "subjectId": "research-author-credential-root-production" },
-    "formal-reviewer-principal": { "kind": "public-reference", "path": "/run/hepta/formal-reviewer-identity.json", "subjectId": "formal-reviewer-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
+    "formal-reviewer-principal": { "kind": "public-reference", "path": "/run/hepta/reviewer-principals.json", "subjectId": "formal-reviewer-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
     "formal-reviewer-credential-root": { "kind": "opaque-directory-reference", "path": "/var/lib/hepta-paper/principals/formal-reviewer/codex-home", "subjectId": "formal-reviewer-credential-root-production" },
+    "formal-reviewer-service-credential-root": { "kind": "opaque-directory-reference", "path": "/run/credentials/hepta-reviewers", "subjectId": "formal-reviewer-service-credential-root-production" },
     "online-state-authority-principal": { "kind": "public-reference", "path": "/run/hepta/online-state-authority.json", "subjectId": "online-state-authority-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
     "online-state-authority-process-config": { "kind": "public-reference", "path": "/run/hepta/online-state-authority-process.json", "subjectId": "online-state-authority-process-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
     "runtime-reproducibility-principal": { "kind": "public-reference", "path": "/run/hepta/runtime-reproducibility-authority.json", "subjectId": "runtime-reproducibility-production", "expectedSha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000" },
@@ -114,8 +120,8 @@
     },
     "generic-domain-capability-convergence": {
       "idempotencyKey": "sha256:f000000000000000000000000000000000000000000000000000000000000000",
-      "execute": { "command": "generic-domain-capability-evidence", "arguments": ["--action", "converge", "--paper-id", "strict-acceptance-production-paper"], "environmentReferences": { "@profile": "readiness" }, "assertions": [{ "path": "/ready", "equals": true }, { "path": "/paperId", "equals": "strict-acceptance-production-paper" }] },
-      "verify": { "command": "generic-domain-capability-evidence", "arguments": ["--action", "status", "--paper-id", "strict-acceptance-production-paper"], "environmentReferences": { "@profile": "readiness" }, "assertions": [{ "path": "/ready", "equals": true }, { "path": "/paperBound", "equals": true }, { "path": "/paperId", "equals": "strict-acceptance-production-paper" }] }
+      "execute": { "command": "generic-domain-capability-evidence", "arguments": ["--action", "converge", "--paper-id", "strict-acceptance-production-paper"], "environmentReferences": { "@profile": "readiness" }, "assertions": [{ "path": "/ready", "equals": true }, { "path": "/snapshotCurrent", "equals": true }, { "path": "/paperId", "equals": "strict-acceptance-production-paper" }] },
+      "verify": { "command": "generic-domain-capability-evidence", "arguments": ["--action", "status", "--paper-id", "strict-acceptance-production-paper"], "environmentReferences": { "@profile": "readiness" }, "assertions": [{ "path": "/ready", "equals": true }, { "path": "/paperBound", "equals": true }, { "path": "/snapshotCurrent", "equals": true }, { "path": "/paperId", "equals": "strict-acceptance-production-paper" }] }
     },
     "restore-drill": {
       "idempotencyKey": "sha256:c000000000000000000000000000000000000000000000000000000000000000",

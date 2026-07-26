@@ -1,5 +1,54 @@
 import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
-import { COMPUTER_SCIENCE_CONFERENCE_DEADLINE_ROUTING, DEFAULT_CONFERENCE_DEADLINE_THRESHOLD_DAYS, JOURNAL_PROFILES, PROFILE_POLICY_DEFAULTS } from './journal-registry.mjs';
+import { hashPaperRecord } from '../contracts/primitives.mjs';
+import {
+  COMPUTER_SCIENCE_CONFERENCE_DEADLINE_ROUTING,
+  DEFAULT_CONFERENCE_DEADLINE_THRESHOLD_DAYS,
+  JOURNAL_PROFILES,
+  PROFILE_POLICY_DEFAULTS,
+  RETIRED_AMBIGUOUS_JOURNAL_PROFILE_IDENTIFIERS,
+} from './journal-registry.mjs';
+
+const RETIRED_AMBIGUOUS_TARGETS = new Set(
+  RETIRED_AMBIGUOUS_JOURNAL_PROFILE_IDENTIFIERS,
+);
+const CURRENT_JOURNAL_PROFILE_IDS = new Set(
+  JOURNAL_PROFILES.map((profile) => profile.id),
+);
+
+function assertJournalProfileIdentifierUnambiguous(value, field = 'target') {
+  const normalized = normalizeText(value).trim().toLowerCase();
+  const tokens = new Set(normalized.split(/[^a-z0-9]+/).filter(Boolean));
+  const compact = normalized.replace(/[^a-z0-9]/g, '');
+  const coltIdentityPresent = tokens.has('colt')
+    || normalized.includes('conference on learning theory');
+  const altIdentityPresent = tokens.has('alt')
+    || normalized.includes('algorithmic learning theory');
+  if (RETIRED_AMBIGUOUS_TARGETS.has(normalized)
+    || (coltIdentityPresent && altIdentityPresent)
+    || ['coltalt', 'altcolt'].includes(compact)) {
+    throw new Error(`journal_profile_identity_ambiguous:${field}:${normalized}`);
+  }
+}
+
+function assertCurrentJournalProfileIdentity(value, field = 'profile') {
+  assertJournalProfileIdentifierUnambiguous(value, field);
+  const normalized = normalizeText(value).trim().toLowerCase();
+  if (!CURRENT_JOURNAL_PROFILE_IDS.has(normalized)) {
+    throw new Error(`journal_profile_identity_unknown:${field}:${normalized}`);
+  }
+  return normalized;
+}
+
+function assertCanonicalJournalProfileSnapshot(profile, field = 'profile') {
+  const profileId = assertCurrentJournalProfileIdentity(profile?.id, field);
+  const currentProfile = JOURNAL_PROFILES.find((candidate) => candidate.id === profileId);
+  const canonicalProfile = enrichProfile(currentProfile);
+  if (hashPaperRecord('JournalProfileSnapshot', profile)
+    !== hashPaperRecord('JournalProfileSnapshot', canonicalProfile)) {
+    throw new Error(`journal_profile_snapshot_mismatch:${field}:${profileId}`);
+  }
+  return profileId;
+}
 
 function tokenText(values = []) {
   return values.map((value) => normalizeText(value).toLowerCase()).filter(Boolean).join(' ');
@@ -21,15 +70,55 @@ function profileScore(profile, text, tokens) {
 }
 
 export function resolveJournalProfile({ target = null, hints = [], fallbackId = 'neurips' } = {}) {
-  const text = tokenText([target, ...hints]);
+  assertJournalProfileIdentifierUnambiguous(target, 'target');
+  const canonicalFallbackId = assertCurrentJournalProfileIdentity(fallbackId, 'fallback');
+  const explicitTargetText = tokenText([target]);
+  const explicitTargetTokens = new Set(
+    explicitTargetText.split(/[^a-z0-9]+/).filter(Boolean),
+  );
+  if (explicitTargetText) {
+    const exactMatches = JOURNAL_PROFILES.filter((profile) => (
+      [profile.id, profile.label, ...(profile.aliases || [])]
+        .map((value) => normalizeText(value).trim().toLowerCase())
+        .includes(explicitTargetText)
+    ));
+    if (exactMatches.length > 1) {
+      throw new Error(
+        `journal_profile_target_ambiguous:${exactMatches.map((profile) => (
+          profile.id
+        )).sort().join(',')}`,
+      );
+    }
+    if (exactMatches.length === 1) return exactMatches[0];
+    const explicitScores = JOURNAL_PROFILES.map((profile) => ({
+      profile,
+      score: profileScore(profile, explicitTargetText, explicitTargetTokens),
+    })).sort((left, right) => (
+      right.score - left.score || left.profile.id.localeCompare(right.profile.id)
+    ));
+    if (explicitScores[0]?.score <= 0) {
+      throw new Error(`journal_profile_target_unknown:${explicitTargetText}`);
+    }
+    const tied = explicitScores.filter((item) => (
+      item.score === explicitScores[0].score
+    ));
+    if (tied.length > 1) {
+      throw new Error(
+        `journal_profile_target_ambiguous:${tied.map((item) => (
+          item.profile.id
+        )).sort().join(',')}`,
+      );
+    }
+    return explicitScores[0].profile;
+  }
+  const text = tokenText(hints);
   const tokens = new Set(text.split(/[^a-z0-9]+/).filter(Boolean));
   const scored = JOURNAL_PROFILES.map((profile) => ({
     profile,
     score: profileScore(profile, text, tokens),
   })).sort((left, right) => right.score - left.score || left.profile.id.localeCompare(right.profile.id));
   return scored.find((item) => item.score > 0)?.profile
-    || JOURNAL_PROFILES.find((profile) => profile.id === fallbackId)
-    || JOURNAL_PROFILES[0];
+    || JOURNAL_PROFILES.find((profile) => profile.id === canonicalFallbackId);
 }
 
 function defaultJournalFallbackIds(profile = {}) {
@@ -121,7 +210,11 @@ function deadlineDate(year, entry = {}) {
   const day = Number(entry.day);
   if (!Number.isFinite(month) || !Number.isFinite(day)) return null;
   if (month < 1 || month > 12 || day < 1 || day > 31) return null;
-  return new Date(Date.UTC(year, month - 1, day, 23, 59, 59));
+  const candidate = new Date(Date.UTC(year, month - 1, day, 23, 59, 59));
+  if (candidate.getUTCFullYear() !== year
+    || candidate.getUTCMonth() !== month - 1
+    || candidate.getUTCDate() !== day) return null;
+  return candidate;
 }
 
 function nextMonthlyDeadline({ asOf, recurringDayOfMonth = 1 } = {}) {
@@ -163,12 +256,33 @@ function daysUntilDeadline(asOf, deadline) {
   return Math.max(0, Math.ceil(milliseconds / (24 * 60 * 60 * 1000)));
 }
 
+function conferenceDeadlineMetadataReady(profile = {}) {
+  if (profile.kind !== 'conference') return true;
+  const deadlineRouting = profile.policy?.deadlineRouting || null;
+  if (!deadlineRouting?.computerScienceConference) return false;
+  if (deadlineRouting.deadlineCadence === 'monthly') {
+    const day = Number(deadlineRouting.recurringDayOfMonth);
+    return Number.isInteger(day) && day >= 1 && day <= 28;
+  }
+  return Array.isArray(deadlineRouting.deadlineCalendar)
+    && deadlineRouting.deadlineCalendar.some((entry) => deadlineDate(2000, entry));
+}
+
 function deadlineAssessmentForProfile({ profile = {}, createdAt = null } = {}) {
   const deadlineRouting = profile.policy?.deadlineRouting || null;
   if (!deadlineRouting?.computerScienceConference) {
     return {
       status: 'deadline_routing_not_applicable',
       evaluated: false,
+    };
+  }
+  if (!conferenceDeadlineMetadataReady(profile)) {
+    return {
+      status: 'conference_deadline_metadata_missing',
+      evaluated: false,
+      deadlineCadence: deadlineRouting.deadlineCadence,
+      routeWhenDeadlineTooFar: deadlineRouting.routeWhenDeadlineTooFar === true,
+      journalFallbackIds: deadlineRouting.journalFallbackIds || [],
     };
   }
   const asOf = normalizeAsOfDate(createdAt);
@@ -257,7 +371,7 @@ function buildAgentDeadlineRoutingDecision({
   const initialProfile = primaryItem?.profile || null;
   const initialAssessment = deadlineAssessmentForProfile({ profile: initialProfile, createdAt });
   const explicitTarget = Boolean(resolvedTarget);
-  if (!initialProfile || initialProfile.kind !== 'conference' || !initialAssessment.evaluated) {
+  if (!initialProfile || initialProfile.kind !== 'conference') {
     return {
       kind: 'AgentDeadlineRoutingDecision',
       status: 'deadline_routing_not_applicable',
@@ -268,6 +382,26 @@ function buildAgentDeadlineRoutingDecision({
         : null,
       deadlineAssessment: initialAssessment,
       rationale: ['primary target is not a CS conference with deadline-routing metadata'],
+    };
+  }
+  if (!initialAssessment.evaluated) {
+    return {
+      kind: 'AgentDeadlineRoutingDecision',
+      status: initialAssessment.status,
+      routeApplied: false,
+      selectedItem: primaryItem,
+      initialTarget: {
+        journalId: initialProfile.id,
+        label: initialProfile.label,
+        kind: initialProfile.kind,
+      },
+      selectedTarget: {
+        journalId: initialProfile.id,
+        label: initialProfile.label,
+        kind: initialProfile.kind,
+      },
+      deadlineAssessment: initialAssessment,
+      rationale: ['conference deadline routing reference data is incomplete'],
     };
   }
   if (explicitTarget) {
@@ -332,7 +466,18 @@ function buildAgentDeadlineRoutingDecision({
 }
 
 function rankProfiles({ target = null, hints = [], registry = null } = {}) {
+  assertJournalProfileIdentifierUnambiguous(target, 'target');
   const profiles = registry?.profiles || JOURNAL_PROFILES.map((profile) => enrichProfile(profile));
+  const profileIds = profiles.map((profile) => (
+    assertCanonicalJournalProfileSnapshot(profile, 'registry_profile')
+  ));
+  if (new Set(profileIds).size !== profileIds.length) {
+    throw new Error('journal_profile_registry_identity_duplicate');
+  }
+  if (registry && (profileIds.length !== JOURNAL_PROFILES.length
+    || JOURNAL_PROFILES.some((profile) => !profileIds.includes(profile.id)))) {
+    throw new Error('journal_profile_registry_snapshot_incomplete');
+  }
   const text = tokenText([target, ...hints]);
   const tokens = new Set(text.split(/[^a-z0-9]+/).filter(Boolean));
   const targetText = normalizeText(target).toLowerCase();
@@ -368,4 +513,4 @@ function rankProfiles({ target = null, hints = [], registry = null } = {}) {
 }
 
 
-export { tokenText, profileScore, defaultJournalFallbackIds, withConferenceDeadlineRouting, profilePolicy, enrichProfile, normalizeAsOfDate, deadlineDate, nextMonthlyDeadline, nextAnnualDeadline, daysUntilDeadline, deadlineAssessmentForProfile, rankedItemForProfile, chooseJournalFallback, buildAgentDeadlineRoutingDecision, rankProfiles };
+export { tokenText, profileScore, defaultJournalFallbackIds, withConferenceDeadlineRouting, profilePolicy, enrichProfile, normalizeAsOfDate, deadlineDate, nextMonthlyDeadline, nextAnnualDeadline, daysUntilDeadline, deadlineAssessmentForProfile, conferenceDeadlineMetadataReady, rankedItemForProfile, chooseJournalFallback, buildAgentDeadlineRoutingDecision, rankProfiles, assertJournalProfileIdentifierUnambiguous, assertCurrentJournalProfileIdentity, assertCanonicalJournalProfileSnapshot };

@@ -16,6 +16,7 @@ import { createExperimentRegistryAuthorityVerifier } from '../../paper-domain/re
 import { buildFormalVerifierRegistry } from '../../paper-domain/research/formal-verifier-registry.mjs';
 import {
   buildGenericFormalCertificateIntake,
+  buildNativeFormalCertificateIntake,
   formalClosureClaimBindingsFromProposalBinding,
 } from '../../paper-domain/research/formal-certificate-intake.mjs';
 import { buildResearchChangeProposal } from '../../paper-domain/research/change-proposal.mjs';
@@ -112,6 +113,7 @@ export function buildResearchCapabilityState({
   receiptLedger,
   campaignEvidenceContext,
   researchSourceSnapshotHash = null,
+  campaignResearchSourceSnapshot = null,
   formalReviewEnvelope = null,
   operatorDatasetHarnessAuthorityVerifier,
   rawEventRecomputationVerifier = verifyIndependentRawEventArtifactRecomputation,
@@ -172,6 +174,9 @@ export function buildResearchCapabilityState({
   const producedCertificateRequests = trustedFormalEvidence
     .filter((item) => item.status === 'trusted_formal_evidence_recorded')
     .map((item) => item.certificateRequest);
+  const nativeProjectionRequests = trustedFormalEvidence
+    .filter((item) => item.status === 'trusted_formal_evidence_projected')
+    .map((item) => item.nativeProjectionRequest);
   const formalVerifierRegistry = buildFormalVerifierRegistry({
     adapterReceipts: [...structured.formalAdapterReceipts, ...producedAdapterReceipts],
     receiptLedger,
@@ -179,7 +184,7 @@ export function buildResearchCapabilityState({
   const expectedFormalClaimBindings = formalClosureClaimBindingsFromProposalBinding(
     formalReviewEnvelope?.proposalClaimToTheoremBinding,
   );
-  const formalCertificateIntakes = [...structured.formalCertificateRequests, ...producedCertificateRequests]
+  const legacyFormalCertificateIntakes = producedCertificateRequests
     .map((request) => buildGenericFormalCertificateIntake({
       paperId: request.paperId || request.paper_id || null,
       campaignId: request.campaignId || request.campaign_id || null,
@@ -203,6 +208,32 @@ export function buildResearchCapabilityState({
         formalReviewEnvelope?.proposalClaimToTheoremBinding || null,
       nativeResearchWorkerExecution,
     }));
+  const nativeFormalCertificateIntakes = nativeProjectionRequests
+    .map((request) => buildNativeFormalCertificateIntake({
+      paperId: request.paperId,
+      campaignId: request.campaignId,
+      researchSourceSnapshotHash: request.researchSourceSnapshotHash,
+      campaignResearchSourceSnapshot: request.campaignResearchSourceSnapshot,
+      claimBindings: request.claimBindings,
+      authoritativeFormalReceipt: request.authoritativeFormalReceipt,
+      authoritativeFormalNode: request.authoritativeFormalNode,
+      authoritativeSource: request.authoritativeSource,
+      nativeResearchWorkerExecution: request.nativeResearchWorkerExecution,
+      receiptLedger,
+    }, {
+      expectedPaperId: row.task.paperId,
+      expectedCampaignId: campaignEvidenceContext?.campaignId || null,
+      expectedResearchSourceSnapshotHash: researchSourceSnapshotHash,
+      expectedClaimBindings: expectedFormalClaimBindings,
+      expectedTaskKey: row.task.taskKey,
+      expectedProposalBinding:
+        formalReviewEnvelope?.proposalClaimToTheoremBinding || null,
+      expectedAuthoritativeFormalNode: request.authoritativeFormalNode,
+    }));
+  const formalCertificateIntakes = [
+    ...legacyFormalCertificateIntakes,
+    ...nativeFormalCertificateIntakes,
+  ];
   const evidenceQualityGate = buildEvidenceQualityGate({
     paperTask: row.task,
     claimRegistry: contractContext.claimRegistry,
@@ -213,10 +244,13 @@ export function buildResearchCapabilityState({
     formalCertificateIntakes,
     campaignId: campaignEvidenceContext?.campaignId || null,
     researchSourceSnapshotHash,
+    campaignResearchSourceSnapshot,
     expectedFormalClaimBindings,
     proposalClaimToTheoremBinding:
       formalReviewEnvelope?.proposalClaimToTheoremBinding || null,
     nativeResearchWorkerExecution,
+    authoritativeFormalNode: nativeProjectionRequests.length === 1
+      ? nativeProjectionRequests[0].authoritativeFormalNode : null,
   });
   const researchGapPlan = buildResearchGapPlan({
     paperTask: row.task,
@@ -319,6 +353,7 @@ export function buildResearchVerifyReport({
   evidenceVerificationReceipts,
   researchGapPlanBinding,
   executeResearchWorkers,
+  trustedFormalExecutionAuthority = null,
   campaignResearchSourceSnapshot = null,
   formalReviewEnvelope = null,
   externalReplayRequired = false,
@@ -327,6 +362,12 @@ export function buildResearchVerifyReport({
 } = {}) {
   const legacyCatalogReferences = [];
   const researchWorkers = [];
+  const trustedFormalExecutionPerformed = trustedFormalEvidence.some((item) => (
+    item?.attempt?.executionPerformed === true
+  ));
+  const trustedFormalWritesPerformed = trustedFormalEvidence.some((item) => (
+    item?.attempt?.writesPerformed === true
+  ));
   const verifyReceipt = buildPaperResearchVerifyReceipt({
     paperTask: row.task,
     claimScopeContract: contractContext.claimScopeContract,
@@ -448,8 +489,22 @@ export function buildResearchVerifyReport({
       empiricalAnalysis: relativePath(root, empiricalRoot),
     },
     safety: {
-      readsOnly: !executeResearchWorkers,
-      writesRuntimeOnly: Boolean(executeResearchWorkers),
+      readsOnly: !executeResearchWorkers
+        && !trustedFormalExecutionPerformed
+        && !trustedFormalWritesPerformed,
+      writesRuntimeOnly: Boolean(
+        executeResearchWorkers || trustedFormalWritesPerformed,
+      ),
+      subprocessExecution:
+        Boolean(executeResearchWorkers || trustedFormalExecutionPerformed),
+      trustedFormalExecutionAuthorized:
+        Boolean(trustedFormalExecutionAuthority),
+      trustedFormalPersistentFenceUsed:
+        trustedFormalEvidence.some((item) => (
+          /^sha256:[0-9a-f]{64}$/.test(
+            String(item?.attempt?.externalActionId || ''),
+          )
+        )),
       sourceMutation: false,
       externalActionPerformed: false,
       legacyWorkerCatalogScanned: false,

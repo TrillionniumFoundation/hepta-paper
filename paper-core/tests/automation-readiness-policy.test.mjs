@@ -15,6 +15,7 @@ import {
   inspectAutomationAgentProviders,
 } from '../../paper-composition/automation/automation-readiness-runtime-probes.mjs';
 import {
+  deriveFullyAutonomousResearchSystemStatus,
   queryAutomationReadiness,
 } from '../../paper-composition/automation/automation-readiness-query.mjs';
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
@@ -222,10 +223,52 @@ test('top-level readiness levels expose runtime, bounded, generic, and productio
     genericCapabilityReady: true,
     formalSandboxRuntimeReady: true,
     dynamicFormalProjectClosureReady: true,
+    autonomousSystemReady: true,
     submissionDispatcherReady: true,
   });
   assert.equal(productionReady.status, 'automation_plane_production_ready');
   assert.equal(productionReady.productionReady, true);
+
+  const autonomousSystemBlocked = evaluateAutomationReadinessLevels({
+    runtimeReady: true,
+    boundedProfileReady: true,
+    configuredScopeReady: true,
+    genericCapabilityReady: true,
+    formalSandboxRuntimeReady: true,
+    dynamicFormalProjectClosureReady: true,
+    autonomousSystemReady: false,
+    submissionDispatcherReady: true,
+  });
+  assert.equal(
+    autonomousSystemBlocked.status,
+    'automation_plane_production_blocked',
+  );
+  assert.equal(autonomousSystemBlocked.genericResearchReady, true);
+  assert.equal(autonomousSystemBlocked.productionReady, false);
+});
+
+test('fully autonomous status cannot inherit a ready core while production is blocked', () => {
+  assert.equal(deriveFullyAutonomousResearchSystemStatus({
+    readinessLevels: {
+      status: 'automation_plane_production_blocked',
+      productionReady: false,
+    },
+    coreStatus: 'generic_domain_autonomous_research_system_ready',
+  }), 'automation_plane_production_blocked');
+  assert.equal(deriveFullyAutonomousResearchSystemStatus({
+    readinessLevels: {
+      status: 'automation_plane_production_ready',
+      productionReady: true,
+    },
+    coreStatus: 'generic_domain_autonomous_research_system_ready',
+  }), 'generic_domain_autonomous_research_system_ready');
+  assert.equal(deriveFullyAutonomousResearchSystemStatus({
+    readinessLevels: {
+      status: 'automation_plane_production_ready',
+      productionReady: true,
+    },
+    coreStatus: 'bounded_profile_autonomous_research_system_ready',
+  }), 'automation_plane_production_blocked');
 });
 
 test('readiness side-effect ledger rejects remote Docker before any process', () => {
@@ -313,6 +356,14 @@ test('automation readiness query completes a passive blocked report with exact s
     query.report.boundedProfileAutonomousResearchSystemReady,
   );
   assert.equal(query.report.productionReady, query.report.fullyAutonomousResearchSystemReady);
+  assert.equal(
+    query.report.fullyAutonomousResearchSystemStatus,
+    query.report.status,
+  );
+  assert.equal(
+    query.report.fullyAutonomousResearchCoreStatus,
+    'autonomous_research_system_blocked',
+  );
   assert.equal(query.report.fullAutomaticResearchWritingReady, false);
   assert.equal(query.report.formalSandboxRuntimeReady, false);
   assert.equal(query.report.dynamicFormalProjectClosureReady, false);
@@ -360,7 +411,7 @@ test('automation readiness query completes a passive blocked report with exact s
   assert.equal(query.report.autonomousStateRestoreAuthorityConfigurationHash, null);
   assert.equal(query.report.autonomousStateOnlineAntiRollbackReady, false);
   assert.ok(query.report.fullyAutonomousResearchSystemBlockers.includes(
-    'autonomous_research_online_anti_rollback_coordinator_not_implemented',
+    'autonomous_research_online_anti_rollback_coordinator_deployment_not_ready',
   ));
   assert.ok(query.report.fullAutomaticResearchWritingBlockers.length > 0);
 });
@@ -386,6 +437,7 @@ test('automation-status keeps release-attestor verification behind an explicit l
 test('automation-status help exits without performing readiness actions', () => {
   const run = spawnSync(process.execPath, [
     fileURLToPath(new URL('../bin/automation-status.mjs', import.meta.url)),
+    '--json',
     '--help',
   ], {
     encoding: 'utf8',
@@ -395,7 +447,7 @@ test('automation-status help exits without performing readiness actions', () => 
   assert.deepEqual(JSON.parse(run.stdout), {
     version: 2,
     kind: 'AutomationStatusUsage',
-    usage: 'automation-status [--root PATH] [--runtime-root PATH] [--require-full-research] [--require-fully-autonomous] [--live-provider-canary] [--live-release-attestor]',
+    usage: 'automation-status [--json] [--root PATH] [--runtime-root PATH] [--require-full-research] [--require-fully-autonomous] [--live-provider-canary] [--live-release-attestor]',
     mutation: 'no-canonical-state-write',
     localObservationEffects: 'runtime-metadata-and-daemon-probes-may-change',
     externalAction: 'argument-dependent',

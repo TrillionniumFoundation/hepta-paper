@@ -1,0 +1,12 @@
+[Unit]
+Description=Periodically revalidate Hepta Paper strict full-auto acceptance
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=5min
+AccuracySec=15s
+Persistent=true
+Unit=strict-full-auto-acceptance.service
+
+[Install]
+WantedBy=timers.target

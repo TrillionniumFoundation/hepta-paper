@@ -11,6 +11,11 @@ import {
   AUTONOMOUS_RESEARCH_ONLINE_WRITER_OPERATION_MANIFEST,
 } from './autonomous-research-online-writer-operation-manifest.mjs';
 import {
+  AUTONOMOUS_RESEARCH_ONLINE_ANTI_ROLLBACK_COORDINATOR_DEPLOYMENT_BLOCKER,
+  AUTONOMOUS_RESEARCH_STATE_SAFETY_BLOCKER_CODE_COMPATIBILITY,
+  expandAutonomousResearchStateSafetyBlockerCodeCompatibility,
+} from '../../paper-domain/automation/autonomous-research-state-safety-contract.mjs';
+import {
   createAutonomousResearchOnlineAuthorityEvidenceCacheReader,
 } from './autonomous-research-online-authority-evidence-cache.mjs';
 import {
@@ -241,9 +246,13 @@ function inspectEvidence({
     }),
     authorityConfigurationHash: verifier.configurationHash,
     journalSchemaContractHash,
-    blockers: Object.freeze([
+    blockerCodeCompatibility:
+      AUTONOMOUS_RESEARCH_STATE_SAFETY_BLOCKER_CODE_COMPATIBILITY,
+    blockers: expandAutonomousResearchStateSafetyBlockerCodeCompatibility([
       ...(coordinatorImplemented
-        ? [] : ['autonomous_research_online_anti_rollback_coordinator_not_implemented']),
+        ? [] : [
+          AUTONOMOUS_RESEARCH_ONLINE_ANTI_ROLLBACK_COORDINATOR_DEPLOYMENT_BLOCKER,
+        ]),
       ...(writerCoverageComplete
         ? [] : ['autonomous_research_online_writer_manifest_100_percent_required']),
     ]),

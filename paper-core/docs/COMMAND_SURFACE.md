@@ -47,7 +47,8 @@ status command.
 `runtime:permissions` is also maintenance-only and is read-only unless the
 caller explicitly forwards `--execute`. It is not routed by `hepta-paper` and
 therefore cannot be mistaken for a supported operator command.
-`automation:status` keeps release-attestor inspection passive by default: a
+`automation:status` emits JSON by default and accepts an explicit `--json` for
+machine callers. It keeps release-attestor inspection passive by default: a
 configured production backend is described, but no KMS/backend probe or
 active-key signature challenge is attempted. The explicit
 `--live-release-attestor` flag opts into those actions. The registered
@@ -93,6 +94,15 @@ lifecycle caps, signal behavior, SQLite lease/CAS recovery, and systemd/Kubernet
 hosting contract are documented in
 `paper-core/docs/autonomous-research-supervisor.md`.
 
+`hepta-paper operator nested-runtime-platform-qualification -- <arguments>` is
+the read-only Kubernetes startup gate for the nested worker boundary. It
+verifies an independently signed exact-platform qualification bundle and a
+separately signed current-Pod conformance bundle. The latter binds the Pod UID,
+deployment plan, profile, fixed-digest worker, shared-bind uid/gid behavior,
+`network=none`, nested CPU/memory/PID controls and parent Pod ceiling. The
+command never generates or signs evidence and exits non-zero for missing,
+placeholder, stale, hash-mismatched, replayed, or same-authority receipts.
+
 `hepta-paper operator strict-full-auto-acceptance -- <arguments>` is the
 single production deployment-convergence gate. `plan` validates and hash-binds
 the complete external reference inventory without writing state; `execute`
@@ -116,6 +126,10 @@ Its dataset root is a fourth, independent read-only plan binding
 root. State provisioning is verified with a read-only online-transition plan
 whose transition ID is bound to the next execute step; complete inventory and
 anti-rollback readiness are both verified after that transition.
+Plan-bound verifiers reserve exit code `2` for a complete semantic
+`not-ready` observation; exit code `1`, malformed/partial JSON, diagnostic
+error objects, timeouts and truncation are infrastructure failures and can
+never authorize a mutating renewal.
 The production-campaign step requires Agenda/prior-art, Experiment IR, venue,
 external replay, and independent formal review inspections to resolve to one
 explicit non-golden paper before the paper-bound generic-domain convergence

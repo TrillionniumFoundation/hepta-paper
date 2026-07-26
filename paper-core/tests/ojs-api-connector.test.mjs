@@ -5,6 +5,9 @@ import {
   buildSubmissionPortalBinding,
 } from '../../paper-domain/submission/submission-portal-binding.mjs';
 import {
+  getJournalSubmissionTargetProfile,
+} from '../../paper-domain/submission/journal-submission-target-registry.mjs';
+import {
   buildSubmissionEnvelope,
 } from '../../paper-domain/submission/submission-envelope.mjs';
 import {
@@ -23,13 +26,7 @@ function fixture() {
     submissionSchemaVersion: 'fixture-v1',
     requiredFields: Object.freeze(['sectionId', 'title', 'abstract', 'authors']),
   });
-  const target = Object.freeze({
-    kind: 'JournalSubmissionTargetProfile',
-    venueId: 'fixture_ojs_journal',
-    venueKind: 'journal',
-    candidateConnectorFamilies: Object.freeze(['ojs-rest-v1']),
-    journalSubmissionTargetProfileHash: sha('a'),
-  });
+  const target = getJournalSubmissionTargetProfile('jmlr');
   const binding = buildSubmissionPortalBinding({
     baseTargetProfile: target,
     targetInstanceId: 'fixture-ojs-journal',

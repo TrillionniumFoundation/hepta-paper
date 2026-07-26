@@ -23,9 +23,24 @@ spec:
       annotations:
         hepta.paper/nested-runtime-contract: hepta-nested-container-runtime-v1
         hepta.paper/nested-runtime-profile-id: REPLACE_WITH_EXTERNALLY_QUALIFIED_PROFILE_ID
+        hepta.paper/nested-runtime-class-name: REPLACE_WITH_EXTERNALLY_QUALIFIED_NESTED_CONTAINER_RUNTIME_CLASS
+        hepta.paper/nested-runtime-plan-hash: REPLACE_WITH_SHA256_OF_DEPLOYMENT_PLAN
+        hepta.paper/nested-runtime-qualification-config-sha256: REPLACE_WITH_SHA256_OF_QUALIFICATION_CONFIG
         hepta.paper/nested-runtime-qualification-receipt-sha256: REPLACE_WITH_SHA256_OF_SIGNED_QUALIFICATION_RECEIPT
+        hepta.paper/nested-runtime-conformance-receipt-sha256: REPLACE_WITH_SHA256_OF_CURRENT_POD_SIGNED_CONFORMANCE_RECEIPT
+        hepta.paper/nested-runtime-authority-independence-receipt-sha256: REPLACE_WITH_SHA256_OF_CURRENT_POD_SIGNED_CONTROL_DOMAIN_ATTESTATION
         hepta.paper/nested-runtime-qualification-signer: REPLACE_WITH_INDEPENDENT_QUALIFIER_KEY_ID
+        hepta.paper/nested-runtime-qualification-subject: REPLACE_WITH_INDEPENDENT_QUALIFIER_SUBJECT_ID
+        hepta.paper/nested-runtime-qualification-public-key-spki-sha256: REPLACE_WITH_INDEPENDENT_QUALIFIER_ED25519_SPKI_SHA256
+        hepta.paper/nested-runtime-conformance-signer: REPLACE_WITH_INDEPENDENT_CONFORMANCE_ATTESTOR_KEY_ID
+        hepta.paper/nested-runtime-conformance-subject: REPLACE_WITH_INDEPENDENT_CONFORMANCE_ATTESTOR_SUBJECT_ID
+        hepta.paper/nested-runtime-conformance-public-key-spki-sha256: REPLACE_WITH_INDEPENDENT_CONFORMANCE_ATTESTOR_ED25519_SPKI_SHA256
         hepta.paper/nested-runtime-conformance: bind-rw-uid-gid-network-none-memory-cpu-pids-parent-pod-v1
+        # A validating admission policy must bind these values to the
+        # site-qualified daemon/Pod cgroup ceiling in the signed profile.
+        hepta.paper/nested-runtime-parent-pod-cpu-millis: "4000"
+        hepta.paper/nested-runtime-parent-pod-memory-bytes: "8589934592"
+        hepta.paper/nested-runtime-parent-pod-pids: "512"
     spec:
       serviceAccountName: hepta-autonomous-research-supervisor
       restartPolicy: Always
@@ -33,8 +48,7 @@ spec:
       automountServiceAccountToken: false
       # RuntimeClass is only a selector; its name is not evidence of nested
       # container isolation. Admission must bind this exact profile and node to
-      # the independently signed receipt in the pod annotations. The canonical
-      # manifest remains deliberately No-Go through the blocking init below.
+      # the independently signed receipts in the pod annotations.
       runtimeClassName: REPLACE_WITH_EXTERNALLY_QUALIFIED_NESTED_CONTAINER_RUNTIME_CLASS
       nodeSelector:
         hepta.paper/dedicated-autonomous-research-node: "true"
@@ -52,22 +66,88 @@ spec:
         seccompProfile:
           type: RuntimeDefault
       initContainers:
-        # CANONICAL TEMPLATE SAFETY GUARD: this manifest is not a runnable
-        # nested-container deployment. A site-specific, separately reviewed
-        # overlay must replace this one guard with BOTH (1) a verifier for the
-        # independently signed qualification receipt pinned above and (2) a
-        # startup conformance runner. The runner must execute the fixed-digest
-        # worker from the supervisor-visible namespace and prove shared bind RW,
-        # uid/gid ownership, network=none, memory/CPU/PID limits, and the parent
-        # Pod resource ceiling. Merely deleting this init is not qualification.
-        - name: deployment-no-go-until-nested-runtime-qualified
-          image: REPLACE_WITH_PINNED_QUALIFICATION_GUARD_IMAGE_DIGEST
+        # The external conformance service must first launch the fixed-digest
+        # worker against this exact Pod/profile and materialize its separately
+        # signed receipt on the read-only evidence volume. The verifier performs
+        # no signing or repair. Missing/placeholder paths, hashes, authorities,
+        # current-Pod bindings, or proof fields make this init fail non-zero.
+        - name: nested-runtime-platform-qualification-gate
+          image: REPLACE_WITH_PINNED_HEPTA_IMAGE_DIGEST
           imagePullPolicy: IfNotPresent
-          command: ["/bin/sh", "-ec"]
-          args:
-            - |
-              echo >&2 'NO-GO: install a signed, externally qualified nested-container runtime overlay'
-              exit 78
+          command:
+            - node
+            - paper-core/bin/nested-runtime-platform-qualification.mjs
+          env:
+            - name: HEPTA_NESTED_RUNTIME_QUALIFICATION_CONFIG
+              value: /hepta/nested-runtime-qualification/config.json
+            - name: HEPTA_NESTED_RUNTIME_QUALIFICATION_CONFIG_SHA256
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['hepta.paper/nested-runtime-qualification-config-sha256']
+            - name: HEPTA_NESTED_RUNTIME_QUALIFICATION_RECEIPT_SHA256
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['hepta.paper/nested-runtime-qualification-receipt-sha256']
+            - name: HEPTA_NESTED_RUNTIME_CONFORMANCE_RECEIPT_SHA256
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['hepta.paper/nested-runtime-conformance-receipt-sha256']
+            - name: HEPTA_NESTED_RUNTIME_AUTHORITY_INDEPENDENCE_RECEIPT_SHA256
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['hepta.paper/nested-runtime-authority-independence-receipt-sha256']
+            - name: HEPTA_NESTED_RUNTIME_POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            - name: HEPTA_NESTED_RUNTIME_PLAN_HASH
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['hepta.paper/nested-runtime-plan-hash']
+            - name: HEPTA_NESTED_RUNTIME_PROFILE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['hepta.paper/nested-runtime-profile-id']
+            - name: HEPTA_NESTED_RUNTIME_CLASS_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['hepta.paper/nested-runtime-class-name']
+            - name: HEPTA_NESTED_RUNTIME_PARENT_POD_CPU_MILLIS
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['hepta.paper/nested-runtime-parent-pod-cpu-millis']
+            - name: HEPTA_NESTED_RUNTIME_PARENT_POD_MEMORY_BYTES
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['hepta.paper/nested-runtime-parent-pod-memory-bytes']
+            - name: HEPTA_NESTED_RUNTIME_PARENT_POD_PIDS
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['hepta.paper/nested-runtime-parent-pod-pids']
+            - name: HEPTA_NESTED_RUNTIME_QUALIFICATION_KEY_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['hepta.paper/nested-runtime-qualification-signer']
+            - name: HEPTA_NESTED_RUNTIME_QUALIFICATION_SUBJECT_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['hepta.paper/nested-runtime-qualification-subject']
+            - name: HEPTA_NESTED_RUNTIME_QUALIFICATION_PUBLIC_KEY_SPKI_SHA256
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['hepta.paper/nested-runtime-qualification-public-key-spki-sha256']
+            - name: HEPTA_NESTED_RUNTIME_CONFORMANCE_KEY_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['hepta.paper/nested-runtime-conformance-signer']
+            - name: HEPTA_NESTED_RUNTIME_CONFORMANCE_SUBJECT_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['hepta.paper/nested-runtime-conformance-subject']
+            - name: HEPTA_NESTED_RUNTIME_CONFORMANCE_PUBLIC_KEY_SPKI_SHA256
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.annotations['hepta.paper/nested-runtime-conformance-public-key-spki-sha256']
           securityContext:
             runAsNonRoot: true
             runAsUser: 10001
@@ -76,6 +156,10 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+          volumeMounts:
+            - name: nested-runtime-qualification
+              mountPath: /hepta/nested-runtime-qualification
+              readOnly: true
       containers:
         - name: supervisor
           image: REPLACE_WITH_PINNED_HEPTA_IMAGE_DIGEST
@@ -372,6 +456,13 @@ spec:
         - name: capabilities
           persistentVolumeClaim:
             claimName: hepta-autonomous-research-public-capability-config
+        # A qualified site must provide immutable regular files config.json,
+        # trust-store.json, qualification.json, a current-Pod conformance.json,
+        # and an externally signed authority-independence.json. The application
+        # never writes or signs them.
+        - name: nested-runtime-qualification
+          persistentVolumeClaim:
+            claimName: hepta-nested-runtime-platform-qualification
         # Reserved for the site-qualified overlay's pod-local daemon socket. The
         # canonical manifest has no daemon and is blocked above. Never replace
         # this emptyDir with a node socket, hostPath, or remote Docker endpoint.

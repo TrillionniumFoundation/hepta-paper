@@ -19,6 +19,44 @@ const CANONICAL_STATE_MANIFEST_ID =
 const FINALIZED_JOURNAL_PROTOCOL =
   'external-linearizable-finalized-mutation-journal-v1';
 
+export const AUTONOMOUS_RESEARCH_ONLINE_ANTI_ROLLBACK_COORDINATOR_DEPLOYMENT_BLOCKER =
+  'autonomous_research_online_anti_rollback_coordinator_deployment_not_ready';
+export const AUTONOMOUS_RESEARCH_ONLINE_ANTI_ROLLBACK_COORDINATOR_LEGACY_BLOCKER =
+  'autonomous_research_online_anti_rollback_coordinator_not_implemented';
+
+export const AUTONOMOUS_RESEARCH_STATE_SAFETY_BLOCKER_CODE_COMPATIBILITY = Object.freeze({
+  version: 1,
+  kind: 'AutonomousResearchStateSafetyBlockerCodeCompatibility',
+  aliases: Object.freeze([
+    Object.freeze({
+      canonicalCode:
+        AUTONOMOUS_RESEARCH_ONLINE_ANTI_ROLLBACK_COORDINATOR_DEPLOYMENT_BLOCKER,
+      legacyAliasCode:
+        AUTONOMOUS_RESEARCH_ONLINE_ANTI_ROLLBACK_COORDINATOR_LEGACY_BLOCKER,
+      appliesToReportVersions: Object.freeze([1]),
+      disposition: 'deprecated_read_compatibility_alias',
+    }),
+  ]),
+});
+
+export function expandAutonomousResearchStateSafetyBlockerCodeCompatibility(
+  blockers = [],
+) {
+  if (!Array.isArray(blockers)
+    || blockers.some((code) => typeof code !== 'string' || code.length === 0)) {
+    throw new Error('autonomous_research_state_safety_blocker_codes_invalid');
+  }
+  const expanded = new Set(blockers);
+  for (const alias of
+    AUTONOMOUS_RESEARCH_STATE_SAFETY_BLOCKER_CODE_COMPATIBILITY.aliases) {
+    if (expanded.has(alias.canonicalCode) || expanded.has(alias.legacyAliasCode)) {
+      expanded.add(alias.canonicalCode);
+      expanded.add(alias.legacyAliasCode);
+    }
+  }
+  return Object.freeze([...expanded].sort());
+}
+
 export const AUTONOMOUS_RESEARCH_STATE_RESTORE_DRILL_MAXIMUM_AGE_MS =
   24 * 60 * 60 * 1000;
 
@@ -466,8 +504,10 @@ export function unavailableAutonomousResearchOnlineAntiRollbackInspection({
         'autonomous_research_online_writer_manifest_100_percent_required',
       ]),
     }),
-    blockers: Object.freeze([
-      'autonomous_research_online_anti_rollback_coordinator_not_implemented',
+    blockerCodeCompatibility:
+      AUTONOMOUS_RESEARCH_STATE_SAFETY_BLOCKER_CODE_COMPATIBILITY,
+    blockers: expandAutonomousResearchStateSafetyBlockerCodeCompatibility([
+      AUTONOMOUS_RESEARCH_ONLINE_ANTI_ROLLBACK_COORDINATOR_DEPLOYMENT_BLOCKER,
       'autonomous_research_online_authority_head_current_required',
       'autonomous_research_online_authority_recent_active_challenge_required',
       'autonomous_research_online_writer_manifest_100_percent_required',
@@ -520,7 +560,7 @@ export function evaluateAutonomousResearchStateSafetyReadiness({
     ...(Array.isArray(latestRestoreDrill?.blockers)
       ? latestRestoreDrill.blockers : []),
     ...(!online.coordinatorImplemented
-      ? ['autonomous_research_online_anti_rollback_coordinator_not_implemented'] : []),
+      ? [AUTONOMOUS_RESEARCH_ONLINE_ANTI_ROLLBACK_COORDINATOR_DEPLOYMENT_BLOCKER] : []),
     ...(!online.currentHeadReceiptVerified
       ? ['autonomous_research_online_authority_head_current_required'] : []),
     ...(!online.recentActiveChallengeVerified
@@ -535,8 +575,9 @@ export function evaluateAutonomousResearchStateSafetyReadiness({
       ? ['autonomous_research_online_writer_manifest_100_percent_required'] : []),
     ...(onlineInspection?.blockers || []),
   ];
-  const uniqueBlockers = unique(blockers).sort();
-  const ready = prerequisitesReady && uniqueBlockers.length === 0;
+  const compatibleBlockers =
+    expandAutonomousResearchStateSafetyBlockerCodeCompatibility(blockers);
+  const ready = prerequisitesReady && compatibleBlockers.length === 0;
   return Object.freeze({
     version: 1,
     kind: 'AutonomousResearchStateSafetyInspection',
@@ -605,6 +646,8 @@ export function evaluateAutonomousResearchStateSafetyReadiness({
         ? [...latestRestoreDrill.blockers] : []),
     }),
     onlineAntiRollback: onlineInspection,
-    blockers: Object.freeze(uniqueBlockers),
+    blockerCodeCompatibility:
+      AUTONOMOUS_RESEARCH_STATE_SAFETY_BLOCKER_CODE_COMPATIBILITY,
+    blockers: compatibleBlockers,
   });
 }

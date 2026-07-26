@@ -8,7 +8,7 @@ import {
   hashPaperRecord,
 } from '../../../paper-domain/contracts/primitives.mjs';
 import {
-  computeReceiptHash,
+  sealReceiptHash,
 } from '../../../paper-domain/evidence/receipt-hash-policy.mjs';
 import {
   nativeFormalClosureBindingFromExecution,
@@ -167,17 +167,73 @@ function updateResearchLineage({
     genericFormalCertificateIntakeHash: _oldFormalIntakeHash,
     ...formalIntakePayload
   } = currentFormalIntake || {};
-  const updatedFormalExecutionReceiptDraft = {
-    ...formalIntakePayload.executionReceipt,
-    researchSourceSnapshotHash:
+  const formalSource = source.fileRecords.find((record) => (
+    record.path === 'Formal.lean'
+  ));
+  if (!formalSource) {
+    throw new Error('production_campaign_release_formal_source_required');
+  }
+  const currentNativeExecution = reportPayload.nativeResearchWorkerExecution;
+  const currentFormalWorker = currentNativeExecution?.workerReceipts?.[0];
+  const {
+    nativeResearchWorkerExecutionReceiptHash: _oldWorkerHash,
+    ledgerReceiptId: formalWorkerLedgerReceiptId,
+    ...formalWorkerPayload
+  } = currentFormalWorker || {};
+  const updatedFormalResult = Object.freeze({
+    ...formalWorkerPayload.result,
+    projectFiles: Object.freeze([Object.freeze({
+      projectPath: formalSource.path,
+      hash: formalSource.hash,
+      bytes: formalSource.bytes,
+    })]),
+  });
+  const updatedFormalWorkerPayload = {
+    ...formalWorkerPayload,
+    inputs: Object.freeze([Object.freeze({
+      ...(formalWorkerPayload.inputs?.[0] || {}),
+      path: formalSource.path,
+      hash: formalSource.hash,
+      expectedHash: formalSource.hash,
+      sizeBytes: formalSource.bytes,
+    })]),
+    sourceSnapshotHash:
       campaignResearchSourceSnapshot.campaignResearchSourceSnapshotHash,
+    sourceMerkleHashBefore: source.verifiedSourceMerkleHash,
+    sourceMerkleHashAfter: source.verifiedSourceMerkleHash,
+    result: updatedFormalResult,
+    resultHash: hashPaperRecord(
+      'NativeResearchWorkerResult',
+      updatedFormalResult,
+    ),
   };
-  const updatedFormalExecutionReceipt = Object.freeze({
-    ...updatedFormalExecutionReceiptDraft,
-    receiptHash: computeReceiptHash(updatedFormalExecutionReceiptDraft),
+  const sealedFormalWorker = sealReceiptHash(updatedFormalWorkerPayload, {
+    hashField: 'nativeResearchWorkerExecutionReceiptHash',
+  });
+  const updatedFormalWorker = Object.freeze({
+    ...sealedFormalWorker,
+    ledgerReceiptId: formalWorkerLedgerReceiptId,
+  });
+  const {
+    nativeResearchWorkerExecutionReportHash: _oldNativeReportHash,
+    ...nativeExecutionPayload
+  } = currentNativeExecution || {};
+  const updatedNativeExecutionPayload = {
+    ...nativeExecutionPayload,
+    workerReceipts: Object.freeze([updatedFormalWorker]),
+    workerReceiptHashes: Object.freeze([
+      updatedFormalWorker.nativeResearchWorkerExecutionReceiptHash,
+    ]),
+  };
+  const updatedNativeExecution = Object.freeze({
+    ...updatedNativeExecutionPayload,
+    nativeResearchWorkerExecutionReportHash: hashPaperRecord(
+      'NativeResearchWorkerExecutionReport',
+      updatedNativeExecutionPayload,
+    ),
   });
   const nativeFormalClosureBinding = nativeFormalClosureBindingFromExecution(
-    reportPayload.nativeResearchWorkerExecution,
+    updatedNativeExecution,
     {
       paperId,
       campaignId,
@@ -185,12 +241,69 @@ function updateResearchLineage({
         campaignResearchSourceSnapshot.campaignResearchSourceSnapshotHash,
     },
   );
+  const currentFormalNode = formalIntakePayload.authoritativeFormalNode;
+  const campaignFormalSourceSnapshot = buildCampaignResearchSourceSnapshot({
+    campaignId,
+    paperId,
+    researchNodeId: currentFormalNode.nodeId,
+    researchAttemptId: currentFormalNode.attemptId,
+    researchLeaseGeneration: currentFormalNode.leaseGeneration,
+    verifiedSourceMerkleHash: source.verifiedSourceMerkleHash,
+    verifiedSourceWorkspaceManifestHash:
+      source.verifiedSourceWorkspaceManifestHash,
+    fileRecords: source.fileRecords,
+    directoryRecords: [],
+  });
+  const {
+    campaignFormalVerificationReceiptHash: _oldFormalReceiptHash,
+    ...formalReceiptPayload
+  } = formalIntakePayload.authoritativeFormalReceipt || {};
+  const updatedFormalReceiptPayload = {
+    ...formalReceiptPayload,
+    verifiedSourceMerkleHash: source.verifiedSourceMerkleHash,
+    verifiedSourceWorkspaceManifestHash:
+      source.verifiedSourceWorkspaceManifestHash,
+    campaignFormalSourceSnapshotHash:
+      campaignFormalSourceSnapshot.campaignResearchSourceSnapshotHash,
+    campaignFormalSourceSnapshot,
+    nativeResearchWorkerExecutionReportHash:
+      updatedNativeExecution.nativeResearchWorkerExecutionReportHash,
+    nativeResearchWorkerExecution: updatedNativeExecution,
+  };
+  const updatedFormalReceipt = Object.freeze({
+    ...updatedFormalReceiptPayload,
+    campaignFormalVerificationReceiptHash: hashRecord(
+      'CampaignFormalVerificationReceipt',
+      updatedFormalReceiptPayload,
+    ),
+  });
+  const updatedFormalNode = Object.freeze({
+    ...currentFormalNode,
+    resultSha256: hashRecord(
+      'PaperCampaignNodeResult',
+      updatedFormalReceipt,
+    ),
+    result: updatedFormalReceipt,
+  });
   const updatedFormalIntakePayload = {
     ...formalIntakePayload,
     researchSourceSnapshotHash:
       campaignResearchSourceSnapshot.campaignResearchSourceSnapshotHash,
-    executionReceipt: updatedFormalExecutionReceipt,
-    executionReceiptHash: updatedFormalExecutionReceipt.receiptHash,
+    campaignFormalVerificationReceiptHash:
+      updatedFormalReceipt.campaignFormalVerificationReceiptHash,
+    authoritativeFormalNode: updatedFormalNode,
+    authoritativeFormalNodeResultHash: updatedFormalNode.resultSha256,
+    authoritativeFormalReceipt: updatedFormalReceipt,
+    nativeResearchWorkerExecutionReportHash:
+      updatedNativeExecution.nativeResearchWorkerExecutionReportHash,
+    nativeResearchWorkerExecutionReceiptHash:
+      updatedFormalWorker.nativeResearchWorkerExecutionReceiptHash,
+    authoritativeSource: Object.freeze({
+      ...formalIntakePayload.authoritativeSource,
+      path: formalSource.path,
+      hash: formalSource.hash,
+      bytes: formalSource.bytes,
+    }),
     nativeFormalClosureBinding,
     nativeFormalClosureBindingHash:
       nativeFormalClosureBinding.nativeFormalClosureBindingHash,
@@ -200,6 +313,42 @@ function updateResearchLineage({
     genericFormalCertificateIntakeHash: hashRecord(
       'GenericFormalCertificateIntake',
       updatedFormalIntakePayload,
+    ),
+  });
+  const trustedFormalEvidence = Object.freeze([
+    ...((reportPayload.capabilities?.trustedFormalEvidence || []).map((
+      item,
+    ) => Object.freeze({
+      ...item,
+      nativeProjectionRequest: Object.freeze({
+        ...(item.nativeProjectionRequest || {}),
+        authoritativeFormalNode: updatedFormalNode,
+      }),
+    }))),
+  ]);
+  const currentEvidenceQualityGate =
+    reportPayload.capabilities?.evidenceQualityGate || {};
+  const {
+    evidenceQualityGateHash: _oldEvidenceQualityGateHash,
+    ...evidenceQualityGatePayload
+  } = currentEvidenceQualityGate;
+  const updatedEvidenceQualityGatePayload = {
+    ...evidenceQualityGatePayload,
+    workerLedgerVerifications: Object.freeze(
+      (evidenceQualityGatePayload.workerLedgerVerifications || []).map((
+        verification,
+      ) => Object.freeze({
+        ...verification,
+        receiptHash:
+          updatedFormalWorker.nativeResearchWorkerExecutionReceiptHash,
+      })),
+    ),
+  };
+  const evidenceQualityGate = Object.freeze({
+    ...updatedEvidenceQualityGatePayload,
+    evidenceQualityGateHash: hashRecord(
+      'EvidenceQualityGate',
+      updatedEvidenceQualityGatePayload,
     ),
   });
   const updatedReportPayload = {
@@ -213,9 +362,12 @@ function updateResearchLineage({
     campaignResearchSourceSnapshotHash:
       campaignResearchSourceSnapshot.campaignResearchSourceSnapshotHash,
     campaignResearchSourceSnapshot,
+    nativeResearchWorkerExecution: updatedNativeExecution,
     capabilities: Object.freeze({
       ...reportPayload.capabilities,
       formalCertificateIntakes: Object.freeze([updatedFormalIntake]),
+      trustedFormalEvidence,
+      evidenceQualityGate,
     }),
   };
   const researchReport = Object.freeze({

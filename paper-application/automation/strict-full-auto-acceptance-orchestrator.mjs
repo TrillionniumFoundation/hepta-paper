@@ -1,6 +1,4 @@
 import {
-  STRICT_FULL_AUTO_ACCEPTANCE_FINAL_VERIFICATION_STEP_ID,
-  buildStrictFullAutoLiveVerificationReceipt,
   buildStrictFullAutoAcceptanceReceipt,
   buildStrictFullAutoFinalVerificationReceipt,
   strictFullAutoAcceptanceHash,
@@ -8,7 +6,6 @@ import {
   verifyStrictFullAutoAcceptanceReceipt,
 } from '../../paper-domain/automation/strict-full-auto-acceptance-contract.mjs';
 import {
-  LIVE_VERIFICATION_MAX_DURATION_MS,
   RECOVERY_REEXECUTION_SAFE_STEPS,
   assertInvocationOutput,
   failureRecord,
@@ -18,9 +15,14 @@ import {
   transitionedState,
   verifyState,
 } from './strict-full-auto-acceptance-state.mjs';
+import {
+  StrictFullAutoAcceptanceLiveVerification,
+} from './strict-full-auto-acceptance-live-verification.mjs';
 
-export class StrictFullAutoAcceptanceOrchestrator {
+export class StrictFullAutoAcceptanceOrchestrator
+  extends StrictFullAutoAcceptanceLiveVerification {
   constructor({ repository, commandRunner, now = () => new Date().toISOString() } = {}) {
+    super();
     if (!repository || typeof repository.inspectPlan !== 'function'
       || !commandRunner || typeof commandRunner.run !== 'function') {
       throw new Error('strict_full_auto_acceptance_dependencies_required');
@@ -32,6 +34,16 @@ export class StrictFullAutoAcceptanceOrchestrator {
 
   plan() {
     return this.repository.inspectPlan();
+  }
+
+  repositoryCapability(name) {
+    if (typeof this.repository[name] === 'function') {
+      return this.repository[name].bind(this.repository);
+    }
+    if (typeof this.repository.controlStore?.[name] === 'function') {
+      return this.repository.controlStore[name].bind(this.repository.controlStore);
+    }
+    return null;
   }
 
   assertStablePlan(plan, lease) {
@@ -92,123 +104,46 @@ export class StrictFullAutoAcceptanceOrchestrator {
     if (leasedContext && leasedContext.planHash !== plan.planHash) {
       throw new Error('strict_full_auto_acceptance_live_verification_plan_drift');
     }
-    const state = this.repository.readState(plan);
-    if (!state) return Object.freeze({
-      version: 1,
-      kind: 'StrictFullAutoAcceptanceStatus',
-      planHash: plan.planHash,
-      status: 'not-started',
-      completedStepCount: 0,
-      totalStepCount: plan.steps.length,
-      strictFullAutoAccepted: false,
-      receipt: null,
-      liveVerificationReceipt: null,
+    const disposition = this.repositoryCapability('planDisposition')?.(plan)
+      || Object.freeze({
+      status: 'active', activePlanHash: plan.planHash, supersededByPlanHash: null,
     });
+    const state = this.repository.readState(plan);
+    if (!state) return this.statusReport(plan, null, null, null, disposition);
     const verifiedState = verifyState(plan, state);
     const receipt = this.repository.readReceipt(plan);
-    let liveVerificationReceipt = null;
-    if (verifiedState.status === 'complete') {
-      if (!leasedContext) {
-        return this.withExclusiveLease(plan, 'live-status', ({ lease, signal }) => this.status({
-          leasedContext: { planHash: plan.planHash, lease, signal },
-        }));
+    if (disposition.status === 'superseded') {
+      const verifiedReceipt = verifiedState.status === 'complete'
+        ? this.verifyCompleteCheckpoint(plan, verifiedState) : null;
+      if (verifiedState.status !== 'complete' && receipt) {
+        throw new Error('strict_full_auto_acceptance_premature_receipt');
       }
-      verifyStrictFullAutoAcceptanceReceipt({
-        plan,
-        receipt,
-        stepReceipts: verifiedState.completedStepReceipts,
-        finalVerificationReceipt: verifiedState.finalVerificationReceipt,
-      });
-      if (receipt.receiptHash !== verifiedState.acceptanceReceiptHash) {
-        throw new Error('strict_full_auto_acceptance_state_receipt_binding_invalid');
-      }
-      const liveVerificationStartedAt = this.now();
-      const verificationController = new AbortController();
-      if (leasedContext.signal.aborted) {
-        verificationController.abort(leasedContext.signal.reason);
-      } else {
-        leasedContext.signal.addEventListener('abort', () => {
-          verificationController.abort(leasedContext.signal.reason);
-        }, { once: true });
-      }
-      const verificationTasks = plan.steps.map(async (step) => {
-        try {
-          const output = await this.runBoundCommand({
-            lease: leasedContext.lease,
-            plan, step, phase: 'verify', invocation: step.verify,
-            signal: verificationController.signal,
-          });
-          return assertInvocationOutput(
-            step.verify, output, `${step.stepId}:live-status-verify`,
-          ).outputHash;
-        } catch (error) {
-          if (!verificationController.signal.aborted) verificationController.abort(error);
-          throw error;
-        }
-      });
-      let verificationOutputHashes;
-      try {
-        verificationOutputHashes = await Promise.all(verificationTasks);
-      } catch (error) {
-        if (!verificationController.signal.aborted) verificationController.abort(error);
-        await Promise.allSettled(verificationTasks);
-        throw error;
-      }
-      let finalVerificationOutputHash;
-      try {
-        const finalStep = finalVerificationStep(plan);
-        const finalOutput = await this.runBoundCommand({
-          lease: leasedContext.lease,
-          plan,
-          step: finalStep,
-          phase: 'verify',
-          invocation: plan.finalVerification,
-          signal: verificationController.signal,
-        });
-        finalVerificationOutputHash = assertInvocationOutput(
-          plan.finalVerification,
-          finalOutput,
-          `${STRICT_FULL_AUTO_ACCEPTANCE_FINAL_VERIFICATION_STEP_ID}:live-status-verify`,
-        ).outputHash;
-      } catch (error) {
-        if (!verificationController.signal.aborted) verificationController.abort(error);
-        throw error;
-      }
-      const liveVerificationObservedAt = this.now();
-      const liveVerificationDurationMs = Date.parse(liveVerificationObservedAt)
-        - Date.parse(liveVerificationStartedAt);
-      if (!Number.isSafeInteger(liveVerificationDurationMs)
-        || liveVerificationDurationMs < 0
-        || liveVerificationDurationMs > LIVE_VERIFICATION_MAX_DURATION_MS) {
-        throw new Error('strict_full_auto_acceptance_live_verification_window_invalid');
-      }
-      const finalPlan = verifyStrictFullAutoAcceptancePlan(this.repository.inspectPlan());
-      if (finalPlan.planHash !== plan.planHash) {
-        throw new Error('strict_full_auto_acceptance_live_verification_plan_drift');
-      }
-      liveVerificationReceipt = buildStrictFullAutoLiveVerificationReceipt({
-        plan,
-        checkpointReceipt: receipt,
-        verificationOutputHashes,
-        finalVerificationOutputHash,
-        startedAt: liveVerificationStartedAt,
-        observedAt: liveVerificationObservedAt,
-        maximumDurationMs: LIVE_VERIFICATION_MAX_DURATION_MS,
-      });
-    } else if (receipt) {
-      throw new Error('strict_full_auto_acceptance_premature_receipt');
+      return this.statusReport(plan, verifiedState, verifiedReceipt, null, disposition);
     }
-    return Object.freeze({
-      version: 1,
-      kind: 'StrictFullAutoAcceptanceStatus',
-      planHash: plan.planHash,
-      status: verifiedState.status,
-      completedStepCount: verifiedState.completedStepReceipts.length,
-      totalStepCount: plan.steps.length,
-      strictFullAutoAccepted: liveVerificationReceipt?.strictFullAutoAccepted === true,
-      receipt: receipt || null,
-      liveVerificationReceipt,
+    if (verifiedState.status !== 'complete') {
+      if (receipt) throw new Error('strict_full_auto_acceptance_premature_receipt');
+      return this.statusReport(plan, verifiedState, null, null, disposition);
+    }
+    if (!leasedContext) {
+      return this.withExclusiveLease(plan, 'live-status', ({ lease, signal }) => this.status({
+        leasedContext: { planHash: plan.planHash, lease, signal },
+      }));
+    }
+    const checkpointReceipt = this.verifyCompleteCheckpoint(plan, verifiedState);
+    const liveVerificationReceipt = await this.runLiveVerificationUnderLease({
+      plan,
+      state: verifiedState,
+      receipt: checkpointReceipt,
+      lease: leasedContext.lease,
+      signal: leasedContext.signal,
     });
+    return this.statusReport(
+      plan,
+      verifiedState,
+      checkpointReceipt,
+      liveVerificationReceipt,
+      disposition,
+    );
   }
 
   async execute({ expectedPlanHash } = {}) {
@@ -217,16 +152,48 @@ export class StrictFullAutoAcceptanceOrchestrator {
     if (expectedPlanHash !== plan.planHash) {
       throw new Error('strict_full_auto_acceptance_explicit_plan_hash_required');
     }
-    await this.withExclusiveLease(plan, 'execute', ({ lease, signal }) => (
-      this.executeUnderLease({ plan, lease, signal })
-    ));
-    return this.status();
+    return this.withExclusiveLease(plan, 'execute', async ({ lease, signal }) => {
+      this.repositoryCapability('ensureCandidate')?.(plan, { lease });
+      const state = verifyState(
+        plan,
+        await this.executeUnderLease({ plan, lease, signal }),
+      );
+      if (state.status !== 'complete') {
+        throw new Error('strict_full_auto_acceptance_execution_incomplete');
+      }
+      const receipt = this.verifyCompleteCheckpoint(plan, state);
+      const liveVerificationReceipt = await this.convergeCompleteStateUnderLease({
+        plan, state, receipt, lease, signal,
+      });
+      this.repositoryCapability('writeLiveReceipt')?.(
+        plan, liveVerificationReceipt, { lease },
+      );
+      this.repositoryCapability('promoteCandidate')?.(
+        plan, liveVerificationReceipt, { lease },
+      );
+      const disposition = this.repositoryCapability('planDisposition')?.(plan)
+        || Object.freeze({
+        status: 'active', activePlanHash: plan.planHash, supersededByPlanHash: null,
+      });
+      return this.statusReport(
+        plan, state, receipt, liveVerificationReceipt, disposition,
+      );
+    });
   }
 
   async executeUnderLease({ plan, lease, signal }) {
     let state = this.repository.readState(plan);
-    if (!state) this.repository.assertRuntimeRootAbsent(plan);
-    state = state ? verifyState(plan, state) : initialState(plan, this.now, lease);
+    let inheritedRuntimeRootActivation = null;
+    if (!state) {
+      inheritedRuntimeRootActivation = this.repositoryCapability(
+        'prepareCandidateRuntimeRootActivation',
+      )?.(plan, { lease }) || null;
+      if (!inheritedRuntimeRootActivation) this.repository.assertRuntimeRootAbsent(plan);
+    }
+    state = state ? verifyState(plan, state) : initialState(plan, this.now, lease, {
+      runtimeRootActivationHash:
+        inheritedRuntimeRootActivation?.runtimeRootActivationHash || null,
+    });
     if (!this.repository.readState(plan)) {
       this.repository.writeState(plan, state, { lease, expectedRevision: null });
     }

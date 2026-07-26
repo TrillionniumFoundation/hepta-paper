@@ -393,6 +393,7 @@ function runFixtureHarness(t, { ignoreArm = false, dropLastCell = false, tamperP
   const selector = buildCampaignBenchmarkSelector({ benchmarkId: 'ml_algorithm_benchmark', datasetMounts: [] });
   const adapters = adapterSet(selector.experimentDesign.benchmarkHarness.armProtocolSet, { identical: identicalAdapters });
   let invocationCount = 0;
+  const resourceBudgets = [];
   const receipt = executeSystemBenchmarkHarness({
     benchmarkSelector: selector,
     datasetMounts: [],
@@ -409,6 +410,7 @@ function runFixtureHarness(t, { ignoreArm = false, dropLastCell = false, tamperP
     ...(nowEpochMs === undefined ? {} : { nowEpochMs }),
     runArmBatch({ batch, outputDirectory }) {
       invocationCount += 1;
+      resourceBudgets.push(batch.resourceBudget);
       const effectiveBatch = {
         ...batch,
         benchmarkId: selector.benchmarkId,
@@ -425,7 +427,7 @@ function runFixtureHarness(t, { ignoreArm = false, dropLastCell = false, tamperP
       return worker;
     },
   });
-  return { receipt, invocationCount };
+  return { receipt, invocationCount, resourceBudgets };
 }
 
 test('benchmark harness fails before dispatch when its absolute deadline or aggregate CPU budget cannot cover every execution unit', (t) => {
@@ -435,6 +437,27 @@ test('benchmark harness fails before dispatch when its absolute deadline or aggr
   const cpuExhausted = runFixtureHarness(t, { aggregateCpuSeconds: 2 });
   assert.equal(cpuExhausted.invocationCount, 0);
   assert.ok(cpuExhausted.receipt.blockers.includes('benchmark_harness_aggregate_cpu_budget_exhausted'));
+});
+
+test('benchmark harness keeps per-unit wall-time limits reproducible while enforcing its absolute deadline', (t) => {
+  const observedTimes = [0, 10, 20];
+  let timeReadCount = 0;
+  const execution = runFixtureHarness(t, {
+    absoluteDeadlineEpochMs: 300,
+    nowEpochMs: () => observedTimes[Math.min(timeReadCount++, observedTimes.length - 1)],
+  });
+  assert.equal(
+    execution.receipt.status,
+    'system_benchmark_harness_verified',
+    JSON.stringify(execution.receipt.blockers),
+  );
+  assert.deepEqual(
+    execution.resourceBudgets.map((budget) => budget.timeoutMs),
+    [100, 100, 100],
+  );
+  assert.ok(execution.resourceBudgets.every(
+    (budget) => budget.absoluteDeadlineEpochMs === 300,
+  ));
 });
 
 test('academic harness proves signed dataset use and one observed process per evaluation cell', (t) => {

@@ -51,6 +51,7 @@ export async function executeCampaignResearchVerificationNode({
   workspace,
   manuscript,
   executionSignal,
+  executionResources = null,
 } = {}) {
   const result = await primitives.release.verifyResearch({
     campaign,
@@ -60,6 +61,8 @@ export async function executeCampaignResearchVerificationNode({
     manuscript,
     formalVerificationReceipt: context.formalVerificationNode?.result || null,
     executionSignal,
+    assertExternalSideEffectReady:
+      executionResources?.assertExternalSideEffectReady || null,
   });
   if (result?.status !== 'campaign_research_verification_completed'
     || !result?.researchReportHash

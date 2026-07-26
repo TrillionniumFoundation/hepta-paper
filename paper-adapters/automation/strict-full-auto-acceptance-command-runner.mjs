@@ -31,6 +31,19 @@ const COMMANDS = Object.freeze({
   'store': 'paper-core/bin/hepta-store.mjs',
 });
 
+// A configured reproducibility verifier may legitimately use the full four-hour
+// child budget. Keep a bounded grace window for result validation and teardown.
+const DEFAULT_EXECUTION_TIMEOUT_MS = (4 * 60 * 60 + 15 * 60) * 1000;
+// Exit 2 is reserved by every plan-bound verifier for a successfully produced,
+// semantically complete observation that is not ready yet. Exit 1 (and every
+// other non-zero code) is an infrastructure or policy failure and must never
+// authorize a mutating renewal.
+const SEMANTIC_NOT_READY_EXIT_CODE = 2;
+const REVIEWER_SERVICE_CREDENTIAL_ROOT_REFERENCE_ID =
+  'formal-reviewer-service-credential-root';
+const REVIEWER_POOL_REFERENCE_ID = 'formal-reviewer-principal';
+const MAXIMUM_OPAQUE_CREDENTIAL_BYTES = 64 * 1024;
+
 const STEP_COMMANDS = Object.freeze({
   migration: new Set(['store']),
   'state-provisioning': new Set([
@@ -62,13 +75,139 @@ function parseChildJson(stdout, label) {
   }
 }
 
+function jsonPointer(value, pointer) {
+  return pointer.split('/').slice(1).reduce((current, key) => (
+    current && Object.prototype.hasOwnProperty.call(current, key) ? current[key] : undefined
+  ), value);
+}
+
+function reportedSkipCount(value) {
+  if (Array.isArray(value)) {
+    return value.reduce((sum, item) => sum + reportedSkipCount(item), 0);
+  }
+  if (!value || typeof value !== 'object') return 0;
+  return Object.entries(value).reduce((sum, [key, item]) => {
+    if (['skipped', 'skipCount', 'skippedCount'].includes(key)
+      && ((Number.isSafeInteger(item) && item > 0) || item === true)) {
+      return sum + (item === true ? 1 : item);
+    }
+    return sum + reportedSkipCount(item);
+  }, 0);
+}
+
+function isCompleteSemanticNotReadyOutput(output, invocation) {
+  if (['error', 'errors', 'fatal', 'stack', 'exception'].some((key) => (
+    Object.prototype.hasOwnProperty.call(output, key)
+  ))) return false;
+  return invocation.assertions.length > 0 && invocation.assertions.every((assertion) => (
+    jsonPointer(output, assertion.path) !== undefined
+  ));
+}
+
+function reviewerServiceCredentialOverrides({ plan, invocation, overrides }) {
+  if (!Object.prototype.hasOwnProperty.call(
+    invocation.environmentReferences,
+    'HEPTA_REVIEWER_PRINCIPAL_POOL_CONFIG',
+  )) return Object.freeze({});
+  const references = new Map(plan.referenceBindings.map((item) => (
+    [item.referenceId, item]
+  )));
+  const pool = references.get(REVIEWER_POOL_REFERENCE_ID);
+  const root = references.get(REVIEWER_SERVICE_CREDENTIAL_ROOT_REFERENCE_ID);
+  const variableNames =
+    pool?.documentPins?.reviewerServiceTokenEnvironmentVariables;
+  let rootStat;
+  try {
+    rootStat = fs.lstatSync(root?.resolvedPath || '', { bigint: true });
+  } catch (cause) {
+    throw new Error(
+      'strict_full_auto_acceptance_reviewer_service_credential_root_invalid',
+      { cause },
+    );
+  }
+  if (root?.kind !== 'opaque-directory-reference'
+    || !rootStat.isDirectory() || rootStat.isSymbolicLink()
+    || fs.realpathSync(root.resolvedPath) !== root.resolvedPath
+    || (Number(rootStat.mode) & 0o077) !== 0
+    || String(rootStat.uid) !== String(process.getuid?.())
+    || !Array.isArray(variableNames) || variableNames.length < 4
+    || variableNames.length > 16
+    || new Set(variableNames).size !== variableNames.length
+    || variableNames.some(
+      (name) => !/^[A-Z][A-Z0-9_]{1,122}_FILE$/.test(String(name || '')),
+    )) {
+    throw new Error(
+      'strict_full_auto_acceptance_reviewer_service_credential_root_invalid',
+    );
+  }
+  const observedRootIdentity = strictFullAutoAcceptanceHash({
+    version: 1,
+    kind: 'OpaqueSecretReferenceIdentity',
+    referenceId: root.referenceId,
+    subjectId: root.subjectId,
+    resolvedPath: root.resolvedPath,
+    device: String(rootStat.dev),
+    inode: String(rootStat.ino),
+    mode: Number(rootStat.mode) & 0o7777,
+    uid: String(rootStat.uid),
+    gid: String(rootStat.gid),
+    size: String(rootStat.size),
+    mtimeNanoseconds: String(rootStat.mtimeNs),
+  });
+  if (observedRootIdentity !== root.identity) {
+    throw new Error(
+      'strict_full_auto_acceptance_reviewer_service_credential_root_changed',
+    );
+  }
+  const selected = {};
+  const fileIdentities = new Set();
+  for (const name of variableNames) {
+    if (Object.prototype.hasOwnProperty.call(overrides, name)
+      || Object.prototype.hasOwnProperty.call(
+        plan.operationalEnvironment,
+        name,
+      )) {
+      throw new Error(
+        `strict_full_auto_acceptance_reviewer_service_credential_conflict:${name}`,
+      );
+    }
+    const candidate = path.join(root.resolvedPath, name);
+    let stat;
+    try {
+      stat = fs.lstatSync(candidate, { bigint: true });
+    } catch (cause) {
+      throw new Error(
+        `strict_full_auto_acceptance_reviewer_service_credential_invalid:${name}`,
+        { cause },
+      );
+    }
+    const fileIdentity = `${String(stat.dev)}:${String(stat.ino)}`;
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1n
+      || fs.realpathSync(candidate) !== candidate
+      || path.dirname(candidate) !== root.resolvedPath
+      || (Number(stat.mode) & 0o077) !== 0
+      || String(stat.uid) !== String(process.getuid?.())
+      || stat.size < 1n || stat.size > BigInt(MAXIMUM_OPAQUE_CREDENTIAL_BYTES)
+      || fileIdentities.has(fileIdentity)) {
+      throw new Error(
+        `strict_full_auto_acceptance_reviewer_service_credential_invalid:${name}`,
+      );
+    }
+    fileIdentities.add(fileIdentity);
+    // Only the path is delivered. This process deliberately never opens or
+    // reads the opaque credential bytes.
+    selected[name] = candidate;
+  }
+  return Object.freeze(selected);
+}
+
 export class StrictFullAutoAcceptanceCommandRunner {
   constructor({
     workspaceRoot,
     environment = process.env,
     executable = process.execPath,
     runProcess = runBoundedChildProcess,
-    timeoutMs = 60 * 60 * 1000,
+    timeoutMs = DEFAULT_EXECUTION_TIMEOUT_MS,
     verificationTimeoutMs = 15 * 60 * 1000,
   } = {}) {
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1
@@ -112,6 +251,14 @@ export class StrictFullAutoAcceptanceCommandRunner {
       stepId: step.stepId,
     });
     Object.assign(overrides, plan.operationalEnvironment);
+    Object.assign(overrides, reviewerServiceCredentialOverrides({
+      plan,
+      invocation,
+      overrides,
+    }));
+    // Bind the public Elan installation through the HEPTA-namespaced plan
+    // surface instead of admitting an arbitrary ambient ELAN_HOME.
+    overrides.ELAN_HOME = plan.operationalEnvironment.HEPTA_FORMAL_ELAN_HOME;
     const activationPointer = plan.operationalEnvironment
       .HEPTA_AUTONOMOUS_EMPIRICAL_PLUGIN_ACTIVATION_POINTER;
     const activationStep = plan.steps.find((candidate) => (
@@ -156,9 +303,55 @@ export class StrictFullAutoAcceptanceCommandRunner {
       maximumCapturedBytes: 4 * 1024 * 1024,
       signal,
     });
-    if (result.exitCode !== 0 || result.timedOut || result.aborted || result.outputTruncated) {
-      throw new Error(`strict_full_auto_acceptance_child_failed:${step.stepId}:${phase}`);
+    if (result.timedOut || result.aborted || result.outputTruncated) {
+      const error = new Error(
+        `strict_full_auto_acceptance_child_infrastructure_failed:${step.stepId}:${phase}`,
+      );
+      error.code = 'STRICT_FULL_AUTO_ACCEPTANCE_INFRASTRUCTURE_FAILURE';
+      throw error;
     }
-    return parseChildJson(result.stdout, `${step.stepId}:${phase}`);
+    let output;
+    try {
+      output = parseChildJson(result.stdout, `${step.stepId}:${phase}`);
+    } catch (cause) {
+      const error = new Error(
+        `strict_full_auto_acceptance_child_infrastructure_failed:${step.stepId}:${phase}`,
+        { cause },
+      );
+      error.code = 'STRICT_FULL_AUTO_ACCEPTANCE_INFRASTRUCTURE_FAILURE';
+      throw error;
+    }
+    if (result.exitCode !== 0 && phase === 'verify') {
+      const skips = reportedSkipCount(output);
+      const failedAssertion = invocation.assertions.find((assertion) => (
+        jsonPointer(output, assertion.path) !== assertion.equals
+      ));
+      if (result.exitCode === SEMANTIC_NOT_READY_EXIT_CODE
+        && skips === 0 && failedAssertion
+        && isCompleteSemanticNotReadyOutput(output, invocation)) {
+        const error = new Error(
+          `strict_full_auto_acceptance_child_not_ready:${step.stepId}:${failedAssertion.path}`,
+        );
+        error.code = 'STRICT_FULL_AUTO_ACCEPTANCE_NOT_READY';
+        error.assertionPath = failedAssertion.path;
+        error.outputHash = strictFullAutoAcceptanceHash(output);
+        throw error;
+      }
+      const error = new Error(
+        `strict_full_auto_acceptance_child_infrastructure_failed:${step.stepId}:${phase}`,
+      );
+      error.code = skips === 0
+        ? 'STRICT_FULL_AUTO_ACCEPTANCE_INFRASTRUCTURE_FAILURE'
+        : 'STRICT_FULL_AUTO_ACCEPTANCE_POLICY_FAILURE';
+      throw error;
+    }
+    if (result.exitCode !== 0) {
+      const error = new Error(
+        `strict_full_auto_acceptance_child_failed:${step.stepId}:${phase}`,
+      );
+      error.code = 'STRICT_FULL_AUTO_ACCEPTANCE_CHILD_ACTION_FAILURE';
+      throw error;
+    }
+    return output;
   }
 }

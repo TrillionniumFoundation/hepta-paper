@@ -790,6 +790,8 @@ test('systemd and Kubernetes contracts host canonical resident probes without se
   assert.match(kubernetes,
     /hepta\.paper\/nested-runtime-qualification-receipt-sha256: REPLACE_WITH_SHA256_OF_SIGNED_QUALIFICATION_RECEIPT/);
   assert.match(kubernetes,
+    /hepta\.paper\/nested-runtime-conformance-receipt-sha256: REPLACE_WITH_SHA256_OF_CURRENT_POD_SIGNED_CONFORMANCE_RECEIPT/);
+  assert.match(kubernetes,
     /hepta\.paper\/nested-runtime-qualification-signer: REPLACE_WITH_INDEPENDENT_QUALIFIER_KEY_ID/);
   assert.match(kubernetes,
     /hepta\.paper\/nested-runtime-conformance: bind-rw-uid-gid-network-none-memory-cpu-pids-parent-pod-v1/);
@@ -840,21 +842,23 @@ test('systemd and Kubernetes contracts host canonical resident probes without se
     /claimName: hepta-autonomous-research-public-capability-config/);
   assert.match(kubernetes,
     /secretRef:\n\s+name: hepta-autonomous-research-provider-tokens/);
-  const noGoGuardStart = kubernetes.indexOf(
-    '- name: deployment-no-go-until-nested-runtime-qualified',
+  const qualificationGateStart = kubernetes.indexOf(
+    '- name: nested-runtime-platform-qualification-gate',
   );
   const applicationStart = kubernetes.indexOf('      containers:');
-  assert.ok(noGoGuardStart > 0);
-  assert.ok(applicationStart > noGoGuardStart);
-  const noGoGuard = kubernetes.slice(noGoGuardStart, applicationStart);
-  assert.match(noGoGuard,
-    /image: REPLACE_WITH_PINNED_QUALIFICATION_GUARD_IMAGE_DIGEST/);
-  assert.match(noGoGuard,
-    /NO-GO: install a signed, externally qualified nested-container runtime overlay/);
-  assert.match(noGoGuard, /exit 78/);
-  assert.match(noGoGuard, /runAsUser: 10001/);
-  assert.match(noGoGuard, /allowPrivilegeEscalation: false/);
-  assert.match(noGoGuard, /readOnlyRootFilesystem: true/);
+  assert.ok(qualificationGateStart > 0);
+  assert.ok(applicationStart > qualificationGateStart);
+  const qualificationGate = kubernetes.slice(qualificationGateStart, applicationStart);
+  assert.match(qualificationGate, /image: REPLACE_WITH_PINNED_HEPTA_IMAGE_DIGEST/);
+  assert.match(qualificationGate,
+    /paper-core\/bin\/nested-runtime-platform-qualification\.mjs/);
+  assert.match(qualificationGate, /fieldPath: metadata\.uid/);
+  assert.match(qualificationGate,
+    /HEPTA_NESTED_RUNTIME_CONFORMANCE_RECEIPT_SHA256/);
+  assert.doesNotMatch(qualificationGate, /exit 78/);
+  assert.match(qualificationGate, /runAsUser: 10001/);
+  assert.match(qualificationGate, /allowPrivilegeEscalation: false/);
+  assert.match(qualificationGate, /readOnlyRootFilesystem: true/);
   assert.match(kubernetes,
     /name: qualified-runtime-run\n\s+emptyDir:\n\s+medium: Memory/);
   assert.match(kubernetes,
@@ -999,17 +1003,17 @@ test('systemd and Kubernetes contracts host canonical resident probes without se
   assert.match(operations, /datasetMounts\[\]\.source/);
   assert.match(operations,
     /remaining persisted campaign wall-time budget plus a minimum 15-minute/);
-  assert.match(operations, /intentionally \*\*No-Go\*\*/);
-  assert.match(operations, /deployment-no-go-until-nested-runtime-qualified/);
+  assert.match(operations, /checked-in Kubernetes manifest is fail-closed/);
+  assert.match(operations, /nested-runtime-platform-qualification-gate/);
   assert.match(operations, /RuntimeClass name alone is only a\s+CRI selector/);
-  assert.match(operations, /independent qualifier has signed a receipt/);
+  assert.match(operations, /static qualification payload binds one exact platform profile/);
   assert.match(operations, /fixed-digest worker/);
   assert.match(operations, /bind sources are visible and writable/);
   assert.match(operations, /parent Pod resource ceiling/);
   assert.match(operations, /privileged or unconfined container/);
   assert.match(operations,
-    /current repository has no CLI that verifies this platform receipt and\s+conformance set/);
-  assert.match(operations, /trusting annotations by\s+themselves is not qualification/);
+    /operator nested-runtime-platform-qualification/);
+  assert.match(operations, /trusting\s+annotations by\s+themselves is not qualification/);
   assert.match(operations, /AUTHORITY_TRUST_STORE\.json/);
   assert.match(operations, /OWNER_TRUST_STORE\.json/);
   assert.match(operations, /AUTONOMOUS_RESEARCH_INTAKE_AUTHORITY_BOOTSTRAP\.json/);

@@ -8,6 +8,10 @@ import {
   readFormalProjectClosure,
 } from '../../paper-adapters/research-verify/formal-project-closure-reader.mjs';
 import { createFormalProjectSnapshotRepository } from '../../paper-adapters/research-verify/formal-project-snapshot-repository.mjs';
+import {
+  inspectWorkspaceExecutionSnapshot,
+  sourceTreeExcludedNames,
+} from '../../paper-adapters/runtime/execution-snapshot.mjs';
 import { createLakeFormalVerifier } from '../../paper-adapters/research-verify/lake-formal-verifier.mjs';
 import {
   DEFAULT_LAKE_FORMAL_BUILD_TIMEOUT_MS,
@@ -107,6 +111,19 @@ test('formal closure binds .lake package and external dependency modes while sna
     const seal = snapshot.seal();
     assert.equal(seal.writableFileCount, 0);
     assert.equal(seal.writableDirectoryCount, 0);
+    const executionSnapshot = inspectWorkspaceExecutionSnapshot(
+      snapshot.scopeRoot,
+      { excludeNames: sourceTreeExcludedNames(snapshot.scopeRoot) },
+    );
+    assert.deepEqual(executionSnapshot.blockers, []);
+    assert.equal(
+      seal.workspaceExecutionMerkleHash,
+      executionSnapshot.merkleHash,
+    );
+    assert.equal(
+      seal.workspaceExecutionManifestHash,
+      executionSnapshot.manifestHash,
+    );
   } finally {
     snapshot.cleanup();
   }

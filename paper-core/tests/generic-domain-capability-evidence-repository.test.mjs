@@ -18,6 +18,7 @@ import {
 } from '../../paper-composition/automation/generic-domain-capability-evidence-publication.mjs';
 import {
   buildGenericDomainCapabilityEvidenceCandidate,
+  composeStrongGenericDomainCapabilityEvidenceStatus,
   resolveFormalDomainQualificationEvidence,
 } from '../../paper-composition/automation/generic-domain-capability-evidence-convergence.mjs';
 import {
@@ -52,6 +53,68 @@ const evidence = Object.freeze({
   venueProfile: {},
   venueRequirementIr: {},
 });
+
+function strongStatusFixture({
+  paperId = 'paper-a',
+  campaignId = 'campaign-a',
+  persistedEvidence = null,
+  candidate = null,
+  semanticReady = true,
+} = {}) {
+  const campaignPlanHash = hashRecord('GenericStatusCampaignPlanFixture', {
+    campaignId,
+  });
+  const dynamicFormalExecutionAuthority = Object.freeze({
+    dynamicFormalExecutionAuthorityHash:
+      hashRecord('GenericStatusFormalAuthorityFixture', { campaignId }),
+  });
+  const selectedEvidence = persistedEvidence || Object.freeze({
+    ...evidence,
+    dynamicFormalExecutionAuthority,
+    experimentIrExecutionAuthorityReceipt: Object.freeze({
+      campaignId,
+      paperId,
+      campaignPlanHash,
+    }),
+    externalResearchReplayReceipt: Object.freeze({ campaignId, paperId }),
+    externalResearchReplayRequest: Object.freeze({ campaignId, paperId }),
+    independentFormalReviewReceipt: Object.freeze({ campaignId, paperId }),
+    priorArtClaimAlignmentReceipt: Object.freeze({ paperId }),
+    researchAgendaIr: Object.freeze({ paperId }),
+    venueRequirementIr: Object.freeze({ paperId }),
+  });
+  const selectedCandidate = candidate || selectedEvidence;
+  const authority = Object.freeze({
+    ready: true,
+    campaignId,
+    paperId,
+    campaignPlanHash,
+    blockers: Object.freeze([]),
+  });
+  return Object.freeze({
+    dynamicFormalExecutionAuthority,
+    report: Object.freeze({
+      genericDomainCapabilityReady: semanticReady,
+      genericDomainCapabilityBlockers: semanticReady
+        ? Object.freeze([])
+        : Object.freeze(['generic_domain_capability_semantic_fixture_blocked']),
+      genericDomainCapabilityEvidenceInspection: Object.freeze({
+        ready: true,
+        evidence: selectedEvidence,
+        evidenceHash: genericDomainCapabilityEvidenceHash(selectedEvidence),
+        blockers: Object.freeze([]),
+      }),
+      genericDomainCapabilityEvidenceCandidate: selectedCandidate,
+      autonomousResearchAgendaAuthorityInspection: Object.freeze({
+        ...authority,
+        priorArtClaimAlignmentReady: true,
+      }),
+      experimentIrExecutionAuthorityInspection: authority,
+      autonomousResearchVenueRequirementAuthorityInspection: authority,
+      autonomousResearchAssuranceAuthorityInspection: authority,
+    }),
+  });
+}
 
 function temporaryRoot(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-generic-evidence-'));
@@ -181,6 +244,97 @@ test('generic capability evidence is loaded only from the canonical private file
   });
   assert.equal(drift.ready, false);
   assert.ok(drift.blockers.includes('generic_domain_capability_evidence_path_drift'));
+});
+
+test('strong generic status verifies authority, semantics, canonical hash, and lineage without returning evidence', () => {
+  const fixture = strongStatusFixture();
+  const status = composeStrongGenericDomainCapabilityEvidenceStatus({
+    root: '/fixture/root',
+    runtimeRoot: '/fixture/runtime',
+    paperId: 'paper-a',
+    environment: {},
+    readinessQuery: () => ({ report: fixture.report }),
+    currentFormalAuthorityAsserter: (authority) => ({ authority }),
+  });
+  assert.equal(status.ready, true);
+  assert.equal(status.currentAuthorityReady, true);
+  assert.equal(status.semanticReady, true);
+  assert.equal(status.canonicalHashReady, true);
+  assert.equal(status.paperBound, true);
+  assert.equal(status.campaignBound, true);
+  assert.equal(status.paperId, 'paper-a');
+  assert.equal(status.campaignId, 'campaign-a');
+  assert.equal(status.evidenceHash,
+    fixture.report.genericDomainCapabilityEvidenceInspection.evidenceHash);
+  assert.equal(Object.hasOwn(status, 'evidence'), false);
+  assert.equal(Object.hasOwn(status, 'candidate'), false);
+  assert.ok(JSON.stringify(status).length < 2_000);
+});
+
+test('strong generic status rejects each shape-only trust shortcut independently', () => {
+  const fixture = strongStatusFixture();
+  const common = {
+    root: '/fixture/root',
+    runtimeRoot: '/fixture/runtime',
+    paperId: 'paper-a',
+    environment: {},
+    currentFormalAuthorityAsserter: (authority) => ({ authority }),
+  };
+  const staleAuthority = composeStrongGenericDomainCapabilityEvidenceStatus({
+    ...common,
+    readinessQuery: () => ({ report: fixture.report }),
+    currentFormalAuthorityAsserter: () => {
+      throw new Error('formal authority drifted');
+    },
+  });
+  assert.equal(staleAuthority.ready, false);
+  assert.equal(staleAuthority.currentAuthorityReady, false);
+
+  const semantic = strongStatusFixture({ semanticReady: false });
+  const semanticallyInvalid = composeStrongGenericDomainCapabilityEvidenceStatus({
+    ...common,
+    readinessQuery: () => ({ report: semantic.report }),
+  });
+  assert.equal(semanticallyInvalid.ready, false);
+  assert.equal(semanticallyInvalid.semanticReady, false);
+
+  const driftedCandidate = Object.freeze({
+    ...fixture.report.genericDomainCapabilityEvidenceCandidate,
+    venueProfile: Object.freeze({ injected: true }),
+  });
+  const canonical = strongStatusFixture({ candidate: driftedCandidate });
+  const canonicallyDrifted = composeStrongGenericDomainCapabilityEvidenceStatus({
+    ...common,
+    readinessQuery: () => ({ report: canonical.report }),
+  });
+  assert.equal(canonicallyDrifted.ready, false);
+  assert.equal(canonicallyDrifted.canonicalHashReady, false);
+
+  const wrongPaper = composeStrongGenericDomainCapabilityEvidenceStatus({
+    ...common,
+    paperId: 'paper-b',
+    readinessQuery: () => ({ report: fixture.report }),
+  });
+  assert.equal(wrongPaper.ready, false);
+  assert.equal(wrongPaper.paperBound, false);
+
+  const campaignDriftEvidence = Object.freeze({
+    ...fixture.report.genericDomainCapabilityEvidenceInspection.evidence,
+    externalResearchReplayReceipt: Object.freeze({
+      campaignId: 'campaign-b',
+      paperId: 'paper-a',
+    }),
+  });
+  const campaign = strongStatusFixture({
+    persistedEvidence: campaignDriftEvidence,
+    candidate: campaignDriftEvidence,
+  });
+  const campaignDrifted = composeStrongGenericDomainCapabilityEvidenceStatus({
+    ...common,
+    readinessQuery: () => ({ report: campaign.report }),
+  });
+  assert.equal(campaignDrifted.ready, false);
+  assert.equal(campaignDrifted.campaignBound, false);
 });
 
 test('missing, public, symlinked, and extra-field evidence fails closed', (t) => {

@@ -9,7 +9,6 @@ import { hasExactObjectKeys as exactKeys } from '../../workflow-kernel/exact-obj
 export const RECOVERY_REEXECUTION_SAFE_STEPS = new Set([
   'online-transition',
   'production-campaign-qualification',
-  'generic-domain-capability-convergence',
 ]);
 // The live pass has two bounded phases: concurrent per-step verification (15m)
 // followed by an independent aggregate verification (15m), plus one minute for
@@ -45,7 +44,9 @@ function signedState(value) {
   return Object.freeze({ ...body, stateHash: strictFullAutoAcceptanceHash(body) });
 }
 
-export function initialState(plan, now, lease) {
+export function initialState(plan, now, lease, {
+  runtimeRootActivationHash = null,
+} = {}) {
   return signedState({
     version: 2,
     kind: 'StrictFullAutoAcceptanceState',
@@ -54,7 +55,7 @@ export function initialState(plan, now, lease) {
     fenceToken: lease.fenceToken,
     status: 'executing',
     completedStepReceipts: [],
-    runtimeRootActivationHash: null,
+    runtimeRootActivationHash,
     finalVerificationReceipt: null,
     acceptanceReceiptHash: null,
     activeStep: null,
@@ -230,10 +231,19 @@ export function assertInvocationOutput(invocation, output, label) {
   if (skips !== 0) throw new Error(`strict_full_auto_acceptance_skip_forbidden:${label}:${skips}`);
   for (const assertion of invocation.assertions) {
     if (jsonPointer(output, assertion.path) !== assertion.equals) {
-      throw new Error(`strict_full_auto_acceptance_assertion_failed:${label}:${assertion.path}`);
+      const error = new Error(
+        `strict_full_auto_acceptance_assertion_failed:${label}:${assertion.path}`,
+      );
+      error.code = 'STRICT_FULL_AUTO_ACCEPTANCE_NOT_READY';
+      error.assertionPath = assertion.path;
+      throw error;
     }
   }
   return Object.freeze({ outputHash: strictFullAutoAcceptanceHash(output), skippedCount: skips });
+}
+
+export function isStrictFullAutoAcceptanceNotReady(error) {
+  return error?.code === 'STRICT_FULL_AUTO_ACCEPTANCE_NOT_READY';
 }
 
 export function stepReceipt({ plan, step, executionOutputHash, verificationOutputHash, now }) {

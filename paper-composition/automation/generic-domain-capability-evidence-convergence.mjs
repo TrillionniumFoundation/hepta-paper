@@ -15,9 +15,16 @@ import {
   produceConfiguredFormalDomainQualificationExternalEvidence,
 } from './formal-domain-qualification-external-evidence-composition.mjs';
 import {
+  formalDomainQualificationExternalEvidenceContentHash,
   verifyFormalDomainQualificationExternalEvidence,
 } from '../../paper-domain/research/formal-domain-qualification-external-evidence.mjs';
+import {
+  genericDomainCapabilityEvidenceHash,
+} from '../../paper-adapters/automation/generic-domain-capability-evidence-repository.mjs';
 import { queryAutomationReadiness } from './automation-readiness-query.mjs';
+import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+
+const PAPER_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}$/;
 
 function genericVerificationContext(report) {
   return Object.freeze({
@@ -82,6 +89,190 @@ function convergencePrerequisiteBlockers(report, expectedPaperId = null) {
   return Object.freeze([...new Set(blockers)]);
 }
 
+function currentAuthorityLineage(report) {
+  const authorities = Object.freeze([
+    report?.autonomousResearchAgendaAuthorityInspection,
+    report?.experimentIrExecutionAuthorityInspection,
+    report?.autonomousResearchVenueRequirementAuthorityInspection,
+    report?.autonomousResearchAssuranceAuthorityInspection,
+  ]);
+  const singleValue = (field) => {
+    const values = authorities.map((authority) => authority?.[field] || null);
+    return values.every((value) => value && value === values[0]) ? values[0] : null;
+  };
+  return Object.freeze({
+    authorities,
+    campaignId: singleValue('campaignId'),
+    paperId: singleValue('paperId'),
+    campaignPlanHash: singleValue('campaignPlanHash'),
+  });
+}
+
+function exactIdentityBinding(values, expected) {
+  return typeof expected === 'string' && expected.length > 0
+    && values.length > 0
+    && values.every((value) => value === expected);
+}
+
+function reportedBlockersOr(values, fallback) {
+  return Array.isArray(values) && values.length > 0 ? values : [fallback];
+}
+
+function genericEvidenceIdentityBinding({ evidence, lineage, expectedPaperId }) {
+  const paperBound = exactIdentityBinding([
+    ...lineage.authorities.map((authority) => authority?.paperId || null),
+    evidence?.researchAgendaIr?.paperId || null,
+    evidence?.experimentIrExecutionAuthorityReceipt?.paperId || null,
+    evidence?.externalResearchReplayRequest?.paperId || null,
+    evidence?.externalResearchReplayReceipt?.paperId || null,
+    evidence?.independentFormalReviewReceipt?.paperId || null,
+    evidence?.priorArtClaimAlignmentReceipt?.paperId || null,
+    evidence?.venueRequirementIr?.paperId || null,
+  ], expectedPaperId);
+  const campaignBound = exactIdentityBinding([
+    ...lineage.authorities.map((authority) => authority?.campaignId || null),
+    evidence?.experimentIrExecutionAuthorityReceipt?.campaignId || null,
+    evidence?.externalResearchReplayRequest?.campaignId || null,
+    evidence?.externalResearchReplayReceipt?.campaignId || null,
+    evidence?.independentFormalReviewReceipt?.campaignId || null,
+  ], lineage.campaignId) && exactIdentityBinding([
+    ...lineage.authorities.map((authority) => authority?.campaignPlanHash || null),
+    evidence?.experimentIrExecutionAuthorityReceipt?.campaignPlanHash || null,
+  ], lineage.campaignPlanHash);
+  return Object.freeze({ paperBound, campaignBound });
+}
+
+function canonicalGenericEvidenceHashInspection(report) {
+  const repositoryInspection =
+    report?.genericDomainCapabilityEvidenceInspection || null;
+  let evidenceHash = null;
+  let candidateHash = null;
+  try {
+    evidenceHash = genericDomainCapabilityEvidenceHash(
+      repositoryInspection?.evidence,
+    );
+    candidateHash = genericDomainCapabilityEvidenceHash(
+      report?.genericDomainCapabilityEvidenceCandidate,
+    );
+  } catch {
+    return Object.freeze({
+      ready: false,
+      evidenceHash: null,
+      candidateHash: null,
+    });
+  }
+  return Object.freeze({
+    ready: repositoryInspection?.ready === true
+      && repositoryInspection.evidenceHash === evidenceHash
+      && candidateHash === evidenceHash,
+    evidenceHash,
+    candidateHash,
+  });
+}
+
+export function composeStrongGenericDomainCapabilityEvidenceStatus({
+  root,
+  runtimeRoot,
+  paperId,
+  environment = process.env,
+  now = new Date(),
+  spawnSyncImpl = undefined,
+  readinessQuery = queryAutomationReadiness,
+  currentFormalAuthorityAsserter =
+    assertCurrentDynamicFormalExecutionAuthority,
+} = {}) {
+  if (!root || !runtimeRoot || !PAPER_ID.test(String(paperId || ''))
+    || typeof readinessQuery !== 'function'
+    || typeof currentFormalAuthorityAsserter !== 'function') {
+    throw new Error('generic_domain_capability_status_context_required');
+  }
+  const queryOptions = {
+    root,
+    runtimeRoot,
+    environment,
+    now,
+    ...(spawnSyncImpl ? { spawnSyncImpl } : {}),
+  };
+  const { report } = readinessQuery(queryOptions);
+  const repositoryInspection =
+    report?.genericDomainCapabilityEvidenceInspection || null;
+  const evidence = repositoryInspection?.evidence || null;
+  const authorityBlockers = convergencePrerequisiteBlockers(report);
+  let currentFormalAuthorityReady = false;
+  if (repositoryInspection?.ready === true
+    && evidence?.dynamicFormalExecutionAuthority) {
+    try {
+      const current = currentFormalAuthorityAsserter(
+        evidence.dynamicFormalExecutionAuthority,
+        {
+          environment,
+          ...(spawnSyncImpl ? { spawnSyncImpl } : {}),
+        },
+      ).authority;
+      currentFormalAuthorityReady =
+        current?.dynamicFormalExecutionAuthorityHash
+        === evidence.dynamicFormalExecutionAuthority
+          .dynamicFormalExecutionAuthorityHash;
+    } catch {
+      currentFormalAuthorityReady = false;
+    }
+  }
+  const currentAuthorityReady =
+    currentFormalAuthorityReady && authorityBlockers.length === 0;
+  const semanticReady = report?.genericDomainCapabilityReady === true;
+  const canonicalHash =
+    canonicalGenericEvidenceHashInspection(report);
+  const lineage = currentAuthorityLineage(report);
+  const { paperBound, campaignBound } = genericEvidenceIdentityBinding({
+    evidence,
+    lineage,
+    expectedPaperId: String(paperId),
+  });
+  const blockers = Object.freeze([...new Set([
+    ...(repositoryInspection?.ready === true
+      ? [] : reportedBlockersOr(
+        repositoryInspection?.blockers,
+        'generic_domain_capability_evidence_required',
+      )),
+    ...authorityBlockers,
+    ...(currentFormalAuthorityReady
+      ? [] : ['generic_domain_capability_current_formal_authority_required']),
+    ...(semanticReady ? [] : reportedBlockersOr(
+      report?.genericDomainCapabilityBlockers,
+      'generic_domain_capability_semantic_readiness_required',
+    )),
+    ...(canonicalHash.ready
+      ? [] : ['generic_domain_capability_canonical_hash_mismatch']),
+    ...(paperBound
+      ? [] : ['generic_domain_capability_paper_binding_mismatch']),
+    ...(campaignBound
+      ? [] : ['generic_domain_capability_campaign_binding_mismatch']),
+  ])]);
+  const ready = currentAuthorityReady && semanticReady
+    && canonicalHash.ready && paperBound && campaignBound
+    && blockers.length === 0;
+  return Object.freeze({
+    version: 1,
+    kind: 'StrongGenericDomainCapabilityEvidenceStatus',
+    status: ready
+      ? 'generic_domain_capability_evidence_current'
+      : 'generic_domain_capability_evidence_blocked',
+    ready,
+    currentAuthorityReady,
+    semanticReady,
+    canonicalHashReady: canonicalHash.ready,
+    paperBound,
+    campaignBound,
+    paperId: lineage.paperId,
+    campaignId: lineage.campaignId,
+    campaignPlanHash: lineage.campaignPlanHash,
+    evidenceHash: canonicalHash.evidenceHash,
+    blockers,
+    statusReadOnly: true,
+    externalActionPerformed: false,
+  });
+}
+
 export async function resolveFormalDomainQualificationEvidence({
   existingCoverageReceipt = null,
   existingExternalEvidence = null,
@@ -106,9 +297,17 @@ export async function resolveFormalDomainQualificationEvidence({
   let externalEvidence = existingExternalEvidence;
   let externalQualificationPerformed = false;
   if (!verifyExternalEvidence(externalEvidence, coverageReceipt)) {
+    const supersededExternalEvidenceHash =
+      formalDomainQualificationExternalEvidenceContentHash(externalEvidence)
+      || (externalEvidence === null || externalEvidence === undefined
+        ? null : hashRecord(
+          'FormalDomainQualificationExternalEvidenceRenewalCandidate',
+          externalEvidence,
+        ));
     externalEvidence = await externalEvidenceProducer({
       ...externalEvidenceArguments,
       coverageReceipt,
+      supersededExternalEvidenceHash,
     });
     externalQualificationPerformed = true;
   }
@@ -120,6 +319,8 @@ export async function resolveFormalDomainQualificationEvidence({
     externalEvidence,
     qualificationPerformed,
     externalQualificationPerformed,
+    externalQualificationCrashSafe:
+      externalQualificationPerformed ? true : null,
   });
 }
 
@@ -175,6 +376,8 @@ export async function convergeGenericDomainCapabilityEvidence({
   formalDomainQualificationRunner = runConfiguredFormalDomainQualification,
   formalDomainExternalEvidenceProducer =
     produceConfiguredFormalDomainQualificationExternalEvidence,
+  assertExternalSideEffectReady = null,
+  executionSignal = null,
 } = {}) {
   if (!root || !runtimeRoot
     || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}$/.test(String(paperId || ''))) {
@@ -236,6 +439,8 @@ export async function convergeGenericDomainCapabilityEvidence({
       runtimeRoot,
       environment,
       clock: Object.freeze({ now: () => new Date(now) }),
+      assertExternalSideEffectReady,
+      executionSignal,
       ...(spawnSyncImpl ? { spawnSyncImpl } : {}),
     },
   });
@@ -243,7 +448,10 @@ export async function convergeGenericDomainCapabilityEvidence({
   qualificationPerformed = resolvedFormalEvidence.qualificationPerformed;
   const formalDomainQualificationExternalEvidence =
     resolvedFormalEvidence.externalEvidence;
-  const { externalQualificationPerformed } = resolvedFormalEvidence;
+  const {
+    externalQualificationPerformed,
+    externalQualificationCrashSafe,
+  } = resolvedFormalEvidence;
   const assembled = buildGenericDomainCapabilityEvidenceCandidate({
     report,
     formalDomainCoverageReceipt,
@@ -270,6 +478,7 @@ export async function convergeGenericDomainCapabilityEvidence({
     ready: true,
     qualificationPerformed,
     externalQualificationPerformed,
+    externalQualificationCrashSafe,
     campaignId: report.autonomousResearchAgendaAuthorityInspection.campaignId,
     paperId: report.autonomousResearchAgendaAuthorityInspection.paperId,
     evidenceHash: publication.evidenceHash,

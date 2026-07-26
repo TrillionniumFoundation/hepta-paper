@@ -39,6 +39,14 @@ export async function runResearchVerifyAdapter({
   receiptLedger = null,
   trustedResearchReceiptWriters = null,
   clock = null,
+  trustedFormalSandboxRuntime = null,
+  trustedFormalExecutionAuthority = null,
+  campaign = null,
+  authoritativeFormalNode = null,
+  authoritativeTheoremSpecification = null,
+  authoritativeFormalReceipt = null,
+  assertExternalSideEffectReady = null,
+  executionSignal = null,
   store = null,
   formalReviewEnvelope = null,
   campaignExperiments = [],
@@ -95,32 +103,45 @@ export async function runResearchVerifyAdapter({
     ],
   };
 
-  const trustedFormalEvidence = [];
-  if (executeResearchWorkers && artifactRepositoryFactory && trustedResearchReceiptWriters && clock) {
-    for (const request of evidence.structured.formalCertificateRequests) {
-      trustedFormalEvidence.push(await produceTrustedFormalEvidence({
-        root,
-        runtimeRoot: resolvedRuntimeRoot,
-        paperTask: row.task,
-        campaignId: campaignEvidenceContext?.campaignId || null,
-        researchSourceSnapshotHash:
-          campaignResearchSourceSnapshot?.campaignResearchSourceSnapshotHash || null,
-        request,
-        artifactRepositoryFactory,
-        receiptWriters: trustedResearchReceiptWriters,
-        clock,
-      }));
+  if (nativeResearchWorkerExecutionOverride) {
+    const verification = verifyNativeResearchWorkerExecutionReport(
+      nativeResearchWorkerExecutionOverride,
+      {
+        paperId: row.task.paperId,
+        taskKey: row.task.taskKey,
+        requireFormalWorkers: true,
+      },
+    );
+    if (!verification.valid) {
+      throw new Error(
+        `native_research_worker_execution_override_invalid:${verification.blockers.join(',')}`,
+      );
     }
   }
-  if (nativeResearchWorkerExecutionOverride) {
-    const verification = verifyNativeResearchWorkerExecutionReport(nativeResearchWorkerExecutionOverride, {
-      paperId: row.task.paperId,
-      taskKey: row.task.taskKey,
-      requireFormalWorkers: true,
-    });
-    if (!verification.valid) {
-      throw new Error(`native_research_worker_execution_override_invalid:${verification.blockers.join(',')}`);
-    }
+  const trustedFormalEvidence = [];
+  if (trustedFormalExecutionAuthority) {
+    trustedFormalEvidence.push(await produceTrustedFormalEvidence({
+      root,
+      runtimeRoot: resolvedRuntimeRoot,
+      paperTask: row.task,
+      campaignEvidenceContext,
+      campaignResearchSourceSnapshot,
+      campaign,
+      authoritativeFormalNode,
+      authoritativeTheoremSpecification,
+      authoritativeFormalReceipt,
+      nativeResearchWorkerExecution: nativeResearchWorkerExecutionOverride,
+      proposalClaimToTheoremBinding:
+        formalReviewEnvelope?.proposalClaimToTheoremBinding || null,
+      requestHints: evidence.structured.formalCertificateRequests,
+      campaignExecutionAuthority: trustedFormalExecutionAuthority,
+      assertExternalSideEffectReady,
+      executionSignal,
+      artifactRepositoryFactory,
+      receiptWriters: trustedResearchReceiptWriters,
+      clock,
+      trustedSandboxRuntime: trustedFormalSandboxRuntime,
+    }));
   }
   const nativeResearchWorkerExecution = nativeResearchWorkerExecutionOverride || await runNativeResearchWorkers({
     root,
@@ -170,6 +191,7 @@ export async function runResearchVerifyAdapter({
     campaignEvidenceContext,
     researchSourceSnapshotHash:
       campaignResearchSourceSnapshot?.campaignResearchSourceSnapshotHash || null,
+    campaignResearchSourceSnapshot,
     formalReviewEnvelope,
     operatorDatasetHarnessAuthorityVerifier,
     rawEventRecomputationVerifier,
@@ -204,6 +226,7 @@ export async function runResearchVerifyAdapter({
     evidenceVerificationReceipts,
     researchGapPlanBinding,
     executeResearchWorkers,
+    trustedFormalExecutionAuthority,
     campaignResearchSourceSnapshot,
     formalReviewEnvelope,
     externalReplayRequired,

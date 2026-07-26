@@ -6,21 +6,29 @@ second campaign or delivery state machine.
 
 ## Current implementation status
 
-The Hepta target catalog contains 97 venue profiles: 37 conferences and 60
-journals. Every profile has exactly one explicit submission disposition.
+The current Hepta target catalog contains 98 venue profiles: 38 conferences and
+60 journals. Every profile has exactly one explicit submission disposition.
 There is no implicit portal or browser fallback.
 
 As of this source revision:
 
 - all 60 journal targets have at least one candidate connector family with a
   local prototype implementation;
-- 36 of 37 conference targets have at least one such family;
-- `colt_alt` is intentionally blocked because one catalog identity combines
-  two different venues and must be split before portal binding;
+- all 38 conference targets have at least one such family;
+- COLT and ALT have independent `colt` and `alt` identities. The retired
+  ambiguous `colt_alt` identifier is rejected rather than resolved by fallback;
 - four targets (`iclr`, `icml`, `neurips`, and `tmlr`) have a target-specific
   OpenReview prototype seed;
 - zero targets have a verified current portal binding, sandbox qualification,
   independent connector attestation, or live-commit authorization.
+
+The historical profile data v1 remains available with its original 97 entries.
+Current profile data is v2: it replaces the composite `colt_alt` row with the
+two independent identities. No portal, deadline, edition, track, schema or
+authentication metadata was inferred during that split. Both targets remain
+fail-closed until those current external facts are verified; target selection
+reports `target_selection_conference_deadline_metadata_required` while the
+venue-specific deadline reference is absent.
 
 “Candidate family available” means reusable code exists. It does not mean the
 current edition, journal instance, form schema, account, terms, or submission

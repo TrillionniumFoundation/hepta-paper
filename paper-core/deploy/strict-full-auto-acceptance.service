@@ -22,7 +22,6 @@ EnvironmentFile=/etc/hepta-paper/strict-full-auto-acceptance.env
 EnvironmentFile=/etc/hepta-paper/autonomous-research-provider.secrets.env
 ExecStartPre=/usr/bin/test -r ${HEPTA_STRICT_FULL_AUTO_ACCEPTANCE_CONFIGURATION}
 ExecStart=/usr/bin/node paper-core/bin/hepta-paper.mjs operator strict-full-auto-acceptance -- --action converge --configuration ${HEPTA_STRICT_FULL_AUTO_ACCEPTANCE_CONFIGURATION} --execute --require-accepted
-RemainAfterExit=yes
 Restart=on-failure
 RestartSec=1min
 TimeoutStartSec=24h

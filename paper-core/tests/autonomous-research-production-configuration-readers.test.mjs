@@ -360,7 +360,10 @@ test('campaign status treats a required but absent autonomous submission as pend
     campaignId: 'campaign-status-1',
     preparation: {
       autonomousSubmissionPortalConfigurationHash: digest('portal-config'),
-      venueProfileSelection: { profile: { externalSubmissionEnabled: true } },
+      venueProfileSelection: {
+        profile: { externalSubmissionEnabled: true },
+        requireExternalSubmission: true,
+      },
     },
     qualificationEligibility: {
       campaignFullyQualified: true,

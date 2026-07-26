@@ -16,8 +16,8 @@ import {
   independentExternalResearchQualificationResponseSigningPayloadHash,
 } from '../../../paper-domain/automation/external-research-qualification-verification-evidence-contract.mjs';
 import {
-  verifyCampaignReleaseAuthorityRecord,
-} from '../../../paper-domain/automation/campaign-release-contracts.mjs';
+  INDEPENDENT_EXTERNAL_RESEARCH_QUALIFICATION_RESPONSE_VERSION,
+} from '../../../paper-domain/automation/external-research-qualification-verification-policy-contract.mjs';
 import {
   fullResearchQualificationSigningPayloadHash,
 } from '../../../paper-domain/automation/full-research-qualification-contract.mjs';
@@ -197,7 +197,7 @@ function productionIndependentQualificationEvidence({
       qualificationReceipt.independentHypothesisPriorArtReceiptHash,
     verificationPolicyHash: request.verificationPolicyHash,
     structuredPriorArtEvidenceVerified: true,
-    nativeFormalCertificateIntakeV3Verified: true,
+    nativeFormalCertificateIntakeV4Verified: true,
     releaseBindingVersion: policy.releaseBindingVersion,
     launchMode: policy.launchMode,
     recursiveReleaseClosureRequired: policy.recursiveReleaseClosureRequired,
@@ -206,7 +206,7 @@ function productionIndependentQualificationEvidence({
     blockers: Object.freeze([]),
   });
   const responsePayload = {
-    version: 2,
+    version: INDEPENDENT_EXTERNAL_RESEARCH_QUALIFICATION_RESPONSE_VERSION,
     kind: 'IndependentExternalResearchQualificationVerificationResponse',
     verifierId: request.verifierId,
     requestHash: request.requestHash,
@@ -479,6 +479,11 @@ function materializeProductionClosurePackage({
     ),
     writeFixtureBytes(
       sourceRoot,
+      'Formal.lean',
+      Buffer.from('theorem fixture_truth : True := by trivial\n', 'utf8'),
+    ),
+    writeFixtureBytes(
+      sourceRoot,
       'AUTONOMOUS_MANUSCRIPT_IR.json',
       Buffer.from(JSON.stringify(manuscript.manuscriptIr), 'utf8'),
     ),
@@ -635,22 +640,8 @@ export function productionResearchClosureFixture({
   const promotionCandidate = campaignRelease.promotionCandidate;
   const releaseBundle = campaignRelease.releaseBundle;
   const campaignReleaseAuthority = campaignRelease.campaignReleaseAuthority;
-  const releaseAuthorityVerification = verifyCampaignReleaseAuthorityRecord(
-    campaignReleaseAuthority,
-    {
-      campaignId,
-      campaignPlanHash,
-      paperId,
-      venueTarget: manuscript.venueProfileSelection.venueId,
-      packageNodeId: campaignRelease.packageNode.nodeId,
-      packageAttemptId: campaignRelease.packageNode.attemptId,
-      leaseGeneration: campaignRelease.packageNode.leaseGeneration,
-    },
-    {
-      experimentRegistryAuthorityVerifier:
-        manuscript.experimentRegistryAuthorityVerifier,
-    },
-  );
+  const releaseAuthorityVerification =
+    campaignRelease.campaignReleaseAuthorityVerification;
   if (!releaseAuthorityVerification.valid) {
     throw new Error(
       `production_research_closure_release_authority_invalid:${

@@ -138,6 +138,7 @@ export function evaluateAutomationReadinessLevels({
   genericCapabilityReady = false,
   formalSandboxRuntimeReady = false,
   dynamicFormalProjectClosureReady = false,
+  autonomousSystemReady = false,
   submissionDispatcherReady = false,
 } = {}) {
   const effectiveRuntimeReady = runtimeReady === true;
@@ -151,6 +152,7 @@ export function evaluateAutomationReadinessLevels({
     && formalSandboxRuntimeReady === true
     && dynamicFormalProjectClosureReady === true;
   const productionReady = genericResearchReady
+    && autonomousSystemReady === true
     && submissionDispatcherReady === true;
   const blockedRuntimeStatus = runtimeStatus
     && runtimeStatus !== 'automation_plane_runtime_ready'

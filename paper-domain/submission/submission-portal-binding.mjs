@@ -3,6 +3,9 @@ import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
   getSubmissionConnectorFamily,
 } from './submission-connector-family-registry.mjs';
+import {
+  getJournalSubmissionTargetProfile,
+} from './journal-submission-target-registry.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,255}$/;
@@ -85,8 +88,23 @@ export function buildSubmissionPortalBinding({
   verifiedAt,
   expiresAt,
 } = {}) {
-  if (baseTargetProfile?.kind !== 'JournalSubmissionTargetProfile'
-    || !SHA256.test(String(baseTargetProfile?.journalSubmissionTargetProfileHash || ''))
+  const {
+    journalSubmissionTargetProfileHash: claimedTargetProfileHash,
+    ...targetProfilePayload
+  } = baseTargetProfile || {};
+  let currentTargetProfile = null;
+  try {
+    currentTargetProfile = getJournalSubmissionTargetProfile(baseTargetProfile?.venueId);
+  } catch {
+    throw new Error('submission_portal_binding_target_profile_not_current');
+  }
+  if (baseTargetProfile?.version !== 1
+    || baseTargetProfile?.kind !== 'JournalSubmissionTargetProfile'
+    || !SHA256.test(String(claimedTargetProfileHash || ''))
+    || claimedTargetProfileHash
+      !== hashRecord('JournalSubmissionTargetProfile', targetProfilePayload)
+    || claimedTargetProfileHash
+      !== currentTargetProfile.journalSubmissionTargetProfileHash
     || !SAFE_ID.test(String(targetInstanceId || ''))
     || !['conference', 'journal'].includes(baseTargetProfile?.venueKind)
     || !baseTargetProfile.candidateConnectorFamilies?.includes(connectorFamily)

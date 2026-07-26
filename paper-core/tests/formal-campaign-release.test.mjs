@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -85,6 +86,7 @@ test('approved proposal seed closes through writer theorem, system spec, Lean re
     '',
   ].join('\n'));
   const proposalSeedPath = 'PROPOSAL_CLAIM_PROOF_EVIDENCE_REPRO_SEED_CONTRACTS.json';
+  const formalCertificateRequestPath = 'FORMAL_CERTIFICATE_REQUEST.json';
   const proposalEnvelopeHash = hashRecord('ProposalEnvelopeFixture', {});
   const productionPlanEnvelopeHash = hashRecord('ProductionPlanEnvelopeFixture', {});
   const reviewGateHash = hashRecord('ProposalReviewGateFixture', {});
@@ -119,11 +121,11 @@ test('approved proposal seed closes through writer theorem, system spec, Lean re
   fs.writeFileSync(path.join(workspace, 'evidence_manifest.md'), '# Evidence Manifest\n\nThe bundled Lean replay receipt verifies the formal claim.\n');
   fs.writeFileSync(path.join(workspace, 'appendix.tex'), 'Formal source appendix.\n');
   const leanSource = 'theorem reflexiveIdentity (n : Nat) : n = n := by rfl\n';
-  fs.writeFileSync(path.join(workspace, 'automation-results', 'final', 'main.pdf'), Buffer.from('%PDF-1.4\nformal campaign fixture\n'));
 
   const packageFiles = [
     'main.tex', 'proof_status.md', 'evidence_manifest.md', 'appendix.tex', 'lakefile.lean',
-    'lean-toolchain', 'lake-manifest.json', 'Main.lean', 'RESEARCH_WORKER_PLAN.json', 'THEOREM_SPEC.json', proposalSeedPath,
+    'lean-toolchain', 'lake-manifest.json', 'Main.lean', 'RESEARCH_WORKER_PLAN.json',
+    'THEOREM_SPEC.json', formalCertificateRequestPath, proposalSeedPath,
   ];
   fs.writeFileSync(path.join(workspace, 'SOURCE_PACKAGE_CONTRACT.json'), `${JSON.stringify({
     version: 1,
@@ -283,9 +285,29 @@ test('approved proposal seed closes through writer theorem, system spec, Lean re
         }],
       };
       fs.writeFileSync(path.join(input.workspacePath, 'RESEARCH_WORKER_PLAN.json'), `${JSON.stringify(plan, null, 2)}\n`);
+      fs.writeFileSync(path.join(input.workspacePath, formalCertificateRequestPath), `${JSON.stringify({
+        version: 1,
+        kind: 'FormalCertificateRequestFixture',
+        formalCertificateRequest: {
+          verifierKind: 'lean',
+          sourceRecords: [{ path: 'Main.lean' }],
+          claimBindings: claim.proofObligationContracts.map((obligation) => ({
+            claimId: claim.claimId,
+            obligationId: obligation.obligationId,
+            statementHash: hashBytes(Buffer.from(claim.statement, 'utf8')),
+          })),
+        },
+      }, null, 2)}\n`);
       return stableAgentReceipt({
         agentId: 'formal-author', role: input.role,
-        changedPaths: ['Main.lean', 'RESEARCH_WORKER_PLAN.json', 'lake-manifest.json', 'lakefile.lean', 'lean-toolchain'],
+        changedPaths: [
+          'Main.lean',
+          formalCertificateRequestPath,
+          'RESEARCH_WORKER_PLAN.json',
+          'lake-manifest.json',
+          'lakefile.lean',
+          'lean-toolchain',
+        ],
       });
     },
   };
@@ -439,9 +461,38 @@ test('approved proposal seed closes through writer theorem, system spec, Lean re
       allNodes: [completedSpecificationNode, { ...formalVerifyNode, status: 'completed', result: formalResult }, runningResearchNode],
     });
   } catch (error) {
-    assert.fail(`${error.message}\n${JSON.stringify(error.receipt, null, 2)}`);
+    assert.fail(`${error.message}\n${JSON.stringify({
+      promotionBlockers: error.receipt?.researchPromotionBlockers,
+      trustedFormalEvidence:
+        error.receipt?.report?.capabilities?.trustedFormalEvidence,
+      formalCertificateIntakes:
+        error.receipt?.report?.capabilities?.formalCertificateIntakes,
+    }, null, 2)}`);
   }
   assert.equal(researchResult.status, 'campaign_research_verification_completed');
+  assert.equal(
+    researchResult.report.capabilities.trustedFormalEvidence[0]?.status,
+    'trusted_formal_evidence_projected',
+  );
+  assert.equal(researchResult.report.capabilities.formalCertificateIntakes.length, 1);
+  assert.equal(
+    researchResult.report.capabilities.formalCertificateIntakes[0]?.version,
+    4,
+  );
+  assert.equal(
+    researchResult.report.capabilities.formalCertificateIntakes[0]?.status,
+    'formal_certificate_intake_verified',
+  );
+  assert.equal(
+    researchResult.report.capabilities.formalCertificateIntakes[0]
+      ?.authoritativeFormalNodeResultHash,
+    hashRecord('PaperCampaignNodeResult', formalResult),
+  );
+  assert.equal(
+    researchResult.report.capabilities.evidenceQualityGate
+      .formalCertificateIntakeClosureVerifications[0]?.valid,
+    true,
+  );
   assert.equal(researchResult.researchNodeId, runningResearchNode.nodeId);
   assert.equal(researchResult.researchAttemptId, runningResearchNode.attemptId);
   assert.equal(researchResult.researchLeaseGeneration, runningResearchNode.leaseGeneration);
@@ -458,6 +509,19 @@ test('approved proposal seed closes through writer theorem, system spec, Lean re
     leaseGeneration: runningResearchNode.leaseGeneration,
     result: researchResult,
   });
+  const finalOutputDirectory = path.join(workspace, 'automation-results', 'final');
+  const finalCompile = spawnSync('/usr/bin/pdflatex', [
+    '-interaction=nonstopmode',
+    '-halt-on-error',
+    '-output-directory',
+    finalOutputDirectory,
+    path.join(workspace, 'main.tex'),
+  ], {
+    cwd: workspace,
+    encoding: 'utf8',
+    timeout: 120000,
+  });
+  assert.equal(finalCompile.status, 0, `${finalCompile.stdout}\n${finalCompile.stderr}`);
   const finalCompileResult = {
     status: 'empirical_execution_completed',
     materializedPaths: ['automation-results/final/main.pdf'],

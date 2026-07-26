@@ -50,6 +50,24 @@ const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathnam
 const paperFactoryRoot = defaultPaperAssetRoot();
 const selftestRuntimeRoot = path.join(defaultPaperRuntimeRoot(), 'selftest');
 
+function createSelftestAutonomousSubmissionOutbox() {
+  const unavailable = () => {
+    throw new Error('paper_selftest_autonomous_submission_write_unexpected');
+  };
+  return Object.freeze({
+    version: 1,
+    kind: 'AutonomousSubmissionHandoffOutboxPort',
+    durability: 'sqlite-transactional-outbox-v1',
+    externallyFencedMutations: false,
+    prepareAutonomousSubmission: unavailable,
+    beginAutonomousSubmissionAttempt: unavailable,
+    recordAutonomousSubmissionOutcome: unavailable,
+    getAutonomousSubmission: () => null,
+    listAutonomousSubmissionsForCampaign: () => Object.freeze([]),
+    listDispatchableAutonomousSubmissions: () => Object.freeze([]),
+  });
+}
+
 async function sourceText(file) {
   return fs.readFile(path.join(workspaceRoot, file), 'utf8');
 }
@@ -166,6 +184,9 @@ async function main() {
     runtimeRoot: selftestRuntimeRoot,
     mode: 'selftest',
     execute: true,
+    serviceOverrides: {
+      autonomousSubmissionOutbox: createSelftestAutonomousSubmissionOutbox(),
+    },
   });
   try {
     enterArtifactWriteContext(selftestContext.services);
@@ -627,6 +648,9 @@ async function main() {
     inventorySource: 'yaml',
     execute: true,
     writeReport: false,
+    serviceOverrides: {
+      autonomousSubmissionOutbox: createSelftestAutonomousSubmissionOutbox(),
+    },
   };
   const campaignReport = await runPaperBatch(batchCampaignOptions);
   assert.equal(campaignReport.results.length, 1);

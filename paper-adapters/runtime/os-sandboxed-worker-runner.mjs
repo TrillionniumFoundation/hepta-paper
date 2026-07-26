@@ -19,6 +19,10 @@ import {
   inspectScopedRegularFileWithRecoverySync,
   stageScopedRegularFileCopySync,
 } from './scoped-file-materialization-repository.mjs';
+import {
+  buildDockerWorkerContainerOwnershipForEnvironment,
+  recoverDockerWorkerContainerAfterLauncher,
+} from './docker-worker-container-recovery.mjs';
 import { buildDatasetRuntimeAccessReceipt, buildRuntimeDatasetAuthorizationSet, DATASET_ACCESS_SUPERVISOR_TRACER } from './dataset-runtime-access-receipt.mjs';
 import { selectAndValidateWorkerEnvironment } from './worker-environment-policy.mjs';
 import { createWorkerEnvironmentBomPreparer } from './worker-environment-bom-binding.mjs';
@@ -56,6 +60,7 @@ export function createOsSandboxedWorkerRunner({
   allowedContainerImages = [], allowedDatasetRoots = [], trustedDatasetSupervisorImages = [],
   maximumTimeoutMs = 120000, maximumMemoryBytes = 1024 * 1024 * 1024, maximumCpuSeconds = 120, maximumPids = 128, maximumOutputBytes = 256 * 1024 * 1024, maximumCapturedBytes = 4 * 1024 * 1024,
   executor = spawnSync, probe = null, imageDigestResolver = null, datasetSnapshotObserver = null, runtimeExecutableSnapshotObserver = null, workspaceSnapshotObserver = null,
+  dockerContainerRecoveryExecutor = spawnSync,
 } = {}) {
   const allowedExecutableEntries = allowedExecutables.map((value) => Object.freeze({
     requested: String(value),
@@ -283,6 +288,11 @@ export function createOsSandboxedWorkerRunner({
         return { source, target: `/datasets/${name}`, name, readOnly: mount?.readOnly === true,
           manifestHash: mount?.manifestHash || null, manifestHashBefore: manifestInspection?.hash || null, manifestEntries: manifestInspection?.entries || [], licenseId: mount?.licenseId || null,
           operatorAuthorizationHash: mount?.operatorAuthorizationHash || null, operatorDatasetAuthorityDocumentHash: mount?.operatorDatasetAuthorityDocumentHash || null, operatorDatasetAuthority: mount?.operatorDatasetAuthority || null,
+          ...(mount?.operatorDatasetResearchSemantics ? {
+            operatorDatasetResearchSemantics: mount.operatorDatasetResearchSemantics,
+            operatorDatasetResearchSemanticsHash:
+              mount.operatorDatasetResearchSemanticsHash || null,
+          } : {}),
           splitManifestHash: mount?.splitManifestHash || null, benchmarkHarnessDocumentHash: mount?.benchmarkHarnessDocumentHash || null, benchmarkHarnessDefinitionHash: mount?.benchmarkHarnessDefinitionHash || null,
           benchmarkFamily: mount?.benchmarkFamily || null, benchmarkSeedSchedule: Array.isArray(mount?.benchmarkSeedSchedule) ? mount.benchmarkSeedSchedule.map(Number) : [], benchmarkMinimumRepetitions: Number(mount?.benchmarkMinimumRepetitions || 0), analysisProtocol: mount?.analysisProtocol || null, analysisProtocolHash: mount?.analysisProtocolHash || null,
           allowedDatasetRoot, sourceType, boundaryBlockers };
@@ -476,6 +486,7 @@ export function createOsSandboxedWorkerRunner({
           isolation: { kernelNetworkIsolationVerified: false, filesystemNamespaceVerified: false, sourceReadOnlyVerified: false, resourceLimitsVerified: false },
         };
       }
+      const dockerContainerOwnership = buildDockerWorkerContainerOwnershipForEnvironment({ executionBackend, processInvocationId, permittedEnvironment, sandboxRoot });
       const environmentBomBinding = prepareEnvironmentBom({ executionIdentity: activeExecutionIdentity, language, executable: containerImage ? containerExecutable : resolvedExecutable, requiresGpu, determinismPolicy, deterministicSeed: deterministicSeed ?? env.HEPTA_EXPERIMENT_SEED ?? env.HEPTA_SEED ?? env.PYTHONHASHSEED ?? null, timeoutMs, memoryBytes, cpuSeconds, maximumProcesses, requestedMaximumOutputBytes, env: Object.fromEntries(permittedEnvironment), runtimePackageClosure, runtimeBuildReproducibility });
       if (environmentBomBinding.blockers.length) { removePrivateSandboxRoot(sandboxRoot); return { ok: false, status: 'os_sandbox_worker_blocked', blockers: environmentBomBinding.blockers, availability: executionAvailability, isolation: { kernelNetworkIsolationVerified: false, filesystemNamespaceVerified: false, sourceReadOnlyVerified: false, resourceLimitsVerified: false } }; }
       const { timeoutMs: boundedTimeout, memoryBytes: boundedMemory, cpuSeconds: boundedCpu, maximumPids: boundedPids, maximumOutputBytes: boundedOutput } = environmentBomBinding.limits;
@@ -503,6 +514,7 @@ export function createOsSandboxedWorkerRunner({
           mountedDatasets, relativeCwd, containerImageDigest, datasetSupervisor, executable: dockerExecutable,
           arguments: args.map((argument) => mapWorkArgument(argument, resolvedSourceRoot)),
           immutableWorkRoot: requireImmutableWorkRoot,
+          containerOwnership: dockerContainerOwnership,
         });
       }
       if (requireDatasetAccessProof && executionBackend === 'bubblewrap') {
@@ -659,9 +671,10 @@ export function createOsSandboxedWorkerRunner({
           containerImageDigest,
           environmentBindingHash,
           environmentBom: environmentBomBinding.environmentBom, environmentBomHash: environmentBomBinding.environmentBomHash,
+          dockerWorkerContainerRecoveryReceipt: result.dockerWorkerContainerRecoveryReceipt || null,
           ...completeWorkerProcessIdentity({ processInvocationId, result }),
           executionBindings: Object.freeze(Object.fromEntries(permittedEnvironment
-            .filter(([key]) => key.startsWith('HEPTA_BENCHMARK_') || key.startsWith('HEPTA_EXPERIMENT_') || ['HEPTA_PRE_DATA_ACCESS_FREEZE_HASH', 'HEPTA_HARNESS_CELL_ID', 'HEPTA_DATASET_AUTHORIZATION_SET_HASH', 'HEPTA_SEED', 'PYTHONHASHSEED'].includes(key))
+            .filter(([key]) => key.startsWith('HEPTA_BENCHMARK_') || key.startsWith('HEPTA_EXPERIMENT_') || ['HEPTA_PRE_DATA_ACCESS_FREEZE_HASH', 'HEPTA_HARNESS_CELL_ID', 'HEPTA_DATASET_AUTHORIZATION_SET_HASH', 'HEPTA_DATASET_RESEARCH_COMPATIBILITY_HASH', 'HEPTA_SEED', 'PYTHONHASHSEED'].includes(key))
             .map(([key, value]) => [key, String(value)])
             .sort(([left], [right]) => left.localeCompare(right)))),
           datasetAuthorizationSetHash: datasetAuthorizationSet.datasetAuthorizationSetHash,
@@ -669,7 +682,13 @@ export function createOsSandboxedWorkerRunner({
             readOnly: true, manifestHash: mount.manifestHash, manifestHashBefore: mount.manifestHashBefore, snapshotManifestHash: mount.snapshotManifestHash, manifestHashAfter: mount.manifestHashAfter,
             manifestVerifiedAfterExecution: mount.manifestVerifiedAfterExecution, snapshotManifestHashAfter: mount.snapshotManifestHashAfter, snapshotVerifiedAfterExecution: mount.snapshotVerifiedAfterExecution,
             licenseId: mount.licenseId, operatorAuthorizationHash: mount.operatorAuthorizationHash || null, operatorDatasetAuthorityDocumentHash: mount.operatorDatasetAuthorityDocumentHash || null,
-            operatorDatasetAuthority: mount.operatorDatasetAuthority || null, splitManifestHash: mount.splitManifestHash || null, benchmarkHarnessDocumentHash: mount.benchmarkHarnessDocumentHash || null,
+            operatorDatasetAuthority: mount.operatorDatasetAuthority || null,
+            ...(mount.operatorDatasetResearchSemantics ? {
+              operatorDatasetResearchSemantics: mount.operatorDatasetResearchSemantics,
+              operatorDatasetResearchSemanticsHash:
+                mount.operatorDatasetResearchSemanticsHash || null,
+            } : {}),
+            splitManifestHash: mount.splitManifestHash || null, benchmarkHarnessDocumentHash: mount.benchmarkHarnessDocumentHash || null,
             benchmarkHarnessDefinitionHash: mount.benchmarkHarnessDefinitionHash || null, benchmarkFamily: mount.benchmarkFamily || null, benchmarkSeedSchedule: mount.benchmarkSeedSchedule || [], benchmarkMinimumRepetitions: mount.benchmarkMinimumRepetitions || 0, analysisProtocol: mount.analysisProtocol || null, analysisProtocolHash: mount.analysisProtocolHash || null })),
           datasetAccessReceipt,
           datasetAccessSupervisorIdentityHash: datasetAccessReceipt?.supervisor?.identityHash || null,
@@ -703,17 +722,27 @@ export function createOsSandboxedWorkerRunner({
           },
           externalActionPerformed: false,
         };
-        removePrivateSandboxRoot(sandboxRoot);
-        return { ok: passed, ...receiptPayload, receiptHash: hashRecord('OsSandboxWorkerReceipt', receiptPayload), blockers: [...(result.aborted ? ['os_sandbox_command_aborted'] : []), ...(result.timedOut ? ['os_sandbox_command_timed_out'] : []), ...(!commandPassed && !result.aborted && !result.timedOut ? ['os_sandbox_command_failed'] : []), ...(sourceMutationDetected ? ['source_mutation_detected', ...sourceExecutionSnapshotAfter.blockers] : []), ...(datasetMutationDetected ? ['worker_dataset_manifest_changed_during_execution'] : []), ...(datasetSnapshotMutationDetected ? ['worker_dataset_snapshot_changed_during_execution'] : []), ...datasetAccessBlockers, ...(!runtimeExecutableSnapshotVerified ? ['worker_runtime_executable_snapshot_changed_during_execution'] : []), ...artifactBlockers] };
+        const containerRecoveryBlockers = result.dockerWorkerContainerRecoveryReceipt?.blockers || [];
+        if (!containerRecoveryBlockers.length) removePrivateSandboxRoot(sandboxRoot);
+        return { ok: passed, ...receiptPayload, receiptHash: hashRecord('OsSandboxWorkerReceipt', receiptPayload), blockers: [...(result.aborted ? ['os_sandbox_command_aborted'] : []), ...(result.timedOut ? ['os_sandbox_command_timed_out'] : []), ...(!commandPassed && !result.aborted && !result.timedOut ? ['os_sandbox_command_failed'] : []), ...(sourceMutationDetected ? ['source_mutation_detected', ...sourceExecutionSnapshotAfter.blockers] : []), ...(datasetMutationDetected ? ['worker_dataset_manifest_changed_during_execution'] : []), ...(datasetSnapshotMutationDetected ? ['worker_dataset_snapshot_changed_during_execution'] : []), ...datasetAccessBlockers, ...(!runtimeExecutableSnapshotVerified ? ['worker_runtime_executable_snapshot_changed_during_execution'] : []), ...artifactBlockers, ...containerRecoveryBlockers] };
       };
+      const withDockerContainerRecovery = (result) => recoverDockerWorkerContainerAfterLauncher({ result, executionBackend, docker, ownership: dockerContainerOwnership, spawnSyncImpl: dockerContainerRecoveryExecutor, environment: process.env });
       if (signal) {
         return runBoundedChildProcess({ executable: launcher, args: command, cwd: resolvedCwd, timeoutMs: boundedTimeout, signal, maximumCapturedBytes })
           .then(
-            (result) => finalize({ ...result, status: result.exitCode, signal: result.signal }),
+            (result) => finalize(withDockerContainerRecovery({
+              ...result,
+              status: result.exitCode,
+              signal: result.signal,
+            })),
             (error) => { removePrivateSandboxRoot(sandboxRoot); throw error; },
           );
       }
-      return finalize(executor(launcher, command, { encoding: 'utf8', timeout: boundedTimeout, maxBuffer: maximumCapturedBytes }));
+      return finalize(withDockerContainerRecovery(executor(
+        launcher,
+        command,
+        { encoding: 'utf8', timeout: boundedTimeout, maxBuffer: maximumCapturedBytes },
+      )));
     },
   });
 }

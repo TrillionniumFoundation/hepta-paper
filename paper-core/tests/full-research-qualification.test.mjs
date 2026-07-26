@@ -593,7 +593,7 @@ test('persisted global readiness rejects an authentic production-run qualificati
     },
     (authority) => {
       authority.releaseBundle.researchReport.capabilities
-        .formalCertificateIntakes[0].executionReceipt.stdoutHash =
+        .formalCertificateIntakes[0].authoritativeFormalNodeResultHash =
           HASH('bounded-intake-tamper');
     },
     (authority) => {
@@ -701,7 +701,7 @@ test('expired, stale, non-formal, non-academic and untrusted releases cannot qua
     }],
     ['golden_micro_campaign_formal_release_required', (a) => {
       a.releaseBundle.researchReport.capabilities
-        .formalCertificateIntakes[0].executionReceipt.stdoutHash =
+        .formalCertificateIntakes[0].claimBindingsHash =
           HASH('tampered-embedded-formal-execution');
     }],
     ['golden_micro_campaign_formal_release_required', (a) => {

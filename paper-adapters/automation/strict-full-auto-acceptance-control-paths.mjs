@@ -5,16 +5,37 @@ import {
   strictFullAutoAcceptanceHash,
 } from '../../paper-domain/automation/strict-full-auto-acceptance-contract.mjs';
 
-export function intentPath(plan, step) {
+const SHA256 = /^sha256:[0-9a-f]{64}$/;
+
+export function planControlScopePath(plan) {
+  if (!SHA256.test(String(plan?.planHash || ''))) {
+    throw new Error('strict_full_auto_acceptance_plan_control_scope_invalid');
+  }
+  return path.join(plan.controlRoot, 'plans', plan.planHash.slice('sha256:'.length));
+}
+
+export function legacyIntentPath(plan, step) {
   const ordinal = step.stepId === 'final-aggregate-live-verification'
     ? '99' : String(plan.steps.findIndex((item) => item.stepId === step.stepId)).padStart(2, '0');
   return path.join(plan.controlRoot, 'intents', `${ordinal}-${step.stepId}.json`);
 }
 
-export function dispatchPath(plan, step) {
+export function intentPath(plan, step) {
+  const ordinal = step.stepId === 'final-aggregate-live-verification'
+    ? '99' : String(plan.steps.findIndex((item) => item.stepId === step.stepId)).padStart(2, '0');
+  return path.join(planControlScopePath(plan), 'intents', `${ordinal}-${step.stepId}.json`);
+}
+
+export function legacyDispatchPath(plan, step) {
   const ordinal = String(plan.steps.findIndex((item) => item.stepId === step.stepId))
     .padStart(2, '0');
   return path.join(plan.controlRoot, 'dispatches', `${ordinal}-${step.stepId}.json`);
+}
+
+export function dispatchPath(plan, step) {
+  const ordinal = String(plan.steps.findIndex((item) => item.stepId === step.stepId))
+    .padStart(2, '0');
+  return path.join(planControlScopePath(plan), 'dispatches', `${ordinal}-${step.stepId}.json`);
 }
 
 export function runtimeRootActivation(plan) {
@@ -38,6 +59,7 @@ export function runtimeRootActivation(plan) {
     inode: String(stat.ino),
     mode: Number(stat.mode) & 0o7777,
     uid: String(stat.uid),
+    gid: String(stat.gid),
   });
   return Object.freeze({
     ...body,

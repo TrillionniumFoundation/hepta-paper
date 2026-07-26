@@ -1,104 +1,404 @@
-import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
-import { buildFormalClaimBindingsManifest, buildFormalExecutionContract, buildFormalSourceManifest } from '../../paper-domain/research/formal-certificate-intake.mjs';
-import { formalVerifierDescriptor } from '../../paper-domain/research/formal-verifier-registry.mjs';
-import { computeReceiptHash } from '../../paper-domain/evidence/receipt-hash-policy.mjs';
+import {
+  formalClosureClaimBindingsFromProposalBinding,
+  verifyNativeFormalResearchClosureBinding,
+} from '../../paper-domain/research/formal-certificate-intake.mjs';
+import {
+  PRODUCTION_LEAN_TOOLCHAIN,
+  PRODUCTION_LEAN_TOOLCHAIN_ROOT_MERKLE_HASHES,
+} from '../../paper-domain/research/formal-verifier-policy.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
-import { readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
-import { createOsSandboxedWorkerRunner, fileSha256Hash } from '../runtime/os-sandboxed-worker-runner.mjs';
+import {
+  readScopedFileSync,
+} from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
+import {
+  normalizeContainerImageDigest,
+} from '../runtime/sandbox-backend-probe.mjs';
+import {
+  createPinnedFormalSandboxRuntime,
+} from './pinned-formal-sandbox-runtime-contract.mjs';
+import {
+  assertCompletedCampaignFormalNode,
+  verifyCampaignFormalReceipt,
+} from '../automation/campaign-formal-verification-evidence.mjs';
+import {
+  blockedTrustedFormalEvidence,
+  MAXIMUM_TRUSTED_FORMAL_REQUEST_HINTS,
+  trustedFormalAuthorityBlockers,
+  uniqueTrustedFormalBlockers,
+} from './trusted-formal-producer-contract.mjs';
+
+export {
+  MAXIMUM_TRUSTED_FORMAL_REQUEST_HINTS,
+  TRUSTED_FORMAL_EXECUTION_TIMEOUT_MS,
+  TRUSTED_FORMAL_TOTAL_BUDGET_MS,
+} from './trusted-formal-producer-contract.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 
-function executablePath(command) {
-  const result = spawnSync('which', [command], { encoding: 'utf8', timeout: 3000 });
-  return result.status === 0 ? String(result.stdout || '').trim() : null;
+function canonicalBindings(value) {
+  if (!Array.isArray(value)) return null;
+  const bindings = value.map((item) => ({
+    claimId: String(item?.claimId || item?.claim_id || ''),
+    obligationId: String(item?.obligationId || item?.obligation_id || ''),
+    statementHash: String(item?.statementHash || item?.statement_hash || ''),
+  })).sort((left, right) => (
+    left.claimId.localeCompare(right.claimId)
+      || left.obligationId.localeCompare(right.obligationId)
+  ));
+  return bindings.some((item) => !item.claimId || !item.obligationId
+    || !SHA256.test(item.statementHash)) ? null : bindings;
+}
+
+function requestHintBlockers(requestHints, {
+  root, sourcePath, sourceHash, claimBindings,
+} = {}) {
+  const hints = Array.isArray(requestHints) ? requestHints : [];
+  const blockers = [];
+  if (hints.length > MAXIMUM_TRUSTED_FORMAL_REQUEST_HINTS) {
+    blockers.push('trusted_formal_request_hint_count_exceeded');
+  }
+  const hint = hints[0] || null;
+  if (!hint) return uniqueTrustedFormalBlockers(blockers);
+  const verifierKind = hint.verifierKind || hint.verifier_kind || null;
+  if (verifierKind && String(verifierKind).toLowerCase() !== 'lean') {
+    blockers.push('trusted_formal_request_verifier_authority_mismatch');
+  }
+  for (const forbidden of [
+    'command', 'executable', 'executableOverride', 'runnerOverride', 'sandbox',
+    'sandboxRuntime', 'timeoutMs', 'timeout_ms',
+  ]) if (Object.hasOwn(hint, forbidden)) {
+    blockers.push(
+      `trusted_formal_request_execution_override_forbidden:${forbidden}`,
+    );
+  }
+  const requestedSources = hint.sourceRecords || hint.source_records;
+  if (requestedSources !== undefined) {
+    if (!Array.isArray(requestedSources) || requestedSources.length !== 1) {
+      blockers.push('trusted_formal_request_source_count_invalid');
+    } else {
+      const requested = requestedSources[0] || {};
+      const rawPath = requested.absolutePath || requested.path || '';
+      if (!rawPath || path.resolve(root, String(rawPath)) !== sourcePath) {
+        blockers.push('trusted_formal_request_source_authority_mismatch');
+      }
+      const requestedHash = requested.hash || requested.sha256 || null;
+      if (requestedHash && requestedHash !== sourceHash) {
+        blockers.push('trusted_formal_request_source_hash_mismatch');
+      }
+    }
+  }
+  const requestedBindings = hint.claimBindings || hint.claim_bindings;
+  if (requestedBindings !== undefined
+    && JSON.stringify(canonicalBindings(requestedBindings))
+      !== JSON.stringify(canonicalBindings(claimBindings))) {
+    blockers.push('trusted_formal_request_claim_bindings_mismatch');
+  }
+  return uniqueTrustedFormalBlockers(blockers);
+}
+
+function authoritativeSource({
+  root,
+  nativeResearchWorkerExecution,
+  campaignResearchSourceSnapshot,
+} = {}) {
+  const receipts = (nativeResearchWorkerExecution?.workerReceipts || [])
+    .filter((receipt) => receipt?.workerType === 'formal_verifier_lake');
+  const receipt = receipts.length === 1 ? receipts[0] : null;
+  const inputs = Array.isArray(receipt?.inputs) ? receipt.inputs : [];
+  const blockers = [];
+  if (!receipt || inputs.length !== 1) {
+    return {
+      receipt,
+      blockers: Object.freeze([
+        'trusted_formal_authoritative_source_count_invalid',
+      ]),
+    };
+  }
+  const input = inputs[0];
+  const relativePath = String(input?.path || '').replace(/\\/g, '/');
+  const absolutePath = path.resolve(root, relativePath);
+  const read = readScopedFileSync({
+    scopeRoot: root,
+    candidate: absolutePath,
+    maximumBytes: 64 * 1024 * 1024,
+  });
+  if (read.status !== 'scoped_file_read_verified') blockers.push(...read.blockers);
+  if (path.extname(absolutePath).toLowerCase() !== '.lean') {
+    blockers.push('trusted_formal_authoritative_source_extension_invalid');
+  }
+  if (input?.verified !== true || !SHA256.test(String(input?.hash || ''))
+    || input.hash !== input.expectedHash || input.hash !== read.hash) {
+    blockers.push('trusted_formal_authoritative_source_hash_invalid');
+  }
+  const projectFiles = (receipt?.result?.projectFiles || []).filter((record) => (
+    String(record?.projectPath ?? record?.path ?? '').replace(/\\/g, '/')
+      === relativePath
+  ));
+  const snapshotFiles = (campaignResearchSourceSnapshot?.fileRecords || [])
+    .filter((record) => String(record?.path || '').replace(/\\/g, '/')
+      === relativePath);
+  if (projectFiles.length !== 1 || snapshotFiles.length !== 1
+    || projectFiles[0]?.hash !== input?.hash
+    || Number(projectFiles[0]?.bytes) !== Number(read.bytes)
+    || snapshotFiles[0]?.hash !== input?.hash
+    || Number(snapshotFiles[0]?.bytes) !== Number(read.bytes)
+    || receipt?.result?.projectManifestHash
+      !== receipt?.result?.replayReceipt?.projectManifestHash) {
+    blockers.push('trusted_formal_authoritative_project_manifest_mismatch');
+  }
+  return {
+    receipt,
+    input,
+    read,
+    absolutePath,
+    projectFile: projectFiles[0] || null,
+    blockers: uniqueTrustedFormalBlockers(blockers),
+  };
+}
+
+function nativeRuntimeBlockers(result, runtime) {
+  const identity = result?.executionIdentity || {};
+  const replayIdentity = result?.replayReceipt?.executionIdentity || {};
+  const toolchain = result?.toolchainRuntimeIdentity || {};
+  const replayToolchain = result?.replayReceipt?.toolchainRuntimeIdentity || {};
+  const expectedRoot =
+    PRODUCTION_LEAN_TOOLCHAIN_ROOT_MERKLE_HASHES[PRODUCTION_LEAN_TOOLCHAIN];
+  return uniqueTrustedFormalBlockers([
+    ...(identity.backend !== 'docker' || replayIdentity.backend !== 'docker'
+      || normalizeContainerImageDigest(identity.containerImageDigest)
+        !== runtime.imageDigest
+      || normalizeContainerImageDigest(replayIdentity.containerImageDigest)
+        !== runtime.imageDigest
+      || result?.isolation?.immutableContainerImageVerified !== true
+      || result?.isolation?.kernelNetworkIsolationVerified !== true
+      || result?.isolation?.sourceReadOnlyVerified !== true
+      ? ['trusted_formal_native_docker_runtime_identity_mismatch'] : []),
+    ...(result?.toolchain !== PRODUCTION_LEAN_TOOLCHAIN
+      || result?.replayReceipt?.toolchain !== PRODUCTION_LEAN_TOOLCHAIN
+      || result?.toolchainHash !== result?.replayReceipt?.toolchainHash
+      || toolchain?.status !== 'lean_toolchain_identity_verified'
+      || toolchain?.toolchain !== PRODUCTION_LEAN_TOOLCHAIN
+      || toolchain?.toolchainRootMerkleHash !== expectedRoot
+      || toolchain?.trustedToolchainRootMerkleHash !== expectedRoot
+      || replayToolchain?.leanToolchainContentIdentityHash
+        !== toolchain?.leanToolchainContentIdentityHash
+      ? ['trusted_formal_native_toolchain_identity_mismatch'] : []),
+  ]);
+}
+
+function verifyAuthoritativeFormalNode({
+  campaign,
+  authoritativeFormalNode,
+  authoritativeFormalReceipt,
+  paperTask,
+  campaignResearchSourceSnapshot,
+  authoritativeTheoremSpecification,
+} = {}) {
+  let completedNode;
+  try {
+    completedNode =
+      assertCompletedCampaignFormalNode(authoritativeFormalNode);
+  } catch {
+    return Object.freeze({
+      node: null,
+      receipt: null,
+      blockers: Object.freeze([
+        'trusted_formal_authoritative_formal_node_invalid',
+      ]),
+    });
+  }
+  const receipt = completedNode.result;
+  const verification = verifyCampaignFormalReceipt(receipt, {
+    campaign,
+    formalNode: completedNode,
+    sourceSnapshot: campaignResearchSourceSnapshot,
+    paperTask,
+    theoremSpecification: authoritativeTheoremSpecification,
+  });
+  const blockers = uniqueTrustedFormalBlockers([
+    ...(JSON.stringify(authoritativeFormalReceipt)
+      !== JSON.stringify(receipt)
+      ? ['trusted_formal_authoritative_formal_receipt_mismatch'] : []),
+    ...(!verification.valid
+      ? verification.blockers.map((blocker) => (
+        `trusted_formal_authoritative_formal_receipt:${blocker}`
+      )) : []),
+  ]);
+  return Object.freeze({
+    node: blockers.length ? null : completedNode,
+    receipt: blockers.length ? null : receipt,
+    blockers,
+  });
+}
+
+function completedFormalNodeProjection(node) {
+  return Object.freeze({
+    nodeId: node.nodeId,
+    kind: node.kind,
+    status: node.status,
+    attemptId: node.attemptId,
+    leaseGeneration: node.leaseGeneration,
+    resultSha256: node.resultSha256,
+    result: node.result,
+  });
+}
+
+function projectedAttempt({ authorityHash, canonicalRequestHash, hints }) {
+  return Object.freeze({
+    version: 1,
+    kind: 'TrustedFormalEvidenceAttempt',
+    status: 'trusted_formal_evidence_projection_verified',
+    phase: 'completed',
+    authorityHash,
+    canonicalRequestHash,
+    externalActionId: null,
+    requestHintCount: hints,
+    maximumRequestHintCount: MAXIMUM_TRUSTED_FORMAL_REQUEST_HINTS,
+    executionPerformed: false,
+    writesPerformed: false,
+    partialMutation: false,
+    authoritativeNativeExecutionReused: true,
+    blockers: Object.freeze([]),
+  });
 }
 
 export async function produceTrustedFormalEvidence({
   root,
-  runtimeRoot,
   paperTask,
-  campaignId = null,
-  researchSourceSnapshotHash = null,
-  request,
-  artifactRepositoryFactory,
-  receiptWriters,
-  clock,
-  executableOverride = null,
-  runnerOverride = null,
+  campaignEvidenceContext = null,
+  campaignResearchSourceSnapshot = null,
+  campaign = null,
+  authoritativeFormalNode = null,
+  authoritativeTheoremSpecification = null,
+  authoritativeFormalReceipt = null,
+  nativeResearchWorkerExecution = null,
+  proposalClaimToTheoremBinding = null,
+  requestHints = [],
+  campaignExecutionAuthority = null,
+  executionSignal = null,
+  trustedSandboxRuntime = null,
 } = {}) {
-  const descriptor = formalVerifierDescriptor(request?.verifierKind || request?.verifier_kind);
-  if (!descriptor) return Object.freeze({ status: 'trusted_formal_evidence_blocked', blockers: ['formal_verifier_kind_unknown'] });
-  if (!artifactRepositoryFactory || !receiptWriters?.formalAdapter || !receiptWriters?.formalExecution || !clock) return Object.freeze({ status: 'trusted_formal_evidence_blocked', blockers: ['trusted_formal_services_missing'] });
-  if (!paperTask?.paperId || !campaignId || !SHA256.test(String(researchSourceSnapshotHash || ''))) {
-    return Object.freeze({
-      status: 'trusted_formal_evidence_blocked',
-      blockers: ['formal_current_research_lineage_required'],
-    });
-  }
-  const executable = executableOverride || executablePath(descriptor.command);
-  if (!executable) return Object.freeze({ status: 'trusted_formal_evidence_blocked', blockers: [`formal_runtime_unavailable:${descriptor.command}`] });
-  const requestedSources = request.sourceRecords || request.source_records || [];
-  if (!requestedSources.length) return Object.freeze({ status: 'trusted_formal_evidence_blocked', blockers: ['formal_source_records_missing'] });
-  const formalDir = path.join(runtimeRoot, 'formal-verification', paperTask.paperId, descriptor.kind);
-  fs.mkdirSync(formalDir, { recursive: true });
-  const repository = artifactRepositoryFactory(formalDir);
-  const sourceRecords = [];
-  for (const [index, source] of requestedSources.entries()) {
-    const input = path.resolve(root, String(source.absolutePath || source.path || ''));
-    const sourceRead = readScopedFileSync({ scopeRoot: root, candidate: input, maximumBytes: 64 * 1024 * 1024 });
-    if (sourceRead.status !== 'scoped_file_read_verified' || path.extname(input).toLowerCase() !== descriptor.extension) {
-      return Object.freeze({ status: 'trusted_formal_evidence_blocked', blockers: [`formal_source_invalid:${index}`, ...sourceRead.blockers] });
-    }
-    const target = path.join(formalDir, 'sources', `${index + 1}-${path.basename(input)}`);
-    const receipt = await repository.writeBytes(target, sourceRead.content, { role: `formal-source:${paperTask.paperId}:${descriptor.kind}:${index + 1}`, atomic: true });
-    sourceRecords.push(Object.freeze({ path: receipt.path, hash: receipt.hash, sourceReadReceiptHash: sourceRead.scopedFileReadReceiptHash, artifactWriteReceipt: receipt, ledgerReceiptId: receipt.ledgerReceiptId, absolutePath: target }));
-  }
-  const adapterPayload = { version: 1, kind: 'FormalVerifierAdapterReceipt', status: 'formal_verifier_adapter_verified', verifierKind: descriptor.kind, command: descriptor.command, extension: descriptor.extension, executableHash: fileSha256Hash(executable), createdAt: clock.nowIso() };
-  const adapterReceiptHash = hashRecord('FormalVerifierAdapterReceipt', adapterPayload);
-  const adapterLedger = receiptWriters.formalAdapter.record({ ...adapterPayload, receiptHash: adapterReceiptHash }, { stream: 'formal-verifier-adapters', strictInsert: true });
-  const adapterReceipt = Object.freeze({ ...adapterPayload, receiptHash: adapterReceiptHash, ledgerReceiptId: adapterLedger.receiptId });
-  const runner = runnerOverride || createOsSandboxedWorkerRunner({ allowedExecutables: [executable], allowedRoots: [formalDir], allowedOutputRoots: [formalDir] });
-  const args = descriptor.kind === 'lean' ? ['--error=warning', sourceRecords[0].absolutePath] : [sourceRecords[0].absolutePath];
-  const execution = runner.run({ executable, args, cwd: formalDir, sourceRoot: formalDir, timeoutMs: Number(request.timeoutMs || 120000) });
-  if (!execution.ok) return Object.freeze({ status: 'trusted_formal_evidence_blocked', adapterReceipt, sandboxReceipt: execution, blockers: execution.blockers || ['formal_execution_failed'] });
-  const certificatePayload = { version: 1, kind: descriptor.certificateKind, verifierKind: descriptor.kind, sourceHashes: sourceRecords.map((item) => item.hash).sort(), toolchainHash: fileSha256Hash(executable), sandboxReceiptHash: execution.receiptHash, exitCode: execution.exitCode, stdoutHash: hashRecord('FormalStdout', String(execution.stdout || '')), stderrHash: hashRecord('FormalStderr', String(execution.stderr || '')) };
-  const certificateReceipt = await repository.writeJson(path.join(formalDir, 'certificates', `${descriptor.kind}-certificate.json`), certificatePayload, { role: `formal-certificate:${paperTask.paperId}:${descriptor.kind}`, atomic: true });
-  const claimBindings = request.claimBindings || request.claim_bindings || [];
-  const sourceManifest = buildFormalSourceManifest({ verifierKind: descriptor.kind, sourceRecords });
-  const claimBindingsManifest = buildFormalClaimBindingsManifest({ claimBindings });
-  const executionContract = buildFormalExecutionContract({ verifierKind: descriptor.kind, command: descriptor.command, certificateHash: certificateReceipt.hash, toolchainHash: certificatePayload.toolchainHash, sourceManifestHash: sourceManifest.formalSourceManifestHash, claimBindingsHash: claimBindingsManifest.formalClaimBindingsHash, certificateWriteReceiptHash: certificateReceipt.writeReceiptHash, adapterReceiptHash });
-  const executionPayload = {
-    version: 1, kind: 'FormalVerifierExecutionReceipt', status: 'formal_verifier_execution_verified', verifierKind: descriptor.kind,
-    paperId: paperTask.paperId, campaignId, researchSourceSnapshotHash,
-    certificateHash: certificateReceipt.hash, sourceHashes: sourceRecords.map((item) => item.hash).sort(), sourceManifestHash: sourceManifest.formalSourceManifestHash,
-    claimBindingsHash: claimBindingsManifest.formalClaimBindingsHash, certificateWriteReceiptHash: certificateReceipt.writeReceiptHash,
-    toolchainHash: certificatePayload.toolchainHash, command: descriptor.command, adapterReceiptHash,
-    executionContractHash: executionContract.formalExecutionContractHash, isolationPolicyHash: executionContract.isolationPolicyHash,
-    isolationReceiptHash: execution.receiptHash, networkPolicy: 'none', secretAccessPerformed: false, sourceMutationDetected: false,
-    externalActionPerformed: false, providerCallPerformed: false, commitPerformed: false,
-    sourceMerkleHashBefore: execution.sourceMerkleHashBefore, sourceMerkleHashAfter: execution.sourceMerkleHashAfter,
-    isolation: execution.isolation, exitCode: execution.exitCode,
-    stdoutHash: certificatePayload.stdoutHash, stderrHash: certificatePayload.stderrHash,
-    runnerId: execution.runnerId, runnerDescriptorHash: hashRecord('FormalRunnerDescriptor', { runnerId: execution.runnerId, backend: execution.backend, isolation: execution.isolation }),
-    createdAt: clock.nowIso(),
-  };
-  const executionReceiptHash = computeReceiptHash(executionPayload, {
-    hashField: 'receiptHash',
+  const hintCount = Array.isArray(requestHints) ? requestHints.length : 0;
+  const authorityHash = campaignExecutionAuthority
+    ?.trustedFormalCampaignExecutionAuthorityHash || null;
+  const block = (phase, blockers, extra = {}) => blockedTrustedFormalEvidence({
+    phase, blockers, authorityHash, requestHintCount: hintCount, ...extra,
   });
-  const executionLedger = receiptWriters.formalExecution.record(
-    { ...executionPayload, receiptHash: executionReceiptHash },
+  if (executionSignal?.aborted) {
+    return block('preflight', ['campaign_research_verification_cancelled']);
+  }
+  const formalNodeVerification = verifyAuthoritativeFormalNode({
+    campaign,
+    authoritativeFormalNode,
+    authoritativeFormalReceipt,
+    paperTask,
+    campaignResearchSourceSnapshot,
+    authoritativeTheoremSpecification,
+  });
+  if (formalNodeVerification.blockers.length) {
+    return block('formal_node_authority', formalNodeVerification.blockers);
+  }
+  const trustedFormalReceipt = formalNodeVerification.receipt;
+  const authorityBlockers = trustedFormalAuthorityBlockers({
+    authority: campaignExecutionAuthority,
+    paperTask,
+    campaignEvidenceContext,
+    campaignResearchSourceSnapshot,
+    authoritativeFormalReceipt: trustedFormalReceipt,
+    authoritativeFormalNode: formalNodeVerification.node,
+    nativeResearchWorkerExecution,
+  });
+  if (authorityBlockers.length) return block('authority', authorityBlockers);
+  let runtime;
+  try {
+    runtime = createPinnedFormalSandboxRuntime(trustedSandboxRuntime);
+  } catch (error) {
+    return block('native_runtime', [
+      error?.message || 'formal_sandbox_runtime_invalid',
+    ]);
+  }
+  const claimBindings = formalClosureClaimBindingsFromProposalBinding(
+    proposalClaimToTheoremBinding,
+  );
+  const nativeVerification = verifyNativeFormalResearchClosureBinding(
+    nativeResearchWorkerExecution,
     {
-      stream: 'formal-verifier-executions',
       paperId: paperTask.paperId,
-      strictInsert: true,
+      campaignId: campaignEvidenceContext.campaignId,
+      researchSourceSnapshotHash:
+        campaignResearchSourceSnapshot.campaignResearchSourceSnapshotHash,
+      taskKey: paperTask.taskKey,
+      proposalBinding: proposalClaimToTheoremBinding,
+      expectedClaimBindings: claimBindings,
     },
   );
-  const executionReceipt = Object.freeze({ ...executionPayload, receiptHash: executionReceiptHash, ledgerReceiptId: executionLedger.receiptId });
+  const source = authoritativeSource({
+    root,
+    nativeResearchWorkerExecution,
+    campaignResearchSourceSnapshot,
+  });
+  const blockers = uniqueTrustedFormalBlockers([
+    ...nativeVerification.blockers.map((item) => `native_formal:${item}`),
+    ...source.blockers,
+    ...nativeRuntimeBlockers(source.receipt?.result, runtime),
+    ...requestHintBlockers(requestHints, {
+      root,
+      sourcePath: source.absolutePath,
+      sourceHash: source.read?.hash,
+      claimBindings,
+    }),
+  ]);
+  if (!nativeVerification.valid || blockers.length) {
+    return block('native_projection_preflight', blockers);
+  }
+  const canonicalRequest = Object.freeze({
+    version: 1,
+    kind: 'TrustedNativeFormalAggregateProjectionRequest',
+    paperId: paperTask.paperId,
+    campaignId: campaignEvidenceContext.campaignId,
+    researchSourceSnapshotHash:
+      campaignResearchSourceSnapshot.campaignResearchSourceSnapshotHash,
+    campaignFormalVerificationReceiptHash:
+      trustedFormalReceipt.campaignFormalVerificationReceiptHash,
+    nativeResearchWorkerExecutionReportHash:
+      nativeResearchWorkerExecution.nativeResearchWorkerExecutionReportHash,
+    nativeResearchWorkerExecutionReceiptHash:
+      source.receipt.nativeResearchWorkerExecutionReceiptHash,
+    sourcePath: String(source.input.path).replace(/\\/g, '/'),
+    sourceHash: source.read.hash,
+    claimBindings,
+  });
+  const canonicalRequestHash = hashRecord(
+    'TrustedNativeFormalAggregateProjectionRequest',
+    canonicalRequest,
+  );
   return Object.freeze({
-    status: 'trusted_formal_evidence_recorded', adapterReceipt,
-    certificateRequest: Object.freeze({ paperId: paperTask.paperId, campaignId, researchSourceSnapshotHash, verifierKind: descriptor.kind, certificate: { kind: descriptor.certificateKind, certificateHash: certificateReceipt.hash, toolchainHash: certificatePayload.toolchainHash, artifactWriteReceipt: certificateReceipt, ledgerReceiptId: certificateReceipt.ledgerReceiptId }, sourceRecords, claimBindings, executionReceipt }),
-    sandboxReceipt: execution, blockers: [],
+    status: 'trusted_formal_evidence_projected',
+    attempt: projectedAttempt({
+      authorityHash,
+      canonicalRequestHash,
+      hints: hintCount,
+    }),
+    nativeProjectionRequest: Object.freeze({
+      paperId: paperTask.paperId,
+      campaignId: campaignEvidenceContext.campaignId,
+      researchSourceSnapshotHash:
+        campaignResearchSourceSnapshot.campaignResearchSourceSnapshotHash,
+      verifierKind: 'lean',
+      claimBindings,
+      authoritativeFormalReceipt: trustedFormalReceipt,
+      authoritativeFormalNode:
+        completedFormalNodeProjection(formalNodeVerification.node),
+      campaignResearchSourceSnapshot,
+      nativeResearchWorkerExecution,
+      authoritativeSource: Object.freeze({
+        path: String(source.input.path).replace(/\\/g, '/'),
+        hash: source.read.hash,
+        bytes: source.read.bytes,
+        sourceReadReceiptHash: source.read.scopedFileReadReceiptHash,
+      }),
+    }),
+    blockers: Object.freeze([]),
   });
 }

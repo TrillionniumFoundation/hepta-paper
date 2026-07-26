@@ -13,8 +13,15 @@ import {
   StrictFullAutoAcceptanceControlStore,
 } from './strict-full-auto-acceptance-control-store-repository.mjs';
 import {
+  inspectStrictFullAutoAcceptanceRootBinding,
+  preflightStrictFullAutoAcceptanceInputDirectory,
+} from './strict-full-auto-acceptance-root-binding.mjs';
+import {
   autonomousSubmissionPortalPublicDescriptorHash,
 } from './autonomous-submission-portal-public-adapter.mjs';
+import {
+  verifyReviewerPrincipalPoolConfiguration,
+} from './reviewer-principal-pool-configuration-reader.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 
@@ -56,20 +63,43 @@ function directoryNoSymlink(candidate, label) {
   return Object.freeze({ absolute, stat: link });
 }
 
-function fileHash(candidate) {
-  const digest = crypto.createHash('sha256');
-  const descriptor = fs.openSync(candidate, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+function regularFileSnapshot(candidate, inspected, label) {
+  let descriptor;
   try {
-    const buffer = Buffer.allocUnsafe(64 * 1024);
-    for (;;) {
-      const count = fs.readSync(descriptor, buffer, 0, buffer.length, null);
-      if (count === 0) break;
-      digest.update(buffer.subarray(0, count));
+    descriptor = fs.openSync(
+      candidate,
+      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+    );
+    const opened = fs.fstatSync(descriptor, { bigint: true });
+    if (!opened.isFile()
+      || String(opened.dev) !== String(inspected.stat.dev)
+      || String(opened.ino) !== String(inspected.stat.ino)) {
+      throw new Error(`strict_full_auto_acceptance_reference_changed:${label}`);
     }
+    const bytes = fs.readFileSync(descriptor);
+    const completed = fs.fstatSync(descriptor, { bigint: true });
+    if (String(opened.dev) !== String(completed.dev)
+      || String(opened.ino) !== String(completed.ino)
+      || String(opened.size) !== String(completed.size)
+      || String(opened.mtimeNs) !== String(completed.mtimeNs)
+      || String(opened.ctimeNs) !== String(completed.ctimeNs)) {
+      throw new Error(`strict_full_auto_acceptance_reference_changed:${label}`);
+    }
+    return bytes;
+  } catch (error) {
+    if (String(error?.message || '').startsWith(
+      'strict_full_auto_acceptance_reference_changed:',
+    )) throw error;
+    throw new Error(`strict_full_auto_acceptance_reference_changed:${label}`, {
+      cause: error,
+    });
   } finally {
-    fs.closeSync(descriptor);
+    if (descriptor !== undefined) fs.closeSync(descriptor);
   }
-  return `sha256:${digest.digest('hex')}`;
+}
+
+function contentHash(bytes) {
+  return `sha256:${crypto.createHash('sha256').update(bytes).digest('hex')}`;
 }
 
 function secretMetadataIdentity({ absolute, stat, referenceId, subjectId }) {
@@ -117,7 +147,7 @@ function inspectReference(referenceId, value) {
     ? directoryNoSymlink(value.path, referenceId)
     : regularFileNoSymlink(value.path, referenceId);
   let identity;
-  let contentHash = null;
+  let inspectedContentHash = null;
   let documentPins = Object.freeze({});
   if (contentReference) {
     if ((Number(inspected.stat.mode) & 0o222) !== 0) {
@@ -128,12 +158,14 @@ function inspectReference(referenceId, value) {
         || String(inspected.stat.uid) !== String(process.getuid?.()))) {
       throw new Error(`strict_full_auto_acceptance_private_config_not_private:${referenceId}`);
     }
-    contentHash = fileHash(inspected.absolute);
-    if (contentHash !== value.expectedSha256) {
+    const bytes = regularFileSnapshot(inspected.absolute, inspected, referenceId);
+    inspectedContentHash = contentHash(bytes);
+    if (inspectedContentHash !== value.expectedSha256) {
       throw new Error(`strict_full_auto_acceptance_reference_hash_mismatch:${referenceId}`);
     }
     const documentPinRequired = new Set([
       'research-author-principal',
+      'formal-reviewer-principal',
       'formal-sandbox-runtime-config',
       'production-mathlib-build-authority-config',
       'autonomous-venue-profile-config',
@@ -144,7 +176,7 @@ function inspectReference(referenceId, value) {
     ]).has(referenceId);
     if (documentPinRequired) {
       let parsed;
-      try { parsed = JSON.parse(fs.readFileSync(inspected.absolute, 'utf8')); }
+      try { parsed = JSON.parse(bytes.toString('utf8')); }
       catch (error) {
         throw new Error(`strict_full_auto_acceptance_document_pin_invalid:${referenceId}`, {
           cause: error,
@@ -153,6 +185,32 @@ function inspectReference(referenceId, value) {
       if (documentPinRequired
         && !/^sha256:[0-9a-f]{64}$/.test(String(parsed?.configurationHash || ''))) {
         throw new Error(`strict_full_auto_acceptance_document_pin_invalid:${referenceId}`);
+      }
+      let reviewerServiceTokenEnvironmentVariables = null;
+      if (referenceId === 'formal-reviewer-principal') {
+        reviewerServiceTokenEnvironmentVariables = parsed?.principals?.flatMap(
+          (principal) => [
+            principal?.signerConfiguration?.tokenEnvironmentVariable,
+            principal?.recoverableExecutorConfiguration?.tokenEnvironmentVariable,
+          ],
+        ).sort();
+        if (!verifyReviewerPrincipalPoolConfiguration(parsed)
+          || parsed.version !== 2
+          || parsed.minimumReviewerTrustDomains < 3
+          || parsed.principals.length < 3
+          || parsed.principals.some((principal) => (
+            principal.signerConfiguration.version !== 3
+          ))
+          || reviewerServiceTokenEnvironmentVariables.length > 16
+          || reviewerServiceTokenEnvironmentVariables.some(
+            (name) => !/^[A-Z][A-Z0-9_]{1,122}_FILE$/.test(String(name || '')),
+          )
+          || new Set(reviewerServiceTokenEnvironmentVariables).size
+            !== reviewerServiceTokenEnvironmentVariables.length) {
+          throw new Error(
+            'strict_full_auto_acceptance_reviewer_pool_config_invalid',
+          );
+        }
       }
       const expectedTokenEnvironmentVariable = referenceId === 'prior-art-service-config'
         ? 'HEPTA_PRIOR_ART_SERVICE_TOKEN_FILE'
@@ -170,13 +228,18 @@ function inspectReference(referenceId, value) {
         } : {}),
         ...(expectedTokenEnvironmentVariable
           ? { tokenEnvironmentVariable: expectedTokenEnvironmentVariable } : {}),
+        ...(reviewerServiceTokenEnvironmentVariables ? {
+          reviewerServiceTokenEnvironmentVariables: Object.freeze(
+            reviewerServiceTokenEnvironmentVariables,
+          ),
+        } : {}),
       });
     }
     identity = strictFullAutoAcceptanceHash({
       referenceId,
       subjectId: value.subjectId,
       resolvedPath: inspected.absolute,
-      contentHash,
+      contentHash: inspectedContentHash,
     });
   } else {
     // Opaque references are deliberately never opened or read by this process.
@@ -192,7 +255,7 @@ function inspectReference(referenceId, value) {
     subjectId: value.subjectId,
     resolvedPath: inspected.absolute,
     identity,
-    contentHash,
+    contentHash: inspectedContentHash,
     documentPins,
   });
 }
@@ -235,75 +298,6 @@ function validatedConfiguration(configuration) {
   return configuration;
 }
 
-function directoryAnchor(candidate, rootId, {
-  targetRequired = false,
-  accessMode,
-} = {}) {
-  const resolvedPath = path.resolve(candidate);
-  if (!['read-only', 'read-write'].includes(accessMode)) {
-    throw new Error(`strict_full_auto_acceptance_root_access_mode_invalid:${rootId}`);
-  }
-  if (resolvedPath === path.parse(resolvedPath).root) {
-    throw new Error(`strict_full_auto_acceptance_root_too_broad:${rootId}`);
-  }
-  const anchorKind = targetRequired ? 'target' : 'parent';
-  const anchorPath = targetRequired ? resolvedPath : path.dirname(resolvedPath);
-  let stat;
-  try {
-    stat = fs.lstatSync(anchorPath, { bigint: true });
-  } catch (error) {
-    throw new Error(`strict_full_auto_acceptance_root_anchor_missing:${rootId}`, { cause: error });
-  }
-  if (!stat.isDirectory() || stat.isSymbolicLink()
-    || fs.realpathSync(anchorPath) !== anchorPath
-    || (Number(stat.mode) & 0o022) !== 0
-    || String(stat.uid) !== String(process.getuid?.())) {
-    throw new Error(`strict_full_auto_acceptance_root_anchor_invalid:${rootId}`);
-  }
-  let futureTarget = null;
-  if (!targetRequired) {
-    try { futureTarget = fs.lstatSync(resolvedPath); }
-    catch (error) { if (error?.code !== 'ENOENT') throw error; }
-  }
-  if (futureTarget) {
-    const target = futureTarget;
-    if (!target.isDirectory() || target.isSymbolicLink()
-      || fs.realpathSync(resolvedPath) !== resolvedPath
-      || (Number(target.mode) & 0o022) !== 0
-      || String(target.uid) !== String(process.getuid?.())) {
-      throw new Error(`strict_full_auto_acceptance_future_root_target_invalid:${rootId}`);
-    }
-  }
-  const body = Object.freeze({
-    rootId,
-    accessMode,
-    resolvedPath,
-    anchorKind,
-    anchorPath,
-    anchorRealPath: fs.realpathSync(anchorPath),
-    anchorDevice: String(stat.dev),
-    anchorInode: String(stat.ino),
-    anchorMode: Number(stat.mode) & 0o7777,
-    anchorUid: String(stat.uid),
-  });
-  return Object.freeze({ ...body, identity: strictFullAutoAcceptanceHash(body) });
-}
-
-function preflightInputDirectory(candidate, label) {
-  const absolute = path.resolve(String(candidate || ''));
-  let stat;
-  try { stat = fs.lstatSync(absolute); }
-  catch (error) {
-    throw new Error(`strict_full_auto_acceptance_input_directory_missing:${label}`, {
-      cause: error,
-    });
-  }
-  if (!stat.isDirectory() || stat.isSymbolicLink() || fs.realpathSync(absolute) !== absolute) {
-    throw new Error(`strict_full_auto_acceptance_input_directory_invalid:${label}`);
-  }
-  return absolute;
-}
-
 function invocationFlagValue(invocation, flag) {
   const index = invocation.arguments.indexOf(flag);
   return index < 0 ? null : invocation.arguments[index + 1];
@@ -321,16 +315,28 @@ function assertExecutableReference(reference, label) {
   }
 }
 
+function parseBoundJsonReference(reference, label) {
+  const inspected = regularFileNoSymlink(reference.resolvedPath, label);
+  const bytes = regularFileSnapshot(inspected.absolute, inspected, label);
+  if (contentHash(bytes) !== reference.contentHash) {
+    throw new Error(
+      `strict_full_auto_acceptance_bound_reference_changed:${reference.referenceId}`,
+    );
+  }
+  try {
+    return JSON.parse(bytes.toString('utf8'));
+  } catch (error) {
+    throw new Error(`strict_full_auto_acceptance_${label}_invalid`, { cause: error });
+  }
+}
+
 function assertPrivateAuthorityConfigurations(referenceBindings) {
   const references = new Map(referenceBindings.map((item) => [item.referenceId, item]));
   const empiricalConfig = references.get('empirical-plugin-signing-config');
-  let empirical;
-  try { empirical = JSON.parse(fs.readFileSync(empiricalConfig.resolvedPath, 'utf8')); }
-  catch (error) {
-    throw new Error('strict_full_auto_acceptance_empirical_signer_config_invalid', {
-      cause: error,
-    });
-  }
+  const empirical = parseBoundJsonReference(
+    empiricalConfig,
+    'empirical_signer_config',
+  );
   const empiricalCommand = references.get('empirical-plugin-signer-command');
   const empiricalTrust = references.get('empirical-plugin-trust-store');
   if (empirical?.kind !== 'AutonomousEmpiricalPluginSigningAuthorityConfiguration'
@@ -345,13 +351,10 @@ function assertPrivateAuthorityConfigurations(referenceBindings) {
   assertExecutableReference(empiricalCommand, 'empirical-plugin-signer-command');
 
   const releaseConfig = references.get('release-attestor-config');
-  let release;
-  try { release = JSON.parse(fs.readFileSync(releaseConfig.resolvedPath, 'utf8')); }
-  catch (error) {
-    throw new Error('strict_full_auto_acceptance_release_attestor_config_invalid', {
-      cause: error,
-    });
-  }
+  const release = parseBoundJsonReference(
+    releaseConfig,
+    'release_attestor_config',
+  );
   const signer = release?.backend?.signerCommand;
   const probe = release?.backend?.probeCommand;
   const signerRoot = references.get('release-attestor-signer-credential-root');
@@ -379,9 +382,13 @@ function assertPrivateAuthorityConfigurations(referenceBindings) {
   assertExecutableReference(probeCommand, 'release-attestor-probe-command');
 }
 
-function parseJsonFile(candidate, label) {
+function parseJsonFile(candidate, label, inspected = regularFileNoSymlink(candidate, label)) {
   try {
-    return JSON.parse(fs.readFileSync(candidate, 'utf8'));
+    return JSON.parse(regularFileSnapshot(
+      inspected.absolute,
+      inspected,
+      label,
+    ).toString('utf8'));
   } catch (error) {
     throw new Error(`strict_full_auto_acceptance_${label}_invalid`, { cause: error });
   }
@@ -397,9 +404,14 @@ export class StrictFullAutoAcceptanceRepository {
   }
 
   inspectPlan() {
+    const inspectedConfiguration = regularFileNoSymlink(
+      this.configurationPath,
+      'configuration',
+    );
     const configuration = validatedConfiguration(parseJsonFile(
       this.configurationPath,
       'configuration',
+      inspectedConfiguration,
     ));
     const configurationHash = strictFullAutoAcceptanceHash(configuration);
     const referenceBindings = Object.entries(configuration.references)
@@ -412,11 +424,11 @@ export class StrictFullAutoAcceptanceRepository {
     const controlRoot = path.resolve(configuration.controlRoot);
     const runtimeRoot = path.resolve(configuration.runtimeRoot);
     const assetRoot = path.resolve(configuration.assetRoot);
-    const datasetRoot = preflightInputDirectory(
+    const datasetRoot = preflightStrictFullAutoAcceptanceInputDirectory(
       configuration.datasetRoot,
       'registered-dataset-root',
     );
-    preflightInputDirectory(
+    preflightStrictFullAutoAcceptanceInputDirectory(
       invocationFlagValue(configuration.steps['restore-drill'].execute, '--bundle'),
       'restore-drill-bundle',
     );
@@ -427,14 +439,18 @@ export class StrictFullAutoAcceptanceRepository {
       assetRoot,
       datasetRoot,
       rootBindings: [
-        directoryAnchor(controlRoot, 'control-root', {
+        inspectStrictFullAutoAcceptanceRootBinding(controlRoot, 'control-root', {
           targetRequired: true, accessMode: 'read-write',
         }),
-        directoryAnchor(runtimeRoot, 'runtime-root', { accessMode: 'read-write' }),
-        directoryAnchor(assetRoot, 'asset-root', {
+        inspectStrictFullAutoAcceptanceRootBinding(
+          runtimeRoot,
+          'runtime-root',
+          { accessMode: 'read-write' },
+        ),
+        inspectStrictFullAutoAcceptanceRootBinding(assetRoot, 'asset-root', {
           targetRequired: true, accessMode: 'read-only',
         }),
-        directoryAnchor(datasetRoot, 'dataset-root', {
+        inspectStrictFullAutoAcceptanceRootBinding(datasetRoot, 'dataset-root', {
           targetRequired: true, accessMode: 'read-only',
         }),
       ],

@@ -18,6 +18,9 @@ import {
   probeOsSandbox,
 } from '../../paper-adapters/runtime/sandbox-backend-probe.mjs';
 import {
+  executableRuntimePathSupported,
+} from '../../paper-adapters/runtime/runtime-resource-mounts.mjs';
+import {
   buildCampaignAgentInstructions,
 } from '../../paper-application/automation/campaign-agent-policy.mjs';
 import {
@@ -56,6 +59,17 @@ function trustedDockerImageInspection(runtime) {
     stderr: '',
   };
 }
+
+test('sandbox recognizes a plan-bound Elan toolchain below a custom ELAN_HOME', () => {
+  assert.equal(executableRuntimePathSupported(
+    '/opt/hepta-paper/elan/toolchains/leanprover--lean4---v4.30.0/bin/lean',
+    '/srv/hepta-paper/formal/project',
+  ), true);
+  assert.equal(executableRuntimePathSupported(
+    '/opt/hepta-paper/elan/not-toolchains/lean/bin/lean',
+    '/srv/hepta-paper/formal/project',
+  ), false);
+});
 
 test('campaign coder contract writes canonical metric artifacts only through HEPTA_OUTPUT_DIR', () => {
   const instructions = buildCampaignAgentInstructions({

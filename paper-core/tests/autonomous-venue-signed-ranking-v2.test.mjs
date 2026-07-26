@@ -353,8 +353,12 @@ test('signed venue profile v3 is the sole source of a generic Venue Requirement 
     selectedAt: OBSERVED_AT,
     authorityObservedAt: OBSERVED_AT,
   });
+  const {
+    autonomousResearchLoopPreparationReportHash: _fixturePreparationHash,
+    ...fixturePreparationPayload
+  } = productionFixture.preparation;
   const preparationPayload = {
-    ...productionFixture.preparation,
+    ...fixturePreparationPayload,
     version: 1,
     kind: 'AutonomousResearchLoopPreparationReport',
     launchMode: 'production-run',

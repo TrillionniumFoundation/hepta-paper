@@ -107,7 +107,7 @@ export function createExternalResearchReplayReceiptVerifier({
   configuration,
   clock = { now: () => new Date() },
 } = {}) {
-  if (configuration?.version !== 3
+  if (![3, 4].includes(configuration?.version)
     || configuration?.receiptSignerRole !== RESULT_SIGNER_ROLE
     || typeof clock?.now !== 'function') {
     throw new Error('external_research_replay_receipt_verifier_configuration_invalid');

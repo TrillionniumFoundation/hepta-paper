@@ -13,9 +13,7 @@ import {
   verifyExternalQualificationReleaseSignerAuthority,
 } from '../../paper-adapters/automation/external-research-qualification-process-adapter.mjs';
 import { readExternalResearchQualificationProcessConfiguration } from '../../paper-adapters/automation/external-research-qualification-process-identity.mjs';
-import {
-  verifyExternalResearchQualificationLocally,
-} from '../../paper-adapters/automation/external-research-qualification-local-verifier.mjs';
+import { verifyExternalResearchQualificationLocally } from '../../paper-adapters/automation/external-research-qualification-local-verifier.mjs';
 import {
   FULL_RESEARCH_QUALIFICATION_ATTESTOR_ROLE,
   fullResearchQualificationSigningPayloadHash,
@@ -24,9 +22,13 @@ import {
   REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES,
   RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE,
 } from '../../paper-domain/automation/runtime-image-reproducibility-receipt-contract.mjs';
+import { MANUSCRIPT_RELEASE_PROOF_FIELDS } from '../../paper-domain/automation/full-research-release-qualification-inspection.mjs';
 import {
-  MANUSCRIPT_RELEASE_PROOF_FIELDS,
-} from '../../paper-domain/automation/full-research-release-qualification-inspection.mjs';
+  EXTERNAL_RESEARCH_QUALIFICATION_NATIVE_FORMAL_INTAKE_VERSION,
+  EXTERNAL_RESEARCH_QUALIFICATION_VERIFICATION_POLICY_VERSION,
+  INDEPENDENT_EXTERNAL_RESEARCH_QUALIFICATION_REQUEST_VERSION,
+  INDEPENDENT_EXTERNAL_RESEARCH_QUALIFICATION_RESPONSE_VERSION,
+} from '../../paper-domain/automation/external-research-qualification-verification-policy-contract.mjs';
 import {
   genericManuscriptReleaseFixture,
 } from './support/autonomous-research-generalization-fixture.mjs';
@@ -153,7 +155,7 @@ function processFixture(t, {
   maximumQualificationCostUsd = 1.5,
   qualificationCostAuthority = 'operator_declared_worst_case_usd',
   lookupSignerPrivateKey = null,
-  verifierBehavior = 'policy-v2',
+  verifierBehavior = 'policy-v3',
   verifierAttestorStatus = 'active',
   verifierAttestorEffectiveFrom = '2026-07-01T00:00:00.000Z',
   verifierAttestorExpiresAt = '2027-07-01T00:00:00.000Z',
@@ -286,18 +288,33 @@ process.stdin.on('end', () => {
       === JSON.stringify(releaseBinding.priorArtEvidenceReceipt);
   const formalIntakes =
     releaseBundle.researchReport?.capabilities?.formalCertificateIntakes;
-  const nativeFormalCertificateIntakeV3Verified =
-    Array.isArray(formalIntakes) && formalIntakes.length > 0
-    && formalIntakes.every((intake) =>
-      intake.version === 3
-      && intake.status === 'formal_certificate_intake_verified');
+  const nativeFormalCertificateIntakeV4Verified =
+    request.version === ${INDEPENDENT_EXTERNAL_RESEARCH_QUALIFICATION_REQUEST_VERSION}
+    && policy?.version === ${EXTERNAL_RESEARCH_QUALIFICATION_VERIFICATION_POLICY_VERSION}
+    && policy?.nativeFormalCertificateIntakeVersion
+      === ${EXTERNAL_RESEARCH_QUALIFICATION_NATIVE_FORMAL_INTAKE_VERSION}
+    && Array.isArray(formalIntakes) && formalIntakes.length > 0
+    && formalIntakes.every((intake) => {
+      const { genericFormalCertificateIntakeHash: claimedHash, ...payload } =
+        intake || {};
+      return intake?.version === 4
+      && intake?.kind === 'GenericFormalCertificateIntake'
+      && intake.status === 'formal_certificate_intake_verified'
+      && /^sha256:[0-9a-f]{64}$/.test(String(claimedHash || ''))
+      && hashRecord('GenericFormalCertificateIntake', payload) === claimedHash
+      && intake.authoritativeFormalReceiptVerified === true
+      && intake.trustedNativeFormalReceiptVerified === true
+      && intake.sourceSnapshotVerified === true
+      && Array.isArray(intake.blockers) && intake.blockers.length === 0
+      && intake.externalActionPerformed === false;
+    });
   const recursiveReleaseClosureRequirementSatisfied =
     policy?.recursiveReleaseClosureRequired === false
     || (releaseBinding.version === 4
       && releaseBinding.researchReportHash === releaseBundle.researchReportHash
       && releaseBundle.researchReportHash
         === releaseBundle.researchReport?.researchReportHash
-      && nativeFormalCertificateIntakeV3Verified);
+      && nativeFormalCertificateIntakeV4Verified);
   const inspection = {
     version: 1,
     kind: 'FullResearchQualificationInspection',
@@ -336,7 +353,7 @@ process.stdin.on('end', () => {
     independentHypothesisPriorArtReceiptHash: receipt.independentHypothesisPriorArtReceiptHash,
     verificationPolicyHash: policyHash,
     structuredPriorArtEvidenceVerified,
-    nativeFormalCertificateIntakeV3Verified,
+    nativeFormalCertificateIntakeV4Verified,
     releaseBindingVersion: policy?.releaseBindingVersion,
     launchMode: policy?.launchMode,
     recursiveReleaseClosureRequired: policy?.recursiveReleaseClosureRequired,
@@ -351,13 +368,17 @@ process.stdin.on('end', () => {
   if (behavior === 'structured-prior-art-false') {
     inspection.structuredPriorArtEvidenceVerified = false;
   }
-  if (behavior === 'native-v3-false') {
-    inspection.nativeFormalCertificateIntakeV3Verified = false;
+  if (behavior === 'native-v4-false') {
+    inspection.nativeFormalCertificateIntakeV4Verified = false;
+  }
+  if (behavior === 'legacy-native-v3-attestation') {
+    delete inspection.nativeFormalCertificateIntakeV4Verified;
+    inspection.nativeFormalCertificateIntakeV3Verified = true;
   }
   if (behavior === 'legacy-no-policy') {
     delete inspection.verificationPolicyHash;
     delete inspection.structuredPriorArtEvidenceVerified;
-    delete inspection.nativeFormalCertificateIntakeV3Verified;
+    delete inspection.nativeFormalCertificateIntakeV4Verified;
     delete inspection.releaseBindingVersion;
     delete inspection.launchMode;
     delete inspection.recursiveReleaseClosureRequired;
@@ -365,7 +386,9 @@ process.stdin.on('end', () => {
     delete inspection.allowBoundedGoldenCapability;
   }
   const payload = {
-    version: behavior === 'legacy-no-policy' ? 1 : 2,
+    version: behavior === 'legacy-no-policy' ? 1
+      : behavior === 'legacy-response-v2' ? 2
+        : ${INDEPENDENT_EXTERNAL_RESEARCH_QUALIFICATION_RESPONSE_VERSION},
     kind: 'IndependentExternalResearchQualificationVerificationResponse',
     verifierId: request.verifierId,
     requestHash: request.requestHash,
@@ -681,13 +704,14 @@ test('process qualifier and distinct verifier enforce signature, time, and curre
     preparation,
   });
   assert.equal(verified.ready, false);
-  assert.ok(verified.blockers.includes('external_qualification_full_verification_context_required'));
+  assert.ok(
+    verified.blockers.includes('external_qualification_full_verification_context_required'),
+    JSON.stringify(verified),
+  );
 
   for (const verifierBehavior of [
-    'legacy-no-policy',
-    'policy-hash-tamper',
-    'structured-prior-art-false',
-    'native-v3-false',
+    'legacy-no-policy', 'legacy-response-v2', 'legacy-native-v3-attestation',
+    'policy-hash-tamper', 'structured-prior-art-false', 'native-v4-false',
   ]) {
     const policyAttackFixture = processFixture(t, {
       receiptValue,

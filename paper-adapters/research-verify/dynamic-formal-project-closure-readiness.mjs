@@ -15,8 +15,6 @@ import { resolvePinnedLakeExecutable } from './pinned-lake-executable-resolver.m
 import {
   configuredPinnedFormalSandboxRuntime,
 } from './pinned-formal-sandbox-runtime-configuration.mjs';
-import { createFormalProjectSnapshotRepository } from './formal-project-snapshot-repository.mjs';
-import { createOsSandboxedWorkerRunner } from '../runtime/os-sandboxed-worker-runner.mjs';
 import {
   inspectProductionMathlibRelease,
   validateProductionMathlibManifest,
@@ -30,8 +28,8 @@ import {
   PRODUCTION_MATHLIB_BUILD_AUTHORITY_CONFIGURATION_HASH_ENV,
 } from './production-mathlib-build-authority-configuration.mjs';
 import {
-  buildSealedFormalLeanProbeEnvironment,
-} from './sealed-formal-lean-probe-environment.mjs';
+  executeDynamicFormalSandboxProbe,
+} from './dynamic-formal-sandbox-probe-verifier.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const SAFE_RELATIVE_LEAN = /^[A-Za-z0-9][A-Za-z0-9_./-]{0,255}\.lean$/;
@@ -108,8 +106,9 @@ export function inspectConfiguredDynamicFormalProjectClosure({
   resolvePinnedRuntime = resolvePinnedLakeExecutable,
   readClosure = readFormalProjectClosureSync,
   inspectToolchain = null,
-  sandboxProbeRunnerFactory = createOsSandboxedWorkerRunner,
-  projectSnapshotRepository = createFormalProjectSnapshotRepository(),
+  sandboxProbeRunnerFactory = undefined,
+  verifySandboxProbeReceipt = undefined,
+  projectSnapshotRepository = undefined,
   inspectMathlibRelease = inspectProductionMathlibRelease,
   inspectMathlibBuildAuthority = inspectConfiguredProductionMathlibBuildAuthority,
   mathlibBuildAuthorityClock = () => new Date().toISOString(),
@@ -299,101 +298,27 @@ export function inspectConfiguredDynamicFormalProjectClosure({
     }
     let sandboxProbeReceipt = null;
     if (!blockers.length) {
-      let snapshot = null;
-      try {
-        snapshot = projectSnapshotRepository.materialize({
-          projectRoot,
-          dependencyScopeRoot: projectScopeRoot,
-          projectFiles: closure.files,
-        });
-        const snapshotSealReceipt = snapshot.seal();
-        details.formalSandboxProbeSnapshotSealReceipt = snapshotSealReceipt;
-        details.formalSandboxProbeSnapshotSealReceiptHash =
-          snapshotSealReceipt.formalProjectSnapshotSealReceiptHash;
-        if (snapshotSealReceipt.writableFileCount !== 0
-          || snapshotSealReceipt.writableDirectoryCount !== 0) {
-          blockers.push('dynamic_formal_sandbox_probe_snapshot_not_sealed');
-        }
-        const snapshotBefore = readClosure({
-          projectRoot: snapshot.root,
-          dependencyScopeRoot: snapshot.scopeRoot,
-        });
-        if (snapshotBefore?.status !== 'formal_project_closure_verified') {
-          blockers.push('dynamic_formal_sandbox_probe_snapshot_invalid');
-        } else {
-          const sealedLeanEnvironment = buildSealedFormalLeanProbeEnvironment({
-            manifest,
-            snapshotScopeRoot: snapshot.scopeRoot,
-            snapshotProjectRoot: snapshot.root,
-            toolchainRoot: pinned.toolchainRoot,
-          });
-          const runner = sandboxProbeRunnerFactory({
-            allowedExecutables: [pinned.leanExecutable],
-            allowedRoots: [snapshot.scopeRoot],
-            dockerImage: formalSandboxRuntimeConfiguration.image,
-            allowedContainerImages: [formalSandboxRuntimeConfiguration.image],
-            maximumTimeoutMs: 120_000,
-            maximumCpuSeconds: 120,
-            maximumPids: 64,
-            maximumCapturedBytes: 2 * 1024 * 1024,
-            executor: spawnSyncImpl,
-          });
-          sandboxProbeReceipt = runner.run({
-            executable: pinned.leanExecutable,
-            args: [probeRelativePath],
-            cwd: snapshot.root,
-            sourceRoot: snapshot.scopeRoot,
-            timeoutMs: 120_000,
-            outputPaths: [],
-            env: {
-              ELAN_HOME: environment.ELAN_HOME
-                || `${environment.HOME || ''}/.elan`,
-              ELAN_TOOLCHAIN: PRODUCTION_LEAN_TOOLCHAIN,
-              ...sealedLeanEnvironment,
-            },
-            language: 'lean',
-            determinismPolicy: 'dynamic-formal-readiness-probe-v1',
-            requireImmutableWorkRoot: true,
-          });
-          if (sandboxProbeReceipt?.then) {
-            blockers.push('dynamic_formal_sandbox_probe_must_be_synchronous');
-          } else {
-            const snapshotAfter = readClosure({
-              projectRoot: snapshot.root,
-              dependencyScopeRoot: snapshot.scopeRoot,
-            });
-            if (sandboxProbeReceipt?.ok !== true
-              || sandboxProbeReceipt.backend !== 'docker'
-              || sandboxProbeReceipt.runtimeIdentityType !== 'container'
-              || sandboxProbeReceipt.containerImageDigest
-                !== formalSandboxRuntimeConfiguration.imageDigest
-              || !SHA256.test(String(sandboxProbeReceipt.runtimeIdentityHash || ''))
-              || !SHA256.test(String(sandboxProbeReceipt.receiptHash || ''))
-              || !SHA256.test(String(
-                sandboxProbeReceipt.executionProcessIdentityHash || '',
-              ))
-              || sandboxProbeReceipt.isolation?.immutableWorkRootVerified !== true
-              || sandboxProbeReceipt.sourceMutationDetected !== false) {
-              blockers.push('dynamic_formal_sandbox_mathlib_probe_failed');
-            }
-            if (snapshotAfter?.status !== 'formal_project_closure_verified'
-              || snapshotAfter.manifestHash !== snapshotBefore.manifestHash
-              || JSON.stringify(authoritativeClosureFiles(snapshotAfter))
-                !== JSON.stringify(authoritativeClosureFiles(snapshotBefore))) {
-              blockers.push('dynamic_formal_sandbox_probe_snapshot_changed');
-            }
-          }
-        }
-      } catch (error) {
-        if (String(error?.message || error).includes(
-          'formal_project_snapshot_input_mismatch',
-        )) {
-          blockers.push('dynamic_formal_project_closure_changed_during_probe');
-        }
-        blockers.push(`dynamic_formal_sandbox_probe_failed:${String(error?.message || error)}`);
-      } finally {
-        snapshot?.cleanup();
-      }
+      const probe = executeDynamicFormalSandboxProbe({
+        manifest,
+        closure,
+        projectRoot,
+        projectScopeRoot,
+        probeRelativePath,
+        environment,
+        pinnedRuntime: pinned,
+        formalSandboxRuntimeConfiguration,
+        readClosure,
+        spawnSyncImpl,
+        sandboxProbeRunnerFactory,
+        projectSnapshotRepository,
+        verifySandboxProbeReceipt,
+      });
+      sandboxProbeReceipt = probe.sandboxProbeReceipt;
+      blockers.push(...probe.blockers);
+      details.formalSandboxProbeSnapshotSealReceipt =
+        probe.snapshotSealReceipt;
+      details.formalSandboxProbeSnapshotSealReceiptHash =
+        probe.snapshotSealReceipt?.formalProjectSnapshotSealReceiptHash || null;
       details.formalSandboxProbeReceiptHash = sandboxProbeReceipt?.receiptHash || null;
       details.formalSandboxProbeRuntimeIdentityHash =
         sandboxProbeReceipt?.runtimeIdentityHash || null;

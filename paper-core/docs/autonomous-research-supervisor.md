@@ -94,9 +94,9 @@ granted through a group. `PrivateTmp=yes` remains enabled, while
 `TMPDIR=/run/hepta-paper-worker` names a service-owned `RuntimeDirectory`
 visible to the host daemon for worker bind sources. The canonical Kubernetes
 file does **not** claim an equivalent runtime. It never mounts a node
-`docker.sock`, and its blocking init deliberately prevents the supervisor from
-starting until a separately reviewed site overlay supplies an externally
-qualified nested-container implementation.
+`docker.sock`, and its verifier init prevents the supervisor from starting
+until a separately reviewed site overlay supplies an externally qualified
+nested-container implementation and current-Pod conformance evidence.
 
 The canonical deployment uses `--require-fully-autonomous`, so a missing intake
 configuration fails closed. Without that flag, the supervisor may recover
@@ -442,7 +442,9 @@ three external signatures without calling the broker; the WORM command accepts
 This backup protocol does not by itself establish the transaction-time global
 reserve/apply/finalize boundary described above. The strict production graph
 now registers all ten trust-state roles through sixteen writer entries and
-202 coordinator-integrated online DML operations. Production nevertheless
+204 statically discovered mutation operations: 132 coordinator-integrated
+online DML operations plus 72 explicitly offline schema/genesis or
+cross-database maintenance operations. Production nevertheless
 remains No-Go for same-UID whole-database anti-rollback until the deployed
 databases have the signed schema-transition receipt, all ten roles reconcile
 through the configured external broker, runtime activation verifies the
@@ -624,6 +626,7 @@ The auditable templates are:
 - `paper-core/deploy/autonomous-submission-handoff-layout-provision.path`
 - `paper-core/deploy/install-hepta-paper-systemd-host.sh`
 - `paper-core/deploy/autonomous-research-supervisor.k8s.yaml`
+- `paper-core/deploy/nested-runtime-platform-qualification.config.example.json`
 
 The systemd unit uses `Restart=always`, `KillSignal=SIGTERM`, `KillMode=mixed`
 so the foreground wrapper forwards one graceful stop before group-wide timeout
@@ -635,47 +638,85 @@ read-only asset, dataset, config and credential mounts, and one writable runtime
 PVC. Replace image, PVC, model, and path placeholders in deployment automation; never place secret
 values in the manifest or environment example.
 
-The checked-in Kubernetes manifest is intentionally **No-Go**. Its
-`deployment-no-go-until-nested-runtime-qualified` init always exits 78, so
-replacing image, PVC, model, RuntimeClass, label, or annotation placeholders
-cannot accidentally turn an unproved platform into a runnable deployment. The
-manifest contains no rootless daemon and no image-loader init. This is
-deliberate: the previously proposed rootless layout could not make the socket
-and UID mapping claims required by the worker boundary.
+The checked-in Kubernetes manifest is fail-closed. Its
+`nested-runtime-platform-qualification-gate` init invokes the repository's
+read-only verifier and cannot pass with the checked-in placeholders, a missing
+PVC, a stale receipt, or a self-asserted RuntimeClass. It never creates,
+repairs, or signs evidence. The manifest contains no rootless daemon and no
+image-loader init. A deployable site overlay must supply the qualified
+pod-local daemon and independently administered evidence volume.
 
-A site-specific overlay may replace that single blocking init only after an
-independent qualifier has signed a receipt for one exact nested-container
-profile. The profile identity and receipt digest/signer are pinned in pod
-annotations, a cluster admission policy must verify the signature and reject
-placeholder or mismatched values, and the pod is constrained to a dedicated
-node label and exact RuntimeClass handler. A RuntimeClass name alone is only a
-CRI selector. Descriptions such as “Sysbox-like” or “Kata-like” do not prove the
-required mount, UID, cgroup, LSM, or nested-daemon behavior; the receipt must
-bind the exact CRI, handler/runtime, kernel, node image, cgroup mode, security
-policy, and GPU integration when GPU execution is declared.
+The static qualification payload binds one exact platform profile: OS and
+architecture, CRI name/version/endpoint identity, RuntimeClass name and handler,
+nested runtime name/version/configuration hash, kernel release/security-policy
+hash, node-image ID/content hash, cgroup-v2 driver/delegation policy, seccomp,
+AppArmor, SELinux and user-namespace settings, non-privileged policy, GPU
+driver/device-plugin/toolkit identities when GPU is declared, a fixed-digest
+worker, worker uid/gid, shared scratch root, and parent Pod CPU/memory/PID
+ceiling. A RuntimeClass name alone is only a CRI selector.
 
 That overlay must provide a pod-local rootful daemon through the reserved
 `qualified-runtime-run` `emptyDir` and mount the same `tmp` `emptyDir` as the
 supervisor. It must not use a privileged or unconfined container, a node
 `hostPath`/Docker socket, or a remote Docker endpoint. Before the supervisor is
-allowed to start, its qualification verifier must validate the signed receipt,
-and a startup conformance init must actually launch a fixed-digest worker from
-the supervisor-visible namespace. The conformance receipt must prove all of:
+allowed to start, an external conformance service must actually launch the
+fixed-digest worker from the supervisor-visible namespace and publish a
+separately signed, current-Pod receipt. The gate verifies all of:
 
 - supervisor-created bind sources are visible and writable by the worker;
-- result paths have the exact expected uid/gid and remain inside the shared
-  scratch root;
+- a challenge read-back hash, result paths, exact uid/gid, and containment in
+  the shared scratch root;
 - `network=none` is effective;
 - memory, CPU, and PID limits are effective inside the worker; and
 - nested workloads remain bounded by the declared parent Pod resource ceiling.
 
-The current repository has no CLI that verifies this platform receipt and
-conformance set. Consequently, deleting the guard or trusting annotations by
-themselves is not qualification, and Kubernetes remains deployment **No-Go**
-until a reviewed overlay and its independent signed evidence are supplied. The
-local runtime-image bundle loader remains available as an installation
-mechanism for such an overlay, but loading images or running `docker info`
-cannot substitute for the conformance receipt.
+The conformance payload additionally binds the qualification subject hash,
+profile ID/hash, deployment plan hash, actual Kubernetes Pod UID, observation
+time, and exact proof set. Its Ed25519 signer key, subject, public-key SPKI hash,
+and normalized trust-store organization must be disjoint from the platform
+qualifier.
+
+Key separation alone is not control-domain independence. The evidence volume
+must also contain `authority-independence.json`, a short-lived Ed25519-signed
+attestation bound to the same qualification subject, conformance subject,
+deployment plan, profile, and current Pod. It carries platform-attested
+external principal identity subjects for the qualifier, conformance operator,
+and deployment operator. Their provider, provider-account, credential-root,
+host, process, signer-SPKI, principal, service, and trust-domain identities must
+all be pairwise distinct. The three control-domain organizations and the
+independent attestor's trust-store organization must also be distinct after
+Unicode, case, and whitespace normalization. The qualifier and conformance
+identity SPKI and principal bindings must match their actual trust-store keys;
+the deployment operator identity must match the content-pinned configuration.
+Missing, self-hashed-only, expired, re-sealed, or coordinated dual-key evidence
+fails closed and cannot set `externallyQualified=true`.
+
+All three canonical payload hashes, exact bundle bytes, trust-store
+bytes/canonical identity, signature roles, signer identities, organizations,
+and validity windows are checked. The short-lived conformance and independence
+receipts therefore cannot be replayed into a replacement Pod.
+
+Run the same gate directly with
+`npm run automation:nested-runtime-platform-qualification -- --config ...`.
+The complete command is
+`hepta-paper operator nested-runtime-platform-qualification -- ...`.
+`paper-core/deploy/nested-runtime-platform-qualification.config.example.json`
+shows the external public trust configuration. The immutable evidence PVC must
+contain `config.json`, `trust-store.json`, `qualification.json`, a current-Pod
+`conformance.json`, and a current-Pod `authority-independence.json`; an external
+controller must patch all three exact bundle content hashes into the Pod
+annotations before the init can pass.
+Admission must also bind the annotated plan/profile/RuntimeClass and parent
+ceiling to the admitted Pod and site overlay. The mounted configuration and hash
+annotations are not an independent root of trust: an immutable external
+admission policy must pin the permitted qualifier, conformance, and
+independence-attestor subjects, key IDs, organizations, and Ed25519 SPKI hashes,
+plus the deployment-operator principal/provider/organization/trust-domain
+identity, and reject coordinated replacement. Deleting the gate or trusting
+annotations by themselves is not qualification. The verifier only validates
+already produced evidence; it does not launch the worker, execute conformance,
+or generate a receipt. Loading images or running `docker info` cannot
+substitute for the signed conformance and control-domain-independence receipts.
 
 Kubernetes startup, readiness, and liveness probes call only zero-write
 inspectors. The startup probe requires startup reconciliation. The readiness

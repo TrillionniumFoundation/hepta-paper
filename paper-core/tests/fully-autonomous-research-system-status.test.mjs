@@ -240,6 +240,10 @@ test('configured scope remains bounded until generic domain evidence is independ
     blockers: [],
   };
   const autonomousStateSafety = { ready: true, blockers: [] };
+  const capabilityScopeInspection = {
+    authorIdentityAttestationReady: true,
+    blockers: [],
+  };
   const capabilityScopeManifest = buildAutonomousResearchCapabilityScopeManifest({
     agendaMode: 'machine-generated',
     manuscriptMode: 'agent-authored-evidence-bound-ir-v1',
@@ -320,6 +324,7 @@ test('configured scope remains bounded until generic domain evidence is independ
     residentPrerequisites,
     autonomousStateSafety,
     capabilityScopeManifest,
+    capabilityScopeInspection,
     researchAgendaProducerReceipt,
   });
   assert.equal(configured.ready, false);
@@ -337,6 +342,20 @@ test('configured scope remains bounded until generic domain evidence is independ
     'autonomous_research_independent_formal_review_receipt_required',
   ));
   assert.equal(configured.machineIntakeConfigurationReconciled, true);
+  const missingCapabilityInspection =
+    evaluateFullyAutonomousResearchSystemReadiness({
+      fullAutomaticResearchWritingReady: true,
+      machineIntake: coldReady,
+      residentSupervisor: residentHealthy,
+      residentPrerequisites,
+      autonomousStateSafety,
+      capabilityScopeManifest,
+      researchAgendaProducerReceipt,
+    });
+  assert.equal(missingCapabilityInspection.configuredScopeReady, false);
+  assert.ok(missingCapabilityInspection.blockers.includes(
+    'autonomous_research_author_identity_attestation_required',
+  ));
   const missingStateSafety = evaluateFullyAutonomousResearchSystemReadiness({
     fullAutomaticResearchWritingReady: true,
     machineIntake: coldReady,
@@ -833,13 +852,13 @@ test('health CLI separates heartbeat, startup, and machine-intake readiness', (t
   const current = run();
   assert.equal(current.status, 0, `${current.stderr}\n${current.stdout}`);
   const strict = run('--require-fully-autonomous');
-  assert.equal(strict.status, 1, `${strict.stderr}\n${strict.stdout}`);
+  assert.equal(strict.status, 2, `${strict.stderr}\n${strict.stdout}`);
   const strictReport = JSON.parse(strict.stdout);
   assert.equal(strictReport.fullyAutonomousReady, false);
   assert.equal(strictReport.autonomousStateSafetyReady, false);
   assert.equal(strictReport.autonomousStateSafety.ready, false);
   assert.ok(strictReport.autonomousStateSafetyBlockers.length > 0);
-  assert.equal(run('--require-startup-reconciliation').status, 1);
+  assert.equal(run('--require-startup-reconciliation').status, 2);
   now = new Date(now.getTime() + 1);
   repository.markStartupReconciled({
     lease,
@@ -847,8 +866,8 @@ test('health CLI separates heartbeat, startup, and machine-intake readiness', (t
     now,
   });
   assert.equal(run('--require-startup-reconciliation').status, 0);
-  assert.equal(run('--require-machine-intake-reconciliation').status, 1);
-  assert.equal(run('--require-current-machine-intake').status, 1);
+  assert.equal(run('--require-machine-intake-reconciliation').status, 2);
+  assert.equal(run('--require-current-machine-intake').status, 2);
   now = new Date(now.getTime() + 1);
   repository.markMachineIntakeReconciled({
     lease,
@@ -857,7 +876,7 @@ test('health CLI separates heartbeat, startup, and machine-intake readiness', (t
     now,
   });
   assert.equal(run('--require-machine-intake-reconciliation').status, 0);
-  assert.equal(run('--require-current-machine-intake').status, 1);
+  assert.equal(run('--require-current-machine-intake').status, 2);
   now = new Date(now.getTime() + 1);
   repository.markMachineIntakeReconciliationFailed({
     lease,
@@ -865,7 +884,7 @@ test('health CLI separates heartbeat, startup, and machine-intake readiness', (t
     now,
   });
   assert.equal(run('--require-startup-reconciliation').status, 0);
-  assert.equal(run('--require-machine-intake-reconciliation').status, 1);
+  assert.equal(run('--require-machine-intake-reconciliation').status, 2);
 });
 
 test('readiness health probe rereads the current intake authority and fails on drift', (t) => {
@@ -919,7 +938,7 @@ test('readiness health probe rereads the current intake authority and fails on d
   assert.equal(currentAuthority.status, 0,
     `${currentAuthority.stderr}\n${currentAuthority.stdout}`);
   writeJson(staticPath, { ...production, objective: 'Drifted after reconciliation.' });
-  assert.equal(run().status, 1);
+  assert.equal(run().status, 2);
 });
 
 test('canonical v2 readiness remeasures the topic profile and dataset source after startup', (t) => {
@@ -1011,27 +1030,27 @@ test('canonical v2 readiness remeasures the topic profile and dataset source aft
     },
   });
 
-  assert.equal(run({ includeDatasetRoot: false }).status, 1);
+  assert.equal(run({ includeDatasetRoot: false }).status, 2);
   const current = run();
   assert.equal(current.status, 0, `${current.stderr}\n${current.stdout}`);
 
   fs.rmSync(datasetSource, { recursive: true });
   const missingDataset = run();
-  assert.equal(missingDataset.status, 1, missingDataset.stdout);
+  assert.equal(missingDataset.status, 2, missingDataset.stdout);
   assert.match(JSON.parse(missingDataset.stdout).currentMachineIntakeBlockers.join(','),
     /producer_admission_capability_required/);
 
   fs.symlinkSync(replacementDataset, datasetSource, 'dir');
-  assert.equal(run().status, 1);
+  assert.equal(run().status, 2);
   fs.rmSync(datasetSource);
   fs.mkdirSync(datasetSource, { mode: 0o700 });
-  assert.equal(run().status, 1);
+  assert.equal(run().status, 2);
 
   fs.writeFileSync(path.join(datasetSource, 'benchmark.json'), '{"rows":1}\n');
   assert.equal(run().status, 0);
 
   fs.rmSync(profilePath);
-  assert.equal(run().status, 1);
+  assert.equal(run().status, 2);
   writeJson(profilePath, profile);
   assert.equal(run().status, 0);
 
@@ -1040,7 +1059,7 @@ test('canonical v2 readiness remeasures the topic profile and dataset source aft
     producerId: 'replacement-system-status-topic-producer',
     implementationSha256: H('undeployed-topic-producer-implementation'),
   }));
-  assert.equal(run().status, 1);
+  assert.equal(run().status, 2);
 });
 
 test('topic-producer profile enforces a realpath-contained dataset root', (t) => {

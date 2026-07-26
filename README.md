@@ -332,6 +332,7 @@ overlay still performs no upload, email, portal mutation, or live submission.
 
 Universal submission connector coverage is documented in
 `paper-core/docs/universal-submission-system.md`. The repository currently has
-explicit dispositions for all 97 target profiles and candidate-family
-prototypes covering all 60 journal targets, while verified portal bindings,
-sandbox qualification and live authorization remain fail-closed.
+explicit dispositions for all 98 stable target identities and candidate-family
+prototypes covering all 60 journal and 38 conference targets, while verified
+portal bindings, sandbox qualification and live authorization remain
+fail-closed.

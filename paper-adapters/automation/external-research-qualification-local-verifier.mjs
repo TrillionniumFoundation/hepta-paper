@@ -64,7 +64,7 @@ function verifiedInspection({
       independentVerificationEvidence
         .independentExternalResearchQualificationVerificationEvidenceHash,
     structuredPriorArtEvidenceVerified: true,
-    nativeFormalCertificateIntakeV3Verified: true,
+    nativeFormalCertificateIntakeV4Verified: true,
     releaseBindingVersion: verificationPolicy.releaseBindingVersion,
     launchMode: verificationPolicy.launchMode,
     recursiveReleaseClosureRequired:

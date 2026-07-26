@@ -29,11 +29,31 @@ export const STRICT_FULL_AUTO_ACCEPTANCE_STEP_ORDER = Object.freeze([
   'submission-dispatcher',
 ]);
 
+// These completed-plan actions are explicitly bounded to operations whose child
+// contracts are repeatable and whose result is independently verified before
+// another action is attempted.  Steps omitted here must never be replayed merely
+// because live readiness became stale.
+export const STRICT_FULL_AUTO_ACCEPTANCE_COMPLETE_RENEWAL_STEP_ORDER = Object.freeze([
+  'online-transition',
+  'runtime-reproducibility',
+  'provider-canaries',
+  'external-qualifier',
+  'release-attestor-challenge',
+  'machine-intake',
+  'resident-supervisor',
+  'golden-qualification',
+  'production-campaign-qualification',
+  'generic-domain-capability-convergence',
+  'restore-drill',
+  'submission-dispatcher',
+]);
+
 export const STRICT_FULL_AUTO_ACCEPTANCE_REFERENCE_POLICY = Object.freeze({
   'research-author-principal': 'public-reference',
   'research-author-credential-root': 'opaque-directory-reference',
   'formal-reviewer-principal': 'public-reference',
   'formal-reviewer-credential-root': 'opaque-directory-reference',
+  'formal-reviewer-service-credential-root': 'opaque-directory-reference',
   'online-state-authority-principal': 'public-reference',
   'online-state-authority-process-config': 'public-reference',
   'runtime-reproducibility-principal': 'public-reference',
@@ -298,12 +318,13 @@ export const STEP_INVOCATION_POLICY = Object.freeze({
       requiredArguments: ['--action', 'converge', '--paper-id'],
       requiredFlagValues: { '--action': 'converge' }, requiredValueFlags: ['--paper-id'],
       environmentReferences: READINESS_ENVIRONMENT_REFERENCES,
-      assertions: [['/ready', true], ['/paperId', QUALIFICATION_PAPER_ID_ASSERTION]] }),
+      assertions: [['/ready', true], ['/snapshotCurrent', true],
+        ['/paperId', QUALIFICATION_PAPER_ID_ASSERTION]] }),
     verify: Object.freeze({ command: 'generic-domain-capability-evidence',
       requiredArguments: ['--action', 'status', '--paper-id'],
       requiredFlagValues: { '--action': 'status' }, requiredValueFlags: ['--paper-id'],
       environmentReferences: READINESS_ENVIRONMENT_REFERENCES,
-      assertions: [['/ready', true], ['/paperBound', true],
+      assertions: [['/ready', true], ['/paperBound', true], ['/snapshotCurrent', true],
         ['/paperId', QUALIFICATION_PAPER_ID_ASSERTION]] }),
   }),
   'restore-drill': Object.freeze({

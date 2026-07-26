@@ -36,12 +36,22 @@ import {
   buildAutonomousResearchAgendaProductionReceipt,
   buildAutonomousResearchAgendaProductionRequest,
 } from '../../paper-domain/automation/autonomous-research-agenda-production-contract.mjs';
+import {
+  buildDeterministicAutonomousHypothesisDraft,
+  createAutonomousHypothesisGenerationReceipt,
+  createMachineProposedScientificClaimSet,
+  selectMachineGeneratedAutonomousResearchAgenda,
+} from '../../paper-domain/automation/autonomous-research-proposal-contract.mjs';
+import {
+  buildResearchAgendaClaimBindingReceipt,
+} from '../../paper-domain/automation/research-agenda-claim-binding-contract.mjs';
 import { buildResearchAgendaIr } from '../../paper-domain/automation/research-agenda-ir.mjs';
 import {
   inspectPersistedExperimentIrExecutionAuthority,
 } from '../../paper-composition/automation/automation-readiness-experiment-ir-authority-inspection.mjs';
 import {
   validateOperatorDatasetHarnessDefinition,
+  validateOperatorDatasetResearchSemantics,
   validateOperatorDatasetSplitManifest,
 } from '../../paper-domain/automation/operator-dataset-harness-contract.mjs';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
@@ -53,6 +63,14 @@ const academicDockerOperationalMode = String(process.env.HEPTA_ACADEMIC_DOCKER_O
 const academicDockerOperational = ['strict', 'diagnostic'].includes(academicDockerOperationalMode);
 const academicDockerOperationalOptions = Object.freeze({
   skip: !dockerImagesPresent || !academicDockerOperational,
+});
+const ACADEMIC_RESEARCH_REQUIREMENTS = Object.freeze({
+  population: 'Rows admitted by the signed dataset contract.',
+  intervention: 'Registered treatment.',
+  comparator: 'Registered baseline.',
+  estimand: 'Paired primary-metric difference.',
+  requiredVariables: Object.freeze(['feature', 'label']),
+  datasetConstraints: Object.freeze(['read-only signed mount']),
 });
 
 function trustedProfile(runtime = AUTOMATION_RUNTIME_IMAGES.python) {
@@ -251,14 +269,26 @@ function academicHarnessFixture(t) {
     metricSpecs: familyDesign.metricSpecs,
   });
   const { analysisProtocolHash, ...analysisProtocol } = builtAnalysisProtocol;
+  const researchSemantics = validateOperatorDatasetResearchSemantics({
+    version: 1,
+    kind: 'OperatorDatasetResearchSemantics',
+    population: ACADEMIC_RESEARCH_REQUIREMENTS.population,
+    variables: ['feature', 'label'],
+    intervention: ACADEMIC_RESEARCH_REQUIREMENTS.intervention,
+    comparator: ACADEMIC_RESEARCH_REQUIREMENTS.comparator,
+    estimands: [ACADEMIC_RESEARCH_REQUIREMENTS.estimand],
+    datasetConstraints: [...ACADEMIC_RESEARCH_REQUIREMENTS.datasetConstraints],
+    eligibleSplits: ['train'],
+  });
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
   const authorityNow = new Date();
   const authoritySignedAt = new Date(authorityNow.getTime() - 60_000).toISOString();
   const authorityExpiresAt = new Date(authorityNow.getTime() + (24 * 60 * 60 * 1000)).toISOString();
   const authority = signAuthorityDocument({
-    version: 2, kind: 'OperatorDatasetHarnessAuthority', datasetName: benchmarkId,
+    version: 3, kind: 'OperatorDatasetHarnessAuthority', datasetName: benchmarkId,
     datasetManifestHash: inspection.hash, datasetLicenseId: 'CC-BY-4.0', datasetSplitManifestHash: splitManifestHash,
     benchmarkHarnessDefinitionHash: definitionHash, benchmarkFamily: 'ml_algorithm_benchmark', seedSchedule, minimumRepetitions,
+    researchSemantics: researchSemantics.researchSemantics,
     analysisProtocolHash,
     workerExposurePolicy: 'signed-complete-dataset-file-manifest-v1', signedAt: authoritySignedAt, expiresAt: authorityExpiresAt,
   }, {
@@ -270,7 +300,7 @@ function academicHarnessFixture(t) {
   }] };
   const envelopePath = path.join(root, 'host-only-envelope.json');
   fs.writeFileSync(envelopePath, `${JSON.stringify({
-    version: 2, kind: 'OperatorDatasetHarnessEnvelope', authority, splitManifest,
+    version: 3, kind: 'OperatorDatasetHarnessEnvelope', authority, splitManifest,
     harnessDefinition: definition, analysisProtocol,
   })}\n`, { mode: 0o600 });
   const mount = authorizeOperatorDatasetMount({ name: benchmarkId, source: datasetRoot, readOnly: true, manifestHash: inspection.hash, licenseId: 'CC-BY-4.0' }, {
@@ -312,6 +342,95 @@ jsonlite::write_json(list(version=1, kind='CampaignBenchmarkArmBatchResponses', 
     for (const arm of ['treatment', 'baseline', 'ablation']) fs.writeFileSync(path.join(source, `${base}.${arm}${extension}`), `# ${arm}\n${adapter}`);
   }
   return { source, datasetRoot, outputRoot, runtimeRoot, mount, selector, trustStore };
+}
+
+function academicResearchContext({ paperId, language }) {
+  const objective = 'Evaluate the registered treatment against the signed baseline.';
+  const request = buildAutonomousResearchAgendaProductionRequest({
+    paperId,
+    allowedProtocolFamilies: ['ml_algorithm_benchmark'],
+  });
+  const agentPayload = {
+    version: 1,
+    kind: 'AgentExecutionReceipt',
+    status: 'agent_execution_completed',
+    agentId: `academic-supervisor-${language}-agenda-producer`,
+    providerMode: 'fixture-provider',
+    resolvedModel: 'fixture-model',
+    promptHash: hashRecord('AcademicSupervisorAgendaPrompt', { language }),
+  };
+  const researchAgendaProducerReceipt = buildAutonomousResearchAgendaProductionReceipt({
+    request,
+    selectedObjective: objective,
+    selectedProtocolFamily: 'ml_algorithm_benchmark',
+    agentExecutionReceipt: {
+      ...agentPayload,
+      agentExecutionReceiptHash: hashRecord('AgentExecutionReceipt', agentPayload),
+    },
+    producerId: agentPayload.agentId,
+    generatedAt: '2026-07-22T00:00:00.000Z',
+  });
+  const agendaSelectionReceipt = selectMachineGeneratedAutonomousResearchAgenda({
+    paperId,
+    researchAgendaProducerReceipt,
+  });
+  const draft = buildDeterministicAutonomousHypothesisDraft({
+    objective,
+    protocolFamily: 'ml_algorithm_benchmark',
+  });
+  const generationReceipt = createAutonomousHypothesisGenerationReceipt({
+    draft,
+    principalId: `academic-supervisor-${language}-hypothesis-producer`,
+    generatedAt: '2026-07-22T00:00:00.000Z',
+  });
+  const proposal = createMachineProposedScientificClaimSet({
+    paperId,
+    objective,
+    protocolFamily: 'ml_algorithm_benchmark',
+    draft,
+    generationReceipt,
+    agendaSelectionReceipt,
+    createdAt: '2026-07-22T00:00:00.000Z',
+  });
+  const researchAgendaIr = buildResearchAgendaIr({
+    agendaProductionReceipt: researchAgendaProducerReceipt,
+    researchQuestion: 'Does the registered treatment improve the signed primary metric?',
+    primaryClaim: draft.empiricalHypothesis.statement,
+    dataRequirements: {
+      population: ACADEMIC_RESEARCH_REQUIREMENTS.population,
+      intervention: ACADEMIC_RESEARCH_REQUIREMENTS.intervention,
+      comparator: ACADEMIC_RESEARCH_REQUIREMENTS.comparator,
+      estimand: ACADEMIC_RESEARCH_REQUIREMENTS.estimand,
+      requiredVariables: [...ACADEMIC_RESEARCH_REQUIREMENTS.requiredVariables],
+      datasetConstraints: [...ACADEMIC_RESEARCH_REQUIREMENTS.datasetConstraints],
+    },
+    falsifiers: ['A non-positive paired difference.'],
+    negativeBoundaries: ['No population-wide causal claim.'],
+    formalTargets: [draft.formalSupportClaim.statement],
+    priorArtQueryPlan: ['Search the registered treatment and estimand.'],
+    venueConstraints: {
+      paperType: 'research_article',
+      requiredSections: ['methods', 'results', 'limitations'],
+      artifactRequired: true,
+      anonymousReviewRequired: true,
+    },
+    resourceFeasibility: {
+      maximumWallTimeMs: 3_600_000,
+      maximumMemoryBytes: 4_294_967_296,
+      maximumCpuCount: 4,
+      executionEnvironment: 'signed-docker-runtime-v1',
+    },
+  });
+  const researchAgendaClaimBindingReceipt = buildResearchAgendaClaimBindingReceipt({
+    researchAgendaIr,
+    proposal,
+  });
+  return Object.freeze({
+    researchAgendaIr,
+    researchAgendaProducerReceipt,
+    proposal,
+    researchAgendaClaimBindingReceipt,
+  });
 }
 
 function academicHarnessWorkerRunner(f, runtime) {
@@ -959,6 +1078,14 @@ test('academic-docker-operational: actual Python and R academic dataset harnesse
     ['r', AUTOMATION_RUNTIME_IMAGES.r, 'run.R'],
   ].filter(([language]) => !languageFilter || language === languageFilter)) {
     const campaignId = `academic-supervisor-${language}-campaign`;
+    const paperId = `academic-supervisor-${language}-paper`;
+    const researchContext = academicResearchContext({ paperId, language });
+    const {
+      researchAgendaIr,
+      researchAgendaProducerReceipt: agendaProducerReceipt,
+      proposal,
+      researchAgendaClaimBindingReceipt,
+    } = researchContext;
     const primaryNodeId = `${campaignId}:0:empirical`;
     const replayNodeId = `${campaignId}:0:empirical-reproduce`;
     const outputDirectory = path.join(f.outputRoot, language);
@@ -972,14 +1099,33 @@ test('academic-docker-operational: actual Python and R academic dataset harnesse
     });
     const sourceLineageHash = hashBytes(`academic-supervisor-${language}`);
     const execute = (role) => {
+      const runnerFailures = [];
       const nodeId = role === 'primary' ? primaryNodeId : replayNodeId;
       const attemptId = `${campaignId}:${nodeId}:attempt-${role}`;
       const attemptOutput = path.join(outputDirectory, role);
       fs.mkdirSync(attemptOutput);
-      return { attemptId, receipt: executor.execute({
+      return { attemptId, runnerFailures, receipt: executor.execute({
         language, entrypoint, cwd: f.source, sourceRoot: f.source, outputDirectory: attemptOutput,
         outputPaths: ['results.json', 'results.csv'], datasetMounts: [f.mount], benchmarkSelector: f.selector,
         sourceLineageHash, cachePolicy: 'bypass',
+        timeoutMs: 30 * 60 * 1000,
+        absoluteDeadlineEpochMs: Date.now() + (30 * 60 * 1000),
+        cpuSeconds: 30 * 60,
+        cpuCount: 1,
+        memoryBytes: 4 * 1024 * 1024 * 1024,
+        maximumProcesses: 128,
+        experimentResearchContext: researchContext,
+        runEmpiricalCell(operation) {
+          const outcome = operation();
+          if (outcome?.ok !== true) runnerFailures.push(Object.freeze({
+            status: outcome?.status || null,
+            blockers: outcome?.blockers || [],
+            exitCode: outcome?.exitCode ?? null,
+            signal: outcome?.signal || null,
+            stderr: String(outcome?.stderr || '').slice(-4096),
+          }));
+          return outcome;
+        },
         env: {
           HEPTA_EXPERIMENT_ATTEMPT_ID: attemptId,
           HEPTA_OUTPUT_DIR: '/output',
@@ -991,9 +1137,16 @@ test('academic-docker-operational: actual Python and R academic dataset harnesse
     const replay = execute('reproduction');
     for (const execution of [original, replay]) {
       const receipt = execution.receipt;
-      assert.equal(receipt.status, 'empirical_execution_completed', `${language}:${JSON.stringify(receipt.blockers)}`);
+      assert.equal(receipt.status, 'empirical_execution_completed',
+        `${language}:${JSON.stringify({
+          blockers: receipt.blockers,
+          runnerFailures: execution.runnerFailures,
+        })}`);
       assert.equal(verifySystemBenchmarkHarnessExecutionReceipt(receipt.harnessExecutionReceipt), true);
       assert.equal(receipt.harnessExecutionReceipt.executionIsolationMode, 'academic-per-cell-process-v1');
+      assert.equal(receipt.experimentIr.version, 3);
+      assert.equal(receipt.experimentIr.researchBinding.proposalHash,
+        proposal.machineProposedScientificClaimSetHash);
       assert.equal(receipt.harnessExecutionReceipt.processExecutionCount, receipt.harnessExecutionReceipt.scheduleCellCount);
       assert.equal(receipt.harnessExecutionReceipt.armBatchExecutions.length, receipt.harnessExecutionReceipt.scheduleCellCount);
       assert.equal(new Set(receipt.harnessExecutionReceipt.armBatchExecutions.map((batch) => batch.executionAttemptId)).size, receipt.harnessExecutionReceipt.scheduleCellCount);
@@ -1027,60 +1180,6 @@ test('academic-docker-operational: actual Python and R academic dataset harnesse
     assert.equal(verifyExperimentRunReceipt(replayRun), true);
     const replayReceipt = buildExperimentReplayReceipt({ originalRunReceipt: originalRun, replayRunReceipt: replayRun });
     assert.equal(verifyExperimentReplayReceipt(replayReceipt), true, JSON.stringify(replayReceipt.blockers));
-    const paperId = `academic-supervisor-${language}-paper`;
-    const agendaRequest = buildAutonomousResearchAgendaProductionRequest({
-      paperId,
-      allowedProtocolFamilies: [f.selector.experimentDesign.benchmarkFamily],
-    });
-    const agentPayload = {
-      version: 1,
-      kind: 'AgentExecutionReceipt',
-      status: 'agent_execution_completed',
-      agentId: 'academic-supervisor-agenda-producer',
-      providerMode: 'fixture-provider',
-      resolvedModel: 'fixture-model',
-      promptHash: hashRecord('AcademicSupervisorAgendaPrompt', { language }),
-    };
-    const agendaProducerReceipt = buildAutonomousResearchAgendaProductionReceipt({
-      request: agendaRequest,
-      selectedObjective: 'Evaluate the registered treatment against the signed baseline.',
-      selectedProtocolFamily: f.selector.experimentDesign.benchmarkFamily,
-      agentExecutionReceipt: {
-        ...agentPayload,
-        agentExecutionReceiptHash: hashRecord('AgentExecutionReceipt', agentPayload),
-      },
-      producerId: 'academic-supervisor-agenda-producer',
-      generatedAt: '2026-07-22T00:00:00.000Z',
-    });
-    const researchAgendaIr = buildResearchAgendaIr({
-      agendaProductionReceipt: agendaProducerReceipt,
-      researchQuestion: 'Does the registered treatment improve the signed primary metric?',
-      primaryClaim: 'The treatment is evaluated against the registered baseline.',
-      dataRequirements: {
-        population: 'Rows admitted by the signed dataset contract.',
-        intervention: 'Registered treatment.',
-        comparator: 'Registered baseline.',
-        estimand: 'Paired primary-metric difference.',
-        requiredVariables: ['feature', 'label'],
-        datasetConstraints: ['read-only signed mount'],
-      },
-      falsifiers: ['A non-positive paired difference.'],
-      negativeBoundaries: ['No population-wide causal claim.'],
-      formalTargets: ['Check the aggregation invariant.'],
-      priorArtQueryPlan: ['Search the registered treatment and estimand.'],
-      venueConstraints: {
-        paperType: 'research_article',
-        requiredSections: ['methods', 'results', 'limitations'],
-        artifactRequired: true,
-        anonymousReviewRequired: true,
-      },
-      resourceFeasibility: {
-        maximumWallTimeMs: 3_600_000,
-        maximumMemoryBytes: 4_294_967_296,
-        maximumCpuCount: 4,
-        executionEnvironment: 'signed-docker-runtime-v1',
-      },
-    });
     const campaignPlanPayload = {
       version: 4,
       kind: 'PaperCampaignPlan',
@@ -1093,6 +1192,8 @@ test('academic-docker-operational: actual Python and R academic dataset harnesse
       autonomousResearchPreparation: {
         researchAgendaProducerReceipt: agendaProducerReceipt,
         researchAgendaIr,
+        proposal,
+        agendaClaimBindingReceipt: researchAgendaClaimBindingReceipt,
       },
     };
     const campaignPlanHash = hashRecord('PaperCampaignPlan', campaignPlanPayload);
@@ -1105,6 +1206,8 @@ test('academic-docker-operational: actual Python and R academic dataset harnesse
       nodeKind: 'empirical-reproduce',
       researchAgendaIr,
       researchAgendaProducerReceipt: agendaProducerReceipt,
+      proposal,
+      researchAgendaClaimBindingReceipt,
       experimentReplayReceipt: replayReceipt,
     };
     const executionAuthority = buildExperimentIrExecutionAuthorityReceipt(authorityInput);

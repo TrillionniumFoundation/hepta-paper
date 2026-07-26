@@ -148,7 +148,16 @@ test('research orchestrator empty-input report matches the compatibility golden'
       'reproducibility_contract_requires_manual_review',
     ],
     sourceRoots: { sourceWorkspace: 'missing', paperctlLog: 'logs/paperctl/paper', empiricalAnalysis: 'runtime/empirical-analysis/paper' },
-    safety: { readsOnly: true, writesRuntimeOnly: false, sourceMutation: false, externalActionPerformed: false, legacyWorkerCatalogScanned: false },
+    safety: {
+      readsOnly: true,
+      writesRuntimeOnly: false,
+      sourceMutation: false,
+      subprocessExecution: false,
+      trustedFormalExecutionAuthorized: false,
+      trustedFormalPersistentFenceUsed: false,
+      externalActionPerformed: false,
+      legacyWorkerCatalogScanned: false,
+    },
     typedVerifyReceiptHash: 'sha256:2c79d92a03356febf6ea013b6d193712383eed91cff32dcaba1a97145a56746c',
   });
 });

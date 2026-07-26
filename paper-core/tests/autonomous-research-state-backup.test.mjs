@@ -256,13 +256,14 @@ test('backup repository validates injected clocks and derives safe default bundl
     'autonomous_research_state_backup_bundle_path_unsafe',
   ));
 
-  const liveClock = Object.freeze({ now: () => new Date() });
-  const liveAuthority = createAuthority(liveClock);
+  const validClock = fixedClock();
+  const validAuthority = createAuthority(validClock);
   const backup = await createAutonomousResearchStateBackup({
     runtimeRoot: setup.runtimeRoot,
     stateDatabaseManifest,
-    authorityClient: liveAuthority.client,
-    authorityTrust: liveAuthority.trust,
+    authorityClient: validAuthority.client,
+    authorityTrust: validAuthority.trust,
+    clock: validClock,
   });
   assert.equal(backup.status, 'autonomous_research_state_backup_recorded');
   assert.equal(
@@ -273,8 +274,9 @@ test('backup repository validates injected clocks and derives safe default bundl
   const restore = await drillAutonomousResearchStateRestore({
     bundlePath: backup.bundlePath,
     stateDatabaseManifest,
-    authorityClient: liveAuthority.client,
-    authorityTrust: liveAuthority.trust,
+    authorityClient: validAuthority.client,
+    authorityTrust: validAuthority.trust,
+    clock: validClock,
   });
   assert.equal(restore.status, 'autonomous_research_state_restore_drill_passed');
 });

@@ -3,159 +3,31 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import {
-  canonicalAcceptanceJson,
   strictFullAutoAcceptanceHash,
 } from '../../paper-domain/automation/strict-full-auto-acceptance-contract.mjs';
 
 import {
   dispatchPath,
   intentPath,
+  legacyDispatchPath,
+  legacyIntentPath,
   runtimeRootActivation,
 } from './strict-full-auto-acceptance-control-paths.mjs';
+import {
+  assertPlanControlRoot,
+  atomicJsonWrite,
+  ensureScopedDirectory,
+  exclusiveJsonCreate,
+  exclusiveJsonPublish,
+  fsyncDirectory,
+  parseJsonFile,
+} from './strict-full-auto-acceptance-control-file-repository.mjs';
+import {
+  StrictFullAutoAcceptancePlanControlStore,
+} from './strict-full-auto-acceptance-plan-control-store.mjs';
 
 const LEASE_TTL_MS = 60_000;
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
-
-function fsyncDirectory(candidate) {
-  const descriptor = fs.openSync(candidate, fs.constants.O_RDONLY);
-  try { fs.fsyncSync(descriptor); } finally { fs.closeSync(descriptor); }
-}
-
-function secureControlRoot(candidate) {
-  const selected = path.resolve(candidate);
-  const stat = fs.lstatSync(selected);
-  const currentUid = typeof process.getuid === 'function' ? process.getuid() : stat.uid;
-  if (!stat.isDirectory() || stat.isSymbolicLink() || fs.realpathSync(selected) !== selected
-    || stat.uid !== currentUid || (stat.mode & 0o077) !== 0) {
-    throw new Error('strict_full_auto_acceptance_control_root_invalid');
-  }
-  return selected;
-}
-
-function assertPlanControlRoot(plan) {
-  const selected = secureControlRoot(plan.controlRoot);
-  const stat = fs.lstatSync(selected, { bigint: true });
-  const binding = plan.rootBindings.find((item) => item.rootId === 'control-root');
-  if (!binding || binding.anchorKind !== 'target' || binding.anchorPath !== selected
-    || binding.anchorRealPath !== selected
-    || binding.anchorDevice !== String(stat.dev)
-    || binding.anchorInode !== String(stat.ino)
-    || binding.anchorMode !== (Number(stat.mode) & 0o7777)
-    || binding.anchorUid !== String(stat.uid)) {
-    throw new Error('strict_full_auto_acceptance_control_root_identity_changed');
-  }
-  return selected;
-}
-
-function secureDirectory(candidate) {
-  const selected = path.resolve(candidate);
-  const stat = fs.lstatSync(selected);
-  if (!stat.isDirectory() || stat.isSymbolicLink() || fs.realpathSync(selected) !== selected
-    || (stat.mode & 0o022) !== 0) {
-    throw new Error('strict_full_auto_acceptance_control_directory_invalid');
-  }
-  return selected;
-}
-
-function ensureScopedDirectory(parent, name) {
-  const selectedParent = secureDirectory(parent);
-  const selected = path.join(selectedParent, name);
-  if (!fs.existsSync(selected)) fs.mkdirSync(selected, { mode: 0o700 });
-  return secureDirectory(selected);
-}
-
-function secureRegularFile(candidate, label) {
-  const selected = path.resolve(candidate);
-  let stat = fs.lstatSync(selected);
-  if (stat.isFile() && !stat.isSymbolicLink() && stat.nlink > 1) {
-    const parent = secureDirectory(path.dirname(selected));
-    for (const entry of fs.readdirSync(parent)) {
-      const possibleTemporary = path.join(parent, entry);
-      if (possibleTemporary === selected || !entry.startsWith('.') || !entry.endsWith('.tmp')) {
-        continue;
-      }
-      let candidateStat;
-      try { candidateStat = fs.lstatSync(possibleTemporary); } catch { continue; }
-      if (candidateStat.isFile() && !candidateStat.isSymbolicLink()
-        && candidateStat.dev === stat.dev && candidateStat.ino === stat.ino) {
-        fs.unlinkSync(possibleTemporary);
-      }
-    }
-    fsyncDirectory(parent);
-    stat = fs.lstatSync(selected);
-  }
-  if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1
-    || fs.realpathSync(selected) !== selected || (stat.mode & 0o022) !== 0) {
-    throw new Error(`strict_full_auto_acceptance_${label}_file_invalid`);
-  }
-  return selected;
-}
-
-function jsonBytes(value) {
-  return `${canonicalAcceptanceJson(value)}\n`;
-}
-
-function atomicJsonWrite(destination, value) {
-  const parent = secureDirectory(path.dirname(destination));
-  if (fs.existsSync(destination)) secureRegularFile(destination, 'atomic_target');
-  const temporary = path.join(
-    parent,
-    `.${path.basename(destination)}.${process.pid}.${crypto.randomBytes(8).toString('hex')}.tmp`,
-  );
-  const descriptor = fs.openSync(
-    temporary,
-    fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL
-      | (fs.constants.O_NOFOLLOW || 0),
-    0o600,
-  );
-  try {
-    fs.writeFileSync(descriptor, jsonBytes(value), 'utf8');
-    fs.fsyncSync(descriptor);
-  } finally { fs.closeSync(descriptor); }
-  fs.renameSync(temporary, destination);
-  secureRegularFile(destination, 'atomic_target');
-  fsyncDirectory(parent);
-}
-
-function exclusiveJsonCreate(destination, value) {
-  const parent = secureDirectory(path.dirname(destination));
-  const descriptor = fs.openSync(
-    destination,
-    fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL
-      | (fs.constants.O_NOFOLLOW || 0),
-    0o600,
-  );
-  try {
-    fs.writeFileSync(descriptor, jsonBytes(value), 'utf8');
-    fs.fsyncSync(descriptor);
-  } finally { fs.closeSync(descriptor); }
-  fsyncDirectory(parent);
-}
-
-function exclusiveJsonPublish(destination, value) {
-  const parent = secureDirectory(path.dirname(destination));
-  const temporary = path.join(
-    parent,
-    `.${path.basename(destination)}.${process.pid}.${crypto.randomBytes(8).toString('hex')}.tmp`,
-  );
-  try {
-    exclusiveJsonCreate(temporary, value);
-    fs.linkSync(temporary, destination);
-    fsyncDirectory(parent);
-  } finally {
-    try {
-      fs.unlinkSync(temporary);
-      fsyncDirectory(parent);
-    } catch { /* published or absent */ }
-  }
-}
-
-function parseJsonFile(candidate, label) {
-  try { return JSON.parse(fs.readFileSync(secureRegularFile(candidate, label), 'utf8')); }
-  catch (error) {
-    throw new Error(`strict_full_auto_acceptance_${label}_invalid`, { cause: error });
-  }
-}
 
 function processStartTime(pid) {
   try {
@@ -229,18 +101,11 @@ function leaseDocument({ plan, purpose, generation, ownerId, acquiredAt, now }) 
   return Object.freeze({ ...body, leaseHash: strictFullAutoAcceptanceHash(body) });
 }
 
-export class StrictFullAutoAcceptanceControlStore {
-  statePath(plan) { return path.join(plan.controlRoot, 'state.json'); }
-
-  receiptPath(plan) { return path.join(plan.controlRoot, 'acceptance-receipt.json'); }
-
+export class StrictFullAutoAcceptanceControlStore
+  extends StrictFullAutoAcceptancePlanControlStore {
   leasePath(plan) { return path.join(plan.controlRoot, 'exclusive-lease.json'); }
 
   generationPath(plan) { return path.join(plan.controlRoot, 'lease-generation.json'); }
-
-  runtimeRootActivationPath(plan) {
-    return path.join(plan.controlRoot, 'runtime-root-activation.json');
-  }
 
   acquireLease(plan, { purpose }) {
     const controlRoot = assertPlanControlRoot(plan);
@@ -313,12 +178,22 @@ export class StrictFullAutoAcceptanceControlStore {
     assertPlanControlRoot(plan);
     if (!fs.existsSync(this.generationPath(plan))) return 0;
     const record = parseJsonFile(this.generationPath(plan), 'lease_generation');
-    if (record.planHash !== plan.planHash
-      || !Number.isSafeInteger(record.generation) || record.generation < 1
-      || record.generationHash !== strictFullAutoAcceptanceHash({
-        planHash: plan.planHash,
+    const legacyValid = SHA256.test(String(record.planHash || ''))
+      && Number.isSafeInteger(record.generation) && record.generation >= 1
+      && record.generationHash === strictFullAutoAcceptanceHash({
+        planHash: record.planHash,
         generation: record.generation,
-      })) {
+      });
+    const body = {
+      version: record.version,
+      kind: record.kind,
+      generation: record.generation,
+    };
+    const globalValid = record.version === 2
+      && record.kind === 'StrictFullAutoAcceptanceLeaseGeneration'
+      && Number.isSafeInteger(record.generation) && record.generation >= 1
+      && record.generationHash === strictFullAutoAcceptanceHash(body);
+    if (!legacyValid && !globalValid) {
       throw new Error('strict_full_auto_acceptance_lease_generation_invalid');
     }
     return record.generation;
@@ -329,11 +204,17 @@ export class StrictFullAutoAcceptanceControlStore {
     if (!Number.isSafeInteger(generation) || generation < current) {
       throw new Error('strict_full_auto_acceptance_lease_generation_regression');
     }
-    if (generation === current) return;
-    atomicJsonWrite(this.generationPath(plan), {
-      planHash: plan.planHash,
+    const existing = fs.existsSync(this.generationPath(plan))
+      ? parseJsonFile(this.generationPath(plan), 'lease_generation') : null;
+    if (generation === current && existing?.version === 2) return;
+    const body = {
+      version: 2,
+      kind: 'StrictFullAutoAcceptanceLeaseGeneration',
       generation,
-      generationHash: strictFullAutoAcceptanceHash({ planHash: plan.planHash, generation }),
+    };
+    atomicJsonWrite(this.generationPath(plan), {
+      ...body,
+      generationHash: strictFullAutoAcceptanceHash(body),
     });
   }
 
@@ -376,6 +257,7 @@ export class StrictFullAutoAcceptanceControlStore {
 
   writeState(plan, state, { lease, expectedRevision }) {
     this.assertLease(plan, lease);
+    if (!this.isLegacyPlan(plan)) this.ensurePlanScope(plan, { lease });
     const current = this.readState(plan);
     const currentRevision = current?.revision ?? null;
     if (currentRevision !== expectedRevision
@@ -396,6 +278,7 @@ export class StrictFullAutoAcceptanceControlStore {
 
   writeReceipt(plan, receipt, { lease }) {
     this.assertLease(plan, lease);
+    if (!this.isLegacyPlan(plan)) this.ensurePlanScope(plan, { lease });
     try { exclusiveJsonPublish(this.receiptPath(plan), receipt); }
     catch (error) {
       if (error?.code !== 'EEXIST') throw error;
@@ -410,7 +293,9 @@ export class StrictFullAutoAcceptanceControlStore {
 
   ensureIntent(plan, step, { lease }) {
     this.assertLease(plan, lease);
-    ensureScopedDirectory(plan.controlRoot, 'intents');
+    if (!this.isLegacyPlan(plan)) this.ensurePlanScope(plan, { lease });
+    const legacy = this.isLegacyPlan(plan);
+    ensureScopedDirectory(legacy ? plan.controlRoot : this.planScopePath(plan), 'intents');
     const body = Object.freeze({
       version: 1,
       kind: 'StrictFullAutoAcceptanceDurableStepIntent',
@@ -427,7 +312,7 @@ export class StrictFullAutoAcceptanceControlStore {
       createdFenceToken: lease.fenceToken,
     });
     const intent = Object.freeze({ ...body, durableIntentHash: strictFullAutoAcceptanceHash(body) });
-    const selectedPath = intentPath(plan, step);
+    const selectedPath = legacy ? legacyIntentPath(plan, step) : intentPath(plan, step);
     try {
       exclusiveJsonPublish(selectedPath, intent);
       return Object.freeze({ created: true, intent });
@@ -450,7 +335,9 @@ export class StrictFullAutoAcceptanceControlStore {
 
   ensureDispatchStarted(plan, step, { lease }) {
     this.assertLease(plan, lease);
-    ensureScopedDirectory(plan.controlRoot, 'dispatches');
+    if (!this.isLegacyPlan(plan)) this.ensurePlanScope(plan, { lease });
+    const legacy = this.isLegacyPlan(plan);
+    ensureScopedDirectory(legacy ? plan.controlRoot : this.planScopePath(plan), 'dispatches');
     const body = Object.freeze({
       version: 1,
       kind: 'StrictFullAutoAcceptanceDurableDispatchStart',
@@ -470,7 +357,7 @@ export class StrictFullAutoAcceptanceControlStore {
       ...body,
       durableDispatchStartHash: strictFullAutoAcceptanceHash(body),
     });
-    const selectedPath = dispatchPath(plan, step);
+    const selectedPath = legacy ? legacyDispatchPath(plan, step) : dispatchPath(plan, step);
     try {
       exclusiveJsonPublish(selectedPath, marker);
       return Object.freeze({ created: true, marker });
@@ -514,6 +401,7 @@ export class StrictFullAutoAcceptanceControlStore {
 
   ensureRuntimeRootActivation(plan, { lease }) {
     this.assertLease(plan, lease);
+    if (!this.isLegacyPlan(plan)) this.ensurePlanScope(plan, { lease });
     const observed = runtimeRootActivation(plan);
     const selectedPath = this.runtimeRootActivationPath(plan);
     try { exclusiveJsonPublish(selectedPath, observed); }

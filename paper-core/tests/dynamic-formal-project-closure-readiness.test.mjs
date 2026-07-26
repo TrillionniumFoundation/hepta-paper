@@ -132,7 +132,11 @@ function fixtureMathlibReleaseIdentity({ projectRoot, projectScopeRoot }) {
   });
 }
 
-function readyOptions(closure, { sandboxCalls = null } = {}) {
+function readyOptions(closure, {
+  sandboxCalls = null,
+  sandboxReceiptOverrides = null,
+  verifySandboxProbeReceipt = () => true,
+} = {}) {
   return {
     resolvePinnedRuntime: () => ({
       status: 'formal_pinned_lake_resolved',
@@ -151,21 +155,43 @@ function readyOptions(closure, { sandboxCalls = null } = {}) {
     sandboxProbeRunnerFactory: (options) => ({
       run: (spec) => {
         sandboxCalls?.push({ options, spec });
-        return {
+        const sourceMerkleHash = spec.expectedSourceMerkleHash;
+        const sourceWorkspaceManifestHash =
+          spec.expectedSourceWorkspaceManifestHash;
+        const receipt = {
           ok: true,
           backend: 'docker',
+          status: 'os_sandbox_worker_passed',
           runtimeIdentityType: 'container',
           containerImageDigest:
             'sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc',
           runtimeIdentityHash: `sha256:${'2'.repeat(64)}`,
           executionProcessIdentityHash: `sha256:${'3'.repeat(64)}`,
           receiptHash: `sha256:${'4'.repeat(64)}`,
+          sourceMerkleHashBefore: sourceMerkleHash,
+          sourceMerkleHashAfter: sourceMerkleHash,
+          workSourceMerkleHash: sourceMerkleHash,
+          sourceWorkspaceManifestHashBefore: sourceWorkspaceManifestHash,
+          sourceWorkspaceManifestHashAfter: sourceWorkspaceManifestHash,
+          workWorkspaceManifestHash: sourceWorkspaceManifestHash,
           sourceMutationDetected: false,
-          isolation: { immutableWorkRootVerified: true },
+          isolation: {
+            immutableWorkRootVerified: true,
+            workspaceExecutionSnapshotVerified: true,
+          },
           blockers: [],
+        };
+        return {
+          ...receipt,
+          ...(sandboxReceiptOverrides || {}),
+          isolation: {
+            ...receipt.isolation,
+            ...(sandboxReceiptOverrides?.isolation || {}),
+          },
         };
       },
     }),
+    verifySandboxProbeReceipt,
     inspectMathlibRelease: fixtureMathlibReleaseIdentity,
     trustedMathlibBuildClosureHashes: Object.freeze([
       closure.formalProjectClosureHash,
@@ -273,6 +299,63 @@ test('dynamic Real readiness requires an explicitly hash-bound executable Mathli
     '/work/.lake/packages/mathlib/.lake/build/lib/lean:'
       + '/work/.lake/build/lib/lean:/pinned/lib/lean');
   assert.ok(closure.lakeBuildArtifactFileCount >= 1);
+});
+
+test('sandbox snapshot receipt must bind equal source, work, and post-execution identities', (t) => {
+  const { projectRoot, closure } = fixture(t);
+  const environment = {
+    HEPTA_DYNAMIC_FORMAL_PROJECT_ROOT: projectRoot,
+    HEPTA_DYNAMIC_FORMAL_PROJECT_CLOSURE_HASH:
+      closure.formalProjectClosureHash,
+    HEPTA_DYNAMIC_FORMAL_PROJECT_PROBE: 'HeptaMathlibReadiness.lean',
+  };
+  const tamperedReceipts = [
+    { sourceMerkleHashAfter: `sha256:${'7'.repeat(64)}` },
+    { workSourceMerkleHash: `sha256:${'7'.repeat(64)}` },
+    { sourceWorkspaceManifestHashAfter: `sha256:${'8'.repeat(64)}` },
+    { workWorkspaceManifestHash: `sha256:${'8'.repeat(64)}` },
+    { sourceMerkleHashBefore: 'not-a-hash' },
+    { isolation: { workspaceExecutionSnapshotVerified: false } },
+    {
+      sourceMerkleHashBefore: `sha256:${'9'.repeat(64)}`,
+      sourceMerkleHashAfter: `sha256:${'9'.repeat(64)}`,
+      workSourceMerkleHash: `sha256:${'9'.repeat(64)}`,
+      sourceWorkspaceManifestHashBefore: `sha256:${'a'.repeat(64)}`,
+      sourceWorkspaceManifestHashAfter: `sha256:${'a'.repeat(64)}`,
+      workWorkspaceManifestHash: `sha256:${'a'.repeat(64)}`,
+    },
+  ];
+  for (const sandboxReceiptOverrides of tamperedReceipts) {
+    const inspection = inspectConfiguredDynamicFormalProjectClosure({
+      environment,
+      spawnSyncImpl: () => ({ status: 0, stdout: '', stderr: '' }),
+      ...readyOptions(closure, { sandboxReceiptOverrides }),
+    });
+    assert.equal(inspection.ready, false, JSON.stringify(sandboxReceiptOverrides));
+    assert.ok(inspection.blockers.includes(
+      'dynamic_formal_sandbox_probe_snapshot_changed',
+    ), JSON.stringify(inspection, null, 2));
+  }
+});
+
+test('sandbox snapshot receipt must pass the complete worker receipt verifier', (t) => {
+  const { projectRoot, closure } = fixture(t);
+  const inspection = inspectConfiguredDynamicFormalProjectClosure({
+    environment: {
+      HEPTA_DYNAMIC_FORMAL_PROJECT_ROOT: projectRoot,
+      HEPTA_DYNAMIC_FORMAL_PROJECT_CLOSURE_HASH:
+        closure.formalProjectClosureHash,
+      HEPTA_DYNAMIC_FORMAL_PROJECT_PROBE: 'HeptaMathlibReadiness.lean',
+    },
+    spawnSyncImpl: () => ({ status: 0, stdout: '', stderr: '' }),
+    ...readyOptions(closure, {
+      verifySandboxProbeReceipt: () => false,
+    }),
+  });
+  assert.equal(inspection.ready, false);
+  assert.ok(inspection.blockers.includes(
+    'dynamic_formal_sandbox_mathlib_probe_failed',
+  ), JSON.stringify(inspection, null, 2));
 });
 
 test('independently signed and environment-pinned Mathlib build authority unlocks only its exact closure', (t) => {

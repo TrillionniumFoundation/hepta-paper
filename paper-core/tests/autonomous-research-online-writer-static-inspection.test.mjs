@@ -16,7 +16,7 @@ test('production writer discovery is complete and binds derived-cache provenance
     manifest: AUTONOMOUS_RESEARCH_ONLINE_WRITER_OPERATION_MANIFEST,
   });
   assert.equal(inspection.status, 'autonomous_research_online_writer_static_coverage_complete');
-  assert.equal(inspection.operationCount, 202);
+  assert.equal(inspection.operationCount, 204);
   assert.equal(
     AUTONOMOUS_RESEARCH_ONLINE_WRITER_OPERATION_MANIFEST.operations
       .filter((operation) => operation.coordinatorIntegrated).length,
@@ -104,6 +104,8 @@ test('production writer discovery is complete and binds derived-cache provenance
     .filter((operation) => operation.mutationClass === 'cross-database-maintenance')
     .map((operation) => `${operation.sourceFile}:${operation.entrypoint}`);
   for (const entrypoint of [
+    'paper-adapters/automation/autonomous-research-resident-cycle-intent-repository.mjs:complete',
+    'paper-adapters/automation/autonomous-research-resident-cycle-intent-repository.mjs:completeAutonomousResearchResidentCycleIntent',
     'paper-adapters/automation/autonomous-research-state-backup-journal-replay.mjs:drillDatabaseCopiesWithReplay',
     'paper-adapters/automation/autonomous-research-state-backup-journal-replay.mjs:insertReplayedAuthorityRecords',
     'paper-adapters/automation/runtime-image-reproducibility-receipt-repository.mjs:recoverPendingPublication',

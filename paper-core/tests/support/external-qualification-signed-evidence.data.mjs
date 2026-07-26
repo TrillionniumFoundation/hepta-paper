@@ -16,10 +16,20 @@ import {
 import {
   buildIndependentExternalResearchQualificationVerificationEvidence,
   buildIndependentExternalResearchQualificationVerificationRequest,
+  INDEPENDENT_EXTERNAL_RESEARCH_QUALIFICATION_EVIDENCE_VERSION,
   independentExternalResearchQualificationEvidenceHash,
   independentExternalResearchQualificationRequestHash,
   independentExternalResearchQualificationResponseSigningPayloadHash,
 } from '../../../paper-domain/automation/external-research-qualification-verification-evidence-contract.mjs';
+import {
+  EXTERNAL_RESEARCH_QUALIFICATION_VERIFICATION_POLICY_KIND,
+  EXTERNAL_RESEARCH_QUALIFICATION_VERIFICATION_POLICY_VERSION,
+  INDEPENDENT_EXTERNAL_RESEARCH_QUALIFICATION_REQUEST_VERSION,
+  INDEPENDENT_EXTERNAL_RESEARCH_QUALIFICATION_RESPONSE_VERSION,
+} from '../../../paper-domain/automation/external-research-qualification-verification-policy-contract.mjs';
+import {
+  nativeFormalCertificateIntakeV4RecordValid,
+} from '../../../paper-domain/research/native-formal-certificate-intake-v4.mjs';
 import {
   runBoundedChildProcess,
 } from '../../../paper-adapters/automation/bounded-child-process.mjs';
@@ -136,6 +146,30 @@ export async function exerciseExternalQualificationSignedEvidence({
   donorAuthority,
   donorPreparation,
 }) {
+  const intake = authority.releaseBundle.researchReport
+    .capabilities.formalCertificateIntakes[0];
+  const rehashIntake = (candidate) => {
+    const {
+      genericFormalCertificateIntakeHash: _claimedHash,
+      ...payload
+    } = candidate;
+    return Object.freeze({
+      ...payload,
+      genericFormalCertificateIntakeHash:
+        hashRecord('GenericFormalCertificateIntake', payload),
+    });
+  };
+  assert.equal(nativeFormalCertificateIntakeV4RecordValid(intake), true);
+  assert.equal(nativeFormalCertificateIntakeV4RecordValid(rehashIntake({
+    ...structuredClone(intake),
+    version: 3,
+  })), false);
+  const fakeV4 = structuredClone(intake);
+  delete fakeV4.authoritativeSource;
+  assert.equal(
+    nativeFormalCertificateIntakeV4RecordValid(rehashIntake(fakeV4)),
+    false,
+  );
   const evidence = await liveEvidence({
     fixture,
     configuration: fullConfiguration,
@@ -168,6 +202,22 @@ export async function exerciseExternalQualificationSignedEvidence({
   assert.equal(valid.valid, true);
   assert.equal(valid.signatureVerified, true);
   assert.equal(valid.timeWindowVerified, true);
+  assert.equal(
+    evidence.request.verificationPolicy.version,
+    EXTERNAL_RESEARCH_QUALIFICATION_VERIFICATION_POLICY_VERSION,
+  );
+  assert.equal(
+    evidence.request.version,
+    INDEPENDENT_EXTERNAL_RESEARCH_QUALIFICATION_REQUEST_VERSION,
+  );
+  assert.equal(
+    evidence.response.version,
+    INDEPENDENT_EXTERNAL_RESEARCH_QUALIFICATION_RESPONSE_VERSION,
+  );
+  assert.equal(
+    evidence.version,
+    INDEPENDENT_EXTERNAL_RESEARCH_QUALIFICATION_EVIDENCE_VERSION,
+  );
   const local = await verifyLocally(evidence);
   assert.equal(local.ready, false);
   assert.deepEqual(local.failureCodes, [
@@ -195,6 +245,25 @@ export async function exerciseExternalQualificationSignedEvidence({
         );
       return candidate;
     })
+  );
+  const reboundRequestEvidence = (mutate) => rehashEvidence(
+    evidence,
+    (candidate) => {
+      candidate.request = rehashRequest(candidate.request, mutate);
+      candidate.response = resignResponse(
+        candidate.response,
+        verifierPrivateKey,
+        (response) => {
+          response.requestHash = candidate.request.requestHash;
+          response.verificationPolicyHash =
+            candidate.request.verificationPolicyHash;
+          response.inspection.verificationPolicyHash =
+            candidate.request.verificationPolicyHash;
+          return response;
+        },
+      );
+      return candidate;
+    },
   );
   const signedAtEvidence = (offsetMs) => responseEvidence(
     (response, candidate) => {
@@ -224,8 +293,66 @@ export async function exerciseExternalQualificationSignedEvidence({
     candidate.response.signature = Buffer.alloc(64, 5).toString('base64');
     return candidate;
   });
-  const legacyV1 = responseEvidence((response) => {
-    response.version = 1;
+  const previousResponseVersion = responseEvidence((response) => {
+    response.version =
+      INDEPENDENT_EXTERNAL_RESEARCH_QUALIFICATION_RESPONSE_VERSION - 1;
+    return response;
+  }, true);
+  const previousRequestVersion = reboundRequestEvidence((request) => {
+    request.version =
+      INDEPENDENT_EXTERNAL_RESEARCH_QUALIFICATION_REQUEST_VERSION - 1;
+    return request;
+  });
+  const previousEvidenceVersion = rehashEvidence(evidence, (candidate) => {
+    candidate.version =
+      INDEPENDENT_EXTERNAL_RESEARCH_QUALIFICATION_EVIDENCE_VERSION - 1;
+    return candidate;
+  });
+  const previousPolicyVersion = reboundRequestEvidence((request) => {
+    const {
+      independentExternalResearchQualificationVerificationPolicyHash:
+        _policyHash,
+      ...policyPayload
+    } = request.verificationPolicy;
+    policyPayload.version =
+      EXTERNAL_RESEARCH_QUALIFICATION_VERIFICATION_POLICY_VERSION - 1;
+    request.verificationPolicy = {
+      ...policyPayload,
+      independentExternalResearchQualificationVerificationPolicyHash:
+        hashRecord(
+          EXTERNAL_RESEARCH_QUALIFICATION_VERIFICATION_POLICY_KIND,
+          policyPayload,
+        ),
+    };
+    request.verificationPolicyHash =
+      request.verificationPolicy
+        .independentExternalResearchQualificationVerificationPolicyHash;
+    return request;
+  });
+  const previousPolicyProfile = reboundRequestEvidence((request) => {
+    const {
+      independentExternalResearchQualificationVerificationPolicyHash:
+        _policyHash,
+      ...policyPayload
+    } = request.verificationPolicy;
+    policyPayload.verificationProfile =
+      'production-full-research-release-v4';
+    request.verificationPolicy = {
+      ...policyPayload,
+      independentExternalResearchQualificationVerificationPolicyHash:
+        hashRecord(
+          EXTERNAL_RESEARCH_QUALIFICATION_VERIFICATION_POLICY_KIND,
+          policyPayload,
+        ),
+    };
+    request.verificationPolicyHash =
+      request.verificationPolicy
+        .independentExternalResearchQualificationVerificationPolicyHash;
+    return request;
+  });
+  const legacyNativeV3Attestation = responseEvidence((response) => {
+    delete response.inspection.nativeFormalCertificateIntakeV4Verified;
+    response.inspection.nativeFormalCertificateIntakeV3Verified = true;
     return response;
   }, true);
   for (const [label, candidate, failureCode] of [
@@ -235,7 +362,12 @@ export async function exerciseExternalQualificationSignedEvidence({
     ['policy', tamperedPolicy, BINDING_FAILURE],
     ['request', tamperedRequest, BINDING_FAILURE],
     ['signature', tamperedSignature, ATTESTATION_FAILURE],
-    ['v1', legacyV1, BINDING_FAILURE],
+    ['previous-policy-version', previousPolicyVersion, BINDING_FAILURE],
+    ['previous-policy-profile', previousPolicyProfile, BINDING_FAILURE],
+    ['previous-request-version', previousRequestVersion, BINDING_FAILURE],
+    ['previous-response-version', previousResponseVersion, BINDING_FAILURE],
+    ['previous-evidence-version', previousEvidenceVersion, BINDING_FAILURE],
+    ['legacy-native-v3-attestation', legacyNativeV3Attestation, BINDING_FAILURE],
   ]) {
     assert.equal(verifyEvidence(candidate).valid, false, label);
     const blocked = await verifyLocally(candidate);

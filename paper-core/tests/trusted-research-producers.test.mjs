@@ -11,17 +11,23 @@ import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-
 import { produceTrustedFormalEvidence } from '../../paper-adapters/research-verify/trusted-formal-producer.mjs';
 import { composeTrustedReceiptLedgers } from '../../paper-composition/bootstrap/receipt-ledger-composition.mjs';
 import {
-  buildGenericFormalCertificateIntake,
+  buildNativeFormalCertificateIntake,
   verifyGenericFormalCertificateIntakeClosureBinding,
   verifyNativeFormalResearchClosureBinding,
 } from '../../paper-domain/research/formal-certificate-intake.mjs';
+import {
+  buildCampaignResearchSourceSnapshot,
+} from '../../paper-domain/automation/campaign-research-contract.mjs';
 import { buildEvidenceQualityGate } from '../../paper-domain/research/evidence-quality-gate.mjs';
-import { buildFormalVerifierRegistry } from '../../paper-domain/research/formal-verifier-registry.mjs';
 import { buildExperimentRegistry } from '../../paper-domain/research/experiment-registry.mjs';
 import { createProofObligationContracts } from '../../paper-domain/research/theorem-specification.mjs';
 import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
 import { sealReceiptHash } from '../../paper-domain/evidence/receipt-hash-policy.mjs';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  workspaceExecutionManifestHash,
+  workspaceExecutionMerkleHash,
+} from '../../workflow-kernel/runtime/workspace-execution-identity.mjs';
 
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-trusted-producer-'));
@@ -44,6 +50,10 @@ function nativeFormalFixture({
 } = {}) {
   const theoremClaimId = 'claim-1';
   const scientificClaimKey = 'truth-claim';
+  const sourcePath = 'proof.lean';
+  const sourceText = 'theorem truth : True := by trivial\n';
+  const sourceHash = hashBytes(Buffer.from(sourceText, 'utf8'));
+  const sourceBytes = Buffer.byteLength(sourceText);
   const proofObligations = ['Construct a kernel-checked proof of truth.'];
   const proofObligationContracts = createProofObligationContracts({
     claimKey: scientificClaimKey,
@@ -125,8 +135,20 @@ function nativeFormalFixture({
   });
   const result = Object.freeze({
     status: 'formal_claim_verified',
+    certificateBundleHash: replayReceipt.originalCertificateBundleHash,
     formalCertificateReplayReceiptHash:
       replayReceipt.formalCertificateReplayReceiptHash,
+    projectManifestHash: replayReceipt.projectManifestHash,
+    formalProjectClosureHash: replayReceipt.formalProjectClosureHash,
+    toolchainHash: replayReceipt.toolchainHash,
+    systemAuditHash: replayReceipt.systemAuditHash,
+    leanReadableProofPrintAuditSetHash:
+      replayReceipt.leanReadableProofPrintAuditSetHash,
+    projectFiles: Object.freeze([Object.freeze({
+      projectPath: sourcePath,
+      hash: sourceHash,
+      bytes: sourceBytes,
+    })]),
     replayReceipt,
     claimBindingReport,
   });
@@ -149,6 +171,12 @@ function nativeFormalFixture({
     planHash,
     engineHash,
     theoremSpecificationHash,
+    inputs: Object.freeze([Object.freeze({
+      path: sourcePath,
+      verified: true,
+      hash: sourceHash,
+      expectedHash: sourceHash,
+    })]),
     workerDefinitionHash:
       hashRecord('NativeFormalWorkerDefinitionFixture', { replayLabel }),
     sourceSnapshotHash:
@@ -208,6 +236,10 @@ function nativeFormalFixture({
     expectedClaimBindings,
     nativeResearchWorkerExecution,
     receipt,
+    sourcePath,
+    sourceText,
+    sourceHash,
+    sourceBytes,
   });
 }
 
@@ -288,9 +320,8 @@ test('kernel-isolated experiment producer persists trusted CAS and ledger lineag
   }
 });
 
-test('formal producer binds full v3 evidence and current native closure', async (t) => {
+test('formal producer rejects legacy self-authorized execution', async (t) => {
   const f = fixture();
-  const outsideSource = path.join(path.dirname(f.root), `${path.basename(f.root)}-outside.lean`);
   try {
     const paperId = 'paper-1';
     const campaignId = 'campaign-1';
@@ -307,33 +338,141 @@ test('formal producer binds full v3 evidence and current native closure', async 
       taskKey,
       statement,
     });
-    const source = path.join(f.root, 'proof.lean');
-    fs.writeFileSync(source, 'theorem truth : True := by trivial\n');
-    fs.writeFileSync(outsideSource, 'theorem escaped : True := by trivial\n');
-    const merkle = hashRecord('SourceMerkle', { stable: true });
-    const runner = { run: () => ({ ok: true, receiptHash: hashRecord('OsSandboxWorkerReceipt', { formal: 1 }), runnerId: 'test-kernel-runner', backend: 'test', sourceMerkleHashBefore: merkle, sourceMerkleHashAfter: merkle, exitCode: 0, stdout: '', stderr: '', isolation: { kernelNetworkIsolationVerified: true, sourceReadOnlyVerified: true, ephemeralWorkRootVerified: true, separateOutputRootVerified: true } }) };
     const { expectedClaimBindings } = native;
-    const produced = await produceTrustedFormalEvidence({ root: f.root, runtimeRoot: path.join(f.root, 'runtime'), paperTask: { paperId }, campaignId, researchSourceSnapshotHash, request: { verifierKind: 'lean', sourceRecords: [{ path: 'proof.lean' }], claimBindings: expectedClaimBindings }, artifactRepositoryFactory: f.artifactRepositoryFactory, receiptWriters: f.ledgers.research, clock: f.clock, executableOverride: '/bin/true', runnerOverride: runner });
-    assert.equal(produced.status, 'trusted_formal_evidence_recorded');
-    const registry = buildFormalVerifierRegistry({ adapterReceipts: [produced.adapterReceipt], receiptLedger: f.reader });
-    const request = produced.certificateRequest;
-    const intake = buildGenericFormalCertificateIntake({ paperId: request.paperId, campaignId: request.campaignId, researchSourceSnapshotHash: request.researchSourceSnapshotHash, verifierKind: request.verifierKind, certificate: request.certificate, sourceRecords: request.sourceRecords, claimBindings: request.claimBindings, executionReceipt: request.executionReceipt, verifierRegistry: registry, receiptLedger: f.reader, artifactVerifier: verifyArtifactWriteReceiptSource }, { expectedPaperId: paperId, expectedCampaignId: campaignId, expectedResearchSourceSnapshotHash: researchSourceSnapshotHash, expectedClaimBindings, expectedTaskKey: taskKey, expectedProposalBinding: native.proposalBinding, nativeResearchWorkerExecution: native.nativeResearchWorkerExecution });
+    const produced = await produceTrustedFormalEvidence({
+      root: f.root,
+      paperTask: { paperId },
+    });
+    assert.equal(produced.status, 'trusted_formal_evidence_blocked');
+    assert.equal(produced.attempt.executionPerformed, false);
+    assert.equal(produced.attempt.writesPerformed, false);
+    assert.ok(produced.blockers.includes(
+      'trusted_formal_authoritative_formal_node_invalid',
+    ));
+    const fileRecords = [{
+      path: native.sourcePath,
+      mode: 0o644,
+      hash: native.sourceHash,
+      bytes: native.sourceBytes,
+    }];
+    const verifiedSourceMerkleHash =
+      workspaceExecutionMerkleHash(fileRecords);
+    const verifiedSourceWorkspaceManifestHash =
+      workspaceExecutionManifestHash(fileRecords, []);
+    const campaignResearchSourceSnapshot =
+      buildCampaignResearchSourceSnapshot({
+        campaignId,
+        paperId,
+        researchNodeId: 'research-node-1',
+        researchAttemptId: 'research-attempt-1',
+        researchLeaseGeneration: 1,
+        verifiedSourceMerkleHash,
+        verifiedSourceWorkspaceManifestHash,
+        fileRecords,
+        directoryRecords: [],
+      });
+    const campaignFormalSourceSnapshot =
+      buildCampaignResearchSourceSnapshot({
+        campaignId,
+        paperId,
+        researchNodeId: 'formal-node-1',
+        researchAttemptId: 'formal-attempt-1',
+        researchLeaseGeneration: 1,
+        verifiedSourceMerkleHash,
+        verifiedSourceWorkspaceManifestHash,
+        fileRecords,
+        directoryRecords: [],
+      });
+    const formalReceiptPayload = {
+      version: 1,
+      kind: 'CampaignFormalVerificationReceipt',
+      status: 'campaign_formal_verification_completed',
+      campaignId,
+      paperId,
+      formalNodeId: 'formal-node-1',
+      formalAttemptId: 'formal-attempt-1',
+      formalLeaseGeneration: 1,
+      verifiedSourceMerkleHash,
+      verifiedSourceWorkspaceManifestHash,
+      campaignFormalSourceSnapshotHash:
+        campaignFormalSourceSnapshot.campaignResearchSourceSnapshotHash,
+      campaignFormalSourceSnapshot,
+      nativeResearchWorkerExecutionReportHash:
+        native.nativeResearchWorkerExecution
+          .nativeResearchWorkerExecutionReportHash,
+      nativeResearchWorkerExecution: native.nativeResearchWorkerExecution,
+      proposalClaimToTheoremBinding: native.proposalBinding,
+      blockers: [],
+      externalActionPerformed: false,
+    };
+    const authoritativeFormalReceipt = Object.freeze({
+      ...formalReceiptPayload,
+      campaignFormalVerificationReceiptHash: hashRecord(
+        'CampaignFormalVerificationReceipt',
+        formalReceiptPayload,
+      ),
+    });
+    const authoritativeFormalNode = Object.freeze({
+      nodeId: 'formal-node-1',
+      kind: 'formal-verify',
+      status: 'completed',
+      attemptId: 'formal-attempt-1',
+      leaseGeneration: 1,
+      resultSha256: hashRecord(
+        'PaperCampaignNodeResult',
+        authoritativeFormalReceipt,
+      ),
+      result: authoritativeFormalReceipt,
+    });
+    const intake = buildNativeFormalCertificateIntake({
+      paperId,
+      campaignId,
+      researchSourceSnapshotHash:
+        campaignResearchSourceSnapshot.campaignResearchSourceSnapshotHash,
+      campaignResearchSourceSnapshot,
+      claimBindings: expectedClaimBindings,
+      authoritativeFormalReceipt,
+      authoritativeFormalNode,
+      authoritativeSource: {
+        path: native.sourcePath,
+        hash: native.sourceHash,
+        bytes: native.sourceBytes,
+        sourceReadReceiptHash: hashRecord('ScopedFileReadReceiptFixture', {
+          path: native.sourcePath,
+          hash: native.sourceHash,
+        }),
+      },
+      nativeResearchWorkerExecution: native.nativeResearchWorkerExecution,
+      receiptLedger: f.reader,
+    }, {
+      expectedPaperId: paperId,
+      expectedCampaignId: campaignId,
+      expectedResearchSourceSnapshotHash:
+        campaignResearchSourceSnapshot.campaignResearchSourceSnapshotHash,
+      expectedClaimBindings,
+      expectedTaskKey: taskKey,
+      expectedProposalBinding: native.proposalBinding,
+      expectedAuthoritativeFormalNode: authoritativeFormalNode,
+    });
     assert.equal(intake.status, 'formal_certificate_intake_verified', JSON.stringify(intake.blockers));
-    assert.equal(intake.version, 3);
-    assert.equal(intake.executionReceipt.receiptHash, request.executionReceipt.receiptHash);
-    assert.equal(intake.certificate.artifactWriteReceipt.writeReceiptHash,
-      request.certificate.artifactWriteReceipt.writeReceiptHash);
-    assert.equal(intake.sourceRecords[0].artifactWriteReceipt.writeReceiptHash,
-      request.sourceRecords[0].artifactWriteReceipt.writeReceiptHash);
+    assert.equal(intake.version, 4);
+    assert.equal(intake.authoritativeFormalNodeResultHash,
+      authoritativeFormalNode.resultSha256);
     assert.equal(intake.trustedNativeFormalReceiptVerified, true);
     const closureContext = {
       paperId,
       campaignId,
-      researchSourceSnapshotHash,
+      researchSourceSnapshotHash:
+        campaignResearchSourceSnapshot.campaignResearchSourceSnapshotHash,
+      campaignResearchSourceSnapshot,
       taskKey,
       expectedClaimBindings,
       proposalBinding: native.proposalBinding,
       nativeResearchWorkerExecution: native.nativeResearchWorkerExecution,
+      authoritativeFormalNode,
+      trustedNativeFormalReceiptHashes: [
+        native.receipt.nativeResearchWorkerExecutionReceiptHash,
+      ],
     };
     assert.equal(verifyGenericFormalCertificateIntakeClosureBinding(
       intake,
@@ -357,9 +496,12 @@ test('formal producer binds full v3 evidence and current native closure', async 
       receiptLedger: f.reader,
       formalCertificateIntakes: [intake],
       campaignId,
-      researchSourceSnapshotHash,
+      researchSourceSnapshotHash:
+        campaignResearchSourceSnapshot.campaignResearchSourceSnapshotHash,
+      campaignResearchSourceSnapshot,
       expectedFormalClaimBindings: expectedClaimBindings,
       proposalClaimToTheoremBinding: native.proposalBinding,
+      authoritativeFormalNode,
     };
     const qualityGate = buildEvidenceQualityGate(gateInput);
     assert.equal(qualityGate.status, 'evidence_quality_ready',
@@ -381,16 +523,16 @@ test('formal producer binds full v3 evidence and current native closure', async 
     const lineageAttacks = [
       ['same-paper old campaign', (value) => {
         value.campaignId = 'campaign-old';
-      }, 'formal_certificate_intake_campaign_mismatch'],
+      }, 'native_formal_intake_projection_binding_invalid'],
       ['wrong source snapshot', (value) => {
         value.researchSourceSnapshotHash = hashRecord('WrongSourceSnapshot', {});
-      }, 'formal_certificate_intake_research_source_snapshot_mismatch'],
+      }, 'native_formal_intake_projection_binding_invalid'],
       ['wrong statement', (value) => {
         value.claimBindings[0].statementHash = hashRecord('WrongStatement', {});
-      }, 'formal_certificate_intake_claim_binding_mismatch'],
+      }, 'native_formal_intake_claim_bindings_invalid'],
       ['wrong obligation', (value) => {
         value.claimBindings[0].obligationId = `obligation:${'b'.repeat(64)}`;
-      }, 'formal_certificate_intake_claim_binding_mismatch'],
+      }, 'native_formal_intake_claim_bindings_invalid'],
     ];
     for (const [label, mutate, expectedBlocker] of lineageAttacks) {
       await t.test(label, () => {
@@ -435,16 +577,97 @@ test('formal producer binds full v3 evidence and current native closure', async 
       }
     });
 
-    await t.test('embedded formal receipt tamper is rejected after outer reseal', () => {
+    await t.test('outer reseal cannot alter the authoritative source', () => {
       const changed = structuredClone(intake);
-      changed.certificate.artifactWriteReceipt.bytes += 1;
+      changed.authoritativeSource.bytes += 1;
       const verification = verifyGenericFormalCertificateIntakeClosureBinding(
         sealIntake(changed),
         closureContext,
       );
       assert.equal(verification.valid, false);
       assert.ok(verification.blockers
-        .includes('formal_certificate_intake_embedded_certificate_invalid'));
+        .includes('native_formal_intake_authoritative_source_invalid'));
+    });
+
+    await t.test('deleted strong field is rejected after outer reseal', () => {
+      const changed = structuredClone(intake);
+      delete changed.authoritativeFormalNodeResultHash;
+      const verification = verifyGenericFormalCertificateIntakeClosureBinding(
+        sealIntake(changed),
+        closureContext,
+      );
+      assert.equal(verification.valid, false);
+      assert.ok(verification.blockers
+        .includes('native_formal_intake_record_invalid'));
+    });
+
+    await t.test('replacement formal receipt cannot escape node binding', () => {
+      const changed = structuredClone(intake);
+      const replacement = structuredClone(
+        changed.authoritativeFormalReceipt,
+      );
+      delete replacement.campaignFormalVerificationReceiptHash;
+      replacement.formalAttemptId = 'formal-attempt-replacement';
+      replacement.campaignFormalVerificationReceiptHash = hashRecord(
+        'CampaignFormalVerificationReceipt',
+        replacement,
+      );
+      changed.authoritativeFormalReceipt = replacement;
+      changed.campaignFormalVerificationReceiptHash =
+        replacement.campaignFormalVerificationReceiptHash;
+      const verification = verifyGenericFormalCertificateIntakeClosureBinding(
+        sealIntake(changed),
+        closureContext,
+      );
+      assert.equal(verification.valid, false);
+      assert.ok(verification.blockers.includes(
+        'native_formal_intake_authoritative_formal_node_invalid',
+      ));
+    });
+
+    await t.test('claim manifest and hash tamper fail after outer reseal', () => {
+      const changed = structuredClone(intake);
+      changed.claimBindingsManifest.bindings[0].statementHash =
+        hashRecord('WrongStatement', { manifest: true });
+      delete changed.claimBindingsManifest.formalClaimBindingsHash;
+      changed.claimBindingsManifest.formalClaimBindingsHash = hashRecord(
+        'FormalClaimBindingsManifest',
+        changed.claimBindingsManifest,
+      );
+      changed.claimBindingsHash =
+        changed.claimBindingsManifest.formalClaimBindingsHash;
+      const verification = verifyGenericFormalCertificateIntakeClosureBinding(
+        sealIntake(changed),
+        closureContext,
+      );
+      assert.equal(verification.valid, false);
+      assert.ok(verification.blockers
+        .includes('native_formal_intake_claim_manifest_invalid'));
+    });
+
+    await t.test('claim hash tamper fails after outer reseal', () => {
+      const changed = structuredClone(intake);
+      changed.claimBindingsHash = hashRecord('WrongClaimManifest', {});
+      const verification = verifyGenericFormalCertificateIntakeClosureBinding(
+        sealIntake(changed),
+        closureContext,
+      );
+      assert.equal(verification.valid, false);
+      assert.ok(verification.blockers
+        .includes('native_formal_intake_claim_manifest_invalid'));
+    });
+
+    await t.test('self-reported native ledger trust receives no credit', () => {
+      const verification = verifyGenericFormalCertificateIntakeClosureBinding(
+        intake,
+        {
+          ...closureContext,
+          trustedNativeFormalReceiptHashes: [],
+        },
+      );
+      assert.equal(verification.valid, false);
+      assert.ok(verification.blockers
+        .includes('native_formal_intake_native_ledger_trust_required'));
     });
 
     await t.test('valid-ledger alternate native replay cannot satisfy the anchor', () => {
@@ -466,7 +689,7 @@ test('formal producer binds full v3 evidence and current native closure', async 
       );
       assert.equal(verification.valid, false);
       assert.ok(verification.blockers
-        .includes('formal_certificate_intake_native_formal_anchor_invalid'));
+        .includes('native_formal_intake_native_ledger_trust_required'));
       const blockedGate = buildEvidenceQualityGate({
         ...gateInput,
         nativeWorkerReceipts: [alternate.receipt],
@@ -512,12 +735,8 @@ test('formal producer binds full v3 evidence and current native closure', async 
         }).valid, false);
       }
     });
-    const escaped = await produceTrustedFormalEvidence({ root: f.root, runtimeRoot: path.join(f.root, 'runtime'), paperTask: { paperId }, campaignId, researchSourceSnapshotHash, request: { verifierKind: 'lean', sourceRecords: [{ absolutePath: outsideSource }], claimBindings: expectedClaimBindings }, artifactRepositoryFactory: f.artifactRepositoryFactory, receiptWriters: f.ledgers.research, clock: f.clock, executableOverride: '/bin/true', runnerOverride: runner });
-    assert.equal(escaped.status, 'trusted_formal_evidence_blocked');
-    assert.ok(escaped.blockers.includes('scoped_path_lexical_escape'));
   } finally {
     f.store.close();
     fs.rmSync(f.root, { recursive: true, force: true });
-    fs.rmSync(outsideSource, { force: true });
   }
 });

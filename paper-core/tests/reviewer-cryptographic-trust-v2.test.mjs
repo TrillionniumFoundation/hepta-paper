@@ -1,23 +1,22 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import {
   assertPinnedExternalEvidenceEnvelope,
-  buildPinnedExternalEvidenceEnvelope,
-  pinnedExternalEvidenceSigningPayload,
 } from '../../paper-adapters/authority/pinned-external-evidence-verifier.mjs';
 import {
   buildReviewerReceiptSignerServiceConfiguration,
-  buildReviewerSignerIdentityAttestationBundle,
   createHttpReviewerReceiptSignerAdapter,
 } from '../../paper-adapters/automation/http-reviewer-receipt-signer-adapter.mjs';
 import {
   createReviewerPrincipalExecutorPool,
 } from '../../paper-adapters/automation/reviewer-principal-executor-pool.mjs';
+import {
+  buildRecoverableReviewerExecutorServiceConfiguration,
+} from '../../paper-adapters/automation/http-recoverable-reviewer-executor-adapter.mjs';
 import {
   createCampaignAgentPrimitivesAdapter,
 } from '../../paper-adapters/automation/campaign-agent-primitives-adapter.mjs';
@@ -28,6 +27,7 @@ import {
   buildReviewerPrincipalPoolConfiguration,
 } from '../../paper-adapters/automation/reviewer-principal-pool-configuration-reader.mjs';
 import {
+  composeReviewerPrincipalExecutorPool,
   preflightReviewerPrincipalPool,
 } from '../../paper-composition/automation/reviewer-principal-pool-composition.mjs';
 import {
@@ -39,9 +39,6 @@ import {
 import {
   buildAutonomousResearchAuthorIdentityConfiguration,
 } from '../../paper-adapters/automation/autonomous-research-author-identity-configuration.mjs';
-import {
-  buildExternalPrincipalIdentityAttestationSubject,
-} from '../../paper-domain/evidence/external-principal-identity-attestation-contract.mjs';
 import {
   buildSignedReviewerReceipt,
   reviewerReceiptSigningSubject,
@@ -66,301 +63,18 @@ import {
   assertCampaignReleaseReviewerEvidenceForPackaging,
 } from '../../paper-adapters/automation/campaign-release-packager.mjs';
 import { buildExecutorCapabilities } from '../../paper-ports/executor-capabilities.mjs';
-import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
-
-const NOW = new Date('2026-07-19T02:00:00.000Z');
-const H = (label) => hashRecord('ReviewerCryptographicTrustV2Test', { label });
-
-function trustKey(pair, { keyId, role, subjectId }) {
-  return Object.freeze({
-    keyId,
-    subjectId,
-    organization: 'Reviewer Trust Test Authority',
-    algorithm: 'ed25519',
-    publicKeyPem: pair.publicKey.export({ type: 'spki', format: 'pem' }),
-    roles: [role],
-    status: 'active',
-    effectiveFrom: '2026-07-19T00:00:00.000Z',
-    expiresAt: '2026-07-20T00:00:00.000Z',
-    revokedAt: null,
-  });
-}
-
-function trustStore(keys) {
-  return Object.freeze({ version: 1, kind: 'AuthorityTrustStore', keys });
-}
-
-function signedEnvelope(pair, {
-  subjectKind,
-  subjectHash,
-  keyId,
-  role,
-  signedAt = '2026-07-19T01:59:00.000Z',
-  expiresAt = '2026-07-19T02:01:00.000Z',
-}) {
-  const placeholder = buildPinnedExternalEvidenceEnvelope({
-    subjectKind,
-    subjectHash,
-    signedAt,
-    expiresAt,
-    signatures: [{ keyId, role, algorithm: 'ed25519', value: 'placeholder' }],
-  });
-  const value = crypto.sign(
-    null,
-    pinnedExternalEvidenceSigningPayload(placeholder),
-    pair.privateKey,
-  ).toString('base64');
-  return buildPinnedExternalEvidenceEnvelope({
-    ...placeholder,
-    signatures: [{ keyId, role, algorithm: 'ed25519', value }],
-  });
-}
-
-function reviewerFixture(index, root) {
-  const receiptKey = crypto.generateKeyPairSync('ed25519');
-  const identityKey = crypto.generateKeyPairSync('ed25519');
-  const receiptKeyId = `reviewer-receipt-key-${index}`;
-  const identityKeyId = `reviewer-identity-key-${index}`;
-  const serviceId = `reviewer-signer-${index}`;
-  const principalId = `reviewer-principal-${index}`;
-  const providerAccountIdentityHash = H(`account-${index}`);
-  const credentialRootIdentityHash = H(`credential-root-${index}`);
-  const trustDomainIdentityHash = H(`trust-domain-${index}`);
-  const identitySubject = buildExternalPrincipalIdentityAttestationSubject({
-    serviceId,
-    principalId,
-    provider: 'openai-codex',
-    providerAccountIdentityHash,
-    credentialRootIdentityHash,
-    hostIdentityHash: H(`host-${index}`),
-    processIdentityHash: H(`process-${index}`),
-    trustDomainIdentityHash,
-    signerPublicKeySpkiHash: hashBytes(
-      receiptKey.publicKey.export({ type: 'spki', format: 'der' }),
-    ),
-    challengeHash: H(`challenge-${index}`),
-    assuranceProfile: 'pinned-provider-account-and-platform-attestation-v1',
-    attestedAt: '2026-07-19T01:58:00.000Z',
-    expiresAt: '2026-07-19T02:02:00.000Z',
-  });
-  const identityEnvelope = signedEnvelope(identityKey, {
-    subjectKind: 'ExternalPrincipalIdentityAttestationSubject',
-    subjectHash: identitySubject.externalPrincipalIdentityAttestationSubjectHash,
-    keyId: identityKeyId,
-    role: 'external_principal_identity_attestor',
-  });
-  const identityAttestationBundle = buildReviewerSignerIdentityAttestationBundle({
-    subject: identitySubject,
-    authorityEnvelope: identityEnvelope,
-    trustStore: trustStore([trustKey(identityKey, {
-      keyId: identityKeyId,
-      role: 'external_principal_identity_attestor',
-      subjectId: `reviewer-identity-authority-${index}`,
-    })]),
-    signerKeyIds: [identityKeyId],
-    maximumLifetimeMs: 5 * 60 * 1000,
-  });
-  const signerConfiguration = buildReviewerReceiptSignerServiceConfiguration({
-    version: 2,
-    serviceId,
-    endpoint: `https://reviewer-${index}.example.test/v2/sign`,
-    serviceIdentityHash: H(`service-${index}`),
-    tokenEnvironmentVariable: `REVIEWER_SIGNER_TOKEN_${index}`,
-    timeoutMs: 5_000,
-    receiptTrustStore: trustStore([trustKey(receiptKey, {
-      keyId: receiptKeyId,
-      role: 'reviewer_receipt_attestor',
-      subjectId: `reviewer-receipt-authority-${index}`,
-    })]),
-    receiptSignerKeyIds: [receiptKeyId],
-    receiptMaximumLifetimeMs: 5 * 60 * 1000,
-    identityAttestationBundle,
-  });
-  return Object.freeze({
-    index,
-    root,
-    receiptKey,
-    receiptKeyId,
-    serviceId,
-    principalId,
-    providerAccountIdentityHash,
-    credentialRootIdentityHash,
-    trustDomainIdentityHash,
-    signerConfiguration,
-  });
-}
-
-function reviewerPreflight({ codexHome, model }) {
-  const index = Number(path.basename(codexHome).split('-').at(-1));
-  const payload = {
-    version: 1,
-    kind: 'CodexFormalReviewerCapabilityReceipt',
-    status: 'codex_formal_reviewer_capability_ready',
-    provider: 'openai',
-    model,
-    codexVersion: 'codex-reviewer-v2-test',
-    codexBinaryIdentityHash: H('codex-binary'),
-    credentialRootIdentityHash: H(`credential-root-${index}`),
-    credentialConfigIdentityHash: H(`credential-config-${index}`),
-    authorCredentialRootIdentityHash: H('author-credential-root'),
-    authenticationStatus: 'codex_authentication_verified',
-    modelOptionVerified: true,
-    selectedModelExecutionCanaryVerified: false,
-    readOnlyReviewRequired: true,
-    dynamicAttemptWorkspaceRequired: true,
-    credentialIndependenceVerified: true,
-    assuranceScope: 'filesystem_credential_root_and_principal_separation',
-    providerAccountIndependenceVerified: false,
-    externalActionPerformed: false,
-  };
-  return Object.freeze({
-    codexBinary: '/usr/bin/true',
-    codexHome,
-    effectivePrincipalId: `reviewer-principal-${index}`,
-    capabilityReceipt: Object.freeze({
-      ...payload,
-      codexFormalReviewerCapabilityReceiptHash:
-        hashRecord('CodexFormalReviewerCapabilityReceipt', payload),
-    }),
-  });
-}
-
-function executor(principalId) {
-  return Object.freeze({
-    executorId: `executor-${principalId}`,
-    capabilities: () => buildExecutorCapabilities({
-      executorId: `executor-${principalId}`,
-      sandboxModes: ['read-only'],
-      networkPolicy: 'none',
-      receiptKinds: ['AgentExecutionReceipt'],
-    }),
-    async execute() { throw new Error('execution_not_expected'); },
-  });
-}
-
-function writeJson(candidate, value) {
-  fs.writeFileSync(candidate, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
-}
-
-function strongPoolFixture(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-reviewer-v2-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const fixtures = [1, 2].map((index) => reviewerFixture(index, root));
-  const authorSigner = crypto.generateKeyPairSync('ed25519');
-  const authorIdentityAuthority = crypto.generateKeyPairSync('ed25519');
-  const authorIdentitySubject = buildExternalPrincipalIdentityAttestationSubject({
-    serviceId: 'research-author-service',
-    principalId: 'research-author-principal',
-    provider: 'openai-codex',
-    providerAccountIdentityHash: H('author-account'),
-    credentialRootIdentityHash: H('author-credential-root'),
-    hostIdentityHash: H('author-host'),
-    processIdentityHash: H('author-process'),
-    trustDomainIdentityHash: H('author-trust-domain'),
-    signerPublicKeySpkiHash: hashBytes(
-      authorSigner.publicKey.export({ type: 'spki', format: 'der' }),
-    ),
-    challengeHash: H('author-identity-challenge'),
-    assuranceProfile: 'pinned-provider-account-and-platform-attestation-v1',
-    attestedAt: '2026-07-19T01:58:00.000Z',
-    expiresAt: '2026-07-19T02:02:00.000Z',
-  });
-  const authorIdentityEnvelope = signedEnvelope(authorIdentityAuthority, {
-    subjectKind: 'ExternalPrincipalIdentityAttestationSubject',
-    subjectHash: authorIdentitySubject.externalPrincipalIdentityAttestationSubjectHash,
-    keyId: 'author-identity-key',
-    role: 'external_principal_identity_attestor',
-  });
-  const authorIdentityTrustStore = trustStore([trustKey(authorIdentityAuthority, {
-    keyId: 'author-identity-key',
-    role: 'external_principal_identity_attestor',
-    subjectId: 'author-identity-authority',
-  })]);
-  const authorIdentityAttestation = Object.freeze({
-    subject: authorIdentitySubject,
-    verificationReceipt: assertPinnedExternalEvidenceEnvelope({
-      envelope: authorIdentityEnvelope,
-      subjectKind: 'ExternalPrincipalIdentityAttestationSubject',
-      subjectHash: authorIdentitySubject.externalPrincipalIdentityAttestationSubjectHash,
-      trustStore: authorIdentityTrustStore,
-      requiredRole: 'external_principal_identity_attestor',
-      expectedKeyIds: ['author-identity-key'],
-      now: NOW,
-      maximumLifetimeMs: 5 * 60 * 1000,
-    }),
-  });
-  for (const fixture of fixtures) {
-    fs.mkdirSync(path.join(root, `reviewer-home-${fixture.index}`), { mode: 0o700 });
-  }
-  const configuration = buildReviewerPrincipalPoolConfiguration({
-    version: 2,
-    poolId: 'cryptographic-reviewers-v2',
-    minimumReviewerTrustDomains: 2,
-    principals: fixtures.map((fixture) => ({
-      codexBinary: '/usr/bin/true',
-      codexHome: path.join(root, `reviewer-home-${fixture.index}`),
-      model: `reviewer-model-${fixture.index}`,
-      providerAccountIdentityHash: fixture.providerAccountIdentityHash,
-      roles: fixture.index === 1
-        ? ['formal-review', 'independent-review'] : ['independent-review'],
-      signerConfiguration: fixture.signerConfiguration,
-      trustDomainIdentityHash: fixture.trustDomainIdentityHash,
-    })),
-  });
-  const configPath = path.join(root, 'reviewers-v2.json');
-  writeJson(configPath, configuration);
-  const environment = Object.fromEntries(fixtures.map((fixture) => (
-    [`REVIEWER_SIGNER_TOKEN_${fixture.index}`, `token-${fixture.index}`]
-  )));
-  const fetchImpl = async (url, init) => {
-    const fixture = fixtures.find((candidate) => String(url).includes(
-      `reviewer-${candidate.index}.example.test`,
-    ));
-    const request = JSON.parse(init.body);
-    return {
-      ok: true,
-      async json() {
-        return {
-          requestHash: request.requestHash,
-          serviceId: fixture.serviceId,
-          serviceIdentityHash: fixture.signerConfiguration.serviceIdentityHash,
-          externalActionPerformed: true,
-          authorityEnvelope: signedEnvelope(fixture.receiptKey, {
-            subjectKind: 'ReviewerReceiptSigningSubjectV1',
-            subjectHash: request.subjectHash,
-            keyId: fixture.receiptKeyId,
-            role: 'reviewer_receipt_attestor',
-          }),
-        };
-      },
-    };
-  };
-  const inspection = preflightReviewerPrincipalPool({
-    configPath,
-    authorProvider: 'openai',
-    authorCodexHome: path.join(root, 'author-home'),
-    environment,
-    preflightReviewer: reviewerPreflight,
-    fetchImpl,
-    clock: { now: () => NOW },
-    authorIdentityAttestation,
-  });
-  return {
-    root,
-    fixtures,
-    configuration,
-    configPath,
-    environment,
-    fetchImpl,
-    inspection,
-    authorIdentityAttestation,
-    authorIdentitySource: Object.freeze({
-      subject: authorIdentitySubject,
-      authorityEnvelope: authorIdentityEnvelope,
-      trustStore: authorIdentityTrustStore,
-    }),
-  };
-}
+import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  REVIEWER_CRYPTOGRAPHIC_TRUST_V2_TEST_NOW as NOW,
+  reviewerCryptographicTrustV2Hash as H,
+  reviewerExecutor as executor,
+  reviewerPreflight,
+  signedEnvelope,
+  strongPoolFixture,
+  trustKey,
+  trustStore,
+  writeReviewerCryptographicTrustV2Json as writeJson,
+} from './support/reviewer-cryptographic-trust-v2-fixture.mjs';
 
 test('reviewer v2 binds every receipt to pinned Ed25519 and signed identity separation', async (t) => {
   const fixture = strongPoolFixture(t);
@@ -735,6 +449,53 @@ test('reviewer v2 binds every receipt to pinned Ed25519 and signed identity sepa
     'formal_review_signed_principal_pool_binding_invalid',
   ), false);
   assert.notEqual(afterRestart.reviewerPrincipalId, null);
+});
+
+test('production v2 composition uses signed recoverable executors and fails closed on credential aliasing', (t) => {
+  const fixture = strongPoolFixture(t, { recoverySigner: true });
+  const composed = composeReviewerPrincipalExecutorPool({
+    configPath: fixture.configPath,
+    authorProvider: 'openai',
+    authorCodexHome: path.join(fixture.root, 'author-home'),
+    runtimeRoot: fixture.root,
+    environment: fixture.environment,
+    preflightReviewer: reviewerPreflight,
+    fetchImpl: fixture.fetchImpl,
+    clock: { now: () => NOW },
+    authorIdentityAttestation: fixture.authorIdentityAttestation,
+  });
+  assert.equal(composed.configuration.version, 2);
+  assert.equal(composed.executorPool.crashRecoveryReady, true);
+  assert.deepEqual(composed.executorPool.crashRecoveryBlockers, []);
+  assert.equal(
+    composed.executorPool.reviewerRecoveryPort
+      ?.recoveryOutcomeCryptographicAuthorityReady,
+    true,
+  );
+  assert.equal(
+    composed.executorPool.signerRecoveryPort
+      ?.recoveryOutcomeCryptographicAuthorityReady,
+    true,
+  );
+
+  const aliasedPrincipals = fixture.configuration.principals.map(
+    (principal, index) => ({
+      ...principal,
+      recoverableExecutorConfiguration: index === 0
+        ? principal.recoverableExecutorConfiguration
+        : buildRecoverableReviewerExecutorServiceConfiguration({
+          ...principal.recoverableExecutorConfiguration,
+          tokenEnvironmentVariable: fixture.configuration.principals[0]
+            .recoverableExecutorConfiguration.tokenEnvironmentVariable,
+        }),
+    }),
+  );
+  assert.throws(() => buildReviewerPrincipalPoolConfiguration({
+    version: 2,
+    poolId: 'aliased-reviewer-credentials',
+    minimumReviewerTrustDomains: 2,
+    principals: aliasedPrincipals,
+  }), /reviewer_principal_pool_service_credential_reference_independence_invalid/);
 });
 
 test('static readiness binds the pinned author identity into the v2 reviewer pool', (t) => {
@@ -1329,7 +1090,7 @@ test('reviewer v2 rejects wrong key, role, expiry, and signing-subject tampering
   for (const candidate of cases) {
     const adapter = createHttpReviewerReceiptSignerAdapter({
       configuration: base.signerConfiguration,
-      environment: { [`REVIEWER_SIGNER_TOKEN_${base.index}`]: 'token' },
+      environment: fixture.environment,
       clock: { now: () => NOW },
       fetchImpl: async (_url, init) => {
         const request = JSON.parse(init.body);

@@ -124,6 +124,21 @@ function automationConfiguration(environment, runtimeRoot) {
   });
 }
 
+export function deriveFullyAutonomousResearchSystemStatus({
+  readinessLevels,
+  coreStatus,
+} = {}) {
+  const readyStatus = 'generic_domain_autonomous_research_system_ready';
+  if (readinessLevels?.productionReady === true && coreStatus === readyStatus) {
+    return readyStatus;
+  }
+  if (readinessLevels?.status
+    && readinessLevels.status !== 'automation_plane_production_ready') {
+    return readinessLevels.status;
+  }
+  return 'automation_plane_production_blocked';
+}
+
 export function composeAutomationReleaseAttestorTrust({
   runtimeRoot,
   environment = process.env,
@@ -460,6 +475,7 @@ export function queryAutomationReadiness({
     genericCapabilityReady: fullyAutonomousReadiness.genericDomainCapabilityReady,
     formalSandboxRuntimeReady: formalSandboxRuntime.ready,
     dynamicFormalProjectClosureReady: dynamicFormalProjectClosure.ready,
+    autonomousSystemReady: fullyAutonomousReadiness.ready,
     submissionDispatcherReady: autonomousSubmissionDispatcherReadiness.ready,
   });
   const fullyAutonomousResearchSystemReady = readinessLevels.productionReady;
@@ -565,7 +581,12 @@ export function queryAutomationReadiness({
     fullyAutonomousResearchSystemReady,
     boundedProfileAutonomousResearchSystemReady:
       readinessLevels.boundedProfileReady,
-    fullyAutonomousResearchSystemStatus: fullyAutonomousReadiness.status,
+    fullyAutonomousResearchCoreStatus: fullyAutonomousReadiness.status,
+    fullyAutonomousResearchSystemStatus:
+      deriveFullyAutonomousResearchSystemStatus({
+        readinessLevels,
+        coreStatus: fullyAutonomousReadiness.status,
+      }),
     fullyAutonomousResearchSystemBlockers,
     fullAutomaticResearchWritingStatus: readiness.fullAutomaticResearchWritingStatus,
     fullAutomaticResearchWritingBlockers: readiness.blockers,

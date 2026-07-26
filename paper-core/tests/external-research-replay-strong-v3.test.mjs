@@ -12,6 +12,9 @@ import {
   verifyExternalResearchReplayReceiptV3Structure,
 } from '../../paper-domain/research/external-research-replay-contract.mjs';
 import {
+  buildExternalResearchReplayRecoveryOutcome,
+} from '../../paper-domain/research/external-operation-recovery-outcome-contract.mjs';
+import {
   buildExternalPrincipalIdentityAttestationSubject,
 } from '../../paper-domain/evidence/external-principal-identity-attestation-contract.mjs';
 import {
@@ -224,7 +227,10 @@ function fixture({
     fetchImpl,
     legacyReceipt,
     localBundle,
+    remoteKey,
+    remoteKeyId,
     remoteBundle,
+    resultAuthorityEnvelope,
     request,
   };
 }
@@ -267,6 +273,225 @@ test('v3 reaches strong readiness and re-verifies persisted evidence after resta
     configuration: restartedConfiguration,
   });
   assert.equal(restarted.verifyReceipt({ request: input.request, receipt: persisted }), true);
+});
+
+test('v3 makes no HTTP request for a pre-aborted replay signal', async () => {
+  const input = fixture();
+  let fetchCalls = 0;
+  const selected = adapter({
+    ...input,
+    fetchImpl: async () => {
+      fetchCalls += 1;
+      throw new Error('fetch_must_not_run');
+    },
+  });
+  const controller = new AbortController();
+  const abortReason = new Error('external_replay_pre_aborted');
+  controller.abort(abortReason);
+
+  await assert.rejects(() => selected.replay({
+    request: input.request,
+    signal: controller.signal,
+  }), (error) => error === abortReason);
+  assert.equal(fetchCalls, 0);
+});
+
+test('v4 signs recovery outcomes and transmits one operation identity across action, lookup, and resume', async () => {
+  const input = fixture();
+  const operationId = H('v4-operation');
+  const idempotencyKey = H('v4-idempotency-key');
+  const configuration = buildExternalResearchReplayServiceConfiguration({
+    ...input.configuration,
+    version: 4,
+    endpoint: 'https://external-replay.example.test/v4/replay',
+    lookupEndpoint: 'https://external-replay.example.test/v4/operations',
+    resumeEndpoint: 'https://external-replay.example.test/v4/resume',
+  });
+  const recoveryDocument = (operationStatus) => {
+    const completed = operationStatus === 'completed';
+    const outcome = buildExternalResearchReplayRecoveryOutcome({
+      serviceId: configuration.serviceId,
+      serviceIdentityHash: configuration.serviceIdentityHash,
+      operationId,
+      idempotencyKey,
+      requestHash: input.request.requestHash,
+      operationStatus,
+      externalActionPerformed: completed,
+      resultHash: completed
+        ? input.legacyReceipt.externalResearchReplayReceiptHash : null,
+    });
+    return {
+      operationId,
+      idempotencyKey,
+      requestHash: input.request.requestHash,
+      serviceId: configuration.serviceId,
+      serviceIdentityHash: configuration.serviceIdentityHash,
+      operationStatus,
+      externalActionPerformed: completed,
+      externalResearchReplayReceipt: completed ? input.legacyReceipt : null,
+      authorityEnvelope: completed ? input.resultAuthorityEnvelope : null,
+      recoveryAuthorityEnvelope: signedEnvelope(input.remoteKey, {
+        subjectKind: outcome.kind,
+        subjectHash: outcome.externalResearchReplayRecoveryOutcomeHash,
+        keyId: input.remoteKeyId,
+        role: RESULT_ROLE,
+      }),
+    };
+  };
+  const calls = [];
+  const recoveryAdapter = createHttpExternalResearchReplayAdapter({
+    configuration,
+    environment: { EXTERNAL_REPLAY_V3_TOKEN: 'test-token' },
+    clock: input.clock,
+    fetchImpl: async (url, init) => {
+      calls.push({ url: String(url), init, body: init.body ? JSON.parse(init.body) : null });
+      const lookup = init.method === 'GET';
+      return {
+        ok: true,
+        status: 200,
+        async json() {
+          return recoveryDocument(lookup ? 'not_found' : 'completed');
+        },
+      };
+    },
+  });
+  assert.equal(recoveryAdapter.crashRecoveryReady, true);
+  assert.equal(
+    recoveryAdapter.recoveryOutcomeCryptographicAuthorityReady,
+    true,
+  );
+  assert.match(
+    recoveryAdapter.recoveryOutcomeVerificationPolicyHash,
+    /^sha256:[0-9a-f]{64}$/,
+  );
+
+  assert.deepEqual(await recoveryAdapter.lookup({
+    operationId,
+    idempotencyKey,
+    request: input.request,
+  }), { status: 'not_found', receipt: null });
+  const resumed = await recoveryAdapter.resume({
+    operationId,
+    idempotencyKey,
+    request: input.request,
+  });
+  assert.equal(resumed.status, 'completed');
+  assert.equal(recoveryAdapter.verifyReceipt({
+    request: input.request,
+    receipt: resumed.receipt,
+  }), true);
+  const replayed = await recoveryAdapter.replay({
+    operationId,
+    idempotencyKey,
+    request: input.request,
+  });
+  assert.equal(recoveryAdapter.verifyReceipt({
+    request: input.request,
+    receipt: replayed,
+  }), true);
+
+  assert.equal(calls.length, 3);
+  for (const call of calls) {
+    assert.equal(call.init.headers['operation-id'], operationId);
+    assert.equal(call.init.headers['idempotency-key'], idempotencyKey);
+  }
+  const lookupUrl = new URL(calls[0].url);
+  assert.equal(lookupUrl.searchParams.get('operationId'), operationId);
+  assert.equal(lookupUrl.searchParams.get('idempotencyKey'), idempotencyKey);
+  assert.equal(
+    lookupUrl.searchParams.get('requestHash'),
+    input.request.requestHash,
+  );
+  assert.deepEqual(calls[1].body, {
+    version: 1,
+    kind: 'ExternalResearchReplayResumeRequest',
+    operationId,
+    idempotencyKey,
+    request: input.request,
+  });
+  assert.deepEqual(calls[2].body, {
+    version: 1,
+    kind: 'ExternalResearchReplayOperationRequest',
+    operationId,
+    idempotencyKey,
+    request: input.request,
+  });
+
+  const unsignedStatusAdapter = createHttpExternalResearchReplayAdapter({
+    configuration,
+    environment: { EXTERNAL_REPLAY_V3_TOKEN: 'test-token' },
+    clock: input.clock,
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      async json() {
+        const { recoveryAuthorityEnvelope: _unsigned, ...document } =
+          recoveryDocument('not_found');
+        return document;
+      },
+    }),
+  });
+  await assert.rejects(() => unsignedStatusAdapter.lookup({
+    operationId,
+    idempotencyKey,
+    request: input.request,
+  }), /pinned_external_evidence/);
+
+  const contradictoryStatusAdapter =
+    createHttpExternalResearchReplayAdapter({
+      configuration,
+      environment: { EXTERNAL_REPLAY_V3_TOKEN: 'test-token' },
+      clock: input.clock,
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            ...recoveryDocument('not_found'),
+            externalActionPerformed: true,
+          };
+        },
+      }),
+    });
+  await assert.rejects(() => contradictoryStatusAdapter.lookup({
+    operationId,
+    idempotencyKey,
+    request: input.request,
+  }), /external_research_replay_recovery_response_invalid/);
+
+  const nonCompletedReceiptAdapter =
+    createHttpExternalResearchReplayAdapter({
+      configuration,
+      environment: { EXTERNAL_REPLAY_V3_TOKEN: 'test-token' },
+      clock: input.clock,
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        async json() {
+          return {
+            ...recoveryDocument('not_found'),
+            externalResearchReplayReceipt: input.legacyReceipt,
+          };
+        },
+      }),
+    });
+  await assert.rejects(() => nonCompletedReceiptAdapter.lookup({
+    operationId,
+    idempotencyKey,
+    request: input.request,
+  }), /external_research_replay_recovery_response_invalid/);
+
+  const bareNotFoundAdapter = createHttpExternalResearchReplayAdapter({
+    configuration,
+    environment: { EXTERNAL_REPLAY_V3_TOKEN: 'test-token' },
+    clock: input.clock,
+    fetchImpl: async () => ({ ok: false, status: 404 }),
+  });
+  await assert.rejects(() => bareNotFoundAdapter.lookup({
+    operationId,
+    idempotencyKey,
+    request: input.request,
+  }), /external_research_replay_recovery_http_failed:404/);
 });
 
 test('v3 rejects tampering, trust swap, expiry, and duplicate origin identities', async () => {

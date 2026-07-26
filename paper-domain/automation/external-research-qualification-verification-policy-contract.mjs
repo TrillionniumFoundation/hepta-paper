@@ -7,19 +7,24 @@ import {
 import {
   inspectAutonomousResearchReleaseQualificationScope,
 } from './full-research-release-qualification-inspection.mjs';
+import {
+  nativeFormalCertificateIntakeV4RecordValid,
+} from '../research/native-formal-certificate-intake-v4.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 
 export const EXTERNAL_RESEARCH_QUALIFICATION_VERIFICATION_POLICY_KIND =
   'IndependentExternalResearchQualificationVerificationPolicy';
+export const EXTERNAL_RESEARCH_QUALIFICATION_VERIFICATION_POLICY_VERSION = 2;
 export const EXTERNAL_RESEARCH_QUALIFICATION_PRODUCTION_POLICY_PROFILE =
-  'production-full-research-release-v4';
+  'production-full-research-release-v4-native-formal-intake-v4';
 export const EXTERNAL_RESEARCH_QUALIFICATION_BOUNDED_POLICY_PROFILE =
-  'bounded-golden-capability-release-v3';
-export const INDEPENDENT_EXTERNAL_RESEARCH_QUALIFICATION_REQUEST_VERSION = 3;
+  'bounded-golden-capability-release-v3-native-formal-intake-v4';
+export const EXTERNAL_RESEARCH_QUALIFICATION_NATIVE_FORMAL_INTAKE_VERSION = 4;
+export const INDEPENDENT_EXTERNAL_RESEARCH_QUALIFICATION_REQUEST_VERSION = 4;
 export const INDEPENDENT_EXTERNAL_RESEARCH_QUALIFICATION_REQUEST_KIND =
   'IndependentExternalResearchQualificationVerificationRequest';
-export const INDEPENDENT_EXTERNAL_RESEARCH_QUALIFICATION_RESPONSE_VERSION = 2;
+export const INDEPENDENT_EXTERNAL_RESEARCH_QUALIFICATION_RESPONSE_VERSION = 3;
 export const INDEPENDENT_EXTERNAL_RESEARCH_QUALIFICATION_RESPONSE_KIND =
   'IndependentExternalResearchQualificationVerificationResponse';
 
@@ -110,6 +115,14 @@ function structuredPriorArtBound(receipt, releaseBinding) {
       === JSON.stringify(releaseBinding.priorArtEvidenceReceipt);
 }
 
+function nativeFormalCertificateIntakesV4Bound(releaseBundle) {
+  const formalIntakes = releaseBundle?.researchReport
+    ?.capabilities?.formalCertificateIntakes;
+  return Array.isArray(formalIntakes)
+    && formalIntakes.length > 0
+    && formalIntakes.every(nativeFormalCertificateIntakeV4RecordValid);
+}
+
 function derivePolicyPayload({
   receipt,
   campaignReleaseAuthority,
@@ -132,6 +145,7 @@ function derivePolicyPayload({
       releaseBundle,
     })
     || !structuredPriorArtBound(receipt, releaseBinding)
+    || !nativeFormalCertificateIntakesV4Bound(releaseBundle)
     || !validHash(releaseBinding?.autonomousResearchReleaseBindingHash)) {
     return null;
   }
@@ -158,7 +172,7 @@ function derivePolicyPayload({
     && (releaseBinding.researchReportHash ?? null) === null;
   if (production === bounded) return null;
   return Object.freeze({
-    version: 1,
+    version: EXTERNAL_RESEARCH_QUALIFICATION_VERIFICATION_POLICY_VERSION,
     kind: EXTERNAL_RESEARCH_QUALIFICATION_VERIFICATION_POLICY_KIND,
     verificationProfile: production
       ? EXTERNAL_RESEARCH_QUALIFICATION_PRODUCTION_POLICY_PROFILE
@@ -174,7 +188,8 @@ function derivePolicyPayload({
       releaseBinding.fullResearchQualificationEligible,
     priorArtEvidenceReceiptHash: releaseBinding.priorArtEvidenceReceiptHash,
     structuredPriorArtEvidenceVersion: 2,
-    nativeFormalCertificateIntakeVersion: 3,
+    nativeFormalCertificateIntakeVersion:
+      EXTERNAL_RESEARCH_QUALIFICATION_NATIVE_FORMAL_INTAKE_VERSION,
     recursiveReleaseClosureRequired: production,
     allowBoundedGoldenCapability: bounded,
     requireGlobalGoldenAuthority: bounded,
@@ -236,9 +251,17 @@ export function independentExternalResearchQualificationInspectionPolicyBound(
   const policyHash = policy
     ?.independentExternalResearchQualificationVerificationPolicyHash;
   return validHash(policyHash)
+    && policy?.version
+      === EXTERNAL_RESEARCH_QUALIFICATION_VERIFICATION_POLICY_VERSION
+    && policy?.nativeFormalCertificateIntakeVersion
+      === EXTERNAL_RESEARCH_QUALIFICATION_NATIVE_FORMAL_INTAKE_VERSION
     && inspection?.verificationPolicyHash === policyHash
     && inspection?.structuredPriorArtEvidenceVerified === true
-    && inspection?.nativeFormalCertificateIntakeV3Verified === true
+    && inspection?.nativeFormalCertificateIntakeV4Verified === true
+    && !Object.hasOwn(
+      inspection || {},
+      'nativeFormalCertificateIntakeV3Verified',
+    )
     && inspection?.releaseBindingVersion === policy.releaseBindingVersion
     && inspection?.launchMode === policy.launchMode
     && inspection?.qualificationScope === policy.qualificationScope

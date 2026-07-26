@@ -2,9 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  AUTONOMOUS_RESEARCH_ONLINE_ANTI_ROLLBACK_COORDINATOR_DEPLOYMENT_BLOCKER,
+  AUTONOMOUS_RESEARCH_ONLINE_ANTI_ROLLBACK_COORDINATOR_LEGACY_BLOCKER,
   autonomousResearchOnlineWriterCoverageManifestHash,
   AUTONOMOUS_RESEARCH_ONLINE_WRITER_REQUIRED_DATABASE_ROLES,
+  AUTONOMOUS_RESEARCH_STATE_SAFETY_BLOCKER_CODE_COMPATIBILITY,
   evaluateAutonomousResearchStateSafetyReadiness,
+  expandAutonomousResearchStateSafetyBlockerCodeCompatibility,
+  unavailableAutonomousResearchOnlineAntiRollbackInspection,
 } from '../../paper-domain/automation/autonomous-research-state-safety-contract.mjs';
 import {
   inspectAutonomousResearchStateSafety,
@@ -169,6 +174,70 @@ function onlineInspection({
   });
 }
 
+test('v1 state-safety reports retain a machine-readable fail-closed blocker alias', () => {
+  assert.deepEqual(
+    AUTONOMOUS_RESEARCH_STATE_SAFETY_BLOCKER_CODE_COMPATIBILITY,
+    {
+      version: 1,
+      kind: 'AutonomousResearchStateSafetyBlockerCodeCompatibility',
+      aliases: [{
+        canonicalCode:
+          AUTONOMOUS_RESEARCH_ONLINE_ANTI_ROLLBACK_COORDINATOR_DEPLOYMENT_BLOCKER,
+        legacyAliasCode:
+          AUTONOMOUS_RESEARCH_ONLINE_ANTI_ROLLBACK_COORDINATOR_LEGACY_BLOCKER,
+        appliesToReportVersions: [1],
+        disposition: 'deprecated_read_compatibility_alias',
+      }],
+    },
+  );
+  assert.deepEqual(
+    expandAutonomousResearchStateSafetyBlockerCodeCompatibility([
+      AUTONOMOUS_RESEARCH_ONLINE_ANTI_ROLLBACK_COORDINATOR_LEGACY_BLOCKER,
+    ]),
+    [
+      AUTONOMOUS_RESEARCH_ONLINE_ANTI_ROLLBACK_COORDINATOR_DEPLOYMENT_BLOCKER,
+      AUTONOMOUS_RESEARCH_ONLINE_ANTI_ROLLBACK_COORDINATOR_LEGACY_BLOCKER,
+    ].sort(),
+  );
+
+  const unavailable = unavailableAutonomousResearchOnlineAntiRollbackInspection();
+  assert.equal(unavailable.version, 1);
+  assert.equal(
+    unavailable.blockerCodeCompatibility,
+    AUTONOMOUS_RESEARCH_STATE_SAFETY_BLOCKER_CODE_COMPATIBILITY,
+  );
+  assert.ok(unavailable.blockers.includes(
+    AUTONOMOUS_RESEARCH_ONLINE_ANTI_ROLLBACK_COORDINATOR_DEPLOYMENT_BLOCKER,
+  ));
+  assert.ok(unavailable.blockers.includes(
+    AUTONOMOUS_RESEARCH_ONLINE_ANTI_ROLLBACK_COORDINATOR_LEGACY_BLOCKER,
+  ));
+
+  const persistedLegacyV1 = structuredClone(onlineInspection());
+  persistedLegacyV1.blockers = [
+    AUTONOMOUS_RESEARCH_ONLINE_ANTI_ROLLBACK_COORDINATOR_LEGACY_BLOCKER,
+  ];
+  const migrated = evaluateAutonomousResearchStateSafetyReadiness({
+    inventory: closedInventory(),
+    latestRestoreDrill: latestRestoreDrill(),
+    onlineAntiRollback: persistedLegacyV1,
+    now: NOW,
+  });
+  assert.equal(migrated.version, 1);
+  assert.equal(migrated.ready, false);
+  assert.equal(migrated.status, 'autonomous_research_state_safety_blocked');
+  assert.equal(
+    migrated.blockerCodeCompatibility,
+    AUTONOMOUS_RESEARCH_STATE_SAFETY_BLOCKER_CODE_COMPATIBILITY,
+  );
+  assert.ok(migrated.blockers.includes(
+    AUTONOMOUS_RESEARCH_ONLINE_ANTI_ROLLBACK_COORDINATOR_DEPLOYMENT_BLOCKER,
+  ));
+  assert.ok(migrated.blockers.includes(
+    AUTONOMOUS_RESEARCH_ONLINE_ANTI_ROLLBACK_COORDINATOR_LEGACY_BLOCKER,
+  ));
+});
+
 test('passive state-safety inspection stays blocked without pinned restore authority or an online coordinator', () => {
   const calls = [];
   const stateBackupService = Object.freeze({
@@ -213,7 +282,7 @@ test('passive state-safety inspection stays blocked without pinned restore autho
   assert.equal(inspection.externalActionPerformed, false);
   assert.equal(inspection.ready, false);
   assert.ok(inspection.blockers.includes(
-    'autonomous_research_online_anti_rollback_coordinator_not_implemented',
+    'autonomous_research_online_anti_rollback_coordinator_deployment_not_ready',
   ));
   assert.ok(inspection.blockers.includes(
     'autonomous_research_state_restore_authority_trust_configuration_required',
@@ -347,7 +416,7 @@ test('local booleans and restore receipts cannot substitute for live signed anti
     assert.equal(inspection.ready, false);
     assert.equal(inspection.onlineAntiRollbackCoordinatorImplemented, false);
     assert.ok(inspection.blockers.includes(
-      'autonomous_research_online_anti_rollback_coordinator_not_implemented',
+      'autonomous_research_online_anti_rollback_coordinator_deployment_not_ready',
     ));
   }
 });

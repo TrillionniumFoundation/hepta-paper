@@ -5,7 +5,7 @@ import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace
 import { parseStrictCliArguments } from '../src/strict-cli-arguments.mjs';
 
 const args = parseStrictCliArguments(process.argv.slice(2), {
-  booleanFlags: ['help', 'require-production-ready'],
+  booleanFlags: ['help', 'json', 'require-production-ready'],
   valueFlags: ['root', 'runtime-root'],
   positional: false,
 });
@@ -14,9 +14,10 @@ if (args.help) {
   process.stdout.write(`${JSON.stringify({
     version: 1,
     kind: 'ResearchCapabilityMatrixUsage',
-    usage: 'research-capability-matrix [--root PATH] [--runtime-root PATH] [--require-production-ready]',
-    mutation: 'read-only',
-    externalAction: false,
+    usage: 'research-capability-matrix [--json] [--root PATH] [--runtime-root PATH] [--require-production-ready]',
+    mutation: 'no-canonical-state-write',
+    localObservationEffects: 'runtime-metadata-and-daemon-probes-may-change',
+    externalAction: 'local-runtime-observation',
   }, null, 2)}\n`);
   process.exit(0);
 }

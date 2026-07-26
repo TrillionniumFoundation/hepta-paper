@@ -1,5 +1,6 @@
 import { verifyProposalClaimToTheoremBinding } from '../research/proposal-claim-to-theorem-binding.mjs';
 import { hashPaperRecord } from '../contracts/primitives.mjs';
+import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
   formalClosureClaimBindingsFromProposalBinding,
   verifyGenericFormalCertificateIntakeClosureBinding,
@@ -189,16 +190,52 @@ export function inspectSuccessfulFullResearchRelease({
   const proposalBinding = report?.capabilities?.proposalClaimToTheoremBinding || null;
   const proposalVerification = verifyProposalClaimToTheoremBinding(proposalBinding || {});
   const researchSourceSnapshotHash = bundle?.campaignResearchSourceSnapshotHash || null;
+  const campaignResearchSourceSnapshot =
+    bundle?.campaignResearchSourceSnapshot
+      || report?.campaignResearchSourceSnapshot
+      || null;
   const expectedClaimBindings =
     formalClosureClaimBindingsFromProposalBinding(proposalBinding);
   const formalIntakes = report?.capabilities?.formalCertificateIntakes;
   const formalReplays = report?.capabilities?.formalReplayReceipts;
+  const evidenceQualityGate = report?.capabilities?.evidenceQualityGate || null;
+  const {
+    evidenceQualityGateHash: claimedEvidenceQualityGateHash,
+    ...evidenceQualityGatePayload
+  } = evidenceQualityGate || {};
+  const trustedFormalProjections = (
+    report?.capabilities?.trustedFormalEvidence || []
+  ).filter((item) => (
+    item?.status === 'trusted_formal_evidence_projected'
+    && item?.nativeProjectionRequest?.authoritativeFormalNode
+  ));
+  const authoritativeFormalNode = trustedFormalProjections.length === 1
+    ? trustedFormalProjections[0].nativeProjectionRequest.authoritativeFormalNode
+    : null;
+  const formalWorkers = (
+    report?.nativeResearchWorkerExecution?.workerReceipts || []
+  ).filter((worker) => worker?.workerType === 'formal_verifier_lake');
+  const formalWorkerReceiptHashes = new Set(formalWorkers.map((worker) => (
+    worker?.nativeResearchWorkerExecutionReceiptHash
+  )).filter(Boolean));
+  const trustedNativeFormalReceiptHashes = (
+    evidenceQualityGate?.workerLedgerVerifications || []
+  ).filter((verification) => (
+    verification?.status === 'trusted_ledger_receipt_verified'
+    && verification?.receiptKind === 'NativeResearchWorkerExecutionReceipt'
+    && verification?.stream === 'jobs'
+    && verification?.writerKind === 'native-research-worker'
+    && verification?.writerTrusted === true
+    && verification?.issuerPolicyVerified === true
+    && formalWorkerReceiptHashes.has(verification?.receiptHash)
+  )).map((verification) => verification.receiptHash);
   const nativeFormalVerification = verifyNativeFormalResearchClosureBinding(
     report?.nativeResearchWorkerExecution,
     {
       paperId: authority?.paperId,
       campaignId: authority?.campaignId,
       researchSourceSnapshotHash,
+      campaignResearchSourceSnapshot,
       taskKey: report?.taskKey,
       proposalBinding,
       expectedClaimBindings,
@@ -210,14 +247,16 @@ export function inspectSuccessfulFullResearchRelease({
       paperId: authority?.paperId,
       campaignId: authority?.campaignId,
       researchSourceSnapshotHash,
+      campaignResearchSourceSnapshot,
       taskKey: report?.taskKey,
       proposalBinding,
       expectedClaimBindings,
       nativeResearchWorkerExecution: report?.nativeResearchWorkerExecution,
+      authoritativeFormalNode,
+      requireNativeFormalLedgerTrust: true,
+      trustedNativeFormalReceiptHashes,
     })
   ));
-  const formalWorkers = (report?.nativeResearchWorkerExecution?.workerReceipts || [])
-    .filter((worker) => worker?.workerType === 'formal_verifier_lake');
   const { researchReportHash: claimedReportHash, ...reportPayload } = report || {};
   const boundedFormalReleaseBindingValid = scope.boundedGoldenScope
     && scope.releaseBinding?.version === 3
@@ -253,8 +292,14 @@ export function inspectSuccessfulFullResearchRelease({
     || (!boundedFormalReleaseBindingValid && !productionFormalReleaseBindingValid)
     || !expectedClaimBindings.length
     || !nativeFormalVerification.valid
+    || evidenceQualityGate?.status !== 'evidence_quality_ready'
+    || !SHA256.test(String(claimedEvidenceQualityGateHash || ''))
+    || hashRecord('EvidenceQualityGate', evidenceQualityGatePayload)
+      !== claimedEvidenceQualityGateHash
+    || trustedFormalProjections.length !== 1
+    || trustedNativeFormalReceiptHashes.length !== formalWorkers.length
     || !Array.isArray(formalIntakes) || !formalIntakes.length
-    || formalIntakes.some((intake) => intake?.version !== 3
+    || formalIntakes.some((intake) => intake?.version !== 4
       || intake?.status !== 'formal_certificate_intake_verified')
     || formalIntakeVerifications.some((verification) => !verification.valid)
     || !Array.isArray(formalReplays) || !formalReplays.length

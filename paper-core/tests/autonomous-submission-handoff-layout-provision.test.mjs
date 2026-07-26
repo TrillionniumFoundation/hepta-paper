@@ -498,9 +498,16 @@ test('systemd bootstrap, isolated layout service, and installer form a fresh-hos
       path.join(DEPLOY_ROOT, 'strict-full-auto-acceptance.service'),
       'utf8',
     );
+    const strictTimer = fs.readFileSync(
+      path.join(DEPLOY_ROOT, 'strict-full-auto-acceptance.timer'),
+      'utf8',
+    );
     assert.match(strict, /^Requires=hepta-paper-host-bootstrap\.service$/m);
     assert.match(strict,
       /^After=.*autonomous-submission-handoff-layout-provision\.path/m);
+    assert.match(strictTimer, /^OnUnitInactiveSec=5min$/m);
+    assert.match(strictTimer,
+      /^Unit=strict-full-auto-acceptance\.service$/m);
 
     const installerPath = path.join(
       DEPLOY_ROOT,
@@ -517,7 +524,11 @@ test('systemd bootstrap, isolated layout service, and installer form a fresh-hos
     assert.match(installer, /installed deployment artifact hash mismatch/);
     assert.match(installer, /hepta-paper-systemd-host\.manifest\.sha256/);
     assert.match(installer, /systemctl daemon-reload/);
+    assert.match(installer,
+      /systemctl disable strict-full-auto-acceptance\.service/);
     assert.match(installer, /systemctl enable/);
+    assert.match(installer,
+      /systemctl restart strict-full-auto-acceptance\.timer/);
     assert.match(installer,
       /systemctl start --no-block strict-full-auto-acceptance\.service/);
     assert.equal(spawnSync('sh', ['-n', installerPath]).status, 0);
@@ -617,6 +628,7 @@ test('systemd bootstrap, isolated layout service, and installer form a fresh-hos
         path.join(DEPLOY_ROOT, 'autonomous-research-supervisor.service'),
         path.join(DEPLOY_ROOT, 'autonomous-submission-dispatcher.service'),
         path.join(DEPLOY_ROOT, 'strict-full-auto-acceptance.service'),
+        path.join(DEPLOY_ROOT, 'strict-full-auto-acceptance.timer'),
       ], { encoding: 'utf8' });
       assert.equal(verification.status, 0, verification.stderr);
     }

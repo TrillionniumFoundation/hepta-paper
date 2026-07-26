@@ -98,7 +98,7 @@ assert.equal(contractsFacade.buildRepairReconciliation, buildRepairReconciliatio
 assert.equal(contractsFacade.buildSubmissionApprovalPacket, buildSubmissionApprovalPacketDirect);
 assert.equal(contractsFacade.buildVenueResolutionPacket, buildVenueResolutionPacketDirect);
 assert.equal(journalProfilesFacade, journalProfilesDirect);
-assert.equal(journalProfilesDirect.length, 97);
+assert.equal(journalProfilesDirect.length, 98);
 
 const summaryBoundary = summarizeRows([{
   draft_status: 'source_tex_present',

@@ -78,6 +78,7 @@ autonomous-submission-handoff-layout-provision.path
 autonomous-research-supervisor.service
 autonomous-submission-dispatcher.service
 strict-full-auto-acceptance.service
+strict-full-auto-acceptance.timer
 autonomous-research-state-backup-renew.service
 autonomous-research-state-backup-renew.timer
 '
@@ -184,6 +185,7 @@ for unit in \
   autonomous-research-supervisor.service \
   autonomous-submission-dispatcher.service \
   strict-full-auto-acceptance.service \
+  strict-full-auto-acceptance.timer \
   autonomous-research-state-backup-renew.service \
   autonomous-research-state-backup-renew.timer
 do
@@ -269,19 +271,22 @@ fi
   "$(target /etc/systemd/system/autonomous-research-supervisor.service)" \
   "$(target /etc/systemd/system/autonomous-submission-dispatcher.service)" \
   "$(target /etc/systemd/system/strict-full-auto-acceptance.service)" \
+  "$(target /etc/systemd/system/strict-full-auto-acceptance.timer)" \
   "$(target /etc/systemd/system/autonomous-research-state-backup-renew.service)" \
   "$(target /etc/systemd/system/autonomous-research-state-backup-renew.timer)"
 
 if [ "$manage_systemd" = yes ]; then
   /usr/bin/systemctl daemon-reload
+  /usr/bin/systemctl disable strict-full-auto-acceptance.service
   /usr/bin/systemctl enable \
     hepta-paper-host-bootstrap.service \
     autonomous-submission-handoff-layout-provision.path \
     autonomous-research-supervisor.service \
     autonomous-submission-dispatcher.service \
-    strict-full-auto-acceptance.service \
+    strict-full-auto-acceptance.timer \
     autonomous-research-state-backup-renew.timer
   /usr/bin/systemctl stop \
+    strict-full-auto-acceptance.timer \
     strict-full-auto-acceptance.service \
     autonomous-submission-dispatcher.service \
     autonomous-research-supervisor.service \
@@ -292,6 +297,7 @@ if [ "$manage_systemd" = yes ]; then
   /usr/bin/systemctl restart hepta-paper-host-bootstrap.service
   /usr/bin/systemctl start autonomous-submission-handoff-layout-provision.path
   /usr/bin/systemctl restart autonomous-research-state-backup-renew.timer
+  /usr/bin/systemctl restart strict-full-auto-acceptance.timer
   /usr/bin/systemctl start --no-block strict-full-auto-acceptance.service
 fi
 

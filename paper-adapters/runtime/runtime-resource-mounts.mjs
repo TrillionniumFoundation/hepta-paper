@@ -7,9 +7,14 @@ function elanRuntimeRoot(executable) {
   const binMarker = `${path.sep}.elan${path.sep}bin${path.sep}`;
   const binMarkerIndex = value.indexOf(binMarker);
   if (binMarkerIndex >= 0) return value.slice(0, binMarkerIndex + `${path.sep}.elan`.length);
-  const marker = `${path.sep}.elan${path.sep}toolchains${path.sep}`;
-  const markerIndex = value.indexOf(marker);
-  if (markerIndex < 0) return null;
+  // ELAN_HOME is configurable in production and is intentionally installed at
+  // /opt/hepta-paper/elan rather than a user's ~/.elan. The executable itself
+  // is already explicitly allowlisted and content-hashed by the worker, so the
+  // safe mount boundary is the exact enclosing toolchain directory regardless
+  // of the ELAN_HOME basename.
+  const marker = `${path.sep}toolchains${path.sep}`;
+  const markerIndex = value.lastIndexOf(marker);
+  if (markerIndex <= 0) return null;
   const toolchainStart = markerIndex + marker.length;
   const toolchainEnd = value.indexOf(path.sep, toolchainStart);
   return toolchainEnd > toolchainStart ? value.slice(0, toolchainEnd) : null;

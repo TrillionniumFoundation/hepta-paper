@@ -1,5 +1,6 @@
 import {
   AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_PRODUCTION_PROFILES,
+  AUTONOMOUS_EMPIRICAL_PLUGIN_RUNTIME_LANGUAGES,
 } from '../../paper-domain/automation/autonomous-empirical-family-plugin-registry.mjs';
 import {
   AUTONOMOUS_FORMAL_SUPPORT_TEMPLATE_REGISTRY,
@@ -11,7 +12,6 @@ const PROOF_SEARCH_STRATEGIES = Object.freeze([
   'mathlib_retrieval',
   'bounded_refutation_or_synthesis',
 ]);
-
 function capability({
   id,
   implemented,
@@ -35,11 +35,16 @@ function capability({
 export function buildResearchCapabilityMatrix(readiness = {}) {
   const empiricalProfiles = AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_PRODUCTION_PROFILES;
   const formalTemplates = AUTONOMOUS_FORMAL_SUPPORT_TEMPLATE_REGISTRY.entries || [];
-  const runtimeLanguages = Object.entries(readiness.runtimes || {})
-    .filter(([, inspection]) => inspection?.usable === true)
-    .map(([language]) => language)
-    .filter((language) => ['python', 'node', 'r', 'julia', 'lean', 'latex'].includes(language))
-    .sort();
+  const canonicalReadyLanguages = new Set(
+    Array.isArray(readiness.empiricalLanguagesReady)
+      ? readiness.empiricalLanguagesReady : [],
+  );
+  const runtimeLanguages = AUTONOMOUS_EMPIRICAL_PLUGIN_RUNTIME_LANGUAGES
+    .filter((language) => (
+      canonicalReadyLanguages.has(language)
+      || readiness.runtimes?.[language]?.usable === true
+      || readiness.runtimes?.images?.[language]?.usable === true
+    ));
   const genericBlockers = Array.isArray(readiness.genericDomainCapabilityBlockers)
     ? readiness.genericDomainCapabilityBlockers : [];
   const capabilities = Object.freeze([
@@ -149,15 +154,23 @@ export function buildResearchCapabilityMatrix(readiness = {}) {
       ],
     }),
   ]);
+  const capabilityEntriesReady = capabilities.every((entry) => entry.productionReady);
+  const fullyAutonomousProductionReady =
+    readiness.productionReady === true
+    && readiness.fullyAutonomousResearchSystemReady === true
+    && readiness.fullAutomaticResearchWritingReady === true
+    && capabilityEntriesReady;
   const payload = {
     version: 1,
     kind: 'ResearchCapabilityMatrix',
-    status: capabilities.every((entry) => entry.productionReady)
+    status: fullyAutonomousProductionReady
       ? 'research_capabilities_production_ready'
       : 'research_capabilities_bounded_or_blocked',
+    capabilityEntriesStatus: capabilityEntriesReady
+      ? 'research_capability_entries_production_ready'
+      : 'research_capability_entries_bounded_or_blocked',
     universalResearchClaimed: false,
-    fullyAutonomousProductionReady: readiness.productionReady === true
-      && readiness.fullAutomaticResearchWritingReady === true,
+    fullyAutonomousProductionReady,
     capabilities,
   };
   return Object.freeze({

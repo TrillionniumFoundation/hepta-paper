@@ -1,16 +1,14 @@
 import assert from 'node:assert/strict';
-import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
 import { StrictFullAutoAcceptanceRepository } from '../../paper-adapters/automation/strict-full-auto-acceptance-repository.mjs';
 import { StrictFullAutoAcceptanceCommandRunner } from '../../paper-adapters/automation/strict-full-auto-acceptance-command-runner.mjs';
-import {
-  autonomousSubmissionPortalPublicDescriptorHash,
-} from '../../paper-adapters/automation/autonomous-submission-portal-public-adapter.mjs';
 import { StrictFullAutoAcceptanceOrchestrator } from '../../paper-application/automation/strict-full-auto-acceptance-orchestrator.mjs';
+import {
+  RECOVERY_REEXECUTION_SAFE_STEPS,
+} from '../../paper-application/automation/strict-full-auto-acceptance-state.mjs';
 import {
   STRICT_FULL_AUTO_ACCEPTANCE_REFERENCE_POLICY,
   STRICT_FULL_AUTO_ACCEPTANCE_STEP_ORDER,
@@ -20,17 +18,17 @@ import {
   parseStrictFullAutoAcceptanceArguments,
   runStrictFullAutoAcceptance,
 } from '../bin/strict-full-auto-acceptance.mjs';
-
-const NOW = '2026-07-21T05:00:00.000Z';
-
-function sha256File(candidate) {
-  return `sha256:${crypto.createHash('sha256').update(fs.readFileSync(candidate)).digest('hex')}`;
-}
-
-const EXAMPLE_CONFIGURATION = JSON.parse(fs.readFileSync(new URL(
-  '../deploy/strict-full-auto-acceptance.config.example.json',
-  import.meta.url,
-), 'utf8'));
+import {
+  STRICT_FULL_AUTO_ACCEPTANCE_TEST_NOW as NOW,
+  sha256File,
+  strictFullAutoAcceptanceFixture as fixture,
+  strictFullAutoAcceptanceNotReadyOutput as notReadyOutput,
+  strictFullAutoAcceptanceOrchestratorFor as orchestratorFor,
+  strictFullAutoAcceptanceProductionRunnerBindingTest,
+  strictFullAutoAcceptanceRuntimeActivatingRunner as runtimeActivatingRunner,
+  strictFullAutoAcceptanceSuccessfulOutput as successfulOutput,
+  strictFullAutoAcceptanceSuccessfulRunner as successfulRunner,
+} from './support/strict-full-auto-acceptance-fixture.mjs';
 
 test('systemd convergence retries unattended without receiving portal secrets', () => {
   const unit = fs.readFileSync(new URL(
@@ -39,12 +37,16 @@ test('systemd convergence retries unattended without receiving portal secrets', 
   const environment = fs.readFileSync(new URL(
     '../deploy/strict-full-auto-acceptance.env.example', import.meta.url,
   ), 'utf8');
+  const timer = fs.readFileSync(new URL(
+    '../deploy/strict-full-auto-acceptance.timer', import.meta.url,
+  ), 'utf8');
   assert.match(unit, /strict-full-auto-acceptance -- --action converge/);
   assert.match(unit, /--execute --require-accepted/);
   assert.doesNotMatch(unit, /--plan-hash/);
   assert.match(unit, /^Restart=on-failure$/m);
   assert.match(unit, /^StartLimitIntervalSec=0$/m);
   assert.match(unit, /^TimeoutStartSec=24h$/m);
+  assert.doesNotMatch(unit, /^RemainAfterExit=yes$/m);
   assert.match(unit, /autonomous-research-supervisor\.service/);
   assert.match(unit, /autonomous-submission-dispatcher\.service/);
   assert.doesNotMatch(unit, /EnvironmentFile=.*autonomous-submission-dispatcher\.secrets\.env/);
@@ -54,280 +56,11 @@ test('systemd convergence retries unattended without receiving portal secrets', 
   assert.doesNotMatch(unit, /\/srv\/hepta-paper\/assets\/datasets/);
   assert.equal(environment.trim(),
     'HEPTA_STRICT_FULL_AUTO_ACCEPTANCE_CONFIGURATION=/run/hepta/strict-full-auto-acceptance.json');
+  assert.match(timer, /^OnBootSec=2min$/m);
+  assert.match(timer, /^OnUnitInactiveSec=5min$/m);
+  assert.match(timer, /^Persistent=true$/m);
+  assert.match(timer, /^Unit=strict-full-auto-acceptance\.service$/m);
 });
-
-function fixtureArgument(value) {
-  return value
-    .replace('sha256:REPLACE_WITH_CHILD_PLAN', `sha256:${'a'.repeat(64)}`)
-    .replaceAll('REPLACE_WITH_GOLDEN_PAPER', 'fixture-golden-paper')
-    .replaceAll('REPLACE', '1');
-}
-
-const ARGUMENT_REFERENCE_FLAGS = Object.freeze({
-  'state-provisioning': Object.freeze({
-    '--machine-intake-config': 'machine-intake-principal',
-    '--topic-producer-profile': 'topic-producer-profile',
-    '--authority-process-config': 'online-state-authority-process-config',
-  }),
-  'online-transition': Object.freeze({
-    '--authority-process-config': 'online-state-authority-process-config',
-  }),
-  'runtime-reproducibility': Object.freeze({
-    '--config': 'runtime-reproducibility-principal',
-  }),
-  'advanced-numeric-activation': Object.freeze({
-    '--signing-config': 'empirical-plugin-signing-config',
-  }),
-  'external-qualifier': Object.freeze({
-    '--external-qualification-config': 'external-qualifier-principal',
-  }),
-  'golden-qualification': Object.freeze({
-    '--external-qualification-config': 'external-qualifier-principal',
-  }),
-  'restore-drill': Object.freeze({
-    '--authority-config': 'backup-restore-authority-principal',
-  }),
-});
-
-const CHILD_IDEMPOTENCY_FLAGS = Object.freeze({
-  'state-provisioning': '--plan-id',
-  'online-transition': '--transition-id',
-  'submission-dispatcher': '--idempotency-key',
-});
-
-function bindFixtureArgumentReferences(stepId, invocation, references) {
-  for (const [flag, referenceId] of Object.entries(ARGUMENT_REFERENCE_FLAGS[stepId] || {})) {
-    const index = invocation.arguments.indexOf(flag);
-    if (index >= 0) invocation.arguments[index + 1] = references[referenceId].path;
-  }
-  if (stepId === 'submission-dispatcher') {
-    const descriptor = JSON.parse(fs.readFileSync(
-      references['submission-portal-descriptor-config'].path,
-      'utf8',
-    ));
-    const values = {
-      '--portal-id': descriptor.portalId,
-      '--portal-configuration-hash': descriptor.configurationHash,
-      '--portal-descriptor-hash': autonomousSubmissionPortalPublicDescriptorHash(descriptor),
-    };
-    for (const [flag, value] of Object.entries(values)) {
-      const index = invocation.arguments.indexOf(flag);
-      if (index >= 0) invocation.arguments[index + 1] = value;
-    }
-  }
-}
-
-function fixture(t, mutate = () => {}) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-strict-acceptance-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const runtimeRoot = path.join(root, 'runtime');
-  const controlRoot = path.join(root, 'control');
-  const assetRoot = path.join(root, 'assets');
-  const datasetRoot = path.join(root, 'datasets');
-  const restoreBundle = path.join(root, 'restore-bundle');
-  const referenceRoot = path.join(root, 'references');
-  fs.mkdirSync(controlRoot, { mode: 0o700 });
-  fs.mkdirSync(referenceRoot, { recursive: true });
-  fs.mkdirSync(assetRoot, { mode: 0o700 });
-  fs.mkdirSync(datasetRoot, { recursive: true, mode: 0o700 });
-  fs.mkdirSync(restoreBundle, { recursive: true });
-  const references = {};
-  let subjectOrdinal = 0;
-  for (const [referenceId, kind] of Object.entries(
-    STRICT_FULL_AUTO_ACCEPTANCE_REFERENCE_POLICY,
-  )) {
-    const candidate = path.join(referenceRoot, `${referenceId}.ref`);
-    subjectOrdinal += 1;
-    const subjectId = kind.startsWith('opaque-')
-      ? `secret-reference-${subjectOrdinal}` : `authority-${subjectOrdinal}`;
-    const principalDocument = referenceId.endsWith('-principal');
-    const pinnedDocument = [
-      'research-author-principal',
-      'formal-sandbox-runtime-config',
-      'production-mathlib-build-authority-config',
-      'autonomous-venue-profile-config',
-      'autonomous-submission-metadata-config',
-      'submission-portal-descriptor-config',
-      'prior-art-service-config',
-      'external-replay-config',
-    ].includes(referenceId);
-    const portalDocument = referenceId === 'submission-portal-descriptor-config';
-    if (kind === 'opaque-directory-reference') {
-      fs.mkdirSync(candidate, { mode: 0o700 });
-    } else {
-      fs.writeFileSync(candidate, kind === 'public-reference'
-        ? pinnedDocument || principalDocument
-          ? `${JSON.stringify({
-            ...(pinnedDocument
-              ? { configurationHash: strictFullAutoAcceptanceHash({ referenceId }) } : {}),
-            ...(principalDocument ? { principalId: subjectId } : {}),
-            ...(portalDocument ? {
-              version: 1,
-              kind: 'AutonomousSubmissionPortalPublicConfiguration',
-              portalId: 'strict-acceptance-portal',
-              serviceIdentityHash: strictFullAutoAcceptanceHash({ portal: 'service' }),
-              portalAccountIdentityHash: strictFullAutoAcceptanceHash({ portal: 'account' }),
-              portalTrustDomainIdentityHash: strictFullAutoAcceptanceHash({ portal: 'trust' }),
-              tokenEnvironmentVariableNameHash: strictFullAutoAcceptanceHash({ portal: 'token' }),
-            } : {}),
-            ...(referenceId === 'prior-art-service-config'
-              ? { tokenEnvironmentVariable: 'HEPTA_PRIOR_ART_SERVICE_TOKEN_FILE' } : {}),
-            ...(referenceId === 'external-replay-config'
-              ? { tokenEnvironmentVariable: 'HEPTA_EXTERNAL_REPLAY_SERVICE_TOKEN_FILE' } : {}),
-          })}\n`
-          : `${referenceId}:public-authority\n`
-        : kind === 'private-configuration-reference'
-          ? '{}\n'
-          : `${referenceId}:opaque\n`, { mode: 0o600 });
-      fs.chmodSync(candidate, kind === 'public-reference' ? 0o444 : 0o400);
-    }
-    references[referenceId] = ['public-reference', 'private-configuration-reference'].includes(kind)
-      ? { kind, path: candidate, subjectId,
-        expectedSha256: sha256File(candidate) }
-      : { kind, path: candidate, subjectId };
-  }
-  for (const referenceId of [
-    'empirical-plugin-signer-command',
-    'release-attestor-signer-command',
-    'release-attestor-probe-command',
-  ]) {
-    fs.chmodSync(references[referenceId].path, 0o555);
-  }
-  const writePrivateConfiguration = (referenceId, value) => {
-    const reference = references[referenceId];
-    fs.chmodSync(reference.path, 0o600);
-    fs.writeFileSync(reference.path, `${JSON.stringify(value)}\n`, { mode: 0o600 });
-    fs.chmodSync(reference.path, 0o400);
-    reference.expectedSha256 = sha256File(reference.path);
-  };
-  writePrivateConfiguration('empirical-plugin-signing-config', {
-    version: 1,
-    kind: 'AutonomousEmpiricalPluginSigningAuthorityConfiguration',
-    trustStorePath: references['empirical-plugin-trust-store'].path,
-    signer: {
-      command: references['empirical-plugin-signer-command'].path,
-      environmentAllowlist: [],
-    },
-  });
-  writePrivateConfiguration('release-attestor-config', {
-    version: 2,
-    kind: 'ResearchExecutionReleaseAttestorConfiguration',
-    backend: {
-      kind: 'external-kms-command',
-      signerCommand: {
-        principalId: 'release-attestor-signer-production',
-        executable: references['release-attestor-signer-command'].path,
-        credentialRoot: references['release-attestor-signer-credential-root'].path,
-        environmentAllowlist: [],
-      },
-      probeCommand: {
-        principalId: 'release-attestor-probe-production',
-        executable: references['release-attestor-probe-command'].path,
-        credentialRoot: references['release-attestor-probe-credential-root'].path,
-        environmentAllowlist: [],
-      },
-    },
-  });
-  const steps = Object.fromEntries(STRICT_FULL_AUTO_ACCEPTANCE_STEP_ORDER.map((stepId) => {
-    const source = structuredClone(EXAMPLE_CONFIGURATION.steps[stepId]);
-    source.idempotencyKey = strictFullAutoAcceptanceHash({ stepId, fixture: true });
-    source.execute.arguments = source.execute.arguments.map(fixtureArgument);
-    source.verify.arguments = source.verify.arguments.map(fixtureArgument);
-    bindFixtureArgumentReferences(stepId, source.execute, references);
-    bindFixtureArgumentReferences(stepId, source.verify, references);
-    const idempotencyFlag = CHILD_IDEMPOTENCY_FLAGS[stepId];
-    if (idempotencyFlag) {
-      for (const invocation of [source.execute, source.verify]) {
-        const index = invocation.arguments.indexOf(idempotencyFlag);
-        if (index >= 0) invocation.arguments[index + 1] = source.idempotencyKey;
-      }
-    }
-    return [stepId, source];
-  }));
-  const stateArguments = steps['state-provisioning'].execute.arguments;
-  stateArguments[stateArguments.indexOf('--dataset-root') + 1] = datasetRoot;
-  steps['state-provisioning'].verify.assertions.find((assertion) => (
-    assertion.path === '/plan/transitionId'
-  )).equals = steps['online-transition'].idempotencyKey;
-  const restoreArguments = steps['restore-drill'].execute.arguments;
-  restoreArguments[restoreArguments.indexOf('--bundle') + 1] = restoreBundle;
-  const operationalEnvironment = structuredClone(EXAMPLE_CONFIGURATION.operationalEnvironment);
-  operationalEnvironment.HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_RECEIPT =
-    path.join(root, 'runtime-reproducibility-receipt.json');
-  operationalEnvironment.HEPTA_AUTONOMOUS_EMPIRICAL_PLUGIN_ACTIVATION_POINTER =
-    path.join(root, 'empirical-plugin-activation-pointer.json');
-  operationalEnvironment.HEPTA_AUTONOMOUS_RESEARCH_DATASET_ROOT = datasetRoot;
-  for (const phase of ['execute', 'verify']) {
-    const invocation = steps['runtime-reproducibility'][phase];
-    invocation.arguments[invocation.arguments.indexOf('--receipt') + 1] =
-      operationalEnvironment.HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_RECEIPT;
-    const activation = steps['advanced-numeric-activation'][phase];
-    activation.arguments[activation.arguments.indexOf('--activation') + 1] =
-      operationalEnvironment.HEPTA_AUTONOMOUS_EMPIRICAL_PLUGIN_ACTIVATION_POINTER;
-  }
-  const finalVerification = structuredClone(EXAMPLE_CONFIGURATION.finalVerification);
-  const configuration = {
-    version: 1,
-    kind: 'StrictFullAutoAcceptanceConfiguration',
-    controlRoot,
-    runtimeRoot,
-    assetRoot,
-    datasetRoot,
-    operationalEnvironment,
-    references,
-    steps,
-    finalVerification,
-  };
-  mutate({
-    root, controlRoot, runtimeRoot, assetRoot, datasetRoot, referenceRoot, configuration,
-  });
-  const configurationPath = path.join(root, 'acceptance-config.json');
-  fs.writeFileSync(configurationPath, `${JSON.stringify(configuration, null, 2)}\n`, { mode: 0o444 });
-  return {
-    root, controlRoot, runtimeRoot, assetRoot, datasetRoot, referenceRoot,
-    configuration, configurationPath,
-  };
-}
-
-function orchestratorFor(configurationPath, runner) {
-  return new StrictFullAutoAcceptanceOrchestrator({
-    repository: new StrictFullAutoAcceptanceRepository({ configurationPath }),
-    commandRunner: runtimeActivatingRunner(runner),
-    now: () => NOW,
-  });
-}
-
-function successfulOutput(invocation, extra = {}) {
-  const output = { skippedCount: 0, ...extra };
-  for (const assertion of invocation.assertions) {
-    const segments = assertion.path.split('/').slice(1);
-    let cursor = output;
-    for (const segment of segments.slice(0, -1)) cursor = cursor[segment] ||= {};
-    cursor[segments.at(-1)] = assertion.equals;
-  }
-  return Object.freeze(output);
-}
-
-function runtimeActivatingRunner(runner) {
-  return {
-    async run(request) {
-      const output = await runner.run(request);
-      if (request.step.stepId === 'state-provisioning' && request.phase === 'execute') {
-        fs.mkdirSync(request.plan.runtimeRoot, { recursive: true, mode: 0o700 });
-      }
-      return output;
-    },
-  };
-}
-
-function successfulRunner(calls = []) {
-  return runtimeActivatingRunner({
-    async run({ step, phase, invocation }) {
-      calls.push(`${step.stepId}:${phase}`);
-      return successfulOutput(invocation, { stepId: step.stepId, phase });
-    },
-  });
-}
 
 test('plan preflights all external references without reading opaque material or creating runtime state', (t) => {
   const value = fixture(t);
@@ -348,8 +81,126 @@ test('plan preflights all external references without reading opaque material or
   ]);
   assert.equal(first.privateKeyMaterialHandled, false);
   assert.equal(first.selfSignedAuthorityPermitted, false);
+  const genericStep = first.steps.find((step) => (
+    step.stepId === 'generic-domain-capability-convergence'
+  ));
+  assert.equal(genericStep.execute.assertions.some((assertion) => (
+    assertion.path === '/snapshotCurrent' && assertion.equals === true
+  )), true);
+  assert.equal(genericStep.verify.assertions.some((assertion) => (
+    assertion.path === '/snapshotCurrent' && assertion.equals === true
+  )), true);
+  assert.equal(RECOVERY_REEXECUTION_SAFE_STEPS.has(
+    'generic-domain-capability-convergence',
+  ), false);
   assert.equal(fs.existsSync(path.join(value.controlRoot, 'state.json')), false);
 });
+
+test('configuration path is revalidated and never followed after loader construction', (t) => {
+  const value = fixture(t);
+  const calls = [];
+  const service = orchestratorFor(value.configurationPath, successfulRunner(calls));
+  const replacement = path.join(value.root, 'replacement-acceptance-config.json');
+  fs.copyFileSync(value.configurationPath, replacement);
+  fs.chmodSync(replacement, 0o444);
+  fs.unlinkSync(value.configurationPath);
+  fs.symlinkSync(replacement, value.configurationPath);
+  assert.throws(
+    () => service.plan(),
+    /strict_full_auto_acceptance_reference_not_regular:configuration/,
+  );
+  assert.equal(calls.length, 0);
+  assert.equal(fs.existsSync(path.join(value.controlRoot, 'state.json')), false);
+});
+
+test('private authority validation cannot parse content from a replacement reference inode',
+  (t) => {
+    const value = fixture(t);
+    const calls = [];
+    const service = orchestratorFor(value.configurationPath, successfulRunner(calls));
+    const selected = value.configuration.references['empirical-plugin-signing-config'].path;
+    const replacement = path.join(value.referenceRoot, 'replacement-empirical-config.ref');
+    fs.writeFileSync(
+      replacement,
+      `${fs.readFileSync(selected, 'utf8')}\n`,
+      { mode: 0o400 },
+    );
+    const originalLstatSync = fs.lstatSync;
+    let selectedInspectionCount = 0;
+    fs.lstatSync = (candidate, ...arguments_) => {
+      if (candidate === selected && (selectedInspectionCount += 1) === 2) {
+        fs.renameSync(replacement, selected);
+      }
+      return originalLstatSync(candidate, ...arguments_);
+    };
+    try {
+      assert.throws(
+        () => service.plan(),
+        /strict_full_auto_acceptance_bound_reference_changed:empirical-plugin-signing-config/,
+      );
+    } finally {
+      fs.lstatSync = originalLstatSync;
+    }
+    assert.equal(calls.length, 0);
+    assert.equal(fs.existsSync(path.join(value.controlRoot, 'state.json')), false);
+  });
+
+test('read-only roots require trusted ownership, effective read/traverse and no write access',
+  (t) => {
+    const value = fixture(t);
+    const service = orchestratorFor(value.configurationPath, successfulRunner());
+    assert.equal(service.plan().rootBindings.find((binding) => (
+      binding.rootId === 'asset-root'
+    )).anchorMode, 0o500);
+    for (const [candidate, mode] of [
+      [value.assetRoot, 0o700],
+      [value.datasetRoot, 0o100],
+      [value.assetRoot, 0o520],
+      [value.datasetRoot, 0o502],
+    ]) {
+      fs.chmodSync(candidate, mode);
+      assert.throws(
+        () => service.plan(),
+        /strict_full_auto_acceptance_root_anchor_invalid/,
+      );
+      fs.chmodSync(candidate, 0o500);
+    }
+    assert.equal(fs.existsSync(path.join(value.controlRoot, 'state.json')), false);
+  });
+
+test('execute and status revalidate read-only root bindings before state or verifier actions',
+  async (t) => {
+    const beforeExecute = fixture(t);
+    const executeCalls = [];
+    const executing = orchestratorFor(
+      beforeExecute.configurationPath,
+      successfulRunner(executeCalls),
+    );
+    const plan = executing.plan();
+    fs.chmodSync(beforeExecute.assetRoot, 0o700);
+    await assert.rejects(
+      executing.execute({ expectedPlanHash: plan.planHash }),
+      /strict_full_auto_acceptance_root_anchor_invalid/,
+    );
+    assert.equal(executeCalls.length, 0);
+    assert.equal(fs.existsSync(path.join(beforeExecute.controlRoot, 'state.json')), false);
+
+    const beforeStatus = fixture(t);
+    const statusCalls = [];
+    const completed = orchestratorFor(
+      beforeStatus.configurationPath,
+      successfulRunner(statusCalls),
+    );
+    const completedPlan = completed.plan();
+    await completed.execute({ expectedPlanHash: completedPlan.planHash });
+    const callsBeforeDriftedStatus = statusCalls.length;
+    fs.chmodSync(beforeStatus.datasetRoot, 0o100);
+    await assert.rejects(
+      completed.status(),
+      /strict_full_auto_acceptance_root_anchor_invalid/,
+    );
+    assert.equal(statusCalls.length, callsBeforeDriftedStatus);
+  });
 
 test('dataset is a separate read-only root and nested asset datasets fail closed', (t) => {
   const nested = fixture(t, ({ assetRoot, configuration }) => {
@@ -434,10 +285,10 @@ test('missing opaque secret and wrong principal separation fail before any actio
   const wrong = fixture(t, ({ configuration }) => {
     const author = configuration.references['research-author-principal'];
     const reviewer = configuration.references['formal-reviewer-principal'];
-    fs.chmodSync(reviewer.path, 0o644);
-    fs.copyFileSync(author.path, reviewer.path);
-    fs.chmodSync(reviewer.path, 0o444);
-    reviewer.expectedSha256 = sha256File(reviewer.path);
+    fs.chmodSync(author.path, 0o644);
+    fs.copyFileSync(reviewer.path, author.path);
+    fs.chmodSync(author.path, 0o444);
+    author.expectedSha256 = sha256File(author.path);
   });
   const wrongService = orchestratorFor(wrong.configurationPath, successfulRunner(calls));
   assert.throws(() => wrongService.plan(), /principal_reference_alias_forbidden/);
@@ -474,6 +325,264 @@ test('execute requires the immutable plan hash and completes all steps with zero
     (STRICT_FULL_AUTO_ACCEPTANCE_STEP_ORDER.length + 1) * 2);
 });
 
+test('a completed plan renews only a typed stale renewable step and appends its intent',
+  async (t) => {
+    const value = fixture(t);
+    const repository = new StrictFullAutoAcceptanceRepository({
+      configurationPath: value.configurationPath,
+    });
+    const calls = [];
+    let submissionStale = false;
+    const service = new StrictFullAutoAcceptanceOrchestrator({
+      repository,
+      commandRunner: runtimeActivatingRunner({
+        async run({ step, phase, invocation }) {
+          calls.push(`${step.stepId}:${phase}`);
+          if (step.stepId === 'submission-dispatcher' && phase === 'verify'
+            && submissionStale) {
+            return notReadyOutput(invocation);
+          }
+          if (step.stepId === 'submission-dispatcher' && phase === 'execute') {
+            submissionStale = false;
+          }
+          return successfulOutput(invocation);
+        },
+      }),
+      now: () => NOW,
+    });
+    const plan = service.plan();
+    await service.execute({ expectedPlanHash: plan.planHash });
+    const initialExecuteCounts = Object.fromEntries(plan.steps.map((step) => [
+      step.stepId,
+      calls.filter((item) => item === `${step.stepId}:execute`).length,
+    ]));
+    submissionStale = true;
+    const renewed = await service.execute({ expectedPlanHash: plan.planHash });
+    assert.equal(renewed.strictFullAutoAccepted, true);
+    for (const step of plan.steps) {
+      const observed = calls.filter((item) => item === `${step.stepId}:execute`).length;
+      assert.equal(
+        observed,
+        initialExecuteCounts[step.stepId] + (step.stepId === 'submission-dispatcher' ? 1 : 0),
+        step.stepId,
+      );
+    }
+    const renewalDirectory = path.join(repository.controlStore.planScopePath(plan), 'renewals');
+    assert.deepEqual(
+      fs.readdirSync(renewalDirectory).map((name) => name.replace(/^[0-9]+-/, '')),
+      ['submission-dispatcher.json'],
+    );
+    assert.ok(fs.readdirSync(path.join(
+      repository.controlStore.planScopePath(plan), 'live-receipts',
+    )).length >= 1);
+  });
+
+test('infrastructure failure on a renewable verifier never dispatches renewal action',
+  async (t) => {
+    const value = fixture(t);
+    const repository = new StrictFullAutoAcceptanceRepository({
+      configurationPath: value.configurationPath,
+    });
+    const initial = new StrictFullAutoAcceptanceOrchestrator({
+      repository,
+      commandRunner: successfulRunner(),
+      now: () => NOW,
+    });
+    const plan = initial.plan();
+    await initial.execute({ expectedPlanHash: plan.planHash });
+    const calls = [];
+    const failing = new StrictFullAutoAcceptanceOrchestrator({
+      repository,
+      commandRunner: {
+        async run({ step, phase, invocation }) {
+          calls.push(`${step.stepId}:${phase}`);
+          if (step.stepId === 'submission-dispatcher' && phase === 'verify') {
+            const error = new Error('fixture_verifier_transport_failed');
+            error.code = 'STRICT_FULL_AUTO_ACCEPTANCE_INFRASTRUCTURE_FAILURE';
+            throw error;
+          }
+          return successfulOutput(invocation);
+        },
+      },
+      now: () => NOW,
+    });
+    await assert.rejects(
+      failing.execute({ expectedPlanHash: plan.planHash }),
+      /fixture_verifier_transport_failed/,
+    );
+    assert.equal(calls.includes('submission-dispatcher:execute'), false);
+
+    const nonRenewableCalls = [];
+    const nonRenewable = new StrictFullAutoAcceptanceOrchestrator({
+      repository,
+      commandRunner: {
+        async run({ step, phase, invocation }) {
+          nonRenewableCalls.push(`${step.stepId}:${phase}`);
+          if (step.stepId === 'migration' && phase === 'verify') {
+            return notReadyOutput(invocation);
+          }
+          return successfulOutput(invocation);
+        },
+      },
+      now: () => NOW,
+    });
+    await assert.rejects(
+      nonRenewable.execute({ expectedPlanHash: plan.planHash }),
+      /assertion_failed:migration/,
+    );
+    assert.equal(nonRenewableCalls.includes('migration:execute'), false);
+  });
+
+test('a stale final live verifier is retried without replacing the checkpoint or replaying steps',
+  async (t) => {
+    const value = fixture(t);
+    const repository = new StrictFullAutoAcceptanceRepository({
+      configurationPath: value.configurationPath,
+    });
+    const calls = [];
+    let finalStaleRemaining = 0;
+    const service = new StrictFullAutoAcceptanceOrchestrator({
+      repository,
+      commandRunner: runtimeActivatingRunner({
+        async run({ step, phase, invocation }) {
+          calls.push(`${step.stepId}:${phase}`);
+          if (step.stepId === 'final-aggregate-live-verification'
+            && phase === 'verify' && finalStaleRemaining > 0) {
+            finalStaleRemaining -= 1;
+            return notReadyOutput(invocation);
+          }
+          return successfulOutput(invocation);
+        },
+      }),
+      now: () => NOW,
+    });
+    const plan = service.plan();
+    const initial = await service.execute({ expectedPlanHash: plan.planHash });
+    const checkpointHash = initial.receipt.receiptHash;
+    const executeCount = calls.filter((item) => item.endsWith(':execute')).length;
+    const finalCount = calls.filter((item) => (
+      item === 'final-aggregate-live-verification:verify'
+    )).length;
+    finalStaleRemaining = 1;
+    const recovered = await service.execute({ expectedPlanHash: plan.planHash });
+    assert.equal(recovered.strictFullAutoAccepted, true);
+    assert.equal(recovered.receipt.receiptHash, checkpointHash);
+    assert.equal(calls.filter((item) => item.endsWith(':execute')).length, executeCount);
+    assert.equal(calls.filter((item) => (
+      item === 'final-aggregate-live-verification:verify'
+    )).length - finalCount, 2);
+  });
+
+test('plan hashes isolate control state and a live-verified successor permanently supersedes its base',
+  async (t) => {
+    const value = fixture(t);
+    const configurationB = structuredClone(value.configuration);
+    configurationB.steps['generic-domain-capability-convergence'].idempotencyKey =
+      `sha256:${'9'.repeat(64)}`;
+    const configurationPathB = path.join(value.root, 'acceptance-config-b.json');
+    fs.writeFileSync(
+      configurationPathB,
+      `${JSON.stringify(configurationB, null, 2)}\n`,
+      { mode: 0o444 },
+    );
+    const callsA = [];
+    const repositoryA = new StrictFullAutoAcceptanceRepository({
+      configurationPath: value.configurationPath,
+    });
+    const serviceA = new StrictFullAutoAcceptanceOrchestrator({
+      repository: repositoryA,
+      commandRunner: successfulRunner(callsA),
+      now: () => NOW,
+    });
+    const planA = serviceA.plan();
+    await serviceA.execute({ expectedPlanHash: planA.planHash });
+
+    const callsB = [];
+    const repositoryB = new StrictFullAutoAcceptanceRepository({
+      configurationPath: configurationPathB,
+    });
+    const serviceB = new StrictFullAutoAcceptanceOrchestrator({
+      repository: repositoryB,
+      commandRunner: successfulRunner(callsB),
+      now: () => NOW,
+    });
+    const planB = serviceB.plan();
+    assert.notEqual(planA.planHash, planB.planHash);
+    const completedB = await serviceB.execute({ expectedPlanHash: planB.planHash });
+    assert.equal(completedB.strictFullAutoAccepted, true);
+    assert.notEqual(repositoryA.statePath(planA), repositoryB.statePath(planB));
+    assert.match(repositoryA.statePath(planA), new RegExp(
+      `/plans/${planA.planHash.slice('sha256:'.length)}/state\\.json$`,
+    ));
+    assert.match(repositoryB.statePath(planB), new RegExp(
+      `/plans/${planB.planHash.slice('sha256:'.length)}/state\\.json$`,
+    ));
+    const callsBeforeSupersededStatus = callsA.length;
+    const superseded = await serviceA.status();
+    assert.equal(superseded.status, 'superseded');
+    assert.equal(superseded.strictFullAutoAccepted, false);
+    assert.equal(superseded.supersededByPlanHash, planB.planHash);
+    assert.equal(callsA.length, callsBeforeSupersededStatus);
+    await assert.rejects(
+      serviceA.execute({ expectedPlanHash: planA.planHash }),
+      /superseded_plan_reactivation_forbidden/,
+    );
+  });
+
+test('legacy flat complete checkpoints remain readable and converge without replaying actions',
+  async (t) => {
+    const value = fixture(t);
+    const repository = new StrictFullAutoAcceptanceRepository({
+      configurationPath: value.configurationPath,
+    });
+    const initialCalls = [];
+    const initial = new StrictFullAutoAcceptanceOrchestrator({
+      repository,
+      commandRunner: successfulRunner(initialCalls),
+      now: () => NOW,
+    });
+    const plan = initial.plan();
+    await initial.execute({ expectedPlanHash: plan.planHash });
+    const scope = repository.controlStore.planScopePath(plan);
+    const documents = Object.fromEntries([
+      ['state.json', 'state.json'],
+      ['acceptance-receipt.json', 'acceptance-receipt.json'],
+      ['runtime-root-activation.json', 'runtime-root-activation.json'],
+    ].map(([name, target]) => [
+      target,
+      fs.readFileSync(path.join(scope, name), 'utf8'),
+    ]));
+    fs.rmSync(scope, { recursive: true });
+    for (const [name, bytes] of Object.entries(documents)) {
+      fs.writeFileSync(path.join(value.controlRoot, name), bytes, { mode: 0o600 });
+    }
+    fs.unlinkSync(path.join(value.controlRoot, 'active-plan.json'));
+
+    const calls = [];
+    const legacy = new StrictFullAutoAcceptanceOrchestrator({
+      repository,
+      commandRunner: successfulRunner(calls),
+      now: () => NOW,
+    });
+    const status = await legacy.status();
+    assert.equal(status.strictFullAutoAccepted, true);
+    const beforeExecute = calls.filter((item) => item.endsWith(':execute')).length;
+    const converged = await legacy.execute({ expectedPlanHash: plan.planHash });
+    assert.equal(converged.strictFullAutoAccepted, true);
+    assert.equal(
+      calls.filter((item) => item.endsWith(':execute')).length,
+      beforeExecute,
+    );
+    assert.equal(repository.statePath(plan), path.join(value.controlRoot, 'state.json'));
+    assert.equal(
+      JSON.parse(fs.readFileSync(
+        path.join(value.controlRoot, 'active-plan.json'),
+        'utf8',
+      )).activePlanHash,
+      plan.planHash,
+    );
+  });
+
 test('external failure checkpoints progress and resumes without repeating completed steps', async (t) => {
   const value = fixture(t);
   const calls = [];
@@ -501,7 +610,7 @@ test('external failure checkpoints progress and resumes without repeating comple
   assert.equal(calls.filter((item) => item === 'online-transition:execute').length, 2);
 });
 
-test('configuration or authority drift invalidates a partial checkpoint', async (t) => {
+test('configuration or authority drift selects a new isolated candidate checkpoint', async (t) => {
   const value = fixture(t);
   const service = orchestratorFor(value.configurationPath, {
     async run({ step, phase, invocation }) {
@@ -524,7 +633,11 @@ test('configuration or authority drift invalidates a partial checkpoint', async 
   fs.chmodSync(value.configurationPath, 0o644);
   fs.writeFileSync(value.configurationPath, `${JSON.stringify(value.configuration, null, 2)}\n`);
   fs.chmodSync(value.configurationPath, 0o444);
-  await assert.rejects(service.status(), /state_invalid/);
+  const drifted = await service.status();
+  assert.equal(drifted.status, 'not-started');
+  assert.equal(drifted.completedStepCount, 0);
+  assert.equal(drifted.strictFullAutoAccepted, false);
+  assert.notEqual(drifted.planHash, plan.planHash);
 });
 
 test('partial step receipts are immediately revalidated against every plan identity', async (t) => {
@@ -652,104 +765,176 @@ test('converge binds the freshly inspected plan hash without an operator handoff
   assert.equal(result.report.strictFullAutoAccepted, true);
 });
 
-test('production runner binds the exact plan invocation, reference paths and idempotency identity', async (t) => {
-  const value = fixture(t);
-  const plan = orchestratorFor(value.configurationPath, successfulRunner()).plan();
-  const captured = [];
-  const runner = new StrictFullAutoAcceptanceCommandRunner({
-    workspaceRoot: path.resolve('.'),
-    environment: { PATH: process.env.PATH, HEPTA_RAW_TOKEN: 'must-not-leak' },
-    runProcess: async (request) => {
-      captured.push(request);
-      return {
-        exitCode: 0,
-        timedOut: false,
-        aborted: false,
-        outputTruncated: false,
-        stdout: JSON.stringify({ ready: true }),
-      };
-    },
-  });
-  const step = plan.steps.find((item) => item.stepId === 'state-provisioning');
-  const invocation = step.execute;
-  const controller = new AbortController();
-  assert.deepEqual(await runner.run({
-    plan, step, phase: 'execute', invocation, signal: controller.signal,
-  }), { ready: true });
-  assert.equal(captured[0].signal, controller.signal);
-  assert.equal(captured[0].env.HEPTA_RAW_TOKEN, undefined);
-  assert.equal(captured[0].env.HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG,
-    value.configuration.references['research-author-principal'].path);
-  assert.equal(captured[0].env.HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG_HASH,
-    JSON.parse(fs.readFileSync(
-      value.configuration.references['research-author-principal'].path,
+test(
+  'production runner binds the exact plan invocation, reference paths and idempotency identity',
+  strictFullAutoAcceptanceProductionRunnerBindingTest,
+);
+
+test('reviewer service credential files are metadata-validated before child execution', async (t) => {
+  const credentialSurface = (value) => {
+    const configuration = JSON.parse(fs.readFileSync(
+      value.configuration.references['formal-reviewer-principal'].path,
       'utf8',
-    )).configurationHash);
-  assert.equal(captured[0].env.HEPTA_RESEARCH_AUTHOR_CODEX_HOME,
-    value.configuration.references['research-author-credential-root'].path);
-  assert.equal(captured[0].env.HEPTA_FORMAL_REVIEW_CODEX_HOME,
-    value.configuration.references['formal-reviewer-credential-root'].path);
-  assert.equal(captured[0].env.HEPTA_PAPER_RUNTIME_ROOT, plan.runtimeRoot);
-  assert.equal(captured[0].env.HEPTA_PAPER_ASSET_ROOT, plan.assetRoot);
-  assert.equal(captured[0].env.HOME, path.join(plan.controlRoot, 'restricted-child-home'));
-  assert.equal(captured[0].env.HEPTA_STRICT_FULL_AUTO_ACCEPTANCE_IDEMPOTENCY_KEY,
-    step.idempotencyKey);
-  assert.equal(captured[0].env.HEPTA_STRICT_FULL_AUTO_ACCEPTANCE_PLAN_HASH, plan.planHash);
-  await runner.run({
-    plan, step, phase: 'verify', invocation: step.verify, signal: controller.signal,
-  });
-  assert.match(captured[1].args[0],
-    /paper-core\/bin\/autonomous-research-online-schema-transition\.mjs$/);
-  assert.deepEqual(captured[1].args.slice(1, 3), ['--action', 'plan']);
-  await assert.rejects(runner.run({
-    plan,
-    step,
-    phase: 'execute',
-    invocation: { ...invocation, command: 'autonomous-submission-dispatcher' },
-  }), /command_forbidden/);
+    ));
+    const variables = configuration.principals.flatMap((principal) => [
+      principal.signerConfiguration.tokenEnvironmentVariable,
+      principal.recoverableExecutorConfiguration.tokenEnvironmentVariable,
+    ]).sort();
+    const root = value.configuration.references[
+      'formal-reviewer-service-credential-root'
+    ].path;
+    return { variables, root };
+  };
+  const attempt = (value, environment = {}) => {
+    const plan = orchestratorFor(
+      value.configurationPath,
+      successfulRunner(),
+    ).plan();
+    const step = plan.steps.find((item) => item.stepId === 'state-provisioning');
+    const state = { childCalls: 0, captured: null };
+    const runner = new StrictFullAutoAcceptanceCommandRunner({
+      workspaceRoot: path.resolve('.'),
+      environment: { PATH: process.env.PATH, ...environment },
+      runProcess: async (request) => {
+        state.childCalls += 1;
+        state.captured = request;
+        return {
+          exitCode: 0,
+          timedOut: false,
+          aborted: false,
+          outputTruncated: false,
+          stdout: JSON.stringify({ ready: true }),
+        };
+      },
+    });
+    return { plan, step, runner, state };
+  };
 
-  const productionStep = plan.steps.find((item) => (
-    item.stepId === 'production-campaign-qualification'
-  ));
-  const productionRunnerPlan = Object.freeze({
-    ...plan,
-    operationalEnvironment: Object.freeze({
-      ...plan.operationalEnvironment,
-      HEPTA_AUTONOMOUS_EMPIRICAL_PLUGIN_ACTIVATION_POINTER: '',
-    }),
+  await t.test('ambient token bytes are replaced by plan-derived file paths', async (child) => {
+    const value = fixture(child);
+    const { variables, root } = credentialSurface(value);
+    const run = attempt(value, { [variables[0]]: 'ambient-token-bytes' });
+    await run.runner.run({
+      plan: run.plan,
+      step: run.step,
+      phase: 'execute',
+      invocation: run.step.execute,
+    });
+    assert.equal(run.state.childCalls, 1);
+    assert.equal(
+      run.state.captured.env[variables[0]],
+      path.join(root, variables[0]),
+    );
+    assert.notEqual(run.state.captured.env[variables[0]], 'ambient-token-bytes');
   });
-  assert.deepEqual(await runner.run({
-    plan: productionRunnerPlan,
-    step: productionStep,
-    phase: 'execute',
-    invocation: productionStep.execute,
-    signal: controller.signal,
-  }), { ready: true });
-  assert.match(captured[2].args[0],
-    /paper-core\/bin\/autonomous-research-supervisor\.mjs$/);
-  assert.deepEqual(captured[2].args.slice(1), ['--request-resident-cycle']);
-  assert.equal(captured[2].env.HEPTA_STRICT_FULL_AUTO_ACCEPTANCE_IDEMPOTENCY_KEY,
-    productionStep.idempotencyKey);
-  assert.equal(captured[2].env.HEPTA_STRICT_FULL_AUTO_ACCEPTANCE_PLAN_HASH,
-    plan.planHash);
 
-  const restoreStep = plan.steps.find((item) => item.stepId === 'restore-drill');
-  const restoreVerificationPlan = Object.freeze({
-    ...plan,
-    operationalEnvironment: Object.freeze({
-      ...plan.operationalEnvironment,
-      HEPTA_AUTONOMOUS_EMPIRICAL_PLUGIN_ACTIVATION_POINTER: '',
-    }),
-  });
-  assert.deepEqual(await runner.run({
-    plan: restoreVerificationPlan,
-    step: restoreStep,
-    phase: 'verify',
-    invocation: restoreStep.verify,
-    signal: controller.signal,
-  }), { ready: true });
-  assert.match(captured[3].args[0], /paper-core\/bin\/automation-status\.mjs$/);
+  for (const attack of ['missing', 'shared-mode', 'symlink', 'hardlink']) {
+    await t.test(`${attack} credential is rejected with zero child calls`, async (child) => {
+      const value = fixture(child);
+      const { variables, root } = credentialSurface(value);
+      const first = path.join(root, variables[0]);
+      const second = path.join(root, variables[1]);
+      if (attack === 'missing') fs.unlinkSync(first);
+      if (attack === 'shared-mode') fs.chmodSync(first, 0o644);
+      if (attack === 'symlink') {
+        fs.unlinkSync(first);
+        fs.symlinkSync(second, first);
+      }
+      if (attack === 'hardlink') {
+        fs.unlinkSync(first);
+        fs.linkSync(second, first);
+      }
+      const run = attempt(value);
+      await assert.rejects(
+        () => run.runner.run({
+          plan: run.plan,
+          step: run.step,
+          phase: 'execute',
+          invocation: run.step.execute,
+        }),
+        /strict_full_auto_acceptance_reviewer_service_credential_invalid/,
+      );
+      assert.equal(run.state.childCalls, 0);
+    });
+  }
 });
+
+test('production runner distinguishes typed JSON not-ready from infrastructure failure',
+  async (t) => {
+    const value = fixture(t);
+    const plan = orchestratorFor(value.configurationPath, successfulRunner()).plan();
+    const step = plan.steps.find((item) => item.stepId === 'state-provisioning');
+    const controller = new AbortController();
+    const result = (stdout, overrides = {}) => ({
+      exitCode: 2,
+      timedOut: false,
+      aborted: false,
+      outputTruncated: false,
+      stdout: JSON.stringify(stdout),
+      ...overrides,
+    });
+    const notReadyRunner = new StrictFullAutoAcceptanceCommandRunner({
+      workspaceRoot: path.resolve('.'),
+      runProcess: async () => result(notReadyOutput(step.verify)),
+    });
+    await assert.rejects(
+      notReadyRunner.run({
+        plan, step, phase: 'verify', invocation: step.verify,
+        signal: controller.signal,
+      }),
+      (error) => error.code === 'STRICT_FULL_AUTO_ACCEPTANCE_NOT_READY',
+    );
+
+    const contradictoryRunner = new StrictFullAutoAcceptanceCommandRunner({
+      workspaceRoot: path.resolve('.'),
+      runProcess: async () => result(successfulOutput(step.verify)),
+    });
+    await assert.rejects(
+      contradictoryRunner.run({
+        plan, step, phase: 'verify', invocation: step.verify,
+        signal: controller.signal,
+      }),
+      (error) => error.code === 'STRICT_FULL_AUTO_ACCEPTANCE_INFRASTRUCTURE_FAILURE',
+    );
+
+    const fatalRunner = new StrictFullAutoAcceptanceCommandRunner({
+      workspaceRoot: path.resolve('.'),
+      runProcess: async () => result({ ready: false, fatal: 'database unavailable' }, {
+        exitCode: 1,
+      }),
+    });
+    await assert.rejects(
+      fatalRunner.run({
+        plan, step, phase: 'verify', invocation: step.verify,
+        signal: controller.signal,
+      }),
+      (error) => error.code === 'STRICT_FULL_AUTO_ACCEPTANCE_INFRASTRUCTURE_FAILURE',
+    );
+
+    const incompleteSemanticRunner = new StrictFullAutoAcceptanceCommandRunner({
+      workspaceRoot: path.resolve('.'),
+      runProcess: async () => result({ ready: false }),
+    });
+    await assert.rejects(
+      incompleteSemanticRunner.run({
+        plan, step, phase: 'verify', invocation: step.verify,
+        signal: controller.signal,
+      }),
+      (error) => error.code === 'STRICT_FULL_AUTO_ACCEPTANCE_INFRASTRUCTURE_FAILURE',
+    );
+
+    const timedOutRunner = new StrictFullAutoAcceptanceCommandRunner({
+      workspaceRoot: path.resolve('.'),
+      runProcess: async () => result({}, { timedOut: true }),
+    });
+    await assert.rejects(
+      timedOutRunner.run({
+        plan, step, phase: 'verify', invocation: step.verify,
+        signal: controller.signal,
+      }),
+      (error) => error.code === 'STRICT_FULL_AUTO_ACCEPTANCE_INFRASTRUCTURE_FAILURE',
+    );
+  });
 
 test('a completed local checkpoint is not acceptance authority without fresh live verification', async (t) => {
   const value = fixture(t);
@@ -940,4 +1125,22 @@ test('configuration cannot replace fixed semantics with help or dangerous enviro
     mismatchedProductionPaper.configurationPath,
     successfulRunner(),
   ).plan(), /production_paper_binding_invalid/);
+
+  const missingFormalClosure = fixture(t, ({ configuration }) => {
+    delete configuration.operationalEnvironment
+      .HEPTA_DYNAMIC_FORMAL_PROJECT_CLOSURE_HASH;
+  });
+  assert.throws(() => orchestratorFor(
+    missingFormalClosure.configurationPath,
+    successfulRunner(),
+  ).plan(), /operational_environment_invalid/);
+
+  const escapedFormalProject = fixture(t, ({ configuration }) => {
+    configuration.operationalEnvironment.HEPTA_DYNAMIC_FORMAL_PROJECT_ROOT =
+      '/srv/unbound-formal-project';
+  });
+  assert.throws(() => orchestratorFor(
+    escapedFormalProject.configurationPath,
+    successfulRunner(),
+  ).plan(), /operational_environment_incomplete/);
 });

@@ -24,6 +24,8 @@ import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { APPLICATION_SERVICE_PORT_CATALOG } from '../../paper-ports/application-service-port-catalog.mjs';
 import { ARCHITECTURE_ENTRYPOINT_MANIFEST } from '../src/architecture-entrypoint-manifest.mjs';
 import { relativeModuleSpecifiers } from '../verification/javascript-module-specifiers.mjs';
+import { inspectProductionComplexity } from '../verification/production-complexity.mjs';
+import { inspectTrackedProductionGraph } from '../verification/tracked-production-graph.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
 
@@ -236,8 +238,8 @@ test('capability and journal datasets are versioned and schema-valid', () => {
     LEGACY_CAPABILITY_MATRIX_V3.summary.ownerAccepted + LEGACY_CAPABILITY_MATRIX_V3.summary.ownerAcceptancePending,
     LEGACY_CAPABILITY_MATRIX_V3.summary.entryCount,
   );
-  assert.equal(JOURNAL_PROFILE_DATASET.version, 1);
-  assert.equal(JOURNAL_PROFILE_DATASET.profiles.length, 97);
+  assert.equal(JOURNAL_PROFILE_DATASET.version, 2);
+  assert.equal(JOURNAL_PROFILE_DATASET.profiles.length, 98);
   assert.equal(JOURNAL_PROFILE_DATASET.validation.status, 'journal_profile_dataset_valid');
 });
 
@@ -391,116 +393,15 @@ test('domain consumes values and never observes filesystem or wall clock directl
   assert.deepEqual(violations, []);
 });
 
-test('high-risk adapters remain split into bounded modules', () => {
-  const boundedModules = [
-    'paper-adapters/empirical-analysis/index.mjs',
-    'paper-adapters/empirical-analysis/benchmark-contracts.mjs',
-    'paper-adapters/empirical-analysis/execution-contracts.mjs',
-    'paper-adapters/journal-manage/index.mjs',
-    'paper-adapters/referee-revise/index.mjs',
-    'paper-adapters/referee-revise/planning-service.mjs',
-    'paper-adapters/referee-revise/post-repair.mjs',
-    'paper-adapters/referee-revise/reconciliation.mjs',
-    'paper-adapters/proposal/index.mjs',
-    'paper-adapters/proposal/proposal-generation.mjs',
-    'paper-adapters/proposal/proposal-materialization.mjs',
-    'paper-adapters/automation/workspace-attempt-repository.mjs',
-    'paper-adapters/automation/workspace-attempt-root-snapshot.mjs',
-    'paper-adapters/automation/workspace-attempt-manifest.mjs',
-    'paper-adapters/automation/workspace-attempt-descriptor.mjs',
-    'paper-adapters/automation/workspace-attempt-commit-journal-repository.mjs',
-    'paper-adapters/automation/workspace-snapshot-exporter.mjs',
-    'paper-adapters/automation/workspace-snapshot-staging-repository.mjs',
-    'paper-adapters/automation/workspace-snapshot-publication-repository.mjs',
-    'paper-adapters/automation/runtime-retention.mjs',
-    'paper-adapters/automation/runtime-retention-scope-repository.mjs',
-    'paper-adapters/automation/runtime-retention-evidence-policy.mjs',
-    'paper-adapters/automation/runtime-retention-intent-repository.mjs',
-    'paper-adapters/automation/autonomous-research-supervisor-state-repository.mjs',
-    'paper-adapters/automation/autonomous-research-supervisor-external-action-repository-support.mjs',
-    'paper-adapters/automation/autonomous-research-supervisor-provider-canary-state-operations.mjs',
-    'paper-adapters/runtime/scoped-file-materialization-repository.mjs',
-    'paper-adapters/runtime/scoped-file-materialization-operation-journal-repository.mjs',
-    'paper-adapters/runtime/scoped-file-materialization-recovery-entry-repository.mjs',
-    'paper-adapters/runtime/scoped-file-materialization-prepared-recovery-repository.mjs',
-    'paper-adapters/runtime/runtime-permission-repository.mjs',
-    'paper-adapters/persistence/sqlite-campaign-store.mjs',
-    'paper-adapters/persistence/sqlite-campaign-row-mappers.mjs',
-    'paper-adapters/persistence/campaign-definition-codec.mjs',
-    'paper-application/reporting/campaign-result-summary.mjs',
-    'paper-application/reporting/batch-result-summary.mjs',
-    'paper-application/reporting/workflow-result-summary.mjs',
-    'paper-application/automation/autonomous-research-supervisor-provider-canary-dispatch.mjs',
-    'paper-composition/automation/autonomous-research-supervisor-external-action-composition.mjs',
-    'paper-domain/automation/autonomous-research-supervisor-external-action-journal.mjs',
-    'paper-domain/automation/autonomous-research-campaign-execution-admission.mjs',
-    'paper-domain/automation/campaign-research-contract.mjs',
-  ];
-  const rows = boundedModules.map((relative) => {
-    const source = fs.readFileSync(path.join(workspaceRoot, relative), 'utf8');
-    const dependencyFanout = new Set([
-      ...source.matchAll(/(?:from\s+|import\s*\()(['"])(\.[^'"]+)\1/g),
-    ].map((match) => match[2])).size;
-    const declarationExports = [
-      ...source.matchAll(
-        /\bexport\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|let|var)\s+[A-Za-z_$][\w$]*/g,
-      ),
-    ].length;
-    const namedExports = [...source.matchAll(/\bexport\s*\{([^}]+)\}/g)]
-      .reduce((count, match) => count + match[1].split(',')
-        .map((entry) => entry.trim()).filter(Boolean).length, 0);
-    const starExports = (source.match(/\bexport\s*\*/g) || []).length;
-    const publicExportCount = declarationExports + namedExports + starExports;
-    const controlFlowPoints = (source.match(
-      /\b(?:if|for|while|switch|catch)\s*\(|\?\?|&&|\|\||\?[^?.]/g,
-    ) || []).length;
-    return {
-      relative,
-      lines: source.split(/\n/).length - 1,
-      dependencyFanout,
-      publicExportCount,
-      responsibilitySurface: dependencyFanout + publicExportCount,
-      controlFlowPoints,
-    };
-  });
-  assert.equal(Math.max(...rows.map((row) => row.lines)) <= 700, true, JSON.stringify(rows));
+test('every reachable production module stays within layer-aware complexity budgets', () => {
+  const productionGraph = inspectTrackedProductionGraph({ workspaceRoot });
+  const report = inspectProductionComplexity({ workspaceRoot, graphReport: productionGraph });
+  assert.equal(report.moduleCount, productionGraph.moduleCount);
+  assert.equal(report.inspectedModuleCount + report.excludedModuleCount, productionGraph.moduleCount);
   assert.equal(
-    Math.max(...rows.map((row) => row.dependencyFanout)) <= 16,
-    true,
-    JSON.stringify(rows),
-  );
-  assert.equal(
-    Math.max(...rows.map((row) => row.publicExportCount)) <= 30,
-    true,
-    JSON.stringify(rows),
-  );
-  assert.equal(
-    Math.max(...rows.map((row) => row.responsibilitySurface)) <= 32,
-    true,
-    JSON.stringify(rows),
-  );
-  assert.equal(
-    Math.max(...rows.map((row) => row.controlFlowPoints)) <= 220,
-    true,
-    JSON.stringify(rows),
-  );
-  for (const relative of [
-    'paper-adapters/empirical-analysis/index.mjs',
-    'paper-adapters/journal-manage/index.mjs',
-    'paper-adapters/referee-revise/index.mjs',
-    'paper-adapters/proposal/index.mjs',
-  ]) {
-    assert.equal(rows.find((row) => row.relative === relative).lines <= 400, true, relative);
-  }
-  assert.equal(
-    rows.find((row) => row.relative === 'paper-adapters/automation/workspace-attempt-repository.mjs').lines <= 450,
-    true,
-    'workspace attempt repository facade',
-  );
-  assert.equal(
-    rows.find((row) => row.relative === 'paper-adapters/automation/runtime-retention.mjs').lines <= 250,
-    true,
-    'runtime retention facade',
+    report.status,
+    'production_complexity_ready',
+    JSON.stringify({ blockers: report.blockers, violations: report.violations }, null, 2),
   );
 });
 

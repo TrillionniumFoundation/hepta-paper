@@ -73,7 +73,7 @@ async function main() {
     report = await composeRuntimeImageReproducibilityVerification({ ...options, action });
   }
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-  if (action !== 'request' && report.ready !== true) process.exitCode = 1;
+  if (action !== 'request' && report.ready !== true) process.exitCode = 2;
 }
 
 main().catch((error) => {

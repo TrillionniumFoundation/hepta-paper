@@ -14,6 +14,7 @@ const ONLINE_MUTATION_AUTOMATION_TESTS = Object.freeze(
 );
 
 const AUTOMATION_TESTS = Object.freeze([...new Set([
+  'paper-core/tests/verification-command-batch.test.mjs',
   'paper-core/tests/automation-campaign.test.mjs',
   'paper-core/tests/automation-executor-entry-boundaries.test.mjs',
   'paper-core/tests/automation-executors.test.mjs',
@@ -63,7 +64,11 @@ const AUTOMATION_TESTS = Object.freeze([...new Set([
   'paper-core/tests/autonomous-research-generalization-plugin-capability.test.mjs',
   'paper-core/tests/autonomous-research-generalization-review-replay.test.mjs',
   'paper-core/tests/external-research-replay-strong-v3.test.mjs',
+  'paper-core/tests/formal-domain-qualification-crash-recovery.test.mjs',
+  'paper-core/tests/recoverable-reviewer-executor.test.mjs',
+  'paper-core/tests/reviewer-principal-recovery-ports.test.mjs',
   'paper-core/tests/reviewer-cryptographic-trust-v2.test.mjs',
+  'paper-core/tests/reviewer-receipt-signer-recovery-v3.test.mjs',
   'paper-core/tests/autonomous-research-author-identity-configuration.test.mjs',
   'paper-core/tests/autonomous-venue-signed-ranking-v2.test.mjs',
   'paper-core/tests/autonomous-venue-template-asset-workspace.test.mjs',
@@ -90,6 +95,7 @@ const AUTOMATION_TESTS = Object.freeze([...new Set([
   'paper-core/tests/autonomous-research-state-recoverability-controller.test.mjs',
   'paper-core/tests/autonomous-research-state-safety-readiness.test.mjs',
   'paper-core/tests/autonomous-research-supervisor-closure.test.mjs',
+  'paper-core/tests/nested-runtime-platform-qualification.test.mjs',
   'paper-core/tests/autonomous-research-supervisor-pause-recovery.test.mjs',
   'paper-core/tests/autonomous-research-resident-cycle-intent.test.mjs',
   'paper-core/tests/autonomous-research-supervisor-resident.test.mjs',
@@ -108,6 +114,7 @@ const AUTOMATION_TESTS = Object.freeze([...new Set([
   'paper-core/tests/campaign-formal-readiness-feedback.test.mjs',
   'paper-core/tests/campaign-release-source-lineage.test.mjs',
   'paper-core/tests/docker-dataset-access-supervisor.test.mjs',
+  'paper-core/tests/docker-worker-container-recovery.test.mjs',
   'paper-core/tests/dataset-evaluation-dependency-contract.test.mjs',
   'paper-core/tests/executor-capabilities.test.mjs',
   'paper-core/tests/empirical-contract.test.mjs',
@@ -145,6 +152,7 @@ const AUTOMATION_TESTS = Object.freeze([...new Set([
   'paper-core/tests/campaign-slo.test.mjs',
   'paper-core/tests/campaign-telemetry-persistence.test.mjs',
   'paper-core/tests/multiprocess-resource-governor.test.mjs',
+  'paper-core/tests/critical-module-coverage-policy.test.mjs',
   'paper-core/tests/mjs-syntax-check-scope.test.mjs',
   'paper-core/tests/batch-campaign-mode-plan.test.mjs',
   'paper-core/tests/campaign-mode-execution-semantics.test.mjs',
@@ -179,6 +187,10 @@ const AUTOMATION_DEDUPLICATED_ELSEWHERE = new Set([
   'paper-core/tests/campaign-telemetry-persistence.test.mjs',
 ]);
 
+const AUTOMATION_CRITICAL_COVERAGE_EXCLUSIONS = new Set([
+  'paper-core/tests/production-research-closure-fixture.test.mjs',
+]);
+
 const SALVAGE_HARDENING_TESTS = Object.freeze([
   'paper-core/tests/workspace-registry.test.mjs',
   'paper-core/tests/workspace-snapshot-exporter.test.mjs',
@@ -209,14 +221,27 @@ const SALVAGE_DEDUPLICATED_ELSEWHERE = new Set([
   'paper-core/tests/campaign-telemetry-persistence.test.mjs',
 ]);
 
-function declaredSuite({ tests, deduplicatedElsewhere, nodeArguments, isolated }) {
+function declaredSuite({
+  tests,
+  deduplicatedElsewhere,
+  criticalCoverageExclusions = new Set(),
+  nodeArguments,
+  isolated,
+}) {
   const deduplicated = tests.filter((candidate) => !deduplicatedElsewhere.has(candidate));
+  const criticalCoverage = tests.filter(
+    (candidate) => !criticalCoverageExclusions.has(candidate),
+  );
   return Object.freeze({
     nodeArguments: Object.freeze([...nodeArguments]),
     isolated,
     full: tests,
     deduplicated: Object.freeze(deduplicated),
+    criticalCoverage: Object.freeze(criticalCoverage),
     omittedFromDeduplicated: Object.freeze(tests.filter((candidate) => deduplicatedElsewhere.has(candidate))),
+    omittedFromCriticalCoverage: Object.freeze(
+      tests.filter((candidate) => criticalCoverageExclusions.has(candidate)),
+    ),
   });
 }
 
@@ -224,6 +249,7 @@ export const DECLARED_TEST_SUITES = Object.freeze({
   automation: declaredSuite({
     tests: AUTOMATION_TESTS,
     deduplicatedElsewhere: AUTOMATION_DEDUPLICATED_ELSEWHERE,
+    criticalCoverageExclusions: AUTOMATION_CRITICAL_COVERAGE_EXCLUSIONS,
     nodeArguments: ['--test', '--test-concurrency=1'],
     isolated: false,
   }),
@@ -238,12 +264,15 @@ export const DECLARED_TEST_SUITES = Object.freeze({
 export function declaredTestSuite(name, profile = 'full') {
   const suite = DECLARED_TEST_SUITES[String(name || '')];
   if (!suite) throw new Error(`declared_test_suite_unknown:${name || '<empty>'}`);
-  if (!['full', 'deduplicated'].includes(profile)) throw new Error(`declared_test_suite_profile_invalid:${profile}`);
+  const profileKey = profile === 'critical-coverage' ? 'criticalCoverage' : profile;
+  if (!['full', 'deduplicated', 'criticalCoverage'].includes(profileKey)) {
+    throw new Error(`declared_test_suite_profile_invalid:${profile}`);
+  }
   return Object.freeze({
     name: String(name),
     profile,
     isolated: suite.isolated,
     nodeArguments: suite.nodeArguments,
-    tests: suite[profile],
+    tests: suite[profileKey],
   });
 }

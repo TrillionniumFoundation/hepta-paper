@@ -30,9 +30,11 @@ unregistered scripts default to internal/blocked rather than operator. Forwarded
 arguments require an explicit `--` separator.
 
 The canonical final deployment gate is `operator strict-full-auto-acceptance`.
-It exposes `plan|status|execute`, requires an immutable plan hash for mutation,
-and converges the closed fifteen-step dependency order with content-addressed
-crash checkpoints. A complete local checkpoint cannot make this gate green;
+It exposes `plan|status|execute|converge`; the unattended `converge` action
+binds the fresh immutable plan hash internally and converges the closed
+fifteen-step dependency order with content-addressed crash checkpoints.
+The split execute action still requires the immutable plan hash explicitly.
+A complete local checkpoint cannot make this gate green;
 every accepted status is derived from a fresh live verification pass. Code
 availability does not make this gate green: independent
 author/reviewer/qualifier identities, KMS/HSM and plugin signer references,
@@ -41,13 +43,14 @@ golden qualification, a paper-bound production campaign, generic-domain evidence
 convergence, and the isolated submission dispatcher must all be
 provided by their real external authorities.
 
-The universal submission registry now covers all 97 target profiles without a
-silent fallback. All 60 journal targets and 36/37 conference targets have at
-least one candidate family backed by a local OpenReview, HotCRP, OJS or
+The universal submission registry now covers all 98 stable target identities
+without a silent fallback. All 60 journal targets and 38 conference targets
+have at least one candidate family backed by a local OpenReview, HotCRP, OJS or
 Playwright-assisted prototype. Four targets have a target-specific OpenReview
-seed. `colt_alt` remains identity-blocked until COLT and ALT are split. Current
+seed. COLT and ALT are independent `colt` and `alt` targets; the retired
+ambiguous `colt_alt` identifier fails closed. Current
 verified portal bindings, sandbox qualifications, production qualifications and
-live-commit authorizations remain 0/97; local prototype availability is not
+live-commit authorizations remain 0/98; local prototype availability is not
 reported as live readiness. See
 [`universal-submission-system.md`](universal-submission-system.md).
 
@@ -217,9 +220,12 @@ provisioned, the research campaign itself has no human checkpoint:
   code-reviewed build allowlist or an independently signed, separately
   configuration-hash-pinned Ed25519 authority that binds the exact closure,
   official Mathlib release identity, Lean toolchain and toolchain Merkle root.
-  The code allowlist currently has no reviewed Mathlib 4.30 closure; absent the
-  external authority the capability remains fail-closed with
-  `dynamic_formal_mathlib_build_authority_required`. If a closure is authorized,
+  The code allowlist contains one independently reviewed immutable Mathlib 4.30
+  closure, `sha256:64b07e1b11ec2f87168612b964d84e350ab9e6e88129397a21694689b24f8412`,
+  bound to the canonical `/srv/hepta-paper/formal/mathlib-project` materialization.
+  A different closure still requires a separately signed build authority. This
+  review establishes the exact source/build byte closure and executable identity;
+  it does not claim two independent bit-for-bit builds. If a closure is authorized,
   readiness additionally requires the production Lean
   toolchain Merkle identity and a closure-bound `import Mathlib` probe in the
   same digest-pinned Docker sandbox from a sealed read-only `/work` snapshot.
@@ -367,9 +373,12 @@ closed database inventory and latest valid restore coverage must both be 10/10,
 and online writer coverage must be 10/10 with matching static AST and broker-
 signed scope evidence bound to a current signed authority head and recent
 active challenge. Ordinary status is passive. The production operation
-manifest now covers all ten roles through sixteen writer entries and binds
-202 coordinator-integrated mutation operations to factory-pinned typed plans;
-the code-level writer coverage contract therefore reports `10/10` (100%).
+manifest now covers all ten roles through sixteen writer entries and classifies
+204 statically discovered mutation operations: 132 coordinator-integrated
+online DML operations are bound to factory-pinned typed plans, while 72
+schema/genesis or cross-database maintenance operations remain explicitly
+offline. The code-level writer coverage contract therefore reports `10/10`
+(100%).
 Constructor/schema DDL remains an offline provisioning operation. Startup can
 verify signed per-database unresolved reservations and idempotently finalize a
 trusted local committed marker. A marker-absent reservation is automatically

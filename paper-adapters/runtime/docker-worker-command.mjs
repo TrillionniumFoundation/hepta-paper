@@ -1,11 +1,18 @@
+import {
+  dockerWorkerContainerOwnershipArguments,
+} from './docker-worker-container-recovery.mjs';
+
 export function buildDockerWorkerCommand({
   limits, uid, gid, environment, requiresGpu, systemMounts, workRoot, outputRoot, supervisorRoot,
   runtimeExecutableSnapshot, runtimeExecutableOverlayTarget, mountedDatasets, relativeCwd,
   containerImageDigest, datasetSupervisor, executable, arguments: workerArguments,
-  immutableWorkRoot = false,
+  immutableWorkRoot = false, containerOwnership = null,
 } = {}) {
   return [
-    'run', '--pull', 'never', '--rm', '--network', 'none', '--read-only', '--cap-drop', 'ALL',
+    'run',
+    ...(containerOwnership
+      ? dockerWorkerContainerOwnershipArguments(containerOwnership) : []),
+    '--pull', 'never', '--rm', '--network', 'none', '--read-only', '--cap-drop', 'ALL',
     ...(datasetSupervisor ? ['--cap-add', 'SYS_PTRACE', '--cap-add', 'SETUID', '--cap-add', 'SETGID', '--cap-add', 'SETPCAP', '--cap-add', 'DAC_OVERRIDE'] : []),
     '--security-opt', 'no-new-privileges', '--memory', String(limits.memory), '--cpus', '1',
     '--pids-limit', String(limits.pids), '--ulimit', `cpu=${limits.cpu}`,

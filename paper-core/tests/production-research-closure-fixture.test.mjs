@@ -43,11 +43,56 @@ import {
   assertProductionExperimentClosureResult,
 } from './support/production-experiment-closure-fixture.mjs';
 
+const deeplyFrozenFixtureValues = new WeakSet();
+
+function freezeFixtureValue(value) {
+  if (!value || typeof value !== 'object'
+    || deeplyFrozenFixtureValues.has(value)) return value;
+  const pending = [value];
+  const seen = new WeakSet();
+  const containers = [];
+  while (pending.length) {
+    const candidate = pending.pop();
+    if (!candidate || typeof candidate !== 'object'
+      || seen.has(candidate)
+      || deeplyFrozenFixtureValues.has(candidate)) continue;
+    const prototype = Object.getPrototypeOf(candidate);
+    if (!Array.isArray(candidate)
+      && prototype !== Object.prototype && prototype !== null) {
+      throw new Error('fixture_freeze_non_json_container');
+    }
+    seen.add(candidate);
+    containers.push(candidate);
+    for (const key of Object.keys(candidate)) {
+      const descriptor = Object.getOwnPropertyDescriptor(candidate, key);
+      if (!descriptor || !Object.hasOwn(descriptor, 'value')) {
+        throw new Error('fixture_freeze_accessor_forbidden');
+      }
+      pending.push(descriptor.value);
+    }
+  }
+  for (const candidate of containers.reverse()) {
+    Object.freeze(candidate);
+    deeplyFrozenFixtureValues.add(candidate);
+  }
+  return value;
+}
+
 function rehash(record, kind, hashField) {
   const { [hashField]: _oldHash, ...payload } = record;
-  return Object.freeze({
-    ...payload,
-    [hashField]: hashRecord(kind, payload),
+  const immutablePayload = freezeFixtureValue(payload);
+  return freezeFixtureValue({
+    ...immutablePayload,
+    [hashField]: hashRecord(kind, immutablePayload),
+  });
+}
+
+function rehashPaperRecord(record, kind, hashField) {
+  const { [hashField]: _oldHash, ...payload } = record;
+  const immutablePayload = freezeFixtureValue(payload);
+  return freezeFixtureValue({
+    ...immutablePayload,
+    [hashField]: hashPaperRecord(kind, immutablePayload),
   });
 }
 
@@ -85,13 +130,10 @@ function rehashResearchReportWithPaper(report, paperId) {
       changedWorker.nativeResearchWorkerExecutionReceiptHash,
     ],
   };
-  const changedNative = Object.freeze({
+  const changedNative = rehashPaperRecord({
     ...changedNativePayload,
-    nativeResearchWorkerExecutionReportHash: hashPaperRecord(
-      'NativeResearchWorkerExecutionReport',
-      changedNativePayload,
-    ),
-  });
+  }, 'NativeResearchWorkerExecutionReport',
+  'nativeResearchWorkerExecutionReportHash');
   const { researchReportHash: _oldResearchHash, ...reportPayload } = report;
   const changedReportPayload = {
     ...reportPayload,
@@ -99,22 +141,18 @@ function rehashResearchReportWithPaper(report, paperId) {
     taskKey: changedTaskKey,
     nativeResearchWorkerExecution: changedNative,
   };
-  return Object.freeze({
+  return rehashPaperRecord({
     ...changedReportPayload,
-    researchReportHash: hashPaperRecord(
-      'PaperResearchVerifyReport',
-      changedReportPayload,
-    ),
-  });
+  }, 'PaperResearchVerifyReport', 'researchReportHash');
 }
 
 function rehashResearchReportWithCampaign(report, campaignId) {
   const proposalBinding = rehash({
-    ...structuredClone(report.capabilities.proposalClaimToTheoremBinding),
+    ...report.capabilities.proposalClaimToTheoremBinding,
     campaignId,
   }, 'ProposalClaimToTheoremBinding', 'proposalClaimToTheoremBindingHash');
   const sourceSnapshot = rehash({
-    ...structuredClone(report.campaignResearchSourceSnapshot),
+    ...report.campaignResearchSourceSnapshot,
     campaignId,
     researchNodeId: `${campaignId}:2:research-verify`,
     researchAttemptId: `${campaignId}:research-attempt-1`,
@@ -141,13 +179,10 @@ function rehashResearchReportWithCampaign(report, campaignId) {
       changedWorker.nativeResearchWorkerExecutionReceiptHash,
     ],
   };
-  const changedNative = Object.freeze({
+  const changedNative = rehashPaperRecord({
     ...changedNativePayload,
-    nativeResearchWorkerExecutionReportHash: hashPaperRecord(
-      'NativeResearchWorkerExecutionReport',
-      changedNativePayload,
-    ),
-  });
+  }, 'NativeResearchWorkerExecutionReport',
+  'nativeResearchWorkerExecutionReportHash');
   const { researchReportHash: _oldResearchHash, ...reportPayload } = report;
   const changedReportPayload = {
     ...reportPayload,
@@ -159,41 +194,36 @@ function rehashResearchReportWithCampaign(report, campaignId) {
     proposalClaimToTheoremBindingHash:
       proposalBinding.proposalClaimToTheoremBindingHash,
     capabilities: {
-      ...structuredClone(report.capabilities),
+      ...report.capabilities,
       proposalClaimToTheoremBinding: proposalBinding,
     },
     nativeResearchWorkerExecution: changedNative,
   };
-  return Object.freeze({
+  return rehashPaperRecord({
     ...changedReportPayload,
-    researchReportHash: hashPaperRecord(
-      'PaperResearchVerifyReport',
-      changedReportPayload,
-    ),
-  });
+  }, 'PaperResearchVerifyReport', 'researchReportHash');
 }
 
 function rehashResearchReportWithFormalIntake(report, mutate) {
-  const capabilities = structuredClone(report.capabilities);
-  const changedIntake = structuredClone(capabilities.formalCertificateIntakes[0]);
+  const originalIntake = report.capabilities.formalCertificateIntakes[0];
+  const changedIntake = structuredClone(originalIntake);
   mutate(changedIntake);
-  capabilities.formalCertificateIntakes = [rehash(
-    changedIntake,
-    'GenericFormalCertificateIntake',
-    'genericFormalCertificateIntakeHash',
-  )];
+  const capabilities = {
+    ...report.capabilities,
+    formalCertificateIntakes: [rehash(
+      changedIntake,
+      'GenericFormalCertificateIntake',
+      'genericFormalCertificateIntakeHash',
+    )],
+  };
   const { researchReportHash: _oldResearchHash, ...reportPayload } = report;
   const changedReportPayload = {
-    ...structuredClone(reportPayload),
+    ...reportPayload,
     capabilities,
   };
-  return Object.freeze({
+  return rehashPaperRecord({
     ...changedReportPayload,
-    researchReportHash: hashPaperRecord(
-      'PaperResearchVerifyReport',
-      changedReportPayload,
-    ),
-  });
+  }, 'PaperResearchVerifyReport', 'researchReportHash');
 }
 
 function rehashResearchReportWithNativeReplay(report, mutate) {
@@ -232,34 +262,28 @@ function rehashResearchReportWithNativeReplay(report, mutate) {
       changedWorker.nativeResearchWorkerExecutionReceiptHash,
     ],
   };
-  const changedNative = Object.freeze({
+  const changedNative = rehashPaperRecord({
     ...changedNativePayload,
-    nativeResearchWorkerExecutionReportHash: hashPaperRecord(
-      'NativeResearchWorkerExecutionReport',
-      changedNativePayload,
-    ),
-  });
+  }, 'NativeResearchWorkerExecutionReport',
+  'nativeResearchWorkerExecutionReportHash');
   const { researchReportHash: _oldResearchHash, ...reportPayload } = report;
   const changedReportPayload = {
-    ...structuredClone(reportPayload),
+    ...reportPayload,
     nativeResearchWorkerExecution: changedNative,
   };
-  return Object.freeze({
+  return rehashPaperRecord({
     ...changedReportPayload,
-    researchReportHash: hashPaperRecord(
-      'PaperResearchVerifyReport',
-      changedReportPayload,
-    ),
-  });
+  }, 'PaperResearchVerifyReport', 'researchReportHash');
 }
 
 function rehashNestedClosure(fixture, {
   bindingChanges = {},
   researchReport = fixture.manuscript.researchReport,
   complianceChanges = {},
+  releaseOnly = false,
 } = {}) {
   const changedBinding = rehash({
-    ...structuredClone(fixture.releaseBinding),
+    ...fixture.releaseBinding,
     ...bindingChanges,
     researchReportHash: researchReport.researchReportHash,
     proposalClaimToTheoremBindingHash:
@@ -269,7 +293,7 @@ function rehashNestedClosure(fixture, {
   const campaignResearchSourceSnapshot =
     researchReport.campaignResearchSourceSnapshot;
   const changedPromotionCandidate = rehash({
-    ...structuredClone(fixture.promotionCandidate),
+    ...fixture.promotionCandidate,
     autonomousResearchReleaseBindingHash:
       changedBinding.autonomousResearchReleaseBindingHash,
     autonomousResearchReleaseBinding: changedBinding,
@@ -285,7 +309,7 @@ function rehashNestedClosure(fixture, {
     researchVerifyLeaseGeneration: researchReport.researchLeaseGeneration,
   }, 'AutomationPromotionCandidate', 'automationPromotionCandidateHash');
   const changedBundle = rehash({
-    ...structuredClone(fixture.releaseBundle),
+    ...fixture.releaseBundle,
     automationPromotionCandidateHash:
       changedPromotionCandidate.automationPromotionCandidateHash,
     autonomousResearchReleaseBindingHash:
@@ -304,27 +328,29 @@ function rehashNestedClosure(fixture, {
     researchVerifyAttemptId: researchReport.researchAttemptId,
     researchVerifyLeaseGeneration: researchReport.researchLeaseGeneration,
   }, 'CampaignReleaseBundle', 'campaignReleaseBundleHash');
+  if (releaseOnly) {
+    return Object.freeze({ changedBinding, changedBundle });
+  }
   const changedAuthority = Object.freeze({
-    ...structuredClone(fixture.campaignReleaseAuthority),
+    ...fixture.campaignReleaseAuthority,
     campaignReleaseBundleHash: changedBundle.campaignReleaseBundleHash,
     releaseBundle: changedBundle,
   });
   const qualificationReceipt = rehash({
-    ...structuredClone(fixture.qualificationInspection.qualificationReceipt),
+    ...fixture.qualificationInspection.qualificationReceipt,
     campaignReleaseBundleHash: changedBundle.campaignReleaseBundleHash,
   }, 'FullResearchGoldenMicroCampaignQualificationReceipt',
   'fullResearchQualificationReceiptHash');
   const qualificationInspection = rehash({
-    ...structuredClone(fixture.qualificationInspection),
+    ...fixture.qualificationInspection,
     campaignReleaseBundleHash: changedBundle.campaignReleaseBundleHash,
     qualificationReceiptHash:
       qualificationReceipt.fullResearchQualificationReceiptHash,
     qualificationReceipt,
   }, 'FullResearchQualificationInspection',
   'fullResearchQualificationInspectionHash');
-  const sourceEvidenceBase = structuredClone(
-    complianceChanges.sourceEvidenceBundle || fixture.sourceEvidenceBundle,
-  );
+  const sourceEvidenceBase =
+    complianceChanges.sourceEvidenceBundle || fixture.sourceEvidenceBundle;
   const pdfInspectionReceipt = rehash({
     ...sourceEvidenceBase.pdfInspectionReceipt,
     campaignReleaseBundleHash: changedBundle.campaignReleaseBundleHash,
@@ -351,10 +377,8 @@ function rehashNestedClosure(fixture, {
     releaseArtifactEvidence,
   }, 'AutonomousVenueSourceEvidenceBundle',
   'autonomousVenueSourceEvidenceBundleHash');
-  const observationBase = structuredClone(
-    complianceChanges.venueRequirementObservations
-      || fixture.venueRequirementObservations,
-  );
+  const observationBase = complianceChanges.venueRequirementObservations
+    || fixture.venueRequirementObservations;
   const venueRequirementObservations = rehash({
     ...observationBase,
     sourceEvidenceBundleHash:
@@ -363,7 +387,7 @@ function rehashNestedClosure(fixture, {
       sourceInspectionReceipt.sourceInspectionReceiptHash,
   }, 'VenueRequirementObservations', 'venueRequirementObservationHash');
   const venueComplianceReceipt = rehash({
-    ...structuredClone(fixture.venueComplianceReceipt),
+    ...fixture.venueComplianceReceipt,
     campaignReleaseBundleHash: changedBundle.campaignReleaseBundleHash,
     autonomousResearchReleaseBindingHash:
       changedBinding.autonomousResearchReleaseBindingHash,
@@ -379,7 +403,7 @@ function rehashNestedClosure(fixture, {
   }, 'AutonomousVenueComplianceReceipt',
   'autonomousVenueComplianceReceiptHash');
   const closure = rehash({
-    ...structuredClone(fixture.researchClosureReceipt),
+    ...fixture.researchClosureReceipt,
     campaignReleaseAuthority: changedAuthority,
     campaignReleaseBundleHash: changedBundle.campaignReleaseBundleHash,
     qualificationInspection,
@@ -412,27 +436,46 @@ function rehashNestedClosure(fixture, {
   });
 }
 
-function rehashVenueObservationAttack(fixture, mutate) {
-  const changedObservationPayload = structuredClone(
-    fixture.venueRequirementObservations,
-  );
+function rehashVenueObservationAttack(fixture, mutate, {
+  recursive = true,
+} = {}) {
+  const changedObservationPayload = {
+    ...fixture.venueRequirementObservations,
+  };
   mutate(changedObservationPayload);
   const changedObservations = rehash(
     changedObservationPayload,
     'VenueRequirementObservations',
     'venueRequirementObservationHash',
   );
-  return rehashNestedClosure(fixture, {
-    complianceChanges: {
-      venueRequirementObservationHash:
-        changedObservations.venueRequirementObservationHash,
-      venueRequirementObservations: changedObservations,
-    },
+  const venueComplianceReceipt = rehash({
+    ...fixture.venueComplianceReceipt,
+    venueRequirementObservationHash:
+      changedObservations.venueRequirementObservationHash,
+    venueRequirementObservations: changedObservations,
+  }, 'AutonomousVenueComplianceReceipt',
+  'autonomousVenueComplianceReceiptHash');
+  if (!recursive) {
+    return Object.freeze({
+      campaignReleaseAuthority: fixture.campaignReleaseAuthority,
+      venueComplianceReceipt,
+    });
+  }
+  const closure = rehash({
+    ...fixture.researchClosureReceipt,
+    venueComplianceReceiptHash:
+      venueComplianceReceipt.autonomousVenueComplianceReceiptHash,
+    venueComplianceReceipt,
+  }, 'ResearchClosureReceipt', 'researchClosureReceiptHash');
+  return Object.freeze({
+    campaignReleaseAuthority: fixture.campaignReleaseAuthority,
+    closure,
+    venueComplianceReceipt,
   });
 }
 
 function rehashVenueIrFileHashSwapAttack(fixture) {
-  const sourceEvidenceBundle = structuredClone(fixture.sourceEvidenceBundle);
+  const sourceEvidenceBundle = { ...fixture.sourceEvidenceBundle };
   const manuscriptIrFileHash = sourceEvidenceBundle.manuscriptIrFileHash;
   sourceEvidenceBundle.manuscriptIrFileHash =
     sourceEvidenceBundle.venueRequirementIrFileHash;
@@ -442,7 +485,7 @@ function rehashVenueIrFileHashSwapAttack(fixture) {
     'AutonomousVenueSourceEvidenceBundle',
     'autonomousVenueSourceEvidenceBundleHash',
   );
-  const observations = structuredClone(fixture.venueRequirementObservations);
+  const observations = { ...fixture.venueRequirementObservations };
   observations.sourceEvidenceBundleHash =
     changedSourceEvidenceBundle.autonomousVenueSourceEvidenceBundleHash;
   observations.venueRequirementIrFileHash =
@@ -466,7 +509,7 @@ function rehashVenueIrFileHashSwapAttack(fixture) {
 }
 
 function forgedVerifiedNoncompliantSourceReceipt(fixture) {
-  const sourceEvidence = structuredClone(fixture.sourceEvidenceBundle);
+  const sourceEvidence = fixture.sourceEvidenceBundle;
   const source = Buffer.from(
     sourceEvidence.sourceInspectionReceipt.manuscriptBytesBase64,
     'base64',
@@ -476,7 +519,10 @@ function forgedVerifiedNoncompliantSourceReceipt(fixture) {
     '',
   );
   const sourceBytes = Buffer.from(source, 'utf8');
-  const sourceTreeManifest = structuredClone(sourceEvidence.sourceTreeManifest);
+  const sourceTreeManifest = {
+    ...sourceEvidence.sourceTreeManifest,
+    rows: sourceEvidence.sourceTreeManifest.rows.map((row) => ({ ...row })),
+  };
   const mainRow = sourceTreeManifest.rows.find((row) => row.path === 'main.tex');
   mainRow.hash = hashBytes(sourceBytes);
   mainRow.bytes = sourceBytes.length;
@@ -524,7 +570,7 @@ function forgedVerifiedNoncompliantSourceReceipt(fixture) {
     sourceEvidenceBundle: changedSourceEvidence,
   });
   const receipt = rehash({
-    ...structuredClone(fixture.venueComplianceReceipt),
+    ...fixture.venueComplianceReceipt,
     status: 'autonomous_venue_compliance_verified',
     blockers: [],
     renderedSourceHash: sourceInspectionReceipt.renderedSourceHash,
@@ -544,7 +590,7 @@ function forgedVerifiedNoncompliantSourceReceipt(fixture) {
 function rehashedVerifiedOverPageAttack(fixture) {
   const pageCount = fixture.releaseBinding.venueProfileSelection.profile.maximumPages + 1;
   const venueRequirementObservations = rehash({
-    ...structuredClone(fixture.venueRequirementObservations),
+    ...fixture.venueRequirementObservations,
     pageCount,
   }, 'VenueRequirementObservations', 'venueRequirementObservationHash');
   return rehashNestedClosure(fixture, {
@@ -561,15 +607,13 @@ function rehashedVerifiedOverPageAttack(fixture) {
 
 function rehashedFakeQualificationSignatureAttack(fixture) {
   const qualificationReceipt = rehash({
-    ...structuredClone(
-      fixture.qualificationInspection.qualificationReceipt,
-    ),
+    ...fixture.qualificationInspection.qualificationReceipt,
     signature: Buffer.from('forged-qualification-signature', 'utf8')
       .toString('base64'),
   }, 'FullResearchGoldenMicroCampaignQualificationReceipt',
   'fullResearchQualificationReceiptHash');
   const qualificationInspection = rehash({
-    ...structuredClone(fixture.qualificationInspection),
+    ...fixture.qualificationInspection,
     ready: true,
     receiptAccepted: true,
     qualificationSignatureVerified: true,
@@ -583,7 +627,7 @@ function rehashedFakeQualificationSignatureAttack(fixture) {
   }, 'FullResearchQualificationInspection',
   'fullResearchQualificationInspectionHash');
   return rehash({
-    ...structuredClone(fixture.researchClosureReceipt),
+    ...fixture.researchClosureReceipt,
     qualificationReceiptHash:
       qualificationInspection.qualificationReceiptHash,
     qualificationInspection,
@@ -597,7 +641,7 @@ function rehashedSignedQualificationPriorArtSplice(fixture, priorArtEvidenceRece
     fullResearchQualificationReceiptHash: _receiptHash,
     signature: _signature,
     ...unsigned
-  } = structuredClone(original);
+  } = original;
   const changedUnsigned = {
     ...unsigned,
     independentHypothesisPriorArtReceiptHash:
@@ -616,14 +660,14 @@ function rehashedSignedQualificationPriorArtSplice(fixture, priorArtEvidenceRece
   }, 'FullResearchGoldenMicroCampaignQualificationReceipt',
   'fullResearchQualificationReceiptHash');
   const qualificationInspection = rehash({
-    ...structuredClone(fixture.qualificationInspection),
+    ...fixture.qualificationInspection,
     qualificationReceiptHash:
       qualificationReceipt.fullResearchQualificationReceiptHash,
     qualificationReceipt,
   }, 'FullResearchQualificationInspection',
   'fullResearchQualificationInspectionHash');
   const closure = rehash({
-    ...structuredClone(fixture.researchClosureReceipt),
+    ...fixture.researchClosureReceipt,
     qualificationReceiptHash:
       qualificationInspection.qualificationReceiptHash,
     qualificationInspection,
@@ -771,16 +815,35 @@ test('production research closure fixture is recursive and rejects rehashed agen
     .proposalClaimToTheoremBinding;
   const expectedFormalClaimBindings =
     formalClosureClaimBindingsFromProposalBinding(proposalBinding);
+  const authoritativeFormalNode = fixture.manuscript.researchReport
+    .capabilities.trustedFormalEvidence[0]
+    .nativeProjectionRequest.authoritativeFormalNode;
+  const trustedNativeFormalReceiptHashes = fixture.manuscript.researchReport
+    .capabilities.evidenceQualityGate.workerLedgerVerifications
+    .filter((verification) => (
+      verification.status === 'trusted_ledger_receipt_verified'
+      && verification.receiptKind === 'NativeResearchWorkerExecutionReceipt'
+      && verification.stream === 'jobs'
+      && verification.writerKind === 'native-research-worker'
+      && verification.writerTrusted === true
+      && verification.issuerPolicyVerified === true
+    ))
+    .map((verification) => verification.receiptHash);
   const formalIntakeContext = {
     paperId: fixture.releaseBinding.paperId,
     campaignId: fixture.releaseBinding.campaignId,
     researchSourceSnapshotHash:
       fixture.releaseBundle.campaignResearchSourceSnapshotHash,
+    campaignResearchSourceSnapshot:
+      fixture.manuscript.researchReport.campaignResearchSourceSnapshot,
     taskKey: fixture.manuscript.researchReport.taskKey,
     expectedClaimBindings: expectedFormalClaimBindings,
     proposalBinding,
     nativeResearchWorkerExecution:
       fixture.manuscript.researchReport.nativeResearchWorkerExecution,
+    authoritativeFormalNode,
+    requireNativeFormalLedgerTrust: true,
+    trustedNativeFormalReceiptHashes,
   };
   assert.equal(verifyGenericFormalCertificateIntakeClosureBinding(
     fixture.manuscript.researchReport.capabilities.formalCertificateIntakes[0],
@@ -789,26 +852,30 @@ test('production research closure fixture is recursive and rejects rehashed agen
   const formalIntakeSplices = [
     ['same-paper old-campaign', (intake) => {
       intake.campaignId = 'campaign-old-formal-intake';
-    }, 'formal_certificate_intake_campaign_mismatch'],
+    }, 'native_formal_intake_projection_binding_invalid'],
     ['wrong source snapshot', (intake) => {
       intake.researchSourceSnapshotHash = hashRecord(
         'WrongFormalResearchSourceSnapshot',
         { paperId: fixture.releaseBinding.paperId },
       );
-    }, 'formal_certificate_intake_research_source_snapshot_mismatch'],
+    }, 'native_formal_intake_projection_binding_invalid'],
     ['wrong statement', (intake) => {
       intake.claimBindings[0].statementHash = hashBytes(
         Buffer.from('attacker-selected same-paper theorem statement', 'utf8'),
       );
-    }, 'formal_certificate_intake_claim_binding_mismatch'],
+    }, 'native_formal_intake_claim_bindings_invalid'],
     ['wrong obligation', (intake) => {
       intake.claimBindings[0].obligationId = `obligation:${hashRecord(
         'WrongFormalProofObligation',
         { paperId: fixture.releaseBinding.paperId },
       ).slice('sha256:'.length)}`;
-    }, 'formal_certificate_intake_claim_binding_mismatch'],
+    }, 'native_formal_intake_claim_bindings_invalid'],
   ];
-  for (const [label, mutate, expectedBlocker] of formalIntakeSplices) {
+  let formalRecursiveClosureChecked = false;
+  for (const [
+    spliceIndex,
+    [label, mutate, expectedBlocker],
+  ] of formalIntakeSplices.entries()) {
     const researchReport = rehashResearchReportWithFormalIntake(
       fixture.manuscript.researchReport,
       mutate,
@@ -820,7 +887,10 @@ test('production research closure fixture is recursive and rejects rehashed agen
     );
     assert.equal(intakeVerification.valid, false);
     assert.ok(intakeVerification.blockers.includes(expectedBlocker));
-    const attack = rehashNestedClosure(fixture, { researchReport });
+    const attack = rehashNestedClosure(fixture, {
+      researchReport,
+      releaseOnly: spliceIndex > 0,
+    });
     const reportInspection = inspectResearchReportForClosure(
       researchReport,
       attack.changedBundle,
@@ -831,11 +901,14 @@ test('production research closure fixture is recursive and rejects rehashed agen
       false,
       `${label} splice must fail the closure report's formal-intake comparison`,
     );
-    assert.equal(
-      verifyFixtureClosure(fixture, attack.closure),
-      false,
-      `${label} splice must be rejected after every outer hash is recomputed`,
-    );
+    if (!formalRecursiveClosureChecked) {
+      assert.equal(
+        verifyFixtureClosure(fixture, attack.closure),
+        false,
+        `${label} splice must be rejected after every outer hash is recomputed`,
+      );
+      formalRecursiveClosureChecked = true;
+    }
   }
   const thinFormalReport = rehashResearchReportWithFormalIntake(
     fixture.manuscript.researchReport,
@@ -871,7 +944,10 @@ test('production research closure fixture is recursive and rejects rehashed agen
 
   const embeddedReceiptTamperReport = rehashResearchReportWithFormalIntake(
     fixture.manuscript.researchReport,
-    (intake) => { intake.certificate.artifactWriteReceipt.bytes += 1; },
+    (intake) => {
+      intake.authoritativeFormalReceipt
+        .campaignFormalSourceSnapshot.fileRecords[0].bytes += 1;
+    },
   );
   const embeddedReceiptTamper = rehashNestedClosure(fixture, {
     researchReport: embeddedReceiptTamperReport,
@@ -882,7 +958,7 @@ test('production research closure fixture is recursive and rejects rehashed agen
     embeddedReceiptTamper.changedBinding,
   ).checks.formal_certificate_intakes, false);
   assert.equal(verifyFixtureClosure(fixture, embeddedReceiptTamper.closure), false,
-    'embedded ArtifactWriteReceipt tamper must fail after outer resealing');
+    'embedded formal source-snapshot receipt tamper must fail after outer resealing');
 
   const nativeReplaySpliceReport = rehashResearchReportWithNativeReplay(
     fixture.manuscript.researchReport,
@@ -1002,13 +1078,27 @@ test('production research closure fixture is recursive and rejects rehashed agen
         !observations.supplementPolicySatisfied;
     }],
   ];
-  for (const [label, mutate] of observationAttacks) {
-    const attack = rehashVenueObservationAttack(fixture, mutate);
+  let observationRecursiveClosureChecked = false;
+  for (const [attackIndex, [label, mutate]] of observationAttacks.entries()) {
+    const attack = rehashVenueObservationAttack(fixture, mutate, {
+      recursive: attackIndex === 0,
+    });
     assert.equal(
-      verifyFixtureClosure(fixture, attack.closure),
+      verifyAutonomousVenueComplianceReceipt(
+        attack.venueComplianceReceipt,
+        { campaignReleaseAuthority: attack.campaignReleaseAuthority },
+      ),
       false,
-      `${label} observation splice must be rejected after every outer hash is recomputed`,
+      `${label} observation splice must be rejected by venue verification`,
     );
+    if (!observationRecursiveClosureChecked) {
+      assert.equal(
+        verifyFixtureClosure(fixture, attack.closure),
+        false,
+        `${label} observation splice must be rejected after every outer hash is recomputed`,
+      );
+      observationRecursiveClosureChecked = true;
+    }
   }
   const venueIrHashSwap = rehashVenueIrFileHashSwapAttack(fixture);
   assert.equal(

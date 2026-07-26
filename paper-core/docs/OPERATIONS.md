@@ -42,6 +42,13 @@ materialize the public authority documents and opaque secret-reference files
 named by `paper-core/deploy/strict-full-auto-acceptance.config.example.json`,
 replace all hash/path/argument placeholders, then use the unattended atomic mode:
 
+The version-2 reviewer pool is one of those hash-bound public documents.
+Provision its unique signer and executor `_FILE` credentials beneath the
+`formal-reviewer-service-credential-root` reference before convergence. The
+runner validates only file metadata and derives `root/<variable-name>` paths;
+it never reads secret bytes. The child reviewer adapters reopen those files
+with no-follow, descriptor-pinned reads immediately before use.
+
 ```bash
 npm run hepta-paper -- operator strict-full-auto-acceptance -- \
   --action converge --configuration /run/hepta/strict-full-auto-acceptance.json \
@@ -54,16 +61,21 @@ an intermediate hash. The separate `plan` and hash-confirmed `execute` actions
 remain available for controlled deployments.
 
 For reboot-persistent convergence, install
-`paper-core/deploy/strict-full-auto-acceptance.service`, copy
+`paper-core/deploy/strict-full-auto-acceptance.service` and its
+`strict-full-auto-acceptance.timer`, copy
 `paper-core/deploy/strict-full-auto-acceptance.env.example` to
-`/etc/hepta-paper/strict-full-auto-acceptance.env`, and enable the unit once.
+`/etc/hepta-paper/strict-full-auto-acceptance.env`, and enable the timer.
 It starts the resident research and dispatcher units, retries failed preflight
-or external authority checks without a start-limit, and becomes active only
-after `--require-accepted` succeeds. It does not receive the submission portal
-secret and cannot manufacture a missing principal, credential, signature or
-KMS/HSM response; external authority provisioning remains a machine/deployment
-responsibility. Docker group access is root-equivalent, so use this unit only on
-the dedicated research host.
+or external authority checks without a start-limit, and revalidates live
+acceptance every five minutes after each completed run. It does not receive the
+submission portal secret and cannot manufacture a missing principal,
+credential, signature or KMS/HSM response; external authority provisioning
+remains a machine/deployment responsibility. Docker group access is
+root-equivalent, so use this unit only on the dedicated research host.
+The acceptance runner treats only exit code `2` plus a complete, plan-bound
+assertion projection as semantic `not-ready`. Exit code `1` and every malformed,
+partial or diagnostic failure are infrastructure failures and never trigger a
+renewal action.
 
 The systemd deployment binds four non-overlapping roots into the acceptance
 plan: writable control and runtime roots under `/var/lib/hepta-paper`, plus
@@ -237,13 +249,15 @@ package toolchain. Configure the canonical project location and expectation:
 ```bash
 HEPTA_DYNAMIC_FORMAL_PROJECT_ROOT=/srv/hepta-paper/formal/mathlib-project
 HEPTA_DYNAMIC_FORMAL_PROJECT_SCOPE_ROOT=/srv/hepta-paper/formal
-HEPTA_DYNAMIC_FORMAL_PROJECT_CLOSURE_HASH=sha256:<code-authorized-closure-hash>
+HEPTA_DYNAMIC_FORMAL_PROJECT_CLOSURE_HASH=sha256:64b07e1b11ec2f87168612b964d84e350ab9e6e88129397a21694689b24f8412
 HEPTA_DYNAMIC_FORMAL_PROJECT_PROBE=HeptaMathlibReadiness.lean
 HEPTA_PRODUCTION_MATHLIB_BUILD_AUTHORITY_CONFIG=/run/hepta-authority/production-mathlib-build-authority.json
 HEPTA_PRODUCTION_MATHLIB_BUILD_AUTHORITY_CONFIGURATION_HASH=sha256:<externally-pinned-configuration-hash>
 ```
 
-The probe must be a regular closure member containing `import Mathlib`; status
+The reviewed host deployment also sets `ELAN_HOME=/opt/hepta-paper/elan` and
+keeps the complete project owned by the `hepta-paper` service principal with no
+write bits. The probe must be a regular closure member containing `import Mathlib`; status
 recomputes the complete source, dependency, `.lake/build` and Lake-metadata
 closure. The deployment-supplied expected hash must match the measurement, but
 that equality is not build authority. The same full closure hash must also be
@@ -253,9 +267,10 @@ closure-, official-release-, Lean-toolchain- and toolchain-Merkle-bound subject
 of the independently signed build-authority configuration above. The external
 configuration must be signed by the exact Ed25519 key set holding the
 `production_mathlib_build_authority` role, remain inside its bounded validity
-window, and match the separately pinned configuration hash. The code allowlist
-is intentionally empty because no complete Mathlib 4.30 build closure has yet
-been reviewed into a code release. An operator-selected closure hash, an
+window, and match the separately pinned configuration hash. The allowlist
+contains only the independently reviewed canonical closure above. That review
+binds 119,871 files and the official release provenance, but does not assert a
+second bit-for-bit rebuild. An operator-selected closure hash, an
 unpinned or self-shaped configuration, an expired signature, key rotation,
 subject drift or file tamper therefore remains blocked.
 
@@ -281,8 +296,26 @@ different signed account identities, credential roots, signer keys, hosts,
 processes, and trust domains. Strong production accepts reviewer identities
 only after pinned Ed25519 receipt verification and signed platform/account
 attestation against the pinned author reference; configuration-only identity
-hashes remain bounded evidence. Structured prior-art and external-replay
-services must return signed, hash-bound receipts.
+hashes remain bounded evidence. A version-2 reviewer-pool principal must also
+provide `recoverableExecutorConfiguration`: an HTTPS execute/lookup/resume
+service whose completed, in-progress, and definitive-not-found outcomes are
+signed by the pinned `reviewer_execution_attestor` trust set. The operation
+request binds the exact role, instructions, structured context, checks,
+resource bounds, principal descriptor, configuration and service identities,
+plus a byte-complete immutable workspace snapshot hash. The external service
+returns an `AgentExecutionReceipt` whose hash is bound into that signed
+outcome. Local `codex exec --ephemeral` remains available only to the
+bounded version-1 pool; it is never advertised as crash-recoverable.
+
+Every version-2 signer and recoverable-executor
+`tokenEnvironmentVariable` must end in `_FILE` and be unique across the whole
+pool (at most 16 principals). The variable value is an absolute, owner-only
+opaque credential file; it is not the token. Strict acceptance derives those
+paths beneath its plan-bound reviewer-service credential root and passes only
+the paths to the child. Missing, aliased, ambient, symlinked, shared-mode, or
+wrong-owner credential files fail before any reviewer HTTP action.
+Structured prior-art and external-replay services must return signed,
+hash-bound receipts.
 An externally submittable venue profile must use `inline-evidence-v1` bibliography
 and `evidence-inline-v1` citation rendering. The host must provide executable
 `unzip` and `pdfinfo`; readiness reports `venue-compliance-runtime` when either

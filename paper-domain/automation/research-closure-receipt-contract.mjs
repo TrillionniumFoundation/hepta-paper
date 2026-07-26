@@ -25,7 +25,6 @@ import {
 import { verifyExperimentRegistry } from '../research/experiment-registry-verifier.mjs';
 import {
   verifyCampaignReleaseAuthorityRecord,
-  verifyCampaignReleaseBundle,
 } from './campaign-release-contracts.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
@@ -214,6 +213,34 @@ export function inspectResearchReportForClosure(report, releaseBundle, releaseBi
   const formalReplays = report?.capabilities?.formalReplayReceipts;
   const formalWorkers = (report?.nativeResearchWorkerExecution?.workerReceipts || [])
     .filter((worker) => worker?.workerType === 'formal_verifier_lake');
+  const formalWorkerReceiptHashes = new Set(formalWorkers.map((worker) => (
+    worker?.nativeResearchWorkerExecutionReceiptHash
+  )).filter(Boolean));
+  const evidenceQualityGate = report?.capabilities?.evidenceQualityGate || null;
+  const {
+    evidenceQualityGateHash: claimedEvidenceQualityGateHash,
+    ...evidenceQualityGatePayload
+  } = evidenceQualityGate || {};
+  const trustedFormalProjections = (
+    report?.capabilities?.trustedFormalEvidence || []
+  ).filter((item) => (
+    item?.status === 'trusted_formal_evidence_projected'
+    && item?.nativeProjectionRequest?.authoritativeFormalNode
+  ));
+  const authoritativeFormalNode = trustedFormalProjections.length === 1
+    ? trustedFormalProjections[0].nativeProjectionRequest.authoritativeFormalNode
+    : null;
+  const trustedNativeFormalReceiptHashes = (
+    evidenceQualityGate?.workerLedgerVerifications || []
+  ).filter((verification) => (
+    verification?.status === 'trusted_ledger_receipt_verified'
+    && verification?.receiptKind === 'NativeResearchWorkerExecutionReceipt'
+    && verification?.stream === 'jobs'
+    && verification?.writerKind === 'native-research-worker'
+    && verification?.writerTrusted === true
+    && verification?.issuerPolicyVerified === true
+    && formalWorkerReceiptHashes.has(verification?.receiptHash)
+  )).map((verification) => verification.receiptHash);
   const expectedFormalClaimBindings =
     formalClosureClaimBindingsFromProposalBinding(proposalBinding);
   const experimentRegistry = report?.capabilities?.experimentRegistry || null;
@@ -273,13 +300,25 @@ export function inspectResearchReportForClosure(report, releaseBundle, releaseBi
           campaignId: releaseBinding?.campaignId,
           researchSourceSnapshotHash:
             releaseBundle?.campaignResearchSourceSnapshotHash,
+          campaignResearchSourceSnapshot:
+            releaseBundle?.campaignResearchSourceSnapshot || null,
           taskKey: report?.taskKey || null,
           expectedClaimBindings: expectedFormalClaimBindings,
           proposalBinding,
           nativeResearchWorkerExecution:
             report?.nativeResearchWorkerExecution || null,
+          authoritativeFormalNode,
+          requireNativeFormalLedgerTrust: true,
+          trustedNativeFormalReceiptHashes,
         })
       )),
+    formal_evidence_quality_gate:
+      evidenceQualityGate?.status === 'evidence_quality_ready'
+      && sha(claimedEvidenceQualityGateHash)
+      && hashRecord('EvidenceQualityGate', evidenceQualityGatePayload)
+        === claimedEvidenceQualityGateHash
+      && trustedFormalProjections.length === 1
+      && trustedNativeFormalReceiptHashes.length === formalWorkers.length,
     formal_replay_receipts:
       Array.isArray(formalReplays) && formalReplays.length > 0
       && formalReplays.every(formalReplayValid),
@@ -332,6 +371,10 @@ function closureInputsValid({
   verifyQualificationSignature = null,
   verifyIndependentQualificationEvidence = null,
 } = {}) {
+  if (typeof verifyQualificationSignature !== 'function'
+    || typeof verifyIndependentQualificationEvidence !== 'function') {
+    return false;
+  }
   const releaseBundle = campaignReleaseAuthority?.releaseBundle || null;
   const releaseBinding = releaseBundle?.autonomousResearchReleaseBinding || null;
   const qualificationReceipt = qualificationInspection?.qualificationReceipt || null;
@@ -346,15 +389,6 @@ function closureInputsValid({
     fullResearchQualificationEligible: true,
     externalSubmissionEligible: true,
     authorityObservedAt: timestamp,
-  });
-  const fullReleaseVerification = verifyCampaignReleaseBundle(releaseBundle, {
-    campaignId: campaignReleaseAuthority?.campaignId,
-    paperId: campaignReleaseAuthority?.paperId,
-    campaignPlanHash: releaseBundle?.campaignPlanHash,
-    venueTarget: releaseBinding?.venueProfileSelection?.venueId,
-  }, {
-    experimentRegistryAuthorityVerifier:
-      experimentRegistryAuthorityVerifier(releaseBinding),
   });
   const releaseAuthorityVerification = verifyCampaignReleaseAuthorityRecord(
     campaignReleaseAuthority,
@@ -452,7 +486,6 @@ function closureInputsValid({
     && templateAssetRows.length === 1
     && releaseBinding?.version === 4
     && releaseVerification.valid
-    && fullReleaseVerification.valid
     && releaseAuthorityVerification.valid
     && releaseBundle?.autonomousResearchReleaseBindingHash
       === releaseBinding?.autonomousResearchReleaseBindingHash

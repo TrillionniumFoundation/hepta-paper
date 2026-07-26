@@ -59,7 +59,7 @@ const RECEIPT_INSPECTION_FIELDS = Object.freeze([
 const builtVerificationRequestHashes = new WeakMap();
 const builtVerificationEvidenceHashes = new WeakMap();
 
-export const INDEPENDENT_EXTERNAL_RESEARCH_QUALIFICATION_EVIDENCE_VERSION = 3;
+export const INDEPENDENT_EXTERNAL_RESEARCH_QUALIFICATION_EVIDENCE_VERSION = 4;
 export const INDEPENDENT_EXTERNAL_RESEARCH_QUALIFICATION_EVIDENCE_KIND =
   'IndependentExternalResearchQualificationVerificationEvidence';
 const CAMPAIGN_RELEASE_AUTHORITY_COMMITMENT_KIND =

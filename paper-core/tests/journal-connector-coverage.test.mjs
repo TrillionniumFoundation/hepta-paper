@@ -10,18 +10,19 @@ import {
 test('every hepta journal profile has one explicit connector disposition', () => {
   const coverage = JOURNAL_SUBMISSION_CONNECTOR_COVERAGE;
   assert.equal(coverage.version, 2);
+  assert.equal(coverage.entries.every((entry) => entry.version === 2), true);
   assert.equal(coverage.journalProfileCount, JOURNAL_PROFILES.length);
   assert.equal(coverage.dispositionCount, JOURNAL_PROFILES.length);
-  assert.equal(coverage.connectorFamilyPrototypeAvailableCount, 96);
+  assert.equal(coverage.connectorFamilyPrototypeAvailableCount, 98);
   assert.equal(coverage.journalConnectorFamilyPrototypeAvailableCount, 60);
-  assert.equal(coverage.journalProfileCount, 97);
-  assert.equal(new Set(coverage.entries.map((entry) => entry.venueId)).size, 97);
+  assert.equal(coverage.journalProfileCount, 98);
+  assert.equal(new Set(coverage.entries.map((entry) => entry.venueId)).size, 98);
   assert.deepEqual(
     coverage.entries.map((entry) => entry.venueId).sort(),
     JOURNAL_PROFILES.map((profile) => profile.id).sort(),
   );
   assert.equal(coverage.silentFallbackPermitted, false);
-  assert.equal(coverage.identityKnownCount, 96);
+  assert.equal(coverage.identityKnownCount, 98);
   assert.equal(coverage.targetProfileResolvedCount, 0);
   assert.equal(coverage.prototypeAdapterPresentCount, 4);
   assert.equal(coverage.adapterImplementedCount, 4);
@@ -29,7 +30,7 @@ test('every hepta journal profile has one explicit connector disposition', () =>
   assert.equal(coverage.productionQualifiedCount, 0);
   assert.equal(coverage.liveCommitAuthorizedCount, 0);
   assert.equal(coverage.liveSubmissionReadyCount, 0);
-  assert.equal(coverage.discoveryRequiredCount, 97);
+  assert.equal(coverage.discoveryRequiredCount, 98);
 });
 
 test('OpenReview prototypes and all discovery seeds remain fail closed', () => {
@@ -50,10 +51,28 @@ test('OpenReview prototypes and all discovery seeds remain fail closed', () => {
   assert.ok(nature.candidateConnectorFamilies.includes('playwright-assisted-draft-v1'));
   assert.ok(nature.blockers.includes('submission_portal_binding_evidence_required'));
 
-  const composite = coverage.entries.find((entry) => entry.venueId === 'colt_alt');
-  assert.equal(composite.identityKnown, false);
-  assert.equal(composite.connectorDisposition, 'venue_identity_split_required');
-  assert.ok(composite.blockers.includes('venue_identity_split_required'));
+  const theoryTargets = coverage.entries.filter((entry) => (
+    ['alt', 'colt'].includes(entry.venueId)
+  ));
+  assert.equal(theoryTargets.length, 2);
+  assert.notEqual(
+    theoryTargets[0].journalSubmissionConnectorCoverageEntryHash,
+    theoryTargets[1].journalSubmissionConnectorCoverageEntryHash,
+  );
+  assert.equal(
+    coverage.entries.some((entry) => entry.venueId === 'colt_alt'),
+    false,
+  );
+  for (const target of theoryTargets) {
+    assert.equal(target.identityKnown, true);
+    assert.equal(
+      target.connectorDisposition,
+      'connector_family_prototype_present_target_profile_required',
+    );
+    assert.equal(target.connectorFamilyPrototypeAvailable, true);
+    assert.equal(target.blockers.includes('venue_identity_split_required'), false);
+    assert.ok(target.blockers.includes('submission_target_adapter_profile_required'));
+  }
 });
 
 test('coverage CLI proves all 60 journal targets have a candidate family prototype', () => {
@@ -80,5 +99,20 @@ test('coverage CLI proves all 60 journal targets have a candidate family prototy
     cwd: process.cwd(),
     encoding: 'utf8',
   });
-  assert.equal(allTargets.status, 1);
+  assert.equal(allTargets.status, 0, allTargets.stderr);
+
+  const retiredComposite = spawnSync(process.execPath, [
+    'paper-core/bin/journal-connector-coverage.mjs',
+    '--summary',
+    '--venue',
+    'colt_alt',
+  ], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+  });
+  assert.equal(retiredComposite.status, 1);
+  assert.match(
+    retiredComposite.stderr,
+    /journal_submission_connector_coverage_unknown_venue:colt_alt/,
+  );
 });

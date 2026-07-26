@@ -14,6 +14,10 @@ import {
   embeddedFormalArtifactReceiptValid,
   embeddedFormalEvidenceBlockers,
 } from './formal-certificate-embedded-evidence-verifier.mjs';
+import {
+  buildNativeFormalCertificateIntakeV4,
+  verifyNativeFormalCertificateIntakeV4,
+} from './native-formal-certificate-intake-v4.mjs';
 
 export {
   buildFormalClaimBindingsManifest,
@@ -325,13 +329,41 @@ export function verifyGenericFormalCertificateIntakeClosureBinding(intake, {
   paperId = null,
   campaignId = null,
   researchSourceSnapshotHash = null,
+  campaignResearchSourceSnapshot = null,
   taskKey = null,
   expectedClaimBindings = [],
   proposalBinding = null,
   nativeResearchWorkerExecution = null,
+  authoritativeFormalNode = null,
   requireNativeFormalLedgerTrust = false,
   trustedNativeFormalReceiptHashes = [],
 } = {}) {
+  if (intake?.version === 4) {
+    const nativeVerification = verifyNativeFormalResearchClosureBinding(
+      nativeResearchWorkerExecution,
+      {
+        paperId,
+        campaignId,
+        researchSourceSnapshotHash,
+        taskKey,
+        proposalBinding,
+        expectedClaimBindings,
+      },
+    );
+    return verifyNativeFormalCertificateIntakeV4(intake, {
+      paperId,
+      campaignId,
+      researchSourceSnapshotHash,
+      campaignResearchSourceSnapshot,
+      expectedClaimBindings,
+      proposalBinding,
+      nativeResearchWorkerExecution,
+      nativeVerification,
+      authoritativeFormalNode,
+      requireNativeFormalLedgerTrust,
+      trustedNativeFormalReceiptHashes,
+    });
+  }
   const blockers = [];
   const { genericFormalCertificateIntakeHash: claimedHash, ...payload } = intake || {};
   if (!hasExactObjectKeys(intake, INTAKE_V3_KEYS)
@@ -409,6 +441,66 @@ export function verifyGenericFormalCertificateIntakeClosureBinding(intake, {
     nativeFormalClosureBinding: uniqueBlockers.length
       ? null : nativeVerification.binding,
     blockers: uniqueBlockers,
+  });
+}
+
+export function buildNativeFormalCertificateIntake({
+  paperId = null,
+  campaignId = null,
+  researchSourceSnapshotHash = null,
+  campaignResearchSourceSnapshot = null,
+  claimBindings = [],
+  authoritativeFormalReceipt = null,
+  authoritativeFormalNode = null,
+  authoritativeSource = null,
+  nativeResearchWorkerExecution = null,
+  receiptLedger = null,
+} = {}, {
+  expectedPaperId = null,
+  expectedCampaignId = null,
+  expectedResearchSourceSnapshotHash = null,
+  expectedClaimBindings = [],
+  expectedTaskKey = null,
+  expectedProposalBinding = null,
+  expectedAuthoritativeFormalNode = null,
+} = {}) {
+  const nativeVerification = verifyNativeFormalResearchClosureBinding(
+    nativeResearchWorkerExecution,
+    {
+      paperId: expectedPaperId,
+      campaignId: expectedCampaignId,
+      researchSourceSnapshotHash: expectedResearchSourceSnapshotHash,
+      taskKey: expectedTaskKey,
+      proposalBinding: expectedProposalBinding,
+      expectedClaimBindings,
+    },
+  );
+  const receipt = nativeVerification.receipt;
+  const nativeLedger = verifyTrustedLedgerReceipt({
+    receipt,
+    ledgerReceiptId: receipt?.ledgerReceiptId,
+    receiptLedger,
+    expectedKinds: ['NativeResearchWorkerExecutionReceipt'],
+    expectedStatuses: ['native_research_worker_execution_verified'],
+    expectedStreams: ['jobs'],
+    expectedWriterKinds: ['native-research-worker'],
+  });
+  return buildNativeFormalCertificateIntakeV4({
+    paperId,
+    campaignId,
+    researchSourceSnapshotHash,
+    claimBindings,
+    expectedClaimBindings,
+    proposalBinding: expectedProposalBinding,
+    nativeResearchWorkerExecution,
+    nativeVerification,
+    authoritativeFormalReceipt,
+    authoritativeFormalNode,
+    expectedAuthoritativeFormalNode,
+    campaignResearchSourceSnapshot,
+    authoritativeSource,
+    nativeLedgerTrusted:
+      nativeLedger.status === 'trusted_ledger_receipt_verified',
   });
 }
 

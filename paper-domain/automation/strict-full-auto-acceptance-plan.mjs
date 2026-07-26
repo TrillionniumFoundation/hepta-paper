@@ -44,6 +44,7 @@ function assertReferenceBindings(bindings) {
       || Array.isArray(binding.documentPins)
       || (new Set([
         'research-author-principal',
+        'formal-reviewer-principal',
         'formal-sandbox-runtime-config',
         'production-mathlib-build-authority-config',
         'autonomous-venue-profile-config',
@@ -59,6 +60,27 @@ function assertReferenceBindings(bindings) {
       || (referenceId === 'external-replay-config'
         && binding.documentPins.tokenEnvironmentVariable
           !== 'HEPTA_EXTERNAL_REPLAY_SERVICE_TOKEN_FILE')
+      || (referenceId === 'formal-reviewer-principal'
+        && (!exactKeys(binding.documentPins, [
+          'configurationHash',
+          'reviewerServiceTokenEnvironmentVariables',
+        ])
+          || !Array.isArray(
+            binding.documentPins.reviewerServiceTokenEnvironmentVariables,
+          )
+          || binding.documentPins.reviewerServiceTokenEnvironmentVariables.length < 4
+          || binding.documentPins.reviewerServiceTokenEnvironmentVariables.length > 16
+          || new Set(
+            binding.documentPins.reviewerServiceTokenEnvironmentVariables,
+          ).size !== binding.documentPins.reviewerServiceTokenEnvironmentVariables.length
+          || binding.documentPins.reviewerServiceTokenEnvironmentVariables.some(
+            (name) => !/^[A-Z][A-Z0-9_]{1,122}_FILE$/.test(String(name || '')),
+          )
+          || JSON.stringify(
+            [...binding.documentPins.reviewerServiceTokenEnvironmentVariables].sort(),
+          ) !== JSON.stringify(
+            binding.documentPins.reviewerServiceTokenEnvironmentVariables,
+          )))
       || (referenceId === 'submission-portal-descriptor-config'
         && (!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}$/.test(String(
           binding.documentPins.portalId || '',
@@ -80,6 +102,21 @@ function assertReferenceBindings(bindings) {
     || authorCredential.identity === reviewerCredential.identity) {
     throw new Error(
       'strict_full_auto_acceptance_provider_credential_root_independence_required',
+    );
+  }
+  const reviewerServiceCredential = byId.get(
+    'formal-reviewer-service-credential-root',
+  );
+  if ([
+    authorCredential,
+    reviewerCredential,
+  ].some((binding) => (
+    reviewerServiceCredential.subjectId === binding.subjectId
+    || pathsOverlap(reviewerServiceCredential.resolvedPath, binding.resolvedPath)
+    || reviewerServiceCredential.identity === binding.identity
+  ))) {
+    throw new Error(
+      'strict_full_auto_acceptance_reviewer_service_credential_root_independence_required',
     );
   }
   return Object.freeze([...bindings].sort((left, right) => (
@@ -299,6 +336,11 @@ const REQUIRED_OPERATIONAL_ENVIRONMENT_KEYS = Object.freeze([
   'HEPTA_AUTONOMOUS_EMPIRICAL_PLUGIN_ACTIVATION_POINTER',
   'HEPTA_AUTONOMOUS_RESEARCH_CONTENT_MODE',
   'HEPTA_DYNAMIC_FORMAL_CLAIMS_ENABLED',
+  'HEPTA_FORMAL_ELAN_HOME',
+  'HEPTA_DYNAMIC_FORMAL_PROJECT_ROOT',
+  'HEPTA_DYNAMIC_FORMAL_PROJECT_SCOPE_ROOT',
+  'HEPTA_DYNAMIC_FORMAL_PROJECT_CLOSURE_HASH',
+  'HEPTA_DYNAMIC_FORMAL_PROJECT_PROBE',
   'HEPTA_AUTONOMOUS_RESEARCH_DATASET_ROOT',
 ]);
 
@@ -323,7 +365,18 @@ function assertOperationalEnvironment(environment) {
       'HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_RECEIPT',
       'HEPTA_AUTONOMOUS_EMPIRICAL_PLUGIN_ACTIVATION_POINTER',
       'HEPTA_AUTONOMOUS_RESEARCH_DATASET_ROOT',
+      'HEPTA_FORMAL_ELAN_HOME',
+      'HEPTA_DYNAMIC_FORMAL_PROJECT_ROOT',
+      'HEPTA_DYNAMIC_FORMAL_PROJECT_SCOPE_ROOT',
     ].some((name) => !String(environment[name] || '').startsWith('/'))
+    || !SHA256.test(environment.HEPTA_DYNAMIC_FORMAL_PROJECT_CLOSURE_HASH)
+    || !/^[A-Za-z0-9][A-Za-z0-9_./-]{0,255}\.lean$/.test(
+      environment.HEPTA_DYNAMIC_FORMAL_PROJECT_PROBE,
+    )
+    || environment.HEPTA_DYNAMIC_FORMAL_PROJECT_PROBE.split('/').includes('..')
+    || !environment.HEPTA_DYNAMIC_FORMAL_PROJECT_ROOT.startsWith(
+      `${environment.HEPTA_DYNAMIC_FORMAL_PROJECT_SCOPE_ROOT}/`,
+    )
     || [
       'HEPTA_RESEARCH_AUTHOR_MAXIMUM_COST_PER_CALL_USD',
       'HEPTA_FORMAL_REVIEWER_MAXIMUM_COST_PER_CALL_USD',
@@ -377,7 +430,7 @@ function assertRootBindings({ controlRoot, runtimeRoot, assetRoot, datasetRoot, 
   return Object.freeze(rootBindings.map((binding) => {
     if (!exactKeys(binding, [
       'rootId', 'accessMode', 'resolvedPath', 'anchorKind', 'anchorPath', 'anchorRealPath',
-      'anchorDevice', 'anchorInode', 'anchorMode', 'anchorUid', 'identity',
+      'anchorDevice', 'anchorInode', 'anchorMode', 'anchorUid', 'anchorGid', 'identity',
     ]) || binding.accessMode !== ROOT_BINDING_ACCESS_MODES[binding.rootId]
       || binding.resolvedPath !== roots[binding.rootId]
       || !['parent', 'target'].includes(binding.anchorKind)
@@ -387,6 +440,7 @@ function assertRootBindings({ controlRoot, runtimeRoot, assetRoot, datasetRoot, 
       || !/^\d+$/.test(String(binding.anchorInode || ''))
       || !Number.isSafeInteger(binding.anchorMode) || binding.anchorMode < 0
       || !/^\d+$/.test(String(binding.anchorUid || ''))
+      || !/^\d+$/.test(String(binding.anchorGid || ''))
       || !SHA256.test(String(binding.identity || ''))) {
       throw new Error(`strict_full_auto_acceptance_root_binding_invalid:${binding?.rootId}`);
     }

@@ -534,6 +534,12 @@ export async function prepareAutonomousResearchLoop({
       productionAuthorityBindingHash: agentAuthority?.autonomousResearchAgentProductionAuthorityBindingHash || null,
       observedAt: createdAt,
       venueProfileSelection,
+      venueTemplateAsset,
+      venueTemplateAssetBundleHash:
+        venueProfileSelection?.venueTemplateAssetBundleHash || null,
+      venueTemplateAssetAuthorityConfigurationHash:
+        venueProfileSelection?.venueAuthorityConfigurationHash || null,
+      venueRequirementIr,
       submissionMetadataReceipt,
     });
   if (!productionProfileInspection.ready) {

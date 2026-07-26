@@ -315,8 +315,8 @@ export function evaluateFullyAutonomousResearchSystemReadiness({
       blockers: Object.freeze(['autonomous_research_capability_scope_manifest_required']),
     });
   const legacyScopeUnspecified = capabilityScopeManifest === null;
-  const capabilityScopeInspectionReady = capabilityScopeInspection === null
-    || (capabilityScopeInspection.authorIdentityAttestationReady === true
+  const capabilityScopeInspectionReady = capabilityScopeInspection !== null
+    && (capabilityScopeInspection.authorIdentityAttestationReady === true
       && Array.isArray(capabilityScopeInspection.blockers)
       && capabilityScopeInspection.blockers.length === 0);
   const configuredScopeReady = capabilityScopeManifestValid
@@ -390,8 +390,7 @@ export function evaluateFullyAutonomousResearchSystemReadiness({
     ...(capabilityScopeManifestValid && !configuredScopeReady
       ? ['autonomous_research_configured_scope_not_ready'] : []),
     ...(capabilityScopeInspection?.blockers || []),
-    ...(capabilityScopeInspection !== null
-      && capabilityScopeInspection.authorIdentityAttestationReady !== true
+    ...(capabilityScopeInspection?.authorIdentityAttestationReady !== true
       ? ['autonomous_research_author_identity_attestation_required'] : []),
     ...(capabilityScopeManifest?.agendaMode === 'machine-generated'
       && !machineGeneratedAgendaReceiptValid

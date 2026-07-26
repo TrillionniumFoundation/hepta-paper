@@ -7,6 +7,9 @@ import {
   verifyExternalResearchReplayReceipt,
 } from '../../paper-domain/research/external-research-replay-contract.mjs';
 import {
+  buildExternalResearchReplayRecoveryOutcome,
+} from '../../paper-domain/research/external-operation-recovery-outcome-contract.mjs';
+import {
   assertPinnedExternalEvidenceEnvelope,
   inspectPinnedExternalEvidenceTrustStore,
 } from '../authority/pinned-external-evidence-verifier.mjs';
@@ -35,7 +38,18 @@ const CONFIG_KEYS_V3 = Object.freeze([
   ...CONFIG_KEYS_V2,
   'localOriginIdentityAttestationBundles', 'remoteIdentityAttestationBundle',
 ]);
+const CONFIG_KEYS_V4 = Object.freeze([
+  ...CONFIG_KEYS_V3,
+  'lookupEndpoint', 'resumeEndpoint',
+]);
 const REPLAY_SIGNER_ROLE = 'external_research_replay_attestor';
+
+function requestAbortError(signal, code) {
+  if (signal?.reason instanceof Error) return signal.reason;
+  const error = new Error(code);
+  error.name = 'AbortError';
+  return error;
+}
 
 export function buildExternalResearchReplayServiceConfiguration({
   version = 1,
@@ -50,11 +64,13 @@ export function buildExternalResearchReplayServiceConfiguration({
   receiptMaximumLifetimeMs = 60 * 60 * 1000,
   remoteIdentityAttestationBundle = null,
   localOriginIdentityAttestationBundles = [],
+  lookupEndpoint = null,
+  resumeEndpoint = null,
 } = {}) {
   let url;
   try { url = new URL(String(endpoint || '')); }
   catch { throw new Error('external_research_replay_endpoint_invalid'); }
-  if (![1, 2, 3].includes(Number(version))
+  if (![1, 2, 3, 4].includes(Number(version))
     || url.protocol !== 'https:' || !SAFE_ID.test(String(serviceId || ''))
     || !SHA256.test(String(serviceIdentityHash || '').toLowerCase())
     || !/^[A-Z][A-Z0-9_]{1,127}$/.test(String(tokenEnvironmentVariable || ''))
@@ -92,7 +108,7 @@ export function buildExternalResearchReplayServiceConfiguration({
       receiptSignerRole: REPLAY_SIGNER_ROLE,
       receiptMaximumLifetimeMs: Number(receiptMaximumLifetimeMs),
     });
-    if (Number(version) === 3) {
+    if (Number(version) >= 3) {
       const remoteIdentity = buildExternalResearchReplayIdentityAttestationBundle(
         remoteIdentityAttestationBundle,
       );
@@ -107,6 +123,23 @@ export function buildExternalResearchReplayServiceConfiguration({
         remoteIdentityAttestationBundle: remoteIdentity,
         localOriginIdentityAttestationBundles: Object.freeze(localOrigins),
       });
+      if (Number(version) === 4) {
+        let lookupUrl;
+        let resumeUrl;
+        try {
+          lookupUrl = new URL(String(lookupEndpoint || ''));
+          resumeUrl = new URL(String(resumeEndpoint || ''));
+        } catch {
+          throw new Error('external_research_replay_recovery_endpoint_invalid');
+        }
+        if (lookupUrl.protocol !== 'https:' || resumeUrl.protocol !== 'https:') {
+          throw new Error('external_research_replay_recovery_endpoint_invalid');
+        }
+        Object.assign(payload, {
+          lookupEndpoint: lookupUrl.toString(),
+          resumeEndpoint: resumeUrl.toString(),
+        });
+      }
     }
   }
   return Object.freeze({
@@ -124,8 +157,9 @@ export function readExternalResearchReplayServiceConfiguration({ configPath } = 
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 1024 * 1024) throw new Error('invalid');
     parsed = JSON.parse(fs.readFileSync(candidate, 'utf8'));
   } catch { throw new Error('external_research_replay_configuration_file_invalid'); }
-  const expectedKeys = parsed?.version === 3
-    ? CONFIG_KEYS_V3 : parsed?.version === 2 ? CONFIG_KEYS_V2 : CONFIG_KEYS_V1;
+  const expectedKeys = parsed?.version === 4
+    ? CONFIG_KEYS_V4 : parsed?.version === 3
+      ? CONFIG_KEYS_V3 : parsed?.version === 2 ? CONFIG_KEYS_V2 : CONFIG_KEYS_V1;
   if (!hasExactObjectKeys(parsed, expectedKeys)) {
     throw new Error('external_research_replay_configuration_shape_invalid');
   }
@@ -151,7 +185,7 @@ export function createHttpExternalResearchReplayAdapter({
   if (!token || typeof fetchImpl !== 'function') {
     throw new Error('external_research_replay_runtime_credentials_missing');
   }
-  const receiptVerifier = selected.version === 3
+  const receiptVerifier = selected.version >= 3
     ? createExternalResearchReplayReceiptVerifier({ configuration: selected, clock })
     : null;
   const requiredOriginHashes = [...new Set((Array.isArray(
@@ -167,14 +201,222 @@ export function createHttpExternalResearchReplayAdapter({
     || requiredOriginHashes.some((value) => !observedOriginHashes.includes(value))) {
     throw new Error('external_research_replay_required_origin_identity_missing');
   }
+  const recoveryConfigurationIdentityHash = selected.version === 4
+    ? hashRecord('ExternalResearchReplayRecoveryConfiguration', {
+      configurationHash: selected.configurationHash,
+      lookupEndpoint: selected.lookupEndpoint,
+      resumeEndpoint: selected.resumeEndpoint,
+      protocol: 'pinned-signed-lookup-resume-idempotency-v1',
+    }) : null;
+  const recoveryOutcomeVerificationPolicyHash = selected.version === 4
+    ? hashRecord('ExternalResearchReplayRecoveryOutcomeVerificationPolicy', {
+      receiptTrustStoreHash: selected.receiptTrustStoreHash,
+      receiptSignerKeyIds: selected.receiptSignerKeyIds,
+      receiptSignerRole: selected.receiptSignerRole,
+      receiptMaximumLifetimeMs: selected.receiptMaximumLifetimeMs,
+      policy: 'pinned-canonical-json-ed25519-v1',
+    }) : null;
+  const verifyRecoveryOutcome = (document, request, {
+    operationId,
+    idempotencyKey,
+    resultHash,
+  }) => {
+    if (selected.version !== 4
+      || document?.operationId !== operationId
+      || document?.idempotencyKey !== idempotencyKey
+      || document?.requestHash !== request.requestHash
+      || document?.serviceId !== selected.serviceId
+      || document?.serviceIdentityHash !== selected.serviceIdentityHash) {
+      throw new Error('external_research_replay_recovery_response_invalid');
+    }
+    let outcome;
+    try {
+      outcome = buildExternalResearchReplayRecoveryOutcome({
+        serviceId: selected.serviceId,
+        serviceIdentityHash: selected.serviceIdentityHash,
+        operationId,
+        idempotencyKey,
+        requestHash: request.requestHash,
+        operationStatus: document.operationStatus,
+        externalActionPerformed: document.externalActionPerformed,
+        resultHash,
+      });
+    } catch {
+      throw new Error('external_research_replay_recovery_response_invalid');
+    }
+    assertPinnedExternalEvidenceEnvelope({
+      envelope: document?.recoveryAuthorityEnvelope,
+      subjectKind: outcome.kind,
+      subjectHash: outcome.externalResearchReplayRecoveryOutcomeHash,
+      trustStore: selected.receiptTrustStore,
+      requiredRole: selected.receiptSignerRole,
+      expectedKeyIds: selected.receiptSignerKeyIds,
+      now: clock.now(),
+      maximumLifetimeMs: selected.receiptMaximumLifetimeMs,
+    });
+    return outcome;
+  };
+  const receiptFromDocument = (document, request, {
+    operationId = null,
+    idempotencyKey = null,
+  } = {}) => {
+    const legacyReceipt = document?.externalResearchReplayReceipt;
+    if (document?.requestHash !== request.requestHash
+      || document?.serviceId !== selected.serviceId
+      || document?.serviceIdentityHash !== selected.serviceIdentityHash
+      || document?.externalActionPerformed !== true
+      || (selected.version === 4
+        && (document?.operationStatus !== 'completed'
+          || document?.operationId !== operationId
+          || document?.idempotencyKey !== idempotencyKey))
+      || !verifyExternalResearchReplayReceipt(legacyReceipt, { request })) {
+      throw new Error('external_research_replay_response_invalid');
+    }
+    if (selected.version === 4) {
+      verifyRecoveryOutcome(document, request, {
+        operationId,
+        idempotencyKey,
+        resultHash: legacyReceipt.externalResearchReplayReceiptHash,
+      });
+    }
+    if (selected.version === 1) return Object.freeze(legacyReceipt);
+    const signatureVerificationReceipt = assertPinnedExternalEvidenceEnvelope({
+      envelope: document?.authorityEnvelope,
+      subjectKind: 'ExternalResearchReplayReceiptV1',
+      subjectHash: legacyReceipt.externalResearchReplayReceiptHash,
+      trustStore: selected.receiptTrustStore,
+      requiredRole: selected.receiptSignerRole,
+      expectedKeyIds: selected.receiptSignerKeyIds,
+      now: clock.now(),
+      maximumLifetimeMs: selected.receiptMaximumLifetimeMs,
+    });
+    if (selected.version >= 3) {
+      return receiptVerifier.wrap({
+        request,
+        legacyReceipt,
+        resultAuthorityEnvelope: document.authorityEnvelope,
+      });
+    }
+    return buildCryptographicExternalResearchReplayReceipt({
+      request,
+      legacyReceipt,
+      authorityEnvelope: document.authorityEnvelope,
+      signatureVerificationReceipt,
+    });
+  };
+  const invokeHttp = async (endpoint, init, signal) => {
+    if (signal?.aborted) {
+      throw requestAbortError(signal, 'external_research_replay_request_aborted');
+    }
+    const controller = new AbortController();
+    const abort = () => controller.abort(signal?.reason);
+    signal?.addEventListener?.('abort', abort, { once: true });
+    if (signal?.aborted) abort();
+    const timer = setTimeout(() => controller.abort(), selected.timeoutMs);
+    try {
+      if (controller.signal.aborted) {
+        throw requestAbortError(signal, 'external_research_replay_request_aborted');
+      }
+      return await fetchImpl(endpoint, {
+        ...init,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+      signal?.removeEventListener?.('abort', abort);
+    }
+  };
+  const recoveryResolution = async (action, {
+    operationId,
+    request,
+    idempotencyKey,
+    signal = null,
+  } = {}) => {
+    if (selected.version !== 4
+      || !verifyExternalResearchReplayRequest(request)
+      || !SHA256.test(String(operationId || ''))
+      || !SHA256.test(String(idempotencyKey || ''))) {
+      throw new Error('external_research_replay_recovery_request_invalid');
+    }
+    const headers = {
+      authorization: `Bearer ${token}`,
+      accept: 'application/json',
+      'content-type': 'application/json',
+      'idempotency-key': idempotencyKey,
+      'operation-id': operationId,
+    };
+    let endpoint = selected.resumeEndpoint;
+    let init = {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        version: 1,
+        kind: 'ExternalResearchReplayResumeRequest',
+        operationId,
+        idempotencyKey,
+        request,
+      }),
+    };
+    if (action === 'lookup') {
+      endpoint = new URL(selected.lookupEndpoint);
+      endpoint.searchParams.set('operationId', operationId);
+      endpoint.searchParams.set('idempotencyKey', idempotencyKey);
+      endpoint.searchParams.set('requestHash', request.requestHash);
+      init = { method: 'GET', headers };
+    }
+    const response = await invokeHttp(endpoint, init, signal);
+    if (!response?.ok) {
+      throw new Error(
+        `external_research_replay_recovery_http_failed:${response?.status || 0}`,
+      );
+    }
+    const document = await response.json();
+    if (document?.operationId !== operationId
+      || document?.idempotencyKey !== idempotencyKey
+      || document?.requestHash !== request.requestHash
+      || document?.serviceId !== selected.serviceId
+      || document?.serviceIdentityHash !== selected.serviceIdentityHash
+      || !['completed', 'in_progress', 'not_found']
+        .includes(document?.operationStatus)) {
+      throw new Error('external_research_replay_recovery_response_invalid');
+    }
+    if (document.operationStatus !== 'completed') {
+      if ((document.externalResearchReplayReceipt !== null
+          && document.externalResearchReplayReceipt !== undefined)
+        || (document.authorityEnvelope !== null
+          && document.authorityEnvelope !== undefined)) {
+        throw new Error('external_research_replay_recovery_response_invalid');
+      }
+      verifyRecoveryOutcome(document, request, {
+        operationId,
+        idempotencyKey,
+        resultHash: null,
+      });
+      return Object.freeze({
+        status: document.operationStatus,
+        receipt: null,
+      });
+    }
+    return Object.freeze({
+      status: 'completed',
+      receipt: receiptFromDocument(document, request, {
+        operationId,
+        idempotencyKey,
+      }),
+    });
+  };
   return assertExternalResearchReplayPort(Object.freeze({
     version: 1,
     kind: 'ExternalResearchReplayPort',
     serviceId: selected.serviceId,
     configurationHash: selected.configurationHash,
+    crashRecoveryReady: selected.version === 4,
+    recoveryConfigurationIdentityHash,
+    recoveryOutcomeCryptographicAuthorityReady: selected.version === 4,
+    recoveryOutcomeVerificationPolicyHash,
     cryptographicAuthorityReady: selected.version >= 2,
-    identityIndependenceReady: selected.version === 3,
-    evidenceProfile: selected.version === 3
+    identityIndependenceReady: selected.version >= 3,
+    evidenceProfile: selected.version >= 3
       ? 'pinned-signed-offhost-replay-v3' : 'bounded-external-replay-v1',
     trustSetHash: receiptVerifier?.trustSetHash
       || (selected.version === 2 ? selected.receiptTrustStoreHash : null),
@@ -192,64 +434,50 @@ export function createHttpExternalResearchReplayAdapter({
         ? receiptVerifier.verify({ request, receipt })
         : verifyExternalResearchReplayReceipt(receipt, { request });
     },
-    async replay({ request, signal = null } = {}) {
-      if (!verifyExternalResearchReplayRequest(request)) {
+    async lookup(input) {
+      return recoveryResolution('lookup', input);
+    },
+    async resume(input) {
+      return recoveryResolution('resume', input);
+    },
+    async replay({
+      operationId = null,
+      request,
+      idempotencyKey = null,
+      signal = null,
+    } = {}) {
+      if (!verifyExternalResearchReplayRequest(request)
+        || (selected.version === 4
+          && (!SHA256.test(String(operationId || ''))
+            || !SHA256.test(String(idempotencyKey || ''))))) {
         throw new Error('external_research_replay_request_invalid');
       }
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), selected.timeoutMs);
-      const abort = () => controller.abort();
-      signal?.addEventListener?.('abort', abort, { once: true });
-      let response;
-      try {
-        response = await fetchImpl(selected.endpoint, {
-          method: 'POST',
-          headers: {
-            authorization: `Bearer ${token}`,
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify(request),
-          signal: controller.signal,
-        });
-      } finally {
-        clearTimeout(timer);
-        signal?.removeEventListener?.('abort', abort);
-      }
+      const headers = {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+        ...(selected.version === 4 ? {
+          'idempotency-key': idempotencyKey,
+          'operation-id': operationId,
+        } : {}),
+      };
+      const response = await invokeHttp(selected.endpoint, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(selected.version === 4 ? {
+          version: 1,
+          kind: 'ExternalResearchReplayOperationRequest',
+          operationId,
+          idempotencyKey,
+          request,
+        } : request),
+      }, signal);
       if (!response?.ok) {
         throw new Error(`external_research_replay_http_failed:${response?.status || 0}`);
       }
       const document = await response.json();
-      const legacyReceipt = document?.externalResearchReplayReceipt;
-      if (document?.requestHash !== request.requestHash
-        || document?.serviceId !== selected.serviceId
-        || document?.serviceIdentityHash !== selected.serviceIdentityHash
-        || document?.externalActionPerformed !== true
-        || !verifyExternalResearchReplayReceipt(legacyReceipt, { request })) {
-        throw new Error('external_research_replay_response_invalid');
-      }
-      if (selected.version === 1) return Object.freeze(legacyReceipt);
-      const signatureVerificationReceipt = assertPinnedExternalEvidenceEnvelope({
-        envelope: document?.authorityEnvelope,
-        subjectKind: 'ExternalResearchReplayReceiptV1',
-        subjectHash: legacyReceipt.externalResearchReplayReceiptHash,
-        trustStore: selected.receiptTrustStore,
-        requiredRole: selected.receiptSignerRole,
-        expectedKeyIds: selected.receiptSignerKeyIds,
-        now: clock.now(),
-        maximumLifetimeMs: selected.receiptMaximumLifetimeMs,
-      });
-      if (selected.version === 3) {
-        return receiptVerifier.wrap({
-          request,
-          legacyReceipt,
-          resultAuthorityEnvelope: document.authorityEnvelope,
-        });
-      }
-      return buildCryptographicExternalResearchReplayReceipt({
-        request,
-        legacyReceipt,
-        authorityEnvelope: document.authorityEnvelope,
-        signatureVerificationReceipt,
+      return receiptFromDocument(document, request, {
+        operationId,
+        idempotencyKey,
       });
     },
   }));

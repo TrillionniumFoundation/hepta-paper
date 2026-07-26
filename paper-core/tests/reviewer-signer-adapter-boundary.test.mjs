@@ -1,4 +1,7 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import {
@@ -51,7 +54,7 @@ test('reviewer signer adapter rejects configuration and HTTP short-circuit edges
   assert.equal(verifyReviewerReceiptSignerServiceConfiguration(validConfiguration), true);
   for (const [label, patch, error] of [
     ['endpoint syntax', { endpoint: '%' }, /endpoint_invalid/],
-    ['version', { version: 3 }, /service_configuration_invalid/],
+    ['version', { version: 4 }, /service_configuration_invalid/],
     ['service id', { serviceId: '' }, /service_configuration_invalid/],
     ['service identity', { serviceIdentityHash: '' }, /service_configuration_invalid/],
     ['token variable', { tokenEnvironmentVariable: '' }, /service_configuration_invalid/],
@@ -157,4 +160,86 @@ test('reviewer signer adapter rejects configuration and HTTP short-circuit edges
     () => missingReceiptAdapter.sign({ subjectHash: H('edge-review-subject'), principal }),
     /reviewer_receipt_signer_response_invalid/,
   );
+});
+
+test('reviewer signer adapter makes no HTTP request for a pre-aborted signal', async () => {
+  const configuration = buildReviewerReceiptSignerServiceConfiguration({
+    version: 1,
+    serviceId: 'pre-aborted-reviewer-signer',
+    endpoint: 'https://reviewer-edge.example.test/v1/sign',
+    serviceIdentityHash: H('pre-aborted-reviewer-service'),
+    signerIdentityHash: H('pre-aborted-reviewer-signer'),
+    tokenEnvironmentVariable: 'EDGE_REVIEWER_TOKEN',
+    timeoutMs: 1_000,
+  });
+  const principal = {
+    principalId: 'pre-aborted-reviewer-principal',
+    principalDescriptorHash: H('pre-aborted-reviewer-principal-descriptor'),
+    signerIdentityHash: configuration.signerIdentityHash,
+  };
+  let fetchCalls = 0;
+  const selected = createHttpReviewerReceiptSignerAdapter({
+    configuration,
+    environment: { EDGE_REVIEWER_TOKEN: 'token' },
+    fetchImpl: async () => {
+      fetchCalls += 1;
+      throw new Error('fetch_must_not_run');
+    },
+  });
+  const controller = new AbortController();
+  const abortReason = new Error('reviewer_signer_pre_aborted');
+  controller.abort(abortReason);
+
+  await assert.rejects(() => selected.sign({
+    subjectHash: H('pre-aborted-review-subject'),
+    principal,
+    signal: controller.signal,
+  }), (error) => error === abortReason);
+  assert.equal(fetchCalls, 0);
+});
+
+test('reviewer signer resolves an opaque credential file without leaking it', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-reviewer-credential-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const credentialPath = path.join(root, 'reviewer-token');
+  const credential = 'reviewer-file-secret-value';
+  fs.writeFileSync(credentialPath, `${credential}\n`, { mode: 0o600 });
+  const configuration = buildReviewerReceiptSignerServiceConfiguration({
+    version: 1,
+    serviceId: 'file-credential-reviewer-signer',
+    endpoint: 'https://reviewer-edge.example.test/v1/sign',
+    serviceIdentityHash: H('file-credential-reviewer-service'),
+    signerIdentityHash: H('file-credential-reviewer-signer'),
+    tokenEnvironmentVariable: 'EDGE_REVIEWER_TOKEN_FILE',
+    timeoutMs: 1_000,
+  });
+  const principal = {
+    principalId: 'file-credential-reviewer-principal',
+    principalDescriptorHash: H('file-credential-reviewer-principal-descriptor'),
+    signerIdentityHash: configuration.signerIdentityHash,
+  };
+  let authorization = null;
+  const selected = createHttpReviewerReceiptSignerAdapter({
+    configuration,
+    environment: { EDGE_REVIEWER_TOKEN_FILE: credentialPath },
+    fetchImpl: async (_url, init) => {
+      authorization = init.headers.authorization;
+      return { ok: false, status: 503 };
+    },
+  });
+  let failure = null;
+  try {
+    await selected.sign({
+      subjectHash: H('file-credential-review-subject'),
+      principal,
+    });
+  } catch (error) {
+    failure = error;
+  }
+
+  assert.equal(authorization, `Bearer ${credential}`);
+  assert.notEqual(authorization, `Bearer ${credentialPath}`);
+  assert.match(String(failure?.message), /reviewer_receipt_signer_http_failed:503/);
+  assert.equal(String(failure).includes(credential), false);
+  assert.equal(String(failure).includes(credentialPath), false);
 });

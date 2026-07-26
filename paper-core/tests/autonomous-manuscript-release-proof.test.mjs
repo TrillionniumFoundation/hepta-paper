@@ -11,7 +11,6 @@ import {
   buildAutonomousResearchExternalCapabilityTrustInspection,
 } from '../../paper-domain/automation/autonomous-research-external-capability-trust-contract.mjs';
 import {
-  buildAutonomousSubmissionRequest,
   createAutonomousSubmissionRequestVerifier,
   verifyAutonomousSubmissionRequest,
 } from '../../paper-domain/automation/autonomous-submission-contract.mjs';
@@ -55,6 +54,7 @@ const HASH = (value) => hashBytes(Buffer.from(String(value), 'utf8'));
 const PAPER_ID = 'paper-release-proof';
 const CAMPAIGN_ID = 'campaign-release-proof';
 const FAMILY = 'ml_algorithm_benchmark';
+let cachedCanonicalProductionRelease = null;
 
 function agentReceipt(executorId, changedPaths, productionAuthorityBinding = null) {
   const payload = {
@@ -131,6 +131,63 @@ function fixture({
   includeProof = true,
   draftMode = 'substantive',
 } = {}) {
+  if (launchMode === 'production-run') {
+    const canonical = includeProof
+      ? (cachedCanonicalProductionRelease ||= genericManuscriptReleaseFixture({
+        paperId: PAPER_ID,
+        campaignId: CAMPAIGN_ID,
+        campaignPlanHash: HASH('plan'),
+        launchMode,
+        externalSubmission: true,
+        includeProof,
+      }))
+      : genericManuscriptReleaseFixture({
+        paperId: PAPER_ID,
+        campaignId: CAMPAIGN_ID,
+        campaignPlanHash: HASH('plan'),
+        launchMode,
+        externalSubmission: true,
+        includeProof,
+      });
+    if (draftMode === 'substantive') {
+      return {
+        binding: canonical.releaseBinding,
+        preparation: canonical.preparation,
+      };
+    }
+    const invalidDraft = draftMode === 'empty'
+      ? {
+        version: 1,
+        kind: 'EvidenceBoundManuscriptIRDraft',
+        paperId: PAPER_ID,
+        title: 'Agent-authored bounded result',
+        sections: [],
+      }
+      : manuscriptDraft({ systemSeed: true });
+    const binding = createAutonomousResearchReleaseBinding({
+      campaignId: CAMPAIGN_ID,
+      paperId: PAPER_ID,
+      campaignPlanHash: HASH('plan'),
+      preparation: canonical.preparation,
+      manuscriptPath: canonical.releaseBinding.manuscriptPath,
+      renderedManuscriptHash: canonical.releaseBinding.renderedManuscriptHash,
+      evidenceBoundManuscriptIrHash:
+        canonical.releaseBinding.evidenceBoundManuscriptIrHash,
+      manuscriptIrFileHash: canonical.releaseBinding.manuscriptIrFileHash,
+      agentAuthoredSourceDraft: invalidDraft,
+      agentAuthoredSourceDraftFileHash:
+        HASH(`file:${JSON.stringify(invalidDraft)}`),
+      trustedAutonomousManuscriptResult:
+        canonical.trustedAutonomousManuscriptResult,
+      refereeConvergenceDecision: canonical.refereeConvergenceDecision,
+      reviewerEvidenceAuthority: canonical.reviewerEvidenceAuthority,
+      researchReport: canonical.researchReport,
+      experimentIrExecutionAuthorityReceipt:
+        canonical.experimentIrExecutionAuthorityReceipt,
+      experimentReplayReceipt: canonical.experimentReplayReceipt,
+    });
+    return { binding, preparation: canonical.preparation };
+  }
   const objective = 'Produce a bounded machine-authored research argument.';
   const submission = productionSubmissionAuthoritiesFixture({
     paperId: PAPER_ID,
@@ -286,9 +343,7 @@ function fixture({
     reviewerPrincipalCount: 2,
     reviewerTrustDomainCount: 2,
     replayMode: 'external-trust-domain-v1',
-    // This fixture exercises the bounded release proof only. External submission
-    // is covered by the recursive ResearchClosureReceipt fixture below.
-    venueMode: 'profile-selected-v1',
+    venueMode: 'submission-enabled-v1',
   });
   const productionContentLineage = productionContentLineageFixture({
     paperId: PAPER_ID,
@@ -591,195 +646,7 @@ test('golden qualification is infrastructure-only and minimal golden cannot mint
   assert.equal(verifyAutonomousResearchReleaseBinding(null).valid, false);
 });
 
-function qualificationInspection({ authority, releaseBinding, signature }) {
-  const proofFields = [
-    'trustedAutonomousManuscriptRenderReceiptHash',
-    'evidenceBoundManuscriptIrHash',
-    'manuscriptIrFileHash',
-    'renderedManuscriptHash',
-    'agentExecutionReceiptHash',
-    'isolatedAgentMergeReceiptHash',
-    'agentAuthoredSourceDraftHash',
-    'agentAuthoredSourceDraftFileHash',
-    'agentWorkspacePostimageBindingHash',
-  ];
-  const receiptPayload = {
-    version: 1,
-    kind: 'FullResearchGoldenMicroCampaignQualificationReceipt',
-    status: 'full_research_golden_micro_campaign_qualified',
-    campaignId: authority.campaignId,
-    paperId: authority.paperId,
-    campaignReleaseBundleHash: authority.campaignReleaseBundleHash,
-    qualificationScope: releaseBinding.qualificationScope,
-    genericContentCanaryVerified: true,
-    ...Object.fromEntries(proofFields.map((field) => [field, releaseBinding[field]])),
-    venueProfileSelectionHash: releaseBinding.venueProfileSelectionHash,
-    submissionMetadataReceiptHash: releaseBinding.submissionMetadataReceiptHash,
-    signer: {
-      keyId: 'fixture-qualification-key',
-      keyVersion: 'v1',
-      subjectId: 'fixture-qualification-attestor',
-      organization: 'fixture-research-office',
-      role: 'research_execution_release_attestor',
-      algorithm: 'ed25519',
-    },
-    signature,
-    externalActionPerformed: true,
-  };
-  const qualificationReceipt = Object.freeze({
-    ...receiptPayload,
-    fullResearchQualificationReceiptHash: hashRecord(
-      'FullResearchGoldenMicroCampaignQualificationReceipt',
-      receiptPayload,
-    ),
-  });
-  const inspectionPayload = {
-    version: 1,
-    kind: 'FullResearchQualificationInspection',
-    status: 'full_research_qualification_verified',
-    ready: true,
-    receiptAccepted: true,
-    qualificationSignatureVerified: true,
-    qualificationTimeWindowVerified: true,
-    releasePointerVerified: true,
-    independentVerifierVerified: true,
-    fullDomainVerificationReady: true,
-    externalVerificationRequestHash: HASH('external-qualification-request'),
-    campaignId: authority.campaignId,
-    paperId: authority.paperId,
-    campaignReleaseBundleHash: authority.campaignReleaseBundleHash,
-    qualificationReceiptHash: qualificationReceipt.fullResearchQualificationReceiptHash,
-    qualificationScope: releaseBinding.qualificationScope,
-    genericContentCanaryVerified: true,
-    ...Object.fromEntries(proofFields.map((field) => [field, releaseBinding[field]])),
-    venueProfileSelectionHash: releaseBinding.venueProfileSelectionHash,
-    submissionMetadataReceiptHash: releaseBinding.submissionMetadataReceiptHash,
-    qualificationReceipt,
-  };
-  return Object.freeze({
-    ...inspectionPayload,
-    fullResearchQualificationInspectionHash:
-      hashRecord('FullResearchQualificationInspection', inspectionPayload),
-  });
-}
-
-function submissionFixture(signature, {
-  portalConfigurationHash = HASH('portal-configuration'),
-  complianceMutate = null,
-} = {}) {
-  const manuscript = genericManuscriptReleaseFixture({
-    paperId: 'paper-submission-trust',
-    campaignId: 'campaign-submission-trust',
-    campaignPlanHash: HASH('submission-plan'),
-    proposalHash: HASH('submission-proposal'),
-    policyAuthorizationHash: HASH('submission-policy'),
-    seedBindingHash: HASH('submission-seed'),
-    externalSubmission: true,
-  });
-  const releaseBinding = manuscript.releaseBinding;
-  const packagePayload = {
-    version: 1,
-    kind: 'ImmutableCampaignPackageOutput',
-    immutable: true,
-    sourceZipHash: HASH('source-zip'),
-    authoritativeCompiledPdfHash: HASH('compiled-pdf'),
-    independentRebuiltPdfHash: HASH('rebuilt-pdf'),
-    packageVerificationReceiptHash: HASH('package-verification'),
-    externalActionPerformed: false,
-  };
-  const packageOutput = Object.freeze({
-    ...packagePayload,
-    immutableCampaignPackageOutputHash:
-      hashRecord('ImmutableCampaignPackageOutput', packagePayload),
-  });
-  const releasePayload = {
-    version: 1,
-    kind: 'CampaignReleaseBundle',
-    status: 'campaign_release_bundle_prepared',
-    campaignId: releaseBinding.campaignId,
-    paperId: releaseBinding.paperId,
-    venueTarget: manuscript.venueProfileSelection.venueId,
-    campaignPlanHash: releaseBinding.campaignPlanHash,
-    sourceSnapshotHash: HASH('source-snapshot'),
-    sourceTreeManifestHash: HASH('source-tree'),
-    researchEvidenceCapsuleManifestHash: HASH('evidence-capsule'),
-    immutableCampaignPackageOutputHash:
-      packageOutput.immutableCampaignPackageOutputHash,
-    packageOutput,
-    autonomousResearchReleaseBindingHash:
-      releaseBinding.autonomousResearchReleaseBindingHash,
-    autonomousResearchReleaseBinding: releaseBinding,
-    createdAt: '2026-07-19T00:00:00.000Z',
-    externalActionPerformed: false,
-  };
-  const releaseBundle = Object.freeze({
-    ...releasePayload,
-    campaignReleaseBundleHash: hashRecord('CampaignReleaseBundle', releasePayload),
-  });
-  const authority = Object.freeze({
-    status: 'current_completed_release',
-    campaignId: releaseBinding.campaignId,
-    paperId: releaseBinding.paperId,
-    campaignReleaseBundleHash: releaseBundle.campaignReleaseBundleHash,
-    releaseBundle,
-  });
-  const compliancePayload = {
-    version: 1,
-    kind: 'AutonomousVenueComplianceReceipt',
-    status: 'autonomous_venue_compliance_verified',
-    paperId: authority.paperId,
-    campaignId: authority.campaignId,
-    venueId: manuscript.venueProfileSelection.venueId,
-    venueProfileHash: manuscript.venueProfileSelection.venueProfileHash,
-    venueProfileSelectionHash: releaseBinding.venueProfileSelectionHash,
-    submissionMetadataReceiptHash: releaseBinding.submissionMetadataReceiptHash,
-    campaignReleaseBundleHash: authority.campaignReleaseBundleHash,
-    immutableCampaignPackageOutputHash:
-      packageOutput.immutableCampaignPackageOutputHash,
-    qualificationScope: releaseBinding.qualificationScope,
-    trustedAutonomousManuscriptRenderReceiptHash:
-      releaseBinding.trustedAutonomousManuscriptRenderReceiptHash,
-    evidenceBoundManuscriptIrHash: releaseBinding.evidenceBoundManuscriptIrHash,
-    manuscriptIrFileHash: releaseBinding.manuscriptIrFileHash,
-    renderedSourceHash: releaseBinding.renderedManuscriptHash,
-    sourceArchiveHash: packageOutput.sourceZipHash,
-    agentExecutionReceiptHash: releaseBinding.agentExecutionReceiptHash,
-    isolatedAgentMergeReceiptHash: releaseBinding.isolatedAgentMergeReceiptHash,
-    agentWorkspacePostimageBindingHash:
-      releaseBinding.agentWorkspacePostimageBindingHash,
-    compiledPdfHash: packageOutput.authoritativeCompiledPdfHash,
-    independentRebuiltPdfHash: packageOutput.independentRebuiltPdfHash,
-    pageCount: 5,
-    documentClass: manuscript.venueProfileSelection.profile.documentClass,
-    metadataPresent: Object.freeze([
-      'abstract', 'authors', 'code_availability', 'conflict_of_interest',
-      'data_availability', 'funding', 'keywords', 'title',
-    ]),
-    blockers: Object.freeze([]),
-  };
-  const selectedCompliancePayload = complianceMutate
-    ? complianceMutate(structuredClone(compliancePayload))
-    : compliancePayload;
-  const venueComplianceReceipt = Object.freeze({
-    ...selectedCompliancePayload,
-    autonomousVenueComplianceReceiptHash:
-      hashRecord('AutonomousVenueComplianceReceipt', selectedCompliancePayload),
-  });
-  const inspection = qualificationInspection({ authority, releaseBinding, signature });
-  const request = buildAutonomousSubmissionRequest({
-    campaignId: authority.campaignId,
-    paperId: authority.paperId,
-    venueProfileSelection: manuscript.venueProfileSelection,
-    campaignReleaseAuthority: authority,
-    qualificationInspection: inspection,
-    venueComplianceReceipt,
-    portalConfigurationHash,
-    requestedAt: '2026-07-19T00:00:00.000Z',
-  });
-  return { authority, inspection, request, venueComplianceReceipt };
-}
-
-test('v5 submission requires live release, qualification, and venue trust verifiers', async () => {
+test('recursive production releases cannot downgrade to legacy v5 submission dispatch', async () => {
   const portalConfiguration = buildAutonomousSubmissionPortalConfiguration({
     portalId: 'trusted-submission-portal',
     endpoint: 'https://submission.example.test/submit',
@@ -788,55 +655,40 @@ test('v5 submission requires live release, qualification, and venue trust verifi
     portalTrustDomainIdentityHash: HASH('portal-trust-domain'),
     tokenEnvironmentVariable: 'SUBMISSION_PORTAL_TEST_TOKEN',
   });
-  const trusted = submissionFixture('trusted-detached-signature', {
+  const { binding } = fixture();
+  assert.equal(binding.version, 4);
+  assert.equal(binding.externalSubmissionEligible, true);
+  const legacyPayload = {
+    version: 5,
+    kind: 'AutonomousSubmissionRequest',
+    campaignId: binding.campaignId,
+    paperId: binding.paperId,
+    requestedAt: '2026-07-19T00:02:00.000Z',
     portalConfigurationHash: portalConfiguration.configurationHash,
+    autonomousResearchReleaseBinding: binding,
+  };
+  const legacy = Object.freeze({
+    ...legacyPayload,
+    requestHash: hashRecord('AutonomousSubmissionRequest', legacyPayload),
   });
+  assert.equal(verifyAutonomousSubmissionRequest(legacy), false);
+  assert.throws(() => createAutonomousSubmissionRequestVerifier({
+    verifyPortalConfigurationAuthority: () => true,
+    verifyCurrentCampaignReleaseAuthority: () => true,
+    verifyQualificationAuthority: () => true,
+    verifyVenueComplianceAuthority: () => true,
+    requireResearchClosure: true,
+  }), /autonomous_submission_request_trust_verifier_required/);
   const verifier = createAutonomousSubmissionRequestVerifier({
-    verifyPortalConfigurationAuthority: ({ portalConfigurationHash }) => (
-      portalConfigurationHash === portalConfiguration.configurationHash
-    ),
-    verifyCurrentCampaignReleaseAuthority: ({ campaignReleaseAuthority }) => (
-      campaignReleaseAuthority.campaignReleaseBundleHash
-        === trusted.authority.campaignReleaseBundleHash
-    ),
-    verifyQualificationAuthority: ({ qualificationReceipt }) => (
-      qualificationReceipt.signature === 'trusted-detached-signature'
-      && qualificationReceipt.fullResearchQualificationReceiptHash
-        === trusted.inspection.qualificationReceiptHash
-    ),
-    verifyVenueComplianceAuthority: ({ venueComplianceReceipt }) => (
-      JSON.stringify(venueComplianceReceipt)
-        === JSON.stringify(trusted.venueComplianceReceipt)
-    ),
+    verifyPortalConfigurationAuthority: () => true,
+    verifyCurrentCampaignReleaseAuthority: () => true,
+    verifyQualificationAuthority: () => true,
+    verifyVenueComplianceAuthority: () => true,
+    verifyQualificationSignature: () => true,
+    verifyIndependentQualificationEvidence: () => true,
+    requireResearchClosure: true,
   });
-  assert.equal(verifyAutonomousSubmissionRequest(trusted.request), false);
-  assert.equal(verifier.verify(trusted.request), true);
-
-  const attackerSelectedPortal = submissionFixture('trusted-detached-signature', {
-    portalConfigurationHash: HASH('attacker-selected-portal-configuration'),
-  });
-  assert.equal(verifier.verify(attackerSelectedPortal.request), false);
-
-  const forged = submissionFixture('arbitrary-nonempty-attacker-signature', {
-    portalConfigurationHash: portalConfiguration.configurationHash,
-  });
-  assert.equal(forged.inspection.qualificationSignatureVerified, true);
-  assert.equal(forged.inspection.ready, true);
-  assert.equal(verifier.verify(forged.request), false);
-
-  const forgedVenue = submissionFixture('trusted-detached-signature', {
-    portalConfigurationHash: portalConfiguration.configurationHash,
-    complianceMutate: (payload) => ({
-      ...payload,
-      compiledPdfHash: HASH('attacker-compiled-pdf'),
-      sourceArchiveHash: HASH('attacker-source-archive'),
-      independentRebuiltPdfHash: HASH('attacker-rebuilt-pdf'),
-      pageCount: 1,
-      documentClass: 'attackerclass',
-      metadataPresent: ['title'],
-    }),
-  });
-  assert.equal(verifier.verify(forgedVenue.request), false);
+  assert.equal(verifier.verify(legacy), false);
   let networkCalls = 0;
   const submissionDispatchAuthority = createAutonomousSubmissionDispatchAuthority();
   const portal = createHttpAutonomousSubmissionPortalAdapter({
@@ -846,20 +698,12 @@ test('v5 submission requires live release, qualification, and venue trust verifi
     dispatchCapability: submissionDispatchAuthority.portal,
     async fetchImpl() {
       networkCalls += 1;
-      throw new Error('forged_venue_request_must_not_reach_network');
+      throw new Error('legacy_request_must_not_reach_network');
     },
   });
   await assert.rejects(
-    () => portal.submit({ request: forgedVenue.request }),
+    () => portal.submit({ request: legacy }),
     /autonomous_submission_portal_request_invalid/,
   );
   assert.equal(networkCalls, 0);
-
-  const { requestHash: _requestHash, ...legacyPayload } = trusted.request;
-  const legacy = {
-    ...legacyPayload,
-    version: 4,
-  };
-  legacy.requestHash = hashRecord('AutonomousSubmissionRequest', legacy);
-  assert.equal(verifier.verify(legacy), false);
 });

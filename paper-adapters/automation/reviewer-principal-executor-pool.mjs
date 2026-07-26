@@ -17,6 +17,9 @@ import {
   reviewerSemanticReceiptSigningSubject,
   verifyReviewerExecutionAuthorityContext,
 } from '../../paper-domain/research/reviewer-semantic-evidence-contract.mjs';
+import {
+  createReviewerPrincipalRecoveryPorts,
+} from './reviewer-principal-recovery-ports.mjs';
 
 function inspectReviewerTrust({ pool, signers, trustInspection }) {
   if (!verifyResearchPrincipalPool(pool)) {
@@ -127,6 +130,22 @@ export function createReviewerPrincipalExecutorPool({
   const identityIndependenceReady = verificationAuthority.identityIndependenceReady;
   const strongReviewerPool = verificationAuthority.version === 2;
   const verifyPoolSignedReviewerReceipt = verificationAuthority.verifySignedReviewerReceipt;
+  const recovery = strongReviewerPool
+    ? createReviewerPrincipalRecoveryPorts({
+      pool,
+      verifiedExecutors,
+      verifiedSigners,
+      trustInspection,
+      verifySignedReviewerReceipt: verifyPoolSignedReviewerReceipt,
+    })
+    : Object.freeze({
+      ready: false,
+      reviewerRecoveryPort: null,
+      signerRecoveryPort: null,
+      blockers: Object.freeze([
+        'formal_domain_qualification_strong_reviewer_pool_required',
+      ]),
+    });
   return Object.freeze({
     version: verificationAuthority.version,
     kind: 'ReviewerPrincipalExecutorPool',
@@ -138,6 +157,10 @@ export function createReviewerPrincipalExecutorPool({
       verificationAuthority.reviewerSignatureVerificationPolicyHash,
     trustInspection,
     verifySignedReviewerReceipt: verifyPoolSignedReviewerReceipt,
+    crashRecoveryReady: recovery.ready,
+    crashRecoveryBlockers: recovery.blockers,
+    reviewerRecoveryPort: recovery.reviewerRecoveryPort,
+    signerRecoveryPort: recovery.signerRecoveryPort,
     async execute(request) {
       const executionSideEffectGate = request?.assertExternalSideEffectReady
         || assertExternalSideEffectReady;
@@ -211,22 +234,46 @@ export function createReviewerPrincipalExecutorPool({
             principalDescriptorHash: principal.principalDescriptorHash,
             researchPrincipalPoolHash: pool.researchPrincipalPoolHash,
           });
+        const signingOperationId = hashRecord(
+          'ReviewerPrincipalReceiptSigningOperation',
+          {
+            unsignedAgentExecutionReceiptHash,
+            principalDescriptorHash: principal.principalDescriptorHash,
+            researchPrincipalPoolHash: pool.researchPrincipalPoolHash,
+          },
+        );
+        const signingIdempotencyKey = hashRecord(
+          'ReviewerPrincipalReceiptSigningIdempotency',
+          {
+            signingOperationId,
+            signerConfigurationHash: signer.configurationHash,
+            subjectHash,
+          },
+        );
         if (executionSideEffectGate) {
           await executionSideEffectGate({
             action: `reviewer_receipt_sign:${principal.principalId}`,
             campaignId: request?.context?.campaignId || null,
             nodeId: request?.context?.nodeId || null,
+            operationId: signingOperationId,
+            idempotencyKey: signingIdempotencyKey,
           });
           executionSideEffectGate.assertCurrent?.({
             action: `reviewer_receipt_sign:${principal.principalId}`,
             campaignId: request?.context?.campaignId || null,
             nodeId: request?.context?.nodeId || null,
+            operationId: signingOperationId,
+            idempotencyKey: signingIdempotencyKey,
           });
         }
         await executionSideEffectGate?.markStarted?.({
           action: `reviewer_receipt_sign:${principal.principalId}`,
+          operationId: signingOperationId,
+          idempotencyKey: signingIdempotencyKey,
         });
         signedReviewerReceipt = await signer.sign({
+          operationId: signingOperationId,
+          idempotencyKey: signingIdempotencyKey,
           subjectHash,
           principal: Object.freeze({
             ...principal,

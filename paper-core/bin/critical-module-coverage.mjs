@@ -8,9 +8,20 @@ import {
   declaredTestSuite,
 } from '../src/test-suite-manifest.mjs';
 import { inspectTrackedProductionGraph } from '../verification/tracked-production-graph.mjs';
+import {
+  createBoundedVerificationCommandExecutor,
+  runVerificationCommandsUntilFailure,
+} from '../src/verification-command-batch.mjs';
+import {
+  buildCriticalCoverageTargetThresholds,
+  CRITICAL_COVERAGE_DEFAULT_THRESHOLD,
+  CRITICAL_COVERAGE_TARGET_OVERRIDES,
+  CRITICAL_COVERAGE_TRUST_BOUNDARY_THRESHOLD,
+} from '../verification/critical-module-coverage-policy.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const coverageRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-critical-coverage-'));
+const criticalCoverageChildTimeoutMs = 30 * 60 * 1_000;
 const explicitlyTargetedTests = [
   'paper-core/tests/paper-contracts-facade.test.mjs',
   'paper-core/tests/domain-purity-identity.test.mjs',
@@ -31,6 +42,7 @@ const explicitlyTargetedTests = [
   'paper-core/tests/autonomous-research-state-backup.test.mjs',
   'paper-core/tests/autonomous-research-state-safety-readiness.test.mjs',
   'paper-core/tests/autonomous-research-supervisor-closure.test.mjs',
+  'paper-core/tests/nested-runtime-platform-qualification.test.mjs',
   'paper-core/tests/autonomous-research-supervisor-pause-recovery.test.mjs',
   'paper-core/tests/autonomous-research-supervisor-resident.test.mjs',
   'paper-core/tests/autonomous-research-supervisor-progress.test.mjs',
@@ -44,6 +56,8 @@ const explicitlyTargetedTests = [
   'paper-core/tests/autonomous-research-generalization-plugin-capability.test.mjs',
   'paper-core/tests/autonomous-research-generalization-review-replay.test.mjs',
   'paper-core/tests/external-research-replay-strong-v3.test.mjs',
+  'paper-core/tests/recoverable-reviewer-executor.test.mjs',
+  'paper-core/tests/reviewer-principal-recovery-ports.test.mjs',
   'paper-core/tests/reviewer-cryptographic-trust-v2.test.mjs',
   'paper-core/tests/autonomous-research-author-identity-configuration.test.mjs',
   'paper-core/tests/autonomous-venue-signed-ranking-v2.test.mjs',
@@ -140,6 +154,7 @@ const explicitlyTargetedTests = [
   'paper-core/tests/submission-live-delivery.test.mjs',
   'paper-core/tests/typed-research-gap-plan.test.mjs',
   'paper-core/tests/research-vacuity-boundaries.test.mjs',
+  'paper-core/tests/critical-module-coverage-policy.test.mjs',
   'migration/tests/operational-proof-intake.test.mjs',
   'migration/tests/capabilities/research.claim-registry.test.mjs',
   'migration/tests/capabilities/research.evidence-quality-gate.test.mjs',
@@ -150,9 +165,12 @@ const explicitlyTargetedTests = [
 ];
 const tests = Object.freeze([...new Set([
   ...explicitlyTargetedTests,
-  ...declaredTestSuite('automation', 'full').tests,
-  ...declaredTestSuite('salvage-hardening', 'full').tests,
+  ...declaredTestSuite('automation', 'critical-coverage').tests,
+  ...declaredTestSuite('salvage-hardening', 'critical-coverage').tests,
 ])]);
+const isolatedCoverageTests = Object.freeze([
+  'paper-core/tests/production-research-closure-fixture.test.mjs',
+]);
 
 const explicitlyTargetedModules = [
   ...fs.readdirSync(path.join(workspaceRoot, 'paper-domain', 'contracts'))
@@ -319,10 +337,35 @@ const explicitlyTargetedModules = [
   'paper-adapters/automation/external-research-replay-receipt-verifier.mjs',
   'paper-adapters/automation/http-prior-art-retrieval-adapter.mjs',
   'paper-adapters/automation/http-reviewer-receipt-signer-adapter.mjs',
+  'paper-adapters/automation/http-recoverable-reviewer-executor-adapter.mjs',
+  'paper-adapters/automation/recoverable-reviewer-workspace-snapshot.mjs',
+  'paper-adapters/automation/opaque-runtime-credential-file.mjs',
   'paper-adapters/automation/local-autonomous-venue-compliance-inspector.mjs',
   'paper-adapters/automation/campaign-external-research-replay.mjs',
   'paper-adapters/automation/reviewer-principal-executor-pool.mjs',
   'paper-adapters/automation/reviewer-principal-pool-configuration-reader.mjs',
+  'paper-adapters/automation/reviewer-principal-executor-recovery-port.mjs',
+  'paper-adapters/automation/reviewer-principal-signer-recovery-port.mjs',
+  'paper-adapters/automation/reviewer-principal-recovery-support.mjs',
+  'paper-adapters/automation/reviewer-principal-recovery-ports.mjs',
+  'paper-adapters/automation/formal-domain-qualification-recovery-append-only-repository.mjs',
+  'paper-adapters/automation/formal-domain-qualification-recovery-filesystem-repository.mjs',
+  'paper-adapters/automation/formal-domain-qualification-recovery-generation-contract.mjs',
+  'paper-adapters/automation/formal-domain-qualification-recovery-generation-repository.mjs',
+  'paper-adapters/automation/formal-domain-qualification-recovery-journal-contract.mjs',
+  'paper-adapters/automation/formal-domain-qualification-recovery-journal-repository.mjs',
+  'paper-adapters/automation/formal-domain-qualification-recovery-journal.mjs',
+  'paper-adapters/automation/formal-domain-qualification-recovery-lock-repository.mjs',
+  'paper-adapters/automation/strict-full-auto-acceptance-command-runner.mjs',
+  'paper-adapters/automation/strict-full-auto-acceptance-control-file-repository.mjs',
+  'paper-adapters/automation/strict-full-auto-acceptance-control-paths.mjs',
+  'paper-adapters/automation/strict-full-auto-acceptance-control-store-repository.mjs',
+  'paper-adapters/automation/strict-full-auto-acceptance-plan-control-store.mjs',
+  'paper-adapters/automation/strict-full-auto-acceptance-repository.mjs',
+  'paper-adapters/automation/strict-full-auto-acceptance-root-binding.mjs',
+  'paper-application/automation/strict-full-auto-acceptance-live-verification.mjs',
+  'paper-application/automation/strict-full-auto-acceptance-orchestrator.mjs',
+  'paper-application/automation/strict-full-auto-acceptance-state.mjs',
   'paper-application/automation/external-qualification-recovery.mjs',
   'paper-application/automation/golden-campaign-qualification-controller.mjs',
   'paper-composition/automation/autonomous-research-qualification-composition.mjs',
@@ -333,6 +376,8 @@ const explicitlyTargetedModules = [
   'paper-adapters/build-package/offline-research-execution-release-attestation-verifier.mjs',
   'paper-domain/automation/campaign-release-execution-attestation-contract.mjs',
   'paper-domain/automation/autonomous-research-release-binding-contract.mjs',
+  'paper-domain/automation/strict-full-auto-acceptance-plan.mjs',
+  'paper-domain/automation/strict-full-auto-acceptance-policy.mjs',
   'paper-domain/automation/autonomous-research-launch-mode-policy.mjs',
   'paper-domain/automation/autonomous-research-proposal-contract.mjs',
   'paper-domain/automation/autonomous-research-readiness-policy.mjs',
@@ -355,6 +400,8 @@ const explicitlyTargetedModules = [
   'paper-domain/research/research-principal-pool-contract.mjs',
   'paper-domain/research/signed-reviewer-receipt-contract.mjs',
   'paper-domain/research/external-research-replay-contract.mjs',
+  'paper-domain/research/external-operation-recovery-outcome-contract.mjs',
+  'paper-domain/research/native-formal-certificate-intake-v4.mjs',
   'paper-domain/research/prior-art-evidence-contract.mjs',
   'paper-domain/research/theorem-specification.mjs',
   'paper-domain/research/independent-typed-numeric-oracle-recomputation.mjs',
@@ -364,12 +411,15 @@ const explicitlyTargetedModules = [
   'paper-domain/automation/versioned-experiment-ir.mjs',
   'paper-domain/automation/autonomous-formal-support-registry.mjs',
   'paper-adapters/research-verify/dynamic-formal-project-closure-readiness.mjs',
+  'paper-adapters/research-verify/dynamic-formal-sandbox-probe-verifier.mjs',
+  'paper-adapters/research-verify/trusted-formal-producer-contract.mjs',
   'paper-ports/external-research-replay-port.mjs',
   'paper-ports/prior-art-retrieval-port.mjs',
   'paper-ports/research-agenda-producer-port.mjs',
   'paper-ports/research-content-producer-port.mjs',
   'paper-ports/reviewer-receipt-signer-port.mjs',
   'paper-composition/automation/reviewer-principal-pool-composition.mjs',
+  'paper-composition/automation/formal-domain-qualification-external-evidence-composition.mjs',
   'paper-adapters/runtime/scoped-file-materialization-recovery-record.mjs',
   'paper-adapters/runtime/scoped-file-materialization-repository.mjs',
   'paper-adapters/automation/multi-language-empirical-executor.mjs',
@@ -399,7 +449,9 @@ const explicitlyTargetedModules = [
   'paper-adapters/automation/workspace-registry.mjs',
   'paper-adapters/automation/workspace-snapshot-exporter.mjs',
   'paper-adapters/automation/workspace-retention-evidence.mjs',
+  'paper-adapters/runtime/docker-worker-container-recovery.mjs',
   'paper-adapters/runtime/os-sandboxed-worker-runner.mjs',
+  'paper-adapters/runtime/runtime-resource-mounts.mjs',
   'paper-adapters/artifacts/filesystem-report-receipt-ledger.mjs',
   'paper-adapters/artifacts/filesystem-report-receipt-repository.mjs',
   'paper-adapters/persistence/sqlite-workflow-state-store.mjs',
@@ -468,6 +520,12 @@ const explicitlyTargetedModules = [
   'paper-adapters/referee-revise/planning-service.mjs',
   'paper-adapters/submission/live-authorization.mjs',
   'paper-application/reporting/metric-descriptor-collector.mjs',
+  'paper-domain/automation/nested-runtime-platform-qualification-contract.mjs',
+  'paper-domain/automation/nested-runtime-authority-independence-contract.mjs',
+  'paper-adapters/automation/nested-runtime-platform-qualification-verifier.mjs',
+  'paper-composition/automation/nested-runtime-platform-qualification-composition.mjs',
+  'paper-core/bin/nested-runtime-platform-qualification.mjs',
+  'paper-core/verification/critical-module-coverage-policy.mjs',
 ];
 
 function isOnlineStateMutationProductionTarget(relative) {
@@ -488,6 +546,11 @@ const targets = Object.freeze([...new Set([
 ])]);
 const TRUST_TARGETS = new Set([
   'paper-domain/automation/automation-readiness-side-effect-inspection.mjs',
+  'paper-domain/automation/nested-runtime-platform-qualification-contract.mjs',
+  'paper-domain/automation/nested-runtime-authority-independence-contract.mjs',
+  'paper-adapters/automation/nested-runtime-platform-qualification-verifier.mjs',
+  'paper-composition/automation/nested-runtime-platform-qualification-composition.mjs',
+  'paper-core/bin/nested-runtime-platform-qualification.mjs',
   'paper-domain/automation/autonomous-research-supervisor-external-action-journal.mjs',
   'paper-domain/automation/autonomous-research-provider-canary-side-effect-inspection.mjs',
   'paper-adapters/automation/autonomous-research-supervisor-state-repository.mjs',
@@ -577,10 +640,41 @@ const TRUST_TARGETS = new Set([
   'paper-adapters/automation/external-research-replay-receipt-verifier.mjs',
   'paper-adapters/automation/http-prior-art-retrieval-adapter.mjs',
   'paper-adapters/automation/http-reviewer-receipt-signer-adapter.mjs',
+  'paper-adapters/automation/http-recoverable-reviewer-executor-adapter.mjs',
+  'paper-adapters/automation/recoverable-reviewer-workspace-snapshot.mjs',
+  'paper-adapters/automation/opaque-runtime-credential-file.mjs',
+  'paper-adapters/automation/reviewer-principal-executor-pool.mjs',
+  'paper-adapters/automation/reviewer-principal-pool-configuration-reader.mjs',
+  'paper-adapters/automation/reviewer-principal-executor-recovery-port.mjs',
+  'paper-adapters/automation/reviewer-principal-signer-recovery-port.mjs',
+  'paper-adapters/automation/reviewer-principal-recovery-support.mjs',
+  'paper-adapters/automation/reviewer-principal-recovery-ports.mjs',
+  'paper-adapters/automation/formal-domain-qualification-recovery-append-only-repository.mjs',
+  'paper-adapters/automation/formal-domain-qualification-recovery-filesystem-repository.mjs',
+  'paper-adapters/automation/formal-domain-qualification-recovery-generation-contract.mjs',
+  'paper-adapters/automation/formal-domain-qualification-recovery-generation-repository.mjs',
+  'paper-adapters/automation/formal-domain-qualification-recovery-journal-contract.mjs',
+  'paper-adapters/automation/formal-domain-qualification-recovery-journal-repository.mjs',
+  'paper-adapters/automation/formal-domain-qualification-recovery-journal.mjs',
+  'paper-adapters/automation/formal-domain-qualification-recovery-lock-repository.mjs',
+  'paper-adapters/automation/strict-full-auto-acceptance-command-runner.mjs',
+  'paper-adapters/automation/strict-full-auto-acceptance-control-file-repository.mjs',
+  'paper-adapters/automation/strict-full-auto-acceptance-control-paths.mjs',
+  'paper-adapters/automation/strict-full-auto-acceptance-control-store-repository.mjs',
+  'paper-adapters/automation/strict-full-auto-acceptance-plan-control-store.mjs',
+  'paper-adapters/automation/strict-full-auto-acceptance-repository.mjs',
+  'paper-adapters/automation/strict-full-auto-acceptance-root-binding.mjs',
+  'paper-application/automation/strict-full-auto-acceptance-live-verification.mjs',
+  'paper-application/automation/strict-full-auto-acceptance-orchestrator.mjs',
+  'paper-application/automation/strict-full-auto-acceptance-state.mjs',
   'paper-application/automation/external-qualification-recovery.mjs',
   'paper-application/automation/golden-campaign-qualification-controller.mjs',
   'paper-composition/automation/autonomous-research-qualification-composition.mjs',
+  'paper-composition/automation/formal-domain-qualification-external-evidence-composition.mjs',
+  'paper-composition/automation/reviewer-principal-pool-composition.mjs',
   'paper-domain/automation/autonomous-research-release-binding-contract.mjs',
+  'paper-domain/automation/strict-full-auto-acceptance-plan.mjs',
+  'paper-domain/automation/strict-full-auto-acceptance-policy.mjs',
   'paper-domain/automation/full-research-qualification-contract.mjs',
   'paper-domain/automation/full-research-release-qualification-inspection.mjs',
   'paper-domain/automation/trusted-autonomous-manuscript-render-contract.mjs',
@@ -595,6 +689,9 @@ const TRUST_TARGETS = new Set([
   'paper-domain/automation/autonomous-venue-compliance-contract.mjs',
   'paper-domain/automation/autonomous-venue-profile-contract.mjs',
   'paper-domain/research/external-research-replay-contract.mjs',
+  'paper-domain/research/external-operation-recovery-outcome-contract.mjs',
+  'paper-domain/research/formal-certificate-intake.mjs',
+  'paper-domain/research/native-formal-certificate-intake-v4.mjs',
   'paper-domain/research/prior-art-evidence-contract.mjs',
   'paper-domain/research/signed-reviewer-receipt-contract.mjs',
   'paper-domain/research/independent-typed-numeric-oracle-recomputation.mjs',
@@ -608,16 +705,20 @@ const TRUST_TARGETS = new Set([
   'paper-domain/research/proposal-claim-to-theorem-binding.mjs',
   'paper-domain/research/theorem-specification.mjs',
   'paper-adapters/research-verify/formal-claim-universe-reader.mjs',
+  'paper-adapters/research-verify/trusted-formal-producer-contract.mjs',
   'paper-adapters/research-verify/lake-formal-verifier.mjs',
+  'paper-adapters/research-verify/dynamic-formal-sandbox-probe-verifier.mjs',
   'paper-adapters/research-verify/formal-review-envelope-verifier.mjs',
+  'paper-ports/external-research-replay-port.mjs',
+  'paper-ports/reviewer-receipt-signer-port.mjs',
+  'paper-adapters/runtime/docker-worker-container-recovery.mjs',
+  'paper-adapters/runtime/os-sandboxed-worker-runner.mjs',
+  'paper-adapters/runtime/runtime-resource-mounts.mjs',
   ...discoveredOnlineStateMutationTargets,
 ]);
-const TARGET_THRESHOLDS = new Map([
-  ['paper-adapters/automation/workspace-attempt-repository.mjs', { lines: 80, functions: 85, maxUncoveredBranchBlocks: 110 }],
-  ['paper-adapters/automation/isolated-agent-executor.mjs', { lines: 75, functions: 80, maxUncoveredBranchBlocks: 60 }],
-  ['paper-application/automation/campaign-node-executor.mjs', { lines: 55, functions: 50, maxUncoveredBranchBlocks: 110 }],
-  ['paper-adapters/runtime/scoped-file-materialization-repository.mjs', { lines: 80, functions: 90, maxUncoveredBranchBlocks: 70 }],
-]);
+const TARGET_THRESHOLDS = buildCriticalCoverageTargetThresholds({
+  trustTargets: TRUST_TARGETS,
+});
 
 function coverageEntries() {
   return fs.readdirSync(coverageRoot)
@@ -706,17 +807,25 @@ try {
   );
   const commands = [
     ...testBatches.map((batch) => ['--test', '--test-concurrency=1', ...batch]),
+    ...isolatedCoverageTests.map(
+      (candidate) => ['--test', '--test-concurrency=1', candidate],
+    ),
     ['paper-core/verification/selftest.mjs'],
     ['paper-core/verification/authority-pipeline-selftest.mjs'],
     ['paper-core/verification/remediation-selftest.mjs'],
     ['migration/tests/p1-referee-revise-retirements.mjs'],
   ];
-  const failed = commands.map((args) => spawnSync(process.execPath, args, {
-    cwd: workspaceRoot,
-    env: { ...process.env, NODE_V8_COVERAGE: coverageRoot },
-    encoding: 'utf8',
-    maxBuffer: 32 * 1024 * 1024,
-  })).find((run) => run.status !== 0);
+  const failed = runVerificationCommandsUntilFailure(
+    commands,
+    createBoundedVerificationCommandExecutor({
+      spawnSyncImpl: spawnSync,
+      executable: process.execPath,
+      cwd: workspaceRoot,
+      env: { ...process.env, NODE_V8_COVERAGE: coverageRoot },
+      maxBuffer: 32 * 1024 * 1024,
+      timeoutMs: criticalCoverageChildTimeoutMs,
+    }),
+  );
   if (failed) {
     process.stdout.write(failed.stdout || '');
     process.stderr.write(failed.stderr || '');
@@ -726,16 +835,19 @@ try {
     const report = targets.map((target) => moduleCoverage(target, entries));
     const failures = report.filter((row) => {
       const threshold = TARGET_THRESHOLDS.get(row.relative)
-        || (TRUST_TARGETS.has(row.relative) ? { lines: 55, functions: 40, maxUncoveredBranchBlocks: 48 } : { lines: 40, functions: 25, maxUncoveredBranchBlocks: 180 });
+        || (TRUST_TARGETS.has(row.relative)
+          ? CRITICAL_COVERAGE_TRUST_BOUNDARY_THRESHOLD
+          : CRITICAL_COVERAGE_DEFAULT_THRESHOLD);
       return row.missing || row.lines < threshold.lines || row.functions < threshold.functions || row.uncoveredBranchBlocks > threshold.maxUncoveredBranchBlocks;
     });
     process.stdout.write(`${JSON.stringify({
       ok: failures.length === 0,
       kind: 'CriticalModuleCoverageReport',
       thresholds: {
-        default: { lines: 40, functions: 25, maxUncoveredBranchBlocks: 180 },
-        trustBoundary: { lines: 55, functions: 40, maxUncoveredBranchBlocks: 48 },
+        default: CRITICAL_COVERAGE_DEFAULT_THRESHOLD,
+        trustBoundary: CRITICAL_COVERAGE_TRUST_BOUNDARY_THRESHOLD,
         targetOverrides: Object.fromEntries(TARGET_THRESHOLDS),
+        auditedTargetExceptions: CRITICAL_COVERAGE_TARGET_OVERRIDES,
       },
       modules: report,
       failures: failures.map((row) => row.relative),

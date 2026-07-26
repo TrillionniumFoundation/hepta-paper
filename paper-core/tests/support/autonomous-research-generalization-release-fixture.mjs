@@ -68,6 +68,9 @@ import {
   nativeFormalClosureBindingFromExecution,
 } from '../../../paper-domain/research/formal-certificate-intake.mjs';
 import {
+  buildCampaignResearchSourceSnapshot,
+} from '../../../paper-domain/automation/campaign-research-contract.mjs';
+import {
   productionExperimentClosureFixture,
 } from './production-experiment-closure-fixture.mjs';
 import {
@@ -81,6 +84,10 @@ import {
   productionSubmissionAuthoritiesFixture,
 } from './autonomous-research-generalization-core-fixture.mjs';
 import { hashBytes, hashRecord } from '../../../workflow-kernel/record-hash.mjs';
+import {
+  workspaceExecutionManifestHash,
+  workspaceExecutionMerkleHash,
+} from '../../../workflow-kernel/runtime/workspace-execution-identity.mjs';
 
 function formalArtifactWriteReceipt({
   paperId,
@@ -237,8 +244,46 @@ function productionResearchReportFixture({
     proofObligations: formalClaim.proofObligations,
   });
   const formalSourceHash = digest(`${paperId}:formal-source`);
+  const sourceFileRecords = Object.freeze([Object.freeze({
+    path: 'Formal.lean',
+    mode: 0o644,
+    hash: formalSourceHash,
+    bytes: 64,
+  })]);
+  const verifiedSourceMerkleHash =
+    workspaceExecutionMerkleHash(sourceFileRecords);
+  const verifiedSourceWorkspaceManifestHash =
+    workspaceExecutionManifestHash(sourceFileRecords, []);
+  const researchNodeId = `${campaignId}:research-verify`;
+  const researchAttemptId = `${campaignId}:research-attempt-1`;
+  const campaignResearchSourceSnapshot =
+    buildCampaignResearchSourceSnapshot({
+      campaignId,
+      paperId,
+      researchNodeId,
+      researchAttemptId,
+      researchLeaseGeneration: 1,
+      verifiedSourceMerkleHash,
+      verifiedSourceWorkspaceManifestHash,
+      fileRecords: sourceFileRecords,
+      directoryRecords: [],
+    });
+  const formalNodeId = `${campaignId}:formal-verify`;
+  const formalAttemptId = `${campaignId}:formal-attempt-1`;
+  const campaignFormalSourceSnapshot =
+    buildCampaignResearchSourceSnapshot({
+      campaignId,
+      paperId,
+      researchNodeId: formalNodeId,
+      researchAttemptId: formalAttemptId,
+      researchLeaseGeneration: 1,
+      verifiedSourceMerkleHash,
+      verifiedSourceWorkspaceManifestHash,
+      fileRecords: sourceFileRecords,
+      directoryRecords: [],
+    });
   const researchSourceSnapshotHash =
-    digest(`${campaignId}:research-source-snapshot`);
+    campaignResearchSourceSnapshot.campaignResearchSourceSnapshotHash;
   const formalToolchainHash = digest(`${paperId}:formal-toolchain`);
   const formalCertificateHash = digest(`${paperId}:formal-certificate`);
   const formalAdapterReceiptHash = digest(`${paperId}:formal-adapter`);
@@ -398,8 +443,21 @@ function productionResearchReportFixture({
     claimId: theoremClaimId,
     theoremSpecificationClaimHash:
       theoremClaim.theoremSpecificationClaimHash,
+    certificateBundleHash:
+      formalReplayReceipt.originalCertificateBundleHash,
     formalCertificateReplayReceiptHash:
       formalReplayReceipt.formalCertificateReplayReceiptHash,
+    projectManifestHash: formalReplayReceipt.projectManifestHash,
+    formalProjectClosureHash: formalReplayReceipt.formalProjectClosureHash,
+    toolchainHash: formalReplayReceipt.toolchainHash,
+    systemAuditHash: formalReplayReceipt.systemAuditHash,
+    leanReadableProofPrintAuditSetHash:
+      formalReplayReceipt.leanReadableProofPrintAuditSetHash,
+    projectFiles: Object.freeze([Object.freeze({
+      projectPath: 'Formal.lean',
+      hash: formalSourceHash,
+      bytes: 64,
+    })]),
     replayReceipt: formalReplayReceipt,
     claimBindingReport: formalClaimBindingReport,
   });
@@ -426,6 +484,7 @@ function productionResearchReportFixture({
       role: 'formal_project_source',
       path: 'Formal.lean',
       hash: formalSourceHash,
+      expectedHash: formalSourceHash,
       sizeBytes: 64,
       scopedFileReadReceiptHash: digest(`${paperId}:formal-source-read`),
       verified: true,
@@ -503,52 +562,91 @@ function productionResearchReportFixture({
     nativeResearchWorkerExecution,
     { paperId, campaignId, researchSourceSnapshotHash },
   );
+  const authoritativeFormalReceiptPayload = {
+    version: 1,
+    kind: 'CampaignFormalVerificationReceipt',
+    status: 'campaign_formal_verification_completed',
+    paperId,
+    campaignId,
+    formalNodeId,
+    formalAttemptId,
+    formalLeaseGeneration: 1,
+    verifiedSourceMerkleHash,
+    verifiedSourceWorkspaceManifestHash,
+    campaignFormalSourceSnapshotHash:
+      campaignFormalSourceSnapshot.campaignResearchSourceSnapshotHash,
+    campaignFormalSourceSnapshot,
+    nativeResearchWorkerExecutionReportHash:
+      nativeResearchWorkerExecution.nativeResearchWorkerExecutionReportHash,
+    nativeResearchWorkerExecution,
+    proposalClaimToTheoremBinding,
+    legacyFormalExecutionReceipt: formalExecutionReceipt,
+    blockers: Object.freeze([]),
+    externalActionPerformed: false,
+  };
+  const authoritativeFormalReceipt = Object.freeze({
+    ...authoritativeFormalReceiptPayload,
+    campaignFormalVerificationReceiptHash: hashRecord(
+      'CampaignFormalVerificationReceipt',
+      authoritativeFormalReceiptPayload,
+    ),
+  });
+  const authoritativeFormalNode = Object.freeze({
+    nodeId: formalNodeId,
+    kind: 'formal-verify',
+    status: 'completed',
+    attemptId: formalAttemptId,
+    leaseGeneration: 1,
+    resultSha256: hashRecord(
+      'PaperCampaignNodeResult',
+      authoritativeFormalReceipt,
+    ),
+    result: authoritativeFormalReceipt,
+  });
   const formalCertificateIntakePayload = {
-    version: 3,
+    version: 4,
     kind: 'GenericFormalCertificateIntake',
     status: 'formal_certificate_intake_verified',
     paperId,
     campaignId,
     researchSourceSnapshotHash,
     verifierKind: 'lean',
-    command: 'lean',
-    extension: '.lean',
-    certificateHash: formalCertificateHash,
-    certificate: Object.freeze({
-      kind: 'LeanFormalCertificate',
-      certificateHash: formalCertificateHash,
-      toolchainHash: formalToolchainHash,
-      artifactWriteReceipt: certificateArtifactWriteReceipt,
-      ledgerReceiptId: certificateArtifactWriteReceipt.ledgerReceiptId,
+    campaignFormalVerificationReceiptHash:
+      authoritativeFormalReceipt.campaignFormalVerificationReceiptHash,
+    authoritativeFormalNode,
+    authoritativeFormalNodeResultHash:
+      authoritativeFormalNode.resultSha256,
+    authoritativeFormalReceipt,
+    authoritativeFormalReceiptVerified: true,
+    nativeResearchWorkerExecutionReportHash:
+      nativeResearchWorkerExecution.nativeResearchWorkerExecutionReportHash,
+    nativeResearchWorkerExecutionReceiptHash:
+      formalWorkerReceipt.nativeResearchWorkerExecutionReceiptHash,
+    nativeFormalCertificateBundleHash:
+      formalWorkerResult.certificateBundleHash,
+    nativeFormalCertificateReplayReceiptHash:
+      formalWorkerResult.formalCertificateReplayReceiptHash,
+    nativeFormalProjectManifestHash:
+      formalWorkerResult.projectManifestHash,
+    nativeFormalProjectClosureHash:
+      formalWorkerResult.formalProjectClosureHash,
+    nativeFormalToolchainHash: formalWorkerResult.toolchainHash,
+    authoritativeSource: Object.freeze({
+      path: 'Formal.lean',
+      hash: formalSourceHash,
+      bytes: 64,
+      sourceReadReceiptHash:
+        formalSourceRecords[0].sourceReadReceiptHash,
     }),
-    toolchainHash: formalToolchainHash,
-    executionReceipt: formalExecutionReceipt,
-    executionReceiptHash: formalExecutionReceipt.receiptHash,
-    formalVerifierRegistryHash: digest(`${paperId}:formal-registry`),
-    adapterReceiptHash: formalAdapterReceiptHash,
-    certificateWriteReceiptHash:
-      certificateArtifactWriteReceipt.writeReceiptHash,
-    sourceManifest: formalSourceManifest,
-    sourceManifestHash: formalSourceManifest.formalSourceManifestHash,
     claimBindings: formalClaimBindings,
     claimBindingsManifest: formalClaimBindingsManifest,
     claimBindingsHash:
       formalClaimBindingsManifest.formalClaimBindingsHash,
-    executionContract: formalExecutionContract,
-    executionContractHash:
-      formalExecutionContract.formalExecutionContractHash,
-    isolationPolicyHash: formalExecutionContract.isolationPolicyHash,
-    isolationReceiptHash: formalExecutionReceipt.isolationReceiptHash,
-    executionLedgerReceiptId: formalExecutionReceipt.ledgerReceiptId,
-    certificateLedgerReceiptId:
-      certificateArtifactWriteReceipt.ledgerReceiptId,
-    trustedLedgerReceiptsVerified: true,
-    trustedNativeFormalReceiptVerified: true,
-    artifactSourcesVerified: true,
     nativeFormalClosureBinding,
     nativeFormalClosureBindingHash:
       nativeFormalClosureBinding.nativeFormalClosureBindingHash,
-    sourceRecords: formalSourceRecords,
+    trustedNativeFormalReceiptVerified: true,
+    sourceSnapshotVerified: true,
     blockers: Object.freeze([]),
     externalActionPerformed: false,
   };
@@ -557,6 +655,35 @@ function productionResearchReportFixture({
     genericFormalCertificateIntakeHash: hashRecord(
       'GenericFormalCertificateIntake',
       formalCertificateIntakePayload,
+    ),
+  });
+  const trustedFormalEvidence = Object.freeze([Object.freeze({
+    status: 'trusted_formal_evidence_projected',
+    nativeProjectionRequest: Object.freeze({
+      authoritativeFormalNode,
+    }),
+  })]);
+  const evidenceQualityGatePayload = {
+    version: 7,
+    kind: 'EvidenceQualityGate',
+    status: 'evidence_quality_ready',
+    workerLedgerVerifications: Object.freeze([Object.freeze({
+      status: 'trusted_ledger_receipt_verified',
+      receiptKind: 'NativeResearchWorkerExecutionReceipt',
+      receiptHash:
+        formalWorkerReceipt.nativeResearchWorkerExecutionReceiptHash,
+      stream: 'jobs',
+      writerKind: 'native-research-worker',
+      writerTrusted: true,
+      issuerPolicyVerified: true,
+    })]),
+    blockers: Object.freeze([]),
+  };
+  const evidenceQualityGate = Object.freeze({
+    ...evidenceQualityGatePayload,
+    evidenceQualityGateHash: hashRecord(
+      'EvidenceQualityGate',
+      evidenceQualityGatePayload,
     ),
   });
   const reportPayload = {
@@ -572,11 +699,19 @@ function productionResearchReportFixture({
       proposalClaimToTheoremBinding.proposalClaimToTheoremBindingHash,
     experimentRegistryHash: experimentRegistry.experimentRegistryHash,
     campaignResearchSourceSnapshotHash: researchSourceSnapshotHash,
+    researchNodeId,
+    researchAttemptId,
+    researchLeaseGeneration: 1,
+    verifiedSourceMerkleHash,
+    verifiedSourceWorkspaceManifestHash,
+    campaignResearchSourceSnapshot,
     capabilities: Object.freeze({
       proposalClaimToTheoremBinding,
       formalCertificateIntakes: Object.freeze([formalCertificateIntake]),
       formalReplayReceipts: Object.freeze([formalReplayReceipt]),
       experimentRegistry,
+      trustedFormalEvidence,
+      evidenceQualityGate,
     }),
     nativeResearchWorkerExecution,
   };

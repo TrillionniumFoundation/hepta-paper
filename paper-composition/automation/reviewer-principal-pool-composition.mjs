@@ -2,6 +2,9 @@ import path from 'node:path';
 import { createCodexAgentExecutor } from '../../paper-adapters/automation/codex-agent-executor.mjs';
 import { preflightCodexFormalReviewer } from '../../paper-adapters/automation/codex-formal-reviewer-preflight.mjs';
 import { createHttpReviewerReceiptSignerAdapter } from '../../paper-adapters/automation/http-reviewer-receipt-signer-adapter.mjs';
+import {
+  createHttpRecoverableReviewerExecutorAdapter,
+} from '../../paper-adapters/automation/http-recoverable-reviewer-executor-adapter.mjs';
 import { createIsolatedAgentExecutor } from '../../paper-adapters/automation/isolated-agent-executor.mjs';
 import {
   createReviewerPrincipalExecutorPool,
@@ -39,7 +42,11 @@ function buildReviewerPrincipalPoolTrustInspection({
 }) {
   const blockers = [];
   const cryptographicAuthorityReady = configuration.version === 2
-    && entries.every((entry) => entry.signer.cryptographicAuthorityReady === true);
+    && entries.every((entry) => (
+      entry.signer.cryptographicAuthorityReady === true
+      && entry.executor?.crashRecoveryReady === true
+      && entry.executor?.recoveryOutcomeCryptographicAuthorityReady === true
+    ));
   if (!cryptographicAuthorityReady) {
     blockers.push('reviewer_principal_pool_cryptographic_authority_not_ready');
   }
@@ -105,6 +112,12 @@ function buildReviewerPrincipalPoolTrustInspection({
       signerTrustSetHash: entry.signer.trustSetHash,
       signerSignatureVerificationPolicyHash:
         entry.signer.signatureVerificationPolicyHash,
+      reviewerExecutorConfigurationHash:
+        entry.executor?.configurationHash || null,
+      reviewerExecutorRecoveryConfigurationIdentityHash:
+        entry.executor?.recoveryConfigurationIdentityHash || null,
+      reviewerExecutorRecoveryOutcomeVerificationPolicyHash:
+        entry.executor?.recoveryOutcomeVerificationPolicyHash || null,
       identityAttestationSubjectHash:
         subject?.externalPrincipalIdentityAttestationSubjectHash || null,
       identityReferenceSubjects: Object.freeze(references),
@@ -116,6 +129,8 @@ function buildReviewerPrincipalPoolTrustInspection({
     ? hashRecord('ReviewerPrincipalPoolTrustSet', {
       configurationHash: configuration.configurationHash,
       signerTrustSetHashes: entries.map((entry) => entry.signer.trustSetHash).sort(),
+      reviewerExecutorRecoveryConfigurationIdentityHashes: entries
+        .map((entry) => entry.executor.recoveryConfigurationIdentityHash).sort(),
       authorIdentitySubjectHash:
         authorIdentitySubject?.externalPrincipalIdentityAttestationSubjectHash || null,
       authorIdentityTrustStoreHash:
@@ -126,6 +141,8 @@ function buildReviewerPrincipalPoolTrustInspection({
       policy: 'all-reviewers-pinned-canonical-json-ed25519-v2',
       signerSignatureVerificationPolicyHashes: entries
         .map((entry) => entry.signer.signatureVerificationPolicyHash).sort(),
+      reviewerExecutorRecoveryOutcomeVerificationPolicyHashes: entries
+        .map((entry) => entry.executor.recoveryOutcomeVerificationPolicyHash).sort(),
       identityPlatformAttestationRequired: true,
       signedAuthorIdentityReferenceRequired: true,
       pairwiseDistinctFields: Object.freeze([
@@ -209,7 +226,21 @@ export function preflightReviewerPrincipalPool({
       fetchImpl,
       clock,
     });
-    return Object.freeze({ principalConfiguration, preflight, descriptor, signer });
+    const executor = configuration.version === 2
+      ? createHttpRecoverableReviewerExecutorAdapter({
+        configuration: principalConfiguration.recoverableExecutorConfiguration,
+        principal: descriptor,
+        environment,
+        fetchImpl,
+        clock,
+      }) : null;
+    return Object.freeze({
+      principalConfiguration,
+      preflight,
+      descriptor,
+      signer,
+      executor,
+    });
   });
   const pool = buildResearchPrincipalPool({
     poolId: configuration.poolId,
@@ -267,25 +298,39 @@ export function composeReviewerPrincipalExecutorPool({
   const executors = new Map();
   const signers = new Map();
   for (const entry of inspection.entries) {
-    const delegate = createCodexAgentExecutor({
-      codexBinary: entry.preflight.codexBinary || entry.principalConfiguration.codexBinary,
-      codexHome: entry.preflight.codexHome,
-      model: entry.principalConfiguration.model,
-      principalId: entry.descriptor.principalId,
-      formalReviewerCapabilityReceipt: entry.preflight.capabilityReceipt,
-    });
-    executors.set(entry.descriptor.principalId, createIsolatedAgentExecutor({
-      delegate,
-      isolationRoot: path.join(
-        runtimeRoot,
-        'automation-reviewer-workspaces',
-        entry.descriptor.principalDescriptorHash.slice(7, 23),
-      ),
-      keepWorkspaces: false,
-      keepFailedWorkspaces: true,
-      workspaceRegistry,
-      assertExternalSideEffectReady,
-    }));
+    if (inspection.configuration.version === 2) {
+      executors.set(
+        entry.descriptor.principalId,
+        createHttpRecoverableReviewerExecutorAdapter({
+          configuration: entry.principalConfiguration.recoverableExecutorConfiguration,
+          principal: entry.descriptor,
+          environment,
+          fetchImpl,
+          clock,
+          assertExternalSideEffectReady,
+        }),
+      );
+    } else {
+      const delegate = createCodexAgentExecutor({
+        codexBinary: entry.preflight.codexBinary || entry.principalConfiguration.codexBinary,
+        codexHome: entry.preflight.codexHome,
+        model: entry.principalConfiguration.model,
+        principalId: entry.descriptor.principalId,
+        formalReviewerCapabilityReceipt: entry.preflight.capabilityReceipt,
+      });
+      executors.set(entry.descriptor.principalId, createIsolatedAgentExecutor({
+        delegate,
+        isolationRoot: path.join(
+          runtimeRoot,
+          'automation-reviewer-workspaces',
+          entry.descriptor.principalDescriptorHash.slice(7, 23),
+        ),
+        keepWorkspaces: false,
+        keepFailedWorkspaces: true,
+        workspaceRegistry,
+        assertExternalSideEffectReady,
+      }));
+    }
     signers.set(entry.descriptor.principalId, entry.signer);
   }
   return Object.freeze({

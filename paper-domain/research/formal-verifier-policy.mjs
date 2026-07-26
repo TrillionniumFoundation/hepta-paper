@@ -35,11 +35,18 @@ export const PRODUCTION_MATHLIB_RELEASES = Object.freeze({
   }),
 });
 
-// Populated only after an official-source, reproducible Mathlib bundle has
-// been independently reviewed. A deployment-provided closure hash is an
-// expectation, not an authorization, and therefore cannot populate this map.
+// Populated only after an official-source Mathlib bundle has been independently
+// reviewed. The Lean 4.30 entry binds the immutable service-owned closure at
+// /srv/hepta-paper/formal/mathlib-project: 119,871 files, official Mathlib
+// commit/tree above, no writable/symlink/hardlink/special entries, and a
+// successful service-principal Real-number probe. It is a reviewed byte-closure
+// authorization, not a claim of two independent bit-for-bit builds.
+// A deployment-provided closure hash is an expectation, not an authorization,
+// and therefore cannot populate this map.
 export const PRODUCTION_MATHLIB_BUILD_CLOSURE_HASHES = Object.freeze({
-  [PRODUCTION_LEAN_TOOLCHAIN]: Object.freeze([]),
+  [PRODUCTION_LEAN_TOOLCHAIN]: Object.freeze([
+    'sha256:64b07e1b11ec2f87168612b964d84e350ab9e6e88129397a21694689b24f8412',
+  ]),
 });
 
 export const FORMAL_ASSURANCE_LADDER = Object.freeze({

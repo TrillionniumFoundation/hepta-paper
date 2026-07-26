@@ -5,13 +5,27 @@ import {
 import {
   AUTONOMOUS_FORMAL_SUPPORT_TEMPLATE_REGISTRY,
 } from '../../paper-domain/automation/autonomous-formal-support-registry.mjs';
+import {
+  FORMAL_PROOF_SEARCH_BACKENDS,
+  FORMAL_PROOF_SEARCH_STRATEGIES,
+} from '../../paper-domain/research/formal-proof-strategy-registry.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
-const PROOF_SEARCH_STRATEGIES = Object.freeze([
-  'direct_elaboration',
-  'mathlib_retrieval',
-  'bounded_refutation_or_synthesis',
-]);
+const PROOF_SEARCH_STRATEGIES = Object.freeze(FORMAL_PROOF_SEARCH_STRATEGIES
+  .map((entry) => entry.strategy));
+const PROOF_SEARCH_STRATEGY_CAPABILITIES = Object.freeze(
+  FORMAL_PROOF_SEARCH_STRATEGIES.map((entry) => Object.freeze({
+    strategy: entry.strategy,
+    capabilities: entry.capabilities,
+  })),
+);
+const PROOF_SEARCH_BACKENDS = Object.freeze(FORMAL_PROOF_SEARCH_BACKENDS
+  .map((entry) => Object.freeze({
+    backend: entry.backend,
+    availability: entry.availability,
+    executionMode: entry.executionMode,
+    productionQualification: entry.productionQualification,
+  })));
 function capability({
   id,
   implemented,
@@ -72,6 +86,8 @@ export function buildResearchCapabilityMatrix(readiness = {}) {
         && readiness.dynamicFormalProjectClosureReady === true,
       scope: {
         strategies: PROOF_SEARCH_STRATEGIES,
+        strategyCapabilities: PROOF_SEARCH_STRATEGY_CAPABILITIES,
+        backends: PROOF_SEARCH_BACKENDS,
         kernel: 'lean4',
         freshReplayRequired: true,
       },
@@ -82,6 +98,7 @@ export function buildResearchCapabilityMatrix(readiness = {}) {
       limitations: [
         'machine search applies only when the exact Lean type compiles to the typed theorem DSL',
         'search exhaustion emits a failure certificate and never establishes truth',
+        'Coq and Isabelle remain unavailable until separately qualified adapters exist',
       ],
     }),
     capability({

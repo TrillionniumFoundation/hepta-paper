@@ -1,7 +1,11 @@
-import fs from 'node:fs';
 import os from 'node:os';
-import path from 'node:path';
 
+import {
+  buildFormalProofStrategyPreparation,
+  FORMAL_PROOF_SEARCH_TACTIC_PORTFOLIO,
+  formalProofSearchTactics,
+  verifyFormalProofStrategyPreparation,
+} from '../../paper-domain/research/formal-proof-strategy-registry.mjs';
 import { verifyFormalProofSearchPlan, verifyTypedTheoremObligationBundle } from '../../paper-domain/research/typed-theorem-proof-search-contract.mjs';
 import { searchTypedTheoremDslCounterexample } from '../../paper-domain/research/typed-theorem-dsl.mjs';
 import { PRODUCTION_LEAN_TOOLCHAIN } from '../../paper-domain/research/formal-verifier-policy.mjs';
@@ -15,26 +19,21 @@ import {
   createFormalProofSearchWorkspaceRepository,
   verifyFormalExecutionSnapshotReceipt,
 } from './formal-proof-search-workspace-repository.mjs';
+import {
+  buildPinnedMathlibSymbolSearchReceipt,
+  verifyPinnedMathlibSymbolSearchReceipt,
+} from './formal-lemma-retrieval-index.mjs';
 import { resolvePinnedLakeExecutable } from './pinned-lake-executable-resolver.mjs';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
-const MAX_INDEX_FILES = 20_000;
-const MAX_INDEX_BYTES = 256 * 1024 * 1024;
-const DECLARATION = /^\s*(?:theorem|lemma|def|abbrev|class|structure|inductive)\s+([A-Za-z_][A-Za-z0-9_'.]*)/gm;
-
-export const FORMAL_PROOF_SEARCH_TACTIC_PORTFOLIO = Object.freeze({
-  direct_elaboration: Object.freeze(['rfl']),
-  mathlib_retrieval: Object.freeze(['simp', 'simpa', 'ext i <;> simp', 'aesop']),
-  bounded_refutation_or_synthesis: Object.freeze([
-    'omega', 'ring_nf', 'linarith', 'nlinarith', 'norm_num', 'positivity', 'aesop', 'simp',
-  ]),
-});
+export {
+  buildPinnedMathlibSymbolSearchReceipt,
+  FORMAL_PROOF_SEARCH_TACTIC_PORTFOLIO,
+  verifyPinnedMathlibSymbolSearchReceipt,
+};
 
 function tacticSources(strategy) {
-  if (FORMAL_PROOF_SEARCH_TACTIC_PORTFOLIO[strategy]) {
-    return FORMAL_PROOF_SEARCH_TACTIC_PORTFOLIO[strategy];
-  }
-  throw new Error('formal_proof_search_strategy_invalid');
+  return formalProofSearchTactics(strategy);
 }
 
 function proofSearchSource({ imports, leanTypeSource, dsl, tactic }) {
@@ -172,157 +171,9 @@ function replayMatches(original, replay) {
     && JSON.stringify(original.executionIdentity) === JSON.stringify(replay.executionIdentity);
 }
 
-function mathlibFiles(root) {
-  const candidate = path.join(root, '.lake', 'packages', 'mathlib');
-  if (!fs.existsSync(candidate)) return [];
-  const files = [];
-  let bytes = 0;
-  const visit = (directory) => {
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })
-      .sort((left, right) => left.name.localeCompare(right.name))) {
-      const absolute = path.join(directory, entry.name);
-      const stat = fs.lstatSync(absolute);
-      if (stat.isSymbolicLink()) throw new Error('formal_mathlib_index_symlink_forbidden');
-      if (stat.isDirectory()) visit(absolute);
-      else if (stat.isFile() && entry.name.endsWith('.lean')) {
-        bytes += stat.size;
-        if (files.length >= MAX_INDEX_FILES || bytes > MAX_INDEX_BYTES) {
-          throw new Error('formal_mathlib_index_size_exceeded');
-        }
-        const content = fs.readFileSync(absolute, 'utf8');
-        files.push(Object.freeze({
-          path: path.relative(candidate, absolute).replace(/\\/g, '/'),
-          hash: hashBytes(Buffer.from(content, 'utf8')),
-          content,
-        }));
-      }
-    }
-  };
-  visit(candidate);
-  return files;
-}
-
-function dslSearchTerms(dsl) {
-  const values = new Set(dsl.binders.map((binder) => binder.domain.kind));
-  const visitTerm = (term) => {
-    values.add(term.kind);
-    if (term.left) visitTerm(term.left);
-    if (term.right) visitTerm(term.right);
-  };
-  for (const relation of [...dsl.assumptions, dsl.conclusion]) {
-    values.add(relation.relation);
-    visitTerm(relation.left);
-    visitTerm(relation.right);
-  }
-  return [...values].sort();
-}
-
-export function buildPinnedMathlibSymbolSearchReceipt({ root, dsl }) {
-  const query = dslSearchTerms(dsl);
-  try {
-    const files = mathlibFiles(root);
-    const indexManifest = Object.freeze(files.map((file) => Object.freeze({
-      path: file.path,
-      hash: file.hash,
-    })));
-    const symbols = [];
-    for (const file of files) {
-      for (const match of file.content.matchAll(DECLARATION)) {
-        symbols.push(Object.freeze({ name: match[1], sourcePath: file.path, sourceHash: file.hash }));
-      }
-    }
-    const ranked = symbols.map((symbol) => ({
-      ...symbol,
-      score: query.filter((term) => symbol.name.toLowerCase().includes(term.toLowerCase())).length,
-    })).filter((symbol) => symbol.score > 0)
-      .sort((left, right) => right.score - left.score || left.name.localeCompare(right.name))
-      .slice(0, 64);
-    const payload = {
-      version: 1,
-      kind: 'PinnedMathlibSymbolSearchReceipt',
-      status: files.length
-        ? 'pinned_mathlib_symbol_search_completed'
-        : 'pinned_mathlib_symbol_index_unavailable',
-      query: Object.freeze(query),
-      queryHash: hashRecord('PinnedMathlibSymbolSearchQuery', query),
-      indexFileCount: files.length,
-      indexManifest,
-      indexManifestHash: hashRecord('PinnedMathlibSymbolIndexManifest', indexManifest),
-      symbolCount: symbols.length,
-      results: Object.freeze(ranked),
-      resultHash: hashRecord('PinnedMathlibSymbolSearchResults', ranked),
-      networkAccessAllowed: false,
-      blockers: Object.freeze(files.length ? [] : ['pinned_mathlib_source_index_missing']),
-    };
-    return Object.freeze({
-      ...payload,
-      pinnedMathlibSymbolSearchReceiptHash:
-        hashRecord('PinnedMathlibSymbolSearchReceipt', payload),
-    });
-  } catch (error) {
-    const payload = {
-      version: 1,
-      kind: 'PinnedMathlibSymbolSearchReceipt',
-      status: 'pinned_mathlib_symbol_search_blocked',
-      query: Object.freeze(query),
-      queryHash: hashRecord('PinnedMathlibSymbolSearchQuery', query),
-      indexFileCount: 0,
-      indexManifest: Object.freeze([]),
-      indexManifestHash: null,
-      symbolCount: 0,
-      results: Object.freeze([]),
-      resultHash: hashRecord('PinnedMathlibSymbolSearchResults', []),
-      networkAccessAllowed: false,
-      blockers: Object.freeze([String(error?.message || error)]),
-    };
-    return Object.freeze({
-      ...payload,
-      pinnedMathlibSymbolSearchReceiptHash:
-        hashRecord('PinnedMathlibSymbolSearchReceipt', payload),
-    });
-  }
-}
-
-export function verifyPinnedMathlibSymbolSearchReceipt(receipt, { dsl } = {}) {
-  const { pinnedMathlibSymbolSearchReceiptHash, ...payload } = receipt || {};
-  const query = dslSearchTerms(dsl);
-  const manifest = Array.isArray(receipt?.indexManifest) ? receipt.indexManifest : [];
-  const results = Array.isArray(receipt?.results) ? receipt.results : [];
-  const manifestByPath = new Map(manifest.map((entry) => [entry?.path, entry?.hash]));
-  const expectedResults = results.map((entry) => ({
-    ...entry,
-    score: query.filter((term) => String(entry?.name || '').toLowerCase()
-      .includes(term.toLowerCase())).length,
-  })).sort((left, right) => right.score - left.score
-    || String(left.name).localeCompare(String(right.name)));
-  return receipt?.version === 1
-    && receipt?.kind === 'PinnedMathlibSymbolSearchReceipt'
-    && receipt?.status === 'pinned_mathlib_symbol_search_completed'
-    && receipt?.networkAccessAllowed === false
-    && Array.isArray(receipt?.blockers) && receipt.blockers.length === 0
-    && JSON.stringify(receipt.query) === JSON.stringify(query)
-    && receipt.queryHash === hashRecord('PinnedMathlibSymbolSearchQuery', query)
-    && receipt.indexFileCount === manifest.length && manifest.length > 0
-    && manifest.every((entry) => typeof entry?.path === 'string'
-      && /^[^/](?:.*[^/])?\.lean$/.test(entry.path)
-      && /^sha256:[0-9a-f]{64}$/.test(String(entry.hash || '')))
-    && new Set(manifest.map((entry) => entry.path)).size === manifest.length
-    && receipt.indexManifestHash
-      === hashRecord('PinnedMathlibSymbolIndexManifest', manifest)
-    && results.length <= 64
-    && results.every((entry) => manifestByPath.get(entry?.sourcePath) === entry?.sourceHash
-      && Number.isInteger(entry?.score) && entry.score > 0)
-    && JSON.stringify(results) === JSON.stringify(expectedResults)
-    && receipt.resultHash === hashRecord('PinnedMathlibSymbolSearchResults', results)
-    && Number.isSafeInteger(receipt.symbolCount)
-    && receipt.symbolCount >= results.length
-    && pinnedMathlibSymbolSearchReceiptHash
-      === hashRecord('PinnedMathlibSymbolSearchReceipt', payload);
-}
-
 function semanticReviewOnlyReceipt({ bundle, plan, candidate }) {
   const payload = {
-    version: 1,
+    version: 2,
     kind: 'FormalProofSearchOperationReceipt',
     status: 'formal_proof_search_operations_semantic_review_only',
     typedTheoremObligationBundleHash: bundle.typedTheoremObligationBundleHash,
@@ -332,6 +183,7 @@ function semanticReviewOnlyReceipt({ bundle, plan, candidate }) {
     operationReceipts: Object.freeze([]),
     mathlibSymbolSearchReceipt: null,
     counterexampleSearchReceipts: Object.freeze([]),
+    formalProofStrategyPreparation: null,
     selectedTactic: null,
     selectedTacticExecutionReceiptHash: null,
     replayExecutionReceiptHash: null,
@@ -366,7 +218,7 @@ export function createFormalProofSearchOperationsExecutor({
     toolchain: PRODUCTION_LEAN_TOOLCHAIN,
   });
   return Object.freeze({
-    version: 1,
+    version: 2,
     kind: 'FormalProofSearchOperationsExecutor',
     async execute({ theoremSpecification, bundle, plan, candidate, workspace = null, signal = null } = {}) {
       if (!verifyTypedTheoremObligationBundle(bundle, { theoremSpecification }).valid
@@ -452,11 +304,17 @@ export function createFormalProofSearchOperationsExecutor({
         const counterexampleSearchReceipts = candidate.requiredOperations
           .includes('bounded_counterexample_search')
           ? Object.freeze([searchTypedTheoremDslCounterexample(dsl)]) : Object.freeze([]);
+        const formalProofStrategyPreparation = buildFormalProofStrategyPreparation({
+          strategy: candidate.strategy,
+          dsl,
+          mathlibSymbolSearchReceipt,
+          counterexampleSearchReceipts,
+        });
         if (counterexampleSearchReceipts.some((receipt) => (
           receipt.status === 'bounded_counterexample_found'
         ))) {
           const payload = {
-            version: 1,
+            version: 2,
             kind: 'FormalProofSearchOperationReceipt',
             status: 'formal_proof_search_counterexample_found',
             typedTheoremObligationBundleHash: bundle.typedTheoremObligationBundleHash,
@@ -466,6 +324,7 @@ export function createFormalProofSearchOperationsExecutor({
             operationReceipts: Object.freeze([]),
             mathlibSymbolSearchReceipt,
             counterexampleSearchReceipts,
+            formalProofStrategyPreparation,
             selectedTactic: null,
             selectedTacticExecutionReceiptHash: null,
             replayExecutionReceiptHash: null,
@@ -489,7 +348,7 @@ export function createFormalProofSearchOperationsExecutor({
         }
         const operationReceipts = [];
         let selected = null;
-        for (const tactic of tacticSources(candidate.strategy)) {
+        for (const { tactic } of formalProofStrategyPreparation.proofTermSynthesis.candidates) {
           const receipt = await runTactic({
             runner, executable: pinned.executable, projectRoot: project.root,
             projectScopeRoot: project.scopeRoot,
@@ -522,7 +381,7 @@ export function createFormalProofSearchOperationsExecutor({
           ...(!mathlibReady ? ['formal_proof_search_mathlib_index_unavailable'] : []),
         ];
         const payload = {
-          version: 1,
+          version: 2,
           kind: 'FormalProofSearchOperationReceipt',
           status: blockers.length
             ? 'formal_proof_search_operations_blocked'
@@ -534,6 +393,7 @@ export function createFormalProofSearchOperationsExecutor({
           operationReceipts: Object.freeze(operationReceipts),
           mathlibSymbolSearchReceipt,
           counterexampleSearchReceipts,
+          formalProofStrategyPreparation,
           selectedTactic: selected?.tactic || null,
           selectedTacticExecutionReceiptHash:
             selected?.formalProofStateTacticExecutionReceiptHash || null,
@@ -577,13 +437,17 @@ export function verifyFormalProofSearchOperationReceipt(receipt, {
   const { formalProofSearchOperationReceiptHash, ...payload } = receipt || {};
   if (hashRecord('FormalProofSearchOperationReceipt', payload)
     !== formalProofSearchOperationReceiptHash) blockers.push('formal_proof_search_operation_hash_invalid');
+  if (receipt?.version !== 2) blockers.push('formal_proof_search_operation_version_invalid');
   if (receipt?.typedTheoremObligationBundleHash !== bundle?.typedTheoremObligationBundleHash
     || receipt?.formalProofSearchPlanHash !== plan?.formalProofSearchPlanHash
     || receipt?.candidateId !== candidate?.candidateId
     || receipt?.strategy !== candidate?.strategy) blockers.push('formal_proof_search_operation_authority_mismatch');
   if (receipt?.status === 'formal_proof_search_operations_semantic_review_only') {
     if (!allowSemanticReviewOnly || receipt.machineSearchEstablished !== false
-      || receipt.semanticReviewOnly !== true) blockers.push('formal_proof_search_semantic_only_not_allowed');
+      || receipt.semanticReviewOnly !== true
+      || receipt.formalProofStrategyPreparation !== null) {
+      blockers.push('formal_proof_search_semantic_only_not_allowed');
+    }
   } else if (receipt?.status === 'formal_proof_search_counterexample_found') {
     if (!receipt.counterexampleSearchReceipts?.some((entry) => (
       entry?.status === 'bounded_counterexample_found' && entry?.witness
@@ -596,6 +460,18 @@ export function verifyFormalProofSearchOperationReceipt(receipt, {
   }
   const eligibleDsl = bundle?.obligations?.length === 1
     ? bundle.obligations[0]?.typedTheoremDsl : null;
+  if (receipt?.status !== 'formal_proof_search_operations_semantic_review_only'
+    && !verifyFormalProofStrategyPreparation(
+      receipt?.formalProofStrategyPreparation,
+      {
+        strategy: candidate?.strategy,
+        dsl: eligibleDsl,
+        mathlibSymbolSearchReceipt: receipt?.mathlibSymbolSearchReceipt || null,
+        counterexampleSearchReceipts: receipt?.counterexampleSearchReceipts || [],
+      },
+    )) {
+    blockers.push('formal_proof_strategy_preparation_invalid');
+  }
   const dynamicFormalRequired = eligibleDsl?.allowedImports?.some((moduleName) => (
     moduleName === 'Mathlib' || moduleName.startsWith('Mathlib.')
   )) === true;

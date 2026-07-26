@@ -51,6 +51,17 @@ test('capability matrix distinguishes implementation, qualification, and product
     'mathlib_retrieval',
     'bounded_refutation_or_synthesis',
   ]);
+  assert.deepEqual(formal.scope.backends.map((entry) => [
+    entry.backend,
+    entry.availability,
+  ]), [
+    ['lean', 'active'],
+    ['coq', 'unavailable'],
+    ['isabelle', 'unavailable'],
+  ]);
+  assert.ok(formal.scope.strategyCapabilities
+    .find((entry) => entry.strategy === 'bounded_refutation_or_synthesis')
+    .capabilities.includes('counterexample_guided_repair'));
   const empirical = matrix.capabilities.find((entry) => entry.id === 'empirical-code-execution');
   assert.equal(empirical.scope.benchmarkFamilies.length, 5);
   assert.deepEqual(empirical.scope.runtimeLanguages, ['python', 'r']);

@@ -209,8 +209,16 @@ provisioned, the research campaign itself has no human checkpoint:
   domain-completeness claims. The bounded tactic portfolio includes direct
   elaboration, simplification, library-guided automation, Presburger arithmetic,
   polynomial normalization, linear/nonlinear arithmetic, numeric normalization
-  and positivity before it emits an exhaustion certificate. Real and structured
-  obligations require a pinned Mathlib
+  and positivity before it emits an exhaustion certificate. Each machine-search
+  attempt now binds a syntactic goal decomposition, pinned local lemma-index
+  results, a fixed proof-term synthesis plan and any bounded counterexample to a
+  canonical strategy-preparation receipt. A counterexample may only propose
+  rejection or re-formalization by an independent semantic authority; it cannot
+  mutate the claim. The backend contract exposes Lean, Coq and Isabelle, but only
+  pinned Lean/Lake execution is active. Coq and Isabelle remain unavailable until
+  separate out-of-process adapters are qualified. None of these receipts proves
+  natural-language-to-formal equivalence or scientific correctness. Real and
+  structured obligations require a pinned Mathlib
   project closure. The production source anchor is the official Mathlib
   `v4.30.0` tag, commit `c5ea00351c28e24afc9f0f84379aa41082b1188f`
   and tree `1fe688f4d9e84fb268a300f8ac33cbca883fbd28`; the exact Lake

@@ -1,5 +1,8 @@
 import { hasExactObjectKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  FORMAL_PROOF_SEARCH_STRATEGIES,
+} from './formal-proof-strategy-registry.mjs';
 import { verifyTheoremSpecification } from './theorem-specification.mjs';
 import { buildTypedTheoremDslFromLeanType } from './typed-theorem-dsl.mjs';
 
@@ -19,32 +22,6 @@ const PLAN_KEYS = Object.freeze([
   'candidateCount', 'candidates', 'exhaustionPolicy', 'kind', 'limitations',
   'status', 'successPolicy', 'theoremSpecificationHash',
   'typedTheoremObligationBundleHash', 'formalProofSearchPlanHash', 'version',
-]);
-
-const SEARCH_STRATEGIES = Object.freeze([
-  Object.freeze({
-    ordinal: 0,
-    strategy: 'direct_elaboration',
-    requiredOperations: Object.freeze(['lean_elaboration', 'proof_state_inspection']),
-    counterexampleDisposition: 'not_requested',
-  }),
-  Object.freeze({
-    ordinal: 1,
-    strategy: 'mathlib_retrieval',
-    requiredOperations: Object.freeze([
-      'lean_elaboration', 'proof_state_inspection', 'pinned_mathlib_symbol_search',
-    ]),
-    counterexampleDisposition: 'not_requested',
-  }),
-  Object.freeze({
-    ordinal: 2,
-    strategy: 'bounded_refutation_or_synthesis',
-    requiredOperations: Object.freeze([
-      'lean_elaboration', 'proof_state_inspection', 'pinned_mathlib_symbol_search',
-      'bounded_counterexample_search',
-    ]),
-    counterexampleDisposition: 'bounded_search_inconclusive',
-  }),
 ]);
 
 function exactHash(value, code) {
@@ -205,12 +182,12 @@ export function createFormalProofSearchPlan(bundle) {
     obligation.typedTheoremDsl?.machineSearchEligible === true
       && obligation.typedTheoremDsl.allowedImports.includes('Mathlib')
     ));
-  const strategies = SEARCH_STRATEGIES.map((strategy) => Object.freeze({
+  const strategies = FORMAL_PROOF_SEARCH_STRATEGIES.map((strategy) => Object.freeze({
     ...strategy,
     requiredOperations: mathlibAuthorized
       ? strategy.requiredOperations
       : Object.freeze(strategy.requiredOperations.filter((operation) => (
-        operation !== 'pinned_mathlib_symbol_search'
+        !['pinned_mathlib_symbol_search', 'pinned_lemma_retrieval'].includes(operation)
       ))),
   }));
   const candidates = Object.freeze(strategies.map((strategy) => (

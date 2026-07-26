@@ -19,6 +19,9 @@ import {
   createTypedTheoremObligationBundle,
 } from '../../paper-domain/research/typed-theorem-proof-search-contract.mjs';
 import {
+  buildFormalProofStrategyPreparation,
+} from '../../paper-domain/research/formal-proof-strategy-registry.mjs';
+import {
   buildTypedTheoremDslFromLeanType,
   searchTypedTheoremDslCounterexample,
 } from '../../paper-domain/research/typed-theorem-dsl.mjs';
@@ -206,6 +209,18 @@ test('pinned local Mathlib search binds query, source index, results, and source
   assert.equal(receipt.networkAccessAllowed, false);
   assert.ok(receipt.results.some((entry) => entry.name === 'nat_add_fixture'));
   assert.equal(verifyPinnedMathlibSymbolSearchReceipt(receipt, { dsl }), true);
+  const preparation = buildFormalProofStrategyPreparation({
+    strategy: 'mathlib_retrieval',
+    dsl,
+    mathlibSymbolSearchReceipt: receipt,
+  });
+  assert.equal(
+    preparation.lemmaRetrieval.status,
+    'formal_proof_pinned_lemma_retrieval_ready',
+  );
+  assert.ok(preparation.lemmaRetrieval.retrievedDeclarationNames
+    .includes('nat_add_fixture'));
+  assert.equal(preparation.lemmaRetrieval.automaticDeclarationInjectionAllowed, false);
   const wrongDsl = buildTypedTheoremDslFromLeanType({
     leanTypeSource: '∀ b : Bool, b = b', allowedImports: ['Mathlib'],
   });
@@ -241,6 +256,19 @@ test('real pinned Lean proof-state search closes and replays with separate proce
     JSON.stringify(receipt, null, 2));
   assert.equal(receipt.selectedTactic, 'rfl');
   assert.equal(receipt.replayMatched, true);
+  assert.equal(
+    receipt.formalProofStrategyPreparation.goalDecomposition.status,
+    'formal_proof_syntactic_goal_decomposition_ready',
+  );
+  assert.deepEqual(
+    receipt.formalProofStrategyPreparation.goalDecomposition.introductionNames,
+    ['n'],
+  );
+  assert.equal(
+    receipt.formalProofStrategyPreparation.semanticBoundary
+      .naturalLanguageToFormalEquivalenceEstablished,
+    false,
+  );
   assert.notEqual(
     receipt.operationReceipts[0].executionProcessIdentityHash,
     receipt.replayExecutionReceipt.executionProcessIdentityHash,
@@ -278,6 +306,10 @@ test('pinned proof-state search advances beyond reflexivity and replays simp clo
     JSON.stringify(receipt, null, 2));
   assert.equal(receipt.selectedTactic, 'simp');
   assert.equal(receipt.replayMatched, true);
+  assert.equal(
+    receipt.formalProofStrategyPreparation.lemmaRetrieval.status,
+    'formal_proof_lemma_retrieval_not_requested',
+  );
   assert.equal(verifyFormalProofSearchOperationReceipt(receipt, {
     bundle, plan, candidate,
   }).valid, true);
@@ -300,6 +332,14 @@ test('counterexample candidate terminates with a hash-bound refutation witness b
   assert.equal(receipt.status, 'formal_proof_search_counterexample_found');
   assert.deepEqual(receipt.counterexampleSearchReceipts[0].witness, { n: 0 });
   assert.deepEqual(receipt.operationReceipts, []);
+  assert.equal(
+    receipt.formalProofStrategyPreparation.counterexampleGuidedRepair.status,
+    'formal_proof_counterexample_guided_repair_proposed',
+  );
+  assert.equal(
+    receipt.formalProofStrategyPreparation.counterexampleGuidedRepair.claimMutationAllowed,
+    false,
+  );
   assert.equal(verifyFormalProofSearchOperationReceipt(receipt, {
     bundle, plan, candidate: plan.candidates[2],
   }).valid, true);
@@ -355,6 +395,7 @@ test('candidate authority mismatch is rejected even after rehashing an operation
     candidate: unsupportedPlan.candidates[0],
   });
   assert.equal(receipt.status, 'formal_proof_search_operations_semantic_review_only');
+  assert.equal(receipt.formalProofStrategyPreparation, null);
   assert.equal(verifyFormalProofSearchOperationReceipt(receipt, {
     bundle: unsupportedBundle,
     plan: unsupportedPlan,

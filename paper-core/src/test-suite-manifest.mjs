@@ -166,6 +166,7 @@ const AUTOMATION_TESTS = Object.freeze([...new Set([
   'paper-core/tests/formal-campaign-release.test.mjs',
   'paper-core/tests/formal-candidate-transaction.test.mjs',
   'paper-core/tests/formal-proof-search-operations.test.mjs',
+  'paper-core/tests/formal-proof-strategy-registry.test.mjs',
   'paper-core/tests/formal-domain-profile-coverage.test.mjs',
   'paper-core/tests/formal-readable-proof-contract.test.mjs',
   'paper-core/tests/formal-claim-universe-reader.test.mjs',

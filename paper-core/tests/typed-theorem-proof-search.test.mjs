@@ -72,7 +72,7 @@ test('typed theorem obligation bundle binds exact specification semantics and ex
   assert.ok(verification.blockers.includes('typed_theorem_obligation_bundle_not_canonical'));
 });
 
-test('proof search plan is a fixed proof-state, Mathlib, and bounded-refutation sequence', (t) => {
+test('proof search plan binds decomposition, retrieval, synthesis, and bounded repair', (t) => {
   const theoremSpecification = theoremSpecificationFixture(t);
   const bundle = createTypedTheoremObligationBundle(theoremSpecification);
   const plan = createFormalProofSearchPlan(bundle);
@@ -82,11 +82,29 @@ test('proof search plan is a fixed proof-state, Mathlib, and bounded-refutation 
     'bounded_refutation_or_synthesis',
   ]);
   assert.deepEqual(plan.candidates.map((candidate) => candidate.requiredOperations), [
-    ['lean_elaboration', 'proof_state_inspection'],
-    ['lean_elaboration', 'proof_state_inspection', 'pinned_mathlib_symbol_search'],
     [
-      'lean_elaboration', 'proof_state_inspection', 'pinned_mathlib_symbol_search',
+      'syntactic_goal_decomposition',
+      'bounded_proof_term_synthesis',
+      'lean_elaboration',
+      'proof_state_inspection',
+    ],
+    [
+      'syntactic_goal_decomposition',
+      'pinned_mathlib_symbol_search',
+      'pinned_lemma_retrieval',
+      'bounded_proof_term_synthesis',
+      'lean_elaboration',
+      'proof_state_inspection',
+    ],
+    [
+      'syntactic_goal_decomposition',
+      'pinned_mathlib_symbol_search',
+      'pinned_lemma_retrieval',
       'bounded_counterexample_search',
+      'counterexample_guided_repair',
+      'bounded_proof_term_synthesis',
+      'lean_elaboration',
+      'proof_state_inspection',
     ],
   ]);
   assert.equal(plan.candidates.every((candidate) => !candidate.claimMutationAllowed), true);

@@ -5,11 +5,7 @@ import { createResearchExecutionReleaseAttestor, runPackageAdapter } from '../bu
 import { createPaperBuildArtifactAcceptance, createPaperTask } from '../../paper-domain/contracts/index.mjs';
 import { createAutomationPromotionCandidate, createAutonomousResearchReleaseBinding, createCampaignReleaseBundle, verifyCampaignReleaseBundle } from '../../paper-domain/automation/campaign-release-contracts.mjs';
 import { assertCampaignReleasePackagerPort } from '../../paper-ports/campaign-release-packager-port.mjs';
-import { fileRecord } from '../../workflow-kernel/runtime/file-utils.mjs';
-import { isPathWithin } from '../../workflow-kernel/runtime/path-utils.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
-import { workspaceExecutionMerkleHash } from '../../workflow-kernel/runtime/workspace-execution-identity.mjs';
-import { inspectWorkspaceExecutionSnapshot, sourceTreeExcludedNames } from '../runtime/execution-snapshot.mjs';
 import { verifyCampaignResearchSourceSnapshot } from '../../paper-domain/automation/campaign-research-contract.mjs';
 import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
 import { createTrustedExperimentRegistryAuthorityVerifier } from '../research-verify/experiment-registry-authority-verifier.mjs';
@@ -27,175 +23,21 @@ import {
   assertCampaignReleaseExternalResearchReplayAuthority,
 } from './campaign-external-research-replay.mjs';
 import {
-  inspectAutonomousResearchReleaseReviewerEvidence,
-} from '../../paper-domain/automation/autonomous-research-release-reviewer-evidence-contract.mjs';
+  assertCampaignReleaseReviewerEvidenceForPackaging,
+} from './campaign-release-reviewer-evidence.mjs';
+import {
+  assertSameCampaignReleaseSourceSnapshot,
+  buildCampaignReleaseSourceArchiveDefinition,
+  campaignManuscriptPath,
+  campaignReleasePackageNodeResult,
+  campaignReleaseSourceSnapshotOptions,
+  compiledCampaignPdfRecord,
+  fsyncCampaignReleaseFileSync,
+  inspectCampaignReleaseSourceSnapshot,
+} from './campaign-release-packaging-helpers.mjs';
 
 export { createResearchExecutionReleaseAttestor };
-
-export function assertCampaignReleaseReviewerEvidenceForPackaging({
-  campaign,
-  releaseBinding,
-  reviewerEvidenceAuthority,
-  expectedManuscriptHash,
-  errorCode = 'campaign_release_reviewer_evidence_invalid',
-} = {}) {
-  if (campaign?.spec?.autonomousResearchPreparation?.launchMode !== 'production-run') {
-    return null;
-  }
-  const inspection = inspectAutonomousResearchReleaseReviewerEvidence(
-    releaseBinding?.releaseReviewerEvidence,
-    {
-      runtimePrincipalBinding:
-        campaign.spec.autonomousResearchPreparation.runtimePrincipalBinding,
-      reviewerEvidenceAuthority,
-      expected: {
-        campaignId: campaign.campaignId,
-        paperId: campaign.paperId,
-        campaignPlanHash: campaign.spec.campaignPlanHash,
-        expectedManuscriptHash,
-      },
-    },
-  );
-  if (!inspection.valid) {
-    throw new Error(`${errorCode}:${inspection.blockers.join(',')}`);
-  }
-  return inspection;
-}
-
-function manuscriptPath(workspace) {
-  for (const name of ['main.tex', 'paper.tex', 'manuscript.tex']) if (fs.existsSync(path.join(workspace, name))) return name;
-  return 'main.tex';
-}
-
-function fsyncFileSync(candidate) {
-  const descriptor = fs.openSync(candidate, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
-  try { fs.fsyncSync(descriptor); } finally { fs.closeSync(descriptor); }
-}
-
-function sourceSnapshotOptions({ workspace, campaign, campaignResearchSourceSnapshot = null } = {}) {
-  if (campaignResearchSourceSnapshot) {
-    const excludeRoots = (campaignResearchSourceSnapshot.excludedRelativeRoots || []).map((relative) => {
-      const candidate = path.resolve(workspace, relative);
-      if (!isPathWithin(workspace, candidate) || candidate === workspace) throw new Error('campaign_release_source_snapshot_exclusion_invalid');
-      return candidate;
-    });
-    return Object.freeze({ excludeRoots, excludeNames: [...campaignResearchSourceSnapshot.excludedNames] });
-  }
-  const excludeRoots = (campaign?.spec?.datasetMounts || []).map((mount) => path.resolve(String(mount.source || '')))
-    .filter((source) => source !== workspace && isPathWithin(workspace, source));
-  return Object.freeze({ excludeRoots, excludeNames: sourceTreeExcludedNames(workspace) });
-}
-
-function inspectReleaseSourceSnapshot(workspace, options) {
-  const snapshot = inspectWorkspaceExecutionSnapshot(workspace, options);
-  if (snapshot.blockers.length) throw new Error(`campaign_release_source_snapshot_invalid:${snapshot.blockers.join(',')}`);
-  return snapshot;
-}
-
-function assertSameSourceSnapshot(actual, expected, blocker) {
-  if (actual.merkleHash !== expected.merkleHash || actual.manifestHash !== expected.manifestHash) throw new Error(blocker);
-}
-
-function sourceArchiveDefinition({ paperId, sourceSnapshot, lineageHash = null } = {}) {
-  const files = (sourceSnapshot.fileRecords || []).map((record) => {
-    if (/(^|\/)(?:\.env|id_rsa|credentials|secrets?)(?:\.|$)/i.test(record.path)) {
-      throw new Error(`campaign_release_source_archive_secret_forbidden:${record.path}`);
-    }
-    return Object.freeze({ path: record.path, role: record.path === 'main.tex' ? 'main_tex' : 'source_file', required: true });
-  });
-  const contractSubject = {
-    version: 1,
-    kind: 'SourcePackageContract',
-    paperId,
-    files,
-    contractFileHash: lineageHash,
-  };
-  const sourcePackageContractHash = hashRecord('SourcePackageContract', contractSubject);
-  const sourcePackageContract = Object.freeze({
-    ...contractSubject,
-    status: 'source_package_contract_verified',
-    blockers: Object.freeze([]),
-    sourcePackageContractHash,
-  });
-  const rows = sourceSnapshot.fileRecords.map((record) => Object.freeze({
-    path: record.path,
-    role: record.path === 'main.tex' ? 'main_tex' : 'source_file',
-    required: true,
-    hash: record.hash,
-    bytes: record.bytes,
-    identityHash: null,
-  }));
-  const manifestPayload = {
-    version: 1,
-    kind: 'ScopedSourceTreeManifest',
-    status: 'scoped_source_tree_verified',
-    sourcePackageContractHash,
-    fileCount: rows.length,
-    totalBytes: rows.reduce((total, item) => total + item.bytes, 0),
-    rows,
-    blockers: Object.freeze([]),
-  };
-  const sourceTreeManifest = Object.freeze({
-    ...manifestPayload,
-    sourceTreeManifestHash: hashRecord('ScopedSourceTreeManifest', manifestPayload),
-  });
-  const archivedMerkleHash = workspaceExecutionMerkleHash(rows);
-  if (archivedMerkleHash !== sourceSnapshot.merkleHash) throw new Error('campaign_release_source_archive_merkle_mismatch');
-  return Object.freeze({
-    sourcePackageContractHash,
-    sourceTreeManifestHash: sourceTreeManifest.sourceTreeManifestHash,
-    archivedSourceMerkleHash: archivedMerkleHash,
-    sourceWorkspaceManifestHash: sourceSnapshot.manifestHash,
-    sourcePackageContract,
-    sourceTreeManifest,
-  });
-}
-
-async function compiledPdfRecord(workspace, finalCompileNode) {
-  const candidates = [
-    ...(finalCompileNode?.result?.materializedPaths || []),
-    'main.pdf',
-    'paper.pdf',
-    'manuscript.pdf',
-  ].filter((candidate) => /\.pdf$/i.test(String(candidate)));
-  for (const relative of candidates) {
-    const candidate = path.resolve(workspace, relative);
-    if (!isPathWithin(workspace, candidate)) continue;
-    if (!fs.existsSync(candidate)) continue;
-    const record = await fileRecord(workspace, candidate, 'compiled_pdf');
-    if (record) return record;
-  }
-  return null;
-}
-
-function packageNodeResult(releaseBundle, materializationReceipt) {
-  const payload = {
-    version: 1,
-    kind: 'CampaignReleasePackageResult',
-    status: 'campaign_release_prepared',
-    campaignId: releaseBundle.campaignId,
-    paperId: releaseBundle.paperId,
-    packageNodeId: releaseBundle.packageNodeId,
-    packageAttemptId: releaseBundle.packageAttemptId,
-    campaignPlanHash: releaseBundle.campaignPlanHash,
-    campaignReleaseBundleHash: releaseBundle.campaignReleaseBundleHash,
-    experimentRegistryHash: releaseBundle.experimentRegistryHash || null,
-    empiricalAssertionAuthorityHash: releaseBundle.empiricalAssertionAuthorityHash || null,
-    empiricalAssertionUniverseHash: releaseBundle.empiricalAssertionUniverseHash || null,
-    empiricalAssertionUniverseBindingHash: releaseBundle.empiricalAssertionUniverseBindingHash || null,
-    empiricalAssertionManuscriptCorpusHash: releaseBundle.empiricalAssertionManuscriptCorpusHash || null,
-    releaseBundle,
-    artifactPackage: releaseBundle.artifactPackage,
-    packageVerificationReceipt: releaseBundle.packageVerificationReceipt,
-    manuscriptPromotionGate: releaseBundle.manuscriptPromotionGate,
-    campaignReleaseBundleMaterializationReceiptHash: materializationReceipt.campaignReleaseBundleMaterializationReceiptHash,
-    materializationReceipt,
-    submitReady: false,
-    submissionConsumable: false,
-    externalActionPerformed: false,
-  };
-  return Object.freeze({ ...payload, campaignReleasePackageResultHash: hashRecord('CampaignReleasePackageResult', payload) });
-}
+export { assertCampaignReleaseReviewerEvidenceForPackaging };
 
 export function createCampaignReleasePackager({
   artifactRepositoryFactory,
@@ -313,8 +155,15 @@ export function createCampaignReleasePackager({
           throw new Error(`campaign_release_research_source_snapshot_invalid:${snapshotVerification.blockers.join(',')}`);
         }
       }
-      const snapshotOptions = sourceSnapshotOptions({ workspace, campaign, campaignResearchSourceSnapshot });
-      const packageStartSourceSnapshot = inspectReleaseSourceSnapshot(workspace, snapshotOptions);
+      const snapshotOptions = campaignReleaseSourceSnapshotOptions({
+        workspace,
+        campaign,
+        campaignResearchSourceSnapshot,
+      });
+      const packageStartSourceSnapshot = inspectCampaignReleaseSourceSnapshot(
+        workspace,
+        snapshotOptions,
+      );
       if (campaignResearchSourceSnapshot) {
         if (packageStartSourceSnapshot.merkleHash !== campaignResearchSourceSnapshot.verifiedSourceMerkleHash
           || packageStartSourceSnapshot.manifestHash !== campaignResearchSourceSnapshot.verifiedSourceWorkspaceManifestHash) {
@@ -326,13 +175,15 @@ export function createCampaignReleasePackager({
         || finalCompileNode.result?.sourceWorkspaceManifestHash !== packageStartSourceSnapshot.manifestHash) {
         throw new Error('campaign_release_final_compile_source_identity_mismatch');
       }
-      const archiveDefinition = sourceArchiveDefinition({
+      const archiveDefinition = buildCampaignReleaseSourceArchiveDefinition({
         paperId: campaign.paperId,
         sourceSnapshot: packageStartSourceSnapshot,
         lineageHash: campaignResearchSourceSnapshot?.campaignResearchSourceSnapshotHash || null,
       });
       const releaseRoot = campaignReleaseRootFor(resolvedRuntimeRoot, campaign, packageNode);
-      const mainTex = String(requestedManuscriptPath || manuscriptPath(workspace));
+      const mainTex = String(
+        requestedManuscriptPath || campaignManuscriptPath(workspace),
+      );
       const mainRecord = packageStartSourceSnapshot.fileRecords
         .find((record) => record.path === mainTex) || null;
       const manuscriptIrRecord = packageStartSourceSnapshot.fileRecords
@@ -451,10 +302,10 @@ export function createCampaignReleasePackager({
         }
         assertImmutableCampaignPackageFilesSync(existing.bundle.packageOutput, resolvedRuntimeRoot);
         const materializationReceipt = persistCampaignReleaseMaterializationSync({ runtimeRoot: resolvedRuntimeRoot, releaseRoot, bundle: existing.bundle });
-        return packageNodeResult(existing.bundle, materializationReceipt);
+        return campaignReleasePackageNodeResult(existing.bundle, materializationReceipt);
       }
       initializeCampaignReleaseRootSync(resolvedRuntimeRoot, releaseRoot); initializeCampaignReleasePackageScopeSync(resolvedRuntimeRoot);
-      const builtPdf = await compiledPdfRecord(workspace, finalCompileNode);
+      const builtPdf = await compiledCampaignPdfRecord(workspace, finalCompileNode);
       if (!builtPdf) throw new Error('campaign_release_compiled_pdf_required');
       const independentPdfRebuild = await executeIndependentCampaignPdfRebuild({
         verifier: suppliedPdfRebuildVerifier,
@@ -533,8 +384,15 @@ export function createCampaignReleasePackager({
           || null,
       }));
       if (executionSignal?.aborted) throw new Error('campaign_release_packaging_cancelled');
-      const packageEndSourceSnapshot = inspectReleaseSourceSnapshot(workspace, snapshotOptions);
-      assertSameSourceSnapshot(packageEndSourceSnapshot, packageStartSourceSnapshot, 'campaign_release_source_changed_during_packaging');
+      const packageEndSourceSnapshot = inspectCampaignReleaseSourceSnapshot(
+        workspace,
+        snapshotOptions,
+      );
+      assertSameCampaignReleaseSourceSnapshot(
+        packageEndSourceSnapshot,
+        packageStartSourceSnapshot,
+        'campaign_release_source_changed_during_packaging',
+      );
       if (packageResult?.sourceTreeManifest?.sourceTreeManifestHash !== archiveDefinition.sourceTreeManifestHash
         || packageResult?.sourceTreeManifest?.sourcePackageContractHash !== archiveDefinition.sourcePackageContractHash) {
         throw new Error('campaign_release_source_archive_definition_mismatch');
@@ -565,7 +423,7 @@ export function createCampaignReleasePackager({
         ...(packageResult.researchEvidenceCapsule?.allFiles || []).map((file) => path.join(packageDir, file.path)),
       ]) {
         if (candidate) {
-          fsyncFileSync(candidate);
+          fsyncCampaignReleaseFileSync(candidate);
           fs.chmodSync(candidate, 0o444);
         }
       }
@@ -673,7 +531,7 @@ export function createCampaignReleasePackager({
       if (!verification.valid) throw new Error(`campaign_release_bundle_self_verification_failed:${verification.blockers.join(',')}`);
       assertImmutableCampaignPackageFilesSync(releaseBundle.packageOutput, resolvedRuntimeRoot);
       const materializationReceipt = persistCampaignReleaseMaterializationSync({ runtimeRoot: resolvedRuntimeRoot, releaseRoot, bundle: releaseBundle });
-      return packageNodeResult(releaseBundle, materializationReceipt);
+      return campaignReleasePackageNodeResult(releaseBundle, materializationReceipt);
     },
   };
   return assertCampaignReleasePackagerPort(port);

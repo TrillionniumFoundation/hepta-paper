@@ -53,6 +53,8 @@ export const ARCHITECTURE_ENTRYPOINT_MANIFEST = Object.freeze({
     'paper-core/verification/remediation-selftest.mjs',
     'paper-core/verification/authority-pipeline-selftest.mjs',
     'paper-core/bin/check-mjs-syntax.mjs',
+    'paper-core/bin/run-impacted-tests.mjs',
+    'paper-core/bin/prepare-ci-mathlib-cache.mjs',
     'paper-core/bin/release-state-check.mjs',
     'paper-core/bin/release-trust-gate.mjs',
     'paper-core/bin/critical-module-coverage.mjs',

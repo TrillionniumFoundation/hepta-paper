@@ -75,6 +75,14 @@ test('root package declares the vendored reference and a non-duplicated verifica
   assert.match(scripts['ci:selftest'], /^npm run static:check/);
   assert.match(scripts['static:check'], /paper-core\/tests\/architecture-conformance\.test\.mjs/);
   assert.match(scripts['static:check'], /paper-core\/tests\/repository-module-imports\.test\.mjs/);
+  assert.equal(
+    scripts['test:impacted'],
+    'node paper-core/bin/run-impacted-tests.mjs',
+  );
+  assert.equal(
+    scripts['test:impacted:plan'],
+    'node paper-core/bin/run-impacted-tests.mjs --dry-run --json',
+  );
   assert.match(scripts['test:inner'], /npm run safety:all/);
   assert.match(scripts.test, /^npm run static:check/);
   assert.match(scripts['release:verify'], /^npm run static:check/);
@@ -224,9 +232,23 @@ test('one declarative registry owns supported routes and npm command classificat
     blocked: [],
   });
   assert.deepEqual(heptaPaperCiCommandMatrix().nightly.map((entry) => entry.id), [
+    'full-portable',
+    'formal-cache',
     'academic-empirical',
     'typed-numeric',
     'dynamic-formal',
+  ]);
+  assert.deepEqual(heptaPaperCiCommandMatrix().pullRequest, [
+    {
+      id: 'static-contracts',
+      npmScripts: ['static:check'],
+    },
+    {
+      id: 'impacted-tests',
+      npmScripts: ['test:impacted'],
+      shardCount: 4,
+      targetDurationMinutes: 5,
+    },
   ]);
   const result = spawnSync(process.execPath, ['paper-core/bin/command-surface.mjs'], {
     cwd: root,

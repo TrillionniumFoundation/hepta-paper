@@ -56,6 +56,8 @@ export const EXPLICIT_NPM_SCRIPTS = Object.freeze({
     'static:check',
     'test:academic-docker-operational',
     'test:dynamic-formal-kernel-operational',
+    'test:impacted',
+    'test:impacted:plan',
     'test:migration-differential',
     'test:typed-numeric-process-operational',
     'workspace:verify-decoupled',
@@ -105,6 +107,7 @@ export const EXPLICIT_NPM_SCRIPTS = Object.freeze({
     'paper:real-provider-sandbox',
   ]),
   internal: Object.freeze([
+    'ci:mathlib-cache',
     'ci:inner',
     'automation:selftest:deduplicated',
     'coverage:architecture-inner',
@@ -136,15 +139,29 @@ export const NPM_COMMAND_GROUPS = Object.freeze([
 export const HEPTA_PAPER_CI_COMMAND_MATRIX = Object.freeze({
   pullRequest: Object.freeze([
     Object.freeze({
-      id: 'portable-contracts',
-      npmScripts: Object.freeze(['ci:selftest']),
+      id: 'static-contracts',
+      npmScripts: Object.freeze(['static:check']),
     }),
     Object.freeze({
-      id: 'portable-coverage',
-      npmScripts: Object.freeze(['coverage:architecture', 'coverage:repository']),
+      id: 'impacted-tests',
+      npmScripts: Object.freeze(['test:impacted']),
+      shardCount: 4,
+      targetDurationMinutes: 5,
     }),
   ]),
   nightly: Object.freeze([
+    Object.freeze({
+      id: 'full-portable',
+      npmScripts: Object.freeze([
+        'ci:selftest',
+        'coverage:architecture',
+        'coverage:repository',
+      ]),
+    }),
+    Object.freeze({
+      id: 'formal-cache',
+      npmScripts: Object.freeze(['ci:mathlib-cache']),
+    }),
     Object.freeze({
       id: 'academic-empirical',
       npmScripts: Object.freeze(['test:academic-docker-operational']),

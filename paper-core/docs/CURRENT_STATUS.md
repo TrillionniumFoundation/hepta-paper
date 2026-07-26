@@ -426,8 +426,19 @@ Use these commands for current status and release verification:
 architecture/import conformance suites. A green static result therefore cannot
 mask a red architecture gate.
 
+Pull requests run that static gate once and distribute the transitive
+changed-module test set across four deterministic shards. `test:impacted`
+selects tests through relative-import and explicit executable-path reachability;
+global configuration changes or an unmapped production module fail safe to the
+complete portable test set. Nightly CI retains full portable qualification,
+repository coverage and operational empirical/numerical/formal checks. Its
+Mathlib cache is accepted only after the pinned official commit and tree are
+remeasured, and it never grants production formal authority.
+
 ```bash
 npm test
+npm run test:impacted:plan -- --base-ref <base>
+npm run test:impacted -- --base-ref <base> --shard-count 4 --shard-index 0
 npm run reference:integrity
 npm run safety:all
 npm run paper:architecture-selftest

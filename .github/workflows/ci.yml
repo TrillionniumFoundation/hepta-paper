@@ -11,36 +11,159 @@ on:
 permissions:
   contents: read
 
+env:
+  ELAN_TOOLCHAIN: leanprover/lean4:v4.30.0
+  FORMAL_SANDBOX_IMAGE: alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+
 jobs:
-  portable-contract-gates:
+  pull-request-static-gates:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22.23.1'
           cache: npm
-      - name: Install system test dependency
-        run: sudo apt-get update && sudo apt-get install -y sqlite3
-      - name: Install pinned Lean verification toolchain
-        env:
-          ELAN_TOOLCHAIN: leanprover/lean4:v4.30.0
+      - name: Install static-gate dependencies
         run: |
-          curl -fsSL https://github.com/leanprover/elan/releases/download/v4.2.3/elan-x86_64-unknown-linux-gnu.tar.gz -o /tmp/elan.tar.gz
-          echo 'df0b2b3a439961ffcbb3985214365ffe40f49bc871df04dff268c7d8e21ca8b2  /tmp/elan.tar.gz' | sha256sum -c -
-          tar -xzf /tmp/elan.tar.gz -C /tmp elan-init
-          /tmp/elan-init -y --default-toolchain "$ELAN_TOOLCHAIN"
+          sudo apt-get update
+          sudo apt-get install -y sqlite3
+          npm ci --ignore-scripts --no-audit --no-fund
+      - name: Run static and architecture gates
+        run: npm run static:check
+
+  pull-request-impacted-tests:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.23.1'
+          cache: npm
+      - name: Plan impacted shard
+        id: impact
+        env:
+          GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          node paper-core/bin/run-impacted-tests.mjs \
+            --base-ref "$GITHUB_BASE_SHA" \
+            --head-ref "$GITHUB_SHA" \
+            --shard-count 4 \
+            --shard-index "${{ matrix.shard }}" \
+            --dry-run --json > "$RUNNER_TEMP/impact-plan.json"
+          cat "$RUNNER_TEMP/impact-plan.json"
+          node -e "const p=require(process.argv[1]);process.stdout.write('count='+p.shardTestCount+'\\n')" \
+            "$RUNNER_TEMP/impact-plan.json" >> "$GITHUB_OUTPUT"
+      - name: Restore pinned Lean and formal runtime image cache
+        if: steps.impact.outputs.count != '0'
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: |
+            ~/.elan
+            .ci-cache/formal-sandbox-alpine.tar
+          key: ${{ runner.os }}-formal-runtime-v4.30.0-d9e853e-${{ hashFiles('paper-domain/research/formal-verifier-policy.mjs', 'paper-adapters/research-verify/pinned-formal-sandbox-runtime-configuration.mjs') }}
+      - name: Materialize pinned Lean and formal runtime
+        if: steps.impact.outputs.count != '0'
+        run: |
+          if [ ! -x "$HOME/.elan/bin/elan" ]; then
+            curl -fsSL https://github.com/leanprover/elan/releases/download/v4.2.3/elan-x86_64-unknown-linux-gnu.tar.gz -o /tmp/elan.tar.gz
+            echo 'df0b2b3a439961ffcbb3985214365ffe40f49bc871df04dff268c7d8e21ca8b2  /tmp/elan.tar.gz' | sha256sum -c -
+            tar -xzf /tmp/elan.tar.gz -C /tmp elan-init
+            /tmp/elan-init -y --default-toolchain "$ELAN_TOOLCHAIN"
+          fi
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
           ELAN_TOOLCHAIN="$ELAN_TOOLCHAIN" "$HOME/.elan/bin/elan" which lake
-      - name: Install package metadata
-        run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Run static, portable integrity and contract gates
+          mkdir -p .ci-cache
+          if [ -s .ci-cache/formal-sandbox-alpine.tar ]; then
+            docker load --input .ci-cache/formal-sandbox-alpine.tar
+          fi
+          if ! docker image inspect "$FORMAL_SANDBOX_IMAGE" >/dev/null 2>&1; then
+            docker pull "$FORMAL_SANDBOX_IMAGE"
+          fi
+          docker image inspect "$FORMAL_SANDBOX_IMAGE" --format '{{json .RepoDigests}}' \
+            | grep -F 'sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc'
+          if [ ! -s .ci-cache/formal-sandbox-alpine.tar ]; then
+            docker save alpine:3.20 --output .ci-cache/formal-sandbox-alpine.tar
+          fi
+      - name: Install selected test dependencies
+        if: steps.impact.outputs.count != '0'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sqlite3
+          npm ci --ignore-scripts --no-audit --no-fund
+      - name: Run impacted shard
+        if: steps.impact.outputs.count != '0'
+        env:
+          GITHUB_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          npm run test:impacted -- \
+            --base-ref "$GITHUB_BASE_SHA" \
+            --head-ref "$GITHUB_SHA" \
+            --shard-count 4 \
+            --shard-index "${{ matrix.shard }}"
+
+  main-portable-contract-gates:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22.23.1'
+          cache: npm
+      - uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: |
+            ~/.elan
+            .ci-cache/formal-sandbox-alpine.tar
+          key: ${{ runner.os }}-formal-runtime-v4.30.0-d9e853e-${{ hashFiles('paper-domain/research/formal-verifier-policy.mjs', 'paper-adapters/research-verify/pinned-formal-sandbox-runtime-configuration.mjs') }}
+      - name: Materialize pinned Lean and formal runtime
+        run: |
+          if [ ! -x "$HOME/.elan/bin/elan" ]; then
+            curl -fsSL https://github.com/leanprover/elan/releases/download/v4.2.3/elan-x86_64-unknown-linux-gnu.tar.gz -o /tmp/elan.tar.gz
+            echo 'df0b2b3a439961ffcbb3985214365ffe40f49bc871df04dff268c7d8e21ca8b2  /tmp/elan.tar.gz' | sha256sum -c -
+            tar -xzf /tmp/elan.tar.gz -C /tmp elan-init
+            /tmp/elan-init -y --default-toolchain "$ELAN_TOOLCHAIN"
+          fi
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          ELAN_TOOLCHAIN="$ELAN_TOOLCHAIN" "$HOME/.elan/bin/elan" which lake
+          mkdir -p .ci-cache
+          if [ -s .ci-cache/formal-sandbox-alpine.tar ]; then
+            docker load --input .ci-cache/formal-sandbox-alpine.tar
+          fi
+          if ! docker image inspect "$FORMAL_SANDBOX_IMAGE" >/dev/null 2>&1; then
+            docker pull "$FORMAL_SANDBOX_IMAGE"
+          fi
+          docker image inspect "$FORMAL_SANDBOX_IMAGE" --format '{{json .RepoDigests}}' \
+            | grep -F 'sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc'
+          if [ ! -s .ci-cache/formal-sandbox-alpine.tar ]; then
+            docker save alpine:3.20 --output .ci-cache/formal-sandbox-alpine.tar
+          fi
+      - name: Install portable-gate dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sqlite3
+          npm ci --ignore-scripts --no-audit --no-fund
+      - name: Run full portable contract gates
         run: npm run ci:selftest
-      - name: Enforce architecture and repository-wide coverage
-        run: npm run coverage:architecture && npm run coverage:repository
 
   legacy-differential-policy:
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -75,26 +198,60 @@ jobs:
   nightly-operational-research-loop:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22.23.1'
           cache: npm
-      - name: Install pinned Lean verification toolchain
-        env:
-          ELAN_TOOLCHAIN: leanprover/lean4:v4.30.0
+      - name: Restore pinned Lean and formal runtime image cache
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: |
+            ~/.elan
+            .ci-cache/formal-sandbox-alpine.tar
+          key: ${{ runner.os }}-formal-runtime-v4.30.0-d9e853e-${{ hashFiles('paper-domain/research/formal-verifier-policy.mjs', 'paper-adapters/research-verify/pinned-formal-sandbox-runtime-configuration.mjs') }}
+      - name: Restore verified Mathlib project cache
+        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809 # v4.2.4
+        with:
+          path: .ci-cache/mathlib-project
+          key: ${{ runner.os }}-mathlib-v4.30.0-c5ea003-${{ hashFiles('paper-domain/research/formal-verifier-policy.mjs', 'paper-core/bin/prepare-ci-mathlib-cache.mjs') }}
+      - name: Materialize pinned Lean and formal runtime
         run: |
-          curl -fsSL https://github.com/leanprover/elan/releases/download/v4.2.3/elan-x86_64-unknown-linux-gnu.tar.gz -o /tmp/elan.tar.gz
-          echo 'df0b2b3a439961ffcbb3985214365ffe40f49bc871df04dff268c7d8e21ca8b2  /tmp/elan.tar.gz' | sha256sum -c -
-          tar -xzf /tmp/elan.tar.gz -C /tmp elan-init
-          /tmp/elan-init -y --default-toolchain "$ELAN_TOOLCHAIN"
+          if [ ! -x "$HOME/.elan/bin/elan" ]; then
+            curl -fsSL https://github.com/leanprover/elan/releases/download/v4.2.3/elan-x86_64-unknown-linux-gnu.tar.gz -o /tmp/elan.tar.gz
+            echo 'df0b2b3a439961ffcbb3985214365ffe40f49bc871df04dff268c7d8e21ca8b2  /tmp/elan.tar.gz' | sha256sum -c -
+            tar -xzf /tmp/elan.tar.gz -C /tmp elan-init
+            /tmp/elan-init -y --default-toolchain "$ELAN_TOOLCHAIN"
+          fi
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
-      - name: Materialize the digest-pinned formal sandbox image
-        run: docker pull alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
-      - name: Install package metadata
-        run: npm ci --ignore-scripts --no-audit --no-fund
+          ELAN_TOOLCHAIN="$ELAN_TOOLCHAIN" "$HOME/.elan/bin/elan" which lake
+          mkdir -p .ci-cache
+          if [ -s .ci-cache/formal-sandbox-alpine.tar ]; then
+            docker load --input .ci-cache/formal-sandbox-alpine.tar
+          fi
+          if ! docker image inspect "$FORMAL_SANDBOX_IMAGE" >/dev/null 2>&1; then
+            docker pull "$FORMAL_SANDBOX_IMAGE"
+          fi
+          docker image inspect "$FORMAL_SANDBOX_IMAGE" --format '{{json .RepoDigests}}' \
+            | grep -F 'sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc'
+          if [ ! -s .ci-cache/formal-sandbox-alpine.tar ]; then
+            docker save alpine:3.20 --output .ci-cache/formal-sandbox-alpine.tar
+          fi
+      - name: Install nightly dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sqlite3
+          npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify or populate pinned Mathlib cache
+        run: npm run ci:mathlib-cache
+      - name: Run full portable qualification
+        run: npm run ci:selftest
+      - name: Enforce architecture and repository-wide coverage
+        run: npm run coverage:architecture && npm run coverage:repository
       - name: Run real Python and R academic original plus replay
         run: npm run test:academic-docker-operational
       - name: Run process-isolated typed numeric oracle recomputation

@@ -15,6 +15,8 @@ const ONLINE_MUTATION_AUTOMATION_TESTS = Object.freeze(
 
 const AUTOMATION_TESTS = Object.freeze([...new Set([
   'paper-core/tests/verification-command-batch.test.mjs',
+  'paper-core/tests/test-impact-graph.test.mjs',
+  'paper-core/tests/ci-formal-cache.test.mjs',
   'paper-core/tests/automation-campaign.test.mjs',
   'paper-core/tests/automation-executor-entry-boundaries.test.mjs',
   'paper-core/tests/automation-executors.test.mjs',

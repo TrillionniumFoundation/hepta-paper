@@ -59,5 +59,5 @@ PRAGMA foreign_keys=ON;
 
   assert.equal(restore.status, 'hepta_store_restore_drill_blocked');
   assert.equal(restore.foreignKeyViolationCount, 1);
-  assert.equal(restoreRun.status, 1, restoreRun.stderr);
+  assert.equal(restoreRun.status, 2, restoreRun.stderr);
 });

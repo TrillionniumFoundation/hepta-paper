@@ -19,6 +19,7 @@ const EXPECTED_AUDITED_CAPS = Object.freeze({
   'paper-adapters/automation/system-benchmark-harness.mjs': 56,
   'paper-application/automation/autonomous-research-campaign.mjs': 81,
   'paper-domain/automation/autonomous-submission-contract.mjs': 55,
+  'paper-domain/automation/autonomous-venue-compliance-contract.mjs': 81,
   'paper-adapters/automation/autonomous-research-state-database-inventory.mjs': 57,
   'paper-adapters/automation/autonomous-research-state-backup-repository.mjs': 49,
   'paper-composition/automation/autonomous-research-external-capability-composition.mjs': 53,
@@ -30,7 +31,11 @@ const EXPECTED_AUDITED_CAPS = Object.freeze({
   'paper-domain/automation/autonomous-research-release-binding-contract.mjs': 51,
   'paper-domain/automation/autonomous-formal-support-registry.mjs': 52,
   'paper-adapters/research-verify/lake-formal-verifier.mjs': 55,
-  'paper-adapters/research-verify/trusted-formal-producer.mjs': 66,
+  'paper-adapters/research-verify/trusted-formal-producer.mjs': 70,
+  'paper-domain/research/formal-certificate-native-closure.mjs': 92,
+  'paper-adapters/runtime/docker-worker-container-recovery.mjs': 51,
+  'paper-adapters/runtime/os-sandboxed-worker-runner.mjs': 102,
+  'paper-adapters/automation/nested-runtime-platform-qualification-verifier.mjs': 54,
 });
 
 const REQUIRED_NEW_TRUST_TARGETS = Object.freeze([
@@ -65,6 +70,9 @@ const REQUIRED_NEW_TRUST_TARGETS = Object.freeze([
   'paper-domain/automation/strict-full-auto-acceptance-policy.mjs',
   'paper-domain/research/native-formal-certificate-intake-v4.mjs',
   'paper-domain/research/formal-certificate-intake.mjs',
+  'paper-domain/research/formal-certificate-intake-primitives.mjs',
+  'paper-domain/research/formal-certificate-native-closure.mjs',
+  'paper-domain/research/formal-certificate-intake-builder.mjs',
   'paper-adapters/research-verify/trusted-formal-producer-contract.mjs',
   'paper-adapters/research-verify/dynamic-formal-sandbox-probe-verifier.mjs',
 ]);

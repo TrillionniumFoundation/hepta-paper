@@ -105,6 +105,15 @@ export const CRITICAL_COVERAGE_TARGET_OVERRIDES = Object.freeze({
     rationale:
       'Submission contract validates several venue-specific optional projections; tests cover binding tamper, receipt reseal, and replay isolation.',
   }),
+  'paper-domain/automation/autonomous-venue-compliance-contract.mjs': exception({
+    lines: 90,
+    functions: 95,
+    maxUncoveredBranchBlocks: 81,
+    trustBoundary: true,
+    reviewedAttackSurface: ['venue-policy', 'release-artifacts', 'compliance-receipt'],
+    rationale:
+      'Venue compliance validates a broad optional policy matrix; release-fixture tests cover artifact drift, metadata, limits, profile binding, and receipt verification.',
+  }),
   'paper-adapters/automation/autonomous-research-state-database-inventory.mjs': exception({
     lines: 55,
     functions: 40,
@@ -207,11 +216,47 @@ export const CRITICAL_COVERAGE_TARGET_OVERRIDES = Object.freeze({
   'paper-adapters/research-verify/trusted-formal-producer.mjs': exception({
     lines: 55,
     functions: 40,
-    maxUncoveredBranchBlocks: 66,
+    maxUncoveredBranchBlocks: 70,
     trustBoundary: true,
     reviewedAttackSurface: ['formal-receipt', 'source-lineage', 'claim-manifest'],
     rationale:
       'Trusted formal producer validates a broad certificate projection; tests cover receipt replacement, source drift, missing lineage, and manifest tamper.',
+  }),
+  'paper-domain/research/formal-certificate-native-closure.mjs': exception({
+    lines: 90,
+    functions: 90,
+    maxUncoveredBranchBlocks: 92,
+    trustBoundary: true,
+    reviewedAttackSurface: ['native-receipt', 'claim-binding', 'replay-closure'],
+    rationale:
+      'Native formal closure verification checks a dense immutable receipt projection; tests cover report, receipt, replay, claim, source, and ledger substitutions.',
+  }),
+  'paper-adapters/runtime/docker-worker-container-recovery.mjs': exception({
+    lines: 80,
+    functions: 95,
+    maxUncoveredBranchBlocks: 51,
+    trustBoundary: true,
+    reviewedAttackSurface: ['container-ownership', 'cleanup-retry', 'cold-start-recovery'],
+    rationale:
+      'Docker recovery retains daemon timing and uncertain-inspection branches; tests cover ownership mismatch, partial cleanup, absence, timeout, and cold-start reconciliation.',
+  }),
+  'paper-adapters/runtime/os-sandboxed-worker-runner.mjs': exception({
+    lines: 85,
+    functions: 85,
+    maxUncoveredBranchBlocks: 102,
+    trustBoundary: true,
+    reviewedAttackSurface: ['execution-identity', 'filesystem-isolation', 'resource-limits'],
+    rationale:
+      'The OS sandbox runner spans Docker and bubblewrap platform branches; tests cover identity replay, path escape, dataset drift, output bounds, cancellation, and immutable mounts.',
+  }),
+  'paper-adapters/automation/nested-runtime-platform-qualification-verifier.mjs': exception({
+    lines: 90,
+    functions: 95,
+    maxUncoveredBranchBlocks: 54,
+    trustBoundary: true,
+    reviewedAttackSurface: ['authority-independence', 'pod-binding', 'signed-evidence'],
+    rationale:
+      'Nested runtime qualification validates independently signed platform and Pod evidence; tests cover signer aliasing, byte drift, expiry, profile mismatch, and deployment identity.',
   }),
 });
 

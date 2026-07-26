@@ -235,12 +235,18 @@ test('approved proposal seed closes through writer theorem, system spec, Lean re
           changedPaths: ['THEOREM_SPEC_DRAFT.json'],
         });
       }
-      if (input.role !== 'formal-author') throw new Error(`unexpected_primary_agent_execution:${input.role}`);
+      if (!['formal-author', 'formal-proof-repair'].includes(input.role)) {
+        throw new Error(`unexpected_primary_agent_execution:${input.role}`);
+      }
       authorCallCount += 1;
       const specification = JSON.parse(fs.readFileSync(path.join(input.workspacePath, 'THEOREM_SPEC.json'), 'utf8'));
       assert.equal(input.context.theoremSpecificationHash, specification.theoremSpecificationHash);
       const claim = specification.claims[0];
-      const declaration = leanSourceDeclarationRecords(leanSource).find((item) => item.name === 'reflexiveIdentity');
+      const candidateLeanSource = input.role === 'formal-proof-repair'
+        ? `-- bounded repair ${authorCallCount}\n${leanSource}`
+        : leanSource;
+      const declaration = leanSourceDeclarationRecords(candidateLeanSource)
+        .find((item) => item.name === 'reflexiveIdentity');
       assert.ok(declaration);
       fs.writeFileSync(path.join(input.workspacePath, 'lakefile.lean'), [
         'import Lake', 'open Lake DSL', 'package heptaFormalCampaign where',
@@ -250,7 +256,10 @@ test('approved proposal seed closes through writer theorem, system spec, Lean re
       fs.writeFileSync(path.join(input.workspacePath, 'lake-manifest.json'), `${JSON.stringify({
         version: '1.1.0', packagesDir: '.lake/packages', packages: [], name: 'heptaFormalCampaign', lakeDir: '.lake',
       }, null, 2)}\n`);
-      fs.writeFileSync(path.join(input.workspacePath, 'Main.lean'), leanSource);
+      fs.writeFileSync(
+        path.join(input.workspacePath, 'Main.lean'),
+        candidateLeanSource,
+      );
       const plan = {
         version: 1,
         kind: 'NativeResearchWorkerPlan',
@@ -259,7 +268,11 @@ test('approved proposal seed closes through writer theorem, system spec, Lean re
         workers: [{
           id: 'lean-proof', type: 'formal_verifier_lake', evidenceClass: 'research_evidence',
           syntheticInput: false, outcomesPreprogrammed: false, claimIds: [claim.claimId],
-          inputs: [{ role: 'formal_source', path: 'Main.lean', sha256: hashBytes(Buffer.from(leanSource)) }],
+          inputs: [{
+            role: 'formal_source',
+            path: 'Main.lean',
+            sha256: hashBytes(Buffer.from(candidateLeanSource)),
+          }],
           parameters: {
             projectRoot: '.', executable: 'lake',
             claimBindings: [{
@@ -394,8 +407,12 @@ test('approved proposal seed closes through writer theorem, system spec, Lean re
   } catch (error) {
     assert.fail(`${error.message}\n${JSON.stringify(error.receipt, null, 2)}`);
   }
-  assert.equal(authorCallCount, 1);
-  assert.equal(reviewCallCount, 1);
+  assert.equal(
+    authorCallCount,
+    formalResult.formalProofSearchAttempts.length + 1,
+  );
+  assert.equal(reviewCallCount, authorCallCount);
+  assert.ok(authorCallCount <= formalResult.formalProofSearchPlan.candidateCount);
   assert.equal(formalResult.kind, 'CampaignFormalVerificationReceipt');
   assert.equal(formalResult.status, 'campaign_formal_verification_completed', JSON.stringify(formalResult.blockers));
   const canonicalSpecification = JSON.parse(fs.readFileSync(path.join(workspace, 'THEOREM_SPEC.json'), 'utf8'));

@@ -8,12 +8,11 @@ import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-
 import {
   HEPTA_PAPER_COMMAND_REGISTRY,
   classifyNpmScriptSurface,
+  generatedNpmRouteScripts,
+  heptaPaperCiCommandMatrix,
   heptaPaperCommandUsage,
+  inspectNpmScriptRegistry,
 } from '../src/command-registry.mjs';
-import {
-  EXPLICIT_NPM_SCRIPTS,
-  ROUTED_NPM_SCRIPT_CLASSIFICATION,
-} from '../src/npm-command-surface-manifest.mjs';
 import { parseStrictCliArguments } from '../src/strict-cli-arguments.mjs';
 import {
   DECLARED_TEST_SUITES,
@@ -58,9 +57,13 @@ test('root package declares the vendored reference and a non-duplicated verifica
   assert.equal(typeof scripts['compat:legacy-workflow-projection'], 'string');
   assert.equal(typeof scripts['experimental:real-paper-pilot'], 'string');
   assert.equal(scripts['paper:submission-handoff'], 'node paper-core/bin/paper-submission-handoff.mjs');
-  for (const name of ['core:baseline', 'core:integrity', 'core:selftest', 'core:selftest:workspace', 'core:runtime-dry-run']) {
-    assert.match(scripts[name], /DEPRECATED: use npm run reference:/, name);
-  }
+  for (const name of [
+    'core:baseline',
+    'core:integrity',
+    'core:selftest',
+    'core:selftest:workspace',
+    'core:runtime-dry-run',
+  ]) assert.equal(scripts[name], undefined, name);
   const commands = new Map();
   for (const [name, command] of Object.entries(scripts)) {
     const aliases = commands.get(command) || [];
@@ -212,7 +215,19 @@ test('full and deduplicated test suites are derived from one declarative manifes
 });
 
 test('one declarative registry owns supported routes and npm command classification', () => {
-  assert.equal(ROUTED_NPM_SCRIPT_CLASSIFICATION.maintenance, 'maintenance');
+  assert.deepEqual(inspectNpmScriptRegistry(scripts), {
+    version: 1,
+    kind: 'NpmScriptRegistryInspection',
+    ready: true,
+    generatedAliases: generatedNpmRouteScripts(),
+    aliasMismatches: [],
+    blocked: [],
+  });
+  assert.deepEqual(heptaPaperCiCommandMatrix().nightly.map((entry) => entry.id), [
+    'academic-empirical',
+    'typed-numeric',
+    'dynamic-formal',
+  ]);
   const result = spawnSync(process.execPath, ['paper-core/bin/command-surface.mjs'], {
     cwd: root,
     encoding: 'utf8',
@@ -221,13 +236,10 @@ test('one declarative registry owns supported routes and npm command classificat
   const surface = JSON.parse(result.stdout);
   assert.equal(surface.version, 4);
   assert.deepEqual(surface.blocked, []);
-  const registeredScripts = [
-    ...Object.values(HEPTA_PAPER_COMMAND_REGISTRY)
-      .flatMap((routes) => Object.values(routes))
-      .flatMap((entry) => (entry.npmScript ? [entry.npmScript] : [])),
-    ...Object.values(EXPLICIT_NPM_SCRIPTS).flat(),
-  ].sort();
-  assert.deepEqual(registeredScripts, Object.keys(scripts).sort());
+  assert.deepEqual(
+    Object.values(surface.groups).flat().sort(),
+    Object.keys(scripts).sort(),
+  );
   const expectedOperatorScripts = [
     'hepta-paper',
     ...Object.values(HEPTA_PAPER_COMMAND_REGISTRY.operator)
@@ -268,13 +280,13 @@ test('one declarative registry owns supported routes and npm command classificat
     'automation:runtime-bootstrap:r',
     'automation:runtime-image-bundle-load',
     'conformance:replay',
-    'core:baseline',
     'migration:matrix-refresh-hashes',
     'migration:salvage-verification-receipt',
     'owner:refresh-local-admin',
     'reference:baseline:accept',
     'runtime:hygiene',
     'runtime:permissions',
+    'scripts:sync',
     'store:repair-ledger-integrity',
   ]) assert.ok(surface.groups.maintenance.includes(name), name);
   for (const name of surface.groups.maintenance) {

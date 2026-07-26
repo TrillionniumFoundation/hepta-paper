@@ -1,4 +1,3 @@
-// Declarative npm classification for supported hepta-paper routes.
 export const ROUTED_NPM_SCRIPT_CLASSIFICATION = Object.freeze({
   operator: 'operator',
   maintenance: 'maintenance',
@@ -6,8 +5,6 @@ export const ROUTED_NPM_SCRIPT_CLASSIFICATION = Object.freeze({
   retirement: 'retirement',
 });
 
-// Package scripts that are not direct routes are classified explicitly.
-// Unknown scripts remain blocked by default.
 export const EXPLICIT_NPM_SCRIPTS = Object.freeze({
   operator: Object.freeze([
     'hepta-paper',
@@ -29,10 +26,6 @@ export const EXPLICIT_NPM_SCRIPTS = Object.freeze({
     'automation:strict-rereview-smoke',
     'ci:selftest',
     'check:syntax',
-    'core:integrity',
-    'core:runtime-dry-run',
-    'core:selftest',
-    'core:selftest:workspace',
     'coverage:architecture',
     'coverage:repository',
     'coverage:system',
@@ -57,6 +50,7 @@ export const EXPLICIT_NPM_SCRIPTS = Object.freeze({
     'safety:p0',
     'safety:p1',
     'safety:p2',
+    'scripts:check',
     'store:trust-status',
     'store:restore-drill',
     'static:check',
@@ -75,7 +69,6 @@ export const EXPLICIT_NPM_SCRIPTS = Object.freeze({
     'automation:workspace-backfill',
     'automation:workspace-backfill:execute',
     'conformance:replay',
-    'core:baseline',
     'external:intake',
     'migration:matrix-refresh-hashes',
     'migration:salvage-verification-receipt',
@@ -129,3 +122,97 @@ export const EXPLICIT_NPM_SCRIPTS = Object.freeze({
     'test:inner',
   ]),
 });
+
+export const NPM_COMMAND_GROUPS = Object.freeze([
+  'operator',
+  'verification',
+  'maintenance',
+  'retirement',
+  'compatibility',
+  'experimental',
+  'internal',
+]);
+
+export const HEPTA_PAPER_CI_COMMAND_MATRIX = Object.freeze({
+  pullRequest: Object.freeze([
+    Object.freeze({
+      id: 'portable-contracts',
+      npmScripts: Object.freeze(['ci:selftest']),
+    }),
+    Object.freeze({
+      id: 'portable-coverage',
+      npmScripts: Object.freeze(['coverage:architecture', 'coverage:repository']),
+    }),
+  ]),
+  nightly: Object.freeze([
+    Object.freeze({
+      id: 'academic-empirical',
+      npmScripts: Object.freeze(['test:academic-docker-operational']),
+    }),
+    Object.freeze({
+      id: 'typed-numeric',
+      npmScripts: Object.freeze(['test:typed-numeric-process-operational']),
+    }),
+    Object.freeze({
+      id: 'dynamic-formal',
+      npmScripts: Object.freeze(['test:dynamic-formal-kernel-operational']),
+    }),
+  ]),
+});
+
+export function defineCommandRoute({
+  group,
+  name,
+  argv,
+  npmScript = null,
+  npmCommand = null,
+  mutability = 'read-only',
+  effects = {},
+  unsupportedModes = [],
+  forwardingPolicy = 'none',
+  forwardedArgumentSchema = null,
+}) {
+  return Object.freeze({
+    group,
+    name,
+    argv: Object.freeze([...argv]),
+    npmScript,
+    npmCommand,
+    mutability,
+    effects: Object.freeze({
+      localMutation: effects.localMutation || mutability,
+      externalAction: effects.externalAction || 'none',
+      networkUse: effects.networkUse || 'none',
+      credentialUse: effects.credentialUse || 'none',
+      providerCost: effects.providerCost || 'none',
+    }),
+    unsupportedModes: Object.freeze([...unsupportedModes]),
+    forwardingPolicy,
+    forwardedArgumentSchema: forwardedArgumentSchema ? Object.freeze({
+      ...forwardedArgumentSchema,
+      booleanFlags: Object.freeze([...(forwardedArgumentSchema.booleanFlags || [])]),
+      valueFlags: Object.freeze([...(forwardedArgumentSchema.valueFlags || [])]),
+      repeatableValueFlags: Object.freeze([
+        ...(forwardedArgumentSchema.repeatableValueFlags || []),
+      ]),
+    }) : null,
+  });
+}
+
+export function buildNpmCommandClassification(routes) {
+  const classification = new Map();
+  const register = (name, group) => {
+    if (classification.has(name)) throw new Error(`duplicate_npm_command_classification:${name}`);
+    classification.set(name, group);
+  };
+  for (const entry of routes) {
+    if (!entry.npmScript) continue;
+    const group = ROUTED_NPM_SCRIPT_CLASSIFICATION[entry.group];
+    if (!group) throw new Error(`unclassified_routed_npm_command_group:${entry.group}`);
+    register(entry.npmScript, group);
+  }
+  for (const [group, names] of Object.entries(EXPLICIT_NPM_SCRIPTS)) {
+    for (const name of names) register(name, group);
+  }
+  return classification;
+}

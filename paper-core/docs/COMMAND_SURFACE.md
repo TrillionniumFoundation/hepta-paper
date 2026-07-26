@@ -16,10 +16,15 @@ surfaces:
   the supported operator graph;
 - `internal`: implementation details invoked by wrapper commands.
 
-The registry lives in `paper-core/src/command-registry.mjs` and drives the
-`hepta-paper` router, npm classification, and surface tests. A package script
-that is not registered defaults to `internal` and is reported in the top-level
-`blocked` list; it can never fall through into `operator`. Forwarded command
+The registry lives in `paper-core/src/command-registry.mjs` and is the sole
+metadata source for the `hepta-paper` router, npm classification, generated npm
+route aliases, help output, CI command matrix, and surface tests. Run
+`npm run scripts:check` to reject alias/classification drift or
+`npm run scripts:sync` to regenerate routed aliases. `command-surface.mjs`
+emits the generated aliases, help, and CI matrix with `--npm-aliases`,
+`--help-artifact`, and `--ci-matrix`. A package script that is not registered
+defaults to `internal` and is reported in the top-level `blocked` list; it can
+never fall through into `operator`. Forwarded command
 arguments require the explicit separator, for example
 `npm run hepta-paper -- operator batch -- --help`.
 The batch registry records `journal-manage`, `venue-resolve`, and `source-adapt`
@@ -35,9 +40,8 @@ explicit non-production `compat:legacy-workflow-projection` command remains for
 bounded compatibility work and is not reachable from `paper-production-core`.
 
 The canonical reference-package commands use the `reference:*` prefix. The
-deprecated `core:*` aliases remain temporarily and print an explicit warning.
-`reference:baseline:accept` and its deprecated `core:baseline` alias are
-maintenance commands, not verification: both rewrite accepted repository
+deprecated `core:*` aliases have been removed. `reference:baseline:accept` is
+a maintenance command, not verification: it rewrites accepted repository
 evidence and must never be included in a routine verification inventory.
 `conformance:replay` is maintenance rather than verification because its
 explicit execute mode reads a private signing key and writes signed production

@@ -1,39 +1,9 @@
 import {
-  EXPLICIT_NPM_SCRIPTS,
-  ROUTED_NPM_SCRIPT_CLASSIFICATION,
-} from './npm-command-surface-manifest.mjs';
-const route = ({
-  group,
-  name,
-  argv,
-  npmScript = null,
-  mutability = 'read-only',
-  effects = {},
-  unsupportedModes = [],
-  forwardingPolicy = 'none',
-  forwardedArgumentSchema = null,
-}) => Object.freeze({
-  group,
-  name,
-  argv: Object.freeze([...argv]),
-  npmScript,
-  mutability,
-  effects: Object.freeze({
-    localMutation: effects.localMutation || mutability,
-    externalAction: effects.externalAction || 'none',
-    networkUse: effects.networkUse || 'none',
-    credentialUse: effects.credentialUse || 'none',
-    providerCost: effects.providerCost || 'none',
-  }),
-  unsupportedModes: Object.freeze([...unsupportedModes]),
-  forwardingPolicy,
-  forwardedArgumentSchema: forwardedArgumentSchema ? Object.freeze({
-    ...forwardedArgumentSchema,
-    booleanFlags: Object.freeze([...(forwardedArgumentSchema.booleanFlags || [])]),
-    valueFlags: Object.freeze([...(forwardedArgumentSchema.valueFlags || [])]),
-    repeatableValueFlags: Object.freeze([...(forwardedArgumentSchema.repeatableValueFlags || [])]),
-  }) : null,
-});
+  HEPTA_PAPER_CI_COMMAND_MATRIX,
+  NPM_COMMAND_GROUPS,
+  buildNpmCommandClassification,
+  defineCommandRoute as route,
+} from './command-registry-catalog.mjs';
 
 const ROUTES = Object.freeze([
   route({ group: 'operator', name: 'workspace', argv: ['node', 'paper-core/bin/workspace-status.mjs'], npmScript: 'workspace:status', forwardingPolicy: 'registry', forwardedArgumentSchema: { booleanFlags: ['require-decoupled'], positional: false } }),
@@ -493,33 +463,70 @@ const ROUTES = Object.freeze([
       positional: false,
     },
   }),
+  route({
+    group: 'maintenance',
+    name: 'command-surface-sync',
+    argv: ['node', 'paper-core/bin/command-surface.mjs', '--write-package'],
+    npmScript: 'scripts:sync',
+    mutability: 'local-write',
+  }),
 
-  route({ group: 'verify', name: 'architecture', argv: ['node', '--test', 'paper-core/tests/architecture-conformance.test.mjs'], npmScript: 'paper:architecture-selftest' }),
-  route({ group: 'verify', name: 'critical', argv: ['npm', 'run', 'coverage:critical-modules'], npmScript: 'coverage:critical-modules' }),
+  route({
+    group: 'verify',
+    name: 'architecture',
+    argv: ['node', '--test', 'paper-core/tests/architecture-conformance.test.mjs'],
+    npmScript: 'paper:architecture-selftest',
+    npmCommand:
+      'node paper-core/bin/run-isolated-command.mjs node --test paper-core/tests/architecture-conformance.test.mjs',
+  }),
+  route({
+    group: 'verify',
+    name: 'critical',
+    argv: ['npm', 'run', 'coverage:critical-modules'],
+    npmScript: 'coverage:critical-modules',
+    npmCommand:
+      'node paper-core/bin/run-isolated-command.mjs node paper-core/bin/critical-module-coverage.mjs',
+  }),
   route({ group: 'verify', name: 'store', argv: ['node', 'paper-core/bin/hepta-store-logical-integrity.mjs'], npmScript: 'store:logical-integrity', forwardingPolicy: 'registry', forwardedArgumentSchema: { positional: true, maximumPositionals: 1 } }),
-  route({ group: 'verify', name: 'release', argv: ['npm', 'run', 'release:verify'], npmScript: 'release:verify' }),
+  route({
+    group: 'verify',
+    name: 'release',
+    argv: ['npm', 'run', 'release:verify'],
+    npmScript: 'release:verify',
+    npmCommand:
+      'npm run static:check && node paper-core/bin/run-isolated-verification.mjs release',
+  }),
   route({ group: 'verify', name: 'trust', argv: ['node', 'paper-core/bin/release-trust-gate.mjs'], npmScript: 'release:trust-gate' }),
   route({ group: 'verify', name: 'operational', argv: ['node', 'paper-core/bin/operational-proof-status.mjs'], npmScript: 'operational:status' }),
   route({ group: 'verify', name: 'owner', argv: ['node', 'paper-core/bin/owner-acceptance-status.mjs'], npmScript: 'owner:status' }),
-  route({ group: 'verify', name: 'full', argv: ['npm', 'test'], npmScript: 'test' }),
+  route({
+    group: 'verify',
+    name: 'full',
+    argv: ['npm', 'test'],
+    npmScript: 'test',
+    npmCommand: 'npm run static:check && node paper-core/bin/run-isolated-verification.mjs test',
+  }),
 
-  route({ group: 'retirement', name: 'status', argv: ['npm', 'run', 'migration:retirement-status'], npmScript: 'migration:retirement-status' }),
+  route({
+    group: 'retirement',
+    name: 'status',
+    argv: ['npm', 'run', 'migration:retirement-status'],
+    npmScript: 'migration:retirement-status',
+    npmCommand: 'npm run legacy:reference-verify && npm run migration:matrix-integrity',
+  }),
   route({ group: 'retirement', name: 'reference', argv: ['node', 'migration/bin/verify-retirement-source-snapshot.mjs'], npmScript: 'legacy:reference-verify' }),
-  route({ group: 'retirement', name: 'matrix', argv: ['npm', 'run', 'migration:capability-matrix-v3'], npmScript: 'migration:capability-matrix-v3' }),
+  route({
+    group: 'retirement',
+    name: 'matrix',
+    argv: ['npm', 'run', 'migration:capability-matrix-v3'],
+    npmScript: 'migration:capability-matrix-v3',
+    npmCommand:
+      "node paper-core/bin/run-isolated-command.mjs sh -lc 'node migration/bin/verify-capabilities.mjs && node migration/tests/capability-matrix-v3.mjs --release-profile'",
+  }),
   route({ group: 'retirement', name: 'drill', argv: ['node', 'paper-core/bin/legacy-deletion-drill.mjs'], npmScript: 'legacy:deletion-drill' }),
 ]);
 
 const ROUTE_GROUPS = Object.freeze(['operator', 'maintenance', 'verify', 'retirement']);
-const NPM_GROUPS = Object.freeze([
-  'operator',
-  'verification',
-  'maintenance',
-  'retirement',
-  'compatibility',
-  'experimental',
-  'internal',
-]);
-
 export const HEPTA_PAPER_COMMAND_REGISTRY = Object.freeze(Object.fromEntries(ROUTE_GROUPS.map((group) => [
   group,
   Object.freeze(Object.fromEntries(ROUTES
@@ -527,25 +534,7 @@ export const HEPTA_PAPER_COMMAND_REGISTRY = Object.freeze(Object.fromEntries(ROU
     .map((entry) => [entry.name, entry]))),
 ])));
 
-function buildNpmClassification() {
-  const classification = new Map();
-  const register = (name, group) => {
-    if (classification.has(name)) throw new Error(`duplicate_npm_command_classification:${name}`);
-    classification.set(name, group);
-  };
-  for (const entry of ROUTES) {
-    if (!entry.npmScript) continue;
-    const group = ROUTED_NPM_SCRIPT_CLASSIFICATION[entry.group];
-    if (!group) throw new Error(`unclassified_routed_npm_command_group:${entry.group}`);
-    register(entry.npmScript, group);
-  }
-  for (const [group, names] of Object.entries(EXPLICIT_NPM_SCRIPTS)) {
-    for (const name of names) register(name, group);
-  }
-  return classification;
-}
-
-const NPM_CLASSIFICATION = buildNpmClassification();
+const NPM_CLASSIFICATION = buildNpmCommandClassification(ROUTES);
 
 export function resolveHeptaPaperCommand(group, name) {
   return HEPTA_PAPER_COMMAND_REGISTRY[group]?.[name] || null;
@@ -582,8 +571,48 @@ export function heptaPaperCommandUsage() {
   });
 }
 
+export function generatedNpmRouteScripts() {
+  return Object.freeze(Object.fromEntries(ROUTES
+    .filter((entry) => entry.npmScript)
+    .map((entry) => [entry.npmScript, entry.npmCommand || entry.argv.join(' ')])));
+}
+
+export function inspectNpmScriptRegistry(packageScripts = {}) {
+  const generatedAliases = generatedNpmRouteScripts();
+  const aliasMismatches = Object.freeze(Object.entries(generatedAliases).flatMap(
+    ([name, command]) => packageScripts[name] === command
+      ? [] : [Object.freeze({
+        name,
+        expected: command,
+        actual: packageScripts[name] || null,
+      })],
+  ));
+  const surface = classifyNpmScriptSurface(Object.keys(packageScripts));
+  return Object.freeze({
+    version: 1,
+    kind: 'NpmScriptRegistryInspection',
+    ready: aliasMismatches.length === 0 && surface.blocked.length === 0,
+    generatedAliases,
+    aliasMismatches,
+    blocked: surface.blocked,
+  });
+}
+
+export function heptaPaperCiCommandMatrix() {
+  for (const entries of Object.values(HEPTA_PAPER_CI_COMMAND_MATRIX)) {
+    for (const entry of entries) {
+      for (const npmScript of entry.npmScripts) {
+        if (!NPM_CLASSIFICATION.has(npmScript)) {
+          throw new Error(`ci_matrix_npm_script_unregistered:${npmScript}`);
+        }
+      }
+    }
+  }
+  return HEPTA_PAPER_CI_COMMAND_MATRIX;
+}
+
 export function classifyNpmScriptSurface(scriptNames) {
-  const groups = Object.fromEntries(NPM_GROUPS.map((group) => [group, []]));
+  const groups = Object.fromEntries(NPM_COMMAND_GROUPS.map((group) => [group, []]));
   const blocked = [];
   for (const name of [...scriptNames].sort()) {
     const group = NPM_CLASSIFICATION.get(name);

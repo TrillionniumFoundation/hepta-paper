@@ -26,14 +26,6 @@ import {
   verifyAutonomousResearchMachineIntakeAdmission,
 } from '../../paper-domain/automation/autonomous-research-machine-intake-admission-contract.mjs';
 import {
-  buildLimitedPriorArtEvidenceReceipt,
-  verifyPriorArtEvidenceReceipt,
-} from '../../paper-domain/research/prior-art-evidence-contract.mjs';
-import {
-  STRONG_PRIOR_ART_CAPABILITY_MODE,
-} from '../../paper-domain/automation/autonomous-research-capability-scope-manifest.mjs';
-import { assertPriorArtRetrievalPort } from '../../paper-ports/prior-art-retrieval-port.mjs';
-import {
   verifyResearchPrincipalPool,
 } from '../../paper-domain/research/research-principal-pool-contract.mjs';
 import {
@@ -47,9 +39,7 @@ import {
   generateAutonomousResearchAgenda,
   generateAutonomousResearchHypothesis,
 } from './autonomous-research-readiness-generation.mjs';
-import {
-  buildConservativePriorArtClaimAlignment,
-} from './prior-art-claim-alignment-production.mjs';
+import { prepareAutonomousResearchPriorArt } from './autonomous-research-prior-art-preparation.mjs';
 import {
   prepareAutonomousResearchVenue,
 } from './autonomous-research-venue-preparation.mjs';
@@ -219,126 +209,27 @@ export async function prepareAutonomousResearchLoop({
     ))) {
     throw new Error('autonomous_research_submission_portal_configuration_hash_invalid');
   }
-  let priorArtAuthorityVerificationBundle = null;
-  let priorArtAuthorityTrustConfiguration = null;
-  let priorArtReceipt = null;
-  if (productionRun) {
-    if (generated.priorArtReceipt !== null) {
-      throw new Error('autonomous_research_production_generated_prior_art_forbidden');
-    }
-    if (!priorArtRetriever) {
-      throw new Error('autonomous_research_production_prior_art_retriever_required');
-    }
-    const retriever = assertPriorArtRetrievalPort(priorArtRetriever);
-    const priorArtTrust = externalCapabilityTrustInspection?.components?.priorArt || null;
-    if (retriever.cryptographicAuthorityReady !== true
-      || retriever.identityIndependenceReady !== true
-      || retriever.evidenceProfile !== STRONG_PRIOR_ART_CAPABILITY_MODE
-      || retriever.trustSetHash !== priorArtTrust?.trustSetHash
-      || retriever.signatureVerificationPolicyHash
-        !== priorArtTrust?.signatureVerificationPolicyHash) {
-      throw new Error('autonomous_research_production_prior_art_trust_not_ready');
-    }
-    if (assertExternalSideEffectReady) {
-      await assertExternalSideEffectReady({
-        action: 'production_prior_art_retrieval',
-        paperId,
-      });
-      assertExternalSideEffectReady.assertCurrent?.({
-        action: 'production_prior_art_retrieval',
-        paperId,
-      });
-    }
-    await assertExternalSideEffectReady?.markStarted?.({
-      action: 'production_prior_art_retrieval',
-    });
-    priorArtReceipt = await retriever.retrieve({
-      paperId,
-      objective: selectedObjective,
-      protocolFamily: selectedProtocolFamily,
-      researchAgendaIrHash: researchAgendaIr.researchAgendaIrHash,
-      priorArtQueryPlan: researchAgendaIr.priorArtQueryPlan,
-      agendaSelectionReceiptHash:
-        agendaSelectionReceipt.autonomousResearchAgendaSelectionReceiptHash,
-      generatorPrincipalId: generated.principalId,
-      generatorIdentityAttestation:
-        authorIdentityAttestation || generated.principalIdentityAttestation,
-      generatorIdentityAuthorityEnvelope:
-        authorIdentityAuthorityEnvelope || generated.principalIdentityAuthorityEnvelope,
-      createdAt: createdAt || agendaSelectionReceipt.selectedAt
-        || '1970-01-01T00:00:00.000Z',
-    });
-    priorArtAuthorityVerificationBundle = retriever.verifyAuthority(priorArtReceipt);
-    if (retriever.authorityFor(priorArtReceipt)
-      !== priorArtAuthorityVerificationBundle) {
-      throw new Error('autonomous_research_production_prior_art_authority_invalid');
-    }
-    retriever.verifyAuthorityBundle(
-      priorArtReceipt, priorArtAuthorityVerificationBundle,
-    );
-    priorArtAuthorityTrustConfiguration = retriever.authorityTrustConfiguration();
-  } else {
-    priorArtReceipt = generated.priorArtReceipt
-      || (priorArtRetriever
-        ? await (async () => {
-          if (assertExternalSideEffectReady) {
-            await assertExternalSideEffectReady({
-              action: 'bounded_prior_art_retrieval',
-              paperId,
-            });
-            assertExternalSideEffectReady.assertCurrent?.({
-              action: 'bounded_prior_art_retrieval',
-              paperId,
-            });
-          }
-          await assertExternalSideEffectReady?.markStarted?.({
-            action: 'bounded_prior_art_retrieval',
-          });
-          return assertPriorArtRetrievalPort(priorArtRetriever).retrieve({
-        paperId,
-        objective: selectedObjective,
-        protocolFamily: selectedProtocolFamily,
-        researchAgendaIrHash: researchAgendaIr?.researchAgendaIrHash,
-        priorArtQueryPlan: researchAgendaIr?.priorArtQueryPlan,
-        agendaSelectionReceiptHash:
-          agendaSelectionReceipt.autonomousResearchAgendaSelectionReceiptHash,
-        generatorPrincipalId: generated.principalId,
-        createdAt: createdAt || agendaSelectionReceipt.selectedAt
-          || '1970-01-01T00:00:00.000Z',
-          });
-        })()
-      : buildLimitedPriorArtEvidenceReceipt({
-        paperId,
-        agendaSelectionReceiptHash:
-          agendaSelectionReceipt.autonomousResearchAgendaSelectionReceiptHash,
-        generatorPrincipalId: generated.principalId,
-        createdAt: createdAt || agendaSelectionReceipt.selectedAt
-          || '1970-01-01T00:00:00.000Z',
-        }));
-  }
-  const priorArtVerification = verifyPriorArtEvidenceReceipt(priorArtReceipt, {
+  const {
+    priorArtAuthorityVerificationBundle,
+    priorArtAuthorityTrustConfiguration,
+    priorArtReceipt,
+    priorArtClaimAlignmentReceipt,
+    priorArtVerification,
+  } = await prepareAutonomousResearchPriorArt({
     paperId,
-    agendaSelectionReceiptHash:
-      agendaSelectionReceipt.autonomousResearchAgendaSelectionReceiptHash,
-    ...(researchAgendaIr ? {
-      researchAgendaIrHash: researchAgendaIr.researchAgendaIrHash,
-      priorArtQueryPlan: researchAgendaIr.priorArtQueryPlan,
-    } : {}),
-    requireVerified: productionRun,
+    productionRun,
+    generated,
+    priorArtRetriever,
+    externalCapabilityTrustInspection,
+    assertExternalSideEffectReady,
+    selectedObjective,
+    selectedProtocolFamily,
+    researchAgendaIr,
+    agendaSelectionReceipt,
+    authorIdentityAttestation,
+    authorIdentityAuthorityEnvelope,
+    createdAt,
   });
-  if (!priorArtVerification.valid) {
-    throw new Error(`autonomous_research_prior_art_evidence_invalid:${priorArtVerification.blockers.join(',')}`);
-  }
-  let priorArtClaimAlignmentReceipt = null;
-  if (researchAgendaIr && priorArtReceipt?.version === 2) {
-    priorArtClaimAlignmentReceipt = buildConservativePriorArtClaimAlignment({
-      researchAgendaIr,
-      agendaSelectionReceipt,
-      priorArtEvidenceReceipt: priorArtReceipt,
-    });
-  } else if (productionRun) {
-    throw new Error('autonomous_research_production_prior_art_claim_alignment_required');
-  }
   const policyAuthorization = evaluateAutonomousResearchPolicy({
     proposal,
     agendaSelectionReceipt,

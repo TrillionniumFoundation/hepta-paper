@@ -8,7 +8,6 @@ import {
   buildExecutorCapabilities,
   evaluateExecutorCapabilityRequest,
 } from '../../paper-ports/executor-capabilities.mjs';
-import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { inspectScopedPathSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
 import { isPathWithin } from '../../workflow-kernel/runtime/path-utils.mjs';
 import { sha256FileSync } from '../../workflow-kernel/runtime/file-utils.mjs';
@@ -65,6 +64,7 @@ import {
   createOsSandboxWorkerExecutionFinalizer,
   removePrivateSandboxRoot,
 } from './os-sandbox-worker-execution-finalizer.mjs';
+import { createWorkerExecutionIdentityIssuer } from './worker-execution-identity-issuer.mjs';
 
 export function createOsSandboxedWorkerRunner({
   allowedExecutables = [], allowedRoots = [], allowedOutputRoots = [], allowGpu = false, bubblewrap = 'bwrap', prlimit = 'prlimit', docker = 'docker', dockerImage = null,
@@ -104,11 +104,7 @@ export function createOsSandboxedWorkerRunner({
     ? Object.freeze({ available: true, mechanism: 'docker-pids-cgroup' })
     : (availability.processLimit || probeProcessLimit(prlimit));
   const runnerId = `${backend}-kernel-isolation-worker-v4`;
-  const issueExecutionIdentity = (payload) => {
-    const identity = Object.freeze({ ...payload, runtimeIdentityHash: hashRecord('WorkerExecutionRuntimeIdentity', payload) });
-    issuedExecutionIdentities.set(identity, { identity, consumed: false });
-    return identity;
-  };
+  const issueExecutionIdentity = createWorkerExecutionIdentityIssuer(issuedExecutionIdentities);
   const resolveExecutionRuntimeIdentity = ({ executable, containerImage = null, containerExecutable = null } = {}) => {
     const allowedExecutable = resolveAllowedExecutable(executable);
     const resolvedExecutable = allowedExecutable.resolvedExecutable;

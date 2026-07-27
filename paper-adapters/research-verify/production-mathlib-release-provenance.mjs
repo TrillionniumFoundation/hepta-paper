@@ -109,7 +109,14 @@ function executeGit(spawnSyncImpl, packageRoot, args) {
     encoding: 'utf8',
     timeout: 30_000,
     windowsHide: true,
-    env: { PATH: '/usr/bin:/bin', LC_ALL: 'C', LANG: 'C' },
+    env: {
+      PATH: '/usr/bin:/bin',
+      LC_ALL: 'C',
+      LANG: 'C',
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'safe.directory',
+      GIT_CONFIG_VALUE_0: packageRoot,
+    },
   });
 }
 

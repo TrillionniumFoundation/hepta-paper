@@ -447,7 +447,7 @@ test('automation-status help exits without performing readiness actions', () => 
   assert.deepEqual(JSON.parse(run.stdout), {
     version: 2,
     kind: 'AutomationStatusUsage',
-    usage: 'automation-status [--json] [--root PATH] [--runtime-root PATH] [--require-full-research] [--require-fully-autonomous] [--live-provider-canary] [--live-release-attestor]',
+    usage: 'automation-status [--json] [--handoff] [--root PATH] [--runtime-root PATH] [--require-full-research] [--require-fully-autonomous] [--live-provider-canary] [--live-release-attestor]',
     mutation: 'no-canonical-state-write',
     localObservationEffects: 'runtime-metadata-and-daemon-probes-may-change',
     externalAction: 'argument-dependent',

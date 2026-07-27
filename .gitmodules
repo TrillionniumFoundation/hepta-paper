@@ -1,0 +1,6 @@
+[submodule "core"]
+	path = core
+	url = https://github.com/ProfAlexQI/hepta-paper-core-reference.git
+[submodule "runtime-images/r-scientific/source-cas"]
+	path = runtime-images/r-scientific/source-cas
+	url = https://github.com/ProfAlexQI/hepta-paper-r-source-cas.git

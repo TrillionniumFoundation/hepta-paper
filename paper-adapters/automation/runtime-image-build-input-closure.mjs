@@ -25,15 +25,16 @@ function normalizedRelative(root, candidate) {
   return relative;
 }
 
-function visitContext(root, directory = root, records = []) {
+function visitContext(root, directory = root, records = [], excludedPaths = new Set()) {
   for (const name of fs.readdirSync(directory).sort()) {
     const absolute = path.join(directory, name);
     const relative = normalizedRelative(root, absolute);
+    if (excludedPaths.has(relative)) continue;
     const stat = fs.lstatSync(absolute);
     const mode = Number(stat.mode & 0o777);
     if (stat.isDirectory()) {
       records.push(Object.freeze({ path: `${relative}/`, type: 'directory', mode }));
-      visitContext(root, absolute, records);
+      visitContext(root, absolute, records, excludedPaths);
     } else if (stat.isFile()) {
       records.push(Object.freeze({
         path: relative,
@@ -55,6 +56,37 @@ function visitContext(root, directory = root, records = []) {
     records.sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
   }
   return records;
+}
+
+function canonicalContextTransportMetadataPaths(context, definition) {
+  const paths = definition.contextTransportMetadataPaths || [];
+  if (!Array.isArray(paths)
+    || paths.some((entry) => typeof entry !== 'string')
+    || new Set(paths).size !== paths.length
+    || JSON.stringify(paths) !== JSON.stringify([...paths].sort())
+    || paths.some((entry) => {
+      const normalized = entry.replaceAll('\\', '/');
+      return normalized !== entry || !normalized || path.posix.isAbsolute(normalized)
+        || normalized === '..' || normalized.startsWith('../')
+        || !/(?:^|\/)\.(?:git|gitattributes)$/.test(normalized);
+    })) {
+    throw new Error('runtime_reproducibility_context_transport_metadata_invalid');
+  }
+  const dockerignore = path.join(context, '.dockerignore');
+  if (!paths.length) {
+    if (fs.existsSync(dockerignore)) {
+      throw new Error('runtime_reproducibility_canonical_context_required');
+    }
+    return new Set();
+  }
+  const stat = fs.lstatSync(dockerignore, { throwIfNoEntry: false });
+  if (!stat?.isFile() || stat.isSymbolicLink()
+    || !definition.definitionPaths.includes('.dockerignore')
+    || paths.some((entry) => definition.definitionPaths.includes(entry))
+    || fs.readFileSync(dockerignore, 'utf8') !== `${paths.join('\n')}\n`) {
+    throw new Error('runtime_reproducibility_canonical_context_required');
+  }
+  return new Set(paths);
 }
 
 function exactDeclaredContext(records, definitionPaths) {
@@ -147,10 +179,11 @@ export function inspectRuntimeImageBuildInputClosure({
   const context = fs.realpathSync(path.resolve(root, definition.contextPath));
   const contextPrefix = normalizedRelative(root, context);
   const contextStat = fs.lstatSync(context);
-  if (!contextStat.isDirectory() || fs.existsSync(path.join(context, '.dockerignore'))) {
+  if (!contextStat.isDirectory()) {
     throw new Error('runtime_reproducibility_canonical_context_required');
   }
-  const contextManifest = Object.freeze(visitContext(context));
+  const excludedPaths = canonicalContextTransportMetadataPaths(context, definition);
+  const contextManifest = Object.freeze(visitContext(context, context, [], excludedPaths));
   exactDeclaredContext(contextManifest, definition.definitionPaths);
   const observedDefinitionHash = legacyDefinitionHash(
     context,

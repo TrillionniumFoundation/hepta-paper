@@ -55,6 +55,20 @@ const trustStore = readImmutableJsonDocument(
 );
 const pluginRoot = configuredPath(configDirectory, configuration.pluginRoot);
 const outputRoot = configuredPath(configDirectory, configuration.outputRoot);
+const qualificationConfigured = Boolean(
+  configuration.qualificationPath || configuration.qualificationTrustStorePath,
+);
+if (qualificationConfigured
+  && (!configuration.qualificationPath || !configuration.qualificationTrustStorePath)) {
+  throw new Error('advanced_numerical_plugin_qualification_configuration_incomplete');
+}
+const qualification = qualificationConfigured ? readImmutableJsonDocument(
+  configuredPath(configDirectory, configuration.qualificationPath),
+) : null;
+const qualificationTrustStore = qualificationConfigured ? readImmutableJsonDocument(
+  configuredPath(configDirectory, configuration.qualificationTrustStorePath),
+  { maximumBytes: 1024 * 1024 },
+) : null;
 const {
   verifiedBundle,
   descriptor,
@@ -63,24 +77,29 @@ const {
 } = composeAdvancedNumericalPluginRuntime({
   bundle,
   trustStore,
+  qualification,
+  qualificationTrustStore,
   pluginRoot,
   outputRoot,
   now: new Date(),
 });
 if (action === 'status') {
+  const capabilities = runner.capabilities();
   const report = {
     version: 1,
     kind: 'AdvancedNumericalPluginRuntimeInspection',
     status: workerRunner.availability?.available === true
-      ? 'advanced_numerical_plugin_runner_ready_unqualified'
+      ? capabilities.productionQualified === true
+        ? 'advanced_numerical_plugin_runner_ready_qualified'
+        : 'advanced_numerical_plugin_runner_ready_unqualified'
       : 'advanced_numerical_plugin_runner_blocked',
     pluginId: descriptor.pluginId,
     analysisFamily: descriptor.analysisFamily,
     descriptorHash: descriptor.advancedNumericalPluginDescriptorHash,
     signedBundleHash: verifiedBundle.signedBundleHash,
     sandboxAvailability: workerRunner.availability,
-    capabilities: runner.capabilities(),
-    productionQualified: false,
+    capabilities,
+    productionQualified: capabilities.productionQualified === true,
   };
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   if (args['require-runner-ready'] && workerRunner.availability?.available !== true) {
@@ -98,7 +117,10 @@ if (action === 'status') {
     outputDirectory: path.resolve(String(args['output-directory'] || '')),
   });
   process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`);
-  if (receipt.status !== 'advanced_numerical_plugin_execution_completed_unqualified') {
+  if (![
+    'advanced_numerical_plugin_execution_completed_qualified',
+    'advanced_numerical_plugin_execution_completed_unqualified',
+  ].includes(receipt.status)) {
     process.exitCode = 1;
   }
 }

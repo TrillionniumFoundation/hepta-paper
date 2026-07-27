@@ -22,7 +22,7 @@
       {
         "name": "design-production-core",
         "path": "core",
-        "classification": "vendored_reference",
+        "classification": "pinned_submodule_reference",
         "baseline": "core/CORE_BASELINE.json",
         "productionImportPolicy": "forbidden"
       }

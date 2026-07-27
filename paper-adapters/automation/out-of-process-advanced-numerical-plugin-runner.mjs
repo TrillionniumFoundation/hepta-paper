@@ -20,6 +20,9 @@ import {
   inspectScopedPathSync,
   readScopedFileSync,
 } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
+import {
+  verifyAdvancedNumericalPluginProductionQualification,
+} from './advanced-numerical-plugin-production-qualification.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const AUTHORITY_ROLE = 'advanced_numerical_plugin_authority';
@@ -73,6 +76,8 @@ export function verifyAdvancedNumericalPluginSignedBundle(bundle, {
 export function createOutOfProcessAdvancedNumericalPluginRunner({
   signedBundle,
   trustStore,
+  qualification = null,
+  qualificationTrustStore = null,
   workerRunner,
   pluginRoot,
   outputRoot,
@@ -83,6 +88,19 @@ export function createOutOfProcessAdvancedNumericalPluginRunner({
     now,
   });
   const descriptor = verifiedBundle.descriptor;
+  if ((qualification === null) !== (qualificationTrustStore === null)) {
+    throw new Error('advanced_numerical_plugin_qualification_configuration_incomplete');
+  }
+  const productionQualification = qualification === null ? null
+    : verifyAdvancedNumericalPluginProductionQualification({
+      descriptor,
+      signedBundleHash: verifiedBundle.signedBundleHash,
+      pluginAuthorityVerification: verifiedBundle.signatureVerification,
+      qualification,
+      trustStore: qualificationTrustStore,
+      now,
+    });
+  const productionQualified = productionQualification?.productionQualified === true;
   const sandbox = assertWorkerRunnerPort(workerRunner);
   const sandboxCapabilities = sandbox.capabilities();
   if (!sandboxCapabilities.sandboxModes?.includes('kernel-isolated')
@@ -128,9 +146,22 @@ export function createOutOfProcessAdvancedNumericalPluginRunner({
     signedPlugins: true,
     resourceLimits: true,
     networkPolicy: 'none',
-    productionQualified: false,
-    qualificationRequirement:
-      'independent-oracle-replay-and-uncertainty-authority-required',
+    productionQualified,
+    qualifiedAnalysisFamilies: Object.freeze(
+      productionQualified ? [descriptor.analysisFamily] : [],
+    ),
+    qualificationStatementHash:
+      productionQualification?.qualificationStatementHash || null,
+    qualificationRequirement: productionQualified ? null
+      : 'independent-oracle-replay-and-uncertainty-authority-required',
+  });
+  const blockedExecution = (blockers, details = {}) => blocked(blockers, {
+    pluginId: descriptor.pluginId,
+    analysisFamily: descriptor.analysisFamily,
+    productionQualified,
+    qualificationStatementHash:
+      productionQualification?.qualificationStatementHash || null,
+    ...details,
   });
   return assertAdvancedNumericalPluginRunnerPort({
     version: 1,
@@ -139,7 +170,7 @@ export function createOutOfProcessAdvancedNumericalPluginRunner({
     async run({ runId, input, seed, outputDirectory } = {}) {
       const selectedOutputDirectory = path.resolve(String(outputDirectory || ''));
       if (!isPathWithin(selectedOutputRoot, selectedOutputDirectory)) {
-        return blocked(['advanced_numerical_plugin_output_scope_invalid']);
+        return blockedExecution(['advanced_numerical_plugin_output_scope_invalid']);
       }
       const request = buildAdvancedNumericalPluginRequest({
         descriptor,
@@ -150,7 +181,7 @@ export function createOutOfProcessAdvancedNumericalPluginRunner({
       fs.mkdirSync(selectedOutputDirectory, { recursive: true, mode: 0o700 });
       const resultPath = path.join(selectedOutputDirectory, 'result.json');
       if (fs.existsSync(resultPath)) {
-        return blocked(['advanced_numerical_plugin_result_preexists'], {
+        return blockedExecution(['advanced_numerical_plugin_result_preexists'], {
           requestHash: request.advancedNumericalPluginRequestHash,
         });
       }
@@ -161,7 +192,7 @@ export function createOutOfProcessAdvancedNumericalPluginRunner({
         || executionIdentity?.allowlisted !== true
         || observedExecutableHash(executionIdentity)
           !== descriptor.runtime.executableHash) {
-        return blocked(['advanced_numerical_plugin_runtime_identity_mismatch'], {
+        return blockedExecution(['advanced_numerical_plugin_runtime_identity_mismatch'], {
           requestHash: request.advancedNumericalPluginRequestHash,
         });
       }
@@ -208,7 +239,7 @@ export function createOutOfProcessAdvancedNumericalPluginRunner({
         || isolation.sourceReadOnlyVerified !== true
         || isolation.resourceLimitsVerified !== true
         || !SHA256.test(String(workerReceipt?.receiptHash || ''))) {
-        return blocked([
+        return blockedExecution([
           'advanced_numerical_plugin_worker_execution_blocked',
           ...(workerReceipt?.blockers || []),
         ], {
@@ -229,7 +260,7 @@ export function createOutOfProcessAdvancedNumericalPluginRunner({
         result = null;
       }
       if (!verifyAdvancedNumericalPluginResult(result, { descriptor, request })) {
-        return blocked(['advanced_numerical_plugin_result_invalid'], {
+        return blockedExecution(['advanced_numerical_plugin_result_invalid'], {
           requestHash: request.advancedNumericalPluginRequestHash,
           workerReceipt,
           resultReadReceiptHash: resultRead.scopedFileReadReceiptHash,
@@ -238,7 +269,9 @@ export function createOutOfProcessAdvancedNumericalPluginRunner({
       const payload = {
         version: 1,
         kind: 'AdvancedNumericalPluginExecutionReceipt',
-        status: 'advanced_numerical_plugin_execution_completed_unqualified',
+        status: productionQualified
+          ? 'advanced_numerical_plugin_execution_completed_qualified'
+          : 'advanced_numerical_plugin_execution_completed_unqualified',
         pluginId: descriptor.pluginId,
         analysisFamily: descriptor.analysisFamily,
         pluginDescriptorHash: descriptor.advancedNumericalPluginDescriptorHash,
@@ -248,9 +281,14 @@ export function createOutOfProcessAdvancedNumericalPluginRunner({
         workerReceiptHash: workerReceipt.receiptHash,
         workerReceipt,
         result,
-        productionQualified: false,
-        qualificationRequirement:
-          'independent-oracle-replay-and-uncertainty-authority-required',
+        productionQualified,
+        qualificationStatementHash:
+          productionQualification?.qualificationStatementHash || null,
+        qualificationInspectionHash:
+          productionQualification
+            ?.advancedNumericalPluginProductionQualificationInspectionHash || null,
+        qualificationRequirement: productionQualified ? null
+          : 'independent-oracle-replay-and-uncertainty-authority-required',
         blockers: Object.freeze([]),
       };
       return Object.freeze({

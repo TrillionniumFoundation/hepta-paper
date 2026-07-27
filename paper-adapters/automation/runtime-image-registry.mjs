@@ -69,7 +69,7 @@ export const RUNTIME_IMAGE_BUILD_REPRODUCIBILITY = Object.freeze({
   r: buildRuntimeImageReproducibilityAssessment({
     image: SYSTEM_DATASET_ACCESS_RUNTIME_IMAGES.r.image,
     imageDigest: SYSTEM_DATASET_ACCESS_RUNTIME_IMAGES.r.imageDigest,
-    definitionManifestHash: 'sha256:5e172fce22a0f643357a455007104330aa3834c339a7aaf9b5ef6f2cfd4ed790',
+    definitionManifestHash: 'sha256:c91e91b0ae7a126e6eaa086f5322259886a9b8856443a6e038e179fdc242b182',
     baseImageDigestPinned: true,
     osPackageSnapshotPinned: true,
     dependencyVersionsPinned: true,
@@ -130,10 +130,14 @@ export const AUTOMATION_RUNTIME_IMAGE_BUILD_DEFINITIONS = Object.freeze({
     profile: 'r',
     contextPath: 'runtime-images/r-scientific',
     definitionPaths: Object.freeze([
-      'Dockerfile', 'renv.lock', 'packages.lock', 'restore-locked.R', 'verify-locked.R',
+      '.dockerignore', 'Dockerfile', 'renv.lock', 'packages.lock', 'restore-locked.R', 'verify-locked.R',
       'normalize-installed.sh',
       'hepta-dataset-access-supervisor',
       ...R_RUNTIME_SOURCE_CAS.definitionPaths,
+    ]),
+    contextTransportMetadataPaths: Object.freeze([
+      'source-cas/.git',
+      'source-cas/.gitattributes',
     ]),
     image: AUTOMATION_RUNTIME_IMAGES.r.image,
     imageDigest: AUTOMATION_RUNTIME_IMAGES.r.imageDigest,

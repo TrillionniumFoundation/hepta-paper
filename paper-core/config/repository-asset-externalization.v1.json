@@ -7,22 +7,64 @@
       "sourcePath": "runtime-images/r-scientific/source-cas",
       "identityFile": "runtime-images/r-scientific/source-cas/manifest.json",
       "expectedIdentitySha256": "sha256:1c739e2c6330a87aa2d2e20fefc3787f27a1c7842dfe07d991e86634f18d3634",
-      "currentStorage": "git-tracked-content-addressed-source-closure",
+      "currentStorage": "git-lfs-content-addressed-pinned-submodule",
       "targetStorage": "oci-artifact-or-content-addressed-artifact-registry",
-      "migrationStatus": "pending-external-registry-reference",
+      "migrationStatus": "externalized",
       "requiredExternalReferenceKind": "immutable-artifact-digest",
-      "retentionPolicy": "retain-until-remote-digest-and-restore-drill-verify"
+      "retentionPolicy": "retain-pinned-submodule-and-lfs-objects",
+      "externalReference": {
+        "kind": "immutable-artifact-digest",
+        "transport": "git-lfs-submodule",
+        "repositoryUrl": "https://github.com/ProfAlexQI/hepta-paper-r-source-cas.git",
+        "pinnedCommit": "d13d857909525f4173063dbd6a7f1f48a089ae93",
+        "location": "https://github.com/ProfAlexQI/hepta-paper-r-source-cas.git#d13d857909525f4173063dbd6a7f1f48a089ae93",
+        "digest": "sha256:1c739e2c6330a87aa2d2e20fefc3787f27a1c7842dfe07d991e86634f18d3634",
+        "restoreDrillReceipt": {
+          "version": 1,
+          "kind": "RepositoryAssetExternalRestoreDrillReceipt",
+          "status": "repository_asset_external_restore_verified",
+          "assetId": "r-scientific-source-cas",
+          "externalReferenceDigest": "sha256:1c739e2c6330a87aa2d2e20fefc3787f27a1c7842dfe07d991e86634f18d3634",
+          "restoredIdentitySha256": "sha256:1c739e2c6330a87aa2d2e20fefc3787f27a1c7842dfe07d991e86634f18d3634",
+          "verifiedAt": "2026-07-27T08:30:19.057Z",
+          "freshClone": true,
+          "restoredPinnedCommit": "d13d857909525f4173063dbd6a7f1f48a089ae93",
+          "verificationStatus": "r_runtime_source_cas_verified",
+          "repositoryAssetExternalRestoreDrillReceiptHash": "sha256:f2945454f975a5d39982c7d227b447030baff4fc3b7c0f7cf188921469ec5ff7"
+        }
+      }
     },
     {
       "assetId": "design-production-core-reference",
       "sourcePath": "core",
       "identityFile": "core/CORE_BASELINE.json",
       "expectedIdentitySha256": "sha256:54a375a885166678e10b61d9cdc721cb90d82559bd570e6245b8ab82437605a2",
-      "currentStorage": "git-tracked-vendored-reference",
+      "currentStorage": "git-pinned-read-only-submodule",
       "targetStorage": "immutable-release-artifact-or-read-only-submodule",
-      "migrationStatus": "pending-read-only-reference-release",
+      "migrationStatus": "externalized",
       "requiredExternalReferenceKind": "signed-release-or-pinned-submodule-commit",
-      "retentionPolicy": "retain-until-reference-release-and-differential-fixture-verify"
+      "retentionPolicy": "retain-pinned-submodule-commit",
+      "externalReference": {
+        "kind": "signed-release-or-pinned-submodule-commit",
+        "transport": "git-submodule",
+        "repositoryUrl": "https://github.com/ProfAlexQI/hepta-paper-core-reference.git",
+        "pinnedCommit": "ff1779d38561e940e5e067006386ff00d8d09a7c",
+        "location": "https://github.com/ProfAlexQI/hepta-paper-core-reference.git#ff1779d38561e940e5e067006386ff00d8d09a7c",
+        "digest": "sha256:54a375a885166678e10b61d9cdc721cb90d82559bd570e6245b8ab82437605a2",
+        "restoreDrillReceipt": {
+          "version": 1,
+          "kind": "RepositoryAssetExternalRestoreDrillReceipt",
+          "status": "repository_asset_external_restore_verified",
+          "assetId": "design-production-core-reference",
+          "externalReferenceDigest": "sha256:54a375a885166678e10b61d9cdc721cb90d82559bd570e6245b8ab82437605a2",
+          "restoredIdentitySha256": "sha256:54a375a885166678e10b61d9cdc721cb90d82559bd570e6245b8ab82437605a2",
+          "verifiedAt": "2026-07-27T08:30:19.057Z",
+          "freshClone": true,
+          "restoredPinnedCommit": "ff1779d38561e940e5e067006386ff00d8d09a7c",
+          "verificationStatus": "pass_accepted_core_baseline",
+          "repositoryAssetExternalRestoreDrillReceiptHash": "sha256:58e2950e78540a96514a85141b9d56798364b74b4d548b8f1b25b270257626b2"
+        }
+      }
     }
   ]
 }

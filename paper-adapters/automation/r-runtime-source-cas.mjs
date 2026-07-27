@@ -11,6 +11,7 @@ const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const PACKAGE = /^[A-Za-z][A-Za-z0-9.]{0,127}$/;
 const VERSION = /^[A-Za-z0-9][A-Za-z0-9.+-]{0,127}$/;
 const SNAPSHOT = 'https://packagemanager.posit.co/cran/2024-11-01';
+const ROOT_TRANSPORT_METADATA = new Set(['.git', '.gitattributes']);
 
 function bytesHash(value) {
   return `sha256:${crypto.createHash('sha256').update(value).digest('hex')}`;
@@ -185,6 +186,7 @@ export function verifyRRuntimeSourceCas({ contextPath } = {}) {
     const actualFiles = [];
     const visit = (directory, relative = '') => {
       for (const name of fs.readdirSync(directory).sort()) {
+        if (!relative && ROOT_TRANSPORT_METADATA.has(name)) continue;
         const absolute = path.join(directory, name);
         const child = path.posix.join(relative, name);
         const stat = fs.lstatSync(absolute);

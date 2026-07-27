@@ -6,7 +6,7 @@ import test from 'node:test';
 import {
   buildRepositoryAssetExternalizationHandoff,
   inspectRepositoryAssetExternalization,
-} from '../src/repository-asset-externalization.mjs';
+} from '../../paper-adapters/automation/repository-asset-externalization.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 const repositoryRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
@@ -17,16 +17,14 @@ const manifest = JSON.parse(fs.readFileSync(path.join(
   'repository-asset-externalization.v1.json',
 ), 'utf8'));
 
-test('large repository assets remain integrity-bound until external references verify', () => {
+test('large repository assets are pinned to verified external references', () => {
   const inspection = inspectRepositoryAssetExternalization({ repositoryRoot, manifest });
-  assert.equal(inspection.status, 'repository_asset_boundary_ready_externalization_pending');
+  assert.equal(inspection.status, 'repository_assets_externalized');
   assert.equal(inspection.repositoryBoundaryReady, true);
-  assert.equal(inspection.fullyExternalized, false);
+  assert.equal(inspection.fullyExternalized, true);
   assert.deepEqual(inspection.integrityBlockers, []);
-  assert.deepEqual(inspection.externalizationBlockers, [
-    'r-scientific-source-cas:external_registry_reference_required',
-    'design-production-core-reference:read_only_reference_release_required',
-  ]);
+  assert.deepEqual(inspection.externalizationBlockers, []);
+  assert.equal(inspection.assets.every((asset) => asset.externalized), true);
 });
 
 test('asset identity drift and incomplete externalization fail closed', () => {
@@ -42,7 +40,7 @@ test('asset identity drift and incomplete externalization fail closed', () => {
   ));
 
   const incomplete = structuredClone(manifest);
-  incomplete.assets[0].migrationStatus = 'externalized';
+  delete incomplete.assets[0].externalReference;
   const incompleteInspection = inspectRepositoryAssetExternalization({
     repositoryRoot,
     manifest: incomplete,
@@ -93,12 +91,26 @@ test('externalization requires a content-bound restore-drill receipt', () => {
   ));
 });
 
+test('externalized submodules fail closed on URL or pinned-commit drift', () => {
+  const drifted = structuredClone(manifest);
+  drifted.assets[0].externalReference.pinnedCommit = '0'.repeat(40);
+  drifted.assets[0].externalReference.location =
+    `${drifted.assets[0].externalReference.repositoryUrl}#${'0'.repeat(40)}`;
+  const inspection = inspectRepositoryAssetExternalization({
+    repositoryRoot,
+    manifest: drifted,
+  });
+  assert.ok(inspection.integrityBlockers.includes(
+    'r-scientific-source-cas:repository_asset_submodule_binding_mismatch',
+  ));
+});
+
 test('externalization handoff exposes exact identities without fabricating authority evidence', () => {
   const handoff = buildRepositoryAssetExternalizationHandoff({
     repositoryRoot,
     manifest,
   });
-  assert.equal(handoff.status, 'repository_asset_externalization_authority_required');
+  assert.equal(handoff.status, 'repository_assets_already_externalized');
   assert.equal(handoff.assets.length, 2);
   for (const asset of handoff.assets) {
     assert.match(asset.expectedIdentitySha256, /^sha256:[0-9a-f]{64}$/);

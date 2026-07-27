@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import {
   buildRepositoryAssetExternalizationHandoff,
   inspectRepositoryAssetExternalization,
-} from '../src/repository-asset-externalization.mjs';
+} from '../../paper-composition/automation/repository-asset-externalization-composition.mjs';
 import { parseStrictCliArguments } from '../src/strict-cli-arguments.mjs';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');

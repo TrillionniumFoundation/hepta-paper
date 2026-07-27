@@ -635,10 +635,10 @@ test('architecture production inventory follows declared executable reachability
   assert.equal(batchProduction.includes('paper-composition/compat/legacy-stage-port-composition.mjs'), false);
 });
 
-test('vendored reference and migration-support paths cannot enter the active production graph', () => {
+test('externalized reference and migration-support paths cannot enter the active production graph', () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(workspaceRoot, 'package.json'), 'utf8'));
   const reference = packageJson.heptaPaper?.referencePackages?.find((item) => item.path === 'core');
-  assert.equal(reference?.classification, 'vendored_reference');
+  assert.equal(reference?.classification, 'pinned_submodule_reference');
   assert.equal(reference?.productionImportPolicy, 'forbidden');
   assert.equal(reference?.baseline, 'core/CORE_BASELINE.json');
 

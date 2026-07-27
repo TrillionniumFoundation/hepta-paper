@@ -24,3 +24,12 @@ optimization. They produce ABI-verifiable estimate, uncertainty, oracle, and
 deterministic replay records, but remain
 `reference_candidates_unqualified`. An independent authority must package,
 sign, replay, review, and qualify them before production activation.
+
+Production admission uses `AdvancedNumericalPluginQualificationStatement`.
+The plugin-authority subject must be distinct from four qualification
+subjects: numeric oracle, replay, uncertainty review, and scientific review.
+The statement binds two distinct process receipts to an identical result hash,
+all evidence hashes, the signed plugin bundle, and an expiring validity window.
+The runner reports `productionQualified=true` only after every signature and
+independence check succeeds; unsigned candidates continue to run only with the
+explicit unqualified receipt status.

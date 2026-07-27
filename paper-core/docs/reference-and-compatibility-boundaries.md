@@ -1,6 +1,6 @@
 # Reference and compatibility boundaries
 
-`core/` is the vendored `design-production-core` reference package. It is not
+`core/` is the pinned, read-only `design-production-core` reference submodule. It is not
 part of the active hepta-paper runtime. Its accepted bytes are recorded in
 `core/CORE_BASELINE.json`; `README.md`, `package.json`, `src/`, `docs/`,
 fixtures and source-snapshot metadata below that directory are baseline-bound
@@ -15,10 +15,10 @@ Use `npm run reference:integrity`, `npm run reference:selftest`, and
 `npm run reference:runtime-dry-run` to verify the reference. Accepting a new
 baseline is a deliberate maintenance action via
 `npm run reference:baseline:accept`; it is never part of CI or release.
-The planned transition to a signed release artifact or read-only submodule is
-tracked by `paper-core/config/repository-asset-externalization.v1.json`.
-`npm run assets:repository-status` verifies the retained baseline identity and
-fails closed rather than claiming that an external release already exists.
+The external reference and its fresh-clone restore receipt are tracked by
+`paper-core/config/repository-asset-externalization.v1.json`.
+`npm run assets:repository-status` verifies the retained baseline identity,
+the `.gitmodules` URL, and the exact pinned commit.
 The production batch preview and execute paths neither import the integrity
 adapter nor walk the reference tree, and batch reports do not claim a reference
 integrity result. Verification and release commands own that evidence.

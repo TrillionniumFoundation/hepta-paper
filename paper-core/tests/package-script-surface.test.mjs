@@ -32,11 +32,11 @@ function jsonLines(output) {
   });
 }
 
-test('root package declares the vendored reference and a non-duplicated verification surface', () => {
+test('root package declares the pinned reference and a non-duplicated verification surface', () => {
   assert.deepEqual(packageJson.heptaPaper?.referencePackages, [{
     name: 'design-production-core',
     path: 'core',
-    classification: 'vendored_reference',
+    classification: 'pinned_submodule_reference',
     baseline: 'core/CORE_BASELINE.json',
     productionImportPolicy: 'forbidden',
   }]);

@@ -9,6 +9,8 @@ import {
 export function composeAdvancedNumericalPluginRuntime({
   bundle,
   trustStore,
+  qualification = null,
+  qualificationTrustStore = null,
   pluginRoot,
   outputRoot,
   now = new Date(),
@@ -32,6 +34,8 @@ export function composeAdvancedNumericalPluginRuntime({
   const runner = createOutOfProcessAdvancedNumericalPluginRunner({
     signedBundle: bundle,
     trustStore,
+    qualification,
+    qualificationTrustStore,
     workerRunner,
     pluginRoot,
     outputRoot,

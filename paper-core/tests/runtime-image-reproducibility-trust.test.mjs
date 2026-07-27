@@ -742,6 +742,15 @@ test('canonical context closure covers every entry and rejects undeclared or ign
       deviceEntriesIncluded: false,
     });
   }
+  const rContext = value.inputs.find((input) => input.profile === 'r');
+  assert.ok(rContext);
+  assert.equal(rContext.contextManifest.some((entry) => (
+    entry.path === 'source-cas/.git' || entry.path === 'source-cas/.gitattributes'
+  )), false);
+  assert.deepEqual(AUTOMATION_RUNTIME_IMAGE_BUILD_DEFINITIONS.r.contextTransportMetadataPaths, [
+    'source-cas/.git',
+    'source-cas/.gitattributes',
+  ]);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-runtime-context-copy-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const context = path.join(root, 'context');

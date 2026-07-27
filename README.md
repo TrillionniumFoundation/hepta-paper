@@ -91,8 +91,8 @@ store is the only DAG execution authority. Details are in
 
 ## Layout
 
-- `core/` is a vendored fork with an accepted content-hash baseline in
-  `core/CORE_BASELINE.json`. It records historical upstream commit
+- `core/` is a private, pinned read-only submodule with an accepted
+  content-hash baseline in `core/CORE_BASELINE.json`. It records historical upstream commit
   `3f90aa277a9a1bde6898dc6ddd9d25d49fa94f30`, but does **not** claim byte
   identity with that now-unavailable snapshot. It is a reference package, is
   not imported by the active production graph, and is governed by

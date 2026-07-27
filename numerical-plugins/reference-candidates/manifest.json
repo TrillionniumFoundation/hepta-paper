@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "kind": "AdvancedNumericalReferenceCandidateManifest",
+  "status": "reference_candidates_unqualified",
+  "entrypoint": "worker.py",
+  "runtime": "python3-standard-library",
+  "networkPolicy": "none",
+  "analysisFamilies": [
+    "linear-algebra",
+    "monte-carlo",
+    "optimization"
+  ],
+  "qualificationRequirements": [
+    "independent-plugin-authority-signature",
+    "independent-numeric-oracle",
+    "separate-process-replay",
+    "typed-uncertainty-review",
+    "scientific-review-authority"
+  ]
+}

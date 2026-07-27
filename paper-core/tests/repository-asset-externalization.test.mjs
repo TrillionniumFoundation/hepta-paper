@@ -3,7 +3,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 
-import { inspectRepositoryAssetExternalization } from '../src/repository-asset-externalization.mjs';
+import {
+  buildRepositoryAssetExternalizationHandoff,
+  inspectRepositoryAssetExternalization,
+} from '../src/repository-asset-externalization.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 const repositoryRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
@@ -88,4 +91,28 @@ test('externalization requires a content-bound restore-drill receipt', () => {
   assert.ok(tampered.integrityBlockers.includes(
     'r-scientific-source-cas:repository_asset_external_reference_incomplete',
   ));
+});
+
+test('externalization handoff exposes exact identities without fabricating authority evidence', () => {
+  const handoff = buildRepositoryAssetExternalizationHandoff({
+    repositoryRoot,
+    manifest,
+  });
+  assert.equal(handoff.status, 'repository_asset_externalization_authority_required');
+  assert.equal(handoff.assets.length, 2);
+  for (const asset of handoff.assets) {
+    assert.match(asset.expectedIdentitySha256, /^sha256:[0-9a-f]{64}$/);
+    assert.equal(asset.requiredExternalReference.location, null);
+    assert.equal(asset.requiredExternalReference.digest, null);
+    assert.equal(
+      asset.requiredExternalReference.restoreDrillReceipt
+        .repositoryAssetExternalRestoreDrillReceiptHash,
+      null,
+    );
+    assert.deepEqual(asset.externalizationSequence.slice(0, 3), [
+      'publish-immutable-reference',
+      'verify-reference-digest',
+      'restore-into-fresh-trusted-root',
+    ]);
+  }
 });

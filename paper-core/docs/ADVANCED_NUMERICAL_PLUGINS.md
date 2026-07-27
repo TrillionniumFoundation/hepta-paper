@@ -17,3 +17,10 @@ authorities qualify the result.
 No repository descriptor is treated as an external signature. Operators must
 provide an immutable runtime configuration pointing to a signed bundle, trust
 store, plugin root, and dedicated output root.
+
+`numerical-plugins/reference-candidates` contains executable standard-library
+reference candidates for linear algebra, Monte Carlo, and convex quadratic
+optimization. They produce ABI-verifiable estimate, uncertainty, oracle, and
+deterministic replay records, but remain
+`reference_candidates_unqualified`. An independent authority must package,
+sign, replay, review, and qualify them before production activation.

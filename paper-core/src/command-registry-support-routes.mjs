@@ -75,7 +75,7 @@ export const COMMAND_REGISTRY_SUPPORT_ROUTES = Object.freeze([
       'node paper-core/bin/run-isolated-command.mjs node paper-core/bin/critical-module-coverage.mjs',
   }),
   route({ group: 'verify', name: 'store', argv: ['node', 'paper-core/bin/hepta-store-logical-integrity.mjs'], npmScript: 'store:logical-integrity', forwardingPolicy: 'registry', forwardedArgumentSchema: { positional: true, maximumPositionals: 1 } }),
-  route({ group: 'verify', name: 'repository-assets', argv: ['node', 'paper-core/bin/repository-asset-status.mjs'], npmScript: 'assets:repository-status', forwardingPolicy: 'registry', forwardedArgumentSchema: { booleanFlags: ['require-externalized'], positional: false } }),
+  route({ group: 'verify', name: 'repository-assets', argv: ['node', 'paper-core/bin/repository-asset-status.mjs'], npmScript: 'assets:repository-status', forwardingPolicy: 'registry', forwardedArgumentSchema: { booleanFlags: ['handoff', 'require-externalized'], positional: false } }),
   route({
     group: 'verify',
     name: 'release',

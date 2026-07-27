@@ -154,3 +154,57 @@ export function inspectRepositoryAssetExternalization({
     externalizationBlockers,
   });
 }
+
+export function buildRepositoryAssetExternalizationHandoff({
+  repositoryRoot,
+  manifest,
+} = {}) {
+  const inspection = inspectRepositoryAssetExternalization({ repositoryRoot, manifest });
+  if (!inspection.repositoryBoundaryReady) {
+    throw new Error(
+      `repository_asset_externalization_handoff_blocked:${inspection.integrityBlockers.join(',')}`,
+    );
+  }
+  return Object.freeze({
+    version: 1,
+    kind: 'RepositoryAssetExternalizationHandoff',
+    status: inspection.fullyExternalized
+      ? 'repository_assets_already_externalized'
+      : 'repository_asset_externalization_authority_required',
+    assets: Object.freeze((manifest.assets || []).map((asset) => Object.freeze({
+      assetId: asset.assetId,
+      sourcePath: asset.sourcePath,
+      identityFile: asset.identityFile,
+      expectedIdentitySha256: asset.expectedIdentitySha256,
+      targetStorage: asset.targetStorage,
+      requiredExternalReferenceKind: asset.requiredExternalReferenceKind,
+      retentionPolicy: asset.retentionPolicy,
+      externalizationSequence: Object.freeze([
+        'publish-immutable-reference',
+        'verify-reference-digest',
+        'restore-into-fresh-trusted-root',
+        'verify-restored-identity',
+        'issue-content-bound-restore-drill-receipt',
+        'update-manifest-to-externalized',
+        'switch-production-readers',
+        'delete-tracked-payload-in-dedicated-migration',
+      ]),
+      requiredExternalReference: Object.freeze({
+        kind: asset.requiredExternalReferenceKind,
+        location: null,
+        digest: null,
+        restoreDrillReceipt: Object.freeze({
+          version: 1,
+          kind: 'RepositoryAssetExternalRestoreDrillReceipt',
+          status: 'repository_asset_external_restore_verified',
+          assetId: asset.assetId,
+          externalReferenceDigest: null,
+          restoredIdentitySha256: asset.expectedIdentitySha256,
+          verifiedAt: null,
+          repositoryAssetExternalRestoreDrillReceiptHash: null,
+        }),
+      }),
+    }))),
+    currentInspection: inspection,
+  });
+}

@@ -3,7 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { inspectRepositoryAssetExternalization } from '../src/repository-asset-externalization.mjs';
+import {
+  buildRepositoryAssetExternalizationHandoff,
+  inspectRepositoryAssetExternalization,
+} from '../src/repository-asset-externalization.mjs';
+import { parseStrictCliArguments } from '../src/strict-cli-arguments.mjs';
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const manifestPath = path.join(
@@ -13,9 +17,16 @@ const manifestPath = path.join(
   'repository-asset-externalization.v1.json',
 );
 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+const args = parseStrictCliArguments(process.argv.slice(2), {
+  booleanFlags: ['handoff', 'require-externalized'],
+  positional: false,
+});
 const inspection = inspectRepositoryAssetExternalization({ repositoryRoot, manifest });
-process.stdout.write(`${JSON.stringify(inspection, null, 2)}\n`);
+const output = args.handoff
+  ? buildRepositoryAssetExternalizationHandoff({ repositoryRoot, manifest })
+  : inspection;
+process.stdout.write(`${JSON.stringify(output, null, 2)}\n`);
 if (!inspection.repositoryBoundaryReady
-  || (process.argv.includes('--require-externalized') && !inspection.fullyExternalized)) {
+  || (args['require-externalized'] && !inspection.fullyExternalized)) {
   process.exitCode = 1;
 }

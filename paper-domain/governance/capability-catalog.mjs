@@ -1,6 +1,6 @@
 export const CAPABILITY_CATALOG = Object.freeze({
   'research.claim-registry': { boundedContext: 'research', target: 'paper-domain/research/claim-registry.mjs' },
-  'research.gap-planner': { boundedContext: 'research', target: 'paper-application/research/gap-planner.mjs' },
+  'research.gap-planner': { boundedContext: 'research', target: 'paper-domain/research/gap-planner.mjs' },
   'research.evidence-ingestor': { boundedContext: 'research', target: 'paper-domain/research/evidence-ingestor.mjs' },
   'research.evidence-quality-gate': { boundedContext: 'research', target: 'paper-domain/research/evidence-quality-gate.mjs' },
   'research.experiment-registry': { boundedContext: 'research', target: 'paper-domain/research/experiment-registry.mjs' },

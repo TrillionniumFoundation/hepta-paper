@@ -118,6 +118,13 @@ export const PRODUCTION_COMPLEXITY_PATH_CEILING_OVERRIDES = Object.freeze({
     Object.freeze({ sourceLines: 450 }),
   'paper-adapters/automation/runtime-retention.mjs':
     Object.freeze({ sourceLines: 250 }),
+  'paper-application/automation/autonomous-research-campaign.mjs':
+    Object.freeze({
+      sourceLines: 620,
+      dependencyFanout: 16,
+      responsibilitySurface: 20,
+      controlFlowPoints: 160,
+    }),
 });
 
 export const PRODUCTION_COMPLEXITY_HIGH_RISK_PATHS = Object.freeze([
@@ -143,10 +150,13 @@ export const PRODUCTION_COMPLEXITY_HIGH_RISK_PATHS = Object.freeze([
   'paper-adapters/automation/runtime-retention.mjs',
   'paper-adapters/automation/runtime-retention-scope-repository.mjs',
   'paper-adapters/automation/runtime-retention-evidence-policy.mjs',
+  'paper-adapters/automation/runtime-retention-intent-operations.mjs',
   'paper-adapters/automation/runtime-retention-intent-repository.mjs',
   'paper-adapters/automation/autonomous-research-supervisor-state-repository.mjs',
   'paper-adapters/automation/autonomous-research-supervisor-external-action-repository-support.mjs',
   'paper-adapters/automation/autonomous-research-supervisor-provider-canary-state-operations.mjs',
+  'paper-adapters/runtime/os-sandbox-worker-execution-finalizer.mjs',
+  'paper-adapters/runtime/os-sandboxed-worker-runner.mjs',
   'paper-adapters/runtime/scoped-file-materialization-repository.mjs',
   'paper-adapters/runtime/scoped-file-materialization-operation-journal-repository.mjs',
   'paper-adapters/runtime/scoped-file-materialization-recovery-entry-repository.mjs',

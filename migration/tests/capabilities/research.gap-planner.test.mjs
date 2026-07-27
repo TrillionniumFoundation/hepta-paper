@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { bindResearchGapPlan, buildResearchGapPlan } from '../../../paper-application/research/gap-planner.mjs';
+import { bindResearchGapPlan, buildResearchGapPlan } from '../../../paper-domain/research/gap-planner.mjs';
 import { createSqliteJobReceiptStore } from '../../../paper-adapters/persistence/sqlite-job-receipt-store.mjs';
 import { createSqliteReceiptLedger } from '../../../paper-adapters/persistence/sqlite-receipt-ledger.mjs';
 import { fixedClock, temporaryDirectory, temporaryStore } from './test-support.mjs';

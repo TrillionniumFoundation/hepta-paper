@@ -2,11 +2,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { heptaStorePath } from '../src/hepta-store.mjs';
 import {
   createDefaultPaperStore,
   createReadOnlyPaperStore,
   createReadOnlySqliteStore,
+  heptaStorePath,
   openExistingWritablePaperStore,
 } from '../../paper-composition/bootstrap/operator-persistence-composition.mjs';
 import {

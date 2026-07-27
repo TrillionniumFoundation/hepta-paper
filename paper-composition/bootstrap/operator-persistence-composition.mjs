@@ -2,6 +2,7 @@
 // remain composed here rather than being re-exported with unrelated adapters.
 export { createSqliteCampaignStore } from '../../paper-adapters/persistence/sqlite-campaign-store.mjs';
 export { createReadOnlySqliteStore } from '../../paper-adapters/persistence/sqlite-store.mjs';
+export { heptaStorePath } from '../../paper-adapters/persistence/store-paths.mjs';
 export {
   createDefaultPaperStore,
   createReadOnlyPaperStore,

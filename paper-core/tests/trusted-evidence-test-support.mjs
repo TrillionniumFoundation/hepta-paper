@@ -1,6 +1,6 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import crypto from 'node:crypto';
-import { signAuthorityDocument } from '../src/authority-signatures.mjs';
+import { signAuthorityDocument } from '../../paper-adapters/authority/authority-signatures.mjs';
 import { buildVenueObservationSubject, verifyReviewedVenueObservationSource } from '../../paper-adapters/submission/venue-observation-verification.mjs';
 import { buildExperimentExecutionContract, buildExperimentOutputManifest } from '../../paper-domain/research/experiment-evidence-binding.mjs';
 import { buildExperimentAcceptanceContract } from '../../paper-domain/research/experiment-profiles.mjs';

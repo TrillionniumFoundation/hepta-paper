@@ -10,9 +10,12 @@ const SAFE_ENTRYPOINT = /^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*$/;
 export const ADVANCED_NUMERICAL_PLUGIN_ANALYSIS_FAMILIES = Object.freeze([
   'bayesian',
   'causal-inference',
+  'linear-algebra',
+  'monte-carlo',
   'ode',
   'optimization',
   'pde',
+  'signal-processing',
   'survival',
   'time-series',
 ]);

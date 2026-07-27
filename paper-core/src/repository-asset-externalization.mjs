@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { hashBytes } from '../../workflow-kernel/record-hash.mjs';
+import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const MIGRATION_BLOCKERS = Object.freeze({
@@ -15,6 +15,22 @@ function repositoryRelativePath(value) {
     throw new Error('repository_asset_path_invalid');
   }
   return normalized;
+}
+
+function externalRestoreDrillReceiptValid(asset, receipt) {
+  const {
+    repositoryAssetExternalRestoreDrillReceiptHash: claimedHash,
+    ...payload
+  } = receipt || {};
+  return receipt?.version === 1
+    && receipt?.kind === 'RepositoryAssetExternalRestoreDrillReceipt'
+    && receipt?.status === 'repository_asset_external_restore_verified'
+    && receipt?.assetId === asset.assetId
+    && receipt?.externalReferenceDigest === asset.externalReference?.digest
+    && receipt?.restoredIdentitySha256 === asset.expectedIdentitySha256
+    && Number.isFinite(Date.parse(String(receipt?.verifiedAt || '')))
+    && SHA256.test(String(claimedHash || ''))
+    && hashRecord('RepositoryAssetExternalRestoreDrillReceipt', payload) === claimedHash;
 }
 
 function inspectAsset(repositoryRoot, asset) {
@@ -69,8 +85,14 @@ function inspectAsset(repositoryRoot, asset) {
     }
   }
   if (asset?.migrationStatus === 'externalized') {
-    if (!SHA256.test(String(asset?.externalReference?.digest || ''))
-      || !SHA256.test(String(asset?.externalReference?.restoreDrillReceiptHash || ''))) {
+    const externalReference = asset?.externalReference;
+    if (externalReference?.kind !== asset.requiredExternalReferenceKind
+      || typeof externalReference?.location !== 'string'
+      || !externalReference.location.trim()
+      || externalReference.location.length > 2_048
+      || /\s/.test(externalReference.location)
+      || !SHA256.test(String(externalReference?.digest || ''))
+      || !externalRestoreDrillReceiptValid(asset, externalReference?.restoreDrillReceipt)) {
       blockers.push('repository_asset_external_reference_incomplete');
     }
   }

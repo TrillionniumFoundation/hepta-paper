@@ -9,7 +9,7 @@ import { createFilesystemArtifactRepository } from '../../paper-adapters/artifac
 import { JOURNAL_PROFILE_DATASET } from '../../paper-domain/journal/journal-registry.mjs';
 import { createSqliteStore } from '../../paper-adapters/persistence/sqlite-store.mjs';
 import { createLeanFormalVerifier } from '../../paper-adapters/research-verify/formal-verifier.mjs';
-import { buildResearchGapPlan } from '../../paper-application/research/gap-planner.mjs';
+import { buildResearchGapPlan } from '../../paper-domain/research/gap-planner.mjs';
 import { buildClaimRegistry } from '../../paper-domain/research/claim-registry.mjs';
 import { buildEvidenceIntake } from '../../paper-domain/research/evidence-ingestor.mjs';
 import { buildEvidenceQualityGate } from '../../paper-domain/research/evidence-quality-gate.mjs';

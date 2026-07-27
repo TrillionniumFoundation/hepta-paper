@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   makeMarkdownTable,
-  summarizeResults,
   summarizeRows,
-} from '../src/batch-summary.mjs';
+} from '../../paper-application/reporting/batch-summary.mjs';
+import { summarizeResults } from '../../paper-application/reporting/batch-result-summary.mjs';
 
 test('batch summary handles an empty batch without manufacturing readiness', () => {
   const summary = summarizeResults([]);

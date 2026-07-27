@@ -219,6 +219,28 @@ test('signed advanced numerical plugins run out of process but remain unqualifie
     /^sha256:[0-9a-f]{64}$/);
 });
 
+test('advanced numerical descriptor onboarding covers the declared cross-domain families', () => {
+  const fixture = signedPluginFixture();
+  try {
+    for (const analysisFamily of ADVANCED_NUMERICAL_PLUGIN_ANALYSIS_FAMILIES) {
+      const descriptor = compileAdvancedNumericalPluginDescriptor({
+        ...fixture.descriptor,
+        analysisFamily,
+        advancedNumericalPluginDescriptorHash: undefined,
+      });
+      assert.equal(descriptor.analysisFamily, analysisFamily);
+      assert.match(descriptor.advancedNumericalPluginDescriptorHash, /^sha256:[0-9a-f]{64}$/);
+    }
+    assert.throws(() => compileAdvancedNumericalPluginDescriptor({
+      ...fixture.descriptor,
+      analysisFamily: 'arbitrary-unreviewed-analysis',
+      advancedNumericalPluginDescriptorHash: undefined,
+    }), /descriptor_invalid/);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test('signature, sandbox capability, runtime and output attacks fail closed', async (context) => {
   const fixture = signedPluginFixture();
   context.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));

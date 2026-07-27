@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { summarizeResults } from '../src/batch-summary.mjs';
+import { summarizeResults } from '../../paper-application/reporting/batch-result-summary.mjs';
 
 const TOP_LEVEL_COUNTERS = [
   'researchTypedContracts', 'legacyCatalogReferenceReceipts', 'legacyCatalogReferenceCount',

@@ -1,0 +1,114 @@
+import { defineCommandRoute as route } from './command-registry-catalog.mjs';
+
+export const COMMAND_REGISTRY_SUPPORT_ROUTES = Object.freeze([
+  route({
+    group: 'maintenance',
+    name: 'autonomous-state-provision',
+    argv: ['node', 'paper-core/bin/autonomous-research-state-provision.mjs'],
+    npmScript: 'automation:autonomous-research-state-provision',
+    mutability: 'argument-dependent',
+    forwardingPolicy: 'registry',
+    forwardedArgumentSchema: {
+      booleanFlags: ['execute', 'help'],
+      valueFlags: [
+        'action', 'plan-id', 'runtime-root', 'machine-intake-config',
+        'topic-producer-profile', 'dataset-root',
+        'provider-canary-pair-maximum-cost-usd',
+        'runtime-reproducibility-maximum-attempts-per-epoch',
+        'runtime-reproducibility-maximum-cost-usd-per-epoch',
+        'runtime-reproducibility-budget-epoch-ms',
+        'runtime-reproducibility-lease-ms',
+        'runtime-reproducibility-base-backoff-ms',
+        'runtime-reproducibility-maximum-backoff-ms',
+        'runtime-reproducibility-renewal-lead-ms',
+        'runtime-reproducibility-action-safety-margin-ms',
+        'agent-provider', 'model', 'codex-home', 'codex-binary',
+        'formal-review-provider', 'formal-review-model',
+        'formal-review-codex-home', 'formal-review-codex-binary',
+      ],
+      positional: false,
+    },
+  }),
+  route({
+    group: 'maintenance',
+    name: 'autonomous-online-schema-transition',
+    argv: ['node', 'paper-core/bin/autonomous-research-online-schema-transition.mjs'],
+    npmScript: 'automation:autonomous-research-online-schema-transition',
+    mutability: 'argument-dependent',
+    effects: {
+      externalAction: 'argument-dependent',
+      networkUse: 'argument-dependent',
+      credentialUse: 'argument-dependent',
+    },
+    forwardingPolicy: 'registry',
+    forwardedArgumentSchema: {
+      booleanFlags: ['execute', 'help'],
+      valueFlags: [
+        'action', 'runtime-root', 'authority-process-config', 'transition-id',
+        'requested-lease-ms', 'required-execution-window-ms',
+        'commit-safety-margin-ms',
+      ],
+      positional: false,
+    },
+  }),
+  route({
+    group: 'maintenance',
+    name: 'command-surface-sync',
+    argv: ['node', 'paper-core/bin/command-surface.mjs', '--write-package'],
+    npmScript: 'scripts:sync',
+    mutability: 'local-write',
+  }),
+  route({
+    group: 'verify',
+    name: 'architecture',
+    argv: ['node', '--test', 'paper-core/tests/architecture-conformance.test.mjs'],
+    npmScript: 'paper:architecture-selftest',
+    npmCommand:
+      'node paper-core/bin/run-isolated-command.mjs node --test paper-core/tests/architecture-conformance.test.mjs',
+  }),
+  route({
+    group: 'verify',
+    name: 'critical',
+    argv: ['npm', 'run', 'coverage:critical-modules'],
+    npmScript: 'coverage:critical-modules',
+    npmCommand:
+      'node paper-core/bin/run-isolated-command.mjs node paper-core/bin/critical-module-coverage.mjs',
+  }),
+  route({ group: 'verify', name: 'store', argv: ['node', 'paper-core/bin/hepta-store-logical-integrity.mjs'], npmScript: 'store:logical-integrity', forwardingPolicy: 'registry', forwardedArgumentSchema: { positional: true, maximumPositionals: 1 } }),
+  route({ group: 'verify', name: 'repository-assets', argv: ['node', 'paper-core/bin/repository-asset-status.mjs'], npmScript: 'assets:repository-status', forwardingPolicy: 'registry', forwardedArgumentSchema: { booleanFlags: ['require-externalized'], positional: false } }),
+  route({
+    group: 'verify',
+    name: 'release',
+    argv: ['npm', 'run', 'release:verify'],
+    npmScript: 'release:verify',
+    npmCommand:
+      'npm run static:check && node paper-core/bin/run-isolated-verification.mjs release',
+  }),
+  route({ group: 'verify', name: 'trust', argv: ['node', 'paper-core/bin/release-trust-gate.mjs'], npmScript: 'release:trust-gate' }),
+  route({ group: 'verify', name: 'operational', argv: ['node', 'paper-core/bin/operational-proof-status.mjs'], npmScript: 'operational:status' }),
+  route({ group: 'verify', name: 'owner', argv: ['node', 'paper-core/bin/owner-acceptance-status.mjs'], npmScript: 'owner:status' }),
+  route({
+    group: 'verify',
+    name: 'full',
+    argv: ['npm', 'test'],
+    npmScript: 'test',
+    npmCommand: 'npm run static:check && node paper-core/bin/run-isolated-verification.mjs test',
+  }),
+  route({
+    group: 'retirement',
+    name: 'status',
+    argv: ['npm', 'run', 'migration:retirement-status'],
+    npmScript: 'migration:retirement-status',
+    npmCommand: 'npm run legacy:reference-verify && npm run migration:matrix-integrity',
+  }),
+  route({ group: 'retirement', name: 'reference', argv: ['node', 'migration/bin/verify-retirement-source-snapshot.mjs'], npmScript: 'legacy:reference-verify' }),
+  route({
+    group: 'retirement',
+    name: 'matrix',
+    argv: ['npm', 'run', 'migration:capability-matrix-v3'],
+    npmScript: 'migration:capability-matrix-v3',
+    npmCommand:
+      "node paper-core/bin/run-isolated-command.mjs sh -lc 'node migration/bin/verify-capabilities.mjs && node migration/tests/capability-matrix-v3.mjs --release-profile'",
+  }),
+  route({ group: 'retirement', name: 'drill', argv: ['node', 'paper-core/bin/legacy-deletion-drill.mjs'], npmScript: 'legacy:deletion-drill' }),
+]);

@@ -13,7 +13,7 @@ const GLOBAL_IMPACT = Object.freeze([
   /^paper-core\/config\//,
   /^paper-core\/verification\//,
   /^migration\/(?:legacy-|compatibility-|capability-)/,
-  /^paper-core\/src\/(?:architecture-entrypoint-manifest|command-registry|command-registry-catalog|test-suite-manifest)\.mjs$/,
+  /^paper-core\/src\/(?:architecture-entrypoint-manifest|command-registry(?:-catalog|-support-routes)?|test-suite-manifest)\.mjs$/,
 ]);
 
 function repositoryPath(value) {

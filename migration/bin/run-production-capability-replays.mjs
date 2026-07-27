@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { CAPABILITY_CATALOG } from '../legacy-capability-matrix-v3.mjs';
 import { capabilityTargetBindings, verifyCapabilityConformanceReceipt } from '../operational-proof-intake.mjs';
 import { buildClaimRegistry, transitionClaim } from '../../paper-domain/research/claim-registry.mjs';
-import { buildResearchGapPlan, bindResearchGapPlan } from '../../paper-application/research/gap-planner.mjs';
+import { buildResearchGapPlan, bindResearchGapPlan } from '../../paper-domain/research/gap-planner.mjs';
 import { verifyEvidenceArtifact } from '../../paper-adapters/research-verify/evidence-verifier.mjs';
 import { buildEvidenceIntake } from '../../paper-domain/research/evidence-ingestor.mjs';
 import { buildEvidenceQualityGate } from '../../paper-domain/research/evidence-quality-gate.mjs';

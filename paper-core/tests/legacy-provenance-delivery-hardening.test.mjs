@@ -26,7 +26,7 @@ import { buildRefereeAppliedPatchReceipt } from '../../paper-domain/contracts/re
 import { buildReviewedVenueEvidence } from '../../paper-domain/submission/reviewed-venue-evidence.mjs';
 import { buildSubmissionRedriveDecision } from '../../paper-domain/submission/redrive-decision.mjs';
 import { buildExecutorResponseIntake } from '../../paper-domain/submission/delivery-runtime.mjs';
-import { signAuthorityDocument } from '../src/authority-signatures.mjs';
+import { signAuthorityDocument } from '../../paper-adapters/authority/authority-signatures.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { h, trustedExperimentFixture, trustedFormalFixture, trustedVenueFixture } from './trusted-evidence-test-support.mjs';
 

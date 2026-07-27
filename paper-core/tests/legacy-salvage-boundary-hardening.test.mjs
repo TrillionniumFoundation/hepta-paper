@@ -20,7 +20,7 @@ import { buildGenericFormalCertificateIntake } from '../../paper-domain/research
 import { buildExecutorCapabilities } from '../../paper-ports/executor-capabilities.mjs';
 import { submissionExecutorDescriptor } from '../../paper-ports/submission-executor-port.mjs';
 import { validateBoundaryRecord } from '../../paper-ports/boundary-schema-catalog.mjs';
-import { signAuthorityDocument } from '../src/authority-signatures.mjs';
+import { signAuthorityDocument } from '../../paper-adapters/authority/authority-signatures.mjs';
 import { trustedExperimentFixture, trustedFormalFixture, trustedVenueFixture } from './trusted-evidence-test-support.mjs';
 
 const h = (character) => `sha256:${character.repeat(64)}`;

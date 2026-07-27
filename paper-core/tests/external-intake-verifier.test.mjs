@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { capabilityTargetBindings } from '../../paper-adapters/governance/capability-proof-verifier.mjs';
 import { LEGACY_OWNER_ACCEPTANCE_FAMILY_MANIFEST } from '../../paper-adapters/governance/legacy-owner-acceptance-contract.mjs';
-import { signAuthorityDocument } from '../src/authority-signatures.mjs';
+import { signAuthorityDocument } from '../../paper-adapters/authority/authority-signatures.mjs';
 import { validatePublicTrustStore, verifyExternalIntake } from '../../paper-adapters/governance/external-intake-verifier.mjs';
 import { CAPABILITY_CATALOG } from '../../paper-domain/governance/capability-catalog.mjs';
 import { currentCodeProvenance } from '../src/code-provenance.mjs';

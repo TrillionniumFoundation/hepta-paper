@@ -30,7 +30,7 @@ const ROUTES = Object.freeze([
         'require-full-research',
         'require-fully-autonomous',
       ],
-      valueFlags: ['root', 'runtime-root'],
+      valueFlags: ['deployment-environment-file', 'root', 'runtime-root'],
       positional: false,
     },
   }),
@@ -42,7 +42,7 @@ const ROUTES = Object.freeze([
     forwardingPolicy: 'registry',
     forwardedArgumentSchema: {
       booleanFlags: ['help', 'require-production-ready'],
-      valueFlags: ['root', 'runtime-root'],
+      valueFlags: ['deployment-environment-file', 'root', 'runtime-root'],
       positional: false,
     },
   }),

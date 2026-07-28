@@ -58,9 +58,13 @@ export function createCodexAgentExecutor({
       || formalReviewerCapabilityReceipt?.selectedModelExecutionCanaryVerified !== false
       || formalReviewerCapabilityReceipt?.readOnlyReviewRequired !== true
       || formalReviewerCapabilityReceipt?.dynamicAttemptWorkspaceRequired !== true
-      || formalReviewerCapabilityReceipt?.credentialIndependenceVerified !== true
-      || !['filesystem_credential_root_and_principal_separation', 'configured_principal_and_process_separation']
-        .includes(formalReviewerCapabilityReceipt?.assuranceScope)
+      || formalReviewerCapabilityReceipt?.providerCredentialSharingPermitted !== true
+      || formalReviewerCapabilityReceipt?.freshEphemeralSessionRequired !== true
+      || formalReviewerCapabilityReceipt?.authorContextInheritanceForbidden !== true
+      || formalReviewerCapabilityReceipt?.frozenArtifactReviewRequired !== true
+      || formalReviewerCapabilityReceipt?.reviewerMustDifferFromAuthorPrincipal !== true
+      || formalReviewerCapabilityReceipt?.assuranceScope
+        !== 'ephemeral_session_frozen_artifact_and_role_separation'
       || formalReviewerCapabilityReceipt?.providerAccountIndependenceVerified !== false
       || !codexHome || !model || !principalId) {
       throw new Error('codex_formal_reviewer_capability_receipt_invalid');
@@ -83,6 +87,8 @@ export function createCodexAgentExecutor({
       || researchAuthorCapabilityReceipt.selectedModelExecutionCanaryVerified !== false
       || researchAuthorCapabilityReceipt.workspaceWriteRequired !== true
       || researchAuthorCapabilityReceipt.dynamicAttemptWorkspaceRequired !== true
+      || researchAuthorCapabilityReceipt.freshEphemeralSessionRequired !== true
+      || researchAuthorCapabilityReceipt.priorAgentContextInheritanceForbidden !== true
       || !codexHome || !model || !principalId) {
       throw new Error('codex_research_author_capability_receipt_invalid');
     }
@@ -206,6 +212,8 @@ export function createCodexAgentExecutor({
         promptHash: promptDigest,
         sessionId,
         childSessionId: sessionId,
+        sessionIsolation: 'fresh_ephemeral_no_resume',
+        contextInheritance: 'forbidden',
         maximumOutputTokens: outputTokenBudget ? Math.max(128, Number(outputTokenBudget)) : null,
         role,
         status: blockers.length ? 'agent_execution_failed' : 'agent_execution_completed',
@@ -230,6 +238,14 @@ export function createCodexAgentExecutor({
           codexCredentialConfigIdentityHash: formalReviewerCapabilityReceipt.credentialConfigIdentityHash,
           codexAuthorCredentialRootIdentityHash: formalReviewerCapabilityReceipt.authorCredentialRootIdentityHash,
           codexCredentialIndependenceVerified: formalReviewerCapabilityReceipt.credentialIndependenceVerified,
+          codexProviderCredentialSharingPermitted:
+            formalReviewerCapabilityReceipt.providerCredentialSharingPermitted,
+          codexFreshEphemeralSessionRequired:
+            formalReviewerCapabilityReceipt.freshEphemeralSessionRequired,
+          codexAuthorContextInheritanceForbidden:
+            formalReviewerCapabilityReceipt.authorContextInheritanceForbidden,
+          codexFrozenArtifactReviewRequired:
+            formalReviewerCapabilityReceipt.frozenArtifactReviewRequired,
           codexReviewerAssuranceScope: formalReviewerCapabilityReceipt.assuranceScope,
           codexProviderAccountIndependenceVerified: false,
           codexBinaryIdentityHash: formalReviewerCapabilityReceipt.codexBinaryIdentityHash,
@@ -239,6 +255,10 @@ export function createCodexAgentExecutor({
         ...(researchAuthorCapabilityReceipt ? {
           codexResearchAuthorCapabilityReceiptHash: researchAuthorCapabilityReceipt.codexResearchAuthorCapabilityReceiptHash,
           codexResearchAuthorAssuranceScope: researchAuthorCapabilityReceipt.assuranceScope,
+          codexFreshEphemeralSessionRequired:
+            researchAuthorCapabilityReceipt.freshEphemeralSessionRequired,
+          codexPriorAgentContextInheritanceForbidden:
+            researchAuthorCapabilityReceipt.priorAgentContextInheritanceForbidden,
           codexResearchAuthorProviderAccountIdentityAttested: researchAuthorCapabilityReceipt.providerAccountIdentityAttested,
           codexCredentialRootIdentityHash: researchAuthorCapabilityReceipt.credentialRootIdentityHash,
           codexCredentialConfigIdentityHash: researchAuthorCapabilityReceipt.credentialConfigIdentityHash,

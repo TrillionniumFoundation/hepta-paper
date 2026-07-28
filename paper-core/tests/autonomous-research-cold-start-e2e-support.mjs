@@ -83,6 +83,7 @@ export function principals() {
       version: 1, kind: 'CodexResearchAuthorCapabilityReceipt',
       status: 'codex_research_author_capability_ready', provider: 'openai', model: 'author',
       credentialRootIdentityHash: H('author-root'), credentialConfigIdentityHash: H('author-config'),
+      freshEphemeralSessionRequired: true, priorAgentContextInheritanceForbidden: true,
     });
   const reviewerCapability = hashed('CodexFormalReviewerCapabilityReceipt',
     'codexFormalReviewerCapabilityReceiptHash', {
@@ -91,7 +92,10 @@ export function principals() {
       credentialRootIdentityHash: H('reviewer-root'), credentialConfigIdentityHash: H('reviewer-config'),
       authorCredentialRootIdentityHash: authorCapability.credentialRootIdentityHash,
       credentialIndependenceVerified: true,
-      assuranceScope: 'filesystem_credential_root_and_principal_separation',
+      providerCredentialSharingPermitted: true, freshEphemeralSessionRequired: true,
+      authorContextInheritanceForbidden: true, frozenArtifactReviewRequired: true,
+      reviewerMustDifferFromAuthorPrincipal: true,
+      assuranceScope: 'ephemeral_session_frozen_artifact_and_role_separation',
     });
   return {
     authorPrincipal: { principalId: 'author:test', capabilityReceipt: authorCapability },

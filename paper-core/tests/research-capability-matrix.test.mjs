@@ -175,7 +175,7 @@ test('capability matrix help discloses local runtime observation effects', () =>
   assert.deepEqual(JSON.parse(run.stdout), {
     version: 1,
     kind: 'ResearchCapabilityMatrixUsage',
-    usage: 'research-capability-matrix [--json] [--root PATH] [--runtime-root PATH] [--require-production-ready]',
+    usage: 'research-capability-matrix [--json] [--deployment-environment-file PATH] [--root PATH] [--runtime-root PATH] [--require-production-ready]',
     mutation: 'no-canonical-state-write',
     localObservationEffects: 'runtime-metadata-and-daemon-probes-may-change',
     externalAction: 'local-runtime-observation',

@@ -10,6 +10,7 @@ import { composeAutonomousResearchCampaignAction } from '../../paper-composition
 import { validatePaperProposalApprovalDocument } from '../../paper-domain/contracts/proposal-contracts.mjs';
 import {
   evaluateAutonomousCampaignTopology,
+  evaluateAutonomousResearchPrincipalSeparation,
 } from '../../paper-domain/automation/autonomous-research-readiness-policy.mjs';
 import {
   verifyAutonomousResearchPolicyAuthorization,
@@ -45,6 +46,8 @@ function principalPreflights() {
     model: 'author-model',
     credentialRootIdentityHash: HASH('author-root'),
     credentialConfigIdentityHash: HASH('author-config'),
+    freshEphemeralSessionRequired: true,
+    priorAgentContextInheritanceForbidden: true,
   };
   const authorCapability = hashed(
     'CodexResearchAuthorCapabilityReceipt',
@@ -61,7 +64,12 @@ function principalPreflights() {
     credentialConfigIdentityHash: HASH('reviewer-config'),
     authorCredentialRootIdentityHash: authorCapability.credentialRootIdentityHash,
     credentialIndependenceVerified: true,
-    assuranceScope: 'filesystem_credential_root_and_principal_separation',
+    providerCredentialSharingPermitted: true,
+    freshEphemeralSessionRequired: true,
+    authorContextInheritanceForbidden: true,
+    frozenArtifactReviewRequired: true,
+    reviewerMustDifferFromAuthorPrincipal: true,
+    assuranceScope: 'ephemeral_session_frozen_artifact_and_role_separation',
   };
   const reviewerCapability = hashed(
     'CodexFormalReviewerCapabilityReceipt',
@@ -81,6 +89,36 @@ function principalPreflights() {
     }),
   });
 }
+
+test('fresh isolated author and reviewer roles may share provider authentication', () => {
+  const principals = principalPreflights();
+  const reviewerPayload = {
+    ...principals.reviewer.capabilityReceipt,
+    credentialRootIdentityHash:
+      principals.author.capabilityReceipt.credentialRootIdentityHash,
+    credentialConfigIdentityHash:
+      principals.author.capabilityReceipt.credentialConfigIdentityHash,
+    credentialIndependenceVerified: false,
+  };
+  delete reviewerPayload.codexFormalReviewerCapabilityReceiptHash;
+  const separation = evaluateAutonomousResearchPrincipalSeparation({
+    authorPrincipal: {
+      principalId: principals.author.effectivePrincipalId,
+      capabilityReceipt: principals.author.capabilityReceipt,
+    },
+    formalReviewerPrincipal: {
+      principalId: principals.reviewer.effectivePrincipalId,
+      capabilityReceipt: hashed(
+        'CodexFormalReviewerCapabilityReceipt',
+        'codexFormalReviewerCapabilityReceiptHash',
+        reviewerPayload,
+      ),
+    },
+  });
+  assert.equal(separation.status, 'autonomous_research_principal_separation_ready');
+  assert.equal(separation.providerCredentialRootShared, true);
+  assert.equal(separation.freshSessionSeparationVerified, true);
+});
 
 function currentReleaseAuthority(paperId = 'autonomous-paper') {
   return Object.freeze({

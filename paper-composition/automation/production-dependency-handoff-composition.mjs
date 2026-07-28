@@ -5,16 +5,22 @@ import {
   buildProductionDependencyHandoff,
 } from '../../paper-application/automation/production-dependency-handoff.mjs';
 import {
+  inspectAdvancedNumericalReferenceCandidateQualifications,
+} from './advanced-numerical-reference-qualification-composition.mjs';
+import {
   inspectWorkspaceExecutionSnapshot,
 } from '../../paper-adapters/runtime/execution-snapshot.mjs';
 import {
   inspectRepositoryAssetExternalization,
 } from '../../paper-adapters/automation/repository-asset-externalization.mjs';
-import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hashBytes } from '../../workflow-kernel/record-hash.mjs';
 
 export function composeProductionDependencyHandoff({
   readiness,
   repositoryRoot,
+  environment = process.env,
+  numericalQualificationInspector =
+    inspectAdvancedNumericalReferenceCandidateQualifications,
 } = {}) {
   const selectedRoot = path.resolve(repositoryRoot);
   const assetManifest = JSON.parse(fs.readFileSync(path.join(
@@ -46,28 +52,14 @@ export function composeProductionDependencyHandoff({
   const entrypointHash = hashBytes(fs.readFileSync(
     path.join(candidateRoot, candidateManifest.entrypoint),
   ));
-  const candidateManifestHash = hashRecord(
-    'AdvancedNumericalReferenceCandidateManifest',
+  const numericalCandidates = numericalQualificationInspector({
+    candidateRoot,
     candidateManifest,
-  );
-  const numericalCandidates = candidateManifest.analysisFamilies.map((analysisFamily) => (
-    Object.freeze({
-      pluginId: `hepta.reference.${analysisFamily}`,
-      pluginVersion: '1.0.0',
-      analysisFamily,
-      status: 'reference_candidate_unqualified',
-      productionQualified: false,
-      entrypoint: candidateManifest.entrypoint,
-      entrypointHash,
-      sourceMerkleHash: candidateSnapshot.merkleHash,
-      sourceWorkspaceManifestHash: candidateSnapshot.manifestHash,
-      candidateManifestHash,
-      runtimeExecutableHash: null,
-      runtimePackageClosureHash: null,
-      signedBundleHash: null,
-      qualificationStatementHash: null,
-    })
-  ));
+    candidateSnapshot,
+    entrypointHash,
+    registryPath:
+      environment.HEPTA_ADVANCED_NUMERICAL_PLUGIN_QUALIFICATION_REGISTRY || null,
+  });
   return buildProductionDependencyHandoff({
     readiness,
     repositoryAssetInspection: assetInspection,

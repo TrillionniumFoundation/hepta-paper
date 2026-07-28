@@ -34,6 +34,8 @@ export function preflightCodexResearchAuthor({
     selectedModelExecutionCanaryVerified: false,
     workspaceWriteRequired: true,
     dynamicAttemptWorkspaceRequired: true,
+    freshEphemeralSessionRequired: true,
+    priorAgentContextInheritanceForbidden: true,
     assuranceScope: 'filesystem_credential_root_runtime_and_model_selection_preflight',
     providerAccountIdentityAttested: false,
     externalActionPerformed: false,

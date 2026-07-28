@@ -11,6 +11,26 @@ returns exit code 4 until full research qualification, current machine intake,
 and the resident supervisor are all ready. It performs no provider canary unless
 that separate live-canary flag is explicitly requested.
 
+An operator observing the service from outside systemd must pass the same
+non-secret policy file explicitly:
+
+```sh
+automation-status \
+  --deployment-environment-file /etc/hepta-paper/autonomous-research-supervisor.env \
+  --require-fully-autonomous
+```
+
+The file must be absolute, regular, owner-private, and contain only the
+allowlisted non-secret deployment keys. Its content hash and loaded key names
+are included in `deploymentEnvironmentInspection`; values and credential
+material are never copied into the report. CLI `--root` and `--runtime-root`
+remain explicit overrides, so an operator can distinguish a production
+deployment from a development runtime without relying on ambient shell state.
+When `--handoff` is requested before the production SQLite store exists, status
+uses a missing-store read-only adapter and returns a blocked machine-readable
+dependency handoff instead of an infrastructure exception. Ordinary readiness
+and strict acceptance retain the stronger missing-store failure behavior.
+
 The resident independently repeats the passive autonomous-state safety
 inspection when `--require-fully-autonomous` is present. This inspection runs
 before the qualification-pointer repository, campaign execution context, or
@@ -576,10 +596,12 @@ The author identity hash is an out-of-band deployment pin over the exact
 regular-file configuration, including its trust store and signed identity
 envelope. It must equal that document's `configurationHash`; replacing the
 document and embedded trust root together therefore fails before the first
-provider call. The pinned subject binds the active author principal, provider,
-credential root, provider account, and platform identity. Composition passes
-that same canonical subject and envelope to reviewer independence and prior-art
-authority verification.
+provider call. The pinned subject binds the active author role, provider
+credential identity, and platform identity. Author and reviewer may share the
+same provider-auth root. Composition establishes scientific review independence
+with distinct role IDs, fresh ephemeral no-resume sessions, forbidden author
+context inheritance, read-only reviewer execution, and frozen artifact hashes.
+It passes the canonical author subject and envelope to prior-art verification.
 
 The venue and submission-metadata hashes are independent out-of-band pins over
 signed configuration documents. Strong production accepts only venue registry

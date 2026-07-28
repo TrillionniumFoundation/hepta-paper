@@ -416,6 +416,47 @@ test('automation readiness query completes a passive blocked report with exact s
   assert.ok(query.report.fullAutomaticResearchWritingBlockers.length > 0);
 });
 
+test('handoff readiness can inspect an uninitialized store without weakening default status', (t) => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'paper-readiness-missing-store-'));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const root = path.join(base, 'assets');
+  const runtimeRoot = path.join(base, 'runtime');
+  fs.mkdirSync(root, { recursive: true });
+  fs.mkdirSync(runtimeRoot, { recursive: true });
+
+  assert.throws(() => queryAutomationReadiness({
+    root,
+    runtimeRoot,
+    environment: {},
+    codeProvenance: {},
+  }), /Read-only paper store missing/);
+
+  const query = queryAutomationReadiness({
+    root,
+    runtimeRoot,
+    environment: {},
+    allowMissingStore: true,
+    spawnSyncImpl() {
+      return {
+        status: 1,
+        signal: null,
+        stdout: '',
+        stderr: 'simulated_unavailable',
+      };
+    },
+    now: new Date('2026-07-28T00:00:00.000Z'),
+    codeProvenance: {},
+  });
+
+  assert.equal(query.report.kind, 'AutomationPlaneStatus');
+  assert.equal(query.report.productionReady, false);
+  assert.equal(query.report.campaignStoreReady, false);
+  assert.equal(query.report.operationalIntegrity.queryReady, false);
+  assert.ok(query.report.operationalIntegrity.blockers.includes(
+    'automation_store_quick_check_query_failed',
+  ));
+});
+
 test('automation-status keeps release-attestor verification behind an explicit live flag', () => {
   const source = fs.readFileSync(new URL('../bin/automation-status.mjs', import.meta.url), 'utf8');
   const packageDocument = JSON.parse(fs.readFileSync(
@@ -447,7 +488,7 @@ test('automation-status help exits without performing readiness actions', () => 
   assert.deepEqual(JSON.parse(run.stdout), {
     version: 2,
     kind: 'AutomationStatusUsage',
-    usage: 'automation-status [--json] [--handoff] [--root PATH] [--runtime-root PATH] [--require-full-research] [--require-fully-autonomous] [--live-provider-canary] [--live-release-attestor]',
+    usage: 'automation-status [--json] [--handoff] [--deployment-environment-file PATH] [--root PATH] [--runtime-root PATH] [--require-full-research] [--require-fully-autonomous] [--live-provider-canary] [--live-release-attestor]',
     mutation: 'no-canonical-state-write',
     localObservationEffects: 'runtime-metadata-and-daemon-probes-may-change',
     externalAction: 'argument-dependent',

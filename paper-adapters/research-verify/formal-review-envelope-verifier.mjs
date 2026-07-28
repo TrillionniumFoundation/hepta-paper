@@ -4,6 +4,7 @@ const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 const BOUNDED_ASSURANCE_SCOPES = new Set([
   'filesystem_credential_root_and_principal_separation',
   'configured_principal_and_process_separation',
+  'ephemeral_session_frozen_artifact_and_role_separation',
 ]);
 const SIGNED_CONFIGURED_IDENTITY_ASSURANCE_SCOPE =
   'signed_configured_identity_credential_root_and_signer_separation';

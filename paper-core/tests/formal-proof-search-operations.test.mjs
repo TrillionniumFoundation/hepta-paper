@@ -109,6 +109,29 @@ function rehashOperationReceipt(receipt) {
   });
 }
 
+function absentDockerRecoveryReceipt(label) {
+  const payload = {
+    version: 1,
+    kind: 'DockerWorkerContainerRecoveryReceipt',
+    trigger: 'launcher_signal:SIGPIPE',
+    containerName: `hepta-os-worker-${label.padEnd(32, '0').slice(0, 32)}`,
+    processInvocationId: digest(`recovery-process:${label}`),
+    dockerWorkerContainerOwnershipHash: digest(`recovery-ownership:${label}`),
+    status: 'docker_worker_container_recovery_absent',
+    containerId: null,
+    inspectionAttemptCount: 5,
+    removalAttemptCount: 0,
+    removalConfirmed: true,
+    externalActionPerformed: false,
+    blockers: [],
+  };
+  return {
+    ...payload,
+    dockerWorkerContainerRecoveryReceiptHash:
+      hashRecord('DockerWorkerContainerRecoveryReceipt', payload),
+  };
+}
+
 test('typed theorem DSL deterministically binds Lean type and rejects unsupported domains', () => {
   const compiled = buildTypedTheoremDslFromLeanType({
     leanTypeSource: '∀ n : Nat, 0 + n = n',
@@ -378,6 +401,76 @@ test('timeout and runner crash cannot be presented as an executed proof-search s
   await assert.rejects(() => crashExecutor.execute({
     theoremSpecification, bundle, plan, candidate: plan.candidates[0],
   }), /fixture-runner-crash/);
+});
+
+test('Docker SIGPIPE is retried once with hash-bound infrastructure failure evidence', async () => {
+  const { theoremSpecification, bundle, plan } = authority('∀ n : Nat, n = n');
+  let calls = 0;
+  const runtimeIdentityHash = digest('sigpipe-runtime');
+  const runtimeExecutableSnapshotHash = digest('sigpipe-executable');
+  const containerImageDigest = digest('sigpipe-image');
+  const executor = createFormalProofSearchOperationsExecutor({
+    workerRunnerFactory: () => ({
+      async run() {
+        calls += 1;
+        const common = {
+          runnerId: 'fixture-runner',
+          backend: 'docker',
+          runtimeIdentityType: 'container',
+          runtimeIdentityHash,
+          runtimeExecutableSnapshotHash,
+          containerImageDigest,
+          stdout: 'proof-state-closed',
+          stderr: '',
+          isolation: { immutableWorkRootVerified: false },
+        };
+        if (calls === 1) {
+          return {
+            ...common,
+            ok: false,
+            exitCode: null,
+            signal: 'SIGPIPE',
+            stdout: '',
+            stderr: 'docker transport pipe closed',
+            receiptHash: digest('sigpipe-receipt'),
+            executionProcessIdentityHash: digest('sigpipe-process'),
+            dockerWorkerContainerRecoveryReceipt:
+              absentDockerRecoveryReceipt('sigpipe'),
+          };
+        }
+        return {
+          ...common,
+          ok: true,
+          exitCode: 0,
+          signal: null,
+          receiptHash: digest(`success-receipt:${calls}`),
+          executionProcessIdentityHash: digest(`success-process:${calls}`),
+        };
+      },
+    }),
+  });
+  const receipt = await executor.execute({
+    theoremSpecification, bundle, plan, candidate: plan.candidates[0],
+  });
+  assert.equal(calls, 3);
+  assert.equal(receipt.status, 'formal_proof_search_operations_verified');
+  assert.equal(receipt.operationReceipts[0].infrastructureRetryCount, 1);
+  assert.equal(
+    receipt.operationReceipts[0].infrastructureFailureReceipts[0].signal,
+    'SIGPIPE',
+  );
+  assert.equal(receipt.replayExecutionReceipt.infrastructureRetryCount, 0);
+  assert.equal(verifyFormalProofSearchOperationReceipt(receipt, {
+    bundle, plan, candidate: plan.candidates[0],
+  }).valid, true);
+
+  const tampered = structuredClone(receipt);
+  tampered.operationReceipts[0]
+    .infrastructureFailureReceipts[0].signal = 'SIGKILL';
+  const rehashed = rehashOperationReceipt(tampered);
+  assert.equal(verifyFormalProofSearchOperationReceipt(rehashed, {
+    bundle, plan, candidate: plan.candidates[0],
+  }).valid, false);
 });
 
 test('candidate authority mismatch is rejected even after rehashing an operation receipt', async () => {

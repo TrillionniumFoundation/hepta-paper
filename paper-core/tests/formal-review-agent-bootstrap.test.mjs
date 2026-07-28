@@ -84,7 +84,12 @@ test('formal reviewer composition requires a distinct principal and preserves at
     credentialConfigIdentityHash: `sha256:${'c'.repeat(64)}`,
     authorCredentialRootIdentityHash: null,
     credentialIndependenceVerified: true,
-    assuranceScope: 'configured_principal_and_process_separation',
+    providerCredentialSharingPermitted: true,
+    freshEphemeralSessionRequired: true,
+    authorContextInheritanceForbidden: true,
+    frozenArtifactReviewRequired: true,
+    reviewerMustDifferFromAuthorPrincipal: true,
+    assuranceScope: 'ephemeral_session_frozen_artifact_and_role_separation',
     providerAccountIndependenceVerified: false,
     codexBinaryIdentityHash: `sha256:${'d'.repeat(64)}`,
     codexVersion: 'codex-cli fixture',
@@ -166,7 +171,14 @@ test('formal reviewer positive path uses the real process-backed Codex compositi
   assert.match(receipt.codexCredentialConfigIdentityHash, /^sha256:[a-f0-9]{64}$/);
   assert.match(receipt.codexBinaryIdentityHash, /^sha256:[a-f0-9]{64}$/);
   assert.equal(receipt.codexCredentialIndependenceVerified, true);
-  assert.equal(receipt.codexReviewerAssuranceScope, 'configured_principal_and_process_separation');
+  assert.equal(receipt.codexProviderCredentialSharingPermitted, true);
+  assert.equal(receipt.codexFreshEphemeralSessionRequired, true);
+  assert.equal(receipt.codexAuthorContextInheritanceForbidden, true);
+  assert.equal(receipt.codexFrozenArtifactReviewRequired, true);
+  assert.equal(receipt.sessionIsolation, 'fresh_ephemeral_no_resume');
+  assert.equal(receipt.contextInheritance, 'forbidden');
+  assert.equal(receipt.codexReviewerAssuranceScope,
+    'ephemeral_session_frozen_artifact_and_role_separation');
   assert.equal(receipt.codexProviderAccountIndependenceVerified, false);
   assert.equal(receipt.codexAuthenticationStatus, 'codex_authentication_verified');
   assert.equal(receipt.codexVersion, 'codex-cli 99.0.0');
@@ -246,7 +258,7 @@ test('formal reviewer identity changes when auth material is rotated in place wi
   assert.notEqual(after.effectivePrincipalId, before.effectivePrincipalId);
 });
 
-test('formal reviewer preflight rejects missing config, logged-out Codex and shared author credentials', (t) => {
+test('formal reviewer preflight rejects unsafe roots while allowing shared provider credentials', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-formal-review-preflight-negative-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const missingConfigHome = privateCodexHome(root, 'missing-config', { config: false });
@@ -269,13 +281,22 @@ test('formal reviewer preflight rejects missing config, logged-out Codex and sha
     codexHome: reviewerHome,
     model: 'formal-review-model',
   }), /formal_review_codex_authentication_required/);
-  assert.throws(() => preflightCodexFormalReviewer({
+  const sharedCredentialReviewer = preflightCodexFormalReviewer({
     codexBinary: executable,
     codexHome: reviewerHome,
     model: 'formal-review-model',
     authorProvider: 'codex',
     authorCodexHome: reviewerHome,
-  }), /formal_review_codex_credential_root_must_be_distinct/);
+  });
+  assert.equal(sharedCredentialReviewer.capabilityReceipt.credentialIndependenceVerified, false);
+  assert.equal(
+    sharedCredentialReviewer.capabilityReceipt.providerCredentialSharingPermitted,
+    true,
+  );
+  assert.equal(
+    sharedCredentialReviewer.capabilityReceipt.assuranceScope,
+    'ephemeral_session_frozen_artifact_and_role_separation',
+  );
   fs.chmodSync(path.join(reviewerHome, 'config.toml'), 0o644);
   assert.throws(() => preflightCodexFormalReviewer({
     codexBinary: executable,
@@ -318,7 +339,8 @@ test('formal reviewer preflight rejects missing config, logged-out Codex and sha
     authorCodexHome: authorHome,
   });
   assert.equal(independent.capabilityReceipt.credentialIndependenceVerified, true);
-  assert.equal(independent.capabilityReceipt.assuranceScope, 'filesystem_credential_root_and_principal_separation');
+  assert.equal(independent.capabilityReceipt.assuranceScope,
+    'ephemeral_session_frozen_artifact_and_role_separation');
   assert.equal(independent.capabilityReceipt.providerAccountIndependenceVerified, false);
   assert.notEqual(
     independent.capabilityReceipt.credentialRootIdentityHash,

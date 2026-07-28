@@ -166,9 +166,14 @@ function formalAgentPrincipal(receipt, {
     || !receipt.codexCredentialRootIdentityHash
     || !receipt.codexCredentialConfigIdentityHash
     || !receipt.codexBinaryIdentityHash
-    || receipt.codexCredentialIndependenceVerified !== true
-    || !['filesystem_credential_root_and_principal_separation', 'configured_principal_and_process_separation']
-      .includes(receipt.codexReviewerAssuranceScope)
+    || receipt.codexProviderCredentialSharingPermitted !== true
+    || receipt.codexFreshEphemeralSessionRequired !== true
+    || receipt.codexAuthorContextInheritanceForbidden !== true
+    || receipt.codexFrozenArtifactReviewRequired !== true
+    || receipt.sessionIsolation !== 'fresh_ephemeral_no_resume'
+    || receipt.contextInheritance !== 'forbidden'
+    || receipt.codexReviewerAssuranceScope
+      !== 'ephemeral_session_frozen_artifact_and_role_separation'
     || receipt.codexProviderAccountIndependenceVerified !== false
     || receipt.codexAuthenticationStatus !== 'codex_authentication_verified')) return null;
   const payload = {
@@ -186,6 +191,15 @@ function formalAgentPrincipal(receipt, {
     codexCredentialConfigIdentityHash: receipt.codexCredentialConfigIdentityHash || null,
     codexAuthorCredentialRootIdentityHash: receipt.codexAuthorCredentialRootIdentityHash || null,
     codexCredentialIndependenceVerified: receipt.codexCredentialIndependenceVerified === true,
+    providerCredentialSharingPermitted:
+      receipt.codexProviderCredentialSharingPermitted === true,
+    freshSessionIsolationVerified:
+      receipt.codexFreshEphemeralSessionRequired === true
+        && receipt.sessionIsolation === 'fresh_ephemeral_no_resume',
+    authorContextInheritanceForbidden:
+      receipt.codexAuthorContextInheritanceForbidden === true
+        && receipt.contextInheritance === 'forbidden',
+    frozenArtifactReviewRequired: receipt.codexFrozenArtifactReviewRequired === true,
     reviewerAssuranceScope: receipt.providerMode === 'openai'
       ? signedPoolReviewer
         ? 'signed_configured_identity_credential_root_and_signer_separation'

@@ -28,6 +28,8 @@ function capabilityPreflights() {
     model: 'author-capability-model',
     credentialRootIdentityHash: H('author-root'),
     credentialConfigIdentityHash: H('author-config'),
+    freshEphemeralSessionRequired: true,
+    priorAgentContextInheritanceForbidden: true,
   };
   const authorCapability = Object.freeze({
     ...authorPayload,
@@ -44,7 +46,12 @@ function capabilityPreflights() {
     credentialConfigIdentityHash: H('reviewer-config'),
     authorCredentialRootIdentityHash: authorCapability.credentialRootIdentityHash,
     credentialIndependenceVerified: true,
-    assuranceScope: 'filesystem_credential_root_and_principal_separation',
+    providerCredentialSharingPermitted: true,
+    freshEphemeralSessionRequired: true,
+    authorContextInheritanceForbidden: true,
+    frozenArtifactReviewRequired: true,
+    reviewerMustDifferFromAuthorPrincipal: true,
+    assuranceScope: 'ephemeral_session_frozen_artifact_and_role_separation',
   };
   const reviewerCapability = Object.freeze({
     ...reviewerPayload,

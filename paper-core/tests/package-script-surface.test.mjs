@@ -404,7 +404,7 @@ test('one declarative registry owns supported routes and npm command classificat
   assert.equal(HEPTA_PAPER_COMMAND_REGISTRY.operator.automation.forwardingPolicy, 'registry');
   assert.deepEqual(
     HEPTA_PAPER_COMMAND_REGISTRY.operator.automation.forwardedArgumentSchema.valueFlags,
-    ['root', 'runtime-root'],
+    ['deployment-environment-file', 'root', 'runtime-root'],
   );
   assert.equal(
     HEPTA_PAPER_COMMAND_REGISTRY.operator.automation.forwardedArgumentSchema.booleanFlags

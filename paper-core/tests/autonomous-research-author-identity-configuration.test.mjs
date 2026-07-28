@@ -200,7 +200,12 @@ function reviewerPoolFixture(authorCredentialRootIdentityHash) {
     credentialConfigIdentityHash: descriptors[0].credentialConfigIdentityHash,
     authorCredentialRootIdentityHash,
     credentialIndependenceVerified: true,
-    assuranceScope: 'configured_principal_and_process_separation',
+    providerCredentialSharingPermitted: true,
+    freshEphemeralSessionRequired: true,
+    authorContextInheritanceForbidden: true,
+    frozenArtifactReviewRequired: true,
+    reviewerMustDifferFromAuthorPrincipal: true,
+    assuranceScope: 'ephemeral_session_frozen_artifact_and_role_separation',
   };
   const reviewerCapability = capability(
     'CodexFormalReviewerCapabilityReceipt',
@@ -558,6 +563,8 @@ test('production composition shares one pinned author identity with reviewer and
     model: 'pinned-author-model',
     credentialRootIdentityHash: authorSubject.credentialRootIdentityHash,
     credentialConfigIdentityHash: H('author-config'),
+    freshEphemeralSessionRequired: true,
+    priorAgentContextInheritanceForbidden: true,
   };
   const author = Object.freeze({
     effectivePrincipalId: authorSubject.principalId,
@@ -1001,6 +1008,8 @@ test('campaign worker revalidates and forwards the pinned author identity to the
     selectedModelExecutionCanaryVerified: false,
     workspaceWriteRequired: true,
     dynamicAttemptWorkspaceRequired: true,
+    freshEphemeralSessionRequired: true,
+    priorAgentContextInheritanceForbidden: true,
     assuranceScope:
       'filesystem_credential_root_runtime_and_model_selection_preflight',
     providerAccountIdentityAttested: false,

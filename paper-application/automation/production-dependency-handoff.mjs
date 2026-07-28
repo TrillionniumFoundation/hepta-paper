@@ -77,6 +77,21 @@ export function buildProductionDependencyHandoff({
       ? 'hepta_paper_production_dependencies_ready'
       : 'hepta_paper_external_authority_inputs_required',
     readinessReportHash: hashRecord('AutomationPlaneStatus', readiness),
+    deploymentEnvironment: Object.freeze({
+      observed: Boolean(readiness.deploymentEnvironmentInspection),
+      status: readiness.deploymentEnvironmentInspection?.status || null,
+      source: readiness.deploymentEnvironmentInspection?.source || null,
+      filePath: readiness.deploymentEnvironmentInspection?.filePath || null,
+      fileHash: readiness.deploymentEnvironmentInspection?.fileHash || null,
+      loadedKeys: Object.freeze([
+        ...(readiness.deploymentEnvironmentInspection?.loadedKeys || []),
+      ]),
+      credentialMaterialLoaded:
+        readiness.deploymentEnvironmentInspection?.credentialMaterialLoaded === true,
+      inspectionHash:
+        readiness.deploymentEnvironmentInspection
+          ?.automationReadinessDeploymentEnvironmentInspectionHash || null,
+    }),
     repositoryAssetInspectionHash:
       hashRecord('RepositoryAssetExternalizationInspection', repositoryAssetInspection),
     assets: Object.freeze({
@@ -253,6 +268,9 @@ export function buildProductionDependencyHandoff({
         'reference-and-replay-process-receipts-are-distinct',
         'reference-and-replay-result-hashes-are-identical',
         'qualification-statement-is-expiring-and-content-bound',
+      ]),
+      requiredEnvironmentVariables: Object.freeze([
+        'HEPTA_ADVANCED_NUMERICAL_PLUGIN_QUALIFICATION_REGISTRY',
       ]),
       candidates: Object.freeze(numericalCandidates),
     }),

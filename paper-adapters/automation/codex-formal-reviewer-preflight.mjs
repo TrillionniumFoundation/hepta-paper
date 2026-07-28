@@ -37,18 +37,12 @@ export function preflightCodexFormalReviewer({
     environment,
   });
   const reviewerCredentialRootIdentityHash = runtime.credentialRootIdentityHash;
-  let authorCredentialRootIdentityHash = null;
-  if (authorProvider === 'codex') {
-    const authorRoot = inspectCodexCredentialRootIdentity({
+  const authorCredentialRootIdentityHash = authorProvider === 'codex'
+    ? inspectCodexCredentialRootIdentity({
       codexHome: authorCodexHome,
       errorPrefix: 'formal_review_codex_author',
-    });
-    authorCredentialRootIdentityHash = authorRoot.credentialRootIdentityHash;
-    if (authorRoot.codexHome === runtime.codexHome
-      || authorCredentialRootIdentityHash === reviewerCredentialRootIdentityHash) {
-      fail('formal_review_codex_credential_root_must_be_distinct');
-    }
-  }
+    }).credentialRootIdentityHash
+    : null;
   const capabilityPayload = {
     version: 1,
     kind: 'CodexFormalReviewerCapabilityReceipt',
@@ -64,9 +58,12 @@ export function preflightCodexFormalReviewer({
     credentialIndependenceVerified: authorProvider === 'codex'
       ? authorCredentialRootIdentityHash !== reviewerCredentialRootIdentityHash
       : true,
-    assuranceScope: authorProvider === 'codex'
-      ? 'filesystem_credential_root_and_principal_separation'
-      : 'configured_principal_and_process_separation',
+    providerCredentialSharingPermitted: true,
+    freshEphemeralSessionRequired: true,
+    authorContextInheritanceForbidden: true,
+    frozenArtifactReviewRequired: true,
+    reviewerMustDifferFromAuthorPrincipal: true,
+    assuranceScope: 'ephemeral_session_frozen_artifact_and_role_separation',
     providerAccountIndependenceVerified: false,
     authenticationStatus: runtime.authenticationStatus,
     modelOptionVerified: runtime.modelOptionVerified,

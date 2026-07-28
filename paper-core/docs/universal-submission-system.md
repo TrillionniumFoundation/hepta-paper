@@ -143,3 +143,12 @@ supplied and verified:
 Production and live-commit qualification additionally require the real account,
 current submission window, final human approval bound to the package and
 metadata hashes, and successful provider read-after-write evidence.
+
+Numerical reference candidates use the same external-authority principle. A
+deployment may set
+`HEPTA_ADVANCED_NUMERICAL_PLUGIN_QUALIFICATION_REGISTRY` to an owner-private,
+hash-bound registry of per-candidate runtime configurations. The production
+handoff re-verifies each signed plugin bundle, independent qualification
+statement, exact source snapshot, entrypoint, runtime closure and all required
+authority roles. A registry boolean or a mismatched candidate can never promote
+an unqualified reference implementation.

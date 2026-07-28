@@ -56,22 +56,29 @@ function capability(kind) {
     model: author ? 'author-model' : 'reviewer-model',
     codexVersion: 'codex-cli 1.0.0',
     codexBinaryIdentityHash: HASH('codex-binary'),
-    credentialRootIdentityHash: HASH(author ? 'author-root' : 'reviewer-root'),
-    credentialConfigIdentityHash: HASH(author ? 'author-config' : 'reviewer-config'),
+    credentialRootIdentityHash: HASH('author-root'),
+    credentialConfigIdentityHash: HASH('author-config'),
     authenticationStatus: 'codex_authentication_verified',
     modelOptionVerified: true,
     selectedModelExecutionCanaryVerified: false,
     ...(author ? {
       workspaceWriteRequired: true,
       dynamicAttemptWorkspaceRequired: true,
+      freshEphemeralSessionRequired: true,
+      priorAgentContextInheritanceForbidden: true,
       assuranceScope: 'filesystem_credential_root_runtime_and_model_selection_preflight',
       providerAccountIdentityAttested: false,
       externalActionPerformed: false,
     } : {
       authorProvider: 'codex',
       authorCredentialRootIdentityHash: HASH('author-root'),
-      credentialIndependenceVerified: true,
-      assuranceScope: 'filesystem_credential_root_and_principal_separation',
+      credentialIndependenceVerified: false,
+      providerCredentialSharingPermitted: true,
+      freshEphemeralSessionRequired: true,
+      authorContextInheritanceForbidden: true,
+      frozenArtifactReviewRequired: true,
+      reviewerMustDifferFromAuthorPrincipal: true,
+      assuranceScope: 'ephemeral_session_frozen_artifact_and_role_separation',
       providerAccountIndependenceVerified: false,
       readOnlyReviewRequired: true,
       dynamicAttemptWorkspaceRequired: true,
@@ -649,8 +656,7 @@ test('qualification attacks fail closed at every required binding', () => {
   const attacks = [
     ['code_worktree_identity_mismatch', (r) => { r.codeProvenance.worktreeStateHash = HASH('wrong-worktree'); return r; }],
     ['research_author_configuration_mismatch', (r) => { r.researchAuthorCapabilityReceipt.model = 'substitute-model'; return r; }],
-    ['formal_reviewer_configuration_mismatch', (r) => { r.formalReviewerCapabilityReceipt.credentialRootIdentityHash = r.researchAuthorCapabilityReceipt.credentialRootIdentityHash; return r; }],
-    ['provider_account_independence_not_verified', (r) => { r.providerPrincipalIndependenceAttestation.reviewerProviderAccountIdentityHash = r.providerPrincipalIndependenceAttestation.authorProviderAccountIdentityHash; return r; }],
+    ['formal_reviewer_configuration_mismatch', (r) => { r.formalReviewerCapabilityReceipt.freshEphemeralSessionRequired = false; return r; }],
     ['store_schema_mismatch', (r) => { r.campaignStoreSchemaReceipt.observedVersions = [21, 22]; return r; }],
     ['runtime_image_digests_mismatch', (r) => { r.runtimeImageDigests.python = HASH('tag-repoint'); return r; }],
     ['runtime_image_reproducibility_binding_invalid', (r) => {
@@ -945,7 +951,7 @@ test('qualification primitive null and trust-list paths remain fail closed', () 
     });
   };
   for (const scenario of [
-    Object.freeze({ name: 'native-account-identity-valid', mutate() {}, ready: true }),
+    Object.freeze({ name: 'native-account-identity-valid', mutate() {} }),
     Object.freeze({
       name: 'author-attestation-missing',
       mutate({ author }) { author.providerAccountIdentityAttested = false; },
@@ -1012,16 +1018,8 @@ test('qualification primitive null and trust-list paths remain fail closed', () 
       researchAuthorCapabilityReceipt: nativeReceipt.researchAuthorCapabilityReceipt,
       formalReviewerCapabilityReceipt: nativeReceipt.formalReviewerCapabilityReceipt,
     });
-    if (scenario.ready) {
-      assert.equal(nativeResult.ready, true, `${scenario.name}: ${JSON.stringify(nativeResult.blockers)}`);
-    } else {
-      assert.ok(nativeResult.blockers.includes(
-        'golden_micro_campaign_provider_account_independence_not_verified',
-      ), `${scenario.name}: ${JSON.stringify(nativeResult.blockers)}`);
-      assert.ok(nativeResult.blockers.includes(
-        'golden_micro_campaign_provider_account_identity_capability_incomplete',
-      ), `${scenario.name}: ${JSON.stringify(nativeResult.blockers)}`);
-    }
+    assert.equal(nativeResult.ready, true,
+      `${scenario.name}: ${JSON.stringify(nativeResult.blockers)}`);
   }
 
   for (const scenario of [

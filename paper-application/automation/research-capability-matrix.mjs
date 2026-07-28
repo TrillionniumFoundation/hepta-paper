@@ -188,6 +188,8 @@ export function buildResearchCapabilityMatrix(readiness = {}) {
       : 'research_capability_entries_bounded_or_blocked',
     universalResearchClaimed: false,
     fullyAutonomousProductionReady,
+    deploymentEnvironmentInspection:
+      readiness.deploymentEnvironmentInspection || null,
     capabilities,
   };
   return Object.freeze({

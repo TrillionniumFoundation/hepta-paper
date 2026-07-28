@@ -10,7 +10,6 @@ import {
   FULL_RESEARCH_QUALIFICATION_MAXIMUM_AGE_MS,
   independentHypothesisPriorArtQualificationValid,
   providerPrincipalIndependenceAttestationSigningPayloadHash,
-  providerPrincipalIndependenceVerified,
   qualificationCanaryValid,
   qualificationCapabilityValid,
   qualificationCodeIdentityValid,
@@ -252,42 +251,17 @@ export function verifyFullResearchQualificationReceipt(receipt, {
     'codex_formal_reviewer_capability_ready', 'codexFormalReviewerCapabilityReceiptHash')
     || reviewerCapability?.codexFormalReviewerCapabilityReceiptHash
       !== formalReviewerCapabilityReceipt?.codexFormalReviewerCapabilityReceiptHash
-    || reviewerCapability?.credentialIndependenceVerified !== true
     || reviewerCapability?.authorCredentialRootIdentityHash !== authorCapability?.credentialRootIdentityHash
-    || reviewerCapability?.credentialRootIdentityHash === authorCapability?.credentialRootIdentityHash) {
+    || authorCapability?.freshEphemeralSessionRequired !== true
+    || authorCapability?.priorAgentContextInheritanceForbidden !== true
+    || reviewerCapability?.providerCredentialSharingPermitted !== true
+    || reviewerCapability?.freshEphemeralSessionRequired !== true
+    || reviewerCapability?.authorContextInheritanceForbidden !== true
+    || reviewerCapability?.frozenArtifactReviewRequired !== true
+    || reviewerCapability?.reviewerMustDifferFromAuthorPrincipal !== true
+    || reviewerCapability?.assuranceScope
+      !== 'ephemeral_session_frozen_artifact_and_role_separation') {
     blockers.push('golden_micro_campaign_formal_reviewer_configuration_mismatch');
-  }
-  const capabilityAccountIndependenceVerified = authorCapability?.providerAccountIdentityAttested === true
-    && reviewerCapability?.providerAccountIdentityAttested === true
-    && reviewerCapability?.providerAccountIndependenceVerified === true
-    && SHA256.test(String(authorCapability?.providerAccountIdentityHash || ''))
-    && SHA256.test(String(reviewerCapability?.providerAccountIdentityHash || ''))
-    && reviewerCapability?.authorProviderAccountIdentityHash === authorCapability?.providerAccountIdentityHash
-    && reviewerCapability?.providerAccountIdentityHash !== authorCapability?.providerAccountIdentityHash;
-  const signedAccountIndependenceVerified = providerPrincipalIndependenceVerified({
-    attestation: receipt?.providerPrincipalIndependenceAttestation,
-    authorCapability,
-    reviewerCapability,
-    signer: receipt?.signer,
-    nowMs,
-    verifySignature: verifyQualificationSignature,
-  });
-  if (!capabilityAccountIndependenceVerified && !signedAccountIndependenceVerified) {
-    blockers.push('golden_micro_campaign_provider_account_independence_not_verified');
-  }
-  /* A distinct credential root remains mandatory even when account identity is
-     externally attested; filesystem separation alone is never account proof. */
-  if (authorCapability?.credentialRootIdentityHash === reviewerCapability?.credentialRootIdentityHash) {
-    blockers.push('golden_micro_campaign_provider_credential_root_independence_not_verified');
-  }
-  /* Keep this explicit shape guard so partially upgraded capability receipts
-     cannot accidentally be interpreted as native account attestations. */
-  if ((authorCapability?.providerAccountIdentityAttested === true
-      || reviewerCapability?.providerAccountIdentityAttested === true)
-    && (authorCapability?.providerAccountIdentityAttested !== true
-    || reviewerCapability?.providerAccountIdentityAttested !== true
-    || !capabilityAccountIndependenceVerified)) {
-    blockers.push('golden_micro_campaign_provider_account_identity_capability_incomplete');
   }
   if (!qualificationSchemaValid(
     receipt?.campaignStoreSchemaReceipt,

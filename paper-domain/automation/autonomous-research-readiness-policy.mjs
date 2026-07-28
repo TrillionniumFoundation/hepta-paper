@@ -64,12 +64,18 @@ export function evaluateAutonomousResearchPrincipalSeparation({
   }
   if (!SHA256.test(String(authorCapability?.credentialRootIdentityHash || ''))
     || !SHA256.test(String(reviewerCapability?.credentialRootIdentityHash || ''))
-    || authorCapability?.credentialRootIdentityHash === reviewerCapability?.credentialRootIdentityHash
-    || reviewerCapability?.authorCredentialRootIdentityHash !== authorCapability?.credentialRootIdentityHash
-    || reviewerCapability?.credentialIndependenceVerified !== true
-    || !['filesystem_credential_root_and_principal_separation', 'configured_principal_and_process_separation']
-      .includes(reviewerCapability?.assuranceScope)) {
-    blockers.push('autonomous_research_author_reviewer_credential_separation_invalid');
+    || reviewerCapability?.authorCredentialRootIdentityHash
+      !== authorCapability?.credentialRootIdentityHash
+    || authorCapability?.freshEphemeralSessionRequired !== true
+    || authorCapability?.priorAgentContextInheritanceForbidden !== true
+    || reviewerCapability?.providerCredentialSharingPermitted !== true
+    || reviewerCapability?.freshEphemeralSessionRequired !== true
+    || reviewerCapability?.authorContextInheritanceForbidden !== true
+    || reviewerCapability?.frozenArtifactReviewRequired !== true
+    || reviewerCapability?.reviewerMustDifferFromAuthorPrincipal !== true
+    || reviewerCapability?.assuranceScope
+      !== 'ephemeral_session_frozen_artifact_and_role_separation') {
+    blockers.push('autonomous_research_author_reviewer_session_separation_invalid');
   }
   const payload = {
     version: 1,
@@ -84,7 +90,12 @@ export function evaluateAutonomousResearchPrincipalSeparation({
       reviewerCapability?.codexFormalReviewerCapabilityReceiptHash || null,
     authorCredentialRootIdentityHash: authorCapability?.credentialRootIdentityHash || null,
     formalReviewerCredentialRootIdentityHash: reviewerCapability?.credentialRootIdentityHash || null,
-    credentialSeparationVerified: blockers.length === 0,
+    providerCredentialSharingPermitted:
+      reviewerCapability?.providerCredentialSharingPermitted === true,
+    providerCredentialRootShared:
+      authorCapability?.credentialRootIdentityHash
+        === reviewerCapability?.credentialRootIdentityHash,
+    freshSessionSeparationVerified: blockers.length === 0,
     providerAccountIndependenceVerified: false,
     externalProviderAccountIndependenceAttestationRequired: true,
     blockers: Object.freeze([...new Set(blockers)]),
@@ -487,7 +498,10 @@ export function evaluateAutonomousResearchQualificationEligibility({
     externalTrust: Object.freeze({
       selfSignedQualificationAccepted: false,
       externalReleaseAttestorRequired: true,
-      providerPrincipalIndependenceAttestationRequired: true,
+      providerPrincipalIndependenceAttestationRequired: false,
+      freshEphemeralAuthorReviewerSessionsRequired: true,
+      authorContextInheritanceForbidden: true,
+      frozenArtifactReviewRequired: true,
     }),
     claims: Object.freeze({
       universalResearchValidityClaimed: false,

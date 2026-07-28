@@ -137,6 +137,7 @@ test('production dependency handoff exposes exact external inputs without creden
   assert.equal(handoff.status, 'hepta_paper_external_authority_inputs_required');
   assert.equal(handoff.assets.ready, true);
   assert.equal(handoff.formalClosure.ready, true);
+  assert.equal(handoff.deploymentEnvironment.credentialMaterialLoaded, false);
   assert.deepEqual(handoff.stateSafety.missingDatabaseRoles, [
     'external-qualification',
     'full-research-qualification-publication',

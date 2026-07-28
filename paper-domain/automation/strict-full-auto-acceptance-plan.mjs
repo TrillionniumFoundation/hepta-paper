@@ -97,13 +97,6 @@ function assertReferenceBindings(bindings) {
   }
   const authorCredential = byId.get('research-author-credential-root');
   const reviewerCredential = byId.get('formal-reviewer-credential-root');
-  if (authorCredential.subjectId === reviewerCredential.subjectId
-    || pathsOverlap(authorCredential.resolvedPath, reviewerCredential.resolvedPath)
-    || authorCredential.identity === reviewerCredential.identity) {
-    throw new Error(
-      'strict_full_auto_acceptance_provider_credential_root_independence_required',
-    );
-  }
   const reviewerServiceCredential = byId.get(
     'formal-reviewer-service-credential-root',
   );

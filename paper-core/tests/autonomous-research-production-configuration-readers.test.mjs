@@ -222,7 +222,12 @@ function reviewerPreflight({ codexHome, model }) {
     readOnlyReviewRequired: true,
     dynamicAttemptWorkspaceRequired: true,
     credentialIndependenceVerified: true,
-    assuranceScope: 'filesystem_credential_root_and_principal_separation',
+    providerCredentialSharingPermitted: true,
+    freshEphemeralSessionRequired: true,
+    authorContextInheritanceForbidden: true,
+    frozenArtifactReviewRequired: true,
+    reviewerMustDifferFromAuthorPrincipal: true,
+    assuranceScope: 'ephemeral_session_frozen_artifact_and_role_separation',
     providerAccountIndependenceVerified: false,
     externalActionPerformed: false,
   };

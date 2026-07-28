@@ -5,6 +5,10 @@ import path from 'node:path';
 import test from 'node:test';
 import { createOsSandboxedWorkerRunner } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
 import {
+  buildDockerWorkerContainerOwnership,
+  buildDockerWorkerContainerOwnershipForEnvironment,
+  dockerWorkerContainerOwnershipArguments,
+  recoverAbandonedDockerWorkerContainer,
   verifyDockerWorkerContainerRecoveryReceipt,
 } from '../../paper-adapters/runtime/docker-worker-container-recovery.mjs';
 
@@ -229,4 +233,73 @@ test('partial cleanup action remains blocked and preserves its recovery workspac
     true,
   );
   assert.equal(fs.existsSync(result.recoveryRoot), true);
+});
+
+test('ownership helpers reject invalid inputs and preserve exact Docker labels', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-worker-ownership-test-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  assert.equal(buildDockerWorkerContainerOwnershipForEnvironment({
+    executionBackend: 'host',
+  }), null);
+  assert.throws(
+    () => buildDockerWorkerContainerOwnership({}),
+    /docker_worker_container_ownership_invalid/,
+  );
+  assert.throws(
+    () => dockerWorkerContainerOwnershipArguments({}),
+    /docker_worker_container_ownership_invalid/,
+  );
+
+  const ownership = buildDockerWorkerContainerOwnership({
+    processInvocationId: `sha256:${'c'.repeat(64)}`,
+    experimentRunId: 'campaign:node:attempt',
+    experimentAttemptId: 'campaign:node:attempt:arm:treatment',
+    containerIdPath: path.join(root, 'worker.cid'),
+  });
+  const args = dockerWorkerContainerOwnershipArguments(ownership);
+  assert.deepEqual(args.slice(0, 4), [
+    '--name', ownership.containerName,
+    '--cidfile', ownership.containerIdPath,
+  ]);
+  assert.ok(args.includes(
+    `io.hepta.worker.ownership-hash=${ownership.dockerWorkerContainerOwnershipHash}`,
+  ));
+});
+
+test('recovery blocks invalid ownership and remote Docker endpoints without cleanup', (t) => {
+  const invalid = recoverAbandonedDockerWorkerContainer({
+    ownership: {},
+    retryDelaysMs: [],
+  });
+  assert.equal(invalid.status, 'docker_worker_container_recovery_blocked');
+  assert.deepEqual(invalid.blockers, ['worker_container_recovery_ownership_invalid']);
+  assert.equal(verifyDockerWorkerContainerRecoveryReceipt(invalid), false);
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-worker-remote-test-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const ownership = buildDockerWorkerContainerOwnership({
+    processInvocationId: `sha256:${'d'.repeat(64)}`,
+    containerIdPath: path.join(root, 'worker.cid'),
+  });
+  let cleanupCalled = false;
+  const remote = recoverAbandonedDockerWorkerContainer({
+    ownership,
+    environment: {
+      DOCKER_HOST: 'tcp://docker.example.invalid:2376',
+    },
+    spawnSyncImpl() {
+      cleanupCalled = true;
+      return { status: 1, stdout: '', stderr: '' };
+    },
+  });
+  assert.equal(cleanupCalled, false);
+  assert.equal(remote.status, 'docker_worker_container_recovery_blocked');
+  assert.deepEqual(remote.blockers, [
+    'worker_container_recovery_remote_docker_endpoint_forbidden',
+  ]);
+  assert.equal(verifyDockerWorkerContainerRecoveryReceipt(remote), true);
+  assert.equal(verifyDockerWorkerContainerRecoveryReceipt({
+    ...remote,
+    trigger: 'tampered',
+  }), false);
 });

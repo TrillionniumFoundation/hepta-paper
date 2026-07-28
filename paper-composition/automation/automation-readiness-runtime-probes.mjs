@@ -288,9 +288,9 @@ function codexLoginReady({ codexHome, codexBinary, spawnSyncImpl, environment })
     && !/not\s+logged\s+in/i.test(text);
 }
 
-function codexHomesDistinct(left, right) {
+function codexHomesShared(left, right) {
   if (!left || !right) return false;
-  try { return fs.realpathSync(path.resolve(left)) !== fs.realpathSync(path.resolve(right)); }
+  try { return fs.realpathSync(path.resolve(left)) === fs.realpathSync(path.resolve(right)); }
   catch { return false; }
 }
 
@@ -461,8 +461,8 @@ export function inspectAutomationAgentProviders({
     spawnSyncImpl,
     environment,
   });
-  const formalReviewCredentialRootDistinct = formalReviewHomeReady
-    && researchAuthorHomeReady && codexHomesDistinct(
+  const formalReviewCredentialRootShared = formalReviewHomeReady
+    && researchAuthorHomeReady && codexHomesShared(
       configuration.formalReviewCodexHome, configuration.researchAuthorCodexHome,
     );
   let formalReviewPreflight = null;
@@ -539,7 +539,15 @@ export function inspectAutomationAgentProviders({
     formalReviewCodexHomeConfigured: Boolean(configuration.formalReviewCodexHome),
     formalReviewCredentialHomePrivate: formalReviewHomeReady,
     formalReviewAuthenticated,
-    formalReviewCredentialRootDistinct,
+    formalReviewCredentialRootShared,
+    formalReviewProviderCredentialSharingPermitted:
+      formalReviewPreflight?.capabilityReceipt?.providerCredentialSharingPermitted === true,
+    formalReviewFreshEphemeralSessionRequired:
+      formalReviewPreflight?.capabilityReceipt?.freshEphemeralSessionRequired === true,
+    formalReviewAuthorContextInheritanceForbidden:
+      formalReviewPreflight?.capabilityReceipt?.authorContextInheritanceForbidden === true,
+    formalReviewFrozenArtifactReviewRequired:
+      formalReviewPreflight?.capabilityReceipt?.frozenArtifactReviewRequired === true,
     formalReviewBlockers,
     formalReviewModelCanaryReceipt: formalReviewModelCanary,
     formalReviewAssuranceScope:

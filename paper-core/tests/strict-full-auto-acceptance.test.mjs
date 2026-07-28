@@ -96,6 +96,27 @@ test('plan preflights all external references without reading opaque material or
   assert.equal(fs.existsSync(path.join(value.controlRoot, 'state.json')), false);
 });
 
+test('plan permits author and reviewer subagents to share one provider credential root', (t) => {
+  const value = fixture(t, ({ configuration }) => {
+    const shared = configuration.references['research-author-credential-root'];
+    configuration.references['formal-reviewer-credential-root'] = {
+      ...configuration.references['formal-reviewer-credential-root'],
+      path: shared.path,
+      subjectId: shared.subjectId,
+    };
+  });
+  const service = orchestratorFor(value.configurationPath, successfulRunner());
+  const plan = service.plan();
+  const author = plan.referenceBindings.find((reference) => (
+    reference.referenceId === 'research-author-credential-root'
+  ));
+  const reviewer = plan.referenceBindings.find((reference) => (
+    reference.referenceId === 'formal-reviewer-credential-root'
+  ));
+  assert.equal(reviewer.resolvedPath, author.resolvedPath);
+  assert.notEqual(reviewer.referenceId, author.referenceId);
+});
+
 test('configuration path is revalidated and never followed after loader construction', (t) => {
   const value = fixture(t);
   const calls = [];

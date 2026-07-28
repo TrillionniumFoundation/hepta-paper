@@ -167,6 +167,7 @@ export function queryAutomationReadiness({
   root,
   runtimeRoot,
   environment = process.env,
+  allowMissingStore = false,
   liveProviderCanaryRequested = false,
   requireFullResearch = false,
   requireFullyAutonomous = false,
@@ -209,7 +210,11 @@ export function queryAutomationReadiness({
     now,
     environment,
   });
-  const store = createReadOnlyPaperStore({ root, runtimeRoot });
+  const store = createReadOnlyPaperStore({
+    root,
+    runtimeRoot,
+    allowMissing: allowMissingStore === true,
+  });
   const runtimes = buildAutomationRuntimeProbes({
     configuration,
     spawnSyncImpl: runtimeSpawnSync,

@@ -274,9 +274,11 @@ does not. A locally loaded file key is reported usable for Golden/local
 packaging but is not production-ready.
 Full readiness also loads the path in
 `HEPTA_FULL_RESEARCH_QUALIFICATION_RECEIPT` and validates its attestor signature,
-24-hour window, exact worktree/config/schema/image bindings, independently
-attested provider-account separation, and pointer to a trusted current completed
-release containing both verified formal evidence and academic empirical replay.
+24-hour window, exact worktree/config/schema/image bindings, fresh ephemeral
+author/reviewer sessions with no author-context inheritance, and pointer to a
+trusted current completed release containing both verified formal evidence and
+academic empirical replay. Provider authentication may be shared by the two
+role-isolated sessions.
 The signed qualification and independent verifier response must agree on an
 opaque bounded prior-art review receipt hash. Search semantics and completeness
 remain the external review service's responsibility; this is an attested review

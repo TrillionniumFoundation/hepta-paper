@@ -354,13 +354,13 @@ academic-empirical release from the trusted store. Its release and qualification
 signatures use the configured research-execution release attestor. The signed
 qualification also binds an externally attested bounded prior-art review
 reference. The repository does not validate search completeness, and this
-evidence does not prove universal scientific novelty. Separate
-provider accounts require either account identities in the capability receipts
-or a separately signed principal-independence attestation; distinct credential
-  directories alone are insufficient. These externally provisioned capabilities
-  and receipts may be supplied by machine-operated KMS/attestation services, so
-  no research-time human action is required, but they are never fabricated or
-  self-signed by this process.
+evidence does not prove universal scientific novelty. Author and reviewer may
+share provider authentication. Review independence is enforced by a fresh
+ephemeral reviewer session that cannot inherit author context, a distinct
+reviewer role ID, read-only execution, and exact frozen artifact bindings.
+Externally provisioned qualification and release receipts may be supplied by
+machine-operated KMS/attestation services, so no research-time human action is
+required, but they are never fabricated or self-signed by this process.
 
 `fullyAutonomousResearchSystemReady` is the stricter deployment claim. It
 requires `fullAutomaticResearchWritingReady`, a current machine-intake authority

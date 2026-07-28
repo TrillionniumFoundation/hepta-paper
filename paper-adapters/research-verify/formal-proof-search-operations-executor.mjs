@@ -12,6 +12,9 @@ import { PRODUCTION_LEAN_TOOLCHAIN } from '../../paper-domain/research/formal-ve
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { createOsSandboxedWorkerRunner } from '../runtime/os-sandboxed-worker-runner.mjs';
 import {
+  verifyDockerWorkerContainerRecoveryReceipt,
+} from '../runtime/docker-worker-container-recovery.mjs';
+import {
   assertCurrentDynamicFormalExecutionAuthority,
   verifyDynamicFormalExecutionAuthority,
 } from './dynamic-formal-project-closure-readiness.mjs';
@@ -26,6 +29,7 @@ import {
 import { resolvePinnedLakeExecutable } from './pinned-lake-executable-resolver.mjs';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const MAXIMUM_INFRASTRUCTURE_RETRIES = 1;
 export {
   buildPinnedMathlibSymbolSearchReceipt,
   FORMAL_PROOF_SEARCH_TACTIC_PORTFOLIO,
@@ -64,7 +68,13 @@ function runtimeIdentity(execution) {
   });
 }
 
-function executionReceipt({ execution, source, tactic, goalBefore }) {
+function executionReceipt({
+  execution,
+  source,
+  tactic,
+  goalBefore,
+  infrastructureFailureReceipts = [],
+}) {
   const stdout = String(execution?.stdout || '');
   const stderr = String(execution?.stderr || '');
   const payload = {
@@ -91,6 +101,12 @@ function executionReceipt({ execution, source, tactic, goalBefore }) {
     executionIdentity: runtimeIdentity(execution),
     immutableWorkRootVerified:
       execution?.isolation?.immutableWorkRootVerified === true,
+    dockerWorkerContainerRecoveryReceipt:
+      execution?.dockerWorkerContainerRecoveryReceipt || null,
+    infrastructureRetryCount: infrastructureFailureReceipts.length,
+    infrastructureFailureReceipts: Object.freeze([
+      ...infrastructureFailureReceipts,
+    ]),
     networkAccessAllowed: false,
     externalActionPerformed: false,
   };
@@ -122,29 +138,45 @@ async function runTactic({
     dsl,
     tactic,
   });
-  const execution = await runner.run({
-    executable,
-    args: ['env', 'lean', relative],
-    cwd: projectRoot,
-    sourceRoot: projectScopeRoot,
-    timeoutMs,
-    outputPaths: [],
-    env: {
-      ELAN_HOME: executionEnvironment.ELAN_HOME
-        || `${executionEnvironment.HOME || ''}/.elan`,
-      ELAN_TOOLCHAIN: PRODUCTION_LEAN_TOOLCHAIN,
-    },
-    language: 'lean',
-    determinismPolicy: 'deterministic-proof-search-v1',
-    requireImmutableWorkRoot,
-    signal,
-  });
-  return executionReceipt({
-    execution,
-    source,
-    tactic,
-    goalBefore: dsl.compiledLeanTypeSource,
-  });
+  const infrastructureFailureReceipts = [];
+  for (let attempt = 0; attempt <= MAXIMUM_INFRASTRUCTURE_RETRIES; attempt += 1) {
+    const execution = await runner.run({
+      executable,
+      args: ['env', 'lean', relative],
+      cwd: projectRoot,
+      sourceRoot: projectScopeRoot,
+      timeoutMs,
+      outputPaths: [],
+      env: {
+        ELAN_HOME: executionEnvironment.ELAN_HOME
+          || `${executionEnvironment.HOME || ''}/.elan`,
+        ELAN_TOOLCHAIN: PRODUCTION_LEAN_TOOLCHAIN,
+      },
+      language: 'lean',
+      determinismPolicy: 'deterministic-proof-search-v1',
+      requireImmutableWorkRoot,
+      signal,
+    });
+    const receipt = executionReceipt({
+      execution,
+      source,
+      tactic,
+      goalBefore: dsl.compiledLeanTypeSource,
+      infrastructureFailureReceipts,
+    });
+    const retryable = receipt.status === 'formal_proof_state_tactic_failed'
+      && receipt.exitCode === null
+      && receipt.signal === 'SIGPIPE'
+      && receipt.executionIdentity.backend === 'docker'
+      && verifyDockerWorkerContainerRecoveryReceipt(
+        receipt.dockerWorkerContainerRecoveryReceipt,
+      )
+      && receipt.dockerWorkerContainerRecoveryReceipt.trigger === 'launcher_signal:SIGPIPE'
+      && receipt.dockerWorkerContainerRecoveryReceipt.removalConfirmed === true;
+    if (!retryable || attempt === MAXIMUM_INFRASTRUCTURE_RETRIES) return receipt;
+    infrastructureFailureReceipts.push(receipt);
+  }
+  throw new Error('formal_proof_search_infrastructure_retry_exhausted');
 }
 
 function stageTacticSource({ projectRoot, workspaceRepository, imports, dsl, tactic }) {
@@ -169,6 +201,41 @@ function replayMatches(original, replay) {
     && original.stderrHash === replay.stderrHash
     && original.traceOutputHash === replay.traceOutputHash
     && JSON.stringify(original.executionIdentity) === JSON.stringify(replay.executionIdentity);
+}
+
+function verifyInfrastructureRetryLineage(receipt) {
+  const failures = Array.isArray(receipt?.infrastructureFailureReceipts)
+    ? receipt.infrastructureFailureReceipts : [];
+  const retryCount = receipt?.infrastructureRetryCount ?? 0;
+  if (retryCount !== failures.length
+    || failures.length > MAXIMUM_INFRASTRUCTURE_RETRIES) return false;
+  return failures.every((failure) => (
+    failure?.status === 'formal_proof_state_tactic_failed'
+    && failure?.exitCode === null
+    && failure?.signal === 'SIGPIPE'
+    && failure?.executionIdentity?.backend === 'docker'
+    && failure?.tactic === receipt?.tactic
+    && failure?.sourceHash === receipt?.sourceHash
+    && failure?.goalBeforeHash === receipt?.goalBeforeHash
+    && verifyDockerWorkerContainerRecoveryReceipt(
+      failure?.dockerWorkerContainerRecoveryReceipt,
+    )
+    && failure.dockerWorkerContainerRecoveryReceipt.trigger === 'launcher_signal:SIGPIPE'
+    && failure.dockerWorkerContainerRecoveryReceipt.removalConfirmed === true
+    && failure?.infrastructureRetryCount === 0
+    && Array.isArray(failure?.infrastructureFailureReceipts)
+    && failure.infrastructureFailureReceipts.length === 0
+    && JSON.stringify(failure?.executionIdentity)
+      === JSON.stringify(receipt?.executionIdentity)
+    && failure?.executionProcessIdentityHash
+      !== receipt?.executionProcessIdentityHash
+  ));
+}
+
+function tacticReceiptHashValid(receipt) {
+  const { formalProofStateTacticExecutionReceiptHash, ...payload } = receipt || {};
+  return hashRecord('FormalProofStateTacticExecutionReceipt', payload)
+    === formalProofStateTacticExecutionReceiptHash;
 }
 
 function semanticReviewOnlyReceipt({ bundle, plan, candidate }) {
@@ -530,6 +597,11 @@ export function verifyFormalProofSearchOperationReceipt(receipt, {
         eligibleDsl?.compiledLeanTypeSource || '',
         'utf8',
       ))
+      || !verifyInfrastructureRetryLineage(operation)
+      || (operation?.dockerWorkerContainerRecoveryReceipt
+        && !verifyDockerWorkerContainerRecoveryReceipt(
+          operation.dockerWorkerContainerRecoveryReceipt,
+        ))
       || operation?.networkAccessAllowed !== false
       || !operation?.executionIdentity?.runtimeIdentityHash
       || !operation?.executionProcessIdentityHash)) {
@@ -544,6 +616,11 @@ export function verifyFormalProofSearchOperationReceipt(receipt, {
       && (!selected || !replay
         || replay?.formalProofStateTacticExecutionReceiptHash
           !== receipt?.replayExecutionReceiptHash
+        || !verifyInfrastructureRetryLineage(replay)
+        || (replay?.dockerWorkerContainerRecoveryReceipt
+          && !verifyDockerWorkerContainerRecoveryReceipt(
+            replay.dockerWorkerContainerRecoveryReceipt,
+          ))
         || !replayMatches(selected, replay))) {
       blockers.push('formal_proof_search_replay_lineage_invalid');
     }
@@ -571,15 +648,16 @@ export function verifyFormalProofSearchOperationReceipt(receipt, {
     }
   }
   for (const operation of receipt?.operationReceipts || []) {
-    const { formalProofStateTacticExecutionReceiptHash, ...operationPayload } = operation;
-    if (hashRecord('FormalProofStateTacticExecutionReceipt', operationPayload)
-      !== formalProofStateTacticExecutionReceiptHash) blockers.push('formal_proof_search_tactic_receipt_hash_invalid');
+    if (!tacticReceiptHashValid(operation)
+      || !(operation.infrastructureFailureReceipts || [])
+        .every(tacticReceiptHashValid)) {
+      blockers.push('formal_proof_search_tactic_receipt_hash_invalid');
+    }
   }
   if (receipt?.replayExecutionReceipt) {
-    const { formalProofStateTacticExecutionReceiptHash, ...replayPayload } =
-      receipt.replayExecutionReceipt;
-    if (hashRecord('FormalProofStateTacticExecutionReceipt', replayPayload)
-      !== formalProofStateTacticExecutionReceiptHash) {
+    if (!tacticReceiptHashValid(receipt.replayExecutionReceipt)
+      || !(receipt.replayExecutionReceipt.infrastructureFailureReceipts || [])
+        .every(tacticReceiptHashValid)) {
       blockers.push('formal_proof_search_replay_receipt_hash_invalid');
     }
   }

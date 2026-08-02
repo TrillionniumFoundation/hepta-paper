@@ -6,6 +6,9 @@ import {
 import {
   verifyOpenClawModelRuntimeProvenance,
 } from './codex-openclaw-managed-configuration.mjs';
+import {
+  verifyOpenClawManagedFailureExecutionBinding,
+} from './codex-openclaw-managed-failure-execution-binding.mjs';
 
 const MANAGED_USAGE_KEYS = Object.freeze([
   'cacheRead', 'cacheWrite', 'input', 'output', 'totalTokens',
@@ -328,10 +331,19 @@ export function buildOpenClawManagedFailureEvidence(error) {
   const attempts = Array.isArray(error?.attemptTrace) ? error.attemptTrace : [];
   const entries = attempts.map(managedAttemptUsageEntry);
   const usage = aggregateManagedUsage(entries.map((entry) => entry.usage));
+  const failureExecutionBinding =
+    error?.openClawManagedFailureExecutionBinding || null;
   if (!/^codex_openclaw_managed_[a-z0-9_:-]{1,128}$/.test(failureCode)
     || !entries.length
     || !verifyOpenClawModelRuntimeProvenance(error?.runtimeProvenance)
+    || (failureExecutionBinding
+      && !verifyOpenClawManagedFailureExecutionBinding(
+        failureExecutionBinding,
+      ))
     || error?.attemptTraceHash !== modelAttemptTraceHash(attempts)) return null;
+  const evidenceVersion = failureExecutionBinding ? 5 : 4;
+  const executionBindingField = failureExecutionBinding
+    ? { failureExecutionBinding } : {};
   if (!usage
     || entries.some((entry, index) => !validManagedAttemptUsageEntry(entry, index))) {
     const incompleteEntries = attempts.map(managedIncompleteAttemptUsageEntry);
@@ -349,7 +361,7 @@ export function buildOpenClawManagedFailureEvidence(error) {
       incompleteEntries,
     );
     const incompletePayload = {
-      version: 4,
+      version: evidenceVersion,
       kind: 'OpenClawManagedCodexFailureUsageEvidence',
       status: 'openclaw_managed_codex_execution_failed',
       failureCode,
@@ -368,6 +380,7 @@ export function buildOpenClawManagedFailureEvidence(error) {
       failureDisposition: 'permanent',
       externalModelInvocationPerformed: true,
       ...externalEffects,
+      ...executionBindingField,
     };
     return Object.freeze({
       ...incompletePayload,
@@ -379,7 +392,7 @@ export function buildOpenClawManagedFailureEvidence(error) {
   }
   const externalEffects = managedFailureExternalEffectProjection(entries);
   const payload = {
-    version: 4,
+    version: evidenceVersion,
     kind: 'OpenClawManagedCodexFailureUsageEvidence',
     status: 'openclaw_managed_codex_execution_failed',
     failureCode,
@@ -398,6 +411,7 @@ export function buildOpenClawManagedFailureEvidence(error) {
     failureDisposition: error?.retryable === true ? 'retryable' : 'permanent',
     externalModelInvocationPerformed: true,
     ...externalEffects,
+    ...executionBindingField,
   };
   return Object.freeze({
     ...payload,
@@ -413,6 +427,8 @@ export function verifyOpenClawManagedFailureEvidence(evidence, {
   model,
   expectedAuthProfileIdentityHash,
   expectedRuntimeProvenanceHash,
+  expectedFailureExecutionBinding = null,
+  allowLegacyAudit = false,
 } = {}) {
   if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) return false;
   const {
@@ -426,7 +442,19 @@ export function verifyOpenClawManagedFailureEvidence(evidence, {
     payload.openClawManagedRuntimeProvenance,
     { expectedProvenanceHash: expectedRuntimeProvenanceHash },
   )) return false;
-  if (payload.version === 4 && payload.usageComplete === false) {
+  const currentExecutionEvidence = payload.version === 5
+    && expectedFailureExecutionBinding !== null
+    && typeof expectedFailureExecutionBinding === 'object'
+    && !Array.isArray(expectedFailureExecutionBinding)
+    && verifyOpenClawManagedFailureExecutionBinding(
+      payload.failureExecutionBinding,
+      { expected: expectedFailureExecutionBinding },
+    );
+  const legacyAuditEvidence = allowLegacyAudit === true
+    && [1, 4].includes(payload.version)
+    && !Object.hasOwn(payload, 'failureExecutionBinding');
+  if (!currentExecutionEvidence && !legacyAuditEvidence) return false;
+  if ([4, 5].includes(payload.version) && payload.usageComplete === false) {
     const attemptTrace = payload.attemptTrace;
     const projectedEntries = Array.isArray(attemptTrace)
       ? attemptTrace.map(managedIncompleteAttemptUsageEntry) : null;
@@ -438,7 +466,7 @@ export function verifyOpenClawManagedFailureEvidence(evidence, {
     const externalEffects = Array.isArray(entries)
       ? managedFailureExternalEffectProjection(entries) : null;
     return Boolean(
-      Object.keys(evidence).length === 18
+      Object.keys(evidence).length === (payload.version === 5 ? 19 : 18)
       && payload.kind === 'OpenClawManagedCodexFailureUsageEvidence'
       && payload.status === 'openclaw_managed_codex_execution_failed'
       && payload.failureCode === failureCode
@@ -475,7 +503,7 @@ export function verifyOpenClawManagedFailureEvidence(evidence, {
       )
     );
   }
-  if (payload.version === 4 && payload.usageComplete === true) {
+  if ([4, 5].includes(payload.version) && payload.usageComplete === true) {
     const attemptTrace = payload.attemptTrace;
     const projectedEntries = Array.isArray(attemptTrace)
       ? attemptTrace.map(managedAttemptUsageEntry) : null;
@@ -484,7 +512,7 @@ export function verifyOpenClawManagedFailureEvidence(evidence, {
     const externalEffects = Array.isArray(entries)
       ? managedFailureExternalEffectProjection(entries) : null;
     return Boolean(
-      Object.keys(evidence).length === 18
+      Object.keys(evidence).length === (payload.version === 5 ? 19 : 18)
       && payload.kind === 'OpenClawManagedCodexFailureUsageEvidence'
       && payload.status === 'openclaw_managed_codex_execution_failed'
       && payload.failureCode === failureCode

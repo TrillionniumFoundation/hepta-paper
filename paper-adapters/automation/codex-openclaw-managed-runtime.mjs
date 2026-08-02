@@ -11,6 +11,9 @@ import {
   managedAuthEvidence,
 } from './codex-openclaw-managed-execution-evidence.mjs';
 import {
+  buildOpenClawManagedFailureExecutionBinding,
+} from './codex-openclaw-managed-failure-execution-binding.mjs';
+import {
   isCodexAvailabilityCanary,
   normalizeStructuredResponse,
   callManagedModel,
@@ -69,6 +72,18 @@ export {
   verifyOpenClawManagedExecutionEvidence,
 } from './codex-openclaw-managed-execution-evidence.mjs';
 
+function bindManagedFailureExecution(error, failureExecutionBinding) {
+  if (!failureExecutionBinding) return error;
+  try {
+    error.openClawManagedFailureExecutionBinding = failureExecutionBinding;
+    return error;
+  } catch {
+    throw runtimeError(
+      'codex_openclaw_managed_failure_execution_binding_attachment_failed',
+    );
+  }
+}
+
 export async function executeCodexOpenClawManaged({
   args,
   stdin,
@@ -115,6 +130,15 @@ export async function executeCodexOpenClawManaged({
     maximumContextBytes: configuration.maximumContextBytes,
     maximumFileCount: configuration.maximumFileCount,
   });
+  const failureExecutionBinding =
+    buildOpenClawManagedFailureExecutionBinding({
+      environment,
+      originalPrompt,
+      execution,
+      executionMetadata,
+      configuration,
+      snapshot,
+    });
   const prompt = managedPrompt({
     originalPrompt,
     snapshot,
@@ -122,14 +146,19 @@ export async function executeCodexOpenClawManaged({
     configuration,
     model,
   });
-  const managed = await callManagedModel({
-    configuration,
-    model,
-    prompt,
-    timeoutMs,
-    signal,
-    modelRuntimeLoader,
-  });
+  let managed;
+  try {
+    managed = await callManagedModel({
+      configuration,
+      model,
+      prompt,
+      timeoutMs,
+      signal,
+      modelRuntimeLoader,
+    });
+  } catch (error) {
+    throw bindManagedFailureExecution(error, failureExecutionBinding);
+  }
   try {
     const parsed = parseManagedStructuredOutput(managed.text);
     const validation = validateStructuredResponse(parsed);
@@ -160,7 +189,10 @@ export async function executeCodexOpenClawManaged({
       managedAuth,
     });
   } catch (error) {
-    throw failureWithCompletedManagedUsage(error, managed);
+    throw bindManagedFailureExecution(
+      failureWithCompletedManagedUsage(error, managed),
+      failureExecutionBinding,
+    );
   }
 }
 

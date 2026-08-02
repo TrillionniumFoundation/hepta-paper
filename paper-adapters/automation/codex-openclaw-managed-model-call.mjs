@@ -347,7 +347,8 @@ export async function callManagedModel({
         errorCode: thrown?.code,
         errorType: thrown?.reason || thrown?.type || thrown?.name,
         errorMessage: thrown?.message || response?.meta?.error?.message,
-        text: `${responseErrorText} ${responseText}`.trim(),
+        errorText: responseErrorText,
+        text: responseText,
       });
       attemptTrace.push(modelAttemptRecord({
         ...attemptRecordFields,

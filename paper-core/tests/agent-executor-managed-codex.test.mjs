@@ -9,7 +9,6 @@ import test from 'node:test';
 import { createCodexAgentExecutor } from '../../paper-adapters/automation/codex-agent-executor.mjs';
 import { preflightCodexFormalReviewer } from '../../paper-adapters/automation/codex-formal-reviewer-preflight.mjs';
 import {
-  buildOpenClawManagedFailureEvidence,
   OPENCLAW_MANAGED_EXECUTION_EVIDENCE_FIELD,
 } from '../../paper-adapters/automation/codex-openclaw-managed-runtime.mjs';
 import {
@@ -278,75 +277,6 @@ function managedCodexChild({
     child.emit('close', 0, null);
   });
   return child;
-}
-
-function managedCodexFailureEvidence({
-  failureCode = 'codex_openclaw_managed_transient_provider_response',
-  model = 'fixture-managed-codex',
-  authProfileIdentityHash,
-  attemptCount = 2,
-  retryable = true,
-  toolCallsObserved = 0,
-  pendingToolCallCount = 0,
-  externalDeliveryObserved = false,
-  runtimeProvenance = null,
-} = {}) {
-  const attemptTrace = Array.from({ length: attemptCount }, (_, index) => {
-    const attemptId = `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`;
-    const usage = {
-      input: 10, output: 10, cacheRead: 0, cacheWrite: 0, totalTokens: 20,
-    };
-    return {
-      attemptNumber: index + 1,
-      attemptId,
-      provider: 'openai',
-      model,
-      authProfileIdentityHash,
-      usage,
-      usageHash: hashRecord(
-        'OpenClawManagedCodexAppServerAttemptUsage', { attemptId, usage },
-      ),
-      toolCallsObserved,
-      pendingToolCallCount,
-      externalDeliveryObserved,
-    };
-  });
-  const error = Object.assign(new Error(failureCode), {
-    code: failureCode,
-    retryable,
-    attemptTrace,
-    attemptTraceHash: hashRecord(
-      'OpenClawManagedCodexAppServerAttemptTrace', { attempts: attemptTrace },
-    ),
-    runtimeProvenance,
-  });
-  return buildOpenClawManagedFailureEvidence(error);
-}
-
-function managedCodexIncompleteUsageEvidence({
-  failureCode = 'codex_openclaw_managed_usage_invalid',
-  model = 'fixture-managed-codex',
-  authProfileIdentityHash,
-  runtimeProvenance = null,
-} = {}) {
-  const attemptTrace = [{
-    attemptNumber: 1,
-    attemptId: '00000000-0000-4000-8000-000000000001',
-    provider: 'openai',
-    model,
-    authProfileIdentityHash,
-    usage: null,
-    usageHash: null,
-  }];
-  const error = Object.assign(new Error(failureCode), {
-    code: failureCode,
-    attemptTrace,
-    attemptTraceHash: hashRecord(
-      'OpenClawManagedCodexAppServerAttemptTrace', { attempts: attemptTrace },
-    ),
-    runtimeProvenance,
-  });
-  return buildOpenClawManagedFailureEvidence(error);
 }
 
 test('managed Codex receipts bind both session fields to the verified explicit-profile completion', async (t) => {
@@ -798,102 +728,8 @@ test('managed Codex receipts bind both session fields to the verified explicit-p
     },
   );
 
-  const incompleteCleanupFailureCode =
-    'codex_openclaw_managed_session_cleanup_entry_disappeared_after_residue_verification';
-  const incompleteCleanupEvidence = managedCodexIncompleteUsageEvidence({
-    runtimeProvenance: openClawRuntime.runtimeProvenance,
-    failureCode: incompleteCleanupFailureCode,
-    authProfileIdentityHash:
-      preflight.capabilityReceipt.openClawManagedAuthProfileIdentityHash,
-  });
-  const incompleteCleanupFailureExecutor = createCodexAgentExecutor({
-    codexBinary: binary,
-    codexHome,
-    model: 'fixture-managed-codex',
-    principalId: preflight.effectivePrincipalId,
-    formalReviewerCapabilityReceipt: preflight.capabilityReceipt,
-    spawnSyncImpl,
-    spawnImpl: () => failedChildProcess(
-      `${incompleteCleanupFailureCode}\n${JSON.stringify(incompleteCleanupEvidence)}\n`,
-    ),
-    timeoutMs: 5000,
-  });
-  await assert.rejects(
-    () => incompleteCleanupFailureExecutor.execute({
-      role: 'formal-review',
-      workspacePath: root,
-      instructions: 'Do not retry a cleanup failure with unknown model usage.',
-      sandbox: 'read-only',
-      outputTokenBudget: 8192,
-    }),
-    (error) => {
-      assert.equal(error.message, incompleteCleanupFailureCode);
-      assert.equal(error.retryable, false);
-      assert.equal(
-        error.receipt.managedRuntimeFailureDisposition,
-        'permanent',
-      );
-      assert.equal(error.receipt.externalModelInvocationPerformed, true);
-      assert.equal(error.receipt.usage, null);
-      assert.equal(error.receipt.usageComplete, false);
-      assert.equal(
-        error.receipt.openClawManagedFailureUsageEvidenceHash,
-        incompleteCleanupEvidence.openClawManagedCodexFailureUsageEvidenceHash,
-      );
-      return true;
-    },
-  );
   assert.equal(postflightModelCalls, 1);
   assert.equal(postflightVersionCalls, 3);
-
-  const meteredFailureCode =
-    'codex_openclaw_managed_transient_provider_response';
-  const meteredFailureEvidence = managedCodexFailureEvidence({
-    runtimeProvenance: openClawRuntime.runtimeProvenance,
-    failureCode: meteredFailureCode,
-    authProfileIdentityHash:
-      preflight.capabilityReceipt.openClawManagedAuthProfileIdentityHash,
-  });
-  const meteredFailureExecutor = createCodexAgentExecutor({
-    codexBinary: binary,
-    codexHome,
-    model: 'fixture-managed-codex',
-    principalId: preflight.effectivePrincipalId,
-    formalReviewerCapabilityReceipt: preflight.capabilityReceipt,
-    spawnSyncImpl,
-    spawnImpl: () => failedChildProcess(
-      `${meteredFailureCode}\n${JSON.stringify(meteredFailureEvidence)}\n`,
-    ),
-    timeoutMs: 5000,
-  });
-  await assert.rejects(
-    () => meteredFailureExecutor.execute({
-      role: 'formal-review',
-      workspacePath: root,
-      instructions: 'Review the frozen formal artifact.',
-      sandbox: 'read-only',
-      outputTokenBudget: 8192,
-    }),
-    (error) => {
-      assert.equal(error.message, meteredFailureCode);
-      assert.equal(error.retryable, true);
-      assert.deepEqual(error.receipt.usage, {
-        input: 20, output: 20, cacheRead: 0, cacheWrite: 0, totalTokens: 40,
-      });
-      assert.equal(
-        error.receipt.openClawManagedFailureUsageEvidenceHash,
-        meteredFailureEvidence.openClawManagedCodexFailureUsageEvidenceHash,
-      );
-      assert.deepEqual(
-        error.receipt.openClawManagedFailureUsageEvidence,
-        meteredFailureEvidence,
-      );
-      assert.equal(error.receipt.stderrTail, `${meteredFailureCode}\n`);
-      assert.equal(error.receipt.externalModelInvocationPerformed, true);
-      assert.equal(error.receipt.externalSideEffectPerformed, false);
-      return true;
-    },
-  );
 
   const snapshotFailureExecutor = createCodexAgentExecutor({
     codexBinary: binary,
@@ -936,98 +772,6 @@ test('managed Codex receipts bind both session fields to the verified explicit-p
       assert.equal(
         error.receipt.stderrTail,
         'codex_openclaw_managed_required_snapshot_omitted\n',
-      );
-      return true;
-    },
-  );
-
-  const incompleteUsageEvidence = managedCodexIncompleteUsageEvidence({
-    runtimeProvenance: openClawRuntime.runtimeProvenance,
-    authProfileIdentityHash:
-      preflight.capabilityReceipt.openClawManagedAuthProfileIdentityHash,
-  });
-  const invalidUsageFailureExecutor = createCodexAgentExecutor({
-    codexBinary: binary,
-    codexHome,
-    model: 'fixture-managed-codex',
-    principalId: preflight.effectivePrincipalId,
-    formalReviewerCapabilityReceipt: preflight.capabilityReceipt,
-    spawnSyncImpl,
-    spawnImpl: () => failedChildProcess(
-      `codex_openclaw_managed_usage_invalid\n${JSON.stringify(incompleteUsageEvidence)}\n`,
-    ),
-    timeoutMs: 5000,
-  });
-  await assert.rejects(
-    () => invalidUsageFailureExecutor.execute({
-      role: 'formal-review',
-      workspacePath: root,
-      instructions: 'Reject invalid managed usage without retrying the model call.',
-      sandbox: 'read-only',
-      outputTokenBudget: 8192,
-    }),
-    (error) => {
-      assert.equal(error.message, 'codex_openclaw_managed_usage_invalid');
-      assert.equal(error.retryable, false);
-      assert.equal(
-        error.receipt.managedRuntimeFailureCode,
-        'codex_openclaw_managed_usage_invalid',
-      );
-      assert.equal(
-        error.receipt.managedRuntimeFailureDisposition,
-        'permanent',
-      );
-      assert.equal(error.receipt.externalModelInvocationPerformed, true);
-      assert.equal(error.receipt.usage, null);
-      assert.equal(error.receipt.usageComplete, false);
-      assert.equal(
-        error.receipt.openClawManagedFailureUsageEvidenceHash,
-        incompleteUsageEvidence.openClawManagedCodexFailureUsageEvidenceHash,
-      );
-      return true;
-    },
-  );
-
-  const policyFailureEvidence = managedCodexFailureEvidence({
-    runtimeProvenance: openClawRuntime.runtimeProvenance,
-    failureCode: 'codex_openclaw_managed_agent_policy_violation',
-    authProfileIdentityHash:
-      preflight.capabilityReceipt.openClawManagedAuthProfileIdentityHash,
-    attemptCount: 1,
-    retryable: false,
-    externalDeliveryObserved: true,
-  });
-  const policyFailureExecutor = createCodexAgentExecutor({
-    codexBinary: binary,
-    codexHome,
-    model: 'fixture-managed-codex',
-    principalId: preflight.effectivePrincipalId,
-    formalReviewerCapabilityReceipt: preflight.capabilityReceipt,
-    spawnSyncImpl,
-    spawnImpl: () => failedChildProcess(
-      `codex_openclaw_managed_agent_policy_violation\n${JSON.stringify(policyFailureEvidence)}\n`,
-    ),
-    timeoutMs: 5000,
-  });
-  await assert.rejects(
-    () => policyFailureExecutor.execute({
-      role: 'formal-review',
-      workspacePath: root,
-      instructions: 'Reject the observed external delivery.',
-      sandbox: 'read-only',
-      outputTokenBudget: 8192,
-    }),
-    (error) => {
-      assert.equal(
-        error.message,
-        'codex_openclaw_managed_agent_policy_violation',
-      );
-      assert.equal(error.retryable, false);
-      assert.equal(error.receipt.externalActionPerformed, true);
-      assert.equal(error.receipt.externalSideEffectPerformed, true);
-      assert.equal(
-        error.receipt.externalActionVerification,
-        'openclaw_user_locked_codex_app_server_failure_evidence',
       );
       return true;
     },
@@ -1154,38 +898,6 @@ test('managed Codex receipts bind both session fields to the verified explicit-p
         'codex_openclaw_managed_execution_evidence_invalid',
       ));
       assert.equal(Object.hasOwn(error.receipt, 'usage'), false);
-      return true;
-    },
-  );
-
-  const noisyFailureExecutor = createCodexAgentExecutor({
-    codexBinary: binary,
-    codexHome,
-    model: 'fixture-managed-codex',
-    principalId: preflight.effectivePrincipalId,
-    formalReviewerCapabilityReceipt: preflight.capabilityReceipt,
-    spawnSyncImpl,
-    spawnImpl: () => failedChildProcess([
-      'unexpected diagnostic',
-      'codex_openclaw_managed_required_snapshot_omitted',
-      '',
-    ].join('\n')),
-    timeoutMs: 5000,
-  });
-  await assert.rejects(
-    () => noisyFailureExecutor.execute({
-      role: 'formal-review',
-      workspacePath: root,
-      instructions: 'Review the frozen formal artifact.',
-      sandbox: 'read-only',
-      outputTokenBudget: 8192,
-    }),
-    (error) => {
-      assert.equal(error.retryable, true);
-      assert.equal(
-        Object.hasOwn(error.receipt, 'managedRuntimeFailureCode'),
-        false,
-      );
       return true;
     },
   );

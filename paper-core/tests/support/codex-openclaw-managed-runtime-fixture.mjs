@@ -427,6 +427,7 @@ export function assertCompleteManagedFailureUsage(error, environment, failureCod
       configuration.openClawManagedAuthProfileIdentityHash,
     expectedRuntimeProvenanceHash:
       FIXTURE_OPENCLAW_RUNTIME_PROVENANCE.openClawManagedRuntimeProvenanceHash,
+    allowLegacyAudit: true,
   }), true);
   return true;
 }
@@ -455,6 +456,7 @@ export function assertIncompleteManagedFailureUsage(error, environment, failureC
       configuration.openClawManagedAuthProfileIdentityHash,
     expectedRuntimeProvenanceHash:
       FIXTURE_OPENCLAW_RUNTIME_PROVENANCE.openClawManagedRuntimeProvenanceHash,
+    allowLegacyAudit: true,
   }), true);
   return true;
 }

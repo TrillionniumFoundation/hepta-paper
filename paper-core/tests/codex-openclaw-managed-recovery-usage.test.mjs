@@ -175,6 +175,28 @@ test('managed no-response failures stop after the first unknown-usage attempt', 
       timeoutMs: 5000,
     },
     {
+      name: 'quota failure with no response or usage',
+      expectedCode: 'codex_openclaw_managed_profile_quota_exhausted',
+      expectedErrorClass: 'quota',
+      completion: async () => {
+        const error = new Error('token quota exceeded');
+        error.code = 'provider_error';
+        throw error;
+      },
+      timeoutMs: 5000,
+    },
+    {
+      name: 'usage-limit failure with no response or usage',
+      expectedCode: 'codex_openclaw_managed_profile_quota_exhausted',
+      expectedErrorClass: 'quota',
+      completion: async () => {
+        const error = new Error('token usage limit reached');
+        error.code = 'provider_error';
+        throw error;
+      },
+      timeoutMs: 5000,
+    },
+    {
       name: 'timeout with successful cleanup',
       expectedCode: 'codex_openclaw_managed_model_timeout',
       expectedErrorClass: 'aborted',
@@ -875,12 +897,20 @@ test('managed usage rejects incomplete or zero response accounting with explicit
           const configuration = readCodexOpenClawManagedConfiguration({
             environment: value.environment,
           });
-          assert.equal(verifyOpenClawManagedFailureEvidence(evidence, {
+          const legacyFailureVerification = {
             failureCode: error.code,
             model: 'gpt-5.6-sol',
             expectedAuthProfileIdentityHash:
               configuration.openClawManagedAuthProfileIdentityHash,
             expectedRuntimeProvenanceHash: EXPECTED_RUNTIME_PROVENANCE_HASH,
+          };
+          assert.equal(verifyOpenClawManagedFailureEvidence(
+            evidence,
+            legacyFailureVerification,
+          ), false);
+          assert.equal(verifyOpenClawManagedFailureEvidence(evidence, {
+            ...legacyFailureVerification,
+            allowLegacyAudit: true,
           }), true);
           return true;
         });
@@ -942,6 +972,7 @@ test('managed usage-invalid evidence preserves the known lower bound from earlie
         expectedAuthProfileIdentityHash:
           configuration.openClawManagedAuthProfileIdentityHash,
         expectedRuntimeProvenanceHash: EXPECTED_RUNTIME_PROVENANCE_HASH,
+        allowLegacyAudit: true,
       }), true);
       return true;
     });
@@ -1274,6 +1305,7 @@ test('managed model exhausts exactly three overloads high medium low without pro
         expectedAuthProfileIdentityHash:
           configuration.openClawManagedAuthProfileIdentityHash,
         expectedRuntimeProvenanceHash: EXPECTED_RUNTIME_PROVENANCE_HASH,
+        allowLegacyAudit: true,
       }), true);
       const tampered = {
         ...evidence,
@@ -1293,6 +1325,7 @@ test('managed model exhausts exactly three overloads high medium low without pro
         expectedAuthProfileIdentityHash:
           configuration.openClawManagedAuthProfileIdentityHash,
         expectedRuntimeProvenanceHash: EXPECTED_RUNTIME_PROVENANCE_HASH,
+        allowLegacyAudit: true,
       }), false);
       const traceTampered = {
         ...evidence,
@@ -1312,6 +1345,7 @@ test('managed model exhausts exactly three overloads high medium low without pro
         expectedAuthProfileIdentityHash:
           configuration.openClawManagedAuthProfileIdentityHash,
         expectedRuntimeProvenanceHash: EXPECTED_RUNTIME_PROVENANCE_HASH,
+        allowLegacyAudit: true,
       }), false);
       return true;
     });

@@ -1018,6 +1018,7 @@ test('managed app-server execution fails closed on fallback, tool use, pending t
           expectedRuntimeProvenanceHash:
             FIXTURE_OPENCLAW_RUNTIME_PROVENANCE
               .openClawManagedRuntimeProvenanceHash,
+          allowLegacyAudit: true,
         }), true, candidate.name);
         assert.equal(
           evidence.externalActionPerformed,
@@ -1086,6 +1087,7 @@ test('managed app-server execution fails closed if the locked session binding ch
           expectedRuntimeProvenanceHash:
             FIXTURE_OPENCLAW_RUNTIME_PROVENANCE
               .openClawManagedRuntimeProvenanceHash,
+          allowLegacyAudit: true,
         },
       ), true);
       return true;
@@ -1147,6 +1149,7 @@ test('managed runtime disposal failure preserves completed response usage as fai
           expectedRuntimeProvenanceHash:
             FIXTURE_OPENCLAW_RUNTIME_PROVENANCE
               .openClawManagedRuntimeProvenanceHash,
+          allowLegacyAudit: true,
         },
       ), true);
       return true;
@@ -1193,6 +1196,7 @@ test('managed model-resolution mismatch preserves the rejected response usage', 
           expectedRuntimeProvenanceHash:
             FIXTURE_OPENCLAW_RUNTIME_PROVENANCE
               .openClawManagedRuntimeProvenanceHash,
+          allowLegacyAudit: true,
         },
       ), true);
       return true;

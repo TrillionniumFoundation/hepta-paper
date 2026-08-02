@@ -5,18 +5,11 @@ import { restrictedChildEnvironment, runBoundedChildProcess } from './bounded-ch
 import { createAgentExecutorTemplate, isExternalAgentCancellation } from './agent-executor-template.mjs';
 import { readOnlyMutationBlockers } from './workspace-change-tracker.mjs';
 import { inspectCodexRuntimeIdentity, preflightCodexRuntime } from './codex-runtime-preflight.mjs';
+import { openClawManagedFailureExecutorBinding } from './codex-openclaw-managed-failure-execution-binding.mjs';
+import { inspectManagedRuntimeFailure, managedRuntimeFailureRetryable } from './codex-openclaw-managed-failure-protocol.mjs';
 import { buildOpenClawManagedExecutionMetadata, OPENCLAW_MANAGED_EXECUTION_EVIDENCE_FIELD,
-  verifyOpenClawManagedExecutionEvidence, verifyOpenClawManagedFailureEvidence } from './codex-openclaw-managed-runtime.mjs';
+  verifyOpenClawManagedExecutionEvidence } from './codex-openclaw-managed-runtime.mjs';
 const MANAGED_RUNTIME_MAXIMUM_CLEANUP_RESERVE_MS = 90_000;
-function managedRuntimeFailureRetryable(code, verifiedFailureEvidence = null) {
-  if (!code) return true;
-  if (String(code).startsWith('codex_openclaw_managed_')) {
-    return verifiedFailureEvidence?.version === 4
-      && verifiedFailureEvidence?.usageComplete === true
-      && verifiedFailureEvidence?.failureDisposition === 'retryable';
-  }
-  return true;
-}
 function parseStructuredOutput(text) {
   const source = String(text || '').trim();
   if (!source) return null;
@@ -35,14 +28,6 @@ function parseStrictStructuredOutput(text) {
     return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
       ? parsed : null;
   } catch { return null; }
-}
-function managedRuntimeErrorCode(stderr) {
-  const [candidate] = String(stderr || '').trim().split(/\r?\n/);
-  return /^codex_openclaw_managed_[a-z0-9_:-]{1,128}$/.test(candidate)
-    ? candidate : null;
-}
-function managedRuntimeFailureEvidence(stderr) {
-  return parseStrictStructuredOutput(String(stderr || '').trim().split(/\r?\n/).slice(1).join('\n'));
 }
 function codexRuntimeIdentityMatchesCapability(runtime, capability) {
   return runtime?.codexBinaryIdentityHash === capability?.codexBinaryIdentityHash
@@ -230,6 +215,18 @@ export function createCodexAgentExecutor({
       ].filter(Boolean).join('\n\n');
       const promptDigest = promptHash(prompt);
       const localSessionId = `codex-exec:${crypto.randomUUID()}`;
+      const failureExecutorBinding = managedRuntimeExpected
+        ? openClawManagedFailureExecutorBinding({
+          capabilityReceipt,
+          executionInvocationId: localSessionId,
+          executionRole: role,
+          principalId,
+          principalRole: formalReviewerCapabilityReceipt
+            ? 'formal-reviewer' : 'research-author',
+          originalPromptHash: promptDigest,
+          sandbox,
+          workspace,
+        }) : null;
       const args = ['exec'];
       if (oss) args.push('--oss', '--local-provider', localProvider);
       if (model) args.push('--model', model);
@@ -260,6 +257,7 @@ export function createCodexAgentExecutor({
             ...(managedRuntimeExpected ? {
               HEPTA_CODEX_OPENCLAW_MANAGED_TIMEOUT_MS:
                 managedRuntimeInnerTimeoutMs,
+              ...failureExecutorBinding.environmentOverrides,
             } : {}),
           },
         }),
@@ -271,19 +269,13 @@ export function createCodexAgentExecutor({
       const changes = changedWorkspacePaths();
       const blockers = [];
       const cancelled = isExternalAgentCancellation(processResult);
-      const managedRuntimeFailureCode = managedRuntimeExpected
-        && !cancelled
-        && !processResult.timedOut
-        && !processResult.outputTruncated
-        && processResult.stdout.length === 0
-        && (processResult.exitCode !== 0 || processResult.error)
-        ? managedRuntimeErrorCode(processResult.stderr) : null;
-      const managedFailureEvidence = managedRuntimeFailureCode
-        ? managedRuntimeFailureEvidence(processResult.stderr) : null;
-      const managedFailureEvidenceVerified = Boolean(managedFailureEvidence
-        && verifyOpenClawManagedFailureEvidence(managedFailureEvidence, { failureCode: managedRuntimeFailureCode,
-          model: resolvedModel, expectedAuthProfileIdentityHash: capabilityReceipt?.openClawManagedAuthProfileIdentityHash,
-          expectedRuntimeProvenanceHash: capabilityReceipt?.openClawManagedRuntimeProvenanceHash }));
+      const {
+        parsedManagedRuntimeFailureProtocol, managedRuntimeFailureCode,
+        managedFailureEvidence, managedFailureEvidenceVerified,
+      } = inspectManagedRuntimeFailure({
+        managedRuntimeExpected, cancelled, processResult,
+        model: resolvedModel, capabilityReceipt, failureExecutorBinding,
+      });
       let capabilityPostflightFailure = null;
       if (processResult.timedOut) blockers.push('codex_agent_timeout');
       if (cancelled) blockers.push('codex_agent_cancelled');
@@ -349,10 +341,15 @@ export function createCodexAgentExecutor({
           expectedAuthSourceIdentityHash:
             capabilityReceipt?.openClawManagedAuthSourceIdentityHash,
         });
-      if (managedRuntimeExpected && !managedExecutionEvidenceVerified) {
+      if (managedRuntimeExpected
+        && !managedExecutionEvidenceVerified
+        && !managedFailureEvidenceVerified) {
         blockers.push('codex_openclaw_managed_execution_evidence_invalid');
       } else if (!managedRuntimeExpected && managedExecutionEvidence) {
         blockers.push('codex_openclaw_managed_execution_evidence_unexpected');
+      }
+      if (parsedManagedRuntimeFailureProtocol?.valid === false) {
+        blockers.push('codex_openclaw_managed_failure_protocol_invalid');
       }
       if (managedFailureEvidence && !managedFailureEvidenceVerified) {
         blockers.push('codex_openclaw_managed_failure_usage_evidence_invalid');
@@ -482,6 +479,7 @@ export function createCodexAgentExecutor({
         failureMessage: managedRuntimeFailureCode
           || blockers.join(',') || payload.error || `agent exited ${payload.exitCode}`,
         retryable: !cancelled && !blockers.includes('read_only_agent_modified_workspace')
+          && parsedManagedRuntimeFailureProtocol?.valid !== false
           && !blockers.includes('codex_openclaw_managed_failure_usage_evidence_invalid')
           && managedRuntimeFailureRetryable(
             managedRuntimeFailureCode,

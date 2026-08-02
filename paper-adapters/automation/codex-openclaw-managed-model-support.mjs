@@ -10,6 +10,24 @@ import {
   managedUsageHash,
 } from './codex-openclaw-managed-usage-evidence.mjs';
 
+const QUOTA_FAILURE_DETAIL =
+  /(?:^|[^a-z0-9])(?:quota|usage[_ -]?limit|insufficient[_ -]?quota|(?:insufficient|no|out[_ -]+of)[_ -]+credits|credits[_ -]+(?:exhausted|depleted))(?:$|[^a-z0-9])/;
+const RATE_LIMIT_FAILURE_DETAIL =
+  /(?:^|[^a-z0-9])(?:rate[_ -]?limit(?:ed|ing)?|too[_ -]+many[_ -]+requests|429)(?:$|[^a-z0-9])/;
+const AUTHENTICATION_FAILURE_DETAIL =
+  /(?:^|[^a-z0-9])(?:auth(?:entication)?|unauthori[sz]ed|forbidden|401|403)(?:$|[^a-z0-9])/;
+const CREDENTIAL_SECRET = '(?:(?:(?:api|access)[_ -]+)?token|api[_ -]+key)';
+const INVALID_CREDENTIAL =
+  '(?:invalid|expired|revoked|missing|rejected|denied|not[_ -]+valid)';
+const CREDENTIAL_FAILURE_DETAIL = new RegExp(
+  `(?:^|[^a-z0-9])(?:${INVALID_CREDENTIAL}[_ -]+${CREDENTIAL_SECRET}`
+    + `|${CREDENTIAL_SECRET}[_ -]+(?:(?:is|was)[_ -]+)?${INVALID_CREDENTIAL}`
+    + ')(?:$|[^a-z0-9])',
+);
+const ABORT_STOP_REASONS = new Set([
+  'abort', 'aborted', 'cancel', 'canceled', 'cancelled',
+]);
+
 export function thinkingForModelAttempt(thinking, attempt) {
   if (thinking !== 'adaptive') return thinking;
   return ['high', 'medium', 'low'][attempt - 1] || 'low';
@@ -20,29 +38,35 @@ export function modelFailureClass({
   errorCode = '',
   errorType = '',
   errorMessage = '',
+  errorText = '',
   text = '',
 } = {}) {
-  const detail = [
-    stopReason, errorCode, errorType, errorMessage, text,
-  ].join(' ').toLowerCase();
-  if (/abort|cancel/.test(detail)) return 'aborted';
-  if (/model.+not supported|unsupported.+model|unknown model/.test(detail)) {
-    return 'unsupported_model';
-  }
-  if (/auth|token|unauthori[sz]ed|forbidden|\b401\b|\b403\b/.test(detail)) {
-    return 'authentication';
-  }
-  if (/quota|credits?|usage[_ -]?limit|insufficient[_ -]?quota/.test(detail)) {
-    return 'quota';
-  }
-  if (/server_is_overloaded|overload|service_unavailable|\b503\b|temporar/.test(detail)) {
-    return 'overloaded';
-  }
-  if (/rate[_ -]?limit|\b429\b/.test(detail)) return 'rate_limited';
-  if (/context|prompt too large|overflow/.test(detail)) return 'context';
+  if (ABORT_STOP_REASONS.has(stopReason)) return 'aborted';
   if (stopReason === 'length') return 'length';
   if (stopReason === 'toolUse') return 'tool_use';
-  if (!String(text || '').trim()) return 'empty';
+  const failureDetail = [
+    stopReason, errorCode, errorType, errorMessage, errorText,
+  ].join(' ').toLowerCase();
+  if (/abort|cancel/.test(failureDetail)) return 'aborted';
+  if (/model.+not supported|unsupported.+model|unknown model/.test(failureDetail)) {
+    return 'unsupported_model';
+  }
+  if (QUOTA_FAILURE_DETAIL.test(failureDetail)) {
+    return 'quota';
+  }
+  if (RATE_LIMIT_FAILURE_DETAIL.test(failureDetail)) return 'rate_limited';
+  if (AUTHENTICATION_FAILURE_DETAIL.test(failureDetail)
+      || CREDENTIAL_FAILURE_DETAIL.test(failureDetail)) {
+    return 'authentication';
+  }
+  if (/server_is_overloaded|overload|service_unavailable|\b503\b|temporar/.test(failureDetail)) {
+    return 'overloaded';
+  }
+  if (/context|prompt too large|overflow/.test(failureDetail)) return 'context';
+  const hasErrorDetail = [
+    errorCode, errorType, errorMessage, errorText,
+  ].some((value) => String(value || '').trim());
+  if (!String(text || '').trim() && !hasErrorDetail) return 'empty';
   return 'transport';
 }
 

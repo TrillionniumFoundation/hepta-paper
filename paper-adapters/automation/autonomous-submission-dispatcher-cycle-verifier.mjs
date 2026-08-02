@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import path from 'node:path';
 
 import { hasExactObjectKeys } from '../../workflow-kernel/exact-object-keys.mjs';
@@ -5,7 +6,10 @@ import {
   readImmutableJsonDocument,
   verifyImmutableEd25519AuthorityDocument,
 } from '../../workflow-kernel/runtime/immutable-signed-json-bundle.mjs';
-import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  assertPinnedExternalEvidenceVerificationReceipt,
+} from '../authority/pinned-external-evidence-verifier.mjs';
 import {
   AUTONOMOUS_SUBMISSION_DISPATCHER_CYCLE_SIGNER_ROLE,
   verifyAutonomousSubmissionDispatcherCycleReceipt,
@@ -64,6 +68,17 @@ export function readAutonomousSubmissionDispatcherIdentityConfiguration({
   if (matching.length !== 1) {
     throw new Error('autonomous_submission_dispatcher_cycle_trust_anchor_invalid');
   }
+  let publicKey;
+  try { publicKey = crypto.createPublicKey(String(matching[0].publicKeyPem || '')); }
+  catch { throw new Error('autonomous_submission_dispatcher_cycle_trust_anchor_invalid'); }
+  if (publicKey.asymmetricKeyType !== 'ed25519') {
+    throw new Error('autonomous_submission_dispatcher_cycle_trust_anchor_invalid');
+  }
+  const signerIdentity = Object.freeze({
+    keyId: signer.keyId,
+    subjectId: String(matching[0].subjectId || signer.keyId),
+    publicKeySpkiHash: hashBytes(publicKey.export({ type: 'spki', format: 'der' })),
+  });
   return Object.freeze({
     configurationPath: selected,
     configuration: Object.freeze(value),
@@ -72,9 +87,50 @@ export function readAutonomousSubmissionDispatcherIdentityConfiguration({
     ),
     principalId: value.principalId,
     signer: Object.freeze(signer),
+    signerIdentity,
     maximumLifetimeMs,
     trustStorePath,
     trustStore: Object.freeze(trustStore),
+  });
+}
+
+export function assertAutonomousSubmissionPortalCanaryAuthorityIndependentFromDispatcher({
+  verificationReceipt,
+  identity,
+} = {}) {
+  const verified = assertPinnedExternalEvidenceVerificationReceipt(verificationReceipt);
+  const dispatcherSubjects = new Set([
+    identity?.principalId,
+    identity?.signerIdentity?.subjectId,
+  ].filter(Boolean));
+  const subjectCollision = verified.verifiedSubjectIds.some(
+    (subjectId) => dispatcherSubjects.has(subjectId),
+  );
+  const spkiCollision = verified.verifiedPublicKeySpkiHashes.includes(
+    identity?.signerIdentity?.publicKeySpkiHash,
+  );
+  if (!identity?.signerIdentity || subjectCollision || spkiCollision) {
+    throw new Error(
+      'autonomous_submission_portal_canary_authority_not_independent_from_dispatcher',
+    );
+  }
+  const payload = Object.freeze({
+    version: 1,
+    kind: 'AutonomousSubmissionPortalCanaryAuthorityIndependence',
+    dispatcherPrincipalId: identity.principalId,
+    dispatcherSignerSubjectId: identity.signerIdentity.subjectId,
+    dispatcherSignerPublicKeySpkiHash: identity.signerIdentity.publicKeySpkiHash,
+    portalCanarySignerSubjectIds: Object.freeze([...verified.verifiedSubjectIds]),
+    portalCanarySignerPublicKeySpkiHashes:
+      Object.freeze([...verified.verifiedPublicKeySpkiHashes]),
+    independent: true,
+  });
+  return Object.freeze({
+    ...payload,
+    portalCanaryAuthorityIndependenceHash: hashRecord(
+      'AutonomousSubmissionPortalCanaryAuthorityIndependence',
+      payload,
+    ),
   });
 }
 
@@ -102,7 +158,10 @@ export function verifyAutonomousSubmissionDispatcherCycleEnvelope({
     maximumLifetimeMs: identity.maximumLifetimeMs,
   });
   if (authority.verifiedSignatures.length !== 1
-    || authority.verifiedSignatures[0].keyId !== identity.signer.keyId) {
+    || authority.verifiedSignatures[0].keyId !== identity.signer.keyId
+    || authority.verifiedSignatures[0].subjectId !== identity.signerIdentity.subjectId
+    || authority.verifiedSignatures[0].publicKeySpkiHash
+      !== identity.signerIdentity.publicKeySpkiHash) {
     throw new Error('autonomous_submission_dispatcher_cycle_signer_invalid');
   }
   return Object.freeze({

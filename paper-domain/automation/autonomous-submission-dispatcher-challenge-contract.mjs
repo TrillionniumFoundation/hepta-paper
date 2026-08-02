@@ -233,9 +233,12 @@ export function buildAutonomousSubmissionDispatcherCycleReceipt({
   portalBindingVerified,
   portalVerifierReady,
   portalIdentityIndependenceReady,
+  portalFullProductionReady,
   livePortalCanaryVerified,
   livePortalCanaryReceiptHash,
   livePortalCanaryVerificationReceiptHash,
+  livePortalCanaryVerificationVerifiedAt,
+  livePortalCanaryAuthorityIndependentFromDispatcher,
   livePortalCanaryExternalActionPerformed,
   livePortalCanaryEvidence,
   cutoverId,
@@ -259,6 +262,11 @@ export function buildAutonomousSubmissionDispatcherCycleReceipt({
   const started = time(startedAt, 'autonomous_submission_dispatcher_cycle_time_invalid');
   const signed = time(signedAt, 'autonomous_submission_dispatcher_cycle_time_invalid');
   const expires = time(expiresAt, 'autonomous_submission_dispatcher_cycle_expiry_invalid');
+  const canaryVerificationVerified = livePortalCanaryVerified === true
+    ? time(
+      livePortalCanaryVerificationVerifiedAt,
+      'autonomous_submission_dispatcher_cycle_canary_verification_time_invalid',
+    ) : null;
   if (signed < started || expires <= signed
     || !SHA256.test(String(cyclePlanHash || ''))
     || !IDENTIFIER.test(String(dispatcherPrincipalId || ''))
@@ -287,7 +295,11 @@ export function buildAutonomousSubmissionDispatcherCycleReceipt({
     if (canonicalCanaryEvidence.canaryEvidenceHash
         !== livePortalCanaryEvidence.canaryEvidenceHash
       || canonicalCanaryEvidence.receipt.canaryReceiptHash
-        !== livePortalCanaryReceiptHash) {
+        !== livePortalCanaryReceiptHash
+      || (canaryVerificationVerified !== null
+        && (canaryVerificationVerified
+            < Date.parse(canonicalCanaryEvidence.receipt.observedAt)
+          || canaryVerificationVerified > signed))) {
       throw new Error('autonomous_submission_dispatcher_cycle_canary_evidence_invalid');
     }
   }
@@ -307,7 +319,9 @@ export function buildAutonomousSubmissionDispatcherCycleReceipt({
     && portalDescriptorHash === challenge.portalDescriptorHash
     && portalVerifierReady === true
     && portalIdentityIndependenceReady === true
+    && portalFullProductionReady === true
     && livePortalCanaryVerified === true
+    && livePortalCanaryAuthorityIndependentFromDispatcher === true
     && canonicalCanaryEvidence !== null
     && livePortalCanaryExternalActionPerformed === false
     && nativeStoreInaccessibleOrReadOnlyVerified === true
@@ -334,9 +348,14 @@ export function buildAutonomousSubmissionDispatcherCycleReceipt({
     portalBindingVerified: portalBindingVerified === true,
     portalVerifierReady: portalVerifierReady === true,
     portalIdentityIndependenceReady: portalIdentityIndependenceReady === true,
+    portalFullProductionReady: portalFullProductionReady === true,
     livePortalCanaryVerified: livePortalCanaryVerified === true,
     livePortalCanaryReceiptHash,
     livePortalCanaryVerificationReceiptHash,
+    livePortalCanaryVerificationVerifiedAt:
+      livePortalCanaryVerified === true ? livePortalCanaryVerificationVerifiedAt : null,
+    livePortalCanaryAuthorityIndependentFromDispatcher:
+      livePortalCanaryAuthorityIndependentFromDispatcher === true,
     livePortalCanaryExternalActionPerformed:
       livePortalCanaryExternalActionPerformed === true,
     livePortalCanaryEvidence: canonicalCanaryEvidence,

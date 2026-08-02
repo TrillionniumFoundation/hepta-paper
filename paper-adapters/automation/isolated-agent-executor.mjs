@@ -218,7 +218,8 @@ export function createIsolatedAgentExecutor({
       const isolationExcludes = [...new Set([...explicitExcludes, ...largeDirectoryExcludes])];
       const skipSourceSymlinks = input.isolationPolicy?.skipSourceSymlinks === true;
       const context = input.context || {};
-      const nodeKey = `${String(context.campaignId || 'campaign')}-${String(context.nodeId || input.role || 'node')}-${crypto.randomUUID()}`.replace(/[^A-Za-z0-9_.-]/g, '_');
+      const operationNodeId = context.operationNodeId || context.nodeId || input.role || 'node';
+      const nodeKey = `${String(context.campaignId || 'campaign')}-${String(operationNodeId)}-${crypto.randomUUID()}`.replace(/[^A-Za-z0-9_.-]/g, '_');
       const materializationAttemptId = String(
         context.attemptId
         || context.executionId
@@ -252,18 +253,18 @@ export function createIsolatedAgentExecutor({
         }
         if (executionSideEffectGate) {
           await executionSideEffectGate({
-            action: `isolated_agent_execute:${context.nodeId || input.role || 'agent'}`,
+            action: `isolated_agent_execute:${operationNodeId}`,
             campaignId: context.campaignId || null,
             nodeId: context.nodeId || null,
           });
           executionSideEffectGate.assertCurrent?.({
-            action: `isolated_agent_execute:${context.nodeId || input.role || 'agent'}`,
+            action: `isolated_agent_execute:${operationNodeId}`,
             campaignId: context.campaignId || null,
             nodeId: context.nodeId || null,
           });
         }
         await executionSideEffectGate?.markStarted?.({
-          action: `isolated_agent_execute:${context.nodeId || input.role || 'agent'}`,
+          action: `isolated_agent_execute:${operationNodeId}`,
         });
         delegateStarted = true;
         receipt = await delegate.execute({

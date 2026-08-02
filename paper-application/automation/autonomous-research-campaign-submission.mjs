@@ -32,9 +32,10 @@ export async function resolveAutonomousResearchCampaignSubmission({
   autonomousVenueComplianceInspector,
   autonomousSubmissionRequestVerifier,
   requestedAt = null,
+  localOnly = false,
 } = {}) {
   const venueProfileSelection = preparation?.venueProfileSelection || null;
-  const submissionRequired =
+  const submissionRequired = localOnly !== true &&
     venueProfileSelection?.requireExternalSubmission === true;
   let autonomousSubmission = null;
   if (action === 'status' && submissionRequired) {
@@ -54,6 +55,9 @@ export async function resolveAutonomousResearchCampaignSubmission({
   }
   const researchQualificationReady =
     qualificationEligibility?.campaignFullyQualified === true;
+  const localResearchWritingReady = localOnly === true
+    && campaign?.status === 'completed'
+    && Boolean(campaignReleaseAuthority);
   if (action !== 'status' && researchQualificationReady && submissionRequired) {
     const portal = requirePortalDescriptor(autonomousSubmissionPortal);
     if (portal.configurationHash
@@ -118,10 +122,17 @@ export async function resolveAutonomousResearchCampaignSubmission({
     submissionTerminalFailure: submissionReadiness.terminalFailure,
     fullAutomaticResearchWritingReady:
       researchQualificationReady && submissionReadiness.ready,
-    campaignExecutionStatus: autonomousSubmissionAwareCampaignStatus({
-      campaignStatus: campaign?.status,
-      qualificationEligibility,
-      submissionReadiness,
-    }),
+    localResearchWritingReady,
+    campaignExecutionStatus: localOnly === true
+      ? localResearchWritingReady
+        ? 'autonomous_research_campaign_completed_local'
+        : campaign?.status === 'completed'
+          ? 'autonomous_research_campaign_completed_local_release_pending'
+          : `autonomous_research_campaign_${campaign?.status || 'unavailable'}`
+      : autonomousSubmissionAwareCampaignStatus({
+        campaignStatus: campaign?.status,
+        qualificationEligibility,
+        submissionReadiness,
+      }),
   });
 }

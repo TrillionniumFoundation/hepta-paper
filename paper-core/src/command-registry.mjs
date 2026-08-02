@@ -25,12 +25,31 @@ const ROUTES = Object.freeze([
     forwardedArgumentSchema: {
       booleanFlags: [
         'help',
+        'handoff',
+        'json',
         'live-provider-canary',
         'live-release-attestor',
         'require-full-research',
         'require-fully-autonomous',
       ],
       valueFlags: ['deployment-environment-file', 'root', 'runtime-root'],
+      positional: false,
+    },
+  }),
+  route({
+    group: 'operator',
+    name: 'external-authority-intake',
+    argv: ['node', 'paper-core/bin/production-external-authority-intake.mjs'],
+    npmScript: 'automation:external-authority-intake',
+    forwardingPolicy: 'registry',
+    forwardedArgumentSchema: {
+      booleanFlags: ['help', 'require-ready'],
+      valueFlags: [
+        'author-config',
+        'author-config-hash',
+        'release-attestor-config',
+        'release-attestor-config-hash',
+      ],
       positional: false,
     },
   }),
@@ -232,6 +251,7 @@ const ROUTES = Object.freeze([
       booleanFlags: [
         'help', 'human-subjects', 'private-data', 'require-launch-ready',
         'require-full-ready', 'require-bounded-golden-ready',
+        'unlimited-tokens', 'unlimited-cost',
       ],
       valueFlags: [
         'action', 'launch-mode', 'paper-id', 'campaign-id', 'objective', 'protocol-family', 'revision-rounds',
@@ -380,8 +400,8 @@ const ROUTES = Object.freeze([
       positional: false,
     },
   }),
-  route({ group: 'operator', name: 'reconcile', argv: ['node', 'paper-core/bin/automation-reconcile.mjs'], npmScript: 'automation:reconcile', mutability: 'argument-dependent' }),
-  route({ group: 'operator', name: 'reconcile-apply', argv: ['node', 'paper-core/bin/automation-reconcile.mjs', '--execute'], npmScript: 'automation:reconcile:execute', mutability: 'local-write' }),
+  route({ group: 'operator', name: 'reconcile', argv: ['node', 'paper-core/bin/automation-reconcile.mjs'], npmScript: 'automation:reconcile', mutability: 'argument-dependent', forwardingPolicy: 'registry', forwardedArgumentSchema: { booleanFlags: ['legacy-terminal-active-residue'], valueFlags: ['campaign-id'], positional: false } }),
+  route({ group: 'operator', name: 'reconcile-apply', argv: ['node', 'paper-core/bin/automation-reconcile.mjs', '--execute'], npmScript: 'automation:reconcile:execute', mutability: 'local-write', forwardingPolicy: 'registry', forwardedArgumentSchema: { booleanFlags: ['legacy-terminal-active-residue'], valueFlags: ['campaign-id'], positional: false } }),
   route({
     group: 'operator',
     name: 'campaign',

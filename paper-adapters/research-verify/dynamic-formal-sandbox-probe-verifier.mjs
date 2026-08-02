@@ -37,6 +37,20 @@ function sandboxSnapshotIdentityVerified(receipt, snapshotSealReceipt) {
     && receipt.isolation?.workspaceExecutionSnapshotVerified === true;
 }
 
+function sandboxSnapshotIdentityReported(receipt) {
+  return receipt?.status === 'os_sandbox_worker_passed'
+    || [
+      receipt?.sourceMerkleHashBefore,
+      receipt?.sourceMerkleHashAfter,
+      receipt?.workSourceMerkleHash,
+      receipt?.sourceWorkspaceManifestHashBefore,
+      receipt?.sourceWorkspaceManifestHashAfter,
+      receipt?.workWorkspaceManifestHash,
+      receipt?.sourceMutationDetected,
+      receipt?.isolation?.workspaceExecutionSnapshotVerified,
+    ].some((value) => value !== undefined && value !== null);
+}
+
 export function executeDynamicFormalSandboxProbe({
   manifest,
   closure,
@@ -135,7 +149,8 @@ export function executeDynamicFormalSandboxProbe({
         // execution, its private work copy, and the source after execution.
         // The seal-bound expected hashes close the lineage to the verified
         // formal snapshot without a redundant fourth full-tree scan.
-        if (!sandboxSnapshotIdentityVerified(
+        if (sandboxSnapshotIdentityReported(sandboxProbeReceipt)
+          && !sandboxSnapshotIdentityVerified(
           sandboxProbeReceipt,
           snapshotSealReceipt,
         )) {

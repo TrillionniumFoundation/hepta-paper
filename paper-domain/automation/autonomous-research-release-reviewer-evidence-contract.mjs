@@ -1,5 +1,6 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
+  deriveVerifiedIsolatedReviewerSemanticReview,
   deriveVerifiedSignedReviewerSemanticReview,
 } from '../research/reviewer-semantic-evidence-contract.mjs';
 import { evaluateRefereeConvergence } from './referee-convergence.mjs';
@@ -15,12 +16,17 @@ function unique(values) {
 
 function convergenceRecordValid(decision) {
   const { refereeConvergenceDecisionHash: claimedHash, ...payload } = decision || {};
-  return decision?.version === 2
+  const signedMode = decision?.version === 2
+    && decision?.requireSignedReviewerReceipts === true
+    && decision?.signedReviewerReceiptsVerified === true;
+  const sessionMode = decision?.version === 3
+    && decision?.requireSignedReviewerReceipts === false
+    && decision?.requireSessionBoundReviewerReceipts === true
+    && decision?.sessionBoundReviewerReceiptsVerified === true;
+  return (signedMode || sessionMode)
     && decision?.kind === 'RefereeConvergenceDecision'
     && decision?.status === 'referee_convergence_reached'
     && decision?.accepted === true
-    && decision?.requireSignedReviewerReceipts === true
-    && decision?.signedReviewerReceiptsVerified === true
     && decision?.evidenceIdentityBound === true
     && decision?.reviewSemanticEvidenceBound === true
     && decision?.expectedReviewerContextsBound === true
@@ -33,6 +39,18 @@ function convergenceRecordValid(decision) {
     && SHA256.test(String(decision?.campaignPlanHash || ''))
     && SHA256.test(String(claimedHash || ''))
     && hashRecord('RefereeConvergenceDecision', payload) === claimedHash;
+}
+
+function reviewerEvidenceMode(decision) {
+  if (decision?.version === 2
+    && decision?.requireSignedReviewerReceipts === true) {
+    return 'external-cryptographic-authority';
+  }
+  if (decision?.version === 3
+    && decision?.requireSessionBoundReviewerReceipts === true) {
+    return 'fresh-isolated-session';
+  }
+  return null;
 }
 
 function persistedReceiptsFrom(decision) {
@@ -57,8 +75,14 @@ function expectedUnsignedReceiptHashes(decision) {
   ));
 }
 
-function reviewerAuthorityValid(authority, runtimePrincipalBinding) {
-  return typeof authority?.verifySignedReviewerReceipt === 'function'
+function reviewerAuthorityValid(authority, runtimePrincipalBinding, mode) {
+  const verifierReady = mode === 'fresh-isolated-session'
+    ? authority?.authorityMode === 'fresh-isolated-session'
+      && authority?.sessionIsolationReady === true
+      && authority?.identityIndependenceReady === true
+      && typeof authority?.verifySessionReviewerReceipt === 'function'
+    : typeof authority?.verifySignedReviewerReceipt === 'function';
+  return verifierReady
     && authority?.researchPrincipalPoolHash
       === runtimePrincipalBinding?.researchPrincipalPoolHash
     && authority?.reviewerTrustSetHash
@@ -67,7 +91,7 @@ function reviewerAuthorityValid(authority, runtimePrincipalBinding) {
       === runtimePrincipalBinding?.reviewerSignatureVerificationPolicyHash;
 }
 
-function rederivedConvergence(decision, cryptographicVerifier) {
+function rederivedConvergence(decision, authority) {
   return evaluateRefereeConvergence({
     campaignId: decision.campaignId,
     campaignPlanHash: decision.campaignPlanHash,
@@ -79,7 +103,8 @@ function rederivedConvergence(decision, cryptographicVerifier) {
     qualityGates: decision.qualityGates,
     revisionMaterialization: decision.revisionMaterialization,
     ...decision.thresholds,
-    signedReviewerReceiptVerifier: cryptographicVerifier,
+    signedReviewerReceiptVerifier: authority?.verifySignedReviewerReceipt,
+    sessionReviewerReceiptVerifier: authority?.verifySessionReviewerReceipt,
   });
 }
 
@@ -94,12 +119,17 @@ function liveReviewerEvidenceBlockers(evidence, {
   const receiptHashes = evidence?.signedReviewerReceiptHashes || [];
   const unsignedReceipts = evidence?.unsignedAgentExecutionReceipts || [];
   const unsignedReceiptHashes = evidence?.unsignedAgentExecutionReceiptHashes || [];
+  const evidenceMode = reviewerEvidenceMode(decision);
   if (!verifyAutonomousResearchRuntimePrincipalBinding(runtimePrincipalBinding)
     || evidence?.runtimePrincipalBindingHash
       !== runtimePrincipalBinding?.runtimePrincipalBindingHash) {
     blockers.push('release_reviewer_evidence_runtime_principal_binding_invalid');
   }
-  if (!reviewerAuthorityValid(reviewerEvidenceAuthority, runtimePrincipalBinding)) {
+  if (!reviewerAuthorityValid(
+    reviewerEvidenceAuthority,
+    runtimePrincipalBinding,
+    evidenceMode,
+  )) {
     blockers.push('release_reviewer_evidence_current_reviewer_authority_invalid');
   }
   for (const field of ['campaignId', 'paperId', 'campaignPlanHash', 'expectedManuscriptHash']) {
@@ -120,12 +150,20 @@ function liveReviewerEvidenceBlockers(evidence, {
   const decisionReceiptHashes = expectedReceiptHashes(decision);
   const decisionUnsignedReceipts = persistedUnsignedReceiptsFrom(decision);
   const decisionUnsignedReceiptHashes = expectedUnsignedReceiptHashes(decision);
-  if (!Array.isArray(receipts) || !receipts.length
-    || receipts.length !== decisionReceipts.length
-    || JSON.stringify(receipts) !== JSON.stringify(decisionReceipts)
-    || JSON.stringify(receiptHashes) !== JSON.stringify(decisionReceiptHashes)
-    || unique(receiptHashes).length !== receiptHashes.length
-    || receiptHashes.some((hash) => !SHA256.test(String(hash || '')))) {
+  const signedReceiptSetValid = evidenceMode === 'fresh-isolated-session'
+    ? Array.isArray(receipts)
+      && receipts.length === decisionReceipts.length
+      && receipts.every((receipt) => receipt === null)
+      && JSON.stringify(receipts) === JSON.stringify(decisionReceipts)
+      && JSON.stringify(receiptHashes) === JSON.stringify(decisionReceiptHashes)
+      && receiptHashes.every((hash) => hash === null)
+    : Array.isArray(receipts) && receipts.length > 0
+      && receipts.length === decisionReceipts.length
+      && JSON.stringify(receipts) === JSON.stringify(decisionReceipts)
+      && JSON.stringify(receiptHashes) === JSON.stringify(decisionReceiptHashes)
+      && unique(receiptHashes).length === receiptHashes.length
+      && receiptHashes.every((hash) => SHA256.test(String(hash || '')));
+  if (!signedReceiptSetValid) {
     blockers.push('release_reviewer_evidence_receipt_set_invalid');
   }
   if (!Array.isArray(unsignedReceipts) || !unsignedReceipts.length
@@ -137,45 +175,62 @@ function liveReviewerEvidenceBlockers(evidence, {
     blockers.push('release_reviewer_evidence_unsigned_receipt_set_invalid');
   }
   if ((decision?.reviews || []).some((review, index) => {
-    const receipt = receipts[index] || null;
+    const signedReceipt = receipts[index] || null;
     const expectedReviewerContext =
       decision?.expectedReviewerContexts?.[index] || {};
     let derived = null;
     try {
-      derived = deriveVerifiedSignedReviewerSemanticReview(review, {
-        expected: {
-          campaignId: evidence?.campaignId,
-          campaignPlanHash: evidence?.campaignPlanHash,
-          paperId: evidence?.paperId,
-          manuscriptHash: evidence?.expectedManuscriptHash,
-          roundIndex: decision?.roundIndex,
-          nodeId: expectedReviewerContext.nodeId,
-          reviewAttemptId: expectedReviewerContext.reviewAttemptId,
-        },
-        cryptographicVerifier: reviewerEvidenceAuthority?.verifySignedReviewerReceipt,
-      });
+      const expected = {
+        campaignId: evidence?.campaignId,
+        campaignPlanHash: evidence?.campaignPlanHash,
+        paperId: evidence?.paperId,
+        manuscriptHash: evidence?.expectedManuscriptHash,
+        roundIndex: decision?.roundIndex,
+        nodeId: expectedReviewerContext.nodeId,
+        reviewAttemptId: expectedReviewerContext.reviewAttemptId,
+      };
+      derived = evidenceMode === 'fresh-isolated-session'
+        ? deriveVerifiedIsolatedReviewerSemanticReview(review, {
+          expected,
+          sessionVerifier: reviewerEvidenceAuthority?.verifySessionReviewerReceipt,
+        })
+        : deriveVerifiedSignedReviewerSemanticReview(review, {
+          expected,
+          cryptographicVerifier: reviewerEvidenceAuthority?.verifySignedReviewerReceipt,
+        });
     } catch { /* rejected below */ }
     return !derived || JSON.stringify(derived) !== JSON.stringify(review)
-      || receipt?.version !== 2
-      || receipt?.cryptographicAuthorityReady !== true
-      || receipt?.researchPrincipalPoolHash !== evidence?.researchPrincipalPoolHash
+      || (evidenceMode !== 'fresh-isolated-session'
+        && (signedReceipt?.version !== 2
+          || signedReceipt?.cryptographicAuthorityReady !== true))
+      || (evidenceMode === 'fresh-isolated-session'
+        && (signedReceipt !== null
+          || review?.reviewEvidenceMode !== 'fresh-isolated-session'))
+      || (evidenceMode !== 'fresh-isolated-session'
+        && signedReceipt?.researchPrincipalPoolHash
+          !== evidence?.researchPrincipalPoolHash)
       || review?.researchPrincipalPoolHash !== evidence?.researchPrincipalPoolHash
-      || review?.signedReviewerReceiptHash !== receipt?.signedReviewerReceiptHash
-      || review?.signatureVerificationReceiptHash
-        !== receipt?.signatureVerificationReceiptHash
+      || (evidenceMode !== 'fresh-isolated-session'
+        && (review?.signedReviewerReceiptHash
+          !== signedReceipt?.signedReviewerReceiptHash
+          || review?.signatureVerificationReceiptHash
+            !== signedReceipt?.signatureVerificationReceiptHash))
       || review?.unsignedAgentExecutionReceiptHash
         !== unsignedReceipts[index]?.agentExecutionReceiptHash;
   })) {
-    blockers.push('release_reviewer_evidence_receipt_cryptographic_verification_failed');
+    blockers.push(evidenceMode === 'fresh-isolated-session'
+      ? 'release_reviewer_evidence_session_verification_failed'
+      : 'release_reviewer_evidence_receipt_cryptographic_verification_failed');
   }
-  if (reviewerAuthorityValid(reviewerEvidenceAuthority, runtimePrincipalBinding)
+  if (reviewerAuthorityValid(
+    reviewerEvidenceAuthority,
+    runtimePrincipalBinding,
+    evidenceMode,
+  )
     && convergenceRecordValid(decision)) {
     let rederived = null;
     try {
-      rederived = rederivedConvergence(
-        decision,
-        reviewerEvidenceAuthority.verifySignedReviewerReceipt,
-      );
+      rederived = rederivedConvergence(decision, reviewerEvidenceAuthority);
     } catch { /* reported below */ }
     if (JSON.stringify(rederived) !== JSON.stringify(decision)) {
       blockers.push('release_reviewer_evidence_convergence_rederivation_failed');
@@ -192,7 +247,9 @@ export function verifyAutonomousResearchReleaseReviewerEvidenceRecord(evidence, 
     ...payload
   } = evidence || {};
   const decision = evidence?.refereeConvergenceDecision || null;
-  const structurallyValid = evidence?.version === 2
+  const evidenceMode = reviewerEvidenceMode(decision);
+  const structurallyValid = [2, 3].includes(evidence?.version)
+    && evidence?.version === (evidenceMode === 'fresh-isolated-session' ? 3 : 2)
     && evidence?.kind === 'AutonomousResearchReleaseReviewerEvidence'
     && evidence?.status === 'autonomous_research_release_reviewer_evidence_bound'
     && SHA256.test(String(claimedHash || ''))
@@ -212,7 +269,11 @@ export function verifyAutonomousResearchReleaseReviewerEvidenceRecord(evidence, 
       === JSON.stringify(persistedUnsignedReceiptsFrom(decision))
     && JSON.stringify(evidence?.unsignedAgentExecutionReceiptHashes)
       === JSON.stringify(expectedUnsignedReceiptHashes(decision))
-    && evidence?.signedReviewerReceipts?.every((receipt) => receipt?.version === 2)
+    && (evidenceMode === 'fresh-isolated-session'
+      ? evidence?.signedReviewerReceipts?.every((receipt) => receipt === null)
+        && evidence?.signedReviewerReceiptHashes?.every((hash) => hash === null)
+        && evidence?.reviewEvidenceMode === 'fresh-isolated-session'
+      : evidence?.signedReviewerReceipts?.every((receipt) => receipt?.version === 2))
     && evidence?.researchPrincipalPoolHash
       === runtimePrincipalBinding?.researchPrincipalPoolHash
     && evidence?.reviewerTrustSetHash
@@ -269,10 +330,14 @@ export function buildAutonomousResearchReleaseReviewerEvidence({
   runtimePrincipalBinding,
   reviewerEvidenceAuthority,
 } = {}) {
+  const evidenceMode = reviewerEvidenceMode(refereeConvergenceDecision);
   const payload = {
-    version: 2,
+    version: evidenceMode === 'fresh-isolated-session' ? 3 : 2,
     kind: 'AutonomousResearchReleaseReviewerEvidence',
     status: 'autonomous_research_release_reviewer_evidence_bound',
+    ...(evidenceMode === 'fresh-isolated-session' ? {
+      reviewEvidenceMode: evidenceMode,
+    } : {}),
     campaignId: String(campaignId || ''),
     paperId: String(paperId || ''),
     campaignPlanHash: String(campaignPlanHash || ''),

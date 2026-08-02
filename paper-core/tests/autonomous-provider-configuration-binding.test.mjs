@@ -349,7 +349,15 @@ test('one hash-bound configuration reaches readiness, worker composition, and qu
   assertPrincipalInput(readinessInputs.author, configuration.researchAuthor);
   assertPrincipalInput(readinessInputs.reviewer, configuration.formalReviewer);
   assert.equal(worker.researchAuthorCapabilityReceipt.model, options.model);
-  assertPrincipalInput(formalWorkerInput, configuration.formalReviewer);
+  assert.equal(formalWorkerInput, null);
+  assert.equal(
+    worker.reviewerPrincipalExecutorPool.authorityMode,
+    'fresh-isolated-session',
+  );
+  assert.match(
+    worker.researchPrincipalPool.researchPrincipalPoolHash,
+    /^sha256:[0-9a-f]{64}$/,
+  );
   assertPrincipalInput(qualificationInputs[0], configuration.researchAuthor);
   assertPrincipalInput(qualificationInputs[1], configuration.formalReviewer);
   assert.equal(worker.autonomousResearchProviderConfigurationHash,

@@ -15,7 +15,6 @@ export function prepareAutonomousResearchCapabilityScope({
   priorArtReceipt,
   priorArtVerification,
   proposal,
-  refereeCount,
   requireAgentAuthoredProse,
   researchAgendaProducerReceipt,
   researchPrincipalPool,
@@ -54,8 +53,7 @@ export function prepareAutonomousResearchCapabilityScope({
       : venueProfileSelection ? 'profile-selected-v1' : 'disabled',
     externalPrerequisites: Object.freeze([
       ...(!priorArtVerification.ready ? ['prior-art-service'] : []),
-      ...(researchPrincipalPool?.reviewerTrustDomainCount >= refereeCount
-        ? [] : ['independent-reviewer-trust-domains']),
+      ...(researchPrincipalPool ? [] : ['independent-reviewer-session-isolation']),
       ...(!SHA256.test(String(externalResearchReplayConfigurationHash || ''))
         ? ['external-replay-service'] : []),
       ...(!venueProfileSelection ? ['venue-profile-registry'] : []),

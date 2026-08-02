@@ -1,8 +1,10 @@
 #!/usr/bin/env node
-import fs from 'node:fs';
 import path from 'node:path';
 import { CAPABILITY_CATALOG } from '../legacy-capability-matrix-v3.mjs';
-import { executeCapabilityVerification } from '../capability-operational-evidence.mjs';
+import {
+  assertProductionCapabilityRefreshCodeProvenance,
+  executeCapabilityVerification,
+} from '../capability-operational-evidence.mjs';
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqlite-receipt-ledger.mjs';
 import {
@@ -20,11 +22,18 @@ if (!process.argv.includes('--execute')) {
 
 const root = defaultPaperAssetRoot();
 const runtimeRoot = defaultPaperRuntimeRoot();
-const releaseCommit = currentCodeProvenance().commit;
-if (!releaseCommit) throw new Error('release commit missing');
-
+const inheritedReleaseCommit = process.env.HEPTA_RELEASE_COMMIT || null;
 process.env.HEPTA_EVIDENCE_ENVIRONMENT = 'production_source_bound';
 process.env.HEPTA_EVIDENCE_CLASS = 'release_conformance';
+const codeProvenanceProvider = () => currentCodeProvenance({
+  allowReleaseCommitEnvironment: false,
+});
+const codeProvenance = assertProductionCapabilityRefreshCodeProvenance({
+  codeProvenance: codeProvenanceProvider(),
+  declaredReleaseCommit: inheritedReleaseCommit,
+});
+const releaseCommit = codeProvenance.commit;
+
 process.env.HEPTA_RELEASE_COMMIT = releaseCommit;
 
 const clock = createSystemClock();
@@ -53,19 +62,13 @@ const result = await executeCapabilityVerification({
   artifactRepositoryFactory: repositoryFactory,
   clock,
   capabilityCatalog: CAPABILITY_CATALOG,
+  codeProvenance,
+  codeProvenanceProvider,
+  requireCleanCodeProvenance: true,
 });
 if (result.manifest.status !== 'capability_verification_complete') {
   throw new Error(`capability verification refresh blocked:${result.manifest.status}`);
 }
-const releaseCurrent = path.join(runtimeRoot, 'release-evidence', 'current');
-fs.mkdirSync(releaseCurrent, { recursive: true });
-const mirrorRepository = repositoryFactory(releaseCurrent);
-const mirrorReceipt = await mirrorRepository.writeJson(
-  path.join(releaseCurrent, 'CAPABILITY_VERIFICATION_MANIFEST.json'),
-  result.manifest,
-  { role: 'release_current_capability_verification_manifest', atomic: true },
-);
-
 store.close?.();
 process.stdout.write(`${JSON.stringify({
   status: result.manifest.status,
@@ -75,6 +78,6 @@ process.stdout.write(`${JSON.stringify({
   operationalProofPending: result.manifest.receipts.filter((receipt) => !receipt.operationalProof).map((receipt) => receipt.capabilityId),
   manifestHash: result.manifest.capabilityVerificationManifestHash,
   auditWriteReceiptHash: result.writeReceipt.writeReceiptHash,
-  releaseCurrentWriteReceiptHash: mirrorReceipt.writeReceiptHash,
+  releaseCurrentPublication: 'deferred_to_signed_isolated_verification_pointer',
   releaseCommit,
 }, null, 2)}\n`);

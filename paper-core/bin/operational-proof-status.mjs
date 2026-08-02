@@ -7,17 +7,22 @@ import { currentCodeProvenance } from '../src/code-provenance.mjs';
 import { defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const codeProvenance = currentCodeProvenance({
+  workspaceRoot,
+  allowReleaseCommitEnvironment: false,
+});
 const proofs = loadCapabilityOperationalProofs({
   runtimeRoot: defaultPaperRuntimeRoot(),
   workspaceRoot,
   capabilityCatalog: CAPABILITY_CATALOG,
-  releaseCommit: currentCodeProvenance().commit,
+  releaseCommit: codeProvenance.commit,
 });
 const conformance = loadCapabilityConformanceProofs({
   runtimeRoot: defaultPaperRuntimeRoot(),
   workspaceRoot,
   capabilityCatalog: CAPABILITY_CATALOG,
-  releaseCommit: currentCodeProvenance().commit,
+  releaseCommit: codeProvenance.commit,
+  codeProvenance,
 });
 const capabilities = Object.keys(CAPABILITY_CATALOG).sort().map((capabilityId) => ({
   capabilityId,
@@ -33,7 +38,7 @@ process.stdout.write(`${JSON.stringify({
   status: capabilities.every((item) => item.operationallyProven)
     ? 'all_capabilities_operationally_proven'
     : 'capability_operational_proof_pending',
-  releaseCommit: currentCodeProvenance().commit,
+  releaseCommit: codeProvenance.commit,
   capabilityCount: capabilities.length,
   operationallyProven: capabilities.filter((item) => item.operationallyProven).length,
   operationallyPending: capabilities.filter((item) => !item.operationallyProven).length,

@@ -2,7 +2,7 @@ import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { hasExactObjectKeys as exactKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 
 const SCIENTIFIC_VERDICTS = new Set(['positive', 'negative', 'inconclusive']);
-const TECHNICAL_EXECUTION_BLOCKER = /(?:command_failed|execution_threw|runner_|runtime_identity|source_snapshot|source_changed|arm_adapter|response_document_shape|observation_(?:unreadable|json_invalid|artifact_mismatch|metric_set_invalid)|artifact_missing|output_|process_|schedule_incomplete|deadline_exhausted|cpu_budget_exhausted|environment_bom|dataset_access_unverified|raw_event_(?:artifact|count|limit)|metric_(?:set|schema|serialization))/;
+const TECHNICAL_EXECUTION_BLOCKER = /(?:command_(?:failed|timed_out)|execution_threw|runner_|runtime_identity|source_snapshot|source_changed|arm_adapter|response_document_shape|observation_(?:unreadable|json_invalid|artifact_mismatch|metric_set_invalid)|artifact_missing|output_|process_|schedule_incomplete|deadline_exhausted|cpu_budget_exhausted|environment_bom|dataset_access_unverified|raw_event_(?:artifact|count|limit)|metric_(?:set|schema|serialization))/;
 const NON_TECHNICAL_OUTCOME_BLOCKER = /(?:confirmatory_hypothesis|hypothesis_not_supported|scientific_verdict|acceptance_predicate|declared_threshold_not_met|metric_inconsistent|replay_observation_inconsistent)/;
 const OUTCOME_BLIND_DIAGNOSTIC_KEYS = Object.freeze([
   'version', 'kind', 'source', 'failureClasses', 'rawProcessOutputWithheld',
@@ -11,6 +11,7 @@ const OUTCOME_BLIND_DIAGNOSTIC_KEYS = Object.freeze([
 
 const EXECUTION_FAILURE_CLASSES = Object.freeze([
   [/command_failed/, 'command_failed'],
+  [/command_timed_out/, 'command_timed_out'],
   [/execution_threw/, 'execution_threw'],
   [/runner_/, 'runner_failure'],
   [/runtime_identity/, 'runtime_identity_failure'],
@@ -85,16 +86,39 @@ function scientificVerdict(result) {
     || result?.harnessExecutionReceipt?.analysisProtocolEvaluation?.scientificVerdict || null;
 }
 
-function latexScientificContentBinding(source) {
+function latexScientificAtoms(source) {
   const withoutTechnicalPreamble = String(source || '')
     .replace(/^\s*\\usepackage(?:\[[^\]\n]*\])?\{[^{}\n]*\}\s*$/gm, '')
     .replace(/(^|[^\\])%.*$/gm, '$1');
-  const atoms = withoutTechnicalPreamble.match(
+  return withoutTechnicalPreamble.match(
     /\\[A-Za-z@]+|\\[^\sA-Za-z]|[\p{L}\p{N}]+(?:[.'’_-][\p{L}\p{N}]+)*|[<>=+\-*/^_|&]/gu,
   ) || [];
+}
+
+function latexScientificContentBinding(source) {
+  const atoms = latexScientificAtoms(source);
   return Object.freeze({
     atomCount: atoms.length,
     contentHash: hashRecord('LatexScientificContentAtoms', { atoms }),
+  });
+}
+
+function latexAuthorityStructureBinding(source) {
+  let markerCount = 0;
+  const records = [];
+  for (const line of String(source || '').split(/\r?\n/)) {
+    const normalized = line.replace(/\\_/g, '_');
+    if (/^\s*%\s*HEPTA_[A-Z0-9_]+_(?:BEGIN|END)(?:\s|$)/.test(normalized)) {
+      markerCount += 1;
+      records.push(Object.freeze({ type: 'authority-marker', value: line }));
+    } else {
+      records.push(...latexScientificAtoms(line)
+        .map((value) => Object.freeze({ type: 'scientific-atom', value })));
+    }
+  }
+  return Object.freeze({
+    markerCount,
+    structureHash: hashRecord('LatexProtectedAuthorityStructure', { records }),
   });
 }
 
@@ -105,17 +129,28 @@ export function assertLatexTechnicalRepairPreservesScientificContent({
 } = {}) {
   const beforeBinding = latexScientificContentBinding(before);
   const afterBinding = latexScientificContentBinding(after);
-  const preserved = beforeBinding.contentHash === afterBinding.contentHash;
+  const beforeAuthority = latexAuthorityStructureBinding(before);
+  const afterAuthority = latexAuthorityStructureBinding(after);
+  const scientificContentPreserved = beforeBinding.contentHash === afterBinding.contentHash;
+  const authorityStructurePreserved =
+    beforeAuthority.structureHash === afterAuthority.structureHash;
+  const preserved = scientificContentPreserved && authorityStructurePreserved;
   const payload = {
-    version: 1,
+    version: 2,
     kind: 'LatexTechnicalRepairContentPreservationReceipt',
     status: preserved
       ? 'latex_technical_repair_content_preserved'
-      : 'latex_technical_repair_content_changed',
+      : scientificContentPreserved
+        ? 'latex_technical_repair_authority_structure_changed'
+        : 'latex_technical_repair_content_changed',
     beforeScientificContentHash: beforeBinding.contentHash,
     afterScientificContentHash: afterBinding.contentHash,
     beforeScientificAtomCount: beforeBinding.atomCount,
     afterScientificAtomCount: afterBinding.atomCount,
+    beforeAuthorityStructureHash: beforeAuthority.structureHash,
+    afterAuthorityStructureHash: afterAuthority.structureHash,
+    beforeAuthorityMarkerCount: beforeAuthority.markerCount,
+    afterAuthorityMarkerCount: afterAuthority.markerCount,
     repairAgentReceiptHash: repairReceipt?.agentExecutionReceiptHash || null,
     externalActionPerformed: false,
   };
@@ -127,7 +162,9 @@ export function assertLatexTechnicalRepairPreservesScientificContent({
     ),
   });
   if (!preserved) {
-    const error = new Error('campaign_latex_repair_scientific_content_changed');
+    const error = new Error(scientificContentPreserved
+      ? 'campaign_latex_repair_authority_structure_changed'
+      : 'campaign_latex_repair_scientific_content_changed');
     error.retryable = false;
     error.receipt = receipt;
     throw error;
@@ -140,6 +177,12 @@ export function empiricalTechnicalRepairEligible(result, { language = null } = {
     || result.repairEligible === false || result.failureClass === 'scientific_outcome') return false;
   const blockers = Array.isArray(result.blockers) ? result.blockers.map(String) : [];
   if (blockers.some((blocker) => NON_TECHNICAL_OUTCOME_BLOCKER.test(blocker))) return false;
+  if (language === 'latex' && (
+    result.benchmarkSelector
+    || result.harnessExecutionReceipt
+    || result.cacheBypassReason === 'system_owned_benchmark_harness'
+    || blockers.some((blocker) => /arm_adapter|benchmark_(?:arm|harness|selector)|dataset_access/.test(blocker))
+  )) return false;
   return !infrastructureBlocked(result, language)
     && (blockers.some((blocker) => TECHNICAL_EXECUTION_BLOCKER.test(blocker))
       || (result.failureClass === 'technical_failure' && result.repairEligible === true && blockers.length === 0)
@@ -154,8 +197,13 @@ export function empiricalResultContractTechnicalRepairEligible(contract) {
 
 export function assertConfirmatoryWritableRepairAllowed({ spec, language, nodeKind, stage, receipt = null } = {}) {
   if (language === 'latex' || (!spec?.benchmarkSelector && !spec?.datasetMounts?.length)) return true;
-  const error = new Error(`campaign_confirmatory_writable_repair_fail_closed:${nodeKind || 'unknown'}:${stage || 'unknown'}`);
-  error.retryable = false;
+  const frozenExecutionRetry = stage === 'empirical-code'
+    && (receipt?.blockers || []).some((blocker) => /os_sandbox_command_timed_out/.test(String(blocker)))
+    && !(receipt?.blockers || []).some((blocker) => NON_TECHNICAL_OUTCOME_BLOCKER.test(String(blocker)));
+  const error = new Error(frozenExecutionRetry
+    ? `campaign_confirmatory_frozen_execution_retry_required:${nodeKind || 'unknown'}:${stage || 'unknown'}`
+    : `campaign_confirmatory_writable_repair_fail_closed:${nodeKind || 'unknown'}:${stage || 'unknown'}`);
+  error.retryable = frozenExecutionRetry;
   error.receipt = receipt;
   throw error;
 }

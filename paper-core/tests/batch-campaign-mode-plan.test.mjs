@@ -68,10 +68,12 @@ test('each executable batch mode maps to an explicit bounded campaign graph', ()
     assert.deepEqual(roundKinds(value), expected, mode);
     assert.equal(value.requestedMode, mode);
     assert.equal(value.mode, mode);
+    assert.equal(value.terminalSiblingSettlementPolicyVersion, 1);
     assert.ok(value.nodes.every((node) => node.executionIntent.requestedMode === mode));
   }
 
   const reviewLoop = plan('local-review-loop');
+  assert.equal(reviewLoop.terminalSiblingSettlementPolicyVersion, 1);
   assert.equal(reviewLoop.nodes.length, 20);
   assert.deepEqual(reviewLoop.nodes.filter((node) => node.kind === 'convergence').map((node) => node.roundIndex), [1, 2]);
   assert.equal(reviewLoop.nodes.at(-1).kind, 'final-compile');

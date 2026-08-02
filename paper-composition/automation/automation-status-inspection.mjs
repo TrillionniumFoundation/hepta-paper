@@ -116,11 +116,36 @@ export function inspectAutomationStoreOperationalIntegrity({
       name: 'terminalCampaignQueuedNodeCount',
       sql: "SELECT count(*) AS count FROM campaign_nodes n JOIN paper_campaigns c ON c.campaign_id=n.campaign_id WHERE n.status='queued' AND c.status IN ('failed','cancelled','stopped','completed');",
     },
+    {
+      name: 'reconcilableTerminalCampaignQueuedNodeCount',
+      sql: "SELECT count(*) AS count FROM campaign_nodes n JOIN paper_campaigns c ON c.campaign_id=n.campaign_id WHERE n.status='queued' AND c.status IN ('failed','cancelled','stopped','completed') AND json_type(c.spec_json,'$.terminalSiblingSettlementPolicyVersion')='integer' AND json_extract(c.spec_json,'$.terminalSiblingSettlementPolicyVersion')=1;",
+    },
+    {
+      name: 'preservedLegacyTerminalCampaignQueuedNodeCount',
+      sql: "SELECT count(*) AS count FROM campaign_nodes n JOIN paper_campaigns c ON c.campaign_id=n.campaign_id WHERE n.status='queued' AND c.status IN ('failed','cancelled','stopped','completed') AND (json_type(c.spec_json,'$.terminalSiblingSettlementPolicyVersion') IS NULL OR (json_type(c.spec_json,'$.terminalSiblingSettlementPolicyVersion')='integer' AND json_extract(c.spec_json,'$.terminalSiblingSettlementPolicyVersion')=0));",
+    },
+    {
+      name: 'invalidTerminalCampaignSettlementPolicyQueuedNodeCount',
+      sql: "SELECT count(*) AS count FROM campaign_nodes n JOIN paper_campaigns c ON c.campaign_id=n.campaign_id WHERE n.status='queued' AND c.status IN ('failed','cancelled','stopped','completed') AND NOT (json_type(c.spec_json,'$.terminalSiblingSettlementPolicyVersion') IS NULL OR (json_type(c.spec_json,'$.terminalSiblingSettlementPolicyVersion')='integer' AND json_extract(c.spec_json,'$.terminalSiblingSettlementPolicyVersion') IN (0,1)));",
+    },
   ];
   const counts = Object.fromEntries(countQueries.map((query) => [query.name, inspectCount(store, query, blockers)]));
   const uniqueBlockers = Object.freeze([...new Set(blockers)]);
   const queryReady = uniqueBlockers.length === 0;
-  const staleStateDetected = Object.values(counts).some((value) => Number.isSafeInteger(value) && value > 0);
+  // Policy-v0 terminal queued nodes are immutable historical evidence. The
+  // reconciler deliberately preserves them and campaign claiming also requires
+  // a running parent. Keep their count observable, but do not report them as
+  // live operational debt. Policy-v1 residue is reconcilable, while malformed
+  // policy encodings remain fail-closed operational debt.
+  const staleStateDetected = [
+    counts.expiredActiveNodeCount,
+    counts.expiredResourceLeaseCount,
+    counts.expiredWaiterCount,
+    counts.stalledRecoverableCampaignCount,
+    counts.noProgressRunningCampaignCount,
+    counts.reconcilableTerminalCampaignQueuedNodeCount,
+    counts.invalidTerminalCampaignSettlementPolicyQueuedNodeCount,
+  ].some((value) => Number.isSafeInteger(value) && value > 0);
   const degraded = !queryReady || staleStateDetected;
 
   return Object.freeze({

@@ -16,13 +16,26 @@ test('production writer discovery is complete and binds derived-cache provenance
     manifest: AUTONOMOUS_RESEARCH_ONLINE_WRITER_OPERATION_MANIFEST,
   });
   assert.equal(inspection.status, 'autonomous_research_online_writer_static_coverage_complete');
-  assert.equal(inspection.operationCount, 204);
+  assert.equal(inspection.operationCount, 205);
   assert.equal(
     AUTONOMOUS_RESEARCH_ONLINE_WRITER_OPERATION_MANIFEST.operations
       .filter((operation) => operation.coordinatorIntegrated).length,
-    132,
+    133,
   );
   assert.deepEqual(inspection.blockers, []);
+  const legacySettlementOperationId =
+    'native-store.legacy-terminal-active-residue-settlement.executeLegacyTerminalActiveResidueSettlement.v1';
+  assert.deepEqual(
+    inspection.coordinatorBindings.filter(
+      (binding) => binding.operationId === legacySettlementOperationId,
+    ),
+    [{
+      sourceFile: 'paper-adapters/automation/legacy-terminal-active-residue-settlement.mjs',
+      entrypoint: 'executeLegacyTerminalActiveResidueSettlement',
+      databaseRole: 'native-store',
+      operationId: legacySettlementOperationId,
+    }],
+  );
   const sources = new Set(inspection.codeProvenanceSources.map((entry) => entry.sourceFile));
   assert.equal(
     sources.has(
@@ -100,6 +113,37 @@ test('production writer discovery is complete and binds derived-cache provenance
     journalExclusions.map((entry) => entry.entrypoint).sort(),
     ['expectedAuthorityJournalSqliteSchemaIdentity', 'moduleSchemaProvisioning'],
   );
+  const excludedEntrypointsFor = (sourceFile) => inspection.excludedCandidates
+    .filter((entry) => entry.sourceFile === sourceFile && entry.entrypoint)
+    .map((entry) => entry.entrypoint)
+    .sort();
+  assert.deepEqual(excludedEntrypointsFor(
+    'paper-adapters/automation/automation-runtime-reconciler.mjs',
+  ), [
+    'applyStrictReconciliation',
+    'executeOfflineReconciliation',
+    'insertStrictEvent',
+    'offlineExactEventSql',
+    'offlineExactMutationSql',
+    'offlineExactlyOneGuardSql',
+  ]);
+  assert.deepEqual(excludedEntrypointsFor(
+    'paper-adapters/automation/legacy-terminal-active-residue-settlement.mjs',
+  ), [
+    'applyStrictSettlement',
+    'executeOfflineSettlement',
+    'offlineExact',
+    'offlineExactlyOneGuardSql',
+    'offlineScopeGuardSql',
+    'offlineSettlementSql',
+    'runExactlyOne',
+  ]);
+  assert.deepEqual(excludedEntrypointsFor(
+    'paper-adapters/automation/autonomous-research-supervisor-external-action-journal-storage.mjs',
+  ), ['installAutonomousResearchSupervisorExternalActionJournalCoreSchema']);
+  assert.deepEqual(excludedEntrypointsFor(
+    'paper-composition/bootstrap/autonomous-research-state-partial-root-maintenance-composition.mjs',
+  ), ['provisionMissingBusinessSchemas']);
   const maintenanceEntrypoints = AUTONOMOUS_RESEARCH_ONLINE_WRITER_OPERATION_MANIFEST.operations
     .filter((operation) => operation.mutationClass === 'cross-database-maintenance')
     .map((operation) => `${operation.sourceFile}:${operation.entrypoint}`);

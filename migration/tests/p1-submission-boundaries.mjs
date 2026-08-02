@@ -9,9 +9,13 @@ import {
   SUBMISSION_EXPLICIT_RETIREMENTS,
   submissionRetirementDisposition,
 } from '../submission-retirements.mjs';
+import { prepareImmutableLegacyMatrixReference } from '../legacy-matrix-reference.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const root = defaultLegacyPaperFactoryRoot();
+const preparedByParent = process.env.HEPTA_LEGACY_REFERENCE_PREPARED === '1';
+const reference = preparedByParent ? null : prepareImmutableLegacyMatrixReference();
+if (reference) process.on('exit', reference.cleanup);
+const root = reference?.root || defaultLegacyPaperFactoryRoot();
 const localBundleWriter = 'paperctl_modules/external_submission_handoff_bundle.py';
 const directMutationExecutor = 'paperctl_modules/paper_production_repair_executor.py';
 
@@ -201,3 +205,4 @@ process.stdout.write(JSON.stringify({
   reviewedSubmitPreflight: reviewed.reviewedSubmitPreflightPacket.status,
   controlledExecutor: reviewed.controlledExecutorReceipt.status,
 }) + '\n');
+reference?.cleanup();

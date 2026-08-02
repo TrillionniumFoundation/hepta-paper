@@ -9,6 +9,7 @@ import { executeSystemBenchmarkHarness } from '../../paper-adapters/automation/s
 import { signAuthorityDocument } from '../../paper-adapters/authority/authority-signatures.mjs';
 import { authorizeOperatorDatasetMount } from '../../paper-adapters/automation/operator-dataset-harness-reader.mjs';
 import { createMultiLanguageEmpiricalExecutor } from '../../paper-adapters/automation/multi-language-empirical-executor.mjs';
+import { resolveSystemBenchmarkArmAdapterSet } from '../../paper-adapters/automation/system-benchmark-arm-adapter-repository.mjs';
 import { inspectStrictDatasetManifest } from '../../paper-adapters/runtime/execution-snapshot.mjs';
 import { createOsSandboxedWorkerRunner } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
 import { selectAndValidateWorkerEnvironment } from '../../paper-adapters/runtime/worker-environment-policy.mjs';
@@ -430,6 +431,25 @@ function runFixtureHarness(t, { ignoreArm = false, dropLastCell = false, tamperP
   return { receipt, invocationCount, resourceBudgets };
 }
 
+test('R arm adapters reject top-level caller-frame path discovery before execution', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-r-arm-adapter-source-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, 'experiments'));
+  fs.writeFileSync(path.join(root, 'experiments', 'run.treatment.R'), 'source(file.path(dirname(normalizePath(sys.frame(1)$ofile)), "run.R"))\n');
+  fs.writeFileSync(path.join(root, 'experiments', 'run.baseline.R'), 'source("experiments/run.R")\n# baseline\n');
+  fs.writeFileSync(path.join(root, 'experiments', 'run.ablation.R'), 'source("experiments/run.R")\n# ablation\n');
+  const selector = buildCampaignBenchmarkSelector({ benchmarkId: 'ml_algorithm_benchmark', datasetMounts: [] });
+  const result = resolveSystemBenchmarkArmAdapterSet({
+    sourceRoot: root,
+    entrypoint: 'experiments/run.R',
+    protocolSet: selector.experimentDesign.benchmarkHarness.armProtocolSet,
+  });
+  assert.equal(result.status, 'system_benchmark_arm_adapters_blocked');
+  assert.ok(result.blockers.includes(
+    'benchmark_arm_adapter_source_invalid:treatment:r_top_level_caller_frame_path_discovery_forbidden',
+  ));
+});
+
 test('benchmark harness fails before dispatch when its absolute deadline or aggregate CPU budget cannot cover every execution unit', (t) => {
   const expired = runFixtureHarness(t, { absoluteDeadlineEpochMs: 1000, nowEpochMs: () => 1000 });
   assert.equal(expired.invocationCount, 0);
@@ -460,11 +480,13 @@ test('benchmark harness keeps per-unit wall-time limits reproducible while enfor
   ));
 });
 
-test('academic harness proves signed dataset use and one observed process per evaluation cell', (t) => {
+test('academic harness proves signed dataset use and serial process isolation per cell', async (t) => {
   const fixture = academicHarnessFixture(t);
   const adapters = adapterSet(fixture.selector.experimentDesign.benchmarkHarness.armProtocolSet);
   let invocationCount = 0;
-  const receipt = executeSystemBenchmarkHarness({
+  let activeCount = 0;
+  let maximumActiveCount = 0;
+  const receipt = await executeSystemBenchmarkHarness({
     benchmarkSelector: fixture.selector,
     datasetMounts: [fixture.mount],
     experimentAttemptId: 'academic-system-harness-attempt',
@@ -475,7 +497,67 @@ test('academic harness proves signed dataset use and one observed process per ev
     armAdapterSet: adapters,
     operatorDatasetAuthorityTrustStore: fixture.trustStore,
     runtimeRoot: fixture.runtimeRoot,
-    runArmBatch({ batch, outputDirectory }) {
+    absoluteDeadlineEpochMs: 120_000,
+    nowEpochMs: () => 0,
+    async runArmBatch({ batch, outputDirectory }) {
+      invocationCount += 1;
+      const processOrdinal = invocationCount;
+      activeCount += 1;
+      maximumActiveCount = Math.max(maximumActiveCount, activeCount);
+      await new Promise((resolve) => setImmediate(resolve));
+      const effectiveBatch = {
+        ...batch,
+        benchmarkId: fixture.selector.benchmarkId,
+        selectorHash: fixture.selector.campaignBenchmarkSelectorHash,
+        designHash: fixture.selector.experimentDesignHash,
+        harnessHash: fixture.selector.experimentDesign.benchmarkHarnessHash,
+      };
+      const content = responseDocument(batch);
+      fs.mkdirSync(outputDirectory, { recursive: true });
+      fs.writeFileSync(path.join(outputDirectory, 'observation.json'), content);
+      const receipt = workerReceipt({
+        batch: effectiveBatch,
+        content,
+        datasetMounts: [fixture.mount],
+        processOrdinal,
+      });
+      activeCount -= 1;
+      return receipt;
+    },
+  });
+  assert.equal(receipt.status, 'system_benchmark_harness_verified', JSON.stringify(receipt.blockers));
+  assert.equal(receipt.executionIsolationMode, 'academic-per-cell-process-v1');
+  assert.equal(invocationCount, receipt.scheduleCellCount);
+  assert.equal(receipt.processExecutionCount, receipt.scheduleCellCount);
+  assert.equal(maximumActiveCount, 1);
+  assert.ok(receipt.armBatchExecutions.every(
+    (batch) => batch.resourceBudget.timeoutMs === 60_000,
+  ));
+  assert.equal(receipt.datasetEvaluationDependencyReceipt.status, 'dataset_evaluation_dependency_verified');
+  assert.equal(new Set(receipt.armBatchExecutions.map((batch) => batch.executionProcessIdentityHash)).size,
+    receipt.scheduleCellCount);
+  assert.equal(verifySystemBenchmarkHarnessExecutionReceipt(receipt), true);
+});
+
+test('local dataset harness keeps hidden evaluation while using one bounded process per arm', async (t) => {
+  const fixture = academicHarnessFixture(t);
+  const adapters = adapterSet(fixture.selector.experimentDesign.benchmarkHarness.armProtocolSet);
+  let invocationCount = 0;
+  const receipt = await executeSystemBenchmarkHarness({
+    benchmarkSelector: fixture.selector,
+    datasetMounts: [fixture.mount],
+    experimentAttemptId: 'local-system-harness-attempt',
+    sourceLineageHash: `sha256:${'c'.repeat(64)}`,
+    sourceMerkleHash: `sha256:${'1'.repeat(64)}`,
+    sourceWorkspaceManifestHash: `sha256:${'2'.repeat(64)}`,
+    outputDirectory: fixture.outputDirectory,
+    armAdapterSet: adapters,
+    operatorDatasetAuthorityTrustStore: fixture.trustStore,
+    runtimeRoot: fixture.runtimeRoot,
+    absoluteDeadlineEpochMs: 120_000,
+    nowEpochMs: () => 0,
+    localOnly: true,
+    async runArmBatch({ batch, outputDirectory }) {
       invocationCount += 1;
       const effectiveBatch = {
         ...batch,
@@ -496,12 +578,13 @@ test('academic harness proves signed dataset use and one observed process per ev
     },
   });
   assert.equal(receipt.status, 'system_benchmark_harness_verified', JSON.stringify(receipt.blockers));
-  assert.equal(receipt.executionIsolationMode, 'academic-per-cell-process-v1');
-  assert.equal(invocationCount, receipt.scheduleCellCount);
-  assert.equal(receipt.processExecutionCount, receipt.scheduleCellCount);
-  assert.equal(receipt.datasetEvaluationDependencyReceipt.status, 'dataset_evaluation_dependency_verified');
-  assert.equal(new Set(receipt.armBatchExecutions.map((batch) => batch.executionProcessIdentityHash)).size,
-    receipt.scheduleCellCount);
+  assert.equal(receipt.executionIsolationMode, 'local-authorized-per-arm-batch-process-v1');
+  assert.equal(receipt.executionAssuranceProfile, 'local-bounded-hidden-evaluation-v1');
+  assert.equal(receipt.academicPromotionEligible, false);
+  assert.equal(invocationCount, 3);
+  assert.equal(receipt.processExecutionCount, 3);
+  assert.equal(receipt.datasetEvaluationDependencyReceipt.status,
+    'dataset_evaluation_dependency_verified');
   assert.equal(verifySystemBenchmarkHarnessExecutionReceipt(receipt), true);
 });
 

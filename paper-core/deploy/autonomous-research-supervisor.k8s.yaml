@@ -233,8 +233,25 @@ spec:
               value: /datasets
             - name: HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG
               value: /hepta/release-attestor/config.json
+            - name: HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG_HASH
+              valueFrom:
+                configMapKeyRef:
+                  name: hepta-autonomous-research-supervisor
+                  key: release-attestor-configuration-identity-hash
+            - name: HEPTA_ADVANCED_NUMERICAL_PLUGIN_QUALIFICATION_REGISTRY
+              value: /hepta/capabilities-public/advanced-numerical-reference-qualifications.json
+            - name: HEPTA_ADVANCED_NUMERICAL_PLUGIN_QUALIFICATION_REGISTRY_HASH
+              valueFrom:
+                configMapKeyRef:
+                  name: hepta-autonomous-research-supervisor
+                  key: advanced-numerical-qualification-registry-hash
             - name: HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG
               value: /hepta/runtime-reproducibility/process-config.json
+            - name: HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG_HASH
+              valueFrom:
+                configMapKeyRef:
+                  name: hepta-autonomous-research-supervisor
+                  key: runtime-reproducibility-configuration-identity-hash
             - name: HEPTA_AUTONOMOUS_RESEARCH_ONLINE_MUTATION_AUTHORITY_PROCESS_CONFIG
               value: /hepta/online-mutation-authority/process-config.json
             - name: HEPTA_AUTONOMOUS_RESEARCH_ONLINE_MUTATION_AUTHORITY_CONFIG
@@ -261,8 +278,18 @@ spec:
               value: /hepta/capabilities-public/reviewer-principals.json
             - name: HEPTA_PRIOR_ART_SERVICE_CONFIG
               value: /hepta/capabilities-public/prior-art-service.json
+            - name: HEPTA_PRIOR_ART_SERVICE_CONFIG_HASH
+              valueFrom:
+                configMapKeyRef:
+                  name: hepta-autonomous-research-supervisor
+                  key: prior-art-service-configuration-hash
             - name: HEPTA_EXTERNAL_REPLAY_CONFIG
               value: /hepta/capabilities-public/external-replay-service.json
+            - name: HEPTA_EXTERNAL_REPLAY_CONFIG_HASH
+              valueFrom:
+                configMapKeyRef:
+                  name: hepta-autonomous-research-supervisor
+                  key: external-replay-service-configuration-hash
             - name: HEPTA_AUTONOMOUS_VENUE_PROFILE_CONFIG
               value: /hepta/capabilities-public/venue-profiles.json
             - name: HEPTA_AUTONOMOUS_VENUE_PROFILE_CONFIG_HASH
@@ -279,6 +306,11 @@ spec:
                 configMapKeyRef:
                   name: hepta-autonomous-research-supervisor
                   key: submission-portal-configuration-hash
+            - name: HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_HASH
+              valueFrom:
+                configMapKeyRef:
+                  name: hepta-autonomous-research-supervisor
+                  key: submission-portal-descriptor-hash
             - name: HEPTA_SUBMISSION_DISPATCHER_IDENTITY_CONFIG_PATH
               value: /hepta/capabilities-public/submission-dispatcher-identity.json
             - name: HEPTA_AUTONOMOUS_SUBMISSION_METADATA_CONFIG
@@ -567,6 +599,11 @@ spec:
                 configMapKeyRef:
                   name: hepta-autonomous-submission-dispatcher
                   key: submission-portal-configuration-hash
+            - name: HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_HASH
+              valueFrom:
+                configMapKeyRef:
+                  name: hepta-autonomous-submission-dispatcher
+                  key: submission-portal-descriptor-hash
             - name: HEPTA_SUBMISSION_DISPATCHER_IDENTITY_CONFIG_PATH
               value: /hepta/capabilities-public/submission-dispatcher-identity.json
             # This external-signer process configuration is resident-only.
@@ -590,6 +627,11 @@ spec:
                   key: submission-metadata-configuration-hash
             - name: HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG
               value: /hepta/release-attestor/config.json
+            - name: HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG_HASH
+              valueFrom:
+                configMapKeyRef:
+                  name: hepta-autonomous-submission-dispatcher
+                  key: release-attestor-configuration-identity-hash
             - name: HEPTA_AUTONOMOUS_SUBMISSION_HANDOFF_MUTATION_AUTHORITY_PROCESS_CONFIG
               value: /hepta/submission-handoff-authority/process-config.json
           envFrom:

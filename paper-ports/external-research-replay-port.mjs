@@ -6,6 +6,8 @@ export function assertExternalResearchReplayPort(value, {
 } = {}) {
   if (!value || value.kind !== 'ExternalResearchReplayPort'
     || typeof value.replay !== 'function'
+    || ![true, false].includes(value.configurationPinned)
+    || ![true, false].includes(value.fullProductionReady)
     || ![true, false].includes(value.crashRecoveryReady ?? false)
     || ![true, false].includes(value.cryptographicAuthorityReady)
     || ![true, false].includes(value.identityIndependenceReady)
@@ -25,6 +27,13 @@ export function assertExternalResearchReplayPort(value, {
       || typeof value.lookup !== 'function'
       || typeof value.resume !== 'function')) {
     throw new Error('external_research_replay_recovery_port_invalid');
+  }
+  if (value.fullProductionReady === true
+    && (value.configurationPinned !== true
+      || value.crashRecoveryReady !== true
+      || value.cryptographicAuthorityReady !== true
+      || value.identityIndependenceReady !== true)) {
+    throw new Error('external_research_replay_full_production_port_invalid');
   }
   if (expectedConfigurationHash
     && value.configurationHash !== expectedConfigurationHash) {

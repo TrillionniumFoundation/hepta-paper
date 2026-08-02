@@ -1,0 +1,21 @@
+{
+  "version": 2,
+  "kind": "LocalResearchExecutionReleaseAttestorDaemonConfiguration",
+  "mode": "signer",
+  "backendId": "host-release-attestor",
+  "backendVersion": "dedicated-uid-v2",
+  "socketPath": "/run/hepta-paper-release-attestor/signer.sock",
+  "socketPolicy": {
+    "idleTimeoutMs": 5000,
+    "requestDeadlineMs": 10000,
+    "maximumConcurrentConnections": 32
+  },
+  "authority": {
+    "keyId": "replace-release-key-id",
+    "keyVersion": "replace-key-version",
+    "subjectId": "release-attestor-production",
+    "organization": "Replace With Operating Organization",
+    "privateKeyPath": "/var/lib/hepta-paper-release-attestor/private/release-attestor-ed25519.pem",
+    "publicKeySpkiHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  }
+}

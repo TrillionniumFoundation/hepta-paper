@@ -14,6 +14,7 @@ import {
   buildIndependentExternalResearchQualificationVerificationRequest,
 } from '../../paper-domain/automation/external-research-qualification-verification-evidence-contract.mjs';
 import {
+  campaignReleaseExecutionAttestationCurrentAt,
   campaignReleaseExecutionAttestationSigningPayloadHash,
   verifyCampaignReleaseExecutionAttestationStructure,
 } from '../../paper-domain/automation/campaign-release-execution-attestation-contract.mjs';
@@ -287,7 +288,11 @@ function verifyReleaseAttestation(input, configuration, verificationTime) {
     signedAt: attestation?.signedAt,
     verificationTime,
   }, configuration);
-  if (!structure.valid || !trusted) return false;
+  if (!structure.valid || !trusted
+    || !campaignReleaseExecutionAttestationCurrentAt(
+      attestation,
+      verificationTime,
+    )) return false;
   try {
     return crypto.verify(
       null,

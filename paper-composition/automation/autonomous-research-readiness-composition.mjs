@@ -41,6 +41,7 @@ import {
   composeAutonomousResearchExternalCapabilities,
 } from './autonomous-research-external-capability-composition.mjs';
 import {
+  autonomousResearchAuthorIdentitySubjectHash,
   inspectAutonomousResearchRuntimePrincipals,
 } from './autonomous-research-runtime-principal-preflight.mjs';
 import {
@@ -104,6 +105,7 @@ export function inspectAutonomousResearchCampaignReleaseAttestor({
   observedAt,
   environment = process.env,
   activeVerification = false,
+  actionClock = null,
   spawnSyncImpl = undefined,
 } = {}) {
   if (productionMutation) {
@@ -127,6 +129,9 @@ export function inspectAutonomousResearchCampaignReleaseAttestor({
       now: observedAt,
       environment,
       activeVerification,
+      clock: activeVerification === true
+        ? actionClock || { now: () => new Date() }
+        : { now: () => observedAt },
       spawnSyncImpl: sideEffectLedger.spawnSyncFor('release-attestor'),
     });
   } catch (error) {
@@ -174,6 +179,7 @@ function createReadinessInspectionClock({ createdAt, clock }) {
 
 export async function composeAutonomousResearchReadiness({
   paperId,
+  campaignId = null,
   objective,
   protocolFamily,
   hypothesisGenerator = null,
@@ -209,6 +215,8 @@ export async function composeAutonomousResearchReadiness({
   externalQualificationConfigurationInspection = null,
   externalQualificationClient = null,
   externalQualificationVerifier = null,
+  localOnly = false,
+  directLocalRunCliProvenance = null,
   launchMode = null,
   launchModeGate = null,
   providerPricingInspection = null,
@@ -338,8 +346,8 @@ export async function composeAutonomousResearchReadiness({
       authorPrincipal: Object.freeze({
         principalId: author.effectivePrincipalId,
         capabilityReceipt: author.capabilityReceipt,
-        identityAttestationSubjectHash: authorIdentityAttestation.subject
-          .externalPrincipalIdentityAttestationSubjectHash,
+        identityAttestationSubjectHash:
+          autonomousResearchAuthorIdentitySubjectHash(authorIdentityAttestation),
       }),
       researchPrincipalPool: reviewerPrincipalPoolInspection.pool,
       externalCapabilityTrustInspection,
@@ -415,6 +423,7 @@ export async function composeAutonomousResearchReadiness({
   }
   const loopPreparation = await prepareAutonomousResearchLoop({
     paperId,
+    campaignId,
     objective,
     protocolFamily,
     researchAgendaProducer: effectiveResearchAgendaProducer,
@@ -445,8 +454,7 @@ export async function composeAutonomousResearchReadiness({
       principalId: author.effectivePrincipalId,
       capabilityReceipt: author.capabilityReceipt,
       identityAttestationSubjectHash:
-        authorIdentityAttestation?.subject
-          ?.externalPrincipalIdentityAttestationSubjectHash || null,
+        autonomousResearchAuthorIdentitySubjectHash(authorIdentityAttestation),
     }) : null,
     formalReviewerPrincipal: reviewer ? Object.freeze({
       principalId: reviewer.effectivePrincipalId,
@@ -468,6 +476,7 @@ export async function composeAutonomousResearchReadiness({
     machineIntakeAdmission,
     assertExternalSideEffectReady,
     launchMode: effectiveLaunchMode,
+    directLocalRunCliProvenance,
     createdAt,
   });
   if (requestedContentMode === 'agent-evidence-bound'
@@ -548,6 +557,7 @@ export async function composeAutonomousResearchReadiness({
       releaseAttestorInspection,
       injectedClient: externalQualificationClient,
       injectedVerifier: externalQualificationVerifier,
+      required: localOnly !== true,
     });
   const payload = {
     version: 1,
@@ -562,12 +572,13 @@ export async function composeAutonomousResearchReadiness({
     autonomousExecutionLaunchReady: loopPreparation.autonomousExecutionLaunchReady,
     unattendedCampaignLaunchReady,
     externalQualificationServiceReady: externalQualificationServiceInspection.ready,
+    externalQualificationServiceRequired: localOnly !== true,
     autonomousPolicyReady: loopPreparation.autonomousPolicyReady,
     qualificationRequestEligible: loopPreparation.qualificationRequestEligible,
     campaignFullyQualified: false,
     fullAutomaticResearchWritingReady: false,
     externalQualificationAuthorityStillRequired:
-      !loopPreparation.fullAutomaticResearchWritingReady,
+      localOnly !== true && !loopPreparation.fullAutomaticResearchWritingReady,
     safety: loopPreparation.safety,
   };
   return Object.freeze({

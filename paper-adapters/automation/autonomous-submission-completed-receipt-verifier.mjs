@@ -24,7 +24,10 @@ function configurationReady(configuration) {
     },
   );
   return [2, 3].includes(configuration?.version)
-    && configuration?.kind === 'AutonomousSubmissionPortalConfiguration'
+    && [
+      'AutonomousSubmissionPortalConfiguration',
+      'AutonomousSubmissionPortalPublicConfiguration',
+    ].includes(configuration?.kind)
     && configuration?.receiptSignerRole === REQUIRED_ROLE
     && trust.ready === true
     && trust.trustStoreHash === configuration?.receiptTrustStoreHash

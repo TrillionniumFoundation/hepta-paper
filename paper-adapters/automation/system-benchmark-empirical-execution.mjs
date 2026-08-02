@@ -63,6 +63,7 @@ export function executeSystemBenchmarkEmpiricalRun({
     executionEnvironment: executionIdentity.runtimeType === 'container'
       ? 'signed-docker-runtime-v1' : 'signed-bubblewrap-runtime-v1',
     researchContext: spec.experimentResearchContext || null,
+    localOnly: spec.localOnly === true,
     runArmBatch({ batch, outputDirectory }) {
       const batchIdentity = firstExecutionIdentity || prepareRuntimeIdentity(command, runtimeImage);
       firstExecutionIdentity = null;

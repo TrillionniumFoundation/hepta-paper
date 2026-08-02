@@ -6,12 +6,16 @@ import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace
 import { parseStrictCliArguments } from '../src/strict-cli-arguments.mjs';
 import {
   autonomousResearchCommandExitCode,
+  isLocalAutonomousResearchCliLaunchMode,
+  LOCAL_AUTONOMOUS_RESEARCH_LAUNCH_MODE,
+  normalizeAutonomousResearchCliLaunchMode,
+  resolveAutonomousResearchDirectLocalRunBudgetWaiver,
 } from '../../paper-application/automation/autonomous-research-cli-policy.mjs';
 
 const args = parseStrictCliArguments(process.argv.slice(2), {
   booleanFlags: [
     'help', 'human-subjects', 'private-data', 'require-launch-ready', 'require-full-ready',
-    'require-bounded-golden-ready',
+    'require-bounded-golden-ready', 'unlimited-tokens', 'unlimited-cost',
   ],
   valueFlags: [
     'action', 'launch-mode', 'paper-id', 'campaign-id', 'objective', 'protocol-family', 'revision-rounds',
@@ -72,33 +76,39 @@ function loadDatasetMounts(candidate) {
 
 function usage() {
   return {
-    version: 3,
+    version: 4,
     kind: 'AutonomousResearchCampaignUsage',
-    usage: 'hepta-paper operator autonomous-research -- --launch-mode golden-bootstrap|production-run [--action prepare|launch|status|resume|converge] --paper-id ID',
+    usage: 'hepta-paper operator autonomous-research -- [--launch-mode local-run|production-run|golden-bootstrap] [--action prepare|launch|status|resume|converge] --paper-id ID',
+    defaultLaunchMode: LOCAL_AUTONOMOUS_RESEARCH_LAUNCH_MODE,
     behavior: {
       prepare: 'default dry action; machine-selects a bounded agenda when objective/protocol are omitted',
       launch: 'explicitly materializes the source and executes the persisted full campaign DAG',
       status: 'reads persisted campaign/node state without local mutation and validates cached qualification state locally',
       resume: 'resumes a paused/stopped persisted campaign and executes only unfinished nodes',
-      converge: 'idempotently prepares or continues one campaign and requests bounded external machine qualification; paused/stopped campaigns require explicit budget flags',
+      converge: 'idempotently prepares or continues one local campaign through release; production-run may additionally request external qualification, and paused/stopped campaigns require explicit budget flags',
     },
     launchRequirements: [
-      'explicit golden-bootstrap or production-run launch mode',
       'independent author/reviewer principals',
-      'one externally authorized academic dataset mount JSON',
+      'a local dataset mount JSON when the selected protocol needs data',
       'explicit --action launch or --action converge',
-      'an external qualifier plus distinct verifier process configuration before full-ready',
+      'external authorities only when production-run or --require-full-ready is explicitly requested',
     ],
     launchModes: {
-      'golden-bootstrap': 'runs only under system-clamped call, configured-price cost, wall-time and compute limits; provider token count is advisory, and a fresh qualification pointer is published only after local re-verification',
-      'production-run': 'fails before provider execution or workspace/store mutation unless full readiness, provider maximum prices, and a cost ceiling are known',
+      'local-run': 'default local-only mode; reuses the bounded golden execution path and does not require external identity, HSM/KMS, remote replay, portal or production qualification',
+      'golden-bootstrap': 'runs only under configured provider-price, call, cost, wall-time and compute limits; provider token count is advisory, and a fresh qualification pointer is published only after local re-verification',
+      'production-run': 'fails before provider execution or workspace/store mutation unless full readiness, provider maximum prices, and lifecycle hard budgets are present',
+    },
+    directLocalRunBudgetWaiver: {
+      tokenFlag: '--unlimited-tokens',
+      costFlag: '--unlimited-cost',
+      scope: 'explicit direct local-run only',
+      conflicts: ['--max-tokens', '--max-cost-usd'],
+      persistence: 'hash-bound in the campaign plan and preserved across resume',
     },
     providerPricing: {
-      researchAuthorMaximumCostPerCallEnvironment:
-        'HEPTA_RESEARCH_AUTHOR_MAXIMUM_COST_PER_CALL_USD',
-      formalReviewerMaximumCostPerCallEnvironment:
-        'HEPTA_FORMAL_REVIEWER_MAXIMUM_COST_PER_CALL_USD',
-      unknownProductionPricingFailsClosed: true,
+      perCallMaximumRequiredOutsideDirectLocalCostWaiver: true,
+      unknownCostAllowedOnlyWithExplicitDirectLocalCostWaiver: true,
+      lifecycleCostBudgetRequired: true,
       providerTokenBudgetAssurance: 'prompt_only_not_a_hard_provider_limit',
     },
     providerConfiguration: {
@@ -108,6 +118,8 @@ function usage() {
       unsupportedProvidersFailClosed: true,
     },
     externalQualification: {
+      requiredForLocalRun: false,
+      scope: 'optional production extension',
       configurationFlag: '--external-qualification-config PATH',
       configurationEnvironment: 'HEPTA_AUTONOMOUS_EXTERNAL_QUALIFICATION_CONFIG',
       protocol: 'two distinct external-qualification-json-stdio-v1 process/service clients',
@@ -131,18 +143,38 @@ async function main() {
     return;
   }
   const action = args.action || 'prepare';
-  const launchMode = args['launch-mode'] || 'production-run';
+  const requestedLaunchMode = args['launch-mode']
+    || LOCAL_AUTONOMOUS_RESEARCH_LAUNCH_MODE;
+  const localOnly = isLocalAutonomousResearchCliLaunchMode(requestedLaunchMode);
+  const launchMode = normalizeAutonomousResearchCliLaunchMode(requestedLaunchMode);
   if (!['prepare', 'launch', 'status', 'resume', 'converge'].includes(action)) {
     throw new Error(`autonomous_research_campaign_action_invalid:${action}`);
   }
   if (!args['paper-id'] && !args['campaign-id']) {
     throw new Error('autonomous_research_paper_or_campaign_id_required');
   }
+  const paperId = args['paper-id'] || null;
+  const campaignId = args['campaign-id']
+    || (paperId ? `autonomous-research:${paperId}` : null);
+  const directLocalRunBudgetWaiver =
+    resolveAutonomousResearchDirectLocalRunBudgetWaiver({
+      launchMode: requestedLaunchMode,
+      campaignId,
+      paperId,
+      unlimitedTokens: args['unlimited-tokens'] === true,
+      unlimitedCost: args['unlimited-cost'] === true,
+      maxTokensSpecified: args['max-tokens'] !== undefined,
+      maxCostUsdSpecified: args['max-cost-usd'] !== undefined,
+    });
+  const createdAt = new Date().toISOString();
   const report = await composeAutonomousResearchCampaignAction({
     action,
     launchMode,
-    paperId: args['paper-id'] || null,
-    campaignId: args['campaign-id'] || null,
+    localOnly,
+    directLocalRunBudgetWaiver: directLocalRunBudgetWaiver.waiver,
+    directLocalRunCliProvenance: directLocalRunBudgetWaiver.provenance,
+    paperId,
+    campaignId,
     objective: args.objective || null,
     protocolFamily: args['protocol-family'] || null,
     root: path.resolve(args.root || defaultPaperAssetRoot()),
@@ -150,10 +182,10 @@ async function main() {
     datasetMounts: loadDatasetMounts(args['dataset-mount-file']),
     revisionRounds: Number(args['revision-rounds'] || 3),
     refereeCount: Number(args['referee-count'] || 3),
-    budgets: numericOptions(),
+    budgets: { ...numericOptions(), ...directLocalRunBudgetWaiver.budgets },
     humanSubjects: Boolean(args['human-subjects']),
     privateData: Boolean(args['private-data']),
-    createdAt: new Date().toISOString(),
+    createdAt,
     environment: process.env,
     externalQualificationConfigPath: args['external-qualification-config']
       ? path.resolve(args['external-qualification-config']) : null,
@@ -177,7 +209,7 @@ async function main() {
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   const exitCode = autonomousResearchCommandExitCode({
     action,
-    launchMode,
+    launchMode: requestedLaunchMode,
     report,
     requireFullReady: Boolean(args['require-full-ready']),
     requireLaunchReady: Boolean(args['require-launch-ready']),

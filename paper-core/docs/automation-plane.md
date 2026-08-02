@@ -192,16 +192,43 @@ execution authenticity, provide a trusted timestamp or act as a transparency
 log; those stronger assurances remain false unless a future external witness is
 added.
 
-Production signing reads a private, operator-provisioned version-2
+Production signing reads a private, operator-provisioned version-3
 `RESEARCH_EXECUTION_RELEASE_ATTESTOR.json` (by default under the runtime
 `trust/` directory, or selected by
-`HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG`). The configuration contains
+`HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG`). Full production also
+requires `HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG_HASH`, an
+out-of-band SHA-256 pin over the stable resolved configuration identity. The
+configuration contains
 only an Ed25519 public-key trust set and identities for external signer and
 independent-probe commands. It must not contain a private key, private-key path,
-token or inline credential. The main process sends only a hash-bound digest,
+token, inline credential, extra schema field, command argument, or inherited
+environment allowlist. The main process sends only a hash-bound digest,
 random request nonce, active `keyId` and `keyVersion` to the external KMS/HSM
 signer. It verifies the response against the pinned active public key before
 accepting a signature.
+
+Configuration, trust-key, attestation-bundle, and executable inputs must be
+single-link regular files with stable descriptor identities. The resolved pin
+binds every referenced key, executable, credential root, restricted child
+environment, backend descriptor, and KMS authority policy. The policy fixes
+the hardware-authority trust-store hash, signer IDs and challenge binding.
+The stable configuration pins the short-lived signed bundle path rather than
+its byte hash. The bundle is safely snapshotted and cryptographically verified
+on every read, so it may be atomically replaced without rewriting the release
+configuration or changing the policy pin. Changing any stable dependency while
+leaving the JSON unchanged fails closed before either external command is
+invoked. Immediately before each probe or signing action, the selected
+top-level executable is reopened without following links, rehashed through
+that descriptor, and executed through the inherited descriptor rather than
+its mutable pathname. Version-3 signing requests bind an authorization
+deadline and cap the command timeout; the caller rechecks the clock,
+configuration, active key and KMS authority before accepting the returned
+signature. Passive inspection reports the exact file hash and resolved
+identity without granting execution authority. Interpreter, dynamic library,
+relative-module, CA-store, and credential-root content closure still requires
+a separately audited immutable deployment/runtime identity; the top-level
+executable pin alone is not a claim that those transitive dependencies are
+reproducible.
 
 Exactly one non-revoked trust-set key is `active` and may sign. Non-revoked
 `retiring` keys remain verification-only during their explicit
@@ -209,6 +236,19 @@ Exactly one non-revoked trust-set key is `active` and may sign. Non-revoked
 Ed25519 SPKI keys, including differently encoded PEM files under different
 identities, are rejected. A revoked, expired, wrong-version or wrong-algorithm
 key fails closed.
+
+Version 3 also requires a fresh Ed25519 bundle signed by an independent KMS
+control-plane hardware authority. Its subject binds the provider/account, key
+resource, credential generation, backend descriptor, active key and
+hardware-protected/non-exportable policy. The authority's key, subject and
+organization must be distinct from both release and probe authorities.
+The release signer and probe attestor must also have distinct subjects and
+normalized organizations. Signing rechecks the actual action clock and
+control-plane bundle immediately before the KMS call; a caller cannot backdate
+`signedAt` to revive an expired authority or issue an already-expired
+attestation. Online verifiers reject an otherwise valid signature outside its
+`validFrom <= now < expiresAt` window.
+Version 2 self-declarations remain bounded and cannot invoke the live KMS.
 
 Production readiness additionally runs a fresh random-challenge probe through
 a distinct executable, service principal and credential root. The response

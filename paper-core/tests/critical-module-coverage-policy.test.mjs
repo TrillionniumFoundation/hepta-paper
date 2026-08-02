@@ -39,6 +39,16 @@ const EXPECTED_AUDITED_CAPS = Object.freeze({
 });
 
 const REQUIRED_NEW_TRUST_TARGETS = Object.freeze([
+  'paper-adapters/runtime/immutable-release-workspace-repository.mjs',
+  'paper-adapters/runtime/release-dependency-tree.mjs',
+  'paper-adapters/build-package/local-release-attestor-runtime.mjs',
+  'paper-adapters/build-package/local-release-attestor-socket.mjs',
+  'paper-adapters/build-package/research-execution-release-attestor-inspection.mjs',
+  'paper-adapters/build-package/research-execution-release-attestor-inspection-support.mjs',
+  'paper-adapters/research-verify/dynamic-formal-execution-authority.mjs',
+  'paper-adapters/research-verify/dynamic-formal-sandbox-probe-qualification-repository.mjs',
+  'paper-adapters/build-package/research-execution-release-kms-hardware-attestation.mjs',
+  'paper-domain/automation/research-execution-release-kms-hardware-attestation-contract.mjs',
   'paper-adapters/automation/formal-domain-qualification-recovery-journal.mjs',
   'paper-adapters/automation/http-recoverable-reviewer-executor-adapter.mjs',
   'paper-adapters/automation/recoverable-reviewer-workspace-snapshot.mjs',

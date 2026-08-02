@@ -70,11 +70,16 @@ export function createCampaignNodeExecutor({
   workspaceAttempts,
   experimentRegistryAuthorityVerifier = null,
   signedReviewerReceiptVerifier = null,
+  sessionReviewerReceiptVerifier = null,
   reviewerEvidenceAuthority = null,
 } = {}) {
   if (signedReviewerReceiptVerifier !== null
     && typeof signedReviewerReceiptVerifier !== 'function') {
     throw new Error('signed_reviewer_receipt_verifier_invalid');
+  }
+  if (sessionReviewerReceiptVerifier !== null
+    && typeof sessionReviewerReceiptVerifier !== 'function') {
+    throw new Error('session_reviewer_receipt_verifier_invalid');
   }
   const primitives = assertCampaignNodePrimitivesPort(nodePrimitives);
   const attempts = assertCampaignWorkspaceAttemptPort(workspaceAttempts);
@@ -82,6 +87,7 @@ export function createCampaignNodeExecutor({
     version: 1,
     kind: 'CampaignNodeExecutor',
     verifySignedReviewerReceipt: signedReviewerReceiptVerifier,
+    verifySessionReviewerReceipt: sessionReviewerReceiptVerifier,
     async execute(input = {}) {
       let campaign = input.campaign;
       const { node } = input;

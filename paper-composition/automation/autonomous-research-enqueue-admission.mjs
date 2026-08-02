@@ -21,11 +21,12 @@ const LIVE_RELEASE_ATTESTOR_BLOCKERS = new Set([
 ]);
 
 function staticProductionAttestorConfigurationReady(inspection) {
-  return releaseAttestorInspectionReady(inspection)
-    && inspection?.backendKind === 'external-kms-command'
-    && inspection?.backendProductionEligible === true
+  const backendAssuranceReady = inspection?.backendKind === 'external-kms-command'
     && inspection?.hardwareProtected === true
-    && inspection?.privateKeyExportable === false
+    && inspection?.privateKeyExportable === false;
+  return releaseAttestorInspectionReady(inspection)
+    && inspection?.backendProductionEligible === true
+    && backendAssuranceReady
     && inspection?.externalSignerProcess === true
     && inspection?.privateKeyLoadedIntoMainProcess === false
     && inspection?.credentialMaterialReadByMainProcess === false

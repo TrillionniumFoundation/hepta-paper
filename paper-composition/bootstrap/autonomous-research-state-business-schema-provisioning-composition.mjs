@@ -66,14 +66,29 @@ function disabledOfflineMutationAuthority() {
   });
 }
 
+function convergeNativeStoreForAtomicInstallation(store) {
+  const checkpoint = store.checkpoint({ mode: 'TRUNCATE' });
+  if (checkpoint?.ok !== true) {
+    throw new Error('autonomous_research_state_native_store_checkpoint_failed');
+  }
+  const journal = store.execute('PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;');
+  const observed = store.query('PRAGMA journal_mode;');
+  if (journal?.ok !== true || observed?.ok !== true
+    || String(observed.rows?.[0]?.journal_mode || '').toLowerCase() !== 'delete') {
+    throw new Error('autonomous_research_state_native_store_offline_journal_failed');
+  }
+}
+
 function provisioningIdentity({
   machineIntakeConfiguration,
+  machineIntakeGenesisAuthorityMode,
   topicProducerProfile,
   providerCanaryPairMaximumCostUsd,
   runtimeRefreshPolicy,
 }) {
   return Object.freeze({
     machineIntakeConfigurationHash: machineIntakeConfiguration.configurationHash,
+    machineIntakeGenesisAuthorityMode,
     providerCanaryPairMaximumCostUsd,
     providerConfigurationHash: topicProducerProfile.providerConfigurationHash,
     runtimeReproducibilityRefreshPolicyHash:
@@ -89,6 +104,7 @@ function provisionCanonicalBusinessSchemas({
   workspaceRoot,
   runtimeRoot,
   machineIntakeConfiguration,
+  machineIntakeGenesisAuthorityMode,
   topicProducerProfile,
   providerCanaryPairMaximumCostUsd,
   runtimeRefreshPolicy,
@@ -121,6 +137,7 @@ function provisionCanonicalBusinessSchemas({
       authorizedMachineProducerProfileHash: topicProducerProfile.producerProfileHash,
       machineProducerAppendAuthority: topicProducer,
       offlineProvision: true,
+      genesisAuthorityMode: machineIntakeGenesisAuthorityMode,
     }));
     repositories.push(createAutonomousResearchSupervisorStateRepository({
       runtimeRoot,
@@ -153,6 +170,7 @@ function provisionCanonicalBusinessSchemas({
         offlineProvision: true,
       });
     qualificationPublication.provision();
+    convergeNativeStoreForAtomicInstallation(nativeStore);
   } finally {
     closeRepositories(repositories);
   }
@@ -162,19 +180,22 @@ export function composeAutonomousResearchStateBusinessSchemaProvisioningService(
   workspaceRoot,
   runtimeRoot,
   machineIntakeConfiguration,
+  machineIntakeGenesisAuthorityMode = 'external',
   topicProducerProfile,
-  providerCanaryPairMaximumCostUsd,
   runtimeReproducibilityPolicy,
 } = {}) {
-  const cost = Number(providerCanaryPairMaximumCostUsd);
+  const cost = Number(topicProducerProfile?.maximumProviderCanaryCostUsdPerUtcDay)
+    / Number(topicProducerProfile?.maximumProviderCanaryAttemptsPerUtcDay);
   if (!workspaceRoot || !runtimeRoot
     || !verifyAutonomousResearchMachineIntakeConfiguration(machineIntakeConfiguration)
     || machineIntakeConfiguration.version !== 2
     || !verifyAutonomousResearchTopicProducerProfile(topicProducerProfile)
     || machineIntakeConfiguration.machineProducerProfileHash
       !== topicProducerProfile.producerProfileHash
-    || !Number.isFinite(cost) || cost <= 0
-    || cost > topicProducerProfile.maximumProviderCanaryCostUsdPerUtcDay) {
+    || !['external', 'root-owned-configuration'].includes(
+      machineIntakeGenesisAuthorityMode,
+    )
+    || !Number.isFinite(cost) || cost <= 0) {
     throw new Error('autonomous_research_state_provisioning_configuration_invalid');
   }
   const runtimeRefreshPolicy = normalizeRuntimeReproducibilityRefreshPolicy(
@@ -190,6 +211,7 @@ export function composeAutonomousResearchStateBusinessSchemaProvisioningService(
   ));
   const identity = provisioningIdentity({
     machineIntakeConfiguration,
+    machineIntakeGenesisAuthorityMode,
     topicProducerProfile,
     providerCanaryPairMaximumCostUsd: cost,
     runtimeRefreshPolicy,
@@ -212,6 +234,7 @@ export function composeAutonomousResearchStateBusinessSchemaProvisioningService(
             workspaceRoot: resolvedWorkspaceRoot,
             runtimeRoot: stagingRuntimeRoot,
             machineIntakeConfiguration,
+            machineIntakeGenesisAuthorityMode,
             topicProducerProfile,
             providerCanaryPairMaximumCostUsd: cost,
             runtimeRefreshPolicy,

@@ -6,6 +6,9 @@ import {
   buildAutonomousResearchRuntimePrincipalBinding,
   verifyAutonomousResearchRuntimePrincipalBinding,
 } from '../../paper-domain/automation/autonomous-research-runtime-principal-binding-contract.mjs';
+import {
+  autonomousResearchAuthorIdentitySubjectHash,
+} from './autonomous-research-runtime-principal-preflight.mjs';
 
 function claimed(value) {
   return value !== null && value !== undefined;
@@ -105,8 +108,8 @@ export function requireCurrentCampaignWorkerPrincipalAuthority({
     runtimePrincipalBinding = buildAutonomousResearchRuntimePrincipalBinding({
       authorPrincipalId: researchAuthorPreflight?.effectivePrincipalId,
       authorIdentityConfigurationHash: authorIdentityAttestation?.configurationHash,
-      authorIdentitySubjectHash: authorIdentityAttestation?.subject
-        ?.externalPrincipalIdentityAttestationSubjectHash,
+      authorIdentitySubjectHash:
+        autonomousResearchAuthorIdentitySubjectHash(authorIdentityAttestation),
       authorCapabilityReceiptHash: researchAuthorPreflight?.capabilityReceipt
         ?.codexResearchAuthorCapabilityReceiptHash,
       authorCredentialRootIdentityHash: researchAuthorPreflight?.capabilityReceipt

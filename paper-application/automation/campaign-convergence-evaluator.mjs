@@ -6,6 +6,7 @@ export function buildCampaignConvergenceDecision({
   nodes = [],
   executionResult,
   signedReviewerReceiptVerifier = null,
+  sessionReviewerReceiptVerifier = null,
 } = {}) {
   const refereeNodes = nodes
     .filter((candidate) => candidate.roundIndex === node.roundIndex
@@ -24,6 +25,11 @@ export function buildCampaignConvergenceDecision({
   const minimumIndependentTrustDomains = Number(
     capabilityScope?.reviewerTrustDomainCount || 1,
   );
+  const productionSessionEvidenceRequired = Boolean(
+    campaign?.spec?.autonomousResearchPreparation?.launchMode === 'production-run'
+      && minimumIndependentTrustDomains === 1
+      && campaign?.spec?.autonomousResearchPreparation?.researchPrincipalPoolHash,
+  );
   return evaluateRefereeConvergence({
     campaignId: campaign.campaignId,
     campaignPlanHash: campaign.spec.campaignPlanHash,
@@ -38,6 +44,8 @@ export function buildCampaignConvergenceDecision({
     minimumReviewers: Number(campaign?.spec?.refereeCount || 3),
     minimumIndependentTrustDomains,
     requireSignedReviewerReceipts: minimumIndependentTrustDomains > 1,
+    requireSessionBoundReviewerReceipts: productionSessionEvidenceRequired,
     signedReviewerReceiptVerifier,
+    sessionReviewerReceiptVerifier,
   });
 }

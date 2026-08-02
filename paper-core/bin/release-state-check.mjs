@@ -1,27 +1,57 @@
 #!/usr/bin/env node
-import fs from 'node:fs';
-import path from 'node:path';
-import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { inspectReleaseState } from '../src/release-state-contract.mjs';
+import { inspectWorkspaceReleaseState } from '../src/release-state-repository.mjs';
 
-const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const read = (relative) => fs.readFileSync(path.join(workspaceRoot, relative), 'utf8');
-const readJson = (relative) => JSON.parse(read(relative));
-const gitTags = (args) => {
-  const result = spawnSync('git', ['tag', ...args], { cwd: workspaceRoot, encoding: 'utf8' });
-  if (result.status !== 0) throw new Error(`git_tag_query_failed:${result.stderr.trim()}`);
-  return result.stdout.split(/\r?\n/u).filter(Boolean);
-};
+function parseArguments(argv) {
+  if (argv.length === 1 && argv[0] === '--help') {
+    return Object.freeze({ help: true, requiredState: null });
+  }
+  let requiredState = null;
+  for (let index = 0; index < argv.length; index += 1) {
+    const argument = argv[index];
+    if (argument !== '--require-state') throw new Error(`unknown_cli_option:${argument}`);
+    if (requiredState !== null) throw new Error('duplicate_cli_option:--require-state');
+    const value = argv[index + 1];
+    if (!value || value.startsWith('--')) throw new Error('missing_cli_option_value:--require-state');
+    if (value !== 'release_ready') throw new Error(`release_state_requirement_override_forbidden:${value}`);
+    requiredState = value;
+    index += 1;
+  }
+  return Object.freeze({ help: false, requiredState });
+}
 
-const result = inspectReleaseState({
-  packageJson: readJson('package.json'),
-  packageLock: readJson('package-lock.json'),
-  currentStatus: read('paper-core/docs/CURRENT_STATUS.md'),
-  releaseDocument: read('RELEASE.md'),
-  changelog: read('CHANGELOG.md'),
-  headTags: gitTags(['--points-at', 'HEAD']),
-  allTags: gitTags(['--list']),
+let options;
+try {
+  options = parseArguments(process.argv.slice(2));
+} catch (error) {
+  process.stderr.write(`${JSON.stringify({
+    ok: false,
+    kind: 'ReleaseStateCheckCliError',
+    error: error instanceof Error ? error.message : String(error),
+  })}\n`);
+  process.exit(2);
+}
+
+if (options.help) {
+  process.stdout.write(`${JSON.stringify({
+    kind: 'ReleaseStateCheckUsage',
+    usage: 'node paper-core/bin/release-state-check.mjs [--require-state release_ready]',
+  }, null, 2)}\n`);
+  process.exit(0);
+}
+
+const releaseStateSnapshot = inspectWorkspaceReleaseState();
+const inspected = releaseStateSnapshot.releaseState;
+const requirementError = options.requiredState !== null && inspected.state !== options.requiredState
+  ? `required_release_state_mismatch:${options.requiredState}:${inspected.state || 'invalid'}`
+  : null;
+const result = Object.freeze({
+  ...inspected,
+  ok: inspected.ok && requirementError === null,
+  requiredState: options.requiredState,
+  workspaceReleaseStateSnapshotHash: releaseStateSnapshot.workspaceReleaseStateSnapshotHash,
+  errors: Object.freeze(requirementError === null
+    ? [...inspected.errors]
+    : [...inspected.errors, requirementError]),
 });
 
 process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

@@ -96,6 +96,10 @@ export const NATIVE_STORE_CAMPAIGN_STATEMENT_IDS = Object.freeze({
   failCampaignNodes: 'campaign.lifecycle.fail-campaign-nodes.v1',
   failNodeAbandonPrepared: 'campaign.lease.fail-node-abandon-prepared.v1',
   failNodePreservePrepared: 'campaign.lease.fail-node-preserve-prepared.v1',
+  inspectTerminalSiblingNodes:
+    'campaign.lease.inspect-terminal-sibling-nodes.v1',
+  settleTerminalSiblingNodes:
+    'campaign.lease.settle-terminal-sibling-nodes.v1',
   markIntegratedNode: 'campaign.integration.mark-integrated-node.v1',
   pauseCampaign: 'campaign.lifecycle.pause-campaign.v1',
   pauseCampaignNodes: 'campaign.lifecycle.pause-campaign-nodes.v1',
@@ -510,6 +514,24 @@ const plans = [
       prepared_integration_started_at=iif(prepared_integration_status='integrating',NULL,prepared_integration_started_at),updated_at=?
       WHERE node_id=? AND status='running' AND lease_owner=? AND attempt_id=?
         AND lease_generation=? AND julianday(lease_expires_at)>=julianday(?)
+        AND EXISTS(SELECT 1 FROM paper_campaigns c
+          WHERE c.campaign_id=campaign_nodes.campaign_id AND c.status='running')`),
+    statement(S.inspectTerminalSiblingNodes, `SELECT node_id,campaign_id,status,
+      lease_owner,attempt_id,lease_generation,node_revision,
+      prepared_integration_status
+      FROM campaign_nodes WHERE campaign_id=? AND node_id<>?
+        AND status IN ('leased','running')
+        AND EXISTS(SELECT 1 FROM paper_campaigns c
+          WHERE c.campaign_id=campaign_nodes.campaign_id AND c.status='running')
+      ORDER BY node_id`, 'all'),
+    statement(S.settleTerminalSiblingNodes, `UPDATE campaign_nodes SET
+      status=?,failure_class=?,failure_json=?,failure_sha256=?,lease_owner=NULL,
+      lease_expires_at=NULL,attempt_id=NULL,node_revision=node_revision+1,updated_at=?
+      WHERE node_id=? AND campaign_id=? AND status=?
+        AND ((? IS NULL AND lease_owner IS NULL) OR lease_owner=?)
+        AND ((? IS NULL AND attempt_id IS NULL) OR attempt_id=?)
+        AND lease_generation=? AND node_revision=?
+        AND prepared_integration_status=?
         AND EXISTS(SELECT 1 FROM paper_campaigns c
           WHERE c.campaign_id=campaign_nodes.campaign_id AND c.status='running')`),
     statement(S.updateCampaignUsage, `UPDATE paper_campaigns SET ${USAGE_SET},updated_at=?

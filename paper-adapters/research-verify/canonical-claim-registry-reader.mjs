@@ -8,6 +8,10 @@ function integer(value) {
   return Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
+function normalizedText(value) {
+  return String(value || '').normalize('NFKC').replace(/\s+/g, ' ').trim();
+}
+
 function manuscriptRelativePath(sourceRoot, paperTask) {
   const mainTex = String(paperTask?.mainTex || '').replace(/\\/g, '/');
   const sourceWorkspace = String(paperTask?.sourceWorkspace || '').replace(/\\/g, '/').replace(/^\.\//, '').replace(/\/+$/, '');
@@ -148,5 +152,125 @@ export function canonicalClaimsFromWorkerPlan({ sourceRoot, paperTask, plan } = 
     claims: Object.freeze(claims),
     byClaimId,
     blockers: Object.freeze([...new Set(blockers)]),
+  });
+}
+
+export function canonicalClaimsFromTheoremSpecification({ sourceRoot, theoremSpecification } = {}) {
+  const blockers = [];
+  const claims = [];
+  const byClaimId = new Map();
+  const manuscriptPath = String(theoremSpecification?.sourceManuscriptPath || '')
+    .replace(/\\/g, '/').replace(/^\.\//, '');
+  const read = manuscriptPath
+    ? readScopedFileSync({ scopeRoot: sourceRoot, candidate: path.join(sourceRoot, manuscriptPath) })
+    : null;
+  if (!manuscriptPath || read?.status !== 'scoped_file_read_verified') {
+    blockers.push('canonical_claim_registry_manuscript_unreadable');
+    return Object.freeze({
+      status: 'canonical_claim_registry_blocked', manuscriptPath,
+      manuscriptHash: null, claims: Object.freeze(claims), byClaimId,
+      blockers: Object.freeze(blockers),
+    });
+  }
+  const formalClaimUniverse = readFormalClaimUniverse({ sourceRoot, manuscriptPath });
+  if (theoremSpecification?.sourceManuscriptHash !== formalClaimUniverse.manuscriptHash) {
+    blockers.push('canonical_claim_registry_manuscript_hash_mismatch');
+  }
+  if (theoremSpecification?.formalClaimUniverseHash !== formalClaimUniverse.formalClaimUniverseHash) {
+    blockers.push('canonical_claim_registry_formal_claim_universe_hash_mismatch');
+  }
+  blockers.push(...formalClaimUniverse.blockers);
+  const theoremBySource = new Map(formalClaimUniverse.theorems.map((theorem) => [
+    `${theorem.manuscriptPath}:${theorem.manuscriptByteStart}:${theorem.manuscriptByteEnd}`,
+    theorem,
+  ]));
+  const boundTheoremIds = new Set();
+  for (const specificationClaim of theoremSpecification?.claims || []) {
+    const claimId = String(specificationClaim?.claimId || '').trim();
+    const locator = specificationClaim?.manuscriptSource;
+    const relative = String(locator?.path || '').replace(/\\/g, '/');
+    const byteStart = integer(locator?.byteStart);
+    const byteEnd = integer(locator?.byteEnd);
+    const claimBlockers = [];
+    const theorem = byteStart === null || byteEnd === null
+      ? null : theoremBySource.get(`${relative}:${byteStart}:${byteEnd}`) || null;
+    if (!claimId) claimBlockers.push('canonical_claim_id_missing');
+    if (!theorem) claimBlockers.push('canonical_claim_not_exact_formal_theorem_body');
+    if (theorem && boundTheoremIds.has(theorem.theoremId)) {
+      claimBlockers.push('canonical_claim_formal_theorem_duplicate_binding');
+    }
+    if (theorem && (locator?.contentHash !== theorem.manuscriptContentHash
+      || locator?.formalClaimUniverseEntryHash !== theorem.formalClaimUniverseEntryHash
+      || normalizedText(specificationClaim?.statement) !== normalizedText(theorem.text))) {
+      claimBlockers.push('canonical_claim_theorem_specification_binding_mismatch');
+    }
+    if (byClaimId.has(claimId)) claimBlockers.push('canonical_claim_id_duplicate');
+    blockers.push(...claimBlockers.map((item) => `${claimId || 'missing'}:${item}`));
+    if (claimBlockers.length) continue;
+    boundTheoremIds.add(theorem.theoremId);
+    const sourceLocator = `${relative}#bytes=${byteStart}-${byteEnd}`;
+    const claim = Object.freeze({
+      id: claimId,
+      claimId,
+      text: theorem.text,
+      sourceLocator,
+      manuscriptPath: relative,
+      manuscriptByteStart: byteStart,
+      manuscriptByteEnd: byteEnd,
+      manuscriptContentHash: theorem.manuscriptContentHash,
+      manuscriptFileHash: read.hash,
+      manuscriptClaimHash: manuscriptClaimHash({ claimId, text: theorem.text, sourceLocator }),
+      formalClaimUniverseEntryHash: theorem.formalClaimUniverseEntryHash,
+      formalClaimUniverseHash: formalClaimUniverse.formalClaimUniverseHash,
+      formalTheoremId: theorem.theoremId,
+      formalTheoremEnvironment: theorem.environment,
+      formalProof: theorem.proof,
+      status: 'candidate',
+      kind: 'formal_claim',
+      verificationPlan: Object.freeze({
+        kind: 'formal_lake_machine_checked',
+        requiresWorker: true,
+        requiresEvidence: false,
+        verifier: 'lean-lake-explicit-source-audit-certificate-v3',
+      }),
+      proofObligations: Object.freeze([...(specificationClaim?.proofObligations || [])]
+        .map(String).sort()),
+    });
+    claims.push(claim);
+    byClaimId.set(claimId, claim);
+  }
+  for (const theorem of formalClaimUniverse.theorems) {
+    if (!boundTheoremIds.has(theorem.theoremId)) {
+      blockers.push(`formal_claim_universe_theorem_unbound:${theorem.theoremId}`);
+    }
+  }
+  if (claims.length !== formalClaimUniverse.theorems.length) {
+    blockers.push('formal_claim_universe_binding_count_mismatch');
+  }
+  const uniqueBlockers = [...new Set(blockers)];
+  const registryPayload = {
+    version: 2,
+    kind: 'CanonicalFormalClaimRegistry',
+    manuscriptPath,
+    manuscriptHash: formalClaimUniverse.manuscriptHash,
+    formalClaimUniverseHash: formalClaimUniverse.formalClaimUniverseHash,
+    claimIdentities: claims.map((claim) => ({
+      claimId: claim.claimId,
+      manuscriptClaimHash: claim.manuscriptClaimHash,
+      formalClaimUniverseEntryHash: claim.formalClaimUniverseEntryHash,
+    })),
+    blockers: uniqueBlockers,
+  };
+  return Object.freeze({
+    status: uniqueBlockers.length
+      ? 'canonical_claim_registry_blocked' : 'canonical_claim_registry_verified',
+    manuscriptPath,
+    manuscriptHash: formalClaimUniverse.manuscriptHash,
+    formalClaimUniverse,
+    formalClaimUniverseHash: formalClaimUniverse.formalClaimUniverseHash,
+    canonicalClaimRegistryHash: hashRecord('CanonicalFormalClaimRegistry', registryPayload),
+    claims: Object.freeze(claims),
+    byClaimId,
+    blockers: Object.freeze(uniqueBlockers),
   });
 }

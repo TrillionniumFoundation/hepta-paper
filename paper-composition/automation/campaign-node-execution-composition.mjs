@@ -39,12 +39,23 @@ export function createCampaignNodeExecutor(options = {}) {
     experimentRegistryAuthorityVerifier: options.experimentRegistryAuthorityVerifier || null,
     signedReviewerReceiptVerifier:
       reviewerPool?.verifySignedReviewerReceipt || null,
+    sessionReviewerReceiptVerifier:
+      reviewerPool?.verifySessionReviewerReceipt || null,
     reviewerEvidenceAuthority: reviewerPool ? Object.freeze({
+      version: reviewerPool.version,
+      kind: 'ReviewerReceiptVerificationAuthority',
+      authorityMode: reviewerPool.authorityMode || null,
+      sessionIsolationReady: reviewerPool.sessionIsolationReady === true,
+      cryptographicAuthorityReady:
+        reviewerPool.cryptographicAuthorityReady === true,
+      identityIndependenceReady:
+        reviewerPool.identityIndependenceReady === true,
       researchPrincipalPoolHash: reviewerPool.pool?.researchPrincipalPoolHash || null,
       reviewerTrustSetHash: reviewerPool.trustSetHash || null,
       reviewerSignatureVerificationPolicyHash:
         reviewerPool.signatureVerificationPolicyHash || null,
       verifySignedReviewerReceipt: reviewerPool.verifySignedReviewerReceipt,
+      verifySessionReviewerReceipt: reviewerPool.verifySessionReviewerReceipt,
     }) : null,
   });
 }

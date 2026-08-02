@@ -1,17 +1,17 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
   createResearchExecutionReleaseAttestor,
-  inspectResearchExecutionReleaseAttestorConfiguration,
-  inspectResearchExecutionReleaseAttestorConfigurationAsync,
 } from '../../paper-adapters/build-package/research-execution-release-attestor.mjs';
 import {
   composeAutomationReleaseAttestorTrust,
 } from '../../paper-composition/automation/automation-readiness-query.mjs';
+import {
+  composeProductionExternalAuthorityIntake,
+} from '../../paper-composition/automation/production-external-authority-intake-composition.mjs';
 import {
   composeAutonomousResearchCampaignAction,
 } from '../../paper-composition/automation/autonomous-research-campaign-composition.mjs';
@@ -22,256 +22,33 @@ import {
   inspectAutonomousResearchCampaignReleaseAttestor,
 } from '../../paper-composition/automation/autonomous-research-readiness-composition.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
-
-const NOW = '2026-07-15T12:00:00.000Z';
-const H = (label) => hashRecord('ResearchExecutionReleaseAttestorRotationTestHash', { label });
-
-function writeFile(candidate, value, mode = 0o600) {
-  fs.writeFileSync(candidate, value, { mode });
-  fs.chmodSync(candidate, mode);
-}
-
-function fixture(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-release-attestor-rotation-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const active = crypto.generateKeyPairSync('ed25519');
-  const retiring = crypto.generateKeyPairSync('ed25519');
-  const probe = crypto.generateKeyPairSync('ed25519');
-  const activePublicKeyPath = path.join(root, 'active-public.pem');
-  const retiringPublicKeyPath = path.join(root, 'retiring-public.pem');
-  const probePublicKeyPath = path.join(root, 'probe-public.pem');
-  writeFile(activePublicKeyPath, active.publicKey.export({ type: 'spki', format: 'pem' }));
-  writeFile(retiringPublicKeyPath, retiring.publicKey.export({ type: 'spki', format: 'pem' }));
-  writeFile(probePublicKeyPath, probe.publicKey.export({ type: 'spki', format: 'pem' }));
-  const signerExecutable = path.join(root, 'kms-signer');
-  const probeExecutable = path.join(root, 'kms-independent-probe');
-  const unexpectedSpawnPath = path.join(root, 'unexpected-direct-spawn.log');
-  const unexpectedSpawn = (scope) => `#!/usr/bin/env node\n`
-    + `require('node:fs').appendFileSync(${JSON.stringify(unexpectedSpawnPath)}, `
-    + `${JSON.stringify(`${scope}\n`)});\n`;
-  writeFile(signerExecutable, unexpectedSpawn('signer'), 0o700);
-  writeFile(probeExecutable, unexpectedSpawn('probe'), 0o700);
-  const signerCredentialRoot = path.join(root, 'signer-credentials');
-  const probeCredentialRoot = path.join(root, 'probe-credentials');
-  fs.mkdirSync(signerCredentialRoot, { mode: 0o700 });
-  fs.mkdirSync(probeCredentialRoot, { mode: 0o700 });
-  const configPath = path.join(root, 'release-attestor.json');
-  const probeSigner = Object.freeze({
-    keyId: 'kms-probe-key',
-    keyVersion: 'probe-v3',
-    subjectId: 'independent-kms-probe',
-    organization: 'Independent KMS Operations',
-    role: 'research_execution_release_signer_backend_probe_attestor',
-    algorithm: 'ed25519',
-  });
-  const configuration = {
-    version: 2,
-    kind: 'ResearchExecutionReleaseAttestorConfiguration',
-    status: 'active',
-    attestationLifetimeSeconds: 24 * 60 * 60,
-    trustSet: {
-      version: 1,
-      kind: 'ResearchExecutionReleaseAttestorTrustSet',
-      keys: [{
-        keyId: 'release-key-old',
-        keyVersion: 'v1',
-        subjectId: 'release-attestor',
-        organization: 'Research Release Office',
-        role: 'research_execution_release_attestor',
-        algorithm: 'ed25519',
-        status: 'retiring',
-        effectiveFrom: '2026-07-01T00:00:00.000Z',
-        expiresAt: '2026-08-01T00:00:00.000Z',
-        revokedAt: null,
-        publicKeyPath: retiringPublicKeyPath,
-      }, {
-        keyId: 'release-key-current',
-        keyVersion: 'v2',
-        subjectId: 'release-attestor',
-        organization: 'Research Release Office',
-        role: 'research_execution_release_attestor',
-        algorithm: 'ed25519',
-        status: 'active',
-        effectiveFrom: '2026-07-10T00:00:00.000Z',
-        expiresAt: '2026-09-01T00:00:00.000Z',
-        revokedAt: null,
-        publicKeyPath: activePublicKeyPath,
-      }],
-    },
-    backend: {
-      kind: 'external-kms-command',
-      backendId: 'research-kms-production',
-      backendVersion: 'hsm-cluster-v7',
-      algorithm: 'ed25519',
-      hardwareProtected: true,
-      privateKeyExportable: false,
-      externalSignerProcess: true,
-      activeKeyId: 'release-key-current',
-      activeKeyVersion: 'v2',
-      signerCommand: {
-        serviceId: 'release-kms-signer',
-        principalId: 'release-kms-principal',
-        protocol: 'hepta-release-signer-json-stdio-v1',
-        executable: signerExecutable,
-        credentialRoot: signerCredentialRoot,
-        args: [],
-        environmentAllowlist: [],
-        timeoutMs: 5000,
-      },
-      probeCommand: {
-        serviceId: 'independent-kms-probe',
-        principalId: 'independent-kms-probe-principal',
-        protocol: 'hepta-release-signer-probe-json-stdio-v1',
-        executable: probeExecutable,
-        credentialRoot: probeCredentialRoot,
-        args: [],
-        environmentAllowlist: [],
-        timeoutMs: 5000,
-      },
-      probeAttestor: {
-        ...probeSigner,
-        status: 'active',
-        effectiveFrom: '2026-07-01T00:00:00.000Z',
-        expiresAt: '2027-07-01T00:00:00.000Z',
-        revokedAt: null,
-        publicKeyPath: probePublicKeyPath,
-      },
-    },
-  };
-  const save = (value = configuration) => writeFile(configPath, `${JSON.stringify(value, null, 2)}\n`);
-  save();
-
-  function spawnSyncImpl(executable, _args, options) {
-    const request = JSON.parse(String(options.input));
-    if (executable === probeExecutable) {
-      const payload = {
-        version: 1,
-        kind: 'ResearchExecutionReleaseSignerBackendProbeAttestation',
-        status: 'research_execution_release_signer_backend_probe_verified',
-        backendDescriptorHash: request.backendDescriptorHash,
-        backendId: request.backendId,
-        backendVersion: request.backendVersion,
-        activeKeyId: request.activeKeyId,
-        activeKeyVersion: request.activeKeyVersion,
-        activePublicKeySpkiHash: request.activePublicKeySpkiHash,
-        algorithm: 'ed25519',
-        challengeHash: request.challengeHash,
-        backendReachable: true,
-        hardwareProtected: true,
-        privateKeyExportable: false,
-        externalSignerProcess: true,
-        probedAt: '2026-07-15T11:59:59.000Z',
-        expiresAt: '2026-07-15T12:04:59.000Z',
-        externalActionPerformed: true,
-        externalActionScope: 'single_read_only_release_signer_backend_challenge',
-        signer: probeSigner,
-      };
-      const signingPayloadHash = hashRecord(
-        'ResearchExecutionReleaseSignerBackendProbeAttestationSigningPayload',
-        payload,
-      );
-      const signature = crypto.sign(
-        null,
-        Buffer.from(signingPayloadHash, 'utf8'),
-        probe.privateKey,
-      ).toString('base64');
-      const signed = { ...payload, signature };
-      return {
-        status: 0,
-        signal: null,
-        stdout: JSON.stringify({
-          ...signed,
-          researchExecutionReleaseSignerBackendProbeAttestationHash: hashRecord(
-            'ResearchExecutionReleaseSignerBackendProbeAttestation',
-            signed,
-          ),
-        }),
-      };
-    }
-    assert.equal(executable, signerExecutable);
-    const signature = crypto.sign(
-      null,
-      Buffer.from(request.signingPayloadHash, 'utf8'),
-      active.privateKey,
-    ).toString('base64');
-    const response = {
-      version: 1,
-      kind: 'ResearchExecutionReleaseSignerResponse',
-      status: 'research_execution_release_digest_signed',
-      backendDescriptorHash: request.backendDescriptorHash,
-      backendId: request.backendId,
-      backendVersion: request.backendVersion,
-      keyId: request.keyId,
-      keyVersion: request.keyVersion,
-      algorithm: 'ed25519',
-      signingPayloadHash: request.signingPayloadHash,
-      requestNonceHash: request.requestNonceHash,
-      signature,
-    };
-    return {
-      status: 0,
-      signal: null,
-      stdout: JSON.stringify({
-        ...response,
-        researchExecutionReleaseSignerResponseHash:
-          hashRecord('ResearchExecutionReleaseSignerResponse', response),
-      }),
-    };
-  }
-  return {
-    root,
-    active,
-    retiring,
-    configPath,
-    configuration,
-    save,
-    spawnSyncImpl,
-    unexpectedSpawnPath,
-    activePublicKeyPath,
-    retiringPublicKeyPath,
-  };
-}
-
-function signer(keyId, keyVersion) {
-  return Object.freeze({
-    keyId,
-    keyVersion,
-    subjectId: 'release-attestor',
-    organization: 'Research Release Office',
-    role: 'research_execution_release_attestor',
-    algorithm: 'ed25519',
-  });
-}
-
-function manifest() {
-  return Object.freeze({
-    researchEvidenceCapsuleManifestHash: H('manifest'),
-    campaignId: 'campaign:rotation',
-    paperId: 'paper:rotation',
-    researchReportHash: H('report'),
-    experimentRegistryHash: H('registry'),
-    campaignResearchSourceSnapshotHash: H('source-snapshot'),
-    verifiedSourceMerkleHash: H('source-merkle'),
-    verifiedSourceWorkspaceManifestHash: H('source-workspace'),
-    researchVerifyNodeId: 'campaign:rotation:research-verify',
-    researchVerifyAttemptId: 'attempt:rotation',
-    researchVerifyLeaseGeneration: 1,
-    academicExperimentCount: 1,
-    experimentCount: 1,
-    createdAt: NOW,
-  });
-}
-
+import {
+  H,
+  NOW,
+  fixture,
+  inspectResearchExecutionReleaseAttestorConfiguration,
+  inspectResearchExecutionReleaseAttestorConfigurationAsync,
+  manifest,
+  signer,
+  writeFile,
+} from './support/research-execution-release-attestor-rotation-fixture.mjs';
 test('external KMS inspection proves a non-exportable backend and overlap verifies retiring keys', (t) => {
   const f = fixture(t);
   const inspection = inspectResearchExecutionReleaseAttestorConfiguration({
     configPath: f.configPath,
+    expectedConfigurationHash: f.configurationIdentityHash(),
     now: new Date(NOW),
     spawnSyncImpl: f.spawnSyncImpl,
     randomBytesImpl: () => Buffer.alloc(32, 7),
   });
   assert.equal(inspection.ready, true);
   assert.equal(inspection.productionReady, true);
+  assert.equal(inspection.fullProductionReady, true);
+  assert.equal(
+    inspection.fullProductionStatus,
+    'research_execution_release_attestor_full_production_ready',
+  );
+  assert.deepEqual(inspection.fullProductionBlockers, []);
   assert.equal(inspection.backendKind, 'external-kms-command');
   assert.equal(inspection.hardwareProtected, true);
   assert.equal(inspection.privateKeyExportable, false);
@@ -292,6 +69,7 @@ test('external KMS inspection proves a non-exportable backend and overlap verifi
 
   const attestor = createResearchExecutionReleaseAttestor({
     configPath: f.configPath,
+    expectedConfigurationHash: f.configurationIdentityHash(),
     clock: { now: () => new Date(NOW) },
     spawnSyncImpl: f.spawnSyncImpl,
     randomBytesImpl: () => Buffer.alloc(32, 9),
@@ -340,6 +118,17 @@ test('external KMS inspection proves a non-exportable backend and overlap verifi
     manifest: releaseManifest,
     manifestFileHash: H('manifest-file'),
   }), true);
+  const expiredWindowVerifier = createResearchExecutionReleaseAttestor({
+    configPath: f.configPath,
+    expectedConfigurationHash: f.configurationIdentityHash(),
+    clock: { now: () => new Date('2026-07-16T12:00:00.001Z') },
+    spawnSyncImpl: f.spawnSyncImpl,
+  });
+  assert.equal(expiredWindowVerifier.verifyAttestation({
+    attestation,
+    manifest: releaseManifest,
+    manifestFileHash: H('manifest-file'),
+  }), false);
 
   for (const [name, input] of [
     ['missing-attestation', {}],
@@ -388,6 +177,7 @@ test('external KMS inspection proves a non-exportable backend and overlap verifi
 
   const stringClockAttestor = createResearchExecutionReleaseAttestor({
     configPath: f.configPath,
+    expectedConfigurationHash: f.configurationIdentityHash(),
     clock: { now: () => NOW },
     spawnSyncImpl: f.spawnSyncImpl,
   });
@@ -401,7 +191,7 @@ test('external KMS inspection proves a non-exportable backend and overlap verifi
     manifest: releaseManifest,
     manifestFileHash: H('manifest-file'),
     signedAt: 'not-a-time',
-  }), /research_execution_release_attestor_key_not_valid_at_signing_time/);
+  }), /research_execution_release_attestor_signing_time_not_current/);
 
   const unavailable = createResearchExecutionReleaseAttestor({
     configPath: path.join(f.root, 'missing-release-attestor.json'),
@@ -424,14 +214,230 @@ test('external KMS inspection proves a non-exportable backend and overlap verifi
   }), /research_execution_release_attestor_config_not_private_regular_file/);
 });
 
+test('external authority intake accepts pinned KMS v3 material without invoking KMS', (t) => {
+  const f = fixture(t);
+  const inspection = composeProductionExternalAuthorityIntake({
+    authorConfigPath: null,
+    releaseAttestorConfigPath: f.configPath,
+    releaseAttestorExpectedConfigurationHash: f.configurationIdentityHash(),
+    environment: process.env,
+    now: new Date(NOW),
+  });
+  assert.equal(inspection.releaseAttestor.configured, true);
+  assert.equal(
+    inspection.releaseAttestor.configurationPinned,
+    true,
+    JSON.stringify(inspection.releaseAttestor),
+  );
+  assert.equal(inspection.releaseAttestor.backendKind, 'external-kms-command');
+  assert.equal(inspection.releaseAttestor.hardwareProtected, true);
+  assert.equal(inspection.releaseAttestor.privateKeyExportable, false);
+  assert.equal(inspection.releaseAttestor.kmsHardwareAuthorityReady, true);
+  assert.equal(inspection.releaseAttestor.kmsHardwareAuthorityIndependent, true);
+  assert.equal(inspection.releaseAttestor.readyForLiveVerification, true);
+  assert.equal(inspection.releaseAttestor.liveProbeRequired, true);
+  assert.equal(inspection.releaseAttestor.liveSignerChallengeRequired, true);
+  assert.equal(inspection.externalActionPerformed, false);
+  assert.equal(inspection.serviceStateChanged, false);
+  assert.equal(fs.existsSync(f.unexpectedSpawnPath), false);
+  assert.equal(inspection.readyForLiveVerification, false);
+});
+
+test('v3 KMS policy pin survives signed bundle file rotation', (t) => {
+  const f = fixture(t);
+  const stablePolicyPin = f.configurationIdentityHash();
+  const stableConfigurationFileHash = f.configurationFileHash();
+  const originalBundleHash = JSON.parse(fs.readFileSync(
+    f.configuration.hardwareAuthorityAttestation.bundlePath,
+    'utf8',
+  )).bundleHash;
+  const rotatedBundle = f.rotateHardwareAuthorityBundle({
+    attestedAt: '2026-07-15T11:59:30.000Z',
+    expiresAt: '2026-07-15T12:06:00.000Z',
+  });
+  assert.notEqual(rotatedBundle.bundleHash, originalBundleHash);
+  assert.equal(f.configurationFileHash(), stableConfigurationFileHash);
+  assert.equal(f.configurationIdentityHash(), stablePolicyPin);
+  const inspection = inspectResearchExecutionReleaseAttestorConfiguration({
+    configPath: f.configPath,
+    expectedConfigurationHash: stablePolicyPin,
+    now: new Date(NOW),
+    activeVerification: false,
+  });
+  assert.equal(inspection.configurationPinned, true);
+  assert.equal(
+    inspection.configurationIdentityProfile,
+    'stable-kms-authority-policy-and-rotating-bundle-v3',
+  );
+  assert.equal(inspection.kmsHardwareAuthorityAttestationReady, true);
+  assert.equal(inspection.externalActionPerformed, false);
+
+  const alternateBundlePath = path.join(f.root, 'kms-hardware-authority-alt.json');
+  writeFile(
+    alternateBundlePath,
+    fs.readFileSync(f.configuration.hardwareAuthorityAttestation.bundlePath),
+  );
+  const redirectedConfiguration = structuredClone(f.configuration);
+  redirectedConfiguration.hardwareAuthorityAttestation.bundlePath =
+    alternateBundlePath;
+  f.save(redirectedConfiguration);
+  const redirected = inspectResearchExecutionReleaseAttestorConfiguration({
+    configPath: f.configPath,
+    expectedConfigurationHash: stablePolicyPin,
+    now: new Date(NOW),
+    activeVerification: false,
+  });
+  assert.equal(redirected.configurationPinned, false);
+  assert.ok(redirected.blockers.includes(
+    'research_execution_release_attestor_config_pin_mismatch',
+  ));
+  assert.equal(redirected.externalActionPerformed, false);
+});
+
+test('manifest time cannot roll back an expired KMS hardware authority', (t) => {
+  const f = fixture(t);
+  let externalActions = 0;
+  const countedSpawn = (...args) => {
+    externalActions += 1;
+    return f.spawnSyncImpl(...args);
+  };
+  const currentAttestor = createResearchExecutionReleaseAttestor({
+    configPath: f.configPath,
+    expectedConfigurationHash: f.configurationIdentityHash(),
+    clock: { now: () => new Date(NOW) },
+    spawnSyncImpl: countedSpawn,
+  });
+  const staleManifest = {
+    ...manifest(),
+    createdAt: '2026-07-15T11:44:59.999Z',
+  };
+  assert.throws(() => currentAttestor.attestCapsuleManifest({
+    manifest: staleManifest,
+    manifestFileHash: H('stale-manifest-file'),
+    signedAt: staleManifest.createdAt,
+  }), /research_execution_release_attestor_signing_time_not_current/);
+  assert.equal(externalActions, 0);
+
+  const futureManifest = {
+    ...manifest(),
+    createdAt: '2026-07-15T12:00:00.001Z',
+  };
+  assert.throws(() => currentAttestor.attestCapsuleManifest({
+    manifest: futureManifest,
+    manifestFileHash: H('future-manifest-file'),
+    signedAt: futureManifest.createdAt,
+  }), /research_execution_release_attestor_signing_time_not_current/);
+  assert.equal(externalActions, 0);
+
+  const expiredAuthorityAttestor = createResearchExecutionReleaseAttestor({
+    configPath: f.configPath,
+    expectedConfigurationHash: f.configurationIdentityHash(),
+    clock: { now: () => new Date('2026-07-15T12:06:00.000Z') },
+    spawnSyncImpl: countedSpawn,
+  });
+  assert.throws(() => expiredAuthorityAttestor.attestCapsuleManifest({
+    manifest: manifest(),
+    manifestFileHash: H('expired-authority-manifest-file'),
+    signedAt: NOW,
+  }), /research_execution_release_attestor_kms_hardware_authority_attestation_required/);
+  assert.equal(externalActions, 0);
+
+  const shortLifetimeConfiguration = structuredClone(f.configuration);
+  shortLifetimeConfiguration.attestationLifetimeSeconds = 60;
+  f.save(shortLifetimeConfiguration);
+  const expiredBeforeSigningAttestor = createResearchExecutionReleaseAttestor({
+    configPath: f.configPath,
+    expectedConfigurationHash: f.configurationIdentityHash(),
+    clock: { now: () => new Date(NOW) },
+    spawnSyncImpl: countedSpawn,
+  });
+  const alreadyExpiredManifest = {
+    ...manifest(),
+    createdAt: '2026-07-15T11:58:00.000Z',
+  };
+  assert.throws(() => expiredBeforeSigningAttestor.attestCapsuleManifest({
+    manifest: alreadyExpiredManifest,
+    manifestFileHash: H('already-expired-manifest-file'),
+    signedAt: alreadyExpiredManifest.createdAt,
+  }), /research_execution_release_attestor_expiry_invalid/);
+  assert.equal(externalActions, 0);
+});
+
+test('KMS signing is deadline-bound and revalidated after the signer returns', (t) => {
+  const f = fixture(t);
+  f.rotateHardwareAuthorityBundle({
+    attestedAt: '2026-07-15T11:59:30.000Z',
+    expiresAt: '2026-07-15T12:00:02.000Z',
+  });
+  const ticks = [
+    new Date(NOW),
+    new Date(NOW),
+    new Date('2026-07-15T12:00:02.000Z'),
+  ];
+  let signerRequest = null;
+  let signerTimeoutMs = null;
+  const attestor = createResearchExecutionReleaseAttestor({
+    configPath: f.configPath,
+    expectedConfigurationHash: f.configurationIdentityHash(),
+    clock: { now: () => ticks.shift() },
+    spawnSyncImpl(executable, args, options) {
+      signerRequest = JSON.parse(String(options.input));
+      signerTimeoutMs = options.timeout;
+      return f.spawnSyncImpl(executable, args, options);
+    },
+  });
+  assert.throws(() => attestor.attestCapsuleManifest({
+    manifest: manifest(),
+    manifestFileHash: H('deadline-bound-manifest-file'),
+    signedAt: NOW,
+  }), /research_execution_release_attestor_signing_authorization_expired/);
+  assert.equal(signerRequest.version, 2);
+  assert.equal(signerRequest.protocol, 'hepta-release-signer-json-stdio-v2');
+  assert.equal(
+    signerRequest.authorizationExpiresAt,
+    '2026-07-15T12:00:02.000Z',
+  );
+  assert.ok(signerTimeoutMs <= 2_000);
+
+  const invalidEcho = createResearchExecutionReleaseAttestor({
+    configPath: f.configPath,
+    expectedConfigurationHash: f.configurationIdentityHash(),
+    clock: { now: () => new Date(NOW) },
+    spawnSyncImpl(executable, args, options) {
+      const result = f.spawnSyncImpl(executable, args, options);
+      const request = JSON.parse(String(options.input));
+      if (request.kind !== 'ResearchExecutionReleaseSignerRequest') return result;
+      const response = JSON.parse(result.stdout);
+      const { researchExecutionReleaseSignerResponseHash: _hash, ...payload } = response;
+      payload.authorizationExpiresAt = '2026-07-15T12:00:01.999Z';
+      return {
+        ...result,
+        stdout: JSON.stringify({
+          ...payload,
+          researchExecutionReleaseSignerResponseHash:
+            hashRecord('ResearchExecutionReleaseSignerResponse', payload),
+        }),
+      };
+    },
+  });
+  assert.throws(() => invalidEcho.attestCapsuleManifest({
+    manifest: manifest(),
+    manifestFileHash: H('wrong-deadline-echo-manifest-file'),
+    signedAt: NOW,
+  }), /research_execution_release_attestor_backend_signing_response_invalid/);
+});
+
 test('Golden release-attestor verification uses the bounded readiness side-effect ledger', (t) => {
   const f = fixture(t);
   let externalCalls = 0;
+  const environment = { ...process.env };
+  environment.HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG_HASH =
+    f.configurationIdentityHash(environment);
   const passive = inspectAutonomousResearchCampaignReleaseAttestor({
     runtimeRoot: f.root,
     configPath: f.configPath,
     observedAt: new Date(NOW),
-    environment: {},
+    environment,
     activeVerification: false,
     spawnSyncImpl() {
       externalCalls += 1;
@@ -445,8 +451,9 @@ test('Golden release-attestor verification uses the bounded readiness side-effec
     runtimeRoot: f.root,
     configPath: f.configPath,
     observedAt: new Date(NOW),
-    environment: {},
+    environment,
     activeVerification: true,
+    actionClock: { now: () => new Date(NOW) },
     spawnSyncImpl(...args) {
       externalCalls += 1;
       return f.spawnSyncImpl(...args);
@@ -455,7 +462,11 @@ test('Golden release-attestor verification uses the bounded readiness side-effec
   const sideEffects = active.sideEffectLedger.inspection({
     releaseAttestorInspection: active.inspection,
   });
-  assert.equal(active.inspection.productionReady, true);
+  assert.equal(
+    active.inspection.productionReady,
+    true,
+    JSON.stringify(active.inspection),
+  );
   assert.equal(externalCalls, 2);
   assert.equal(sideEffects.processActionCount, 2);
   assert.equal(sideEffects.releaseAttestorProcessActionCount, 2);
@@ -467,10 +478,14 @@ test('Golden release-attestor verification uses the bounded readiness side-effec
 test('enqueue admission trust inspection reads KMS configuration without probe or signer challenge', (t) => {
   const f = fixture(t);
   let externalCalls = 0;
+  const environment = {
+    ...process.env,
+    HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG: f.configPath,
+  };
+  environment.HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG_HASH =
+    f.configurationIdentityHash(environment);
   const trust = composeAutomationReleaseAttestorTrust({
-    environment: {
-      HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG: f.configPath,
-    },
+    environment,
     now: new Date(NOW),
     activeVerification: false,
     spawnSyncImpl(...args) {
@@ -479,7 +494,7 @@ test('enqueue admission trust inspection reads KMS configuration without probe o
     },
   });
   assert.equal(externalCalls, 0);
-  assert.equal(trust.inspection.ready, true);
+  assert.equal(trust.inspection.ready, true, JSON.stringify(trust.inspection));
   assert.equal(trust.inspection.productionReady, false);
   assert.equal(trust.inspection.backendProductionEligible, true);
   assert.equal(trust.inspection.backendProbeExternalActionAttempted, false);
@@ -511,11 +526,38 @@ test('enqueue admission trust inspection reads KMS configuration without probe o
     /production_enqueue_readiness_external_action_forbidden/);
 });
 
+test('live readiness attestor verification uses action time instead of a stale query snapshot', (t) => {
+  const f = fixture(t);
+  const environment = {
+    ...process.env,
+    HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG: f.configPath,
+  };
+  environment.HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG_HASH =
+    f.configurationIdentityHash(environment);
+  const trust = composeAutomationReleaseAttestorTrust({
+    environment,
+    now: new Date('2026-07-15T11:30:00.000Z'),
+    activeVerificationNow: new Date(NOW),
+    activeVerification: true,
+    activeVerificationClock: { now: () => new Date(NOW) },
+    spawnSyncImpl: f.spawnSyncImpl,
+  });
+  assert.equal(trust.inspection.inspectedAt, NOW);
+  assert.equal(
+    trust.inspection.independentBackendProbeVerified,
+    true,
+    JSON.stringify(trust.inspection),
+  );
+  assert.equal(trust.inspection.activeSignerChallengeVerified, true);
+  assert.equal(trust.inspection.productionReady, true);
+});
+
 test('production mutation cannot reach live KMS before persisted-plan reservation', async (t) => {
   const f = fixture(t);
   const root = path.join(f.root, 'paper');
   const runtimeRoot = path.join(f.root, 'runtime');
   const environment = {
+    ...process.env,
     HEPTA_RESEARCH_AUTHOR_PROVIDER: 'codex',
     HEPTA_RESEARCH_AUTHOR_MODEL: 'author-model',
     HEPTA_FORMAL_REVIEW_PROVIDER: 'codex',
@@ -524,6 +566,8 @@ test('production mutation cannot reach live KMS before persisted-plan reservatio
     HEPTA_FORMAL_REVIEWER_MAXIMUM_COST_PER_CALL_USD: '1',
     HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG: f.configPath,
   };
+  environment.HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG_HASH =
+    f.configurationIdentityHash(environment);
   let readinessInspections = 0;
   let liveSpawns = 0;
   const readiness = (inspection) => ({
@@ -590,6 +634,7 @@ test('external KMS inspection synchronously fences the probe-to-signer boundary'
   const stages = [];
   const inspection = inspectResearchExecutionReleaseAttestorConfiguration({
     configPath: f.configPath,
+    expectedConfigurationHash: f.configurationIdentityHash(),
     now: new Date(NOW),
     spawnSyncImpl: f.spawnSyncImpl,
     randomBytesImpl: () => Buffer.alloc(32, 17),
@@ -616,12 +661,93 @@ test('external KMS inspection synchronously fences the probe-to-signer boundary'
   assert.equal(externalCalls, 0);
 });
 
+test('live KMS inspection cannot cross its authorization deadline or an async bundle rotation',
+  async (t) => {
+    const synchronous = fixture(t);
+    synchronous.rotateHardwareAuthorityBundle({
+      attestedAt: '2026-07-15T11:59:30.000Z',
+      expiresAt: '2026-07-15T12:00:02.000Z',
+    });
+    const ticks = [
+      new Date(NOW),
+      new Date('2026-07-15T12:00:00.500Z'),
+      new Date('2026-07-15T12:00:01.000Z'),
+      new Date('2026-07-15T12:00:02.000Z'),
+    ];
+    let synchronousCalls = 0;
+    const expiredAfterChallenge =
+      inspectResearchExecutionReleaseAttestorConfiguration({
+        configPath: synchronous.configPath,
+        expectedConfigurationHash: synchronous.configurationIdentityHash(),
+        now: new Date(NOW),
+        clock: {
+          now: () => ticks.shift()
+            || new Date('2026-07-15T12:00:02.000Z'),
+        },
+        spawnSyncImpl(...args) {
+          synchronousCalls += 1;
+          return synchronous.spawnSyncImpl(...args);
+        },
+      });
+    assert.equal(synchronousCalls, 2);
+    assert.equal(expiredAfterChallenge.backendProbeExternalActionAttempted, true);
+    assert.equal(
+      expiredAfterChallenge.activeSignerChallengeExternalActionAttempted,
+      true,
+    );
+    assert.equal(expiredAfterChallenge.activeSignerChallengeVerified, false);
+    assert.equal(expiredAfterChallenge.productionReady, false);
+    assert.equal(expiredAfterChallenge.fullProductionReady, false);
+    assert.equal(
+      expiredAfterChallenge.liveVerificationCompletedAt,
+      '2026-07-15T12:00:02.000Z',
+    );
+    assert.ok(expiredAfterChallenge.blockers.includes(
+      'research_execution_release_attestor_kms_hardware_authority_attestation_required',
+    ));
+
+    const asynchronous = fixture(t);
+    const asynchronousPin = asynchronous.configurationIdentityHash();
+    let asynchronousCalls = 0;
+    const rotatedBeforeSigner =
+      await inspectResearchExecutionReleaseAttestorConfigurationAsync({
+        configPath: asynchronous.configPath,
+        expectedConfigurationHash: asynchronousPin,
+        now: new Date(NOW),
+        clock: { now: () => new Date(NOW) },
+        spawnSyncImpl(...args) {
+          asynchronousCalls += 1;
+          return asynchronous.spawnSyncImpl(...args);
+        },
+        async onProgress({ stage }) {
+          if (stage === 'release_attestor_before_active_signer_challenge') {
+            asynchronous.rotateHardwareAuthorityBundle({
+              attestedAt: '2026-07-15T11:49:00.000Z',
+              expiresAt: '2026-07-15T11:59:00.000Z',
+            });
+          }
+        },
+      });
+    assert.equal(asynchronousCalls, 1);
+    assert.equal(rotatedBeforeSigner.backendProbeExternalActionAttempted, true);
+    assert.equal(
+      rotatedBeforeSigner.activeSignerChallengeExternalActionAttempted,
+      false,
+    );
+    assert.equal(rotatedBeforeSigner.productionReady, false);
+    assert.equal(rotatedBeforeSigner.fullProductionReady, false);
+    assert.ok(rotatedBeforeSigner.blockers.includes(
+      'research_execution_release_attestor_kms_hardware_authority_attestation_required',
+    ));
+  });
+
 test('async release-attestor inspection mirrors live trust and fails closed per boundary',
   async (t) => {
     const f = fixture(t);
     const stages = [];
     const live = await inspectResearchExecutionReleaseAttestorConfigurationAsync({
       configPath: f.configPath,
+      expectedConfigurationHash: f.configurationIdentityHash(),
       now: new Date(NOW),
       spawnSyncImpl: f.spawnSyncImpl,
       randomBytesImpl: () => Buffer.alloc(32, 19),
@@ -679,6 +805,7 @@ test('async release-attestor inspection mirrors live trust and fails closed per 
     ]) {
       const inspection = await inspectResearchExecutionReleaseAttestorConfigurationAsync({
         configPath: f.configPath,
+        expectedConfigurationHash: f.configurationIdentityHash(),
         now: new Date(NOW),
         spawnSyncImpl: f.spawnSyncImpl,
         randomBytesImpl: () => Buffer.alloc(32, 23),
@@ -695,228 +822,3 @@ test('async release-attestor inspection mirrors live trust and fails closed per 
       }
     }
   });
-
-test('revocation, duplicate SPKI encodings, wrong algorithm, and private-key disclosure fail closed', (t) => {
-  const f = fixture(t);
-  const revoked = structuredClone(f.configuration);
-  revoked.trustSet.keys[0].revokedAt = '2026-07-15T11:30:00.000Z';
-  f.save(revoked);
-  const revokedAttestor = createResearchExecutionReleaseAttestor({
-    configPath: f.configPath,
-    clock: { now: () => new Date(NOW) },
-    spawnSyncImpl: f.spawnSyncImpl,
-  });
-  const payloadHash = H('revoked-payload');
-  const signature = crypto.sign(
-    null,
-    Buffer.from(payloadHash, 'utf8'),
-    f.retiring.privateKey,
-  ).toString('base64');
-  assert.equal(revokedAttestor.verifyDetachedSignature({
-    signingPayloadHash: payloadHash,
-    signature,
-    signer: signer('release-key-old', 'v1'),
-    signedAt: '2026-07-15T11:00:00.000Z',
-  }), false);
-
-  const duplicatePemPath = path.join(f.root, 'retiring-public-alternate.pem');
-  const alternatePem = String(
-    f.retiring.publicKey.export({ type: 'spki', format: 'pem' }),
-  ).replaceAll('\n', '\r\n');
-  writeFile(duplicatePemPath, alternatePem);
-  const duplicate = structuredClone(f.configuration);
-  duplicate.trustSet.keys.push({
-    ...duplicate.trustSet.keys[0],
-    keyId: 'release-key-alias',
-    keyVersion: 'alias-v9',
-    publicKeyPath: duplicatePemPath,
-  });
-  f.save(duplicate);
-  const duplicateInspection = inspectResearchExecutionReleaseAttestorConfiguration({
-    configPath: f.configPath,
-    now: new Date(NOW),
-    spawnSyncImpl: f.spawnSyncImpl,
-  });
-  assert.equal(duplicateInspection.ready, false);
-  assert.ok(duplicateInspection.blockers.includes(
-    'research_execution_release_attestor_trust_set_key_identity_collision',
-  ));
-
-  const wrongAlgorithm = structuredClone(f.configuration);
-  wrongAlgorithm.backend.algorithm = 'rsa-sha256';
-  f.save(wrongAlgorithm);
-  const algorithmInspection = inspectResearchExecutionReleaseAttestorConfiguration({
-    configPath: f.configPath,
-    now: new Date(NOW),
-    spawnSyncImpl: f.spawnSyncImpl,
-  });
-  assert.equal(algorithmInspection.ready, false);
-  assert.ok(algorithmInspection.blockers.includes(
-    'research_execution_release_attestor_backend_descriptor_invalid',
-  ));
-
-  const disclosure = structuredClone(f.configuration);
-  disclosure.backend.privateKeyPath = '/forbidden/main-process-private-key.pem';
-  f.save(disclosure);
-  const disclosureInspection = inspectResearchExecutionReleaseAttestorConfiguration({
-    configPath: f.configPath,
-    now: new Date(NOW),
-    spawnSyncImpl: f.spawnSyncImpl,
-  });
-  assert.equal(disclosureInspection.ready, false);
-  assert.ok(disclosureInspection.blockers.includes(
-    'research_execution_release_attestor_private_key_disclosure_forbidden',
-  ));
-  assert.equal(disclosureInspection.privateKeyDisclosed, false);
-  assert.equal(JSON.stringify(disclosureInspection).includes('main-process-private-key.pem'), false);
-});
-
-test('file signer is explicit local degradation and forged independent probes never unlock production', (t) => {
-  const f = fixture(t);
-  const localPrivateKeyPath = path.join(f.root, 'local-private.pem');
-  const localConfigPath = path.join(f.root, 'local-config.json');
-  writeFile(localPrivateKeyPath, f.active.privateKey.export({ type: 'pkcs8', format: 'pem' }));
-  writeFile(localConfigPath, JSON.stringify({
-    version: 1,
-    kind: 'ResearchExecutionReleaseAttestorConfiguration',
-    keyId: 'local-release-key',
-    keyVersion: 'local-v1',
-    subjectId: 'local-release-attestor',
-    organization: 'Local Test Release Office',
-    algorithm: 'ed25519',
-    role: 'research_execution_release_attestor',
-    status: 'active',
-    revoked: false,
-    effectiveFrom: '2026-07-01T00:00:00.000Z',
-    expiresAt: '2027-07-01T00:00:00.000Z',
-    attestationLifetimeSeconds: 86400,
-    privateKeyPath: localPrivateKeyPath,
-  }));
-  const localInspection = inspectResearchExecutionReleaseAttestorConfiguration({
-    configPath: localConfigPath,
-    now: new Date(NOW),
-  });
-  assert.equal(localInspection.ready, true);
-  assert.equal(localInspection.productionReady, false);
-  assert.equal(localInspection.backendKind, 'local-file');
-  assert.equal(localInspection.privateKeyLoadedIntoMainProcess, true);
-  assert.equal(localInspection.externalActionPerformed, false);
-  assert.ok(localInspection.productionBlockers.includes(
-    'research_execution_release_attestor_production_backend_required',
-  ));
-  assert.equal(JSON.stringify(localInspection).includes(localPrivateKeyPath), false);
-
-  const forgedProbe = (executable, args, options) => {
-    const result = f.spawnSyncImpl(executable, args, options);
-    if (executable !== f.configuration.backend.probeCommand.executable) return result;
-    const response = JSON.parse(result.stdout);
-    response.backendVersion = 'attacker-downgrade';
-    return { ...result, stdout: JSON.stringify(response) };
-  };
-  const forgedInspection = inspectResearchExecutionReleaseAttestorConfiguration({
-    configPath: f.configPath,
-    now: new Date(NOW),
-    spawnSyncImpl: forgedProbe,
-  });
-  assert.equal(forgedInspection.ready, false);
-  assert.equal(forgedInspection.productionReady, false);
-  assert.ok(forgedInspection.blockers.includes(
-    'research_execution_release_attestor_backend_probe_not_verified',
-  ));
-  assert.equal(forgedInspection.activeSignerChallengeVerified, false);
-  assert.equal(forgedInspection.externalActionScope, 'independent_release_backend_probe');
-
-  const wrongVersionSigner = (executable, args, options) => {
-    const result = f.spawnSyncImpl(executable, args, options);
-    if (executable !== f.configuration.backend.signerCommand.executable) return result;
-    const response = JSON.parse(result.stdout);
-    const { researchExecutionReleaseSignerResponseHash: _hash, ...payload } = response;
-    payload.keyVersion = 'retired-version-downgrade';
-    return {
-      ...result,
-      stdout: JSON.stringify({
-        ...payload,
-        researchExecutionReleaseSignerResponseHash:
-          hashRecord('ResearchExecutionReleaseSignerResponse', payload),
-      }),
-    };
-  };
-  const downgradedAttestor = createResearchExecutionReleaseAttestor({
-    configPath: f.configPath,
-    clock: { now: () => new Date(NOW) },
-    spawnSyncImpl: wrongVersionSigner,
-  });
-  assert.throws(() => downgradedAttestor.attestCapsuleManifest({
-    manifest: manifest(),
-    manifestFileHash: H('manifest-file'),
-    signedAt: NOW,
-  }), /research_execution_release_attestor_backend_signing_response_invalid/);
-});
-
-test('an independent probe cannot hide an unreachable or wrong active KMS signing key', (t) => {
-  const f = fixture(t);
-  const unreachableSigner = (executable, args, options) => {
-    if (executable === f.configuration.backend.signerCommand.executable) {
-      return { status: 1, signal: null, stdout: '', stderr: 'active key unavailable' };
-    }
-    return f.spawnSyncImpl(executable, args, options);
-  };
-  const unreachable = inspectResearchExecutionReleaseAttestorConfiguration({
-    configPath: f.configPath,
-    now: new Date(NOW),
-    spawnSyncImpl: unreachableSigner,
-    randomBytesImpl: () => Buffer.alloc(32, 11),
-  });
-  assert.equal(unreachable.independentBackendProbeVerified, true);
-  assert.equal(unreachable.activeSignerChallengeVerified, false);
-  assert.equal(unreachable.ready, false);
-  assert.equal(unreachable.productionReady, false);
-  assert.ok(unreachable.blockers.includes(
-    'research_execution_release_attestor_active_signer_challenge_not_verified',
-  ));
-  assert.ok(unreachable.productionBlockers.includes(
-    'research_execution_release_attestor_active_signer_challenge_required',
-  ));
-
-  const wrongKey = crypto.generateKeyPairSync('ed25519');
-  const wrongKeySigner = (executable, args, options) => {
-    const result = f.spawnSyncImpl(executable, args, options);
-    if (executable !== f.configuration.backend.signerCommand.executable) return result;
-    const request = JSON.parse(String(options.input));
-    const response = JSON.parse(result.stdout);
-    const { researchExecutionReleaseSignerResponseHash: _hash, ...payload } = response;
-    payload.signature = crypto.sign(
-      null,
-      Buffer.from(request.signingPayloadHash, 'utf8'),
-      wrongKey.privateKey,
-    ).toString('base64');
-    return {
-      ...result,
-      stdout: JSON.stringify({
-        ...payload,
-        researchExecutionReleaseSignerResponseHash:
-          hashRecord('ResearchExecutionReleaseSignerResponse', payload),
-      }),
-    };
-  };
-  const mismatched = inspectResearchExecutionReleaseAttestorConfiguration({
-    configPath: f.configPath,
-    now: new Date(NOW),
-    spawnSyncImpl: wrongKeySigner,
-    randomBytesImpl: () => Buffer.alloc(32, 12),
-  });
-  assert.equal(mismatched.independentBackendProbeVerified, true);
-  assert.equal(mismatched.activeSignerChallengeVerified, false);
-  assert.equal(mismatched.productionReady, false);
-
-  const mismatchedAttestor = createResearchExecutionReleaseAttestor({
-    configPath: f.configPath,
-    clock: { now: () => new Date(NOW) },
-    spawnSyncImpl: wrongKeySigner,
-  });
-  assert.throws(() => mismatchedAttestor.attestCapsuleManifest({
-    manifest: manifest(),
-    manifestFileHash: H('manifest-file'),
-    signedAt: NOW,
-  }), /research_execution_release_attestor_backend_signature_invalid/);
-});

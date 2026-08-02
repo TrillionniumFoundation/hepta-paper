@@ -10,15 +10,9 @@ import {
 } from './campaign-mode-graph.mjs';
 import { PAPER_BATCH_MODES } from '../workflow/mode-registry.mjs';
 import { normalizePaperQualityProfiles } from '../quality/paper-quality-profile-set.mjs';
-import {
-  verifyAutonomousEmpiricalExecutionProfileSelection,
-} from './autonomous-empirical-execution-profile-policy.mjs';
-import {
-  verifyAutonomousResearchMachineIntake,
-} from './autonomous-research-machine-intake-contract.mjs';
-import {
-  verifyAutonomousResearchMachineIntakeAdmission,
-} from './autonomous-research-machine-intake-admission-contract.mjs';
+import { verifyAutonomousEmpiricalExecutionProfileSelection } from './autonomous-empirical-execution-profile-policy.mjs';
+import { verifyAutonomousResearchMachineIntake } from './autonomous-research-machine-intake-contract.mjs';
+import { verifyAutonomousResearchMachineIntakeAdmission } from './autonomous-research-machine-intake-admission-contract.mjs';
 import {
   verifyAutonomousResearchAgendaProductionReceipt,
 } from './autonomous-research-agenda-production-contract.mjs';
@@ -29,7 +23,7 @@ import { verifyVenueRequirementIr } from './venue-requirement-ir.mjs';
 import {
   verifyResearchAgendaClaimBindingReceipt,
 } from './research-agenda-claim-binding-contract.mjs';
-
+import { assertAutonomousResearchDirectLocalRunBudgetWaiverBinding } from './autonomous-research-launch-mode-policy.mjs';
 const FULL_CAMPAIGN_MODE = 'full-campaign';
 const ACADEMIC_EMPIRICAL_ASSURANCE_SCOPE = 'operator-authorized-hidden-evaluation-v1';
 const UNSUPPORTED_BATCH_MODES = new Set([
@@ -37,12 +31,10 @@ const UNSUPPORTED_BATCH_MODES = new Set([
   PAPER_BATCH_MODES.VENUE_RESOLVE,
   PAPER_BATCH_MODES.SOURCE_ADAPT,
 ]);
-
 function normalizeOptional(value) {
   const text = String(value ?? '').trim();
   return text || null;
 }
-
 function normalizeVenueTarget(value) {
   const venueTarget = normalizeOptional(value);
   if (!venueTarget) return null;
@@ -244,6 +236,8 @@ export function buildPaperCampaignPlan({
   autonomousResearchPreparation = null,
   autonomousResearchMachineIntake = null,
   autonomousResearchMachineIntakeAdmission = null,
+  localOnly = false,
+  directLocalRunBudgetWaiver = null,
 } = {}) {
   if (!paperId || !sourceWorkspace) throw new Error('paperId and sourceWorkspace are required');
   const requestedMode = normalizeOptional(mode) || FULL_CAMPAIGN_MODE;
@@ -412,10 +406,33 @@ export function buildPaperCampaignPlan({
   if (!nodes.length) throw new Error(`campaign_mode_plan_empty:${requestedMode}`);
   const defaultMaxAgentCalls = Math.max(30, plannedAgentCallUpperBound(nodes));
   const plannedCellJobs = plannedBenchmarkCellJobUpperBounds(nodes, benchmarkSelector);
+  const campaignBudgets = Object.freeze({
+    maxWallTimeMs: Number(budgets.maxWallTimeMs ?? 6 * 60 * 60 * 1000),
+    maxAgentCalls: Number(budgets.maxAgentCalls ?? defaultMaxAgentCalls),
+    maxCpuJobs: Number(budgets.maxCpuJobs ?? Math.max(32, plannedCellJobs.cpu)),
+    maxGpuJobs: Number(budgets.maxGpuJobs ?? Math.max(8, plannedCellJobs.gpu)),
+    maxTokenCount: Number(budgets.maxTokenCount ?? 500000),
+    maxCostUsd: Number(budgets.maxCostUsd ?? 100),
+    maxMemoryMiB: Number(budgets.maxMemoryMiB ?? 8192),
+  });
+  if (localOnly === true || directLocalRunBudgetWaiver || autonomousResearchPreparation) {
+    assertAutonomousResearchDirectLocalRunBudgetWaiverBinding(
+      {
+        launchMode: explicitAutonomousPreparation?.launchMode || null,
+        localOnly,
+        budgets: campaignBudgets,
+        waiver: directLocalRunBudgetWaiver,
+        campaignId: id,
+        paperId,
+        preparation: explicitAutonomousPreparation,
+      },
+    );
+  }
   const payload = {
     version: 4,
     kind: 'PaperCampaignPlan',
     campaignId: id,
+    terminalSiblingSettlementPolicyVersion: 1,
     parentCampaignId: parentCampaignId || inferredRecovery,
     supersedesCampaignId: supersedesCampaignId || inferredRecovery,
     recoveryOfCampaignId: recoveryOfCampaignId || inferredRecovery,
@@ -453,6 +470,8 @@ export function buildPaperCampaignPlan({
           .autonomousResearchMachineIntakeAdmissionHash,
       executionAdmission,
     } : {}),
+    ...(localOnly === true ? { localOnly: true } : {}),
+    ...(directLocalRunBudgetWaiver ? { directLocalRunBudgetWaiver } : {}),
     researchVerificationRequired,
     convergenceThresholds: { minimumRoundIndex: Math.max(1, Math.min(rounds, Number(minimumRevisionRounds || 1))) },
     venueTarget: executionIntent.venueTarget,
@@ -470,15 +489,7 @@ export function buildPaperCampaignPlan({
       relativeTolerance: Math.max(0, Number(metricSchema.relativeTolerance ?? 1e-6)),
       metrics: Array.isArray(metricSchema.metrics) ? metricSchema.metrics.map((item) => ({ path: String(item.path) })) : [],
     },
-    budgets: {
-      maxWallTimeMs: Number(budgets.maxWallTimeMs ?? 6 * 60 * 60 * 1000),
-      maxAgentCalls: Number(budgets.maxAgentCalls ?? defaultMaxAgentCalls),
-      maxCpuJobs: Number(budgets.maxCpuJobs ?? Math.max(32, plannedCellJobs.cpu)),
-      maxGpuJobs: Number(budgets.maxGpuJobs ?? Math.max(8, plannedCellJobs.gpu)),
-      maxTokenCount: Number(budgets.maxTokenCount ?? 500000),
-      maxCostUsd: Number(budgets.maxCostUsd ?? 100),
-      maxMemoryMiB: Number(budgets.maxMemoryMiB ?? 8192),
-    },
+    budgets: campaignBudgets,
     ...(commandBinding ? { commandBinding: Object.freeze({ ...commandBinding }) } : {}),
     nodes,
     externalSubmissionEnabled: false,

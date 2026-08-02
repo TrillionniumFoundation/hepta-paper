@@ -8,13 +8,19 @@ import { createCodexAgentExecutor } from '../../paper-adapters/automation/codex-
 import { probeCodexModelAvailability } from '../../paper-adapters/automation/codex-runtime-preflight.mjs';
 
 function fixture(t, { loggedIn = true, privateHome = true, privateConfig = true,
-  canaryMode = 'solve', rotateAuthDuringExec = false } = {}) {
+  canaryMode = 'solve', rotateAuthDuringExec = false, configModel = null,
+  rejectModelOverride = false, touchHomeDuringExec = false,
+  failVersionOnce = false } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-research-author-preflight-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const codexHome = path.join(root, 'codex-home');
   fs.mkdirSync(codexHome, { mode: privateHome ? 0o700 : 0o775 });
   fs.chmodSync(codexHome, privateHome ? 0o700 : 0o775);
-  fs.writeFileSync(path.join(codexHome, 'config.toml'), 'model_reasoning_effort = "high"\n', { mode: privateConfig ? 0o600 : 0o644 });
+  fs.writeFileSync(path.join(codexHome, 'config.toml'), [
+    ...(configModel ? [`model = ${JSON.stringify(configModel)}`] : []),
+    'model_reasoning_effort = "high"',
+    '',
+  ].join('\n'), { mode: privateConfig ? 0o600 : 0o644 });
   fs.chmodSync(path.join(codexHome, 'config.toml'), privateConfig ? 0o600 : 0o644);
   if (rotateAuthDuringExec) {
     fs.writeFileSync(path.join(codexHome, 'auth.json'), '{"fixture":"before"}\n', {
@@ -27,15 +33,58 @@ function fixture(t, { loggedIn = true, privateHome = true, privateConfig = true,
     "const fs = require('node:fs');",
     "const path = require('node:path');",
     "const args = process.argv.slice(2);",
+    `if (args[0] === '--version' && ${JSON.stringify(failVersionOnce)}) { const marker=path.join(process.env.CODEX_HOME, '.version-once'); if (!fs.existsSync(marker)) { fs.writeFileSync(marker, '1'); process.exit(75); } }`,
     "if (args[0] === '--version') { console.log('codex-cli 99.1.0'); process.exit(0); }",
     "if (args[0] === 'exec' && args[1] === '--help') { console.log('Usage: codex exec --model MODEL'); process.exit(0); }",
-    "if (args[0] === 'exec') { let input=''; process.stdin.on('data', (chunk) => { input += chunk; }); process.stdin.on('end', () => { if (input.includes('HEPTA_CODEX_MODEL_CANARY_CHALLENGE')) { if ('" + canaryMode + "' === 'echo') console.log(input); else { const match=input.match(/Add decimal integers (\\d+) and (\\d+)/); console.log('HEPTA_CODEX_CANARY_RESPONSE:' + (Number(match[1]) + Number(match[2]))); } } else { if (" + JSON.stringify(rotateAuthDuringExec) + ") fs.writeFileSync(path.join(process.env.CODEX_HOME, 'auth.json'), '{\"fixture\":\"after0\"}\\n', {mode:0o600}); console.log(JSON.stringify({status:'completed',summary:'ok',checksRun:[],blockers:[]})); } }); return; }",
+    "if (args[0] === 'exec' && " + JSON.stringify(rejectModelOverride) + " && args.includes('--model')) process.exit(3);",
+    "if (args[0] === 'exec') { let input=''; process.stdin.on('data', (chunk) => { input += chunk; }); process.stdin.on('end', () => { if (input.includes('HEPTA_CODEX_MODEL_CANARY_CHALLENGE')) { if ('" + canaryMode + "' === 'echo') console.log(input); else { const match=input.match(/Add decimal integers (\\d+) and (\\d+)/); console.log('HEPTA_CODEX_CANARY_RESPONSE:' + (Number(match[1]) + Number(match[2]))); } } else { if (" + JSON.stringify(touchHomeDuringExec) + ") fs.writeFileSync(path.join(process.env.CODEX_HOME, 'runtime-cache.json'), '{}\\n', {mode:0o600}); if (" + JSON.stringify(rotateAuthDuringExec) + ") fs.writeFileSync(path.join(process.env.CODEX_HOME, 'auth.json'), '{\"fixture\":\"after0\"}\\n', {mode:0o600}); console.log(JSON.stringify({status:'completed',summary:'ok',checksRun:[],blockers:[]})); } }); return; }",
     `if (args[0] === 'login' && args[1] === 'status') { console.log('${loggedIn ? 'Logged in' : 'Not logged in'}'); process.exit(${loggedIn ? 0 : 1}); }`,
     'process.exit(2);',
   ].join('\n'), { mode: 0o700 });
   fs.chmodSync(binary, 0o700);
   return { root, codexHome, binary };
 }
+
+test('read-only Codex preflight retries one transient version probe failure', (t) => {
+  const { codexHome, binary } = fixture(t, { failVersionOnce: true });
+  const result = preflightCodexResearchAuthor({
+    codexBinary: binary,
+    codexHome,
+    model: 'gpt-research-fixture',
+  });
+  assert.equal(result.capabilityReceipt.status, 'codex_research_author_capability_ready');
+  assert.equal(fs.readFileSync(path.join(codexHome, '.version-once'), 'utf8'), '1');
+});
+
+test('research agents inherit the main CODEX_HOME model without a command override', async (t) => {
+  const { codexHome, binary, root } = fixture(t, {
+    configModel: 'gpt-main-agent-fixture',
+    rejectModelOverride: true,
+  });
+  const preflight = preflightCodexResearchAuthor({ codexBinary: binary, codexHome });
+  assert.equal(preflight.capabilityReceipt.model, 'gpt-main-agent-fixture');
+  assert.equal(preflight.capabilityReceipt.modelSelectionSource, 'codex_home_config');
+  const executor = createCodexAgentExecutor({
+    codexBinary: preflight.codexBinary,
+    codexHome: preflight.codexHome,
+    model: null,
+    principalId: preflight.effectivePrincipalId,
+    researchAuthorCapabilityReceipt: preflight.capabilityReceipt,
+  });
+  const execution = await executor.execute({
+    role: 'writer',
+    workspacePath: root,
+    instructions: 'Return the structured result without writing files.',
+    context: {},
+    sandbox: 'workspace-write',
+  });
+  assert.equal(execution.status, 'agent_execution_completed');
+  assert.equal(execution.model, 'gpt-main-agent-fixture');
+  assert.equal(execution.modelSelectionSource, 'codex_home_config');
+  const canary = probeCodexModelAvailability({ codexBinary: binary, codexHome });
+  assert.equal(canary.model, 'gpt-main-agent-fixture');
+  assert.equal(canary.modelSelectionSource, 'codex_home_config');
+});
 
 test('research author preflight binds a private authenticated Codex runtime without exposing its home', (t) => {
   const { codexHome, binary } = fixture(t);
@@ -160,6 +209,30 @@ test('preflighted research author rejects credential rotation during the Codex c
     ), true);
     return true;
   });
+});
+
+test('preflighted research author permits non-credential Codex home cache activity', async (t) => {
+  const { codexHome, binary, root } = fixture(t, { touchHomeDuringExec: true });
+  const preflight = preflightCodexResearchAuthor({
+    codexBinary: binary,
+    codexHome,
+    model: 'fixture',
+  });
+  const executor = createCodexAgentExecutor({
+    codexBinary: binary,
+    codexHome,
+    model: 'fixture',
+    principalId: preflight.effectivePrincipalId,
+    researchAuthorCapabilityReceipt: preflight.capabilityReceipt,
+  });
+  const receipt = await executor.execute({
+    role: 'writer',
+    workspacePath: root,
+    instructions: 'Return success after writing a non-credential cache entry.',
+    sandbox: 'workspace-write',
+  });
+  assert.equal(receipt.status, 'agent_execution_completed');
+  assert.deepEqual(receipt.blockers, []);
 });
 
 test('research author executor rejects a forged capability receipt even after outer fields are recomputed', (t) => {

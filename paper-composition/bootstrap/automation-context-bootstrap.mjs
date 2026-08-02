@@ -47,6 +47,7 @@ export function bootstrapAutomationContext({
   autonomousSubmissionDispatchAuthority = null,
   autonomousSubmissionHandoffOnly = true,
   submissionHandoffMutationCoordinator = null,
+  requireExternallyFencedSubmissionHandoff = null,
 } = {}) {
   for (const forbiddenOverride of [
     'experimentRegistryAuthorityVerifier',
@@ -81,7 +82,11 @@ export function bootstrapAutomationContext({
       ? createPinnedFormalSandboxRuntime(configuredFormalSandboxRuntime)
       : null;
   const dynamicFormalExecutionAuthority =
-    inspectConfiguredDynamicFormalExecutionAuthority({ environment }).authority;
+    inspectConfiguredDynamicFormalExecutionAuthority({
+      environment,
+      runtimeRoot,
+      activeProbe: false,
+    }).authority;
   const submissionHandoffContext = bootstrapAutonomousSubmissionHandoffContext({
     root,
     runtimeRoot,
@@ -93,7 +98,10 @@ export function bootstrapAutomationContext({
     mutationCoordinator: submissionHandoffMutationCoordinator,
     readOnly: Boolean(readOnly || !execute),
     allowMissingReadOnlyStore,
-    requireExternallyFenced: Boolean(execute),
+    requireExternallyFenced:
+      requireExternallyFencedSubmissionHandoff === null
+        ? Boolean(execute)
+        : requireExternallyFencedSubmissionHandoff === true,
   });
   const {
     autonomousSubmissionRequestVerifier,
@@ -124,7 +132,11 @@ export function bootstrapAutomationContext({
     rawEventRecomputationVerifier,
     externalResearchReplay,
   } = composeAutomationResearchAuthority({ runtimeRoot, receiptLedger, clock, environment });
-  const researchExecutionReleaseAttestor = createResearchExecutionReleaseAttestor({ runtimeRoot, clock });
+  const researchExecutionReleaseAttestor = createResearchExecutionReleaseAttestor({
+    runtimeRoot,
+    clock,
+    environment,
+  });
   const independentPdfRebuildRoot = path.join(runtimeRoot, 'campaign-release-rebuilds');
   const independentPdfRebuildWorkerRunner = createOsSandboxedWorkerRunner({
     allowedExecutables: ['latexmk'],

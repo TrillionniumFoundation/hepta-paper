@@ -1,8 +1,8 @@
 # hepta-paper current status
 
-This is the normative status for the unreleased v0.21.0 development candidate. Older remediation,
-phase and retirement documents are archived under `docs/history/`; they are historical records and
-do not override this document.
+This is the normative status for the unreleased v0.21.0 development candidate.
+Older remediation, phase and retirement documents are archived under `docs/history/`;
+they are historical records and do not override this document.
 
 ## Architecture
 
@@ -29,7 +29,15 @@ The declarative command registry drives both routing and classification;
 unregistered scripts default to internal/blocked rather than operator. Forwarded
 arguments require an explicit `--` separator.
 
-The canonical final deployment gate is `operator strict-full-auto-acceptance`.
+For local use, `operator autonomous-research` now defaults to `local-run`, an
+alias of the existing bounded local execution path. Local runs keep lifecycle
+budgets, isolated author/reviewer processes and local release signing, but do
+not wait for external author identity, KMS/HSM, off-host replay, portal or
+production qualification. They do not claim public production readiness or
+enable unattended submission.
+
+The canonical final deployment gate for an explicitly requested external
+production deployment is `operator strict-full-auto-acceptance`.
 It exposes `plan|status|execute|converge`; the unattended `converge` action
 binds the fresh immutable plan hash internally and converges the closed
 fifteen-step dependency order with content-addressed crash checkpoints.
@@ -51,7 +59,11 @@ seed. COLT and ALT are independent `colt` and `alt` targets; the retired
 ambiguous `colt_alt` identifier fails closed. Current
 verified portal bindings, sandbox qualifications, production qualifications and
 live-commit authorizations remain 0/98; local prototype availability is not
-reported as live readiness. See
+reported as live readiness. The dispatcher now requires a v3 private/public
+portal binding with two out-of-band hashes, single-link immutable files,
+platform identity separation, a canary authority distinct from its cycle
+signer, and a fresh pending challenge before any network action. No real portal
+configuration, descriptor pin, or signed live canary has been supplied. See
 [`universal-submission-system.md`](universal-submission-system.md).
 
 Contract implementations live only in `paper-domain/contracts`. One hash-bound
@@ -299,15 +311,35 @@ provisioned, the research campaign itself has no human checkpoint:
   independent execution witness, trusted timestamp or proof of execution
   authenticity.
 - Production release signing no longer requires the main process to load a
-  private-key file. Version-2 attestor configuration pins an active plus
+  private-key file. Version-3 attestor configuration pins an active plus
   retiring Ed25519 public-key trust set and delegates digest signing to an
   external KMS/HSM command port. Production readiness requires a fresh,
-  independently signed backend challenge proving the exact backend/key tuple is
-  reachable, hardware protected and non-exportable, plus a fresh domain-separated
+  separately pinned, short-lived control-plane signature over the provider,
+  account, hardware key resource, credential generation and backend descriptor;
+  an independently signed backend challenge proving the exact backend/key tuple
+  is reachable; plus a fresh domain-separated
   signature challenge executed by the active release key and verified against
-  its configured public key. The version-1 file signer
+  its configured public key. The resolved configuration pin also binds referenced
+  keys, executables, credential roots, restricted environment, and the stable
+  KMS control-plane trust policy rather than only the JSON file. Short-lived
+  signed hardware bundles rotate beneath that stable policy without an
+  operator re-pin. Version 2 self-declared KMS profiles remain bounded and
+  execute no live KMS action. The version-1 file signer
   is retained as an explicit Golden/test/local degradation and is blocked by
   the `production-run` gate.
+- The bundled dedicated-UID signer is a bounded fallback for the
+  `research-runtime-uid` threat boundary. It may pass its own live probe and
+  active-key challenge, but it is not `fullProductionReady`; that stronger
+  state remains reserved for a hardware-protected, non-exportable external
+  KMS/HSM backend.
+- Prior-art and external-replay service configurations require independent
+  `*_CONFIG_HASH` deployment pins for full production. External replay also
+  requires version-4 signed lookup/resume recovery; version 3 can verify
+  off-host identity and receipts but remains bounded-only after a crash.
+- Runtime-image reproducibility now requires an out-of-band pin over the full
+  resolved process/trust identity, including both verifier executables,
+  credential roots, backends, and Ed25519 signers. An unpinned configuration is
+  bounded-only and cannot read a receipt, invoke a verifier, refresh, or publish.
 - Release packaging independently rebuilds the manuscript PDF from the bound
   read-only LaTeX source in a fresh supervised sandbox. The typed receipt binds
   both source manifests, command/tool identity, worker/process evidence,
@@ -415,8 +447,9 @@ completed.
 
 Lean proves the generated Lean statement. Natural-language-to-Lean equivalence
 remains a separated semantic-review attestation, not a kernel theorem. Runtime
-image identities are digest pinned, but bitwise image rebuild reproducibility is
-reported false until all transitive source/artifact hashes are available.
+image identities and transitive source/artifact closures are digest pinned, but
+bitwise image rebuild reproducibility remains false until an out-of-band-pinned
+dual-verifier configuration produces a fresh matching signed OCI receipt.
 
 ## Verification surface
 

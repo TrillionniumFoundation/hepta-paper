@@ -13,6 +13,7 @@ import { createAutonomousResearchQualificationContextProvider } from './autonomo
 import { queryAutomationReadiness } from './automation-readiness-query.mjs';
 import { AUTONOMOUS_RESEARCH_LAUNCH_MODES, evaluateAutonomousResearchLaunchModeGate,
   resolvePersistedAutonomousResearchLaunchMode,
+  resolveAutonomousResearchDirectLocalRunBudgetWaiverForCampaign,
   resolveAutonomousResearchProviderPricing } from '../../paper-domain/automation/autonomous-research-launch-mode-policy.mjs';
 import { issueAutonomousResearchSupervisorDispatchAuthorization } from '../../paper-application/automation/autonomous-research-supervisor-dispatch-authorization.mjs';
 import { autonomousResearchCampaignRuntimeOptions, autonomousResearchReadinessInspectionTime, createGoldenCampaignQualificationController, prepareAutonomousResearchSupervisorReadinessAction, trustedAutonomousResearchReadinessInspectionTime } from './autonomous-research-supervisor-external-action-composition.mjs';
@@ -43,6 +44,9 @@ export { composeAutonomousResearchMachineIntakeEnqueue } from './autonomous-rese
 export async function composeAutonomousResearchCampaignAction({
   action = 'prepare',
   launchMode = null,
+  localOnly = false,
+  directLocalRunBudgetWaiver = null,
+  directLocalRunCliProvenance = null,
   paperId = null,
   campaignId = null,
   objective = null,
@@ -82,6 +86,10 @@ export async function composeAutonomousResearchCampaignAction({
   runtimeSignal = null,
   worker = {},
 } = {}) {
+  if (localOnly === true
+    && launchMode !== AUTONOMOUS_RESEARCH_LAUNCH_MODES.GOLDEN_BOOTSTRAP) {
+    throw new Error('autonomous_research_local_mode_requires_bounded_launch_mode');
+  }
   const initialWorkerOptions = campaignWorkerOptions({ ...worker, budgets });
   const providerConfiguration = resolveAutonomousResearchProviderConfiguration({
     options: initialWorkerOptions,
@@ -139,8 +147,9 @@ export async function composeAutonomousResearchCampaignAction({
     && dispatchMutation;
   const productionReadinessObservedAt = productionMutation
     ? trustedAutonomousResearchReadinessInspectionTime(readinessClock) : null;
-  const id = action === 'prepare'
-    ? null : campaignId || (paperId ? `autonomous-research:${paperId}` : null);
+  const requestedCampaignId = campaignId
+    || (paperId ? `autonomous-research:${paperId}` : null);
+  const id = action === 'prepare' ? null : requestedCampaignId;
   if (action !== 'prepare' && !id) throw new Error('autonomous_research_campaign_id_required');
   if (productionMutation && !supervisorDispatchAuthorization) {
     throw new Error('autonomous_research_production_readiness_authorization_required');
@@ -155,6 +164,7 @@ export async function composeAutonomousResearchCampaignAction({
         environment: readinessEnvironment,
         nativeStoreMutationCoordinator,
         requireExternallyFencedNativeStore,
+        requireExternallyFencedSubmissionHandoff: productionMutation,
         autonomousSubmissionDispatchAuthority,
       });
     } catch (error) {
@@ -175,6 +185,21 @@ export async function composeAutonomousResearchCampaignAction({
   };
   try {
     existing = campaignStore?.getCampaign(id) || null;
+    if (existing) {
+      resolvePersistedAutonomousResearchLaunchMode({
+        campaign: existing,
+        requestedLaunchMode: launchMode,
+        requestedLocalOnly: localOnly,
+      });
+    }
+    const effectiveBudgetWaiver =
+      resolveAutonomousResearchDirectLocalRunBudgetWaiverForCampaign({
+        existingCampaign: existing,
+        requestedWaiver: directLocalRunBudgetWaiver,
+      });
+    const effectiveDirectLocalRunCliProvenance = existing
+      ?.spec?.autonomousResearchPreparation?.directLocalRunCliProvenance
+      || directLocalRunCliProvenance;
     supervisorReadinessAction = await prepareAutonomousResearchSupervisorReadinessAction({
       dispatchMutation, productionMutation, supervisorDispatchAuthorization,
       campaign: existing, campaignId: id, launchMode, action, providerConfigurationHash,
@@ -210,13 +235,24 @@ export async function composeAutonomousResearchCampaignAction({
         });
       }
     }
+    const gateBudgets = existing
+      ? { ...(existing.spec?.budgets || {}), ...budgets }
+      : budgets;
     let launchModeGate = evaluateAutonomousResearchLaunchModeGate({
-    launchMode,
-    action,
-    budgets,
-    providerPricingInspection,
-    fullResearchReadiness: productionReadiness,
-  });
+      launchMode,
+      action,
+      budgets: gateBudgets,
+      localOnly,
+      directLocalRunBudgetWaiver: effectiveBudgetWaiver,
+      directLocalRunCliProvenance: effectiveDirectLocalRunCliProvenance,
+      autonomousResearchPreparation:
+        existing?.spec?.autonomousResearchPreparation || null,
+      directLocalRunPreparationPending: !existing && Boolean(effectiveBudgetWaiver),
+      campaignId: existing?.campaignId || requestedCampaignId,
+      paperId: existing?.paperId || paperId,
+      providerPricingInspection,
+      fullResearchReadiness: productionReadiness,
+    });
     if (launchModeGate.status !== 'autonomous_research_launch_mode_ready') {
       throw new Error(
         `autonomous_research_launch_mode_blocked:${launchModeGate.blockers.join(',')}`,
@@ -228,14 +264,15 @@ export async function composeAutonomousResearchCampaignAction({
     datasetMounts,
     runtimeRoot,
   });
-    const injectedQualificationServices = Boolean(
-    externalQualificationClient || externalQualificationVerifier,
-  );
-    if (Boolean(externalQualificationClient) !== Boolean(externalQualificationVerifier)) {
-    throw new Error('autonomous_research_external_qualification_services_incomplete');
-  }
-    const qualificationConfigurationRequested = Boolean(
-    externalQualificationConfigPath
+    const injectedQualificationServices = localOnly !== true && Boolean(
+      externalQualificationClient || externalQualificationVerifier,
+    );
+    if (localOnly !== true
+      && Boolean(externalQualificationClient) !== Boolean(externalQualificationVerifier)) {
+      throw new Error('autonomous_research_external_qualification_services_incomplete');
+    }
+    const qualificationConfigurationRequested = localOnly !== true && Boolean(
+      externalQualificationConfigPath
       || environment.HEPTA_AUTONOMOUS_EXTERNAL_QUALIFICATION_CONFIG,
   );
     if (injectedQualificationServices && qualificationConfigurationRequested) {
@@ -264,6 +301,8 @@ export async function composeAutonomousResearchCampaignAction({
       observedAt: autonomousResearchReadinessInspectionTime(createdAt),
       environment: readinessEnvironment,
       activeVerification: activeReleaseAttestorVerification,
+      actionClock: readinessClock || serviceOverrides.clock
+        || { now: () => new Date() },
       spawnSyncImpl: releaseAttestorSpawnSyncImpl,
     }));
     if (supervisorReadinessAction.recovered
@@ -282,9 +321,10 @@ export async function composeAutonomousResearchCampaignAction({
         });
       }
     }
-    const externalQualificationConfigurationInspection = injectedQualificationServices
-    ? null
-    : inspectExternalResearchQualificationProcessConfiguration({
+    const externalQualificationConfigurationInspection = localOnly === true
+      || injectedQualificationServices
+      ? null
+      : inspectExternalResearchQualificationProcessConfiguration({
       configPath: externalQualificationConfigPath,
       environment,
     });
@@ -296,7 +336,8 @@ export async function composeAutonomousResearchCampaignAction({
         action: 'campaign_readiness_composition_preflight',
       });
       return composeAutonomousResearchReadiness({
-      paperId, objective, protocolFamily, revisionRounds, refereeCount, humanSubjects, privateData,
+      paperId, campaignId: requestedCampaignId,
+      objective, protocolFamily, revisionRounds, refereeCount, humanSubjects, privateData,
       datasetMounts,
       datasetAuthorityReceipt,
       researchContentWorkspace: root,
@@ -306,8 +347,10 @@ export async function composeAutonomousResearchCampaignAction({
       expectedProviderConfigurationHash: providerConfigurationHash,
       releaseAttestorInspection,
       externalQualificationConfigurationInspection,
-      externalQualificationClient,
-      externalQualificationVerifier,
+      externalQualificationClient: localOnly === true ? null : externalQualificationClient,
+      externalQualificationVerifier: localOnly === true ? null : externalQualificationVerifier,
+      localOnly,
+      directLocalRunCliProvenance: effectiveDirectLocalRunCliProvenance,
       launchModeGate,
       providerPricingInspection,
       autonomousSubmissionRequestVerifier,
@@ -342,6 +385,7 @@ export async function composeAutonomousResearchCampaignAction({
       resolvePersistedAutonomousResearchLaunchMode({
         campaign: existing,
         requestedLaunchMode: launchMode,
+        requestedLocalOnly: localOnly,
       });
       requireExistingProductionPricingEnvelope({
         action,
@@ -359,7 +403,8 @@ export async function composeAutonomousResearchCampaignAction({
     const legacyProviderConfigurationBindingMissing = Boolean(
       existing && !providerConfigurationBindingHash,
     );
-    const configuredQualification = !legacyProviderConfigurationBindingMissing
+    const configuredQualification = localOnly !== true
+      && !legacyProviderConfigurationBindingMissing
       && !externalQualificationClient
       && qualificationConfigurationRequested
       ? createExternalResearchQualificationProcessAdapter({
@@ -388,10 +433,12 @@ export async function composeAutonomousResearchCampaignAction({
               ) : null,
           }),
       }) : null;
-    const effectiveQualificationClient = legacyProviderConfigurationBindingMissing
+    const effectiveQualificationClient = localOnly === true
+      ? null : legacyProviderConfigurationBindingMissing
       ? null
       : externalQualificationClient || configuredQualification?.client || null;
-    const effectiveQualificationVerifier = legacyProviderConfigurationBindingMissing
+    const effectiveQualificationVerifier = localOnly === true
+      ? null : legacyProviderConfigurationBindingMissing
       ? null
       : externalQualificationVerifier || configuredQualification?.verifier || null;
     const effectiveQualificationRetry = qualificationRetryBoundToExternalCostAuthority({
@@ -415,7 +462,8 @@ export async function composeAutonomousResearchCampaignAction({
         action: 'campaign_readiness_composition_preflight',
       });
       readinessReport = await composeAutonomousResearchReadiness({
-        paperId, objective, protocolFamily, revisionRounds, refereeCount, humanSubjects, privateData,
+        paperId, campaignId: requestedCampaignId,
+        objective, protocolFamily, revisionRounds, refereeCount, humanSubjects, privateData,
         datasetMounts,
         datasetAuthorityReceipt,
         researchContentWorkspace: root,
@@ -428,6 +476,8 @@ export async function composeAutonomousResearchCampaignAction({
           configuredQualification?.inspection || externalQualificationConfigurationInspection,
         externalQualificationClient,
         externalQualificationVerifier,
+        localOnly,
+        directLocalRunCliProvenance: effectiveDirectLocalRunCliProvenance,
         launchModeGate,
         providerPricingInspection,
         autonomousSubmissionRequestVerifier,
@@ -444,6 +494,10 @@ export async function composeAutonomousResearchCampaignAction({
         requestedBudgets: budgets,
         launchMode,
         action,
+        localOnly,
+        directLocalRunBudgetWaiver: effectiveBudgetWaiver,
+        directLocalRunCliProvenance: effectiveDirectLocalRunCliProvenance,
+        autonomousResearchPreparation: readinessReport.loopPreparation,
         launchModeGate,
         providerPricingInspection,
         fullResearchReadiness: productionReadiness,
@@ -474,6 +528,8 @@ export async function composeAutonomousResearchCampaignAction({
         datasetMounts,
         campaignId: id,
         budgets: effectiveBudgets,
+        localOnly,
+        directLocalRunBudgetWaiver: effectiveBudgetWaiver,
       });
     }
     if (!qualificationStateStore && existing && !legacyProviderConfigurationBindingMissing) {
@@ -519,7 +575,7 @@ export async function composeAutonomousResearchCampaignAction({
       gpu: Number(worker.gpuSlots || 1),
       memoryMiB: Number(worker.memoryMiB || 8192),
     });
-    const goldenQualificationController = launchMode
+    const goldenQualificationController = localOnly !== true && launchMode
         === AUTONOMOUS_RESEARCH_LAUNCH_MODES.GOLDEN_BOOTSTRAP
       && effectiveQualificationVerifier?.kind
         === 'IndependentExternalResearchQualificationVerifier'
@@ -531,6 +587,8 @@ export async function composeAutonomousResearchCampaignAction({
       }) : null;
     const executionReport = await executeAutonomousResearchCampaign({
       action,
+      localOnly,
+      directLocalRunBudgetWaiver: effectiveBudgetWaiver,
       readinessReport,
       campaignId: id,
       datasetMounts,

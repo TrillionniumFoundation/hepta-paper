@@ -97,6 +97,15 @@ const CLAIM_CLASS_EVIDENCE_KINDS = Object.freeze({
   ]),
 });
 
+export function evidenceEntailmentClaimClassesForEvidenceKind(value) {
+  const kind = safeId(value);
+  if (!kind) return Object.freeze([]);
+  return Object.freeze(Object.entries(CLAIM_CLASS_EVIDENCE_KINDS)
+    .filter(([, evidenceKinds]) => evidenceKinds.has(kind))
+    .map(([claimClass]) => claimClass)
+    .sort());
+}
+
 function sha(value) {
   const candidate = String(value || '').toLowerCase();
   return SHA256.test(candidate) ? candidate : null;

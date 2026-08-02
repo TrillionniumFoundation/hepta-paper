@@ -40,6 +40,17 @@ function stableAgentReceipt({ agentId, role, structuredOutput = null, changedPat
     changedPaths,
     structuredOutput,
     finalOutput: structuredOutput ? JSON.stringify(structuredOutput) : '',
+    externalModelInvocationPerformed: false,
+    usageComplete: true,
+    usage: Object.freeze({
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      costUsd: 0,
+      cost_usd: 0,
+    }),
     externalActionPerformed: false,
   };
   return Object.freeze({

@@ -5,9 +5,25 @@ import path from 'node:path';
 import test from 'node:test';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
+  AUTONOMOUS_RESEARCH_UNLIMITED_BUDGET_SENTINEL,
   evaluateAutonomousResearchLaunchModeGate,
+  resolveAutonomousResearchDirectLocalRunBudgetWaiverForCampaign,
+  resolvePersistedAutonomousResearchLaunchMode,
   resolveAutonomousResearchProviderPricing,
 } from '../../paper-domain/automation/autonomous-research-launch-mode-policy.mjs';
+import {
+  normalizeAutonomousResearchCliLaunchMode,
+  resolveAutonomousResearchDirectLocalRunBudgetWaiver,
+} from '../../paper-application/automation/autonomous-research-cli-policy.mjs';
+import { buildPaperCampaignPlan } from '../../paper-domain/automation/campaign-plan.mjs';
+import {
+  assertCampaignDefinition,
+} from '../../paper-adapters/persistence/campaign-definition-codec.mjs';
+import {
+  evolveCampaignForResume,
+} from '../../paper-domain/automation/campaign-evolution-policy.mjs';
+import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
+import { createSqliteCampaignStore } from '../../paper-adapters/persistence/sqlite-campaign-store.mjs';
 import {
   createFullResearchQualificationReceiptPointerRepository,
 } from '../../paper-adapters/automation/full-research-qualification-receipt-pointer-repository.mjs';
@@ -15,6 +31,7 @@ import {
   createGoldenCampaignQualificationController,
 } from '../../paper-application/automation/golden-campaign-qualification-controller.mjs';
 import {
+  AUTONOMOUS_RESEARCH_GOLDEN_RECURRING_HARD_BUDGETS,
   buildAutonomousResearchMachineIntake,
   buildAutonomousResearchRecurringGoldenTemplate,
   materializeAutonomousResearchRecurringGoldenIntake,
@@ -71,7 +88,7 @@ const FULL_READY = Object.freeze({
   }),
 });
 
-test('golden bootstrap fails closed on unknown pricing and clamps known-price calls', () => {
+test('ordinary golden bootstrap keeps independent hard budgets and fails closed on unknown pricing', () => {
   const unknown = pricing(null, null);
   const gate = evaluateAutonomousResearchLaunchModeGate({
     launchMode: 'golden-bootstrap',
@@ -79,13 +96,14 @@ test('golden bootstrap fails closed on unknown pricing and clamps known-price ca
     budgets: {
       maxWallTimeMs: Number.MAX_SAFE_INTEGER,
       maxAgentCalls: Number.MAX_SAFE_INTEGER,
-      maxTokenCount: Number.MAX_SAFE_INTEGER,
-      maxCostUsd: Number.MAX_SAFE_INTEGER,
+      maxTokenCount: 4_000_000,
+      maxCostUsd: 100,
     },
     providerPricingInspection: unknown,
   });
   assert.equal(gate.status, 'autonomous_research_launch_mode_blocked');
   assert.ok(gate.blockers.includes('autonomous_research_provider_pricing_required'));
+  assert.equal(gate.maximumAffordableAgentCalls, null);
   assert.equal(gate.unknownProviderCostTreatedAsUnlimited, false);
   assert.equal(gate.budgetPolicy, 'golden-bootstrap-priced-call-cost-and-wall-limits-v2');
 
@@ -95,16 +113,532 @@ test('golden bootstrap fails closed on unknown pricing and clamps known-price ca
     budgets: {
       maxWallTimeMs: Number.MAX_SAFE_INTEGER,
       maxAgentCalls: Number.MAX_SAFE_INTEGER,
-      maxTokenCount: Number.MAX_SAFE_INTEGER,
-      maxCostUsd: Number.MAX_SAFE_INTEGER,
+      maxTokenCount: 4_000_000,
+      maxCostUsd: 100,
     },
     providerPricingInspection: pricing(),
   });
   assert.equal(priced.status, 'autonomous_research_launch_mode_ready');
   assert.equal(priced.effectiveBudgets.maxAgentCalls, 33);
+  assert.equal(priced.effectiveBudgets.maxTokenCount, 4_000_000);
   assert.equal(priced.effectiveBudgets.maxCostUsd, 100);
   assert.equal(priced.providerTokenUsageMetered, false);
   assert.equal(priced.tokenBudgetAssurance, 'prompt_only_not_a_hard_provider_limit');
+});
+
+test('direct local-run preserves unlimited token and cost sentinels through plan, hash, JSON and SQLite', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-local-run-token-sentinel-'));
+  let milliseconds = Date.parse('2026-07-31T16:00:00.000Z');
+  const clock = {
+    now: () => new Date(milliseconds),
+    nowIso: () => new Date(milliseconds += 1).toISOString(),
+  };
+  const store = createDefaultPaperStore({ root, runtimeRoot: root });
+  t.after(() => {
+    store.close?.();
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  const campaigns = createSqliteCampaignStore({ store, clock });
+  const paperId = 'local-run-token-sentinel-paper';
+  const campaignId = 'local-run-token-sentinel-campaign';
+
+  const launchMode = normalizeAutonomousResearchCliLaunchMode('local-run');
+  assert.equal(launchMode, 'golden-bootstrap');
+  assert.throws(() => resolveAutonomousResearchDirectLocalRunBudgetWaiver({
+    launchMode: 'production-run',
+    unlimitedTokens: true,
+    unlimitedCost: true,
+  }), /autonomous_research_unlimited_budget_requires_direct_local_run/);
+  assert.throws(() => resolveAutonomousResearchDirectLocalRunBudgetWaiver({
+    launchMode: 'local-run',
+    unlimitedTokens: true,
+    maxTokensSpecified: true,
+  }), /autonomous_research_unlimited_tokens_conflicts_with_max_tokens/);
+  assert.throws(() => resolveAutonomousResearchDirectLocalRunBudgetWaiver({
+    launchMode: 'local-run',
+    unlimitedCost: true,
+    maxCostUsdSpecified: true,
+  }), /autonomous_research_unlimited_cost_conflicts_with_max_cost_usd/);
+  const directBudgetWaiver = resolveAutonomousResearchDirectLocalRunBudgetWaiver({
+    launchMode: 'local-run',
+    campaignId,
+    paperId,
+    unlimitedTokens: true,
+    unlimitedCost: true,
+  });
+  assert.throws(() => evaluateAutonomousResearchLaunchModeGate({
+    launchMode,
+    action: 'launch',
+    localOnly: true,
+    budgets: {
+      maxTokenCount: String(AUTONOMOUS_RESEARCH_UNLIMITED_BUDGET_SENTINEL),
+      maxCostUsd: String(AUTONOMOUS_RESEARCH_UNLIMITED_BUDGET_SENTINEL),
+    },
+    directLocalRunBudgetWaiver: directBudgetWaiver.waiver,
+    directLocalRunCliProvenance: directBudgetWaiver.provenance,
+    campaignId,
+    paperId,
+    providerPricingInspection: pricing(null, null),
+  }), /autonomous_research_launch_budget_invalid:maxTokenCount/);
+  assert.throws(() => evaluateAutonomousResearchLaunchModeGate({
+    launchMode,
+    action: 'launch',
+    localOnly: true,
+    budgets: {
+      maxTokenCount: AUTONOMOUS_RESEARCH_UNLIMITED_BUDGET_SENTINEL,
+      maxCostUsd: String(AUTONOMOUS_RESEARCH_UNLIMITED_BUDGET_SENTINEL),
+    },
+    directLocalRunBudgetWaiver: directBudgetWaiver.waiver,
+    directLocalRunCliProvenance: directBudgetWaiver.provenance,
+    campaignId,
+    paperId,
+    providerPricingInspection: pricing(null, null),
+  }), /autonomous_research_launch_budget_invalid:maxCostUsd/);
+  assert.throws(() => evaluateAutonomousResearchLaunchModeGate({
+    launchMode: 'production-run',
+    action: 'launch',
+    budgets: {
+      maxTokenCount: String(AUTONOMOUS_RESEARCH_UNLIMITED_BUDGET_SENTINEL),
+      maxCostUsd: String(AUTONOMOUS_RESEARCH_UNLIMITED_BUDGET_SENTINEL),
+    },
+    providerPricingInspection: pricing(),
+    fullResearchReadiness: FULL_READY,
+  }), /autonomous_research_launch_budget_invalid:maxTokenCount/);
+  const defaultGate = evaluateAutonomousResearchLaunchModeGate({
+    launchMode,
+    action: 'launch',
+    providerPricingInspection: pricing(null, null),
+  });
+  assert.equal(defaultGate.effectiveBudgets.maxTokenCount, 300_000);
+  assert.equal(defaultGate.effectiveBudgets.maxCostUsd, 100);
+  assert.equal(defaultGate.status, 'autonomous_research_launch_mode_blocked');
+  const unboundGate = evaluateAutonomousResearchLaunchModeGate({
+    launchMode,
+    action: 'launch',
+    localOnly: true,
+    budgets: directBudgetWaiver.budgets,
+    directLocalRunCliProvenance: directBudgetWaiver.provenance,
+    campaignId,
+    paperId,
+    providerPricingInspection: pricing(null, null),
+  });
+  assert.ok(unboundGate.blockers.includes(
+    'autonomous_research_direct_local_run_budget_waiver_required',
+  ));
+  const noPreparationGate = evaluateAutonomousResearchLaunchModeGate({
+    launchMode,
+    action: 'launch',
+    localOnly: true,
+    budgets: directBudgetWaiver.budgets,
+    directLocalRunBudgetWaiver: directBudgetWaiver.waiver,
+    directLocalRunCliProvenance: directBudgetWaiver.provenance,
+    campaignId,
+    paperId,
+    providerPricingInspection: pricing(null, null),
+  });
+  assert.equal(noPreparationGate.status, 'autonomous_research_launch_mode_blocked');
+  assert.equal(noPreparationGate.directLocalRunBudgetWaiverActive, false);
+  assert.ok(noPreparationGate.blockers.includes(
+    'autonomous_research_direct_local_run_preparation_required',
+  ));
+  const preflightGate = evaluateAutonomousResearchLaunchModeGate({
+    launchMode,
+    action: 'launch',
+    localOnly: true,
+    budgets: directBudgetWaiver.budgets,
+    directLocalRunBudgetWaiver: directBudgetWaiver.waiver,
+    directLocalRunCliProvenance: directBudgetWaiver.provenance,
+    directLocalRunPreparationPending: true,
+    campaignId,
+    paperId,
+    providerPricingInspection: pricing(null, null),
+  });
+  assert.equal(preflightGate.status, 'autonomous_research_launch_mode_ready');
+  assert.equal(preflightGate.directLocalRunBudgetWaiverActive, false);
+  assert.equal(preflightGate.directLocalRunCliPreflightActive, true);
+  assert.equal(preflightGate.effectiveBudgets.maxTokenCount, 4_000_000);
+  assert.equal(preflightGate.effectiveBudgets.maxCostUsd, 100);
+  assert.equal(
+    AUTONOMOUS_RESEARCH_GOLDEN_RECURRING_HARD_BUDGETS.maxTokenCount,
+    4_000_000,
+    'recurring machine intake retains its independent bounded ceiling',
+  );
+  assert.equal(
+    AUTONOMOUS_RESEARCH_GOLDEN_RECURRING_HARD_BUDGETS.maxCostUsd,
+    100,
+    'recurring machine intake retains its independent cost ceiling',
+  );
+  const recurringTemplate = buildAutonomousResearchRecurringGoldenTemplate({
+    templateId: 'direct-waiver-does-not-expand-recurring',
+    epochDurationMs: 12 * 60 * 60 * 1000,
+    objective: 'Keep recurring campaign resource exposure independently bounded.',
+    protocolFamily: 'ml_algorithm_benchmark',
+    datasetMounts: [Object.freeze({
+      name: 'recurring-bounded-dataset',
+      source: '/datasets/recurring-bounded',
+      readOnly: true,
+      manifestHash: H('recurring-bounded-dataset'),
+      licenseId: 'CC0-1.0',
+      benchmarkFamily: 'ml_algorithm_benchmark',
+    })],
+    budgets: {
+      maxTokenCount: AUTONOMOUS_RESEARCH_UNLIMITED_BUDGET_SENTINEL,
+      maxCostUsd: AUTONOMOUS_RESEARCH_UNLIMITED_BUDGET_SENTINEL,
+    },
+    providerConfigurationHash: H('recurring-bounded-provider'),
+    revisionRounds: 1,
+    refereeCount: 2,
+  });
+  assert.equal(recurringTemplate.budgets.maxTokenCount, 4_000_000);
+  assert.equal(recurringTemplate.budgets.maxCostUsd, 100);
+
+  assert.throws(() => buildPaperCampaignPlan({
+    paperId,
+    sourceWorkspace: root,
+    campaignId,
+    mode: 'local-review-loop',
+    maxRounds: 1,
+    languages: ['latex'],
+    budgets: directBudgetWaiver.budgets,
+    localOnly: true,
+    directLocalRunBudgetWaiver: directBudgetWaiver.waiver,
+  }), /autonomous_research_direct_local_run_budget_waiver_scope_invalid/);
+  const basePlan = buildPaperCampaignPlan({
+    paperId,
+    sourceWorkspace: root,
+    campaignId,
+    mode: 'local-review-loop',
+    maxRounds: 1,
+    languages: ['latex'],
+    localOnly: true,
+  });
+  const {
+    campaignPlanHash: _basePlanHash,
+    ...basePlanPayload
+  } = basePlan;
+  const preparationPayload = Object.freeze({
+    version: 1,
+    kind: 'AutonomousResearchLoopPreparationReport',
+    status: 'autonomous_research_launch_ready_qualification_pending',
+    proposal: Object.freeze({ paperId }),
+    launchMode,
+    directLocalRunCliProvenance: directBudgetWaiver.provenance,
+    autonomousExecutionLaunchReady: true,
+  });
+  const preparation = Object.freeze({
+    ...preparationPayload,
+    autonomousResearchLoopPreparationReportHash: hashRecord(
+      'AutonomousResearchLoopPreparationReport',
+      preparationPayload,
+    ),
+  });
+  const gate = evaluateAutonomousResearchLaunchModeGate({
+    launchMode,
+    action: 'launch',
+    localOnly: true,
+    budgets: directBudgetWaiver.budgets,
+    directLocalRunBudgetWaiver: directBudgetWaiver.waiver,
+    directLocalRunCliProvenance: directBudgetWaiver.provenance,
+    autonomousResearchPreparation: preparation,
+    campaignId,
+    paperId,
+    providerPricingInspection: pricing(null, null),
+  });
+  assert.equal(gate.status, 'autonomous_research_launch_mode_ready');
+  assert.equal(gate.directLocalRunBudgetWaiverActive, true);
+  assert.equal(gate.unknownProviderCostTreatedAsUnlimited, true);
+  assert.equal(
+    gate.effectiveBudgets.maxTokenCount,
+    AUTONOMOUS_RESEARCH_UNLIMITED_BUDGET_SENTINEL,
+  );
+  assert.equal(
+    gate.effectiveBudgets.maxCostUsd,
+    AUTONOMOUS_RESEARCH_UNLIMITED_BUDGET_SENTINEL,
+  );
+  const waivedPlanPayload = Object.freeze({
+    ...basePlanPayload,
+    autonomousResearchPreparation: preparation,
+    budgets: gate.effectiveBudgets,
+    directLocalRunBudgetWaiver: directBudgetWaiver.waiver,
+  });
+  const campaignPlanHash = hashRecord('PaperCampaignPlan', waivedPlanPayload);
+  const plan = Object.freeze({ ...waivedPlanPayload, campaignPlanHash });
+  assert.equal(plan.terminalSiblingSettlementPolicyVersion, 1);
+  assert.deepEqual(plan.directLocalRunBudgetWaiver, directBudgetWaiver.waiver);
+  assert.equal(plan.budgets.maxTokenCount, AUTONOMOUS_RESEARCH_UNLIMITED_BUDGET_SENTINEL);
+  assert.equal(plan.budgets.maxCostUsd, AUTONOMOUS_RESEARCH_UNLIMITED_BUDGET_SENTINEL);
+  assert.equal(campaignPlanHash, hashRecord('PaperCampaignPlan', waivedPlanPayload));
+
+  const encodedPlan = JSON.stringify(plan);
+  assert.match(encodedPlan, /9007199254740991/);
+  const decodedPlan = JSON.parse(encodedPlan);
+  const { campaignPlanHash: decodedPlanHash, ...decodedPlanPayload } = decodedPlan;
+  assert.equal(decodedPlan.budgets.maxTokenCount, Number.MAX_SAFE_INTEGER);
+  assert.equal(decodedPlan.budgets.maxCostUsd, Number.MAX_SAFE_INTEGER);
+  assert.equal(decodedPlanHash, campaignPlanHash);
+  assert.equal(decodedPlanHash, hashRecord('PaperCampaignPlan', decodedPlanPayload));
+  assert.equal(assertCampaignDefinition(decodedPlan), decodedPlan);
+
+  assert.throws(
+    () => assertCampaignDefinition({
+      ...decodedPlan,
+      campaignPlanHash: H('tampered-nonrelease-waived-plan'),
+    }),
+    /campaign_definition_plan_hash_invalid/,
+  );
+  const { campaignPlanHash: _missingPlanHash, ...missingPlanHashPlan } = decodedPlan;
+  assert.throws(
+    () => assertCampaignDefinition(missingPlanHashPlan),
+    /campaign_definition_plan_hash_invalid/,
+  );
+  const {
+    autonomousResearchPreparation: _removedPreparation,
+    ...noPreparationPayload
+  } = decodedPlanPayload;
+  assert.throws(
+    () => assertCampaignDefinition({
+      ...noPreparationPayload,
+      campaignPlanHash: hashRecord('PaperCampaignPlan', noPreparationPayload),
+    }),
+    /autonomous_research_direct_local_run_budget_waiver_scope_invalid/,
+  );
+  const crossCampaignPayload = {
+    ...decodedPlanPayload,
+    campaignId: `${campaignId}:other`,
+  };
+  assert.throws(
+    () => assertCampaignDefinition({
+      ...crossCampaignPayload,
+      campaignPlanHash: hashRecord('PaperCampaignPlan', crossCampaignPayload),
+    }),
+    /autonomous_research_direct_local_run_budget_waiver_invalid|autonomous_research_direct_local_run_preparation_invalid/,
+  );
+
+  const { directLocalRunBudgetWaiver: _removedWaiver, ...missingWaiverPayload } =
+    decodedPlanPayload;
+  const missingWaiverPlan = {
+    ...missingWaiverPayload,
+    campaignPlanHash: hashRecord('PaperCampaignPlan', missingWaiverPayload),
+  };
+  assert.throws(
+    () => assertCampaignDefinition(missingWaiverPlan),
+    /autonomous_research_direct_local_run_budget_waiver_invalid/,
+  );
+  let providerExecutionCalls = 0;
+  assert.throws(() => {
+    resolveAutonomousResearchDirectLocalRunBudgetWaiverForCampaign({
+      existingCampaign: { campaignId, paperId, status: 'running', spec: missingWaiverPlan },
+      requestedWaiver: directBudgetWaiver.waiver,
+    });
+    providerExecutionCalls += 1;
+  }, /autonomous_research_direct_local_run_budget_waiver_retrofit_forbidden/);
+  assert.equal(providerExecutionCalls, 0);
+  assert.strictEqual(
+    resolveAutonomousResearchDirectLocalRunBudgetWaiverForCampaign({
+      existingCampaign: { campaignId, paperId, status: 'running', spec: decodedPlan },
+    }),
+    decodedPlan.directLocalRunBudgetWaiver,
+  );
+  assert.strictEqual(
+    resolveAutonomousResearchDirectLocalRunBudgetWaiverForCampaign({
+      existingCampaign: { campaignId, paperId, status: 'running', spec: decodedPlan },
+      requestedWaiver: directBudgetWaiver.waiver,
+    }),
+    decodedPlan.directLocalRunBudgetWaiver,
+  );
+  const { localOnly: _removedLocalOnly, ...wrongScopePayload } = decodedPlanPayload;
+  const wrongScopePlan = {
+    ...wrongScopePayload,
+    campaignPlanHash: hashRecord('PaperCampaignPlan', wrongScopePayload),
+  };
+  assert.throws(
+    () => assertCampaignDefinition(wrongScopePlan),
+    /autonomous_research_direct_local_run_budget_waiver_scope_invalid/,
+  );
+  const invalidWaiverHashPayload = {
+    ...decodedPlanPayload,
+    directLocalRunBudgetWaiver: {
+      ...directBudgetWaiver.waiver,
+      autonomousResearchDirectLocalRunBudgetWaiverHash: H('forged-budget-waiver'),
+    },
+  };
+  const invalidWaiverHashPlan = {
+    ...invalidWaiverHashPayload,
+    campaignPlanHash: hashRecord('PaperCampaignPlan', invalidWaiverHashPayload),
+  };
+  assert.throws(
+    () => assertCampaignDefinition(invalidWaiverHashPlan),
+    /autonomous_research_direct_local_run_budget_waiver_invalid/,
+  );
+  const tokenOnlyWaiver = resolveAutonomousResearchDirectLocalRunBudgetWaiver({
+    launchMode: 'local-run',
+    campaignId,
+    paperId,
+    unlimitedTokens: true,
+  }).waiver;
+  const mismatchedPolicyPayload = {
+    ...decodedPlanPayload,
+    directLocalRunBudgetWaiver: tokenOnlyWaiver,
+  };
+  const mismatchedPolicyPlan = {
+    ...mismatchedPolicyPayload,
+    campaignPlanHash: hashRecord('PaperCampaignPlan', mismatchedPolicyPayload),
+  };
+  assert.throws(
+    () => assertCampaignDefinition(mismatchedPolicyPlan),
+    /autonomous_research_direct_local_run_budget_waiver_binding_invalid/,
+  );
+  const stringSentinelPayload = {
+    ...decodedPlanPayload,
+    budgets: {
+      ...decodedPlanPayload.budgets,
+      maxTokenCount: String(AUTONOMOUS_RESEARCH_UNLIMITED_BUDGET_SENTINEL),
+      maxCostUsd: String(AUTONOMOUS_RESEARCH_UNLIMITED_BUDGET_SENTINEL),
+    },
+  };
+  assert.throws(() => assertCampaignDefinition({
+    ...stringSentinelPayload,
+    campaignPlanHash: hashRecord('PaperCampaignPlan', stringSentinelPayload),
+  }), /autonomous_research_direct_local_run_budget_invalid:maxTokenCount/);
+  const stringCostSentinelPayload = {
+    ...decodedPlanPayload,
+    budgets: {
+      ...decodedPlanPayload.budgets,
+      maxCostUsd: String(AUTONOMOUS_RESEARCH_UNLIMITED_BUDGET_SENTINEL),
+    },
+  };
+  assert.throws(() => assertCampaignDefinition({
+    ...stringCostSentinelPayload,
+    campaignPlanHash: hashRecord('PaperCampaignPlan', stringCostSentinelPayload),
+  }), /autonomous_research_direct_local_run_budget_invalid:maxCostUsd/);
+
+  const productionPreparationPayload = {
+    ...decodedPlanPayload,
+    autonomousResearchPreparation: {
+      ...(decodedPlanPayload.autonomousResearchPreparation || {}),
+      launchMode: 'production-run',
+    },
+  };
+  const productionPreparationPlan = {
+    ...productionPreparationPayload,
+    campaignPlanHash: hashRecord('PaperCampaignPlan', productionPreparationPayload),
+  };
+  assert.throws(
+    () => assertCampaignDefinition(productionPreparationPlan),
+    /autonomous_research_direct_local_run_budget_waiver_scope_invalid/,
+  );
+  assert.throws(() => evolveCampaignForResume({
+    campaign: { status: 'paused', spec: productionPreparationPlan },
+  }), /autonomous_research_direct_local_run_budget_waiver_scope_invalid/);
+
+  const boundedPlan = buildPaperCampaignPlan({
+    paperId: 'bounded-local-resume-paper',
+    sourceWorkspace: root,
+    campaignId: 'bounded-local-resume-campaign',
+    mode: 'local-review-loop',
+    maxRounds: 1,
+    languages: ['latex'],
+    localOnly: true,
+  });
+  assert.throws(() => evolveCampaignForResume({
+    campaign: { status: 'paused', spec: boundedPlan },
+    budgetOverrides: {
+      maxTokenCount: AUTONOMOUS_RESEARCH_UNLIMITED_BUDGET_SENTINEL,
+      maxCostUsd: AUTONOMOUS_RESEARCH_UNLIMITED_BUDGET_SENTINEL,
+    },
+  }), /autonomous_research_direct_local_run_budget_waiver_invalid/);
+  for (const [key, value] of [
+    ['maxTokenCount', String(AUTONOMOUS_RESEARCH_UNLIMITED_BUDGET_SENTINEL)],
+    ['maxCostUsd', String(AUTONOMOUS_RESEARCH_UNLIMITED_BUDGET_SENTINEL)],
+  ]) {
+    assert.throws(() => evolveCampaignForResume({
+      campaign: { campaignId, paperId, status: 'paused', spec: decodedPlan },
+      budgetOverrides: { [key]: value },
+    }), new RegExp(`invalid_campaign_budget:${key}`));
+  }
+  const resumedWaived = evolveCampaignForResume({
+    campaign: { campaignId, paperId, status: 'paused', spec: decodedPlan },
+  });
+  assert.deepEqual(
+    resumedWaived.nextSpec.directLocalRunBudgetWaiver,
+    directBudgetWaiver.waiver,
+  );
+  assert.equal(
+    resumedWaived.nextSpec.budgets.maxTokenCount,
+    AUTONOMOUS_RESEARCH_UNLIMITED_BUDGET_SENTINEL,
+  );
+  assert.equal(
+    resumedWaived.nextSpec.budgets.maxCostUsd,
+    AUTONOMOUS_RESEARCH_UNLIMITED_BUDGET_SENTINEL,
+  );
+  const {
+    localOnly: _persistedLocalOnly,
+    directLocalRunBudgetWaiver: _persistedBudgetWaiver,
+    ...nonLocalPersistedSpec
+  } = decodedPlan;
+  assert.throws(() => resolvePersistedAutonomousResearchLaunchMode({
+    campaign: {
+      campaignId,
+      paperId,
+      spec: nonLocalPersistedSpec,
+    },
+    requestedLaunchMode: launchMode,
+    requestedLocalOnly: true,
+  }), /autonomous_research_local_only_mismatch:false:true/);
+
+  campaigns.createCampaign(decodedPlan);
+  const persisted = campaigns.getCampaign(decodedPlan.campaignId);
+  const { campaignPlanHash: persistedPlanHash, ...persistedPlanPayload } = persisted.spec;
+  assert.equal(persisted.spec.budgets.maxTokenCount, Number.MAX_SAFE_INTEGER);
+  assert.equal(persisted.spec.budgets.maxCostUsd, Number.MAX_SAFE_INTEGER);
+  assert.equal(persistedPlanHash, campaignPlanHash);
+  assert.equal(persistedPlanHash, hashRecord('PaperCampaignPlan', persistedPlanPayload));
+  const [raw] = store.query(`SELECT
+    typeof(json_extract(spec_json,'$.budgets.maxTokenCount')) AS token_budget_type,
+    json_extract(spec_json,'$.budgets.maxTokenCount') AS max_token_count,
+    typeof(json_extract(spec_json,'$.budgets.maxCostUsd')) AS cost_budget_type,
+    json_extract(spec_json,'$.budgets.maxCostUsd') AS max_cost_usd
+    FROM paper_campaigns WHERE campaign_id='local-run-token-sentinel-campaign';`).rows;
+  assert.equal(raw.token_budget_type, 'integer');
+  assert.equal(Number(raw.max_token_count), Number.MAX_SAFE_INTEGER);
+  assert.equal(raw.cost_budget_type, 'integer');
+  assert.equal(Number(raw.max_cost_usd), Number.MAX_SAFE_INTEGER);
+
+  campaigns.recordUsage(
+    decodedPlan.campaignId,
+    { tokens: Number.MAX_SAFE_INTEGER - 1 },
+    { enforceBudget: true },
+  );
+  assert.equal(
+    campaigns.recordUsage(decodedPlan.campaignId, { tokens: 1 }, { enforceBudget: true })
+      .tokenCount,
+    Number.MAX_SAFE_INTEGER,
+  );
+  assert.throws(
+    () => campaigns.recordUsage(decodedPlan.campaignId, { tokens: 1 }, { enforceBudget: true }),
+    /campaign_usage_budget_reservation_failed/,
+  );
+  assert.equal(campaigns.getCampaign(decodedPlan.campaignId).tokenCount, Number.MAX_SAFE_INTEGER);
+  campaigns.recordUsage(decodedPlan.campaignId, {
+    agentCalls: 1,
+    costUsd: Number.MAX_SAFE_INTEGER - 1,
+    pricedAgentCalls: 1,
+  }, { enforceBudget: true });
+  assert.equal(
+    campaigns.recordUsage(decodedPlan.campaignId, {
+      costUsd: 1,
+      pricedAgentCalls: 0,
+    }, { enforceBudget: true }).costUsd,
+    Number.MAX_SAFE_INTEGER,
+  );
+  assert.throws(
+    () => campaigns.recordUsage(decodedPlan.campaignId, {
+      costUsd: 1,
+      pricedAgentCalls: 0,
+    }, { enforceBudget: true }),
+    /campaign_usage_budget_reservation_failed/,
+  );
+  assert.equal(campaigns.getCampaign(decodedPlan.campaignId).costUsd, Number.MAX_SAFE_INTEGER);
 });
 
 test('production mode requires full readiness, known provider price, and a precomputed ceiling', () => {

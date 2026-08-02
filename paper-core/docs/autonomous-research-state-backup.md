@@ -52,7 +52,6 @@ npm run automation:autonomous-research-state-provision -- \
   --machine-intake-config /etc/hepta-paper/intake/config.json \
   --topic-producer-profile /etc/hepta-paper/intake/topic-producer-profile.json \
   --dataset-root /srv/hepta-paper/datasets \
-  --provider-canary-pair-maximum-cost-usd 1 \
   --runtime-reproducibility-maximum-attempts-per-epoch 4 \
   --runtime-reproducibility-maximum-cost-usd-per-epoch 10
 npm run automation:autonomous-research-state-provision -- \
@@ -61,16 +60,70 @@ npm run automation:autonomous-research-state-provision -- \
   --machine-intake-config /etc/hepta-paper/intake/config.json \
   --topic-producer-profile /etc/hepta-paper/intake/topic-producer-profile.json \
   --dataset-root /srv/hepta-paper/datasets \
-  --provider-canary-pair-maximum-cost-usd 1 \
   --runtime-reproducibility-maximum-attempts-per-epoch 4 \
   --runtime-reproducibility-maximum-cost-usd-per-epoch 10
 ```
 
-Execute requires the independently provisioned machine-intake genesis documents
-and never creates or self-signs them. The resulting business-schema receipt is
-not online anti-rollback readiness. Run the externally authorized ten-database
-online schema transition next, followed by signed `renew` or
+Execute binds root-owned, non-group-writable machine-intake and topic-producer
+configuration files and never creates or self-signs synthetic genesis
+authority. The resulting business-schema receipt is not online anti-rollback
+readiness. Run the authority-reserved ten-database online schema transition
+next, followed by signed `renew` or
 `reconcile-and-renew` backup/restore validation.
+
+### Historical partial-root repair
+
+The fresh-root provisioner remains fresh-root-only. A separate, narrower
+maintenance route exists only for the manifest-bound historical layout with
+exactly five present roles (`native-store`, `submission-handoff`,
+`supervisor-state`, `resident-instance`, and `external-qualification`) and the
+other five canonical singleton roles absent. It rejects every other role set,
+unknown database, sidecar, business-schema gap, configuration drift,
+implementation drift, or writer-manifest drift.
+
+The operator must first fence every writer and provide a current, hash-valid
+quiescence receipt covering the supervisor, submission dispatcher, strict
+acceptance process, and backup-renewal process. Plan is read-only:
+
+```bash
+npm run automation:autonomous-research-state-partial-root-maintenance -- \
+  --action plan \
+  --runtime-root /var/lib/hepta-paper/runtime \
+  --rescue-root /var/lib/hepta-paper-rescue \
+  --writer-quiescence-receipt /run/hepta-paper/partial-root-quiescence.json \
+  --machine-intake-config /etc/hepta-paper/intake/config.json \
+  --topic-producer-profile /etc/hepta-paper/intake/topic-producer-profile.json \
+  --dataset-root /srv/hepta-paper/datasets \
+  --runtime-reproducibility-maximum-attempts-per-epoch 4 \
+  --runtime-reproducibility-maximum-cost-usd-per-epoch 10
+```
+
+Execute requires both the action and boolean confirmation plus the exact
+current plan ID. It acquires exclusive locks on all five existing databases,
+creates a recoverable rescue bundle and copy-restore verifies every database
+before mutation, adds only the three manifest-declared supervisor external
+action journal objects, and creates the five missing business databases with
+the existing constructors in same-filesystem staging. New files are published
+with a no-clobber atomic link/unlink boundary and file/directory `fsync`; any
+collision fails rather than replacing a path. Existing business table schemas,
+row counts, and streamed row hashes must remain identical.
+
+```bash
+npm run automation:autonomous-research-state-partial-root-maintenance -- \
+  --action execute --execute --maintenance-plan-id sha256:PLAN_ID \
+  --runtime-root /var/lib/hepta-paper/runtime \
+  --rescue-root /var/lib/hepta-paper-rescue \
+  --writer-quiescence-receipt /run/hepta-paper/partial-root-quiescence.json \
+  --machine-intake-config /etc/hepta-paper/intake/config.json \
+  --topic-producer-profile /etc/hepta-paper/intake/topic-producer-profile.json \
+  --dataset-root /srv/hepta-paper/datasets \
+  --runtime-reproducibility-maximum-attempts-per-epoch 4 \
+  --runtime-reproducibility-maximum-cost-usd-per-epoch 10
+```
+
+This route never reads, resets, reuses, or invokes state-authority storage. Its
+success receipt proves only pre-transition business repair: the complete
+independent authority-reserved online schema transition is still mandatory.
 
 The supported production command is registered as
 `automation:autonomous-research-state-backup` and as the `autonomous-state-backup`
@@ -150,14 +203,15 @@ and public-key document but the resolver never invokes the broker. Missing or
 incorrect trust blocks state-source selection and cannot be replaced by a
 local success flag.
 
-## External authority boundary
+## Independent authority boundary
 
-Backup and restore-drill fail closed without an external authority client.
-There is deliberately no production implementation that signs or advances an
-authority head locally. The configured command is only a JSON-over-stdio client
-for an independently administered, linearizable broker. It must not contain or
-have filesystem access to the broker's private signing key. The runtime config
-contains only a pinned Ed25519 public-key document with this shape:
+Backup and restore-drill fail closed without an independent authority client.
+A production deployment may use the bundled `hepta-paper-state-authority`
+service under a dedicated OS identity, or a remotely administered linearizable
+broker. In the bundled profile, the research service cannot read the authority
+private key or monotonic database and can reach it only through the restricted
+Unix socket. The configured command remains a pinned client and the runtime
+config contains only a pinned Ed25519 public-key document with this shape:
 
 ```json
 {
@@ -193,21 +247,36 @@ the restore process to verify each original reserve/finalize signature:
 }
 ```
 
-`commandPath` must be the dedicated pinned broker client, not a generic
+`commandPath` must be the dedicated pinned authority client, not a generic
 interpreter followed by an unpinned script; fixed arguments are therefore
 required to be empty. The client receives one request on stdin and returns one
-signed receipt on stdout. The broker reservation must sign the exact database
+signed receipt on stdout. The authority reservation must sign the exact database
 inventory and attest that
 all registered mutations are fenced through finalization. A restore drill also
 requires a fresh, expiring signed observation of the same live authority head;
 a locally recomputed hash or a caller flag cannot substitute for it.
+
+For the bundled same-host profile, the reviewed host installer materializes
+`/usr/libexec/hepta-paper/hepta-paper-state-authority-client` as that executable.
+It has no socket override: the daemon configuration must use
+`/run/hepta-paper-state-authority/authority.sock`, while the process
+configuration retains an empty `fixedArguments` array and pins the installed
+launcher hash. See
+[`operational-process-entrypoints.md`](operational-process-entrypoints.md) for
+the source/deployment mode and release-graph closure requirements.
+
+The bundled same-host profile protects the state boundary from the
+`hepta-paper` research UID; it does not protect against host root, hypervisor,
+or whole-machine rollback. Deploy the authority on a separate control domain,
+with remote durable state and optionally HSM/KMS-backed signing, when that
+stronger threat model is required.
 
 This command does not by itself turn same-UID SQLite writers into an
 anti-rollback boundary. The strict production code graph covers all ten
 registered roles through sixteen writers and 204 statically discovered
 mutation operations: 132 coordinator-integrated online DML operations plus 72
 explicitly offline schema/genesis or cross-database maintenance operations.
-The broker may issue fencing attestations only after the
+The authority may issue fencing attestations only after the
 exact deployed manifest has reconciled and activated against its current
 signed head (or while an equivalent external write freeze is active). Explicit
 offline maintenance and non-strict compatibility factories are outside that
@@ -218,7 +287,7 @@ remains No-Go.
 `autonomous-research-state-backup-renew.timer` creates a fresh snapshot and
 drill every 12 hours, with persistent scheduling, jitter, and 15-minute retry
 after transient failure. Its `flock` prevents only same-host duplicate jobs;
-the external reservation remains the cross-process fence. The timer is for
+the signed authority reservation remains the cross-process fence. The timer is for
 fresh-snapshot retention, not continuous resident admission.
 
 The canonical systemd resident runs `reconcile-and-renew` under the same host

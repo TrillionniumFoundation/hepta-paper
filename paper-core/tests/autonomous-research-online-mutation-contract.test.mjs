@@ -139,13 +139,13 @@ test('canonical native-store routing covers every integrated native operation ex
     manifest,
   ));
   assert.equal(routing.writerIds.length, 7);
-  assert.equal(routing.operationIds.length, 67);
+  assert.equal(routing.operationIds.length, 68);
   assert.deepEqual(routing.writerIds, nativeWriters.map((writer) => writer.writerId).sort());
   assert.deepEqual(
     routing.operationIds,
     nativeOperations.map((operation) => operation.operationId).sort(),
   );
-  assert.equal(new Set(Object.keys(routing.operationWriters)).size, 67);
+  assert.equal(new Set(Object.keys(routing.operationWriters)).size, 68);
   for (const writer of nativeWriters) {
     for (const operationId of writer.operationIds) {
       assert.equal(routing.operationWriters[operationId], writer.writerId);

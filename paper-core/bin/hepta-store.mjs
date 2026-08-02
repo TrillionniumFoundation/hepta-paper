@@ -6,6 +6,7 @@ import {
   createDefaultPaperStore,
   createReadOnlyPaperStore,
   createReadOnlySqliteStore,
+  copySqliteDatabase,
   heptaStorePath,
   openExistingWritablePaperStore,
 } from '../../paper-composition/bootstrap/operator-persistence-composition.mjs';
@@ -47,10 +48,6 @@ function receiptLedger() {
   return mutableReceiptLedger;
 }
 
-function sqlQuote(value) {
-  return `'${String(value).replace(/'/g, "''")}'`;
-}
-
 function runSql(store, sql, { json = false } = {}) {
   const result = json ? store.query(sql) : store.execute(sql);
   if (!result.ok) throw new Error(result.stderr || result.stdout || result.error || 'sqlite3 failed');
@@ -61,6 +58,22 @@ const fileSha256 = (file) => fileSha256HashSync(file, { prefix: false });
 const within = pathWithin;
 const writeDurableJson = writeDurableJsonSync;
 const jsonFile = readRegularJsonFileSync;
+
+function regularFileIdentity(candidate) {
+  const stat = fs.lstatSync(candidate);
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('hepta_store_backup_file_unsafe');
+  return Object.freeze({ dev: stat.dev, ino: stat.ino });
+}
+
+function removeIdentityFile(candidate, identity) {
+  if (!identity) return;
+  try {
+    const stat = fs.lstatSync(candidate);
+    if (stat.dev === identity.dev && stat.ino === identity.ino) fs.unlinkSync(candidate);
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+}
 
 function ledgerIdentity(receipt, evidenceClass) {
   return receiptLedger().prepare(receipt, {
@@ -210,32 +223,47 @@ AND NOT EXISTS (
   };
 }
 
-function backup() {
+async function backup() {
   const backupRoot = path.join(layout.runtimeRoot, 'backups');
-  fs.mkdirSync(backupRoot, { recursive: true });
+  fs.mkdirSync(backupRoot, { recursive: true, mode: 0o700 });
   const stamp = new Date().toISOString().replace(/[-:.]/g, '');
   const backupPath = path.join(backupRoot, `hepta-paper-${stamp}-${process.pid}.sqlite`);
-  const result = writableStore().execute(`VACUUM INTO ${sqlQuote(backupPath)};`);
-  if (!result.ok) throw new Error(result.error || result.stderr || 'backup_failed');
-  const receipt = {
-    version: 1,
-    kind: 'HeptaStoreBackupReceipt',
-    status: 'hepta_store_backup_recorded',
-    sourcePath: dbPath,
-    backupPath,
-    backupSha256: `sha256:${fileSha256(backupPath)}`,
-    bytes: fs.statSync(backupPath).size,
-    createdAt: new Date().toISOString(),
-  };
-  writeDurableJson(`${backupPath}.receipt.json`, receipt);
-  const ledgerReceipt = receiptLedger().record(receipt, { stream: 'store-admin', environment: 'administrative', evidenceClass: 'backup' });
-  return { ...receipt, ledgerReceipt };
+  const receiptPath = `${backupPath}.receipt.json`;
+  let backupIdentity = null;
+  let receiptIdentity = null;
+  try {
+    writableStore();
+    await copySqliteDatabase({ sourcePath: dbPath, destinationPath: backupPath });
+    backupIdentity = regularFileIdentity(backupPath);
+    const receipt = {
+      version: 1,
+      kind: 'HeptaStoreBackupReceipt',
+      status: 'hepta_store_backup_recorded',
+      sourcePath: dbPath,
+      backupPath,
+      backupSha256: `sha256:${fileSha256(backupPath)}`,
+      bytes: fs.statSync(backupPath).size,
+      createdAt: new Date().toISOString(),
+    };
+    writeDurableJson(receiptPath, receipt);
+    receiptIdentity = regularFileIdentity(receiptPath);
+    const ledgerReceipt = receiptLedger().record(receipt, {
+      stream: 'store-admin',
+      environment: 'administrative',
+      evidenceClass: 'backup',
+    });
+    return { ...receipt, ledgerReceipt };
+  } catch (error) {
+    removeIdentityFile(receiptPath, receiptIdentity);
+    removeIdentityFile(backupPath, backupIdentity);
+    throw error;
+  }
 }
 
-function restoreDrill({ backupPath = null } = {}) {
+async function restoreDrill({ backupPath = null } = {}) {
   let selected = resolveBackupReceipt(backupPath);
   if (!selected) {
-    const created = backup();
+    const created = await backup();
     selected = Object.freeze({
       receipt: Object.freeze(Object.fromEntries(Object.entries(created).filter(([key]) => key !== 'ledgerReceipt'))),
       identity: created.ledgerReceipt,
@@ -283,8 +311,8 @@ const selectedBackupPath = backupOptionIndex >= 0 ? process.argv[backupOptionInd
 if (backupOptionIndex >= 0 && !selectedBackupPath) throw new Error('--backup requires a path');
 let output = null;
 if (command === 'init' || command === 'migrate') output = initialize();
-else if (command === 'backup') output = backup();
-else if (command === 'restore-drill') output = restoreDrill({ backupPath: selectedBackupPath });
+else if (command === 'backup') output = await backup();
+else if (command === 'restore-drill') output = await restoreDrill({ backupPath: selectedBackupPath });
 else if (command === 'status') output = status({ allowIsolatedVerificationEvidence: process.argv.includes('--allow-isolated-verification-evidence') });
 else throw new Error(`Unknown hepta-store command: ${command}`);
 process.stdout.write(`${JSON.stringify(output || status(), null, 2)}\n`);

@@ -16,19 +16,26 @@ export function composeAutonomousSubmissionDispatcherServices({
   const configPath = String(
     environment.HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIG || '',
   ).trim();
+  const expectedConfigurationHash = String(
+    environment.HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIGURATION_HASH || '',
+  ).trim() || null;
+  const expectedDescriptorHash = String(
+    environment.HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_HASH || '',
+  ).trim() || null;
   const configuration = configPath
-    ? readAutonomousSubmissionPortalConfiguration({ configPath }) : null;
+    ? readAutonomousSubmissionPortalConfiguration({
+      configPath,
+      expectedConfigurationHash,
+    }) : null;
   const publicConfigPath = String(
     environment.HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_CONFIG || '',
   ).trim();
   let publicConfiguration = null;
   if (configuration && publicConfigPath) {
-    const expectedConfigurationHash = String(
-      environment.HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIGURATION_HASH || '',
-    ).trim();
     publicConfiguration = readAutonomousSubmissionPortalPublicConfiguration({
       configPath: publicConfigPath,
       expectedConfigurationHash,
+      expectedDescriptorHash,
     });
     const derived = deriveAutonomousSubmissionPortalPublicConfiguration({ configuration });
     if (!expectedConfigurationHash
@@ -38,6 +45,8 @@ export function composeAutonomousSubmissionDispatcherServices({
   }
   const portal = configuration ? createHttpAutonomousSubmissionPortalAdapter({
     configuration,
+    expectedConfigurationHash,
+    expectedDescriptorHash,
     environment,
     submissionRequestVerifier: autonomousSubmissionRequestVerifier,
     dispatchCapability: autonomousSubmissionPortalDispatchCapability,

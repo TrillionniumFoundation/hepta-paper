@@ -68,9 +68,11 @@ export function createAutonomousResearchMachineIntakeRepository({
   schemaContractId = AUTONOMOUS_RESEARCH_MACHINE_INTAKE_SCHEMA_CONTRACT_ID,
   writerId = AUTONOMOUS_RESEARCH_MACHINE_INTAKE_WRITER_ID,
   requireExternallyFencedMutations = false,
+  genesisAuthorityMode = 'external',
 } = {}) {
   if (typeof offlineProvision !== 'boolean'
     || typeof requireExternallyFencedMutations !== 'boolean'
+    || !['external', 'root-owned-configuration'].includes(genesisAuthorityMode)
     || !SAFE_ID.test(String(databaseInstanceId || ''))
     || !SAFE_ID.test(String(schemaContractId || ''))
     || !SAFE_ID.test(String(writerId || ''))) {
@@ -111,6 +113,7 @@ export function createAutonomousResearchMachineIntakeRepository({
     machineProducerAppendAuthority,
     migrationHooks,
     offlineProvision,
+    genesisAuthorityMode,
   });
   let closed = false;
 

@@ -1,5 +1,8 @@
 import { assertAgentExecutorPort } from '../../paper-ports/agent-executor-port.mjs';
 import { buildExecutorCapabilities, capabilityRequestFromExecution, evaluateExecutorCapabilityRequest } from '../../paper-ports/executor-capabilities.mjs';
+import {
+  buildAgentBackendUsageReceipt,
+} from '../../paper-domain/evidence/agent-execution-receipt-contract.mjs';
 
 export function createAgentBackendRouter({ primary, fallbacks = [], health = () => ({}), failureThreshold = 3, cooldownMs = 60000, now = () => Date.now() } = {}) {
   const executors = [primary, ...fallbacks].filter(Boolean);
@@ -38,6 +41,8 @@ export function createAgentBackendRouter({ primary, fallbacks = [], health = () 
     backendStatus,
     async execute(input = {}) {
       const failures = [];
+      const attemptedReceipts = [];
+      let terminalFailureObserved = false;
       const snapshot = health();
       for (const executor of executors) {
         const preflight = evaluateExecutorCapabilityRequest({ capabilities: executor.capabilities(), request: capabilityRequestFromExecution(input) });
@@ -53,12 +58,41 @@ export function createAgentBackendRouter({ primary, fallbacks = [], health = () 
           failures.push({ executorId: executor.executorId, message: 'backend_circuit_breaker_open', receiptHash: null });
           continue;
         }
+        const attemptId = `backend-attempt-${attemptedReceipts.length + 1}:${executor.executorId}`;
         try {
           const receipt = await executor.execute(input);
+          attemptedReceipts.push({ attemptId, executorId: executor.executorId, receipt });
           failuresByExecutor.set(executor.executorId, 0);
           unavailableUntil.delete(executor.executorId);
-          return Object.freeze({ ...receipt, selectedExecutorId: executor.executorId, fallbackCount: failures.length, fallbackFailures: failures });
+          const agentBackendUsageReceipt = buildAgentBackendUsageReceipt({
+            attempts: attemptedReceipts,
+            selectedExecutorId: executor.executorId,
+            status: 'agent_backend_selected',
+          });
+          if (agentBackendUsageReceipt.usageComplete !== true) {
+            const error = new Error('agent_backend_usage_incomplete');
+            error.retryable = false;
+            error.agentBackendUsageIncomplete = true;
+            throw error;
+          }
+          return Object.freeze({
+            ...receipt,
+            selectedExecutorId: executor.executorId,
+            fallbackCount: failures.length,
+            fallbackFailures: failures,
+            agentBackendUsage: agentBackendUsageReceipt.usage,
+            agentBackendUsageReceipt,
+            agentBackendUsageReceiptHash:
+              agentBackendUsageReceipt.agentBackendUsageReceiptHash,
+          });
         } catch (error) {
+          if (error?.agentBackendUsageIncomplete !== true) {
+            attemptedReceipts.push({
+              attemptId,
+              executorId: executor.executorId,
+              receipt: error?.receipt || null,
+            });
+          }
           failures.push({
             executorId: executor.executorId,
             message: String(error?.message || error).slice(0, 500),
@@ -70,12 +104,26 @@ export function createAgentBackendRouter({ primary, fallbacks = [], health = () 
           const failureCount = Number(failuresByExecutor.get(executor.executorId) || 0) + 1;
           failuresByExecutor.set(executor.executorId, failureCount);
           if (failureCount >= Math.max(1, Number(failureThreshold))) unavailableUntil.set(executor.executorId, now() + Math.max(1000, Number(cooldownMs)));
-          if (error?.retryable === false) break;
+          const failureUsageReceipt = buildAgentBackendUsageReceipt({
+            attempts: attemptedReceipts,
+            selectedExecutorId: null,
+            status: 'all_agent_backends_failed',
+          });
+          if (failureUsageReceipt.usageComplete !== true
+            || error?.retryable === false) {
+            terminalFailureObserved = true;
+            break;
+          }
         }
       }
       const error = new Error(`all_agent_backends_failed:${failures.map((item) => item.executorId).join(',')}`);
-      error.retryable = true;
+      error.retryable = !terminalFailureObserved;
       error.failures = failures;
+      error.receipt = buildAgentBackendUsageReceipt({
+        attempts: attemptedReceipts,
+        selectedExecutorId: null,
+        status: 'all_agent_backends_failed',
+      });
       throw error;
     },
   });

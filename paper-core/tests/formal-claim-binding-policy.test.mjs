@@ -473,6 +473,8 @@ test('approved proposal claims are externally rebound and an unrelated theorem i
       openClawGatewayConfigurationHash: hashRecord('ProposalLineageGatewayConfiguration', {}),
       resolvedModel: 'fixture', structuredOutput,
       finalOutput: structuredOutput ? JSON.stringify(structuredOutput) : '', changedPaths: [],
+      usage: { input: 8, output: 4, cacheRead: 0, cacheWrite: 0, totalTokens: 12 },
+      externalModelInvocationPerformed: true,
       externalActionPerformed: false,
     };
     return { ...payload, agentExecutionReceiptHash: hashRecord('AgentExecutionReceipt', payload) };

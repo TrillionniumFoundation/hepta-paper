@@ -185,10 +185,11 @@ export function buildExperimentRunReceipt({
     experimentDesignHash: design?.experimentDesignHash || null,
     benchmarkHarnessHash: design?.benchmarkHarnessHash || null,
     assuranceScope: benchmarkSelector?.assuranceScope || null,
-    academicPromotionEligible: benchmarkSelector?.assuranceScope === 'operator-authorized-hidden-evaluation-v1',
-    evidenceClass: benchmarkSelector?.assuranceScope === 'operator-authorized-hidden-evaluation-v1'
+    executionAssuranceProfile: harnessExecutionReceipt?.executionAssuranceProfile || null,
+    academicPromotionEligible: harnessExecutionReceipt?.academicPromotionEligible === true,
+    evidenceClass: harnessExecutionReceipt?.academicPromotionEligible === true
       ? 'academic-experiment-evidence' : 'software-conformance-evidence',
-    promotionScope: benchmarkSelector?.assuranceScope === 'operator-authorized-hidden-evaluation-v1'
+    promotionScope: harnessExecutionReceipt?.academicPromotionEligible === true
       ? 'academic-research-promotion' : 'software-conformance-only',
     systemBenchmarkHarnessImplementationHash: design?.benchmarkHarness?.systemBenchmarkHarnessImplementationHash || null,
     datasetAuthorizationSetHash: datasetAuthorizationSet.datasetAuthorizationSetHash,
@@ -275,7 +276,10 @@ export function verifyExperimentRunReceipt(receipt) {
     && receipt.experimentDesignHash === design?.experimentDesignHash
     && receipt.benchmarkHarnessHash === design?.benchmarkHarnessHash
     && receipt.assuranceScope === selectorVerification.expected?.assuranceScope
-    && receipt.academicPromotionEligible === (receipt.assuranceScope === 'operator-authorized-hidden-evaluation-v1')
+    && receipt.executionAssuranceProfile
+      === receipt.harnessExecutionReceipt?.executionAssuranceProfile
+    && receipt.academicPromotionEligible
+      === receipt.harnessExecutionReceipt?.academicPromotionEligible
     && receipt.evidenceClass === (receipt.academicPromotionEligible ? 'academic-experiment-evidence' : 'software-conformance-evidence')
     && receipt.promotionScope === (receipt.academicPromotionEligible ? 'academic-research-promotion' : 'software-conformance-only')
     && verifyExperimentRawArtifactWriteReceipt(receipt.rawArtifactWriteReceipt, {

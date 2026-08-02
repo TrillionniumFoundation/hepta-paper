@@ -20,10 +20,18 @@ import {
   autonomousSubmissionPortalPublicDescriptorHash,
 } from './autonomous-submission-portal-public-adapter.mjs';
 import {
-  verifyReviewerPrincipalPoolConfiguration,
-} from './reviewer-principal-pool-configuration-reader.mjs';
+  verifyAutonomousResearchAuthorIdentityConfiguration,
+} from './autonomous-research-author-identity-configuration.mjs';
+import {
+  readProvisionedReleaseAttestorConfiguration,
+} from '../build-package/research-execution-release-attestor-configuration.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
+const SEMANTIC_CONFIGURATION_REFERENCES = new Set([
+  'research-author-identity-config',
+  'release-attestor-config',
+]);
+const OBSERVED_CONTENT_HASH = Symbol('strictFullAutoAcceptanceObservedContentHash');
 
 function regularFileNoSymlink(candidate, label) {
   const absolute = path.resolve(candidate);
@@ -134,13 +142,19 @@ function inspectReference(referenceId, value) {
   const privateConfiguration = requiredKind === 'private-configuration-reference';
   const contentReference = publicReference || privateConfiguration;
   const opaqueDirectory = requiredKind === 'opaque-directory-reference';
+  const semanticConfiguration = SEMANTIC_CONFIGURATION_REFERENCES.has(referenceId);
   const requiredKeys = contentReference
-    ? ['kind', 'path', 'subjectId', 'expectedSha256']
+    ? semanticConfiguration
+      ? ['kind', 'path', 'subjectId', 'expectedConfigurationIdentityHash']
+      : ['kind', 'path', 'subjectId', 'expectedSha256']
     : ['kind', 'path', 'subjectId'];
   if (!exactKeys(value, requiredKeys) || value.kind !== requiredKind
     || typeof value.path !== 'string' || value.path.length === 0
     || typeof value.subjectId !== 'string' || value.subjectId.length === 0
-    || (contentReference && !SHA256.test(String(value.expectedSha256 || '')))) {
+    || (contentReference && !semanticConfiguration
+      && !SHA256.test(String(value.expectedSha256 || '')))
+    || (semanticConfiguration
+      && !SHA256.test(String(value.expectedConfigurationIdentityHash || '')))) {
     throw new Error(`strict_full_auto_acceptance_reference_configuration_invalid:${referenceId}`);
   }
   const inspected = opaqueDirectory
@@ -160,12 +174,10 @@ function inspectReference(referenceId, value) {
     }
     const bytes = regularFileSnapshot(inspected.absolute, inspected, referenceId);
     inspectedContentHash = contentHash(bytes);
-    if (inspectedContentHash !== value.expectedSha256) {
+    if (!semanticConfiguration && inspectedContentHash !== value.expectedSha256) {
       throw new Error(`strict_full_auto_acceptance_reference_hash_mismatch:${referenceId}`);
     }
     const documentPinRequired = new Set([
-      'research-author-principal',
-      'formal-reviewer-principal',
       'formal-sandbox-runtime-config',
       'production-mathlib-build-authority-config',
       'autonomous-venue-profile-config',
@@ -173,6 +185,8 @@ function inspectReference(referenceId, value) {
       'submission-portal-descriptor-config',
       'prior-art-service-config',
       'external-replay-config',
+      'research-author-identity-config',
+      'release-attestor-config',
     ]).has(referenceId);
     if (documentPinRequired) {
       let parsed;
@@ -182,35 +196,16 @@ function inspectReference(referenceId, value) {
           cause: error,
         });
       }
-      if (documentPinRequired
+      if (documentPinRequired && !semanticConfiguration
         && !/^sha256:[0-9a-f]{64}$/.test(String(parsed?.configurationHash || ''))) {
         throw new Error(`strict_full_auto_acceptance_document_pin_invalid:${referenceId}`);
       }
-      let reviewerServiceTokenEnvironmentVariables = null;
-      if (referenceId === 'formal-reviewer-principal') {
-        reviewerServiceTokenEnvironmentVariables = parsed?.principals?.flatMap(
-          (principal) => [
-            principal?.signerConfiguration?.tokenEnvironmentVariable,
-            principal?.recoverableExecutorConfiguration?.tokenEnvironmentVariable,
-          ],
-        ).sort();
-        if (!verifyReviewerPrincipalPoolConfiguration(parsed)
-          || parsed.version !== 2
-          || parsed.minimumReviewerTrustDomains < 3
-          || parsed.principals.length < 3
-          || parsed.principals.some((principal) => (
-            principal.signerConfiguration.version !== 3
-          ))
-          || reviewerServiceTokenEnvironmentVariables.length > 16
-          || reviewerServiceTokenEnvironmentVariables.some(
-            (name) => !/^[A-Z][A-Z0-9_]{1,122}_FILE$/.test(String(name || '')),
-          )
-          || new Set(reviewerServiceTokenEnvironmentVariables).size
-            !== reviewerServiceTokenEnvironmentVariables.length) {
-          throw new Error(
-            'strict_full_auto_acceptance_reviewer_pool_config_invalid',
-          );
-        }
+      if (referenceId === 'research-author-identity-config'
+        && (parsed?.version !== 2
+          || parsed.kind !== 'AutonomousResearchAuthorIdentityConfiguration'
+          || !verifyAutonomousResearchAuthorIdentityConfiguration(parsed)
+          || parsed.configurationHash !== value.expectedConfigurationIdentityHash)) {
+        throw new Error(`strict_full_auto_acceptance_document_pin_invalid:${referenceId}`);
       }
       const expectedTokenEnvironmentVariable = referenceId === 'prior-art-service-config'
         ? 'HEPTA_PRIOR_ART_SERVICE_TOKEN_FILE'
@@ -221,25 +216,25 @@ function inspectReference(referenceId, value) {
         throw new Error(`strict_full_auto_acceptance_credential_binding_invalid:${referenceId}`);
       }
       documentPins = Object.freeze({
-        ...(documentPinRequired ? { configurationHash: parsed.configurationHash } : {}),
+        ...(documentPinRequired ? {
+          configurationHash: semanticConfiguration
+            ? value.expectedConfigurationIdentityHash
+            : parsed.configurationHash,
+        } : {}),
         ...(referenceId === 'submission-portal-descriptor-config' ? {
           portalId: parsed.portalId,
           portalDescriptorHash: autonomousSubmissionPortalPublicDescriptorHash(parsed),
         } : {}),
         ...(expectedTokenEnvironmentVariable
           ? { tokenEnvironmentVariable: expectedTokenEnvironmentVariable } : {}),
-        ...(reviewerServiceTokenEnvironmentVariables ? {
-          reviewerServiceTokenEnvironmentVariables: Object.freeze(
-            reviewerServiceTokenEnvironmentVariables,
-          ),
-        } : {}),
       });
     }
     identity = strictFullAutoAcceptanceHash({
       referenceId,
       subjectId: value.subjectId,
       resolvedPath: inspected.absolute,
-      contentHash: inspectedContentHash,
+      contentHash: semanticConfiguration
+        ? value.expectedConfigurationIdentityHash : inspectedContentHash,
     });
   } else {
     // Opaque references are deliberately never opened or read by this process.
@@ -249,15 +244,22 @@ function inspectReference(referenceId, value) {
       subjectId: value.subjectId,
     });
   }
-  return Object.freeze({
+  const binding = {
     referenceId,
     kind: requiredKind,
     subjectId: value.subjectId,
     resolvedPath: inspected.absolute,
     identity,
-    contentHash: inspectedContentHash,
+    contentHash: semanticConfiguration
+      ? value.expectedConfigurationIdentityHash : inspectedContentHash,
     documentPins,
-  });
+  };
+  if (inspectedContentHash !== null) {
+    Object.defineProperty(binding, OBSERVED_CONTENT_HASH, {
+      value: inspectedContentHash,
+    });
+  }
+  return Object.freeze(binding);
 }
 
 function validatedConfiguration(configuration) {
@@ -318,7 +320,7 @@ function assertExecutableReference(reference, label) {
 function parseBoundJsonReference(reference, label) {
   const inspected = regularFileNoSymlink(reference.resolvedPath, label);
   const bytes = regularFileSnapshot(inspected.absolute, inspected, label);
-  if (contentHash(bytes) !== reference.contentHash) {
+  if (contentHash(bytes) !== (reference[OBSERVED_CONTENT_HASH] ?? reference.contentHash)) {
     throw new Error(
       `strict_full_auto_acceptance_bound_reference_changed:${reference.referenceId}`,
     );
@@ -361,9 +363,47 @@ function assertPrivateAuthorityConfigurations(referenceBindings) {
   const probeRoot = references.get('release-attestor-probe-credential-root');
   const signerCommand = references.get('release-attestor-signer-command');
   const probeCommand = references.get('release-attestor-probe-command');
-  if (release?.version !== 2
+  const hardwareAuthority = release?.hardwareAuthorityAttestation;
+  const hardwareSignerKeyIds = hardwareAuthority?.signerKeyIds;
+  const passiveReleaseRead = readProvisionedReleaseAttestorConfiguration({
+    configPath: releaseConfig.resolvedPath,
+    expectedConfigurationHash: releaseConfig.documentPins.configurationHash,
+    requiredConfigurationVersion: 3,
+    requiredBackendKind: 'external-kms-command',
+    environment: {},
+    spawnSyncImpl() {
+      throw new Error('strict_full_auto_acceptance_release_attestor_action_forbidden');
+    },
+  });
+  if (!passiveReleaseRead.configuration
+    || passiveReleaseRead.blocker !== null
+    || passiveReleaseRead.configuration.configurationPinned !== true
+    || passiveReleaseRead.configuration.configurationIdentityProfile
+      !== 'stable-kms-authority-policy-and-rotating-bundle-v3'
+    || release?.version !== 3
     || release.kind !== 'ResearchExecutionReleaseAttestorConfiguration'
     || release?.backend?.kind !== 'external-kms-command'
+    || !/^[A-Za-z0-9][A-Za-z0-9._:@/-]{2,159}$/.test(
+      String(release.backend.kmsProvider || ''),
+    )
+    || ![
+      release.backend.providerAccountIdentityHash,
+      release.backend.keyResourceIdentityHash,
+      release.backend.credentialGenerationIdentityHash,
+    ].every((value) => SHA256.test(String(value || '')))
+    || !exactKeys(hardwareAuthority, [
+      'bundlePath', 'challengeHash', 'signerKeyIds', 'trustStoreHash',
+    ])
+    || ![
+      hardwareAuthority.challengeHash,
+      hardwareAuthority.trustStoreHash,
+    ].every((value) => SHA256.test(String(value || '')))
+    || !Array.isArray(hardwareSignerKeyIds)
+    || hardwareSignerKeyIds.length < 1
+    || new Set(hardwareSignerKeyIds).size !== hardwareSignerKeyIds.length
+    || hardwareSignerKeyIds.some((keyId) => (
+      !/^[A-Za-z0-9][A-Za-z0-9._:@/-]{2,159}$/.test(String(keyId || ''))
+    ))
     || !Array.isArray(signer?.environmentAllowlist)
     || !Array.isArray(probe?.environmentAllowlist)
     || signer.environmentAllowlist.length !== 0 || probe.environmentAllowlist.length !== 0

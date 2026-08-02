@@ -9,9 +9,13 @@ import {
   RESEARCH_VERIFY_EXPLICIT_RETIREMENTS,
   researchVerifyRetirementDisposition,
 } from '../research-verify-retirements.mjs';
+import { prepareImmutableLegacyMatrixReference } from '../legacy-matrix-reference.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const root = defaultLegacyPaperFactoryRoot();
+const preparedByParent = process.env.HEPTA_LEGACY_REFERENCE_PREPARED === '1';
+const reference = preparedByParent ? null : prepareImmutableLegacyMatrixReference();
+if (reference) process.on('exit', reference.cleanup);
+const root = reference?.root || defaultLegacyPaperFactoryRoot();
 
 function filesUnder(directory) {
   return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -187,3 +191,4 @@ process.stdout.write(JSON.stringify({
   nativeSemanticMigrationVerifiedWorkerCount: report.semanticMigrationVerifiedWorkerCount,
   academicEvidenceEligible: report.academicEvidenceEligible,
 }) + '\n');
+reference?.cleanup();

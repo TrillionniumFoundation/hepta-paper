@@ -22,7 +22,7 @@ import {
 import { buildPaperCampaignPlan } from '../../paper-domain/automation/campaign-plan.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
-function plan(campaignId, { maxAgentCalls = 10, nodes = null } = {}) {
+function plan(campaignId, { maxAgentCalls = 10, budgets = {}, nodes = null } = {}) {
   return Object.freeze({
     version: 2,
     kind: 'PaperCampaignPlan',
@@ -30,7 +30,7 @@ function plan(campaignId, { maxAgentCalls = 10, nodes = null } = {}) {
     paperId: `${campaignId}:paper`,
     sourceWorkspace: '/tmp',
     maxRounds: 1,
-    budgets: Object.freeze({ maxAgentCalls }),
+    budgets: Object.freeze({ maxAgentCalls, ...budgets }),
     nodes: Object.freeze(nodes || [Object.freeze({
       nodeId: `${campaignId}:writer`,
       kind: 'writer',
@@ -284,6 +284,157 @@ test('strict campaign lease, integration and completion use only fixed mutations
   }
 });
 
+test('strict terminal failure atomically settles ordinary and integrating siblings', (t) => {
+  const fixtureState = fixture(t);
+  const campaignId = 'strict-terminal-sibling-settlement';
+  fixtureState.campaigns.createCampaign(plan(campaignId, {
+    nodes: Object.freeze(['terminal', 'ordinary', 'integrating'].map((kind) => Object.freeze({
+      nodeId: `${campaignId}:${kind}`,
+      kind,
+      roundIndex: 1,
+      priority: 10,
+      maxAttempts: 1,
+      dependencies: Object.freeze([]),
+    }))),
+  }));
+  const workerId = 'worker:terminal-sibling-settlement';
+  const claims = fixtureState.campaigns.claimReady({ campaignId, workerId, limit: 3 });
+  assert.equal(claims.length, 3);
+  const fences = new Map(claims.map((claim) => [claim.kind, Object.freeze({
+    nodeId: claim.nodeId,
+    workerId,
+    attemptId: claim.attemptId,
+    leaseGeneration: claim.leaseGeneration,
+  })]));
+  for (const fence of fences.values()) fixtureState.campaigns.startNode(fence);
+
+  const integrationKey = 'sha256:strict-terminal-sibling-integration';
+  fixtureState.campaigns.prepareNodeResult({
+    ...fences.get('integrating'),
+    result: {
+      status: 'prepared',
+      workspaceAttemptIntegration: {
+        workspaceAttemptIntegrationDescriptorHash: integrationKey,
+      },
+    },
+    requiresIntegration: true,
+    integrationKey,
+  });
+  fixtureState.campaigns.beginNodeResultIntegration({
+    ...fences.get('integrating'),
+    integrationKey,
+  });
+
+  const terminalFailureDetail = Object.freeze({ injected: true });
+  const terminalFailureHash = hashRecord(
+    'PaperCampaignNodeFailure',
+    terminalFailureDetail,
+  );
+  fixtureState.campaigns.failNode({
+    ...fences.get('terminal'),
+    retryable: false,
+    failureClass: 'strict_terminal_failure',
+    failureDetail: terminalFailureDetail,
+  });
+
+  const byKind = new Map(fixtureState.campaigns.listNodes(campaignId)
+    .map((node) => [node.kind, node]));
+  assert.equal(fixtureState.campaigns.getCampaign(campaignId).status, 'failed');
+  assert.equal(byKind.get('terminal').status, 'failed_terminal');
+  assert.equal(byKind.get('ordinary').status, 'skipped');
+  assert.equal(byKind.get('ordinary').failureClass,
+    'campaign_terminal_sibling_cancelled');
+  assert.equal(byKind.get('integrating').status, 'external_outcome_uncertain');
+  assert.equal(byKind.get('integrating').failureClass,
+    'campaign_terminal_sibling_outcome_uncertain');
+  assert.equal(byKind.get('integrating').preparedIntegrationStatus, 'integrating');
+  assert.ok(byKind.get('integrating').preparedResultHash);
+
+  for (const kind of ['ordinary', 'integrating']) {
+    const node = byKind.get(kind);
+    assert.equal(node.attemptId, null);
+    assert.equal(node.leaseOwner, null);
+    assert.equal(node.leaseExpiresAt, null);
+    assert.equal(node.failureDetail.reason, node.failureClass);
+    assert.equal(node.failureDetail.terminalNodeId, fences.get('terminal').nodeId);
+    assert.equal(node.failureDetail.terminalFailureHash, terminalFailureHash);
+    assert.equal(node.failureDetail.previousAttemptId, fences.get(kind).attemptId);
+    assert.equal(node.failureDetail.previousLeaseGeneration,
+      fences.get(kind).leaseGeneration);
+    assert.equal(
+      node.failureSha256,
+      hashRecord('PaperCampaignNodeFailure', node.failureDetail),
+    );
+  }
+  assert.throws(
+    () => fixtureState.campaigns.renewNodeLease({
+      ...fences.get('ordinary'),
+      leaseSeconds: 10,
+    }),
+    /campaign_node_lease_renew_failed|campaign_node_lease_lost/,
+  );
+  assert.throws(
+    () => fixtureState.campaigns.failNode({
+      ...fences.get('ordinary'),
+      retryable: false,
+      failureClass: 'late_failure',
+    }),
+    /campaign_node_lease_lost/,
+  );
+  assert.throws(
+    () => fixtureState.campaigns.markNodeResultIntegrated({
+      ...fences.get('integrating'),
+      integrationKey,
+      integrationReceipt: integrationReceipt(integrationKey),
+    }),
+    /campaign_node_lease_lost|campaign_node_attempt_fence_check_failed/,
+  );
+  assert.equal(fixtureState.campaigns.listEvents(campaignId)
+    .filter((event) => event.kind === 'campaign_terminal_sibling_settled').length, 2);
+  assert.ok(fixtureState.operationIds.includes(
+    NATIVE_STORE_CAMPAIGN_OPERATION_IDS.failNode,
+  ));
+  assert.equal(fixtureState.genericWriteAttempts(), 0);
+});
+
+test('strict terminal sibling settlement statement failure rolls back the root failure', (t) => {
+  const fixtureState = fixture(t, {
+    failStatementId: NATIVE_STORE_CAMPAIGN_STATEMENT_IDS.settleTerminalSiblingNodes,
+  });
+  const campaignId = 'strict-terminal-sibling-rollback';
+  fixtureState.campaigns.createCampaign(plan(campaignId, {
+    nodes: Object.freeze(['terminal', 'sibling'].map((kind) => Object.freeze({
+      nodeId: `${campaignId}:${kind}`,
+      kind,
+      dependencies: Object.freeze([]),
+      maxAttempts: 1,
+    }))),
+  }));
+  const workerId = 'worker:terminal-sibling-rollback';
+  const claims = fixtureState.campaigns.claimReady({ campaignId, workerId, limit: 2 });
+  const fences = new Map(claims.map((claim) => [claim.kind, Object.freeze({
+    nodeId: claim.nodeId,
+    workerId,
+    attemptId: claim.attemptId,
+    leaseGeneration: claim.leaseGeneration,
+  })]));
+  for (const fence of fences.values()) fixtureState.campaigns.startNode(fence);
+  assert.throws(() => fixtureState.campaigns.failNode({
+    ...fences.get('terminal'),
+    retryable: false,
+    failureClass: 'strict_terminal_failure',
+  }), /injected_native_campaign_statement_failure|campaign_node_lease_lost/);
+  assert.equal(fixtureState.campaigns.getCampaign(campaignId).status, 'running');
+  assert.deepEqual(
+    fixtureState.campaigns.listNodes(campaignId).map((node) => node.status).sort(),
+    ['running', 'running'],
+  );
+  assert.equal(fixtureState.campaigns.listEvents(campaignId)
+    .filter((event) => ['campaign_node_failed', 'campaign_terminal_sibling_settled']
+      .includes(event.kind)).length, 0);
+  assert.equal(fixtureState.genericWriteAttempts(), 0);
+});
+
 test('strict start budget CAS rolls back the node transition and event', (t) => {
   const fixtureState = fixture(t);
   const campaignId = 'strict-budget-fence';
@@ -303,6 +454,42 @@ test('strict start budget CAS rolls back the node transition and event', (t) => 
     .find((node) => node.nodeId === claimed.nodeId).status, 'leased');
   assert.equal(fixtureState.campaigns.listEvents(campaignId)
     .filter((event) => event.kind === 'campaign_node_started').length, 0);
+  assert.equal(fixtureState.genericWriteAttempts(), 0);
+});
+
+test('strict usage mutation preserves operationally unlimited token and cost sentinels', (t) => {
+  const fixtureState = fixture(t);
+  const campaignId = 'strict-unlimited-token-cost-sentinel';
+  fixtureState.campaigns.createCampaign(plan(campaignId, {
+    maxAgentCalls: 2,
+    budgets: {
+      maxTokenCount: Number.MAX_SAFE_INTEGER,
+      maxCostUsd: Number.MAX_SAFE_INTEGER,
+    },
+  }));
+  fixtureState.campaigns.recordUsage(campaignId, {
+    agentCalls: 1,
+    tokens: Number.MAX_SAFE_INTEGER - 1,
+    costUsd: Number.MAX_SAFE_INTEGER - 1,
+    pricedAgentCalls: 1,
+  }, { enforceBudget: true });
+  const atBoundary = fixtureState.campaigns.recordUsage(campaignId, {
+    tokens: 1,
+    costUsd: 1,
+    pricedAgentCalls: 0,
+  }, { enforceBudget: true });
+  assert.equal(atBoundary.tokenCount, Number.MAX_SAFE_INTEGER);
+  assert.equal(atBoundary.costUsd, Number.MAX_SAFE_INTEGER);
+  assert.throws(() => fixtureState.campaigns.recordUsage(campaignId, {
+    costUsd: 1,
+    pricedAgentCalls: 0,
+  }, { enforceBudget: true }), /campaign_usage_budget_reservation_failed/);
+  assert.throws(() => fixtureState.campaigns.recordUsage(campaignId, {
+    tokens: 1,
+  }, { enforceBudget: true }), /campaign_usage_budget_reservation_failed/);
+  const afterRejectedReservation = fixtureState.campaigns.getCampaign(campaignId);
+  assert.equal(afterRejectedReservation.tokenCount, Number.MAX_SAFE_INTEGER);
+  assert.equal(afterRejectedReservation.costUsd, Number.MAX_SAFE_INTEGER);
   assert.equal(fixtureState.genericWriteAttempts(), 0);
 });
 
@@ -366,9 +553,18 @@ test('infrastructure cancellation refunds only persisted attempt reservations an
     ...startedFence,
     usageDelta: { agentCalls: 1 },
   });
-  fixtureState.campaigns.markNodeExternalActionStarted({
+  const startedAction = fixtureState.campaigns.markNodeExternalActionStarted({
     ...startedFence,
     action: 'test_external_action',
+  });
+  const completedAction = fixtureState.campaigns.completeNodeExternalAction({
+    ...startedFence,
+    externalActionId: startedAction.externalActionId,
+    outcome: { status: 'test_external_action_completed' },
+  });
+  assert.equal(completedAction.status, 'completed');
+  assert.deepEqual(completedAction.outcomePayload, {
+    status: 'test_external_action_completed',
   });
   fixtureState.campaigns.recordUsage(
     startedCampaignId,
@@ -385,6 +581,9 @@ test('infrastructure cancellation refunds only persisted attempt reservations an
   assert.ok(fixtureState.operationIds.includes(
     NATIVE_STORE_CAMPAIGN_OPERATION_IDS.markNodeExternalActionStarted,
   ));
+  assert.ok(fixtureState.operationIds.includes(
+    NATIVE_STORE_CAMPAIGN_OPERATION_IDS.completeNodeExternalAction,
+  ));
 });
 
 test('strict lifecycle and recovery plans execute every remaining fixed parameter shape', (t) => {
@@ -395,6 +594,20 @@ test('strict lifecycle and recovery plans execute every remaining fixed paramete
   fixtureState.campaigns.resumeCampaign('strict-pause-resume');
   fixtureState.campaigns.recordUsage('strict-pause-resume', { cpuJobs: 1 });
   fixtureState.campaigns.cancelCampaign('strict-pause-resume');
+
+  fixtureState.campaigns.createCampaign(plan('strict-stopped-resume'));
+  fixtureState.campaigns.stopCampaign(
+    'strict-stopped-resume',
+    'supervisor_process_shutdown',
+  );
+  assert.equal(
+    fixtureState.campaigns.resumeCampaign('strict-stopped-resume').status,
+    'running',
+  );
+  assert.equal(
+    fixtureState.campaigns.listNodes('strict-stopped-resume')[0].status,
+    'queued',
+  );
 
   fixtureState.campaigns.createCampaign(plan('strict-skip', {
     nodes: Object.freeze([
@@ -414,6 +627,13 @@ test('strict lifecycle and recovery plans execute every remaining fixed paramete
     ]),
   }));
   fixtureState.campaigns.cancelNode('strict-cancel-node:a');
+
+  fixtureState.campaigns.createCampaign(plan('strict-cancel-only-node'));
+  fixtureState.campaigns.cancelNode('strict-cancel-only-node:writer');
+  assert.equal(
+    fixtureState.campaigns.getCampaign('strict-cancel-only-node').status,
+    'completed',
+  );
 
   fixtureState.campaigns.createCampaign(plan('strict-fail-campaign'));
   fixtureState.campaigns.failCampaign('strict-fail-campaign');
@@ -471,6 +691,34 @@ test('strict lifecycle and recovery plans execute every remaining fixed paramete
   assert.equal(
     fixtureState.campaigns.recoverExpiredLeases('strict-recover').length,
     1,
+  );
+
+  fixtureState.campaigns.createCampaign(plan('strict-running-recover'));
+  const [runningRecoveryClaim] = fixtureState.campaigns.claimReady({
+    campaignId: 'strict-running-recover',
+    workerId: 'worker:running-expired',
+    leaseSeconds: 1,
+  });
+  fixtureState.campaigns.startNode({
+    nodeId: runningRecoveryClaim.nodeId,
+    workerId: 'worker:running-expired',
+    attemptId: runningRecoveryClaim.attemptId,
+    leaseGeneration: runningRecoveryClaim.leaseGeneration,
+    usageDelta: { agentCalls: 1, cpuJobs: 1 },
+  });
+  fixtureState.clock.advance(2_000);
+  const [runningRecovered] = fixtureState.campaigns.recoverExpiredLeases(
+    'strict-running-recover',
+  );
+  assert.equal(runningRecovered.status, 'queued');
+  assert.equal(runningRecovered.attemptCount, 0);
+  assert.equal(
+    fixtureState.campaigns.getCampaign('strict-running-recover').agentCallCount,
+    0,
+  );
+  assert.equal(
+    fixtureState.campaigns.getCampaign('strict-running-recover').cpuJobCount,
+    0,
   );
 
   for (const operation of [

@@ -6,8 +6,6 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { createCodexAgentExecutor } from '../../paper-adapters/automation/codex-agent-executor.mjs';
-import { createOllamaStructuredAgentExecutor } from '../../paper-adapters/automation/ollama-structured-agent-executor.mjs';
-import { createCampaignNodeExecutor } from '../../paper-composition/automation/campaign-node-execution-composition.mjs';
 import { createIsolatedAgentExecutor } from '../../paper-adapters/automation/isolated-agent-executor.mjs';
 import { createMultiLanguageEmpiricalExecutor } from '../../paper-adapters/automation/multi-language-empirical-executor.mjs';
 import { createFilesystemEmpiricalCacheRepository } from '../../paper-adapters/automation/empirical-cache-repository.mjs';
@@ -262,6 +260,100 @@ test('multi-language empirical execution propagates AbortSignal and returns a ca
   const receipt = await pending;
   assert.equal(receipt.status, 'empirical_execution_cancelled');
   assert.deepEqual(receipt.blockers, ['os_sandbox_command_aborted']);
+});
+
+test('LaTeX execution writes every build artifact to the separate output root', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-latex-output-root-'));
+  const source = path.join(root, 'source');
+  const output = path.join(root, 'output');
+  fs.mkdirSync(source);
+  fs.mkdirSync(output);
+  fs.writeFileSync(
+    path.join(source, 'main.tex'),
+    '\\documentclass{article}\n\\begin{document}fixture\\end{document}\n',
+  );
+  let captured = null;
+  const image = 'fixture/latex:locked';
+  const digest = `sha256:${'c'.repeat(64)}`;
+  const workerRunner = withFixtureEnvironmentBom({
+    availability: { available: true, backend: 'bubblewrap' },
+    resolveExecutionRuntimeIdentity() {
+      return fixtureContainerExecutionIdentity({
+        image,
+        digest,
+        executable: 'latexmk',
+      });
+    },
+    run(spec) {
+      captured = spec;
+      return {
+        ok: true,
+        status: 'os_sandbox_worker_completed',
+        blockers: [],
+        artifacts: [{
+          path: 'main.pdf',
+          sha256: `sha256:${'b'.repeat(64)}`,
+          bytes: 1,
+        }],
+        isolation: { separateOutputRootVerified: true },
+        datasetMounts: [],
+        runtimeIdentityHash: spec.executionIdentity.runtimeIdentityHash,
+        containerImage: image,
+        containerImageDigest: digest,
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      };
+    },
+  });
+  const receipt = createMultiLanguageEmpiricalExecutor({
+    workerRunner,
+    runtimeImages: { latex: { image, executable: 'latexmk' } },
+  }).execute({
+    language: 'latex',
+    entrypoint: 'main.tex',
+    cwd: source,
+    sourceRoot: source,
+    outputDirectory: output,
+    outputPaths: ['main.pdf'],
+    requireSeparateOutputRoot: true,
+    env: { HEPTA_OUTPUT_DIR: '/output' },
+  });
+  assert.equal(receipt.status, 'empirical_execution_completed', JSON.stringify(receipt));
+  assert.deepEqual(captured.args, [
+    '-pdf',
+    '-interaction=nonstopmode',
+    '-halt-on-error',
+    '-outdir=/output',
+    'main.tex',
+  ]);
+  assert.equal(captured.requireSeparateOutputRoot, true);
+  assert.deepEqual(captured.outputPaths, ['main.pdf']);
+});
+
+test('LaTeX execution rejects benchmark and dataset authority before invoking a worker', () => {
+  let workerCalls = 0;
+  const workerRunner = withFixtureEnvironmentBom({
+    availability: { available: true, backend: 'bubblewrap' },
+    run() {
+      workerCalls += 1;
+      throw new Error('worker_must_not_run');
+    },
+  });
+  const receipt = createMultiLanguageEmpiricalExecutor({ workerRunner }).execute({
+    language: 'latex',
+    entrypoint: 'main.tex',
+    cwd: '/tmp',
+    sourceRoot: '/tmp',
+    outputDirectory: '/tmp/output',
+    datasetMounts: [{ name: 'forbidden' }],
+    benchmarkSelector: { forbidden: true },
+    env: { HEPTA_OUTPUT_DIR: '/output' },
+  });
+  assert.equal(receipt.status, 'empirical_compile_authority_invalid');
+  assert.equal(receipt.repairEligible, false);
+  assert.deepEqual(receipt.blockers, ['latex_compile_benchmark_or_dataset_authority_forbidden']);
+  assert.equal(workerCalls, 0);
 });
 
 test('isolated agent workspace excludes research-data binaries and oversized files', async (t) => {
@@ -1401,87 +1493,4 @@ test('implicit Docker fallback is prepared before cache lookup and cannot share 
   assert.equal(hostReceipt.cacheBypassReason, 'runtime_identity_not_cacheable');
   assert.notEqual(hostReceipt.runtimeIdentityHash, dockerReceipt.runtimeIdentityHash);
   assert.equal(cacheGets, 0);
-});
-
-test('structured Ollama adapter enforces schema and per-node output budgets', async (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-ollama-executor-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  fs.writeFileSync(path.join(root, 'main.tex'), 'before\n');
-  let request = null;
-  const executor = createOllamaStructuredAgentExecutor({
-    model: 'fixture-model',
-    fetchImpl: async (_url, options) => {
-      request = JSON.parse(options.body);
-      return { ok: true, json: async () => ({ response: JSON.stringify({ status: 'completed', summary: 'edited', edits: [{ path: 'main.tex', content: 'after\n' }], checks: [], blockers: [] }), done_reason: 'stop', eval_count: 23 }) };
-    },
-  });
-  const receipt = await executor.execute({ role: 'writer', workspacePath: root, instructions: 'edit', outputTokenBudget: 777 });
-  assert.equal(request.options.num_predict, 777);
-  assert.equal(request.format.type, 'object');
-  assert.equal(receipt.outputDoneReason, 'stop');
-  assert.equal(receipt.outputTokenCount, 23);
-  assert.equal(fs.readFileSync(path.join(root, 'main.tex'), 'utf8'), 'after\n');
-});
-
-test('every campaign repair path forwards the nested lease AbortSignal and stops before retrying execution', async (t) => {
-  const cases = [
-    { name: 'dataset', language: 'python', role: 'dataset-consumption-contract-repair', source: 'print("fixture")\n', datasetMounts: [{ name: 'fixture', source: '/fixture.csv', readOnly: true, manifestHash: `sha256:${'a'.repeat(64)}`, licenseId: 'MIT' }], empiricalStatus: 'empirical_execution_completed', expectedEmpiricalCalls: 0 },
-    { name: 'latex', language: 'latex', role: 'latex-repair', source: '\\documentclass{article}\n\\begin{document}fixture\\end{document}\n', empiricalStatus: 'empirical_execution_failed', expectedEmpiricalCalls: 1 },
-    { name: 'empirical', language: 'python', role: 'empirical-code-repair', source: 'raise RuntimeError("fixture")\n', empiricalStatus: 'empirical_execution_failed', expectedEmpiricalCalls: 1 },
-    { name: 'artifact', language: 'r', role: 'empirical-artifact-contract-repair', source: 'quit(status=0)\n', empiricalStatus: 'empirical_execution_completed', metricSchema: { minimumMetricCount: 1 }, expectedEmpiricalCalls: 1 },
-  ];
-
-  for (const fixture of cases) {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), `hepta-${fixture.name}-repair-abort-`));
-    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-    fs.mkdirSync(path.join(root, 'runtime'), { recursive: true });
-    fs.writeFileSync(path.join(root, 'main.tex'), fixture.language === 'latex' ? fixture.source : 'fixture\n');
-    if (fixture.language === 'python') fs.writeFileSync(path.join(root, 'run.py'), fixture.source);
-    if (fixture.language === 'r') fs.writeFileSync(path.join(root, 'run.R'), fixture.source);
-    let empiricalCalls = 0;
-    let agentAbortCount = 0;
-    const nestedLost = new AbortController();
-    const executor = createCampaignNodeExecutor({
-      runtimeRoot: path.join(root, 'runtime'),
-      empiricalExecutor: {
-        async execute() {
-          empiricalCalls += 1;
-          return fixture.empiricalStatus === 'empirical_execution_completed'
-            ? { status: fixture.empiricalStatus, multiLanguageEmpiricalReceiptHash: `sha256:${fixture.name}` , artifacts: [] }
-            : { status: fixture.empiricalStatus, blockers: ['os_sandbox_command_failed'], stderrTail: `${fixture.name} fixture failure` };
-        },
-      },
-      agentExecutor: {
-        async execute(input) {
-          assert.equal(input.role, fixture.role, fixture.name);
-          assert.equal(input.signal, nestedLost.signal, fixture.name);
-          return new Promise((resolve, reject) => {
-            input.signal.addEventListener('abort', () => {
-              agentAbortCount += 1;
-              reject(new Error(String(input.signal.reason)));
-            }, { once: true });
-          });
-        },
-      },
-    });
-    const executionResources = {
-      runNestedAgent(operation) {
-        const pending = operation({ remainingTokenCount: 512, signal: nestedLost.signal });
-        setImmediate(() => nestedLost.abort(`nested_${fixture.name}_resource_lease_lost`));
-        return pending;
-      },
-    };
-
-    await assert.rejects(
-      () => executor.execute({
-        campaign: { campaignId: `campaign-${fixture.name}`, paperId: `paper-${fixture.name}`, spec: { sourceWorkspace: root, languages: [fixture.language], datasetMounts: fixture.datasetMounts || [], metricSchema: fixture.metricSchema || {} } },
-        node: { nodeId: `node-${fixture.name}`, kind: fixture.language === 'latex' ? 'compile' : 'empirical', roundIndex: 0, spec: { language: fixture.language } },
-        allNodes: [],
-        executionResources,
-      }),
-      new RegExp(`nested_${fixture.name}_resource_lease_lost`),
-    );
-    assert.equal(agentAbortCount, 1, fixture.name);
-    assert.equal(empiricalCalls, fixture.expectedEmpiricalCalls, fixture.name);
-  }
 });

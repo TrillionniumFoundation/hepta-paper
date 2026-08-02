@@ -1,4 +1,31 @@
 import { resourcesForCampaignNode } from './resource-governor.mjs';
+import {
+  normalizeAgentExecutionUsage,
+  verifyAgentBackendUsageReceipt,
+  verifyAgentExecutionReceipt,
+  verifyAgentExecutionUsageBinding,
+  verifyAgentPostprocessingFailureUsageReceipt,
+  verifiedAgentExecutionUsage,
+} from '../../paper-domain/evidence/agent-execution-receipt-contract.mjs';
+
+export const AGENT_USAGE_UNKNOWN_TERMINAL = 'agent_usage_unknown_terminal';
+
+function unknownTerminalAgentUsage(result, reason, {
+  knownUsageTrusted = false,
+} = {}) {
+  const knownUsage = knownUsageTrusted
+    ? normalizeAgentExecutionUsage(result?.usage) : null;
+  return Object.freeze({
+    tokens: knownUsage?.totalTokens || 0,
+    agentUsageComplete: false,
+    agentUsageStatus: AGENT_USAGE_UNKNOWN_TERMINAL,
+    agentUsageReason: reason,
+    agentUsageReceiptHash: result?.agentBackendUsageReceiptHash
+      || result?.agentPostprocessingFailureUsageReceiptHash
+      || result?.agentExecutionReceiptHash
+      || null,
+  });
+}
 
 export function elapsedRunMs(campaign, nowMs) {
   const accumulated = Number(campaign.accumulatedRunMs || 0);
@@ -21,15 +48,131 @@ export function campaignNodeUsageDelta(campaign, node, result = null) {
   };
 }
 
-export function meteredCampaignResultUsage(result, { agentCall = false } = {}) {
-  const usage = result?.usage || {};
-  const delta = { tokens: Number(result?.outputTokenCount || usage.totalTokens || usage.total_tokens || usage.total || 0) };
+export function meteredCampaignResultUsage(result, {
+  agentCall = false,
+  failureReceipt = false,
+} = {}) {
+  let usage = result?.usage || {};
+  if (agentCall && failureReceipt) {
+    if (verifyAgentPostprocessingFailureUsageReceipt(result)) {
+      usage = result.usage;
+    } else if (result?.kind === 'AgentBackendUsageReceipt') {
+      if (!verifyAgentBackendUsageReceipt(result)) {
+        return unknownTerminalAgentUsage(
+          result,
+          'agent_backend_usage_receipt_invalid',
+        );
+      }
+      if (result.usageComplete !== true) {
+        return unknownTerminalAgentUsage(
+          result,
+          'agent_backend_usage_incomplete',
+          { knownUsageTrusted: true },
+        );
+      }
+      usage = result.usage || {};
+    } else if (verifyAgentExecutionReceipt(result, { requireCompleted: false })) {
+      if (result.usageComplete === false) {
+        return unknownTerminalAgentUsage(
+          result,
+          'agent_execution_usage_incomplete',
+          { knownUsageTrusted: true },
+        );
+      }
+      const verifiedUsage = verifiedAgentExecutionUsage(
+        result,
+        { requireCompleted: false },
+      );
+      if (verifiedUsage) {
+        usage = verifiedUsage;
+      } else if (result.externalModelInvocationPerformed === false
+        && (result.usage === null || result.usage === undefined)) {
+        usage = {};
+      } else {
+        return unknownTerminalAgentUsage(
+          result,
+          'agent_execution_usage_incomplete',
+        );
+      }
+    } else if (result) {
+      return unknownTerminalAgentUsage(
+        result,
+        'agent_failure_usage_receipt_unverified',
+      );
+    } else {
+      return unknownTerminalAgentUsage(
+        null,
+        'agent_failure_usage_receipt_missing',
+      );
+    }
+  } else if (agentCall) {
+    const verifiedUsage = verifiedAgentExecutionUsage(result);
+    if (verifiedUsage) {
+      usage = verifiedUsage;
+    } else if (verifyAgentExecutionReceipt(result)
+      && result.externalModelInvocationPerformed === false
+      && (result.usage === null || result.usage === undefined)) {
+      usage = {};
+    } else {
+      const binding = result?.agentExecutionUsageBinding
+        || result?.sourceAgentExecutionUsageBinding || null;
+      const sourceReceipt = result?.agentExecutionReceipt
+        || result?.sourceAgentExecutionReceipt || null;
+      const claimedBindingHash = result?.agentExecutionUsageBinding
+        ? result?.agentExecutionUsageBindingHash
+        : result?.sourceAgentExecutionUsageBindingHash;
+      const boundUsage = binding?.usage === null
+        ? null : normalizeAgentExecutionUsage(binding?.usage);
+      const reportedUsage = result?.usage === null || result?.usage === undefined
+        ? null : normalizeAgentExecutionUsage(result.usage);
+      if (verifyAgentExecutionUsageBinding(binding, {
+        agentExecutionReceipt: sourceReceipt,
+      })
+        && claimedBindingHash === binding.agentExecutionUsageBindingHash
+        && JSON.stringify(reportedUsage) === JSON.stringify(boundUsage)) {
+        usage = boundUsage || {};
+      } else {
+        const error = new Error('agent_execution_usage_binding_invalid');
+        error.retryable = false;
+        error.receipt = sourceReceipt || result || null;
+        throw error;
+      }
+    }
+  }
+  const meteredTokens = agentCall
+    ? usage.totalTokens || usage.total_tokens || usage.total || 0
+    : result?.outputTokenCount || usage.totalTokens || usage.total_tokens || usage.total || 0;
+  const delta = { tokens: Number(meteredTokens) };
   if (Object.prototype.hasOwnProperty.call(usage, 'costUsd')
     || Object.prototype.hasOwnProperty.call(usage, 'cost_usd')) {
     delta.costUsd = Number(usage.costUsd ?? usage.cost_usd);
     delta.pricedAgentCalls = agentCall ? 1 : 0;
   }
   return delta;
+}
+
+export function meteredCampaignFailureUsage(error, { agentCall = false } = {}) {
+  const usageDelta = meteredCampaignResultUsage(error?.receipt, {
+    agentCall,
+    failureReceipt: true,
+  });
+  const agentUsageUnknown = usageDelta.agentUsageComplete === false
+    || usageDelta.agentUsageStatus === AGENT_USAGE_UNKNOWN_TERMINAL;
+  return Object.freeze({
+    nodeFailure: Object.freeze({
+      failureClass: agentUsageUnknown
+        ? AGENT_USAGE_UNKNOWN_TERMINAL
+        : error?.code || error?.message || 'campaign_executor_failed',
+      retryable: agentUsageUnknown ? false : error?.retryable !== false,
+      usageDelta,
+    }),
+    usageMetering: agentUsageUnknown ? Object.freeze({
+      status: AGENT_USAGE_UNKNOWN_TERMINAL,
+      reason: usageDelta.agentUsageReason || 'agent_usage_incomplete',
+      knownTokenCount: Number(usageDelta.tokens || 0),
+      receiptHash: usageDelta.agentUsageReceiptHash || null,
+    }) : null,
+  });
 }
 
 export function campaignBudgetBlocker(campaign, node, nowMs) {

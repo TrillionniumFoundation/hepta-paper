@@ -7,6 +7,13 @@ and internal classification. Maintenance commands rewrite accepted repository
 evidence; compatibility and experimental scripts are not production operator
 entrypoints.
 
+Machine protocol executables are installed separately from this human command
+surface. Before configuring `codexBinary`, a same-host state-authority client,
+or the bounded local release-attestor client, follow
+[`operational-process-entrypoints.md`](operational-process-entrypoints.md).
+Their source files are non-executable; the reviewed host installer creates the
+root-owned `/usr/libexec/hepta-paper` launchers and records their hashes.
+
 ## Before running campaigns
 
 ```bash
@@ -31,6 +38,26 @@ complete the portal-binding, terms, schema, sandbox, canary, credential,
 independent-receipt and human commit-approval checklist in
 [`universal-submission-system.md`](universal-submission-system.md).
 
+## Local autonomous research
+
+The default operating profile is local-only:
+
+```bash
+npm run hepta-paper -- operator autonomous-research -- \
+  --action prepare --paper-id <paper-id>
+```
+
+This is equivalent to `--launch-mode local-run`. It uses the existing bounded
+local execution path and local author/reviewer processes. It does not require
+an external author attestation, HSM/KMS, off-host replay, runtime attestor,
+submission portal or strict production acceptance. Dataset mounts are required
+only when the selected protocol actually uses data. Cost, wall-time, process
+and compute budgets remain enforced.
+
+Use `--launch-mode production-run` only for a deployment that intentionally
+needs external trust and unattended submission. The production machinery below
+is optional and is not a prerequisite for local paper generation.
+
 ## Declared-capability autonomous research
 
 The production composition can run without a runtime human checkpoint when all
@@ -42,12 +69,12 @@ materialize the public authority documents and opaque secret-reference files
 named by `paper-core/deploy/strict-full-auto-acceptance.config.example.json`,
 replace all hash/path/argument placeholders, then use the unattended atomic mode:
 
-The version-2 reviewer pool is one of those hash-bound public documents.
-Provision its unique signer and executor `_FILE` credentials beneath the
-`formal-reviewer-service-credential-root` reference before convergence. The
-runner validates only file metadata and derives `root/<variable-name>` paths;
-it never reads secret bytes. The child reviewer adapters reopen those files
-with no-follow, descriptor-pinned reads immediately before use.
+Strict convergence may bind author and reviewer to the same private
+`research-author-credential-root`. Each review still runs in a new ephemeral,
+non-resumable session against a frozen read-only artifact package. Full
+production additionally requires the author principal to carry a pinned,
+externally signed provider/platform identity attestation. A separate reviewer
+account remains optional when fresh-session and frozen-artifact isolation hold.
 
 ```bash
 npm run hepta-paper -- operator strict-full-auto-acceptance -- \
@@ -103,40 +130,108 @@ assertion. It does not read or generate private keys and cannot mint
 an external identity, signature, golden receipt, portal credential, or KMS
 challenge itself.
 
+Do not prepare the complete strict-acceptance inventory while the first
+external dependency is still missing. Check only the real author/KMS inputs in
+one read-only command:
+
+```bash
+node paper-core/bin/hepta-paper.mjs operator external-authority-intake -- \
+  --author-config /run/hepta/research-author-identity.json \
+  --author-config-hash sha256:REPLACE_WITH_OUT_OF_BAND_CONFIGURATION_HASH \
+  --release-attestor-config /run/hepta/research-execution-release-attestor.json \
+  --release-attestor-config-hash sha256:REPLACE_WITH_OUT_OF_BAND_RESOLVED_IDENTITY_HASH \
+  --require-ready
+```
+
+The command verifies the current author authority envelope and KMS
+control-plane bundle but forcibly disables all child-process execution. It
+prints candidate hashes for comparison when a pin is absent or wrong; those
+observed values are diagnostics, not a replacement for an independently
+delivered pin. Only after this command is ready should deployment run one live
+provider binding plus release probe/signing challenge. The final convergence
+gate remains a one-time action after all later external dependencies are
+present.
+
 ```bash
 export HEPTA_AUTONOMOUS_RESEARCH_CONTENT_MODE=agent-evidence-bound
 export HEPTA_DYNAMIC_FORMAL_CLAIMS_ENABLED=1
 export HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG=/run/hepta/research-author-identity.json
 export HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG_HASH=sha256:REPLACE_WITH_CONFIGURATION_HASH
-export HEPTA_REVIEWER_PRINCIPAL_POOL_CONFIG=/run/hepta/reviewer-principals.json
+export HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG=/run/hepta/research-execution-release-attestor.json
+export HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG_HASH=sha256:REPLACE_WITH_RESOLVED_CONFIGURATION_IDENTITY_HASH
 export HEPTA_PRIOR_ART_SERVICE_CONFIG=/run/hepta/prior-art-service.json
+export HEPTA_PRIOR_ART_SERVICE_CONFIG_HASH=sha256:REPLACE_WITH_CONFIGURATION_HASH
 export HEPTA_EXTERNAL_REPLAY_CONFIG=/run/hepta/external-replay-service.json
+export HEPTA_EXTERNAL_REPLAY_CONFIG_HASH=sha256:REPLACE_WITH_CONFIGURATION_HASH
+export HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG=/run/hepta/runtime-reproducibility.json
+export HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG_HASH=sha256:REPLACE_WITH_CONFIGURATION_IDENTITY_HASH
 export HEPTA_AUTONOMOUS_VENUE_PROFILE_CONFIG=/run/hepta/venue-profiles.json
 export HEPTA_AUTONOMOUS_VENUE_PROFILE_CONFIG_HASH=sha256:REPLACE_WITH_CONFIGURATION_HASH
 export HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_CONFIG=/run/hepta/submission-portal-descriptor.json
 export HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIGURATION_HASH=sha256:REPLACE_WITH_CONFIGURATION_HASH
+export HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_HASH=sha256:REPLACE_WITH_PUBLIC_DESCRIPTOR_HASH
 export HEPTA_AUTONOMOUS_SUBMISSION_METADATA_CONFIG=/run/hepta/submission-metadata.json
 export HEPTA_AUTONOMOUS_SUBMISSION_METADATA_CONFIG_HASH=sha256:REPLACE_WITH_CONFIGURATION_HASH
 ```
 
-The research/supervisor process must receive only the public portal descriptor.
+The research/supervisor process must receive only the public portal descriptor
+and both out-of-band hashes.
 Run `autonomous-submission-dispatcher` as a distinct OS/Kubernetes principal;
 its environment alone contains
 `HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIG=/run/hepta/submission-portal.json`
 and the token variable named by that complete configuration. The dispatcher
-also receives the public descriptor and configuration-hash pin and refuses to
-create a network adapter unless the private configuration deterministically
-derives that exact descriptor. The checked-in systemd/Kubernetes templates keep
-the portal-token Secret and egress capability out of the research principal.
+also receives the public descriptor and both pins and refuses production
+dispatch unless the private configuration deterministically derives that exact
+descriptor. Portal configuration v3, independent platform identity
+attestations, a portal canary signer distinct from the dispatcher cycle signer,
+and a fresh externally published challenge are mandatory; without a pending
+challenge no portal network action occurs. The checked-in systemd/Kubernetes
+templates keep the portal-token Secret and egress capability out of the
+research principal.
 
-`HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG_HASH` must equal the exact
-`configurationHash` inside the regular-file author identity configuration. It
-is an out-of-band deployment pin: replacing the configuration, its embedded
-trust store, and its signed envelope together still fails before the first
-model invocation. The signed subject must bind the active author principal,
-provider and credential-root identity and carry provider-account plus platform
-attestation. The same canonical subject and envelope are passed unchanged to
-the reviewer-pool independence check and the prior-art retrieval authority.
+The bounded author identity and reviewer pool are derived from the live Codex
+capability receipts, shared credential-root metadata, distinct role IDs, and
+fresh-session policies. Full production must also set
+`HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG`,
+`HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG_HASH`; the signed subject must bind the
+active provider account, platform, author principal, and credential root.
+Production uses author configuration v2: its out-of-band hash pins the stable
+account/platform/trust policy while the host, process, challenge, timestamps,
+subject hash, and signed envelope may rotate. Every rotated envelope is still
+verified at the current clock and rebound to the live author principal; v1
+exact-envelope pins remain readable but are bounded-only.
+`HEPTA_REVIEWER_PRINCIPAL_POOL_CONFIG` remains an optional stronger compliance
+mode, and all configured signature and separation checks remain fail-closed.
+
+The release-attestor hash is an out-of-band SHA-256 pin over the resolved
+configuration identity, not merely the JSON bytes. It binds the trust keys,
+probe key, executable content and inode identities, credential-root identity,
+restricted child environment, backend descriptor, and the stable v3 KMS
+authority policy: trust-store hash, signer IDs, and challenge binding. The
+configuration pins the bundle path, not a short-lived bundle byte hash. The
+bundle is read through a no-follow, single-link descriptor and its signature,
+time window, trust store, signer set, challenge and KMS identities are verified
+on every read. An independently signed refresh can therefore atomically replace
+the bundle without rewriting the release configuration or changing the
+out-of-band pin. Full production requires the current bundle to bind the
+provider/account, key resource, credential generation, active key, descriptor,
+hardware protection and non-exportability. Version 2 remains bounded and
+performs no KMS action. Version 3 uses signer protocol v2: every request binds
+the authorization deadline, caps the child timeout to that deadline, and
+revalidates the clock, configuration, active key and KMS authority after the
+signer returns. Signer and probe commands must use empty argument and
+environment allowlists; credentials remain behind separately mounted roots.
+
+The strict acceptance configuration uses
+`expectedConfigurationIdentityHash` for both
+`research-author-identity-config` and `release-attestor-config`; neither
+semantic reference carries an `expectedSha256` pin. The author configuration
+may rotate with its subject/envelope; the stable release configuration need not
+change when its signed KMS bundle rotates. Other content references remain
+byte-pinned. Each plan inspection still snapshots the current files through
+no-follow descriptors, verifies their stable semantic identities without
+executing a signer or probe, and leaves current signature, expiry and KMS
+action-time verification fail-closed.
 
 The venue registry must be a signed version-2 configuration. Each profile
 declares normalized scope terms and hard format/submission constraints; local
@@ -148,16 +243,34 @@ reverify both signatures at the current time and bind the ranking, formatting,
 citation, metadata, portal, and post-render compliance receipts. Version-1
 hash selection remains bounded-only and cannot satisfy strong production.
 
-`HEPTA_EXTERNAL_REPLAY_CONFIG` must use version 3 for strong production. It
+`HEPTA_PRIOR_ART_SERVICE_CONFIG_HASH` and
+`HEPTA_EXTERNAL_REPLAY_CONFIG_HASH` are mandatory out-of-band pins for full
+production. A self-hash inside either document does not authorize replacement
+of the complete endpoint and trust-store configuration. Both readers require a
+single regular file that is not group/world writable.
+
+`HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG_HASH` is likewise mandatory for full
+production, but pins the resolved `configurationIdentityHash`, not only the JSON
+bytes. That identity includes both verifier processes, interpreters, arguments,
+restricted environments, credential-root contents, backend identities, and
+Ed25519 signer trust. Run read-only `runtime-image-reproducibility --action
+status` without the hash only to obtain a bounded candidate identity for
+independent review; then provision the accepted hash out of band. Until it
+matches, the system does not read the receipt authority or invoke a builder.
+
+`HEPTA_EXTERNAL_REPLAY_CONFIG` must use version 4 for strong production. It
 pins the replay-result Ed25519 trust store, one signed remote replay platform
 and account identity bundle, and one or more signed local-origin identity
 bundles. Every identity must use
 `pinned-provider-account-and-platform-attestation-v1`; the remote signer,
 provider account, credential root, host, process, and trust domain must all be
-distinct from every local origin. Versions 1 and 2 remain bounded audit
-formats and cannot satisfy generic production readiness. Persisted v3 replay
-receipts are reverified against the current configuration and current time at
-campaign verification and release packaging.
+distinct from every local origin. Version 4 additionally requires signed
+lookup/resume recovery outcomes bound to one operation ID and idempotency key,
+so a supervisor crash cannot silently duplicate the external action. Versions
+1 through 3 remain bounded audit formats and cannot satisfy generic production
+readiness. Persisted v3 receipt payloads are reverified against the current
+version-4 configuration and current time at campaign verification and release
+packaging.
 
 The empirical family registry is resolved once, while the process module graph
 is initialized. With no override it uses the repository's Ed25519-signed,
@@ -275,45 +388,38 @@ unpinned or self-shaped configuration, an expired signature, key rotation,
 subject drift or file tamper therefore remains blocked.
 
 Once a build closure is independently reviewed and authorized by either path,
-status also verifies the production Lean toolchain content Merkle identity and
-executes the exact probe in the configured digest-pinned Docker runtime from a
-sealed snapshot mounted read-only at `/work`. The seal strips every write bit
+an explicit `automation-status --live-formal-sandbox-probe` qualification
+verifies the production Lean toolchain content Merkle identity and executes the
+exact probe in the configured digest-pinned Docker runtime from a sealed
+snapshot mounted read-only at `/work`. The seal strips every write bit
 and gives sources and compiled metadata deterministic ordered timestamps.
 Missing configuration, the default Init-only project, dependency or build
 drift, toolchain drift, sandbox write authority, or an unsuccessful probe keeps
 both generic and production readiness false.
-After the probe exits, status remeasures the complete closure and its file-read
+After the active probe exits, qualification remeasures the complete closure and its file-read
 identities, rereads the probe bytes and `Mathlib` import, reinspects official
 source provenance and build authority, and revalidates the toolchain Merkle and
 content identity. A successful process exit therefore cannot conceal either
 persistent mutation or mutate-and-restore drift during the readiness probe.
+The resulting hash-bound receipt is valid for 24 hours. Ordinary
+`automation-status`, capability-matrix reads, resident startup and formal
+execution assertions recompute the current closure, release, build-authority,
+toolchain and runtime identities and compare them with that receipt; they do
+not copy the complete Mathlib tree or rerun the kernel probe. A missing,
+expired or identity-mismatched receipt remains fail-closed. Formal-domain
+qualification performs and publishes the same active probe automatically when
+the receipt must be established or renewed.
 Strict full-auto acceptance must supply the public reference
 `production-mathlib-build-authority-config`; both build-authority environment
 variables resolve to that same content-pinned reference.
 
-The reviewer pool must provide the configured referee cardinality through
-different signed account identities, credential roots, signer keys, hosts,
-processes, and trust domains. Strong production accepts reviewer identities
-only after pinned Ed25519 receipt verification and signed platform/account
-attestation against the pinned author reference; configuration-only identity
-hashes remain bounded evidence. A version-2 reviewer-pool principal must also
-provide `recoverableExecutorConfiguration`: an HTTPS execute/lookup/resume
-service whose completed, in-progress, and definitive-not-found outcomes are
-signed by the pinned `reviewer_execution_attestor` trust set. The operation
-request binds the exact role, instructions, structured context, checks,
-resource bounds, principal descriptor, configuration and service identities,
-plus a byte-complete immutable workspace snapshot hash. The external service
-returns an `AgentExecutionReceipt` whose hash is bound into that signed
-outcome. Local `codex exec --ephemeral` remains available only to the
-bounded version-1 pool; it is never advertised as crash-recoverable.
-
-Every version-2 signer and recoverable-executor
-`tokenEnvironmentVariable` must end in `_FILE` and be unique across the whole
-pool (at most 16 principals). The variable value is an absolute, owner-only
-opaque credential file; it is not the token. Strict acceptance derives those
-paths beneath its plan-bound reviewer-service credential root and passes only
-the paths to the child. Missing, aliased, ambient, symlinked, shared-mode, or
-wrong-owner credential files fail before any reviewer HTTP action.
+The default reviewer pool uses fresh, non-resumable `codex exec --ephemeral`
+sessions under a reviewer role distinct from the author role. It may share the
+same provider-auth root and inherited model. Each session receives only the
+frozen, hash-bound evidence workspace, never the author conversation, and every
+revision round starts another session. Optional external compliance mode may
+still supply signed account identities and recoverable HTTPS executors, but it
+is not a production-readiness requirement for the standard autonomous profile.
 Structured prior-art and external-replay services must return signed,
 hash-bound receipts.
 An externally submittable venue profile must use `inline-evidence-v1` bibliography
@@ -462,6 +568,35 @@ npm run store:restore-drill
 npm run store:logical-integrity
 ```
 
+`automation:reconcile` is read-only unless its explicit execute script is used.
+The one-time legacy terminal-active residue path is additionally campaign
+scoped and requires an explicit policy-v0 terminal campaign:
+
+```bash
+# Plan only (default): no worker, provider, or external action is started.
+npm run automation:reconcile -- \
+  --legacy-terminal-active-residue --campaign-id <campaign-id>
+
+# Apply the exact hash-bound plan atomically after operator review.
+npm run automation:reconcile:execute -- \
+  --legacy-terminal-active-residue --campaign-id <campaign-id>
+```
+
+This maintenance path preserves queued legacy nodes and binds their exact count
+and deterministic sorted state hash into the plan and receipt. It accepts only
+a missing legacy settlement-policy field or an explicit integer `0`; it refuses
+text/boolean/noninteger encodings, policy v1, a non-terminal parent, any
+unexpired active lease, any `integrating` or `integrated` prepared result, and
+any campaign-scoped resource lease or waiter. A stale or partially matching
+batch rolls back without settlement events or a receipt.
+
+Operational-integrity status reports those preserved policy-v0 queued nodes in
+`preservedLegacyTerminalCampaignQueuedNodeCount`, but does not classify them as
+live stale work: campaign claiming independently requires a running parent and
+the reconciler intentionally retains this immutable historical evidence.
+Policy-v1 terminal queued nodes remain actionable reconciliation debt, and any
+malformed settlement-policy encoding remains fail-closed degraded state.
+
 The native-store commands above cover `hepta-paper.sqlite` only. For a fully
 provisioned autonomous-research runtime, inspect and back up the complete
 trust-bearing database inventory separately:
@@ -514,14 +649,22 @@ change, already-compliant entry, blocker, an inventory hash, and a hash-bound
 receipt on stdout. Review that output before applying the same policy with:
 
 ```bash
-npm run runtime:permissions -- --execute
+npm run runtime:permissions -- --execute --writer-quiesced
 ```
 
-The execute path sets directories to `0700`, ordinary files to `0600`, and
-files that already required execution to `0700`. It uses descriptor-relative
-`fchmod`, refuses symbolic links, special files, multiply linked files and path
-escapes, and applies nothing when the initial audit has a blocker. The command
-never follows a link or writes a receipt into the tree it is auditing. Retain
+The execute path requires the operator to stop or fence every runtime writer
+before explicitly asserting `--writer-quiesced`. It then holds a runtime-root
+scoped exclusive lock, repeats the complete inventory under that lock, and
+requires the locked inventory hash to match the reviewed plan before setting
+directories to `0700`, ordinary files to `0600`, and files that already
+required execution to `0700`. Cooperative runtime writers must honor the same
+lock; this is not a claim of a filesystem transaction against arbitrary
+non-cooperating processes. The apply path uses descriptor-relative `fchmod`,
+refuses symbolic links, special files, multiply linked files and path escapes,
+and attempts a reverse-order permission rollback if a later mutation fails.
+The receipt exposes mutation attempts, successful rollbacks, and incomplete
+rollback explicitly; a blocked batch never reports committed applied rows. The
+command never follows a link or writes a receipt into the tree it is auditing. Retain
 the stdout receipt in the operator's normal protected evidence sink. Do not
 substitute `runtime:hygiene`: that separate command classifies legacy database
 evidence and is not a permission repair command.

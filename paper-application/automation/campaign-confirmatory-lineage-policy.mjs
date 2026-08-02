@@ -47,15 +47,38 @@ export function empiricalPreDataFreezeFromResult(result) {
 
 export function assertOutcomeBoundBenchmarkSourceUnchanged({
   anchorFreeze,
+  anchorArmAdapterSet = null,
+  currentArmAdapterSet = null,
   analysisProtocolHash,
   systemBenchmarkArmProtocolSetHash,
   systemBenchmarkArmAdapterSetHash,
 } = {}) {
   const current = { analysisProtocolHash, systemBenchmarkArmProtocolSetHash, systemBenchmarkArmAdapterSetHash };
+  const stableAdapterIdentity = (adapterSet) => adapterSet && ({
+    version: adapterSet.version,
+    kind: adapterSet.kind,
+    entrypointConvention: adapterSet.entrypointConvention,
+    adapters: (adapterSet.adapters || []).map((adapter) => ({
+      version: adapter.version,
+      kind: adapter.kind,
+      arm: adapter.arm,
+      relativePath: adapter.relativePath,
+      sourceHash: adapter.sourceHash,
+      systemBenchmarkArmProtocolHash: adapter.systemBenchmarkArmProtocolHash,
+    })),
+  });
+  const adapterSetSemanticallyUnchanged = anchorArmAdapterSet && currentArmAdapterSet
+    && anchorFreeze?.systemBenchmarkArmAdapterSetHash
+      === anchorArmAdapterSet.systemBenchmarkArmAdapterSetHash
+    && systemBenchmarkArmAdapterSetHash
+      === currentArmAdapterSet.systemBenchmarkArmAdapterSetHash
+    && JSON.stringify(stableAdapterIdentity(anchorArmAdapterSet))
+      === JSON.stringify(stableAdapterIdentity(currentArmAdapterSet));
   if (!anchorFreeze || Object.values(current).some((value) => !SHA256.test(String(value || '')))
     || anchorFreeze.analysisProtocolHash !== current.analysisProtocolHash
     || anchorFreeze.systemBenchmarkArmProtocolSetHash !== current.systemBenchmarkArmProtocolSetHash
-    || anchorFreeze.systemBenchmarkArmAdapterSetHash !== current.systemBenchmarkArmAdapterSetHash) {
+    || (anchorFreeze.systemBenchmarkArmAdapterSetHash !== current.systemBenchmarkArmAdapterSetHash
+      && !adapterSetSemanticallyUnchanged)) {
     const error = new Error('campaign_outcome_informed_empirical_source_mutation_forbidden');
     error.retryable = false;
     error.receipt = Object.freeze({

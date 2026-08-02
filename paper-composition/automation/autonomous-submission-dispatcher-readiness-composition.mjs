@@ -6,6 +6,7 @@ import {
   inspectAutonomousSubmissionDispatcherHandoffState,
 } from '../../paper-adapters/automation/autonomous-submission-dispatcher-handoff-inspection.mjs';
 import {
+  assertAutonomousSubmissionPortalCanaryAuthorityIndependentFromDispatcher,
   readAutonomousSubmissionDispatcherIdentityConfiguration,
   verifyAutonomousSubmissionDispatcherCycleEnvelope,
 } from '../../paper-adapters/automation/autonomous-submission-dispatcher-cycle-verifier.mjs';
@@ -14,6 +15,7 @@ import {
 } from '../../paper-adapters/automation/autonomous-submission-portal-descriptor-reader.mjs';
 import {
   autonomousSubmissionPortalPublicDescriptorHash,
+  createAutonomousSubmissionPortalDescriptor,
 } from '../../paper-adapters/automation/autonomous-submission-portal-public-adapter.mjs';
 import {
   AUTONOMOUS_SUBMISSION_PORTAL_READINESS_CANARY_SUBJECT_KIND,
@@ -42,8 +44,11 @@ export function inspectAutonomousSubmissionDispatcherReadiness({
   let verification = null;
   let handoff = null;
   let publicPortal = null;
+  let publicPortalDescriptor = null;
   let observedPortalDescriptorHash = null;
+  let cyclePortalCanaryVerification = null;
   let independentPortalCanaryVerification = null;
+  let portalCanaryAuthorityIndependence = null;
   try {
     identity = readAutonomousSubmissionDispatcherIdentityConfiguration({ environment });
   } catch { blockers.push('autonomous_submission_dispatcher_identity_not_ready'); }
@@ -55,7 +60,19 @@ export function inspectAutonomousSubmissionDispatcherReadiness({
     });
     observedPortalDescriptorHash = publicPortal
       ? autonomousSubmissionPortalPublicDescriptorHash(publicPortal) : null;
+    publicPortalDescriptor = publicPortal
+      ? createAutonomousSubmissionPortalDescriptor({
+        configuration: publicPortal,
+        expectedConfigurationHash: String(
+          environment.HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIGURATION_HASH || '',
+        ).trim() || null,
+        expectedDescriptorHash: String(
+          environment.HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_HASH || '',
+        ).trim() || null,
+        clock: { now: () => new Date(now) },
+      }) : null;
     if (!publicPortal
+      || publicPortalDescriptor?.fullProductionReady !== true
       || (portalId && publicPortal.portalId !== portalId)
       || (portalConfigurationHash
         && publicPortal.configurationHash !== portalConfigurationHash)
@@ -120,6 +137,22 @@ export function inspectAutonomousSubmissionDispatcherReadiness({
       })) {
       throw new Error('canary_binding_invalid');
     }
+    cyclePortalCanaryVerification = assertPinnedExternalEvidenceEnvelope({
+      envelope: evidence.authorityEnvelope,
+      subjectKind: AUTONOMOUS_SUBMISSION_PORTAL_READINESS_CANARY_SUBJECT_KIND,
+      subjectHash: receipt.canaryReceiptHash,
+      trustStore: publicPortal.receiptTrustStore,
+      requiredRole: publicPortal.receiptSignerRole,
+      expectedKeyIds: publicPortal.receiptSignerKeyIds,
+      now: new Date(envelope.livePortalCanaryVerificationVerifiedAt),
+      maximumLifetimeMs: publicPortal.receiptMaximumLifetimeMs,
+    });
+    if (cyclePortalCanaryVerification.pinnedExternalEvidenceVerificationReceiptHash
+        !== envelope.livePortalCanaryVerificationReceiptHash
+      || cyclePortalCanaryVerification.verifiedAt
+        !== envelope.livePortalCanaryVerificationVerifiedAt) {
+      throw new Error('canary_cycle_verification_binding_invalid');
+    }
     independentPortalCanaryVerification = assertPinnedExternalEvidenceEnvelope({
       envelope: evidence.authorityEnvelope,
       subjectKind: AUTONOMOUS_SUBMISSION_PORTAL_READINESS_CANARY_SUBJECT_KIND,
@@ -130,6 +163,14 @@ export function inspectAutonomousSubmissionDispatcherReadiness({
       now,
       maximumLifetimeMs: publicPortal.receiptMaximumLifetimeMs,
     });
+    portalCanaryAuthorityIndependence =
+      assertAutonomousSubmissionPortalCanaryAuthorityIndependentFromDispatcher({
+        verificationReceipt: independentPortalCanaryVerification,
+        identity,
+      });
+    if (envelope.livePortalCanaryAuthorityIndependentFromDispatcher !== true) {
+      throw new Error('canary_dispatcher_independence_claim_missing');
+    }
   } catch {
     blockers.push('autonomous_submission_dispatcher_portal_canary_not_independently_verified');
   }
@@ -169,6 +210,7 @@ export function inspectAutonomousSubmissionDispatcherReadiness({
     portalDescriptorHash: challenge?.portalDescriptorHash
       || observedPortalDescriptorHash || portalDescriptorHash,
     portalBindingVerified: verification?.signatureVerified === true
+      && publicPortalDescriptor?.fullProductionReady === true
       && envelope?.portalBindingVerified === true
       && envelope?.portalId === publicPortal?.portalId
       && envelope?.portalConfigurationHash === publicPortal?.configurationHash
@@ -176,7 +218,17 @@ export function inspectAutonomousSubmissionDispatcherReadiness({
     livePortalCanaryVerified: verification?.signatureVerified === true
       && envelope?.livePortalCanaryVerified === true
       && envelope?.livePortalCanaryExternalActionPerformed === false
-      && independentPortalCanaryVerification?.cryptographicAuthorityReady === true,
+      && independentPortalCanaryVerification?.cryptographicAuthorityReady === true
+      && portalCanaryAuthorityIndependence?.independent === true,
+    portalConfigurationIdentityPinned:
+      publicPortalDescriptor?.configurationIdentityPinned === true,
+    portalDescriptorPinned: publicPortalDescriptor?.descriptorPinned === true,
+    portalFullProductionReady: publicPortalDescriptor?.fullProductionReady === true,
+    livePortalCanaryAuthorityIndependentFromDispatcher:
+      portalCanaryAuthorityIndependence?.independent === true,
+    livePortalCanaryCycleVerificationReceiptHash:
+      cyclePortalCanaryVerification
+        ?.pinnedExternalEvidenceVerificationReceiptHash || null,
     livePortalCanaryIndependentVerificationReceiptHash:
       independentPortalCanaryVerification
         ?.pinnedExternalEvidenceVerificationReceiptHash || null,

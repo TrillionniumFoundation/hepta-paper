@@ -21,6 +21,7 @@ function syntheticFormalNode(node, kind, iteration) {
   const suffix = `${kind}:${iteration}`;
   return Object.freeze({
     ...node,
+    persistedNodeId: node.persistedNodeId || node.nodeId,
     nodeId: `${node.nodeId}:${suffix}`,
     attemptId: `${node.attemptId || 'direct'}:${suffix}`,
     kind,
@@ -38,6 +39,12 @@ function formalDiagnostics(result, reviewEnvelope = null) {
       blockers: receipt.blockers || [],
       resultBlockers: receipt.result?.blockers || [],
       status: receipt.result?.status || receipt.status || null,
+      claimBindings: (receipt.result?.claimBindingReport?.bindings || []).map((binding) => ({
+        claimId: binding.claimId || null,
+        theoremName: binding.theoremName || null,
+        axioms: binding.axioms || [],
+        issues: binding.issues || [],
+      })),
     })),
   });
 }
@@ -146,6 +153,15 @@ export async function executeCampaignFormalVerificationNode({
   let currentAuthorReceipt = initialAuthorReceipt;
 
   for (let iteration = 0; iteration < formalProofSearchPlan.candidateCount; iteration += 1) {
+    const formalPaperTaskKey = campaign.spec?.researchVerificationInput?.paperTask?.taskKey;
+    if (formalPaperTaskKey) {
+      primitives.agent.finalizeFormalWorkerPlan?.({
+        workspace,
+        paperId: campaign.paperId,
+        taskKey: formalPaperTaskKey,
+        theoremSpecification,
+      });
+    }
     const formalProofSearchCandidate = formalProofSearchPlan.candidates[iteration];
     const multiTheorem = typedTheoremDependencyGraph.nodeCount > 1;
     const formalProofSearchOperationReceipt = multiTheorem ? null

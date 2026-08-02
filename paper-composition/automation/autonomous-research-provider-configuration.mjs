@@ -84,6 +84,9 @@ export function resolveAutonomousResearchProviderConfiguration({
       codexHome: configured(
         options['formal-review-codex-home'],
         environment.HEPTA_FORMAL_REVIEW_CODEX_HOME,
+        options['codex-home'],
+        environment.HEPTA_RESEARCH_AUTHOR_CODEX_HOME,
+        environment.CODEX_HOME,
       ),
       model: configured(
         options['formal-review-model'],

@@ -86,11 +86,24 @@ export function verifySystemBenchmarkHarnessExecutionReceipt(receipt) {
   );
   if (!experimentIrBinding.valid) return false;
   const { researchResolved } = experimentIrBinding;
-  const executionIsolationMode = datasetBacked ? 'academic-per-cell-process-v1' : 'synthetic-per-arm-batch-process-v1';
-  const executionUnits = datasetBacked
+  const localDatasetBatch = datasetBacked
+    && receipt.executionIsolationMode === 'local-authorized-per-arm-batch-process-v1'
+    && receipt.executionAssuranceProfile === 'local-bounded-hidden-evaluation-v1'
+    && receipt.academicPromotionEligible === false;
+  const academicDatasetExecution = datasetBacked && !localDatasetBatch;
+  const executionIsolationMode = academicDatasetExecution
+    ? 'academic-per-cell-process-v1'
+    : (datasetBacked ? 'local-authorized-per-arm-batch-process-v1' : 'synthetic-per-arm-batch-process-v1');
+  const expectedExecutionAssuranceProfile = academicDatasetExecution
+    ? 'academic-per-cell-isolation-v1'
+    : (datasetBacked ? 'local-bounded-hidden-evaluation-v1' : 'synthetic-conformance-v1');
+  const executionUnits = academicDatasetExecution
     ? expected.map((cell) => [cell])
     : REQUIRED_ARMS.map((arm) => expected.filter((cell) => cell.arm === arm));
   if (receipt.executionIsolationMode !== executionIsolationMode
+    || receipt.executionAssuranceProfile !== expectedExecutionAssuranceProfile
+    || receipt.academicPromotionEligible !== (academicDatasetExecution
+      && receipt.assuranceScope === 'operator-authorized-hidden-evaluation-v1')
     || receipt.expectedProcessExecutionCount !== executionUnits.length
     || receipt.processExecutionCount !== executionUnits.length
     || receipt.armBatchExecutionCount !== executionUnits.length
@@ -122,7 +135,7 @@ export function verifySystemBenchmarkHarnessExecutionReceipt(receipt) {
     }
     const boundChallenge = decodeSystemBenchmarkArmBatchChallengeEnvironment(batchReceipt?.runnerReceipt?.executionBindings || {});
     const expectedBatchChallengeHash = datasetBacked ? boundChallenge?.systemBenchmarkArmBatchChallengeHash : fixture?.challenge?.systemBenchmarkArmBatchChallengeHash;
-    const executionAttemptId = datasetBacked
+    const executionAttemptId = academicDatasetExecution
       ? `${receipt.experimentAttemptId}:arm:${arm}:cell:${scheduledCells[0].cellId}`
       : `${receipt.experimentAttemptId}:arm:${arm}`;
     if (!batchReceipt || batchReceipt.version !== 2 || batchReceipt.kind !== 'SystemBenchmarkArmBatchExecutionReceipt'
@@ -154,7 +167,7 @@ export function verifySystemBenchmarkHarnessExecutionReceipt(receipt) {
         !== hashRecord('SystemBenchmarkArmBatchChallengeExpected', datasetBacked ? boundChallenge : fixture.challenge)
       || bindings.HEPTA_EXPERIMENT_ATTEMPT_ID !== executionAttemptId
       || bindings.HEPTA_EXPERIMENT_RUN_ID !== receipt.experimentAttemptId
-      || (datasetBacked && (bindings.HEPTA_EXPERIMENT_SEED !== String(scheduledCells[0].seed)
+      || (academicDatasetExecution && (bindings.HEPTA_EXPERIMENT_SEED !== String(scheduledCells[0].seed)
         || bindings.HEPTA_EXPERIMENT_REPETITION !== String(scheduledCells[0].repetition)
         || bindings.HEPTA_HARNESS_CELL_ID !== scheduledCells[0].cellId
         || bindings.HEPTA_SEED !== String(scheduledCells[0].seed)
@@ -202,7 +215,7 @@ export function verifySystemBenchmarkHarnessExecutionReceipt(receipt) {
   }
   if (!verifySystemBenchmarkHarnessResourceBudget(receipt, {
     executionUnitCount: executionUnits.length,
-    requireDistinctProcesses: datasetBacked,
+    requireDistinctProcesses: academicDatasetExecution,
     processIdentityHashes,
     launcherPids,
     executionAttemptIds,
@@ -353,7 +366,9 @@ export function verifySystemBenchmarkHarnessExecutionReceipt(receipt) {
     operatorDatasetHarnessAuthority,
     datasetEvaluationDependencyReceipt: receipt.datasetEvaluationDependencyReceipt,
     assuranceScope: selector.expected.assuranceScope,
-    academicPromotionEligible: selector.expected.assuranceScope === 'operator-authorized-hidden-evaluation-v1',
+    executionAssuranceProfile: expectedExecutionAssuranceProfile,
+    academicPromotionEligible: academicDatasetExecution
+      && selector.expected.assuranceScope === 'operator-authorized-hidden-evaluation-v1',
     rawEventManifestHash: receipt.rawEventManifestHash,
     rawEventArtifactHash: receipt.rawEventArtifactHash,
     rawEventArtifactBytes: receipt.rawEventArtifactBytes,
@@ -390,4 +405,3 @@ export function verifySystemBenchmarkHarnessExecutionReceipt(receipt) {
   preflight.rememberIf(valid);
   return valid;
 }
-

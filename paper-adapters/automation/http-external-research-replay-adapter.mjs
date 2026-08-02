@@ -149,12 +149,17 @@ export function buildExternalResearchReplayServiceConfiguration({
   });
 }
 
-export function readExternalResearchReplayServiceConfiguration({ configPath } = {}) {
+export function readExternalResearchReplayServiceConfiguration({
+  configPath,
+  expectedConfigurationHash = null,
+} = {}) {
   const candidate = path.resolve(String(configPath || ''));
   let parsed;
   try {
     const stat = fs.lstatSync(candidate);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 1024 * 1024) throw new Error('invalid');
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1
+      || stat.size < 1 || stat.size > 1024 * 1024
+      || (stat.mode & 0o022) !== 0) throw new Error('invalid');
     parsed = JSON.parse(fs.readFileSync(candidate, 'utf8'));
   } catch { throw new Error('external_research_replay_configuration_file_invalid'); }
   const expectedKeys = parsed?.version === 4
@@ -167,17 +172,32 @@ export function readExternalResearchReplayServiceConfiguration({ configPath } = 
   if (JSON.stringify(rebuilt) !== JSON.stringify(parsed)) {
     throw new Error('external_research_replay_configuration_verification_failed');
   }
+  if (expectedConfigurationHash !== null
+    && (!SHA256.test(String(expectedConfigurationHash || '').toLowerCase())
+      || rebuilt.configurationHash
+        !== String(expectedConfigurationHash).toLowerCase())) {
+    throw new Error('external_research_replay_configuration_pin_mismatch');
+  }
   return rebuilt;
 }
 
 export function createHttpExternalResearchReplayAdapter({
   configuration,
+  expectedConfigurationHash = null,
   environment = process.env,
   fetchImpl = globalThis.fetch,
   requiredLocalOriginIdentitySubjectHashes = [],
   clock = { now: () => new Date() },
 } = {}) {
   const selected = buildExternalResearchReplayServiceConfiguration(configuration);
+  const normalizedExpectedConfigurationHash = expectedConfigurationHash === null
+    ? null : String(expectedConfigurationHash || '').toLowerCase();
+  if (normalizedExpectedConfigurationHash !== null
+    && (!SHA256.test(normalizedExpectedConfigurationHash)
+      || selected.configurationHash !== normalizedExpectedConfigurationHash)) {
+    throw new Error('external_research_replay_configuration_pin_mismatch');
+  }
+  const configurationPinned = normalizedExpectedConfigurationHash !== null;
   const token = resolveOpaqueRuntimeCredential({
     environment,
     variableName: selected.tokenEnvironmentVariable,
@@ -410,6 +430,8 @@ export function createHttpExternalResearchReplayAdapter({
     kind: 'ExternalResearchReplayPort',
     serviceId: selected.serviceId,
     configurationHash: selected.configurationHash,
+    configurationPinned,
+    fullProductionReady: selected.version === 4 && configurationPinned,
     crashRecoveryReady: selected.version === 4,
     recoveryConfigurationIdentityHash,
     recoveryOutcomeCryptographicAuthorityReady: selected.version === 4,

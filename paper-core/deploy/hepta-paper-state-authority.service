@@ -1,0 +1,35 @@
+[Unit]
+Description=Hepta Paper local autonomous state authority
+After=local-fs.target
+Before=autonomous-research-supervisor.service autonomous-research-state-backup-renew.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=hepta-state-authority
+Group=hepta-paper
+WorkingDirectory=/opt/hepta-paper
+RuntimeDirectory=hepta-paper-state-authority
+RuntimeDirectoryMode=0750
+StateDirectory=hepta-paper-state-authority
+StateDirectoryMode=0700
+Environment=NODE_NO_WARNINGS=1
+ExecStart=/usr/bin/node paper-core/bin/hepta-paper-state-authority-daemon.mjs --configuration /etc/hepta-paper/state-authority/daemon-config.json
+Restart=always
+RestartSec=2s
+TimeoutStopSec=30s
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+ReadOnlyPaths=/opt/hepta-paper /etc/hepta-paper/state-authority
+ReadWritePaths=/run/hepta-paper-state-authority /var/lib/hepta-paper-state-authority
+UMask=0007
+
+[Install]
+WantedBy=multi-user.target

@@ -1,5 +1,6 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { buildPaperCampaignPlan } from '../../paper-domain/automation/campaign-plan.mjs';
+import { createPaperTask } from '../../paper-domain/contracts/workflow-contracts.mjs';
 import { buildCampaignBenchmarkSelector } from '../../paper-domain/automation/campaign-benchmark-selector.mjs';
 import { analysisProtocolMatchesEmpiricalClaimUniverse } from '../../paper-domain/automation/analysis-protocol-contract.mjs';
 import { verifyAutonomousEmpiricalClaimLineage } from '../../paper-domain/automation/autonomous-empirical-claim-lineage-contract.mjs';
@@ -43,6 +44,8 @@ export function buildAutonomousResearchCampaignPlan({
   budgets = {},
   machineIntake = null,
   machineIntakeAdmission = null,
+  localOnly = false,
+  directLocalRunBudgetWaiver = null,
 } = {}) {
   const proposal = loopPreparation?.proposal;
   const empiricalProfileSelection = loopPreparation?.empiricalExecutionProfileSelection;
@@ -106,6 +109,14 @@ export function buildAutonomousResearchCampaignPlan({
     })) {
     throw new Error('autonomous_research_empirical_claim_lineage_invalid');
   }
+  const paperTask = createPaperTask({
+    paperId: proposal.paperId,
+    title: proposal.title || proposal.paperId,
+    venueTarget: loopPreparation?.venueProfileSelection?.venueId || null,
+    sourceWorkspace: materialization.sourceWorkspace,
+    mainTex: materialization.mainTex,
+    paperQualityProfiles: ['formal_theorem_or_proof', 'empirical_or_experiment'],
+  });
   const plan = buildPaperCampaignPlan({
     paperId: proposal.paperId,
     sourceWorkspace: materialization.sourceWorkspace,
@@ -119,11 +130,14 @@ export function buildAutonomousResearchCampaignPlan({
     benchmarkId: datasetMounts[0].name,
     empiricalClaimUniverse: materialization.empiricalClaimUniverse,
     applyManuscript: true,
+    paperTask,
     paperQualityProfiles: ['formal_theorem_or_proof', 'empirical_or_experiment'],
     scientificClaimAuthority: loopPreparation.seedBinding,
     autonomousResearchPreparation: loopPreparation,
     autonomousResearchMachineIntake: machineIntake,
     autonomousResearchMachineIntakeAdmission: machineIntakeAdmission,
+    localOnly,
+    directLocalRunBudgetWaiver,
     budgets,
   });
   assertAutonomousResearchResourceBudgetClosure({
@@ -249,6 +263,7 @@ export function enqueuePreparedAutonomousResearchCampaign({
 
 async function executionReport({
   action,
+  localOnly = false,
   campaignStore,
   campaignId,
   executionResult = null,
@@ -288,7 +303,13 @@ async function executionReport({
         action: `qualification:${stage}`,
       });
     } : qualificationRetry?.onSynchronousProgress || null;
-  const externalQualification = preparation ? await requestAutonomousResearchCampaignQualification({
+  const externalQualification = localOnly === true
+    ? Object.freeze({
+      status: 'qualification_not_required_for_local_run',
+      inspection: null,
+      externalActionPerformed: false,
+    })
+    : preparation ? await requestAutonomousResearchCampaignQualification({
     externalQualificationClient,
     externalQualificationVerifier,
     campaignReleaseAuthority,
@@ -348,6 +369,7 @@ async function executionReport({
     autonomousSubmissionRequestVerifier,
     requestedAt: action === 'status'
       ? null : autonomousResearchCampaignDispatchAuthorizationTime(runtime).toISOString(),
+    localOnly,
     signal: runtime?.signal || null,
     assertExternalSideEffectReady:
       runtime?.assertExternalSideEffectReady || null,
@@ -358,6 +380,7 @@ async function executionReport({
     kind: 'AutonomousResearchCampaignExecutionReport',
     status: submission.campaignExecutionStatus,
     action,
+    localOnly: localOnly === true,
     campaignId,
     campaign: presentCampaignStatus(campaign, nodes),
     run: executionResult ? summarizeRun(executionResult) : null,
@@ -374,6 +397,7 @@ async function executionReport({
     submissionReady: submission.submissionReady,
     submissionTerminalFailure: submission.submissionTerminalFailure,
     fullAutomaticResearchWritingReady: submission.fullAutomaticResearchWritingReady,
+    localResearchWritingReady: submission.localResearchWritingReady === true,
     providerConfigurationBinding,
     launchModeGate,
     operatorApprovalClaimed: false,
@@ -392,6 +416,8 @@ async function executionReport({
 
 export async function executeAutonomousResearchCampaign({
   action = 'launch',
+  localOnly = false,
+  directLocalRunBudgetWaiver = null,
   readinessReport = null,
   campaignId = null,
   datasetMounts = [],
@@ -444,6 +470,8 @@ export async function executeAutonomousResearchCampaign({
         ? await workspaceMaterializer({ loopPreparation: preparation, datasetMounts }) : null);
     const plan = buildAutonomousResearchCampaignPlan({
       loopPreparation: preparation, materialization, datasetMounts, campaignId: id, budgets,
+      localOnly,
+      directLocalRunBudgetWaiver,
     });
     if (plan?.campaignId !== id
       || plan?.scientificClaimAuthority?.autonomousResearchSeedBindingHash
@@ -512,6 +540,7 @@ export async function executeAutonomousResearchCampaign({
   }
   return executionReport({
     action,
+    localOnly,
     campaignStore: store,
     campaignId: id,
     executionResult,

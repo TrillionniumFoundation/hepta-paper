@@ -17,6 +17,7 @@ import {
 import { selectAutonomousEmpiricalExecutionProfile } from '../../paper-domain/automation/autonomous-empirical-execution-profile-policy.mjs';
 import {
   AUTONOMOUS_RESEARCH_LAUNCH_MODES,
+  verifyAutonomousResearchDirectLocalRunCliProvenance,
 } from '../../paper-domain/automation/autonomous-research-launch-mode-policy.mjs';
 import {
   inspectAutonomousResearchProductionProfileInputs,
@@ -54,6 +55,7 @@ const SHA256 = /^sha256:[0-9a-f]{64}$/;
 
 export async function prepareAutonomousResearchLoop({
   paperId,
+  campaignId = null,
   objective,
   protocolFamily,
   researchAgendaProducer = null,
@@ -90,11 +92,20 @@ export async function prepareAutonomousResearchLoop({
   machineIntake = null,
   machineIntakeAdmission = null,
   launchMode = AUTONOMOUS_RESEARCH_LAUNCH_MODES.GOLDEN_BOOTSTRAP,
+  directLocalRunCliProvenance = null,
   createdAt = null,
   assertExternalSideEffectReady = null,
 } = {}) {
   if (!Object.values(AUTONOMOUS_RESEARCH_LAUNCH_MODES).includes(launchMode)) {
     throw new Error(`autonomous_research_launch_mode_invalid:${launchMode || '<empty>'}`);
+  }
+  if (directLocalRunCliProvenance !== null
+    && (launchMode !== AUTONOMOUS_RESEARCH_LAUNCH_MODES.GOLDEN_BOOTSTRAP
+      || !verifyAutonomousResearchDirectLocalRunCliProvenance(
+        directLocalRunCliProvenance,
+        { campaignId, paperId },
+      ))) {
+    throw new Error('autonomous_research_direct_local_run_cli_provenance_invalid');
   }
   const productionProfileInputInspection =
     inspectAutonomousResearchProductionProfileInputs({
@@ -409,6 +420,7 @@ export async function prepareAutonomousResearchLoop({
     seedBundle,
     seedBinding,
     launchMode,
+    ...(directLocalRunCliProvenance ? { directLocalRunCliProvenance } : {}),
     autonomousResearchProviderConfigurationHash,
     ...(machineIntakeAdmission ? {
       autonomousResearchMachineIntakeAdmission: machineIntakeAdmission,

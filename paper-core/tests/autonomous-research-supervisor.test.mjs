@@ -26,7 +26,11 @@ import {
   resolveAutonomousResearchSupervisorDispatchPolicy,
 } from '../../paper-composition/automation/autonomous-research-supervisor-composition.mjs';
 import {
+  campaignWorkerOptions,
+  configuredMaximumCost,
+  providerBoundReadinessEnvironment,
   qualificationRetryBoundToExternalCostAuthority,
+  requireExistingProductionPricingEnvelope,
 } from '../../paper-composition/automation/autonomous-research-qualification-composition.mjs';
 import {
   resolvePersistedAutonomousResearchLaunchMode,
@@ -408,6 +412,180 @@ test('qualification cost authority cannot be lowered by a composition caller', (
     action: 'resume',
     externalQualificationClient: {},
     externalQualificationVerifier: {},
+  }), /autonomous_research_qualification_cost_authority_invalid/);
+});
+
+test('qualification composition binds worker, provider, pricing, and retry configuration', () => {
+  assert.deepEqual(campaignWorkerOptions(), {});
+  assert.deepEqual(campaignWorkerOptions({
+    agentProvider: 'openai',
+    model: 'author-model',
+    formalReviewProvider: 'codex',
+    formalReviewModel: 'reviewer-model',
+    formalReviewCodexBinary: '/opt/codex-reviewer',
+    formalReviewCodexHome: '/srv/reviewer-home',
+    codexHome: '/srv/author-home',
+    codexBinary: '/opt/codex-author',
+    budgets: { maxWallTimeMs: 1234 },
+    workerMemoryMiB: 768,
+    workerCpuSeconds: 45,
+  }), {
+    'agent-provider': 'openai',
+    model: 'author-model',
+    'formal-review-provider': 'codex',
+    'formal-review-model': 'reviewer-model',
+    'formal-review-codex-binary': '/opt/codex-reviewer',
+    'formal-review-codex-home': '/srv/reviewer-home',
+    'codex-home': '/srv/author-home',
+    'codex-binary': '/opt/codex-author',
+    'max-wall-ms': 1234,
+    'worker-memory-mib': 768,
+    'worker-cpu-seconds': 45,
+  });
+
+  const fullyBound = providerBoundReadinessEnvironment(
+    { PRESERVED: 'yes' },
+    {
+      researchAuthor: {
+        provider: 'openai',
+        codexBinary: '/opt/codex-author',
+        codexHome: '/srv/author-home',
+        model: 'author-model',
+      },
+      formalReviewer: {
+        provider: 'codex',
+        codexBinary: '/opt/codex-reviewer',
+        codexHome: '/srv/reviewer-home',
+        model: 'reviewer-model',
+      },
+    },
+  );
+  assert.equal(fullyBound.PRESERVED, 'yes');
+  assert.equal(fullyBound.HEPTA_RESEARCH_AUTHOR_CODEX_HOME, '/srv/author-home');
+  assert.equal(fullyBound.HEPTA_RESEARCH_AUTHOR_MODEL, 'author-model');
+  assert.equal(fullyBound.HEPTA_FORMAL_REVIEW_CODEX_HOME, '/srv/reviewer-home');
+  assert.equal(fullyBound.HEPTA_FORMAL_REVIEW_MODEL, 'reviewer-model');
+  const minimallyBound = providerBoundReadinessEnvironment({}, {
+    researchAuthor: { provider: 'openai', codexBinary: '/opt/codex-author' },
+    formalReviewer: { provider: 'codex', codexBinary: '/opt/codex-reviewer' },
+  });
+  assert.equal('HEPTA_RESEARCH_AUTHOR_CODEX_HOME' in minimallyBound, false);
+  assert.equal('HEPTA_RESEARCH_AUTHOR_MODEL' in minimallyBound, false);
+  assert.equal('HEPTA_FORMAL_REVIEW_CODEX_HOME' in minimallyBound, false);
+  assert.equal('HEPTA_FORMAL_REVIEW_MODEL' in minimallyBound, false);
+
+  assert.equal(configuredMaximumCost({
+    HEPTA_REVIEW_MAXIMUM_COST_PER_CALL_USD: '2.5',
+    HEPTA_REVIEW_MAX_COST_PER_CALL_USD: '1.5',
+  }, 'REVIEW'), '2.5');
+  assert.equal(configuredMaximumCost({
+    HEPTA_REVIEW_MAX_COST_PER_CALL_USD: '1.5',
+  }, 'REVIEW'), '1.5');
+  assert.equal(configuredMaximumCost({}, 'REVIEW'), null);
+
+  const persistedCampaign = { spec: { budgets: { maxAgentCalls: 4 } } };
+  const productionGate = {
+    productionRun: true,
+    effectiveBudgets: { maxAgentCalls: 5 },
+  };
+  assert.doesNotThrow(() => requireExistingProductionPricingEnvelope({
+    action: 'resume',
+    existingCampaign: persistedCampaign,
+    launchModeGate: productionGate,
+  }));
+  for (const options of [
+    { action: 'resume', launchModeGate: productionGate },
+    { action: 'status', existingCampaign: persistedCampaign, launchModeGate: productionGate },
+    {
+      action: 'resume',
+      existingCampaign: persistedCampaign,
+      launchModeGate: { productionRun: false },
+    },
+  ]) assert.doesNotThrow(() => requireExistingProductionPricingEnvelope(options));
+  for (const [requested, effective] of [
+    ['not-a-number', 5],
+    [0, 5],
+    [4, Number.NaN],
+    [4, 0],
+    [6, 5],
+  ]) {
+    assert.throws(() => requireExistingProductionPricingEnvelope({
+      action: 'resume',
+      existingCampaign: persistedCampaign,
+      requestedBudgets: { maxAgentCalls: requested },
+      launchModeGate: {
+        productionRun: true,
+        effectiveBudgets: { maxAgentCalls: effective },
+      },
+    }), /autonomous_research_production_provider_price_drift_exceeds_campaign_envelope/);
+  }
+
+  const unchangedRetry = { maximumTotalCostUsd: 7 };
+  assert.equal(qualificationRetryBoundToExternalCostAuthority({
+    launchMode: 'invalid-mode',
+    action: 'resume',
+    qualificationRetry: unchangedRetry,
+  }), unchangedRetry);
+  assert.equal(qualificationRetryBoundToExternalCostAuthority({
+    launchMode: 'production-run',
+    action: 'status',
+    qualificationRetry: unchangedRetry,
+  }), unchangedRetry);
+  assert.equal(qualificationRetryBoundToExternalCostAuthority({
+    launchMode: 'production-run',
+    action: 'resume',
+    qualificationRetry: unchangedRetry,
+  }), unchangedRetry);
+  assert.equal(qualificationRetryBoundToExternalCostAuthority({
+    launchMode: 'production-run',
+    action: 'resume',
+    configurationInspection: {
+      ready: true,
+      maximumQualificationCostUsd: 0,
+      qualificationCostAuthority: 'externally_operated_zero_cost',
+    },
+  }).attemptReservationCostUsd, 0);
+  assert.throws(() => qualificationRetryBoundToExternalCostAuthority({
+    launchMode: 'production-run',
+    action: 'resume',
+    configurationInspection: {
+      ready: true,
+      maximumQualificationCostUsd: 1001,
+      qualificationCostAuthority: 'operator_declared_worst_case_usd',
+    },
+  }), /autonomous_research_qualification_cost_authority_invalid/);
+  const paidAuthority = {
+    maximumQualificationCostUsd: 0.75,
+    qualificationCostAuthority: 'operator_declared_worst_case_usd',
+  };
+  assert.equal(qualificationRetryBoundToExternalCostAuthority({
+    launchMode: 'production-run',
+    action: 'resume',
+    externalQualificationClient: paidAuthority,
+    externalQualificationVerifier: { ...paidAuthority },
+  }).attemptReservationCostUsd, 0.75);
+  for (const qualificationRetry of [
+    { maximumTotalCostUsd: Number.POSITIVE_INFINITY },
+    { maximumTotalCostUsd: 0 },
+    { maximumTotalCostUsd: 1, attemptReservationCostUsd: Number.NaN },
+    { maximumTotalCostUsd: 1, attemptReservationCostUsd: -0.01 },
+  ]) {
+    assert.throws(() => qualificationRetryBoundToExternalCostAuthority({
+      launchMode: 'production-run',
+      action: 'resume',
+      qualificationRetry,
+      externalQualificationClient: paidAuthority,
+      externalQualificationVerifier: { ...paidAuthority },
+    }), /autonomous_research_qualification_cost_envelope_insufficient/);
+  }
+  assert.throws(() => qualificationRetryBoundToExternalCostAuthority({
+    launchMode: 'production-run',
+    action: 'resume',
+    externalQualificationClient: paidAuthority,
+    externalQualificationVerifier: {
+      maximumQualificationCostUsd: 0.5,
+      qualificationCostAuthority: 'operator_declared_worst_case_usd',
+    },
   }), /autonomous_research_qualification_cost_authority_invalid/);
 });
 

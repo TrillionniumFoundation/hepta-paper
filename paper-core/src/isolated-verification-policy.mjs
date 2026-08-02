@@ -1,8 +1,16 @@
+import {
+  isolatedVerificationCodeProvenance,
+  isolatedVerificationCodeProvenanceMatches,
+} from './isolated-verification-receipt-contract.mjs';
+
 const SUPPORTED_MODES = Object.freeze(['test', 'ci', 'release']);
+
+export { isolatedVerificationCodeProvenanceMatches };
 
 export function inspectIsolatedVerificationPreflight({
   mode,
   codeProvenance = null,
+  declaredReleaseCommit = null,
 } = {}) {
   const normalizedMode = String(mode || '');
   const blockers = [];
@@ -11,6 +19,19 @@ export function inspectIsolatedVerificationPreflight({
   }
   if (normalizedMode === 'release' && codeProvenance?.treeDirty !== false) {
     blockers.push('release_verification_clean_worktree_required');
+  }
+  if (normalizedMode === 'release') {
+    try {
+      isolatedVerificationCodeProvenance(codeProvenance);
+    } catch {
+      blockers.push('release_verification_exact_code_provenance_required');
+    }
+  }
+  if (normalizedMode === 'release'
+    && declaredReleaseCommit !== null
+    && declaredReleaseCommit !== undefined
+    && String(declaredReleaseCommit) !== codeProvenance?.commit) {
+    blockers.push('release_verification_declared_commit_mismatch');
   }
   return Object.freeze({
     version: 1,

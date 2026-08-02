@@ -29,17 +29,27 @@ function createCliFixture(t) {
 }
 
 test('hepta-store restore drill preserves a zero exit for a passing receipt', (t) => {
-  const { run } = createCliFixture(t);
-  const backupRun = run('backup');
+  const { runtimeRoot, run } = createCliFixture(t);
+  const previousUmask = process.umask(0o000);
+  let backupRun;
+  try {
+    backupRun = run('backup');
+  } finally {
+    process.umask(previousUmask);
+  }
   assert.equal(backupRun.status, 0, backupRun.stderr);
   const backup = JSON.parse(backupRun.stdout);
+  assert.equal(fs.statSync(backup.backupPath).mode & 0o777, 0o600);
+  assert.equal(fs.statSync(`${backup.backupPath}.receipt.json`).mode & 0o777, 0o600);
+  assert.deepEqual(fs.readdirSync(path.join(runtimeRoot, 'backups'))
+    .filter((name) => name.startsWith('.sqlite-copy-')), []);
 
   const restoreRun = run('restore-drill', '--backup', backup.backupPath);
   assert.equal(restoreRun.status, 0, restoreRun.stderr);
   assert.equal(JSON.parse(restoreRun.stdout).status, 'hepta_store_restore_drill_passed');
 });
 
-test('hepta-store restore drill exits nonzero for a blocked receipt', (t) => {
+test('hepta-store backup blocks foreign-key-damaged state before publication', (t) => {
   const { assetRoot, runtimeRoot, run } = createCliFixture(t);
   const dbPath = path.join(runtimeRoot, 'hepta-paper.sqlite');
   const store = createDefaultPaperStore({ root: assetRoot, runtimeRoot, dbPath });
@@ -52,12 +62,9 @@ PRAGMA foreign_keys=ON;
   assert.equal(injected.ok, true, injected.error);
 
   const backupRun = run('backup');
-  assert.equal(backupRun.status, 0, backupRun.stderr);
-  const backup = JSON.parse(backupRun.stdout);
-  const restoreRun = run('restore-drill', '--backup', backup.backupPath);
-  const restore = JSON.parse(restoreRun.stdout);
-
-  assert.equal(restore.status, 'hepta_store_restore_drill_blocked');
-  assert.equal(restore.foreignKeyViolationCount, 1);
-  assert.equal(restoreRun.status, 2, restoreRun.stderr);
+  assert.equal(backupRun.status, 1, backupRun.stderr);
+  assert.match(backupRun.stderr, /sqlite_copy_restore_verification_failed/);
+  const backupRoot = path.join(runtimeRoot, 'backups');
+  assert.deepEqual(fs.readdirSync(backupRoot)
+    .filter((name) => name.endsWith('.sqlite') || name.startsWith('.sqlite-copy-')), []);
 });

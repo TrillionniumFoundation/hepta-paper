@@ -820,6 +820,7 @@ test('systemd and Kubernetes contracts host canonical resident probes without se
   assert.match(kubernetes, /HEPTA_AUTONOMOUS_RESEARCH_TOPIC_PRODUCER_PROFILE/);
   assert.match(kubernetes, /- --topic-producer-profile/);
   assert.match(kubernetes, /HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG/);
+  assert.match(kubernetes, /HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG_HASH/);
   assert.match(kubernetes,
     /HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_MAXIMUM_REFRESH_ATTEMPTS_PER_EPOCH/);
   assert.match(kubernetes,
@@ -900,6 +901,8 @@ test('systemd and Kubernetes contracts host canonical resident probes without se
   assert.match(environment,
     /HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_REFRESH_ACTION_SAFETY_MARGIN_MS=900000/);
   assert.match(environment,
+    /^HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG_HASH=REPLACE_WITH_SHA256_CONFIGURATION_IDENTITY_HASH$/m);
+  assert.match(environment,
     /^HEPTA_AUTONOMOUS_RESEARCH_ONLINE_MUTATION_AUTHORITY_PROCESS_CONFIG=\/etc\/hepta-paper\/online-mutation-authority\/process-config\.json$/m);
   assert.match(environment,
     /^HEPTA_AUTONOMOUS_RESEARCH_ONLINE_MUTATION_AUTHORITY_CONFIG=\/etc\/hepta-paper\/online-mutation-authority\/authority-config\.json$/m);
@@ -914,10 +917,6 @@ test('systemd and Kubernetes contracts host canonical resident probes without se
   const genericCapabilityEnvironment = Object.freeze({
     HEPTA_AUTONOMOUS_RESEARCH_CONTENT_MODE: 'agent-evidence-bound',
     HEPTA_DYNAMIC_FORMAL_CLAIMS_ENABLED: '1',
-    HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG:
-      '/etc/hepta-paper/capabilities-public/research-author-identity.json',
-    HEPTA_REVIEWER_PRINCIPAL_POOL_CONFIG:
-      '/etc/hepta-paper/capabilities-public/reviewer-principals.json',
     HEPTA_PRIOR_ART_SERVICE_CONFIG:
       '/etc/hepta-paper/capabilities-public/prior-art-service.json',
     HEPTA_EXTERNAL_REPLAY_CONFIG:
@@ -941,19 +940,41 @@ test('systemd and Kubernetes contracts host canonical resident probes without se
     ));
   }
   assert.match(environment,
+    /^HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG=\/etc\/hepta-paper\/capabilities-public\/research-author-identity\.json$/m);
+  assert.match(environment,
     /^HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG_HASH=REPLACE_WITH_SHA256_CONFIGURATION_HASH$/m);
+  assert.match(environment,
+    /^# HEPTA_REVIEWER_PRINCIPAL_POOL_CONFIG=\/etc\/hepta-paper\/capabilities-public\/reviewer-principals\.json$/m);
+  assert.match(kubernetes,
+    /name: HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG\n\s+value: \/hepta\/capabilities-public\/research-author-identity\.json/);
+  assert.match(kubernetes,
+    /name: HEPTA_REVIEWER_PRINCIPAL_POOL_CONFIG\n\s+value: \/hepta\/capabilities-public\/reviewer-principals\.json/);
+  assert.match(environment,
+    /^HEPTA_PRIOR_ART_SERVICE_CONFIG_HASH=REPLACE_WITH_SHA256_CONFIGURATION_HASH$/m);
+  assert.match(environment,
+    /^HEPTA_EXTERNAL_REPLAY_CONFIG_HASH=REPLACE_WITH_SHA256_CONFIGURATION_HASH$/m);
   assert.match(environment,
     /^HEPTA_AUTONOMOUS_VENUE_PROFILE_CONFIG_HASH=REPLACE_WITH_SHA256_CONFIGURATION_HASH$/m);
   assert.match(environment,
     /^HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIGURATION_HASH=REPLACE_WITH_SHA256_CONFIGURATION_HASH$/m);
   assert.match(environment,
+    /^HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_HASH=REPLACE_WITH_SHA256_PUBLIC_DESCRIPTOR_HASH$/m);
+  assert.match(environment,
     /^HEPTA_AUTONOMOUS_SUBMISSION_METADATA_CONFIG_HASH=REPLACE_WITH_SHA256_CONFIGURATION_HASH$/m);
   assert.match(kubernetes,
     /name: HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG_HASH\n\s+valueFrom:\n\s+configMapKeyRef:\n\s+name: hepta-autonomous-research-supervisor\n\s+key: research-author-identity-configuration-hash/);
   assert.match(kubernetes,
+    /name: HEPTA_PRIOR_ART_SERVICE_CONFIG_HASH\n\s+valueFrom:\n\s+configMapKeyRef:\n\s+name: hepta-autonomous-research-supervisor\n\s+key: prior-art-service-configuration-hash/);
+  assert.match(kubernetes,
+    /name: HEPTA_EXTERNAL_REPLAY_CONFIG_HASH\n\s+valueFrom:\n\s+configMapKeyRef:\n\s+name: hepta-autonomous-research-supervisor\n\s+key: external-replay-service-configuration-hash/);
+  assert.match(kubernetes,
+    /name: HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG_HASH\n\s+valueFrom:\n\s+configMapKeyRef:\n\s+name: hepta-autonomous-research-supervisor\n\s+key: runtime-reproducibility-configuration-identity-hash/);
+  assert.match(kubernetes,
     /name: HEPTA_AUTONOMOUS_VENUE_PROFILE_CONFIG_HASH\n\s+valueFrom:\n\s+configMapKeyRef:\n\s+name: hepta-autonomous-research-supervisor\n\s+key: venue-profile-configuration-hash/);
   assert.match(kubernetes,
     /name: HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIGURATION_HASH\n\s+valueFrom:\n\s+configMapKeyRef:\n\s+name: hepta-autonomous-research-supervisor\n\s+key: submission-portal-configuration-hash/);
+  assert.match(kubernetes,
+    /name: HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_HASH\n\s+valueFrom:\n\s+configMapKeyRef:\n\s+name: hepta-autonomous-research-supervisor\n\s+key: submission-portal-descriptor-hash/);
   assert.match(kubernetes,
     /name: HEPTA_AUTONOMOUS_SUBMISSION_METADATA_CONFIG_HASH\n\s+valueFrom:\n\s+configMapKeyRef:\n\s+name: hepta-autonomous-research-supervisor\n\s+key: submission-metadata-configuration-hash/);
   assert.doesNotMatch(environment, /^HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIG=/m);
@@ -977,6 +998,8 @@ test('systemd and Kubernetes contracts host canonical resident probes without se
     /operator autonomous-submission-dispatcher -- --resident/);
   assert.match(dispatcherEnvironment,
     /^HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIG=\/etc\/hepta-paper\/submission-portal\/config\.json$/m);
+  assert.match(dispatcherEnvironment,
+    /^HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_HASH=REPLACE_WITH_SHA256_PUBLIC_DESCRIPTOR_HASH$/m);
   assert.match(kubernetes, /name: hepta-autonomous-submission-dispatcher/);
   assert.match(kubernetes,
     /serviceAccountName: hepta-autonomous-submission-dispatcher/);
@@ -1017,15 +1040,18 @@ test('systemd and Kubernetes contracts host canonical resident probes without se
   assert.match(operations, /AUTHORITY_TRUST_STORE\.json/);
   assert.match(operations, /OWNER_TRUST_STORE\.json/);
   assert.match(operations, /AUTONOMOUS_RESEARCH_INTAKE_AUTHORITY_BOOTSTRAP\.json/);
-  assert.match(operations, /AUTONOMOUS_RESEARCH_INTAKE_AUTHORITY_GENESIS\.json/);
+  assert.doesNotMatch(operations, /AUTONOMOUS_RESEARCH_INTAKE_AUTHORITY_GENESIS\.json/);
   assert.match(operations, /--rotation-intent/);
   assert.match(operations, /projected ConfigMap or Secret/);
-  assert.match(operations, /linearizable authority-head broker/);
-  assert.match(operations, /Every trust-bearing SQLite transaction/);
+  assert.match(operations,
+    /linearizable authority head controlled by a different security\s+identity/);
+  assert.match(operations, /bundled `hepta-paper-state-authority` service/);
+  assert.match(operations, /remote durable authority state/);
+  assert.match(operations, /Every\s+trust-bearing SQLite transaction/);
   assert.match(operations, /replayable SQLite changeset/);
   assert.match(operations, /authoritative database-scope inventory/);
   assert.match(operations, /Provider or KMS actions/);
-  assert.match(operations, /deployment is \*\*No-Go\*\*/);
+  assert.match(operations, /same-host profile remains \*\*No-Go\*\*/);
   assert.doesNotMatch(`${systemd}\n${environment}\n${kubernetes}`,
     /(?:api[_-]?key|access[_-]?token|private[_-]?key|password)\s*[:=]\s*[A-Za-z0-9+/]{16,}/i);
 });

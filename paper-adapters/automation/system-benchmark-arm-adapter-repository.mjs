@@ -1,9 +1,20 @@
 import path from 'node:path';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
-import { armProtocolFor, verifySystemBenchmarkArmAdapterSet } from '../../paper-domain/automation/system-benchmark-arm-protocol.mjs';
+import {
+  armProtocolFor,
+  systemBenchmarkArmAdapterSetIdentityPayload,
+  verifySystemBenchmarkArmAdapterSet,
+} from '../../paper-domain/automation/system-benchmark-arm-protocol.mjs';
 
 const ARMS = Object.freeze(['treatment', 'baseline', 'ablation']);
+
+function adapterSourceBlockers(relativePath, content) {
+  if (!/\.r$/i.test(relativePath)) return [];
+  const source = content?.toString('utf8') || '';
+  return /\bsys\.frame\s*\([^)]*\)\s*\$\s*ofile\b/i.test(source)
+    ? ['r_top_level_caller_frame_path_discovery_forbidden'] : [];
+}
 
 function relativeArmEntrypoint(entrypoint, arm) {
   const normalized = String(entrypoint || '').split(path.sep).join('/');
@@ -25,6 +36,11 @@ export function resolveSystemBenchmarkArmAdapterSet({ sourceRoot, entrypoint, pr
       blockers.push(`benchmark_arm_adapter_unavailable:${arm}:${read.blockers.join(',') || 'unreadable'}`);
       continue;
     }
+    const sourceBlockers = adapterSourceBlockers(relativePath, read.content);
+    if (sourceBlockers.length) {
+      blockers.push(...sourceBlockers.map((item) => `benchmark_arm_adapter_source_invalid:${arm}:${item}`));
+      continue;
+    }
     adapters.push(Object.freeze({
       version: 1,
       kind: 'SystemBenchmarkArmAdapterIdentity',
@@ -41,7 +57,13 @@ export function resolveSystemBenchmarkArmAdapterSet({ sourceRoot, entrypoint, pr
     entrypointConvention: 'sibling-arm-entrypoints-v1',
     adapters,
   };
-  const adapterSet = Object.freeze({ ...payload, systemBenchmarkArmAdapterSetHash: hashRecord('SystemBenchmarkArmAdapterSet', payload) });
+  const adapterSet = Object.freeze({
+    ...payload,
+    systemBenchmarkArmAdapterSetHash: hashRecord(
+      'SystemBenchmarkArmAdapterSet',
+      systemBenchmarkArmAdapterSetIdentityPayload(payload),
+    ),
+  });
   if (!verifySystemBenchmarkArmAdapterSet(adapterSet, protocolSet)) blockers.push('benchmark_arm_adapter_set_invalid_or_not_distinct');
   return Object.freeze({
     status: blockers.length ? 'system_benchmark_arm_adapters_blocked' : 'system_benchmark_arm_adapters_verified',

@@ -1,7 +1,18 @@
 export {
+  capabilityConformanceReceiptHash,
+  capabilityConformanceReplayEvidenceHash,
+  capabilityConformanceReplayManifestHash,
+  capabilityProductionSubject,
   capabilityTargetBindings,
+  capabilityVerificationCodeProvenance,
+  capabilityVerificationCodeProvenanceHash,
+  capabilityVerificationCodeProvenanceMatches,
   loadCapabilityConformanceProofs,
   loadCapabilityOperationalProofs,
+  readBoundRegularJson,
+  resolveCurrentCapabilityProductionSubject,
   verifyCapabilityConformanceReceipt,
+  verifyCapabilityConformanceReplayEvidence,
+  verifyCapabilityConformanceReplayManifest,
   verifyCapabilityOperationalReceipt,
 } from '../paper-adapters/governance/capability-proof-verifier.mjs';

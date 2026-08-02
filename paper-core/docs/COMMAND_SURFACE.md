@@ -32,6 +32,13 @@ as unsupported production vocabulary. Both preview and execution through the
 production batch command fail closed because no campaign node executor exists;
 legacy projection work must choose the explicit compatibility entrypoint.
 
+The managed-Codex, local state-authority, and local release-attestor clients are
+machine-protocol executables, not npm or `hepta-paper operator` commands. They
+remain absent from the registry so raw mutation/signing JSON and protocol stdout
+cannot be widened into a general operator surface. Their root-owned deployment
+launchers, strict help/failure behavior, and bounded trust profiles are defined
+in [`operational-process-entrypoints.md`](operational-process-entrypoints.md).
+
 Historical retirement commands are not production paper modes. In particular,
 there is no `paper:legacy-cleanup`, `store:migrate-legacy`, or
 `store:snapshot-legacy-history` command. The production legacy surface is
@@ -49,7 +56,8 @@ evidence. `store:restore-drill` remains an operational verification gate with
 intentional, scoped backup and restore-receipt writes rather than a read-only
 status command.
 `runtime:permissions` is also maintenance-only and is read-only unless the
-caller explicitly forwards `--execute`. It is not routed by `hepta-paper` and
+caller explicitly forwards both `--execute` and the cooperative-writer fencing
+assertion `--writer-quiesced`. It is not routed by `hepta-paper` and
 therefore cannot be mistaken for a supported operator command.
 `automation:status` emits JSON by default and accepts an explicit `--json` for
 machine callers. It keeps release-attestor inspection passive by default: a
@@ -61,6 +69,17 @@ active-key signature challenge is attempted. The explicit
 probe, and fresh active-key challenge are all explicit external actions. Its
 external-action, network, and credential effects are classified accordingly in
 the command registry.
+`hepta-paper operator external-authority-intake -- <arguments>` is the short
+path for the first production dependency only. It reads the external author
+identity configuration and release-attestor v3 configuration, verifies their
+current signed authority material, compares both out-of-band pins, and returns
+the observed semantic hashes and exact blockers. It does not inspect assets,
+replay, numerical plugins, state, or submission; it cannot start a service,
+probe a KMS, or request a signature. A successful result means only that the
+four external-authority inputs are ready for one explicit live author/KMS
+verification. It never reports full production readiness.
+`hepta-paper operator automation -- --handoff` remains the complete read-only
+dependency view and is accepted by the canonical router.
 `hepta-paper operator generic-domain-capability-evidence -- <arguments>` is the
 canonical generic-domain evidence surface. `status` is read-only. `converge`
 revalidates the persisted Agenda, prior-art, experiment and pinned venue

@@ -7,14 +7,36 @@ import test from 'node:test';
 import { createOpenClawAgentExecutor, openClawAgentCapabilityProfileHash } from '../../paper-adapters/automation/openclaw-agent-executor.mjs';
 import { openClawAgentConfigurationHash, openClawGatewayConfigurationHash } from '../../paper-adapters/automation/openclaw-agent-configuration.mjs';
 import { createAgentBackendRouter } from '../../paper-adapters/automation/agent-backend-router.mjs';
+import {
+  buildAgentBackendUsageReceipt,
+  buildAgentExecutionUsageBinding,
+  buildAgentPostprocessingFailureUsageReceipt,
+  normalizeAgentExecutionUsage,
+  verifyAgentBackendUsageReceipt,
+  verifyAgentExecutionReceipt,
+  verifyAgentExecutionUsageBinding,
+  verifyAgentPostprocessingFailureUsageReceipt,
+} from '../../paper-domain/evidence/agent-execution-receipt-contract.mjs';
 import { createIsolatedAgentExecutor } from '../../paper-adapters/automation/isolated-agent-executor.mjs';
 import { runManuscriptQualityChecks } from '../../paper-adapters/automation/manuscript-quality-checks.mjs';
+import {
+  executeCampaignQualityRevalidationNode,
+} from '../../paper-application/automation/campaign-quality-release-orchestrator.mjs';
+import {
+  executeCampaignAgentNode,
+} from '../../paper-application/automation/campaign-agent-node-orchestrator.mjs';
 import { createResourceGovernor } from '../../paper-application/automation/resource-governor.mjs';
+import {
+  meteredCampaignResultUsage,
+} from '../../paper-application/automation/campaign-execution-budget-policy.mjs';
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { createSqliteCampaignStore } from '../../paper-adapters/persistence/sqlite-campaign-store.mjs';
 import { buildPaperCampaignPlan } from '../../paper-domain/automation/campaign-plan.mjs';
 import { buildExecutorCapabilities } from '../../paper-ports/executor-capabilities.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  genericManuscriptReleaseFixture,
+} from './support/autonomous-research-generalization-fixture.mjs';
 
 function fixtureCapabilities(executorId, overrides = {}) {
   return () => buildExecutorCapabilities({
@@ -31,6 +53,10 @@ function fixtureAgentReceipt(executorId, changedPaths, extra = {}) {
     status: 'agent_execution_completed',
     executorId,
     changedPaths: Object.freeze([...changedPaths].sort()),
+    externalModelInvocationPerformed: false,
+    usage: Object.freeze({
+      input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+    }),
     ...extra,
   };
   return Object.freeze({
@@ -134,7 +160,7 @@ test('isolated executor merges non-conflicting changes and backend router falls 
   fs.mkdirSync(paper);
   fs.writeFileSync(path.join(paper, 'main.tex'), 'before\n');
   const fallback = { executorId: 'fallback', capabilities: fixtureCapabilities('fallback'), async execute(input) { fs.writeFileSync(path.join(input.workspacePath, 'main.tex'), 'after\n'); fs.writeFileSync(path.join(input.workspacePath, 'NEW.md'), 'new\n'); fs.mkdirSync(path.join(input.workspacePath, '__pycache__')); fs.writeFileSync(path.join(input.workspacePath, '__pycache__', 'generated.pyc'), 'cache'); return fixtureAgentReceipt('fallback', ['main.tex', 'NEW.md']); } };
-  const router = createAgentBackendRouter({ primary: { executorId: 'primary', capabilities: fixtureCapabilities('primary'), async execute() { const error = new Error('offline'); error.retryable = true; throw error; } }, fallbacks: [fallback] });
+  const router = createAgentBackendRouter({ primary: { executorId: 'primary', capabilities: fixtureCapabilities('primary'), async execute() { const error = new Error('offline'); error.retryable = true; error.receipt = fixtureAgentReceipt('primary', [], { status: 'agent_execution_failed' }); throw error; } }, fallbacks: [fallback] });
   const executor = createIsolatedAgentExecutor({ delegate: router, isolationRoot: isolation, keepWorkspaces: false });
   const receipt = await executor.execute({ role: 'writer', workspacePath: paper, instructions: 'edit', context: { campaignId: 'c', nodeId: 'n' } });
   assert.equal(receipt.selectedExecutorId, 'fallback');
@@ -142,6 +168,525 @@ test('isolated executor merges non-conflicting changes and backend router falls 
   assert.equal(fs.readFileSync(path.join(paper, 'main.tex'), 'utf8'), 'after\n');
   assert.equal(fs.readFileSync(path.join(paper, 'NEW.md'), 'utf8'), 'new\n');
   assert.equal(fs.existsSync(path.join(paper, '__pycache__')), false);
+});
+
+test('backend router preserves a terminal executor failure without fallback', async () => {
+  let fallbackCalls = 0;
+  const primary = {
+    executorId: 'terminal-primary',
+    capabilities: fixtureCapabilities('terminal-primary'),
+    async execute() {
+      const error = new Error('managed_snapshot_policy_failed');
+      error.retryable = false;
+      throw error;
+    },
+  };
+  const fallback = {
+    executorId: 'unused-fallback',
+    capabilities: fixtureCapabilities('unused-fallback'),
+    async execute() {
+      fallbackCalls += 1;
+      return fixtureAgentReceipt('unused-fallback', []);
+    },
+  };
+  const router = createAgentBackendRouter({ primary, fallbacks: [fallback] });
+  await assert.rejects(
+    () => router.execute({
+      role: 'writer',
+      workspacePath: process.cwd(),
+      instructions: 'do not execute the fallback',
+    }),
+    (error) => {
+      assert.equal(error.retryable, false);
+      assert.equal(error.failures.length, 1);
+      assert.equal(error.failures[0].message, 'managed_snapshot_policy_failed');
+      return true;
+    },
+  );
+  assert.equal(fallbackCalls, 0);
+});
+
+test('backend router aggregates hash-verified failed and selected usage', async () => {
+  const failedReceipt = fixtureAgentReceipt('usage-primary', [], {
+    status: 'agent_execution_failed',
+    usage: { input: 2, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 3 },
+  });
+  const selectedReceipt = fixtureAgentReceipt('usage-fallback', [], {
+    usage: { input: 4, output: 2, cacheRead: 1, cacheWrite: 0, totalTokens: 7 },
+  });
+  const primary = {
+    executorId: 'usage-primary',
+    capabilities: fixtureCapabilities('usage-primary'),
+    async execute() {
+      const error = new Error('retryable_primary_failure');
+      error.retryable = true;
+      error.receipt = failedReceipt;
+      throw error;
+    },
+  };
+  const fallback = {
+    executorId: 'usage-fallback',
+    capabilities: fixtureCapabilities('usage-fallback'),
+    async execute() { return selectedReceipt; },
+  };
+  const result = await createAgentBackendRouter({ primary, fallbacks: [fallback] })
+    .execute({ role: 'writer', workspacePath: process.cwd(), instructions: 'usage' });
+  assert.equal(verifyAgentExecutionReceipt(result), true);
+  assert.deepEqual(result.agentBackendUsage, {
+    cacheRead: 1,
+    cacheWrite: 0,
+    input: 6,
+    output: 3,
+    totalTokens: 10,
+  });
+  assert.equal(verifyAgentBackendUsageReceipt(result.agentBackendUsageReceipt, {
+    selectedAgentExecutionReceiptHash: selectedReceipt.agentExecutionReceiptHash,
+  }), true);
+  assert.equal(meteredCampaignResultUsage(result, {
+    agentCall: true,
+  }).tokens, 10);
+  const usageBinding = buildAgentExecutionUsageBinding(result);
+  assert.equal(verifyAgentExecutionUsageBinding(usageBinding, {
+    agentExecutionReceipt: result,
+  }), true);
+  assert.equal(meteredCampaignResultUsage({
+    agentExecutionReceipt: result,
+    usage: usageBinding.usage,
+    outputTokenCount: 1,
+    agentExecutionUsageBindingHash:
+      usageBinding.agentExecutionUsageBindingHash,
+    agentExecutionUsageBinding: usageBinding,
+  }, { agentCall: true }).tokens, 10);
+  const postprocessing = buildAgentPostprocessingFailureUsageReceipt(result);
+  assert.equal(postprocessing.usage.totalTokens, 10);
+  assert.equal(meteredCampaignResultUsage(postprocessing, {
+    agentCall: true, failureReceipt: true,
+  }).tokens, 10);
+  const unverifiedFailure = meteredCampaignResultUsage({
+    usage: { totalTokens: 999 },
+  }, {
+    agentCall: true, failureReceipt: true,
+  });
+  assert.equal(unverifiedFailure.tokens, 0);
+  assert.equal(unverifiedFailure.agentUsageComplete, false);
+  assert.equal(unverifiedFailure.agentUsageStatus, 'agent_usage_unknown_terminal');
+  const tampered = structuredClone(result.agentBackendUsageReceipt);
+  tampered.usage.totalTokens = 9;
+  assert.equal(verifyAgentBackendUsageReceipt(tampered), false);
+  const suppressed = structuredClone(result.agentBackendUsageReceipt);
+  suppressed.attempts[0].usageReported = false;
+  suppressed.attempts[0].usage = null;
+  suppressed.attempts[0].usageHash = null;
+  const { agentBackendUsageReceiptHash: _suppressedHash, ...suppressedPayload } = suppressed;
+  suppressed.agentBackendUsageReceiptHash = hashRecord(
+    'AgentBackendUsageReceipt', suppressedPayload,
+  );
+  assert.equal(verifyAgentBackendUsageReceipt(suppressed), false);
+  assert.throws(() => meteredCampaignResultUsage({
+    ...result,
+    agentBackendUsageReceipt: suppressed,
+    agentBackendUsageReceiptHash: suppressed.agentBackendUsageReceiptHash,
+  }, { agentCall: true }), /agent_execution_usage_binding_invalid/);
+});
+
+test('usage bindings require their verified source receipt and cannot self-authenticate', () => {
+  const receipt = fixtureAgentReceipt('binding-source', [], {
+    externalModelInvocationPerformed: true,
+    usage: {
+      input: 2, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 3, costUsd: 0.25,
+    },
+  });
+  const binding = buildAgentExecutionUsageBinding(receipt);
+  assert.equal(verifyAgentExecutionUsageBinding(binding), false);
+  assert.equal(verifyAgentExecutionUsageBinding(binding, {
+    agentExecutionReceipt: receipt,
+  }), true);
+  assert.throws(() => meteredCampaignResultUsage({
+    usage: binding.usage,
+    agentExecutionUsageBinding: binding,
+    agentExecutionUsageBindingHash: binding.agentExecutionUsageBindingHash,
+  }, { agentCall: true }), /agent_execution_usage_binding_invalid/);
+  assert.deepEqual(meteredCampaignResultUsage({
+    agentExecutionReceipt: receipt,
+    usage: binding.usage,
+    agentExecutionUsageBinding: binding,
+    agentExecutionUsageBindingHash: binding.agentExecutionUsageBindingHash,
+  }, { agentCall: true }), { tokens: 3, costUsd: 0.25, pricedAgentCalls: 1 });
+  const tamperedCost = structuredClone(receipt);
+  tamperedCost.usage.costUsd = 0.5;
+  assert.throws(() => meteredCampaignResultUsage(tamperedCost, {
+    agentCall: true,
+  }), /agent_execution_usage_binding_invalid/);
+  const invalidCost = fixtureAgentReceipt('binding-negative-cost', [], {
+    externalModelInvocationPerformed: true,
+    usage: {
+      input: 2, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 3, costUsd: -1,
+    },
+  });
+  assert.equal(buildAgentExecutionUsageBinding(invalidCost), null);
+  assert.throws(() => meteredCampaignResultUsage(invalidCost, {
+    agentCall: true,
+  }), /agent_execution_usage_binding_invalid/);
+});
+
+test('workspace integration metadata remains outside the agent receipt hash domain', () => {
+  const receipt = fixtureAgentReceipt('workspace-isolated-usage', ['RESEARCH_PLAN.md'], {
+    externalModelInvocationPerformed: true,
+    usage: {
+      input: 25_026,
+      output: 1_124,
+      cacheRead: 7_936,
+      cacheWrite: 0,
+      totalTokens: 34_086,
+    },
+  });
+  const isolatedResult = {
+    ...receipt,
+    workspaceAttemptIntegration: {
+      version: 2,
+      kind: 'WorkspaceAttemptIntegrationDescriptor',
+      workspaceAttemptIntegrationDescriptorHash:
+        `sha256:${'a'.repeat(64)}`,
+    },
+  };
+  assert.equal(verifyAgentExecutionReceipt(isolatedResult), true);
+  const binding = buildAgentExecutionUsageBinding(isolatedResult);
+  assert.equal(verifyAgentExecutionUsageBinding(binding, {
+    agentExecutionReceipt: isolatedResult,
+  }), true);
+  assert.equal(meteredCampaignResultUsage(isolatedResult, {
+    agentCall: true,
+  }).tokens, 34_086);
+
+  const tampered = structuredClone(isolatedResult);
+  tampered.usage.totalTokens = 34_087;
+  assert.equal(verifyAgentExecutionReceipt(tampered), false);
+  assert.throws(() => meteredCampaignResultUsage(tampered, {
+    agentCall: true,
+  }), /agent_execution_usage_binding_invalid/);
+});
+
+test('backend usage receipts reject replayed attempts and executor mismatches', () => {
+  const first = fixtureAgentReceipt('identity-a', [], {
+    externalModelInvocationPerformed: true,
+    usage: {
+      input: 2, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 3,
+    },
+  });
+  const second = fixtureAgentReceipt('identity-b', [], {
+    externalModelInvocationPerformed: true,
+    usage: {
+      input: 3, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 4,
+    },
+  });
+  const replayed = buildAgentBackendUsageReceipt({
+    attempts: [
+      { attemptId: 'attempt-a', executorId: 'identity-a', receipt: first },
+      { attemptId: 'attempt-b', executorId: 'identity-a', receipt: first },
+    ],
+    status: 'all_agent_backends_failed',
+  });
+  assert.equal(replayed.usageComplete, false);
+  assert.equal(verifyAgentBackendUsageReceipt(replayed), false);
+
+  const duplicateAttemptId = buildAgentBackendUsageReceipt({
+    attempts: [
+      { attemptId: 'duplicate', executorId: 'identity-a', receipt: first },
+      { attemptId: 'duplicate', executorId: 'identity-b', receipt: second },
+    ],
+    status: 'all_agent_backends_failed',
+  });
+  assert.equal(verifyAgentBackendUsageReceipt(duplicateAttemptId), false);
+
+  const mismatchedExecutor = buildAgentBackendUsageReceipt({
+    attempts: [{
+      attemptId: 'mismatch', executorId: 'identity-b', receipt: first,
+    }],
+    status: 'all_agent_backends_failed',
+  });
+  assert.equal(mismatchedExecutor.usageComplete, false);
+  assert.equal(verifyAgentBackendUsageReceipt(mismatchedExecutor), false);
+});
+
+test('incomplete backend usage is a terminal unknown with a metered known lower bound', () => {
+  assert.deepEqual(meteredCampaignResultUsage(undefined, {
+    agentCall: true, failureReceipt: true,
+  }), {
+    tokens: 0,
+    agentUsageComplete: false,
+    agentUsageStatus: 'agent_usage_unknown_terminal',
+    agentUsageReason: 'agent_failure_usage_receipt_missing',
+    agentUsageReceiptHash: null,
+  });
+  const known = fixtureAgentReceipt('known-attempt', [], {
+    status: 'agent_execution_failed',
+    externalModelInvocationPerformed: true,
+    usage: {
+      input: 2, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 3,
+    },
+  });
+  const incomplete = buildAgentBackendUsageReceipt({
+    attempts: [
+      { attemptId: 'known', executorId: 'known-attempt', receipt: known },
+      { attemptId: 'unknown', executorId: 'unknown-attempt', receipt: null },
+    ],
+    status: 'all_agent_backends_failed',
+  });
+  assert.equal(verifyAgentBackendUsageReceipt(incomplete), true);
+  assert.equal(incomplete.usageComplete, false);
+  const metered = meteredCampaignResultUsage(incomplete, {
+    agentCall: true, failureReceipt: true,
+  });
+  assert.deepEqual(metered, {
+    tokens: 3,
+    agentUsageComplete: false,
+    agentUsageStatus: 'agent_usage_unknown_terminal',
+    agentUsageReason: 'agent_backend_usage_incomplete',
+    agentUsageReceiptHash: incomplete.agentBackendUsageReceiptHash,
+  });
+
+  const knownLowerBoundPayload = {
+    status: 'agent_execution_failed',
+    executorId: 'managed-usage-invalid',
+    externalModelInvocationPerformed: true,
+    usageComplete: false,
+    usage: {
+      input: 5, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 6,
+    },
+  };
+  const knownLowerBound = {
+    ...knownLowerBoundPayload,
+    agentExecutionReceiptHash: hashRecord(
+      'AgentExecutionReceipt', knownLowerBoundPayload,
+    ),
+  };
+  const directMetered = meteredCampaignResultUsage(knownLowerBound, {
+    agentCall: true, failureReceipt: true,
+  });
+  assert.equal(directMetered.tokens, 6);
+  assert.equal(directMetered.agentUsageComplete, false);
+});
+
+test('outcome-bound mutation rejection preserves successful agent usage evidence', async () => {
+  const paperId = 'paper-generalized-1';
+  const campaignId = 'campaign-generalized-1';
+  const release = genericManuscriptReleaseFixture({ paperId, campaignId });
+  const receipt = fixtureAgentReceipt('outcome-bound-writer', [
+    'experiments/run.py',
+  ], {
+    externalModelInvocationPerformed: true,
+    finalOutput: '{}',
+    usage: {
+      input: 2, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 3,
+    },
+  });
+  await assert.rejects(() => executeCampaignAgentNode({
+    primitives: {
+      agent: { async execute() { return receipt; } },
+      workspace: { prepareEmpiricalAssertionAuthority() { return {}; } },
+    },
+    campaign: {
+      campaignId,
+      paperId,
+      spec: {
+        autonomousResearchPreparation: release.preparation,
+        paperQualityProfiles: ['empirical_or_experiment'],
+        datasetMounts: [],
+        languages: ['latex'],
+      },
+    },
+    node: {
+      nodeId: 'revise', kind: 'revise', role: 'writer', roundIndex: 1,
+    },
+    context: {
+      campaignNodes: [{ kind: 'empirical', status: 'completed' }],
+      reviews: [],
+      qualityGateBlockers: [],
+    },
+    workspace: '/tmp',
+    manuscript: 'main.tex',
+    executionBudget: { remainingTokenCount: 1000, remainingWallTimeMs: 1000 },
+  }), (error) => {
+    assert.equal(
+      error.message,
+      'campaign_outcome_informed_empirical_mutation_forbidden:experiments/run.py',
+    );
+    assert.equal(verifyAgentPostprocessingFailureUsageReceipt(error.receipt), true);
+    assert.equal(error.postprocessingReceipt.invalidPath, 'experiments/run.py');
+    assert.equal(meteredCampaignResultUsage(error.receipt, {
+      agentCall: true, failureReceipt: true,
+    }).tokens, 3);
+    return true;
+  });
+});
+
+test('agent usage rejects conflicting or null aliases while tolerating undefined aliases', () => {
+  assert.equal(normalizeAgentExecutionUsage({
+    input: 1,
+    inputTokens: 1000,
+    output: 1,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 2,
+  }), null);
+  assert.equal(normalizeAgentExecutionUsage({
+    input: null,
+    inputTokens: 1,
+    output: 1,
+    totalTokens: 2,
+  }), null);
+  assert.deepEqual(normalizeAgentExecutionUsage({
+    input: 1,
+    inputTokens: undefined,
+    output: 1,
+    output_tokens: undefined,
+    cacheRead: undefined,
+    cacheWrite: undefined,
+    total: 2,
+    totalTokens: undefined,
+  }), {
+    cacheRead: 0,
+    cacheWrite: 0,
+    input: 1,
+    output: 1,
+    totalTokens: 2,
+  });
+});
+
+test('failure metering ignores output-only counts when verified full agent usage is absent', () => {
+  const receipt = fixtureAgentReceipt('legacy-output-only-failure', [], {
+    status: 'agent_execution_failed',
+    externalModelInvocationPerformed: true,
+    usage: undefined,
+    outputTokenCount: 1,
+  });
+  assert.equal(verifyAgentExecutionReceipt(receipt, { requireCompleted: false }), true);
+  assert.equal(meteredCampaignResultUsage(receipt, {
+    agentCall: true, failureReceipt: true,
+  }).tokens, 0);
+});
+
+test('backend router fails closed on a verified external model receipt without usage', async () => {
+  const executor = {
+    executorId: 'missing-usage-model',
+    capabilities: fixtureCapabilities('missing-usage-model'),
+    async execute() {
+      return fixtureAgentReceipt('missing-usage-model', [], {
+        externalModelInvocationPerformed: true,
+        usage: undefined,
+      });
+    },
+  };
+  await assert.rejects(
+    () => createAgentBackendRouter({ primary: executor }).execute({
+      role: 'writer', workspacePath: process.cwd(), instructions: 'missing usage',
+    }),
+    (error) => error.retryable === false
+      && error.receipt?.usageComplete === false
+      && error.receipt?.attempts?.[0]?.usageRequired === true
+      && error.receipt?.attempts?.[0]?.usageReported === false,
+  );
+});
+
+test('usage binding permits missing usage only for an explicit non-model execution', () => {
+  const unknownPayload = {
+    status: 'agent_execution_completed',
+    executorId: 'unknown-model-status',
+    changedPaths: [],
+  };
+  const unknown = {
+    ...unknownPayload,
+    agentExecutionReceiptHash: hashRecord('AgentExecutionReceipt', unknownPayload),
+  };
+  assert.equal(buildAgentExecutionUsageBinding(unknown), null);
+  const nonModel = fixtureAgentReceipt('explicit-non-model', [], { usage: undefined });
+  assert.equal(buildAgentExecutionUsageBinding(nonModel)?.usage, null);
+});
+
+test('backend router attaches aggregate verified usage when every backend fails', async () => {
+  const failing = (executorId, usage, retryable) => ({
+    executorId,
+    capabilities: fixtureCapabilities(executorId),
+    async execute() {
+      const receipt = fixtureAgentReceipt(executorId, [], {
+        status: 'agent_execution_failed', usage,
+      });
+      const error = new Error(`${executorId}_failed`);
+      error.retryable = retryable;
+      error.receipt = receipt;
+      throw error;
+    },
+  });
+  const router = createAgentBackendRouter({
+    primary: failing('failure-a', {
+      input: 2, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 3,
+    }, true),
+    fallbacks: [failing('failure-b', {
+      input: 3, output: 2, cacheRead: 1, cacheWrite: 1, totalTokens: 7,
+    }, false)],
+  });
+  await assert.rejects(
+    () => router.execute({
+      role: 'writer', workspacePath: process.cwd(), instructions: 'all fail',
+    }),
+    (error) => {
+      assert.equal(error.retryable, false);
+      assert.equal(error.receipt.status, 'all_agent_backends_failed');
+      assert.deepEqual(error.receipt.usage, {
+        cacheRead: 1,
+        cacheWrite: 1,
+        input: 5,
+        output: 3,
+        totalTokens: 10,
+      });
+      assert.equal(verifyAgentBackendUsageReceipt(error.receipt), true);
+      assert.equal(meteredCampaignResultUsage(error.receipt, {
+        agentCall: true, failureReceipt: true,
+      }).tokens, 10);
+      return true;
+    },
+  );
+});
+
+test('isolated executor keeps nested operation identity separate from persisted campaign node identity', async (t) => {
+  const root = temporary(t, 'hepta-isolated-nested-node-');
+  const paper = path.join(root, 'paper');
+  fs.mkdirSync(paper);
+  fs.writeFileSync(path.join(paper, 'main.tex'), 'before\n');
+  const registrations = [];
+  const workspaceRegistry = {
+    register(entry) {
+      registrations.push(entry);
+      return { ...entry, status: 'active' };
+    },
+    transition() {},
+  };
+  const delegate = {
+    executorId: 'nested-formal-delegate',
+    capabilities: fixtureCapabilities('nested-formal-delegate'),
+    async execute() {
+      return fixtureAgentReceipt('nested-formal-delegate', []);
+    },
+  };
+  const executor = createIsolatedAgentExecutor({
+    delegate,
+    isolationRoot: path.join(root, 'isolated'),
+    workspaceRegistry,
+    keepWorkspaces: false,
+  });
+  await executor.execute({
+    role: 'formal-author',
+    workspacePath: paper,
+    instructions: 'verify',
+    context: {
+      campaignId: 'campaign-1',
+      nodeId: 'persisted-formal-verify-node',
+      operationNodeId: 'persisted-formal-verify-node:formal-author:0',
+    },
+  });
+  assert.equal(registrations.length, 1);
+  assert.equal(registrations[0].nodeId, 'persisted-formal-verify-node');
+  assert.match(registrations[0].workspaceId, /formal-author_0/);
 });
 
 test('isolated agents cannot mint system-owned automation result artifacts', async (t) => {
@@ -167,7 +712,7 @@ test('isolated agents cannot mint system-owned automation result artifacts', asy
   assert.equal(fs.existsSync(path.join(paper, 'automation-results')), false);
 });
 
-test('OpenClaw timeout is eligible for fallback while isolated workspaces reject symlinks', async (t) => {
+test('OpenClaw timeout with unknown usage fails closed while isolated workspaces reject symlinks', async (t) => {
   const root = temporary(t, 'hepta-openclaw-timeout-');
   const paper = path.join(root, 'paper');
   fs.mkdirSync(paper);
@@ -177,8 +722,12 @@ test('OpenClaw timeout is eligible for fallback while isolated workspaces reject
   fs.chmodSync(slow, 0o755);
   const primary = createOpenClawAgentExecutor({ openclawBinary: slow, agentId: 'fixture', timeoutMs: 25, ...openClawPolicy('fixture', paper) });
   const fallback = { executorId: 'fallback-after-timeout', capabilities: fixtureCapabilities('fallback-after-timeout'), async execute() { return { status: 'agent_execution_completed', changedPaths: [], agentExecutionReceiptHash: 'sha256:fallback-timeout' }; } };
-  const receipt = await createAgentBackendRouter({ primary, fallbacks: [fallback] }).execute({ role: 'writer', workspacePath: paper, instructions: 'probe', context: { campaignId: 'c', nodeId: 'n' } });
-  assert.equal(receipt.selectedExecutorId, 'fallback-after-timeout');
+  await assert.rejects(
+    () => createAgentBackendRouter({ primary, fallbacks: [fallback] }).execute({ role: 'writer', workspacePath: paper, instructions: 'probe', context: { campaignId: 'c', nodeId: 'n' } }),
+    (error) => error.retryable === false
+      && error.receipt?.usageComplete === false
+      && error.receipt?.usage === null,
+  );
   fs.symlinkSync('/tmp', path.join(paper, 'unsafe-link'));
   const isolated = createIsolatedAgentExecutor({ delegate: fallback, isolationRoot: path.join(root, 'isolated') });
   await assert.rejects(() => isolated.execute({ role: 'writer', workspacePath: paper, instructions: 'probe' }), /isolated_workspace_symlink_forbidden/);
@@ -402,6 +951,245 @@ test('self-created result JSON cannot authorize manuscript numbers without accep
   assert.ok(receipt.blockers.includes('empirical_result_registry_authority_invalid'));
   assert.ok(receipt.blockers.includes('empirical_result_artifact_authority_missing'));
   assert.ok(receipt.blockers.includes('claim_result_provenance_mismatch'));
+});
+
+test('typed autonomous manuscript revalidation fails closed without its bound authority', (t) => {
+  const root = temporary(t, 'hepta-typed-manuscript-authority-');
+  fs.writeFileSync(path.join(root, 'main.tex'), 'A typed empirical manuscript.\n');
+  const receipt = runManuscriptQualityChecks({
+    workspacePath: root,
+    requiresEmpiricalArtifacts: true,
+    expectedPaperId: 'paper',
+    expectedCampaignId: 'campaign',
+    trustedAutonomousManuscriptRenderReceipt: {},
+    trustedAutonomousManuscriptCampaignNodes: [],
+  });
+  assert.equal(receipt.passed, false);
+  assert.equal(receipt.details.trustedAutonomousManuscriptAuthorityRequired, true);
+  assert.ok(receipt.blockers.includes('trusted_autonomous_manuscript_revalidation_invalid'));
+  assert.ok(receipt.blockers.includes(
+    'trusted_autonomous_manuscript_revalidation_materialized_authority_mismatch',
+  ));
+  assert.equal(receipt.blockers.includes('empirical_claim_provenance_missing'), false);
+  assert.equal(receipt.blockers.includes('empirical_numeric_claim_provenance_missing'), false);
+  assert.equal(receipt.blockers.includes('empirical_assertion_provenance_missing'), false);
+});
+
+test('typed autonomous manuscript revalidation returns a hash-bound failure for malformed arrays', (t) => {
+  const root = temporary(t, 'hepta-typed-manuscript-malformed-arrays-');
+  fs.writeFileSync(path.join(root, 'main.tex'), 'A typed empirical manuscript.\n');
+  fs.writeFileSync(path.join(root, 'AUTONOMOUS_MANUSCRIPT_IR.json'), JSON.stringify({
+    authorityBindings: { forged: true },
+  }));
+  fs.writeFileSync(path.join(root, 'AUTONOMOUS_MANUSCRIPT_ENTAILMENT.json'), JSON.stringify({
+    sourceEvidenceDocuments: { forged: true },
+  }));
+  const receipt = runManuscriptQualityChecks({
+    workspacePath: root,
+    mode: 'artifacts',
+    requiresEmpiricalArtifacts: true,
+    expectedPaperId: 'paper',
+    expectedCampaignId: 'campaign',
+    trustedAutonomousManuscriptRenderReceipt: {
+      manuscriptIrPath: 'AUTONOMOUS_MANUSCRIPT_IR.json',
+      evidenceEntailmentContractPath: 'AUTONOMOUS_MANUSCRIPT_ENTAILMENT.json',
+      presentationArtifacts: { path: 'figures/forged.pdf' },
+    },
+    trustedAutonomousManuscriptCampaignNodes: { forged: true },
+  });
+  const revalidation = receipt.details.trustedAutonomousManuscriptRevalidation;
+  assert.equal(receipt.passed, false);
+  assert.equal(revalidation.passed, false);
+  assert.ok(revalidation.blockers.includes(
+    'trusted_autonomous_manuscript_revalidation_presentation_artifact_invalid',
+  ));
+  assert.ok(revalidation.blockers.includes(
+    'trusted_autonomous_manuscript_revalidation_source_evidence_document_invalid',
+  ));
+  assert.ok(revalidation.blockers.includes(
+    'trusted_autonomous_manuscript_revalidation_ir_authority_binding_invalid',
+  ));
+  assert.ok(revalidation.blockers.includes(
+    'trusted_autonomous_manuscript_revalidation_campaign_node_invalid',
+  ));
+  assert.match(
+    revalidation.trustedAutonomousManuscriptWorkspaceRevalidationReceiptHash,
+    /^sha256:[0-9a-f]{64}$/,
+  );
+
+  fs.writeFileSync(path.join(root, 'AUTONOMOUS_MANUSCRIPT_ENTAILMENT.json'), JSON.stringify({
+    sourceEvidenceDocuments: [null],
+  }));
+  const nullDocumentReceipt = runManuscriptQualityChecks({
+    workspacePath: root,
+    mode: 'artifacts',
+    requiresEmpiricalArtifacts: true,
+    expectedPaperId: 'paper',
+    expectedCampaignId: 'campaign',
+    trustedAutonomousManuscriptRenderReceipt: {
+      manuscriptIrPath: 'AUTONOMOUS_MANUSCRIPT_IR.json',
+      evidenceEntailmentContractPath: 'AUTONOMOUS_MANUSCRIPT_ENTAILMENT.json',
+      presentationArtifacts: [],
+    },
+    trustedAutonomousManuscriptCampaignNodes: [],
+  });
+  const nullDocumentRevalidation =
+    nullDocumentReceipt.details.trustedAutonomousManuscriptRevalidation;
+  assert.equal(nullDocumentRevalidation.passed, false);
+  assert.ok(nullDocumentRevalidation.blockers.includes(
+    'trusted_autonomous_manuscript_revalidation_source_evidence_document_invalid',
+  ));
+  assert.match(
+    nullDocumentRevalidation.trustedAutonomousManuscriptWorkspaceRevalidationReceiptHash,
+    /^sha256:[0-9a-f]{64}$/,
+  );
+});
+
+test('production artifact revalidation selects only a hash-valid manuscript result', () => {
+  const paperId = 'paper-quality-revalidation';
+  const campaignId = 'campaign-quality-revalidation';
+  const release = genericManuscriptReleaseFixture({
+    paperId,
+    campaignId,
+    campaignPlanHash: hashRecord('FixtureCampaignPlan', { campaignId }),
+    launchMode: 'production-run',
+    externalSubmission: true,
+    includeProof: true,
+  });
+  const proof = release.trustedAutonomousManuscriptResult;
+  const candidate = Object.freeze({
+    ...proof,
+    campaignId,
+    paperId,
+    nodeId: '1:revise',
+    kind: 'revise',
+    role: 'writer',
+    roundIndex: 1,
+    status: 'completed',
+    resultSha256: proof.resultHash,
+  });
+  const qualityCalls = [];
+  const primitives = {
+    workspace: {
+      hashFile() { return release.releaseBinding.renderedManuscriptHash; },
+    },
+    quality: {
+      manuscriptQuality(input) {
+        qualityCalls.push(input);
+        return Object.freeze({ passed: true, blockers: Object.freeze([]) });
+      },
+    },
+  };
+  const campaign = {
+    paperId,
+    campaignId,
+    spec: {
+      paperQualityProfiles: ['empirical_or_experiment'],
+      languages: ['latex'],
+      autonomousResearchPreparation: release.preparation,
+      scientificClaimAuthority: { claimAuthorityType: 'machine-policy-authorized' },
+    },
+  };
+  const node = { kind: 'revalidate-artifacts' };
+  const context = {
+    revisionNode: { result: { changedPaths: ['figures/result.pdf'] } },
+    campaignNodes: [candidate],
+  };
+  const input = { primitives, campaign, node, context, workspace: '/fixture', manuscript: 'main.tex' };
+  assert.equal(executeCampaignQualityRevalidationNode(input).passed, true);
+  assert.equal(qualityCalls.length, 1);
+  assert.equal(
+    qualityCalls[0].trustedAutonomousManuscriptRenderReceiptHash,
+    undefined,
+  );
+  assert.equal(
+    qualityCalls[0].trustedAutonomousManuscriptRenderReceipt
+      .trustedAutonomousManuscriptRenderReceiptHash,
+    candidate.result.trustedAutonomousManuscriptRenderReceiptHash,
+  );
+  assert.deepEqual(qualityCalls[0].trustedAutonomousManuscriptCampaignNodes, [candidate]);
+  assert.equal(
+    Object.hasOwn(qualityCalls[0], 'trustedAutonomousManuscriptFormalVerificationReceipt'),
+    false,
+  );
+
+  const legacyCampaign = {
+    ...campaign,
+    spec: {
+      paperQualityProfiles: ['empirical_or_experiment'],
+      languages: ['latex'],
+    },
+  };
+  const legacy = {
+    ...input,
+    campaign: legacyCampaign,
+    context: { ...context, campaignNodes: [] },
+  };
+  assert.equal(executeCampaignQualityRevalidationNode(legacy).passed, true);
+  assert.equal(qualityCalls.length, 2);
+  assert.equal(qualityCalls[1].trustedAutonomousManuscriptRenderReceipt, null);
+  assert.equal(qualityCalls[1].trustedAutonomousManuscriptAgentExecutionReceipt, null);
+
+  const blockedReceipt = Object.freeze({
+    passed: false,
+    blockers: Object.freeze([
+      'trusted_autonomous_manuscript_revalidation_presentation_artifact_invalid',
+    ]),
+  });
+  assert.throws(
+    () => executeCampaignQualityRevalidationNode({
+      ...input,
+      primitives: {
+        ...primitives,
+        quality: { manuscriptQuality() { return blockedReceipt; } },
+      },
+    }),
+    (error) => error.retryable === false && error.receipt === blockedReceipt,
+  );
+
+  const missing = { ...input, context: { ...context, campaignNodes: [] } };
+  assert.throws(
+    () => executeCampaignQualityRevalidationNode(missing),
+    (error) => error.message
+        === 'campaign_revalidation_trusted_autonomous_manuscript_authority_required'
+      && error.retryable === false,
+  );
+
+  const validResult = candidate.result;
+  const {
+    campaignTrustedAutonomousManuscriptResultHash: _resultHash,
+    ...validResultPayload
+  } = validResult;
+  const tamperedReceipt = {
+    ...validResult.trustedAutonomousManuscriptRenderReceipt,
+    manuscriptHash: hashRecord('FixtureTamperedManuscript', { campaignId }),
+  };
+  const tamperedResultPayload = {
+    ...validResultPayload,
+    trustedAutonomousManuscriptRenderReceipt: tamperedReceipt,
+  };
+  const tamperedResult = {
+    ...tamperedResultPayload,
+    campaignTrustedAutonomousManuscriptResultHash: hashRecord(
+      'CampaignTrustedAutonomousManuscriptResult',
+      tamperedResultPayload,
+    ),
+  };
+  const tamperedCandidate = {
+    ...candidate,
+    result: tamperedResult,
+    resultSha256: hashRecord('PaperCampaignNodeResult', tamperedResult),
+  };
+  const tampered = {
+    ...input,
+    context: { ...context, campaignNodes: [tamperedCandidate] },
+  };
+  assert.throws(
+    () => executeCampaignQualityRevalidationNode(tampered),
+    (error) => error.message
+        === 'campaign_revalidation_trusted_autonomous_manuscript_authority_required'
+      && error.retryable === false,
+  );
 });
 
 test('manuscript empirical provenance covers the recursive TeX corpus and every numeric result claim', (t) => {

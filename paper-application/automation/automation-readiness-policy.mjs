@@ -41,6 +41,7 @@ export function evaluateAutomationReadiness({
     && academicEmpiricalReady
     && researchExecutionReleaseAttestor?.ready === true
     && researchExecutionReleaseAttestor?.productionReady === true
+    && researchExecutionReleaseAttestor?.fullProductionReady === true
     && runtimeImageReproducibility?.ready === true
     && runtimes.lean?.usable === true;
   const independentHypothesisPriorArtQualificationReady =
@@ -82,6 +83,7 @@ export function evaluateAutomationReadiness({
     ...(!academicEmpiricalReady ? [academicEmpiricalReadinessReason] : []),
     ...(researchExecutionReleaseAttestor?.ready !== true ? ['research_execution_release_attestor_not_ready'] : []),
     ...(researchExecutionReleaseAttestor?.productionReady !== true
+      || researchExecutionReleaseAttestor?.fullProductionReady !== true
       ? ['research_execution_release_attestor_production_backend_not_ready'] : []),
     ...(runtimeImageReproducibility?.ready !== true
       ? ['runtime_image_reproducibility_not_ready'] : []),

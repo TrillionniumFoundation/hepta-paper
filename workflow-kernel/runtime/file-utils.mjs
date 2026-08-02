@@ -39,6 +39,70 @@ export function sha256FileSync(candidate, { prefix = true } = {}) {
   const hash = hashBytes(fs.readFileSync(candidate));
   return prefix ? hash : hash.slice('sha256:'.length);
 }
+
+function stableRegularFileSnapshot(stat) {
+  return JSON.stringify({
+    dev: String(stat.dev),
+    ino: String(stat.ino),
+    mode: String(stat.mode),
+    nlink: String(stat.nlink),
+    size: String(stat.size),
+    mtimeNs: String(stat.mtimeNs),
+    ctimeNs: String(stat.ctimeNs),
+  });
+}
+
+export function sha256StableFileSyncNoFollow(candidate, {
+  prefix = true,
+  readBufferBytes = 1024 * 1024,
+} = {}) {
+  if (!Number.isInteger(fs.constants.O_NOFOLLOW)) {
+    throw new Error('stable_file_hash_no_follow_unavailable');
+  }
+  if (!Number.isSafeInteger(readBufferBytes)
+    || readBufferBytes < 4 * 1024
+    || readBufferBytes > 16 * 1024 * 1024) {
+    throw new Error('stable_file_hash_read_buffer_invalid');
+  }
+  const descriptor = fs.openSync(
+    candidate,
+    fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+  );
+  try {
+    const before = fs.fstatSync(descriptor, { bigint: true });
+    if (!before.isFile()) throw new Error('stable_file_hash_regular_file_required');
+    const beforeSnapshot = stableRegularFileSnapshot(before);
+    const hash = crypto.createHash('sha256');
+    const buffer = Buffer.allocUnsafe(readBufferBytes);
+    let totalBytes = 0n;
+    while (true) {
+      const bytesRead = fs.readSync(descriptor, buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      hash.update(buffer.subarray(0, bytesRead));
+      totalBytes += BigInt(bytesRead);
+    }
+    const after = fs.fstatSync(descriptor, { bigint: true });
+    if (stableRegularFileSnapshot(after) !== beforeSnapshot
+      || totalBytes !== after.size) {
+      throw new Error('stable_file_hash_file_changed_during_read');
+    }
+    let pathAfter;
+    try {
+      pathAfter = fs.lstatSync(candidate, { bigint: true });
+    } catch (error) {
+      throw new Error('stable_file_hash_path_changed_during_read', { cause: error });
+    }
+    if (!pathAfter.isFile()
+      || pathAfter.isSymbolicLink()
+      || stableRegularFileSnapshot(pathAfter) !== beforeSnapshot) {
+      throw new Error('stable_file_hash_path_changed_during_read');
+    }
+    const digest = hash.digest('hex');
+    return prefix ? `sha256:${digest}` : digest;
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
 export async function fileRecord(root, candidate, role = 'artifact') {
   const read = readScopedFileSync({ scopeRoot: root, candidate });
   if (read.status !== 'scoped_file_read_verified') return null;

@@ -207,11 +207,43 @@ export function executeCampaignQualityRevalidationNode({ primitives, campaign, n
   if (!impact.required.includes(node.kind)) {
     return { status: 'impact_revalidation_not_required', nodeKind: node.kind, changedPaths };
   }
+  const artifactMode = node.kind === 'revalidate-artifacts';
+  const empiricalProfile = profiles(campaign).includes('empirical_or_experiment');
+  const trustedAutonomousManuscriptAuthorityRequired = artifactMode && empiricalProfile
+    && Boolean(campaign.spec.autonomousResearchPreparation)
+    && campaign.spec.scientificClaimAuthority?.claimAuthorityType
+      === 'machine-policy-authorized';
+  const trustedAutonomousManuscriptResult = trustedAutonomousManuscriptAuthorityRequired
+    ? authoritativeManuscriptResult({
+      primitives,
+      campaign,
+      context,
+      workspace,
+      manuscript,
+    }) : null;
+  if (trustedAutonomousManuscriptAuthorityRequired && !trustedAutonomousManuscriptResult) {
+    const error = new Error(
+      'campaign_revalidation_trusted_autonomous_manuscript_authority_required',
+    );
+    error.retryable = false;
+    throw error;
+  }
   const receipt = primitives.quality.manuscriptQuality({
     workspacePath: workspace,
     manuscriptPath: manuscript,
-    mode: node.kind === 'revalidate-citations' ? 'citations' : 'artifacts',
-    requiresEmpiricalArtifacts: (campaign.spec.languages || []).some((language) => String(language).toLowerCase() !== 'latex'),
+    mode: artifactMode ? 'artifacts' : 'citations',
+    requiresEmpiricalArtifacts: empiricalProfile
+      || (campaign.spec.languages || []).some((language) => (
+        String(language).toLowerCase() !== 'latex'
+      )),
+    expectedPaperId: campaign.paperId,
+    expectedCampaignId: campaign.campaignId,
+    trustedAutonomousManuscriptRenderReceipt:
+      trustedAutonomousManuscriptResult
+        ?.result?.trustedAutonomousManuscriptRenderReceipt || null,
+    trustedAutonomousManuscriptAgentExecutionReceipt:
+      trustedAutonomousManuscriptResult?.result?.agentExecutionReceipt || null,
+    trustedAutonomousManuscriptCampaignNodes: context.campaignNodes || [],
   });
   if (!receipt.passed) {
     const error = new Error(receipt.blockers.join(',') || 'manuscript_quality_check_failed');

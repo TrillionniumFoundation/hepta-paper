@@ -257,6 +257,10 @@ test('reviewer v2 binds every receipt to pinned Ed25519 and signed identity sepa
           changedPaths: [],
           structuredOutput,
           finalOutput: JSON.stringify(structuredOutput),
+          usage: Object.freeze({
+            input: 8, output: 4, cacheRead: 0, cacheWrite: 0, totalTokens: 12,
+          }),
+          externalModelInvocationPerformed: true,
           externalActionPerformed: true,
         };
         return Object.freeze({
@@ -410,7 +414,7 @@ test('reviewer v2 binds every receipt to pinned Ed25519 and signed identity sepa
   };
   const withoutRestoredVerifier = buildCampaignFormalReviewEnvelope(envelopeInput);
   assert.ok(withoutRestoredVerifier.blockers.includes(
-    'formal_review_signed_principal_pool_binding_invalid',
+    'formal_review_principal_pool_binding_invalid',
   ));
   const restartedAuthorIdentityAttestation = Object.freeze({
     subject: fixture.authorIdentitySource.subject,

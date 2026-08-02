@@ -13,6 +13,10 @@ import {
   buildEvidenceEntailmentSourceDocument,
 } from '../../paper-domain/research/evidence-entailment-source-document.mjs';
 import {
+  autonomousManuscriptEvidenceRefBindings,
+  autonomousManuscriptEvidenceSourceDocuments,
+} from '../../paper-adapters/automation/autonomous-manuscript-ir-materialization.mjs';
+import {
   buildIndependentEvidenceEntailmentReviewReceipt,
   verifyIndependentEvidenceEntailmentReviewReceipt,
 } from '../../paper-domain/research/evidence-entailment-review-receipt-contract.mjs';
@@ -26,6 +30,77 @@ import {
 const H = (value) => hashBytes(Buffer.from(String(value), 'utf8'));
 const PAPER_ID = 'paper-entailment-closed-loop';
 const MANUSCRIPT_HASH = H('rendered-manuscript');
+
+test('autonomous manuscript evidence normalizes integrated formal receipts and exact replay records', () => {
+  const replayPayload = {
+    version: 1,
+    kind: 'FormalCertificateReplayReceipt',
+    status: 'formal_claim_replay_verified',
+    theoremName: 'boundedClaim',
+    expectedTypeHash: H('expected-type'),
+    replayTypeHash: H('expected-type'),
+    axiomAuditPassed: true,
+    externalActionPerformed: false,
+  };
+  const replayReceipt = {
+    ...replayPayload,
+    formalCertificateReplayReceiptHash:
+      hashRecord('FormalCertificateReplayReceipt', replayPayload),
+  };
+  const replayWrapper = {
+    version: 1,
+    kind: 'FormalCertificateBundle',
+    formalCertificateReplayReceiptHash:
+      replayReceipt.formalCertificateReplayReceiptHash,
+    replayReceipt,
+  };
+  const formalPayload = {
+    version: 1,
+    kind: 'CampaignFormalVerificationReceipt',
+    status: 'campaign_formal_verification_completed',
+    blockers: [],
+    formalWorkerReceiptHashes: [H('formal-worker')],
+    formalReplayReceiptHashes: [replayReceipt.formalCertificateReplayReceiptHash],
+    certificateBundle: replayWrapper,
+    externalActionPerformed: false,
+  };
+  const formalVerificationReceipt = {
+    ...formalPayload,
+    campaignFormalVerificationReceiptHash:
+      hashRecord('CampaignFormalVerificationReceipt', formalPayload),
+    workspaceAttemptIntegration: {
+      version: 1,
+      kind: 'WorkspaceAttemptIntegrationDescriptor',
+      workspaceAttemptIntegrationDescriptorHash: H('integration'),
+    },
+  };
+  const documents = autonomousManuscriptEvidenceSourceDocuments({
+    formalVerificationReceipt,
+  });
+  assert.deepEqual(
+    documents.map((document) => document.evidenceKind).sort(),
+    ['formal_kernel_replay', 'formal_verification'],
+  );
+  assert.equal(documents.find(
+    (document) => document.evidenceKind === 'formal_verification',
+  )?.evidenceHash, formalVerificationReceipt.campaignFormalVerificationReceiptHash);
+  assert.equal(documents.find(
+    (document) => document.evidenceKind === 'formal_kernel_replay',
+  )?.evidenceHash, replayReceipt.formalCertificateReplayReceiptHash);
+  assert.deepEqual(autonomousManuscriptEvidenceRefBindings({
+    formalVerificationReceipt,
+  }), [{
+    kind: 'formal_verification',
+    hash: formalVerificationReceipt.campaignFormalVerificationReceiptHash,
+    claimClasses: ['interpretation', 'limitation', 'reproducibility'],
+  }]);
+  assert.throws(() => autonomousManuscriptEvidenceSourceDocuments({
+    formalVerificationReceipt: {
+      ...formalVerificationReceipt,
+      status: 'campaign_formal_verification_blocked',
+    },
+  }), /evidence_entailment_source_document_hash_invalid/);
+});
 
 function manuscriptFixture() {
   const proposalPayload = {

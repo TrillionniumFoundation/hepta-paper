@@ -60,6 +60,50 @@ function sourceSealRepairError(node, stage, receipt = null) {
   return error;
 }
 
+function latexRepairRejectionReceipt({
+  preservationReceipt,
+  failedExecution,
+  sanitizerReceipt,
+  repairReceipt,
+  failedAttemptLineage,
+}) {
+  const executionDiagnostic = {
+    status: failedExecution?.status || null,
+    failureClass: failedExecution?.failureClass || null,
+    repairEligible: failedExecution?.repairEligible !== false,
+    blockers: Object.freeze([...(failedExecution?.blockers || [])].map(String).slice(0, 20)),
+  };
+  const payload = {
+    version: 1,
+    kind: 'LatexTechnicalRepairFailureReceipt',
+    status: 'latex_technical_repair_rejected',
+    failedExecutionReceiptHash: failedExecution?.multiLanguageEmpiricalReceiptHash
+      || failedExecution?.runnerReceiptHash || null,
+    failedExecutionDiagnosticHash:
+      hashRecord('LatexTechnicalRepairFailedExecutionDiagnostic', executionDiagnostic),
+    failedExecutionStatus: executionDiagnostic.status,
+    failedExecutionFailureClass: executionDiagnostic.failureClass,
+    failedExecutionRepairEligible: executionDiagnostic.repairEligible,
+    failedExecutionBlockers: executionDiagnostic.blockers,
+    blockers: executionDiagnostic.blockers,
+    generatedLatexSanitizerReceiptHash:
+      sanitizerReceipt?.generatedLatexSanitizerReceiptHash || null,
+    repairAgentReceiptHash: repairReceipt?.agentExecutionReceiptHash || null,
+    latexTechnicalRepairContentPreservationReceiptHash:
+      preservationReceipt?.latexTechnicalRepairContentPreservationReceiptHash || null,
+    latexTechnicalRepairContentPreservationStatus: preservationReceipt?.status || null,
+    failedAttemptLineageHashes: Object.freeze((failedAttemptLineage || [])
+      .map((item) => item.empiricalFailedAttemptLineageHash)),
+    externalActionPerformed: false,
+  };
+  const receiptHash = hashRecord('LatexTechnicalRepairFailureReceipt', payload);
+  return Object.freeze({
+    ...payload,
+    latexTechnicalRepairFailureReceiptHash: receiptHash,
+    receiptHash,
+  });
+}
+
 async function enforceDatasetConsumption({ primitives, campaign, node, context, workspace, executionResources, executionSignal, language, entrypoint, datasetMounts, allowSourceRepair }) {
   if (language === 'latex' || !datasetMounts.length) return { contract: null, repairReceipt: null };
   let contract = primitives.empirical.evaluateDatasetConsumption({
@@ -124,12 +168,23 @@ async function executeWithRepair({ primitives, campaign, node, workspace, manusc
           campaign, workspace, manuscript, nodeKind: node.kind, diagnostic, remainingTokenCount, signal,
         }),
       });
-      latexRepairContentPreservationReceipt =
-        assertLatexTechnicalRepairPreservesScientificContent({
+      try {
+        latexRepairContentPreservationReceipt =
+          assertLatexTechnicalRepairPreservesScientificContent({
           before: manuscriptBeforeRepair,
           after: primitives.workspace.readTextIfPresent({ workspace, relative: manuscript }),
           repairReceipt,
         });
+      } catch (cause) {
+        cause.receipt = latexRepairRejectionReceipt({
+          preservationReceipt: cause.receipt,
+          failedExecution: result,
+          sanitizerReceipt,
+          repairReceipt,
+          failedAttemptLineage,
+        });
+        throw cause;
+      }
       const failed = buildEmpiricalFailedAttemptRecord({ spec: executionSpec, result });
       failedAttemptLineage.push(failed);
       executionSpec = advanceEmpiricalTechnicalRepairSpec(executionSpec, failed);

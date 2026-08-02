@@ -27,6 +27,13 @@ import {
   buildSignedAutonomousSubmissionMetadataProfileConfiguration,
 } from '../../paper-adapters/automation/autonomous-submission-metadata-profile-reader.mjs';
 import {
+  buildAutonomousSubmissionPortalConfiguration,
+  deriveAutonomousSubmissionPortalPublicConfiguration,
+} from '../../paper-adapters/automation/http-autonomous-submission-portal-adapter.mjs';
+import {
+  autonomousSubmissionPortalPublicDescriptorHash,
+} from '../../paper-adapters/automation/autonomous-submission-portal-public-adapter.mjs';
+import {
   composeAutonomousResearchExternalCapabilities,
   inspectConfiguredAutonomousResearchCapabilityScope,
 } from '../../paper-composition/automation/autonomous-research-external-capability-composition.mjs';
@@ -37,6 +44,70 @@ import {
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 const H = (label) => hashRecord('ExternalCapabilityTrustWiringTest', { label });
+
+function freshSessionProviderInspections() {
+  const credentialRootIdentityHash = H('fresh-provider-credential-root');
+  const authorPayload = {
+    version: 1,
+    kind: 'CodexResearchAuthorCapabilityReceipt',
+    status: 'codex_research_author_capability_ready',
+    provider: 'openai',
+    model: 'fresh-author-model',
+    credentialRootIdentityHash,
+    credentialConfigIdentityHash: H('fresh-author-credential-config'),
+    freshEphemeralSessionRequired: true,
+    priorAgentContextInheritanceForbidden: true,
+  };
+  const reviewerPayload = {
+    version: 1,
+    kind: 'CodexFormalReviewerCapabilityReceipt',
+    status: 'codex_formal_reviewer_capability_ready',
+    provider: 'openai',
+    model: 'fresh-reviewer-model',
+    modelSelectionSource: 'codex_home_config',
+    codexVersion: '0.144.1',
+    codexBinaryIdentityHash: H('fresh-reviewer-binary'),
+    credentialRootIdentityHash,
+    credentialConfigIdentityHash: H('fresh-reviewer-credential-config'),
+    authorProvider: 'codex',
+    authorCredentialRootIdentityHash: credentialRootIdentityHash,
+    credentialIndependenceVerified: false,
+    providerCredentialSharingPermitted: true,
+    freshEphemeralSessionRequired: true,
+    authorContextInheritanceForbidden: true,
+    frozenArtifactReviewRequired: true,
+    reviewerMustDifferFromAuthorPrincipal: true,
+    assuranceScope: 'ephemeral_session_frozen_artifact_and_role_separation',
+    providerAccountIndependenceVerified: false,
+    authenticationStatus: 'codex_authentication_verified',
+    modelOptionVerified: true,
+    selectedModelExecutionCanaryVerified: false,
+    readOnlyReviewRequired: true,
+    dynamicAttemptWorkspaceRequired: true,
+  };
+  return Object.freeze({
+    researchAuthorPreflight: Object.freeze({
+      effectivePrincipalId: 'fresh-session-author',
+      capabilityReceipt: Object.freeze({
+        ...authorPayload,
+        codexResearchAuthorCapabilityReceiptHash: hashRecord(
+          'CodexResearchAuthorCapabilityReceipt',
+          authorPayload,
+        ),
+      }),
+    }),
+    formalReviewPreflight: Object.freeze({
+      effectivePrincipalId: 'fresh-session-reviewer',
+      capabilityReceipt: Object.freeze({
+        ...reviewerPayload,
+        codexFormalReviewerCapabilityReceiptHash: hashRecord(
+          'CodexFormalReviewerCapabilityReceipt',
+          reviewerPayload,
+        ),
+      }),
+    }),
+  });
+}
 
 function agendaReceipt(allowedProtocolFamilies) {
   const request = buildAutonomousResearchAgendaProductionRequest({
@@ -70,6 +141,9 @@ function trustedComponent(label, extra = {}) {
   return Object.freeze({
     cryptographicAuthorityReady: true,
     identityIndependenceReady: true,
+    configurationPinned: true,
+    crashRecoveryReady: true,
+    fullProductionReady: true,
     trustSetHash: H(`${label}:trust-set`),
     signatureVerificationPolicyHash: H(`${label}:signature-policy`),
     ...extra,
@@ -80,10 +154,14 @@ function readyTrustInspection(overrides = {}) {
   return buildAutonomousResearchExternalCapabilityTrustInspection({
     priorArt: trustedComponent('prior-art', {
       evidenceProfile: 'structured-ranked-deduplicated-v2',
+      ...overrides.priorArt,
     }),
     reviewerPool: trustedComponent('reviewer-pool'),
     externalReplay: trustedComponent('external-replay', overrides.externalReplay),
-    submissionPortal: trustedComponent('submission-portal'),
+    submissionPortal: trustedComponent(
+      'submission-portal',
+      overrides.submissionPortal,
+    ),
   });
 }
 
@@ -143,6 +221,39 @@ test('strong production requires ranked prior art v2, submission, and bound exte
     capabilityScopeManifest: manifest,
     externalCapabilityTrustInspection: untrusted,
   }).ready, false);
+  const unpinnedPriorArt = readyTrustInspection({
+    priorArt: {
+      configurationPinned: false,
+      fullProductionReady: false,
+    },
+  });
+  assert.equal(unpinnedPriorArt.ready, false);
+  assert.ok(unpinnedPriorArt.blockers.includes(
+    'autonomous_research_prior_art_configuration_not_pinned',
+  ));
+  const unpinnedPortal = readyTrustInspection({
+    submissionPortal: {
+      configurationPinned: false,
+      fullProductionReady: false,
+    },
+  });
+  assert.equal(unpinnedPortal.ready, false);
+  assert.ok(unpinnedPortal.blockers.includes(
+    'autonomous_research_submission_portal_configuration_not_pinned',
+  ));
+  assert.ok(unpinnedPortal.blockers.includes(
+    'autonomous_research_submission_portal_full_production_not_ready',
+  ));
+  const replayWithoutRecovery = readyTrustInspection({
+    externalReplay: {
+      crashRecoveryReady: false,
+      fullProductionReady: false,
+    },
+  });
+  assert.equal(replayWithoutRecovery.ready, false);
+  assert.ok(replayWithoutRecovery.blockers.includes(
+    'autonomous_research_external_replay_crash_recovery_not_ready',
+  ));
   assert.equal(inspectAutonomousResearchProductionProfileInputs({
     launchMode: 'golden-bootstrap',
     capabilityScopeManifest: strongManifest({ venueMode: 'profile-selected-v1' }),
@@ -361,6 +472,19 @@ test('external capability inspection reports every missing or malformed configur
   const signedMetadataPath = path.join(runtimeRoot, 'signed-metadata.json');
   fs.writeFileSync(signedVenuePath, JSON.stringify(signedVenue), { mode: 0o600 });
   fs.writeFileSync(signedMetadataPath, JSON.stringify(signedMetadata), { mode: 0o600 });
+  const portalConfiguration = buildAutonomousSubmissionPortalConfiguration({
+    portalId: 'capability-inspection-portal',
+    endpoint: 'https://submission.example.test/v1/',
+    serviceIdentityHash: H('capability-inspection-portal-service'),
+    portalAccountIdentityHash: H('capability-inspection-portal-account'),
+    portalTrustDomainIdentityHash: H('capability-inspection-portal-domain'),
+    tokenEnvironmentVariable: 'CAPABILITY_INSPECTION_PORTAL_TOKEN',
+  });
+  const portalDescriptor = deriveAutonomousSubmissionPortalPublicConfiguration({
+    configuration: portalConfiguration,
+  });
+  const portalDescriptorPath = path.join(runtimeRoot, 'submission-portal-descriptor.json');
+  fs.writeFileSync(portalDescriptorPath, JSON.stringify(portalDescriptor), { mode: 0o600 });
   const NativeDate = globalThis.Date;
   let signedConfiguration;
   try {
@@ -377,8 +501,18 @@ test('external capability inspection reports every missing or malformed configur
         HEPTA_AUTONOMOUS_VENUE_PROFILE_CONFIG_HASH: signedVenue.configurationHash,
         HEPTA_AUTONOMOUS_SUBMISSION_METADATA_CONFIG: signedMetadataPath,
         HEPTA_AUTONOMOUS_SUBMISSION_METADATA_CONFIG_HASH: signedMetadata.configurationHash,
+        HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_CONFIG: portalDescriptorPath,
+        HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIGURATION_HASH:
+          portalConfiguration.configurationHash,
+        HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_HASH:
+          autonomousSubmissionPortalPublicDescriptorHash(portalDescriptor),
       },
       providerInspections: {},
+      providerSpawnSync: () => Object.freeze({
+        status: 0,
+        stdout: `${process.execPath}\n`,
+        stderr: '',
+      }),
     });
   } finally {
     globalThis.Date = NativeDate;
@@ -392,6 +526,30 @@ test('external capability inspection reports every missing or malformed configur
     signedConfiguration.submissionMetadataAuthorityReady,
     true,
     JSON.stringify(signedConfiguration.blockers),
+  );
+  assert.equal(signedConfiguration.submissionPortalConfigured, true);
+  assert.equal(signedConfiguration.venueComplianceRuntimeReady, true);
+  assert.equal(signedConfiguration.manifest.venueMode, 'submission-enabled-v1');
+});
+
+test('configured capability inspection binds fresh provider session identities', () => {
+  const inspection = inspectConfiguredAutonomousResearchCapabilityScope({
+    environment: {},
+    providerInspections: freshSessionProviderInspections(),
+  });
+  assert.equal(inspection.authorIdentityAttestationReady, true);
+  assert.equal(inspection.authorIdentityCryptographicAuthorityReady, false);
+  assert.equal(inspection.authorIdentityFullProductionReady, false);
+  assert.match(inspection.authorIdentitySubjectHash, /^sha256:[0-9a-f]{64}$/);
+  assert.equal(inspection.authorIdentityAttestation.identityMode,
+    'fresh-ephemeral-session-policy');
+  assert.equal(inspection.authorIdentityAttestation.sessionIsolationReady, true);
+  assert.equal(inspection.manifest.externalPrerequisites.includes(
+    'independent-reviewer-session-isolation',
+  ), false);
+  assert.equal(
+    inspection.externalCapabilityTrustInspection.components.reviewerPool.ready,
+    true,
   );
 });
 
@@ -441,7 +599,7 @@ test('external capability composition rejects partial submission and identity wi
   ]) assert.ok(partial.blockers.includes(blocker), blocker);
   for (const prerequisite of [
     'structured-prior-art-service',
-    'independent-reviewer-trust-domains',
+    'independent-reviewer-session-isolation',
     'submission-request-verifier',
     'venue-compliance-runtime',
     'venue-rendering-profile',

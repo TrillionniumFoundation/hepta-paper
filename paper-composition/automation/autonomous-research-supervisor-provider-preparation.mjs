@@ -1,6 +1,5 @@
 import {
   resolvePersistedAutonomousResearchLaunchMode,
-  resolveAutonomousResearchProviderPricing,
 } from '../../paper-domain/automation/autonomous-research-launch-mode-policy.mjs';
 import {
   resolveAutonomousResearchProviderConfiguration,
@@ -22,12 +21,6 @@ function workerOptions(worker = {}) {
     codexHome: worker.codexHome,
     codexBinary: worker.codexBinary,
   });
-}
-
-function configuredMaximumCost(environment, role) {
-  return environment[`HEPTA_${role}_MAXIMUM_COST_PER_CALL_USD`]
-    ?? environment[`HEPTA_${role}_MAX_COST_PER_CALL_USD`]
-    ?? null;
 }
 
 export function resolveAutonomousResearchSupervisorDispatchPolicy(campaign) {
@@ -56,34 +49,15 @@ export function prepareAutonomousResearchSupervisorProvider({
 }
 
 export function resolveAutonomousResearchSupervisorLifecycleCostEnvelope({
-  environment,
   lifecyclePolicy = {},
   externalQualificationConfiguration = null,
-  providerConfiguration,
 } = {}) {
-  const pricing = resolveAutonomousResearchProviderPricing({
-    researchAuthorProvider: providerConfiguration.researchAuthor.provider,
-    researchAuthorModel: providerConfiguration.researchAuthor.model,
-    formalReviewerProvider: providerConfiguration.formalReviewer.provider,
-    formalReviewerModel: providerConfiguration.formalReviewer.model,
-    researchAuthorMaximumCostPerCallUsd:
-      configuredMaximumCost(environment, 'RESEARCH_AUTHOR'),
-    formalReviewerMaximumCostPerCallUsd:
-      configuredMaximumCost(environment, 'FORMAL_REVIEWER'),
-  });
-  if (pricing.pricingKnown !== true) {
-    throw new Error('autonomous_research_supervisor_provider_pricing_required');
-  }
-  const pairMaximum = Number(pricing.providerCanaryPairMaximumCostUsd);
   const qualificationMaximumTotalCostUsd = Number(
     lifecyclePolicy.qualificationMaximumTotalCostUsd ?? 25,
   );
   const configuredQualificationAttemptMaximumCostUsd = Number(
     externalQualificationConfiguration?.maximumQualificationCostUsd ?? 0,
   );
-  if (!Number.isFinite(pairMaximum) || pairMaximum <= 0) {
-    throw new Error('autonomous_research_supervisor_provider_canary_pricing_invalid');
-  }
   if (!Number.isFinite(configuredQualificationAttemptMaximumCostUsd)
     || configuredQualificationAttemptMaximumCostUsd < 0
     || !Number.isFinite(qualificationMaximumTotalCostUsd)
@@ -94,22 +68,18 @@ export function resolveAutonomousResearchSupervisorLifecycleCostEnvelope({
   const requestedMaximumProviderCanaries = Number(
     lifecyclePolicy.maximumProviderCanaries ?? 64,
   );
-  const affordableProviderCanaries = Math.floor(
-    (maximumLifecycleCostUsd - qualificationMaximumTotalCostUsd) / pairMaximum,
-  );
+  const providerCanaryBudgetUsd = maximumLifecycleCostUsd - qualificationMaximumTotalCostUsd;
   if (!Number.isFinite(maximumLifecycleCostUsd) || maximumLifecycleCostUsd <= 0
     || !Number.isSafeInteger(requestedMaximumProviderCanaries)
-    || requestedMaximumProviderCanaries < 1 || affordableProviderCanaries < 1) {
+    || requestedMaximumProviderCanaries < 1 || providerCanaryBudgetUsd <= 0) {
     throw new Error('autonomous_research_supervisor_provider_canary_cost_envelope_insufficient');
   }
+  const pairMaximum = providerCanaryBudgetUsd / requestedMaximumProviderCanaries;
   return Object.freeze({
     pairMaximum,
     effectiveLifecyclePolicy: Object.freeze({
       ...lifecyclePolicy,
-      maximumProviderCanaries: Math.min(
-        requestedMaximumProviderCanaries,
-        affordableProviderCanaries,
-      ),
+      maximumProviderCanaries: requestedMaximumProviderCanaries,
       providerCanaryReservationCostUsd: pairMaximum,
       qualificationAttemptReservationCostUsd: Math.max(
         Number(lifecyclePolicy.qualificationAttemptReservationCostUsd || 0),

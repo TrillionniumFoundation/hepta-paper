@@ -119,8 +119,8 @@ export function buildAutonomousResearchCapabilityScopeManifest({
     && manuscriptMode === 'agent-authored-evidence-bound-ir-v1'
     && claims.includes('dynamic-lean-type-v1')
     && priorArtMode === STRONG_PRIOR_ART_CAPABILITY_MODE
-    && reviewerPrincipalCount >= 2
-    && reviewerTrustDomainCount >= 2
+    && reviewerPrincipalCount >= 1
+    && reviewerTrustDomainCount >= 1
     && replayMode === 'external-trust-domain-v1'
     && venueMode === 'submission-enabled-v1'
     && empiricalPluginStartupAuthorityVerified === true

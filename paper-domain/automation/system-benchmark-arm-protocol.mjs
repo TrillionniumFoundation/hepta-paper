@@ -252,7 +252,9 @@ export function verifySystemBenchmarkStatisticalCompatibilityEvidence(evaluation
 export function verifySystemBenchmarkArmAdapterSet(adapterSet, protocolSet) {
   if (!adapterSet || adapterSet.version !== 1 || adapterSet.kind !== 'SystemBenchmarkArmAdapterSet') return false;
   const { systemBenchmarkArmAdapterSetHash, ...payload } = adapterSet;
-  if (hashRecord('SystemBenchmarkArmAdapterSet', payload) !== systemBenchmarkArmAdapterSetHash) return false;
+  const stablePayload = systemBenchmarkArmAdapterSetIdentityPayload(adapterSet);
+  if (hashRecord('SystemBenchmarkArmAdapterSet', stablePayload) !== systemBenchmarkArmAdapterSetHash
+    && hashRecord('SystemBenchmarkArmAdapterSet', payload) !== systemBenchmarkArmAdapterSetHash) return false;
   if (!Array.isArray(adapterSet.adapters) || adapterSet.adapters.length !== REQUIRED_ARMS.length) return false;
   const paths = new Set();
   const hashes = new Set();
@@ -263,9 +265,26 @@ export function verifySystemBenchmarkArmAdapterSet(adapterSet, protocolSet) {
       || adapter.systemBenchmarkArmProtocolHash !== protocol?.systemBenchmarkArmProtocolHash
       || !/^[A-Za-z0-9_./-]+$/.test(String(adapter.relativePath || ''))
       || String(adapter.relativePath).split('/').includes('..')
-      || !/^sha256:[0-9a-f]{64}$/.test(String(adapter.sourceHash || ''))) return false;
+      || !/^sha256:[0-9a-f]{64}$/.test(String(adapter.sourceHash || ''))
+      || !/^sha256:[0-9a-f]{64}$/.test(String(adapter.sourceReadReceiptHash || ''))) return false;
     paths.add(adapter.relativePath);
     hashes.add(adapter.sourceHash);
   }
   return paths.size === REQUIRED_ARMS.length && hashes.size === REQUIRED_ARMS.length;
+}
+
+export function systemBenchmarkArmAdapterSetIdentityPayload(adapterSet) {
+  return {
+    version: adapterSet?.version,
+    kind: adapterSet?.kind,
+    entrypointConvention: adapterSet?.entrypointConvention,
+    adapters: (adapterSet?.adapters || []).map((adapter) => ({
+      version: adapter.version,
+      kind: adapter.kind,
+      arm: adapter.arm,
+      relativePath: adapter.relativePath,
+      sourceHash: adapter.sourceHash,
+      systemBenchmarkArmProtocolHash: adapter.systemBenchmarkArmProtocolHash,
+    })),
+  };
 }

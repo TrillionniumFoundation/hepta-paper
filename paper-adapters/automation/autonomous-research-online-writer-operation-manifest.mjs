@@ -125,6 +125,10 @@ const GROUPS = Object.freeze([
   group('native-store', 'paper-adapters/automation/automation-runtime-reconciler.mjs', [
     'executeAutomationRuntimeReconciliation',
   ]),
+  group('native-store',
+    'paper-adapters/automation/legacy-terminal-active-residue-settlement.mjs', [
+      'executeLegacyTerminalActiveResidueSettlement',
+    ]),
   group('native-store', 'paper-adapters/automation/sqlite-resource-governor.mjs', [
     'createSqliteResourceGovernor', 'reapDeadOwners', 'acquire',
     'renewLeaseHeartbeat', 'release',

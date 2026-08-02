@@ -22,7 +22,9 @@ import {
   RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE,
 } from '../../paper-domain/automation/runtime-image-reproducibility-receipt-contract.mjs';
 import {
-  inspectConfiguredAutonomousResearchAuthorIdentity,
+  autonomousResearchAuthorIdentitySubjectHash,
+  buildAutonomousResearchReviewerSessionPrincipalPool,
+  inspectAutonomousResearchAuthorRuntimeIdentity,
 } from './autonomous-research-runtime-principal-preflight.mjs';
 import {
   composeReviewerReceiptVerificationAuthority,
@@ -30,6 +32,9 @@ import {
 import {
   buildAutonomousResearchRuntimePrincipalBinding,
 } from '../../paper-domain/automation/autonomous-research-runtime-principal-binding-contract.mjs';
+import {
+  createReviewerReceiptVerificationAuthority,
+} from '../../paper-adapters/automation/reviewer-principal-executor-pool.mjs';
 
 function observedPinnedImageDigest(profile, spawnSyncImpl) {
   const inspection = inspectDockerRuntimeImageManifest({
@@ -113,8 +118,11 @@ export function createAutonomousResearchQualificationContextProvider({
   runtimeImageStatusComposer = composeRuntimeImageReproducibilityStatus,
   releaseAttestorInspector = inspectResearchExecutionReleaseAttestorConfigurationAsync,
   pinnedImageDigestInspector = observedPinnedImageDigest,
-  authorIdentityInspector = inspectConfiguredAutonomousResearchAuthorIdentity,
+  authorIdentityInspector = inspectAutonomousResearchAuthorRuntimeIdentity,
   reviewerReceiptAuthorityComposer = composeReviewerReceiptVerificationAuthority,
+  reviewerSessionPoolBuilder = buildAutonomousResearchReviewerSessionPrincipalPool,
+  reviewerReceiptVerificationAuthorityFactory =
+    createReviewerReceiptVerificationAuthority,
   runtimePrincipalBindingBuilder = buildAutonomousResearchRuntimePrincipalBinding,
 } = {}) {
   const configuration = requireAutonomousResearchProviderConfiguration(
@@ -167,31 +175,40 @@ export function createAutonomousResearchQualificationContextProvider({
       const reviewerPoolConfigPath = String(
         environment.HEPTA_REVIEWER_PRINCIPAL_POOL_CONFIG || '',
       ).trim();
-      if (!reviewerPoolConfigPath) {
-        throw new Error('autonomous_research_qualification_reviewer_pool_config_required');
-      }
       await progress('qualification_context_before_reviewer_evidence_authority');
       const authorIdentityAttestation = authorIdentityInspector({
         environment,
         author,
         clock,
       });
-      const reviewerAuthorityComposition = reviewerReceiptAuthorityComposer({
-        configPath: reviewerPoolConfigPath,
-        authorProvider: authorConfiguration.provider,
-        authorCodexHome: author.codexHome || authorConfiguration.codexHome,
-        environment,
-        spawnSyncImpl,
-        preflightReviewer,
-        clock,
-        authorIdentityAttestation,
-      });
-      reviewerEvidenceAuthority = reviewerAuthorityComposition.verificationAuthority;
+      if (reviewerPoolConfigPath) {
+        const reviewerAuthorityComposition = reviewerReceiptAuthorityComposer({
+          configPath: reviewerPoolConfigPath,
+          authorProvider: authorConfiguration.provider,
+          authorCodexHome: author.codexHome || authorConfiguration.codexHome,
+          environment,
+          spawnSyncImpl,
+          preflightReviewer,
+          clock,
+          authorIdentityAttestation,
+        });
+        reviewerEvidenceAuthority = reviewerAuthorityComposition.verificationAuthority;
+      } else {
+        const reviewerSessionPoolInspection = reviewerSessionPoolBuilder({
+          author,
+          reviewer,
+        });
+        reviewerEvidenceAuthority = reviewerReceiptVerificationAuthorityFactory({
+          pool: reviewerSessionPoolInspection.pool,
+          signers: null,
+          trustInspection: reviewerSessionPoolInspection.trustInspection,
+        });
+      }
       runtimePrincipalBinding = runtimePrincipalBindingBuilder({
         authorPrincipalId: author.effectivePrincipalId,
         authorIdentityConfigurationHash: authorIdentityAttestation.configurationHash,
-        authorIdentitySubjectHash: authorIdentityAttestation.subject
-          .externalPrincipalIdentityAttestationSubjectHash,
+        authorIdentitySubjectHash:
+          autonomousResearchAuthorIdentitySubjectHash(authorIdentityAttestation),
         authorCapabilityReceiptHash:
           author.capabilityReceipt.codexResearchAuthorCapabilityReceiptHash,
         authorCredentialRootIdentityHash:
@@ -269,6 +286,7 @@ export function createAutonomousResearchQualificationContextProvider({
       configPath: environment.HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG || null,
       environment,
       now: dateFromClock(clock),
+      clock: clock?.now ? clock : { now: () => new Date() },
       spawnSyncImpl,
       onProgress: progress,
       onSynchronousProgress: synchronousProgress,

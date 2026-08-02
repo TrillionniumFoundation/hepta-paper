@@ -116,6 +116,12 @@ export const NON_WRITER_EXCLUSIONS = Object.freeze({
     'coordinator-internal pinned statement executor; never reachable as an unfenced repository writer',
   'paper-adapters/automation/externally-fenced-sqlite-mutation-recovery.mjs':
     'coordinator-internal committed-marker recovery; never reachable as an unfenced repository writer',
+  'paper-adapters/automation/local-autonomous-research-state-authority-backup.mjs':
+    'dedicated authority-principal state outside the research runtime; it cannot open or mutate any registered research database',
+  'paper-adapters/automation/local-autonomous-research-state-authority-mutation.mjs':
+    'dedicated authority-principal state outside the research runtime; it cannot open or mutate any registered research database',
+  'paper-adapters/automation/local-autonomous-research-state-authority-runtime.mjs':
+    'dedicated authority-principal state outside the research runtime; it cannot open or mutate any registered research database',
 });
 export const NON_WRITER_ENTRYPOINT_EXCLUSIONS = Object.freeze({
   'paper-adapters/automation/autonomous-research-online-authority-journal.mjs:expectedAuthorityJournalSqliteSchemaIdentity':
@@ -128,8 +134,28 @@ export const NON_WRITER_ENTRYPOINT_EXCLUSIONS = Object.freeze({
     'transaction-scoped fixed-statement callback of executeAutomationRuntimeReconciliation',
   'paper-adapters/automation/automation-runtime-reconciler.mjs:executeOfflineReconciliation':
     'offline compatibility transaction unavailable through the strict native StorePort',
+  'paper-adapters/automation/automation-runtime-reconciler.mjs:offlineExactEventSql':
+    'offline compatibility SQL builder used only by executeOfflineReconciliation',
+  'paper-adapters/automation/automation-runtime-reconciler.mjs:offlineExactMutationSql':
+    'offline compatibility SQL builder used only by executeOfflineReconciliation',
+  'paper-adapters/automation/automation-runtime-reconciler.mjs:offlineExactlyOneGuardSql':
+    'offline compatibility guard SQL used only by executeOfflineReconciliation',
   'paper-adapters/automation/automation-runtime-reconciler.mjs:insertStrictEvent':
     'transaction-scoped fixed-statement helper of executeAutomationRuntimeReconciliation',
+  'paper-adapters/automation/legacy-terminal-active-residue-settlement.mjs:applyStrictSettlement':
+    'transaction-scoped fixed-statement callback of the registered legacy settlement operation',
+  'paper-adapters/automation/legacy-terminal-active-residue-settlement.mjs:executeOfflineSettlement':
+    'offline compatibility transaction unavailable through the strict native StorePort',
+  'paper-adapters/automation/legacy-terminal-active-residue-settlement.mjs:offlineExact':
+    'offline compatibility SQL builder used only by executeOfflineSettlement',
+  'paper-adapters/automation/legacy-terminal-active-residue-settlement.mjs:offlineExactlyOneGuardSql':
+    'offline compatibility guard SQL used only by executeOfflineSettlement',
+  'paper-adapters/automation/legacy-terminal-active-residue-settlement.mjs:offlineScopeGuardSql':
+    'offline compatibility scope-guard SQL used only by executeOfflineSettlement',
+  'paper-adapters/automation/legacy-terminal-active-residue-settlement.mjs:offlineSettlementSql':
+    'offline compatibility settlement SQL used only by executeOfflineSettlement',
+  'paper-adapters/automation/legacy-terminal-active-residue-settlement.mjs:runExactlyOne':
+    'transaction-scoped fixed-statement helper of the registered legacy settlement operation',
   'paper-adapters/automation/full-research-qualification-receipt-pointer-repository.mjs:createFullResearchQualificationReceiptPointerRepository':
     'pure repository factory; its publication and lease mutation methods remain separately discovered',
   'paper-adapters/automation/runtime-image-reproducibility-receipt-repository.mjs:createRuntimeImageReproducibilityReceiptRepository':
@@ -170,6 +196,10 @@ export const NON_WRITER_ENTRYPOINT_EXCLUSIONS = Object.freeze({
     'fresh-only staging callback for explicit offline provisioning; it cannot target the resident online state root',
   'paper-composition/bootstrap/autonomous-research-state-business-schema-provisioning-composition.mjs:provisionCanonicalBusinessSchemas':
     'fresh-only offline schema composition over a private staging root; no resident online mutation surface',
+  'paper-composition/bootstrap/autonomous-research-state-business-schema-provisioning-composition.mjs:convergeNativeStoreForAtomicInstallation':
+    'fresh-only native-store convergence inside the private atomic-installation staging root',
+  'paper-composition/bootstrap/autonomous-research-state-partial-root-maintenance-composition.mjs:provisionMissingBusinessSchemas':
+    'writer-quiesced partial-root repair provisions only private staging databases before atomic no-clobber publication',
   'paper-adapters/automation/autonomous-research-supervisor-instance-mutation-plan.mjs:moduleSchemaProvisioning':
     'offline compatibility transaction shell contains no business SQL; strict resident writes remain covered at six literal repository bindings',
   'paper-adapters/automation/autonomous-research-runtime-refresh-mutation-plan.mjs:moduleSchemaProvisioning':
@@ -240,6 +270,8 @@ export const NON_WRITER_ENTRYPOINT_EXCLUSIONS = Object.freeze({
     'transaction-scoped recovery result helper invoked by completeRecoveryInTransaction under the registered coordinator binding',
   'paper-adapters/automation/autonomous-research-supervisor-state-provisioning.mjs:provisionAutonomousResearchSupervisorStateDatabase':
     'explicit offline schema provisioning; strict online construction disables this path before filesystem or SQLite I/O',
+  'paper-adapters/automation/autonomous-research-supervisor-external-action-journal-storage.mjs:installAutonomousResearchSupervisorExternalActionJournalCoreSchema':
+    'transaction-scoped minimal schema helper invoked only by writer-quiesced partial-root repair and full offline provisioning',
   'paper-adapters/automation/autonomous-research-machine-intake-mutation-plan.mjs:moduleSchemaProvisioning':
     'offline compatibility transaction shell contains no business SQL; strict machine-intake writes remain covered at eight literal repository bindings',
   'paper-adapters/automation/autonomous-research-machine-intake-repository.mjs:supersedePriorRecurringEpochs':
@@ -429,6 +461,14 @@ export const DIRECT_SQL_ALLOWED_ENTRYPOINT_EXCLUSIONS = new Set([
   'paper-adapters/automation/autonomous-research-online-schema-transition-schema.mjs:expectedPostSchemaHash',
   'paper-adapters/automation/autonomous-research-online-schema-transition-schema.mjs:projectInstance',
   'paper-adapters/automation/autonomous-research-online-schema-transition-schema.mjs:buildAutonomousResearchOnlineSchemaTransitionPlan',
+  'paper-composition/bootstrap/autonomous-research-state-business-schema-provisioning-composition.mjs:convergeNativeStoreForAtomicInstallation',
+  'paper-adapters/automation/automation-runtime-reconciler.mjs:offlineExactEventSql',
+  'paper-adapters/automation/automation-runtime-reconciler.mjs:offlineExactlyOneGuardSql',
+  'paper-adapters/automation/legacy-terminal-active-residue-settlement.mjs:executeOfflineSettlement',
+  'paper-adapters/automation/legacy-terminal-active-residue-settlement.mjs:offlineExactlyOneGuardSql',
+  'paper-adapters/automation/legacy-terminal-active-residue-settlement.mjs:offlineScopeGuardSql',
+  'paper-adapters/automation/legacy-terminal-active-residue-settlement.mjs:offlineSettlementSql',
+  'paper-adapters/automation/autonomous-research-supervisor-external-action-journal-storage.mjs:installAutonomousResearchSupervisorExternalActionJournalCoreSchema',
   'paper-adapters/automation/autonomous-research-supervisor-instance-mutation-plan.mjs:moduleSchemaProvisioning',
   'paper-adapters/automation/autonomous-research-runtime-refresh-mutation-plan.mjs:moduleSchemaProvisioning',
   'paper-adapters/automation/autonomous-research-supervisor-state-mutation-plan.mjs:moduleSchemaProvisioning',

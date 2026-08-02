@@ -16,12 +16,16 @@ export function readConfiguredAutonomousSubmissionPortalDescriptorConfiguration(
     const expectedConfigurationHash = String(
       environment.HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIGURATION_HASH || '',
     ).trim();
+    const expectedDescriptorHash = String(
+      environment.HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_HASH || '',
+    ).trim();
     if (!expectedConfigurationHash) {
       throw new Error('autonomous_submission_portal_public_configuration_pin_required');
     }
     const configuration = readAutonomousSubmissionPortalPublicConfiguration({
       configPath: publicConfigPath,
       expectedConfigurationHash,
+      expectedDescriptorHash: expectedDescriptorHash || null,
     });
     const portalCredentialPresent = Object.keys(environment).some((name) => (
       hashRecord('AutonomousSubmissionPortalTokenEnvironmentVariableName', { name })
@@ -36,5 +40,10 @@ export function readConfiguredAutonomousSubmissionPortalDescriptorConfiguration(
     environment.HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIG || '',
   ).trim();
   if (!privateConfigPath || !allowPrivateConfigurationFallback) return null;
-  return readAutonomousSubmissionPortalConfiguration({ configPath: privateConfigPath });
+  return readAutonomousSubmissionPortalConfiguration({
+    configPath: privateConfigPath,
+    expectedConfigurationHash: String(
+      environment.HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIGURATION_HASH || '',
+    ).trim() || null,
+  });
 }

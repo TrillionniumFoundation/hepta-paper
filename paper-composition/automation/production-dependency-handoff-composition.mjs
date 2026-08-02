@@ -59,6 +59,9 @@ export function composeProductionDependencyHandoff({
     entrypointHash,
     registryPath:
       environment.HEPTA_ADVANCED_NUMERICAL_PLUGIN_QUALIFICATION_REGISTRY || null,
+    registryHash:
+      environment.HEPTA_ADVANCED_NUMERICAL_PLUGIN_QUALIFICATION_REGISTRY_HASH
+      || null,
   });
   return buildProductionDependencyHandoff({
     readiness,

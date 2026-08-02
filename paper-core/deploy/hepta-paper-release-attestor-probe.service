@@ -1,0 +1,36 @@
+[Unit]
+Description=Hepta Paper independent release-attestor probe
+Requires=hepta-paper-release-attestor.service
+After=local-fs.target hepta-paper-release-attestor.service
+Before=autonomous-research-supervisor.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=hepta-release-probe
+Group=hepta-paper
+WorkingDirectory=/opt/hepta-paper
+RuntimeDirectory=hepta-paper-release-probe
+RuntimeDirectoryMode=0750
+StateDirectory=hepta-paper-release-probe
+StateDirectoryMode=0700
+Environment=NODE_NO_WARNINGS=1
+ExecStart=/usr/bin/node paper-core/bin/hepta-paper-release-attestor-daemon.mjs --configuration /etc/hepta-paper/release-attestor/probe-daemon.json
+Restart=always
+RestartSec=2s
+TimeoutStopSec=30s
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateNetwork=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX
+ReadOnlyPaths=/opt/hepta-paper /etc/hepta-paper/release-attestor
+ReadWritePaths=/run/hepta-paper-release-probe /var/lib/hepta-paper-release-probe
+UMask=0007
+
+[Install]
+WantedBy=multi-user.target

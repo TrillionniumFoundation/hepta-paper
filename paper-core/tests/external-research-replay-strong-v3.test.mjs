@@ -238,17 +238,21 @@ function fixture({
 function adapter(input) {
   return createHttpExternalResearchReplayAdapter({
     configuration: input.configuration,
+    expectedConfigurationHash: input.configuration.configurationHash,
     environment: { EXTERNAL_REPLAY_V3_TOKEN: 'test-token' },
     fetchImpl: input.fetchImpl,
     clock: input.clock,
   });
 }
 
-test('v3 reaches strong readiness and re-verifies persisted evidence after restart', async (t) => {
+test('v3 verifies signed identity evidence but remains below full production recovery', async (t) => {
   const input = fixture();
   const first = adapter(input);
   assert.equal(first.cryptographicAuthorityReady, true);
   assert.equal(first.identityIndependenceReady, true);
+  assert.equal(first.configurationPinned, true);
+  assert.equal(first.crashRecoveryReady, false);
+  assert.equal(first.fullProductionReady, false);
   assert.match(first.trustSetHash, /^sha256:[0-9a-f]{64}$/);
   assert.match(first.signatureVerificationPolicyHash, /^sha256:[0-9a-f]{64}$/);
   const receipt = await first.replay({ request: input.request });
@@ -267,12 +271,20 @@ test('v3 reaches strong readiness and re-verifies persisted evidence after resta
   fs.writeFileSync(configPath, `${JSON.stringify(input.configuration)}\n`, { mode: 0o600 });
   const restartedConfiguration = readExternalResearchReplayServiceConfiguration({
     configPath,
+    expectedConfigurationHash: input.configuration.configurationHash,
   });
   const restarted = adapter({
     ...input,
     configuration: restartedConfiguration,
   });
   assert.equal(restarted.verifyReceipt({ request: input.request, receipt: persisted }), true);
+  assert.throws(() => readExternalResearchReplayServiceConfiguration({
+    configPath,
+    expectedConfigurationHash: H('wrong-replay-configuration'),
+  }), /external_research_replay_configuration_pin_mismatch/);
+  fs.chmodSync(configPath, 0o666);
+  assert.throws(() => readExternalResearchReplayServiceConfiguration({ configPath }),
+    /external_research_replay_configuration_file_invalid/);
 });
 
 test('v3 makes no HTTP request for a pre-aborted replay signal', async () => {
@@ -294,6 +306,120 @@ test('v3 makes no HTTP request for a pre-aborted replay signal', async () => {
     signal: controller.signal,
   }), (error) => error === abortReason);
   assert.equal(fetchCalls, 0);
+});
+
+test('replay configuration, origin binding, abort, and recovery inputs fail closed', async () => {
+  const input = fixture();
+  assert.throws(() => buildExternalResearchReplayServiceConfiguration({
+    ...input.configuration,
+    version: 4,
+    lookupEndpoint: null,
+    resumeEndpoint: null,
+  }), /external_research_replay_recovery_endpoint_invalid/);
+  assert.throws(() => buildExternalResearchReplayServiceConfiguration({
+    ...input.configuration,
+    version: 4,
+    lookupEndpoint: 'http://external-replay.example.test/v4/operations',
+    resumeEndpoint: 'https://external-replay.example.test/v4/resume',
+  }), /external_research_replay_recovery_endpoint_invalid/);
+  assert.throws(() => createHttpExternalResearchReplayAdapter({
+    configuration: input.configuration,
+    expectedConfigurationHash: H('wrong-adapter-configuration'),
+    environment: { EXTERNAL_REPLAY_V3_TOKEN: 'test-token' },
+    fetchImpl: input.fetchImpl,
+    clock: input.clock,
+  }), /external_research_replay_configuration_pin_mismatch/);
+  assert.throws(() => createHttpExternalResearchReplayAdapter({
+    configuration: input.configuration,
+    environment: {},
+    fetchImpl: input.fetchImpl,
+    clock: input.clock,
+  }), /external_research_replay_runtime_credentials_missing/);
+  assert.throws(() => createHttpExternalResearchReplayAdapter({
+    configuration: input.configuration,
+    environment: { EXTERNAL_REPLAY_V3_TOKEN: 'test-token' },
+    fetchImpl: null,
+    clock: input.clock,
+  }), /external_research_replay_runtime_credentials_missing/);
+  assert.throws(() => createHttpExternalResearchReplayAdapter({
+    configuration: input.configuration,
+    environment: { EXTERNAL_REPLAY_V3_TOKEN: 'test-token' },
+    fetchImpl: input.fetchImpl,
+    requiredLocalOriginIdentitySubjectHashes: ['invalid-origin-hash'],
+    clock: input.clock,
+  }), /external_research_replay_required_origin_identity_missing/);
+  assert.throws(() => createHttpExternalResearchReplayAdapter({
+    configuration: input.configuration,
+    environment: { EXTERNAL_REPLAY_V3_TOKEN: 'test-token' },
+    fetchImpl: input.fetchImpl,
+    requiredLocalOriginIdentitySubjectHashes: [H('unobserved-origin')],
+    clock: input.clock,
+  }), /external_research_replay_required_origin_identity_missing/);
+
+  const unpinned = createHttpExternalResearchReplayAdapter({
+    configuration: input.configuration,
+    environment: { EXTERNAL_REPLAY_V3_TOKEN: 'test-token' },
+    fetchImpl: input.fetchImpl,
+    requiredLocalOriginIdentitySubjectHashes: 'not-an-array',
+    clock: input.clock,
+  });
+  assert.equal(unpinned.configurationPinned, false);
+  await assert.rejects(() => unpinned.lookup({ request: input.request }),
+    /external_research_replay_recovery_request_invalid/);
+  await assert.rejects(() => unpinned.replay({ request: {} }),
+    /external_research_replay_request_invalid/);
+
+  let fetchCalls = 0;
+  const aborting = createHttpExternalResearchReplayAdapter({
+    configuration: input.configuration,
+    environment: { EXTERNAL_REPLAY_V3_TOKEN: 'test-token' },
+    fetchImpl: async () => { fetchCalls += 1; return null; },
+    clock: input.clock,
+  });
+  const controller = new AbortController();
+  controller.abort('operator_cancelled');
+  await assert.rejects(() => aborting.replay({
+    request: input.request,
+    signal: controller.signal,
+  }), (error) => error.name === 'AbortError'
+    && error.message === 'external_research_replay_request_aborted');
+  assert.equal(fetchCalls, 0);
+  await assert.rejects(() => aborting.replay({ request: input.request }),
+    /external_research_replay_http_failed:0/);
+
+  const recoveryConfiguration = buildExternalResearchReplayServiceConfiguration({
+    ...input.configuration,
+    version: 4,
+    endpoint: 'https://external-replay.example.test/v4/replay',
+    lookupEndpoint: 'https://external-replay.example.test/v4/operations',
+    resumeEndpoint: 'https://external-replay.example.test/v4/resume',
+  });
+  const recoveryHttpFailure = createHttpExternalResearchReplayAdapter({
+    configuration: recoveryConfiguration,
+    environment: { EXTERNAL_REPLAY_V3_TOKEN: 'test-token' },
+    fetchImpl: async () => null,
+    clock: input.clock,
+  });
+  await assert.rejects(() => recoveryHttpFailure.lookup({
+    operationId: H('recovery-http-operation'),
+    idempotencyKey: H('recovery-http-idempotency'),
+    request: input.request,
+  }), /external_research_replay_recovery_http_failed:0/);
+  const invalidRecoveryStatus = createHttpExternalResearchReplayAdapter({
+    configuration: recoveryConfiguration,
+    environment: { EXTERNAL_REPLAY_V3_TOKEN: 'test-token' },
+    fetchImpl: async () => ({
+      ok: true,
+      status: 200,
+      async json() { return { operationStatus: 'unknown' }; },
+    }),
+    clock: input.clock,
+  });
+  await assert.rejects(() => invalidRecoveryStatus.resume({
+    operationId: H('invalid-status-operation'),
+    idempotencyKey: H('invalid-status-idempotency'),
+    request: input.request,
+  }), /external_research_replay_recovery_response_invalid/);
 });
 
 test('v4 signs recovery outcomes and transmits one operation identity across action, lookup, and resume', async () => {
@@ -341,6 +467,7 @@ test('v4 signs recovery outcomes and transmits one operation identity across act
   const calls = [];
   const recoveryAdapter = createHttpExternalResearchReplayAdapter({
     configuration,
+    expectedConfigurationHash: configuration.configurationHash,
     environment: { EXTERNAL_REPLAY_V3_TOKEN: 'test-token' },
     clock: input.clock,
     fetchImpl: async (url, init) => {
@@ -356,6 +483,8 @@ test('v4 signs recovery outcomes and transmits one operation identity across act
     },
   });
   assert.equal(recoveryAdapter.crashRecoveryReady, true);
+  assert.equal(recoveryAdapter.configurationPinned, true);
+  assert.equal(recoveryAdapter.fullProductionReady, true);
   assert.equal(
     recoveryAdapter.recoveryOutcomeCryptographicAuthorityReady,
     true,

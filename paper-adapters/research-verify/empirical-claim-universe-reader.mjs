@@ -1,6 +1,8 @@
 import path from 'node:path';
 import { analyzeTheoremEnvironmentMacroDefinitions } from '../../paper-domain/quality/latex-theorem-environment-syntax.mjs';
-import { empiricalManuscriptClaimHash } from '../../paper-domain/research/empirical-claim-contract.mjs';
+import {
+  deriveEmpiricalClaimUniverseIdentity,
+} from '../../paper-domain/research/empirical-claim-contract.mjs';
 import { hasExactObjectKeys as exactKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
@@ -164,7 +166,9 @@ export function readEmpiricalClaimUniverse({ sourceRoot, manuscriptPath = 'main.
   const sortedFiles = files.sort((left, right) => left.path.localeCompare(right.path));
   const sourceCorpusHash = hashRecord('EmpiricalManuscriptSourceCorpus', sortedFiles);
   const orderedCandidates = extractedClaims;
-  const manuscriptCorpusHash = hashRecord('EmpiricalManuscriptClaimCorpus', orderedCandidates.map((candidate) => ({
+  const empiricalClaimIdentity = deriveEmpiricalClaimUniverseIdentity({
+    manuscriptPath: rootManuscript,
+    claims: orderedCandidates.map((candidate) => ({
     claimId: candidate.declaration.claimId,
     metric: candidate.declaration.metric,
     comparator: candidate.declaration.comparator,
@@ -174,9 +178,11 @@ export function readEmpiricalClaimUniverse({ sourceRoot, manuscriptPath = 'main.
     proposalClaimRecordHash: candidate.declaration.proposalClaimRecordHash,
     manuscriptPath: candidate.manuscriptPath,
     manuscriptContentHash: candidate.manuscriptContentHash,
-  })));
+    })),
+  });
+  const manuscriptCorpusHash = empiricalClaimIdentity.manuscriptCorpusHash;
   const ids = new Set();
-  const claims = orderedCandidates.map((candidate) => {
+  const claims = orderedCandidates.map((candidate, index) => {
     const { declaration, ...source } = candidate;
     if (ids.has(declaration.claimId)) blockers.push(`empirical_claim_universe_claim_id_duplicate:${declaration.claimId}`);
     ids.add(declaration.claimId);
@@ -186,12 +192,8 @@ export function readEmpiricalClaimUniverse({ sourceRoot, manuscriptPath = 'main.
       ...declaration,
       minimumEffect: Number(declaration.minimumEffect),
       ...source,
-      manuscriptClaimHash: empiricalManuscriptClaimHash({
-        claimId: declaration.claimId,
-        ...declaration,
-        ...source,
-        manuscriptCorpusHash,
-      }),
+      manuscriptClaimHash:
+        empiricalClaimIdentity.claimIdentities[index].manuscriptClaimHash,
     };
     return Object.freeze({
       ...payload,
@@ -199,18 +201,7 @@ export function readEmpiricalClaimUniverse({ sourceRoot, manuscriptPath = 'main.
     });
   });
   if (!claims.length) blockers.push('empirical_claim_universe_claims_missing');
-  const authorityPayload = {
-    version: 1,
-    kind: 'EmpiricalClaimUniverseAuthority',
-    manuscriptPath: rootManuscript,
-    manuscriptCorpusHash,
-    claimIdentities: claims.map((claim) => ({
-      claimId: claim.claimId,
-      manuscriptClaimHash: claim.manuscriptClaimHash,
-      proposalClaimRecordHash: claim.proposalClaimRecordHash,
-    })),
-  };
-  const empiricalClaimUniverseHash = hashRecord('EmpiricalClaimUniverseAuthority', authorityPayload);
+  const empiricalClaimUniverseHash = empiricalClaimIdentity.empiricalClaimUniverseHash;
   const payload = {
     version: 1,
     kind: 'EmpiricalClaimUniverse',

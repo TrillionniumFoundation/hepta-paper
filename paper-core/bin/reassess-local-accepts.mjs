@@ -6,11 +6,14 @@ import {
   withArtifactWriteContext,
   writeJsonFile,
 } from '../../paper-composition/bootstrap/operator-artifact-composition.mjs';
-import { fileURLToPath } from 'node:url';
 import { bootstrapBatchInventoryContext } from '../../paper-composition/bootstrap/batch-inventory-context-bootstrap.mjs';
+import {
+  defaultPaperAssetRoot,
+  defaultPaperRuntimeRoot,
+} from '../src/workspace-layout.mjs';
 
-const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const runtimeRoot = path.join(workspaceRoot, 'runtime');
+const assetRoot = defaultPaperAssetRoot();
+const runtimeRoot = defaultPaperRuntimeRoot();
 
 function walkJson(root) {
   const out = [];
@@ -69,12 +72,12 @@ for (const file of walkJson(runtimeRoot)) {
     for (const item of collectObjects(parsed)) {
       objects.push({
         ...item,
-        file: path.relative(workspaceRoot, file).replace(/\\/g, '/'),
+        file: path.relative(runtimeRoot, file).replace(/\\/g, '/'),
       });
     }
   } catch (error) {
     parseErrors.push({
-      file: path.relative(workspaceRoot, file).replace(/\\/g, '/'),
+      file: path.relative(runtimeRoot, file).replace(/\\/g, '/'),
       error: error.message,
     });
   }
@@ -143,7 +146,7 @@ const report = {
 report.reportHash = `sha256:${crypto.createHash('sha256').update(JSON.stringify(report)).digest('hex')}`;
 const outputPath = path.join(runtimeRoot, 'audits', 'LOCAL_ACCEPT_REASSESSMENT.json');
 const context = bootstrapBatchInventoryContext({
-  root: workspaceRoot,
+  root: assetRoot,
   runtimeRoot,
   mode: 'admin-reassessment',
   execute: false,

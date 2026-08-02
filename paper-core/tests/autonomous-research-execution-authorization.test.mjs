@@ -441,7 +441,7 @@ test('machine intake create is atomically persisted paused and admitted-not-auth
   const forged = structuredClone(plan);
   forged.executionAdmission.providerConfigurationHash = H('forged-provider');
   assert.throws(
-    () => operations.createCampaign(forged),
+    () => operations.createCampaign(rehashPlan(forged)),
     /campaign_execution_admission_invalid/,
   );
   assert.equal(transactions.length, 1);

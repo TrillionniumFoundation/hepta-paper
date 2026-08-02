@@ -7,7 +7,12 @@ import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
   buildAutonomousSubmissionPortalConfiguration,
   deriveAutonomousSubmissionPortalPublicConfiguration,
+  readAutonomousSubmissionPortalConfiguration,
+  readAutonomousSubmissionPortalPublicConfiguration,
 } from '../../paper-adapters/automation/http-autonomous-submission-portal-adapter.mjs';
+import {
+  autonomousSubmissionPortalPublicDescriptorHash,
+} from '../../paper-adapters/automation/autonomous-submission-portal-public-adapter.mjs';
 import {
   prepareAutonomousSubmissionHandoff,
 } from '../../paper-application/automation/autonomous-submission-delivery.mjs';
@@ -132,6 +137,8 @@ test('research consumes only a public descriptor while dispatcher binds it to pr
     HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_CONFIG: descriptorPath,
     HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIGURATION_HASH:
       configuration.configurationHash,
+    HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_HASH:
+      autonomousSubmissionPortalPublicDescriptorHash(publicConfiguration),
   };
   const research = composeAutonomousResearchSubmissionServices({
     environment: publicEnvironment,
@@ -185,5 +192,47 @@ test('research consumes only a public descriptor while dispatcher binds it to pr
     },
     autonomousSubmissionRequestVerifier: verifierPort,
     autonomousSubmissionPortalDispatchCapability: authority.portal,
-  }), /autonomous_submission_portal_public_private_binding_invalid/);
+  }), /autonomous_submission_portal_configuration_verification_failed/);
+});
+
+test('portal configuration readers enforce pins and immutable single-link files', (t) => {
+  const {
+    configuration,
+    configPath,
+    publicConfiguration,
+    descriptorPath,
+    root,
+  } = portalConfiguration(t);
+  const descriptorHash =
+    autonomousSubmissionPortalPublicDescriptorHash(publicConfiguration);
+  assert.deepEqual(readAutonomousSubmissionPortalConfiguration({
+    configPath,
+    expectedConfigurationHash: configuration.configurationHash,
+  }), configuration);
+  assert.deepEqual(readAutonomousSubmissionPortalPublicConfiguration({
+    configPath: descriptorPath,
+    expectedConfigurationHash: configuration.configurationHash,
+    expectedDescriptorHash: descriptorHash,
+  }), publicConfiguration);
+  assert.throws(() => readAutonomousSubmissionPortalConfiguration({
+    configPath,
+    expectedConfigurationHash: H('wrong-private-pin'),
+  }), /autonomous_submission_portal_configuration_verification_failed/);
+  assert.throws(() => readAutonomousSubmissionPortalPublicConfiguration({
+    configPath: descriptorPath,
+    expectedConfigurationHash: configuration.configurationHash,
+    expectedDescriptorHash: H('wrong-descriptor-pin'),
+  }), /autonomous_submission_portal_public_configuration_verification_failed/);
+
+  fs.chmodSync(descriptorPath, 0o666);
+  assert.throws(() => readAutonomousSubmissionPortalPublicConfiguration({
+    configPath: descriptorPath,
+  }), /autonomous_submission_portal_public_configuration_file_invalid/);
+  fs.chmodSync(descriptorPath, 0o644);
+
+  const hardlinkPath = path.join(root, 'portal-hardlink.json');
+  fs.linkSync(configPath, hardlinkPath);
+  assert.throws(() => readAutonomousSubmissionPortalConfiguration({
+    configPath,
+  }), /autonomous_submission_portal_configuration_file_invalid/);
 });

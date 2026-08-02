@@ -4,8 +4,19 @@ import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { restrictedChildEnvironment, runBoundedChildProcess } from './bounded-child-process.mjs';
 import { createAgentExecutorTemplate, isExternalAgentCancellation } from './agent-executor-template.mjs';
 import { readOnlyMutationBlockers } from './workspace-change-tracker.mjs';
-import { preflightCodexRuntime } from './codex-runtime-preflight.mjs';
-
+import { inspectCodexRuntimeIdentity, preflightCodexRuntime } from './codex-runtime-preflight.mjs';
+import { buildOpenClawManagedExecutionMetadata, OPENCLAW_MANAGED_EXECUTION_EVIDENCE_FIELD,
+  verifyOpenClawManagedExecutionEvidence, verifyOpenClawManagedFailureEvidence } from './codex-openclaw-managed-runtime.mjs';
+const MANAGED_RUNTIME_MAXIMUM_CLEANUP_RESERVE_MS = 90_000;
+function managedRuntimeFailureRetryable(code, verifiedFailureEvidence = null) {
+  if (!code) return true;
+  if (String(code).startsWith('codex_openclaw_managed_')) {
+    return verifiedFailureEvidence?.version === 4
+      && verifiedFailureEvidence?.usageComplete === true
+      && verifiedFailureEvidence?.failureDisposition === 'retryable';
+  }
+  return true;
+}
 function parseStructuredOutput(text) {
   const source = String(text || '').trim();
   if (!source) return null;
@@ -16,16 +27,66 @@ function parseStructuredOutput(text) {
   }
   return null;
 }
-
-function codexRuntimeMatchesCapability(runtime, capability) {
+function parseStrictStructuredOutput(text) {
+  const source = String(text || '').trim();
+  if (!source) return null;
+  try {
+    const parsed = JSON.parse(source);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed : null;
+  } catch { return null; }
+}
+function managedRuntimeErrorCode(stderr) {
+  const [candidate] = String(stderr || '').trim().split(/\r?\n/);
+  return /^codex_openclaw_managed_[a-z0-9_:-]{1,128}$/.test(candidate)
+    ? candidate : null;
+}
+function managedRuntimeFailureEvidence(stderr) {
+  return parseStrictStructuredOutput(String(stderr || '').trim().split(/\r?\n/).slice(1).join('\n'));
+}
+function codexRuntimeIdentityMatchesCapability(runtime, capability) {
   return runtime?.codexBinaryIdentityHash === capability?.codexBinaryIdentityHash
     && runtime?.credentialRootIdentityHash === capability?.credentialRootIdentityHash
     && runtime?.credentialConfigIdentityHash === capability?.credentialConfigIdentityHash
     && runtime?.codexVersion === capability?.codexVersion
-    && runtime?.authenticationStatus === capability?.authenticationStatus
-    && runtime?.model === capability?.model;
+    && runtime?.model === capability?.model
+    && runtime?.modelSelectionSource === capability?.modelSelectionSource
+    && runtime?.executionTransport === (capability?.executionTransport || 'codex_cli')
+    && runtime?.authenticationAuthorityMode === (capability?.authenticationAuthorityMode || 'codex_home')
+    && runtime?.managedRuntimeEvidenceRequired === (capability?.managedRuntimeEvidenceRequired === true)
+    && runtime?.openClawManagedConfigurationHash === (capability?.openClawManagedConfigurationHash || null)
+    && runtime?.openClawManagedRuntimeProvenanceHash === (capability?.openClawManagedRuntimeProvenanceHash || null)
+    && runtime?.openClawManagedAuthProfileIdentityHash === (capability?.openClawManagedAuthProfileIdentityHash || null)
+    && runtime?.openClawManagedAuthSourceIdentityHash === (capability?.openClawManagedAuthSourceIdentityHash || null);
+}
+function codexRuntimeMatchesCapability(runtime, capability) {
+  return codexRuntimeIdentityMatchesCapability(runtime, capability)
+    && runtime?.authenticationStatus === capability?.authenticationStatus;
+}
+function safeCapabilityPostflightFailureCode(error, capabilityPrefix) {
+  const candidate = String(error?.code || error?.message || '').trim();
+  return new RegExp(`^${capabilityPrefix}_[a-z0-9_]{1,160}$`).test(candidate)
+    ? candidate
+    : `${capabilityPrefix}_capability_runtime_postflight_unclassified`;
+}
+function capabilityPostflightFailureRetryable(failureCode, capabilityPrefix) {
+  return new Set([
+    `${capabilityPrefix}_version_unverified`,
+    `${capabilityPrefix}_openclaw_managed_runtime_required`,
+  ]).has(failureCode);
+}
+function openClawManagedRuntimeExpected(capabilityReceipt) {
+  return /^codex-openclaw-managed\s+3\b/.test(String(capabilityReceipt?.codexVersion || ''));
 }
 
+function managedCapabilityReceiptValid(receipt) {
+  if (!openClawManagedRuntimeExpected(receipt)) return true;
+  return receipt.executionTransport === 'openclaw_user_locked_codex_app_server'
+    && receipt.authenticationAuthorityMode === 'openclaw_user_locked_profile_fail_closed'
+    && receipt.managedRuntimeEvidenceRequired === true
+    && [receipt.openClawManagedConfigurationHash, receipt.openClawManagedRuntimeProvenanceHash, receipt.openClawManagedAuthProfileIdentityHash, receipt.openClawManagedAuthSourceIdentityHash]
+      .every((value) => /^sha256:[a-f0-9]{64}$/.test(String(value || '')));
+}
 export function createCodexAgentExecutor({
   codexBinary = 'codex',
   codexHome = null,
@@ -39,6 +100,8 @@ export function createCodexAgentExecutor({
   spawnSyncImpl = spawnSync,
   timeoutMs = 30 * 60 * 1000,
 } = {}) {
+  const capabilityReceipt = formalReviewerCapabilityReceipt || researchAuthorCapabilityReceipt;
+  const resolvedModel = capabilityReceipt?.model || model || null;
   if (principalId !== null && !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(String(principalId))) {
     throw new Error('codex_agent_principal_id_invalid');
   }
@@ -52,7 +115,7 @@ export function createCodexAgentExecutor({
         !== codexFormalReviewerCapabilityReceiptHash
       || !formalReviewerCapabilityReceipt?.credentialConfigIdentityHash
       || !formalReviewerCapabilityReceipt?.codexBinaryIdentityHash
-      || formalReviewerCapabilityReceipt?.model !== model
+      || formalReviewerCapabilityReceipt?.model !== resolvedModel
       || formalReviewerCapabilityReceipt?.authenticationStatus !== 'codex_authentication_verified'
       || formalReviewerCapabilityReceipt?.modelOptionVerified !== true
       || formalReviewerCapabilityReceipt?.selectedModelExecutionCanaryVerified !== false
@@ -66,7 +129,8 @@ export function createCodexAgentExecutor({
       || formalReviewerCapabilityReceipt?.assuranceScope
         !== 'ephemeral_session_frozen_artifact_and_role_separation'
       || formalReviewerCapabilityReceipt?.providerAccountIndependenceVerified !== false
-      || !codexHome || !model || !principalId) {
+      || !managedCapabilityReceiptValid(formalReviewerCapabilityReceipt)
+      || !codexHome || !resolvedModel || !principalId) {
       throw new Error('codex_formal_reviewer_capability_receipt_invalid');
     }
   }
@@ -80,7 +144,7 @@ export function createCodexAgentExecutor({
         !== codexResearchAuthorCapabilityReceiptHash
       || !researchAuthorCapabilityReceipt.credentialConfigIdentityHash
       || !researchAuthorCapabilityReceipt.codexBinaryIdentityHash
-      || researchAuthorCapabilityReceipt.model !== model
+      || researchAuthorCapabilityReceipt.model !== resolvedModel
       || researchAuthorCapabilityReceipt.assuranceScope !== 'filesystem_credential_root_runtime_and_model_selection_preflight'
       || researchAuthorCapabilityReceipt.providerAccountIdentityAttested !== false
       || researchAuthorCapabilityReceipt.authenticationStatus !== 'codex_authentication_verified'
@@ -89,7 +153,8 @@ export function createCodexAgentExecutor({
       || researchAuthorCapabilityReceipt.dynamicAttemptWorkspaceRequired !== true
       || researchAuthorCapabilityReceipt.freshEphemeralSessionRequired !== true
       || researchAuthorCapabilityReceipt.priorAgentContextInheritanceForbidden !== true
-      || !codexHome || !model || !principalId) {
+      || !managedCapabilityReceiptValid(researchAuthorCapabilityReceipt)
+      || !codexHome || !resolvedModel || !principalId) {
       throw new Error('codex_research_author_capability_receipt_invalid');
     }
   }
@@ -120,7 +185,6 @@ export function createCodexAgentExecutor({
       changedWorkspacePaths,
     }) {
       let verifiedCodexBinary = codexBinary;
-      const capabilityReceipt = formalReviewerCapabilityReceipt || researchAuthorCapabilityReceipt;
       const capabilityPrefix = formalReviewerCapabilityReceipt
         ? 'formal_review_codex' : 'research_author_codex';
       if (capabilityReceipt) {
@@ -138,7 +202,14 @@ export function createCodexAgentExecutor({
         }
         verifiedCodexBinary = freshRuntime.codexBinary;
       }
+      const managedRuntimeExpected = openClawManagedRuntimeExpected(capabilityReceipt);
       const prompt = [
+        managedRuntimeExpected
+          ? buildOpenClawManagedExecutionMetadata({
+            role,
+            sandbox,
+            workspaceMutationPolicy,
+          }) : '',
         `You are the ${role} for an automated paper campaign.`,
         principalId ? `Your runtime principal is ${principalId}. Do not impersonate another campaign principal.` : '',
         'Work only inside the provided workspace. Do not submit externally, send messages, or access credentials.',
@@ -148,16 +219,34 @@ export function createCodexAgentExecutor({
           : '',
         `Structured context: ${JSON.stringify(context)}`,
         requiredChecks.length ? `Before finishing run these checks when applicable: ${requiredChecks.join(' ; ')}` : '',
-        outputTokenBudget ? `Keep the final response within ${Math.max(128, Number(outputTokenBudget))} output tokens. Prefer editing files with tools over returning file bodies.` : '',
+        outputTokenBudget
+          ? managedRuntimeExpected
+            ? `Keep the final response within ${Math.max(128, Number(outputTokenBudget))} output tokens. This managed transport is tool-free: do not call tools. ${sandbox === 'workspace-write'
+              ? 'Return complete replacement file bodies through the required top-level edits array.'
+              : 'Return the required structured JSON directly.'}`
+            : `Keep the final response within ${Math.max(128, Number(outputTokenBudget))} output tokens. Prefer editing files with tools over returning file bodies.`
+          : '',
         'Finish with one compact JSON object containing status, summary, checksRun, and blockers. Include every role-specific JSON field explicitly requested by the task in that same object.',
       ].filter(Boolean).join('\n\n');
       const promptDigest = promptHash(prompt);
-      const sessionId = `codex-exec:${crypto.randomUUID()}`;
+      const localSessionId = `codex-exec:${crypto.randomUUID()}`;
       const args = ['exec'];
       if (oss) args.push('--oss', '--local-provider', localProvider);
       if (model) args.push('--model', model);
       args.push('--ephemeral', '--color', 'never', '--sandbox', sandbox, '--skip-git-repo-check', '--cd', workspace, '-');
       const startedAt = new Date().toISOString();
+      const effectiveTimeoutMs = Math.min(
+        Number(requestedTimeout || timeoutMs),
+        timeoutMs,
+      );
+      const managedRuntimeCleanupReserveMs = Math.min(
+        MANAGED_RUNTIME_MAXIMUM_CLEANUP_RESERVE_MS,
+        Math.floor(effectiveTimeoutMs / 5),
+      );
+      const managedRuntimeInnerTimeoutMs = Math.max(
+        250,
+        effectiveTimeoutMs - managedRuntimeCleanupReserveMs,
+      );
       const processResult = await runBoundedChildProcess({
         spawnImpl,
         executable: verifiedCodexBinary,
@@ -168,16 +257,34 @@ export function createCodexAgentExecutor({
           overrides: {
             HEPTA_AUTOMATION_ROLE: role,
             ...(codexHome ? { CODEX_HOME: codexHome } : {}),
+            ...(managedRuntimeExpected ? {
+              HEPTA_CODEX_OPENCLAW_MANAGED_TIMEOUT_MS:
+                managedRuntimeInnerTimeoutMs,
+            } : {}),
           },
         }),
         stdin: prompt,
-        timeoutMs: Math.min(Number(requestedTimeout || timeoutMs), timeoutMs),
+        timeoutMs: effectiveTimeoutMs,
         signal,
       });
       const completedAt = new Date().toISOString();
       const changes = changedWorkspacePaths();
       const blockers = [];
       const cancelled = isExternalAgentCancellation(processResult);
+      const managedRuntimeFailureCode = managedRuntimeExpected
+        && !cancelled
+        && !processResult.timedOut
+        && !processResult.outputTruncated
+        && processResult.stdout.length === 0
+        && (processResult.exitCode !== 0 || processResult.error)
+        ? managedRuntimeErrorCode(processResult.stderr) : null;
+      const managedFailureEvidence = managedRuntimeFailureCode
+        ? managedRuntimeFailureEvidence(processResult.stderr) : null;
+      const managedFailureEvidenceVerified = Boolean(managedFailureEvidence
+        && verifyOpenClawManagedFailureEvidence(managedFailureEvidence, { failureCode: managedRuntimeFailureCode,
+          model: resolvedModel, expectedAuthProfileIdentityHash: capabilityReceipt?.openClawManagedAuthProfileIdentityHash,
+          expectedRuntimeProvenanceHash: capabilityReceipt?.openClawManagedRuntimeProvenanceHash }));
+      let capabilityPostflightFailure = null;
       if (processResult.timedOut) blockers.push('codex_agent_timeout');
       if (cancelled) blockers.push('codex_agent_cancelled');
       if (!cancelled && (processResult.exitCode !== 0 || processResult.error)) blockers.push('codex_agent_process_failed');
@@ -185,34 +292,90 @@ export function createCodexAgentExecutor({
       blockers.push(...readOnlyMutationBlockers({ sandbox, changedPaths: changes }));
       if (capabilityReceipt) {
         try {
-          const postflightRuntime = preflightCodexRuntime({
+          const postflightRuntime = inspectCodexRuntimeIdentity({
             codexBinary,
             codexHome,
             model,
             errorPrefix: capabilityPrefix,
             spawnSyncImpl,
           });
-          if (!codexRuntimeMatchesCapability(postflightRuntime, capabilityReceipt)) {
-            blockers.push(
-              `${capabilityPrefix}_capability_runtime_identity_changed_during_execution`,
-            );
+          if (!codexRuntimeIdentityMatchesCapability(postflightRuntime, capabilityReceipt)) {
+            const failureCode = `${capabilityPrefix}_capability_runtime_identity_changed_during_execution`;
+            capabilityPostflightFailure = Object.freeze({
+              phase: 'identity_only',
+              failureCode,
+              disposition: 'permanent',
+              outcomeHash: hashRecord('CodexCapabilityRuntimePostflightOutcome', {
+                phase: 'identity_only',
+                failureCode,
+                disposition: 'permanent',
+              }),
+            });
+            blockers.push(failureCode);
           }
-        } catch {
+        } catch (error) {
+          const failureCode = safeCapabilityPostflightFailureCode(error, capabilityPrefix);
+          const retryable = capabilityPostflightFailureRetryable(failureCode, capabilityPrefix);
+          capabilityPostflightFailure = Object.freeze({
+            phase: 'identity_only',
+            failureCode,
+            disposition: retryable ? 'retryable' : 'permanent',
+            outcomeHash: hashRecord('CodexCapabilityRuntimePostflightOutcome', {
+              phase: 'identity_only',
+              failureCode,
+              disposition: retryable ? 'retryable' : 'permanent',
+            }),
+          });
           blockers.push(`${capabilityPrefix}_capability_runtime_postflight_failed`);
         }
       }
-      const structuredOutput = processResult.outputTruncated
+      const parsedStructuredOutput = processResult.outputTruncated
         ? null
-        : parseStructuredOutput(processResult.stdout);
+        : managedRuntimeExpected
+          ? parseStrictStructuredOutput(processResult.stdout)
+          : parseStructuredOutput(processResult.stdout);
+      const managedExecutionEvidence = parsedStructuredOutput
+        ? parsedStructuredOutput[OPENCLAW_MANAGED_EXECUTION_EVIDENCE_FIELD] || null
+        : null;
+      const managedExecutionEvidenceVerified = managedRuntimeExpected
+        && verifyOpenClawManagedExecutionEvidence(managedExecutionEvidence, {
+          originalPromptHash: promptDigest,
+          model: resolvedModel,
+          changedPaths: changes,
+          expectedConfigurationHash: capabilityReceipt?.openClawManagedConfigurationHash,
+          expectedRuntimeProvenanceHash: capabilityReceipt?.openClawManagedRuntimeProvenanceHash,
+          expectedAuthProfileIdentityHash:
+            capabilityReceipt?.openClawManagedAuthProfileIdentityHash,
+          expectedAuthSourceIdentityHash:
+            capabilityReceipt?.openClawManagedAuthSourceIdentityHash,
+        });
+      if (managedRuntimeExpected && !managedExecutionEvidenceVerified) {
+        blockers.push('codex_openclaw_managed_execution_evidence_invalid');
+      } else if (!managedRuntimeExpected && managedExecutionEvidence) {
+        blockers.push('codex_openclaw_managed_execution_evidence_unexpected');
+      }
+      if (managedFailureEvidence && !managedFailureEvidenceVerified) {
+        blockers.push('codex_openclaw_managed_failure_usage_evidence_invalid');
+      }
+      const structuredOutput = parsedStructuredOutput
+        ? Object.freeze(Object.fromEntries(Object.entries(parsedStructuredOutput)
+          .filter(([key]) => key !== OPENCLAW_MANAGED_EXECUTION_EVIDENCE_FIELD)))
+        : null;
+      const verifiedSessionId = managedExecutionEvidenceVerified
+        ? managedExecutionEvidence.completionInvocationId
+        : localSessionId;
       const payload = {
         providerMode: oss ? `local:${localProvider}` : 'openai',
         agentId: principalId,
-        model,
-        resolvedModel: model,
+        model: resolvedModel,
+        resolvedModel,
+        modelSelectionSource: capabilityReceipt?.modelSelectionSource
+          || (model ? 'explicit_override' : null),
         promptHash: promptDigest,
-        sessionId,
-        childSessionId: sessionId,
-        sessionIsolation: 'fresh_ephemeral_no_resume',
+        sessionId: verifiedSessionId,
+        childSessionId: verifiedSessionId,
+        sessionIsolation: managedExecutionEvidenceVerified
+          ? 'fresh_one_shot_codex_app_server_no_resume' : 'fresh_ephemeral_no_resume',
         contextInheritance: 'forbidden',
         maximumOutputTokens: outputTokenBudget ? Math.max(128, Number(outputTokenBudget)) : null,
         role,
@@ -226,55 +389,110 @@ export function createCodexAgentExecutor({
         outputTruncated: processResult.outputTruncated,
         finalOutput: processResult.stdout.slice(-12000),
         structuredOutput,
-        stderrTail: processResult.stderr.slice(-12000),
+        stderrTail: managedFailureEvidenceVerified ? `${managedRuntimeFailureCode}\n`
+          : processResult.stderr.slice(-12000),
         error: processResult.error?.message || null,
+        ...(capabilityPostflightFailure ? {
+          details: Object.freeze({ capabilityRuntimePostflight: capabilityPostflightFailure }),
+        } : {}),
+        ...(managedRuntimeFailureCode ? {
+          managedRuntimeFailureCode,
+          managedRuntimeFailureDisposition: managedRuntimeFailureRetryable(
+            managedRuntimeFailureCode,
+            managedFailureEvidenceVerified ? managedFailureEvidence : null,
+          )
+            ? 'retryable' : 'permanent',
+        } : {}),
         startedAt,
         completedAt,
-        externalActionPerformed: false,
-        externalActionVerification: 'codex_sandbox_policy',
+        externalActionPerformed: managedFailureEvidenceVerified
+          ? managedFailureEvidence.externalActionPerformed : false,
+        externalModelInvocationPerformed: managedExecutionEvidenceVerified || managedFailureEvidenceVerified ? true : null,
+        externalSideEffectPerformed: managedExecutionEvidenceVerified
+          ? false : managedFailureEvidenceVerified
+            ? managedFailureEvidence.externalSideEffectPerformed : null,
+        externalActionVerification: managedExecutionEvidenceVerified
+          ? 'openclaw_user_locked_codex_app_server_no_tools_or_delivery'
+          : managedFailureEvidenceVerified
+            ? 'openclaw_user_locked_codex_app_server_failure_evidence'
+            : 'codex_sandbox_policy',
+        ...(managedExecutionEvidenceVerified ? {
+          ...(managedExecutionEvidence.usage ? { usage: managedExecutionEvidence.usage } : {}),
+          codexExecutionTransport: 'openclaw_user_locked_codex_app_server',
+          codexAuthenticationAuthorityMode: 'openclaw_user_locked_profile_fail_closed',
+          openClawManagedCodexExecutionHash: managedExecutionEvidence.openClawManagedCodexExecutionHash,
+          openClawManagedExecutionEvidence: managedExecutionEvidence,
+          openClawCompletionInvocationId: managedExecutionEvidence.completionInvocationId,
+          openClawSuccessfulAttemptId: managedExecutionEvidence.successfulAttemptId,
+          openClawAttemptTraceHash: managedExecutionEvidence.attemptTraceHash,
+          openClawSourceSnapshotHash: managedExecutionEvidence.sourceSnapshotHash,
+          openClawManagedConfigurationHash: managedExecutionEvidence.configurationHash,
+          openClawManagedRuntimeProvenanceHash: managedExecutionEvidence
+            .openClawManagedRuntimeProvenance.openClawManagedRuntimeProvenanceHash,
+          openClawManagedAuthProfileIdentityHash: managedExecutionEvidence.openClawManagedAuthProfileIdentityHash,
+          openClawManagedAuthSourceIdentityHash: managedExecutionEvidence.openClawManagedAuthSourceIdentityHash,
+          credentialMaterialExported: false,
+          simpleCompletionModelRun: false,
+          codexAppServerOneShot: true,
+          toolExecutionEnabled: false,
+          messageDeliveryEnabled: false,
+        } : {}),
+        ...(managedFailureEvidenceVerified ? {
+          usage: managedFailureEvidence.usage,
+          usageComplete: managedFailureEvidence.usageComplete !== false,
+          openClawManagedFailureUsageEvidence: managedFailureEvidence,
+          openClawManagedFailureUsageEvidenceHash:
+            managedFailureEvidence.openClawManagedCodexFailureUsageEvidenceHash,
+        } : {}),
         ...(formalReviewerCapabilityReceipt ? {
           codexFormalReviewerCapabilityReceiptHash: formalReviewerCapabilityReceipt.codexFormalReviewerCapabilityReceiptHash,
           codexCredentialRootIdentityHash: formalReviewerCapabilityReceipt.credentialRootIdentityHash,
           codexCredentialConfigIdentityHash: formalReviewerCapabilityReceipt.credentialConfigIdentityHash,
           codexAuthorCredentialRootIdentityHash: formalReviewerCapabilityReceipt.authorCredentialRootIdentityHash,
           codexCredentialIndependenceVerified: formalReviewerCapabilityReceipt.credentialIndependenceVerified,
-          codexProviderCredentialSharingPermitted:
-            formalReviewerCapabilityReceipt.providerCredentialSharingPermitted,
-          codexFreshEphemeralSessionRequired:
-            formalReviewerCapabilityReceipt.freshEphemeralSessionRequired,
-          codexAuthorContextInheritanceForbidden:
-            formalReviewerCapabilityReceipt.authorContextInheritanceForbidden,
-          codexFrozenArtifactReviewRequired:
-            formalReviewerCapabilityReceipt.frozenArtifactReviewRequired,
+          codexProviderCredentialSharingPermitted: formalReviewerCapabilityReceipt.providerCredentialSharingPermitted,
+          codexFreshEphemeralSessionRequired: formalReviewerCapabilityReceipt.freshEphemeralSessionRequired,
+          codexAuthorContextInheritanceForbidden: formalReviewerCapabilityReceipt.authorContextInheritanceForbidden,
+          codexFrozenArtifactReviewRequired: formalReviewerCapabilityReceipt.frozenArtifactReviewRequired,
           codexReviewerAssuranceScope: formalReviewerCapabilityReceipt.assuranceScope,
           codexProviderAccountIndependenceVerified: false,
           codexBinaryIdentityHash: formalReviewerCapabilityReceipt.codexBinaryIdentityHash,
           codexVersion: formalReviewerCapabilityReceipt.codexVersion,
           codexAuthenticationStatus: formalReviewerCapabilityReceipt.authenticationStatus,
+          codexExecutionTransport: formalReviewerCapabilityReceipt.executionTransport || 'codex_cli',
+          codexAuthenticationAuthorityMode: formalReviewerCapabilityReceipt.authenticationAuthorityMode || 'codex_home',
         } : {}),
         ...(researchAuthorCapabilityReceipt ? {
           codexResearchAuthorCapabilityReceiptHash: researchAuthorCapabilityReceipt.codexResearchAuthorCapabilityReceiptHash,
           codexResearchAuthorAssuranceScope: researchAuthorCapabilityReceipt.assuranceScope,
-          codexFreshEphemeralSessionRequired:
-            researchAuthorCapabilityReceipt.freshEphemeralSessionRequired,
-          codexPriorAgentContextInheritanceForbidden:
-            researchAuthorCapabilityReceipt.priorAgentContextInheritanceForbidden,
+          codexFreshEphemeralSessionRequired: researchAuthorCapabilityReceipt.freshEphemeralSessionRequired,
+          codexPriorAgentContextInheritanceForbidden: researchAuthorCapabilityReceipt.priorAgentContextInheritanceForbidden,
           codexResearchAuthorProviderAccountIdentityAttested: researchAuthorCapabilityReceipt.providerAccountIdentityAttested,
           codexCredentialRootIdentityHash: researchAuthorCapabilityReceipt.credentialRootIdentityHash,
           codexCredentialConfigIdentityHash: researchAuthorCapabilityReceipt.credentialConfigIdentityHash,
           codexBinaryIdentityHash: researchAuthorCapabilityReceipt.codexBinaryIdentityHash,
           codexVersion: researchAuthorCapabilityReceipt.codexVersion,
           codexAuthenticationStatus: researchAuthorCapabilityReceipt.authenticationStatus,
+          codexExecutionTransport: researchAuthorCapabilityReceipt.executionTransport || 'codex_cli',
+          codexAuthenticationAuthorityMode: researchAuthorCapabilityReceipt.authenticationAuthorityMode || 'codex_home',
         } : {}),
       };
       return {
         payload,
-        failureMessage: blockers.join(',') || payload.error || `agent exited ${payload.exitCode}`,
+        failureMessage: managedRuntimeFailureCode
+          || blockers.join(',') || payload.error || `agent exited ${payload.exitCode}`,
         retryable: !cancelled && !blockers.includes('read_only_agent_modified_workspace')
+          && !blockers.includes('codex_openclaw_managed_failure_usage_evidence_invalid')
+          && managedRuntimeFailureRetryable(
+            managedRuntimeFailureCode,
+            managedFailureEvidenceVerified ? managedFailureEvidence : null,
+          )
           && !blockers.some((blocker) => (
             blocker === `${capabilityPrefix}_capability_runtime_identity_changed_during_execution`
-            || blocker === `${capabilityPrefix}_capability_runtime_postflight_failed`
-          )),
+          ))
+          && (!blockers.includes(
+            `${capabilityPrefix}_capability_runtime_postflight_failed`,
+          ) || capabilityPostflightFailure?.disposition === 'retryable'),
       };
     },
   });

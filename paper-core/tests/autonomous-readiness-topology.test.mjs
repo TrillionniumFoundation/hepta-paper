@@ -7,6 +7,8 @@ import test from 'node:test';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
   autonomousResearchCommandExitCode,
+  isLocalAutonomousResearchCliLaunchMode,
+  normalizeAutonomousResearchCliLaunchMode,
 } from '../../paper-application/automation/autonomous-research-cli-policy.mjs';
 import {
   createAutonomousResearchSupervisorAutonomyFence,
@@ -26,6 +28,15 @@ import {
 } from '../../paper-composition/automation/autonomous-research-readiness-inspections.mjs';
 
 const H = (label) => hashRecord('AutonomousReadinessTopologyTestHash', { label });
+
+test('local autonomous research mode defaults to the bounded local execution path', () => {
+  assert.equal(isLocalAutonomousResearchCliLaunchMode(), true);
+  assert.equal(isLocalAutonomousResearchCliLaunchMode('local-run'), true);
+  assert.equal(isLocalAutonomousResearchCliLaunchMode('golden-bootstrap'), false);
+  assert.equal(normalizeAutonomousResearchCliLaunchMode(), 'golden-bootstrap');
+  assert.equal(normalizeAutonomousResearchCliLaunchMode('local-run'), 'golden-bootstrap');
+  assert.equal(normalizeAutonomousResearchCliLaunchMode('production-run'), 'production-run');
+});
 
 function withHash(kind, hashField, payload) {
   return Object.freeze({ ...payload, [hashField]: hashRecord(kind, payload) });
@@ -63,6 +74,7 @@ function releaseInspection({
       status: 'research_execution_release_attestor_ready',
       ready: true,
       inspectedAt: '2026-07-15T10:00:00.000Z',
+      liveVerificationCompletedAt: '2026-07-15T10:00:00.000Z',
       keyId: activeKey.keyId,
       keyVersion: activeKey.keyVersion,
       subjectId: activeKey.subjectId,
@@ -78,6 +90,9 @@ function releaseInspection({
         keys: trustedKeys,
       }),
       trustedKeys,
+      configurationFileHash: H('release-attestor-configuration-file'),
+      configurationIdentityHash: H('release-attestor-configuration-identity'),
+      configurationPinned: false,
       backendKind: 'local-file',
       backendId: 'local-file:release-key:test',
       backendVersion: 'legacy-v1',
@@ -689,6 +704,11 @@ test('action-aware full-ready policy never treats prepare postconditions as laun
   }), 2);
   assert.equal(autonomousResearchCommandExitCode({
     action: 'converge',
+    launchMode: 'local-run',
+    report: { localResearchWritingReady: true },
+  }), 0);
+  assert.equal(autonomousResearchCommandExitCode({
+    action: 'converge',
     report: {
       campaignFullyQualified: true,
       status: 'autonomous_research_campaign_completed_and_qualified',
@@ -991,6 +1011,30 @@ test('prepare inspects matching qualification configuration without invoking eit
     async verify() { fs.writeFileSync(fixture.marker, 'verifier called'); },
     async verifyLookup() { fs.writeFileSync(fixture.marker, 'verifier lookup called'); },
   };
+  const localReport = await composeAutonomousResearchCampaignAction({
+    action: 'prepare',
+    launchMode: 'golden-bootstrap',
+    localOnly: true,
+    paperId: 'readiness-local-paper',
+    root: fixture.root,
+    runtimeRoot: fixture.runtimeRoot,
+    environment,
+    externalQualificationClient: injectedClient,
+    preflightAuthor: () => preflights.author,
+    preflightReviewer: () => preflights.reviewer,
+    preflightEmpiricalRuntime: () => empiricalRuntimeInspection(),
+    createdAt: '2026-07-15T10:00:00.000Z',
+  });
+  assert.equal(localReport.externalQualificationServiceReady, true);
+  assert.equal(localReport.externalQualificationServiceRequired, false);
+  assert.equal(
+    localReport.externalQualificationServiceInspection.status,
+    'external_qualification_service_not_required',
+  );
+  assert.deepEqual(localReport.externalQualificationServiceInspection.blockers, []);
+  assert.equal(localReport.externalQualificationAuthorityStillRequired, false);
+  assert.equal(fs.existsSync(fixture.marker), false);
+
   await assert.rejects(() => composeAutonomousResearchCampaignAction({
     action: 'prepare',
     launchMode: 'golden-bootstrap',

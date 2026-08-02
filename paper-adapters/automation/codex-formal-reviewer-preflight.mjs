@@ -49,6 +49,7 @@ export function preflightCodexFormalReviewer({
     status: 'codex_formal_reviewer_capability_ready',
     provider: 'openai',
     model: runtime.model,
+    modelSelectionSource: runtime.modelSelectionSource,
     codexVersion: runtime.codexVersion,
     codexBinaryIdentityHash: runtime.codexBinaryIdentityHash,
     credentialRootIdentityHash: reviewerCredentialRootIdentityHash,
@@ -67,6 +68,17 @@ export function preflightCodexFormalReviewer({
     providerAccountIndependenceVerified: false,
     authenticationStatus: runtime.authenticationStatus,
     modelOptionVerified: runtime.modelOptionVerified,
+    executionTransport: runtime.executionTransport,
+    authenticationAuthorityMode: runtime.authenticationAuthorityMode,
+    managedRuntimeEvidenceRequired: runtime.managedRuntimeEvidenceRequired,
+    openClawManagedConfigurationHash:
+      runtime.openClawManagedConfigurationHash,
+    openClawManagedRuntimeProvenanceHash:
+      runtime.openClawManagedRuntimeProvenanceHash,
+    openClawManagedAuthProfileIdentityHash:
+      runtime.openClawManagedAuthProfileIdentityHash,
+    openClawManagedAuthSourceIdentityHash:
+      runtime.openClawManagedAuthSourceIdentityHash,
     selectedModelExecutionCanaryVerified: false,
     readOnlyReviewRequired: true,
     dynamicAttemptWorkspaceRequired: true,

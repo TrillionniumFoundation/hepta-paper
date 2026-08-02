@@ -9,6 +9,43 @@ import {
 import { buildSqliteCampaignProjectionStatement } from './sqlite-campaign-projection.mjs';
 import { mapCampaignNodeRow as parseNode } from './sqlite-campaign-row-mappers.mjs';
 
+function terminalSiblingSettlement({ sibling, terminalNodeId, terminalFailureHash,
+  now, eventStatement }) {
+  const integrationStatus = String(sibling.preparedIntegrationStatus || 'none');
+  const outcomeUncertain = ['integrating', 'integrated'].includes(integrationStatus);
+  const status = outcomeUncertain ? 'external_outcome_uncertain' : 'skipped';
+  const failureClass = outcomeUncertain
+    ? 'campaign_terminal_sibling_outcome_uncertain'
+    : 'campaign_terminal_sibling_cancelled';
+  const failureDetail = Object.freeze({
+    reason: failureClass,
+    terminalNodeId,
+    terminalFailureHash,
+    previousStatus: sibling.status,
+    previousLeaseOwner: sibling.leaseOwner || null,
+    previousAttemptId: sibling.attemptId || null,
+    previousLeaseGeneration: Number(sibling.leaseGeneration || 0),
+    previousNodeRevision: Number(sibling.nodeRevision || 0),
+    preparedIntegrationStatus: integrationStatus,
+  });
+  const failureHash = hashRecord('PaperCampaignNodeFailure', failureDetail);
+  const eventRow = eventStatement(
+    sibling.campaignId,
+    sibling.nodeId,
+    'campaign_terminal_sibling_settled',
+    { status, failureClass, failureHash, ...failureDetail },
+    now,
+  );
+  return Object.freeze({
+    sibling,
+    status,
+    failureClass,
+    failureDetail,
+    failureHash,
+    eventRow,
+  });
+}
+
 export function createCampaignNodeAttemptOperations({
   store, clock, mutation, guarded, eventStatement, usageSql,
   usageBudgetCondition, getApi,
@@ -91,6 +128,19 @@ export function createCampaignNodeAttemptOperations({
       const { status } = failureTransition;
       const now = clock.nowIso();
       const failureHash = hashRecord('PaperCampaignNodeFailure', failureDetail);
+      const terminalSiblingSettlements = status === 'failed_terminal'
+        ? store.query(`SELECT * FROM campaign_nodes
+          WHERE campaign_id=${sqlText(node.campaignId)} AND node_id<>${sqlText(nodeId)}
+            AND status IN ('leased','running') ORDER BY node_id;`).rows
+          .map(parseNode)
+          .map((sibling) => terminalSiblingSettlement({
+            sibling,
+            terminalNodeId: nodeId,
+            terminalFailureHash: failureHash,
+            now,
+            eventStatement,
+          }))
+        : [];
       const eventRow = eventStatement(
         node.campaignId,
         nodeId,
@@ -111,6 +161,15 @@ export function createCampaignNodeAttemptOperations({
           operationId: 'native-store.campaign-lease.failNode.v1',
           statements: [
             guarded(`UPDATE campaign_nodes SET status=${sqlText(status)},failure_class=${sqlText(failureClass)},failure_json=${sqlJson(failureDetail)},failure_sha256=${sqlText(failureHash)},lease_owner=NULL,lease_expires_at=NULL,node_revision=node_revision+1${preparedReset},updated_at=${sqlText(now)} WHERE node_id=${sqlText(nodeId)} AND status='running' AND lease_owner=${sqlText(workerId)} AND attempt_id=${sqlText(attemptId)} AND lease_generation=${Number(leaseGeneration)} AND julianday(lease_expires_at)>=julianday(${sqlText(now)}) AND EXISTS(SELECT 1 FROM paper_campaigns c WHERE c.campaign_id=campaign_nodes.campaign_id AND c.status='running');`),
+            ...terminalSiblingSettlements.flatMap((settlement) => {
+              const sibling = settlement.sibling;
+              const ownerCondition = sibling.leaseOwner
+                ? `lease_owner=${sqlText(sibling.leaseOwner)}` : 'lease_owner IS NULL';
+              const attemptCondition = sibling.attemptId
+                ? `attempt_id=${sqlText(sibling.attemptId)}` : 'attempt_id IS NULL';
+              const update = `UPDATE campaign_nodes SET status=${sqlText(settlement.status)},failure_class=${sqlText(settlement.failureClass)},failure_json=${sqlJson(settlement.failureDetail)},failure_sha256=${sqlText(settlement.failureHash)},lease_owner=NULL,lease_expires_at=NULL,attempt_id=NULL,node_revision=node_revision+1,updated_at=${sqlText(now)} WHERE node_id=${sqlText(sibling.nodeId)} AND campaign_id=${sqlText(node.campaignId)} AND status=${sqlText(sibling.status)} AND ${ownerCondition} AND ${attemptCondition} AND lease_generation=${Number(sibling.leaseGeneration || 0)} AND node_revision=${Number(sibling.nodeRevision || 0)} AND prepared_integration_status=${sqlText(sibling.preparedIntegrationStatus || 'none')} AND EXISTS(SELECT 1 FROM paper_campaigns c WHERE c.campaign_id=campaign_nodes.campaign_id AND c.status='running');`;
+              return [guarded(update), settlement.eventRow.sql];
+            }),
             `UPDATE paper_campaigns SET ${usageSql(usageDelta)},updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(node.campaignId)} AND status='running';`,
             eventRow.sql,
             buildSqliteCampaignProjectionStatement({ campaignId: node.campaignId, now }),
@@ -119,6 +178,7 @@ export function createCampaignNodeAttemptOperations({
           input: {
             node, now, nodeId, workerId, attemptId, leaseGeneration,
             status, failureClass, failureDetail, failureHash,
+            terminalSiblingSettlements,
             abandonPreparedResult, usageDelta, eventRow,
           },
         });

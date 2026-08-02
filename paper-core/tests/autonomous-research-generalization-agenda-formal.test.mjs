@@ -205,6 +205,8 @@ test('production agenda and content producers are budgeted, idempotent, dynamic,
   const priorArtRetriever = Object.freeze({
     version: 1,
     kind: 'PriorArtRetrievalPort',
+    configurationPinned: false,
+    fullProductionReady: false,
     cryptographicAuthorityReady: false,
     identityIndependenceReady: false,
     async retrieve(input) {

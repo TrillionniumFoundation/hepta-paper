@@ -123,7 +123,7 @@ export function createAutonomousResearchRuntimeRefreshStateRepository({
   const database = new DatabaseSync(databasePath);
   database.exec(`PRAGMA busy_timeout=${busyTimeoutMs};`);
   if (offlineProvision) {
-    database.exec('PRAGMA journal_mode=WAL;');
+    database.exec('PRAGMA journal_mode=DELETE;');
     database.exec('PRAGMA synchronous=FULL;');
     database.exec(`CREATE TABLE IF NOT EXISTS runtime_reproducibility_refresh_state (
     scope_id TEXT PRIMARY KEY,

@@ -136,7 +136,7 @@ export function assertAutonomousResearchSupervisorFinalizedSideEffectPermit({
   throw error;
 }
 
-export function installAutonomousResearchSupervisorExternalActionJournalSchema(database) {
+export function installAutonomousResearchSupervisorExternalActionJournalCoreSchema(database) {
   database.exec(`CREATE TABLE IF NOT EXISTS autonomous_research_supervisor_external_action_journal (
     attempt_id TEXT PRIMARY KEY,
     campaign_id TEXT NOT NULL,
@@ -169,6 +169,10 @@ export function installAutonomousResearchSupervisorExternalActionJournalSchema(d
     WHERE status='in_progress';
   CREATE INDEX IF NOT EXISTS idx_autonomous_research_supervisor_external_action_history
     ON autonomous_research_supervisor_external_action_journal(campaign_id,started_at,attempt_id);`);
+}
+
+export function installAutonomousResearchSupervisorExternalActionJournalSchema(database) {
+  installAutonomousResearchSupervisorExternalActionJournalCoreSchema(database);
   const columns = new Set(database.prepare(
     'PRAGMA table_info(autonomous_research_supervisor_external_action_journal)',
   ).all().map((column) => column.name));

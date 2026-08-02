@@ -8,7 +8,7 @@ export function provisionAutonomousResearchSupervisorStateDatabase({
   database,
   databasePath,
 } = {}) {
-  database.exec('PRAGMA journal_mode=WAL;');
+  database.exec('PRAGMA journal_mode=DELETE;');
   database.exec('PRAGMA synchronous=FULL;');
   database.exec(`CREATE TABLE IF NOT EXISTS autonomous_research_supervisor_campaign (
     campaign_id TEXT PRIMARY KEY,

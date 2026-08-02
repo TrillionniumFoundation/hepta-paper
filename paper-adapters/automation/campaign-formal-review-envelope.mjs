@@ -1,10 +1,7 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
-import { hasExactObjectKeys as hasExactKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
 import { hashWorkspaceFile } from './campaign-node-workspace-support.mjs';
-import { canonicalClaimsFromWorkerPlan } from '../research-verify/canonical-claim-registry-reader.mjs';
+import { canonicalClaimsFromTheoremSpecification } from '../research-verify/canonical-claim-registry-reader.mjs';
 import { readFinalizedTheoremSpecification } from './theorem-specification-finalizer.mjs';
 import {
   createProposalClaimToTheoremBinding,
@@ -14,6 +11,15 @@ import {
   reviewerReceiptSigningSubject,
   verifySignedReviewerReceipt,
 } from '../../paper-domain/research/signed-reviewer-receipt-contract.mjs';
+import {
+  verifyFreshIsolatedReviewerSessionReceipt,
+} from '../../paper-domain/research/reviewer-semantic-evidence-contract.mjs';
+import {
+  buildAgentExecutionUsageBinding,
+} from '../../paper-domain/evidence/agent-execution-receipt-contract.mjs';
+import {
+  verifyOpenClawManagedExecutionEvidence,
+} from './codex-openclaw-managed-runtime.mjs';
 
 const REVIEW_DOCUMENT_KEYS = Object.freeze([
   'kind',
@@ -41,8 +47,17 @@ const PROPOSAL_REVIEW_ENTRY_KEYS = Object.freeze([
   'proposalToTheoremVerdict',
 ]);
 
+function hasRequiredKeys(value, keys) {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value)
+    && keys.every((key) => Object.hasOwn(value, key)));
+}
+
 function sortedStrings(values) {
   return [...new Set((Array.isArray(values) ? values : []).map(String))].sort();
+}
+
+function normalizedText(value) {
+  return String(value || '').normalize('NFKC').replace(/\s+/g, ' ').trim();
 }
 
 function extractCampaignAgentJson(text) {
@@ -78,12 +93,12 @@ export function readFormalSemanticReviewAgentDocument(receipt, { proposalLineage
     ? Object.freeze(parsed.reviews.map(normalizeFormalReviewEntry)) : Object.freeze([]);
   const expectedEntryKeys = proposalLineageRequired ? PROPOSAL_REVIEW_ENTRY_KEYS : REVIEW_ENTRY_KEYS;
   const blockers = [
-    ...(!hasExactKeys(parsed, REVIEW_DOCUMENT_KEYS)
+    ...(!hasRequiredKeys(parsed, REVIEW_DOCUMENT_KEYS)
       || parsed.kind !== 'FormalClaimSemanticReview'
       || parsed.version !== (proposalLineageRequired ? 2 : 1)
       ? ['formal_semantic_review_schema_invalid'] : []),
     ...(!reviews.length ? ['formal_semantic_review_entries_missing'] : []),
-    ...(Array.isArray(parsed.reviews) && parsed.reviews.some((review) => !hasExactKeys(review, expectedEntryKeys))
+    ...(Array.isArray(parsed.reviews) && parsed.reviews.some((review) => !hasRequiredKeys(review, expectedEntryKeys))
       ? ['formal_semantic_review_entry_schema_invalid'] : []),
   ];
   return Object.freeze({
@@ -149,9 +164,75 @@ function signedPoolReviewerVerified(receipt, { signedReviewerReceiptVerifier = n
   return false;
 }
 
+function sessionPoolReviewerVerified(receipt, {
+  sessionReviewerReceiptVerifier = null,
+} = {}) {
+  const expected = {
+    reviewPrincipalId: receipt?.reviewPrincipalId,
+    reviewPrincipalDescriptorHash: receipt?.reviewPrincipalDescriptorHash,
+    researchPrincipalPoolHash: receipt?.researchPrincipalPoolHash,
+  };
+  if (typeof sessionReviewerReceiptVerifier === 'function') {
+    try {
+      return sessionReviewerReceiptVerifier({ receipt, expected }) === true;
+    } catch {
+      return false;
+    }
+  }
+  return verifyFreshIsolatedReviewerSessionReceipt(receipt, expected);
+}
+
+function managedCodexReviewerSessionVerified(receipt) {
+  const evidence = receipt?.openClawManagedExecutionEvidence;
+  const model = receipt?.resolvedModel || receipt?.model || null;
+  return Boolean(
+    receipt?.sessionIsolation
+      === 'fresh_one_shot_codex_app_server_no_resume'
+    && receipt?.codexExecutionTransport
+      === 'openclaw_user_locked_codex_app_server'
+    && receipt?.codexAuthenticationAuthorityMode
+      === 'openclaw_user_locked_profile_fail_closed'
+    && receipt?.codexAppServerOneShot === true
+    && receipt?.simpleCompletionModelRun === false
+    && receipt?.toolExecutionEnabled === false
+    && receipt?.messageDeliveryEnabled === false
+    && receipt?.credentialMaterialExported === false
+    && receipt?.externalModelInvocationPerformed === true
+    && receipt?.externalSideEffectPerformed === false
+    && receipt?.externalActionPerformed === false
+    && receipt?.sessionId === receipt?.childSessionId
+    && receipt?.sessionId === evidence?.completionInvocationId
+    && receipt?.openClawCompletionInvocationId
+      === evidence?.completionInvocationId
+    && receipt?.openClawSuccessfulAttemptId
+      === evidence?.successfulAttemptId
+    && receipt?.openClawManagedCodexExecutionHash
+      === evidence?.openClawManagedCodexExecutionHash
+    && verifyOpenClawManagedExecutionEvidence(evidence, {
+      originalPromptHash: receipt?.promptHash,
+      model,
+      changedPaths: receipt?.changedPaths,
+      expectedConfigurationHash:
+        receipt?.openClawManagedConfigurationHash,
+      expectedRuntimeProvenanceHash:
+        receipt?.openClawManagedRuntimeProvenanceHash,
+      expectedAuthProfileIdentityHash:
+        receipt?.openClawManagedAuthProfileIdentityHash,
+      expectedAuthSourceIdentityHash:
+        receipt?.openClawManagedAuthSourceIdentityHash,
+    })
+  );
+}
+
+function codexReviewerSessionVerified(receipt) {
+  return receipt?.sessionIsolation === 'fresh_ephemeral_no_resume'
+    || managedCodexReviewerSessionVerified(receipt);
+}
+
 function formalAgentPrincipal(receipt, {
   independentReviewer = false,
   signedReviewerReceiptVerifier = null,
+  sessionReviewerReceiptVerifier = null,
 } = {}) {
   if (!receipt?.providerMode || !receipt?.executorId) return null;
   const openClaw = receipt.providerMode === 'openclaw:detached-child-session';
@@ -160,6 +241,9 @@ function formalAgentPrincipal(receipt, {
   const codexReviewer = independentReviewer && receipt.providerMode === 'openai';
   const signedPoolReviewer = independentReviewer && signedPoolReviewerVerified(receipt, {
     signedReviewerReceiptVerifier,
+  });
+  const sessionPoolReviewer = independentReviewer && sessionPoolReviewerVerified(receipt, {
+    sessionReviewerReceiptVerifier,
   });
   if (codexReviewer && (!receipt.agentId
     || !receipt.codexFormalReviewerCapabilityReceiptHash
@@ -170,7 +254,7 @@ function formalAgentPrincipal(receipt, {
     || receipt.codexFreshEphemeralSessionRequired !== true
     || receipt.codexAuthorContextInheritanceForbidden !== true
     || receipt.codexFrozenArtifactReviewRequired !== true
-    || receipt.sessionIsolation !== 'fresh_ephemeral_no_resume'
+    || !codexReviewerSessionVerified(receipt)
     || receipt.contextInheritance !== 'forbidden'
     || receipt.codexReviewerAssuranceScope
       !== 'ephemeral_session_frozen_artifact_and_role_separation'
@@ -195,7 +279,7 @@ function formalAgentPrincipal(receipt, {
       receipt.codexProviderCredentialSharingPermitted === true,
     freshSessionIsolationVerified:
       receipt.codexFreshEphemeralSessionRequired === true
-        && receipt.sessionIsolation === 'fresh_ephemeral_no_resume',
+        && codexReviewerSessionVerified(receipt),
     authorContextInheritanceForbidden:
       receipt.codexAuthorContextInheritanceForbidden === true
         && receipt.contextInheritance === 'forbidden',
@@ -203,7 +287,9 @@ function formalAgentPrincipal(receipt, {
     reviewerAssuranceScope: receipt.providerMode === 'openai'
       ? signedPoolReviewer
         ? 'signed_configured_identity_credential_root_and_signer_separation'
-        : receipt.codexReviewerAssuranceScope || null
+        : sessionPoolReviewer
+          ? 'ephemeral_session_frozen_artifact_and_role_separation'
+          : receipt.codexReviewerAssuranceScope || null
       : 'configured_principal_and_process_separation',
     // Even a signed reviewer-pool identity does not prove separation from the
     // author account unless an author identity attestation is compared here.
@@ -234,14 +320,19 @@ export function buildCampaignFormalReviewEnvelope({
   workspace,
   manuscript,
   signedReviewerReceiptVerifier = null,
+  sessionReviewerReceiptVerifier = null,
 } = {}) {
   const reviewerPrincipalId = formalAgentPrincipal(receipt, {
     independentReviewer: true,
     signedReviewerReceiptVerifier,
+    sessionReviewerReceiptVerifier,
   });
   const authorPrincipalId = formalAgentPrincipal(authorNode?.result);
   const signedPoolReviewer = signedPoolReviewerVerified(receipt, {
     signedReviewerReceiptVerifier,
+  });
+  const sessionPoolReviewer = sessionPoolReviewerVerified(receipt, {
+    sessionReviewerReceiptVerifier,
   });
   const expectedResearchPrincipalPoolHash = campaign?.spec?.autonomousResearchPreparation
     ?.researchPrincipalPoolHash || null;
@@ -260,16 +351,15 @@ export function buildCampaignFormalReviewEnvelope({
     });
   } catch { theoremSpecification = null; }
   try {
-    const plan = JSON.parse(fs.readFileSync(path.join(workspace, 'RESEARCH_WORKER_PLAN.json'), 'utf8'));
-    canonicalClaimRegistry = canonicalClaimsFromWorkerPlan({
+    canonicalClaimRegistry = canonicalClaimsFromTheoremSpecification({
       sourceRoot: workspace,
-      paperTask: { sourceWorkspace: workspace, mainTex: path.join(workspace, manuscript) },
-      plan,
+      theoremSpecification,
     });
   } catch { canonicalClaimRegistry = null; }
   const manuscriptHash = canonicalClaimRegistry?.manuscriptHash || null;
   const proposalLineageRequired = theoremSpecification?.proposalClaimLineageRequired === true;
   const agentDocument = readFormalSemanticReviewAgentDocument(receipt, { proposalLineageRequired });
+  const agentExecutionUsageBinding = buildAgentExecutionUsageBinding(receipt);
   const reviews = agentDocument.reviews;
   const reviewClaimIds = reviews.map((review) => review.claimId).filter(Boolean);
   const duplicateReviewClaimIds = [...new Set(reviewClaimIds.filter((claimId, index) => reviewClaimIds.indexOf(claimId) !== index))];
@@ -280,10 +370,11 @@ export function buildCampaignFormalReviewEnvelope({
     ...agentDocument.blockers,
     ...(!authorNode?.result?.agentExecutionReceiptHash ? ['formal_author_execution_receipt_missing'] : []),
     ...(!receipt?.agentExecutionReceiptHash ? ['formal_review_execution_receipt_missing'] : []),
+    ...(!agentExecutionUsageBinding ? ['formal_review_execution_usage_binding_invalid'] : []),
     ...(!reviewerPrincipalId || !authorPrincipalId || reviewerPrincipalId === authorPrincipalId ? ['formal_review_principal_independence_invalid'] : []),
-    ...(expectedResearchPrincipalPoolHash && (!signedPoolReviewer
+    ...(expectedResearchPrincipalPoolHash && (!(signedPoolReviewer || sessionPoolReviewer)
       || receipt?.researchPrincipalPoolHash !== expectedResearchPrincipalPoolHash)
-      ? ['formal_review_signed_principal_pool_binding_invalid'] : []),
+      ? ['formal_review_principal_pool_binding_invalid'] : []),
     ...(!workerPlanHash || !manuscriptHash ? ['formal_review_input_hash_missing'] : []),
     ...(!theoremSpecification ? ['formal_review_theorem_specification_invalid'] : []),
     ...(theoremSpecification && agentDocument.theoremSpecificationHash !== theoremSpecification.theoremSpecificationHash
@@ -299,7 +390,8 @@ export function buildCampaignFormalReviewEnvelope({
   ];
   for (const claim of canonicalClaimRegistry?.claims || []) {
     const specificationClaim = theoremSpecification?.claims?.find((candidate) => candidate.claimId === claim.claimId) || null;
-    if (!specificationClaim || specificationClaim.statement !== claim.text
+    if (!specificationClaim
+      || normalizedText(specificationClaim.statement) !== normalizedText(claim.text)
       || specificationClaim.manuscriptSource?.path !== claim.manuscriptPath
       || specificationClaim.manuscriptSource?.byteStart !== claim.manuscriptByteStart
       || specificationClaim.manuscriptSource?.byteEnd !== claim.manuscriptByteEnd
@@ -351,11 +443,19 @@ export function buildCampaignFormalReviewEnvelope({
     reviewNodeId: node?.nodeId || null,
     reviewAttemptId: node?.attemptId || null,
     reviewAgentReceiptHash: receipt?.agentExecutionReceiptHash || null,
+    agentExecutionReceiptHash: receipt?.agentExecutionReceiptHash || null,
+    agentExecutionReceipt: receipt || null,
+    usage: agentExecutionUsageBinding?.usage || null,
+    agentExecutionUsageBindingHash:
+      agentExecutionUsageBinding?.agentExecutionUsageBindingHash || null,
+    agentExecutionUsageBinding,
     reviewerPrincipalId,
     reviewerIndependenceAssuranceScope: receipt?.providerMode === 'openai'
       ? receipt.signedReviewerReceiptHash
         ? 'signed_configured_identity_credential_root_and_signer_separation'
-        : receipt.codexReviewerAssuranceScope || null
+        : sessionPoolReviewer
+          ? 'ephemeral_session_frozen_artifact_and_role_separation'
+          : receipt.codexReviewerAssuranceScope || null
       : 'configured_principal_and_process_separation',
     providerAccountIndependenceVerified: false,
     reviewPrincipalDescriptorHash: receipt?.reviewPrincipalDescriptorHash || null,

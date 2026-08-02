@@ -7,6 +7,12 @@ This one-time transition is an explicit maintenance operation; ordinary status,
 readiness, supervisor startup, and runtime activation only inspect its signed
 final receipt and never install schema.
 
+The historical partial-root maintenance route, when applicable, ends before
+this protocol. It provisions business schema only and deliberately does not
+call the state authority or install any online marker/journal object. A partial-
+root repair receipt therefore cannot substitute for this transition's signed
+reservation, installation, finalization, or final observation.
+
 The resident journal schema is retained for transition compatibility but has
 no production online writer. Current active evidence is persisted only after
 state-safety validation in the derived JSON cache outside the canonical
@@ -46,12 +52,14 @@ configuration fails before database mutation. There is no local trust override.
 
 ## Authority, recovery, and receipt
 
-The process configuration pins both the external authority client executable
-and its public-key configuration by SHA-256. The client reserves the exact
+The process configuration pins both the independent authority client
+executable and its public-key configuration by SHA-256. The client may address
+the bundled dedicated-UID Unix-socket service or a remote broker; neither path
+exposes signing material to the research process. It reserves the exact
 database scope and writer manifest before any installation. The transition
 then holds exclusive SQLite locks, commits one database at a time while the
-lease remains safe, finalizes the complete post-inventory with the external
-authority, and performs a fresh final-state observation.
+lease remains safe, finalizes the complete post-inventory with the authority,
+and performs a fresh final-state observation.
 
 Crash state is durably recorded below
 `runtimeRoot/autonomous-research/online-schema-transition`. A retry with the

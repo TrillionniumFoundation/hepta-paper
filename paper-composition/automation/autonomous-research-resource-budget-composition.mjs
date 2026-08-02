@@ -14,6 +14,10 @@ export function closeAutonomousResearchResourceBudgets({
   requestedBudgets,
   launchMode,
   action,
+  localOnly = false,
+  directLocalRunBudgetWaiver = null,
+  directLocalRunCliProvenance = null,
+  autonomousResearchPreparation = null,
   launchModeGate,
   providerPricingInspection,
   fullResearchReadiness,
@@ -25,15 +29,28 @@ export function closeAutonomousResearchResourceBudgets({
     datasetMounts,
     budgets: launchModeGate?.effectiveBudgets,
   });
-  const completedBudgets = completeAutonomousResearchResourceBudgets({
+  const completedBudgetBase = completeAutonomousResearchResourceBudgets({
     requestedBudgets,
     effectiveBudgets: launchModeGate?.effectiveBudgets,
     requiredBudgets: preview.requiredBudgets,
+  });
+  const completedBudgets = Object.freeze({
+    ...completedBudgetBase,
+    ...(directLocalRunBudgetWaiver?.unlimitedTokenCount === true
+      ? { maxTokenCount: requestedBudgets?.maxTokenCount } : {}),
+    ...(directLocalRunBudgetWaiver?.unlimitedCostUsd === true
+      ? { maxCostUsd: requestedBudgets?.maxCostUsd } : {}),
   });
   const closedGate = evaluateAutonomousResearchLaunchModeGate({
     launchMode,
     action,
     budgets: completedBudgets,
+    localOnly,
+    directLocalRunBudgetWaiver,
+    directLocalRunCliProvenance,
+    autonomousResearchPreparation,
+    campaignId,
+    paperId: loopPreparation?.proposal?.paperId || null,
     providerPricingInspection,
     fullResearchReadiness,
     admissionOnly,

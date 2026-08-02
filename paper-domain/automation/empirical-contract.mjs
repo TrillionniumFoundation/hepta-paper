@@ -24,13 +24,34 @@ function executableSourceText(sourceText) {
 function datasetTokenIsRead(sourceText, token) {
   const text = executableSourceText(sourceText);
   const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const readCall = '(?:open|read(?:File(?:Sync)?|_csv|\\.csv)?|load|scan|CSV\\.read|pandas\\.read_csv)';
+  const readCall = '(?:(?:[A-Za-z][A-Za-z0-9.]*::)?(?:open|read(?:File(?:Sync)?|Lines|Bin|_csv|\\.(?:csv|table|delim)|RDS)?|load|scan|fromJSON)|CSV\\.read|pandas\\.read_csv)';
   const quotedToken = `['\"]${escaped}['\"]`;
-  const environmentAccess = `(?:os\\.environ\\s*\\[\\s*${quotedToken}\\s*\\]|(?:os\\.)?getenv\\s*\\(\\s*${quotedToken}\\s*\\)|process\\.env\\.${escaped}|Sys\\.getenv\\s*\\(\\s*${quotedToken}\\s*\\)|ENV\\s*\\[\\s*${quotedToken}\\s*\\])`;
+  const environmentAccess = `(?:os\\.environ\\s*\\[\\s*${quotedToken}\\s*\\]|(?:os\\.)?getenv\\s*\\(\\s*${quotedToken}|process\\.env\\.${escaped}|Sys\\.getenv\\s*\\(\\s*${quotedToken}|ENV\\s*\\[\\s*${quotedToken}\\s*\\])`;
   const directArgument = token.startsWith('/datasets/') ? quotedToken : environmentAccess;
   if (new RegExp(`${readCall}\\s*\\([^\\n]{0,240}${directArgument}`, 'i').test(text)) return true;
-  const assignment = new RegExp(`(?:const|let|var)?\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*${directArgument}`, 'i').exec(text);
-  return Boolean(assignment && new RegExp(`${readCall}\\s*\\([^\\n]{0,160}\\b${assignment[1]}\\b`, 'i').test(text));
+  const providerFunctions = [...text.matchAll(/([A-Za-z_][A-Za-z0-9_]*)\s*(?:=|<-)\s*function\s*\([^)]*\)\s*\{([\s\S]*?)\n\}/gi)]
+    .filter((match) => new RegExp(directArgument, 'i').test(match[2]))
+    .map((match) => match[1]);
+  const providerCall = providerFunctions.length
+    ? `(?:${providerFunctions.map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})\\s*\\(`
+    : null;
+  const assignment = new RegExp(
+    `(?:const|let|var)?\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(?:=|<-)\\s*(?:${directArgument}${providerCall ? `|${providerCall}` : ''})`,
+    'i',
+  ).exec(text);
+  if (!assignment) return false;
+  const derivedVariables = new Set([assignment[1]]);
+  for (let pass = 0; pass < 8; pass += 1) {
+    let changed = false;
+    for (const match of text.matchAll(/(?:const|let|var)?\s*([A-Za-z_][A-Za-z0-9_]*)\s*(?:=|<-)\s*([^\n]+)/gi)) {
+      if ([...derivedVariables].some((name) => new RegExp(`\\b${name}\\b`).test(match[2])) && !derivedVariables.has(match[1])) {
+        derivedVariables.add(match[1]);
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+  return [...derivedVariables].some((name) => new RegExp(`${readCall}\\s*\\([^\\n]{0,240}\\b${name}\\b`, 'i').test(text));
 }
 
 export function evaluateDatasetConsumptionContract({ sourceText = '', datasetMounts = [] } = {}) {

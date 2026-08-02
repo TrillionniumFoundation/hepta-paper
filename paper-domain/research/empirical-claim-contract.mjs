@@ -32,6 +32,48 @@ export function empiricalManuscriptClaimHash({
   });
 }
 
+export function deriveEmpiricalClaimUniverseIdentity({
+  manuscriptPath,
+  claims = [],
+} = {}) {
+  const normalizedManuscriptPath = String(manuscriptPath || '');
+  const claimCorpus = Object.freeze(claims.map((claim) => Object.freeze({
+    claimId: claim.claimId,
+    metric: claim.metric,
+    comparator: claim.comparator,
+    alternative: claim.alternative,
+    minimumEffect: Number(claim.minimumEffect),
+    acceptanceRequired: claim.acceptanceRequired === true,
+    proposalClaimRecordHash: claim.proposalClaimRecordHash || null,
+    manuscriptPath: String(claim.manuscriptPath || normalizedManuscriptPath),
+    manuscriptContentHash: claim.manuscriptContentHash || null,
+  })));
+  const manuscriptCorpusHash = hashRecord('EmpiricalManuscriptClaimCorpus', claimCorpus);
+  const claimIdentities = Object.freeze(claimCorpus.map((claim) => Object.freeze({
+    claimId: claim.claimId,
+    manuscriptClaimHash: empiricalManuscriptClaimHash({
+      ...claim,
+      manuscriptCorpusHash,
+    }),
+    proposalClaimRecordHash: claim.proposalClaimRecordHash,
+  })));
+  const authorityPayload = {
+    version: 1,
+    kind: 'EmpiricalClaimUniverseAuthority',
+    manuscriptPath: normalizedManuscriptPath,
+    manuscriptCorpusHash,
+    claimIdentities,
+  };
+  return Object.freeze({
+    manuscriptPath: normalizedManuscriptPath,
+    claimCorpus,
+    manuscriptCorpusHash,
+    claimIdentities,
+    empiricalClaimUniverseHash:
+      hashRecord('EmpiricalClaimUniverseAuthority', authorityPayload),
+  });
+}
+
 export function verifyEmpiricalClaimUniverse(universe) {
   if (!universe || universe.version !== 1 || universe.kind !== 'EmpiricalClaimUniverse'
     || universe.status !== 'empirical_claim_universe_verified'

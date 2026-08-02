@@ -172,6 +172,88 @@ test('signed private fixture source is interpreted without the producer oracle b
   }
 });
 
+test('baseline accepts only machine-epsilon JSON serialization drift', () => {
+  const seedSchedule = Array.from({ length: 32 }, (_, index) => 11 + (index * 12));
+  const minimumRepetitions = 2;
+  const referenceResponse = 0.009600000000000001;
+  const definition = {
+    version: 1,
+    kind: 'OperatorAuthorizedDatasetBenchmarkHarness',
+    benchmarkId: 'portable-json-baseline',
+    benchmarkFamily: 'finance_asset_pricing_benchmark',
+    seedSchedule,
+    minimumRepetitions,
+    cells: seedSchedule.flatMap((seed) => Array.from({ length: minimumRepetitions }, (_, index) => ({
+      seed,
+      repetition: index + 1,
+      cases: Array.from({ length: 8 }, (__, caseIndex) => ({
+        caseId: hashRecord('PortableJsonBaselineCase', {
+          seed, repetition: index + 1, caseIndex,
+        }),
+        input: { signal: caseIndex / 8, volatility: seed / 10_000 },
+        ablationInput: { volatility: seed / 10_000 },
+        referenceResponse,
+        oracle: { futureReturn: 0.01, robustReturn: 0.009 },
+      })),
+    }))),
+  };
+  const protocol = buildSystemBenchmarkArmProtocolSet({
+    benchmarkId: definition.benchmarkId,
+    datasetBacked: true,
+    benchmarkFamily: definition.benchmarkFamily,
+  }).protocols.find((item) => item.arm === 'baseline');
+  const fixture = buildSystemBenchmarkCellChallenge({
+    protocol,
+    seed: seedSchedule[0],
+    repetition: 1,
+    operatorDatasetHarnessDefinition: definition,
+  });
+  const portableResponses = fixture.challenge.cases.map((item) => ({
+    caseId: item.caseId,
+    [fixture.challenge.responseField]: 0.0096,
+  }));
+  assert.equal(evaluateSystemBenchmarkCellResponses({
+    protocol,
+    challenge: fixture.challenge,
+    oracle: fixture.oracle,
+    operatorDatasetHarnessDefinition: definition,
+    document: {
+      version: 1,
+      kind: 'CampaignBenchmarkCellResponses',
+      systemBenchmarkCellChallengeHash: fixture.challenge.systemBenchmarkCellChallengeHash,
+      responses: portableResponses,
+    },
+  }).status, 'system_benchmark_cell_response_evaluated');
+  assert.equal(independentlyEvaluateSystemBenchmarkCellResponses({
+    protocol,
+    challenge: fixture.challenge,
+    oracle: fixture.oracle,
+    responses: portableResponses,
+  }).status, 'independent_response_evaluation_verified');
+  portableResponses[0] = {
+    ...portableResponses[0],
+    [fixture.challenge.responseField]: referenceResponse + 1e-12,
+  };
+  assert.ok(evaluateSystemBenchmarkCellResponses({
+    protocol,
+    challenge: fixture.challenge,
+    oracle: fixture.oracle,
+    operatorDatasetHarnessDefinition: definition,
+    document: {
+      version: 1,
+      kind: 'CampaignBenchmarkCellResponses',
+      systemBenchmarkCellChallengeHash: fixture.challenge.systemBenchmarkCellChallengeHash,
+      responses: portableResponses,
+    },
+  }).blockers.includes('benchmark_baseline_not_repository_reference'));
+  assert.ok(independentlyEvaluateSystemBenchmarkCellResponses({
+    protocol,
+    challenge: fixture.challenge,
+    oracle: fixture.oracle,
+    responses: portableResponses,
+  }).blockers.includes('independent_response_schema_invalid'));
+});
+
 test('independent decoder accepts every producer-authorized challenge chunk', () => {
   const seedSchedule = [11, 23, 37, 41];
   const minimumRepetitions = 8;

@@ -25,12 +25,24 @@ export function preflightCodexResearchAuthor({
     status: 'codex_research_author_capability_ready',
     provider: 'openai',
     model: runtime.model,
+    modelSelectionSource: runtime.modelSelectionSource,
     codexVersion: runtime.codexVersion,
     codexBinaryIdentityHash: runtime.codexBinaryIdentityHash,
     credentialRootIdentityHash: runtime.credentialRootIdentityHash,
     credentialConfigIdentityHash: runtime.credentialConfigIdentityHash,
     authenticationStatus: runtime.authenticationStatus,
     modelOptionVerified: runtime.modelOptionVerified,
+    executionTransport: runtime.executionTransport,
+    authenticationAuthorityMode: runtime.authenticationAuthorityMode,
+    managedRuntimeEvidenceRequired: runtime.managedRuntimeEvidenceRequired,
+    openClawManagedConfigurationHash:
+      runtime.openClawManagedConfigurationHash,
+    openClawManagedRuntimeProvenanceHash:
+      runtime.openClawManagedRuntimeProvenanceHash,
+    openClawManagedAuthProfileIdentityHash:
+      runtime.openClawManagedAuthProfileIdentityHash,
+    openClawManagedAuthSourceIdentityHash:
+      runtime.openClawManagedAuthSourceIdentityHash,
     selectedModelExecutionCanaryVerified: false,
     workspaceWriteRequired: true,
     dynamicAttemptWorkspaceRequired: true,

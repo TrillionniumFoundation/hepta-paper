@@ -120,6 +120,18 @@ blindly repeats the commit. A provider observation from an in-process prototype
 is not an independently signed submission receipt and therefore cannot satisfy
 production readiness.
 
+The resident dispatcher is also fail-closed on its own readiness proof. The
+private portal configuration must match
+`HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIGURATION_HASH`, while the public
+descriptor must match both that configuration identity and the independently
+distributed `HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_HASH`. Both files
+must be regular, single-link, owner/root-controlled, non-writable-by-group-or-
+world files. Full production requires portal configuration v3, current
+platform identity attestations, and a portal receipt signer whose subject and
+Ed25519 SPKI are distinct from the dispatcher cycle signer. A fresh externally
+published challenge and signed no-side-effect canary are mandatory for every
+dispatchable batch; no pending challenge means no portal network action.
+
 Final commit requires a human-reviewed, hash-bound, single-use authorization.
 Author order and consent, declarations, conflicts, ethics, licenses, APC or
 payment decisions, and any provider legal terms cannot be inferred or accepted
@@ -147,8 +159,14 @@ metadata hashes, and successful provider read-after-write evidence.
 Numerical reference candidates use the same external-authority principle. A
 deployment may set
 `HEPTA_ADVANCED_NUMERICAL_PLUGIN_QUALIFICATION_REGISTRY` to an owner-private,
-hash-bound registry of per-candidate runtime configurations. The production
-handoff re-verifies each signed plugin bundle, independent qualification
-statement, exact source snapshot, entrypoint, runtime closure and all required
-authority roles. A registry boolean or a mismatched candidate can never promote
-an unqualified reference implementation.
+single-link registry of per-candidate runtime configurations and must set
+`HEPTA_ADVANCED_NUMERICAL_PLUGIN_QUALIFICATION_REGISTRY_HASH` to its independently
+distributed SHA-256 file hash. Each version-2 runtime configuration pins every
+bundle, trust-store, statement, and evidence-bundle file. The production
+handoff re-verifies each signed plugin bundle, five role-specific signed
+evidence receipts, exact source snapshot, entrypoint, runtime closure, distinct
+reference/replay process identities, and all required authority roles. The five
+roles must also use distinct subjects, normalized organizations, and Ed25519
+public keys. All three bundled families must pass; a registry boolean, stale
+`productionQualified` flag, missing pin, or mismatched candidate can never
+promote an unqualified reference implementation.

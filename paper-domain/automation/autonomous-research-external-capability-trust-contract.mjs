@@ -16,8 +16,18 @@ function canonicalHash(value) {
 function componentInspection(componentId, value, {
   requiredEvidenceProfile = null,
 } = {}) {
+  const productionConfigurationRequired = [
+    'prior_art', 'external_replay', 'submission_portal',
+  ].includes(componentId);
+  const freshReviewerSessionReady = componentId === 'reviewer_pool'
+    && value?.authorityMode === 'fresh-isolated-session'
+    && value?.sessionIsolationReady === true
+    && value?.identityIndependenceReady === true;
   const cryptographicAuthorityReady = value?.cryptographicAuthorityReady === true;
   const identityIndependenceReady = value?.identityIndependenceReady === true;
+  const configurationPinned = value?.configurationPinned === true;
+  const crashRecoveryReady = value?.crashRecoveryReady === true;
+  const fullProductionReady = value?.fullProductionReady === true;
   const trustSetHash = canonicalHash(value?.trustSetHash);
   const signatureVerificationPolicyHash = canonicalHash(
     value?.signatureVerificationPolicyHash,
@@ -28,17 +38,33 @@ function componentInspection(componentId, value, {
   if (requiredEvidenceProfile && evidenceProfile !== requiredEvidenceProfile) {
     blockers.push(`autonomous_research_${componentId}_evidence_profile_not_ready`);
   }
-  if (!cryptographicAuthorityReady) {
+  if (!cryptographicAuthorityReady && !freshReviewerSessionReady) {
     blockers.push(`autonomous_research_${componentId}_cryptographic_authority_not_ready`);
   }
   if (!identityIndependenceReady) {
     blockers.push(`autonomous_research_${componentId}_identity_independence_not_ready`);
   }
-  if (!trustSetHash) {
+  if (!trustSetHash && !freshReviewerSessionReady) {
     blockers.push(`autonomous_research_${componentId}_trust_set_not_bound`);
   }
-  if (!signatureVerificationPolicyHash) {
+  if (!signatureVerificationPolicyHash && !freshReviewerSessionReady) {
     blockers.push(`autonomous_research_${componentId}_signature_policy_not_bound`);
+  }
+  if (productionConfigurationRequired && !configurationPinned) {
+    blockers.push(`autonomous_research_${componentId}_configuration_not_pinned`);
+  }
+  if (componentId === 'external_replay' && !crashRecoveryReady) {
+    blockers.push('autonomous_research_external_replay_crash_recovery_not_ready');
+  }
+  if (productionConfigurationRequired && !fullProductionReady) {
+    blockers.push(`autonomous_research_${componentId}_full_production_not_ready`);
+  }
+  if (fullProductionReady
+    && (!configurationPinned
+      || !cryptographicAuthorityReady
+      || !identityIndependenceReady
+      || (componentId === 'external_replay' && !crashRecoveryReady))) {
+    blockers.push(`autonomous_research_${componentId}_full_production_claim_invalid`);
   }
   const uniqueBlockers = Object.freeze([...new Set(blockers)]);
   return Object.freeze({
@@ -47,8 +73,14 @@ function componentInspection(componentId, value, {
     requiredEvidenceProfile,
     cryptographicAuthorityReady,
     identityIndependenceReady,
+    configurationPinned,
+    crashRecoveryReady,
+    fullProductionReady,
     trustSetHash,
     signatureVerificationPolicyHash,
+    authorityMode: freshReviewerSessionReady
+      ? 'fresh-isolated-session' : 'external-cryptographic-authority',
+    sessionIsolationReady: freshReviewerSessionReady,
     ready: uniqueBlockers.length === 0,
     blockers: uniqueBlockers,
   });

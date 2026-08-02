@@ -19,6 +19,7 @@ import {
   readDispatcherExchangeDocument,
 } from '../../paper-adapters/automation/autonomous-submission-dispatcher-exchange-repository.mjs';
 import {
+  assertAutonomousSubmissionPortalCanaryAuthorityIndependentFromDispatcher,
   readAutonomousSubmissionDispatcherIdentityConfiguration,
 } from '../../paper-adapters/automation/autonomous-submission-dispatcher-cycle-verifier.mjs';
 import {
@@ -45,16 +46,24 @@ import {
 } from '../../paper-composition/bootstrap/autonomous-submission-handoff-migration-composition.mjs';
 import { createDefaultPaperStore }
   from '../../paper-adapters/persistence/store-provider.mjs';
-import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
   autonomousSubmissionPortalPublicDescriptorHash,
   buildAutonomousSubmissionPortalConfiguration,
+  createAutonomousSubmissionPortalDescriptor,
   deriveAutonomousSubmissionPortalPublicConfiguration,
 } from '../../paper-adapters/automation/autonomous-submission-portal-public-adapter.mjs';
 import {
+  assertPinnedExternalEvidenceEnvelope,
   buildPinnedExternalEvidenceEnvelope,
   pinnedExternalEvidenceSigningPayload,
 } from '../../paper-adapters/authority/pinned-external-evidence-verifier.mjs';
+import {
+  buildExternalPrincipalIdentityAttestationSubject,
+} from '../../paper-domain/evidence/external-principal-identity-attestation-contract.mjs';
+import {
+  buildAutonomousSubmissionPortalIdentityAttestationBundle,
+} from '../../paper-adapters/automation/autonomous-submission-portal-identity-attestation.mjs';
 
 const NOW = new Date('2026-07-21T12:00:00.000Z');
 const H = (label) => hashRecord('AutonomousSubmissionDispatcherChallengeTest', { label });
@@ -62,6 +71,46 @@ const H = (label) => hashRecord('AutonomousSubmissionDispatcherChallengeTest', {
 function writeJson(candidate, value, mode = 0o600) {
   fs.writeFileSync(candidate, `${JSON.stringify(value)}\n`, { mode });
   fs.chmodSync(candidate, mode);
+}
+
+function spkiHash(publicKey) {
+  return hashBytes(publicKey.export({ type: 'spki', format: 'der' }));
+}
+
+function signedEvidenceEnvelope({
+  subjectKind,
+  subjectHash,
+  keyId,
+  role,
+  privateKey,
+  signedAt = new Date(NOW.getTime() - 60_000).toISOString(),
+  expiresAt = new Date(NOW.getTime() + 10 * 60_000).toISOString(),
+} = {}) {
+  const placeholder = buildPinnedExternalEvidenceEnvelope({
+    subjectKind,
+    subjectHash,
+    signedAt,
+    expiresAt,
+    signatures: [{
+      keyId,
+      role,
+      algorithm: 'ed25519',
+      value: 'placeholder',
+    }],
+  });
+  return buildPinnedExternalEvidenceEnvelope({
+    ...placeholder,
+    signatures: [{
+      keyId,
+      role,
+      algorithm: 'ed25519',
+      value: crypto.sign(
+        null,
+        pinnedExternalEvidenceSigningPayload(placeholder),
+        privateKey,
+      ).toString('base64'),
+    }],
+  });
 }
 
 function fixture(t) {
@@ -157,14 +206,20 @@ process.stdout.write(JSON.stringify(result));
 
 test('plan-bound challenge converges only through an externally signed resident cycle', (t) => {
   const { root, runtimeRoot, cutover } = fixture(t);
-  const pair = crypto.generateKeyPairSync('ed25519');
-  const privateKey = pair.privateKey.export({ type: 'pkcs8', format: 'pem' });
-  const publicKey = pair.publicKey.export({ type: 'spki', format: 'pem' });
+  const portalPair = crypto.generateKeyPairSync('ed25519');
+  const dispatcherPair = crypto.generateKeyPairSync('ed25519');
+  const identityAttestorPair = crypto.generateKeyPairSync('ed25519');
+  const dispatcherPrivateKey = dispatcherPair.privateKey.export({
+    type: 'pkcs8',
+    format: 'pem',
+  });
   const planHash = H('plan');
   const idempotencyKey = H('idempotency');
   const portalId = 'portal:production';
-  const portalSignerKeyId = 'dispatcher-cycle-key';
+  const portalSignerKeyId = 'portal-canary-key';
   const portalSignerRole = 'autonomous_submission_portal';
+  const identityAttestorKeyId = 'portal-identity-attestor-key';
+  const identityAttestorRole = 'external_principal_identity_attestor';
   const portalTrustStore = {
     version: 1,
     kind: 'AuthorityTrustStore',
@@ -172,22 +227,85 @@ test('plan-bound challenge converges only through an externally signed resident 
       keyId: portalSignerKeyId,
       subjectId: 'portal-canary-authority',
       algorithm: 'ed25519',
-      publicKeyPem: publicKey,
+      publicKeyPem: portalPair.publicKey.export({ type: 'spki', format: 'pem' }),
       roles: [portalSignerRole],
       status: 'active',
     }],
   };
+  const identityTrustStore = {
+    version: 1,
+    kind: 'AuthorityTrustStore',
+    keys: [{
+      keyId: identityAttestorKeyId,
+      subjectId: 'independent-portal-identity-attestor',
+      organization: 'Independent Portal Identity Attestor',
+      algorithm: 'ed25519',
+      publicKeyPem: identityAttestorPair.publicKey.export({
+        type: 'spki',
+        format: 'pem',
+      }),
+      roles: [identityAttestorRole],
+      status: 'active',
+    }],
+  };
+  const portalIdentity = buildExternalPrincipalIdentityAttestationSubject({
+    serviceId: portalId,
+    principalId: 'portal:production-principal',
+    provider: 'portal-provider',
+    providerAccountIdentityHash: H('portal-account'),
+    credentialRootIdentityHash: H('portal-credential-root'),
+    hostIdentityHash: H('portal-host'),
+    processIdentityHash: H('portal-process'),
+    trustDomainIdentityHash: H('portal-trust-domain'),
+    signerPublicKeySpkiHash: spkiHash(portalPair.publicKey),
+    challengeHash: H('portal-identity-challenge'),
+    assuranceProfile: 'pinned-provider-account-and-platform-attestation-v1',
+    attestedAt: new Date(NOW.getTime() - 60_000).toISOString(),
+    expiresAt: new Date(NOW.getTime() + 10 * 60_000).toISOString(),
+  });
+  const localOriginIdentity = buildExternalPrincipalIdentityAttestationSubject({
+    serviceId: 'research-origin',
+    principalId: 'research-origin-principal',
+    provider: 'research-provider',
+    providerAccountIdentityHash: H('research-origin-account'),
+    credentialRootIdentityHash: H('research-origin-credential-root'),
+    hostIdentityHash: H('research-origin-host'),
+    processIdentityHash: H('research-origin-process'),
+    trustDomainIdentityHash: H('research-origin-trust-domain'),
+    signerPublicKeySpkiHash: H('research-origin-signer'),
+    challengeHash: H('research-origin-identity-challenge'),
+    assuranceProfile: 'pinned-provider-account-and-platform-attestation-v1',
+    attestedAt: new Date(NOW.getTime() - 60_000).toISOString(),
+    expiresAt: new Date(NOW.getTime() + 10 * 60_000).toISOString(),
+  });
+  const identityBundle = (subject) => (
+    buildAutonomousSubmissionPortalIdentityAttestationBundle({
+      subject,
+      authorityEnvelope: signedEvidenceEnvelope({
+        subjectKind: 'ExternalPrincipalIdentityAttestationSubject',
+        subjectHash: subject.externalPrincipalIdentityAttestationSubjectHash,
+        keyId: identityAttestorKeyId,
+        role: identityAttestorRole,
+        privateKey: identityAttestorPair.privateKey,
+      }),
+      trustStore: identityTrustStore,
+      signerKeyIds: [identityAttestorKeyId],
+      signerRole: identityAttestorRole,
+    })
+  );
   const privatePortalConfiguration = buildAutonomousSubmissionPortalConfiguration({
-    version: 2,
+    version: 3,
     portalId,
     endpoint: 'https://portal.example.test/submissions',
-    serviceIdentityHash: H('portal-service'),
-    portalAccountIdentityHash: H('portal-account'),
-    portalTrustDomainIdentityHash: H('portal-trust-domain'),
+    serviceIdentityHash: portalIdentity.externalPrincipalIdentityAttestationSubjectHash,
+    portalAccountIdentityHash: portalIdentity.providerAccountIdentityHash,
+    portalTrustDomainIdentityHash: portalIdentity.trustDomainIdentityHash,
     tokenEnvironmentVariable: 'PORTAL_TEST_TOKEN',
     receiptTrustStore: portalTrustStore,
     receiptSignerKeyIds: [portalSignerKeyId],
     receiptSignerRole: portalSignerRole,
+    portalIdentityAttestationBundle: identityBundle(portalIdentity),
+    localOriginIdentityAttestationBundles: [identityBundle(localOriginIdentity)],
   });
   const portalConfigurationHash = privatePortalConfiguration.configurationHash;
   const portalDescriptor = deriveAutonomousSubmissionPortalPublicConfiguration({
@@ -197,6 +315,12 @@ test('plan-bound challenge converges only through an externally signed resident 
     autonomousSubmissionPortalPublicDescriptorHash(portalDescriptor);
   const portalDescriptorPath = path.join(root, 'portal-descriptor.json');
   writeJson(portalDescriptorPath, portalDescriptor);
+  assert.equal(createAutonomousSubmissionPortalDescriptor({
+    configuration: portalDescriptor,
+    expectedConfigurationHash: portalConfigurationHash,
+    expectedDescriptorHash: portalDescriptorHash,
+    clock: { now: () => new Date(NOW.getTime() + 2_000) },
+  }).fullProductionReady, true);
   const published = publishAutonomousSubmissionDispatcherChallenge({
     runtimeRoot,
     planHash,
@@ -226,11 +350,8 @@ test('plan-bound challenge converges only through an externally signed resident 
       keyId: 'dispatcher-cycle-key',
       subjectId: 'dispatcher-cycle-subject',
       algorithm: 'ed25519',
-      publicKeyPem: publicKey,
-      roles: [
-        'autonomous-submission-dispatcher-cycle-signer',
-        portalSignerRole,
-      ],
+      publicKeyPem: dispatcherPair.publicKey.export({ type: 'spki', format: 'pem' }),
+      roles: ['autonomous-submission-dispatcher-cycle-signer'],
       status: 'active',
     }],
   });
@@ -317,7 +438,7 @@ process.stdout.write(JSON.stringify({version:1,kind:'AutonomousSubmissionDispatc
       value: crypto.sign(
         null,
         pinnedExternalEvidenceSigningPayload(canaryPlaceholder),
-        pair.privateKey,
+        portalPair.privateKey,
       ).toString('base64'),
     }],
   });
@@ -327,6 +448,36 @@ process.stdout.write(JSON.stringify({version:1,kind:'AutonomousSubmissionDispatc
     receipt: canaryReceipt,
     authorityEnvelope: canaryAuthorityEnvelope,
   });
+  const canaryVerification = assertPinnedExternalEvidenceEnvelope({
+    envelope: canaryAuthorityEnvelope,
+    subjectKind: 'AutonomousSubmissionPortalReadinessCanaryReceipt',
+    subjectHash: canaryReceipt.canaryReceiptHash,
+    trustStore: portalTrustStore,
+    requiredRole: portalSignerRole,
+    expectedKeyIds: [portalSignerKeyId],
+    now: new Date(signedAt),
+    maximumLifetimeMs: privatePortalConfiguration.receiptMaximumLifetimeMs,
+  });
+  assert.equal(
+    assertAutonomousSubmissionPortalCanaryAuthorityIndependentFromDispatcher({
+      verificationReceipt: canaryVerification,
+      identity,
+    }).independent,
+    true,
+  );
+  assert.throws(
+    () => assertAutonomousSubmissionPortalCanaryAuthorityIndependentFromDispatcher({
+      verificationReceipt: canaryVerification,
+      identity: {
+        principalId: 'dispatcher:colliding',
+        signerIdentity: {
+          subjectId: 'portal-canary-authority',
+          publicKeySpkiHash: spkiHash(portalPair.publicKey),
+        },
+      },
+    }),
+    /canary_authority_not_independent_from_dispatcher/,
+  );
   const receipt = buildAutonomousSubmissionDispatcherCycleReceipt({
     challenge: published.challenge,
     cyclePlanHash: H('cycle-plan'),
@@ -339,9 +490,13 @@ process.stdout.write(JSON.stringify({version:1,kind:'AutonomousSubmissionDispatc
     portalBindingVerified: true,
     portalVerifierReady: true,
     portalIdentityIndependenceReady: true,
+    portalFullProductionReady: true,
     livePortalCanaryVerified: true,
     livePortalCanaryReceiptHash: canaryReceipt.canaryReceiptHash,
-    livePortalCanaryVerificationReceiptHash: H('portal-canary-verification'),
+    livePortalCanaryVerificationReceiptHash:
+      canaryVerification.pinnedExternalEvidenceVerificationReceiptHash,
+    livePortalCanaryVerificationVerifiedAt: canaryVerification.verifiedAt,
+    livePortalCanaryAuthorityIndependentFromDispatcher: true,
     livePortalCanaryExternalActionPerformed: false,
     livePortalCanaryEvidence: canaryEvidence,
     cutoverId: cutover.cutoverId,
@@ -363,7 +518,9 @@ process.stdout.write(JSON.stringify({version:1,kind:'AutonomousSubmissionDispatc
     receipt,
     challenge: published.challenge,
     signingConfiguration: signing,
-    environment: { TEST_KEY: Buffer.from(privateKey).toString('base64') },
+    environment: {
+      TEST_KEY: Buffer.from(dispatcherPrivateKey).toString('base64'),
+    },
   });
   publishAutonomousSubmissionDispatcherCycleEnvelope({
     runtimeRoot,
@@ -377,6 +534,8 @@ process.stdout.write(JSON.stringify({version:1,kind:'AutonomousSubmissionDispatc
       HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_CONFIG: portalDescriptorPath,
       HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIGURATION_HASH:
         portalConfigurationHash,
+      HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_HASH:
+        portalDescriptorHash,
     },
     now: new Date(NOW.getTime() + 2_000),
     planHash,
@@ -390,6 +549,40 @@ process.stdout.write(JSON.stringify({version:1,kind:'AutonomousSubmissionDispatc
     kind: 'dispatcher-cycles',
     hash: published.challengeHash,
   });
+  const wrongVerificationHashReceipt = buildAutonomousSubmissionDispatcherCycleReceipt({
+    ...receipt,
+    challenge: published.challenge,
+    livePortalCanaryVerificationReceiptHash: H('wrong-canary-verification'),
+  });
+  const dispatcherSignedWrongVerificationHash =
+    signAutonomousSubmissionDispatcherCycleReceipt({
+      receipt: wrongVerificationHashReceipt,
+      challenge: published.challenge,
+      signingConfiguration: signing,
+      environment: {
+        TEST_KEY: Buffer.from(dispatcherPrivateKey).toString('base64'),
+      },
+    });
+  writeJson(cyclePath, dispatcherSignedWrongVerificationHash, 0o640);
+  const wrongVerificationHash = inspectAutonomousSubmissionDispatcherReadiness({
+    runtimeRoot,
+    environment: {
+      HEPTA_SUBMISSION_DISPATCHER_IDENTITY_CONFIG_PATH: identityPath,
+      HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_CONFIG: portalDescriptorPath,
+      HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIGURATION_HASH:
+        portalConfigurationHash,
+      HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_HASH:
+        portalDescriptorHash,
+    },
+    now: new Date(NOW.getTime() + 2_000),
+    planHash,
+    idempotencyKey,
+  });
+  assert.equal(wrongVerificationHash.signatureVerified, true);
+  assert.equal(wrongVerificationHash.ready, false);
+  assert.ok(wrongVerificationHash.blockers.includes(
+    'autonomous_submission_dispatcher_portal_canary_not_independently_verified',
+  ));
   const forgedPortalEnvelope = {
     ...canaryAuthorityEnvelope,
     signatures: [{
@@ -412,7 +605,9 @@ process.stdout.write(JSON.stringify({version:1,kind:'AutonomousSubmissionDispatc
     receipt: forgedReceipt,
     challenge: published.challenge,
     signingConfiguration: signing,
-    environment: { TEST_KEY: Buffer.from(privateKey).toString('base64') },
+    environment: {
+      TEST_KEY: Buffer.from(dispatcherPrivateKey).toString('base64'),
+    },
   });
   writeJson(cyclePath, dispatcherSignedForgery, 0o640);
   const forgedCanary = inspectAutonomousSubmissionDispatcherReadiness({
@@ -422,6 +617,8 @@ process.stdout.write(JSON.stringify({version:1,kind:'AutonomousSubmissionDispatc
       HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_CONFIG: portalDescriptorPath,
       HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIGURATION_HASH:
         portalConfigurationHash,
+      HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_HASH:
+        portalDescriptorHash,
     },
     now: new Date(NOW.getTime() + 2_000),
     planHash,
@@ -439,6 +636,8 @@ process.stdout.write(JSON.stringify({version:1,kind:'AutonomousSubmissionDispatc
       HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_CONFIG: portalDescriptorPath,
       HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIGURATION_HASH:
         portalConfigurationHash,
+      HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_HASH:
+        portalDescriptorHash,
     },
     now: new Date(NOW.getTime() + 400_000),
     planHash,
@@ -453,6 +652,8 @@ process.stdout.write(JSON.stringify({version:1,kind:'AutonomousSubmissionDispatc
       HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_CONFIG: portalDescriptorPath,
       HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIGURATION_HASH:
         portalConfigurationHash,
+      HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_HASH:
+        portalDescriptorHash,
     },
     now: new Date(NOW.getTime() + 2_000),
     planHash,
@@ -473,6 +674,8 @@ test('missing challenge never bypasses portal, identity, or storage readiness', 
     portal: Object.freeze({}),
     outbox: Object.freeze({}),
     submissionRequestVerifier: Object.freeze({}),
+    portalFullProductionReady: true,
+    livePortalCanaryReady: true,
     deliver,
   };
   for (const readiness of [
@@ -490,6 +693,18 @@ test('missing challenge never bypasses portal, identity, or storage readiness', 
       portalVerifierReady: true,
       portalIdentityIndependenceReady: true,
       storagePreflight: { ready: false },
+    },
+    {
+      portalVerifierReady: true,
+      portalIdentityIndependenceReady: true,
+      portalFullProductionReady: false,
+      storagePreflight: { ready: true },
+    },
+    {
+      portalVerifierReady: true,
+      portalIdentityIndependenceReady: true,
+      livePortalCanaryReady: false,
+      storagePreflight: { ready: true },
     },
   ]) {
     assert.deepEqual(await deliverAutonomousSubmissionStatesIfReady({

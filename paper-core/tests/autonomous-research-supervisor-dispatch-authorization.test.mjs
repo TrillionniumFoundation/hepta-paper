@@ -114,11 +114,20 @@ function machinePlan(
     sourceKind: golden ? 'recurring-golden' : 'machine',
     sourceAuthorityHash: H('source-authority'),
   });
-  const preparation = Object.freeze({
+  const preparationPayload = Object.freeze({
+    version: 1,
+    kind: 'AutonomousResearchLoopPreparationReport',
     launchMode: intake.launchMode,
     autonomousResearchProviderConfigurationHash: providerConfigurationHash,
     autonomousResearchMachineIntakeAdmissionHash:
       intakeAdmission.autonomousResearchMachineIntakeAdmissionHash,
+  });
+  const preparation = Object.freeze({
+    ...preparationPayload,
+    autonomousResearchLoopPreparationReportHash: hashRecord(
+      'AutonomousResearchLoopPreparationReport',
+      preparationPayload,
+    ),
   });
   const executionPayload = Object.freeze({
     version: 1,

@@ -35,3 +35,29 @@ test('generated LaTeX sanitizer converts model newline tokens and table row endi
   assert.match(source, /\\textbf\{Specifically \*time\*\.\}\\end\{itemize\}/);
   assert.doesNotMatch(source, /\\end\{subsection\}/);
 });
+
+test('generated LaTeX sanitizer preserves comments and HEPTA authority markers byte-for-byte', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-latex-sanitizer-comments-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const protectedComments = [
+    '% HEPTA_EMPIRICAL_CLAIM_BEGIN {"claimId":"empirical:fixture","minimumEffect":10%}',
+    '% literal model token \\\\n and HEPTA_FORMAL_SUPPORT_END must stay unchanged',
+    '% HEPTA_EMPIRICAL_CLAIM_END empirical:fixture',
+  ];
+  const nativePrivateUseSequence = '\uE000HEPTA-COMMENT-\uE001';
+  fs.writeFileSync(
+    path.join(root, 'main.tex'),
+    `${protectedComments[0]}\nBody HEPTA_EMPIRICAL_CLAIM at 10% noise ${nativePrivateUseSequence}.\n${protectedComments[1]}\n${protectedComments[2]}\n`,
+  );
+  const receipt = sanitizeGeneratedLatex({
+    workspacePath: root,
+    manuscriptPath: 'main.tex',
+  });
+  const source = fs.readFileSync(path.join(root, 'main.tex'), 'utf8');
+  for (const comment of protectedComments) assert.ok(source.includes(comment));
+  assert.match(source, /Body HEPTA\\_EMPIRICAL\\_CLAIM at 10\\% noise/);
+  assert.ok(source.includes(nativePrivateUseSequence));
+  assert.equal(receipt.uppercaseIdentifierUnderscoreEscapes, 2);
+  assert.equal(receipt.numericPercentEscapes, 1);
+  assert.equal(receipt.literalNewlineReplacements, 0);
+});

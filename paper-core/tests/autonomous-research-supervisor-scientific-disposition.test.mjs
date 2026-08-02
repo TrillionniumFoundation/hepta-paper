@@ -8,6 +8,9 @@ import test from 'node:test';
 import {
   createAutonomousResearchSupervisorStateRepository,
 } from '../../paper-adapters/automation/autonomous-research-supervisor-state-repository.mjs';
+import {
+  canonicalCampaignDefinition,
+} from '../../paper-adapters/persistence/campaign-definition-codec.mjs';
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { createSqliteCampaignStore } from '../../paper-adapters/persistence/sqlite-campaign-store.mjs';
 import {
@@ -229,7 +232,7 @@ test('campaign failure persistence retains the formal exhaustion certificate has
   const campaignStore = createSqliteCampaignStore({ store, clock });
   const value = campaign('proof-persistence', 'running');
   const nodeId = `${value.campaignId}:formal-verify`;
-  const plan = {
+  const planPayload = canonicalCampaignDefinition({
     version: 2,
     kind: 'PaperCampaignPlan',
     campaignId: value.campaignId,
@@ -254,6 +257,10 @@ test('campaign failure persistence retains the formal exhaustion certificate has
       priority: 10,
       maxAttempts: 1,
     }],
+  });
+  const plan = {
+    ...planPayload,
+    campaignPlanHash: hashRecord('PaperCampaignPlan', planPayload),
   };
   campaignStore.createCampaign(plan);
   const certificateHash = H('persisted-formal-failure-certificate');

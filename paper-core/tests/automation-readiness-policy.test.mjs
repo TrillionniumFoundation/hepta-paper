@@ -48,7 +48,11 @@ function readyInput() {
     campaignStoreSchema: { status: 'scoped_schema_version_verified' },
     campaignStoreSchemaBlockers: [],
     operationalIntegrity: { queryReady: true, degraded: false },
-    researchExecutionReleaseAttestor: { ready: true, productionReady: true },
+    researchExecutionReleaseAttestor: {
+      ready: true,
+      productionReady: true,
+      fullProductionReady: true,
+    },
     runtimeImageReproducibility: { ready: true, blockers: [] },
     fullResearchQualification: {
       ready: true,
@@ -74,6 +78,7 @@ test('readiness policy requires every independent runtime and qualification bind
     },
     (input) => { input.researchExecutionReleaseAttestor.ready = false; },
     (input) => { input.researchExecutionReleaseAttestor.productionReady = false; },
+    (input) => { input.researchExecutionReleaseAttestor.fullProductionReady = false; },
     (input) => {
       input.runtimeImageReproducibility = {
         ready: false,
@@ -470,6 +475,11 @@ test('automation-status keeps release-attestor verification behind an explicit l
   assert.doesNotMatch(source, /activeReleaseAttestorVerification:\s*true/);
   assert.doesNotMatch(source, /activeReleaseAttestorVerification:\s*false/);
   assert.match(
+    source,
+    /activeFormalSandboxProbe:\s*args\['live-formal-sandbox-probe'\]\s*===\s*true/,
+  );
+  assert.doesNotMatch(source, /activeFormalSandboxProbe:\s*true/);
+  assert.match(
     packageDocument.scripts['automation:research-status'],
     /--live-provider-canary --live-release-attestor$/,
   );
@@ -488,8 +498,8 @@ test('automation-status help exits without performing readiness actions', () => 
   assert.deepEqual(JSON.parse(run.stdout), {
     version: 2,
     kind: 'AutomationStatusUsage',
-    usage: 'automation-status [--json] [--handoff] [--deployment-environment-file PATH] [--root PATH] [--runtime-root PATH] [--require-full-research] [--require-fully-autonomous] [--live-provider-canary] [--live-release-attestor]',
-    mutation: 'no-canonical-state-write',
+    usage: 'automation-status [--json] [--handoff] [--deployment-environment-file PATH] [--root PATH] [--runtime-root PATH] [--require-full-research] [--require-fully-autonomous] [--live-formal-sandbox-probe] [--live-provider-canary] [--live-release-attestor]',
+    mutation: 'formal probe qualification receipt only with --live-formal-sandbox-probe',
     localObservationEffects: 'runtime-metadata-and-daemon-probes-may-change',
     externalAction: 'argument-dependent',
   });

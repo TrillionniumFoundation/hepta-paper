@@ -49,11 +49,8 @@ export const STRICT_FULL_AUTO_ACCEPTANCE_COMPLETE_RENEWAL_STEP_ORDER = Object.fr
 ]);
 
 export const STRICT_FULL_AUTO_ACCEPTANCE_REFERENCE_POLICY = Object.freeze({
-  'research-author-principal': 'public-reference',
   'research-author-credential-root': 'opaque-directory-reference',
-  'formal-reviewer-principal': 'public-reference',
-  'formal-reviewer-credential-root': 'opaque-directory-reference',
-  'formal-reviewer-service-credential-root': 'opaque-directory-reference',
+  'research-author-identity-config': 'public-reference',
   'online-state-authority-principal': 'public-reference',
   'online-state-authority-process-config': 'public-reference',
   'runtime-reproducibility-principal': 'public-reference',
@@ -89,11 +86,8 @@ export const STRICT_FULL_AUTO_ACCEPTANCE_FINAL_VERIFICATION_STEP_ID =
   'final-aggregate-live-verification';
 
 export const CORE_PRINCIPAL_ENVIRONMENT_REFERENCES = Object.freeze({
-  HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG: 'research-author-principal',
-  HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG_HASH: 'research-author-principal',
   HEPTA_RESEARCH_AUTHOR_CODEX_HOME: 'research-author-credential-root',
-  HEPTA_REVIEWER_PRINCIPAL_POOL_CONFIG: 'formal-reviewer-principal',
-  HEPTA_FORMAL_REVIEW_CODEX_HOME: 'formal-reviewer-credential-root',
+  HEPTA_FORMAL_REVIEW_CODEX_HOME: 'research-author-credential-root',
 });
 
 export const READINESS_ENVIRONMENT_REFERENCES = Object.freeze({
@@ -111,8 +105,12 @@ export const READINESS_ENVIRONMENT_REFERENCES = Object.freeze({
   HEPTA_PRIOR_ART_SERVICE_TOKEN_FILE: 'prior-art-service-credential-reference',
   HEPTA_EXTERNAL_REPLAY_CONFIG: 'external-replay-config',
   HEPTA_EXTERNAL_REPLAY_SERVICE_TOKEN_FILE: 'external-replay-credential-reference',
+  HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG: 'research-author-identity-config',
+  HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG_HASH: 'research-author-identity-config',
   HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG: 'release-attestor-config',
+  HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG_HASH: 'release-attestor-config',
   HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG: 'runtime-reproducibility-principal',
+  HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG_HASH: 'runtime-reproducibility-principal',
   HEPTA_FORMAL_SANDBOX_RUNTIME_CONFIG: 'formal-sandbox-runtime-config',
   HEPTA_FORMAL_SANDBOX_RUNTIME_CONFIG_HASH: 'formal-sandbox-runtime-config',
   HEPTA_PRODUCTION_MATHLIB_BUILD_AUTHORITY_CONFIG:
@@ -128,7 +126,18 @@ export const READINESS_ENVIRONMENT_REFERENCES = Object.freeze({
     'submission-portal-descriptor-config',
   HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIGURATION_HASH:
     'submission-portal-descriptor-config',
+  HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_HASH:
+    'submission-portal-descriptor-config',
   HEPTA_SUBMISSION_DISPATCHER_IDENTITY_CONFIG_PATH: 'submission-dispatcher-principal',
+});
+
+const SUBMISSION_PORTAL_ENVIRONMENT_REFERENCES = Object.freeze({
+  HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_CONFIG:
+    'submission-portal-descriptor-config',
+  HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIGURATION_HASH:
+    'submission-portal-descriptor-config',
+  HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_HASH:
+    'submission-portal-descriptor-config',
 });
 
 export const STEP_INVOCATION_POLICY = Object.freeze({
@@ -344,16 +353,20 @@ export const STEP_INVOCATION_POLICY = Object.freeze({
         '--idempotency-key', '--portal-id', '--portal-configuration-hash',
         '--portal-descriptor-hash'], requiredFlagValues: { '--action': 'publish' },
       planHashValueFlag: '--plan-hash', idempotencyValueFlag: '--idempotency-key',
-      environmentReferences: {}, assertions: [['/ready', true]] }),
+      environmentReferences: SUBMISSION_PORTAL_ENVIRONMENT_REFERENCES,
+      assertions: [['/ready', true]] }),
     verify: Object.freeze({ command: 'autonomous-submission-dispatcher-challenge',
       requiredArguments: ['--action', 'status', '--plan-hash', '@acceptance-plan-hash',
         '--idempotency-key', '--portal-id', '--portal-configuration-hash',
         '--portal-descriptor-hash'], requiredFlagValues: { '--action': 'status' },
       planHashValueFlag: '--plan-hash', idempotencyValueFlag: '--idempotency-key',
       environmentReferences: {
+        ...SUBMISSION_PORTAL_ENVIRONMENT_REFERENCES,
         HEPTA_SUBMISSION_DISPATCHER_IDENTITY_CONFIG_PATH: 'submission-dispatcher-principal',
       }, assertions: [['/ready', true], ['/portalBindingVerified', true],
-        ['/livePortalCanaryVerified', true]] }),
+        ['/portalConfigurationIdentityPinned', true], ['/portalDescriptorPinned', true],
+        ['/portalFullProductionReady', true], ['/livePortalCanaryVerified', true],
+        ['/livePortalCanaryAuthorityIndependentFromDispatcher', true]] }),
   }),
 });
 
@@ -378,7 +391,6 @@ export const STEP_ARGUMENT_GRAMMAR = Object.freeze({
       booleanFlags: ['--execute'],
       valueFlags: ['--action', '--plan-id', '--machine-intake-config',
         '--topic-producer-profile', '--dataset-root',
-        '--provider-canary-pair-maximum-cost-usd',
         '--runtime-reproducibility-maximum-attempts-per-epoch',
         '--runtime-reproducibility-maximum-cost-usd-per-epoch'],
     }),

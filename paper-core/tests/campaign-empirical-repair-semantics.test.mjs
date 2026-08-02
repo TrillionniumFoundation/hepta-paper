@@ -20,6 +20,9 @@ import {
   assertLatexTechnicalRepairPreservesScientificContent,
 } from '../../paper-application/automation/campaign-empirical-repair-policy.mjs';
 import {
+  buildCampaignEmpiricalSpec,
+} from '../../paper-application/automation/campaign-empirical-spec-builder.mjs';
+import {
   buildCampaignAgentExecutionRequest,
   empiricalCodeWorkspaceMutationPolicy,
 } from '../../paper-application/automation/campaign-agent-policy.mjs';
@@ -28,6 +31,7 @@ import {
   assertOutcomeBoundManuscriptMutationAllowed,
 } from '../../paper-application/automation/campaign-confirmatory-lineage-policy.mjs';
 import { buildCampaignModeNodes } from '../../paper-domain/automation/campaign-mode-graph.mjs';
+import { buildCampaignBenchmarkSelector } from '../../paper-domain/automation/campaign-benchmark-selector.mjs';
 import {
   collectCampaignManuscriptAgentExecutionReceipts,
 } from '../../paper-application/automation/campaign-manuscript-agent-receipts.mjs';
@@ -51,6 +55,13 @@ test('empirical auto-repair eligibility is technical-only and excludes scientifi
   assert.equal(empiricalTechnicalRepairEligible({
     status: 'empirical_execution_failed', blockers: ['os_sandbox_command_failed'],
   }, { language: 'python' }), true);
+  assert.equal(empiricalTechnicalRepairEligible({
+    status: 'empirical_execution_failed', failureClass: 'technical_failure', repairEligible: true,
+    blockers: ['benchmark_arm_adapter_unavailable:treatment:scoped_path_missing_or_unreadable'],
+  }, { language: 'latex' }), false);
+  assert.equal(empiricalTechnicalRepairEligible({
+    status: 'empirical_execution_failed', blockers: ['os_sandbox_command_failed'],
+  }, { language: 'latex' }), true);
   assert.equal(empiricalResultContractTechnicalRepairEligible({
     blockers: ['empirical_metric_inconsistent:mean_score'],
   }), false);
@@ -76,6 +87,175 @@ test('LaTeX technical repair preserves scientific tokens and rejects result chan
       && error.message === 'campaign_latex_repair_scientific_content_changed'
       && error.receipt.status === 'latex_technical_repair_content_changed',
   );
+});
+
+test('LaTeX technical repair rejects deletion or rewriting of HEPTA authority markers', () => {
+  const marker =
+    '% HEPTA_EMPIRICAL_ASSERTION_BEGIN {"version":1,"assertionId":"fixture"}';
+  const end = '% HEPTA_EMPIRICAL_ASSERTION_END fixture';
+  const before = `\\documentclass{article}\n${marker}\nRegistered result is negative.\n${end}\n`;
+  assert.throws(
+    () => assertLatexTechnicalRepairPreservesScientificContent({
+      before,
+      after: '\\documentclass{article}\nRegistered result is negative.\n',
+    }),
+    (error) => error.retryable === false
+      && error.message === 'campaign_latex_repair_authority_structure_changed'
+      && error.receipt.status === 'latex_technical_repair_authority_structure_changed'
+      && error.receipt.beforeAuthorityMarkerCount === 2
+      && error.receipt.afterAuthorityMarkerCount === 0,
+  );
+  const receipt = assertLatexTechnicalRepairPreservesScientificContent({
+    before,
+    after: `\\documentclass{article}\n\\usepackage{microtype}\n${marker}\nRegistered result is negative.\n${end}\n`,
+  });
+  assert.equal(receipt.status, 'latex_technical_repair_content_preserved');
+  assert.equal(receipt.beforeAuthorityStructureHash, receipt.afterAuthorityStructureHash);
+  assert.throws(
+    () => assertLatexTechnicalRepairPreservesScientificContent({
+      before,
+      after: `\\documentclass{article}\nRegistered result is negative.\n${marker}\n${end}\n`,
+    }),
+    (error) => error.retryable === false
+      && error.message === 'campaign_latex_repair_authority_structure_changed',
+  );
+});
+
+test('compile specs never inherit benchmark or dataset execution authority', () => {
+  const built = buildCampaignEmpiricalSpec({
+    primitives: {
+      workspace: {
+        findEmpiricalEntrypoint: () => 'main.tex',
+        outputDirectory: () => '/tmp/hepta-compile-output',
+        hashFile: () => `sha256:${'a'.repeat(64)}`,
+      },
+    },
+    campaign: {
+      campaignId: 'campaign',
+      spec: {
+        benchmarkId: 'finance_asset_pricing_benchmark',
+        benchmarkSelector: { intentionallyInvalidIfConsumed: true },
+        datasetMounts: [{
+          name: 'must-not-reach-latex',
+          source: '/datasets/private',
+          readOnly: true,
+        }],
+      },
+    },
+    node: {
+      nodeId: 'compile',
+      kind: 'compile',
+      attemptId: 'attempt-1',
+      spec: { language: 'latex' },
+    },
+    context: {
+      empirical: {
+        empirical: true,
+        compile: true,
+        primary: false,
+        reproduction: false,
+        revalidate: false,
+      },
+    },
+    workspace: '/workspace',
+    manuscript: 'main.tex',
+    executionBudget: {
+      remainingWallTimeMs: 30_000,
+      absoluteDeadlineEpochMs: Date.now() + 30_000,
+    },
+  });
+  assert.equal(built.language, 'latex');
+  assert.equal(built.benchmarkSelector, null);
+  assert.deepEqual(built.datasetMounts, []);
+  assert.equal(built.spec.benchmarkSelector, null);
+  assert.deepEqual(built.spec.datasetMounts, []);
+  assert.deepEqual(built.spec.outputPaths, ['main.pdf']);
+  assert.equal(built.spec.requireSeparateOutputRoot, true);
+  assert.equal(Object.keys(built.spec.env).some((key) => key.startsWith('HEPTA_DATASET_')), false);
+  assert.equal('HEPTA_BENCHMARK_ID' in built.spec.env, false);
+});
+
+test('rejected LaTeX repair preserves the original execution blocker in a hashed failure receipt', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-latex-repair-rejection-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, 'runtime'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, 'main.tex'),
+    '% HEPTA_EMPIRICAL_ASSERTION_BEGIN {"version":1,"assertionId":"fixture"}\n'
+      + 'Registered result is negative.\n'
+      + '% HEPTA_EMPIRICAL_ASSERTION_END fixture\n',
+  );
+  let empiricalCalls = 0;
+  const executor = createCampaignNodeExecutor({
+    runtimeRoot: path.join(root, 'runtime'),
+    empiricalExecutor: {
+      execute() {
+        empiricalCalls += 1;
+        return {
+          version: 1,
+          kind: 'MultiLanguageEmpiricalReceipt',
+          language: 'latex',
+          status: 'empirical_execution_failed',
+          failureClass: 'technical_failure',
+          repairEligible: true,
+          blockers: ['os_sandbox_command_failed'],
+          multiLanguageEmpiricalReceiptHash: `sha256:${'b'.repeat(64)}`,
+          stderrTail: 'fixture LaTeX diagnostic',
+        };
+      },
+    },
+    agentExecutor: {
+      async execute(input) {
+        assert.equal(input.role, 'latex-repair');
+        fs.writeFileSync(path.join(input.workspacePath, 'main.tex'), 'Registered result is negative.\n');
+        return { agentExecutionReceiptHash: `sha256:${'c'.repeat(64)}` };
+      },
+    },
+  });
+  await assert.rejects(
+    () => executor.execute({
+      campaign: {
+        campaignId: 'campaign-latex-rejection',
+        paperId: 'paper-latex-rejection',
+        spec: {
+          sourceWorkspace: root,
+          manuscript: 'main.tex',
+          languages: ['latex'],
+          datasetMounts: [],
+        },
+      },
+      node: {
+        nodeId: 'compile',
+        kind: 'compile',
+        roundIndex: 0,
+        spec: { language: 'latex' },
+      },
+      allNodes: [],
+    }),
+    (error) => {
+      const {
+        latexTechnicalRepairFailureReceiptHash,
+        receiptHash,
+        ...receiptPayload
+      } = error.receipt;
+      return error.retryable === false
+        && error.message === 'campaign_latex_repair_authority_structure_changed'
+        && error.receipt.kind === 'LatexTechnicalRepairFailureReceipt'
+        && error.receipt.status === 'latex_technical_repair_rejected'
+        && error.receipt.failedExecutionReceiptHash === `sha256:${'b'.repeat(64)}`
+        && error.receipt.failedExecutionFailureClass === 'technical_failure'
+        && error.receipt.failedExecutionRepairEligible === true
+        && error.receipt.failedExecutionBlockers.includes('os_sandbox_command_failed')
+        && /^sha256:[a-f0-9]{64}$/.test(error.receipt.failedExecutionDiagnosticHash)
+        && /^sha256:[a-f0-9]{64}$/.test(error.receipt
+          .latexTechnicalRepairContentPreservationReceiptHash)
+        && /^sha256:[a-f0-9]{64}$/.test(latexTechnicalRepairFailureReceiptHash)
+        && receiptHash === latexTechnicalRepairFailureReceiptHash
+        && hashRecord('LatexTechnicalRepairFailureReceipt', receiptPayload)
+          === latexTechnicalRepairFailureReceiptHash;
+    },
+  );
+  assert.equal(empiricalCalls, 1);
 });
 
 test('coder agents receive an exact empirical-source allowlist and an outcome-blind workspace', async (t) => {
@@ -107,7 +287,22 @@ test('coder agents receive an exact empirical-source allowlist and an outcome-bl
     'experiments/run.baseline.py',
     'experiments/run.ablation.py',
   ]);
-
+  const benchmarkRequest = buildCampaignAgentExecutionRequest({
+    campaign: {
+      campaignId: 'campaign', paperId: 'paper',
+      spec: {
+        datasetMounts: [],
+        benchmarkSelector: buildCampaignBenchmarkSelector({ benchmarkId: 'ml_algorithm_benchmark' }),
+      },
+    },
+    node: { nodeId: 'coder-r', kind: 'coder-r', role: 'coder-r', roundIndex: 0, language: 'r' },
+    workspace: root,
+    manuscript: 'main.tex',
+    reviews: [],
+    executionBudget: { remainingTokenCount: 1024, remainingWallTimeMs: 30_000 },
+  });
+  assert.match(benchmarkRequest.instructions, /one response object for every case as \{caseId:case\.caseId/);
+  assert.match(benchmarkRequest.instructions, /never an array of bare scalars/);
   const delegate = {
     version: 1,
     kind: 'CoderContainmentFixtureAgent',
@@ -228,6 +423,37 @@ test('outcome-informed revision cannot mutate empirical code or reopen confirmat
     systemBenchmarkArmAdapterSetHash: hash('d'),
   }), (error) => error.message === 'campaign_outcome_informed_empirical_source_mutation_forbidden'
     && error.retryable === false);
+  const adapterSet = (readHash, sourceHash = hash('e')) => ({
+    version: 1,
+    kind: 'SystemBenchmarkArmAdapterSet',
+    entrypointConvention: 'sibling-arm-entrypoints-v1',
+    adapters: [{
+      version: 1,
+      kind: 'SystemBenchmarkArmAdapterIdentity',
+      arm: 'treatment',
+      relativePath: 'experiments/run.treatment.R',
+      sourceHash,
+      systemBenchmarkArmProtocolHash: hash('b'),
+      sourceReadReceiptHash: readHash,
+    }],
+    systemBenchmarkArmAdapterSetHash: readHash,
+  });
+  assert.equal(assertOutcomeBoundBenchmarkSourceUnchanged({
+    anchorFreeze,
+    anchorArmAdapterSet: adapterSet(hash('c')),
+    currentArmAdapterSet: adapterSet(hash('d')),
+    analysisProtocolHash: hash('a'),
+    systemBenchmarkArmProtocolSetHash: hash('b'),
+    systemBenchmarkArmAdapterSetHash: hash('d'),
+  }), true, 'volatile read-receipt identity must not look like source mutation');
+  assert.throws(() => assertOutcomeBoundBenchmarkSourceUnchanged({
+    anchorFreeze,
+    anchorArmAdapterSet: adapterSet(hash('c')),
+    currentArmAdapterSet: adapterSet(hash('d'), hash('f')),
+    analysisProtocolHash: hash('a'),
+    systemBenchmarkArmProtocolSetHash: hash('b'),
+    systemBenchmarkArmAdapterSetHash: hash('d'),
+  }), /campaign_outcome_informed_empirical_source_mutation_forbidden/);
 
   const nodes = buildCampaignModeNodes({
     campaignId: 'campaign', mode: 'full-campaign', rounds: 1, reviewers: 1,
@@ -255,6 +481,68 @@ test('manuscript agents without empirical outcomes cannot claim observed evidenc
     assert.doesNotMatch(request.instructions, /The empirical outcome is already observed/);
     assert.equal(request.context.empiricalOutcomeObserved, false);
   }
+});
+
+test('outcome-informed manuscript instructions expose only class-compatible evidence refs', () => {
+  const empiricalAuthorityHash = `sha256:${'a'.repeat(64)}`;
+  const proposalHash = `sha256:${'b'.repeat(64)}`;
+  const empiricalEntryHash = `sha256:${'c'.repeat(64)}`;
+  const theoremSpecificationHash = `sha256:${'d'.repeat(64)}`;
+  const evidenceRefBindings = [{
+    kind: 'proposal',
+    hash: proposalHash,
+    claimClasses: ['limitation', 'method', 'scope'],
+  }, {
+    kind: 'empirical_assertion_authority_entry',
+    hash: empiricalEntryHash,
+    claimClasses: ['interpretation'],
+  }];
+  const campaign = {
+    campaignId: 'campaign-evidence-ref-bindings',
+    paperId: 'paper-evidence-ref-bindings',
+    spec: {
+      datasetMounts: [],
+      scientificClaimAuthority: {
+        claimAuthorityType: 'machine-policy-authorized',
+      },
+    },
+  };
+  const requestInput = {
+    campaign,
+    node: {
+      nodeId: 'campaign-evidence-ref-bindings:0:manuscript-integrate',
+      kind: 'manuscript-integrate',
+      role: 'writer',
+      roundIndex: 0,
+    },
+    workspace: '/tmp/evidence-ref-bindings',
+    manuscript: 'main.tex',
+    reviews: [],
+    empiricalAssertionAuthority: {
+      empiricalAssertionAuthorityHash: empiricalAuthorityHash,
+      entryCount: 1,
+    },
+    empiricalOutcomeObserved: true,
+    executionBudget: { remainingTokenCount: 4096, remainingWallTimeMs: 60_000 },
+  };
+  const request = buildCampaignAgentExecutionRequest({
+    ...requestInput,
+    autonomousManuscriptEvidenceRefBindings: evidenceRefBindings,
+  });
+  assert.ok(request.instructions.includes(JSON.stringify(evidenceRefBindings)));
+  assert.deepEqual(
+    request.context.autonomousManuscriptEvidenceRefBindings,
+    evidenceRefBindings,
+  );
+  assert.match(request.instructions, /only when that block's claimClass appears/i);
+  assert.match(request.instructions, /THEOREM_SPEC\.json.*never manuscript evidenceRefs/i);
+  assert.match(request.instructions,
+    /formal_support as the sole formal theorem\/proof\/verification surface/i);
+  assert.equal(request.instructions.includes(theoremSpecificationHash), false);
+  assert.throws(
+    () => buildCampaignAgentExecutionRequest(requestInput),
+    /campaign_manuscript_evidence_ref_bindings_required/,
+  );
 });
 
 test('contained mutation retries tell the agent which isolated path was discarded', () => {
@@ -491,6 +779,32 @@ test('confirmatory or authorized-data execution failures never invoke a writable
   );
   assert.equal(empiricalCalls, 1);
   assert.equal(agentCalls, 0);
+
+  let timeoutAgentCalls = 0;
+  fs.mkdirSync(path.join(root, 'timeout-runtime'), { recursive: true });
+  const timeoutExecutor = createCampaignNodeExecutor({
+    runtimeRoot: path.join(root, 'timeout-runtime'),
+    empiricalExecutor: { execute() {
+      return {
+        status: 'empirical_execution_failed',
+        blockers: ['benchmark_arm_batch_runner:treatment:os_sandbox_command_timed_out'],
+      };
+    } },
+    agentExecutor: { async execute() {
+      timeoutAgentCalls += 1;
+      throw new Error('confirmatory timeout must retry frozen execution without writable repair');
+    } },
+  });
+  await assert.rejects(
+    () => timeoutExecutor.execute({
+      campaign: { campaignId: 'timeout-campaign', paperId: 'paper', spec: { sourceWorkspace: root, languages: ['python'], datasetMounts: [datasetMount] } },
+      node: { nodeId: 'timeout-node', kind: 'empirical', roundIndex: 0, spec: { language: 'python' } },
+      allNodes: [],
+    }),
+    (error) => error.retryable === true
+      && error.message === 'campaign_confirmatory_frozen_execution_retry_required:empirical:empirical-code',
+  );
+  assert.equal(timeoutAgentCalls, 0);
 
   let artifactAgentCalls = 0;
   fs.mkdirSync(path.join(root, 'artifact-runtime'), { recursive: true });

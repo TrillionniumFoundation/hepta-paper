@@ -14,40 +14,137 @@ import {
   createExternalKmsReleaseSignerBackend,
   RESEARCH_EXECUTION_RELEASE_SIGNER_PROBE_ROLE,
 } from './research-execution-release-signer-command-backend.mjs';
+import {
+  verifyResearchExecutionReleaseKmsHardwareAttestationBundle,
+} from './research-execution-release-kms-hardware-attestation.mjs';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  openPinnedRegularFileSync,
+  samePinnedFileIdentity,
+} from '../runtime/pinned-file-reader.mjs';
+import { hasExactObjectKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 
 const DEFAULT_CONFIG_NAME = 'RESEARCH_EXECUTION_RELEASE_ATTESTOR.json';
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{2,159}$/;
 const SAFE_VERSION = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,159}$/;
 const SAFE_ORGANIZATION = /^[A-Za-z0-9][A-Za-z0-9 ._():-]{0,159}$/;
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
+const LOCAL_CONFIGURATION_KEYS = Object.freeze([
+  'algorithm', 'attestationLifetimeSeconds', 'effectiveFrom', 'expiresAt',
+  'keyId', 'kind', 'organization', 'privateKeyPath', 'revoked', 'role',
+  'status', 'subjectId', 'version',
+]);
+const LOCAL_CONFIGURATION_KEYS_WITH_VERSION = Object.freeze([
+  ...LOCAL_CONFIGURATION_KEYS,
+  'keyVersion',
+]);
+const EXTERNAL_CONFIGURATION_KEYS = Object.freeze([
+  'attestationLifetimeSeconds', 'backend', 'kind', 'status', 'trustSet',
+  'version',
+]);
+const EXTERNAL_CONFIGURATION_V3_KEYS = Object.freeze([
+  ...EXTERNAL_CONFIGURATION_KEYS,
+  'hardwareAuthorityAttestation',
+]);
+const TRUST_SET_KEYS = Object.freeze(['keys', 'kind', 'version']);
+const TRUST_KEY_KEYS = Object.freeze([
+  'algorithm', 'effectiveFrom', 'expiresAt', 'keyId', 'keyVersion',
+  'organization', 'publicKeyPath', 'revokedAt', 'role', 'status', 'subjectId',
+]);
+const COMMAND_KEYS = Object.freeze([
+  'args', 'credentialRoot', 'environmentAllowlist', 'executable',
+  'principalId', 'protocol', 'serviceId', 'timeoutMs',
+]);
+const EXTERNAL_BACKEND_KEYS = Object.freeze([
+  'activeKeyId', 'activeKeyVersion', 'algorithm', 'backendId',
+  'backendVersion', 'externalSignerProcess', 'hardwareProtected', 'kind',
+  'privateKeyExportable', 'probeAttestor', 'probeCommand', 'signerCommand',
+]);
+const EXTERNAL_BACKEND_V3_KEYS = Object.freeze([
+  ...EXTERNAL_BACKEND_KEYS,
+  'credentialGenerationIdentityHash', 'keyResourceIdentityHash', 'kmsProvider',
+  'providerAccountIdentityHash',
+]);
+const DEDICATED_UID_BACKEND_KEYS = Object.freeze([
+  ...EXTERNAL_BACKEND_KEYS,
+  'assuranceProfile',
+  'threatBoundary',
+]);
+const HARDWARE_AUTHORITY_ATTESTATION_KEYS = Object.freeze([
+  'bundlePath', 'challengeHash', 'signerKeyIds', 'trustStoreHash',
+]);
 
-function privateOwnedRegularFile(candidate, maximumBytes) {
+function readIntegrityRegularFile(candidate, {
+  maximumBytes,
+  privateFile = false,
+  errorCode,
+} = {}) {
+  let pinned = null;
   try {
     const requested = path.resolve(candidate);
-    const stat = fs.lstatSync(requested);
-    const currentUid = typeof process.getuid === 'function' ? process.getuid() : stat.uid;
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.uid !== currentUid
-      || (stat.mode & 0o077) !== 0 || stat.size < 1 || stat.size > maximumBytes
-      || fs.realpathSync(requested) !== requested) return null;
-    return fs.readFileSync(requested, 'utf8');
-  } catch { return null; }
+    const resolved = fs.realpathSync(requested);
+    if (resolved !== requested) throw new Error(errorCode);
+    pinned = openPinnedRegularFileSync(requested, { errorCode });
+    const stat = pinned.opened;
+    const currentUid = BigInt(
+      typeof process.getuid === 'function' ? process.getuid() : Number(stat.uid),
+    );
+    if (stat.nlink !== 1n || stat.size < 1n || stat.size > BigInt(maximumBytes)
+      || (privateFile
+        ? stat.uid !== currentUid || (stat.mode & 0o077n) !== 0n
+        : (stat.uid !== 0n && stat.uid !== currentUid)
+          || (stat.mode & 0o022n) !== 0n)) {
+      throw new Error(errorCode);
+    }
+    const bytes = fs.readFileSync(pinned.descriptor);
+    const after = fs.fstatSync(pinned.descriptor, { bigint: true });
+    const pathAfter = fs.lstatSync(requested, { bigint: true });
+    if (BigInt(bytes.length) !== stat.size
+      || !samePinnedFileIdentity(stat, after)
+      || !samePinnedFileIdentity(after, pathAfter)) {
+      throw new Error(errorCode);
+    }
+    return Object.freeze({
+      path: requested,
+      bytes,
+      fileHash: hashBytes(bytes),
+    });
+  } catch {
+    return null;
+  } finally {
+    if (pinned?.descriptor !== undefined) fs.closeSync(pinned.descriptor);
+  }
+}
+
+function privateOwnedRegularFile(candidate, maximumBytes) {
+  return readIntegrityRegularFile(candidate, {
+    maximumBytes,
+    privateFile: true,
+    errorCode: 'research_execution_release_attestor_private_file_invalid',
+  });
 }
 
 function integrityPublicKeyFile(candidate) {
-  const requested = path.resolve(String(candidate || ''));
-  const resolved = fs.realpathSync(requested);
-  const stat = fs.statSync(resolved);
-  if (requested !== resolved || !stat.isFile() || stat.size < 1 || stat.size > 64 * 1024
-    || (stat.mode & 0o022) !== 0) {
+  const read = readIntegrityRegularFile(String(candidate || ''), {
+    maximumBytes: 64 * 1024,
+    privateFile: false,
+    errorCode: 'research_execution_release_attestor_integrity_file_invalid',
+  });
+  if (!read) {
     throw new Error('research_execution_release_attestor_integrity_file_invalid');
   }
-  return resolved;
+  return read;
 }
 
 function canonicalTimestamp(value) {
   const timestamp = typeof value === 'string' ? Date.parse(value) : Number.NaN;
   return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value ? timestamp : null;
+}
+
+function organizationIdentity(value) {
+  return typeof value === 'string'
+    ? value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase()
+    : null;
 }
 
 function resolveRelative(candidate, configPath) {
@@ -68,15 +165,18 @@ function configurationDisclosesPrivateKey(value) {
 
 function publicSigner(value, { configPath, role, requireExplicitVersion = true }) {
   const keyVersion = requireExplicitVersion ? value?.keyVersion : value?.keyVersion || 'legacy-v1';
-  if (!value || !SAFE_ID.test(String(value.keyId || ''))
+  if (!hasExactObjectKeys(value, TRUST_KEY_KEYS)
+    || !SAFE_ID.test(String(value.keyId || ''))
     || !SAFE_VERSION.test(String(keyVersion || ''))
     || !SAFE_ID.test(String(value.subjectId || ''))
     || !SAFE_ORGANIZATION.test(String(value.organization || ''))
     || value.algorithm !== 'ed25519' || value.role !== role) {
     throw new Error('research_execution_release_attestor_trusted_signer_invalid');
   }
-  const publicKeyPath = integrityPublicKeyFile(resolveRelative(value.publicKeyPath, configPath));
-  const publicKeyText = fs.readFileSync(publicKeyPath, 'utf8');
+  const publicKeyFile = integrityPublicKeyFile(
+    resolveRelative(value.publicKeyPath, configPath),
+  );
+  const publicKeyText = publicKeyFile.bytes.toString('utf8');
   if (/PRIVATE KEY/.test(publicKeyText)) {
     throw new Error('research_execution_release_attestor_public_key_invalid');
   }
@@ -152,12 +252,62 @@ function publicTrustKey(key) {
   });
 }
 
+function hardwareAuthorityAttestation(value, configPath) {
+  const signerKeyIds = [...new Set((Array.isArray(value?.signerKeyIds)
+    ? value.signerKeyIds : []).map(String))].sort();
+  const expectedTrustStoreHash = String(value?.trustStoreHash || '').toLowerCase();
+  const challengeHash = String(value?.challengeHash || '').toLowerCase();
+  if (!hasExactObjectKeys(value, HARDWARE_AUTHORITY_ATTESTATION_KEYS)
+    || signerKeyIds.length < 1 || signerKeyIds.length > 4
+    || signerKeyIds.some((keyId) => !SAFE_ID.test(keyId))
+    || JSON.stringify(signerKeyIds) !== JSON.stringify(value.signerKeyIds)
+    || !SHA256.test(expectedTrustStoreHash)
+    || !SHA256.test(challengeHash)) {
+    throw new Error(
+      'research_execution_release_attestor_kms_hardware_authority_configuration_invalid',
+    );
+  }
+  const file = readIntegrityRegularFile(
+    resolveRelative(value.bundlePath, configPath),
+    {
+      maximumBytes: 1024 * 1024,
+      privateFile: false,
+      errorCode:
+        'research_execution_release_attestor_kms_hardware_authority_file_invalid',
+    },
+  );
+  if (!file) {
+    throw new Error(
+      'research_execution_release_attestor_kms_hardware_authority_file_invalid',
+    );
+  }
+  let bundle = null;
+  try { bundle = JSON.parse(file.bytes.toString('utf8')); } catch { bundle = null; }
+  if (!verifyResearchExecutionReleaseKmsHardwareAttestationBundle(bundle)
+    || bundle.trustStoreHash !== expectedTrustStoreHash
+    || bundle.subject?.challengeHash !== challengeHash
+    || JSON.stringify(bundle.signerKeyIds) !== JSON.stringify(signerKeyIds)) {
+    throw new Error(
+      'research_execution_release_attestor_kms_hardware_authority_bundle_invalid',
+    );
+  }
+  return Object.freeze({
+    bundle,
+    bundlePath: file.path,
+    bundleFileHash: file.fileHash,
+    trustStoreHash: expectedTrustStoreHash,
+    signerKeyIds: Object.freeze(signerKeyIds),
+    challengeHash,
+  });
+}
+
 function localFileConfiguration(value, { requested, lifetimeMs }) {
   const privateKeyCandidate = String(value.privateKeyPath || '');
   const privateKeyPath = path.isAbsolute(privateKeyCandidate)
     ? path.resolve(privateKeyCandidate)
     : path.resolve(path.dirname(requested), privateKeyCandidate);
-  const privateKeyPem = privateOwnedRegularFile(privateKeyPath, 64 * 1024);
+  const privateKeyFile = privateOwnedRegularFile(privateKeyPath, 64 * 1024);
+  const privateKeyPem = privateKeyFile?.bytes.toString('utf8') || null;
   const effectiveFrom = canonicalTimestamp(String(value.effectiveFrom || ''));
   const expiresAt = canonicalTimestamp(String(value.expiresAt || ''));
   const keyVersion = String(value.keyVersion || 'legacy-v1');
@@ -259,7 +409,21 @@ function externalConfiguration(value, options) {
     throw new Error('research_execution_release_attestor_private_key_disclosure_forbidden');
   }
   const { requested, lifetimeMs } = options;
-  if (value.status !== 'active' || !value.trustSet
+  const version3 = value.version === 3;
+  const externalKms = value.backend?.kind === 'external-kms-command';
+  const backendKeys = value.backend?.kind === 'dedicated-uid-command'
+    ? DEDICATED_UID_BACKEND_KEYS
+    : version3 ? EXTERNAL_BACKEND_V3_KEYS : EXTERNAL_BACKEND_KEYS;
+  const configurationKeys = version3
+    ? EXTERNAL_CONFIGURATION_V3_KEYS : EXTERNAL_CONFIGURATION_KEYS;
+  if (!hasExactObjectKeys(value, configurationKeys)
+    || !hasExactObjectKeys(value.trustSet, TRUST_SET_KEYS)
+    || !hasExactObjectKeys(value.backend, backendKeys)
+    || !hasExactObjectKeys(value.backend?.signerCommand, COMMAND_KEYS)
+    || !hasExactObjectKeys(value.backend?.probeCommand, COMMAND_KEYS)
+    || !hasExactObjectKeys(value.backend?.probeAttestor, TRUST_KEY_KEYS)
+    || value.status !== 'active' || !value.trustSet
+    || (version3 && !externalKms)
     || value.trustSet.version !== 1
     || value.trustSet.kind !== 'ResearchExecutionReleaseAttestorTrustSet'
     || !Array.isArray(value.trustSet.keys) || value.trustSet.keys.length < 1
@@ -286,8 +450,14 @@ function externalConfiguration(value, options) {
     keys: trustedKeys.map(publicTrustKey),
   });
   const independentProbeAttestor = probeAttestor(value.backend?.probeAttestor, requested);
+  if (independentProbeAttestor.signer.subjectId === activeKey.signer.subjectId
+    || organizationIdentity(independentProbeAttestor.signer.organization)
+      === organizationIdentity(activeKey.signer.organization)) {
+    throw new Error('research_execution_release_attestor_independent_backend_probe_required');
+  }
   const backendPort = createExternalKmsReleaseSignerBackend({
     backendValue: value.backend,
+    configurationVersion: value.version,
     configPath: requested,
     environment: options.environment,
     spawnSyncImpl: options.spawnSyncImpl,
@@ -297,12 +467,17 @@ function externalConfiguration(value, options) {
     trustSetHash,
     probeAttestor: independentProbeAttestor,
   });
+  const kmsHardwareAuthorityAttestation = version3
+    ? hardwareAuthorityAttestation(value.hardwareAuthorityAttestation, requested)
+    : null;
   return Object.freeze({
+    configurationVersion: value.version,
     lifetimeMs,
     trustedKeys: Object.freeze(trustedKeys),
     activeKey,
     backendPort,
     probeAttestor: independentProbeAttestor,
+    kmsHardwareAuthorityAttestation,
     trustSetVersion: 1,
   });
 }
@@ -313,9 +488,56 @@ function stableBlocker(error) {
     ? message : 'research_execution_release_attestor_config_invalid';
 }
 
+export function inspectProvisionedReleaseAttestorConfigurationHeader({
+  runtimeRoot,
+  configPath = null,
+  environment = process.env,
+} = {}) {
+  const requested = configPath || environment.HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG
+    || (runtimeRoot ? path.join(runtimeRoot, 'trust', DEFAULT_CONFIG_NAME) : null);
+  if (!requested) {
+    return Object.freeze({
+      configurationVersion: null,
+      backendKind: null,
+      configurationFileHash: null,
+      blocker: 'research_execution_release_attestor_config_path_missing',
+    });
+  }
+  const configFile = privateOwnedRegularFile(requested, 256 * 1024);
+  if (!configFile) {
+    return Object.freeze({
+      configurationVersion: null,
+      backendKind: null,
+      configurationFileHash: null,
+      blocker: 'research_execution_release_attestor_config_not_private_regular_file',
+    });
+  }
+  let value = null;
+  try { value = JSON.parse(configFile.bytes.toString('utf8')); } catch { value = null; }
+  if (!value || value.kind !== 'ResearchExecutionReleaseAttestorConfiguration') {
+    return Object.freeze({
+      configurationVersion: null,
+      backendKind: null,
+      configurationFileHash: configFile.fileHash,
+      blocker: 'research_execution_release_attestor_config_invalid',
+    });
+  }
+  return Object.freeze({
+    configurationVersion:
+      Number.isSafeInteger(value.version) ? value.version : null,
+    backendKind: typeof value.backend?.kind === 'string'
+      ? value.backend.kind : value.version === 1 ? 'local-file' : null,
+    configurationFileHash: configFile.fileHash,
+    blocker: null,
+  });
+}
+
 export function readProvisionedReleaseAttestorConfiguration({
   runtimeRoot,
   configPath = null,
+  expectedConfigurationHash = null,
+  requiredConfigurationVersion = null,
+  requiredBackendKind = null,
   environment = process.env,
   spawnSyncImpl = spawnSync,
   randomBytesImpl = crypto.randomBytes,
@@ -325,18 +547,43 @@ export function readProvisionedReleaseAttestorConfiguration({
   if (!requested) {
     return { configuration: null, blocker: 'research_execution_release_attestor_config_path_missing' };
   }
-  const text = privateOwnedRegularFile(requested, 256 * 1024);
-  if (!text) {
+  const configuredExpectedHash = expectedConfigurationHash
+    ?? environment.HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG_HASH
+    ?? null;
+  const normalizedExpectedHash = configuredExpectedHash === null
+    ? null : String(configuredExpectedHash || '').toLowerCase();
+  if (normalizedExpectedHash !== null && !SHA256.test(normalizedExpectedHash)) {
+    return {
+      configuration: null,
+      blocker: 'research_execution_release_attestor_config_pin_mismatch',
+    };
+  }
+  const configFile = privateOwnedRegularFile(requested, 256 * 1024);
+  if (!configFile) {
     return {
       configuration: null,
       blocker: 'research_execution_release_attestor_config_not_private_regular_file',
     };
   }
+  const text = configFile.bytes.toString('utf8');
   let value = null;
   try { value = JSON.parse(text); } catch { value = null; }
-  if (!value || ![1, 2].includes(value.version)
-    || value.kind !== 'ResearchExecutionReleaseAttestorConfiguration') {
+  if (!value || ![1, 2, 3].includes(value.version)
+    || value.kind !== 'ResearchExecutionReleaseAttestorConfiguration'
+    || (value.version === 1
+      && !hasExactObjectKeys(value, LOCAL_CONFIGURATION_KEYS)
+      && !hasExactObjectKeys(value, LOCAL_CONFIGURATION_KEYS_WITH_VERSION))) {
     return { configuration: null, blocker: 'research_execution_release_attestor_config_invalid' };
+  }
+  if ((requiredConfigurationVersion !== null
+      && value.version !== requiredConfigurationVersion)
+    || (requiredBackendKind !== null
+      && value.backend?.kind !== requiredBackendKind)) {
+    return {
+      configuration: null,
+      blocker:
+        'research_execution_release_attestor_external_kms_v3_configuration_required',
+    };
   }
   const lifetimeMs = Number(value.attestationLifetimeSeconds) * 1000;
   try {
@@ -351,14 +598,75 @@ export function readProvisionedReleaseAttestorConfiguration({
         randomBytesImpl,
       });
     const publicKeys = Object.freeze(parsed.trustedKeys.map(publicTrustKey));
+    const descriptor = parsed.backendPort.describeBackend();
+    const publicProbeAttestor = parsed.probeAttestor
+      ? Object.freeze({
+        ...parsed.probeAttestor.signer,
+        status: parsed.probeAttestor.status,
+        publicKeySpkiHash: parsed.probeAttestor.publicKeySpkiHash,
+        effectiveFrom: parsed.probeAttestor.effectiveFrom,
+        expiresAt: parsed.probeAttestor.expiresAt,
+        revokedAt: parsed.probeAttestor.revokedAt,
+      }) : null;
+    const trustSetHash = hashRecord('ResearchExecutionReleaseAttestorTrustSet', {
+      version: parsed.trustSetVersion,
+      keys: publicKeys,
+    });
+    const kmsHardwareAuthorityIdentity = value.version === 3
+      ? {
+        kmsHardwareAuthorityPolicy: {
+          verificationPolicy:
+            'pinned-independent-kms-control-plane-ed25519-v1',
+          bundlePath:
+            parsed.kmsHardwareAuthorityAttestation?.bundlePath || null,
+          trustStoreHash:
+            parsed.kmsHardwareAuthorityAttestation?.trustStoreHash || null,
+          signerKeyIds:
+            parsed.kmsHardwareAuthorityAttestation?.signerKeyIds || null,
+          challengeHash:
+            parsed.kmsHardwareAuthorityAttestation?.challengeHash || null,
+        },
+      } : {
+        kmsHardwareAuthorityAttestationBundleHash:
+          parsed.kmsHardwareAuthorityAttestation?.bundle?.bundleHash || null,
+        kmsHardwareAuthorityAttestationBundleFileHash:
+          parsed.kmsHardwareAuthorityAttestation?.bundleFileHash || null,
+        kmsHardwareAuthorityTrustStoreHash:
+          parsed.kmsHardwareAuthorityAttestation?.trustStoreHash || null,
+      };
+    const configurationIdentityHash = hashRecord(
+      'ResearchExecutionReleaseAttestorConfigurationIdentity',
+      {
+        version: value.version,
+        lifetimeMs: parsed.lifetimeMs,
+        trustSetVersion: parsed.trustSetVersion,
+        trustSetHash,
+        backendDescriptorHash:
+          descriptor.researchExecutionReleaseSignerBackendDescriptorHash,
+        probeAttestor: publicProbeAttestor,
+        ...kmsHardwareAuthorityIdentity,
+      },
+    );
+    if (normalizedExpectedHash !== null
+      && normalizedExpectedHash !== configurationIdentityHash) {
+      return {
+        configuration: null,
+        blocker: 'research_execution_release_attestor_config_pin_mismatch',
+      };
+    }
     return {
       configuration: Object.freeze({
         ...parsed,
         publicKeys,
-        trustSetHash: hashRecord('ResearchExecutionReleaseAttestorTrustSet', {
-          version: parsed.trustSetVersion,
-          keys: publicKeys,
-        }),
+        trustSetHash,
+        configurationFileHash: configFile.fileHash,
+        configurationIdentityHash,
+        configurationIdentityProfile: value.version === 3
+          ? 'stable-kms-authority-policy-and-rotating-bundle-v3'
+          : 'exact-resolved-configuration-v1',
+        configurationPinned:
+          normalizedExpectedHash !== null
+          && normalizedExpectedHash === configurationIdentityHash,
       }),
       blocker: null,
     };

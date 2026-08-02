@@ -47,8 +47,11 @@ export function selectReadyCampaignNodes(nodes = [], { limit = 1 } = {}) {
 
 export function decideNodeFailureTransition(node, { retryable = true } = {}) {
   if (!node) throw new Error('campaign node is required');
-  const canRetry = node.preparedIntegrationStatus === 'integrated'
-    || (Boolean(retryable) && Number(node.attemptCount ?? 0) < Number(node.maxAttempts ?? 3));
+  const attemptCount = Number(node.attemptCount ?? 0);
+  const maxAttempts = Number(node.maxAttempts ?? 3);
+  const retryLimit = node.preparedIntegrationStatus === 'integrated'
+    ? maxAttempts + 1 : maxAttempts;
+  const canRetry = Boolean(retryable) && attemptCount < retryLimit;
   return Object.freeze({
     status: canRetry ? 'queued' : 'failed_terminal',
     canRetry,

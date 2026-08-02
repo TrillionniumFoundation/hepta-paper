@@ -33,6 +33,19 @@ export function campaignReleaseExecutionAttestationDocumentFileHash(attestation)
   return hashBytes(Buffer.from(`${JSON.stringify(attestation, null, 2)}\n`, 'utf8'));
 }
 
+export function campaignReleaseExecutionAttestationCurrentAt(
+  attestation,
+  observedAt,
+) {
+  const observedTimestamp = observedAt instanceof Date
+    ? observedAt.getTime() : Date.parse(String(observedAt));
+  const validFrom = Date.parse(String(attestation?.validFrom || ''));
+  const expiresAt = Date.parse(String(attestation?.expiresAt || ''));
+  return [observedTimestamp, validFrom, expiresAt].every(Number.isFinite)
+    && observedTimestamp >= validFrom
+    && observedTimestamp < expiresAt;
+}
+
 export function buildCampaignReleaseExecutionAttestationUnsignedPayload({
   manifest,
   manifestFileHash,

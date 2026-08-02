@@ -9,9 +9,13 @@ import {
   BUILD_PACKAGE_EXPLICIT_RETIREMENTS,
   buildPackageRetirementDisposition,
 } from '../build-package-retirements.mjs';
+import { prepareImmutableLegacyMatrixReference } from '../legacy-matrix-reference.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const root = defaultLegacyPaperFactoryRoot();
+const preparedByParent = process.env.HEPTA_LEGACY_REFERENCE_PREPARED === '1';
+const reference = preparedByParent ? null : prepareImmutableLegacyMatrixReference();
+if (reference) process.on('exit', reference.cleanup);
+const root = reference?.root || defaultLegacyPaperFactoryRoot();
 const localWriterPath = 'paperctl_modules/paper_production_runner_execution_contract_artifact_queue.py';
 
 function filesUnder(directory) {
@@ -189,3 +193,4 @@ process.stdout.write(JSON.stringify({
   externalActions: 0,
   heptaProductionReferences: 0,
 }) + '\n');
+reference?.cleanup();

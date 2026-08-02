@@ -28,6 +28,7 @@
 #define DISPATCHER_GROUP "hepta-submission-dispatcher"
 #define DISPATCHER_HOME "/nonexistent"
 #define HANDOFF_GROUP "hepta-runtime-handoff"
+#define SUPERVISOR_RUNTIME_GROUP "docker"
 #define RESOLVE_CHILD (RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS | RESOLVE_NO_XDEV)
 #define PRODUCTION_RUNTIME_ROOT "/var/lib/hepta-paper/runtime"
 #define PRODUCTION_RECEIPT_PATH \
@@ -290,11 +291,14 @@ static void require_locked_exact_gshadow(void) {
     bool supervisor_primary = strcmp(row->sg_namp, SUPERVISOR_GROUP) == 0;
     bool dispatcher_primary = strcmp(row->sg_namp, DISPATCHER_GROUP) == 0;
     bool handoff = strcmp(row->sg_namp, HANDOFF_GROUP) == 0;
-    bool service_member = name_in_list(row->sg_mem, SUPERVISOR_USER)
-      || name_in_list(row->sg_mem, DISPATCHER_USER);
+    bool supervisor_listed = name_in_list(row->sg_mem, SUPERVISOR_USER);
+    bool dispatcher_listed = name_in_list(row->sg_mem, DISPATCHER_USER);
     bool service_admin = name_in_list(row->sg_adm, SUPERVISOR_USER)
       || name_in_list(row->sg_adm, DISPATCHER_USER);
-    if (service_admin || (service_member && !handoff)) {
+    bool supervisor_group_allowed = handoff
+      || strcmp(row->sg_namp, SUPERVISOR_RUNTIME_GROUP) == 0;
+    if (service_admin || (supervisor_listed && !supervisor_group_allowed)
+        || (dispatcher_listed && !handoff)) {
       endsgent();
       errno = EINVAL;
       fail("autonomous_submission_handoff_group_shadow_membership_forbidden");
@@ -339,8 +343,10 @@ static void require_locked_exact_gshadow(void) {
   }
 }
 
-static void require_exact_initgroups(const char *name, gid_t primary_gid,
-                                     gid_t handoff_gid) {
+static void require_allowed_initgroups(const char *name, gid_t primary_gid,
+                                       gid_t handoff_gid,
+                                       gid_t optional_runtime_gid,
+                                       bool allow_optional_runtime_group) {
   int count = 0;
   (void) getgrouplist(name, primary_gid, NULL, &count);
   if (count < 1 || count > 1024) {
@@ -360,6 +366,10 @@ static void require_exact_initgroups(const char *name, gid_t primary_gid,
   for (int index = 0; index < count; index++) {
     if (groups[index] == primary_gid) primary_present = true;
     else if (groups[index] == handoff_gid) handoff_present = true;
+    else if (allow_optional_runtime_group
+        && groups[index] == optional_runtime_gid) {
+      continue;
+    }
     else {
       free(groups);
       errno = EINVAL;
@@ -374,7 +384,8 @@ static void require_exact_initgroups(const char *name, gid_t primary_gid,
 }
 
 static void require_exact_public_group_memberships(
-    gid_t supervisor_gid, gid_t dispatcher_gid, gid_t handoff_gid) {
+    gid_t supervisor_gid, gid_t dispatcher_gid, gid_t handoff_gid,
+    gid_t supervisor_runtime_gid) {
   setgrent();
   struct group *row;
   while ((row = getgrent()) != NULL) {
@@ -386,15 +397,27 @@ static void require_exact_public_group_memberships(
       errno = EINVAL;
       fail("autonomous_submission_handoff_primary_group_members_invalid");
     }
-    if ((supervisor_member || dispatcher_member) && row->gr_gid != handoff_gid) {
+    if ((supervisor_member && row->gr_gid != handoff_gid
+          && row->gr_gid != supervisor_runtime_gid)
+        || (dispatcher_member && row->gr_gid != handoff_gid)) {
       endgrent();
       errno = EINVAL;
       fail("autonomous_submission_handoff_persistent_supplementary_group_forbidden");
     }
   }
   endgrent();
-  require_exact_initgroups(SUPERVISOR_USER, supervisor_gid, handoff_gid);
-  require_exact_initgroups(DISPATCHER_USER, dispatcher_gid, handoff_gid);
+  require_allowed_initgroups(
+    SUPERVISOR_USER,
+    supervisor_gid,
+    handoff_gid,
+    supervisor_runtime_gid,
+    true);
+  require_allowed_initgroups(
+    DISPATCHER_USER,
+    dispatcher_gid,
+    handoff_gid,
+    supervisor_runtime_gid,
+    false);
 }
 
 static void require_unique_user(uid_t uid, const char *expected_name) {
@@ -498,11 +521,20 @@ static struct identities production_identities(bool privileged) {
     &dispatcher_member,
     &member_count,
     "autonomous_submission_handoff_group_membership_not_exclusive");
+  struct group *supervisor_runtime = getgrnam(SUPERVISOR_RUNTIME_GROUP);
+  if (supervisor_runtime == NULL
+      || !passwd_placeholder_or_locked(supervisor_runtime->gr_passwd)) {
+    fail("autonomous_submission_handoff_supervisor_runtime_group_missing");
+  }
+  gid_t supervisor_runtime_gid = supervisor_runtime->gr_gid;
   if (!supervisor_member || !dispatcher_member || member_count != 2
       || supervisor_uid == dispatcher_uid
       || supervisor_gid == dispatcher_gid
       || handoff_gid == supervisor_gid
-      || handoff_gid == dispatcher_gid) {
+      || handoff_gid == dispatcher_gid
+      || supervisor_runtime_gid == supervisor_gid
+      || supervisor_runtime_gid == dispatcher_gid
+      || supervisor_runtime_gid == handoff_gid) {
     errno = EINVAL;
     fail("autonomous_submission_handoff_system_identity_mismatch");
   }
@@ -520,8 +552,9 @@ static struct identities production_identities(bool privileged) {
   require_unique_group(supervisor_gid, SUPERVISOR_GROUP);
   require_unique_group(dispatcher_gid, DISPATCHER_GROUP);
   require_unique_group(handoff_gid, HANDOFF_GROUP);
+  require_unique_group(supervisor_runtime_gid, SUPERVISOR_RUNTIME_GROUP);
   require_exact_public_group_memberships(
-    supervisor_gid, dispatcher_gid, handoff_gid);
+    supervisor_gid, dispatcher_gid, handoff_gid, supervisor_runtime_gid);
   return (struct identities) {
     .supervisor_uid = supervisor_uid,
     .supervisor_gid = supervisor_gid,

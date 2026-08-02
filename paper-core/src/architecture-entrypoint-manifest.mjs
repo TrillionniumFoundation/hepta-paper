@@ -1,14 +1,23 @@
 // Architecture reachability must start from executable surfaces, not from
-// convenient composition modules. Keep this manifest path-only so the
-// architecture checker can consume it without importing production code.
+// convenient composition modules. Entrypoint categories stay path-only;
+// external runtime imports are declared separately as exact, auditable edges.
 export const ARCHITECTURE_ENTRYPOINT_MANIFEST = Object.freeze({
-  version: 2,
+  version: 3,
   kind: 'ArchitectureEntrypointManifest',
   production: Object.freeze([
     'paper-core/bin/hepta-paper.mjs',
     'paper-core/bin/workspace-status.mjs',
     'paper-core/bin/hepta-store.mjs',
     'paper-core/bin/automation-status.mjs',
+    'paper-core/bin/production-external-authority-intake.mjs',
+    // Production process boundaries invoked by systemd or a pinned executable
+    // path (including the reviewed /usr/libexec launchers) cannot be discovered
+    // through ordinary static imports.
+    'paper-core/bin/codex-openclaw-managed.mjs',
+    'paper-core/bin/hepta-paper-release-attestor-client.mjs',
+    'paper-core/bin/hepta-paper-release-attestor-daemon.mjs',
+    'paper-core/bin/hepta-paper-state-authority-client.mjs',
+    'paper-core/bin/hepta-paper-state-authority-daemon.mjs',
     'paper-core/bin/research-capability-matrix.mjs',
     'paper-core/bin/journal-connector-coverage.mjs',
     'paper-core/bin/automation-runtime-image-bundle-loader.mjs',
@@ -52,6 +61,8 @@ export const ARCHITECTURE_ENTRYPOINT_MANIFEST = Object.freeze({
     'paper-core/verification/selftest.mjs',
     'paper-core/verification/remediation-selftest.mjs',
     'paper-core/verification/authority-pipeline-selftest.mjs',
+    'paper-core/bin/run-isolated-command.mjs',
+    'paper-core/bin/run-isolated-verification.mjs',
     'paper-core/bin/check-mjs-syntax.mjs',
     'paper-core/bin/run-impacted-tests.mjs',
     'paper-core/bin/prepare-ci-mathlib-cache.mjs',
@@ -73,9 +84,11 @@ export const ARCHITECTURE_ENTRYPOINT_MANIFEST = Object.freeze({
   ]),
   maintenance: Object.freeze([
     'paper-core/bin/autonomous-research-state-provision.mjs',
+    'paper-core/bin/autonomous-research-state-partial-root-maintenance.mjs',
     'paper-core/bin/autonomous-research-online-schema-transition.mjs',
     'paper-core/bin/runtime-hygiene.mjs',
     'paper-core/bin/runtime-permissions.mjs',
+    'paper-core/bin/release-integrity-key.mjs',
     'paper-core/bin/release-evidence.mjs',
     'paper-core/bin/quarantine-stale-latest.mjs',
     'paper-core/bin/workspace-lineage-backfill.mjs',
@@ -92,9 +105,55 @@ export const ARCHITECTURE_ENTRYPOINT_MANIFEST = Object.freeze({
     'paper-core/bin/legacy-immutable-snapshot.mjs',
     'paper-core/bin/retire-legacy-archive.mjs',
   ]),
+  externalRuntimeImports: Object.freeze([
+    Object.freeze({
+      importer: 'paper-adapters/automation/codex-openclaw-managed-configuration.mjs',
+      expression: 'pathToFileURL(located.agentCommandRuntimePath).href',
+      locationProperty: 'agentCommandRuntimePath',
+      packageName: 'openclaw',
+      packageExport: './plugin-sdk/agent-runtime',
+      requiredExports: Object.freeze(['agentCommand', 'ensureAuthProfileStore']),
+    }),
+    Object.freeze({
+      importer: 'paper-adapters/automation/codex-openclaw-managed-configuration.mjs',
+      expression: 'pathToFileURL(located.configRuntimePath).href',
+      locationProperty: 'configRuntimePath',
+      packageName: 'openclaw',
+      packageExport: './plugin-sdk/config-runtime',
+      requiredExports: Object.freeze(['loadConfig']),
+    }),
+    Object.freeze({
+      importer: 'paper-adapters/automation/codex-openclaw-managed-configuration.mjs',
+      expression: 'pathToFileURL(located.agentHarnessRuntimePath).href',
+      locationProperty: 'agentHarnessRuntimePath',
+      packageName: 'openclaw',
+      packageExport: './plugin-sdk/agent-harness-runtime',
+      requiredExports: Object.freeze([
+        'resolveAgentDir',
+        'disposeRegisteredAgentHarnesses',
+      ]),
+    }),
+    Object.freeze({
+      importer: 'paper-adapters/automation/codex-openclaw-managed-configuration.mjs',
+      expression: 'pathToFileURL(located.sessionStoreRuntimePath).href',
+      locationProperty: 'sessionStoreRuntimePath',
+      packageName: 'openclaw',
+      packageExport: './plugin-sdk/session-store-runtime',
+      requiredExports: Object.freeze([
+        'resolveStorePath',
+        'resolveSessionFilePath',
+        'upsertSessionEntry',
+        'updateSessionStore',
+        'getSessionEntry',
+      ]),
+    }),
+  ]),
 });
 
 export function assertArchitectureEntrypointManifest(manifest = ARCHITECTURE_ENTRYPOINT_MANIFEST) {
+  if (manifest?.version !== 3 || manifest?.kind !== 'ArchitectureEntrypointManifest') {
+    throw new Error('architecture_entrypoint_manifest_identity_invalid');
+  }
   const categories = [
     'production',
     'compatibility',
@@ -113,5 +172,48 @@ export function assertArchitectureEntrypointManifest(manifest = ARCHITECTURE_ENT
       seen.set(entry, category);
     }
   }
+  if (!Array.isArray(manifest.externalRuntimeImports)
+    || manifest.externalRuntimeImports.length === 0) {
+    throw new Error('architecture_external_runtime_imports_empty');
+  }
+  const externalRuntimeImportKeys = new Set();
+  for (const declaration of manifest.externalRuntimeImports) {
+    const expectedKeys = [
+      'expression',
+      'importer',
+      'locationProperty',
+      'packageExport',
+      'packageName',
+      'requiredExports',
+    ];
+    if (JSON.stringify(Object.keys(declaration || {}).sort())
+      !== JSON.stringify(expectedKeys)
+      || typeof declaration.importer !== 'string'
+      || !declaration.importer.endsWith('.mjs')
+      || pathLikeEscape(declaration.importer)
+      || typeof declaration.locationProperty !== 'string'
+      || declaration.expression
+        !== `pathToFileURL(located.${declaration.locationProperty}).href`
+      || !/^[a-z0-9][a-z0-9._-]*$/.test(declaration.packageName || '')
+      || !/^\.\/[a-z0-9][a-z0-9._/-]*$/.test(declaration.packageExport || '')
+      || !Array.isArray(declaration.requiredExports)
+      || declaration.requiredExports.length === 0
+      || new Set(declaration.requiredExports).size !== declaration.requiredExports.length
+      || declaration.requiredExports.some((name) => (
+        !/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(name)
+      ))) {
+      throw new Error('architecture_external_runtime_import_invalid');
+    }
+    const key = `${declaration.importer}\0${declaration.expression}`;
+    if (externalRuntimeImportKeys.has(key)) {
+      throw new Error(`architecture_external_runtime_import_duplicate:${key}`);
+    }
+    externalRuntimeImportKeys.add(key);
+  }
   return manifest;
+}
+
+function pathLikeEscape(candidate) {
+  return candidate.startsWith('/')
+    || candidate.split('/').some((segment) => segment === '..' || segment === '');
 }

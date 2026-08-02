@@ -77,6 +77,7 @@ export function createOutOfProcessAdvancedNumericalPluginRunner({
   signedBundle,
   trustStore,
   qualification = null,
+  qualificationEvidence = null,
   qualificationTrustStore = null,
   workerRunner,
   pluginRoot,
@@ -88,7 +89,10 @@ export function createOutOfProcessAdvancedNumericalPluginRunner({
     now,
   });
   const descriptor = verifiedBundle.descriptor;
-  if ((qualification === null) !== (qualificationTrustStore === null)) {
+  if ([qualification, qualificationEvidence, qualificationTrustStore]
+    .filter((value) => value !== null).length !== 0
+    && [qualification, qualificationEvidence, qualificationTrustStore]
+      .some((value) => value === null)) {
     throw new Error('advanced_numerical_plugin_qualification_configuration_incomplete');
   }
   const productionQualification = qualification === null ? null
@@ -96,7 +100,9 @@ export function createOutOfProcessAdvancedNumericalPluginRunner({
       descriptor,
       signedBundleHash: verifiedBundle.signedBundleHash,
       pluginAuthorityVerification: verifiedBundle.signatureVerification,
+      pluginTrustStore: trustStore,
       qualification,
+      evidenceBundle: qualificationEvidence,
       trustStore: qualificationTrustStore,
       now,
     });
@@ -152,8 +158,36 @@ export function createOutOfProcessAdvancedNumericalPluginRunner({
     ),
     qualificationStatementHash:
       productionQualification?.qualificationStatementHash || null,
+    qualificationEvidenceBundleHash:
+      productionQualification?.qualificationEvidenceBundleHash || null,
+    qualificationInspectionHash:
+      productionQualification
+        ?.advancedNumericalPluginProductionQualificationInspectionHash || null,
+    pluginAuthoritySubjectIds:
+      productionQualification?.pluginAuthoritySubjectIds || Object.freeze([]),
+    pluginAuthorityOrganizations:
+      productionQualification?.pluginAuthorityOrganizations || Object.freeze([]),
+    pluginAuthorityPublicKeySpkiHashes:
+      productionQualification?.pluginAuthorityPublicKeySpkiHashes
+      || Object.freeze([]),
+    qualificationAuthoritySubjectIds:
+      productionQualification?.qualificationAuthoritySubjectIds || Object.freeze([]),
+    qualificationAuthorityOrganizations:
+      productionQualification?.qualificationAuthorityOrganizations
+      || Object.freeze([]),
+    qualificationAuthorityPublicKeySpkiHashes:
+      productionQualification?.qualificationAuthorityPublicKeySpkiHashes
+      || Object.freeze([]),
+    qualificationAuthorityRoles:
+      productionQualification?.qualificationAuthorityRoles || Object.freeze([]),
+    qualificationExpiresAt: productionQualification?.expiresAt || null,
+    referenceExecutionProcessIdentityHash:
+      productionQualification?.referenceExecutionProcessIdentityHash || null,
+    replayExecutionProcessIdentityHash:
+      productionQualification?.replayExecutionProcessIdentityHash || null,
+    qualificationResultHash: productionQualification?.resultHash || null,
     qualificationRequirement: productionQualified ? null
-      : 'independent-oracle-replay-and-uncertainty-authority-required',
+      : 'signed-reference-replay-oracle-uncertainty-and-scientific-evidence-required',
   });
   const blockedExecution = (blockers, details = {}) => blocked(blockers, {
     pluginId: descriptor.pluginId,
@@ -161,6 +195,8 @@ export function createOutOfProcessAdvancedNumericalPluginRunner({
     productionQualified,
     qualificationStatementHash:
       productionQualification?.qualificationStatementHash || null,
+    qualificationEvidenceBundleHash:
+      productionQualification?.qualificationEvidenceBundleHash || null,
     ...details,
   });
   return assertAdvancedNumericalPluginRunnerPort({
@@ -284,11 +320,13 @@ export function createOutOfProcessAdvancedNumericalPluginRunner({
         productionQualified,
         qualificationStatementHash:
           productionQualification?.qualificationStatementHash || null,
+        qualificationEvidenceBundleHash:
+          productionQualification?.qualificationEvidenceBundleHash || null,
         qualificationInspectionHash:
           productionQualification
             ?.advancedNumericalPluginProductionQualificationInspectionHash || null,
         qualificationRequirement: productionQualified ? null
-          : 'independent-oracle-replay-and-uncertainty-authority-required',
+          : 'signed-reference-replay-oracle-uncertainty-and-scientific-evidence-required',
         blockers: Object.freeze([]),
       };
       return Object.freeze({

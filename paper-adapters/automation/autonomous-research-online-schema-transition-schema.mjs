@@ -89,10 +89,16 @@ export function schemaTransitionTargetSchema(instance) {
   });
 }
 
-export function schemaTransitionFileIdentity(candidate) {
+export function schemaTransitionFileIdentity(candidate, { databaseRole = null } = {}) {
   const stat = fs.lstatSync(candidate, { bigint: true });
-  if (!stat.isFile() || stat.isSymbolicLink() || Number(stat.mode) & 0o022) {
-    fail('autonomous_research_online_schema_transition_database_unsafe');
+  const mode = Number(stat.mode);
+  const groupWritePermitted = databaseRole === 'submission-handoff';
+  if (!stat.isFile() || stat.isSymbolicLink() || mode & 0o002
+    || (!groupWritePermitted && mode & 0o020)) {
+    fail('autonomous_research_online_schema_transition_database_unsafe', {
+      databasePath: candidate,
+      databaseMode: Number(stat.mode & 0o777n),
+    });
   }
   return Object.freeze({
     device: String(stat.dev), inode: String(stat.ino), mode: String(stat.mode),
@@ -114,13 +120,15 @@ export function schemaTransitionDatabasePath(runtimeRoot, instance) {
     || !pathWithin(fs.realpathSync(root), fs.realpathSync(candidate))) {
     fail('autonomous_research_online_schema_transition_database_path_invalid');
   }
-  schemaTransitionFileIdentity(candidate);
+  schemaTransitionFileIdentity(candidate, { databaseRole: instance.role });
   return candidate;
 }
 
 export function assertSchemaTransitionNoSidecars(candidate) {
   if (fs.existsSync(`${candidate}-wal`) || fs.existsSync(`${candidate}-shm`)) {
-    fail('autonomous_research_online_schema_transition_wal_or_shm_present');
+    fail('autonomous_research_online_schema_transition_wal_or_shm_present', {
+      databasePath: candidate,
+    });
   }
 }
 
@@ -150,13 +158,17 @@ FROM sqlite_schema WHERE name=?;
 }
 
 function expectedPostSchemaHash({ candidate, instance }) {
-  const beforeIdentity = schemaTransitionFileIdentity(candidate);
+  const beforeIdentity = schemaTransitionFileIdentity(candidate, {
+    databaseRole: instance.role,
+  });
   const beforeSha256 = fileSha256HashSync(candidate);
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-schema-transition-'));
   const temporaryDatabasePath = path.join(temporaryRoot, 'candidate.sqlite');
   try {
     fs.copyFileSync(candidate, temporaryDatabasePath, fs.constants.COPYFILE_EXCL);
-    if (!schemaTransitionSameIdentity(beforeIdentity, schemaTransitionFileIdentity(candidate))
+    if (!schemaTransitionSameIdentity(beforeIdentity, schemaTransitionFileIdentity(candidate, {
+      databaseRole: instance.role,
+    }))
       || beforeSha256 !== fileSha256HashSync(candidate)) {
       fail('autonomous_research_online_schema_transition_database_changed_during_simulation');
     }
@@ -246,7 +258,9 @@ function projectInstance(runtimeRoot, instance) {
   const database = new DatabaseSync(candidate, { readOnly: true });
   try { assertSchemaTransitionTargetObjects(database, schemaTransitionTargetSchema(instance)); }
   finally { database.close(); }
-  const sourceFileIdentity = schemaTransitionFileIdentity(candidate);
+  const sourceFileIdentity = schemaTransitionFileIdentity(candidate, {
+    databaseRole: instance.role,
+  });
   return Object.freeze({
     databaseRole: instance.role,
     databaseInstanceId: instance.instanceId,

@@ -6,14 +6,24 @@ import {
   materializeFormalDomainQualificationReviewWorkspace,
 } from '../../paper-adapters/automation/formal-domain-qualification-review-workspace-repository.mjs';
 import {
-  formalDomainQualificationRecoveryIdempotencyKey,
   formalDomainQualificationRecoveryLineageId,
   openFormalDomainQualificationRecoveryGenerationLedger,
   openFormalDomainQualificationRecoveryJournal,
 } from '../../paper-adapters/automation/formal-domain-qualification-recovery-journal.mjs';
 import {
+  assertRecoveryExecutionActive,
+  assertRecoveryGenerationSelectionCurrent,
+  assertRecoveryPort,
+  assertReplayRecoveryPort,
+  resolveCrashSafeStage,
+  resolveRepeatableLocalStage,
+} from './formal-domain-qualification-recovery-composition.mjs';
+import {
   preflightCodexResearchAuthor,
 } from '../../paper-adapters/automation/codex-research-author-preflight.mjs';
+import {
+  preflightCodexFormalReviewer,
+} from '../../paper-adapters/automation/codex-formal-reviewer-preflight.mjs';
 import {
   buildExternalResearchReplayRequest,
   verifyExternalResearchReplayReceipt,
@@ -27,266 +37,28 @@ import {
 import { assertExternalResearchReplayPort }
   from '../../paper-ports/external-research-replay-port.mjs';
 import {
-  inspectConfiguredAutonomousResearchAuthorIdentity,
+  autonomousResearchAuthorIdentitySubjectHash,
+  buildAutonomousResearchReviewerSessionPrincipalPool,
+  inspectAutonomousResearchAuthorRuntimeIdentity,
 } from './autonomous-research-runtime-principal-preflight.mjs';
 import {
   resolveAutonomousResearchProviderConfiguration,
 } from './autonomous-research-provider-configuration.mjs';
 import {
   composeReviewerPrincipalExecutorPool,
+  composeReviewerSessionExecutorPool,
 } from './reviewer-principal-pool-composition.mjs';
 import {
   buildImmutableReviewerWorkspaceSnapshot,
 } from '../../paper-adapters/automation/http-recoverable-reviewer-executor-adapter.mjs';
-
-const SHA256 = /^sha256:[0-9a-f]{64}$/;
-const RECOVERY_PORT_KINDS = Object.freeze({
-  reviewer: 'FormalDomainQualificationReviewerRecoveryPort',
-  signer: 'FormalDomainQualificationSignerRecoveryPort',
-});
-
-function assertRecoveryPort(port, stage) {
-  if (!port || port.kind !== RECOVERY_PORT_KINDS[stage]
-    || port.crashRecoveryReady !== true
-    || !SHA256.test(String(port.configurationIdentityHash || ''))
-    || port.recoveryOutcomeCryptographicAuthorityReady !== true
-    || !SHA256.test(String(
-      port.recoveryOutcomeVerificationPolicyHash || '',
-    ))
-    || typeof port.lookup !== 'function'
-    || typeof port.resume !== 'function'
-    || typeof port.execute !== 'function'
-    || typeof port.verifyReceipt !== 'function') {
-    throw new Error(
-      `formal_domain_qualification_${stage}_lookup_resume_required`,
-    );
-  }
-  return port;
-}
-
-function assertReplayRecoveryPort(port) {
-  if (port?.crashRecoveryReady !== true
-    || !SHA256.test(String(
-      port.recoveryConfigurationIdentityHash || port.configurationHash || '',
-    ))
-    || port.recoveryOutcomeCryptographicAuthorityReady !== true
-    || !SHA256.test(String(
-      port.recoveryOutcomeVerificationPolicyHash || '',
-    ))
-    || typeof port.lookup !== 'function'
-    || typeof port.resume !== 'function'
-    || typeof port.replay !== 'function'
-    || typeof port.verifyReceipt !== 'function') {
-    throw new Error(
-      'formal_domain_qualification_external_replay_lookup_resume_required',
-    );
-  }
-  return port;
-}
-
-function normalizeRecoveryResolution(resolution, verifyReceipt) {
-  if (!resolution || !['completed', 'in_progress', 'not_found']
-    .includes(resolution.status)) {
-    throw new Error('formal_domain_qualification_recovery_resolution_invalid');
-  }
-  if (resolution.status !== 'completed') {
-    if (resolution.receipt !== null && resolution.receipt !== undefined) {
-      throw new Error('formal_domain_qualification_recovery_resolution_invalid');
-    }
-    return Object.freeze({ status: resolution.status, receipt: null });
-  }
-  if (!verifyReceipt(resolution.receipt)) {
-    throw new Error('formal_domain_qualification_recovery_receipt_invalid');
-  }
-  return Object.freeze({
-    status: 'completed',
-    receipt: Object.freeze(resolution.receipt),
-  });
-}
-
-async function authorizeRecoveryStage(gate, {
-  stage,
-  campaignId,
-  operationId,
-  idempotencyKey,
-} = {}) {
-  if (!gate) return;
-  await gate({
-    action: `formal_domain_qualification_${stage}`,
-    campaignId,
-    operationId,
-    idempotencyKey,
-  });
-  gate.assertCurrent?.({
-    action: `formal_domain_qualification_${stage}`,
-    campaignId,
-    operationId,
-    idempotencyKey,
-  });
-  await gate.markStarted?.({
-    action: `formal_domain_qualification_${stage}`,
-    operationId,
-    idempotencyKey,
-  });
-}
-
-function assertRecoveryLookupCurrent(gate, {
-  stage,
-  campaignId,
-  operationId,
-  idempotencyKey,
-} = {}) {
-  gate?.assertCurrent?.({
-    action: `formal_domain_qualification_${stage}_lookup`,
-    campaignId,
-    operationId,
-    idempotencyKey,
-  });
-}
-
-function assertRecoveryExecutionActive(executionSignal) {
-  if (executionSignal?.aborted === true) {
-    if (executionSignal.reason instanceof Error) {
-      throw executionSignal.reason;
-    }
-    throw new Error('formal_domain_qualification_execution_aborted');
-  }
-}
-
-function assertRecoveryGenerationSelectionCurrent(gate, {
-  campaignId,
-  lineageId,
-} = {}) {
-  gate?.assertCurrent?.({
-    action: 'formal_domain_qualification_generation_select',
-    campaignId,
-    lineageId,
-  });
-}
-
-async function resolveCrashSafeStage({
-  journal,
-  operationId,
-  stage,
-  request,
-  port,
-  execute,
-  resume = null,
-  verifyReceipt,
-  campaignId,
-  assertExternalSideEffectReady,
-  faultInjector,
-  executionSignal,
-}) {
-  const idempotencyKey = formalDomainQualificationRecoveryIdempotencyKey({
-    operationId,
-    stage,
-  });
-  const completed = journal.latest(stage, 'stage_completed');
-  if (completed) {
-    if (completed.idempotencyKey !== idempotencyKey
-      || !verifyReceipt(completed.result?.receipt)) {
-      throw new Error('formal_domain_qualification_recovery_journal_receipt_invalid');
-    }
-    return completed.result.receipt;
-  }
-  const priorStart = journal.latest(stage, 'stage_started');
-  if (priorStart && priorStart.idempotencyKey !== idempotencyKey) {
-    throw new Error('formal_domain_qualification_recovery_journal_identity_invalid');
-  }
-
-  const recoveryInput = Object.freeze({
-    operationId,
-    idempotencyKey,
-    request,
-    signal: executionSignal || null,
-  });
-  assertRecoveryExecutionActive(executionSignal);
-  assertRecoveryLookupCurrent(assertExternalSideEffectReady, {
-    stage,
-    campaignId,
-    operationId,
-    idempotencyKey,
-  });
-  const lookup = normalizeRecoveryResolution(
-    await port.lookup(recoveryInput),
-    verifyReceipt,
-  );
-  if (lookup.status === 'completed') {
-    if (!priorStart) {
-      journal.append({
-        stage,
-        event: 'stage_started',
-        idempotencyKey,
-      });
-    }
-    journal.append({
-      stage,
-      event: 'stage_completed',
-      idempotencyKey,
-      result: Object.freeze({ receipt: lookup.receipt, recovered: true }),
-    });
-    return lookup.receipt;
-  }
-
-  assertRecoveryExecutionActive(executionSignal);
-  await authorizeRecoveryStage(assertExternalSideEffectReady, {
-    stage,
-    campaignId,
-    operationId,
-    idempotencyKey,
-  });
-  assertRecoveryExecutionActive(executionSignal);
-  if (!priorStart) {
-    journal.append({
-      stage,
-      event: 'stage_started',
-      idempotencyKey,
-    });
-  }
-  assertRecoveryExecutionActive(executionSignal);
-  let receipt;
-  if (priorStart || lookup.status === 'in_progress') {
-    const resumed = normalizeRecoveryResolution(
-      await (resume ? resume(recoveryInput) : port.resume(recoveryInput)),
-      verifyReceipt,
-    );
-    if (resumed.status !== 'completed') {
-      throw new Error(
-        `formal_domain_qualification_${stage}_recovery_incomplete:${resumed.status}`,
-      );
-    }
-    receipt = resumed.receipt;
-  } else {
-    receipt = await execute({ ...recoveryInput });
-    if (!verifyReceipt(receipt)) {
-      throw new Error('formal_domain_qualification_recovery_receipt_invalid');
-    }
-  }
-  await faultInjector?.({
-    point: 'after_remote_success_before_journal_append',
-    stage,
-    operationId,
-    idempotencyKey,
-    receipt,
-  });
-  journal.append({
-    stage,
-    event: 'stage_completed',
-    idempotencyKey,
-    result: Object.freeze({
-      receipt,
-      recovered: Boolean(priorStart) || lookup.status === 'in_progress',
-    }),
-  });
-  return receipt;
-}
 
 function reviewerVerificationAuthority(executorPool) {
   return Object.freeze({
     version: executorPool?.version,
     kind: 'ReviewerReceiptVerificationAuthority',
     researchPrincipalPoolHash: executorPool?.pool?.researchPrincipalPoolHash || null,
+    authorityMode: executorPool?.authorityMode || null,
+    sessionIsolationReady: executorPool?.sessionIsolationReady === true,
     cryptographicAuthorityReady: executorPool?.cryptographicAuthorityReady === true,
     identityIndependenceReady: executorPool?.identityIndependenceReady === true,
     reviewerTrustSetHash: executorPool?.trustSetHash || null,
@@ -294,6 +66,9 @@ function reviewerVerificationAuthority(executorPool) {
       executorPool?.signatureVerificationPolicyHash || null,
     verifySignedReviewerReceipt: (input) => (
       executorPool?.verifySignedReviewerReceipt?.(input) === true
+    ),
+    verifySessionReviewerReceipt: (input) => (
+      executorPool?.verifySessionReviewerReceipt?.(input) === true
     ),
   });
 }
@@ -356,7 +131,7 @@ function configuredReviewerPool({
     environment,
     ...(spawnSyncImpl ? { spawnSyncImpl } : {}),
   });
-  const authorIdentityAttestation = inspectConfiguredAutonomousResearchAuthorIdentity({
+  const authorIdentityAttestation = inspectAutonomousResearchAuthorRuntimeIdentity({
     environment,
     author,
     clock,
@@ -365,33 +140,58 @@ function configuredReviewerPool({
     throw new Error('formal_domain_qualification_author_identity_required');
   }
   const configPath = String(environment.HEPTA_REVIEWER_PRINCIPAL_POOL_CONFIG || '').trim();
-  if (!configPath) throw new Error('formal_domain_qualification_reviewer_pool_required');
-  const composed = composeReviewerPrincipalExecutorPool({
-    configPath,
+  if (configPath) {
+    const composed = composeReviewerPrincipalExecutorPool({
+      configPath,
+      authorProvider: authorConfiguration.provider,
+      authorCodexHome: author.codexHome || authorConfiguration.codexHome,
+      runtimeRoot,
+      workspaceRegistry: null,
+      environment,
+      ...(spawnSyncImpl ? { spawnSyncImpl } : {}),
+      ...(fetchImpl ? { fetchImpl } : {}),
+      clock,
+      authorIdentityAttestation,
+      assertExternalSideEffectReady,
+    });
+    if (composed.cryptographicAuthorityReady !== true
+      || composed.identityIndependenceReady !== true
+      || composed.pool?.reviewerTrustDomainCount < 3) {
+      throw new Error('formal_domain_qualification_independent_reviewer_pool_not_ready');
+    }
+    return composed.executorPool;
+  }
+  const reviewer = preflightCodexFormalReviewer({
+    ...providerConfiguration.formalReviewer,
     authorProvider: authorConfiguration.provider,
     authorCodexHome: author.codexHome || authorConfiguration.codexHome,
-    runtimeRoot,
-    workspaceRegistry: null,
     environment,
     ...(spawnSyncImpl ? { spawnSyncImpl } : {}),
-    ...(fetchImpl ? { fetchImpl } : {}),
-    clock,
-    authorIdentityAttestation,
-    assertExternalSideEffectReady,
   });
-  if (composed.cryptographicAuthorityReady !== true
-    || composed.identityIndependenceReady !== true
-    || composed.pool?.reviewerTrustDomainCount < 3) {
-    throw new Error('formal_domain_qualification_independent_reviewer_pool_not_ready');
-  }
-  return composed.executorPool;
+  const inspection = buildAutonomousResearchReviewerSessionPrincipalPool({
+    author,
+    reviewer,
+  });
+  return composeReviewerSessionExecutorPool({
+    inspection,
+    runtimeRoot,
+    workspaceRegistry: null,
+    assertExternalSideEffectReady,
+  }).executorPool;
 }
 
 function configuredExternalReplay({ environment, clock, authorIdentitySubjectHash }) {
   const configPath = String(environment.HEPTA_EXTERNAL_REPLAY_CONFIG || '').trim();
+  const expectedConfigurationHash = String(
+    environment.HEPTA_EXTERNAL_REPLAY_CONFIG_HASH || '',
+  ).trim().toLowerCase() || null;
   if (!configPath) throw new Error('formal_domain_qualification_external_replay_required');
   return createHttpExternalResearchReplayAdapter({
-    configuration: readExternalResearchReplayServiceConfiguration({ configPath }),
+    configuration: readExternalResearchReplayServiceConfiguration({
+      configPath,
+      expectedConfigurationHash,
+    }),
+    expectedConfigurationHash,
     environment,
     requiredLocalOriginIdentitySubjectHashes: [authorIdentitySubjectHash],
     clock,
@@ -426,11 +226,10 @@ export async function produceConfiguredFormalDomainQualificationExternalEvidence
       environment,
       ...(spawnSyncImpl ? { spawnSyncImpl } : {}),
     });
-    const authorIdentity = inspectConfiguredAutonomousResearchAuthorIdentity({
+    const authorIdentity = inspectAutonomousResearchAuthorRuntimeIdentity({
       environment, author, clock,
     });
-    authorIdentitySubjectHash = authorIdentity?.subject
-      ?.externalPrincipalIdentityAttestationSubjectHash || null;
+    authorIdentitySubjectHash = autonomousResearchAuthorIdentitySubjectHash(authorIdentity);
     if (authorIdentity?.ready !== true || !authorIdentitySubjectHash) {
       throw new Error('formal_domain_qualification_author_identity_required');
     }
@@ -448,10 +247,19 @@ export async function produceConfiguredFormalDomainQualificationExternalEvidence
       environment, clock, authorIdentitySubjectHash,
     }),
   );
-  if (effectiveExternalReplay.cryptographicAuthorityReady !== true
+  const sessionReviewerReady = effectiveReviewerPool?.version === 3
+    && effectiveReviewerPool?.authorityMode === 'fresh-isolated-session'
+    && effectiveReviewerPool?.sessionIsolationReady === true
+    && effectiveReviewerPool?.cryptographicAuthorityReady === false
+    && effectiveReviewerPool?.identityIndependenceReady === true
+    && typeof effectiveReviewerPool?.verifySessionReviewerReceipt === 'function';
+  const cryptographicReviewerReady =
+    effectiveReviewerPool?.cryptographicAuthorityReady === true
+    && effectiveReviewerPool?.identityIndependenceReady === true;
+  if (effectiveExternalReplay.fullProductionReady !== true
+    || effectiveExternalReplay.cryptographicAuthorityReady !== true
     || effectiveExternalReplay.identityIndependenceReady !== true
-    || effectiveReviewerPool?.cryptographicAuthorityReady !== true
-    || effectiveReviewerPool?.identityIndependenceReady !== true) {
+    || (!sessionReviewerReady && !cryptographicReviewerReady)) {
     throw new Error('formal_domain_qualification_external_authorities_not_ready');
   }
   const externalReplayRequest = buildExternalResearchReplayRequest({
@@ -463,11 +271,11 @@ export async function produceConfiguredFormalDomainQualificationExternalEvidence
       .map((item) => item.replayExecutionReceiptHash),
   });
   const replayRecoveryPort = assertReplayRecoveryPort(effectiveExternalReplay);
-  const reviewerRecoveryPort = assertRecoveryPort(
+  const reviewerRecoveryPort = sessionReviewerReady ? null : assertRecoveryPort(
     effectiveReviewerPool?.reviewerRecoveryPort,
     'reviewer',
   );
-  const signerRecoveryPort = assertRecoveryPort(
+  const signerRecoveryPort = sessionReviewerReady ? null : assertRecoveryPort(
     effectiveReviewerPool?.signerRecoveryPort,
     'signer',
   );
@@ -477,9 +285,13 @@ export async function produceConfiguredFormalDomainQualificationExternalEvidence
       replayRecoveryPort.recoveryConfigurationIdentityHash
         || replayRecoveryPort.configurationHash,
     reviewerConfigurationIdentityHash:
-      reviewerRecoveryPort.configurationIdentityHash,
+      sessionReviewerReady
+        ? effectiveReviewerPool.trustSetHash
+        : reviewerRecoveryPort.configurationIdentityHash,
     signerConfigurationIdentityHash:
-      signerRecoveryPort.configurationIdentityHash,
+      sessionReviewerReady
+        ? effectiveReviewerPool.signatureVerificationPolicyHash
+        : signerRecoveryPort.configurationIdentityHash,
   });
   assertRecoveryExecutionActive(executionSignal);
   assertRecoveryGenerationSelectionCurrent(assertExternalSideEffectReady, {
@@ -561,35 +373,57 @@ export async function produceConfiguredFormalDomainQualificationExternalEvidence
         ...reviewRequest,
         workspacePath: reviewWorkspace.workspacePath,
       });
-      const unsignedReviewerReceipt = await resolveCrashSafeStage({
-        journal,
-        operationId,
-        stage: 'reviewer',
-        request: reviewRequest,
-        port: reviewerRecoveryPort,
-        execute: (input) => reviewerRecoveryPort.execute({
-          ...input,
-          executionRequest: reviewExecutionRequest,
-        }),
-        resume: (input) => reviewerRecoveryPort.resume({
-          ...input,
-          executionRequest: reviewExecutionRequest,
-        }),
-        verifyReceipt: (receipt) => reviewerRecoveryPort.verifyReceipt({
+      const unsignedReviewerReceipt = sessionReviewerReady
+        ? await resolveRepeatableLocalStage({
+          journal,
+          operationId,
+          stage: 'reviewer',
           request: reviewRequest,
-          receipt,
-        }) === true,
-        campaignId: externalReplayRequest.campaignId,
-        assertExternalSideEffectReady,
-        faultInjector,
-        executionSignal,
-      });
+          execute: ({ signal }) => effectiveReviewerPool.execute({
+            ...reviewExecutionRequest,
+            signal,
+          }),
+          verifyReceipt: (receipt) => (
+            effectiveReviewerPool.verifySessionReviewerReceipt({
+              receipt,
+              expected: { role: 'formal-review' },
+            }) === true
+          ),
+          campaignId: externalReplayRequest.campaignId,
+          assertExternalSideEffectReady,
+          faultInjector,
+          executionSignal,
+        })
+        : await resolveCrashSafeStage({
+          journal,
+          operationId,
+          stage: 'reviewer',
+          request: reviewRequest,
+          port: reviewerRecoveryPort,
+          execute: (input) => reviewerRecoveryPort.execute({
+            ...input,
+            executionRequest: reviewExecutionRequest,
+          }),
+          resume: (input) => reviewerRecoveryPort.resume({
+            ...input,
+            executionRequest: reviewExecutionRequest,
+          }),
+          verifyReceipt: (receipt) => reviewerRecoveryPort.verifyReceipt({
+            request: reviewRequest,
+            receipt,
+          }) === true,
+          campaignId: externalReplayRequest.campaignId,
+          assertExternalSideEffectReady,
+          faultInjector,
+          executionSignal,
+        });
       const signerRequest = Object.freeze({
         reviewRequest,
         unsignedReviewerReceipt,
       });
-      const formalDomainIndependentReviewAgentReceipt =
-        await resolveCrashSafeStage({
+      const formalDomainIndependentReviewAgentReceipt = sessionReviewerReady
+        ? unsignedReviewerReceipt
+        : await resolveCrashSafeStage({
           journal,
           operationId,
           stage: 'signer',

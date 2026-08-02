@@ -125,6 +125,13 @@ function rounded(value) {
   return Number(value.toFixed(12));
 }
 
+function independentlyEquivalentJsonNumber(left, right) {
+  if (left === right) return true;
+  if (!Number.isFinite(left) || !Number.isFinite(right)) return false;
+  const magnitude = Math.max(1, Math.abs(left), Math.abs(right));
+  return Math.abs(left - right) <= (Number.EPSILON * magnitude * 4);
+}
+
 function deterministicScalar(parts, minimum, maximum) {
   return rounded(minimum + ((maximum - minimum) * deterministicUnit(parts)));
 }
@@ -400,7 +407,8 @@ export function independentlyEvaluateSystemBenchmarkCellResponses({
     if (!exactKeys(response, ['caseId', responseField]) || seen.has(caseId)
       || publicCase?.caseId !== caseId || !oracleById.has(caseId)
       || typeof value !== 'number' || !Number.isFinite(value) || Math.abs(value) > 1e6
-      || (protocol?.arm === 'baseline' && value !== Number(publicCase?.referenceResponse))) {
+      || (protocol?.arm === 'baseline'
+        && !independentlyEquivalentJsonNumber(value, Number(publicCase?.referenceResponse)))) {
       blockers.push('independent_response_schema_invalid');
       continue;
     }

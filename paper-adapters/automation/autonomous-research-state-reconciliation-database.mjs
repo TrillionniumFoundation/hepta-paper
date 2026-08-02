@@ -4,9 +4,12 @@ import { DatabaseSync } from 'node:sqlite';
 
 import { pathWithin } from '../../workflow-kernel/runtime/file-utils.mjs';
 
-function fileIdentity(candidate) {
+function fileIdentity(candidate, { databaseRole = null } = {}) {
   const stat = fs.lstatSync(candidate, { bigint: true });
-  if (!stat.isFile() || stat.isSymbolicLink() || (Number(stat.mode) & 0o022) !== 0) {
+  const mode = Number(stat.mode);
+  const groupWritePermitted = databaseRole === 'submission-handoff';
+  if (!stat.isFile() || stat.isSymbolicLink() || mode & 0o002
+    || (!groupWritePermitted && mode & 0o020)) {
     throw new Error('autonomous_research_state_reconciliation_database_unsafe');
   }
   return Object.freeze({
@@ -31,7 +34,7 @@ export function openAutonomousResearchStateReconciliationDatabase({
     || !pathWithin(root, candidate)
     || !fs.existsSync(candidate)
     || !pathWithin(fs.realpathSync(root), fs.realpathSync(candidate))
-    || JSON.stringify(fileIdentity(candidate))
+    || JSON.stringify(fileIdentity(candidate, { databaseRole: instance.role }))
       !== JSON.stringify(instance.sourceFileIdentity)) {
     throw new Error('autonomous_research_state_reconciliation_database_identity_changed');
   }

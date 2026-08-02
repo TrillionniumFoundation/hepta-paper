@@ -16,6 +16,7 @@ import {
   campaignBudgetBlocker as budgetBlocker,
   campaignNodeUsageDelta as usageDelta,
   elapsedRunMs,
+  meteredCampaignFailureUsage as meteredFailureUsage,
   meteredCampaignResultUsage as meteredResultUsage,
   postExecutionCampaignBudgetBlocker as postExecutionBudgetBlocker,
 } from './campaign-execution-budget-policy.mjs';
@@ -24,7 +25,7 @@ import {
   prepareCampaignPackageLifecycle,
 } from './campaign-package-lifecycle.mjs';
 
-function boundedFailureDetail(error) {
+function boundedFailureDetail(error, { usageMetering = null } = {}) {
   const receipt = error?.receipt || {};
   return Object.freeze({
     message: String(error?.message || 'campaign_executor_failed').slice(0, 1000),
@@ -40,6 +41,7 @@ function boundedFailureDetail(error) {
     stdoutTail: String(receipt.stdoutTail || '').slice(-4000),
     receiptDetails: receipt.details || null,
     backendFailures: Array.isArray(error?.failures) ? error.failures.slice(0, 10) : [],
+    usageMetering,
   });
 }
 
@@ -319,6 +321,7 @@ export async function runPaperCampaign({
             signedReviewerReceiptVerifier:
               typeof executor.verifySignedReviewerReceipt === 'function'
                 ? executor.verifySignedReviewerReceipt : null,
+            sessionReviewerReceiptVerifier: typeof executor.verifySessionReviewerReceipt === 'function' ? executor.verifySessionReviewerReceipt : null,
           });
         }
         const workspaceIntegrationDescriptor = result?.workspaceAttemptIntegration || null;
@@ -432,17 +435,16 @@ export async function runPaperCampaign({
         if (latestNode?.status !== 'running' || latestNode?.attemptId !== node.attemptId || latestNode?.leaseGeneration !== node.leaseGeneration) return;
         const campaignStatus = campaignStore.getCampaign(campaignId)?.status;
         if (campaignStatus !== 'running') return;
+        const failureMetering = meteredFailureUsage(error, { agentCall: requestedResources.agent > 0 });
         const failed = campaignStore.failNode({
           nodeId: node.nodeId,
           workerId,
           attemptId: node.attemptId,
           leaseGeneration: node.leaseGeneration,
-          failureClass: error?.code || error?.message || 'campaign_executor_failed',
-          failureDetail: boundedFailureDetail(error),
-          retryable: error?.retryable !== false,
+          failureDetail: boundedFailureDetail(error, failureMetering),
           abandonPreparedResult: Boolean(error?.abandonPreparedResult
             || /workspace_attempt_(?:integration_conflict|postimage|source_|descriptor|root_|read_set|manifest|attempt_)/.test(String(error?.code || error?.message || ''))),
-          usageDelta: meteredResultUsage(error?.receipt, { agentCall: requestedResources.agent > 0 }),
+          ...failureMetering.nodeFailure,
         });
         if (failed.status === 'queued') retryCount += 1;
       } finally {

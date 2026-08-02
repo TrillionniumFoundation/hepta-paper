@@ -22,7 +22,6 @@ export function autonomousResearchStateProvisioningUsage() {
     '  --machine-intake-config PATH   Valid version-2 intake configuration.',
     '  --topic-producer-profile PATH  Bound topic-producer profile.',
     '  --dataset-root PATH            Immutable registered-dataset root.',
-    '  --provider-canary-pair-maximum-cost-usd N',
     '  --runtime-reproducibility-maximum-attempts-per-epoch N',
     '  --runtime-reproducibility-maximum-cost-usd-per-epoch N',
     '',
@@ -83,7 +82,6 @@ export function parseAutonomousResearchStateProvisioningArguments(argv = []) {
     valueFlags: [
       'action', 'plan-id', 'runtime-root', 'machine-intake-config',
       'topic-producer-profile', 'dataset-root',
-      'provider-canary-pair-maximum-cost-usd',
       'runtime-reproducibility-maximum-attempts-per-epoch',
       'runtime-reproducibility-maximum-cost-usd-per-epoch',
       'runtime-reproducibility-budget-epoch-ms',
@@ -125,11 +123,6 @@ export function parseAutonomousResearchStateProvisioningArguments(argv = []) {
     machineIntakeConfigPath: path.resolve(args['machine-intake-config']),
     topicProducerProfilePath: path.resolve(args['topic-producer-profile']),
     datasetRoot: path.resolve(args['dataset-root']),
-    providerCanaryPairMaximumCostUsd: finiteNumber(
-      args['provider-canary-pair-maximum-cost-usd'],
-      'provider_canary_pair_maximum_cost_usd',
-      { minimum: Number.MIN_VALUE, required: true },
-    ),
     runtimeReproducibilityPolicy: selectedPolicy(args),
     providerOptions: Object.freeze(Object.fromEntries([
       'agent-provider', 'model', 'codex-home', 'codex-binary',
@@ -153,8 +146,6 @@ export function runAutonomousResearchStateProvisioning({
     machineIntakeConfigPath: options.machineIntakeConfigPath,
     topicProducerProfilePath: options.topicProducerProfilePath,
     datasetRoot: options.datasetRoot,
-    providerCanaryPairMaximumCostUsd:
-      options.providerCanaryPairMaximumCostUsd,
     runtimeReproducibilityPolicy: options.runtimeReproducibilityPolicy,
     providerOptions: options.providerOptions,
     environment,

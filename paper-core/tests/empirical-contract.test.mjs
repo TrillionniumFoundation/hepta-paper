@@ -78,6 +78,79 @@ test('dataset consumption contract requires every declared worker mount in the e
   assert.equal(passed.blockers.length, 0);
   const commentOnly = evaluateDatasetConsumptionContract({ sourceText: '# read.csv(Sys.getenv("HEPTA_DATASET_TRIAL_DATA"))\n# open("/datasets/holdout")', datasetMounts: mounts });
   assert.equal(commentOnly.status, 'dataset_consumption_contract_blocked');
+  const listingOnly = evaluateDatasetConsumptionContract({
+    sourceText: 'root <- Sys.getenv("HEPTA_DATASET_TRIAL_DATA"); list.files(root)',
+    datasetMounts: [mounts[0]],
+  });
+  assert.deepEqual(listingOnly.blockers, ['declared_dataset_not_consumed:trial data']);
+  const directoryContentRead = evaluateDatasetConsumptionContract({
+    sourceText: [
+      'root <- Sys.getenv("HEPTA_DATASET_TRIAL_DATA")',
+      'probe <- read.csv(file.path(root, "factors_monthly.csv.gz"), nrows = 1)',
+    ].join('\n'),
+    datasetMounts: [mounts[0]],
+  });
+  assert.equal(
+    directoryContentRead.status,
+    'dataset_consumption_source_preflight_verified',
+  );
+  const namespacedTableRead = evaluateDatasetConsumptionContract({
+    sourceText: [
+      'root <- Sys.getenv("HEPTA_DATASET_TRIAL_DATA")',
+      'relative <- "factors_monthly.txt"',
+      'probe <- utils::read.table(file.path(root, relative), nrows = 1)',
+    ].join('\n'),
+    datasetMounts: [mounts[0]],
+  });
+  assert.equal(
+    namespacedTableRead.status,
+    'dataset_consumption_source_preflight_verified',
+  );
+  const derivedMultilineRead = evaluateDatasetConsumptionContract({
+    sourceText: [
+      'root <- Sys.getenv("HEPTA_DATASET_TRIAL_DATA",',
+      '                   unset = "/datasets/trial-data")',
+      'relative <- "factors_monthly.txt"',
+      'dataset_file <- file.path(root, relative)',
+      'probe <- read.table(dataset_file, nrows = 1)',
+    ].join('\n'),
+    datasetMounts: [mounts[0]],
+  });
+  assert.equal(
+    derivedMultilineRead.status,
+    'dataset_consumption_source_preflight_verified',
+  );
+  const connectionRead = evaluateDatasetConsumptionContract({
+    sourceText: [
+      'root <- Sys.getenv("HEPTA_DATASET_TRIAL_DATA", unset = "/datasets/trial-data")',
+      'relative <- "factors_monthly.csv.gz"',
+      'dataset_file <- file.path(root, relative)',
+      'connection <- gzfile(dataset_file, "rt")',
+      'probe <- readLines(connection, n = 2L)',
+    ].join('\n'),
+    datasetMounts: [mounts[0]],
+  });
+  assert.equal(
+    connectionRead.status,
+    'dataset_consumption_source_preflight_verified',
+  );
+  const helperConnectionRead = evaluateDatasetConsumptionContract({
+    sourceText: [
+      'dataset_root <- function() {',
+      '  candidates <- c(Sys.getenv("HEPTA_DATASET_TRIAL_DATA", unset = ""), "/datasets/trial-data")',
+      '  normalizePath(candidates[[1L]], mustWork = TRUE)',
+      '}',
+      'root <- dataset_root()',
+      'dataset_file <- file.path(root, "factors_monthly.csv.gz")',
+      'connection <- gzfile(dataset_file, "rt")',
+      'probe <- readLines(connection, n = 2L)',
+    ].join('\n'),
+    datasetMounts: [mounts[0]],
+  });
+  assert.equal(
+    helperConnectionRead.status,
+    'dataset_consumption_source_preflight_verified',
+  );
 });
 
 test('empirical metric gate compares repeated numeric outputs within tolerance', (t) => {

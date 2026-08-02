@@ -413,6 +413,19 @@ test('dispatcher opens from the scoped one-database inventory and dedicated auth
   assert.equal(context.kind, 'AutonomousSubmissionHandoffContext');
   assert.equal(context.services.autonomousSubmissionOutbox.externallyFencedMutations, true);
   context.services.persistenceSession.close();
+
+  const localContext = bootstrapAutonomousSubmissionHandoffContext({
+    root: fixture.parent,
+    runtimeRoot: fixture.runtimeRoot,
+    environment: {},
+    requireExternallyFenced: false,
+  });
+  assert.equal(localContext.kind, 'AutonomousSubmissionHandoffContext');
+  assert.equal(
+    localContext.services.autonomousSubmissionOutbox.externallyFencedMutations,
+    false,
+  );
+  localContext.services.persistenceSession.close();
 });
 
 test('handoff path resolution rejects root, parent, and database symlink substitution', (t) => {
@@ -609,7 +622,7 @@ test('deployment grants native writes only to research and exact handoff writes 
     'autonomous-research-supervisor.service',
   ), 'utf8');
   assert.match(supervisorService,
-    /^Requires=hepta-paper-host-bootstrap\.service autonomous-submission-handoff-layout-provision\.service$/m);
+    /^Requires=hepta-paper-host-bootstrap\.service autonomous-submission-handoff-layout-provision\.service hepta-paper-state-authority\.service$/m);
   assert.match(supervisorService,
     /^Wants=.*autonomous-submission-handoff-layout-provision\.path/m);
   assert.doesNotMatch(supervisorService, /^ExecStartPre=\+/m);

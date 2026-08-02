@@ -17,6 +17,13 @@ import {
   ADVANCED_NUMERICAL_PLUGIN_QUALIFICATION_ROLES,
   buildAdvancedNumericalPluginQualificationStatement,
 } from '../../paper-domain/research/advanced-numerical-plugin-qualification-contract.mjs';
+import {
+  buildAdvancedNumericalOracleQualificationReceipt,
+  buildAdvancedNumericalPluginQualificationEvidenceBundle,
+  buildAdvancedNumericalQualificationExecutionReceipt,
+  buildAdvancedNumericalScientificReviewQualificationReceipt,
+  buildAdvancedNumericalUncertaintyQualificationReceipt,
+} from '../../paper-domain/research/advanced-numerical-plugin-qualification-evidence-contract.mjs';
 import { signAuthorityDocument } from '../../paper-adapters/authority/authority-signatures.mjs';
 import { buildExecutorCapabilities } from '../../paper-ports/executor-capabilities.mjs';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
@@ -104,6 +111,7 @@ function signedPluginFixture() {
     outputRoot,
     descriptor,
     now,
+    pluginPrivateKey: keys.privateKey,
     bundle: {
       version: 1,
       kind: 'AdvancedNumericalPluginSignedBundle',
@@ -116,6 +124,7 @@ function signedPluginFixture() {
       keys: [{
         keyId: 'advanced-numerical-plugin-key',
         subjectId: 'advanced-numerical-plugin-authority',
+        organization: 'advanced-numerical-plugin-organization',
         algorithm: 'ed25519',
         publicKeyPem: keys.publicKey.export({ type: 'spki', format: 'pem' }),
         roles: ['advanced_numerical_plugin_authority'],
@@ -199,10 +208,12 @@ function sandboxRunner(descriptor, { invalidResult = false, networkPolicy = 'non
 function productionQualification(fixture) {
   const trustKeys = [];
   const privateKeys = new Map();
+  const keyIdsByRole = new Map();
   for (const [index, role] of ADVANCED_NUMERICAL_PLUGIN_QUALIFICATION_ROLES.entries()) {
     const keyPair = crypto.generateKeyPairSync('ed25519');
     const keyId = `advanced-numerical-qualification-${index + 1}`;
     privateKeys.set(keyId, keyPair.privateKey);
+    keyIdsByRole.set(role, keyId);
     trustKeys.push({
       keyId,
       subjectId: `independent-qualification-subject-${index + 1}`,
@@ -213,21 +224,150 @@ function productionQualification(fixture) {
       status: 'active',
     });
   }
+  const signedBundleHash = hashRecord(
+    'AdvancedNumericalPluginSignedBundle',
+    fixture.bundle,
+  );
+  const evidenceExpiresAt = new Date(
+    fixture.now.getTime() + 55_000,
+  ).toISOString();
+  const signQualificationEvidence = (document, role) => {
+    const keyId = keyIdsByRole.get(role);
+    return signAuthorityDocument(document, {
+      privateKeyPem: privateKeys.get(keyId),
+      keyId,
+      role,
+    });
+  };
+  let referenceExecutionReceipt =
+    buildAdvancedNumericalQualificationExecutionReceipt({
+      descriptor: fixture.descriptor,
+      signedBundleHash,
+      executionMode: 'reference',
+      requestCorpusHash: `sha256:${'c'.repeat(64)}`,
+      resultHash: `sha256:${'f'.repeat(64)}`,
+      executionProcessIdentityHash: `sha256:${'d'.repeat(64)}`,
+      executedAt: new Date(fixture.now.getTime() - 70_000).toISOString(),
+      signedAt: new Date(fixture.now.getTime() - 60_000).toISOString(),
+      validFrom: new Date(fixture.now.getTime() - 59_000).toISOString(),
+      expiresAt: evidenceExpiresAt,
+    });
+  referenceExecutionReceipt = signAuthorityDocument(
+    referenceExecutionReceipt,
+    {
+      privateKeyPem: fixture.pluginPrivateKey,
+      keyId: 'advanced-numerical-plugin-key',
+      role: 'advanced_numerical_plugin_authority',
+    },
+  );
+  let replayExecutionReceipt =
+    buildAdvancedNumericalQualificationExecutionReceipt({
+      descriptor: fixture.descriptor,
+      signedBundleHash,
+      executionMode: 'independent-replay',
+      requestCorpusHash: referenceExecutionReceipt.requestCorpusHash,
+      resultHash: referenceExecutionReceipt.resultHash,
+      executionProcessIdentityHash: `sha256:${'e'.repeat(64)}`,
+      executedAt: new Date(fixture.now.getTime() - 65_000).toISOString(),
+      signedAt: new Date(fixture.now.getTime() - 55_000).toISOString(),
+      validFrom: new Date(fixture.now.getTime() - 54_000).toISOString(),
+      expiresAt: evidenceExpiresAt,
+    });
+  replayExecutionReceipt = signQualificationEvidence(
+    replayExecutionReceipt,
+    'advanced_numerical_replay_authority',
+  );
+  let independentNumericOracleReceipt =
+    buildAdvancedNumericalOracleQualificationReceipt({
+      descriptor: fixture.descriptor,
+      signedBundleHash,
+      referenceExecutionReceiptHash:
+        referenceExecutionReceipt
+          .advancedNumericalQualificationExecutionReceiptHash,
+      replayExecutionReceiptHash:
+        replayExecutionReceipt
+          .advancedNumericalQualificationExecutionReceiptHash,
+      resultHash: referenceExecutionReceipt.resultHash,
+      independentNumericOracleArtifactHash: `sha256:${'8'.repeat(64)}`,
+      signedAt: new Date(fixture.now.getTime() - 50_000).toISOString(),
+      validFrom: new Date(fixture.now.getTime() - 49_000).toISOString(),
+      expiresAt: evidenceExpiresAt,
+    });
+  independentNumericOracleReceipt = signQualificationEvidence(
+    independentNumericOracleReceipt,
+    'advanced_numerical_oracle_authority',
+  );
+  let typedUncertaintyReviewReceipt =
+    buildAdvancedNumericalUncertaintyQualificationReceipt({
+      descriptor: fixture.descriptor,
+      signedBundleHash,
+      referenceExecutionReceiptHash:
+        referenceExecutionReceipt
+          .advancedNumericalQualificationExecutionReceiptHash,
+      replayExecutionReceiptHash:
+        replayExecutionReceipt
+          .advancedNumericalQualificationExecutionReceiptHash,
+      resultHash: referenceExecutionReceipt.resultHash,
+      typedUncertaintyArtifactHash: `sha256:${'9'.repeat(64)}`,
+      signedAt: new Date(fixture.now.getTime() - 48_000).toISOString(),
+      validFrom: new Date(fixture.now.getTime() - 47_000).toISOString(),
+      expiresAt: evidenceExpiresAt,
+    });
+  typedUncertaintyReviewReceipt = signQualificationEvidence(
+    typedUncertaintyReviewReceipt,
+    'advanced_numerical_uncertainty_reviewer',
+  );
+  let scientificReviewReceipt =
+    buildAdvancedNumericalScientificReviewQualificationReceipt({
+      descriptor: fixture.descriptor,
+      signedBundleHash,
+      referenceExecutionReceiptHash:
+        referenceExecutionReceipt
+          .advancedNumericalQualificationExecutionReceiptHash,
+      replayExecutionReceiptHash:
+        replayExecutionReceipt
+          .advancedNumericalQualificationExecutionReceiptHash,
+      independentNumericOracleReceiptHash:
+        independentNumericOracleReceipt
+          .advancedNumericalOracleQualificationReceiptHash,
+      typedUncertaintyReviewReceiptHash:
+        typedUncertaintyReviewReceipt
+          .advancedNumericalUncertaintyQualificationReceiptHash,
+      resultHash: referenceExecutionReceipt.resultHash,
+      scientificReviewArtifactHash: `sha256:${'a'.repeat(64)}`,
+      signedAt: new Date(fixture.now.getTime() - 45_000).toISOString(),
+      validFrom: new Date(fixture.now.getTime() - 44_000).toISOString(),
+      expiresAt: evidenceExpiresAt,
+    });
+  scientificReviewReceipt = signQualificationEvidence(
+    scientificReviewReceipt,
+    'advanced_numerical_scientific_reviewer',
+  );
   let qualification = buildAdvancedNumericalPluginQualificationStatement({
     descriptor: fixture.descriptor,
-    signedBundleHash: hashRecord('AdvancedNumericalPluginSignedBundle', fixture.bundle),
+    signedBundleHash,
     evidence: {
-      independentNumericOracleReceiptHash: `sha256:${'d'.repeat(64)}`,
-      referenceExecutionReceiptHash: `sha256:${'e'.repeat(64)}`,
-      referenceResultHash: `sha256:${'f'.repeat(64)}`,
-      replayExecutionReceiptHash: `sha256:${'0'.repeat(64)}`,
-      replayResultHash: `sha256:${'f'.repeat(64)}`,
-      scientificReviewReceiptHash: `sha256:${'a'.repeat(64)}`,
-      typedUncertaintyReviewReceiptHash: `sha256:${'b'.repeat(64)}`,
+      independentNumericOracleReceiptHash:
+        independentNumericOracleReceipt
+          .advancedNumericalOracleQualificationReceiptHash,
+      referenceExecutionReceiptHash:
+        referenceExecutionReceipt
+          .advancedNumericalQualificationExecutionReceiptHash,
+      referenceResultHash: referenceExecutionReceipt.resultHash,
+      replayExecutionReceiptHash:
+        replayExecutionReceipt
+          .advancedNumericalQualificationExecutionReceiptHash,
+      replayResultHash: replayExecutionReceipt.resultHash,
+      scientificReviewReceiptHash:
+        scientificReviewReceipt
+          .advancedNumericalScientificReviewQualificationReceiptHash,
+      typedUncertaintyReviewReceiptHash:
+        typedUncertaintyReviewReceipt
+          .advancedNumericalUncertaintyQualificationReceiptHash,
     },
-    signedAt: new Date(fixture.now.getTime() - 30_000).toISOString(),
-    validFrom: new Date(fixture.now.getTime() - 20_000).toISOString(),
-    expiresAt: new Date(fixture.now.getTime() + 60_000).toISOString(),
+    signedAt: new Date(fixture.now.getTime() - 40_000).toISOString(),
+    validFrom: new Date(fixture.now.getTime() - 35_000).toISOString(),
+    expiresAt: new Date(fixture.now.getTime() + 50_000).toISOString(),
   });
   for (const [index, role] of ADVANCED_NUMERICAL_PLUGIN_QUALIFICATION_ROLES.entries()) {
     const keyId = `advanced-numerical-qualification-${index + 1}`;
@@ -237,8 +377,19 @@ function productionQualification(fixture) {
       role,
     });
   }
+  const evidence = buildAdvancedNumericalPluginQualificationEvidenceBundle({
+    descriptor: fixture.descriptor,
+    signedBundleHash,
+    qualification,
+    referenceExecutionReceipt,
+    replayExecutionReceipt,
+    independentNumericOracleReceipt,
+    typedUncertaintyReviewReceipt,
+    scientificReviewReceipt,
+  });
   return {
     qualification,
+    evidence,
     trustStore: {
       version: 1,
       kind: 'AuthorityTrustStore',
@@ -283,6 +434,7 @@ test('independently qualified plugins emit production-qualified receipts', async
     signedBundle: fixture.bundle,
     trustStore: fixture.trustStore,
     qualification: qualified.qualification,
+    qualificationEvidence: qualified.evidence,
     qualificationTrustStore: qualified.trustStore,
     workerRunner: sandboxRunner(fixture.descriptor),
     pluginRoot: fixture.pluginRoot,
@@ -291,6 +443,15 @@ test('independently qualified plugins emit production-qualified receipts', async
   });
   assert.equal(runner.capabilities().productionQualified, true);
   assert.deepEqual(runner.capabilities().qualifiedAnalysisFamilies, ['causal-inference']);
+  assert.match(
+    runner.capabilities().qualificationEvidenceBundleHash,
+    /^sha256:[0-9a-f]{64}$/,
+  );
+  assert.equal(
+    runner.capabilities().referenceExecutionProcessIdentityHash
+      === runner.capabilities().replayExecutionProcessIdentityHash,
+    false,
+  );
   const receipt = await runner.run({
     runId: 'causal-run-qualified',
     input: { outcome: [1, 2, 3], treatment: [0, 1, 1] },
@@ -314,6 +475,7 @@ test('qualification tampering and signer collusion fail closed', () => {
       signedBundle: fixture.bundle,
       trustStore: fixture.trustStore,
       qualification: qualified.qualification,
+      qualificationEvidence: qualified.evidence,
       qualificationTrustStore: colludingTrustStore,
       workerRunner: sandboxRunner(fixture.descriptor),
       pluginRoot: fixture.pluginRoot,
@@ -321,18 +483,60 @@ test('qualification tampering and signer collusion fail closed', () => {
       now: fixture.now,
     }), /qualification_subject_independence_required/);
 
+    const sameOrganizationTrustStore = structuredClone(qualified.trustStore);
+    sameOrganizationTrustStore.keys[0].organization =
+      'advanced-numerical-plugin-organization';
+    assert.throws(() => createOutOfProcessAdvancedNumericalPluginRunner({
+      signedBundle: fixture.bundle,
+      trustStore: fixture.trustStore,
+      qualification: qualified.qualification,
+      qualificationEvidence: qualified.evidence,
+      qualificationTrustStore: sameOrganizationTrustStore,
+      workerRunner: sandboxRunner(fixture.descriptor),
+      pluginRoot: fixture.pluginRoot,
+      outputRoot: fixture.outputRoot,
+      now: fixture.now,
+    }), /qualification_organization_independence_required/);
+
     const tampered = structuredClone(qualified.qualification);
     tampered.evidence.replayResultHash = `sha256:${'c'.repeat(64)}`;
     assert.throws(() => createOutOfProcessAdvancedNumericalPluginRunner({
       signedBundle: fixture.bundle,
       trustStore: fixture.trustStore,
       qualification: tampered,
+      qualificationEvidence: qualified.evidence,
       qualificationTrustStore: qualified.trustStore,
       workerRunner: sandboxRunner(fixture.descriptor),
       pluginRoot: fixture.pluginRoot,
       outputRoot: fixture.outputRoot,
       now: fixture.now,
     }), /qualification_statement_invalid/);
+
+    const forgedEvidence = structuredClone(qualified.evidence);
+    forgedEvidence.replayExecutionReceipt.executionProcessIdentityHash =
+      forgedEvidence.referenceExecutionReceipt.executionProcessIdentityHash;
+    assert.throws(() => createOutOfProcessAdvancedNumericalPluginRunner({
+      signedBundle: fixture.bundle,
+      trustStore: fixture.trustStore,
+      qualification: qualified.qualification,
+      qualificationEvidence: forgedEvidence,
+      qualificationTrustStore: qualified.trustStore,
+      workerRunner: sandboxRunner(fixture.descriptor),
+      pluginRoot: fixture.pluginRoot,
+      outputRoot: fixture.outputRoot,
+      now: fixture.now,
+    }), /qualification_evidence_bundle_invalid/);
+
+    assert.throws(() => createOutOfProcessAdvancedNumericalPluginRunner({
+      signedBundle: fixture.bundle,
+      trustStore: fixture.trustStore,
+      qualification: qualified.qualification,
+      qualificationTrustStore: qualified.trustStore,
+      workerRunner: sandboxRunner(fixture.descriptor),
+      pluginRoot: fixture.pluginRoot,
+      outputRoot: fixture.outputRoot,
+      now: fixture.now,
+    }), /qualification_configuration_incomplete/);
   } finally {
     fs.rmSync(fixture.root, { recursive: true, force: true });
   }

@@ -48,6 +48,8 @@ const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 const ARMS = Object.freeze(['treatment', 'baseline', 'ablation']);
 const MAXIMUM_RAW_EVENT_BYTES = 16 * 1024 * 1024;
 const MAXIMUM_RAW_EVENTS_PER_CELL = 64;
+const ACADEMIC_PER_CELL_MINIMUM_TIMEOUT_MS = 60_000;
+const ACADEMIC_PER_CELL_MAXIMUM_CONCURRENCY = 1;
 
 export function executeSystemBenchmarkHarness({
   benchmarkSelector,
@@ -71,6 +73,7 @@ export function executeSystemBenchmarkHarness({
   maximumWallTimeMs = null,
   cpuCount = 1,
   executionEnvironment = null,
+  localOnly = false,
   researchContext = null,
   nowEpochMs = () => Date.now(),
 } = {}) {
@@ -324,9 +327,6 @@ export function executeSystemBenchmarkHarness({
       const cells = schedule.map((cell) => cellsById.get(cell.cellId)).filter(Boolean);
       const rawEventRows = schedule.map((cell) => rawEventRowsById.get(cell.cellId)).filter(Boolean);
       const observations = cells.map((cell) => ({ seed: cell.seed, repetition: cell.repetition, arm: cell.arm, metrics: cell.metrics }));
-      const academicPerCell = selector.expected.selectorType === 'authorized_dataset_mount';
-      const executionMode = academicPerCell ? 'academic-per-cell-process-v1' : 'synthetic-per-arm-batch-process-v1';
-      const expectedProcessExecutionCount = academicPerCell ? schedule.length : ARMS.length;
       if (armBatchExecutions.length !== expectedProcessExecutionCount) blockers.push('benchmark_harness_process_execution_incomplete');
       if (cells.length !== schedule.length) blockers.push('benchmark_harness_schedule_incomplete');
       const statisticalEvaluation = evaluateSystemBenchmarkStatisticalPolicy({ observations, experimentDesign: selector.expected.experimentDesign });
@@ -429,7 +429,7 @@ export function executeSystemBenchmarkHarness({
         analysisProtocolEvaluation,
         analysisProtocolEvaluationInputs,
       ));
-      const workerDatasetPositiveByteReadObserved = academicPerCell
+      const workerDatasetPositiveByteReadObserved = datasetBacked
         && armBatchExecutions.length === expectedProcessExecutionCount
         && armBatchExecutions.every((batch) => authorizations.datasets.every((dataset) => {
           const access = batch.runnerReceipt?.datasetAccessReceipt?.datasets
@@ -438,7 +438,7 @@ export function executeSystemBenchmarkHarness({
             && Number.isSafeInteger(access.positiveReadBytesObserved)
             && access.positiveReadBytesObserved > 0;
         }));
-      const datasetEvaluationDependencyReceipt = academicPerCell
+      const datasetEvaluationDependencyReceipt = datasetBacked
         ? buildDatasetEvaluationDependencyReceipt({
           operatorDatasetHarnessAuthority,
           preDataAccessFreeze,
@@ -450,7 +450,7 @@ export function executeSystemBenchmarkHarness({
           workerDatasetPositiveByteReadObserved,
         })
         : null;
-      if (academicPerCell && datasetEvaluationDependencyReceipt.status
+      if (datasetBacked && datasetEvaluationDependencyReceipt.status
         !== 'dataset_evaluation_dependency_verified') {
         blockers.push(...datasetEvaluationDependencyReceipt.blockers);
       }
@@ -476,7 +476,9 @@ export function executeSystemBenchmarkHarness({
         operatorDatasetHarnessAuthority,
         datasetEvaluationDependencyReceipt,
         assuranceScope: selector.expected.assuranceScope,
-        academicPromotionEligible: selector.expected.assuranceScope === 'operator-authorized-hidden-evaluation-v1',
+        executionAssuranceProfile,
+        academicPromotionEligible: academicPerCell
+          && selector.expected.assuranceScope === 'operator-authorized-hidden-evaluation-v1',
         rawEventManifestHash,
         rawEventArtifactHash,
         rawEventArtifactBytes,
@@ -558,7 +560,9 @@ export function executeSystemBenchmarkHarness({
         operatorDatasetHarnessAuthority,
         datasetEvaluationDependencyReceipt,
         assuranceScope: selector.expected.assuranceScope,
-        academicPromotionEligible: selector.expected.assuranceScope === 'operator-authorized-hidden-evaluation-v1',
+        executionAssuranceProfile,
+        academicPromotionEligible: academicPerCell
+          && selector.expected.assuranceScope === 'operator-authorized-hidden-evaluation-v1',
         datasetAuthorizations: authorizations.datasets,
         experimentAttemptId,
         sourceLineageHash,
@@ -610,27 +614,36 @@ export function executeSystemBenchmarkHarness({
     }
   };
 
-  const academicPerCell = selector.expected.selectorType === 'authorized_dataset_mount';
-  const executionMode = academicPerCell ? 'academic-per-cell-process-v1' : 'synthetic-per-arm-batch-process-v1';
+  const datasetBacked = selector.expected.selectorType === 'authorized_dataset_mount';
+  const academicPerCell = datasetBacked && localOnly !== true;
+  const executionAssuranceProfile = academicPerCell
+    ? 'academic-per-cell-isolation-v1'
+    : (datasetBacked ? 'local-bounded-hidden-evaluation-v1' : 'synthetic-conformance-v1');
+  const executionMode = academicPerCell
+    ? 'academic-per-cell-process-v1'
+    : (datasetBacked ? 'local-authorized-per-arm-batch-process-v1' : 'synthetic-per-arm-batch-process-v1');
   const executionUnits = academicPerCell
     ? schedule.map((cell) => Object.freeze({ arm: cell.arm, cells: Object.freeze([cell]) }))
     : ARMS.map((arm) => Object.freeze({ arm, cells: Object.freeze(schedule.filter((cell) => cell.arm === arm)) }));
-  const perUnitWallTimeMs = Math.floor(
+  const expectedProcessExecutionCount = executionUnits.length;
+  const nominalPerUnitWallTimeMs = Math.floor(
     (Number(absoluteDeadlineEpochMs) - Number(nowEpochMs())) / executionUnits.length,
   );
-  const advance = (index) => {
-    if (index >= executionUnits.length || blockers.length) return finalize();
+  const perUnitWallTimeMs = academicPerCell
+    ? Math.max(ACADEMIC_PER_CELL_MINIMUM_TIMEOUT_MS, nominalPerUnitWallTimeMs)
+    : nominalPerUnitWallTimeMs;
+  const startUnit = (index) => {
     const remainingWallTimeMs = Math.floor(Number(absoluteDeadlineEpochMs) - Number(nowEpochMs()));
     if (perUnitWallTimeMs < 1 || remainingWallTimeMs < 1) {
       blockers.push('benchmark_harness_absolute_deadline_exhausted');
-      return finalize();
+      return null;
     }
-    const timeoutMs = perUnitWallTimeMs;
+    const timeoutMs = Math.min(perUnitWallTimeMs, remainingWallTimeMs);
     const baseCpuSeconds = Math.floor(Number(aggregateCpuSeconds) / executionUnits.length);
     const cpuSeconds = baseCpuSeconds;
     if (cpuSeconds < 1) {
       blockers.push('benchmark_harness_aggregate_cpu_budget_exhausted');
-      return finalize();
+      return null;
     }
     const { arm, cells: scheduledCells } = executionUnits[index];
     const armProtocol = scheduledCells[0]?.armProtocol || null;
@@ -644,7 +657,7 @@ export function executeSystemBenchmarkHarness({
         versionedExperimentIrHash: experimentIr.versionedExperimentIrHash,
       });
     }
-    catch (error) { blockers.push(`benchmark_repository_owned_arm_batch_unavailable:${arm}:${error?.message || 'unknown'}`); return finalize(); }
+    catch (error) { blockers.push(`benchmark_repository_owned_arm_batch_unavailable:${arm}:${error?.message || 'unknown'}`); return null; }
     const batch = Object.freeze({
       arm,
       armProtocol,
@@ -681,15 +694,34 @@ export function executeSystemBenchmarkHarness({
     fs.mkdirSync(batchOutput, { recursive: true, mode: 0o700 });
     let pending = null;
     try { pending = runArmBatch({ batch, outputDirectory: batchOutput }); }
-    catch (error) { blockers.push(`benchmark_arm_batch_execution_threw:${arm}:${error?.message || 'unknown'}`); return finalize(); }
-    if (typeof pending?.then === 'function') {
-      return pending.then(
-        (receipt) => { consume(batch, batchOutput, receipt); return advance(index + 1); },
-        (error) => { blockers.push(`benchmark_arm_batch_execution_threw:${arm}:${error?.message || 'unknown'}`); return finalize(); },
-      );
+    catch (error) { blockers.push(`benchmark_arm_batch_execution_threw:${arm}:${error?.message || 'unknown'}`); return null; }
+    return Object.freeze({ arm, batch, batchOutput, pending });
+  };
+  const advance = (index) => {
+    if (index >= executionUnits.length || blockers.length) return finalize();
+    const width = academicPerCell
+      ? Math.min(ACADEMIC_PER_CELL_MAXIMUM_CONCURRENCY, executionUnits.length - index)
+      : 1;
+    const started = [];
+    for (let offset = 0; offset < width && !blockers.length; offset += 1) {
+      const unit = startUnit(index + offset);
+      if (unit) started.push(unit);
     }
-    consume(batch, batchOutput, pending);
-    return advance(index + 1);
+    if (!started.length || blockers.length) return finalize();
+    if (started.some((unit) => typeof unit.pending?.then === 'function')) {
+      return Promise.all(started.map(async (unit) => {
+        try { return { unit, receipt: await unit.pending, error: null }; }
+        catch (error) { return { unit, receipt: null, error }; }
+      })).then((settled) => {
+        for (const { unit, receipt, error } of settled) {
+          if (error) blockers.push(`benchmark_arm_batch_execution_threw:${unit.arm}:${error?.message || 'unknown'}`);
+          else consume(unit.batch, unit.batchOutput, receipt);
+        }
+        return advance(index + started.length);
+      });
+    }
+    for (const unit of started) consume(unit.batch, unit.batchOutput, unit.pending);
+    return advance(index + started.length);
   };
   return advance(0);
 }

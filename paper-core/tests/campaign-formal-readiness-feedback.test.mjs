@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import { buildCampaignAgentExecutionRequest } from '../../paper-application/automation/campaign-agent-policy.mjs';
 import { deriveCampaignNodeExecutionContext } from '../../paper-application/automation/campaign-node-execution-context.mjs';
+import { workspaceMutationPolicyBlockers } from '../../paper-adapters/automation/workspace-change-tracker.mjs';
 import { evaluateRefereeConvergence } from '../../paper-domain/automation/referee-convergence.mjs';
 
 function blockedConvergence(roundIndex, blocker, requestCount = 1) {
@@ -84,6 +85,123 @@ test('agent requests cap one call below the whole-campaign wall-time budget', ()
   assert.equal(request.timeoutMs, 20 * 60 * 1000);
   assert.deepEqual(request.workspaceMutationPolicy.allowedPaths, ['RESEARCH_PLAN.md']);
   assert.deepEqual(request.workspaceMutationPolicy.allowedExtensions, []);
+});
+
+test('machine-authorized initial writer is confined to manuscript and IR draft', () => {
+  const request = buildCampaignAgentExecutionRequest({
+    campaign: {
+      campaignId: 'campaign',
+      paperId: 'paper-machine-writer-scope',
+      spec: {
+        datasetMounts: [],
+        paperQualityProfile: 'formal_theorem_or_proof',
+        scientificClaimAuthority: {
+          status: 'autonomous_research_seed_bound',
+          contractPath: 'AUTONOMOUS_RESEARCH_SEED_CONTRACTS.json',
+          autonomousResearchSeedBindingHash: `sha256:${'a'.repeat(64)}`,
+        },
+      },
+    },
+    node: {
+      nodeId: 'campaign:0:writer',
+      kind: 'writer',
+      role: 'writer',
+      roundIndex: 0,
+    },
+    workspace: '/tmp/machine-writer-scope',
+    manuscript: 'main.tex',
+    reviews: [],
+    executionBudget: {
+      remainingTokenCount: 8192,
+      remainingWallTimeMs: 60_000,
+    },
+    executionSignal: null,
+  });
+  assert.deepEqual(request.workspaceMutationPolicy.allowedPaths, [
+    'main.tex',
+    'AUTONOMOUS_MANUSCRIPT_IR_DRAFT.json',
+  ]);
+  assert.deepEqual(request.workspaceMutationPolicy.allowedPrefixes, []);
+  assert.deepEqual(request.workspaceMutationPolicy.allowedExtensions, []);
+  assert.match(request.instructions,
+    /initial writer may modify exactly main\.tex and AUTONOMOUS_MANUSCRIPT_IR_DRAFT\.json/i);
+  assert.match(request.instructions,
+    /Do not create or edit proof_status\.md, evidence_manifest\.md, an appendix, a bibliography/i);
+  assert.match(request.instructions,
+    /scope and method prose may cite only compatible proposal, proposal-claim, policy, or seed/i);
+  assert.match(request.instructions,
+    /never cite empirical claim-lineage or result identities as scope\/method evidence/i);
+  assert.match(request.instructions,
+    /never use theorem-specification identities as manuscript evidenceRefs/i);
+  assert.deepEqual(workspaceMutationPolicyBlockers({
+    policy: request.workspaceMutationPolicy,
+    changedPaths: ['main.tex', 'AUTONOMOUS_MANUSCRIPT_IR_DRAFT.json'],
+  }), []);
+  assert.deepEqual(workspaceMutationPolicyBlockers({
+    policy: request.workspaceMutationPolicy,
+    changedPaths: ['proof_status.md', 'appendix.tex', 'references.bib'],
+  }), [
+    'workspace_mutation_forbidden:proof_status.md',
+    'workspace_mutation_not_allowlisted:appendix.tex',
+    'workspace_mutation_not_allowlisted:references.bib',
+  ]);
+
+  const revise = buildCampaignAgentExecutionRequest({
+    campaign: {
+      campaignId: 'campaign',
+      paperId: 'paper-machine-writer-scope',
+      spec: { datasetMounts: [], paperQualityProfile: 'formal_theorem_or_proof' },
+    },
+    node: {
+      nodeId: 'campaign:2:revise',
+      kind: 'revise',
+      role: 'reviser',
+      roundIndex: 2,
+    },
+    workspace: '/tmp/machine-writer-scope',
+    manuscript: 'main.tex',
+    reviews: [],
+    qualityGateBlockers: [
+      'theorem_proof_status_missing',
+      'theorem_evidence_manifest_missing',
+    ],
+    executionBudget: {
+      remainingTokenCount: 8192,
+      remainingWallTimeMs: 60_000,
+    },
+    executionSignal: null,
+  });
+  assert.ok(revise.workspaceMutationPolicy.allowedPaths.includes('proof_status.md'));
+  assert.ok(revise.workspaceMutationPolicy.allowedPaths.includes('evidence_manifest.md'));
+  assert.ok(revise.workspaceMutationPolicy.allowedExtensions.includes('.tex'));
+  assert.match(revise.instructions, /create proof_status\.md/i);
+  assert.match(revise.instructions, /create evidence_manifest\.md/i);
+});
+
+test('nested formal requests retain a persisted parent node while exposing their operation identity', () => {
+  const request = buildCampaignAgentExecutionRequest({
+    campaign: {
+      campaignId: 'campaign', paperId: 'paper-formal-node-identity',
+      spec: { datasetMounts: [], paperQualityProfile: 'formal_theorem_or_proof' },
+    },
+    node: {
+      nodeId: 'campaign:0:formal-verify:formal-author:0',
+      persistedNodeId: 'campaign:0:formal-verify',
+      kind: 'formal-author',
+      role: 'formal-author',
+      roundIndex: 0,
+    },
+    workspace: '/tmp/formal-node-identity',
+    manuscript: 'main.tex',
+    reviews: [],
+    executionBudget: { remainingTokenCount: 4096, remainingWallTimeMs: 60_000 },
+    executionSignal: null,
+  });
+  assert.equal(request.context.nodeId, 'campaign:0:formal-verify');
+  assert.equal(
+    request.context.operationNodeId,
+    'campaign:0:formal-verify:formal-author:0',
+  );
 });
 
 test('referee instructions require verdict and score coherence', () => {

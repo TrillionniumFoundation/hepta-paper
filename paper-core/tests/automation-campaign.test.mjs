@@ -16,6 +16,9 @@ import { executeIndependentCampaignPdfRebuild } from '../../paper-adapters/autom
 import { createIndependentPdfRebuildVerifierCapability } from '../../paper-ports/independent-pdf-rebuild-verifier-port.mjs';
 import { attestResearchEvidenceCapsuleManifest } from '../../paper-adapters/build-package/research-evidence-capsule-attestation.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  buildAgentBackendUsageReceipt,
+} from '../../paper-domain/evidence/agent-execution-receipt-contract.mjs';
 
 const campaignClocks = new WeakMap();
 const scheduler = createSystemScheduler();
@@ -47,6 +50,25 @@ function reviewEvidence(reviewerId, detail = {}) {
     childSessionId: `session:${reviewerId}`,
     reviewHash: `sha256:review:${reviewerId}`,
     ...detail,
+  };
+}
+
+function agentExecutionResult(detail = {}, {
+  externalModelInvocationPerformed = false,
+  usage = null,
+} = {}) {
+  const payload = {
+    ...detail,
+    version: 1,
+    kind: 'AgentExecutionReceipt',
+    executorId: 'automation-campaign-fixture',
+    status: 'agent_execution_completed',
+    externalModelInvocationPerformed,
+    ...(usage === null ? {} : { usage }),
+  };
+  return {
+    ...payload,
+    agentExecutionReceiptHash: hashRecord('AgentExecutionReceipt', payload),
   };
 }
 
@@ -145,10 +167,23 @@ test('ten campaigns run concurrently, retry, converge, skip later rounds and rep
         failedOnce.add(node.nodeId);
         const error = new Error('injected_transient_failure');
         error.retryable = true;
+        const receiptPayload = {
+          version: 1,
+          kind: 'AgentExecutionReceipt',
+          executorId: 'automation-campaign-fixture',
+          status: 'agent_execution_failed',
+          externalModelInvocationPerformed: false,
+        };
+        error.receipt = {
+          ...receiptPayload,
+          agentExecutionReceiptHash: hashRecord(
+            'AgentExecutionReceipt', receiptPayload,
+          ),
+        };
         throw error;
       }
-      if (/^(?:revision-)?referee-\d+$/.test(node.kind)) return reviewEvidence(node.kind, { verdict: 'accept', score: 0.9, criticalFindingCount: 0, reviewHash: `hash-${node.nodeId}`, childSessionId: `session-${node.nodeId}`, manuscriptHash: 'sha256:revised' });
-      return { status: 'completed', nodeKind: node.kind };
+      if (/^(?:revision-)?referee-\d+$/.test(node.kind)) return agentExecutionResult(reviewEvidence(node.kind, { verdict: 'accept', score: 0.9, criticalFindingCount: 0, reviewHash: `hash-${node.nodeId}`, childSessionId: `session-${node.nodeId}`, manuscriptHash: 'sha256:revised' }));
+      return agentExecutionResult({ nodeKind: node.kind });
     },
   };
   const governor = createResourceGovernor({ agent: 3, cpu: 2, gpu: 1, memoryMiB: 8192 });
@@ -176,7 +211,7 @@ test('expired running lease is recovered after a simulated crash', async (t) => 
   const result = await runPaperCampaign({
     campaignId: plan.campaignId,
     campaignStore,
-    executor: { execute: async ({ node }) => /^(?:revision-)?referee-\d+$/.test(node.kind) ? reviewEvidence(node.kind, { verdict: 'accept', score: 0.9, reviewHash: `hash-${node.nodeId}`, childSessionId: `session-${node.nodeId}`, manuscriptHash: 'sha256:revised' }) : { status: 'completed' } },
+    executor: { execute: async ({ node }) => /^(?:revision-)?referee-\d+$/.test(node.kind) ? agentExecutionResult(reviewEvidence(node.kind, { verdict: 'accept', score: 0.9, reviewHash: `hash-${node.nodeId}`, childSessionId: `session-${node.nodeId}`, manuscriptHash: 'sha256:revised' })) : agentExecutionResult() },
     concurrency: 3,
     pollMs: 1,
   });
@@ -217,6 +252,106 @@ test('operator cancellation aborts an active agent node and leaves campaign canc
   const result = await running;
   assert.equal(result.campaign.status, 'cancelled');
   assert.ok(result.nodes.every((node) => ['skipped', 'failed_terminal'].includes(node.status)));
+});
+
+test('terminal concurrent failure fences and settles active sibling attempts', async (t) => {
+  const { root, campaignStore } = fixture(t);
+  const campaignId = 'terminal-sibling-settlement-campaign';
+  campaignStore.createCampaign({
+    version: 2,
+    kind: 'PaperCampaignPlan',
+    campaignId,
+    paperId: 'terminal-sibling-settlement-paper',
+    sourceWorkspace: root,
+    maxRounds: 1,
+    budgets: {
+      maxWallTimeMs: 60_000,
+      maxAgentCalls: 3,
+      maxCpuJobs: 0,
+      maxGpuJobs: 0,
+      maxTokenCount: 1_000,
+      maxCostUsd: 1,
+      maxMemoryMiB: 8_192,
+    },
+    nodes: [1, 2, 3].map((ordinal) => ({
+      nodeId: `${campaignId}:1:referee-${ordinal}`,
+      kind: `referee-${ordinal}`,
+      role: `referee-${ordinal}`,
+      roundIndex: 1,
+      dependencies: [],
+      priority: 10,
+      maxAttempts: 1,
+    })),
+  });
+  let startedCount = 0;
+  let resolveAllStarted;
+  const allStarted = new Promise((resolve) => { resolveAllStarted = resolve; });
+  const attemptFences = new Map();
+  const result = await runPaperCampaign({
+    campaignId,
+    campaignStore,
+    concurrency: 3,
+    pollMs: 1,
+    executor: {
+      async execute({ node, executionSignal }) {
+        attemptFences.set(node.nodeId, Object.freeze({
+          nodeId: node.nodeId,
+          workerId: node.leaseOwner,
+          attemptId: node.attemptId,
+          leaseGeneration: node.leaseGeneration,
+        }));
+        startedCount += 1;
+        if (startedCount === 3) resolveAllStarted();
+        const startBarrierKeepAlive = setTimeout(() => {}, 5_000);
+        await allStarted;
+        clearTimeout(startBarrierKeepAlive);
+        if (node.kind === 'referee-2') {
+          const error = new Error('terminal_reviewer_failure');
+          error.retryable = false;
+          throw error;
+        }
+        return new Promise((resolve, reject) => {
+          const keepAlive = setTimeout(
+            () => resolve({ status: 'must-not-complete-after-terminal-sibling' }),
+            5_000,
+          );
+          const abort = () => {
+            clearTimeout(keepAlive);
+            const error = new Error(String(
+              executionSignal.reason || 'campaign_terminal_sibling_cancelled',
+            ));
+            error.retryable = false;
+            reject(error);
+          };
+          if (executionSignal.aborted) abort();
+          else executionSignal.addEventListener('abort', abort, { once: true });
+        });
+      },
+    },
+  });
+
+  assert.equal(result.campaign.status, 'failed');
+  assert.equal(result.nodes.filter((node) => node.status === 'failed_terminal').length, 1);
+  assert.equal(result.nodes.filter((node) => node.status === 'skipped').length, 2);
+  assert.equal(result.nodes.some((node) => ['leased', 'running'].includes(node.status)), false);
+  for (const node of result.nodes.filter((candidate) => candidate.status === 'skipped')) {
+    assert.equal(node.failureClass, 'campaign_terminal_sibling_cancelled');
+    assert.equal(node.leaseOwner, null);
+    assert.equal(node.leaseExpiresAt, null);
+    const fence = attemptFences.get(node.nodeId);
+    assert.throws(
+      () => campaignStore.renewNodeLease({ ...fence, leaseSeconds: 10 }),
+      /campaign_node_lease_renew_failed|campaign_node_lease_lost/,
+    );
+    assert.throws(
+      () => campaignStore.failNode({
+        ...fence,
+        failureClass: 'late_sibling_failure',
+        retryable: false,
+      }),
+      /campaign_node_lease_lost/,
+    );
+  }
 });
 
 test('losing a global resource lease aborts the node before accepting its result', async (t) => {
@@ -406,8 +541,8 @@ test('campaign stops without packaging when final revised manuscript does not co
     concurrency: 3,
     pollMs: 1,
     executor: { execute: async ({ node }) => /^(?:revision-)?referee-\d+$/.test(node.kind)
-      ? reviewEvidence(node.kind, { verdict: 'revise', score: 0.4, criticalFindingCount: 1, reviewHash: `hash-${node.nodeId}`, childSessionId: `session-${node.nodeId}`, manuscriptHash: 'sha256:revised' })
-      : { status: 'completed' } },
+      ? agentExecutionResult(reviewEvidence(node.kind, { verdict: 'revise', score: 0.4, criticalFindingCount: 1, reviewHash: `hash-${node.nodeId}`, childSessionId: `session-${node.nodeId}`, manuscriptHash: 'sha256:revised' }))
+      : agentExecutionResult() },
   });
   assert.equal(result.campaign.status, 'stopped');
   assert.equal(result.campaign.stopReason, 'referee_convergence_not_reached_within_budget');
@@ -463,8 +598,8 @@ test('early convergence preserves final compile research verification and packag
     campaignId, campaignStore, concurrency: 1, pollMs: 1,
     executor: { async execute({ node }) {
       executed.push(node.kind);
-      if (/^revision-referee-/.test(node.kind)) return reviewEvidence(node.kind, { verdict: 'accept', score: 0.9, criticalFindingCount: 0, manuscriptHash: 'sha256:revised' });
-      return { status: 'completed', qualityGates: [] };
+      if (/^revision-referee-/.test(node.kind)) return agentExecutionResult(reviewEvidence(node.kind, { verdict: 'accept', score: 0.9, criticalFindingCount: 0, manuscriptHash: 'sha256:revised' }));
+      return agentExecutionResult({ qualityGates: [] });
     } },
   });
   assert.equal(result.campaign.status, 'completed');
@@ -502,11 +637,223 @@ test('token and CPU budgets stop work before a campaign can overrun downstream n
     campaignStore,
     concurrency: 1,
     pollMs: 1,
-    executor: { execute: async () => ({ status: 'completed', usage: { total: 11 } }) },
+    executor: { execute: async () => agentExecutionResult({}, {
+      externalModelInvocationPerformed: true,
+      usage: { input: 10, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 11 },
+    }) },
   });
   assert.equal(result.campaign.status, 'stopped');
   assert.equal(result.campaign.stopReason, 'campaign_token_budget_exhausted');
   assert.equal(result.nodes.find((node) => node.kind === 'empirical').status, 'skipped');
+});
+
+test('terminal agent failures meter the exact receipt usage into the campaign total', async (t) => {
+  const { root, campaignStore } = fixture(t);
+  const campaignId = 'metered-agent-failure-campaign';
+  campaignStore.createCampaign({
+    version: 2,
+    kind: 'PaperCampaignPlan',
+    campaignId,
+    paperId: 'metered-agent-failure-paper',
+    sourceWorkspace: root,
+    maxRounds: 1,
+    budgets: {
+      maxWallTimeMs: 60000,
+      maxAgentCalls: 1,
+      maxCpuJobs: 0,
+      maxGpuJobs: 0,
+      maxTokenCount: 1000,
+      maxCostUsd: 1,
+      maxMemoryMiB: 4096,
+    },
+    nodes: [{
+      nodeId: `${campaignId}:0:writer`,
+      kind: 'writer',
+      roundIndex: 0,
+      dependencies: [],
+      priority: 10,
+      maxAttempts: 1,
+    }],
+  });
+  const receiptPayload = {
+    version: 1,
+    kind: 'AgentExecutionReceipt',
+    executorId: 'metered-agent-failure-fixture',
+    status: 'agent_execution_failed',
+    externalModelInvocationPerformed: true,
+    usage: {
+      input: 13, output: 17, cacheRead: 5, cacheWrite: 2, totalTokens: 37,
+    },
+  };
+  const receipt = {
+    ...receiptPayload,
+    agentExecutionReceiptHash: hashRecord('AgentExecutionReceipt', receiptPayload),
+  };
+  const result = await runPaperCampaign({
+    campaignId,
+    campaignStore,
+    concurrency: 1,
+    pollMs: 1,
+    executor: { async execute() {
+      throw Object.assign(new Error('fixture_metered_agent_failure'), {
+        code: 'fixture_metered_agent_failure',
+        retryable: false,
+        receipt,
+      });
+    } },
+  });
+  assert.equal(result.campaign.status, 'failed');
+  assert.equal(result.campaign.tokenCount, 37);
+  assert.equal(result.campaign.agentCallCount, 1);
+  assert.equal(result.nodes[0].status, 'failed_terminal');
+  assert.equal(result.nodes[0].attemptCount, 1);
+});
+
+test('unverified agent failure usage terminates as unknown without trusting forged tokens', async (t) => {
+  const { root, campaignStore } = fixture(t);
+  const campaignId = 'forged-agent-failure-receipt-campaign';
+  campaignStore.createCampaign({
+    version: 2,
+    kind: 'PaperCampaignPlan',
+    campaignId,
+    paperId: 'forged-agent-failure-receipt-paper',
+    sourceWorkspace: root,
+    maxRounds: 1,
+    budgets: {
+      maxWallTimeMs: 60000,
+      maxAgentCalls: 1,
+      maxCpuJobs: 0,
+      maxGpuJobs: 0,
+      maxTokenCount: 1000,
+      maxCostUsd: 1,
+      maxMemoryMiB: 4096,
+    },
+    nodes: [{
+      nodeId: `${campaignId}:0:writer`,
+      kind: 'writer',
+      roundIndex: 0,
+      dependencies: [],
+      priority: 10,
+      maxAttempts: 3,
+    }],
+  });
+  const signedPayload = {
+    version: 1,
+    kind: 'AgentExecutionReceipt',
+    executorId: 'forged-agent-failure-fixture',
+    status: 'agent_execution_failed',
+    externalModelInvocationPerformed: true,
+    usage: {
+      input: 13, output: 17, cacheRead: 5, cacheWrite: 2, totalTokens: 37,
+    },
+  };
+  const forgedReceipt = {
+    ...signedPayload,
+    usage: {
+      input: 997, output: 1, cacheRead: 1, cacheWrite: 1, totalTokens: 1000,
+    },
+    agentExecutionReceiptHash: hashRecord('AgentExecutionReceipt', signedPayload),
+  };
+  const result = await runPaperCampaign({
+    campaignId,
+    campaignStore,
+    concurrency: 1,
+    pollMs: 1,
+    executor: { async execute() {
+      throw Object.assign(new Error('fixture_forged_agent_failure_receipt'), {
+        code: 'fixture_forged_agent_failure_receipt',
+        retryable: false,
+        receipt: forgedReceipt,
+      });
+    } },
+  });
+  assert.equal(result.campaign.status, 'failed');
+  assert.equal(result.campaign.tokenCount, 0);
+  assert.equal(result.campaign.agentCallCount, 1);
+  assert.equal(result.nodes[0].status, 'failed_terminal');
+  assert.equal(result.nodes[0].attemptCount, 1);
+  assert.equal(result.nodes[0].failureClass, 'agent_usage_unknown_terminal');
+  assert.deepEqual(result.nodes[0].failureDetail.usageMetering, {
+    status: 'agent_usage_unknown_terminal',
+    reason: 'agent_failure_usage_receipt_unverified',
+    knownTokenCount: 0,
+    receiptHash: forgedReceipt.agentExecutionReceiptHash,
+  });
+});
+
+test('incomplete routed failure usage records the known lower bound and terminates', async (t) => {
+  const { root, campaignStore } = fixture(t);
+  const campaignId = 'incomplete-routed-agent-usage-campaign';
+  campaignStore.createCampaign({
+    version: 2,
+    kind: 'PaperCampaignPlan',
+    campaignId,
+    paperId: 'incomplete-routed-agent-usage-paper',
+    sourceWorkspace: root,
+    maxRounds: 1,
+    budgets: {
+      maxWallTimeMs: 60000,
+      maxAgentCalls: 3,
+      maxCpuJobs: 0,
+      maxGpuJobs: 0,
+      maxTokenCount: 1000,
+      maxCostUsd: 1,
+      maxMemoryMiB: 4096,
+    },
+    nodes: [{
+      nodeId: `${campaignId}:0:writer`,
+      kind: 'writer',
+      roundIndex: 0,
+      dependencies: [],
+      priority: 10,
+      maxAttempts: 3,
+    }],
+  });
+  const knownPayload = {
+    version: 1,
+    kind: 'AgentExecutionReceipt',
+    executorId: 'known-backend',
+    status: 'agent_execution_failed',
+    externalModelInvocationPerformed: true,
+    usage: {
+      input: 13, output: 17, cacheRead: 5, cacheWrite: 2, totalTokens: 37,
+    },
+  };
+  const knownReceipt = {
+    ...knownPayload,
+    agentExecutionReceiptHash: hashRecord('AgentExecutionReceipt', knownPayload),
+  };
+  const incompleteReceipt = buildAgentBackendUsageReceipt({
+    attempts: [
+      { attemptId: 'known', executorId: 'known-backend', receipt: knownReceipt },
+      { attemptId: 'unknown', executorId: 'unknown-backend', receipt: null },
+    ],
+    status: 'all_agent_backends_failed',
+  });
+  const result = await runPaperCampaign({
+    campaignId,
+    campaignStore,
+    concurrency: 1,
+    pollMs: 1,
+    executor: { async execute() {
+      throw Object.assign(new Error('fixture_incomplete_routed_usage'), {
+        retryable: true,
+        receipt: incompleteReceipt,
+      });
+    } },
+  });
+  assert.equal(result.campaign.status, 'failed');
+  assert.equal(result.campaign.tokenCount, 37);
+  assert.equal(result.campaign.agentCallCount, 1);
+  assert.equal(result.nodes[0].status, 'failed_terminal');
+  assert.equal(result.nodes[0].attemptCount, 1);
+  assert.equal(result.nodes[0].failureClass, 'agent_usage_unknown_terminal');
+  assert.deepEqual(result.nodes[0].failureDetail.usageMetering, {
+    status: 'agent_usage_unknown_terminal',
+    reason: 'agent_backend_usage_incomplete',
+    knownTokenCount: 37,
+    receiptHash: incompleteReceipt.agentBackendUsageReceiptHash,
+  });
 });
 
 test('nested empirical repair agents share the global semaphore and hard agent-call budget', async (t) => {
@@ -533,7 +880,10 @@ test('nested empirical repair agents share the global semaphore and hard agent-c
     pollMs: 1,
     resourceGovernor: governor,
     executor: { execute: async ({ executionResources }) => {
-      await executionResources.runNestedAgent(async () => ({ status: 'agent-repair-completed', usage: { total: 7 } }));
+      await executionResources.runNestedAgent(async () => agentExecutionResult({}, {
+        externalModelInvocationPerformed: true,
+        usage: { input: 6, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 7 },
+      }));
       return { status: 'empirical-completed' };
     } },
   });

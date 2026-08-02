@@ -31,6 +31,7 @@ const H = (label) => hashRecord('AutonomousResearchStateProvisioningTest', { lab
 
 const provisioningIdentity = Object.freeze({
   machineIntakeConfigurationHash: H('machine-intake-configuration'),
+  machineIntakeGenesisAuthorityMode: 'external',
   providerCanaryPairMaximumCostUsd: 1,
   providerConfigurationHash: H('provider-configuration'),
   runtimeReproducibilityRefreshPolicyHash: H('runtime-refresh-policy'),
@@ -171,7 +172,6 @@ test('state provisioning CLI requires immutable inputs and double-gates execute'
     '--machine-intake-config', '/etc/hepta-paper/intake/config.json',
     '--topic-producer-profile', '/etc/hepta-paper/intake/topic-profile.json',
     '--dataset-root', '/srv/hepta-paper/datasets',
-    '--provider-canary-pair-maximum-cost-usd', '1',
     '--runtime-reproducibility-maximum-attempts-per-epoch', '4',
     '--runtime-reproducibility-maximum-cost-usd-per-epoch', '10',
   ];
@@ -189,4 +189,7 @@ test('state provisioning CLI requires immutable inputs and double-gates execute'
   assert.throws(() => parseAutonomousResearchStateProvisioningArguments([
     ...common, '--execute',
   ]), /execute_options_forbidden/);
+  assert.throws(() => parseAutonomousResearchStateProvisioningArguments([
+    ...common, '--provider-canary-pair-maximum-cost-usd', '1',
+  ]), /unknown_cli_option/);
 });

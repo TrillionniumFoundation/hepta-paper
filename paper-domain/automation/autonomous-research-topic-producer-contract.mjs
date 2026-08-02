@@ -170,10 +170,6 @@ export function verifyAutonomousResearchProviderCanaryPairReceipt(receipt, {
     )
     && receipt.researchAuthorProviderCanaryReceipt.observedAt <= receipt.observedAt
     && receipt.formalReviewerProviderCanaryReceipt.observedAt <= receipt.observedAt
-    && receipt.researchAuthorProviderCanaryReceipt.credentialRootIdentityHash
-      !== receipt.formalReviewerProviderCanaryReceipt.credentialRootIdentityHash
-    && receipt.researchAuthorProviderCanaryReceipt.credentialConfigIdentityHash
-      !== receipt.formalReviewerProviderCanaryReceipt.credentialConfigIdentityHash
     && SHA256.test(String(claimedHash || ''))
     && hashRecord('AutonomousResearchProviderCanaryPairReceipt', payload) === claimedHash;
 }

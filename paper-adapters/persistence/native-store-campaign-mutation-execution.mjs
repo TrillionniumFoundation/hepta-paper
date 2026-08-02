@@ -402,6 +402,56 @@ function applyCompleteNodeExternalAction(transaction, input) {
   insertNativeStoreCampaignEvent(transaction, input.eventRow);
 }
 
+function terminalSiblingSettlement({ sibling, input }) {
+  const integrationStatus = String(sibling.prepared_integration_status || 'none');
+  const outcomeUncertain = ['integrating', 'integrated'].includes(integrationStatus);
+  const status = outcomeUncertain ? 'external_outcome_uncertain' : 'skipped';
+  const failureClass = outcomeUncertain
+    ? 'campaign_terminal_sibling_outcome_uncertain'
+    : 'campaign_terminal_sibling_cancelled';
+  const failureDetail = Object.freeze({
+    reason: failureClass,
+    terminalNodeId: input.nodeId,
+    terminalFailureHash: input.failureHash,
+    previousStatus: sibling.status,
+    previousLeaseOwner: sibling.lease_owner || null,
+    previousAttemptId: sibling.attempt_id || null,
+    previousLeaseGeneration: Number(sibling.lease_generation || 0),
+    previousNodeRevision: Number(sibling.node_revision || 0),
+    preparedIntegrationStatus: integrationStatus,
+  });
+  const failureHash = hashRecord('PaperCampaignNodeFailure', failureDetail);
+  const payload = Object.freeze({
+    version: 1,
+    kind: 'campaign_terminal_sibling_settled',
+    campaignId: sibling.campaign_id,
+    nodeId: sibling.node_id,
+    detail: Object.freeze({
+      status,
+      failureClass,
+      failureHash,
+      ...failureDetail,
+    }),
+    createdAt: input.now,
+  });
+  const eventHash = hashRecord('PaperCampaignEvent', payload);
+  return Object.freeze({
+    status,
+    failureClass,
+    failureDetail,
+    failureHash,
+    event: Object.freeze({
+      eventId: `${sibling.campaign_id}:${input.now}:${eventHash.slice(-16)}`,
+      campaignId: sibling.campaign_id,
+      nodeId: sibling.node_id,
+      kind: payload.kind,
+      payload,
+      eventHash,
+      createdAt: input.now,
+    }),
+  });
+}
+
 function applyFailNode(transaction, input) {
   const { node, now, nodeId, workerId, attemptId, leaseGeneration } = input;
   required(transaction, input.abandonPreparedResult
@@ -410,6 +460,34 @@ function applyFailNode(transaction, input) {
     input.failureHash, now, nodeId, workerId, attemptId,
     Number(leaseGeneration), now,
   ], 'campaign_node_failure_failed');
+  if (input.status === 'failed_terminal') {
+    const siblings = transaction.all(
+      S.inspectTerminalSiblingNodes,
+      node.campaignId,
+      nodeId,
+    );
+    for (const sibling of siblings) {
+      const settlement = terminalSiblingSettlement({ sibling, input });
+      required(transaction, S.settleTerminalSiblingNodes, [
+        settlement.status,
+        settlement.failureClass,
+        JSON.stringify(settlement.failureDetail),
+        settlement.failureHash,
+        now,
+        sibling.node_id,
+        node.campaignId,
+        sibling.status,
+        sibling.lease_owner || null,
+        sibling.lease_owner || null,
+        sibling.attempt_id || null,
+        sibling.attempt_id || null,
+        Number(sibling.lease_generation || 0),
+        Number(sibling.node_revision || 0),
+        String(sibling.prepared_integration_status || 'none'),
+      ], 'campaign_terminal_sibling_settlement_failed');
+      insertNativeStoreCampaignEvent(transaction, settlement.event);
+    }
+  }
   runNativeStoreCampaignUsage(transaction, S.updateCampaignUsage, {
     campaignId: node.campaignId, delta: input.usageDelta, now, required: true,
   });

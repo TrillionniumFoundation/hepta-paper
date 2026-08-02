@@ -11,17 +11,21 @@ import {
   StrictFullAutoAcceptanceRepository,
 } from '../../../paper-adapters/automation/strict-full-auto-acceptance-repository.mjs';
 import {
-  buildRecoverableReviewerExecutorServiceConfiguration,
-} from '../../../paper-adapters/automation/http-recoverable-reviewer-executor-adapter.mjs';
-import {
-  buildReviewerReceiptSignerServiceConfiguration,
-} from '../../../paper-adapters/automation/http-reviewer-receipt-signer-adapter.mjs';
-import {
-  buildReviewerPrincipalPoolConfiguration,
-} from '../../../paper-adapters/automation/reviewer-principal-pool-configuration-reader.mjs';
+  buildAutonomousResearchAuthorIdentityConfiguration,
+} from '../../../paper-adapters/automation/autonomous-research-author-identity-configuration.mjs';
 import {
   autonomousSubmissionPortalPublicDescriptorHash,
 } from '../../../paper-adapters/automation/autonomous-submission-portal-public-adapter.mjs';
+import {
+  buildPinnedExternalEvidenceEnvelope,
+  pinnedExternalEvidenceSigningPayload,
+} from '../../../paper-adapters/authority/pinned-external-evidence-verifier.mjs';
+import {
+  buildResearchExecutionReleaseKmsHardwareAttestationBundle,
+} from '../../../paper-adapters/build-package/research-execution-release-kms-hardware-attestation.mjs';
+import {
+  readProvisionedReleaseAttestorConfiguration,
+} from '../../../paper-adapters/build-package/research-execution-release-attestor-configuration.mjs';
 import {
   StrictFullAutoAcceptanceOrchestrator,
 } from '../../../paper-application/automation/strict-full-auto-acceptance-orchestrator.mjs';
@@ -30,6 +34,14 @@ import {
   STRICT_FULL_AUTO_ACCEPTANCE_STEP_ORDER,
   strictFullAutoAcceptanceHash,
 } from '../../../paper-domain/automation/strict-full-auto-acceptance-contract.mjs';
+import {
+  buildResearchExecutionReleaseKmsHardwareAttestationSubject,
+  RESEARCH_EXECUTION_RELEASE_KMS_HARDWARE_ATTESTOR_ROLE,
+} from '../../../paper-domain/automation/research-execution-release-kms-hardware-attestation-contract.mjs';
+import {
+  buildExternalPrincipalIdentityAttestationSubject,
+} from '../../../paper-domain/evidence/external-principal-identity-attestation-contract.mjs';
+import { hashBytes } from '../../../workflow-kernel/record-hash.mjs';
 
 export const STRICT_FULL_AUTO_ACCEPTANCE_TEST_NOW = '2026-07-21T05:00:00.000Z';
 
@@ -41,6 +53,329 @@ const EXAMPLE_CONFIGURATION = JSON.parse(fs.readFileSync(new URL(
   '../../deploy/strict-full-auto-acceptance.config.example.json',
   import.meta.url,
 ), 'utf8'));
+const SEMANTIC_CONFIGURATION_REFERENCES = new Set([
+  'research-author-identity-config',
+  'release-attestor-config',
+]);
+const AUTHOR_IDENTITY_ROLE = 'external_principal_identity_attestor';
+const RELEASE_ATTESTOR_ROLE = 'research_execution_release_attestor';
+const RELEASE_PROBE_ROLE = 'research_execution_release_signer_backend_probe_attestor';
+
+function strictAuthorIdentityFixture() {
+  const authority = crypto.generateKeyPairSync('ed25519');
+  const trustStore = {
+    version: 1,
+    kind: 'AuthorityTrustStore',
+    keys: [{
+      keyId: 'strict-author-identity-key',
+      subjectId: 'strict-author-identity-authority',
+      organization: 'Independent Strict Author Identity Authority',
+      algorithm: 'ed25519',
+      publicKeyPem: authority.publicKey.export({ type: 'spki', format: 'pem' }),
+      roles: [AUTHOR_IDENTITY_ROLE],
+      status: 'active',
+      effectiveFrom: '2026-07-20T00:00:00.000Z',
+      expiresAt: '2026-07-22T00:00:00.000Z',
+      revokedAt: null,
+    }],
+  };
+  const configuration = (rotation) => {
+    const subject = buildExternalPrincipalIdentityAttestationSubject({
+      serviceId: 'strict-author-platform',
+      principalId: 'strict-author-principal',
+      provider: 'openai',
+      providerAccountIdentityHash:
+        strictFullAutoAcceptanceHash({ author: 'provider-account' }),
+      credentialRootIdentityHash:
+        strictFullAutoAcceptanceHash({ author: 'credential-root' }),
+      hostIdentityHash:
+        strictFullAutoAcceptanceHash({ author: 'host', rotation }),
+      processIdentityHash:
+        strictFullAutoAcceptanceHash({ author: 'process', rotation }),
+      trustDomainIdentityHash:
+        strictFullAutoAcceptanceHash({ author: 'trust-domain' }),
+      signerPublicKeySpkiHash:
+        strictFullAutoAcceptanceHash({ author: 'platform-signer' }),
+      challengeHash:
+        strictFullAutoAcceptanceHash({ author: 'challenge', rotation }),
+      assuranceProfile: 'pinned-provider-account-and-platform-attestation-v1',
+      attestedAt: rotation === 1
+        ? '2026-07-21T04:57:00.000Z' : '2026-07-21T04:59:00.000Z',
+      expiresAt: rotation === 1
+        ? '2026-07-21T05:04:00.000Z' : '2026-07-21T05:06:00.000Z',
+    });
+    const unsigned = buildPinnedExternalEvidenceEnvelope({
+      subjectKind: subject.kind,
+      subjectHash: subject.externalPrincipalIdentityAttestationSubjectHash,
+      signedAt: rotation === 1
+        ? '2026-07-21T04:58:00.000Z' : '2026-07-21T05:00:00.000Z',
+      expiresAt: rotation === 1
+        ? '2026-07-21T05:03:00.000Z' : '2026-07-21T05:05:00.000Z',
+      signatures: [{
+        keyId: 'strict-author-identity-key',
+        role: AUTHOR_IDENTITY_ROLE,
+        algorithm: 'ed25519',
+        value: 'placeholder',
+      }],
+    });
+    const value = crypto.sign(
+      null,
+      pinnedExternalEvidenceSigningPayload(unsigned),
+      authority.privateKey,
+    ).toString('base64');
+    return buildAutonomousResearchAuthorIdentityConfiguration({
+      version: 2,
+      subject,
+      authorityEnvelope: buildPinnedExternalEvidenceEnvelope({
+        ...unsigned,
+        signatures: [{
+          keyId: 'strict-author-identity-key',
+          role: AUTHOR_IDENTITY_ROLE,
+          algorithm: 'ed25519',
+          value,
+        }],
+      }),
+      trustStore,
+      signerKeyIds: ['strict-author-identity-key'],
+      maximumLifetimeMs: 10 * 60 * 1000,
+    });
+  };
+  return Object.freeze({
+    initial: configuration(1),
+    rotate: () => configuration(2),
+  });
+}
+
+function strictReleaseAttestorFixture({ referenceRoot, references }) {
+  const active = crypto.generateKeyPairSync('ed25519');
+  const probe = crypto.generateKeyPairSync('ed25519');
+  const hardwareAuthority = crypto.generateKeyPairSync('ed25519');
+  const activePublicKeyPath = path.join(referenceRoot, 'strict-release-active-public.pem');
+  const probePublicKeyPath = path.join(referenceRoot, 'strict-release-probe-public.pem');
+  const bundlePath = path.join(referenceRoot, 'strict-release-kms-bundle.json');
+  for (const [candidate, value] of [
+    [activePublicKeyPath, active.publicKey.export({ type: 'spki', format: 'pem' })],
+    [probePublicKeyPath, probe.publicKey.export({ type: 'spki', format: 'pem' })],
+  ]) {
+    fs.writeFileSync(candidate, value, { mode: 0o444 });
+    fs.chmodSync(candidate, 0o444);
+  }
+  const challengeHash = strictFullAutoAcceptanceHash({
+    release: 'hardware-authority-challenge',
+  });
+  const hardwareTrustStore = {
+    version: 1,
+    kind: 'AuthorityTrustStore',
+    keys: [{
+      keyId: 'strict-release-hardware-authority-key',
+      subjectId: 'strict-release-hardware-authority',
+      organization: 'Independent Strict KMS Control Plane',
+      algorithm: 'ed25519',
+      publicKeyPem: hardwareAuthority.publicKey.export({ type: 'spki', format: 'pem' }),
+      roles: [RESEARCH_EXECUTION_RELEASE_KMS_HARDWARE_ATTESTOR_ROLE],
+      status: 'active',
+      effectiveFrom: '2026-07-20T00:00:00.000Z',
+      expiresAt: '2026-07-22T00:00:00.000Z',
+      revokedAt: null,
+    }],
+  };
+  const configuration = {
+    version: 3,
+    kind: 'ResearchExecutionReleaseAttestorConfiguration',
+    status: 'active',
+    attestationLifetimeSeconds: 60 * 60,
+    trustSet: {
+      version: 1,
+      kind: 'ResearchExecutionReleaseAttestorTrustSet',
+      keys: [{
+        keyId: 'strict-release-active-key',
+        keyVersion: 'v3',
+        subjectId: 'strict-release-attestor',
+        organization: 'Strict Research Release Office',
+        role: RELEASE_ATTESTOR_ROLE,
+        algorithm: 'ed25519',
+        status: 'active',
+        effectiveFrom: '2026-07-20T00:00:00.000Z',
+        expiresAt: '2026-07-22T00:00:00.000Z',
+        revokedAt: null,
+        publicKeyPath: activePublicKeyPath,
+      }],
+    },
+    backend: {
+      kind: 'external-kms-command',
+      backendId: 'strict-release-kms',
+      backendVersion: 'v3',
+      algorithm: 'ed25519',
+      hardwareProtected: true,
+      privateKeyExportable: false,
+      externalSignerProcess: true,
+      activeKeyId: 'strict-release-active-key',
+      activeKeyVersion: 'v3',
+      kmsProvider: 'strict-external-kms',
+      providerAccountIdentityHash:
+        strictFullAutoAcceptanceHash({ release: 'provider-account' }),
+      keyResourceIdentityHash:
+        strictFullAutoAcceptanceHash({ release: 'key-resource' }),
+      credentialGenerationIdentityHash:
+        strictFullAutoAcceptanceHash({ release: 'credential-generation' }),
+      signerCommand: {
+        serviceId: 'strict-release-signer',
+        principalId: 'strict-release-signer-principal',
+        protocol: 'hepta-release-signer-json-stdio-v2',
+        executable: references['release-attestor-signer-command'].path,
+        credentialRoot: references['release-attestor-signer-credential-root'].path,
+        args: [],
+        environmentAllowlist: [],
+        timeoutMs: 5_000,
+      },
+      probeCommand: {
+        serviceId: 'strict-release-probe',
+        principalId: 'strict-release-probe-principal',
+        protocol: 'hepta-release-signer-probe-json-stdio-v1',
+        executable: references['release-attestor-probe-command'].path,
+        credentialRoot: references['release-attestor-probe-credential-root'].path,
+        args: [],
+        environmentAllowlist: [],
+        timeoutMs: 5_000,
+      },
+      probeAttestor: {
+        keyId: 'strict-release-probe-key',
+        keyVersion: 'v3',
+        subjectId: 'strict-release-probe-attestor',
+        organization: 'Independent Strict Release Probe',
+        role: RELEASE_PROBE_ROLE,
+        algorithm: 'ed25519',
+        status: 'active',
+        effectiveFrom: '2026-07-20T00:00:00.000Z',
+        expiresAt: '2026-07-22T00:00:00.000Z',
+        revokedAt: null,
+        publicKeyPath: probePublicKeyPath,
+      },
+    },
+    hardwareAuthorityAttestation: null,
+  };
+  const configPath = references['release-attestor-config'].path;
+  const writeConfig = () => {
+    fs.chmodSync(configPath, 0o600);
+    fs.writeFileSync(configPath, `${JSON.stringify(configuration, null, 2)}\n`);
+    fs.chmodSync(configPath, 0o400);
+  };
+  const bundleFor = ({ backendDescriptorHash, trustSetHash, rotation }) => {
+    const subject = buildResearchExecutionReleaseKmsHardwareAttestationSubject({
+      kmsProvider: configuration.backend.kmsProvider,
+      providerAccountIdentityHash: configuration.backend.providerAccountIdentityHash,
+      keyResourceIdentityHash: configuration.backend.keyResourceIdentityHash,
+      credentialGenerationIdentityHash:
+        configuration.backend.credentialGenerationIdentityHash,
+      backendDescriptorHash,
+      backendId: configuration.backend.backendId,
+      backendVersion: configuration.backend.backendVersion,
+      activeKeyId: configuration.backend.activeKeyId,
+      activeKeyVersion: configuration.backend.activeKeyVersion,
+      activePublicKeySpkiHash: hashBytes(
+        active.publicKey.export({ type: 'spki', format: 'der' }),
+      ),
+      trustSetHash,
+      challengeHash,
+      attestedAt: rotation === 1
+        ? '2026-07-21T04:58:00.000Z' : '2026-07-21T05:00:00.000Z',
+      expiresAt: rotation === 1
+        ? '2026-07-21T05:05:00.000Z' : '2026-07-21T05:07:00.000Z',
+    });
+    const unsigned = buildPinnedExternalEvidenceEnvelope({
+      subjectKind: subject.kind,
+      subjectHash:
+        subject.researchExecutionReleaseKmsHardwareAttestationSubjectHash,
+      signedAt: subject.attestedAt,
+      expiresAt: subject.expiresAt,
+      signatures: [{
+        keyId: 'strict-release-hardware-authority-key',
+        role: RESEARCH_EXECUTION_RELEASE_KMS_HARDWARE_ATTESTOR_ROLE,
+        algorithm: 'ed25519',
+        value: 'placeholder',
+      }],
+    });
+    const value = crypto.sign(
+      null,
+      pinnedExternalEvidenceSigningPayload(unsigned),
+      hardwareAuthority.privateKey,
+    ).toString('base64');
+    return buildResearchExecutionReleaseKmsHardwareAttestationBundle({
+      subject,
+      authorityEnvelope: buildPinnedExternalEvidenceEnvelope({
+        ...unsigned,
+        signatures: [{
+          keyId: 'strict-release-hardware-authority-key',
+          role: RESEARCH_EXECUTION_RELEASE_KMS_HARDWARE_ATTESTOR_ROLE,
+          algorithm: 'ed25519',
+          value,
+        }],
+      }),
+      trustStore: hardwareTrustStore,
+      signerKeyIds: ['strict-release-hardware-authority-key'],
+      maximumLifetimeMs: 10 * 60 * 1000,
+    });
+  };
+  const writeBundle = (bundle) => {
+    try { fs.chmodSync(bundlePath, 0o600); } catch {}
+    fs.writeFileSync(bundlePath, `${JSON.stringify(bundle, null, 2)}\n`, { mode: 0o600 });
+    fs.chmodSync(bundlePath, 0o444);
+    if (configuration.hardwareAuthorityAttestation === null) {
+      configuration.hardwareAuthorityAttestation = {
+        bundlePath,
+        trustStoreHash: bundle.trustStoreHash,
+        signerKeyIds: ['strict-release-hardware-authority-key'],
+        challengeHash,
+      };
+      writeConfig();
+    }
+  };
+  const passiveRead = () => readProvisionedReleaseAttestorConfiguration({
+    configPath,
+    environment: {},
+    spawnSyncImpl() {
+      throw new Error('strict_release_fixture_external_action_forbidden');
+    },
+  });
+  writeBundle(bundleFor({
+    backendDescriptorHash:
+      strictFullAutoAcceptanceHash({ release: 'placeholder-descriptor' }),
+    trustSetHash: strictFullAutoAcceptanceHash({ release: 'placeholder-trust-set' }),
+    rotation: 1,
+  }));
+  const provisional = passiveRead();
+  assert.equal(provisional.blocker, null);
+  writeBundle(bundleFor({
+    backendDescriptorHash: provisional.configuration.backendPort.describeBackend()
+      .researchExecutionReleaseSignerBackendDescriptorHash,
+    trustSetHash: provisional.configuration.trustSetHash,
+    rotation: 1,
+  }));
+  const initial = passiveRead();
+  assert.equal(initial.blocker, null);
+  const configurationIdentityHash = initial.configuration.configurationIdentityHash;
+  return Object.freeze({
+    configurationIdentityHash,
+    bundlePath,
+    rotate() {
+      const current = passiveRead();
+      assert.equal(current.blocker, null);
+      writeBundle(bundleFor({
+        backendDescriptorHash: current.configuration.backendPort.describeBackend()
+          .researchExecutionReleaseSignerBackendDescriptorHash,
+        trustSetHash: current.configuration.trustSetHash,
+        rotation: 2,
+      }));
+      const rotated = passiveRead();
+      assert.equal(rotated.blocker, null);
+      assert.equal(rotated.configuration.configurationIdentityHash, configurationIdentityHash);
+      return Object.freeze({
+        bundleHash: sha256File(bundlePath),
+        configurationFileHash: sha256File(configPath),
+      });
+    },
+  });
+}
 
 function fixtureArgument(value) {
   return value
@@ -103,97 +438,6 @@ function bindFixtureArgumentReferences(stepId, invocation, references) {
   }
 }
 
-function reviewerAuthorityTrustStore(pair, {
-  keyId,
-  role,
-  subjectId,
-}) {
-  return {
-    version: 1,
-    kind: 'AuthorityTrustStore',
-    keys: [{
-      keyId,
-      subjectId,
-      organization: 'Strict Acceptance External Reviewer Authority',
-      algorithm: 'ed25519',
-      publicKeyPem: pair.publicKey.export({ type: 'spki', format: 'pem' }),
-      roles: [role],
-      status: 'active',
-      effectiveFrom: '2026-07-20T00:00:00.000Z',
-      expiresAt: '2027-07-20T00:00:00.000Z',
-      revokedAt: null,
-    }],
-  };
-}
-
-function strictReviewerPoolConfiguration({ root, credentialRoot }) {
-  const principals = [1, 2, 3].map((index) => {
-    const signerKey = crypto.generateKeyPairSync('ed25519');
-    const executionKey = crypto.generateKeyPairSync('ed25519');
-    const signerTokenVariable = `HEPTA_REVIEWER_${index}_SIGNER_TOKEN_FILE`;
-    const executorTokenVariable = `HEPTA_REVIEWER_${index}_EXECUTOR_TOKEN_FILE`;
-    for (const [name, value] of [
-      [signerTokenVariable, `signer-token-${index}\n`],
-      [executorTokenVariable, `executor-token-${index}\n`],
-    ]) {
-      fs.writeFileSync(path.join(credentialRoot, name), value, { mode: 0o600 });
-    }
-    return {
-      codexBinary: '/usr/local/bin/codex',
-      codexHome: path.join(root, `reviewer-codex-home-${index}`),
-      model: 'gpt-5.2',
-      providerAccountIdentityHash:
-        strictFullAutoAcceptanceHash({ reviewer: index, identity: 'account' }),
-      roles: index === 1
-        ? ['formal-review', 'independent-review'] : ['independent-review'],
-      signerConfiguration: buildReviewerReceiptSignerServiceConfiguration({
-        version: 3,
-        serviceId: `strict-reviewer-signer-${index}`,
-        endpoint: `https://strict-reviewer-${index}.example.test/v3/sign`,
-        lookupEndpoint:
-          `https://strict-reviewer-${index}.example.test/v3/operations`,
-        resumeEndpoint:
-          `https://strict-reviewer-${index}.example.test/v3/resume`,
-        serviceIdentityHash:
-          strictFullAutoAcceptanceHash({ reviewer: index, service: 'signer' }),
-        tokenEnvironmentVariable: signerTokenVariable,
-        receiptTrustStore: reviewerAuthorityTrustStore(signerKey, {
-          keyId: `strict-reviewer-signer-key-${index}`,
-          role: 'reviewer_receipt_attestor',
-          subjectId: `strict-reviewer-signer-authority-${index}`,
-        }),
-        receiptSignerKeyIds: [`strict-reviewer-signer-key-${index}`],
-      }),
-      recoverableExecutorConfiguration:
-        buildRecoverableReviewerExecutorServiceConfiguration({
-          serviceId: `strict-reviewer-executor-${index}`,
-          endpoint: `https://strict-reviewer-${index}.example.test/v1/execute`,
-          lookupEndpoint:
-            `https://strict-reviewer-${index}.example.test/v1/operations`,
-          resumeEndpoint:
-            `https://strict-reviewer-${index}.example.test/v1/resume`,
-          serviceIdentityHash:
-            strictFullAutoAcceptanceHash({ reviewer: index, service: 'executor' }),
-          tokenEnvironmentVariable: executorTokenVariable,
-          outcomeTrustStore: reviewerAuthorityTrustStore(executionKey, {
-            keyId: `strict-reviewer-executor-key-${index}`,
-            role: 'reviewer_execution_attestor',
-            subjectId: `strict-reviewer-executor-authority-${index}`,
-          }),
-          outcomeSignerKeyIds: [`strict-reviewer-executor-key-${index}`],
-        }),
-      trustDomainIdentityHash:
-        strictFullAutoAcceptanceHash({ reviewer: index, identity: 'trust-domain' }),
-    };
-  });
-  return buildReviewerPrincipalPoolConfiguration({
-    version: 2,
-    poolId: 'strict-acceptance-reviewers',
-    principals,
-    minimumReviewerTrustDomains: 3,
-  });
-}
-
 export function strictFullAutoAcceptanceFixture(t, mutate = () => {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-strict-acceptance-'));
   t.after(() => {
@@ -212,6 +456,7 @@ export function strictFullAutoAcceptanceFixture(t, mutate = () => {}) {
   fs.mkdirSync(datasetRoot, { recursive: true, mode: 0o700 });
   fs.mkdirSync(restoreBundle, { recursive: true });
   const references = {};
+  const authorIdentity = strictAuthorIdentityFixture();
   let subjectOrdinal = 0;
   for (const [referenceId, kind] of Object.entries(
     STRICT_FULL_AUTO_ACCEPTANCE_REFERENCE_POLICY,
@@ -222,7 +467,6 @@ export function strictFullAutoAcceptanceFixture(t, mutate = () => {}) {
       ? `secret-reference-${subjectOrdinal}` : `authority-${subjectOrdinal}`;
     const principalDocument = referenceId.endsWith('-principal');
     const pinnedDocument = [
-      'research-author-principal',
       'formal-sandbox-runtime-config',
       'production-mathlib-build-authority-config',
       'autonomous-venue-profile-config',
@@ -230,13 +474,16 @@ export function strictFullAutoAcceptanceFixture(t, mutate = () => {}) {
       'submission-portal-descriptor-config',
       'prior-art-service-config',
       'external-replay-config',
+      'research-author-identity-config',
     ].includes(referenceId);
     const portalDocument = referenceId === 'submission-portal-descriptor-config';
     if (kind === 'opaque-directory-reference') {
       fs.mkdirSync(candidate, { mode: 0o700 });
     } else {
       fs.writeFileSync(candidate, kind === 'public-reference'
-        ? pinnedDocument || principalDocument
+        ? referenceId === 'research-author-identity-config'
+          ? `${JSON.stringify(authorIdentity.initial, null, 2)}\n`
+          : pinnedDocument || principalDocument
           ? `${JSON.stringify({
             ...(pinnedDocument
               ? { configurationHash: strictFullAutoAcceptanceHash({ referenceId }) } : {}),
@@ -262,25 +509,20 @@ export function strictFullAutoAcceptanceFixture(t, mutate = () => {}) {
       fs.chmodSync(candidate, kind === 'public-reference' ? 0o444 : 0o400);
     }
     references[referenceId] = ['public-reference', 'private-configuration-reference'].includes(kind)
-      ? { kind, path: candidate, subjectId,
-        expectedSha256: sha256File(candidate) }
+      ? {
+        kind,
+        path: candidate,
+        subjectId,
+        ...(SEMANTIC_CONFIGURATION_REFERENCES.has(referenceId)
+          ? referenceId === 'research-author-identity-config'
+            ? {
+              expectedConfigurationIdentityHash:
+                JSON.parse(fs.readFileSync(candidate, 'utf8')).configurationHash,
+            } : {}
+          : { expectedSha256: sha256File(candidate) }),
+      }
       : { kind, path: candidate, subjectId };
   }
-  const reviewerPoolReference = references['formal-reviewer-principal'];
-  const reviewerCredentialRoot =
-    references['formal-reviewer-service-credential-root'].path;
-  const reviewerPoolConfiguration = strictReviewerPoolConfiguration({
-    root,
-    credentialRoot: reviewerCredentialRoot,
-  });
-  fs.chmodSync(reviewerPoolReference.path, 0o600);
-  fs.writeFileSync(
-    reviewerPoolReference.path,
-    `${JSON.stringify(reviewerPoolConfiguration, null, 2)}\n`,
-    { mode: 0o600 },
-  );
-  fs.chmodSync(reviewerPoolReference.path, 0o444);
-  reviewerPoolReference.expectedSha256 = sha256File(reviewerPoolReference.path);
   for (const referenceId of [
     'empirical-plugin-signer-command',
     'release-attestor-signer-command',
@@ -293,7 +535,9 @@ export function strictFullAutoAcceptanceFixture(t, mutate = () => {}) {
     fs.chmodSync(reference.path, 0o600);
     fs.writeFileSync(reference.path, `${JSON.stringify(value)}\n`, { mode: 0o600 });
     fs.chmodSync(reference.path, 0o400);
-    reference.expectedSha256 = sha256File(reference.path);
+    if (!SEMANTIC_CONFIGURATION_REFERENCES.has(referenceId)) {
+      reference.expectedSha256 = sha256File(reference.path);
+    }
   };
   writePrivateConfiguration('empirical-plugin-signing-config', {
     version: 1,
@@ -304,25 +548,9 @@ export function strictFullAutoAcceptanceFixture(t, mutate = () => {}) {
       environmentAllowlist: [],
     },
   });
-  writePrivateConfiguration('release-attestor-config', {
-    version: 2,
-    kind: 'ResearchExecutionReleaseAttestorConfiguration',
-    backend: {
-      kind: 'external-kms-command',
-      signerCommand: {
-        principalId: 'release-attestor-signer-production',
-        executable: references['release-attestor-signer-command'].path,
-        credentialRoot: references['release-attestor-signer-credential-root'].path,
-        environmentAllowlist: [],
-      },
-      probeCommand: {
-        principalId: 'release-attestor-probe-production',
-        executable: references['release-attestor-probe-command'].path,
-        credentialRoot: references['release-attestor-probe-credential-root'].path,
-        environmentAllowlist: [],
-      },
-    },
-  });
+  const releaseAttestor = strictReleaseAttestorFixture({ referenceRoot, references });
+  references['release-attestor-config'].expectedConfigurationIdentityHash =
+    releaseAttestor.configurationIdentityHash;
   const steps = Object.fromEntries(STRICT_FULL_AUTO_ACCEPTANCE_STEP_ORDER.map((stepId) => {
     const source = structuredClone(EXAMPLE_CONFIGURATION.steps[stepId]);
     source.idempotencyKey = strictFullAutoAcceptanceHash({ stepId, fixture: true });
@@ -384,6 +612,16 @@ export function strictFullAutoAcceptanceFixture(t, mutate = () => {}) {
   return {
     root, controlRoot, runtimeRoot, assetRoot, datasetRoot, referenceRoot,
     configuration, configurationPath,
+    rotateAuthorIdentity() {
+      const reference = references['research-author-identity-config'];
+      const rotated = authorIdentity.rotate();
+      assert.equal(rotated.configurationHash, reference.expectedConfigurationIdentityHash);
+      fs.chmodSync(reference.path, 0o600);
+      fs.writeFileSync(reference.path, `${JSON.stringify(rotated, null, 2)}\n`);
+      fs.chmodSync(reference.path, 0o444);
+      return rotated;
+    },
+    rotateReleaseHardwareAuthority: releaseAttestor.rotate,
   };
 }
 
@@ -469,42 +707,12 @@ export async function strictFullAutoAcceptanceProductionRunnerBindingTest(t) {
   }), { ready: true });
   assert.equal(captured[0].signal, controller.signal);
   assert.equal(captured[0].env.HEPTA_RAW_TOKEN, undefined);
-  assert.equal(captured[0].env.HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG,
-    value.configuration.references['research-author-principal'].path);
-  assert.equal(captured[0].env.HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG_HASH,
-    JSON.parse(fs.readFileSync(
-      value.configuration.references['research-author-principal'].path,
-      'utf8',
-    )).configurationHash);
   assert.equal(captured[0].env.HEPTA_RESEARCH_AUTHOR_CODEX_HOME,
     value.configuration.references['research-author-credential-root'].path);
   assert.equal(captured[0].env.HEPTA_FORMAL_REVIEW_CODEX_HOME,
-    value.configuration.references['formal-reviewer-credential-root'].path);
-  const reviewerConfiguration = JSON.parse(fs.readFileSync(
-    value.configuration.references['formal-reviewer-principal'].path,
-    'utf8',
-  ));
-  const reviewerServiceVariables = reviewerConfiguration.principals.flatMap(
-    (principal) => [
-      principal.signerConfiguration.tokenEnvironmentVariable,
-      principal.recoverableExecutorConfiguration.tokenEnvironmentVariable,
-    ],
-  );
-  for (const name of reviewerServiceVariables) {
-    assert.equal(
-      captured[0].env[name],
-      path.join(
-        value.configuration.references[
-          'formal-reviewer-service-credential-root'
-        ].path,
-        name,
-      ),
-    );
-    assert.notEqual(captured[0].env[name], fs.readFileSync(
-      captured[0].env[name],
-      'utf8',
-    ).trim());
-  }
+    value.configuration.references['research-author-credential-root'].path);
+  assert.equal(captured[0].env.HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG, undefined);
+  assert.equal(captured[0].env.HEPTA_REVIEWER_PRINCIPAL_POOL_CONFIG, undefined);
   assert.equal(captured[0].env.HEPTA_PAPER_RUNTIME_ROOT, plan.runtimeRoot);
   assert.equal(captured[0].env.HEPTA_PAPER_ASSET_ROOT, plan.assetRoot);
   assert.equal(captured[0].env.ELAN_HOME,
@@ -571,4 +779,50 @@ export async function strictFullAutoAcceptanceProductionRunnerBindingTest(t) {
     signal: controller.signal,
   }), { ready: true });
   assert.match(captured[3].args[0], /paper-core\/bin\/automation-status\.mjs$/);
+  const portalReference = plan.referenceBindings.find((item) => (
+    item.referenceId === 'submission-portal-descriptor-config'
+  ));
+  assert.equal(captured[3].env.HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_CONFIG,
+    portalReference.resolvedPath);
+  assert.equal(captured[3].env.HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIGURATION_HASH,
+    portalReference.documentPins.configurationHash);
+  assert.equal(captured[3].env.HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_HASH,
+    portalReference.documentPins.portalDescriptorHash);
+  const authorIdentityReference = plan.referenceBindings.find((item) => (
+    item.referenceId === 'research-author-identity-config'
+  ));
+  assert.equal(captured[3].env.HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG,
+    authorIdentityReference.resolvedPath);
+  assert.equal(captured[3].env.HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG_HASH,
+    authorIdentityReference.documentPins.configurationHash);
+  const releaseAttestorReference = plan.referenceBindings.find((item) => (
+    item.referenceId === 'release-attestor-config'
+  ));
+  assert.equal(
+    releaseAttestorReference.documentPins.configurationHash,
+    releaseAttestorReference.contentHash,
+  );
+  assert.notEqual(
+    sha256File(releaseAttestorReference.resolvedPath),
+    releaseAttestorReference.contentHash,
+  );
+  assert.equal(captured[3].env.HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG_HASH,
+    releaseAttestorReference.documentPins.configurationHash);
+
+  const submissionStep = plan.steps.find((item) => item.stepId === 'submission-dispatcher');
+  assert.deepEqual(await runner.run({
+    plan: restoreVerificationPlan,
+    step: submissionStep,
+    phase: 'execute',
+    invocation: submissionStep.execute,
+    signal: controller.signal,
+  }), { ready: true });
+  assert.match(captured[4].args[0],
+    /paper-core\/bin\/autonomous-submission-dispatcher-challenge\.mjs$/);
+  assert.equal(captured[4].env.HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_CONFIG,
+    portalReference.resolvedPath);
+  assert.equal(captured[4].env.HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIGURATION_HASH,
+    portalReference.documentPins.configurationHash);
+  assert.equal(captured[4].env.HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_HASH,
+    portalReference.documentPins.portalDescriptorHash);
 }

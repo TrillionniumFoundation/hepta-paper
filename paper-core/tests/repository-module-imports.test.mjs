@@ -5,6 +5,11 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
+import { parse } from 'espree';
+import {
+  OPENCLAW_MODEL_RUNTIME_PACKAGE_EXPORTS,
+  openClawModelRuntimeLocation,
+} from '../../paper-adapters/automation/codex-openclaw-managed-configuration.mjs';
 import { HEPTA_PAPER_COMMAND_REGISTRY, classifyNpmScriptSurface } from '../src/command-registry.mjs';
 import {
   ARCHITECTURE_ENTRYPOINT_MANIFEST,
@@ -84,6 +89,32 @@ function packageScriptModuleEntries(groups) {
 }
 
 function posix(relative) { return relative.replace(/\\/g, '/'); }
+
+function dynamicImportExpressions(source) {
+  const syntax = parse(source, {
+    ecmaVersion: 'latest',
+    sourceType: 'module',
+  });
+  const pending = [syntax];
+  const expressions = [];
+  while (pending.length) {
+    const node = pending.pop();
+    if (!node || typeof node !== 'object') continue;
+    if (node.type === 'ImportExpression') {
+      expressions.push({
+        expression: source.slice(node.source.start, node.source.end),
+        nodeBuiltin: node.source.type === 'Literal'
+          && typeof node.source.value === 'string'
+          && node.source.value.startsWith('node:'),
+      });
+    }
+    for (const value of Object.values(node)) {
+      if (Array.isArray(value)) pending.push(...value);
+      else if (value && typeof value === 'object') pending.push(value);
+    }
+  }
+  return expressions;
+}
 
 function modulesUnder(directory) {
   return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
@@ -351,16 +382,36 @@ test('production inventory is reachable only from declared executable entrypoint
     || posix(path.relative(workspaceRoot, file)).startsWith('core/src/')
   ));
   assert.deepEqual(forbiddenOperatorModules, []);
-  const unsafeDynamicImports = [];
+  const externalRuntimeImports = [];
   for (const file of operator) {
     const source = fs.readFileSync(file, 'utf8');
-    for (const match of source.matchAll(/\bimport\s*\(([^)]+)\)/g)) {
-      if (!/^\s*['"]node:[^'"]+['"]\s*$/.test(match[1])) {
-        unsafeDynamicImports.push({ file: posix(path.relative(workspaceRoot, file)), expression: match[1].trim() });
-      }
+    for (const dynamicImport of dynamicImportExpressions(source)) {
+      if (dynamicImport.nodeBuiltin) continue;
+      externalRuntimeImports.push({
+        file: posix(path.relative(workspaceRoot, file)),
+        expression: dynamicImport.expression,
+      });
     }
   }
-  assert.deepEqual(unsafeDynamicImports, []);
+  const byImportIdentity = (left, right) => (
+    `${left.file}\0${left.expression}`.localeCompare(`${right.file}\0${right.expression}`)
+  );
+  assert.deepEqual(
+    externalRuntimeImports.sort(byImportIdentity),
+    entrypoints.externalRuntimeImports.map((declaration) => ({
+      file: declaration.importer,
+      expression: declaration.expression,
+    })).sort(byImportIdentity),
+  );
+  assert.deepEqual(
+    entrypoints.externalRuntimeImports.map((declaration) => ({
+      locationProperty: declaration.locationProperty,
+      packageName: declaration.packageName,
+      packageExport: declaration.packageExport,
+      requiredExports: declaration.requiredExports,
+    })),
+    OPENCLAW_MODEL_RUNTIME_PACKAGE_EXPORTS,
+  );
 
   const importable = [...production]
     .filter((file) => !file.includes(`${path.sep}paper-core${path.sep}bin${path.sep}`))
@@ -385,6 +436,61 @@ test('every supported operator executable is covered by the production architect
   }
 });
 
+test('OpenClaw external runtime edges resolve only declared public package exports', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-openclaw-package-exports-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const binary = path.join(root, 'openclaw.mjs');
+  fs.writeFileSync(binary, 'export {};\n');
+  const exports = Object.fromEntries(OPENCLAW_MODEL_RUNTIME_PACKAGE_EXPORTS.map(
+    (descriptor) => {
+      const target = `./dist/plugin-sdk/${descriptor.packageExport.split('/').at(-1)}.js`;
+      const absolute = path.join(root, target);
+      fs.mkdirSync(path.dirname(absolute), { recursive: true });
+      fs.writeFileSync(absolute, 'export const fixture = true;\n');
+      return [descriptor.packageExport, { default: target }];
+    },
+  ));
+  const packagePath = path.join(root, 'package.json');
+  const writePackage = (value) => fs.writeFileSync(
+    packagePath,
+    `${JSON.stringify(value, null, 2)}\n`,
+  );
+  writePackage({ name: 'openclaw', type: 'module', exports });
+
+  const located = openClawModelRuntimeLocation(binary);
+  assert.equal(located.packageRoot, root);
+  for (const descriptor of OPENCLAW_MODEL_RUNTIME_PACKAGE_EXPORTS) {
+    assert.equal(
+      located[descriptor.locationProperty],
+      path.join(
+        root,
+        exports[descriptor.packageExport].default,
+      ),
+    );
+  }
+
+  const missingExport = structuredClone(exports);
+  delete missingExport['./plugin-sdk/session-store-runtime'];
+  writePackage({ name: 'openclaw', type: 'module', exports: missingExport });
+  assert.throws(
+    () => openClawModelRuntimeLocation(binary),
+    /codex_openclaw_managed_model_runtime_unavailable/,
+  );
+
+  writePackage({
+    name: 'openclaw',
+    type: 'module',
+    exports: {
+      ...exports,
+      './plugin-sdk/session-store-runtime': { default: '../outside.js' },
+    },
+  });
+  assert.throws(
+    () => openClawModelRuntimeLocation(binary),
+    /codex_openclaw_managed_model_runtime_unavailable/,
+  );
+});
+
 test('release production graph is hash-bound to the Git index and rejects worktree-only modules', (t) => {
   const inheritedGitIndexFile = process.env.GIT_INDEX_FILE;
   delete process.env.GIT_INDEX_FILE;
@@ -397,7 +503,10 @@ test('release production graph is hash-bound to the Git index and rejects worktr
     workspaceRoot,
     'paper-core/bin/run-isolated-verification.mjs',
   ), 'utf8');
-  assert.match(releaseVerificationRunner, /mode === 'release'[\s\S]+inspectTrackedProductionGraph\(\{ workspaceRoot \}\)/);
+  assert.match(
+    releaseVerificationRunner,
+    /mode === 'release'[\s\S]+prepareImmutableReleaseWorkspace\([\s\S]+inspectTrackedProductionGraph\(\{ workspaceRoot: executionWorkspaceRoot \}\)/,
+  );
   assert.match(releaseVerificationRunner, /productionGraphManifestHash: productionGraphTracking\.productionGraphManifestHash/);
 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-tracked-production-graph-'));

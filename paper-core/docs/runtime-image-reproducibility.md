@@ -19,7 +19,16 @@ reconciles a missing or drifted mirror from SQLite during its mutating startup/r
 `status` remains read-only and fails closed on mirror drift.
 
 Configuration is supplied with `--config` or
-`HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG`. It has this exact shape:
+`HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG`. Full production also requires
+`HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG_HASH`. That out-of-band value must
+equal the `configurationIdentityHash` reported by `status` for the exact resolved
+configuration, executable/interpreter identities, argument resources, restricted
+child environments, credential-root contents, backend identities, and verifier
+signers. A first `status` call without the pin may expose that candidate identity
+for an independent deployment review, but reports bounded-only configuration
+readiness and does not read a receipt. A missing, malformed, or mismatched pin
+blocks request generation, receipt reads, verifier invocation, and publication.
+It has this exact shape:
 
 ```json
 {
@@ -75,12 +84,15 @@ Configuration is supplied with `--config` or
 ```
 
 The example abbreviates the second object for readability; deployed JSON must use the exact object
-shapes. The two services, principals, executables, credential roots, Ed25519 SPKI identities,
+shapes. The configuration itself must be a non-symlink, single-link regular file
+that is not group/world writable. The two services, principals, executables,
+credential roots, Ed25519 SPKI identities,
 canonicalized signer organizations, backend endpoints, workers, and state roots must all be
 different. Credential roots are exclusively for private principal material: their regular-file
 content SHA-256 sets must be disjoint even when a copied secret is renamed or accompanied by other
 files. Shared public CA material must live outside these roots. Docker and BuildKit environment
-variables are forbidden. Executable, interpreter, argument resources, restricted environment,
+variables and the controller's configuration-hash pin are forbidden in verifier
+environment allowlists. Executable, interpreter, argument resources, restricted environment,
 credential material, UID and filesystem identities are rechecked before every invocation.
 `platform`, `sourceDateEpoch`, and `buildArgs` are repository policy, not operator choices: they must
 be exactly `linux/amd64`, `1733097600`, and `{}`. Any configured drift fails before an external
@@ -104,7 +116,8 @@ verification attempt and is included in the configuration identity. It must be p
 `operator_declared_worst_case_usd`. Genuinely non-billed external builders must instead declare
 exactly `0` with `externally_operated_zero_cost`; an omitted, negative, mismatched, or unknown cost
 authority fails closed. The resident supervisor reserves this entire amount before refreshing.
-The hash-bound configuration inspection also reports `maximumVerifierTimeoutMs` and the derived
+The out-of-band-pinned configuration inspection also reports
+`maximumVerifierTimeoutMs` and the derived
 `minimumRefreshLeadMs` (maximum timeout plus the 60-second protocol margin). Configurations whose
 minimum refresh lead is not shorter than the receipt lifetime fail closed.
 

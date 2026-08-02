@@ -766,6 +766,9 @@ export function productionExternalCapabilityTrustInspectionFixture({
   const component = (label, extra = {}) => Object.freeze({
     cryptographicAuthorityReady: true,
     identityIndependenceReady: true,
+    configurationPinned: true,
+    crashRecoveryReady: true,
+    fullProductionReady: true,
     trustSetHash: digest(`${label}:trust-set`),
     signatureVerificationPolicyHash: digest(`${label}:signature-policy`),
     ...extra,
@@ -941,6 +944,8 @@ export function productionPriorArtAuthorityFixture({
       priorArt: {
         cryptographicAuthorityReady: true,
         identityIndependenceReady: true,
+        configurationPinned: true,
+        fullProductionReady: true,
         evidenceProfile: 'structured-ranked-deduplicated-v2',
         trustSetHash: trustConfiguration.trustSetHash,
         signatureVerificationPolicyHash:

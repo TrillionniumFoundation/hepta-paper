@@ -18,6 +18,7 @@ const args = parseStrictCliArguments(process.argv.slice(2), {
     'help',
     'handoff',
     'json',
+    'live-formal-sandbox-probe',
     'live-provider-canary',
     'live-release-attestor',
     'require-full-research',
@@ -31,8 +32,8 @@ if (args.help) {
   process.stdout.write(`${JSON.stringify({
     version: 2,
     kind: 'AutomationStatusUsage',
-    usage: 'automation-status [--json] [--handoff] [--deployment-environment-file PATH] [--root PATH] [--runtime-root PATH] [--require-full-research] [--require-fully-autonomous] [--live-provider-canary] [--live-release-attestor]',
-    mutation: 'no-canonical-state-write',
+    usage: 'automation-status [--json] [--handoff] [--deployment-environment-file PATH] [--root PATH] [--runtime-root PATH] [--require-full-research] [--require-fully-autonomous] [--live-formal-sandbox-probe] [--live-provider-canary] [--live-release-attestor]',
+    mutation: 'formal probe qualification receipt only with --live-formal-sandbox-probe',
     localObservationEffects: 'runtime-metadata-and-daemon-probes-may-change',
     externalAction: 'argument-dependent',
   }, null, 2)}\n`);
@@ -52,6 +53,7 @@ const query = queryAutomationReadiness({
   liveProviderCanaryRequested: args['live-provider-canary'] === true,
   requireFullResearch: args['require-full-research'] === true,
   requireFullyAutonomous: args['require-fully-autonomous'] === true,
+  activeFormalSandboxProbe: args['live-formal-sandbox-probe'] === true,
   activeReleaseAttestorVerification: args['live-release-attestor'] === true,
 });
 const readiness = Object.freeze({

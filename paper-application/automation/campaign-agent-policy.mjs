@@ -17,6 +17,20 @@ const OUTCOME_BEARING_WORKSPACE_PATHS = Object.freeze([
   'automation-results', 'results.json', 'results.csv', 'observation.json',
 ]);
 const CAMPAIGN_AGENT_MAXIMUM_TIMEOUT_MS = 20 * 60 * 1000;
+const SHA256 = /^sha256:[0-9a-f]{64}$/;
+const SAFE_EVIDENCE_KIND = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}$/;
+const MANUSCRIPT_EVIDENCE_CLAIM_CLASSES = new Set([
+  'interpretation', 'limitation', 'method', 'related_work', 'reproducibility', 'scope',
+]);
+const FORMAL_LOSS_CAP_AXIOM_FREE_INSTRUCTION = `
+For the exact loss_cap_upper_bound obligation, use this already kernel-audited declaration verbatim:
+theorem loss_cap_upper_bound : ∀ (loss cap : Nat), Nat.min loss cap ≤ cap := by
+  intro loss cap
+  change (if loss ≤ cap then loss else cap) ≤ cap
+  split
+  · assumption
+  · exact Nat.le_refl cap
+Do not replace its change step with rw, simp, omega, or another library lemma. This exact declaration elaborates under the pinned Lean toolchain with no axioms while preserving the authorized theorem type and source-statement identities.`;
 
 function normalizedWorkspacePath(value, code) {
   const relative = String(value || '').replace(/\\/g, '/').replace(/^\.\//, '');
@@ -71,6 +85,28 @@ export function researchPlanWorkspaceMutationPolicy() {
     allowedExtensions: Object.freeze([]),
     forbiddenPaths: Object.freeze([]),
     forbiddenExtensions: Object.freeze(['.tex']),
+  });
+}
+
+export function autonomousMachineWriterWorkspaceMutationPolicy({
+  manuscript = 'main.tex',
+} = {}) {
+  return Object.freeze({
+    allowedPaths: Object.freeze([
+      normalizedWorkspacePath(manuscript, 'campaign_manuscript_path_invalid'),
+      'AUTONOMOUS_MANUSCRIPT_IR_DRAFT.json',
+    ]),
+    allowedPrefixes: Object.freeze([]),
+    allowedExtensions: Object.freeze([]),
+    forbiddenPaths: Object.freeze([
+      'proof_status.md',
+      'evidence_manifest.md',
+      'AUTONOMOUS_MANUSCRIPT_IR.json',
+      'RESEARCH_PLAN.md',
+      'THEOREM_SPEC.json',
+      'THEOREM_SPEC_DRAFT.json',
+    ]),
+    forbiddenExtensions: Object.freeze(['.lean']),
   });
 }
 
@@ -143,9 +179,57 @@ function empiricalClaimMarkerInstructions(benchmarkSelector) {
   return ` Before any empirical run, write exactly ${declarations.length} confirmatory manuscript claim range(s), in the declaration order below. Copy each required begin and end marker line byte-for-byte, with the exact natural-language hypothesis text between its matching marker lines. Do not alter a claimId, metric, comparator, alternative, minimumEffect, acceptanceRequired, or proposalClaimRecordHash. Do not add, omit, duplicate, or reorder declarations. Use literal \\input/\\include paths and never generate markers through TeX macros.\n${requiredMarkers}`;
 }
 
-function typedEmpiricalAssertionInstructions(authority) {
+function canonicalManuscriptEvidenceRefBindings(values, {
+  required = false,
+} = {}) {
+  if (values === null || values === undefined) {
+    if (required) throw new Error('campaign_manuscript_evidence_ref_bindings_required');
+    return null;
+  }
+  if (!Array.isArray(values) || !values.length || values.length > 512) {
+    throw new Error('campaign_manuscript_evidence_ref_bindings_invalid');
+  }
+  const bindings = values.map((value) => {
+    const keys = value && typeof value === 'object' && !Array.isArray(value)
+      ? Object.keys(value).sort() : [];
+    const claimClasses = Array.isArray(value?.claimClasses)
+      ? value.claimClasses.map(String) : [];
+    if (JSON.stringify(keys) !== JSON.stringify(['claimClasses', 'hash', 'kind'])
+      || !SAFE_EVIDENCE_KIND.test(String(value.kind || ''))
+      || !SHA256.test(String(value.hash || ''))
+      || !claimClasses.length
+      || new Set(claimClasses).size !== claimClasses.length
+      || claimClasses.some((claimClass) => (
+        !MANUSCRIPT_EVIDENCE_CLAIM_CLASSES.has(claimClass)
+      ))) {
+      throw new Error('campaign_manuscript_evidence_ref_bindings_invalid');
+    }
+    return Object.freeze({
+      kind: String(value.kind),
+      hash: String(value.hash),
+      claimClasses: Object.freeze([...claimClasses].sort()),
+    });
+  });
+  const keys = bindings.map((binding) => `${binding.kind}:${binding.hash}`);
+  if (new Set(keys).size !== keys.length) {
+    throw new Error('campaign_manuscript_evidence_ref_bindings_invalid');
+  }
+  return Object.freeze(bindings);
+}
+
+function typedEmpiricalAssertionInstructions(
+  authority,
+  evidenceRefBindings = null,
+  { requireExactBindings = false } = {},
+) {
   if (!authority) return '';
-  return ` The system-derived empirical assertion authority is immutable at automation-results/EMPIRICAL_ASSERTION_AUTHORITY.json and has hash ${authority.empiricalAssertionAuthorityHash}. Read it directly; never create, rewrite, or self-sign it. Author all noncanonical manuscript prose through AUTONOMOUS_MANUSCRIPT_IR_DRAFT.json; never edit AUTONOMOUS_MANUSCRIPT_IR.json. Preserve the draft's exact top-level and block schemas. You may change the plain-text title, section headings, prose/citation text, and section arrangement, but must keep exactly one slot for empirical_claims, formal_support, and empirical_results and at least one limitation prose block. Every prose or citation block must list only real sha256 evidenceRefs copied from AUTONOMOUS_RESEARCH_PROPOSAL.json, AUTONOMOUS_RESEARCH_POLICY_AUTHORIZATION.json, AUTONOMOUS_RESEARCH_SEED_CONTRACTS.json, AUTONOMOUS_PRIOR_ART_EVIDENCE.json, AUTONOMOUS_EMPIRICAL_CLAIM_LINEAGE.json, THEOREM_SPEC.json, or automation-results/EMPIRICAL_ASSERTION_AUTHORITY.json. Never invent a hash or cite a work absent from a verified prior-art receipt. The trusted renderer escapes plain text, injects canonical claims, formal support, results, tables, and figures into the three slots, binds your draft to this execution receipt, and rejects unbound scientific prose. A negative or inconclusive result is a result and must not be reframed as support. Do not alter empirical code, protocol, thresholds, claims, authority files, or canonical result bodies.`;
+  const bindings = canonicalManuscriptEvidenceRefBindings(evidenceRefBindings, {
+    required: requireExactBindings,
+  });
+  const bindingInstruction = bindings
+    ? ` The exact system-verified evidenceRef bindings eligible for this attempt are ${JSON.stringify(bindings)}. For each prose or citation block, use only a hash in this list and only when that block's claimClass appears in the same binding's claimClasses. File presence and sha256 syntax do not confer evidence authority. Before returning, inspect every existing prose/citation block and replace or remove any evidenceRef absent from this list or incompatible with its claimClass.`
+    : ' Every prose or citation block must use only renderer-admitted evidence identities from the verified proposal, policy authorization, seed bundle, prior-art receipt, empirical claim lineage, or empirical assertion authority. Use proposal, policy, or seed identities for scope and method prose; use typed empirical authority-entry identities for observed-result interpretation. Do not treat arbitrary hashes found in those files as evidence authority.';
+  return ` The system-derived empirical assertion authority is immutable at automation-results/EMPIRICAL_ASSERTION_AUTHORITY.json and has hash ${authority.empiricalAssertionAuthorityHash}. Read it directly; never create, rewrite, or self-sign it. Author all noncanonical manuscript prose through AUTONOMOUS_MANUSCRIPT_IR_DRAFT.json; never edit AUTONOMOUS_MANUSCRIPT_IR.json. Preserve the draft's exact top-level and block schemas. You may change the plain-text title, section headings, prose/citation text, and section arrangement, but must keep exactly one slot for empirical_claims, formal_support, and empirical_results and at least one limitation prose block.${bindingInstruction} THEOREM_SPEC.json, theoremSpecificationHash, and theorem-specification claim hashes are formal-pipeline identities, never manuscript evidenceRefs. Keep formal_support as the sole formal theorem/proof/verification surface; do not add prose that restates formal results outside that slot. The trusted renderer injects its canonical content from independently verified formal authority. Never invent a hash or cite a work absent from a verified prior-art receipt. The trusted renderer escapes plain text, injects canonical claims, formal support, results, tables, and figures into the three slots, binds your draft to this execution receipt, and rejects unbound scientific prose. A negative or inconclusive result is a result and must not be reframed as support. Do not alter empirical code, protocol, thresholds, claims, authority files, or canonical result bodies.`;
 }
 
 export function buildCampaignAgentInstructions({
@@ -166,26 +250,35 @@ export function buildCampaignAgentInstructions({
   qualityGateBlockers = [],
   revisionMaterialization = null,
   empiricalAssertionAuthority = null,
+  autonomousManuscriptEvidenceRefBindings = null,
   empiricalOutcomeObserved = false,
 } = {}) {
   const empiricalClaimMarkers = empiricalClaimMarkerInstructions(benchmarkSelector);
-  const empiricalAssertions = typedEmpiricalAssertionInstructions(empiricalAssertionAuthority);
+  const empiricalAssertions = ['manuscript-integrate', 'revise'].includes(kind)
+    ? typedEmpiricalAssertionInstructions(
+      empiricalAssertionAuthority,
+      autonomousManuscriptEvidenceRefBindings,
+      {
+        requireExactBindings:
+          claimAuthorityType === 'machine-policy-authorized',
+      },
+    ) : '';
   const evidenceEntailmentReview = ' If AUTONOMOUS_MANUSCRIPT_ENTAILMENT.json exists, read it independently and reject unless every rendered prose/citation block is covered exactly once, its renderedSentence matches the current manuscript, and every evidenceRef has canonical source-document predicates permitted for that claimClass. Inspect each predicate sourceDocumentHash, JSON fieldPath, typed actualValue, operator, unit, denominator, and original/replay role; do not infer support merely because an authority hash is present. Treat provenance and source-field predicates as necessary but not sufficient for semantic entailment; reject unsupported generalization, causal language, novelty, or universal-truth claims. In the returned JSON also include evidenceEntailmentReview exactly as {version:1,kind:"EvidenceEntailmentPerClaimReview",evidenceEntailmentContractHash:"sha256:...",claims:[{claimId:"exact contract claimId",renderedSentenceHash:"exact contract hash",verdict:"entailed"|"not_entailed",rationale:"specific source-field-to-sentence justification"}]} in contract claim order. Use verdict entailed only when the cited source fields logically support the whole rendered sentence.';
   if (kind === 'research-plan') return `Inspect ${manuscript} and the project. Write a concise RESEARCH_PLAN.md of at most 450 words with falsifiable claims, code tasks, datasets, metrics, baselines, ablations, seeds, and stopping criteria. Prefer compact tables or bullets over prose.`;
-  if (kind === 'writer' && formalProposalSeedRequired && claimAuthorityType === 'machine-policy-authorized') return `This is a machine-proposed research source authorized only for bounded execution by system policy and bound by ${claimAuthorityBindingHash || 'a missing binding hash'}; it is not operator approval, scientific validation, or release authority. Read ${proposalSeedContractPath}; require kind AutonomousResearchSeedContractBundle, status autonomous_research_seed_contracts_ready, claimAuthorityType machine-policy-authorized, valid safety declarations, and non-empty claims. Use exactly the claims whose verificationMode is formal_kernel as theorem authority; never turn an empirical_protocol outcome claim, observed metric, treatment effect, replay result, or empirical obligation into a theorem premise or axiom. Preserve every selected formal claim's exact statement, assumptions, quantifiers, negativeBoundaries, and proofObligations, and use each selected formal claim exactly once. Reject circular P-implies-P, assumption-echo, True, or otherwise vacuous theorem formulations. Add its natural-language proof in an immediately adjacent \\begin{proof} environment and state every formal negative boundary in a Limitations section. Also improve AUTONOMOUS_MANUSCRIPT_IR_DRAFT.json using only its existing exact schema; every prose block must retain real evidenceRefs copied from immutable authority files, and the three canonical slots must each remain exactly once. Never edit AUTONOMOUS_MANUSCRIPT_IR.json. Do not invent evidence, write Lean, or create THEOREM_SPEC files. The later system-finalized theorem-spec and independent formal review may reject the claim; external release attestation remains required. If the authority or lineage is missing or blocked, fail closed.${empiricalClaimMarkers}`;
+  if (kind === 'writer' && formalProposalSeedRequired && claimAuthorityType === 'machine-policy-authorized') return `This is a machine-proposed research source authorized only for bounded execution by system policy and bound by ${claimAuthorityBindingHash || 'a missing binding hash'}; it is not operator approval, scientific validation, or release authority. Read ${proposalSeedContractPath}; require kind AutonomousResearchSeedContractBundle, status autonomous_research_seed_contracts_ready, claimAuthorityType machine-policy-authorized, valid safety declarations, and non-empty claims. Use exactly the claims whose verificationMode is formal_kernel as theorem authority; never turn an empirical_protocol outcome claim, observed metric, treatment effect, replay result, or empirical obligation into a theorem premise or axiom. Preserve every selected formal claim's exact statement, assumptions, quantifiers, negativeBoundaries, and proofObligations, and use each selected formal claim exactly once. Reject circular P-implies-P, assumption-echo, True, or otherwise vacuous theorem formulations. Add its natural-language proof in an immediately adjacent \\begin{proof} environment and state every formal negative boundary in a Limitations section. Also improve AUTONOMOUS_MANUSCRIPT_IR_DRAFT.json using only its existing exact schema; every prose block must retain real evidenceRefs copied from immutable authority files, and the three canonical slots must each remain exactly once. In the IR, scope and method prose may cite only compatible proposal, proposal-claim, policy, or seed identities; never cite empirical claim-lineage or result identities as scope/method evidence. Do not create observed-result interpretation before typed empirical authority exists. Keep formal_support as the sole formal theorem/proof/verification slot and never use theorem-specification identities as manuscript evidenceRefs. This initial writer may modify exactly ${manuscript} and AUTONOMOUS_MANUSCRIPT_IR_DRAFT.json. Do not create or edit proof_status.md, evidence_manifest.md, an appendix, a bibliography, or any other file; formal verification and a later revise carrying exact readiness blockers own those artifacts. Return replacement bodies only for these two files when their bytes actually change. Never edit AUTONOMOUS_MANUSCRIPT_IR.json. Do not invent evidence, write Lean, or create THEOREM_SPEC files. The later system-finalized theorem-spec and independent formal review may reject the claim; external release attestation remains required. If the authority or lineage is missing or blocked, fail closed.${empiricalClaimMarkers}`;
   if (kind === 'writer' && formalProposalSeedRequired) return `This is an approved formal proposal source bound by ${approvedProposalSeedBindingHash || 'a missing binding hash'}. Read ${proposalSeedContractPath}; require kind PaperProposalSeedContractBundle, status proposal_seed_contracts_ready, non-empty proposal-derived claims, proof obligations, proposalEnvelopeHash, productionPlanEnvelopeHash, reviewGateHash, and a scientificClaimInputHash. Each claim carries the operator-supplied exact scientific statement plus non-empty assumptions, quantifiers, negativeBoundaries, and proofObligations. Use every approved claim exactly once as the only theorem authority. Preserve its complete semantic scope; TeX syntax conversion is allowed, but paraphrasing, narrowing, strengthening, adding conditions, deleting quantifiers, or substituting a different claim is forbidden. Add its natural-language proof in an immediately adjacent \\begin{proof} environment and state every approved negative boundary in a Limitations section. Do not invent evidence, write Lean, or create THEOREM_SPEC files. The later system-finalized theorem-spec and Lean candidate stages bind and independently review the result; if the approved seed contract or scientific claim lineage is missing or blocked, fail closed.${empiricalClaimMarkers}`;
   if (kind === 'writer') return `Improve only ${manuscript} according to RESEARCH_PLAN.md; do not modify RESEARCH_PLAN.md or any other file. Strengthen only claims supported by files already present. Do not invent results, datasets, benchmark names, citations, bibliographic identities, external systems, authority, or evidence. If verified evidence is absent, describe the work explicitly as a plan or protocol, omit empirical findings and citations, and state the evidence limitations. Keep the complete manuscript concise enough for the configured output budget.${empiricalClaimMarkers}`;
   if (kind === 'theorem-spec') return `Read ${manuscript} and every recursively included TeX file.${formalProposalSeedRequired ? ` Also read the bound scientific claim authority in ${proposalSeedContractPath}.` : ''} Enumerate every theorem-like environment in source order. Write exactly one file, THEOREM_SPEC_DRAFT.json, and modify nothing else. Its exact JSON schema is {"version":1,"kind":"TheoremSpecificationDraft","claims":[{"claimKey":"stable-key","title":"short title","statement":"exact theorem body text","assumptions":["..."],"quantifiers":["..."],"negativeBoundaries":["at least one explicit non-claim"],"proofObligations":["at least one concrete obligation"],"proofDependencyClaimKeys":["stable-key-of-an-earlier-or-shared-lemma"],"evidenceObligations":[],"manuscriptIntent":"existing"${formalProposalSeedRequired ? ',"proposalClaimId":"exact bound formal claim id"' : ''}}]}. Every object must contain exactly those keys, with no claimId, hashes, source paths, byte offsets, receipts, TODOs, or extra fields. proofDependencyClaimKeys must list every canonical theorem/lemma whose proved declaration is used by this theorem, or [] when independent; do not invent dependencies, self-reference, or create cycles. statement must reproduce the exact theorem body text, not a stronger paraphrase.${formalProposalSeedRequired ? ` Map every theorem one-to-one to the authorized ${claimAuthorityType === 'machine-policy-authorized' ? 'formal_kernel claim only; exclude every empirical_protocol claim' : 'operator-approved proposal claim'} by exact proposalClaimId; do not omit, duplicate, strengthen, or substitute an unrelated claim. This mapping is only a locator and will not be trusted until independently reviewed.` : ''} The system, never the agent, binds source bytes and creates canonical THEOREM_SPEC.json.`;
-  if (kind === 'formal-author') return `Treat THEOREM_SPEC.json and every .tex file as immutable authority. For every canonical specification claim, use its exact claimId, statement, proof obligations, proofObligationContracts, and manuscriptSource binding. If proposalClaimSource contains dynamicFormalClaimSeedHash, the Lean declaration name must equal leanDeclarationName, its elaborated normalized type hash must equal leanNormalizedTypeHash, its source type must be leanTypeSource, and imports must be a subset of allowedImports. Create or update only Lean/Lake files and RESEARCH_WORKER_PLAN.json. Prove the exact statements without sorry/admit/unreviewed axioms. Every formal_verifier_lake claim binding must use the canonical claimId, theoremSpecificationHash, theoremSpecificationClaimHash, and exact manuscriptSource path, byteStart, byteEnd, and contentHash from THEOREM_SPEC.json, and include theoremName,sourceFile,expectedTypeHash,sourceStatementHash,proofObligations. Also copy every canonical proofObligationContract exactly and provide proofObligationMappings as [{obligationId,displayText,leanDeclarations:["LeanDeclaration"]}], covering each obligation exactly once with one or more declarations in sourceFile. Do not modify any .tex, THEOREM_SPEC.json, THEOREM_SPEC_DRAFT.json, Markdown, empirical artifact, or source package contract. Do not weaken a claim to make the proof pass. The verifier generates its own fresh #check/#print axioms audit outside the source workspace.`;
-  if (kind === 'formal-review') return `Read-only independent review: bind your review to canonical THEOREM_SPEC.json, compare every specification claim and exact manuscript byte range with its Lean theorem type and proof obligations, and reject any mismatch. For dynamic proposalClaimSource entries, also independently reject unless theoremName equals leanDeclarationName and the elaborated normalized Lean type hash equals leanNormalizedTypeHash.${formalProposalSeedRequired ? ` Independently compare each exact proposalClaimSource text from THEOREM_SPEC.json (ultimately bound to ${proposalSeedContractPath}) with the natural-language theorem. Accept only semantic equivalence to the bound ${claimAuthorityType === 'machine-policy-authorized' ? 'machine-policy-authorized formal_kernel claim; this is not operator approval and does not establish novelty or scientific correctness' : 'operator-approved proposal claim'}; narrowing, strengthening, unrelated substitution, or scope change must fail${claimAuthorityType === 'machine-policy-authorized' ? ' and external release attestation remains required' : ' and requires a new operator-signed proposal approval outside this review'}.` : ''} There must be exactly one review for every canonical claim and no extra review. Do not modify any file. Return only JSON as {version:${formalProposalSeedRequired ? 2 : 1},kind:"FormalClaimSemanticReview",theoremSpecificationHash:"sha256:...",reviews:[...]}; every review must contain claimId,theoremName,manuscriptClaimHash,theoremTypeHash,sourceStatementHash,status:"formal_semantic_review_verified" only when the manuscript theorem and Lean type are equivalent,semanticEquivalenceVerified,and verdict:"equivalent"${formalProposalSeedRequired ? ', plus proposalClaimId,proposalClaimRecordHash,proposalClaimTextHash copied exactly from proposalClaimSource, proposalToTheoremSemanticVerified, proposalToTheoremVerdict:"equivalent", and approvedNarrowingRationale:null' : ''}. Identity and execution authority are injected by the runtime. Block omissions, narrowing, strengthening, unrelated or conditional or vacuous proofs, sorry/admit, assumption echo, or a specification hash mismatch.`;
+  if (kind === 'formal-author') return `Treat THEOREM_SPEC.json and every .tex file as immutable authority. For every canonical specification claim, use its exact claimId, statement, proof obligations, proofObligationContracts, and manuscriptSource binding. If proposalClaimSource contains dynamicFormalClaimSeedHash, the Lean declaration name must equal leanDeclarationName, its elaborated normalized type hash must equal leanNormalizedTypeHash, its source type must be leanTypeSource, and imports must be a subset of allowedImports. Create or update only the necessary Lean/Lake source files. RESEARCH_WORKER_PLAN.json, lean-toolchain, and a missing lake-manifest.json are system-finalized after your turn: do not calculate or self-author their SHA-256 values, do not block because a raw tool-free turn cannot compute them, and leave an existing worker plan unchanged. For every theorem with parameters, put the complete type after the declaration colon in explicit '∀ (...)' form instead of placing binders before that colon, and fully qualify overloaded constants (for example 'Nat.min', never bare 'min'), so the source type identity is byte-canonical with the verifier’s independent '#check' output. The verifier binds SYSTEM_ALLOWED_FORMAL_AXIOMS=[]: every target and mapped obligation declaration must have a fresh '#print axioms' result that says it does not depend on any axioms. Do not assume a convenience library lemma is axiom-free; in particular, prove natural-number minimum bounds by expanding 'Nat.min_def', splitting its branch condition, and closing the branches from the comparison hypothesis and 'Nat.le_refl', rather than using 'Nat.min_le_left' or 'Nat.min_le_right'. For the one-sided loss-cap invariant, the verified branch shape is 'change (if loss ≤ cap then loss else cap) ≤ cap', then 'split', with the true branch closed by 'assumption' and the false branch by 'exact Nat.le_refl cap'. Prove the exact statements without sorry/admit/unreviewed axioms. The host, not the model, generates canonical formal_verifier_lake bindings with claimId, theorem/spec/source/manuscript identities, source hashes, proofObligationContracts, and proofObligationMappings after the Lean sources are materialized. Do not modify any .tex, THEOREM_SPEC.json, THEOREM_SPEC_DRAFT.json, Markdown, empirical artifact, or source package contract. Do not weaken a claim to make the proof pass. The verifier generates its own fresh #check/#print axioms audit outside the source workspace.`;
+  if (kind === 'formal-review') return `Read-only independent review: bind your review to canonical THEOREM_SPEC.json, compare every specification claim and exact manuscript byte range with its Lean theorem type and proof obligations, and reject any mismatch. RESEARCH_WORKER_PLAN.json is rebuilt by the system immediately before each review. Copy claimId, theoremName, manuscriptClaimHash, theoremTypeHash from expectedTypeHash, and sourceStatementHash exactly from its system-finalized claim binding; never calculate or substitute these identity hashes. manuscriptClaimHash is the domain-separated ManuscriptClaimIdentity and is intentionally not manuscriptSource.contentHash. THEOREM_SPEC.json sourceManuscriptHash is a domain-separated FormalManuscriptCorpus record hash, not the raw-byte hash printed for a snapshot .tex file, so comparing those two different hash domains is invalid and must not block a review. The host independently recomputes and verifies every copied identity. For dynamic proposalClaimSource entries, also independently reject unless theoremName equals leanDeclarationName and the elaborated normalized Lean type hash equals leanNormalizedTypeHash.${formalProposalSeedRequired ? ` Independently compare each exact proposalClaimSource text from THEOREM_SPEC.json (ultimately bound to ${proposalSeedContractPath}) with the natural-language theorem. Accept only semantic equivalence to the bound ${claimAuthorityType === 'machine-policy-authorized' ? 'machine-policy-authorized formal_kernel claim; this is not operator approval and does not establish novelty or scientific correctness' : 'operator-approved proposal claim'}; narrowing, strengthening, unrelated substitution, or scope change must fail${claimAuthorityType === 'machine-policy-authorized' ? ' and external release attestation remains required' : ' and requires a new operator-signed proposal approval outside this review'}.` : ''} There must be exactly one review for every canonical claim and no extra review. Do not modify any file. Return only JSON as {version:${formalProposalSeedRequired ? 2 : 1},kind:"FormalClaimSemanticReview",theoremSpecificationHash:"sha256:...",reviews:[...]}; every review must contain claimId,theoremName,manuscriptClaimHash,theoremTypeHash,sourceStatementHash,status:"formal_semantic_review_verified" only when the manuscript theorem and Lean type are equivalent,semanticEquivalenceVerified,and verdict:"equivalent"${formalProposalSeedRequired ? ', plus proposalClaimId,proposalClaimRecordHash,proposalClaimTextHash copied exactly from proposalClaimSource, proposalToTheoremSemanticVerified, proposalToTheoremVerdict:"equivalent", and approvedNarrowingRationale:null' : ''}. Identity and execution authority are injected by the runtime. Block omissions, narrowing, strengthening, unrelated or conditional or vacuous proofs, sorry/admit, assumption echo, or a specification hash mismatch.`;
   if (/^coder(?:-|$)/.test(kind)) {
     const entrypoint = empiricalEntrypoint({ language });
     const armEntrypoints = siblingArmEntrypoints(entrypoint);
     const datasets = datasetMounts.length
-      ? ` Declared datasets are mounted read-only inside the worker at ${datasetMounts.map((mount) => `/datasets/${mount.name} (${mount.licenseId})`).join(', ')}; use only those declared paths for external data.`
+      ? ` Declared datasets are mounted read-only inside the worker at ${datasetMounts.map((mount) => `/datasets/${mount.name} (${mount.licenseId})`).join(', ')}; use only those declared paths for external data. The main entrypoint must open and parse file content through each dataset environment variable or worker path before producing responses. Checking dir.exists, file.exists, or list.files alone is not dataset consumption. For a directory mount, recursively choose an actual data file below the bound root, including compressed files such as .csv.gz, and pass a path derived from that root directly to the language's content reader (for example, R read.csv(file.path(datasetRoot, relativeFile), nrows=1) or Python pandas.read_csv(os.path.join(dataset_root, relative_file), nrows=1)). Do not use an extension filter that excludes compressed CSV files.`
       : '';
     const benchmark = benchmarkSelector
-      ? ` Implement three distinct candidate arm adapters at ${armEntrypoints.join(', ')}; never branch one shared entrypoint on HEPTA_EXPERIMENT_ARM. Each arm is invoked exactly once per run. Reconstruct the repository-owned SystemBenchmarkArmBatchChallenge by concatenating HEPTA_BENCHMARK_CHALLENGE_JSON_PART_1 through the integer HEPTA_BENCHMARK_CHALLENGE_PART_COUNT in numeric order. Write only observation.json as {version:1,kind:"CampaignBenchmarkArmBatchResponses",systemBenchmarkArmBatchChallengeHash:batch.systemBenchmarkArmBatchChallengeHash,cells:[{cellId,systemBenchmarkCellChallengeHash,responses:[...]}]}. Preserve batch cell order and return exactly one response for every caseId under each cell.challenge.responseField; do not invent labels, outcomes, raw events, final metrics, aggregates, results.json, or results.csv. The baseline adapter must return each case's repository-provided referenceResponse exactly. The treatment adapter uses full public inputs; the ablation adapter only receives the system-redacted input. The host-held oracle evaluates every seed/repetition cell and derives bounded raw events, metrics, aggregation, CI, power, and acceptance. Keep the three adapter implementations byte-distinct; their source and runner provenance are independently bound.`
+      ? ` Implement three distinct executable candidate arm adapters at ${armEntrypoints.join(', ')}; the harness directly launches each sibling file as its complete process, so every sibling must immediately reconstruct its own batch, consume the dataset, compute only its own arm responses, and write its own observation. Shared helpers may be sourced from ${entrypoint}, but ${entrypoint} must not invoke all three arms and a sibling must not merely define a function and exit. For R, the harness launches Rscript with the source workspace as its current directory: source helpers by the stable workspace-relative path ${entrypoint} and never inspect sys.frame(...).ofile to discover the top-level script path, because no caller frame exists under Rscript. Never branch one shared entrypoint on HEPTA_EXPERIMENT_ARM. Each arm is invoked exactly once per run. Reconstruct the repository-owned SystemBenchmarkArmBatchChallenge by concatenating HEPTA_BENCHMARK_CHALLENGE_JSON_PART_1 through the integer HEPTA_BENCHMARK_CHALLENGE_PART_COUNT in numeric order. Read HEPTA_OUTPUT_DIR and write only HEPTA_OUTPUT_DIR/observation.json; the source workspace is read-only, so never write observation.json to the current working directory. Its document must be {version:1,kind:"CampaignBenchmarkArmBatchResponses",systemBenchmarkArmBatchChallengeHash:batch.systemBenchmarkArmBatchChallengeHash,cells:[{cellId:cell.cellId,systemBenchmarkCellChallengeHash:cell.challenge.systemBenchmarkCellChallengeHash,responses:[...]}]}; both cases and the cell challenge hash are nested under cell.challenge: iterate cell.challenge.cases, never cell.cases, because cell.cases does not exist. Preserve batch cell order and return exactly one response object for every case as {caseId:case.caseId,[cell.challenge.responseField]:scalar}; responses must be an array of these objects, never an array of bare scalars. Do not invent labels, outcomes, raw events, final metrics, aggregates, results.json, or results.csv. Read every treatment and ablation candidate input from case.input; the host has already redacted case.input for the ablation challenge. Each scalar stored under cell.challenge.responseField must be finite numeric; deterministically reduce numeric case.input fields when needed and never store an object, list, array, or data frame as that field value. Only baseline cases contain case.referenceResponse, which the baseline adapter must return exactly. The host-held oracle evaluates every seed/repetition cell and derives bounded raw events, metrics, aggregation, CI, power, and acceptance. Keep the three adapter implementations byte-distinct; their source and runner provenance are independently bound.`
       : '';
     return `Implement the smallest valid ${entrypoint} for RESEARCH_PLAN.md${requiresGpu ? ' using the declared GPU runtime' : ''}. Use deterministic seeds and no network.${benchmarkSelector ? '' : ' Read HEPTA_OUTPUT_DIR from the environment and write HEPTA_OUTPUT_DIR/results.json plus HEPTA_OUTPUT_DIR/results.csv; do not fall back to the working directory. results.csv must begin with the exact header metric,value and contain at least one non-empty metric with a finite numeric value.'} Include a fast self-check. Do not fabricate outputs or add unnecessary framework code.${benchmark}${datasets}`;
   }
@@ -219,7 +312,8 @@ function commonRepairRequest({ campaign, workspace, role, instructions, context,
   return {
     role,
     workspacePath: workspace,
-    instructions,
+    instructions: `${instructions}${role === 'formal-proof-repair'
+      ? FORMAL_LOSS_CAP_AXIOM_FREE_INSTRUCTION : ''}`,
     context: {
       campaignId: campaign.campaignId,
       paperId: campaign.paperId,
@@ -237,7 +331,7 @@ function commonRepairRequest({ campaign, workspace, role, instructions, context,
   };
 }
 
-export function buildCampaignAgentExecutionRequest({ campaign, node, workspace, manuscript, reviews, priorConvergence = null, qualityGateBlockers = [], revisionMaterialization = null, empiricalAssertionAuthority = null, reviewerExecutionAuthorityContext = null, empiricalOutcomeObserved = false, executionBudget, executionSignal }) {
+export function buildCampaignAgentExecutionRequest({ campaign, node, workspace, manuscript, reviews, priorConvergence = null, qualityGateBlockers = [], revisionMaterialization = null, empiricalAssertionAuthority = null, autonomousManuscriptEvidenceRefBindings = null, reviewerExecutionAuthorityContext = null, empiricalOutcomeObserved = false, executionBudget, executionSignal }) {
   const kind = node.kind;
   const coderNode = /^coder(?:-|$)/.test(kind);
   const datasetMounts = campaign.spec.datasetMounts || [];
@@ -282,15 +376,18 @@ export function buildCampaignAgentExecutionRequest({ campaign, node, workspace, 
     qualityGateBlockers,
     revisionMaterialization,
     empiricalAssertionAuthority,
+    autonomousManuscriptEvidenceRefBindings,
     empiricalOutcomeObserved,
   });
   return {
     role: node.role || kind,
     workspacePath: workspace,
-    instructions: `${instructions}${containedMutationRetryInstruction(node)}`,
+    instructions: `${instructions}${kind === 'formal-author'
+      ? FORMAL_LOSS_CAP_AXIOM_FREE_INSTRUCTION : ''}${containedMutationRetryInstruction(node)}`,
     context: {
       campaignId: campaign.campaignId,
-      nodeId: node.nodeId,
+      nodeId: node.persistedNodeId || node.nodeId,
+      operationNodeId: node.nodeId,
       paperId: campaign.paperId,
       roundIndex: node.roundIndex,
       datasetMounts: datasetMounts.map((mount) => ({
@@ -312,6 +409,8 @@ export function buildCampaignAgentExecutionRequest({ campaign, node, workspace, 
       revisionMaterialization,
       empiricalAssertionAuthorityHash: empiricalAssertionAuthority?.empiricalAssertionAuthorityHash || null,
       empiricalAssertionAuthorityEntryCount: empiricalAssertionAuthority?.entryCount || 0,
+      autonomousManuscriptEvidenceRefBindings:
+        autonomousManuscriptEvidenceRefBindings || null,
       ...(reviewerExecutionAuthorityContext ? {
         campaignPlanHash: reviewerExecutionAuthorityContext.campaignPlanHash,
         manuscriptHash: reviewerExecutionAuthorityContext.manuscriptHash,
@@ -357,6 +456,9 @@ export function buildCampaignAgentExecutionRequest({ campaign, node, workspace, 
           benchmarkSelector,
           manuscript,
         }),
+      } : kind === 'writer' && formalProposalSeedRequired && machineClaimAuthority ? {
+        workspaceMutationPolicy:
+          autonomousMachineWriterWorkspaceMutationPolicy({ manuscript }),
       } : ['writer', 'manuscript-integrate', 'revise'].includes(kind) ? {
         workspaceMutationPolicy: outcomeBoundManuscriptMutationPolicy({ manuscript }),
       } : {}),
@@ -368,7 +470,7 @@ export function buildFormalProofRepairRequest({ campaign, workspace, manuscript,
     campaign,
     workspace,
     role: 'formal-proof-repair',
-    instructions: `Repair only the Lean/Lake formalization for canonical THEOREM_SPEC.json. Preserve every claimId, theorem statement, assumption boundary, proof obligation, proofObligationContract, proofObligationMapping, and manuscriptSource binding. Never modify ${manuscript}, any .tex file, THEOREM_SPEC.json, or THEOREM_SPEC_DRAFT.json. Make the smallest change needed to address these verifier diagnostics, then update RESEARCH_WORKER_PLAN.json hashes and bindings exactly. Repair iteration ${iteration}. Diagnostics:\n${String(diagnostics || '').slice(-6000)}`,
+    instructions: `Repair only the Lean/Lake formalization for canonical THEOREM_SPEC.json. Preserve every claimId, theorem statement, assumption boundary, proof obligation, proofObligationContract, proofObligationMapping, and manuscriptSource binding. Never modify ${manuscript}, any .tex file, THEOREM_SPEC.json, or THEOREM_SPEC_DRAFT.json. Make the smallest Lean/Lake source change needed to address these verifier diagnostics. The host system-finalizes RESEARCH_WORKER_PLAN.json, lean-toolchain, a missing lake-manifest.json, and all source/binding SHA-256 values after your turn; do not edit or calculate those identities, and do not block merely because this raw tool-free turn cannot hash files. The verifier binds SYSTEM_ALLOWED_FORMAL_AXIOMS=[]: eliminate every named axiom in the diagnostics rather than asserting that a library theorem is axiom-free. For natural-number minimum bounds, expand 'Nat.min_def', split its branch condition, and close the branches from the comparison hypothesis and 'Nat.le_refl'; do not use 'Nat.min_le_left' or 'Nat.min_le_right' when their independent axiom audit reports 'propext'. For the one-sided loss-cap invariant, the verified branch shape is 'change (if loss ≤ cap then loss else cap) ≤ cap', then 'split', with the true branch closed by 'assumption' and the false branch by 'exact Nat.le_refl cap'. Put parameterized theorem types after the declaration colon in explicit '∀ (...)' form and fully qualify overloaded constants so source type identity matches independent '#check'. Repair iteration ${iteration}. Diagnostics:\n${String(diagnostics || '').slice(-6000)}`,
     context: { failedNode: 'formal-verify', iteration },
     requiredChecks: ['Lean/Lake project must be ready for independent semantic review and fresh replay'],
     remainingTokenCount,
@@ -426,7 +528,7 @@ export function buildDatasetConsumptionRepairRequest({ campaign, workspace, entr
     campaign,
     workspace,
     role: 'dataset-consumption-contract-repair',
-    instructions: `Repair ${entrypoint} so it consumes every declared read-only dataset from its worker path or environment variable: ${contract.evidence.map((item) => `${item.workerPath} via ${item.environmentName}`).join(', ')}. Remove any source-tree or host-specific input-data fallback. Preserve deterministic outputs and HEPTA_OUTPUT_DIR. Make the smallest valid change.`,
+    instructions: `Repair ${entrypoint} so it opens and parses file content from every declared read-only dataset through its worker path or environment variable: ${contract.evidence.map((item) => `${item.workerPath} via ${item.environmentName}`).join(', ')}. Directory existence checks and file listings alone do not count. For a directory mount, choose a data file below the bound root and pass a path derived directly from that root to the language's content reader (for example, R read.csv(file.path(datasetRoot, relativeFile), nrows=1) or Python pandas.read_csv(os.path.join(dataset_root, relative_file), nrows=1)). Remove any source-tree or host-specific input-data fallback. Preserve deterministic outputs and HEPTA_OUTPUT_DIR. Make the smallest valid change.`,
     context: { failedNode: nodeKind, language, entrypoint, datasets: contract.evidence },
     requiredChecks: ['all declared datasets must be consumed through their read-only worker mount'],
     remainingTokenCount,
@@ -464,7 +566,7 @@ export function buildEmpiricalCodeRepairRequest({ campaign, workspace, entrypoin
     workspace,
     role: 'empirical-code-repair',
     instructions: benchmarkSelector
-      ? `Repair the three sibling treatment/baseline/ablation adapters for ${entrypoint}. This is a technical repair only: the frozen protocol, hypotheses, thresholds, seed schedule, arm semantics, estimator, and scientific verdict are immutable; never tune code to obtain a positive or significant result. Each adapter must remain byte-distinct, concatenate the numbered HEPTA_BENCHMARK_CHALLENGE_JSON_PART_* values, parse the SystemBenchmarkArmBatchChallenge, and write only a CampaignBenchmarkArmBatchResponses observation.json with every ordered cell and every caseId-keyed scalar under cell.challenge.responseField. Baseline must echo referenceResponse exactly. Never self-report labels, raw events, final metrics, or aggregates. ${safeDiagnostic}`
+      ? `Repair the three sibling treatment/baseline/ablation adapters for ${entrypoint}. This is a technical repair only: the frozen protocol, hypotheses, thresholds, seed schedule, arm semantics, estimator, and scientific verdict are immutable; never tune code to obtain a positive or significant result. Each adapter must remain byte-distinct, concatenate the numbered HEPTA_BENCHMARK_CHALLENGE_JSON_PART_* values, parse the SystemBenchmarkArmBatchChallenge, and write only a CampaignBenchmarkArmBatchResponses document to HEPTA_OUTPUT_DIR/observation.json, never to the read-only current working directory. For R, source helpers by the stable workspace-relative path ${entrypoint}; never use sys.frame(...).ofile to infer the top-level Rscript path. Iterate every ordered cell.challenge.cases entry, never cell.cases, because cases are nested under the challenge; emit every caseId-keyed finite numeric scalar under cell.challenge.responseField. Treatment and ablation must read candidate inputs from case.input, deterministically reduce numeric fields when necessary, and never return an object or collection; ablation redaction is already applied by the host. Only baseline cases contain case.referenceResponse, which baseline must echo exactly. The dataset reader must support the mounted file formats, including compressed .csv.gz files. Never self-report labels, raw events, final metrics, or aggregates. ${safeDiagnostic}`
       : `Repair ${entrypoint} only to correct the reported technical execution failure. Do not change the research question, method, hypotheses, thresholds, seeds, metric definitions, or code behavior to target a positive or significant result. The empirical command must succeed, its self-check must pass, and it must write HEPTA_OUTPUT_DIR/results.json plus HEPTA_OUTPUT_DIR/results.csv without falling back to the working directory. results.csv must begin with the exact header metric,value and contain at least one non-empty metric with a finite numeric value. Do not hard-code an automation-results path or a prior node id. Make the smallest valid change. ${safeDiagnostic}`,
     context: {
       failedNode: nodeKind,
@@ -490,7 +592,7 @@ export function buildEmpiricalArtifactRepairRequest({ campaign, workspace, entry
     workspace,
     role: 'empirical-artifact-contract-repair',
     instructions: benchmarkSelector
-      ? `Repair only the serialization/shape defect in the three sibling arm adapters for ${entrypoint}; the frozen protocol, hypotheses, thresholds, seeds, arm semantics, and scientific verdict are immutable, and result-targeted tuning is forbidden. Each adapter must concatenate the numbered HEPTA_BENCHMARK_CHALLENGE_JSON_PART_* values and write a valid ordered CampaignBenchmarkArmBatchResponses observation.json for every cell and case. Baseline must echo referenceResponse; do not emit raw events or final metrics. ${safeDiagnostic}`
+      ? `Repair only the serialization/shape defect in the three sibling arm adapters for ${entrypoint}; the frozen protocol, hypotheses, thresholds, seeds, arm semantics, and scientific verdict are immutable, and result-targeted tuning is forbidden. Each adapter must concatenate the numbered HEPTA_BENCHMARK_CHALLENGE_JSON_PART_* values and write a valid ordered CampaignBenchmarkArmBatchResponses observation.json for every cell and every case in cell.challenge.cases; never read nonexistent cell.cases. Baseline must echo referenceResponse; do not emit raw events or final metrics. ${safeDiagnostic}`
       : `Repair only the artifact serialization defect in ${entrypoint}; do not change methods, hypotheses, thresholds, seeds, metric values, or behavior to target a positive/significant result. A successful run must write HEPTA_OUTPUT_DIR/results.json plus HEPTA_OUTPUT_DIR/results.csv without falling back to the working directory. results.csv must begin with the exact header metric,value and contain at least one non-empty metric with a finite numeric value. Do not hard-code an automation-results path or a prior node id. ${safeDiagnostic}`,
     context: {
       failedNode: nodeKind,

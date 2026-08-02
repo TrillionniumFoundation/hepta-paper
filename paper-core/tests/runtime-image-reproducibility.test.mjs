@@ -263,7 +263,7 @@ test('R system packages use an immutable Ubuntu snapshot and exact requested ver
   const dockerfile = fs.readFileSync('runtime-images/r-scientific/Dockerfile', 'utf8');
   const restore = fs.readFileSync('runtime-images/r-scientific/restore-locked.R', 'utf8');
   assert.equal(AUTOMATION_RUNTIME_IMAGES.r.imageDigest,
-    'sha256:8fb19fecb75e13e74a7c2fc1e4c9c9e53bd0621be1e4cc62a8bd660e76ce3c03');
+    'sha256:5216785588a8b78476b62ec26488232c248ecd58b2ac3bdff58ffa4cdac2f6cd');
   assert.match(dockerfile, /snapshot\.ubuntu\.com\/ubuntu\/20260715T000000Z/);
   assert.match(dockerfile, /COPY source-cas \/opt\/hepta-r-source-cas/);
   assert.match(dockerfile, /RUN --network=none Rscript \/tmp\/restore-locked\.R/);

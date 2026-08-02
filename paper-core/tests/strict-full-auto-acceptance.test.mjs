@@ -96,25 +96,144 @@ test('plan preflights all external references without reading opaque material or
   assert.equal(fs.existsSync(path.join(value.controlRoot, 'state.json')), false);
 });
 
-test('plan permits author and reviewer subagents to share one provider credential root', (t) => {
-  const value = fixture(t, ({ configuration }) => {
-    const shared = configuration.references['research-author-credential-root'];
-    configuration.references['formal-reviewer-credential-root'] = {
-      ...configuration.references['formal-reviewer-credential-root'],
-      path: shared.path,
-      subjectId: shared.subjectId,
-    };
+test('strict acceptance requires v3 KMS authority and preflights its pinned bundle', (t) => {
+  const downgraded = fixture(t, ({ configuration }) => {
+    const reference = configuration.references['release-attestor-config'];
+    const release = JSON.parse(fs.readFileSync(reference.path, 'utf8'));
+    release.version = 2;
+    delete release.hardwareAuthorityAttestation;
+    fs.chmodSync(reference.path, 0o600);
+    fs.writeFileSync(reference.path, `${JSON.stringify(release)}\n`);
+    fs.chmodSync(reference.path, 0o400);
   });
+  assert.throws(
+    () => orchestratorFor(
+      downgraded.configurationPath,
+      successfulRunner(),
+    ).plan(),
+    /strict_full_auto_acceptance_release_attestor_config_invalid/,
+  );
+
+  const substituted = fixture(t);
+  const releaseReference =
+    substituted.configuration.references['release-attestor-config'];
+  const release = JSON.parse(fs.readFileSync(releaseReference.path, 'utf8'));
+  fs.chmodSync(release.hardwareAuthorityAttestation.bundlePath, 0o644);
+  fs.writeFileSync(
+    release.hardwareAuthorityAttestation.bundlePath,
+    '{"substituted":true}\n',
+  );
+  fs.chmodSync(release.hardwareAuthorityAttestation.bundlePath, 0o444);
+  assert.throws(
+    () => orchestratorFor(
+      substituted.configurationPath,
+      successfulRunner(),
+    ).plan(),
+    /strict_full_auto_acceptance_release_attestor_config_invalid/,
+  );
+});
+
+test('short-lived author and KMS evidence rotates beneath stable acceptance pins', (t) => {
+  const value = fixture(t);
+  const service = orchestratorFor(value.configurationPath, successfulRunner());
+  const authorReference =
+    value.configuration.references['research-author-identity-config'];
+  const releaseReference =
+    value.configuration.references['release-attestor-config'];
+  const release = JSON.parse(fs.readFileSync(releaseReference.path, 'utf8'));
+  const originalRawHashes = {
+    author: sha256File(authorReference.path),
+    release: sha256File(releaseReference.path),
+    bundle: sha256File(release.hardwareAuthorityAttestation.bundlePath),
+  };
+  const first = service.plan();
+
+  value.rotateAuthorIdentity();
+  const rotatedRelease = value.rotateReleaseHardwareAuthority();
+  const second = service.plan();
+
+  assert.equal(second.planHash, first.planHash);
+  for (const referenceId of [
+    'research-author-identity-config',
+    'release-attestor-config',
+  ]) {
+    const before = first.referenceBindings.find((item) => item.referenceId === referenceId);
+    const after = second.referenceBindings.find((item) => item.referenceId === referenceId);
+    assert.equal(after.identity, before.identity);
+    assert.equal(after.contentHash, before.contentHash);
+    assert.deepEqual(after.documentPins, before.documentPins);
+  }
+  assert.notEqual(sha256File(authorReference.path), originalRawHashes.author);
+  assert.equal(rotatedRelease.configurationFileHash, originalRawHashes.release);
+  assert.notEqual(rotatedRelease.bundleHash, originalRawHashes.bundle);
+
+  const driftedAuthor = JSON.parse(fs.readFileSync(authorReference.path, 'utf8'));
+  driftedAuthor.identityPolicy.providerAccountIdentityHash =
+    strictFullAutoAcceptanceHash({ fixture: 'author-stable-policy-drift' });
+  fs.chmodSync(authorReference.path, 0o600);
+  fs.writeFileSync(authorReference.path, `${JSON.stringify(driftedAuthor, null, 2)}\n`);
+  fs.chmodSync(authorReference.path, 0o444);
+  assert.throws(
+    () => service.plan(),
+    /strict_full_auto_acceptance_document_pin_invalid:research-author-identity-config/,
+  );
+});
+
+test('stable author and KMS policy drift is rejected before strict actions', (t) => {
+  const releaseDrift = fixture(t);
+  const releaseReference =
+    releaseDrift.configuration.references['release-attestor-config'];
+  const release = JSON.parse(fs.readFileSync(releaseReference.path, 'utf8'));
+  release.backend.backendId = 'strict-release-kms-substituted';
+  fs.chmodSync(releaseReference.path, 0o600);
+  fs.writeFileSync(releaseReference.path, `${JSON.stringify(release, null, 2)}\n`);
+  fs.chmodSync(releaseReference.path, 0o400);
+  assert.throws(
+    () => orchestratorFor(
+      releaseDrift.configurationPath,
+      successfulRunner(),
+    ).plan(),
+    /strict_full_auto_acceptance_release_attestor_config_invalid/,
+  );
+  assert.equal(fs.existsSync(path.join(releaseDrift.controlRoot, 'state.json')), false);
+
+  const duplicateRawPin = fixture(t, ({ configuration }) => {
+    const author = configuration.references['research-author-identity-config'];
+    author.expectedSha256 = sha256File(author.path);
+  });
+  assert.throws(
+    () => orchestratorFor(
+      duplicateRawPin.configurationPath,
+      successfulRunner(),
+    ).plan(),
+    /strict_full_auto_acceptance_reference_configuration_invalid:research-author-identity-config/,
+  );
+  assert.equal(fs.existsSync(path.join(duplicateRawPin.controlRoot, 'state.json')), false);
+});
+
+test('plan permits author and reviewer subagents to share one provider credential root', (t) => {
+  const value = fixture(t);
   const service = orchestratorFor(value.configurationPath, successfulRunner());
   const plan = service.plan();
-  const author = plan.referenceBindings.find((reference) => (
-    reference.referenceId === 'research-author-credential-root'
+  const stateProvisioning = plan.steps.find((step) => (
+    step.stepId === 'state-provisioning'
   ));
-  const reviewer = plan.referenceBindings.find((reference) => (
-    reference.referenceId === 'formal-reviewer-credential-root'
-  ));
-  assert.equal(reviewer.resolvedPath, author.resolvedPath);
-  assert.notEqual(reviewer.referenceId, author.referenceId);
+  assert.equal(
+    stateProvisioning.execute.environmentReferences
+      .HEPTA_RESEARCH_AUTHOR_CODEX_HOME,
+    'research-author-credential-root',
+  );
+  assert.equal(
+    stateProvisioning.execute.environmentReferences
+      .HEPTA_FORMAL_REVIEW_CODEX_HOME,
+    'research-author-credential-root',
+  );
+  assert.equal(
+    plan.referenceBindings.some((reference) => (
+      reference.referenceId === 'formal-reviewer-credential-root'
+    )),
+    false,
+  );
 });
 
 test('configuration path is revalidated and never followed after loader construction', (t) => {
@@ -304,12 +423,12 @@ test('missing opaque secret and wrong principal separation fail before any actio
   assert.equal(fs.existsSync(path.join(missing.controlRoot, 'state.json')), false);
 
   const wrong = fixture(t, ({ configuration }) => {
-    const author = configuration.references['research-author-principal'];
-    const reviewer = configuration.references['formal-reviewer-principal'];
-    fs.chmodSync(author.path, 0o644);
-    fs.copyFileSync(reviewer.path, author.path);
-    fs.chmodSync(author.path, 0o444);
-    author.expectedSha256 = sha256File(author.path);
+    const online = configuration.references['online-state-authority-principal'];
+    const qualifier = configuration.references['external-qualifier-principal'];
+    fs.chmodSync(online.path, 0o644);
+    fs.copyFileSync(qualifier.path, online.path);
+    fs.chmodSync(online.path, 0o444);
+    online.expectedSha256 = sha256File(online.path);
   });
   const wrongService = orchestratorFor(wrong.configurationPath, successfulRunner(calls));
   assert.throws(() => wrongService.plan(), /principal_reference_alias_forbidden/);
@@ -643,7 +762,8 @@ test('configuration or authority drift selects a new isolated candidate checkpoi
   });
   const plan = service.plan();
   await assert.rejects(service.execute({ expectedPlanHash: plan.planHash }), /fixture_stop/);
-  const publicReference = value.configuration.references['research-author-principal'];
+  const publicReference =
+    value.configuration.references['online-state-authority-principal'];
   fs.chmodSync(publicReference.path, 0o644);
   fs.writeFileSync(publicReference.path, `${JSON.stringify({
     configurationHash: strictFullAutoAcceptanceHash({ rotatedAuthority: true }),
@@ -790,95 +910,6 @@ test(
   'production runner binds the exact plan invocation, reference paths and idempotency identity',
   strictFullAutoAcceptanceProductionRunnerBindingTest,
 );
-
-test('reviewer service credential files are metadata-validated before child execution', async (t) => {
-  const credentialSurface = (value) => {
-    const configuration = JSON.parse(fs.readFileSync(
-      value.configuration.references['formal-reviewer-principal'].path,
-      'utf8',
-    ));
-    const variables = configuration.principals.flatMap((principal) => [
-      principal.signerConfiguration.tokenEnvironmentVariable,
-      principal.recoverableExecutorConfiguration.tokenEnvironmentVariable,
-    ]).sort();
-    const root = value.configuration.references[
-      'formal-reviewer-service-credential-root'
-    ].path;
-    return { variables, root };
-  };
-  const attempt = (value, environment = {}) => {
-    const plan = orchestratorFor(
-      value.configurationPath,
-      successfulRunner(),
-    ).plan();
-    const step = plan.steps.find((item) => item.stepId === 'state-provisioning');
-    const state = { childCalls: 0, captured: null };
-    const runner = new StrictFullAutoAcceptanceCommandRunner({
-      workspaceRoot: path.resolve('.'),
-      environment: { PATH: process.env.PATH, ...environment },
-      runProcess: async (request) => {
-        state.childCalls += 1;
-        state.captured = request;
-        return {
-          exitCode: 0,
-          timedOut: false,
-          aborted: false,
-          outputTruncated: false,
-          stdout: JSON.stringify({ ready: true }),
-        };
-      },
-    });
-    return { plan, step, runner, state };
-  };
-
-  await t.test('ambient token bytes are replaced by plan-derived file paths', async (child) => {
-    const value = fixture(child);
-    const { variables, root } = credentialSurface(value);
-    const run = attempt(value, { [variables[0]]: 'ambient-token-bytes' });
-    await run.runner.run({
-      plan: run.plan,
-      step: run.step,
-      phase: 'execute',
-      invocation: run.step.execute,
-    });
-    assert.equal(run.state.childCalls, 1);
-    assert.equal(
-      run.state.captured.env[variables[0]],
-      path.join(root, variables[0]),
-    );
-    assert.notEqual(run.state.captured.env[variables[0]], 'ambient-token-bytes');
-  });
-
-  for (const attack of ['missing', 'shared-mode', 'symlink', 'hardlink']) {
-    await t.test(`${attack} credential is rejected with zero child calls`, async (child) => {
-      const value = fixture(child);
-      const { variables, root } = credentialSurface(value);
-      const first = path.join(root, variables[0]);
-      const second = path.join(root, variables[1]);
-      if (attack === 'missing') fs.unlinkSync(first);
-      if (attack === 'shared-mode') fs.chmodSync(first, 0o644);
-      if (attack === 'symlink') {
-        fs.unlinkSync(first);
-        fs.symlinkSync(second, first);
-      }
-      if (attack === 'hardlink') {
-        fs.unlinkSync(first);
-        fs.linkSync(second, first);
-      }
-      const run = attempt(value);
-      await assert.rejects(
-        () => run.runner.run({
-          plan: run.plan,
-          step: run.step,
-          phase: 'execute',
-          invocation: run.step.execute,
-        }),
-        /strict_full_auto_acceptance_reviewer_service_credential_invalid/,
-      );
-      assert.equal(run.state.childCalls, 0);
-    });
-  }
-});
 
 test('production runner distinguishes typed JSON not-ready from infrastructure failure',
   async (t) => {

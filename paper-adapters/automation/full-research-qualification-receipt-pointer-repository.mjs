@@ -33,7 +33,7 @@ import {
   validatedAuthority,
 } from './full-research-qualification-receipt-pointer-repository-support.mjs';
 
-const POINTER_FILE = 'HEPTA_FULL_RESEARCH_QUALIFICATION_RECEIPT.json';
+const POINTER_FILE = 'qualification-receipt.json';
 
 export function fullResearchQualificationReceiptPointerPath({ runtimeRoot } = {}) {
   if (!runtimeRoot) throw new Error('full_research_qualification_pointer_runtime_root_required');

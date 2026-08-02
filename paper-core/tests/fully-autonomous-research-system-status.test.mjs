@@ -242,6 +242,7 @@ test('configured scope remains bounded until generic domain evidence is independ
   const autonomousStateSafety = { ready: true, blockers: [] };
   const capabilityScopeInspection = {
     authorIdentityAttestationReady: true,
+    authorIdentityFullProductionReady: true,
     blockers: [],
   };
   const capabilityScopeManifest = buildAutonomousResearchCapabilityScopeManifest({
@@ -342,6 +343,24 @@ test('configured scope remains bounded until generic domain evidence is independ
     'autonomous_research_independent_formal_review_receipt_required',
   ));
   assert.equal(configured.machineIntakeConfigurationReconciled, true);
+  const sessionIdentityOnly = evaluateFullyAutonomousResearchSystemReadiness({
+    fullAutomaticResearchWritingReady: true,
+    machineIntake: coldReady,
+    residentSupervisor: residentHealthy,
+    residentPrerequisites,
+    autonomousStateSafety,
+    capabilityScopeManifest,
+    capabilityScopeInspection: {
+      authorIdentityAttestationReady: true,
+      authorIdentityFullProductionReady: false,
+      blockers: [],
+    },
+    researchAgendaProducerReceipt,
+  });
+  assert.equal(sessionIdentityOnly.configuredScopeReady, false);
+  assert.ok(sessionIdentityOnly.blockers.includes(
+    'autonomous_research_author_identity_external_cryptographic_attestation_required',
+  ));
   const missingCapabilityInspection =
     evaluateFullyAutonomousResearchSystemReadiness({
       fullAutomaticResearchWritingReady: true,

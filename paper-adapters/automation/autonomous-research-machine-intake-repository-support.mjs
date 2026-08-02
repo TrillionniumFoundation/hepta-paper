@@ -238,7 +238,9 @@ export function createMachineIntakeSchema(database) {
   ) STRICT;
   CREATE TABLE IF NOT EXISTS autonomous_research_machine_intake_authority_genesis (
     singleton INTEGER PRIMARY KEY CHECK(singleton=1),
-    origin TEXT NOT NULL CHECK(origin='fresh-v2-genesis'),
+    origin TEXT NOT NULL CHECK(origin IN(
+      'fresh-v2-genesis','fresh-v2-root-owned-configuration'
+    )),
     configuration_hash TEXT NOT NULL,
     producer_profile_hash TEXT NOT NULL,
     authority_generation INTEGER NOT NULL CHECK(authority_generation=1),

@@ -9,6 +9,10 @@ import {
   inspectConfiguredDynamicFormalProjectClosure,
 } from '../../paper-adapters/research-verify/dynamic-formal-project-closure-readiness.mjs';
 import {
+  buildDynamicFormalExecutionAuthority,
+  verifyDynamicFormalExecutionAuthority,
+} from '../../paper-adapters/research-verify/dynamic-formal-execution-authority.mjs';
+import {
   readFormalProjectClosureSync,
 } from '../../paper-adapters/research-verify/formal-project-closure-reader.mjs';
 import {
@@ -24,6 +28,10 @@ import { createOsSandboxedWorkerRunner } from '../../paper-adapters/runtime/os-s
 import {
   SYSTEM_PINNED_FORMAL_SANDBOX_RUNTIME_CONFIGURATION,
 } from '../../paper-adapters/research-verify/pinned-formal-sandbox-runtime-configuration.mjs';
+import {
+  DYNAMIC_FORMAL_SANDBOX_PROBE_QUALIFICATION_MAXIMUM_AGE_MS,
+  dynamicFormalSandboxProbeQualificationReceiptPath,
+} from '../../paper-adapters/research-verify/dynamic-formal-sandbox-probe-qualification-repository.mjs';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
   autonomousConfigurationAuthoritySigningPayload,
@@ -301,6 +309,144 @@ test('dynamic Real readiness requires an explicitly hash-bound executable Mathli
   assert.ok(closure.lakeBuildArtifactFileCount >= 1);
 });
 
+test('passive readiness reuses a current probe qualification without copying or executing', (t) => {
+  const { projectRoot, closure } = fixture(t);
+  const runtimeRoot = fs.mkdtempSync(path.join(
+    os.tmpdir(),
+    'hepta-dynamic-formal-runtime-',
+  ));
+  t.after(() => fs.rmSync(runtimeRoot, { recursive: true, force: true }));
+  let now = new Date('2026-07-28T06:00:00.000Z');
+  const probeQualificationClock = { now: () => new Date(now) };
+  const environment = {
+    HEPTA_DYNAMIC_FORMAL_PROJECT_ROOT: projectRoot,
+    HEPTA_DYNAMIC_FORMAL_PROJECT_CLOSURE_HASH:
+      closure.formalProjectClosureHash,
+    HEPTA_DYNAMIC_FORMAL_PROJECT_PROBE: 'HeptaMathlibReadiness.lean',
+    HEPTA_PAPER_RUNTIME_ROOT: runtimeRoot,
+  };
+  const activeSandboxCalls = [];
+  const active = inspectConfiguredDynamicFormalProjectClosure({
+    environment,
+    runtimeRoot,
+    activeProbe: true,
+    publishActiveProbeReceipt: true,
+    probeQualificationClock,
+    spawnSyncImpl: () => ({ status: 0, stdout: '', stderr: '' }),
+    ...readyOptions(closure, { sandboxCalls: activeSandboxCalls }),
+  });
+  assert.equal(active.ready, true, JSON.stringify(active, null, 2));
+  assert.equal(activeSandboxCalls.length, 1);
+  assert.equal(fs.existsSync(
+    dynamicFormalSandboxProbeQualificationReceiptPath({ runtimeRoot }),
+  ), true);
+
+  let passiveProcessCalls = 0;
+  const passive = inspectConfiguredDynamicFormalProjectClosure({
+    environment,
+    runtimeRoot,
+    activeProbe: false,
+    probeQualificationClock,
+    spawnSyncImpl() {
+      passiveProcessCalls += 1;
+      throw new Error('passive_probe_process_execution_forbidden');
+    },
+    projectSnapshotRepository: {
+      materialize() {
+        throw new Error('passive_probe_snapshot_copy_forbidden');
+      },
+    },
+    ...readyOptions(closure),
+  });
+  assert.equal(passive.ready, true, JSON.stringify(passive, null, 2));
+  assert.equal(passiveProcessCalls, 0);
+  assert.equal(
+    passive.dynamicFormalProjectClosureReadinessHash,
+    active.dynamicFormalProjectClosureReadinessHash,
+  );
+
+  write(
+    path.join(projectRoot, 'HeptaMathlibReadiness.lean'),
+    'import Mathlib\nexample (x : Real) : x + 0 = x := by ring\n',
+  );
+  const changedClosure = readFormalProjectClosureSync({ projectRoot });
+  const changed = inspectConfiguredDynamicFormalProjectClosure({
+    environment: {
+      ...environment,
+      HEPTA_DYNAMIC_FORMAL_PROJECT_CLOSURE_HASH:
+        changedClosure.formalProjectClosureHash,
+    },
+    runtimeRoot,
+    activeProbe: false,
+    probeQualificationClock,
+    spawnSyncImpl() {
+      throw new Error('passive_probe_process_execution_forbidden');
+    },
+    ...readyOptions(changedClosure),
+  });
+  assert.equal(changed.ready, false);
+  assert.ok(changed.blockers.includes(
+    'dynamic_formal_sandbox_probe_qualification_identity_mismatch',
+  ), JSON.stringify(changed, null, 2));
+
+  now = new Date(
+    now.getTime()
+      + DYNAMIC_FORMAL_SANDBOX_PROBE_QUALIFICATION_MAXIMUM_AGE_MS,
+  );
+  const expired = inspectConfiguredDynamicFormalProjectClosure({
+    environment: {
+      ...environment,
+      HEPTA_DYNAMIC_FORMAL_PROJECT_CLOSURE_HASH:
+        changedClosure.formalProjectClosureHash,
+    },
+    runtimeRoot,
+    activeProbe: false,
+    probeQualificationClock,
+    spawnSyncImpl() {
+      throw new Error('passive_probe_process_execution_forbidden');
+    },
+    ...readyOptions(changedClosure),
+  });
+  assert.equal(expired.ready, false);
+  assert.ok(expired.blockers.includes(
+    'dynamic_formal_sandbox_probe_qualification_receipt_invalid_or_expired',
+  ), JSON.stringify(expired, null, 2));
+});
+
+test('passive readiness fails closed when the probe qualification is missing', (t) => {
+  const { projectRoot, closure } = fixture(t);
+  const runtimeRoot = fs.mkdtempSync(path.join(
+    os.tmpdir(),
+    'hepta-dynamic-formal-runtime-',
+  ));
+  t.after(() => fs.rmSync(runtimeRoot, { recursive: true, force: true }));
+  let sandboxCalls = 0;
+  const inspection = inspectConfiguredDynamicFormalProjectClosure({
+    environment: {
+      HEPTA_DYNAMIC_FORMAL_PROJECT_ROOT: projectRoot,
+      HEPTA_DYNAMIC_FORMAL_PROJECT_CLOSURE_HASH:
+        closure.formalProjectClosureHash,
+      HEPTA_DYNAMIC_FORMAL_PROJECT_PROBE: 'HeptaMathlibReadiness.lean',
+      HEPTA_PAPER_RUNTIME_ROOT: runtimeRoot,
+    },
+    runtimeRoot,
+    activeProbe: false,
+    ...readyOptions(closure),
+    spawnSyncImpl() {
+      throw new Error('passive_probe_process_execution_forbidden');
+    },
+    sandboxProbeRunnerFactory() {
+      sandboxCalls += 1;
+      throw new Error('passive_probe_sandbox_execution_forbidden');
+    },
+  });
+  assert.equal(inspection.ready, false);
+  assert.equal(sandboxCalls, 0);
+  assert.ok(inspection.blockers.includes(
+    'dynamic_formal_sandbox_probe_qualification_receipt_missing',
+  ), JSON.stringify(inspection, null, 2));
+});
+
 test('sandbox snapshot receipt must bind equal source, work, and post-execution identities', (t) => {
   const { projectRoot, closure } = fixture(t);
   const environment = {
@@ -358,16 +504,55 @@ test('sandbox snapshot receipt must pass the complete worker receipt verifier', 
   ), JSON.stringify(inspection, null, 2));
 });
 
+test('sandbox runtime preflight failure does not claim the sealed snapshot changed', (t) => {
+  const { projectRoot, closure } = fixture(t);
+  const options = readyOptions(closure);
+  const inspection = inspectConfiguredDynamicFormalProjectClosure({
+    environment: {
+      HEPTA_DYNAMIC_FORMAL_PROJECT_ROOT: projectRoot,
+      HEPTA_DYNAMIC_FORMAL_PROJECT_CLOSURE_HASH:
+        closure.formalProjectClosureHash,
+      HEPTA_DYNAMIC_FORMAL_PROJECT_PROBE: 'HeptaMathlibReadiness.lean',
+    },
+    spawnSyncImpl: () => ({ status: 0, stdout: '', stderr: '' }),
+    ...options,
+    sandboxProbeRunnerFactory: () => ({
+      run: () => ({
+        ok: false,
+        status: 'os_sandbox_worker_blocked',
+        blockers: [
+          'os_sandbox_runtime_unavailable',
+          'worker_container_image_digest_unavailable',
+        ],
+        isolation: {
+          kernelNetworkIsolationVerified: false,
+          filesystemNamespaceVerified: false,
+          sourceReadOnlyVerified: false,
+          resourceLimitsVerified: false,
+        },
+      }),
+    }),
+  });
+  assert.equal(inspection.ready, false);
+  assert.ok(inspection.blockers.includes(
+    'dynamic_formal_sandbox_mathlib_probe_failed',
+  ));
+  assert.ok(!inspection.blockers.includes(
+    'dynamic_formal_sandbox_probe_snapshot_changed',
+  ));
+});
+
 test('independently signed and environment-pinned Mathlib build authority unlocks only its exact closure', (t) => {
   const { projectRoot, closure } = fixture(t);
   const authorityRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-mathlib-authority-'));
   t.after(() => fs.rmSync(authorityRoot, { recursive: true, force: true }));
-  const observedAt = '2026-07-22T08:00:00.000Z';
+  const observedAt = new Date().toISOString();
+  const observedAtMs = Date.parse(observedAt);
   const configuration = signedBuildAuthorityConfiguration({
     projectRoot,
     closure,
-    signedAt: '2026-07-22T07:55:00.000Z',
-    expiresAt: '2026-07-22T09:00:00.000Z',
+    signedAt: new Date(observedAtMs - 5 * 60 * 1_000).toISOString(),
+    expiresAt: new Date(observedAtMs + 60 * 60 * 1_000).toISOString(),
     observedAt,
   });
   const configurationPath = path.join(authorityRoot, 'mathlib-build-authority.json');
@@ -400,6 +585,20 @@ test('independently signed and environment-pinned Mathlib build authority unlock
   assert.equal(
     inspection.productionMathlibBuildAuthority.formalProjectClosureHash,
     closure.formalProjectClosureHash,
+  );
+  const executionAuthority = buildDynamicFormalExecutionAuthority(inspection);
+  assert.equal(verifyDynamicFormalExecutionAuthority(executionAuthority), true);
+  assert.equal(verifyDynamicFormalExecutionAuthority({
+    ...executionAuthority,
+    unexpected: true,
+  }), false);
+  assert.equal(verifyDynamicFormalExecutionAuthority({
+    ...executionAuthority,
+    dynamicFormalExecutionAuthorityHash: `sha256:${'f'.repeat(64)}`,
+  }), false);
+  assert.throws(
+    () => buildDynamicFormalExecutionAuthority({ ...inspection, ready: false }),
+    /dynamic_formal_execution_authority_inspection_not_ready/,
   );
 
   delete environment[PRODUCTION_MATHLIB_BUILD_AUTHORITY_CONFIGURATION_HASH_ENV];

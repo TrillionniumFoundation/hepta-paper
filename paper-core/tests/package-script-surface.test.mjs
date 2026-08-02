@@ -85,7 +85,11 @@ test('root package declares the pinned reference and a non-duplicated verificati
   );
   assert.match(scripts['test:inner'], /npm run safety:all/);
   assert.match(scripts.test, /^npm run static:check/);
-  assert.match(scripts['release:verify'], /^npm run static:check/);
+  assert.equal(
+    scripts['release:verify'],
+    'npm run static:check && npm run release:state-check -- --require-state release_ready'
+      + ' && node paper-core/bin/run-isolated-verification.mjs release',
+  );
   assert.doesNotMatch(scripts['release:inner'], /coverage:critical-modules/);
   assert.doesNotMatch(scripts['release:inner'], /coverage:repository/);
   assert.match(scripts['release:inner'], /coverage:system/);
@@ -93,6 +97,19 @@ test('root package declares the pinned reference and a non-duplicated verificati
   assert.match(scripts['release:inner'], /npm run assets:cold-volume-release-gate/);
   assert.match(scripts['release:inner'], /npm run assets:cold-volume-cas-release-gate/);
   assert.match(scripts['release:inner'], /npm run store:restore-drill/);
+  const releaseSteps = scripts['release:inner'].split(' && ');
+  assert.equal(
+    releaseSteps.filter((step) => step === 'npm run legacy:deletion-drill').length,
+    1,
+  );
+  assert.ok(
+    releaseSteps.indexOf('npm run legacy:matrix-reference-status')
+      < releaseSteps.indexOf('npm run legacy:deletion-drill'),
+  );
+  assert.ok(
+    releaseSteps.indexOf('npm run legacy:deletion-drill')
+      < releaseSteps.indexOf('npm run workspace:verify-decoupled'),
+  );
   assert.doesNotMatch(scripts['release:inner'], /npm run assets:cold-volume-status(?:\s|$)/);
   assert.doesNotMatch(scripts['release:inner'], /npm run assets:cold-volume-cas-status(?:\s|$)/);
   assert.equal(scripts['assets:cold-volume-release-gate'],
@@ -332,6 +349,41 @@ test('one declarative registry owns supported routes and npm command classificat
   assert.equal(help.status, 0, help.stderr);
   assert.deepEqual(JSON.parse(help.stdout), heptaPaperCommandUsage());
   assert.equal(JSON.parse(help.stdout).version, 4);
+  assert.deepEqual(HEPTA_PAPER_COMMAND_REGISTRY.retirement.drill.effects, {
+    localMutation: 'read-only',
+    externalAction: 'none',
+    networkUse: 'none',
+    credentialUse: 'none',
+    providerCost: 'none',
+  });
+  assert.deepEqual(HEPTA_PAPER_COMMAND_REGISTRY.retirement['drill-attest'].effects, {
+    localMutation: 'local-write',
+    externalAction: 'none',
+    networkUse: 'none',
+    credentialUse: 'required',
+    providerCost: 'none',
+  });
+  assert.deepEqual(HEPTA_PAPER_COMMAND_REGISTRY.maintenance['release-attest'].effects, {
+    localMutation: 'local-write',
+    externalAction: 'none',
+    networkUse: 'none',
+    credentialUse: 'required',
+    providerCost: 'none',
+  });
+  assert.deepEqual(HEPTA_PAPER_COMMAND_REGISTRY.maintenance['release-integrity-key'].effects, {
+    localMutation: 'argument-dependent',
+    externalAction: 'none',
+    networkUse: 'none',
+    credentialUse: 'required',
+    providerCost: 'none',
+  });
+  assert.deepEqual(HEPTA_PAPER_COMMAND_REGISTRY.verify.release.effects, {
+    localMutation: 'local-write',
+    externalAction: 'none',
+    networkUse: 'none',
+    credentialUse: 'required',
+    providerCost: 'none',
+  });
   assert.deepEqual(
     HEPTA_PAPER_COMMAND_REGISTRY.maintenance['autonomous-online-schema-transition'].effects,
     {
@@ -376,6 +428,10 @@ test('one declarative registry owns supported routes and npm command classificat
   assert.equal(autonomousValueFlags.includes('launch-mode'), true);
   assert.equal(autonomousValueFlags.includes('openclaw-agent'), false);
   assert.equal(autonomousValueFlags.includes('ollama-model'), false);
+  const autonomousBooleanFlags = HEPTA_PAPER_COMMAND_REGISTRY
+    .operator['autonomous-research'].forwardedArgumentSchema.booleanFlags;
+  assert.equal(autonomousBooleanFlags.includes('unlimited-tokens'), true);
+  assert.equal(autonomousBooleanFlags.includes('unlimited-cost'), true);
   assert.equal(HEPTA_PAPER_COMMAND_REGISTRY.operator['autonomous-supervisor']
     .forwardedArgumentSchema.valueFlags.includes('topic-producer-profile'), true);
   assert.equal(HEPTA_PAPER_COMMAND_REGISTRY.operator['autonomous-supervisor-health']
@@ -410,6 +466,31 @@ test('one declarative registry owns supported routes and npm command classificat
     HEPTA_PAPER_COMMAND_REGISTRY.operator.automation.forwardedArgumentSchema.booleanFlags
       .includes('require-fully-autonomous'),
     true,
+  );
+  assert.equal(
+    HEPTA_PAPER_COMMAND_REGISTRY.operator.automation.forwardedArgumentSchema.booleanFlags
+      .includes('handoff'),
+    true,
+  );
+  assert.equal(
+    HEPTA_PAPER_COMMAND_REGISTRY.operator.automation.forwardedArgumentSchema.booleanFlags
+      .includes('json'),
+    true,
+  );
+  assert.deepEqual(
+    HEPTA_PAPER_COMMAND_REGISTRY.operator['external-authority-intake'].effects,
+    {
+      localMutation: 'read-only',
+      externalAction: 'none',
+      networkUse: 'none',
+      credentialUse: 'none',
+      providerCost: 'none',
+    },
+  );
+  assert.deepEqual(
+    HEPTA_PAPER_COMMAND_REGISTRY.operator['external-authority-intake']
+      .forwardedArgumentSchema.booleanFlags,
+    ['help', 'require-ready'],
   );
   assert.deepEqual(
     HEPTA_PAPER_COMMAND_REGISTRY.operator['generic-domain-capability-evidence']
@@ -487,13 +568,23 @@ test('shared strict argument parser rejects unknown, missing, duplicate, and pos
 
   const noArgumentsRoute = spawnSync(process.execPath, [
     'paper-core/bin/hepta-paper.mjs',
-    'operator',
-    'reconcile',
+    'retirement',
+    'reference',
     '--',
     '--unknown',
   ], { cwd: root, encoding: 'utf8' });
   assert.equal(noArgumentsRoute.status, 2);
   assert.match(noArgumentsRoute.stderr, /command_does_not_accept_arguments/);
+
+  const reconcileRoute = spawnSync(process.execPath, [
+    'paper-core/bin/hepta-paper.mjs',
+    'operator',
+    'reconcile',
+    '--',
+    '--unknown',
+  ], { cwd: root, encoding: 'utf8' });
+  assert.equal(reconcileRoute.status, 2);
+  assert.match(reconcileRoute.stderr, /unknown_cli_option:--unknown/);
 
   const registryValidatedRoute = spawnSync(process.execPath, [
     'paper-core/bin/hepta-paper.mjs',
@@ -557,6 +648,9 @@ test('shared strict argument parser rejects unknown, missing, duplicate, and pos
   assert.equal(autonomousRoute.status, 0, autonomousRoute.stderr);
   const autonomousUsage = JSON.parse(autonomousRoute.stdout);
   assert.equal(autonomousUsage.kind, 'AutonomousResearchCampaignUsage');
+  assert.equal(autonomousUsage.defaultLaunchMode, 'local-run');
+  assert.match(autonomousUsage.launchModes['local-run'], /local-only mode/);
+  assert.match(autonomousUsage.launchModes['local-run'], /does not require external identity/);
   assert.match(autonomousUsage.behavior.status, /without local mutation/);
   assert.match(autonomousUsage.behavior.status, /validates cached qualification state locally/);
   assert.match(autonomousUsage.behavior.converge, /idempotently prepares or continues/);
@@ -682,6 +776,8 @@ test('autonomous research status forwards external qualification configuration',
     'status',
     '--campaign-id',
     'missing-campaign',
+    '--launch-mode',
+    'production-run',
     '--root',
     assetRoot,
     '--runtime-root',

@@ -11,6 +11,10 @@ const RELEASE_ATTESTOR_ROLE = 'research_execution_release_attestor';
 const OPERATOR_COST_AUTHORITY = 'operator_declared_worst_case_usd';
 const ZERO_COST_AUTHORITY = 'externally_operated_zero_cost';
 
+function sha256ValuesValid(...values) {
+  return values.every((value) => SHA256.test(String(value)));
+}
+
 function recordHashValid(record, kind, hashField) {
   if (!record || typeof record !== 'object' || !record[hashField]) return false;
   const { [hashField]: claimedHash, ...payload } = record;
@@ -29,6 +33,20 @@ function releaseSignerBackendDescriptorHashValid(inspection) {
     privateKeyExportable: inspection?.privateKeyExportable,
     externalSignerProcess: inspection?.externalSignerProcess,
     productionEligible: inspection?.backendProductionEligible,
+    ...(inspection?.signerBackendAssuranceProfile
+      ? { assuranceProfile: inspection.signerBackendAssuranceProfile } : {}),
+    ...(inspection?.signerBackendThreatBoundary
+      ? { threatBoundary: inspection.signerBackendThreatBoundary } : {}),
+    ...(inspection?.kmsProvider
+      ? {
+        kmsProvider: inspection.kmsProvider,
+        providerAccountIdentityHash:
+          inspection.kmsProviderAccountIdentityHash,
+        keyResourceIdentityHash:
+          inspection.kmsKeyResourceIdentityHash,
+        credentialGenerationIdentityHash:
+          inspection.kmsCredentialGenerationIdentityHash,
+      } : {}),
     activeKeyId: inspection?.keyId,
     activeKeyVersion: inspection?.keyVersion,
     activePublicKeySpkiHash: inspection?.publicKeySpkiHash,
@@ -44,6 +62,9 @@ function releaseSignerBackendDescriptorHashValid(inspection) {
 
 export function releaseAttestorInspectionReady(inspection) {
   const inspectedAt = canonicalTimestamp(inspection?.inspectedAt);
+  const liveVerificationCompletedAt = canonicalTimestamp(
+    inspection?.liveVerificationCompletedAt,
+  );
   const effectiveFrom = canonicalTimestamp(inspection?.effectiveFrom);
   const expiresAt = canonicalTimestamp(inspection?.expiresAt);
   const trustedKeys = Array.isArray(inspection?.trustedKeys) ? inspection.trustedKeys : [];
@@ -85,13 +106,18 @@ export function releaseAttestorInspectionReady(inspection) {
     && inspection?.role === RELEASE_ATTESTOR_ROLE
     && inspection?.algorithm === 'ed25519'
     && inspectedAt !== null
+    && liveVerificationCompletedAt !== null
     && effectiveFrom !== null
     && expiresAt !== null
     && effectiveFrom <= inspectedAt
-    && inspectedAt < expiresAt
+    && inspectedAt <= liveVerificationCompletedAt
+    && liveVerificationCompletedAt < expiresAt
     && effectiveFrom < expiresAt
     && inspection?.privateKeyDisclosed === false
     && SHA256.test(String(inspection?.publicKeySpkiHash || ''))
+    && SHA256.test(String(inspection?.configurationFileHash || ''))
+    && SHA256.test(String(inspection?.configurationIdentityHash || ''))
+    && typeof inspection?.configurationPinned === 'boolean'
     && trustSetValid
     && activeKey?.keyId === inspection.keyId
     && activeKey?.keyVersion === inspection.keyVersion
@@ -113,6 +139,9 @@ export function releaseAttestorProductionInspectionReady(inspection) {
   return releaseAttestorInspectionReady(inspection)
     && inspection?.productionStatus === 'research_execution_release_attestor_production_ready'
     && inspection?.productionReady === true
+    && inspection?.fullProductionStatus
+      === 'research_execution_release_attestor_full_production_ready'
+    && inspection?.fullProductionReady === true
     && inspection?.backendKind === 'external-kms-command'
     && inspection?.backendProductionEligible === true
     && inspection?.hardwareProtected === true
@@ -120,6 +149,24 @@ export function releaseAttestorProductionInspectionReady(inspection) {
     && inspection?.externalSignerProcess === true
     && inspection?.privateKeyLoadedIntoMainProcess === false
     && inspection?.credentialMaterialReadByMainProcess === false
+    && inspection?.configurationPinned === true
+    && inspection?.configurationIdentityProfile
+      === 'stable-kms-authority-policy-and-rotating-bundle-v3'
+    && inspection?.kmsHardwareAuthorityAttestationReady === true
+    && inspection?.kmsHardwareAuthorityIndependent === true
+    && sha256ValuesValid(
+      inspection?.kmsHardwareAuthorityAttestationInspectionHash,
+      inspection?.kmsHardwareAuthorityAttestationBundleHash,
+      inspection?.kmsHardwareAuthorityAttestationSubjectHash,
+      inspection?.kmsHardwareAuthorityTrustStoreHash,
+      inspection?.kmsHardwareAuthorityVerificationReceiptHash,
+      inspection?.kmsProviderAccountIdentityHash,
+      inspection?.kmsKeyResourceIdentityHash,
+      inspection?.kmsCredentialGenerationIdentityHash,
+    )
+    && Array.isArray(inspection?.kmsHardwareAuthorityVerifiedKeyIds)
+    && inspection.kmsHardwareAuthorityVerifiedKeyIds.length > 0
+    && SAFE_ID.test(String(inspection?.kmsProvider || ''))
     && inspection?.independentBackendProbeVerified === true
     && SHA256.test(String(inspection?.backendProbeAttestationHash || ''))
     && inspection?.activeSignerChallengeVerified === true
@@ -129,7 +176,9 @@ export function releaseAttestorProductionInspectionReady(inspection) {
     && SAFE_VERSION.test(String(inspection?.backendProbeAttestorKeyVersion || ''))
     && SHA256.test(String(inspection?.backendProbeAttestorPublicKeySpkiHash || ''))
     && Array.isArray(inspection?.productionBlockers)
-    && inspection.productionBlockers.length === 0;
+    && inspection.productionBlockers.length === 0
+    && Array.isArray(inspection?.fullProductionBlockers)
+    && inspection.fullProductionBlockers.length === 0;
 }
 
 function canonicalTimestamp(value) {
@@ -477,7 +526,39 @@ export function evaluateExternalQualificationServiceReadiness({
   releaseAttestorInspection = null,
   injectedClient = null,
   injectedVerifier = null,
+  required = true,
 } = {}) {
+  if (required === false) {
+    const payload = {
+      version: 1,
+      kind: 'ExternalQualificationServiceInspection',
+      status: 'external_qualification_service_not_required',
+      ready: true,
+      source: 'local-run',
+      processConfigurationInspection: null,
+      processConfigurationInspectionHash: null,
+      releaseAttestorInspectionHash: null,
+      configurationIdentityHash: null,
+      trustIdentityHash: null,
+      clientServiceIdentityHash: null,
+      verifierServiceIdentityHash: null,
+      trustedSignerKeyId: null,
+      trustedSignerSubjectId: null,
+      trustedSignerOrganization: null,
+      trustedSignerRole: null,
+      trustedSignerAlgorithm: null,
+      trustedSignerPublicKeySpkiHash: null,
+      trustedSignerTrustSetHash: null,
+      injectedServicePairValid: null,
+      releaseSignerBindingVerified: false,
+      blockers: Object.freeze([]),
+    };
+    return Object.freeze({
+      ...payload,
+      externalQualificationServiceInspectionHash:
+        hashRecord('ExternalQualificationServiceInspection', payload),
+    });
+  }
   const blockers = [];
   const injected = Boolean(injectedClient || injectedVerifier);
   const source = injected ? 'paired_injection'

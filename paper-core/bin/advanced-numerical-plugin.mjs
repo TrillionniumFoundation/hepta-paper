@@ -2,7 +2,7 @@
 import path from 'node:path';
 
 import {
-  composeAdvancedNumericalPluginRuntime,
+  composeConfiguredAdvancedNumericalPluginRuntime,
 } from '../../paper-composition/automation/advanced-numerical-plugin-composition.mjs';
 import {
   readImmutableJsonDocument,
@@ -15,15 +15,11 @@ function usage() {
     kind: 'AdvancedNumericalPluginUsage',
     usage:
       'advanced-numerical-plugin --config PATH [--action status|run] [--request PATH --output-directory PATH]',
-    status: 'verifies signed descriptor, local plugin identity and sandbox availability',
-    run: 'executes one bounded request and remains scientifically unqualified',
+    status:
+      'verifies pinned runtime documents, signed evidence, local identity and sandbox availability',
+    run:
+      'executes one bounded request; qualified status requires the complete external evidence chain',
   };
-}
-
-function configuredPath(configDirectory, value) {
-  const selected = String(value || '').trim();
-  if (!selected) throw new Error('advanced_numerical_plugin_configuration_path_required');
-  return path.resolve(configDirectory, selected);
 }
 
 const args = parseStrictCliArguments(process.argv.slice(2), {
@@ -40,48 +36,14 @@ if (!['run', 'status'].includes(action)) {
   throw new Error(`advanced_numerical_plugin_action_invalid:${action}`);
 }
 const configPath = path.resolve(String(args.config || ''));
-const configuration = readImmutableJsonDocument(configPath);
-if (configuration?.version !== 1
-  || configuration?.kind !== 'AdvancedNumericalPluginRuntimeConfiguration') {
-  throw new Error('advanced_numerical_plugin_runtime_configuration_invalid');
-}
-const configDirectory = path.dirname(configPath);
-const bundle = readImmutableJsonDocument(
-  configuredPath(configDirectory, configuration.signedBundlePath),
-);
-const trustStore = readImmutableJsonDocument(
-  configuredPath(configDirectory, configuration.trustStorePath),
-  { maximumBytes: 1024 * 1024 },
-);
-const pluginRoot = configuredPath(configDirectory, configuration.pluginRoot);
-const outputRoot = configuredPath(configDirectory, configuration.outputRoot);
-const qualificationConfigured = Boolean(
-  configuration.qualificationPath || configuration.qualificationTrustStorePath,
-);
-if (qualificationConfigured
-  && (!configuration.qualificationPath || !configuration.qualificationTrustStorePath)) {
-  throw new Error('advanced_numerical_plugin_qualification_configuration_incomplete');
-}
-const qualification = qualificationConfigured ? readImmutableJsonDocument(
-  configuredPath(configDirectory, configuration.qualificationPath),
-) : null;
-const qualificationTrustStore = qualificationConfigured ? readImmutableJsonDocument(
-  configuredPath(configDirectory, configuration.qualificationTrustStorePath),
-  { maximumBytes: 1024 * 1024 },
-) : null;
 const {
   verifiedBundle,
   descriptor,
   workerRunner,
   runner,
-} = composeAdvancedNumericalPluginRuntime({
-  bundle,
-  trustStore,
-  qualification,
-  qualificationTrustStore,
-  pluginRoot,
-  outputRoot,
-  now: new Date(),
+  runtimeConfiguration,
+} = composeConfiguredAdvancedNumericalPluginRuntime({
+  configurationPath: configPath,
 });
 if (action === 'status') {
   const capabilities = runner.capabilities();
@@ -100,6 +62,14 @@ if (action === 'status') {
     sandboxAvailability: workerRunner.availability,
     capabilities,
     productionQualified: capabilities.productionQualified === true,
+    runtimeConfiguration: Object.freeze({
+      version: runtimeConfiguration.configuration.version,
+      configurationHash: runtimeConfiguration.configurationHash,
+      configurationPinned: runtimeConfiguration.configurationPinned,
+      dependentDocumentsPinned:
+        runtimeConfiguration.dependentDocumentsPinned,
+      dependencyFileHashes: runtimeConfiguration.dependencyFileHashes,
+    }),
   };
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   if (args['require-runner-ready'] && workerRunner.availability?.available !== true) {

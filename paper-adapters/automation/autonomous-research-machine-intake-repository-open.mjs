@@ -54,6 +54,7 @@ function validateOpenOptions({
   authorizedMachineProducerProfileHash,
   machineProducerAppendAuthority,
   migrationHooks,
+  genesisAuthorityMode = 'external',
 }) {
   if (!runtimeRoot) throw new Error('autonomous_research_machine_intake_runtime_root_required');
   if (typeof create !== 'boolean' || typeof offlineProvision !== 'boolean'
@@ -81,6 +82,9 @@ function validateOpenOptions({
       && typeof migrationHooks.afterLegacyTablesRenamed !== 'function')) {
     throw new Error('autonomous_research_machine_intake_migration_hooks_invalid');
   }
+  if (!['external', 'root-owned-configuration'].includes(genesisAuthorityMode)) {
+    throw new Error('autonomous_research_machine_intake_genesis_authority_mode_invalid');
+  }
 }
 
 export function openAutonomousResearchMachineIntakeRepository({
@@ -92,6 +96,7 @@ export function openAutonomousResearchMachineIntakeRepository({
   authorizedMachineProducerProfileHash,
   machineProducerAppendAuthority,
   migrationHooks,
+  genesisAuthorityMode,
 }) {
   validateOpenOptions({
     runtimeRoot,
@@ -102,6 +107,7 @@ export function openAutonomousResearchMachineIntakeRepository({
     authorizedMachineProducerProfileHash,
     machineProducerAppendAuthority,
     migrationHooks,
+    genesisAuthorityMode,
   });
   const stateRoot = path.join(path.resolve(runtimeRoot), 'autonomous-research', 'machine-intake');
   const databasePath = path.join(stateRoot, 'machine-intake.sqlite');
@@ -156,6 +162,7 @@ export function openAutonomousResearchMachineIntakeRepository({
             configurationHash: configuredSourceAuthorityHash,
             producerProfileHash: configuredMachineProducerProfileHash,
             createdAt: new Date().toISOString(),
+            authorityMode: genesisAuthorityMode,
           });
         }
       } else {

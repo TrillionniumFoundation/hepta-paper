@@ -38,6 +38,7 @@ if [ "$install_root" != / ] && [ "$manage_systemd" != no ]; then
 fi
 
 effective_uid=$(/usr/bin/id -u)
+effective_gid=$(/usr/bin/id -g)
 if [ "$install_root" = / ] && [ "$effective_uid" -ne 0 ]; then
   echo "production host installation requires root" >&2
   exit 77
@@ -47,7 +48,53 @@ if [ "$effective_uid" -eq 0 ]; then
   owner_arguments="-o root -g root"
 fi
 
+if [ ! -d "$install_root" ] || [ -L "$install_root" ]; then
+  echo "install root must already be a non-symlink directory" >&2
+  exit 64
+fi
+install_root=$(CDPATH='' cd -- "$install_root" && /usr/bin/pwd -P)
+target() {
+  if [ "$install_root" = / ]; then
+    echo "$1"
+  else
+    echo "$install_root$1"
+  fi
+}
+
 deploy_root=$(CDPATH='' cd -- "$(dirname -- "$0")" && /usr/bin/pwd -P)
+candidate_root=$(CDPATH='' cd -- "$deploy_root/../.." && /usr/bin/pwd -P)
+attestor_preflight="$candidate_root/paper-core/bin/hepta-paper-release-attestor-daemon.mjs"
+if [ ! -f "$attestor_preflight" ] || [ -L "$attestor_preflight" ]; then
+  echo "candidate release-attestor preflight entrypoint is missing or unsafe" >&2
+  exit 74
+fi
+signer_configuration=$(target \
+  /etc/hepta-paper/release-attestor/signer-daemon.json)
+probe_configuration=$(target \
+  /etc/hepta-paper/release-attestor/probe-daemon.json)
+signer_private_key_owner_uid=$effective_uid
+probe_private_key_owner_uid=$effective_uid
+if [ "$install_root" = / ]; then
+  if ! signer_private_key_owner_uid=$(/usr/bin/id -u hepta-release-attestor) \
+    || ! probe_private_key_owner_uid=$(/usr/bin/id -u hepta-release-probe); then
+    echo "release-attestor identities must exist before host installation" >&2
+    echo "migration: apply the reviewed sysusers identity declaration, provision v2 signer/probe configuration, then rerun the installer" >&2
+    exit 78
+  fi
+fi
+if ! /usr/bin/env -i PATH=/usr/sbin:/usr/bin LC_ALL=C \
+  /usr/bin/node "$attestor_preflight" \
+    --preflight-configuration-pair \
+    --signer-configuration "$signer_configuration" \
+    --probe-configuration "$probe_configuration" \
+    --signer-private-key-owner-uid "$signer_private_key_owner_uid" \
+    --probe-private-key-owner-uid "$probe_private_key_owner_uid" \
+    >/dev/null; then
+  echo "release-attestor v2 configuration preflight failed before installation mutation" >&2
+  echo "migration: stage both version 2 configurations with explicit socketPolicy, matching signer/probe pins, and correct dedicated-UID key ownership; then rerun" >&2
+  exit 78
+fi
+
 compiler=/usr/bin/cc
 if [ ! -x "$compiler" ]; then
   echo "/usr/bin/cc is required" >&2
@@ -70,9 +117,18 @@ snapshot_root="$build_root/source"
 artifact_allowlist='
 autonomous-submission-handoff-layout-provision.c
 install-hepta-paper-systemd-host.sh
+codex-openclaw-managed
+hepta-paper-state-authority-client
+hepta-paper-release-attestor-client
+local-release-attestor-daemon.schema.json
+local-release-attestor-signer.config.example.json
+local-release-attestor-probe.config.example.json
 hepta-paper.sysusers.conf
 hepta-paper.tmpfiles.conf
 hepta-paper-host-bootstrap.service
+hepta-paper-state-authority.service
+hepta-paper-release-attestor.service
+hepta-paper-release-attestor-probe.service
 autonomous-submission-handoff-layout-provision.service
 autonomous-submission-handoff-layout-provision.path
 autonomous-research-supervisor.service
@@ -130,16 +186,6 @@ compiler_realpath=$(/usr/bin/readlink -f "$compiler")
 set -- $(/usr/bin/sha256sum "$compiler_realpath")
 compiler_sha256=$1
 
-/usr/bin/mkdir -p "$install_root"
-install_root=$(CDPATH='' cd -- "$install_root" && /usr/bin/pwd -P)
-target() {
-  if [ "$install_root" = / ]; then
-    echo "$1"
-  else
-    echo "$install_root$1"
-  fi
-}
-
 /usr/bin/install -d $owner_arguments -m 0755 \
   "$(target /usr/libexec/hepta-paper)" \
   "$(target /usr/share/hepta-paper/deploy)" \
@@ -154,6 +200,23 @@ target() {
 /usr/bin/install $owner_arguments -m 0755 \
   "$snapshot_root/install-hepta-paper-systemd-host.sh" \
   "$(target /usr/share/hepta-paper/deploy/install-hepta-paper-systemd-host.sh)"
+for public_configuration_document in \
+  local-release-attestor-daemon.schema.json \
+  local-release-attestor-signer.config.example.json \
+  local-release-attestor-probe.config.example.json
+do
+  /usr/bin/install $owner_arguments -m 0644 \
+    "$snapshot_root/$public_configuration_document" \
+    "$(target /usr/share/hepta-paper/deploy/$public_configuration_document)"
+done
+for launcher in \
+  codex-openclaw-managed \
+  hepta-paper-state-authority-client \
+  hepta-paper-release-attestor-client
+do
+  /usr/bin/install $owner_arguments -m 0755 \
+    "$snapshot_root/$launcher" "$(target /usr/libexec/hepta-paper/$launcher)"
+done
 
 umask 0022
 {
@@ -180,6 +243,9 @@ umask 0022
 
 for unit in \
   hepta-paper-host-bootstrap.service \
+  hepta-paper-state-authority.service \
+  hepta-paper-release-attestor.service \
+  hepta-paper-release-attestor-probe.service \
   autonomous-submission-handoff-layout-provision.service \
   autonomous-submission-handoff-layout-provision.path \
   autonomous-research-supervisor.service \
@@ -201,6 +267,12 @@ for artifact in $artifact_allowlist; do
       ;;
     install-hepta-paper-systemd-host.sh)
       manifest_path=usr/share/hepta-paper/deploy/install-hepta-paper-systemd-host.sh
+      ;;
+    local-release-attestor-daemon.schema.json|local-release-attestor-*.config.example.json)
+      manifest_path=usr/share/hepta-paper/deploy/$artifact
+      ;;
+    codex-openclaw-managed|hepta-paper-state-authority-client|hepta-paper-release-attestor-client)
+      manifest_path=usr/libexec/hepta-paper/$artifact
       ;;
     hepta-paper.sysusers.conf)
       manifest_path=usr/lib/sysusers.d/hepta-paper.conf
@@ -236,6 +308,12 @@ for artifact in $artifact_allowlist; do
       installed_artifact=$(target \
         /usr/share/hepta-paper/deploy/install-hepta-paper-systemd-host.sh)
       ;;
+    local-release-attestor-daemon.schema.json|local-release-attestor-*.config.example.json)
+      installed_artifact=$(target "/usr/share/hepta-paper/deploy/$artifact")
+      ;;
+    codex-openclaw-managed|hepta-paper-state-authority-client|hepta-paper-release-attestor-client)
+      installed_artifact=$(target "/usr/libexec/hepta-paper/$artifact")
+      ;;
     hepta-paper.sysusers.conf)
       installed_artifact=$(target /usr/lib/sysusers.d/hepta-paper.conf)
       ;;
@@ -254,6 +332,26 @@ for artifact in $artifact_allowlist; do
     exit 74
   fi
 done
+expected_launcher_uid=$effective_uid
+expected_launcher_gid=$effective_gid
+if [ "$effective_uid" -eq 0 ]; then
+  expected_launcher_uid=0
+  expected_launcher_gid=0
+fi
+for launcher in \
+  codex-openclaw-managed \
+  hepta-paper-state-authority-client \
+  hepta-paper-release-attestor-client
+do
+  set -- $(/usr/bin/stat -c '%u %g %a' \
+    "$(target /usr/libexec/hepta-paper/$launcher)")
+  if [ "$1" -ne "$expected_launcher_uid" ] \
+    || [ "$2" -ne "$expected_launcher_gid" ] \
+    || [ "$3" != 755 ]; then
+    echo "installed operational launcher owner or mode mismatch: $launcher" >&2
+    exit 74
+  fi
+done
 set -- $(/usr/bin/sha256sum \
   "$(target /usr/libexec/hepta-paper/autonomous-submission-handoff-layout-provision)")
 if [ "$1" != "$binary_sha256" ]; then
@@ -266,6 +364,9 @@ fi
 
 /usr/bin/systemd-analyze verify \
   "$(target /etc/systemd/system/hepta-paper-host-bootstrap.service)" \
+  "$(target /etc/systemd/system/hepta-paper-state-authority.service)" \
+  "$(target /etc/systemd/system/hepta-paper-release-attestor.service)" \
+  "$(target /etc/systemd/system/hepta-paper-release-attestor-probe.service)" \
   "$(target /etc/systemd/system/autonomous-submission-handoff-layout-provision.service)" \
   "$(target /etc/systemd/system/autonomous-submission-handoff-layout-provision.path)" \
   "$(target /etc/systemd/system/autonomous-research-supervisor.service)" \
@@ -280,6 +381,9 @@ if [ "$manage_systemd" = yes ]; then
   /usr/bin/systemctl disable strict-full-auto-acceptance.service
   /usr/bin/systemctl enable \
     hepta-paper-host-bootstrap.service \
+    hepta-paper-state-authority.service \
+    hepta-paper-release-attestor.service \
+    hepta-paper-release-attestor-probe.service \
     autonomous-submission-handoff-layout-provision.path \
     autonomous-research-supervisor.service \
     autonomous-submission-dispatcher.service \
@@ -290,11 +394,17 @@ if [ "$manage_systemd" = yes ]; then
     strict-full-auto-acceptance.service \
     autonomous-submission-dispatcher.service \
     autonomous-research-supervisor.service \
+    hepta-paper-release-attestor-probe.service \
+    hepta-paper-release-attestor.service \
+    hepta-paper-state-authority.service \
     autonomous-submission-handoff-layout-provision.path \
     autonomous-submission-handoff-layout-provision.service
   /usr/bin/systemctl clean --what=runtime \
     autonomous-submission-handoff-layout-provision.service
   /usr/bin/systemctl restart hepta-paper-host-bootstrap.service
+  /usr/bin/systemctl restart hepta-paper-state-authority.service
+  /usr/bin/systemctl restart hepta-paper-release-attestor.service
+  /usr/bin/systemctl restart hepta-paper-release-attestor-probe.service
   /usr/bin/systemctl start autonomous-submission-handoff-layout-provision.path
   /usr/bin/systemctl restart autonomous-research-state-backup-renew.timer
   /usr/bin/systemctl restart strict-full-auto-acceptance.timer

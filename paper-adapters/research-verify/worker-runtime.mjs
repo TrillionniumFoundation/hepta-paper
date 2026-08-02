@@ -28,6 +28,8 @@ import {
 export { NATIVE_RESEARCH_WORKER_TYPES };
 export { formalAcademicPromotionBlockers } from './formal-academic-promotion-policy.mjs';
 const WORKER_TYPE_SET = new Set(NATIVE_RESEARCH_WORKER_TYPES);
+const normalizedText = (value) => String(value || '').normalize('NFKC')
+  .replace(/\s+/g, ' ').trim();
 const safeWorkerId = (value) => (/^[a-z0-9][a-z0-9_-]{0,63}$/i.test(String(value || ''))
   ? String(value || '') : null);
 async function validateInputs({ sourceRoot, worker }) {
@@ -312,7 +314,7 @@ export function bindFormalReviewsToWorkers({
       const specificationBindingValid = !specificationRequired || (specificationClaim
         && binding?.theoremSpecificationHash === theoremSpecification?.theoremSpecificationHash
         && binding?.theoremSpecificationClaimHash === specificationClaim.theoremSpecificationClaimHash
-        && specificationClaim.statement === canonicalClaim.text
+        && normalizedText(specificationClaim.statement) === normalizedText(canonicalClaim.text)
         && specificationClaim.manuscriptSource?.path === canonicalClaim.manuscriptPath
         && specificationClaim.manuscriptSource?.byteStart === canonicalClaim.manuscriptByteStart
         && specificationClaim.manuscriptSource?.byteEnd === canonicalClaim.manuscriptByteEnd

@@ -54,7 +54,11 @@ function stable(value) {
 }
 
 export function digest(value) {
-  return `sha256:${crypto.createHash('sha256').update(JSON.stringify(stable(value))).digest('hex')}`;
+  return `sha256:${crypto.createHash('sha256').update(stableStringify(value)).digest('hex')}`;
+}
+
+export function stableStringify(value) {
+  return JSON.stringify(stable(value));
 }
 
 export function hashRecord(kind, value) {

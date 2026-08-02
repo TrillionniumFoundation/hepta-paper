@@ -15,7 +15,11 @@ import { assertOutcomeBoundManuscriptMutationAllowed } from './campaign-confirma
 import {
   collectCampaignManuscriptAgentExecutionReceipts,
 } from './campaign-manuscript-agent-receipts.mjs';
-import { requireVerifiedAgentReceipt } from './campaign-agent-execution-boundary.mjs';
+import {
+  agentExecutionUsageFields,
+  attachSuccessfulAgentReceipt,
+  requireVerifiedAgentReceipt,
+} from './campaign-agent-execution-boundary.mjs';
 import {
   inspectAutonomousResearchProductionProfilePreparation,
 } from '../../paper-domain/automation/autonomous-research-production-profile-contract.mjs';
@@ -41,6 +45,31 @@ function blockedResult(result) {
   error.retryable = false;
   error.receipt = result || null;
   return error;
+}
+
+const PERMANENT_TRUSTED_MANUSCRIPT_ERROR_PREFIXES = Object.freeze([
+  'trusted_autonomous_manuscript_proposal_claim_binding_invalid',
+  'trusted_autonomous_manuscript_claim_id_duplicate',
+  'trusted_autonomous_manuscript_claims_missing',
+  'trusted_autonomous_manuscript_empirical_claim_lineage_required',
+  'trusted_autonomous_manuscript_empirical_claim_lineage_invalid',
+  'trusted_autonomous_manuscript_empirical_claim_lineage_identity_invalid',
+  'trusted_autonomous_manuscript_empirical_claim_lineage_binding_invalid',
+  'trusted_autonomous_manuscript_empirical_claim_lineage_bijection_invalid',
+]);
+const PERMANENT_TRUSTED_MANUSCRIPT_ERROR_MARKERS = Object.freeze([
+  'empirical_claim_universe_authority_claim_missing:',
+  'empirical_claim_universe_authority_hash_mismatch:',
+]);
+
+export function trustedAutonomousManuscriptRenderFailureIsPermanent(value) {
+  const message = String(value?.message || value || '');
+  return PERMANENT_TRUSTED_MANUSCRIPT_ERROR_PREFIXES.some((prefix) => (
+    message.startsWith(prefix)
+  )) || (message.startsWith('trusted_autonomous_manuscript_render_verification_failed:')
+    && PERMANENT_TRUSTED_MANUSCRIPT_ERROR_MARKERS.some((marker) => (
+      message.includes(marker)
+    )));
 }
 
 export async function executeCampaignResearchVerificationNode({
@@ -112,6 +141,16 @@ export async function executeCampaignAgentNode({
     : null;
   const empiricalOutcomeObserved = ['manuscript-integrate', 'revise'].includes(node.kind)
     && completedEmpiricalOutcome(context.campaignNodes);
+  const autonomousManuscriptEvidenceRefBindings =
+    ['manuscript-integrate', 'revise'].includes(node.kind)
+      && campaign.spec.scientificClaimAuthority
+        ?.claimAuthorityType === 'machine-policy-authorized'
+      ? primitives.workspace.prepareAutonomousManuscriptEvidenceRefBindings({
+        workspace,
+        empiricalAssertionAuthority,
+        formalVerificationReceipt: context.formalVerificationNode?.result || null,
+      })
+      : null;
   const independentReview = isCampaignRefereeNode(node.kind);
   const reviewerManuscriptHash = independentReview
     ? primitives.workspace.hashFile({ workspace, relative: manuscript }) : null;
@@ -136,6 +175,7 @@ export async function executeCampaignAgentNode({
     qualityGateBlockers: context.qualityGateBlockers,
     revisionMaterialization: context.revisionMaterialization,
     empiricalAssertionAuthority,
+    autonomousManuscriptEvidenceRefBindings,
     reviewerExecutionAuthorityContext,
     empiricalOutcomeObserved,
     executionBudget,
@@ -161,141 +201,175 @@ export async function executeCampaignAgentNode({
   });
   if (empiricalOutcomeObserved) {
     requireVerifiedAgentReceipt(receipt, 'outcome_bound_manuscript_revision');
-    assertOutcomeBoundManuscriptMutationAllowed({ changedPaths: receipt.changedPaths, manuscript });
+    try {
+      assertOutcomeBoundManuscriptMutationAllowed({
+        changedPaths: receipt.changedPaths,
+        manuscript,
+      });
+    } catch (error) {
+      throw attachSuccessfulAgentReceipt(error, receipt);
+    }
   }
   if (['manuscript-integrate', 'revise'].includes(node.kind)
     && campaign.spec.scientificClaimAuthority?.claimAuthorityType === 'machine-policy-authorized') {
+    requireVerifiedAgentReceipt(receipt, 'trusted_autonomous_manuscript');
+    const usageFields = agentExecutionUsageFields(receipt);
     const manuscriptProductionMode = campaign.spec.autonomousResearchPreparation
       ?.capabilityScopeManifest?.manuscriptMode
       || 'minimal-report-evidence-bound-ir-v1';
     const requireAgentAuthoredProse = manuscriptProductionMode
       === 'agent-authored-evidence-bound-ir-v1';
-    const renderReceipt = primitives.workspace.renderTrustedAutonomousManuscript({
-      workspace,
-      manuscriptPath: manuscript,
-      paperId: campaign.paperId,
-      campaignId: campaign.campaignId,
-      authority: empiricalAssertionAuthority,
-      formalVerificationReceipt: context.formalVerificationNode?.result || null,
-      agentExecutionReceipt: receipt,
-      agentExecutionReceipts:
-        collectCampaignManuscriptAgentExecutionReceipts(context.campaignNodes, receipt),
-      requireAgentAuthoredProse,
-      manuscriptProductionMode: manuscriptProductionMode === 'agent-authored-evidence-bound-ir-v1'
-        ? manuscriptProductionMode : 'minimal-report-evidence-bound-ir-v1',
-    });
-    const changedPaths = Object.freeze([...new Set([
-      ...(receipt.changedPaths || []),
-      manuscript,
-      renderReceipt.manuscriptIrPath,
-      renderReceipt.evidenceEntailmentContractPath,
-      ...(renderReceipt.presentationArtifacts || []).map((artifact) => artifact.path),
-    ].filter(Boolean))].sort());
-    const payload = {
-      version: 1,
-      kind: 'CampaignTrustedAutonomousManuscriptResult',
-      status: 'campaign_trusted_autonomous_manuscript_completed',
-      agentExecutionReceiptHash: receipt.agentExecutionReceiptHash,
-      agentExecutionReceipt: receipt,
-      changedPaths,
-      trustedAutonomousManuscriptRenderReceiptHash:
-        renderReceipt.trustedAutonomousManuscriptRenderReceiptHash,
-      trustedAutonomousManuscriptRenderReceipt: renderReceipt,
-    };
-    return Object.freeze({
-      ...payload,
-      campaignTrustedAutonomousManuscriptResultHash:
-        hashRecord('CampaignTrustedAutonomousManuscriptResult', payload),
-    });
+    try {
+      const renderReceipt = primitives.workspace.renderTrustedAutonomousManuscript({
+        workspace,
+        manuscriptPath: manuscript,
+        paperId: campaign.paperId,
+        campaignId: campaign.campaignId,
+        authority: empiricalAssertionAuthority,
+        formalVerificationReceipt: context.formalVerificationNode?.result || null,
+        agentExecutionReceipt: receipt,
+        agentExecutionReceipts:
+          collectCampaignManuscriptAgentExecutionReceipts(context.campaignNodes, receipt),
+        requireAgentAuthoredProse,
+        manuscriptProductionMode: manuscriptProductionMode === 'agent-authored-evidence-bound-ir-v1'
+          ? manuscriptProductionMode : 'minimal-report-evidence-bound-ir-v1',
+      });
+      const changedPaths = Object.freeze([...new Set([
+        ...(receipt.changedPaths || []),
+        manuscript,
+        renderReceipt.manuscriptIrPath,
+        renderReceipt.evidenceEntailmentContractPath,
+        ...(renderReceipt.presentationArtifacts || []).map((artifact) => artifact.path),
+      ].filter(Boolean))].sort());
+      const payload = {
+        version: 1,
+        kind: 'CampaignTrustedAutonomousManuscriptResult',
+        status: 'campaign_trusted_autonomous_manuscript_completed',
+        agentExecutionReceiptHash: receipt.agentExecutionReceiptHash,
+        agentExecutionReceipt: receipt,
+        ...usageFields,
+        changedPaths,
+        trustedAutonomousManuscriptRenderReceiptHash:
+          renderReceipt.trustedAutonomousManuscriptRenderReceiptHash,
+        trustedAutonomousManuscriptRenderReceipt: renderReceipt,
+      };
+      return Object.freeze({
+        ...payload,
+        campaignTrustedAutonomousManuscriptResultHash:
+          hashRecord('CampaignTrustedAutonomousManuscriptResult', payload),
+      });
+    } catch (error) {
+      if (trustedAutonomousManuscriptRenderFailureIsPermanent(error)) {
+        error.retryable = false;
+      }
+      throw attachSuccessfulAgentReceipt(error, receipt);
+    }
   }
   if (proposalSeedVerification) {
     requireVerifiedAgentReceipt(receipt, 'formal_proposal_writer');
-    verifyFormalProposalWriterSurface({ primitives, campaign, workspace, manuscript });
+    agentExecutionUsageFields(receipt);
+    try {
+      verifyFormalProposalWriterSurface({ primitives, campaign, workspace, manuscript });
+    } catch (error) {
+      throw attachSuccessfulAgentReceipt(error, receipt);
+    }
   }
   if (node.kind === 'theorem-spec') {
     requireVerifiedAgentReceipt(receipt, 'theorem_specification');
-    if (JSON.stringify(receipt.changedPaths || []) !== JSON.stringify(['THEOREM_SPEC_DRAFT.json'])) {
-      const error = new Error('theorem_specification_agent_changed_paths_invalid');
-      error.retryable = false;
-      error.receipt = receipt;
-      throw error;
+    try {
+      if (JSON.stringify(receipt.changedPaths || []) !== JSON.stringify(['THEOREM_SPEC_DRAFT.json'])) {
+        const error = new Error('theorem_specification_agent_changed_paths_invalid');
+        error.retryable = false;
+        throw error;
+      }
+      const finalizationReceipt = primitives.workspace.finalizeTheoremSpecification({
+        workspace,
+        manuscriptPath: manuscript,
+        paperId: campaign.paperId,
+        campaignId: campaign.campaignId,
+        scientificClaimAuthority: campaign.spec.scientificClaimAuthority || null,
+        approvedProposalSeed: campaign.spec.approvedProposalSeed || null,
+      });
+      const {
+        theoremSpecificationFinalizationReceiptHash: claimedFinalizationHash,
+        ...finalizationPayload
+      } = finalizationReceipt || {};
+      if (!claimedFinalizationHash
+        || hashRecord('TheoremSpecificationFinalizationReceipt', finalizationPayload) !== claimedFinalizationHash) {
+        throw new Error('theorem_specification_finalization_receipt_invalid');
+      }
+      const theoremSpecification = primitives.workspace.readTheoremSpecification({
+        workspace,
+        manuscriptPath: manuscript,
+        paperId: campaign.paperId,
+        campaignId: campaign.campaignId,
+        scientificClaimAuthority: campaign.spec.scientificClaimAuthority || null,
+        approvedProposalSeed: campaign.spec.approvedProposalSeed || null,
+      });
+      const payload = {
+        version: 1,
+        kind: 'CampaignTheoremSpecificationResult',
+        status: 'campaign_theorem_specification_completed',
+        campaignId: campaign.campaignId,
+        paperId: campaign.paperId,
+        nodeId: node.nodeId,
+        attemptId: node.attemptId || null,
+        agentExecutionReceiptHash: receipt.agentExecutionReceiptHash,
+        theoremSpecificationAgentReceipt: receipt,
+        ...agentExecutionUsageFields(receipt),
+        theoremSpecificationFinalizationReceiptHash: claimedFinalizationHash,
+        theoremSpecificationFinalizationReceipt: finalizationReceipt,
+        theoremSpecificationHash: theoremSpecification.theoremSpecificationHash,
+        sourceManuscriptHash: theoremSpecification.sourceManuscriptHash,
+        formalClaimUniverseHash: theoremSpecification.formalClaimUniverseHash,
+        claimAuthorityType: theoremSpecification.claimAuthorityType,
+        claimAuthorityBindingHash: theoremSpecification.claimAuthorityBindingHash,
+        claimAuthorityBundleHash: theoremSpecification.claimAuthorityBundleHash,
+        approvedProposalSeedBindingHash: theoremSpecification.approvedProposalSeedBindingHash,
+        proposalSeedContractBundleHash: theoremSpecification.proposalSeedContractBundleHash,
+        proposalClaimRecordHashes: Object.freeze(theoremSpecification.claims
+          .map((claim) => claim.proposalClaimSource?.proposalClaimRecordHash).filter(Boolean)),
+        claimCount: theoremSpecification.claimCount,
+        externalActionPerformed: false,
+      };
+      return Object.freeze({
+        ...payload,
+        campaignTheoremSpecificationResultHash: hashRecord('CampaignTheoremSpecificationResult', payload),
+      });
+    } catch (error) {
+      throw attachSuccessfulAgentReceipt(error, receipt);
     }
-    const finalizationReceipt = primitives.workspace.finalizeTheoremSpecification({
-      workspace,
-      manuscriptPath: manuscript,
-      paperId: campaign.paperId,
-      campaignId: campaign.campaignId,
-      scientificClaimAuthority: campaign.spec.scientificClaimAuthority || null,
-      approvedProposalSeed: campaign.spec.approvedProposalSeed || null,
-    });
-    const {
-      theoremSpecificationFinalizationReceiptHash: claimedFinalizationHash,
-      ...finalizationPayload
-    } = finalizationReceipt || {};
-    if (!claimedFinalizationHash
-      || hashRecord('TheoremSpecificationFinalizationReceipt', finalizationPayload) !== claimedFinalizationHash) {
-      throw new Error('theorem_specification_finalization_receipt_invalid');
-    }
-    const theoremSpecification = primitives.workspace.readTheoremSpecification({
-      workspace,
-      manuscriptPath: manuscript,
-      paperId: campaign.paperId,
-      campaignId: campaign.campaignId,
-      scientificClaimAuthority: campaign.spec.scientificClaimAuthority || null,
-      approvedProposalSeed: campaign.spec.approvedProposalSeed || null,
-    });
-    const payload = {
-      version: 1,
-      kind: 'CampaignTheoremSpecificationResult',
-      status: 'campaign_theorem_specification_completed',
-      campaignId: campaign.campaignId,
-      paperId: campaign.paperId,
-      nodeId: node.nodeId,
-      attemptId: node.attemptId || null,
-      agentExecutionReceiptHash: receipt.agentExecutionReceiptHash,
-      theoremSpecificationAgentReceipt: receipt,
-      theoremSpecificationFinalizationReceiptHash: claimedFinalizationHash,
-      theoremSpecificationFinalizationReceipt: finalizationReceipt,
-      theoremSpecificationHash: theoremSpecification.theoremSpecificationHash,
-      sourceManuscriptHash: theoremSpecification.sourceManuscriptHash,
-      formalClaimUniverseHash: theoremSpecification.formalClaimUniverseHash,
-      claimAuthorityType: theoremSpecification.claimAuthorityType,
-      claimAuthorityBindingHash: theoremSpecification.claimAuthorityBindingHash,
-      claimAuthorityBundleHash: theoremSpecification.claimAuthorityBundleHash,
-      approvedProposalSeedBindingHash: theoremSpecification.approvedProposalSeedBindingHash,
-      proposalSeedContractBundleHash: theoremSpecification.proposalSeedContractBundleHash,
-      proposalClaimRecordHashes: Object.freeze(theoremSpecification.claims
-        .map((claim) => claim.proposalClaimSource?.proposalClaimRecordHash).filter(Boolean)),
-      claimCount: theoremSpecification.claimCount,
-      externalActionPerformed: false,
-    };
-    return Object.freeze({
-      ...payload,
-      campaignTheoremSpecificationResultHash: hashRecord('CampaignTheoremSpecificationResult', payload),
-    });
   }
   if (node.kind === 'formal-review') {
-    return primitives.agent.buildFormalReviewEnvelope({
-      campaign,
-      node,
-      authorNode: context.formalAuthorNode,
-      receipt,
-      workspace,
-      manuscript,
-    });
+    requireVerifiedAgentReceipt(receipt, 'formal_review');
+    agentExecutionUsageFields(receipt);
+    try {
+      return primitives.agent.buildFormalReviewEnvelope({
+        campaign,
+        node,
+        authorNode: context.formalAuthorNode,
+        receipt,
+        workspace,
+        manuscript,
+      });
+    } catch (error) {
+      throw attachSuccessfulAgentReceipt(error, receipt);
+    }
   }
   if (!isCampaignRefereeNode(node.kind)) return receipt;
-  const parsed = receipt.structuredOutput || extractCampaignAgentJson(receipt.finalOutput) || {};
-  const postReviewManuscriptHash = primitives.workspace.hashFile({
-    workspace, relative: manuscript,
-  });
-  if (postReviewManuscriptHash !== reviewerManuscriptHash) {
-    throw new Error('campaign_referee_manuscript_changed_during_review');
-  }
-  const semanticReviewerEvidence = Boolean(
-    reviewerExecutionAuthorityContext && receipt.unsignedAgentExecutionReceipt,
-  );
-  return Object.freeze({
+  requireVerifiedAgentReceipt(receipt, 'campaign_referee');
+  try {
+    const parsed = receipt.structuredOutput || extractCampaignAgentJson(receipt.finalOutput) || {};
+    const postReviewManuscriptHash = primitives.workspace.hashFile({
+      workspace, relative: manuscript,
+    });
+    if (postReviewManuscriptHash !== reviewerManuscriptHash) {
+      throw new Error('campaign_referee_manuscript_changed_during_review');
+    }
+    const semanticReviewerEvidence = Boolean(
+      reviewerExecutionAuthorityContext && receipt.unsignedAgentExecutionReceipt,
+    );
+    return Object.freeze({
     reviewerId: node.spec?.role || node.role || node.kind,
     role: node.spec?.role || node.role || node.kind,
     verdict: parsed.verdict === 'accept' ? 'accept' : 'revise',
@@ -326,6 +400,7 @@ export async function executeCampaignAgentNode({
     signatureVerificationReceiptHash:
       receipt.signatureVerificationReceiptHash || null,
     researchPrincipalPoolHash: receipt.researchPrincipalPoolHash || null,
+    reviewEvidenceMode: receipt.reviewEvidenceMode || null,
     reviewAttemptId: reviewerExecutionAuthorityContext?.reviewAttemptId
       || node.attemptId || null,
     manuscriptHash: reviewerExecutionAuthorityContext?.manuscriptHash
@@ -334,7 +409,7 @@ export async function executeCampaignAgentNode({
       || receipt.sessionId || receipt.sessionKey || null,
     sessionKey: receipt.sessionKey || null,
     openClawRunId: receipt.openClawRunId || null,
-    usage: receipt.usage || null,
+    ...agentExecutionUsageFields(receipt),
     promptHash: receipt.promptHash || null,
     resolvedModel: receipt.resolvedModel || receipt.model || null,
     campaignId: reviewerExecutionAuthorityContext?.campaignId || null,
@@ -343,6 +418,9 @@ export async function executeCampaignAgentNode({
     nodeId: reviewerExecutionAuthorityContext?.nodeId || node.nodeId || null,
     roundIndex: reviewerExecutionAuthorityContext?.roundIndex
       || Number(node.roundIndex || 0),
-    selectedExecutorId: receipt.selectedExecutorId || receipt.executorId || null,
-  });
+      selectedExecutorId: receipt.selectedExecutorId || receipt.executorId || null,
+    });
+  } catch (error) {
+    throw attachSuccessfulAgentReceipt(error, receipt);
+  }
 }

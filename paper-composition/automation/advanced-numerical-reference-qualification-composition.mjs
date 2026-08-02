@@ -1,22 +1,35 @@
-import fs from 'node:fs';
 import path from 'node:path';
 
 import {
-  readImmutableJsonDocument,
-} from '../../workflow-kernel/runtime/immutable-signed-json-bundle.mjs';
+  readAdvancedNumericalPluginRuntimeConfiguration,
+  readIntegrityAdvancedNumericalJsonDocument,
+} from '../../paper-adapters/automation/advanced-numerical-plugin-runtime-configuration.mjs';
+import {
+  ADVANCED_NUMERICAL_PLUGIN_QUALIFICATION_ROLES,
+} from '../../paper-domain/research/advanced-numerical-plugin-qualification-contract.mjs';
 import { hasExactObjectKeys } from '../../workflow-kernel/exact-object-keys.mjs';
-import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
   composeAdvancedNumericalPluginRuntime,
 } from './advanced-numerical-plugin-composition.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
-const REGISTRY_KEYS = Object.freeze(['entries', 'kind', 'version']);
+const REGISTRY_KEYS = Object.freeze([
+  'candidateManifestHash',
+  'candidateSourceMerkleHash',
+  'candidateSourceWorkspaceManifestHash',
+  'entries',
+  'kind',
+  'version',
+]);
 const ENTRY_KEYS = Object.freeze([
   'analysisFamily',
   'runtimeConfigurationHash',
   'runtimeConfigurationPath',
 ]);
+const REQUIRED_QUALIFICATION_ROLES = Object.freeze(
+  [...ADVANCED_NUMERICAL_PLUGIN_QUALIFICATION_ROLES].sort(),
+);
 
 function configuredPath(configDirectory, value) {
   const selected = String(value || '').trim();
@@ -30,6 +43,9 @@ function baseCandidate({
   candidateManifestHash,
   candidateSnapshot,
   entrypointHash,
+  registryConfigured = false,
+  registryPinned = false,
+  registryHash = null,
   blockers = [],
 }) {
   return Object.freeze({
@@ -38,6 +54,13 @@ function baseCandidate({
     analysisFamily,
     status: 'reference_candidate_unqualified',
     productionQualified: false,
+    fullProductionReady: false,
+    registryConfigured,
+    registryPinned,
+    registryHash,
+    runtimeConfigurationPinned: false,
+    runtimeConfigurationHash: null,
+    dependentDocumentsPinned: false,
     entrypoint: candidateManifest.entrypoint,
     entrypointHash,
     sourceMerkleHash: candidateSnapshot.merkleHash,
@@ -47,8 +70,114 @@ function baseCandidate({
     runtimePackageClosureHash: null,
     signedBundleHash: null,
     qualificationStatementHash: null,
+    qualificationEvidenceBundleHash: null,
+    qualificationInspectionHash: null,
+    qualificationExpiresAt: null,
+    pluginAuthoritySubjectIds: Object.freeze([]),
+    pluginAuthorityOrganizations: Object.freeze([]),
+    pluginAuthorityPublicKeySpkiHashes: Object.freeze([]),
+    qualificationAuthoritySubjectIds: Object.freeze([]),
+    qualificationAuthorityOrganizations: Object.freeze([]),
+    qualificationAuthorityPublicKeySpkiHashes: Object.freeze([]),
+    qualificationAuthorityRoles: Object.freeze([]),
+    referenceExecutionProcessIdentityHash: null,
+    replayExecutionProcessIdentityHash: null,
+    qualificationResultHash: null,
     qualificationBlockers: Object.freeze([...new Set(blockers)].sort()),
   });
+}
+
+function blockedCandidate(candidate, blocker, details = {}) {
+  return Object.freeze({
+    ...candidate,
+    ...details,
+    status: 'reference_candidate_unqualified',
+    productionQualified: false,
+    fullProductionReady: false,
+    qualificationBlockers: Object.freeze([
+      ...new Set([
+        ...(candidate.qualificationBlockers || []),
+        String(blocker || 'advanced_numerical_reference_qualification_blocked'),
+      ]),
+    ].sort()),
+  });
+}
+
+function uniqueNonemptyStrings(values, minimumLength) {
+  return Array.isArray(values)
+    && values.length >= minimumLength
+    && values.every((value) => typeof value === 'string' && value.length > 0)
+    && new Set(values).size === values.length;
+}
+
+function capabilitiesValid(capabilities, {
+  qualification,
+  qualificationEvidence,
+  now,
+} = {}) {
+  const qualificationSubjects = capabilities?.qualificationAuthoritySubjectIds;
+  const pluginSubjects = capabilities?.pluginAuthoritySubjectIds;
+  const qualificationOrganizations =
+    capabilities?.qualificationAuthorityOrganizations;
+  const pluginOrganizations = capabilities?.pluginAuthorityOrganizations;
+  const qualificationPublicKeys =
+    capabilities?.qualificationAuthorityPublicKeySpkiHashes;
+  const pluginPublicKeys = capabilities?.pluginAuthorityPublicKeySpkiHashes;
+  const expiresAtMs = Date.parse(String(capabilities?.qualificationExpiresAt || ''));
+  const nowMs = now instanceof Date ? now.getTime() : Date.parse(String(now || ''));
+  const pluginSubjectSet = new Set(pluginSubjects || []);
+  const pluginOrganizationSet = new Set(pluginOrganizations || []);
+  const pluginPublicKeySet = new Set(pluginPublicKeys || []);
+  return capabilities?.productionQualified === true
+    && SHA256.test(String(capabilities.qualificationInspectionHash || ''))
+    && capabilities.qualificationStatementHash
+      === qualification?.advancedNumericalPluginQualificationStatementHash
+    && capabilities.qualificationEvidenceBundleHash
+      === qualificationEvidence
+        ?.advancedNumericalPluginQualificationEvidenceBundleHash
+    && uniqueNonemptyStrings(pluginSubjects, 1)
+    && uniqueNonemptyStrings(
+      qualificationSubjects,
+      ADVANCED_NUMERICAL_PLUGIN_QUALIFICATION_ROLES.length,
+    )
+    && qualificationSubjects.length
+      === ADVANCED_NUMERICAL_PLUGIN_QUALIFICATION_ROLES.length
+    && qualificationSubjects.every((subjectId) => !pluginSubjectSet.has(subjectId))
+    && uniqueNonemptyStrings(pluginOrganizations, 1)
+    && pluginOrganizations.length === 1
+    && uniqueNonemptyStrings(
+      qualificationOrganizations,
+      ADVANCED_NUMERICAL_PLUGIN_QUALIFICATION_ROLES.length,
+    )
+    && qualificationOrganizations.length
+      === ADVANCED_NUMERICAL_PLUGIN_QUALIFICATION_ROLES.length
+    && qualificationOrganizations.every((organization) => (
+      !pluginOrganizationSet.has(organization)
+    ))
+    && uniqueNonemptyStrings(pluginPublicKeys, 1)
+    && pluginPublicKeys.length === 1
+    && pluginPublicKeys.every((publicKeyHash) => SHA256.test(publicKeyHash))
+    && uniqueNonemptyStrings(
+      qualificationPublicKeys,
+      ADVANCED_NUMERICAL_PLUGIN_QUALIFICATION_ROLES.length,
+    )
+    && qualificationPublicKeys.length
+      === ADVANCED_NUMERICAL_PLUGIN_QUALIFICATION_ROLES.length
+    && qualificationPublicKeys.every((publicKeyHash) => (
+      SHA256.test(publicKeyHash) && !pluginPublicKeySet.has(publicKeyHash)
+    ))
+    && JSON.stringify(capabilities.qualificationAuthorityRoles)
+      === JSON.stringify(REQUIRED_QUALIFICATION_ROLES)
+    && Number.isFinite(nowMs) && Number.isFinite(expiresAtMs) && expiresAtMs > nowMs
+    && SHA256.test(String(
+      capabilities.referenceExecutionProcessIdentityHash || '',
+    ))
+    && SHA256.test(String(
+      capabilities.replayExecutionProcessIdentityHash || '',
+    ))
+    && capabilities.referenceExecutionProcessIdentityHash
+      !== capabilities.replayExecutionProcessIdentityHash
+    && SHA256.test(String(capabilities.qualificationResultHash || ''));
 }
 
 function inspectEntry({
@@ -57,6 +186,7 @@ function inspectEntry({
   entry,
   now,
   registryPath,
+  registryHash,
   runtimeComposer,
 }) {
   if (!hasExactObjectKeys(entry, ENTRY_KEYS)
@@ -65,43 +195,28 @@ function inspectEntry({
     throw new Error('advanced_numerical_reference_qualification_registry_entry_invalid');
   }
   const registryDirectory = path.dirname(registryPath);
-  const configurationPath = configuredPath(
-    registryDirectory,
-    entry.runtimeConfigurationPath,
-  );
-  const configurationBytes = fs.readFileSync(configurationPath);
-  if (hashBytes(configurationBytes) !== entry.runtimeConfigurationHash) {
-    throw new Error('advanced_numerical_reference_runtime_configuration_hash_mismatch');
-  }
-  const configuration = readImmutableJsonDocument(configurationPath);
-  if (configuration?.version !== 1
-    || configuration?.kind !== 'AdvancedNumericalPluginRuntimeConfiguration') {
-    throw new Error('advanced_numerical_plugin_runtime_configuration_invalid');
-  }
-  const configDirectory = path.dirname(configurationPath);
-  if (!configuration.qualificationPath || !configuration.qualificationTrustStorePath) {
-    throw new Error('advanced_numerical_plugin_qualification_configuration_required');
-  }
-  const bundle = readImmutableJsonDocument(
-    configuredPath(configDirectory, configuration.signedBundlePath),
-  );
-  const trustStore = readImmutableJsonDocument(
-    configuredPath(configDirectory, configuration.trustStorePath),
-    { maximumBytes: 1024 * 1024 },
-  );
-  const qualification = readImmutableJsonDocument(
-    configuredPath(configDirectory, configuration.qualificationPath),
-  );
-  const qualificationTrustStore = readImmutableJsonDocument(
-    configuredPath(configDirectory, configuration.qualificationTrustStorePath),
-    { maximumBytes: 1024 * 1024 },
-  );
-  const pluginRoot = configuredPath(configDirectory, configuration.pluginRoot);
-  const outputRoot = configuredPath(configDirectory, configuration.outputRoot);
+  const runtimeConfiguration = readAdvancedNumericalPluginRuntimeConfiguration({
+    configurationPath: configuredPath(
+      registryDirectory,
+      entry.runtimeConfigurationPath,
+    ),
+    expectedConfigurationHash: entry.runtimeConfigurationHash,
+    requireProductionQualification: true,
+  });
+  const {
+    bundle,
+    trustStore,
+    qualification,
+    qualificationEvidence,
+    qualificationTrustStore,
+    pluginRoot,
+    outputRoot,
+  } = runtimeConfiguration;
   const runtime = runtimeComposer({
     bundle,
     trustStore,
     qualification,
+    qualificationEvidence,
     qualificationTrustStore,
     pluginRoot,
     outputRoot,
@@ -118,18 +233,55 @@ function inspectEntry({
     || descriptor.sourceIdentity.merkleHash !== candidate.sourceMerkleHash
     || descriptor.sourceIdentity.workspaceManifestHash
       !== candidate.sourceWorkspaceManifestHash
-    || capabilities.productionQualified !== true) {
+    || runtimeConfiguration.configurationPinned !== true
+    || runtimeConfiguration.dependentDocumentsPinned !== true
+    || !capabilitiesValid(capabilities, {
+      qualification,
+      qualificationEvidence,
+      now,
+    })) {
     throw new Error('advanced_numerical_reference_qualification_identity_mismatch');
   }
   return Object.freeze({
     ...candidate,
-    status: 'reference_candidate_production_qualified',
+    status: 'reference_candidate_full_production_qualified',
     productionQualified: true,
+    fullProductionReady: true,
+    registryConfigured: true,
+    registryPinned: true,
+    registryHash,
+    runtimeConfigurationPinned: true,
+    runtimeConfigurationHash: runtimeConfiguration.configurationHash,
+    dependentDocumentsPinned: true,
     runtimeExecutableHash: descriptor.runtime.executableHash,
     runtimePackageClosureHash: descriptor.runtime.packageClosureHash,
     signedBundleHash: runtime.verifiedBundle.signedBundleHash,
-    qualificationStatementHash:
-      capabilities.qualificationStatementHash || null,
+    qualificationStatementHash: capabilities.qualificationStatementHash,
+    qualificationEvidenceBundleHash:
+      capabilities.qualificationEvidenceBundleHash,
+    qualificationInspectionHash: capabilities.qualificationInspectionHash,
+    qualificationExpiresAt: capabilities.qualificationExpiresAt,
+    pluginAuthoritySubjectIds:
+      Object.freeze([...capabilities.pluginAuthoritySubjectIds]),
+    pluginAuthorityOrganizations:
+      Object.freeze([...capabilities.pluginAuthorityOrganizations]),
+    pluginAuthorityPublicKeySpkiHashes:
+      Object.freeze([...capabilities.pluginAuthorityPublicKeySpkiHashes]),
+    qualificationAuthoritySubjectIds:
+      Object.freeze([...capabilities.qualificationAuthoritySubjectIds]),
+    qualificationAuthorityOrganizations:
+      Object.freeze([...capabilities.qualificationAuthorityOrganizations]),
+    qualificationAuthorityPublicKeySpkiHashes:
+      Object.freeze([
+        ...capabilities.qualificationAuthorityPublicKeySpkiHashes,
+      ]),
+    qualificationAuthorityRoles:
+      Object.freeze([...capabilities.qualificationAuthorityRoles]),
+    referenceExecutionProcessIdentityHash:
+      capabilities.referenceExecutionProcessIdentityHash,
+    replayExecutionProcessIdentityHash:
+      capabilities.replayExecutionProcessIdentityHash,
+    qualificationResultHash: capabilities.qualificationResultHash,
     qualificationBlockers: Object.freeze([]),
   });
 }
@@ -140,6 +292,7 @@ export function inspectAdvancedNumericalReferenceCandidateQualifications({
   candidateSnapshot,
   entrypointHash,
   registryPath = null,
+  registryHash = null,
   now = new Date(),
   runtimeComposer = composeAdvancedNumericalPluginRuntime,
 } = {}) {
@@ -147,42 +300,79 @@ export function inspectAdvancedNumericalReferenceCandidateQualifications({
     'AdvancedNumericalReferenceCandidateManifest',
     candidateManifest,
   );
-  const baseCandidates = candidateManifest.analysisFamilies.map((analysisFamily) => (
-    baseCandidate({
+  const buildBaseCandidates = ({
+    registryConfigured = false,
+    registryPinned = false,
+    observedRegistryHash = null,
+    blockers = [],
+  } = {}) => Object.freeze(
+    candidateManifest.analysisFamilies.map((analysisFamily) => baseCandidate({
       analysisFamily,
       candidateManifest,
       candidateManifestHash,
       candidateSnapshot,
       entrypointHash,
-    })
-  ));
-  if (!registryPath) return Object.freeze(baseCandidates);
+      registryConfigured,
+      registryPinned,
+      registryHash: observedRegistryHash,
+      blockers,
+    })),
+  );
+  if (!registryPath) {
+    return buildBaseCandidates({
+      blockers: [
+        'advanced_numerical_reference_qualification_registry_path_required',
+      ],
+    });
+  }
+  if (!SHA256.test(String(registryHash || ''))) {
+    return buildBaseCandidates({
+      registryConfigured: true,
+      blockers: [
+        'advanced_numerical_reference_qualification_registry_pin_required',
+      ],
+    });
+  }
+  let registryRead;
   let registry;
   try {
-    registry = readImmutableJsonDocument(path.resolve(registryPath));
+    registryRead = readIntegrityAdvancedNumericalJsonDocument(
+      path.resolve(registryPath),
+      { expectedHash: registryHash },
+    );
+    registry = registryRead.value;
     if (!hasExactObjectKeys(registry, REGISTRY_KEYS)
-      || registry.version !== 1
+      || registry.version !== 2
       || registry.kind
         !== 'AdvancedNumericalReferenceCandidateQualificationRegistry'
+      || registry.candidateManifestHash !== candidateManifestHash
+      || registry.candidateSourceMerkleHash !== candidateSnapshot.merkleHash
+      || registry.candidateSourceWorkspaceManifestHash
+        !== candidateSnapshot.manifestHash
       || !Array.isArray(registry.entries)
-      || registry.entries.length !== baseCandidates.length) {
+      || registry.entries.length !== candidateManifest.analysisFamilies.length) {
       throw new Error('advanced_numerical_reference_qualification_registry_invalid');
     }
     const families = registry.entries.map((entry) => entry?.analysisFamily);
-    if (new Set(families).size !== baseCandidates.length
-      || baseCandidates.some((candidate) => !families.includes(candidate.analysisFamily))) {
-      throw new Error('advanced_numerical_reference_qualification_registry_coverage_invalid');
+    if (new Set(families).size !== candidateManifest.analysisFamilies.length
+      || candidateManifest.analysisFamilies.some((analysisFamily) => (
+        !families.includes(analysisFamily)
+      ))) {
+      throw new Error(
+        'advanced_numerical_reference_qualification_registry_coverage_invalid',
+      );
     }
   } catch (error) {
-    return Object.freeze(baseCandidates.map((candidate) => baseCandidate({
-      ...candidate,
-      candidateManifest,
-      candidateManifestHash,
-      candidateSnapshot,
-      entrypointHash,
+    return buildBaseCandidates({
+      registryConfigured: true,
       blockers: [String(error?.message || error)],
-    })));
+    });
   }
+  const baseCandidates = buildBaseCandidates({
+    registryConfigured: true,
+    registryPinned: true,
+    observedRegistryHash: registryRead.fileHash,
+  });
   return Object.freeze(baseCandidates.map((candidate) => {
     const entry = registry.entries.find((item) => (
       item.analysisFamily === candidate.analysisFamily
@@ -193,13 +383,18 @@ export function inspectAdvancedNumericalReferenceCandidateQualifications({
         candidateRoot,
         entry,
         now,
-        registryPath: path.resolve(registryPath),
+        registryPath: registryRead.path,
+        registryHash: registryRead.fileHash,
         runtimeComposer,
       });
     } catch (error) {
-      return Object.freeze({
-        ...candidate,
-        qualificationBlockers: Object.freeze([String(error?.message || error)]),
+      return blockedCandidate(candidate, String(error?.message || error), {
+        registryConfigured: true,
+        registryPinned: true,
+        registryHash: registryRead.fileHash,
+        runtimeConfigurationHash:
+          SHA256.test(String(entry?.runtimeConfigurationHash || ''))
+            ? entry.runtimeConfigurationHash : null,
       });
     }
   }));

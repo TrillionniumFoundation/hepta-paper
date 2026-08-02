@@ -16,6 +16,7 @@ function reviewReceipt({ agentId, attempt }) {
     status: 'agent_execution_completed', agentId, principalId: agentId,
     sessionId: `${agentId}:${attempt}`, structuredOutput,
     finalOutput: JSON.stringify(structuredOutput), externalActionPerformed: false,
+    externalModelInvocationPerformed: false,
   };
   return { ...payload, agentExecutionReceiptHash: hashRecord('AgentExecutionReceipt', payload) };
 }

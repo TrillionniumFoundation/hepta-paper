@@ -16,6 +16,7 @@ import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const IDENTITY_KEYS = Object.freeze([
   'machineIntakeConfigurationHash',
+  'machineIntakeGenesisAuthorityMode',
   'providerCanaryPairMaximumCostUsd',
   'providerConfigurationHash',
   'runtimeReproducibilityRefreshPolicyHash',
@@ -37,6 +38,9 @@ function assertProvisioningIdentity(value) {
   if (!value || typeof value !== 'object' || Array.isArray(value)
     || Object.keys(value).sort().join('\0') !== IDENTITY_KEYS.join('\0')
     || !SHA256.test(String(value.machineIntakeConfigurationHash || ''))
+    || !['external', 'root-owned-configuration'].includes(
+      value.machineIntakeGenesisAuthorityMode,
+    )
     || !SHA256.test(String(value.providerConfigurationHash || ''))
     || !SHA256.test(String(value.runtimeReproducibilityRefreshPolicyHash || ''))
     || !SHA256.test(String(value.topicProducerProfileHash || ''))

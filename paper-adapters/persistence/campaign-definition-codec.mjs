@@ -1,5 +1,8 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { evaluateCampaignReleaseTopology } from '../../paper-domain/automation/campaign-release-topology-policy.mjs';
+import {
+  assertAutonomousResearchDirectLocalRunBudgetWaiverBinding,
+} from '../../paper-domain/automation/autonomous-research-launch-mode-policy.mjs';
 
 export function canonicalCampaignDefinition(spec = {}) {
   const nodes = Array.isArray(spec.nodes) ? spec.nodes : [];
@@ -39,18 +42,36 @@ export function assertCampaignDefinition(spec = {}) {
     || (node.dependencies || []).some((dependency) => !knownNodeIds.has(String(dependency))))) {
     throw new Error('campaign_definition_node_or_dependency_invalid');
   }
+  if (spec.localOnly === true || spec.directLocalRunBudgetWaiver
+    || spec.autonomousResearchPreparation) {
+    assertAutonomousResearchDirectLocalRunBudgetWaiverBinding({
+      launchMode: spec.autonomousResearchPreparation?.launchMode || null,
+      localOnly: spec.localOnly === true,
+      budgets: spec.budgets,
+      waiver: spec.directLocalRunBudgetWaiver || null,
+      campaignId: spec.campaignId,
+      paperId: spec.paperId,
+      preparation: spec.autonomousResearchPreparation || null,
+    });
+  }
   const releaseTopology = evaluateCampaignReleaseTopology({ nodes: spec.nodes });
   if (releaseTopology.blockers.length) {
     throw new Error(`campaign_definition_release_topology_invalid:${releaseTopology.blockers.join(',')}`);
+  }
+  const planHashRequired = releaseTopology.releasePackagingPresent
+    || spec.localOnly === true
+    || Boolean(spec.directLocalRunBudgetWaiver)
+    || Boolean(spec.autonomousResearchPreparation);
+  if (planHashRequired) {
+    const { campaignPlanHash, ...planPayload } = spec;
+    if (!campaignPlanHash || hashRecord('PaperCampaignPlan', planPayload) !== campaignPlanHash) {
+      throw new Error('campaign_definition_plan_hash_invalid');
+    }
   }
   if (releaseTopology.releasePackagingPresent) {
     if (spec.researchVerificationRequired !== true
       || spec.paperQualityRequirements?.researchVerificationRequired !== true) {
       throw new Error('campaign_definition_release_research_requirement_invalid');
-    }
-    const { campaignPlanHash, ...planPayload } = spec;
-    if (!campaignPlanHash || hashRecord('PaperCampaignPlan', planPayload) !== campaignPlanHash) {
-      throw new Error('campaign_definition_plan_hash_invalid');
     }
   }
   return spec;

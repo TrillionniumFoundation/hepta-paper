@@ -16,21 +16,35 @@ const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 const SIGNATURE = /^[A-Za-z0-9+/]{80,120}={0,2}$/;
 const MAXIMUM_PROTOCOL_BYTES = 1024 * 1024;
 const MAXIMUM_PROBE_LIFETIME_MS = 5 * 60 * 1000;
+const SIGNER_PROTOCOL_V1 = 'hepta-release-signer-json-stdio-v1';
+const SIGNER_PROTOCOL_V2 = 'hepta-release-signer-json-stdio-v2';
+const RESERVED_COMMAND_ENVIRONMENT_KEYS = new Set([
+  'HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG',
+  'HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG_HASH',
+]);
 
 export const RESEARCH_EXECUTION_RELEASE_SIGNER_PROBE_ROLE =
   'research_execution_release_signer_backend_probe_attestor';
 
 function fileContentHash(candidate) {
-  const digest = crypto.createHash('sha256');
   const descriptor = fs.openSync(candidate, 'r');
-  const buffer = Buffer.allocUnsafe(1024 * 1024);
   try {
-    let count;
-    do {
-      count = fs.readSync(descriptor, buffer, 0, buffer.length, null);
-      if (count > 0) digest.update(buffer.subarray(0, count));
-    } while (count > 0);
+    return fileDescriptorContentHash(descriptor);
   } finally { fs.closeSync(descriptor); }
+}
+
+function fileDescriptorContentHash(descriptor) {
+  const digest = crypto.createHash('sha256');
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  let offset = 0;
+  let count;
+  do {
+    count = fs.readSync(descriptor, buffer, 0, buffer.length, offset);
+    if (count > 0) {
+      digest.update(buffer.subarray(0, count));
+      offset += count;
+    }
+  } while (count > 0);
   return `sha256:${digest.digest('hex')}`;
 }
 
@@ -48,8 +62,10 @@ function resolveRelative(candidate, configPath) {
 function integrityExecutable(candidate) {
   const requested = path.resolve(String(candidate || ''));
   const resolved = fs.realpathSync(requested);
-  const stat = fs.statSync(resolved);
-  if (requested !== resolved || !stat.isFile() || stat.size < 1
+  const stat = fs.lstatSync(resolved);
+  const currentUid = typeof process.getuid === 'function' ? process.getuid() : stat.uid;
+  if (requested !== resolved || !stat.isFile() || stat.isSymbolicLink()
+    || stat.nlink !== 1 || (stat.uid !== 0 && stat.uid !== currentUid) || stat.size < 1
     || stat.size > 1024 * 1024 * 1024 || (stat.mode & 0o022) !== 0
     || (stat.mode & 0o111) === 0) {
     throw new Error('research_execution_release_attestor_integrity_file_invalid');
@@ -97,6 +113,9 @@ function externalCommand(value, { configPath, environment, protocol, label }) {
     || value.args.some((item) => typeof item !== 'string' || item.length > 4096)
     || !Array.isArray(value.environmentAllowlist || [])
     || value.environmentAllowlist.some((key) => !ENVIRONMENT_KEY.test(String(key)))
+    || value.environmentAllowlist.some((key) => (
+      RESERVED_COMMAND_ENVIRONMENT_KEYS.has(String(key))
+    ))
     || !Number.isSafeInteger(Number(value.timeoutMs))
     || Number(value.timeoutMs) < 1000 || Number(value.timeoutMs) > 300_000) {
     throw new Error(`research_execution_release_attestor_${label}_configuration_invalid`);
@@ -133,35 +152,62 @@ function externalCommand(value, { configPath, environment, protocol, label }) {
   });
 }
 
-function assertCommandIdentity(command, environment) {
-  const executable = fs.realpathSync(command.executable);
-  const stat = fs.statSync(executable);
-  const credential = credentialRootIdentity(command.credentialRoot);
-  const environmentHash = hashRecord(
-    'ResearchExecutionReleaseSignerChildEnvironmentIdentity',
-    childEnvironment(command, environment),
-  );
-  if (executable !== command.executable
-    || String(stat.dev) !== command.executableDevice
-    || String(stat.ino) !== command.executableInode
-    || fileContentHash(executable) !== command.executableContentHash
-    || credential.identityHash !== command.credentialRootIdentityHash
-    || environmentHash !== command.childEnvironmentIdentityHash) {
+function openPinnedCommand(command, environment) {
+  let descriptor;
+  try {
+    descriptor = fs.openSync(
+      command.executable,
+      fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0),
+    );
+    const stat = fs.fstatSync(descriptor);
+    const pathStat = fs.lstatSync(command.executable);
+    const credential = credentialRootIdentity(command.credentialRoot);
+    const environmentHash = hashRecord(
+      'ResearchExecutionReleaseSignerChildEnvironmentIdentity',
+      childEnvironment(command, environment),
+    );
+    if (!stat.isFile() || pathStat.isSymbolicLink()
+      || stat.nlink !== 1
+      || String(stat.dev) !== command.executableDevice
+      || String(stat.ino) !== command.executableInode
+      || String(pathStat.dev) !== command.executableDevice
+      || String(pathStat.ino) !== command.executableInode
+      || fileDescriptorContentHash(descriptor) !== command.executableContentHash
+      || credential.identityHash !== command.credentialRootIdentityHash
+      || environmentHash !== command.childEnvironmentIdentityHash) {
+      throw new Error('identity changed');
+    }
+    return descriptor;
+  } catch {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
     throw new Error('research_execution_release_attestor_backend_command_identity_changed');
   }
 }
 
-function invokeCommand(command, request, { environment, spawnSyncImpl }) {
-  assertCommandIdentity(command, environment);
-  const result = spawnSyncImpl(command.executable, command.args, {
-    cwd: command.configurationDirectory,
-    env: { ...childEnvironment(command, environment) },
-    input: `${JSON.stringify(request)}\n`,
-    encoding: 'utf8',
-    timeout: command.timeoutMs,
-    maxBuffer: MAXIMUM_PROTOCOL_BYTES,
-    windowsHide: true,
-  });
+function invokeCommand(command, request, {
+  environment,
+  spawnSyncImpl,
+  maximumWaitMs = null,
+}) {
+  const descriptor = openPinnedCommand(command, environment);
+  let result;
+  try {
+    const timeoutMs = maximumWaitMs === null
+      ? command.timeoutMs
+      : Math.max(1, Math.min(command.timeoutMs, Math.floor(maximumWaitMs)));
+    result = spawnSyncImpl('/proc/self/fd/3', command.args, {
+      cwd: command.configurationDirectory,
+      env: { ...childEnvironment(command, environment) },
+      input: `${JSON.stringify(request)}\n`,
+      encoding: 'utf8',
+      timeout: timeoutMs,
+      maxBuffer: MAXIMUM_PROTOCOL_BYTES,
+      windowsHide: true,
+      stdio: ['pipe', 'pipe', 'pipe', descriptor],
+    });
+  } finally {
+    fs.closeSync(descriptor);
+  }
   if (result?.error || result?.signal || result?.status !== 0
     || Buffer.byteLength(String(result?.stdout || ''), 'utf8') > MAXIMUM_PROTOCOL_BYTES) {
     throw new Error('research_execution_release_attestor_backend_command_failed');
@@ -208,8 +254,10 @@ function verifyProbe(response, { challengeHash, inspectedAt, descriptor, probeAt
     || response.activeKeyVersion !== activeKey.signer.keyVersion
     || response.activePublicKeySpkiHash !== activeKey.publicKeySpkiHash
     || response.algorithm !== 'ed25519' || response.challengeHash !== challengeHash
-    || response.backendReachable !== true || response.hardwareProtected !== true
-    || response.privateKeyExportable !== false || response.externalSignerProcess !== true
+    || response.backendReachable !== true
+    || response.hardwareProtected !== descriptor.hardwareProtected
+    || response.privateKeyExportable !== descriptor.privateKeyExportable
+    || response.externalSignerProcess !== descriptor.externalSignerProcess
     || response.externalActionPerformed !== true
     || response.externalActionScope !== 'single_read_only_release_signer_backend_challenge'
     || response.signer?.keyId !== probeAttestor.signer.keyId
@@ -243,6 +291,7 @@ function verifyProbe(response, { challengeHash, inspectedAt, descriptor, probeAt
 
 export function createExternalKmsReleaseSignerBackend({
   backendValue,
+  configurationVersion,
   configPath,
   environment,
   spawnSyncImpl,
@@ -252,20 +301,46 @@ export function createExternalKmsReleaseSignerBackend({
   trustSetHash,
   probeAttestor,
 }) {
-  if (!backendValue || backendValue.kind !== 'external-kms-command'
+  const externalKms = backendValue?.kind === 'external-kms-command';
+  const dedicatedUid = backendValue?.kind === 'dedicated-uid-command';
+  const kmsIdentityValues = [
+    backendValue?.kmsProvider,
+    backendValue?.providerAccountIdentityHash,
+    backendValue?.keyResourceIdentityHash,
+    backendValue?.credentialGenerationIdentityHash,
+  ];
+  const kmsIdentityDeclared = kmsIdentityValues.some((value) => value !== undefined);
+  const kmsIdentityValid = SAFE_ID.test(String(backendValue?.kmsProvider || ''))
+    && SHA256.test(String(backendValue?.providerAccountIdentityHash || ''))
+    && SHA256.test(String(backendValue?.keyResourceIdentityHash || ''))
+    && SHA256.test(String(backendValue?.credentialGenerationIdentityHash || ''));
+  if (!backendValue || (!externalKms && !dedicatedUid)
     || !SAFE_ID.test(String(backendValue.backendId || ''))
     || !SAFE_VERSION.test(String(backendValue.backendVersion || ''))
-    || backendValue.algorithm !== 'ed25519' || backendValue.hardwareProtected !== true
-    || backendValue.privateKeyExportable !== false || backendValue.externalSignerProcess !== true
+    || backendValue.algorithm !== 'ed25519'
+    || backendValue.externalSignerProcess !== true
+    || (externalKms && (backendValue.hardwareProtected !== true
+      || backendValue.privateKeyExportable !== false))
+    || (externalKms && kmsIdentityDeclared && !kmsIdentityValid)
+    || (dedicatedUid && (backendValue.hardwareProtected !== false
+      || backendValue.privateKeyExportable !== true
+      || backendValue.assuranceProfile !== 'dedicated-host-uid-unix-socket-v1'
+      || backendValue.threatBoundary !== 'research-runtime-uid'))
     || backendValue.activeKeyId !== activeKey.signer.keyId
     || backendValue.activeKeyVersion !== activeKey.signer.keyVersion
+    || (externalKms && (
+      backendValue.signerCommand?.args?.length !== 0
+      || backendValue.probeCommand?.args?.length !== 0
+      || backendValue.signerCommand?.environmentAllowlist?.length !== 0
+      || backendValue.probeCommand?.environmentAllowlist?.length !== 0
+    ))
     || !SHA256.test(String(trustSetHash || ''))) {
     throw new Error('research_execution_release_attestor_backend_descriptor_invalid');
   }
   const signerCommand = externalCommand(backendValue.signerCommand, {
     configPath,
     environment,
-    protocol: 'hepta-release-signer-json-stdio-v1',
+    protocol: configurationVersion === 3 ? SIGNER_PROTOCOL_V2 : SIGNER_PROTOCOL_V1,
     label: 'signer_command',
   });
   const probeCommand = externalCommand(backendValue.probeCommand, {
@@ -277,7 +352,8 @@ export function createExternalKmsReleaseSignerBackend({
   if (signerCommand.serviceId === probeCommand.serviceId
     || signerCommand.principalId === probeCommand.principalId
     || signerCommand.commandIdentityHash === probeCommand.commandIdentityHash
-    || signerCommand.executableContentHash === probeCommand.executableContentHash
+    || (externalKms
+      && signerCommand.executableContentHash === probeCommand.executableContentHash)
     || signerCommand.credentialRootIdentityHash === probeCommand.credentialRootIdentityHash
     || trustedKeys.some((key) => key.publicKeySpkiHash === probeAttestor.publicKeySpkiHash)) {
     throw new Error('research_execution_release_attestor_independent_backend_probe_required');
@@ -285,14 +361,31 @@ export function createExternalKmsReleaseSignerBackend({
   const descriptor = finalizeDescriptor({
     version: 1,
     kind: 'ResearchExecutionReleaseSignerBackendDescriptor',
-    backendKind: RESEARCH_EXECUTION_RELEASE_SIGNER_BACKEND_KINDS.EXTERNAL_KMS_COMMAND,
+    backendKind: externalKms
+      ? RESEARCH_EXECUTION_RELEASE_SIGNER_BACKEND_KINDS.EXTERNAL_KMS_COMMAND
+      : RESEARCH_EXECUTION_RELEASE_SIGNER_BACKEND_KINDS.DEDICATED_UID_COMMAND,
     backendId: String(backendValue.backendId),
     backendVersion: String(backendValue.backendVersion),
     algorithm: 'ed25519',
-    hardwareProtected: true,
-    privateKeyExportable: false,
+    hardwareProtected: backendValue.hardwareProtected,
+    privateKeyExportable: backendValue.privateKeyExportable,
     externalSignerProcess: true,
     productionEligible: true,
+    assuranceProfile: externalKms
+      ? kmsIdentityValid
+        ? 'external-hardware-kms-control-plane-bindable-v2'
+        : 'operator-declared-external-hardware-kms-nonexportable-v1'
+      : backendValue.assuranceProfile,
+    threatBoundary: externalKms ? 'external-kms-control-plane' : backendValue.threatBoundary,
+    ...(externalKms && kmsIdentityValid ? {
+      kmsProvider: String(backendValue.kmsProvider),
+      providerAccountIdentityHash:
+        String(backendValue.providerAccountIdentityHash).toLowerCase(),
+      keyResourceIdentityHash:
+        String(backendValue.keyResourceIdentityHash).toLowerCase(),
+      credentialGenerationIdentityHash:
+        String(backendValue.credentialGenerationIdentityHash).toLowerCase(),
+    } : {}),
     activeKeyId: activeKey.signer.keyId,
     activeKeyVersion: activeKey.signer.keyVersion,
     activePublicKeySpkiHash: activeKey.publicKeySpkiHash,
@@ -328,15 +421,26 @@ export function createExternalKmsReleaseSignerBackend({
       });
       return Object.freeze({ verified, attestation: verified ? response : null });
     },
-    signDigest({ signingPayloadHash, keyId, keyVersion } = {}) {
+    signDigest({
+      signingPayloadHash,
+      keyId,
+      keyVersion,
+      authorizationExpiresAt = null,
+      maximumWaitMs = null,
+    } = {}) {
+      const deadline = canonicalTimestamp(authorizationExpiresAt);
+      const deadlineProtocol = signerCommand.protocol === SIGNER_PROTOCOL_V2;
       if (!SHA256.test(String(signingPayloadHash || ''))
-        || keyId !== activeKey.signer.keyId || keyVersion !== activeKey.signer.keyVersion) {
+        || keyId !== activeKey.signer.keyId || keyVersion !== activeKey.signer.keyVersion
+        || (deadlineProtocol && (deadline === null
+          || !Number.isFinite(Number(maximumWaitMs))
+          || Number(maximumWaitMs) < 1))) {
         throw new Error('research_execution_release_attestor_signing_request_invalid');
       }
       const requestNonce = randomBytesImpl(32).toString('base64');
       const requestNonceHash = hashBytes(Buffer.from(requestNonce, 'utf8'));
       const response = invokeCommand(signerCommand, {
-        version: 1,
+        version: deadlineProtocol ? 2 : 1,
         kind: 'ResearchExecutionReleaseSignerRequest',
         protocol: signerCommand.protocol,
         operation: 'sign-sha256-identity',
@@ -349,15 +453,27 @@ export function createExternalKmsReleaseSignerBackend({
         signingPayloadHash,
         requestNonce,
         requestNonceHash,
-      }, { environment, spawnSyncImpl });
+        ...(deadlineProtocol ? { authorizationExpiresAt } : {}),
+      }, {
+        environment,
+        spawnSyncImpl,
+        maximumWaitMs: deadlineProtocol ? Number(maximumWaitMs) : null,
+      });
       const { researchExecutionReleaseSignerResponseHash: responseHash, ...payload } = response || {};
-      if (response?.version !== 1 || response?.kind !== 'ResearchExecutionReleaseSignerResponse'
+      const signedAt = deadlineProtocol ? canonicalTimestamp(response?.signedAt) : null;
+      if (response?.version !== (deadlineProtocol ? 2 : 1)
+        || response?.kind !== 'ResearchExecutionReleaseSignerResponse'
         || response?.status !== 'research_execution_release_digest_signed'
         || response?.backendDescriptorHash !== descriptor.researchExecutionReleaseSignerBackendDescriptorHash
         || response?.backendId !== descriptor.backendId || response?.backendVersion !== descriptor.backendVersion
         || response?.keyId !== keyId || response?.keyVersion !== keyVersion
         || response?.algorithm !== 'ed25519' || response?.signingPayloadHash !== signingPayloadHash
-        || response?.requestNonceHash !== requestNonceHash || !SIGNATURE.test(String(response?.signature || ''))
+        || response?.requestNonceHash !== requestNonceHash
+        || (deadlineProtocol && (
+          response.authorizationExpiresAt !== authorizationExpiresAt
+          || signedAt === null || signedAt >= deadline
+        ))
+        || !SIGNATURE.test(String(response?.signature || ''))
         || hashRecord('ResearchExecutionReleaseSignerResponse', payload) !== responseHash) {
         throw new Error('research_execution_release_attestor_backend_signing_response_invalid');
       }

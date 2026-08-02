@@ -1,7 +1,7 @@
 [Unit]
 Description=Hepta Paper autonomous research supervisor
-Requires=hepta-paper-host-bootstrap.service autonomous-submission-handoff-layout-provision.service
-After=hepta-paper-host-bootstrap.service autonomous-submission-handoff-layout-provision.service network-online.target docker.service
+Requires=hepta-paper-host-bootstrap.service autonomous-submission-handoff-layout-provision.service hepta-paper-state-authority.service
+After=hepta-paper-host-bootstrap.service autonomous-submission-handoff-layout-provision.service hepta-paper-state-authority.service network-online.target docker.service
 Wants=autonomous-submission-handoff-layout-provision.path network-online.target docker.service
 StartLimitIntervalSec=0
 

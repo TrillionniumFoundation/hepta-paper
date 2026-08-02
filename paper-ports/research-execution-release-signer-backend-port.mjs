@@ -5,9 +5,25 @@ const SAFE_VERSION = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,159}$/;
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 
 export const RESEARCH_EXECUTION_RELEASE_SIGNER_BACKEND_KINDS = Object.freeze({
+  DEDICATED_UID_COMMAND: 'dedicated-uid-command',
   EXTERNAL_KMS_COMMAND: 'external-kms-command',
   LOCAL_FILE: 'local-file',
 });
+
+export function researchExecutionReleaseSignerBackendProductionAssuranceReady(descriptor) {
+  if (descriptor?.productionEligible !== true || descriptor?.externalSignerProcess !== true
+    || descriptor?.credentialMaterialReadByMainProcess !== false) return false;
+  if (descriptor.backendKind === RESEARCH_EXECUTION_RELEASE_SIGNER_BACKEND_KINDS
+    .EXTERNAL_KMS_COMMAND) {
+    return descriptor.hardwareProtected === true && descriptor.privateKeyExportable === false;
+  }
+  return descriptor.backendKind === RESEARCH_EXECUTION_RELEASE_SIGNER_BACKEND_KINDS
+    .DEDICATED_UID_COMMAND
+    && descriptor.hardwareProtected === false
+    && descriptor.privateKeyExportable === true
+    && descriptor.assuranceProfile === 'dedicated-host-uid-unix-socket-v1'
+    && descriptor.threatBoundary === 'research-runtime-uid';
+}
 
 export function researchExecutionReleaseSignerBackendDescriptorHash(descriptor) {
   if (!descriptor || typeof descriptor !== 'object') return null;
@@ -17,6 +33,14 @@ export function researchExecutionReleaseSignerBackendDescriptorHash(descriptor) 
 
 export function assertResearchExecutionReleaseSignerBackendDescriptor(descriptor) {
   const expectedHash = researchExecutionReleaseSignerBackendDescriptorHash(descriptor);
+  const kmsIdentityFields = [
+    descriptor?.kmsProvider,
+    descriptor?.providerAccountIdentityHash,
+    descriptor?.keyResourceIdentityHash,
+    descriptor?.credentialGenerationIdentityHash,
+  ];
+  const kmsIdentityFieldCount = kmsIdentityFields
+    .filter((value) => value !== undefined).length;
   if (!descriptor || descriptor.version !== 1
     || descriptor.kind !== 'ResearchExecutionReleaseSignerBackendDescriptor'
     || !Object.values(RESEARCH_EXECUTION_RELEASE_SIGNER_BACKEND_KINDS)
@@ -33,14 +57,21 @@ export function assertResearchExecutionReleaseSignerBackendDescriptor(descriptor
     || !SHA256.test(String(descriptor.activePublicKeySpkiHash || ''))
     || !SHA256.test(String(descriptor.trustSetHash || ''))
     || !SHA256.test(String(descriptor.commandIdentityHash || ''))
+    || (descriptor.backendKind
+      === RESEARCH_EXECUTION_RELEASE_SIGNER_BACKEND_KINDS.EXTERNAL_KMS_COMMAND
+      ? kmsIdentityFieldCount !== 0 && (
+        kmsIdentityFieldCount !== kmsIdentityFields.length
+        || !SAFE_ID.test(String(descriptor.kmsProvider || ''))
+        || !SHA256.test(String(descriptor.providerAccountIdentityHash || ''))
+        || !SHA256.test(String(descriptor.keyResourceIdentityHash || ''))
+        || !SHA256.test(String(descriptor.credentialGenerationIdentityHash || ''))
+      )
+      : kmsIdentityFieldCount !== 0)
     || descriptor.researchExecutionReleaseSignerBackendDescriptorHash !== expectedHash) {
     throw new Error('ResearchExecutionReleaseSignerBackendDescriptor v1 is required');
   }
   if (descriptor.productionEligible === true
-    && (descriptor.backendKind !== RESEARCH_EXECUTION_RELEASE_SIGNER_BACKEND_KINDS.EXTERNAL_KMS_COMMAND
-      || descriptor.hardwareProtected !== true
-      || descriptor.privateKeyExportable !== false
-      || descriptor.externalSignerProcess !== true)) {
+    && !researchExecutionReleaseSignerBackendProductionAssuranceReady(descriptor)) {
     throw new Error('research_execution_release_signer_backend_production_assurance_invalid');
   }
   return descriptor;

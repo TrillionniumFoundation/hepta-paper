@@ -9,7 +9,10 @@ hepta-paper operator autonomous-supervisor -- --require-fully-autonomous --machi
 For deployment admission, `automation-status --require-fully-autonomous`
 returns exit code 4 until full research qualification, current machine intake,
 and the resident supervisor are all ready. It performs no provider canary unless
-that separate live-canary flag is explicitly requested.
+that separate live-canary flag is explicitly requested. It also performs no
+sealed Mathlib copy or Lean kernel probe during an ordinary status read:
+`--live-formal-sandbox-probe` is the explicit first-qualification/renewal
+action, while passive reads require its current 24-hour hash-bound receipt.
 
 An operator observing the service from outside systemd must pass the same
 non-secret policy file explicitly:
@@ -200,6 +203,16 @@ the same authorization cannot repeat the action and is consumed only by the
 subsequent campaign execution boundary. Passive `prepare` and `status` never
 activate the external release-attestor challenge.
 
+The release signer may use an external hardware KMS/HSM or the bundled
+dedicated-UID Unix-socket backend. The dedicated-UID profile keeps both signer
+and probe private keys outside the research process and requires a live
+independent probe plus active-key challenge. It is bounded-production eligible
+only for the declared `research-runtime-uid` threat boundary. Fully production
+ready status requires the external hardware-protected, non-exportable KMS/HSM
+profile. Reports remain explicit that the dedicated-UID key is exportable by
+its owning service UID or root and does not resist root, hypervisor, or
+host-snapshot rollback.
+
 Supervisor cooldown timestamps are durable. A replacement process does not
 require an operator or machine `resume` command: it waits until the persisted
 timestamp, then dispatches the existing campaign through the bounded `resume`
@@ -232,24 +245,31 @@ fail-closed on a durable authority mismatch. Rotate an existing persistent
 runtime only through the offline maintenance command, with the resident service
 stopped and automatic restart temporarily disabled.
 
-The external governance anchor is a deployment prerequisite, not resident
-state. Before fresh version-2 initialization or rotation, an independent
-operator must provision these public-only documents at the fixed root
+Fresh production initialization does not require a synthetic external genesis
+ceremony. It binds the exact root-owned, non-symlink configuration files
+`/etc/hepta-paper/intake/config.json` and
+`/etc/hepta-paper/intake/topic-producer-profile.json`; every path component
+must be root-owned and must not be group- or world-writable. The service
+identity receives read access only, and the resulting genesis row records the
+two content hashes.
+
+The external governance anchor is required only when rotating an existing
+persistent runtime. Before rotation, an independent operator must provision
+these public-only documents at the fixed root
 `/etc/hepta-paper/authority-rotation`:
 
 - `AUTHORITY_TRUST_STORE.json`
 - `OWNER_TRUST_STORE.json`
 - `AUTONOMOUS_RESEARCH_INTAKE_AUTHORITY_BOOTSTRAP.json`
-- `AUTONOMOUS_RESEARCH_INTAKE_AUTHORITY_GENESIS.json`
 
 Every path component from `/` through that directory must be root-owned and
 must not be group- or world-writable. Each document must be a root-owned,
 non-symlink regular file with link count one and no group/world write bit. The
 service identity needs read access only. The resident never creates this root,
 generates a key, signs a document, or copies the anchor into writable runtime
-state. Genesis and bootstrap authorization require distinct
-`capability_owner` and `operational_observer` signatures; the rotation intent
-requires an `autonomous_research_intake_authority_rotator` signature.
+state. Bootstrap authorization requires distinct `capability_owner` and
+`operational_observer` signatures; the rotation intent requires an
+`autonomous_research_intake_authority_rotator` signature.
 
 First generate a zero-write plan against the exact staged, immutable target
 files. The maintenance environment must set the same canonical
@@ -322,6 +342,13 @@ the dedicated handoff PVC at the canonical nested path.
 
 For systemd, first provision the referenced public configuration, private
 provider/dispatcher environment files, authority roots, and immutable assets.
+The release-attestor signer/probe files must both use strict daemon
+configuration v2 with an explicit `socketPolicy`; v1 is intentionally rejected.
+Follow the no-downtime v1→v2 staging and candidate pair-preflight sequence in
+`paper-core/docs/operational-process-entrypoints.md` before invoking the
+installer. The installer performs that read-only preflight before compilation,
+target writes, unit reload, or service restart, so an old or incoherent pair
+cannot partially deploy the candidate or stop the active daemons.
 Then run the checked-in machine installer:
 
 ```sh
@@ -387,13 +414,15 @@ a divergent private store.
 anchor read-only to the resident, so external governance must stage or replace
 it before starting the service, not from inside the unit.
 
-Startup continuously rereads the fixed documents. Persisted genesis signatures
-are evaluated at their signed `validFrom`; persisted bootstrap and intent
-signatures, key windows, and document lifetimes are evaluated at the signed
-intent `validFrom`, which is the authority-effective `rotatedAt`. Thus a sound
-historical receipt remains verifiable after a key or document's ordinary
-validity window has elapsed, while replacement, removal, shape drift, or
-signature drift of the fixed external anchor still fails closed.
+Fresh startup continuously revalidates the fixed root-owned intake
+configuration/profile paths and their content hashes. After an external
+rotation, startup also rereads the fixed governance documents. Persisted
+bootstrap and intent signatures, key windows, and document lifetimes are
+evaluated at the signed intent `validFrom`, which is the authority-effective
+`rotatedAt`. Thus a sound historical rotation receipt remains verifiable after
+a key or document's ordinary validity window has elapsed, while replacement,
+removal, shape drift, or signature drift of the fixed external anchor still
+fails closed.
 
 The local append-only trigger and receipt hash detect ordinary corruption but
 are not an external monotonic-head service: a database owner can replace the
@@ -402,22 +431,30 @@ again eligible for a valid signed genesis. Exporting a receipt after commit, or
 adding a static fifth `HEAD` file, does not close this boundary because either
 ordering leaves a crash window between the external head and SQLite commit.
 
-Accordingly, deployment is **No-Go** when the threat model requires protection
-against writable-runtime snapshot rollback/replacement. Closing that threat
-requires an independently administered, linearizable authority-head broker
-that externally creates and binds each `databaseInstanceId`. Advancing only the
-machine-intake authority generation is insufficient: an old snapshot from the
-same generation can also roll back intake rows, leases, budgets and external
-action journals. Every trust-bearing SQLite transaction across the runtime must
-therefore reserve the next global and per-database mutation sequence before its
-durable commit. The reservation must bind the schema identity, canonical
-pre/post logical-state hashes, a replayable SQLite changeset and the exact
-domain authorization/side-effect reservations; the same SQLite transaction
-records that reservation before commit, and only then may the broker finalize
-it. The broker must maintain an authoritative database-scope inventory and
+Accordingly, protecting against rollback by the `hepta-paper` research UID
+requires a linearizable authority head controlled by a different security
+identity. The bundled `hepta-paper-state-authority` service satisfies that
+boundary when its private key and monotonic database are owned by the dedicated
+authority UID and the research service can access only its restricted Unix
+socket. A remotely administered broker implements the same protocol for a
+stronger control-domain boundary.
+
+The same-host profile remains **No-Go** when the threat model includes host
+root, hypervisor, storage-controller, or whole-machine snapshot
+rollback/replacement; that requires remote durable authority state and
+optionally HSM/KMS-backed signing. Advancing only the machine-intake authority
+generation is insufficient: an old snapshot from the same generation can also
+roll back intake rows, leases, budgets and external action journals. Every
+trust-bearing SQLite transaction across the runtime must therefore reserve the
+next global and per-database mutation sequence before its durable commit. The
+reservation must bind the schema identity, canonical pre/post logical-state
+hashes, a replayable SQLite changeset and the exact domain
+authorization/side-effect reservations; the same SQLite transaction records
+that reservation before commit, and only then may the authority finalize it.
+The authority must maintain an authoritative database-scope inventory and
 validate mutations or require an authorization unavailable to the database
-writer. A local caller-controlled sequence service is not an independent
-authority.
+writer. A caller-controlled sequence service running as the research UID is
+not an independent authority.
 
 The operational backup surface is `automation:autonomous-research-state-backup`.
 Its versioned database manifest is
@@ -425,23 +462,23 @@ Its versioned database manifest is
 SQLite state below `runtimeRoot/autonomous-research` blocks backup. `status`
 checks the main store, machine intake, topic producer, supervisor, resident,
 runtime-refresh, both monotonic publication databases, and the singleton
-external-qualification database. `backup` requires an external broker process
+external-qualification database. `backup` requires an independent authority process
 configuration whose executable and Ed25519 public-key document are pinned by
 SHA-256. There is no local `--force` or boolean substitute.
 
-The broker must return a signed reservation over the exact database inventory
+The authority must return a signed reservation over the exact database inventory
 and scope, a linearizable authority head, and an expiring mutation fence. The
 backup implementation re-inspects that inventory after reservation, uses the
 SQLite backup API for every database, verifies quick-check, foreign keys,
 schema and content hashes, then re-inspects every source before requesting a
 signed finalization over the complete snapshot-content hash. Only that
 finalization can publish an `autonomous_research_state_backup_recorded` bundle.
-Partial staging after an externally finalized publication failure is retained
+Partial staging after an authority-finalized publication failure is retained
 for explicit recovery and is never reported as a successful backup.
 
 `restore-drill` copies every bundle database into a temporary root and repeats
 all integrity checks without mutating production state. It additionally
-requires a fresh signed external restore-validation fence. A missing signature,
+requires a fresh signed restore-validation fence. A missing signature,
 incomplete scope, expired fence, tampered database, foreign-key violation, or a
 live authority head newer or different from the bundle blocks the drill. A
 stale bundle is therefore recoverable evidence, but cannot be presented as a
@@ -455,7 +492,7 @@ candidates are reported with non-sensitive audit codes and hashed directory
 names. It fails closed when no valid bundle exists; the former raw-main-store
 source is not treated as a complete autonomous-system snapshot. Source
 resolution requires the pinned authority configuration and re-verifies all
-three external signatures without calling the broker; the WORM command accepts
+three authority signatures without calling the authority service; the WORM command accepts
 `--authority-config` or
 `HEPTA_AUTONOMOUS_RESEARCH_STATE_BACKUP_AUTHORITY_CONFIG`.
 
@@ -467,15 +504,16 @@ online DML operations plus 72 explicitly offline schema/genesis or
 cross-database maintenance operations. Production nevertheless
 remains No-Go for same-UID whole-database anti-rollback until the deployed
 databases have the signed schema-transition receipt, all ten roles reconcile
-through the configured external broker, runtime activation verifies the
+through the configured independent authority, runtime activation verifies the
 current signed head and scope, and a current restore-drill receipt is present.
 Signed backup fencing cannot be used as a local readiness bypass. Explicit
 offline maintenance and non-strict compatibility factories remain outside this
-claim and require quiescence/deployment isolation.
+claim and require quiescence/deployment isolation. A same-host authority remains
+No-Go for the stronger host-root or full-machine rollback threat model.
 
-Startup and crash recovery compare every locally bound database with the broker
+Startup and crash recovery compare every locally bound database with the authority
 and idempotently finalize an already committed, cryptographically bound local
-marker. A broker reservation with no local marker is never replayed. It is
+marker. An authority reservation with no local marker is never replayed. It is
 automatically aborted only under a database write lock after its signature and
 manifest binding are verified and the exact local database
 sequence/hash/schema/state still equal the signed pre-commit head. The signed
@@ -483,9 +521,9 @@ abort is then confirmed by a second unresolved-reservation observation. Any
 head drift or commit ambiguity preserves the remote evidence and blocks
 startup. Missing, old, or divergent local state against a finalized remote head
 is also rejected. Provider or KMS actions may run only after their marker
-transaction is externally finalized. Code-level
+transaction is authority-finalized. Code-level
 strict-profile writer coverage is necessary but not sufficient: without
-successful production activation and current external evidence, do not
+successful production activation and current authority evidence, do not
 describe the deployment, this backup command, or fixed root files as same-UID
 whole-database anti-rollback protection. A WORM export remains useful audit
 evidence, but is not a substitute for the online monotonic-head gate.
@@ -493,7 +531,7 @@ evidence, but is not a substitute for the online monotonic-head gate.
 The separately registered `autonomous-state-backup` operator command closes the
 backup *scope* over the canonical trust-database inventory and can validate a
 restore drill against a fresh signed head. It intentionally cannot mint that
-head and does not weaken the No-Go statement above: the external broker may
+head and does not weaken the No-Go statement above: the independent authority may
 attest a write fence only after all registered writers participate in the
 online protocol (or an equivalent external write freeze is active). See
 [`autonomous-research-state-backup.md`](autonomous-research-state-backup.md).
@@ -569,16 +607,21 @@ templates, not permission to infer missing values):
 - `HEPTA_DYNAMIC_FORMAL_CLAIMS_ENABLED=1`
 - `HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG`
 - `HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG_HASH`
-- `HEPTA_REVIEWER_PRINCIPAL_POOL_CONFIG`
+- `HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG`
+- `HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG_HASH`
 - `HEPTA_PRIOR_ART_SERVICE_CONFIG`
+- `HEPTA_PRIOR_ART_SERVICE_CONFIG_HASH`
 - `HEPTA_EXTERNAL_REPLAY_CONFIG`
+- `HEPTA_EXTERNAL_REPLAY_CONFIG_HASH`
 - `HEPTA_AUTONOMOUS_VENUE_PROFILE_CONFIG`
 - `HEPTA_AUTONOMOUS_VENUE_PROFILE_CONFIG_HASH`
 - `HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_CONFIG`
 - `HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIGURATION_HASH`
+- `HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_HASH`
 - `HEPTA_AUTONOMOUS_SUBMISSION_METADATA_CONFIG`
 - `HEPTA_AUTONOMOUS_SUBMISSION_METADATA_CONFIG_HASH`
 - `HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG`
+- `HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG_HASH`
 - `HEPTA_AUTONOMOUS_RESEARCH_ONLINE_MUTATION_AUTHORITY_PROCESS_CONFIG`
 - `HEPTA_AUTONOMOUS_RESEARCH_ONLINE_MUTATION_AUTHORITY_CONFIG`
 - `HEPTA_AUTONOMOUS_RESEARCH_STATE_BACKUP_AUTHORITY_CONFIG`
@@ -592,16 +635,64 @@ templates, not permission to infer missing values):
 - `--qualification-action-safety-margin-ms` (at least `900000`)
 - `--require-fully-autonomous`
 
-The author identity hash is an out-of-band deployment pin over the exact
-regular-file configuration, including its trust store and signed identity
-envelope. It must equal that document's `configurationHash`; replacing the
-document and embedded trust root together therefore fails before the first
-provider call. The pinned subject binds the active author role, provider
-credential identity, and platform identity. Author and reviewer may share the
-same provider-auth root. Composition establishes scientific review independence
-with distinct role IDs, fresh ephemeral no-resume sessions, forbidden author
-context inheritance, read-only reviewer execution, and frozen artifact hashes.
-It passes the canonical author subject and envelope to prior-art verification.
+The runtime reproducibility hash is not a self-asserted file checksum. It must
+equal the independently reviewed `configurationIdentityHash` emitted by a
+bounded `status` inspection for the exact resolved dual-verifier process, trust,
+credential-root, and backend identities. Missing or drifted pins block status
+before the receipt authority is read and block refresh before either external
+builder is invoked.
+
+By default the bounded author identity is content-addressed from the live provider
+capability receipt, role ID, credential-root identity, inherited model
+selection, and the mandatory fresh-ephemeral/no-resume policy. Author and
+reviewer may share the same provider-auth root. Scientific review independence
+comes from distinct role IDs, a new reviewer session for every review round,
+forbidden author-context inheritance, read-only reviewer execution, and frozen
+artifact hashes. This bounded autonomous-research profile requires no second
+provider account or external reviewer trust domain.
+
+`HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG`,
+`HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG_HASH` are mandatory for fully production
+ready status. Version 2 pins the stable provider account, principal,
+credential-root, platform signer and authority trust policy. Its short-lived
+host/process/challenge subject and signed envelope can rotate under that policy
+without an operator changing the pin. Version 1 exact-envelope pins remain
+bounded-only.
+`HEPTA_REVIEWER_PRINCIPAL_POOL_CONFIG` remains an optional stronger compliance
+override and retains its external signature and identity-separation checks.
+Missing author attestation never causes the session-isolated bounded profile to
+impersonate an external platform attestation.
+
+`HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG_HASH` pins the resolved
+release-attestor configuration identity out of band. That identity includes
+the selected trust/probe keys, executable and credential-root identities,
+restricted child environment, backend descriptor and stable v3 KMS
+hardware-authority policy. Changing those dependencies breaks the pin even
+when the JSON bytes are unchanged. A fresh control-plane-signed
+hardware/non-exportability bundle is verified against that stable policy on
+every read. Its path, trust policy and KMS identities remain stable, so the
+bundle can be atomically replaced without rewriting the release configuration
+or changing the out-of-band deployment pin. No external KMS probe, signer
+challenge or signing call is allowed while the semantic pin is absent or
+mismatched. Full production also requires that fresh attestation; the
+self-declared version-2 profile remains bounded and performs no live KMS
+action. Live commands are reopened, rehashed and invoked through a pinned file
+descriptor to remove the pathname replacement window. Version-3 signer
+requests bind the current authorization deadline, and returned signatures are
+accepted only after the clock, configuration, key and KMS authority are
+revalidated. The deployment must still independently pin or attest interpreter,
+dynamic-library, module, certificate-store and credential-root content closure.
+A production handoff accepts the release-attestor atom only from a
+record-hash-valid live inspection no more than two minutes old and before the
+control-plane subject expires.
+
+`HEPTA_PRIOR_ART_SERVICE_CONFIG_HASH` and
+`HEPTA_EXTERNAL_REPLAY_CONFIG_HASH` are also mandatory out-of-band pins for
+fully production ready status. The prior-art service must expose the signed
+ranked/deduplicated v2 authority chain. External replay must use configuration
+version 4, retain the signed off-host identity separation from v3, and provide
+signed lookup/resume recovery outcomes for the exact operation and idempotency
+identities. An unpinned configuration or replay version 3 remains bounded-only.
 
 The venue and submission-metadata hashes are independent out-of-band pins over
 signed configuration documents. Strong production accepts only venue registry
@@ -614,8 +705,9 @@ The process configuration, qualification configuration, release-attestor
 configuration, declared-capability configuration, and provider credential
 roots are separate read-only mounts. Configuration readers require regular
 files and reject projected symlinks. The research supervisor receives only the
-public submission portal descriptor and its out-of-band configuration-hash
-pin. That descriptor deliberately omits the endpoint and token-variable name.
+public submission portal descriptor, its out-of-band configuration-hash pin,
+and its independent descriptor-hash pin. That descriptor deliberately omits
+the endpoint and token-variable name.
 It never mounts the complete portal configuration or the portal-token Secret.
 
 Live submission is owned by a second OS/Kubernetes principal running
@@ -633,6 +725,14 @@ lease and outbox guarantees. The two principals share only the dedicated
 runtime handoff group. The native runtime root is not setgid; only the handoff
 root is setgid, so its SQLite, WAL and SHM files inherit the shared group and
 remain inaccessible to all other users.
+
+Full production dispatch additionally requires portal configuration v3,
+current signed platform identity separation, and a no-side-effect canary whose
+signing subject and Ed25519 SPKI differ from the dispatcher cycle signer. The
+cycle binds the original local verification time and receipt hash so the
+research-side readiness process can replay that verification and then perform
+a fresh independent verification. Dispatchable handoffs remain blocked when no
+fresh externally published challenge is pending.
 
 The auditable templates are:
 

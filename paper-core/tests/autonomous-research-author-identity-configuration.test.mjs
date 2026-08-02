@@ -24,6 +24,8 @@ import {
   composeAutonomousResearchExternalCapabilities,
 } from '../../paper-composition/automation/autonomous-research-external-capability-composition.mjs';
 import {
+  autonomousResearchAuthorIdentitySubjectHash,
+  inspectAutonomousResearchAuthorRuntimeIdentity,
   inspectAutonomousResearchRuntimePrincipals,
 } from '../../paper-composition/automation/autonomous-research-runtime-principal-preflight.mjs';
 import {
@@ -458,6 +460,100 @@ test('author identity configuration is pinned, file-safe, and bound to the live 
   }
 });
 
+test('v2 author policy pin survives short-lived attestation rotation', () => {
+  const selected = fixture();
+  const initial = buildAutonomousResearchAuthorIdentityConfiguration({
+    version: 2,
+    subject: selected.subject,
+    authorityEnvelope: signedEnvelope(selected.pair, selected.subject),
+    trustStore: selected.configuration.trustStore,
+    signerKeyIds: ['author-identity-key'],
+    maximumLifetimeMs: 5 * 60 * 1000,
+  });
+  const rotatedSubject = buildExternalPrincipalIdentityAttestationSubject({
+    ...selected.subject,
+    hostIdentityHash: H('rotated-author-host'),
+    processIdentityHash: H('rotated-author-process'),
+    challengeHash: H('rotated-author-challenge'),
+  });
+  const rotated = buildAutonomousResearchAuthorIdentityConfiguration({
+    version: 2,
+    subject: rotatedSubject,
+    authorityEnvelope: signedEnvelope(selected.pair, rotatedSubject),
+    trustStore: selected.configuration.trustStore,
+    signerKeyIds: ['author-identity-key'],
+    maximumLifetimeMs: 5 * 60 * 1000,
+  });
+  assert.notEqual(
+    initial.subject.externalPrincipalIdentityAttestationSubjectHash,
+    rotated.subject.externalPrincipalIdentityAttestationSubjectHash,
+  );
+  assert.notEqual(initial.authorityEnvelope.subjectHash, rotated.authorityEnvelope.subjectHash);
+  assert.equal(initial.configurationHash, rotated.configurationHash);
+  const inspection = inspectAutonomousResearchAuthorIdentity({
+    configuration: rotated,
+    author: selected.author,
+    now: NOW,
+    expectedConfigurationHash: initial.configurationHash,
+  });
+  assert.equal(inspection.ready, true);
+  assert.equal(inspection.configurationVersion, 2);
+  assert.equal(inspection.stablePolicyPinned, true);
+  assert.match(inspection.stableIdentityPolicyHash, /^sha256:[0-9a-f]{64}$/);
+
+  const changedAccountSubject = buildExternalPrincipalIdentityAttestationSubject({
+    ...rotatedSubject,
+    providerAccountIdentityHash: H('different-provider-account'),
+  });
+  const changedAccount = buildAutonomousResearchAuthorIdentityConfiguration({
+    version: 2,
+    subject: changedAccountSubject,
+    authorityEnvelope: signedEnvelope(selected.pair, changedAccountSubject),
+    trustStore: selected.configuration.trustStore,
+    signerKeyIds: ['author-identity-key'],
+    maximumLifetimeMs: 5 * 60 * 1000,
+  });
+  assert.notEqual(initial.configurationHash, changedAccount.configurationHash);
+});
+
+test('fresh author sessions provide the default runtime identity without external account attestation', () => {
+  const capabilityPayload = {
+    version: 1,
+    kind: 'CodexResearchAuthorCapabilityReceipt',
+    status: 'codex_research_author_capability_ready',
+    provider: 'openai',
+    model: 'inherited-main-agent-model',
+    credentialRootIdentityHash: H('session-author-credential-root'),
+    credentialConfigIdentityHash: H('session-author-credential-config'),
+    freshEphemeralSessionRequired: true,
+    priorAgentContextInheritanceForbidden: true,
+  };
+  const author = Object.freeze({
+    effectivePrincipalId: 'codex-research-author:session-fixture',
+    capabilityReceipt: Object.freeze({
+      ...capabilityPayload,
+      codexResearchAuthorCapabilityReceiptHash:
+        hashRecord('CodexResearchAuthorCapabilityReceipt', capabilityPayload),
+    }),
+  });
+  const inspection = inspectAutonomousResearchAuthorRuntimeIdentity({
+    environment: {},
+    author,
+  });
+  assert.equal(inspection.ready, true);
+  assert.equal(inspection.identityMode, 'fresh-ephemeral-session-policy');
+  assert.equal(inspection.sessionIsolationReady, true);
+  assert.equal(inspection.cryptographicAuthorityReady, false);
+  assert.equal(inspection.authorityEnvelope, null);
+  assert.equal(
+    autonomousResearchAuthorIdentitySubjectHash(inspection),
+    inspection.subject.autonomousResearchAuthorSessionIdentitySubjectHash,
+  );
+  assert.equal(inspection.subject.principalId, author.effectivePrincipalId);
+  assert.equal(inspection.subject.capabilityReceiptHash,
+    author.capabilityReceipt.codexResearchAuthorCapabilityReceiptHash);
+});
+
 test('author identity rejects expiry, trust substitution, and a symlinked config', () => {
   const selected = fixture();
   assert.throws(() => inspectAutonomousResearchAuthorIdentity({
@@ -589,6 +685,8 @@ test('production composition shares one pinned author identity with reviewer and
     kind: 'PriorArtRetrievalPort',
     evidenceProfile: 'structured-ranked-deduplicated-v2',
     configurationHash: priorAuthority.authorityBundle.configurationHash,
+    configurationPinned: true,
+    fullProductionReady: true,
     cryptographicAuthorityReady: true,
     identityIndependenceReady: true,
     trustSetHash: priorAuthority.trustConfiguration.trustSetHash,
@@ -611,6 +709,9 @@ test('production composition shares one pinned author identity with reviewer and
   });
   const externalReplay = Object.freeze({
     configurationHash: H('external-replay-config'),
+    configurationPinned: true,
+    crashRecoveryReady: true,
+    fullProductionReady: true,
     identitySeparationInspection: Object.freeze({
       localOriginIdentitySubjects: Object.freeze([authorSubject]),
     }),
@@ -623,6 +724,8 @@ test('production composition shares one pinned author identity with reviewer and
     version: 1,
     kind: 'AutonomousSubmissionPortalPort',
     configurationHash: H('submission-portal-config'),
+    configurationPinned: true,
+    fullProductionReady: true,
     idempotencyLookupSupported: true,
     identitySeparationInspection: Object.freeze({
       localOriginIdentitySubjects: Object.freeze([authorSubject]),

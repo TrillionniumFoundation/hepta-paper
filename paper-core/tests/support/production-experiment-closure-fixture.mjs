@@ -379,7 +379,12 @@ function workerReceipt({
   });
 }
 
-function buildDatasetFixture({ root, researchAgendaIr, proposal }) {
+function buildDatasetFixture({
+  root,
+  researchAgendaIr,
+  proposal,
+  empiricalManuscriptClaimText = null,
+}) {
   const datasetRoot = path.join(root, 'dataset');
   const runtimeRoot = path.join(root, 'runtime');
   const outputRoot = path.join(root, 'output');
@@ -529,11 +534,30 @@ function buildDatasetFixture({ root, researchAgendaIr, proposal }) {
     ...templateSelector.experimentDesign.analysisProtocol,
     analysisProtocolHash: templateSelector.experimentDesign.analysisProtocolHash,
   });
-  const empiricalProposalClaim = proposal?.claims?.find((claim) => (
-    claim?.verificationMode === 'empirical_replay'
+  const empiricalProposalClaimIndex = proposal?.claims?.findIndex((claim) => (
+    ['empirical_replay', 'empirical_protocol'].includes(claim?.verificationMode)
   ));
+  const empiricalProposalClaim = empiricalProposalClaimIndex >= 0
+    ? proposal.claims[empiricalProposalClaimIndex] : null;
   const proposalClaimRecordHash = empiricalProposalClaim
-    ? hashRecord('AutonomousResearchClaimRecord', empiricalProposalClaim)
+    ? hashRecord('AutonomousResearchClaimRecord',
+      empiricalProposalClaim.verificationMode === 'empirical_protocol'
+        ? {
+          id: `${proposal.paperId}:autonomous_claim:${empiricalProposalClaimIndex + 1}`,
+          kind: 'machine_proposed_claim_seed',
+          status: 'machine_proposed_policy_authorized_for_bounded_execution',
+          text: empiricalProposalClaim.statement,
+          scientificClaimKey: empiricalProposalClaim.claimKey,
+          verificationMode: empiricalProposalClaim.verificationMode,
+          assumptions: empiricalProposalClaim.assumptions,
+          quantifiers: empiricalProposalClaim.quantifiers,
+          negativeBoundaries: empiricalProposalClaim.negativeBoundaries,
+          proofObligations: empiricalProposalClaim.proofObligations,
+          empiricalObligations: empiricalProposalClaim.empiricalObligations,
+          machineProposedScientificClaimSetHash:
+            proposal.machineProposedScientificClaimSetHash,
+        }
+        : empiricalProposalClaim)
     : null;
   const claimText = empiricalProposalClaim?.statement
     || researchAgendaIr.primaryClaim;
@@ -544,7 +568,8 @@ function buildDatasetFixture({ root, researchAgendaIr, proposal }) {
       ...declaration,
       proposalClaimRecordHash,
     })}`,
-    `${claimText} Confirmatory comparison ${index + 1} is evaluated exactly as registered.`,
+    empiricalManuscriptClaimText
+      || `${claimText} Confirmatory comparison ${index + 1} is evaluated exactly as registered.`,
     `% HEPTA_EMPIRICAL_CLAIM_END ${declaration.claimId}`,
   ].join('\n')).join('\n\n');
   fs.writeFileSync(path.join(root, 'main.tex'), `${empiricalClaimSource}\n`, {
@@ -953,6 +978,7 @@ export function productionExperimentClosureFixture({
   researchAgendaClaimBindingReceipt,
   nodeId = `${campaignId}:empirical-reproduce`,
   nodeKind = 'empirical-reproduce',
+  empiricalManuscriptClaimText = null,
 } = {}) {
   const cacheKey = JSON.stringify({
     campaignId,
@@ -962,13 +988,19 @@ export function productionExperimentClosureFixture({
     proposalHash: proposal?.machineProposedScientificClaimSetHash,
     researchAgendaClaimBindingReceiptHash:
       researchAgendaClaimBindingReceipt?.researchAgendaClaimBindingReceiptHash,
+    empiricalManuscriptClaimText,
     nodeId,
     nodeKind,
   });
   if (PROCESS_CACHE.has(cacheKey)) return PROCESS_CACHE.get(cacheKey);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-production-closure-'));
   try {
-    const dataset = buildDatasetFixture({ root, researchAgendaIr, proposal });
+    const dataset = buildDatasetFixture({
+      root,
+      researchAgendaIr,
+      proposal,
+      empiricalManuscriptClaimText,
+    });
     const receiptLedger = createMemoryReceiptLedger();
     const researchContext = Object.freeze({
       researchAgendaIr,

@@ -267,7 +267,13 @@ export function provisionAutonomousSubmissionHandoffStore({ runtimeRoot, now = n
       INSERT INTO handoff_instance(singleton,instance_nonce,provisioned_at)
       VALUES(1,'${instanceNonce}','${appliedAt}');`);
     if (!result.ok) throw new Error(result.error || 'autonomous_submission_handoff_schema_failed');
-    store.checkpoint({ mode: 'TRUNCATE' });
+    const checkpoint = store.checkpoint({ mode: 'TRUNCATE' });
+    const journal = store.execute('PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;');
+    if (checkpoint.ok !== true || journal.ok !== true) {
+      throw new Error(
+        checkpoint.error || journal.error || 'autonomous_submission_handoff_journal_failed',
+      );
+    }
   } finally { store.close(); }
   fs.chmodSync(databasePath, 0o660);
   assertSameIdentity(tree.identity, fileIdentity(directory),

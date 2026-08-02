@@ -115,16 +115,26 @@ export function buildFormalDomainQualificationTheoremSpecification(profile) {
 export async function runConfiguredFormalDomainQualification({
   dynamicFormalExecutionAuthority,
   environment = process.env,
+  runtimeRoot = null,
   spawnSyncImpl = undefined,
   temporaryRoot = undefined,
   formalProofSearchOperationsExecutor = null,
 } = {}) {
+  const selectedRuntimeRoot = runtimeRoot
+    || String(environment.HEPTA_PAPER_RUNTIME_ROOT || '').trim()
+    || null;
   const authorityOptions = {
     environment,
+    ...(selectedRuntimeRoot
+      ? { runtimeRoot: selectedRuntimeRoot, activeProbe: false } : {}),
     ...(spawnSyncImpl ? { spawnSyncImpl } : {}),
   };
   const discoveredAuthority = dynamicFormalExecutionAuthority
-    || inspectConfiguredDynamicFormalExecutionAuthority(authorityOptions).authority;
+    || inspectConfiguredDynamicFormalExecutionAuthority({
+      ...authorityOptions,
+      activeProbe: true,
+      publishActiveProbeReceipt: Boolean(selectedRuntimeRoot),
+    }).authority;
   const current = assertCurrentDynamicFormalExecutionAuthority(
     discoveredAuthority,
     authorityOptions,

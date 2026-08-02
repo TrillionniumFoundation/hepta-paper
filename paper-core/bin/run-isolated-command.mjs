@@ -7,14 +7,23 @@ import { copySqliteDatabase } from '../../paper-composition/bootstrap/operator-p
 import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 import { currentCodeProvenance } from '../src/code-provenance.mjs';
 import { prepareImmutableLegacyMatrixReference } from '../../migration/legacy-matrix-reference.mjs';
-import { sha256FileSync } from '../../workflow-kernel/runtime/file-utils.mjs';
+import { sha256StableFileSyncNoFollow } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { prepareIsolatedRuntimeStore } from './isolated-runtime-store.mjs';
+import {
+  bindIdentityBoundTemporaryDirectory,
+  createNonReentrantCleanup,
+} from '../../paper-composition/bootstrap/immutable-release-workspace-composition.mjs';
 
 const args = process.argv.slice(2);
 if (!args.length) throw new Error('Usage: run-isolated-command.mjs <command> [args...]');
 
 function sha(file) {
-  return fs.existsSync(file) ? sha256FileSync(file) : null;
+  try {
+    return sha256StableFileSyncNoFollow(file);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  }
 }
 
 function run(env) {
@@ -33,9 +42,15 @@ if (process.env.HEPTA_PAPER_RUNTIME_ISOLATED === '1' && process.env.HEPTA_PAPER_
   const productionRuntimeRoot = defaultPaperRuntimeRoot();
   const productionDb = path.join(productionRuntimeRoot, 'hepta-paper.sqlite');
   const isolatedRuntimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-paper-command-'));
+  const ownedIsolatedRuntimeRoot = bindIdentityBoundTemporaryDirectory(isolatedRuntimeRoot);
+  const cleanupIsolatedRuntimeRoot = createNonReentrantCleanup(
+    () => ownedIsolatedRuntimeRoot.cleanup(),
+  );
   const isolatedDb = path.join(isolatedRuntimeRoot, 'hepta-paper.sqlite');
   const productionHashBefore = sha(productionDb);
   const legacyReference = prepareImmutableLegacyMatrixReference();
+  const cleanupLegacyReference = createNonReentrantCleanup(() => legacyReference.cleanup());
+  process.once('exit', cleanupLegacyReference);
   if (fs.existsSync(productionDb)) await copySqliteDatabase({ sourcePath: productionDb, destinationPath: isolatedDb });
   for (const relative of ['owner-acceptance', 'operational-proof', 'trust', 'authority-inbox', 'legacy-retirement', path.join('release-evidence', 'current'), path.join('audits', 'capability-verification')]) {
     const source = path.join(productionRuntimeRoot, relative);
@@ -63,8 +78,9 @@ if (process.env.HEPTA_PAPER_RUNTIME_ISOLATED === '1' && process.env.HEPTA_PAPER_
   const result = run(env);
   const productionHashAfter = sha(productionDb);
   const mutated = productionHashBefore !== productionHashAfter;
-  legacyReference.cleanup();
-  if (result.status === 0 && !mutated) fs.rmSync(isolatedRuntimeRoot, { recursive: true, force: true });
+  cleanupLegacyReference();
+  process.removeListener('exit', cleanupLegacyReference);
+  if (result.status === 0 && !mutated) cleanupIsolatedRuntimeRoot();
   else process.stderr.write(`Isolated command runtime retained: ${isolatedRuntimeRoot}\n`);
   if (mutated) process.stderr.write('Production store changed during isolated command.\n');
   process.exitCode = result.status || (mutated ? 1 : 0);

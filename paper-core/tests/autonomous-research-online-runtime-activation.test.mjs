@@ -2,11 +2,16 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
 import {
   activateAutonomousResearchOnlineMutationRuntime,
+  openAutonomousResearchOnlineRuntimeActivationDatabase,
 } from '../../paper-adapters/automation/autonomous-research-online-runtime-activation.mjs';
+import {
+  openAutonomousResearchStateReconciliationDatabase,
+} from '../../paper-adapters/automation/autonomous-research-state-reconciliation-database.mjs';
 import {
   AUTONOMOUS_RESEARCH_ONLINE_AUTHORITY_EVIDENCE_CACHE_RELATIVE_PATH,
   createAutonomousResearchOnlineAuthorityEvidenceCacheWriter,
@@ -31,6 +36,19 @@ import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 const NOW = new Date('2026-07-18T09:00:00.000Z');
 const H = (label) => hashRecord('AutonomousResearchOnlineRuntimeActivationTest', { label });
 const ROLES = Object.freeze([...AUTONOMOUS_RESEARCH_STATE_DATABASE_ROLES].sort());
+
+function fileIdentity(candidate) {
+  const stat = fs.lstatSync(candidate, { bigint: true });
+  return Object.freeze({
+    device: String(stat.dev),
+    inode: String(stat.ino),
+    mode: String(stat.mode),
+    links: String(stat.nlink),
+    bytes: String(stat.size),
+    modifiedNs: String(stat.mtimeNs),
+    changedNs: String(stat.ctimeNs),
+  });
+}
 
 function manifest({ coveredRoles = ROLES } = {}) {
   const operations = Object.freeze(ROLES.map((role, index) => Object.freeze({
@@ -456,4 +474,44 @@ test('partial writer coverage fails before opening a database or challenging aut
     /autonomous_research_online_runtime_activation_inventory_invalid/,
   );
   assert.equal(sideEffects, 0);
+});
+
+test('shared submission handoff database permissions are accepted without weakening other roles', (t) => {
+  const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-runtime-permissions-'));
+  t.after(() => fs.rmSync(runtimeRoot, { recursive: true, force: true }));
+  const openers = [
+    openAutonomousResearchStateReconciliationDatabase,
+    openAutonomousResearchOnlineRuntimeActivationDatabase,
+  ];
+  const createInstance = (role, mode) => {
+    const databasePath = path.join(runtimeRoot, `${role}.sqlite`);
+    const database = new DatabaseSync(databasePath);
+    database.exec('CREATE TABLE state(value TEXT NOT NULL);');
+    database.close();
+    fs.chmodSync(databasePath, mode);
+    return Object.freeze({
+      role,
+      sourceRelativePath: path.basename(databasePath),
+      sourceFileIdentity: fileIdentity(databasePath),
+    });
+  };
+  const handoff = createInstance('submission-handoff', 0o660);
+  for (const openDatabase of openers) openDatabase({ runtimeRoot, instance: handoff }).close();
+
+  const ordinary = createInstance('resident-instance', 0o660);
+  for (const openDatabase of openers) {
+    assert.throws(
+      () => openDatabase({ runtimeRoot, instance: ordinary }),
+      /database_unsafe/,
+    );
+  }
+
+  const worldWritable = createInstance('submission-handoff-world', 0o662);
+  const unsafeHandoff = Object.freeze({ ...worldWritable, role: 'submission-handoff' });
+  for (const openDatabase of openers) {
+    assert.throws(
+      () => openDatabase({ runtimeRoot, instance: unsafeHandoff }),
+      /database_unsafe/,
+    );
+  }
 });

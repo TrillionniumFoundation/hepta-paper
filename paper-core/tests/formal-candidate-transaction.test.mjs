@@ -5,6 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { createCampaignNodeExecutor } from '../../paper-composition/automation/campaign-node-execution-composition.mjs';
+import { finalizeCampaignFormalWorkerPlan } from '../../paper-adapters/automation/campaign-formal-worker-plan-finalizer.mjs';
 import { finalizeTheoremSpecification } from '../../paper-adapters/automation/theorem-specification-finalizer.mjs';
 import { leanSourceDeclarationRecords } from '../../paper-adapters/research-verify/lean-source-contracts.mjs';
 import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
@@ -12,6 +13,25 @@ import { manuscriptClaimHash } from '../../paper-domain/research/formal-claim-co
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 function agentReceipt({ agentId, role, structuredOutput = null, changedPaths = [] } = {}) {
+  const usage = Object.freeze({
+    input: 5,
+    inputTokens: 5,
+    input_tokens: 5,
+    output: 3,
+    outputTokens: 3,
+    output_tokens: 3,
+    cacheRead: 2,
+    cacheReadTokens: 2,
+    cache_read_tokens: 2,
+    cacheWrite: 0,
+    cacheWriteTokens: 0,
+    cache_write_tokens: 0,
+    totalTokens: 10,
+    total_tokens: 10,
+    total: 10,
+    costUsd: 0.01,
+    cost_usd: 0.01,
+  });
   const payload = {
     status: 'agent_execution_completed',
     providerMode: 'openclaw:detached-child-session',
@@ -26,6 +46,9 @@ function agentReceipt({ agentId, role, structuredOutput = null, changedPaths = [
     structuredOutput,
     finalOutput: structuredOutput ? JSON.stringify(structuredOutput) : '',
     externalActionPerformed: false,
+    externalModelInvocationPerformed: true,
+    usageComplete: true,
+    usage,
   };
   return Object.freeze({ ...payload, agentExecutionReceiptHash: hashRecord('AgentExecutionReceipt', payload) });
 }
@@ -59,6 +82,89 @@ test('theorem specification finalization rejects draft and canonical-spec symlin
   assert.equal(fs.readFileSync(outsideSpec, 'utf8'), '{}\n');
 });
 
+test('system finalization replaces an empty model-authored worker plan with canonical Lean bindings', (t) => {
+  const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-formal-worker-plan-'));
+  t.after(() => fs.rmSync(workspace, { recursive: true, force: true }));
+  const statement = 'For every natural number n, n equals n.';
+  fs.writeFileSync(path.join(workspace, 'main.tex'), [
+    `\\begin{theorem}${statement}\\end{theorem}`,
+    '\\begin{proof}By reflexivity.\\end{proof}',
+    '',
+  ].join('\n'));
+  fs.writeFileSync(path.join(workspace, 'THEOREM_SPEC_DRAFT.json'), `${JSON.stringify({
+    version: 1,
+    kind: 'TheoremSpecificationDraft',
+    claims: [{
+      claimKey: 'reflexive', title: 'Reflexive equality', statement,
+      assumptions: [], quantifiers: ['For every natural number n.'],
+      negativeBoundaries: ['No equality of distinct values is claimed.'],
+      proofObligations: ['reflexiveIdentity'], evidenceObligations: [], manuscriptIntent: 'existing',
+    }],
+  }, null, 2)}\n`);
+  finalizeTheoremSpecification({
+    workspace, manuscriptPath: 'main.tex', paperId: 'paper', campaignId: 'campaign',
+  });
+  fs.writeFileSync(
+    path.join(workspace, 'FormalProof.lean'),
+    'theorem reflexiveIdentity (n : Nat) : n = n := by rfl\n',
+  );
+  fs.writeFileSync(path.join(workspace, 'RESEARCH_WORKER_PLAN.json'), `${JSON.stringify({
+    version: 1, kind: 'ResearchWorkerPlan', paperId: null, taskKey: null, workers: [],
+  })}\n`);
+  fs.writeFileSync(path.join(workspace, 'lean-toolchain'), 'leanprover/lean4:v4.18.0\n');
+
+  const theoremSpecification = JSON.parse(
+    fs.readFileSync(path.join(workspace, 'THEOREM_SPEC.json'), 'utf8'),
+  );
+  const result = finalizeCampaignFormalWorkerPlan({
+    workspace,
+    paperId: 'paper',
+    taskKey: 'paper_factory:paper',
+    theoremSpecification,
+  });
+  const persisted = JSON.parse(
+    fs.readFileSync(path.join(workspace, 'RESEARCH_WORKER_PLAN.json'), 'utf8'),
+  );
+
+  assert.equal(result.status, 'formal_worker_plan_system_finalized');
+  assert.equal(persisted.kind, 'NativeResearchWorkerPlan');
+  assert.equal(persisted.paperId, 'paper');
+  assert.equal(persisted.taskKey, 'paper_factory:paper');
+  assert.equal(persisted.workers.length, 1);
+  assert.equal(persisted.workers[0].inputs[0].path, 'FormalProof.lean');
+  assert.equal(
+    persisted.workers[0].parameters.claimBindings[0].theoremName,
+    'reflexiveIdentity',
+  );
+  assert.equal(
+    persisted.workers[0].parameters.claimBindings[0].claimId,
+    theoremSpecification.claims[0].claimId,
+  );
+  const claim = theoremSpecification.claims[0];
+  const binding = persisted.workers[0].parameters.claimBindings[0];
+  const sourceLocator = `${claim.manuscriptSource.path}#bytes=${claim.manuscriptSource.byteStart}-${claim.manuscriptSource.byteEnd}`;
+  assert.equal(
+    binding.manuscriptClaimHash,
+    manuscriptClaimHash({
+      claimId: claim.claimId,
+      text: claim.statement,
+      sourceLocator,
+    }),
+  );
+  assert.notEqual(
+    binding.manuscriptClaimHash,
+    claim.manuscriptSource.contentHash,
+  );
+  assert.equal(
+    fs.readFileSync(path.join(workspace, 'lean-toolchain'), 'utf8'),
+    'leanprover/lean4:v4.30.0\n',
+  );
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(path.join(workspace, 'lake-manifest.json'), 'utf8')),
+    { version: '1.1.0', packagesDir: '.lake/packages', packages: [] },
+  );
+});
+
 function fixture(t, { completeAfterIteration = null } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-formal-candidate-'));
   const workspace = path.join(root, 'source');
@@ -89,6 +195,7 @@ function fixture(t, { completeAfterIteration = null } = {}) {
   const leanSource = 'theorem reflexiveIdentity (n : Nat) : n = n := by rfl\n';
   let authorCalls = 0;
   let reviewerCalls = 0;
+  const authorInputs = [];
   const reviewerReceiptHashes = [];
   const verifierInputs = [];
 
@@ -138,6 +245,7 @@ function fixture(t, { completeAfterIteration = null } = {}) {
       if (!['formal-author', 'formal-proof-repair'].includes(input.role)) {
         throw new Error(`unexpected_formal_candidate_role:${input.role}`);
       }
+      authorInputs.push(input);
       return writeFormalCandidate(input);
     },
   };
@@ -148,7 +256,17 @@ function fixture(t, { completeAfterIteration = null } = {}) {
       const claim = specification.claims[0];
       const plan = JSON.parse(fs.readFileSync(path.join(input.workspacePath, 'RESEARCH_WORKER_PLAN.json'), 'utf8'));
       const binding = plan.workers[0].parameters.claimBindings[0];
-      const locator = `${claim.manuscriptSource.path}#bytes=${claim.manuscriptSource.byteStart}-${claim.manuscriptSource.byteEnd}`;
+      const sourceLocator = `${claim.manuscriptSource.path}#bytes=${claim.manuscriptSource.byteStart}-${claim.manuscriptSource.byteEnd}`;
+      assert.equal(plan.workers[0].id, 'system-finalized-lean-proof');
+      assert.equal(
+        binding.manuscriptClaimHash,
+        manuscriptClaimHash({
+          claimId: claim.claimId,
+          text: claim.statement,
+          sourceLocator,
+        }),
+      );
+      assert.notEqual(binding.manuscriptClaimHash, claim.manuscriptSource.contentHash);
       const receipt = agentReceipt({
         agentId: `formal-reviewer-${reviewerCalls}`,
         role: input.role,
@@ -158,7 +276,7 @@ function fixture(t, { completeAfterIteration = null } = {}) {
           theoremSpecificationHash: specification.theoremSpecificationHash,
           reviews: [{
             claimId: claim.claimId, theoremName: binding.theoremName,
-            manuscriptClaimHash: manuscriptClaimHash({ claimId: claim.claimId, text: claim.statement, sourceLocator: locator }),
+            manuscriptClaimHash: binding.manuscriptClaimHash,
             theoremTypeHash: binding.expectedTypeHash, sourceStatementHash: binding.sourceStatementHash,
             status: 'formal_semantic_review_verified', semanticEquivalenceVerified: true, verdict: 'equivalent',
           }],
@@ -193,6 +311,27 @@ function fixture(t, { completeAfterIteration = null } = {}) {
           input.formalProofSearchOperationReceipt.formalProofSearchOperationReceiptHash,
         formalProofSearchOperationReceipt: input.formalProofSearchOperationReceipt,
         formalProofSearchAttempts: input.formalProofSearchAttempts,
+        nativeResearchWorkerExecution: {
+          workerReceipts: [{
+            workerId: 'system-finalized-lean-proof',
+            status: completed
+              ? 'native_research_worker_execution_verified'
+              : 'native_research_worker_execution_blocked',
+            blockers: completed ? [] : ['fixture_axiom_audit_blocked'],
+            result: {
+              status: completed ? 'formal_claim_verified' : 'formal_claim_binding_blocked',
+              blockers: completed ? [] : ['fixture_axiom_audit_blocked'],
+              claimBindingReport: {
+                bindings: [{
+                  claimId: input.theoremSpecification.claims[0].claimId,
+                  theoremName: 'reflexiveIdentity',
+                  axioms: completed ? [] : ['propext'],
+                  issues: completed ? [] : ['target_theorem_uses_unapproved_axioms'],
+                }],
+              },
+            },
+          }],
+        },
         blockers: completed ? [] : [`fixture_lake_failure:${input.formalVerificationIteration}`],
       };
       return Object.freeze({
@@ -210,14 +349,20 @@ function fixture(t, { completeAfterIteration = null } = {}) {
   });
   const campaign = Object.freeze({
     campaignId: 'campaign', paperId: 'paper',
-    spec: Object.freeze({ sourceWorkspace: workspace, paperQualityProfile: 'formal_theorem_or_proof' }),
+    spec: Object.freeze({
+      sourceWorkspace: workspace,
+      paperQualityProfile: 'formal_theorem_or_proof',
+      researchVerificationInput: Object.freeze({
+        paperTask: Object.freeze({ taskKey: 'paper_factory:paper' }),
+      }),
+    }),
   });
   const node = Object.freeze({
     nodeId: 'campaign:0:formal-verify', kind: 'formal-verify', roundIndex: 0,
     dependencies: ['campaign:0:theorem-spec'], attemptId: 'attempt-1', leaseGeneration: 1,
   });
   return {
-    workspace, executor, campaign, node, verifierInputs, reviewerReceiptHashes,
+    workspace, executor, campaign, node, verifierInputs, reviewerReceiptHashes, authorInputs,
     counts: () => ({ authorCalls, reviewerCalls }),
   };
 }
@@ -268,6 +413,30 @@ test('repair gets a new independent review and iteration-scoped verification bef
   assert.notEqual(
     value.verifierInputs[0].formalReviewEnvelope.formalSemanticReviewEnvelopeHash,
     value.verifierInputs[1].formalReviewEnvelope.formalSemanticReviewEnvelopeHash,
+  );
+  assert.match(value.authorInputs[1].instructions, /"axioms":\["propext"\]/);
+  assert.match(value.authorInputs[1].instructions, /SYSTEM_ALLOWED_FORMAL_AXIOMS=\[\]/);
+  assert.match(value.authorInputs[1].instructions, /expand 'Nat\.min_def'/);
+  assert.match(value.authorInputs[1].instructions, /'Nat\.le_refl'/);
+  assert.match(
+    value.authorInputs[1].instructions,
+    /change \(if loss ≤ cap then loss else cap\) ≤ cap/,
+  );
+  assert.match(
+    value.authorInputs[1].instructions,
+    /use this already kernel-audited declaration verbatim/,
+  );
+  assert.match(
+    value.authorInputs[1].instructions,
+    /Do not replace its change step with rw, simp, omega/,
+  );
+  assert.match(
+    value.authorInputs[1].instructions,
+    /host system-finalizes RESEARCH_WORKER_PLAN\.json/,
+  );
+  assert.match(
+    value.authorInputs[1].instructions,
+    /do not edit or calculate those identities/,
   );
   assert.equal(value.verifierInputs[1].formalRepairHistory.length, 1);
   const integration = value.executor.integratePrepared({

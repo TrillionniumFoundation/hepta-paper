@@ -149,15 +149,20 @@ function coverageTests(entry, decision, capabilityIds) {
 export function buildLegacyCapabilityMatrixV3({ matrixV2 = null, operationalEvidence = null, operationalProofs = null, runtimeRoot = null } = {}) {
   const source = matrixV2 || JSON.parse(fs.readFileSync(matrixV2Path, 'utf8'));
   const resolvedRuntimeRoot = runtimeRoot || defaultPaperRuntimeRoot();
+  const codeProvenance = currentCodeProvenance({
+    workspaceRoot,
+    allowReleaseCommitEnvironment: false,
+  });
   const verificationReceipts = validateCapabilityOperationalEvidence({
     runtimeRoot: resolvedRuntimeRoot,
     evidence: operationalEvidence,
+    codeProvenance,
   });
   const verifiedOperationalProofs = operationalProofs || loadCapabilityOperationalProofs({
     runtimeRoot: resolvedRuntimeRoot,
     workspaceRoot,
     capabilityCatalog: CAPABILITY_CATALOG,
-    releaseCommit: currentCodeProvenance({ workspaceRoot }).commit,
+    releaseCommit: codeProvenance.commit,
   });
   const retiredEntries = source.entries.filter((entry) => entry.verificationClass === 'explicit_retirement');
   const entryPlans = retiredEntries.map((entry) => {

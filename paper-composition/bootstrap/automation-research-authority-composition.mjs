@@ -120,11 +120,16 @@ export function composeAutomationResearchAuthority({
   const externalReplayConfigPath = String(
     environment.HEPTA_EXTERNAL_REPLAY_CONFIG || '',
   ).trim();
+  const externalReplayExpectedConfigurationHash = String(
+    environment.HEPTA_EXTERNAL_REPLAY_CONFIG_HASH || '',
+  ).trim().toLowerCase() || null;
   const externalResearchReplay = externalReplayConfigPath
     ? createHttpExternalResearchReplayAdapter({
       configuration: readExternalResearchReplayServiceConfiguration({
         configPath: externalReplayConfigPath,
+        expectedConfigurationHash: externalReplayExpectedConfigurationHash,
       }),
+      expectedConfigurationHash: externalReplayExpectedConfigurationHash,
       environment,
     })
     : null;

@@ -43,8 +43,6 @@ function assertReferenceBindings(bindings) {
       || !binding.documentPins || typeof binding.documentPins !== 'object'
       || Array.isArray(binding.documentPins)
       || (new Set([
-        'research-author-principal',
-        'formal-reviewer-principal',
         'formal-sandbox-runtime-config',
         'production-mathlib-build-authority-config',
         'autonomous-venue-profile-config',
@@ -52,6 +50,8 @@ function assertReferenceBindings(bindings) {
         'submission-portal-descriptor-config',
         'prior-art-service-config',
         'external-replay-config',
+        'research-author-identity-config',
+        'release-attestor-config',
       ]).has(referenceId)
         && !SHA256.test(String(binding.documentPins.configurationHash || '')))
       || (referenceId === 'prior-art-service-config'
@@ -60,27 +60,6 @@ function assertReferenceBindings(bindings) {
       || (referenceId === 'external-replay-config'
         && binding.documentPins.tokenEnvironmentVariable
           !== 'HEPTA_EXTERNAL_REPLAY_SERVICE_TOKEN_FILE')
-      || (referenceId === 'formal-reviewer-principal'
-        && (!exactKeys(binding.documentPins, [
-          'configurationHash',
-          'reviewerServiceTokenEnvironmentVariables',
-        ])
-          || !Array.isArray(
-            binding.documentPins.reviewerServiceTokenEnvironmentVariables,
-          )
-          || binding.documentPins.reviewerServiceTokenEnvironmentVariables.length < 4
-          || binding.documentPins.reviewerServiceTokenEnvironmentVariables.length > 16
-          || new Set(
-            binding.documentPins.reviewerServiceTokenEnvironmentVariables,
-          ).size !== binding.documentPins.reviewerServiceTokenEnvironmentVariables.length
-          || binding.documentPins.reviewerServiceTokenEnvironmentVariables.some(
-            (name) => !/^[A-Z][A-Z0-9_]{1,122}_FILE$/.test(String(name || '')),
-          )
-          || JSON.stringify(
-            [...binding.documentPins.reviewerServiceTokenEnvironmentVariables].sort(),
-          ) !== JSON.stringify(
-            binding.documentPins.reviewerServiceTokenEnvironmentVariables,
-          )))
       || (referenceId === 'submission-portal-descriptor-config'
         && (!/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}$/.test(String(
           binding.documentPins.portalId || '',
@@ -94,23 +73,6 @@ function assertReferenceBindings(bindings) {
     || new Set(principalReferences.map((binding) => binding.contentHash)).size
       !== principalReferences.length) {
     throw new Error('strict_full_auto_acceptance_principal_reference_alias_forbidden');
-  }
-  const authorCredential = byId.get('research-author-credential-root');
-  const reviewerCredential = byId.get('formal-reviewer-credential-root');
-  const reviewerServiceCredential = byId.get(
-    'formal-reviewer-service-credential-root',
-  );
-  if ([
-    authorCredential,
-    reviewerCredential,
-  ].some((binding) => (
-    reviewerServiceCredential.subjectId === binding.subjectId
-    || pathsOverlap(reviewerServiceCredential.resolvedPath, binding.resolvedPath)
-    || reviewerServiceCredential.identity === binding.identity
-  ))) {
-    throw new Error(
-      'strict_full_auto_acceptance_reviewer_service_credential_root_independence_required',
-    );
   }
   return Object.freeze([...bindings].sort((left, right) => (
     left.referenceId.localeCompare(right.referenceId)
@@ -319,12 +281,8 @@ const ROOT_BINDING_IDS = Object.freeze(Object.keys(ROOT_BINDING_ACCESS_MODES));
 const REQUIRED_OPERATIONAL_ENVIRONMENT_KEYS = Object.freeze([
   'HEPTA_RESEARCH_AUTHOR_PROVIDER',
   'HEPTA_RESEARCH_AUTHOR_CODEX_BINARY',
-  'HEPTA_RESEARCH_AUTHOR_MODEL',
   'HEPTA_FORMAL_REVIEW_PROVIDER',
   'HEPTA_FORMAL_REVIEW_CODEX_BINARY',
-  'HEPTA_FORMAL_REVIEW_MODEL',
-  'HEPTA_RESEARCH_AUTHOR_MAXIMUM_COST_PER_CALL_USD',
-  'HEPTA_FORMAL_REVIEWER_MAXIMUM_COST_PER_CALL_USD',
   'HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_RECEIPT',
   'HEPTA_AUTONOMOUS_EMPIRICAL_PLUGIN_ACTIVATION_POINTER',
   'HEPTA_AUTONOMOUS_RESEARCH_CONTENT_MODE',
@@ -369,12 +327,7 @@ function assertOperationalEnvironment(environment) {
     || environment.HEPTA_DYNAMIC_FORMAL_PROJECT_PROBE.split('/').includes('..')
     || !environment.HEPTA_DYNAMIC_FORMAL_PROJECT_ROOT.startsWith(
       `${environment.HEPTA_DYNAMIC_FORMAL_PROJECT_SCOPE_ROOT}/`,
-    )
-    || [
-      'HEPTA_RESEARCH_AUTHOR_MAXIMUM_COST_PER_CALL_USD',
-      'HEPTA_FORMAL_REVIEWER_MAXIMUM_COST_PER_CALL_USD',
-    ].some((name) => !Number.isFinite(Number(environment[name]))
-      || Number(environment[name]) <= 0)) {
+    )) {
     throw new Error('strict_full_auto_acceptance_operational_environment_incomplete');
   }
   for (const [name, value] of entries) {

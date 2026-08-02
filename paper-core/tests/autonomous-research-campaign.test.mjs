@@ -40,6 +40,24 @@ import {
 
 const H = (label) => hashRecord('AutonomousCampaignTestHash', { label });
 
+function fakeAgentExecutionReceipt(detail = {}, {
+  status = 'agent_execution_completed',
+} = {}) {
+  const payload = {
+    ...detail,
+    version: 1,
+    kind: 'AgentExecutionReceipt',
+    executorId: 'autonomous-research-campaign-fixture',
+    status,
+    externalModelInvocationPerformed: false,
+    externalActionPerformed: false,
+  };
+  return Object.freeze({
+    ...payload,
+    agentExecutionReceiptHash: hashRecord('AgentExecutionReceipt', payload),
+  });
+}
+
 function empiricalRuntimeCapabilityInspection({ wrongDigestLanguage = null } = {}) {
   return preflightAutonomousEmpiricalRuntimes({
     spawnSyncImpl(_command, args) {
@@ -221,13 +239,14 @@ function fakeExecutor({
           writerFailed = true;
           const error = new Error('transient_fake_author_failure');
           error.retryable = true;
+          error.receipt = fakeAgentExecutionReceipt({
+            nodeKind: node.kind,
+            failureCode: error.message,
+          }, { status: 'agent_execution_failed' });
           throw error;
         }
         formalMutationFence?.beforeExecute({ node, allNodes });
-        return {
-          version: 1,
-          kind: 'FakeAutonomousNodeReceipt',
-          status: 'fake_autonomous_node_completed',
+        return fakeAgentExecutionReceipt({
           nodeKind: node.kind,
           ...(formalMutationFence?.resultFor(node) || {}),
           ...(node.kind === 'convergence' ? {
@@ -244,8 +263,7 @@ function fakeExecutor({
               score: 1,
               criticalFindingCount: 0,
             } : {}),
-          externalActionPerformed: false,
-        };
+        });
       },
     },
   };
@@ -1033,6 +1051,9 @@ test('resume uses persisted fencing state and completes a paused campaign withou
     prepared.empiricalExecutionProfileSelection
       .autonomousEmpiricalExecutionProfileSelectionHash);
   assert.deepEqual(plan.languages, ['lean', 'python', 'latex']);
+  assert.equal(plan.researchVerificationInput.paperId, prepared.proposal.paperId);
+  assert.equal(plan.researchVerificationInput.paperTask.paperId, prepared.proposal.paperId);
+  assert.ok(plan.researchVerificationInput.paperTask.semanticIdentityHash);
   fixture.campaignStore.createCampaign(plan);
   fixture.campaignStore.pauseCampaign(campaignId, 'simulated_process_shutdown');
   const fake = fakeExecutor();
@@ -1056,6 +1077,22 @@ test('resume uses persisted fencing state and completes a paused campaign withou
   assert.equal(result.externalQualification.status, 'qualification_pending_external_service');
   assert.equal(fixture.campaignStore.getCampaign(campaignId).status, 'completed');
   assert.ok(fixture.campaignStore.listEvents(campaignId).some((event) => event.kind === 'campaign_resumed'));
+
+  const local = await executeAutonomousResearchCampaign({
+    action: 'status',
+    localOnly: true,
+    campaignId,
+    campaignStore: fixture.campaignStore,
+    campaignReleaseAuthorityReader:
+      () => releaseAuthority(campaignId, prepared.proposal.paperId, prepared),
+    runtime: runtime(fixture.clock),
+  });
+  assert.equal(local.status, 'autonomous_research_campaign_completed_local');
+  assert.equal(local.localOnly, true);
+  assert.equal(local.localResearchWritingReady, true);
+  assert.equal(local.fullAutomaticResearchWritingReady, false);
+  assert.equal(local.externalQualification.status,
+    'qualification_not_required_for_local_run');
 });
 
 test('materialization and launch fail closed on authority conflicts or absent academic dataset authority', async (t) => {

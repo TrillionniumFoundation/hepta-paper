@@ -11,10 +11,13 @@ import {
 } from '../../paper-domain/research/signed-reviewer-receipt-contract.mjs';
 import {
   agentExecutionReceiptPayload,
+  buildAgentPostprocessingFailureUsageReceipt,
+  buildAgentExecutionUsageBinding,
   verifyAgentExecutionReceipt,
 } from '../../paper-domain/evidence/agent-execution-receipt-contract.mjs';
 import {
   reviewerSemanticReceiptSigningSubject,
+  verifyFreshIsolatedReviewerSessionReceipt,
   verifyReviewerExecutionAuthorityContext,
 } from '../../paper-domain/research/reviewer-semantic-evidence-contract.mjs';
 import {
@@ -37,9 +40,22 @@ function inspectReviewerTrust({ pool, signers, trustInspection }) {
   );
   if (!valid) throw new Error('reviewer_principal_pool_trust_inspection_invalid');
   const strong = trustInspection?.strongReviewerPool === true;
+  const freshReviewerSessionPool = trustInspection?.authorityMode
+    === 'fresh-isolated-session'
+    && trustInspection?.sessionIsolationReady === true
+    && trustInspection?.cryptographicAuthorityReady === false
+    && trustInspection?.identityIndependenceReady === true
+    && /^sha256:[0-9a-f]{64}$/.test(String(trustInspection?.trustSetHash || ''))
+    && /^sha256:[0-9a-f]{64}$/.test(String(
+      trustInspection?.signatureVerificationPolicyHash || '',
+    ));
   if (strong && (trustInspection?.cryptographicAuthorityReady !== true
     || trustInspection?.identityIndependenceReady !== true)) {
     throw new Error('reviewer_principal_pool_strong_trust_not_ready');
+  }
+  if (trustInspection?.authorityMode === 'fresh-isolated-session'
+    && !freshReviewerSessionPool) {
+    throw new Error('reviewer_principal_pool_session_trust_not_ready');
   }
   const verifiedSigners = new Map();
   for (const principal of pool.principals) {
@@ -57,7 +73,7 @@ function inspectReviewerTrust({ pool, signers, trustInspection }) {
       throw new Error(`reviewer_principal_cryptographic_signer_required:${principal.principalId}`);
     }
   }
-  return Object.freeze({ strong, verifiedSigners });
+  return Object.freeze({ strong, freshReviewerSessionPool, verifiedSigners });
 }
 
 export function createReviewerReceiptVerificationAuthority({
@@ -65,13 +81,15 @@ export function createReviewerReceiptVerificationAuthority({
   signers = null,
   trustInspection = null,
 } = {}) {
-  const { strong: strongReviewerPool, verifiedSigners } = inspectReviewerTrust({
-    pool, signers, trustInspection,
-  });
+  const {
+    strong: strongReviewerPool,
+    freshReviewerSessionPool,
+    verifiedSigners,
+  } = inspectReviewerTrust({ pool, signers, trustInspection });
   const cryptographicAuthorityReady = strongReviewerPool
     && trustInspection.cryptographicAuthorityReady === true;
-  const identityIndependenceReady = cryptographicAuthorityReady
-    && trustInspection.identityIndependenceReady === true;
+  const identityIndependenceReady = freshReviewerSessionPool
+    || (cryptographicAuthorityReady && trustInspection.identityIndependenceReady === true);
   const verifyPoolSignedReviewerReceipt = ({ receipt, expected = {} } = {}) => {
     const signer = verifiedSigners.get(expected.principalId || receipt?.principalId) || null;
     if (!signer) return false;
@@ -87,16 +105,38 @@ export function createReviewerReceiptVerificationAuthority({
       })
       : verifySignedReviewerReceipt(receipt, expected);
   };
+  const verifyPoolSessionReviewerReceipt = ({ receipt, expected = {} } = {}) => {
+    const principal = pool.principals.find((candidate) => (
+      candidate.principalId === (expected.principalId || receipt?.reviewPrincipalId)
+    )) || null;
+    return freshReviewerSessionPool
+      && principal !== null
+      && receipt?.reviewPrincipalDescriptorHash === principal.principalDescriptorHash
+      && receipt?.researchPrincipalPoolHash === pool.researchPrincipalPoolHash
+      && receipt?.reviewerTrustSetHash === trustInspection.trustSetHash
+      && receipt?.reviewerSignatureVerificationPolicyHash
+        === trustInspection.signatureVerificationPolicyHash
+      && verifyFreshIsolatedReviewerSessionReceipt(receipt, {
+        ...expected,
+        reviewPrincipalId: principal.principalId,
+        reviewPrincipalDescriptorHash: principal.principalDescriptorHash,
+        researchPrincipalPoolHash: pool.researchPrincipalPoolHash,
+      });
+  };
   return Object.freeze({
-    version: strongReviewerPool ? 2 : 1,
+    version: strongReviewerPool ? 2 : freshReviewerSessionPool ? 3 : 1,
     kind: 'ReviewerReceiptVerificationAuthority',
     researchPrincipalPoolHash: pool.researchPrincipalPoolHash,
+    authorityMode: freshReviewerSessionPool
+      ? 'fresh-isolated-session' : 'external-cryptographic-authority',
+    sessionIsolationReady: freshReviewerSessionPool,
     cryptographicAuthorityReady,
     identityIndependenceReady,
-    reviewerTrustSetHash: cryptographicAuthorityReady ? trustInspection.trustSetHash : null,
-    reviewerSignatureVerificationPolicyHash: cryptographicAuthorityReady
+    reviewerTrustSetHash: identityIndependenceReady ? trustInspection.trustSetHash : null,
+    reviewerSignatureVerificationPolicyHash: identityIndependenceReady
       ? trustInspection.signatureVerificationPolicyHash : null,
     verifySignedReviewerReceipt: verifyPoolSignedReviewerReceipt,
+    verifySessionReviewerReceipt: verifyPoolSessionReviewerReceipt,
   });
 }
 
@@ -129,6 +169,7 @@ export function createReviewerPrincipalExecutorPool({
   const cryptographicAuthorityReady = verificationAuthority.cryptographicAuthorityReady;
   const identityIndependenceReady = verificationAuthority.identityIndependenceReady;
   const strongReviewerPool = verificationAuthority.version === 2;
+  const freshReviewerSessionPool = verificationAuthority.version === 3;
   const verifyPoolSignedReviewerReceipt = verificationAuthority.verifySignedReviewerReceipt;
   const recovery = strongReviewerPool
     ? createReviewerPrincipalRecoveryPorts({
@@ -152,11 +193,15 @@ export function createReviewerPrincipalExecutorPool({
     pool,
     cryptographicAuthorityReady,
     identityIndependenceReady,
+    authorityMode: verificationAuthority.authorityMode,
+    sessionIsolationReady: verificationAuthority.sessionIsolationReady,
     trustSetHash: verificationAuthority.reviewerTrustSetHash,
     signatureVerificationPolicyHash:
       verificationAuthority.reviewerSignatureVerificationPolicyHash,
     trustInspection,
     verifySignedReviewerReceipt: verifyPoolSignedReviewerReceipt,
+    verifySessionReviewerReceipt:
+      verificationAuthority.verifySessionReviewerReceipt,
     crashRecoveryReady: recovery.ready,
     crashRecoveryBlockers: recovery.blockers,
     reviewerRecoveryPort: recovery.reviewerRecoveryPort,
@@ -191,13 +236,25 @@ export function createReviewerPrincipalExecutorPool({
       const selectionKey = request?.context?.nodeId || request?.context?.attemptId
         || request?.context?.campaignId || request?.role;
       const principal = selectResearchPrincipal({ pool, role, selectionKey });
-      const receipt = await verifiedExecutors.get(principal.principalId).execute(request);
+      const receipt = await verifiedExecutors.get(principal.principalId).execute({
+        ...request,
+        role,
+      });
+      try {
       if (!verifyAgentExecutionReceipt(receipt)) {
         throw new Error('reviewer_principal_agent_receipt_invalid');
+      }
+      const agentExecutionUsageBinding = buildAgentExecutionUsageBinding(receipt);
+      if (!agentExecutionUsageBinding) {
+        throw new Error('reviewer_principal_agent_usage_binding_invalid');
       }
       const receiptPayload = agentExecutionReceiptPayload(receipt);
       const unsignedPayload = {
         ...receiptPayload,
+        usage: agentExecutionUsageBinding.usage,
+        sourceAgentExecutionUsageBindingHash:
+          agentExecutionUsageBinding.agentExecutionUsageBindingHash,
+        sourceAgentExecutionUsageBinding: agentExecutionUsageBinding,
         reviewPrincipalId: principal.principalId,
         reviewPrincipalDescriptorHash: principal.principalDescriptorHash,
         reviewerProviderAccountIdentityHash: principal.providerAccountIdentityHash,
@@ -205,10 +262,13 @@ export function createReviewerPrincipalExecutorPool({
         reviewerTrustDomainIdentityHash: principal.trustDomainIdentityHash,
         reviewerSignerIdentityHash: principal.signerIdentityHash,
         researchPrincipalPoolHash: pool.researchPrincipalPoolHash,
+        reviewEvidenceMode: freshReviewerSessionPool
+          ? 'fresh-isolated-session'
+          : strongReviewerPool ? 'external-cryptographic-authority' : 'bounded-configured',
         reviewerCryptographicAuthorityReady: cryptographicAuthorityReady,
         reviewerIdentityIndependenceReady: identityIndependenceReady,
-        reviewerTrustSetHash: cryptographicAuthorityReady ? trustInspection.trustSetHash : null,
-        reviewerSignatureVerificationPolicyHash: cryptographicAuthorityReady
+        reviewerTrustSetHash: identityIndependenceReady ? trustInspection.trustSetHash : null,
+        reviewerSignatureVerificationPolicyHash: identityIndependenceReady
           ? trustInspection.signatureVerificationPolicyHash : null,
         ...(semanticReviewerEvidence ? { reviewerExecutionAuthorityContext } : {}),
       };
@@ -309,6 +369,10 @@ export function createReviewerPrincipalExecutorPool({
       }
       const payload = {
         ...unsignedPayload,
+        ...(freshReviewerSessionPool && semanticReviewerEvidence ? {
+          unsignedAgentExecutionReceiptHash,
+          unsignedAgentExecutionReceipt,
+        } : {}),
         ...(signedReviewerReceipt ? {
           unsignedAgentExecutionReceiptHash,
           unsignedAgentExecutionReceipt,
@@ -322,6 +386,14 @@ export function createReviewerPrincipalExecutorPool({
         ...payload,
         agentExecutionReceiptHash: hashRecord('AgentExecutionReceipt', payload),
       });
+      } catch (error) {
+        if (error?.receipt && error.receipt !== receipt) {
+          error.postprocessingReceipt = error.receipt;
+        }
+        error.agentExecutionReceipt = receipt;
+        error.receipt = buildAgentPostprocessingFailureUsageReceipt(receipt) || receipt;
+        throw error;
+      }
     },
   });
 }

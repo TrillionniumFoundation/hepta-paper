@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import {
@@ -7,6 +10,7 @@ import {
   buildPriorArtRetrievalAuthoritySubjectV2,
   buildPriorArtServiceConfiguration,
   createHttpPriorArtRetrievalAdapter,
+  readPriorArtServiceConfiguration,
 } from '../../paper-adapters/automation/http-prior-art-retrieval-adapter.mjs';
 import {
   buildPinnedExternalEvidenceEnvelope,
@@ -313,6 +317,7 @@ function adapterFor(selected, responseOptions = {}) {
   let body = null;
   const adapter = createHttpPriorArtRetrievalAdapter({
     configuration: selected.configuration,
+    expectedConfigurationHash: selected.configuration.configurationHash,
     environment: { PRIOR_ART_TEST_TOKEN: 'secret-token' },
     clock: { now: () => NOW },
     fetchImpl: async (_url, init) => {
@@ -332,6 +337,8 @@ test('v2 verifies retrieval, independent review, and distinct signed identities 
   assert.equal(adapter.evidenceProfile, 'structured-ranked-deduplicated-v2');
   assert.equal(adapter.cryptographicAuthorityReady, true);
   assert.equal(adapter.identityIndependenceReady, true);
+  assert.equal(adapter.configurationPinned, true);
+  assert.equal(adapter.fullProductionReady, true);
   assert.match(adapter.trustSetHash, /^sha256:[0-9a-f]{64}$/);
   assert.match(adapter.signatureVerificationPolicyHash, /^sha256:[0-9a-f]{64}$/);
   assert.equal(assertPriorArtRetrievalPort(adapter, {
@@ -471,5 +478,43 @@ test('v1 stays bounded and does not expose cryptographic readiness', () => {
   assert.equal(adapter.evidenceProfile, 'structured-receipt-v1');
   assert.equal(adapter.cryptographicAuthorityReady, false);
   assert.equal(adapter.identityIndependenceReady, false);
+  assert.equal(adapter.configurationPinned, false);
+  assert.equal(adapter.fullProductionReady, false);
   assert.equal(adapter.trustSetHash, null);
+});
+
+test('v2 full production requires an out-of-band pin and a safe configuration file', () => {
+  const selected = fixture();
+  const unpinned = createHttpPriorArtRetrievalAdapter({
+    configuration: selected.configuration,
+    environment: { PRIOR_ART_TEST_TOKEN: 'secret-token' },
+    fetchImpl: async () => { throw new Error('unused'); },
+  });
+  assert.equal(unpinned.configurationPinned, false);
+  assert.equal(unpinned.fullProductionReady, false);
+  assert.throws(() => createHttpPriorArtRetrievalAdapter({
+    configuration: selected.configuration,
+    expectedConfigurationHash: H('wrong-prior-art-configuration'),
+    environment: { PRIOR_ART_TEST_TOKEN: 'secret-token' },
+    fetchImpl: async () => { throw new Error('unused'); },
+  }), /prior_art_service_configuration_pin_mismatch/);
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-prior-art-config-'));
+  const configPath = path.join(root, 'prior-art.json');
+  fs.writeFileSync(configPath, `${JSON.stringify(selected.configuration)}\n`, { mode: 0o600 });
+  try {
+    assert.equal(readPriorArtServiceConfiguration({
+      configPath,
+      expectedConfigurationHash: selected.configuration.configurationHash,
+    }).configurationHash, selected.configuration.configurationHash);
+    assert.throws(() => readPriorArtServiceConfiguration({
+      configPath,
+      expectedConfigurationHash: H('wrong-prior-art-configuration'),
+    }), /prior_art_service_configuration_pin_mismatch/);
+    fs.chmodSync(configPath, 0o666);
+    assert.throws(() => readPriorArtServiceConfiguration({ configPath }),
+      /prior_art_service_configuration_file_invalid/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

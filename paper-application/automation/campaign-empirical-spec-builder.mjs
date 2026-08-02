@@ -10,9 +10,14 @@ import {
   empiricalPreDataFreezeFromResult,
 } from './campaign-confirmatory-lineage-policy.mjs';
 
-function confirmatoryAnchorFreeze({ node, context, language }) {
+function confirmatoryAnchor({ node, context, language }) {
   if (context.empirical.reproduction) {
-    return empiricalPreDataFreezeFromResult(context.empiricalBaselineNode?.result);
+    const result = context.empiricalBaselineNode?.result;
+    return Object.freeze({
+      freeze: empiricalPreDataFreezeFromResult(result),
+      armAdapterSet: result?.harnessExecutionReceipt?.armAdapterSet
+        || result?.experimentRunReceipt?.harnessExecutionReceipt?.armAdapterSet || null,
+    });
   }
   if (!(context.empirical.revalidate || context.empirical.revalidateCode)) return null;
   const anchor = [...(context.campaignNodes || [])]
@@ -25,7 +30,11 @@ function confirmatoryAnchorFreeze({ node, context, language }) {
       && empiricalPreDataFreezeFromResult(candidate?.result))
     .sort((left, right) => Number(right.roundIndex || 0) - Number(left.roundIndex || 0)
       || String(right.nodeId || '').localeCompare(String(left.nodeId || '')))[0];
-  return empiricalPreDataFreezeFromResult(anchor?.result);
+  return Object.freeze({
+    freeze: empiricalPreDataFreezeFromResult(anchor?.result),
+    armAdapterSet: anchor?.result?.harnessExecutionReceipt?.armAdapterSet
+      || anchor?.result?.experimentRunReceipt?.harnessExecutionReceipt?.armAdapterSet || null,
+  });
 }
 
 export function buildCampaignEmpiricalSpec({
@@ -46,11 +55,18 @@ export function buildCampaignEmpiricalSpec({
     nodeId: node.nodeId,
     attemptId: node.attemptId || 'direct',
   });
-  const datasetMounts = campaign.spec.datasetMounts || [];
+  // Compilation is a document build, not a benchmark execution. Carrying the
+  // campaign benchmark selector into a LaTeX node routes the manuscript through
+  // the system benchmark harness and makes it look for treatment/baseline/
+  // ablation adapters next to main.tex. It also grants an unnecessary dataset
+  // surface to the compiler.
+  const datasetMounts = language === 'latex' ? [] : (campaign.spec.datasetMounts || []);
   const datasetAuthorizationSet = buildDatasetAuthorizationSet(datasetMounts);
-  const benchmarkSelectorTemplate = campaign.spec.benchmarkSelector || null;
+  const benchmarkSelectorTemplate = language === 'latex'
+    ? null
+    : (campaign.spec.benchmarkSelector || null);
   let benchmarkSelector = benchmarkSelectorTemplate;
-  if (campaign.spec.benchmarkId || benchmarkSelectorTemplate) {
+  if (language !== 'latex' && (campaign.spec.benchmarkId || benchmarkSelectorTemplate)) {
     const templateVerification = verifyCampaignBenchmarkSelector(benchmarkSelectorTemplate, {
       benchmarkId: campaign.spec.benchmarkId,
       datasetMounts,
@@ -89,15 +105,17 @@ export function buildCampaignEmpiricalSpec({
       error.retryable = false;
       throw error;
     }
-    const anchorFreeze = confirmatoryAnchorFreeze({ node, context, language });
-    if (anchorFreeze) {
+    const anchor = confirmatoryAnchor({ node, context, language });
+    if (anchor?.freeze) {
       const resolvedAdapters = primitives.empirical.resolveBenchmarkArmAdapterSet?.({
         sourceRoot: workspace,
         entrypoint,
         protocolSet: benchmarkSelector.experimentDesign.benchmarkHarness.armProtocolSet,
       });
       assertOutcomeBoundBenchmarkSourceUnchanged({
-        anchorFreeze,
+        anchorFreeze: anchor.freeze,
+        anchorArmAdapterSet: anchor.armAdapterSet,
+        currentArmAdapterSet: resolvedAdapters?.adapterSet || null,
         analysisProtocolHash: benchmarkSelector.experimentDesign.analysisProtocolHash,
         systemBenchmarkArmProtocolSetHash:
           benchmarkSelector.experimentDesign.benchmarkHarness.systemBenchmarkArmProtocolSetHash,
@@ -178,13 +196,19 @@ export function buildCampaignEmpiricalSpec({
     cpuSeconds: workerCpuSeconds,
     cpuCount: workerCpuCount,
     maximumProcesses: Number(campaign.spec.workerMaximumProcesses || 128),
-    requireSeparateOutputRoot: Boolean(context.empirical.primary || context.empirical.reproduction || context.empirical.revalidate),
+    requireSeparateOutputRoot: Boolean(
+      language === 'latex'
+      || context.empirical.primary
+      || context.empirical.reproduction
+      || context.empirical.revalidate
+    ),
     cachePolicy: context.empirical.reproduction ? 'bypass' : 'default',
     sourceLineageHash: primitives.workspace.hashFile({ workspace, relative: manuscript }),
     empiricalAttemptRootId,
     empiricalAttemptVersion: 1,
     failedAttemptLineageHashes: Object.freeze([]),
     experimentResearchContext,
+    localOnly: campaign.spec.localOnly === true,
     signal: executionSignal || null,
     runEmpiricalCell: executionResources?.runEmpiricalCell || null,
   };

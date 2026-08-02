@@ -20,7 +20,16 @@ const LANGUAGE_COMMANDS = Object.freeze({
   r: { executable: 'Rscript', args: (spec) => [spec.entrypoint, ...(spec.args || [])] },
   julia: { executable: 'julia', args: (spec) => ['--project=@.', spec.entrypoint, ...(spec.args || [])] },
   lean: { executable: 'lake', args: (spec) => spec.entrypoint ? ['env', 'lean', spec.entrypoint] : ['build'] },
-  latex: { executable: 'latexmk', args: (spec) => ['-pdf', '-interaction=nonstopmode', '-halt-on-error', spec.entrypoint] },
+  latex: {
+    executable: 'latexmk',
+    args: (spec) => [
+      '-pdf',
+      '-interaction=nonstopmode',
+      '-halt-on-error',
+      '-outdir=/output',
+      spec.entrypoint,
+    ],
+  },
 });
 function available(executable) {
   return spawnSync('which', [executable], { encoding: 'utf8', timeout: 3000 }).status === 0;
@@ -192,6 +201,17 @@ export function createMultiLanguageEmpiricalExecutor({
     },
     execute(spec = {}) {
       const benchmarkSelector = spec.benchmarkSelector || null;
+      const language = String(spec.language || '').toLowerCase();
+      if (language === 'latex'
+        && (benchmarkSelector || (spec.datasetMounts || []).length > 0)) {
+        return Object.freeze({
+          status: 'empirical_compile_authority_invalid',
+          blockers: ['latex_compile_benchmark_or_dataset_authority_forbidden'],
+          failureClass: 'authority_failure',
+          repairEligible: false,
+          language: spec.language,
+        });
+      }
       if (spec.requireSeparateOutputRoot === true && spec.env?.HEPTA_OUTPUT_DIR !== '/output') {
         return Object.freeze({
           status: 'empirical_output_contract_invalid',

@@ -30,6 +30,18 @@ import {
 import {
   executeDynamicFormalSandboxProbe,
 } from './dynamic-formal-sandbox-probe-verifier.mjs';
+import {
+  createDynamicFormalSandboxProbeQualificationRepository,
+} from './dynamic-formal-sandbox-probe-qualification-repository.mjs';
+import {
+  buildDynamicFormalExecutionAuthority,
+  verifyDynamicFormalExecutionAuthority,
+} from './dynamic-formal-execution-authority.mjs';
+
+export {
+  buildDynamicFormalExecutionAuthority,
+  verifyDynamicFormalExecutionAuthority,
+};
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const SAFE_RELATIVE_LEAN = /^[A-Za-z0-9][A-Za-z0-9_./-]{0,255}\.lean$/;
@@ -100,8 +112,62 @@ function authoritativeClosureFiles(closure) {
   }));
 }
 
+const PASSIVE_PROBE_IDENTITY_FIELDS = Object.freeze([
+  'formalProjectClosureHash',
+  'formalProjectManifestHash',
+  'formalSandboxRuntimeConfigurationHash',
+  'formalSandboxRuntimeImage',
+  'formalSandboxRuntimeImageDigest',
+  'mathlibPackageSourcePath',
+  'probeRelativePath',
+  'productionMathlibBuildAuthorityHash',
+  'productionMathlibReleaseIdentityHash',
+  'projectRoot',
+  'projectScopeRoot',
+  'toolchain',
+  'toolchainContentIdentityHash',
+  'toolchainRootMerkleHash',
+]);
+
+function passiveProbeIdentityMismatches(cached, details) {
+  return [
+    ...PASSIVE_PROBE_IDENTITY_FIELDS.filter((field) => (
+      cached?.[field] !== details?.[field]
+    )),
+    ...(JSON.stringify(cached?.productionMathlibReleaseIdentity)
+      === JSON.stringify(details?.productionMathlibReleaseIdentity)
+      ? [] : ['productionMathlibReleaseIdentity']),
+    ...(JSON.stringify(cached?.productionMathlibBuildAuthority)
+      === JSON.stringify(details?.productionMathlibBuildAuthority)
+      ? [] : ['productionMathlibBuildAuthority']),
+  ];
+}
+
+function cachedProbeQualificationReady(cached) {
+  return cached?.status === 'dynamic_formal_project_closure_ready'
+    && cached.ready === true
+    && cached.executableProbeVerified === true
+    && cached.postProbeReinspectionVerified === true
+    && cached.blockers?.length === 0
+    && SHA256.test(String(cached.formalSandboxProbeReceiptHash || ''))
+    && SHA256.test(String(
+      cached.formalSandboxProbeRuntimeIdentityHash || '',
+    ))
+    && SHA256.test(String(
+      cached.formalSandboxProbeExecutionProcessIdentityHash || '',
+    ))
+    && SHA256.test(String(
+      cached.formalSandboxProbeSnapshotSealReceiptHash || '',
+    ));
+}
+
 export function inspectConfiguredDynamicFormalProjectClosure({
   environment = process.env,
+  runtimeRoot = null,
+  activeProbe = undefined,
+  publishActiveProbeReceipt = false,
+  probeQualificationRepository = null,
+  probeQualificationClock = { now: () => new Date() },
   spawnSyncImpl = spawnSync,
   resolvePinnedRuntime = resolvePinnedLakeExecutable,
   readClosure = readFormalProjectClosureSync,
@@ -114,6 +180,20 @@ export function inspectConfiguredDynamicFormalProjectClosure({
   mathlibBuildAuthorityClock = () => new Date().toISOString(),
   trustedMathlibBuildClosureHashes = undefined,
 } = {}) {
+  const selectedRuntimeRoot = runtimeRoot
+    ? path.resolve(runtimeRoot)
+    : String(environment.HEPTA_PAPER_RUNTIME_ROOT || '').trim()
+      ? path.resolve(environment.HEPTA_PAPER_RUNTIME_ROOT)
+      : null;
+  const activeProbeRequested = activeProbe === undefined
+    ? selectedRuntimeRoot === null
+    : activeProbe === true;
+  const qualificationRepository = probeQualificationRepository
+    || (selectedRuntimeRoot
+      ? createDynamicFormalSandboxProbeQualificationRepository({
+        runtimeRoot: selectedRuntimeRoot,
+        clock: probeQualificationClock,
+      }) : null);
   let projectRoot = path.resolve(String(
     environment.HEPTA_DYNAMIC_FORMAL_PROJECT_ROOT || '',
   ));
@@ -271,6 +351,7 @@ export function inspectConfiguredDynamicFormalProjectClosure({
             expectedToolchainRootMerkleHash: expectedToolchainMerkle,
           }).inspect())
       : null;
+    details.toolchain = PRODUCTION_LEAN_TOOLCHAIN;
     details.toolchainRootMerkleHash = toolchainIdentity?.toolchainRootMerkleHash || null;
     details.toolchainContentIdentityHash =
       toolchainIdentity?.leanToolchainContentIdentityHash || null;
@@ -280,8 +361,45 @@ export function inspectConfiguredDynamicFormalProjectClosure({
       blockers.push(...(toolchainIdentity?.blockers
         || ['dynamic_formal_toolchain_content_identity_required']));
     }
+    let cachedProbeReadiness = null;
+    if (!blockers.length && !activeProbeRequested) {
+      const qualification = qualificationRepository?.inspect() || null;
+      if (qualification?.ready !== true) {
+        blockers.push(...(qualification?.blockers || [
+          'dynamic_formal_sandbox_probe_qualification_receipt_required',
+        ]));
+      } else {
+        cachedProbeReadiness = qualification.receipt
+          ?.dynamicFormalProjectClosureReadiness || null;
+        const identityMismatches = passiveProbeIdentityMismatches(
+          cachedProbeReadiness,
+          details,
+        );
+        if (!cachedProbeQualificationReady(cachedProbeReadiness)
+          || identityMismatches.length) {
+          blockers.push(
+            'dynamic_formal_sandbox_probe_qualification_identity_mismatch',
+            ...identityMismatches.map((field) => (
+              `dynamic_formal_sandbox_probe_qualification_identity_mismatch:${field}`
+            )),
+          );
+        } else {
+          details.formalSandboxProbeSnapshotSealReceipt =
+            cachedProbeReadiness.formalSandboxProbeSnapshotSealReceipt;
+          details.formalSandboxProbeSnapshotSealReceiptHash =
+            cachedProbeReadiness.formalSandboxProbeSnapshotSealReceiptHash;
+          details.formalSandboxProbeReceiptHash =
+            cachedProbeReadiness.formalSandboxProbeReceiptHash;
+          details.formalSandboxProbeRuntimeIdentityHash =
+            cachedProbeReadiness.formalSandboxProbeRuntimeIdentityHash;
+          details.formalSandboxProbeExecutionProcessIdentityHash =
+            cachedProbeReadiness
+              .formalSandboxProbeExecutionProcessIdentityHash;
+        }
+      }
+    }
     let probeResult = null;
-    if (!blockers.length) {
+    if (!blockers.length && activeProbeRequested) {
       probeResult = spawnSyncImpl(pinned.lakeExecutable, ['env', 'lean', probeRelativePath], {
         cwd: projectRoot,
         encoding: 'utf8',
@@ -297,7 +415,7 @@ export function inspectConfiguredDynamicFormalProjectClosure({
       }
     }
     let sandboxProbeReceipt = null;
-    if (!blockers.length) {
+    if (!blockers.length && activeProbeRequested) {
       const probe = executeDynamicFormalSandboxProbe({
         manifest,
         closure,
@@ -327,7 +445,7 @@ export function inspectConfiguredDynamicFormalProjectClosure({
     }
     let postProbeClosure = null;
     let postProbeToolchainIdentity = null;
-    if (!blockers.length) {
+    if (!blockers.length && activeProbeRequested) {
       const postProbeToolchainSource = fs.readFileSync(
         path.join(projectRoot, 'lean-toolchain'), 'utf8',
       ).trim();
@@ -473,175 +591,34 @@ export function inspectConfiguredDynamicFormalProjectClosure({
       postProbeReinspectionVerified: true,
       blockers: Object.freeze([]),
     };
-    return Object.freeze({
+    const readiness = Object.freeze({
       ...payload,
       dynamicFormalProjectClosureReadinessHash: hashRecord(
         'DynamicFormalProjectClosureReadiness', payload,
       ),
     });
+    if (!activeProbeRequested
+      && readiness.dynamicFormalProjectClosureReadinessHash
+        !== cachedProbeReadiness?.dynamicFormalProjectClosureReadinessHash) {
+      return blocked([
+        'dynamic_formal_sandbox_probe_qualification_readiness_mismatch',
+      ], details);
+    }
+    if (activeProbeRequested && publishActiveProbeReceipt === true) {
+      if (!qualificationRepository) {
+        return blocked([
+          'dynamic_formal_sandbox_probe_qualification_repository_required',
+        ], details);
+      }
+      qualificationRepository.publish(readiness);
+    }
+    return readiness;
   } catch (error) {
     return blocked([
       ...blockers,
       `dynamic_formal_project_inspection_failed:${String(error?.message || error)}`,
     ], details);
   }
-}
-
-const DYNAMIC_FORMAL_EXECUTION_AUTHORITY_KEYS = Object.freeze([
-  'dynamicFormalExecutionAuthorityHash',
-  'dynamicFormalProjectClosureReadinessHash',
-  'formalProjectClosureHash',
-  'formalProjectManifestHash',
-  'formalSandboxRuntimeConfigurationHash',
-  'formalSandboxRuntimeImage',
-  'formalSandboxRuntimeImageDigest',
-  'formalSandboxProbeReceiptHash',
-  'formalSandboxProbeRuntimeIdentityHash',
-  'formalSandboxProbeExecutionProcessIdentityHash',
-  'formalSandboxProbeSnapshotSealReceiptHash',
-  'imports',
-  'kind',
-  'mathlibPackageSourcePath',
-  'productionMathlibBuildAuthority',
-  'productionMathlibBuildAuthorityHash',
-  'productionMathlibReleaseIdentity',
-  'productionMathlibReleaseIdentityHash',
-  'probeRelativePath',
-  'projectRoot',
-  'projectScopeRoot',
-  'status',
-  'toolchain',
-  'toolchainContentIdentityHash',
-  'toolchainRootMerkleHash',
-  'version',
-]);
-
-export function buildDynamicFormalExecutionAuthority(inspection) {
-  if (inspection?.status !== 'dynamic_formal_project_closure_ready'
-    || inspection.ready !== true
-    || inspection.postProbeReinspectionVerified !== true
-    || JSON.stringify(inspection.imports) !== JSON.stringify(['Mathlib'])
-    || !SHA256.test(String(inspection.dynamicFormalProjectClosureReadinessHash || ''))
-    || !SHA256.test(String(inspection.formalProjectClosureHash || ''))
-    || !SHA256.test(String(inspection.formalProjectManifestHash || ''))
-    || !SHA256.test(String(inspection.toolchainRootMerkleHash || ''))
-    || !SHA256.test(String(inspection.toolchainContentIdentityHash || ''))
-    || !SHA256.test(String(inspection.formalSandboxRuntimeConfigurationHash || ''))
-    || !String(inspection.formalSandboxRuntimeImage || '')
-    || !SHA256.test(String(inspection.formalSandboxRuntimeImageDigest || ''))
-    || !SHA256.test(String(inspection.formalSandboxProbeReceiptHash || ''))
-    || !SHA256.test(String(inspection.formalSandboxProbeRuntimeIdentityHash || ''))
-    || !SHA256.test(String(
-      inspection.formalSandboxProbeExecutionProcessIdentityHash || '',
-    ))
-    || !SHA256.test(String(
-      inspection.formalSandboxProbeSnapshotSealReceiptHash || '',
-    ))
-    || !verifyProductionMathlibReleaseIdentity(
-      inspection.productionMathlibReleaseIdentity,
-    )
-    || inspection.productionMathlibReleaseIdentityHash
-      !== inspection.productionMathlibReleaseIdentity
-        .productionMathlibReleaseIdentityHash
-    || !verifyProductionMathlibBuildAuthority(
-      inspection.productionMathlibBuildAuthority,
-    )
-    || inspection.productionMathlibBuildAuthorityHash
-      !== inspection.productionMathlibBuildAuthority
-        .productionMathlibBuildAuthorityHash
-    ) {
-    throw new Error('dynamic_formal_execution_authority_inspection_not_ready');
-  }
-  const payload = {
-    version: 1,
-    kind: 'DynamicFormalExecutionAuthority',
-    status: 'dynamic_formal_execution_authority_verified',
-    imports: Object.freeze(['Mathlib']),
-    projectRoot: inspection.projectRoot,
-    projectScopeRoot: inspection.projectScopeRoot,
-    probeRelativePath: inspection.probeRelativePath,
-    mathlibPackageSourcePath: inspection.mathlibPackageSourcePath,
-    productionMathlibReleaseIdentity:
-      inspection.productionMathlibReleaseIdentity,
-    productionMathlibReleaseIdentityHash:
-      inspection.productionMathlibReleaseIdentityHash,
-    productionMathlibBuildAuthority:
-      inspection.productionMathlibBuildAuthority,
-    productionMathlibBuildAuthorityHash:
-      inspection.productionMathlibBuildAuthorityHash,
-    toolchain: inspection.toolchain,
-    formalProjectClosureHash: inspection.formalProjectClosureHash,
-    formalProjectManifestHash: inspection.formalProjectManifestHash,
-    toolchainRootMerkleHash: inspection.toolchainRootMerkleHash,
-    toolchainContentIdentityHash: inspection.toolchainContentIdentityHash,
-    formalSandboxRuntimeConfigurationHash:
-      inspection.formalSandboxRuntimeConfigurationHash,
-    formalSandboxRuntimeImage: inspection.formalSandboxRuntimeImage,
-    formalSandboxRuntimeImageDigest: inspection.formalSandboxRuntimeImageDigest,
-    formalSandboxProbeReceiptHash: inspection.formalSandboxProbeReceiptHash,
-    formalSandboxProbeRuntimeIdentityHash:
-      inspection.formalSandboxProbeRuntimeIdentityHash,
-    formalSandboxProbeExecutionProcessIdentityHash:
-      inspection.formalSandboxProbeExecutionProcessIdentityHash,
-    formalSandboxProbeSnapshotSealReceiptHash:
-      inspection.formalSandboxProbeSnapshotSealReceiptHash,
-    dynamicFormalProjectClosureReadinessHash:
-      inspection.dynamicFormalProjectClosureReadinessHash,
-  };
-  return Object.freeze({
-    ...payload,
-    dynamicFormalExecutionAuthorityHash: hashRecord(
-      'DynamicFormalExecutionAuthority', payload,
-    ),
-  });
-}
-
-export function verifyDynamicFormalExecutionAuthority(authority) {
-  if (!authority || JSON.stringify(Object.keys(authority).sort())
-      !== JSON.stringify([...DYNAMIC_FORMAL_EXECUTION_AUTHORITY_KEYS].sort())) return false;
-  const { dynamicFormalExecutionAuthorityHash, ...payload } = authority;
-  return authority.version === 1
-    && authority.kind === 'DynamicFormalExecutionAuthority'
-    && authority.status === 'dynamic_formal_execution_authority_verified'
-    && JSON.stringify(authority.imports) === JSON.stringify(['Mathlib'])
-    && authority.toolchain === PRODUCTION_LEAN_TOOLCHAIN
-    && verifyProductionMathlibReleaseIdentity(
-      authority.productionMathlibReleaseIdentity,
-    )
-    && authority.productionMathlibReleaseIdentityHash
-      === authority.productionMathlibReleaseIdentity
-        .productionMathlibReleaseIdentityHash
-    && verifyProductionMathlibBuildAuthority(
-      authority.productionMathlibBuildAuthority,
-    )
-    && authority.productionMathlibBuildAuthorityHash
-      === authority.productionMathlibBuildAuthority
-        .productionMathlibBuildAuthorityHash
-    && authority.productionMathlibBuildAuthority.formalProjectClosureHash
-      === authority.formalProjectClosureHash
-    && authority.productionMathlibBuildAuthority
-      .productionMathlibReleaseIdentityHash
-      === authority.productionMathlibReleaseIdentityHash
-    && SHA256.test(String(dynamicFormalExecutionAuthorityHash || ''))
-    && SHA256.test(String(authority.formalProjectClosureHash || ''))
-    && SHA256.test(String(authority.formalProjectManifestHash || ''))
-    && SHA256.test(String(authority.toolchainRootMerkleHash || ''))
-    && SHA256.test(String(authority.toolchainContentIdentityHash || ''))
-    && SHA256.test(String(authority.formalSandboxRuntimeConfigurationHash || ''))
-    && SHA256.test(String(authority.formalSandboxRuntimeImageDigest || ''))
-    && String(authority.formalSandboxRuntimeImage || '').endsWith(
-      `@${authority.formalSandboxRuntimeImageDigest}`,
-    )
-    && SHA256.test(String(authority.formalSandboxProbeReceiptHash || ''))
-    && SHA256.test(String(authority.formalSandboxProbeRuntimeIdentityHash || ''))
-    && SHA256.test(String(
-      authority.formalSandboxProbeExecutionProcessIdentityHash || '',
-    ))
-    && SHA256.test(String(
-      authority.formalSandboxProbeSnapshotSealReceiptHash || '',
-    ))
-    && hashRecord('DynamicFormalExecutionAuthority', payload)
-      === dynamicFormalExecutionAuthorityHash;
 }
 
 export function inspectConfiguredDynamicFormalExecutionAuthority(options = {}) {

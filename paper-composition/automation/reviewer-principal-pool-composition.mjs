@@ -345,6 +345,52 @@ export function composeReviewerPrincipalExecutorPool({
   });
 }
 
+export function composeReviewerSessionExecutorPool({
+  inspection,
+  runtimeRoot,
+  workspaceRegistry,
+  assertExternalSideEffectReady = null,
+} = {}) {
+  if (!runtimeRoot
+    || inspection?.authorityMode !== 'fresh-isolated-session'
+    || inspection?.sessionIsolationReady !== true
+    || inspection?.identityIndependenceReady !== true
+    || inspection?.cryptographicAuthorityReady !== false
+    || inspection?.entries?.length !== 1) {
+    throw new Error('reviewer_session_executor_pool_inputs_invalid');
+  }
+  const entry = inspection.entries[0];
+  const delegate = createCodexAgentExecutor({
+    codexBinary: entry.preflight.codexBinary,
+    codexHome: entry.preflight.codexHome,
+    model: entry.preflight.capabilityReceipt.model,
+    principalId: entry.descriptor.principalId,
+    formalReviewerCapabilityReceipt: entry.preflight.capabilityReceipt,
+  });
+  const executor = createIsolatedAgentExecutor({
+    delegate,
+    isolationRoot: path.join(
+      runtimeRoot,
+      'automation-reviewer-session-workspaces',
+      entry.descriptor.principalDescriptorHash.slice(7, 23),
+    ),
+    keepWorkspaces: false,
+    keepFailedWorkspaces: true,
+    workspaceRegistry,
+    assertExternalSideEffectReady,
+  });
+  return Object.freeze({
+    ...inspection,
+    executorPool: createReviewerPrincipalExecutorPool({
+      pool: inspection.pool,
+      executors: new Map([[entry.descriptor.principalId, executor]]),
+      signers: null,
+      trustInspection: inspection.trustInspection,
+      assertExternalSideEffectReady,
+    }),
+  });
+}
+
 export function composeReviewerReceiptVerificationAuthority({
   configPath,
   authorProvider,

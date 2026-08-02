@@ -116,7 +116,8 @@ function automationConfiguration(environment, runtimeRoot) {
     researchAuthorCodexHome: environment.HEPTA_RESEARCH_AUTHOR_CODEX_HOME || environment.CODEX_HOME || null,
     researchAuthorModel: environment.HEPTA_RESEARCH_AUTHOR_MODEL || null,
     researchAuthorCodexBinary: environment.HEPTA_RESEARCH_AUTHOR_CODEX_BINARY || 'codex',
-    formalReviewCodexHome: environment.HEPTA_FORMAL_REVIEW_CODEX_HOME || null,
+    formalReviewCodexHome: environment.HEPTA_FORMAL_REVIEW_CODEX_HOME
+      || environment.HEPTA_RESEARCH_AUTHOR_CODEX_HOME || environment.CODEX_HOME || null,
     formalReviewModel: environment.HEPTA_FORMAL_REVIEW_MODEL || null,
     formalReviewCodexBinary: environment.HEPTA_FORMAL_REVIEW_CODEX_BINARY || 'codex',
     qualificationReceiptPath: environment.HEPTA_FULL_RESEARCH_QUALIFICATION_RECEIPT
@@ -143,21 +144,28 @@ export function composeAutomationReleaseAttestorTrust({
   runtimeRoot,
   environment = process.env,
   now = new Date(),
+  activeVerificationNow = now,
   activeVerification = false,
+  activeVerificationClock = null,
   spawnSyncImpl = spawnSync,
 } = {}) {
+  const inspectionNow = activeVerification === true ? activeVerificationNow : now;
+  const inspectionClock = activeVerification === true
+    ? activeVerificationClock || { now: () => new Date() }
+    : { now: () => inspectionNow };
   return Object.freeze({
     inspection: inspectResearchExecutionReleaseAttestorConfiguration({
       runtimeRoot,
-      now,
+      now: inspectionNow,
       environment,
       activeVerification,
+      clock: inspectionClock,
       spawnSyncImpl,
     }),
     attestor: createResearchExecutionReleaseAttestor({
       runtimeRoot,
       environment,
-      clock: { now: () => now },
+      clock: inspectionClock,
       spawnSyncImpl,
     }),
   });
@@ -171,9 +179,11 @@ export function queryAutomationReadiness({
   liveProviderCanaryRequested = false,
   requireFullResearch = false,
   requireFullyAutonomous = false,
+  activeFormalSandboxProbe = false,
   activeReleaseAttestorVerification = false,
   spawnSyncImpl = spawnSync,
   now = new Date(),
+  liveActionClock = { now: () => new Date() },
   codeProvenance = currentCodeProvenance(),
 } = {}) {
   if (!root || !runtimeRoot) throw new Error('automation_readiness_query_roots_required');
@@ -226,6 +236,9 @@ export function queryAutomationReadiness({
   });
   const dynamicFormalProjectClosure = inspectAutomationDynamicFormalProjectClosure({
     environment,
+    runtimeRoot,
+    activeProbe: activeFormalSandboxProbe,
+    publishActiveProbeReceipt: activeFormalSandboxProbe,
     spawnSyncImpl: runtimeSpawnSync,
   });
   let currentDynamicFormalExecutionAuthority = null;
@@ -240,7 +253,8 @@ export function queryAutomationReadiness({
     liveProviderCanaryRequested,
     spawnSyncImpl: providerSpawnSync,
     environment,
-    canaryClock: { now: () => now },
+    canaryClock: liveProviderCanaryRequested === true
+      ? liveActionClock : { now: () => now },
     legacyAgentFallbackProbesRequested: !(requireFullResearch || requireFullyAutonomous),
   });
   const campaignQuery = store.query('SELECT status,count(*) AS count FROM paper_campaigns GROUP BY status ORDER BY status;');
@@ -258,7 +272,11 @@ export function queryAutomationReadiness({
     runtimeRoot,
     environment,
     now,
+    activeVerificationNow: activeReleaseAttestorVerification === true
+      ? liveActionClock.now() : now,
     activeVerification: activeReleaseAttestorVerification,
+    activeVerificationClock: activeReleaseAttestorVerification === true
+      ? liveActionClock : null,
     spawnSyncImpl: releaseAttestorSpawnSync,
   });
   const researchExecutionReleaseAttestor = releaseAttestorTrust.inspection;
@@ -532,12 +550,22 @@ export function queryAutomationReadiness({
     academicEmpiricalStatus: readiness.academicEmpiricalReady ? 'academic_empirical_runtime_ready' : 'academic_empirical_runtime_blocked',
     academicEmpiricalReadinessReason: readiness.academicEmpiricalReadinessReason,
     academicEmpiricalDatasetProofBackend: runtimes.sandbox.academicEmpiricalDatasetProofBackend || null,
+    researchAuthorIdentityAttestation:
+      capabilityScopeInspection.authorIdentityAttestation || null,
+    researchAuthorIdentityAttestationReady:
+      capabilityScopeInspection.authorIdentityAttestationReady === true,
+    researchAuthorIdentityCryptographicAuthorityReady:
+      capabilityScopeInspection.authorIdentityCryptographicAuthorityReady === true,
+    researchAuthorIdentityFullProductionReady:
+      capabilityScopeInspection.authorIdentityFullProductionReady === true,
     researchExecutionReleaseAttestor,
     liveReleaseAttestorVerificationRequested:
       activeReleaseAttestorVerification === true,
     researchExecutionReleaseAttestorReady: researchExecutionReleaseAttestor.ready,
-    researchExecutionReleaseAttestorProductionReady:
+    researchExecutionReleaseAttestorBoundedProductionReady:
       researchExecutionReleaseAttestor.productionReady === true,
+    researchExecutionReleaseAttestorProductionReady:
+      researchExecutionReleaseAttestor.fullProductionReady === true,
     runtimeImageReproducibility,
     runtimeImageReproducibilityConfiguration:
       runtimeImageReproducibilityReport.configuration,

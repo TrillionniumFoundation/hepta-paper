@@ -3,6 +3,9 @@ import {
   verifyAdvancedNumericalPluginSignedBundle,
 } from '../../paper-adapters/automation/out-of-process-advanced-numerical-plugin-runner.mjs';
 import {
+  readAdvancedNumericalPluginRuntimeConfiguration,
+} from '../../paper-adapters/automation/advanced-numerical-plugin-runtime-configuration.mjs';
+import {
   createOsSandboxedWorkerRunner,
 } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
 
@@ -10,6 +13,7 @@ export function composeAdvancedNumericalPluginRuntime({
   bundle,
   trustStore,
   qualification = null,
+  qualificationEvidence = null,
   qualificationTrustStore = null,
   pluginRoot,
   outputRoot,
@@ -35,6 +39,7 @@ export function composeAdvancedNumericalPluginRuntime({
     signedBundle: bundle,
     trustStore,
     qualification,
+    qualificationEvidence,
     qualificationTrustStore,
     workerRunner,
     pluginRoot,
@@ -46,5 +51,32 @@ export function composeAdvancedNumericalPluginRuntime({
     descriptor,
     workerRunner,
     runner,
+  });
+}
+
+export function composeConfiguredAdvancedNumericalPluginRuntime({
+  configurationPath,
+  expectedConfigurationHash = null,
+  requireProductionQualification = false,
+  now,
+} = {}) {
+  const runtimeConfiguration = readAdvancedNumericalPluginRuntimeConfiguration({
+    configurationPath,
+    expectedConfigurationHash,
+    requireProductionQualification,
+  });
+  const runtime = composeAdvancedNumericalPluginRuntime({
+    bundle: runtimeConfiguration.bundle,
+    trustStore: runtimeConfiguration.trustStore,
+    qualification: runtimeConfiguration.qualification,
+    qualificationEvidence: runtimeConfiguration.qualificationEvidence,
+    qualificationTrustStore: runtimeConfiguration.qualificationTrustStore,
+    pluginRoot: runtimeConfiguration.pluginRoot,
+    outputRoot: runtimeConfiguration.outputRoot,
+    now,
+  });
+  return Object.freeze({
+    ...runtime,
+    runtimeConfiguration,
   });
 }

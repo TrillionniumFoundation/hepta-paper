@@ -128,6 +128,60 @@ function signedReviewerAgentReceipt(
   });
 }
 
+function freshSessionReviewerAgentReceipt(coverage, replayReceipt, ordinal) {
+  const structuredOutput = Object.freeze({
+    version: 1,
+    kind: 'FormalDomainQualificationIndependentReview',
+    status: 'approved',
+    summary: `Fresh isolated formal-domain review ${ordinal}.`,
+    blockers: Object.freeze([]),
+    formalDomainCoverageReceiptHash:
+      coverage.formalDomainCoverageReceiptHash,
+    externalReplayReceiptHash:
+      replayReceipt.externalResearchReplayReceiptHash,
+    reviewedProfileIds: REQUIRED_GENERIC_FORMAL_DOMAIN_PROFILE_IDS,
+    reviewedProfileEvidenceHashes: Object.freeze(
+      [...coverage.profileEvidence]
+        .sort((left, right) => left.profileId.localeCompare(right.profileId))
+        .map((item) => item.formalProofSearchOperationReceiptHash),
+    ),
+  });
+  const sessionId = `codex-exec:formal-domain-session-${ordinal}`;
+  const payload = {
+    version: 1,
+    kind: 'AgentExecutionReceipt',
+    status: 'agent_execution_completed',
+    structuredOutput,
+    role: 'formal-review',
+    childSessionId: sessionId,
+    sessionId,
+    sessionIsolation: 'fresh_ephemeral_no_resume',
+    contextInheritance: 'forbidden',
+    reviewEvidenceMode: 'fresh-isolated-session',
+    reviewerCryptographicAuthorityReady: false,
+    reviewerIdentityIndependenceReady: true,
+    codexProviderCredentialSharingPermitted: true,
+    codexFreshEphemeralSessionRequired: true,
+    codexAuthorContextInheritanceForbidden: true,
+    codexFrozenArtifactReviewRequired: true,
+    codexReviewerAssuranceScope:
+      'ephemeral_session_frozen_artifact_and_role_separation',
+    reviewPrincipalId: 'formal-reviewer-session',
+    reviewPrincipalDescriptorHash: H('session-reviewer-descriptor'),
+    reviewerProviderAccountIdentityHash: H('session-provider-account'),
+    reviewerCredentialRootIdentityHash: H('session-credential-root'),
+    reviewerTrustDomainIdentityHash: H('session-trust-domain'),
+    reviewerSignerIdentityHash: H('session-policy'),
+    researchPrincipalPoolHash: H('session-reviewer-pool'),
+    reviewerTrustSetHash: H('session-reviewer-trust'),
+    reviewerSignatureVerificationPolicyHash: H('session-reviewer-policy'),
+  };
+  return Object.freeze({
+    ...payload,
+    agentExecutionReceiptHash: hashRecord('AgentExecutionReceipt', payload),
+  });
+}
+
 function recoverableOperationPort({ kind, configurationIdentityHash, receipt }) {
   const remote = new Map();
   const counts = {
@@ -211,6 +265,8 @@ function recoveryFixture({ evidenceExpiresAt = null } = {}) {
     version: 1,
     kind: 'ExternalResearchReplayPort',
     configurationHash: H('external-replay-configuration'),
+    configurationPinned: true,
+    fullProductionReady: true,
     recoveryConfigurationIdentityHash:
       H('external-replay-recovery-configuration'),
     crashRecoveryReady: true,
@@ -270,6 +326,40 @@ function recoveryFixture({ evidenceExpiresAt = null } = {}) {
     replayCounts,
     reviewerCounts: reviewerRecoveryPort.counts,
     signerCounts: signerRecoveryPort.counts,
+  };
+}
+
+function freshSessionRecoveryFixture() {
+  const fixture = recoveryFixture();
+  let reviewerExecutionCount = 0;
+  const receipts = [];
+  const reviewerExecutorPool = Object.freeze({
+    version: 3,
+    authorityMode: 'fresh-isolated-session',
+    sessionIsolationReady: true,
+    cryptographicAuthorityReady: false,
+    identityIndependenceReady: true,
+    trustSetHash: H('session-reviewer-trust'),
+    signatureVerificationPolicyHash: H('session-reviewer-policy'),
+    pool: Object.freeze({
+      researchPrincipalPoolHash: H('session-reviewer-pool'),
+    }),
+    verifySessionReviewerReceipt: ({ receipt }) => receipts.includes(receipt),
+    async execute() {
+      reviewerExecutionCount += 1;
+      const receipt = freshSessionReviewerAgentReceipt(
+        fixture.coverage,
+        externalReplayReceipt(),
+        reviewerExecutionCount,
+      );
+      receipts.push(receipt);
+      return receipt;
+    },
+  });
+  return {
+    ...fixture,
+    reviewerExecutorPool,
+    reviewerExecutionCount: () => reviewerExecutionCount,
   };
 }
 
@@ -602,6 +692,64 @@ for (const crashedStage of ['external-replay', 'reviewer', 'signer']) {
   });
 }
 
+test('fresh isolated reviewer sessions replace the external reviewer signer stage', async (t) => {
+  const runtimeRoot = temporaryRoot(t);
+  const fixture = freshSessionRecoveryFixture();
+  let injected = false;
+  await assert.rejects(() => (
+    produceConfiguredFormalDomainQualificationExternalEvidence({
+      coverageReceipt: fixture.coverage,
+      root: runtimeRoot,
+      runtimeRoot,
+      environment: {},
+      externalResearchReplay: fixture.externalResearchReplay,
+      reviewerExecutorPool: fixture.reviewerExecutorPool,
+      faultInjector({ point, stage }) {
+        if (!injected
+          && point === 'after_remote_success_before_journal_append'
+          && stage === 'reviewer') {
+          injected = true;
+          throw new Error('injected_fresh_session_reviewer_crash');
+        }
+      },
+    })
+  ), /injected_fresh_session_reviewer_crash/);
+  assert.equal(fixture.reviewerExecutionCount(), 1);
+  const evidence =
+    await produceConfiguredFormalDomainQualificationExternalEvidence({
+      coverageReceipt: fixture.coverage,
+      root: runtimeRoot,
+      runtimeRoot,
+      environment: {},
+      externalResearchReplay: fixture.externalResearchReplay,
+      reviewerExecutorPool: fixture.reviewerExecutorPool,
+    });
+  assert.equal(fixture.reviewerExecutionCount(), 2);
+  assert.equal(
+    evidence.formalDomainIndependentReviewAgentReceipt.reviewEvidenceMode,
+    'fresh-isolated-session',
+  );
+  assert.equal(
+    evidence.formalDomainIndependentReviewAgentReceipt
+      .reviewerCryptographicAuthorityReady,
+    false,
+  );
+  const journalRoot = path.join(
+    runtimeRoot,
+    'formal-domain-qualification-recovery-journals',
+  );
+  const journalDirectory = fs.readdirSync(journalRoot)
+    .find((name) => name.endsWith('.journal'));
+  const stages = fs.readdirSync(path.join(journalRoot, journalDirectory))
+    .sort()
+    .map((name) => JSON.parse(fs.readFileSync(
+      path.join(journalRoot, journalDirectory, name),
+      'utf8',
+    )).stage);
+  assert.equal(stages.includes('signer'), false);
+  assert.equal(stages.at(-1), 'evidence');
+});
+
 test('a rejected action gate leaves no started intent and the next attempt executes fresh', async (t) => {
   const runtimeRoot = temporaryRoot(t);
   const fixture = recoveryFixture();
@@ -871,6 +1019,7 @@ for (const missingStage of ['external-replay', 'reviewer', 'signer']) {
       ? Object.freeze({
         ...fixture.externalResearchReplay,
         crashRecoveryReady: false,
+        fullProductionReady: false,
       }) : fixture.externalResearchReplay;
     const reviewerExecutorPool = missingStage === 'reviewer'
       ? Object.freeze({
@@ -896,7 +1045,9 @@ for (const missingStage of ['external-replay', 'reviewer', 'signer']) {
         externalResearchReplay,
         reviewerExecutorPool,
       })
-    ), new RegExp(`${missingStage.replace('-', '_')}.*lookup_resume_required`));
+    ), missingStage === 'external-replay'
+      ? /formal_domain_qualification_external_authorities_not_ready/
+      : new RegExp(`${missingStage.replace('-', '_')}.*lookup_resume_required`));
     assert.equal(fixture.replayCounts.action, 0);
     assert.equal(fixture.reviewerCounts.action, 0);
     assert.equal(fixture.signerCounts.action, 0);

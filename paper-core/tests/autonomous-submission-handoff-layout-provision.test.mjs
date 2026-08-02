@@ -9,6 +9,9 @@ import test from 'node:test';
 import {
   verifyAutonomousSubmissionHandoffLayoutReceipt,
 } from '../../paper-adapters/automation/autonomous-submission-handoff-layout-receipt-repository.mjs';
+import {
+  provisionLocalReleaseAttestorDeploymentFixture,
+} from './support/local-release-attestor-deployment-fixture.mjs';
 
 const WORKSPACE_ROOT = path.resolve(
   path.dirname(new URL(import.meta.url).pathname),
@@ -418,10 +421,14 @@ test('systemd bootstrap, isolated layout service, and installer form a fresh-hos
       'utf8',
     );
     assert.match(sysusers, /^g hepta-runtime-handoff -$/m);
+    assert.match(sysusers, /^g hepta-state-authority -$/m);
     assert.match(sysusers, /^u hepta-paper -:hepta-paper .* \/var\/lib\/hepta-paper \/usr\/sbin\/nologin$/m);
     assert.match(sysusers, /^u hepta-submission-dispatcher -:hepta-submission-dispatcher .* \/nonexistent \/usr\/sbin\/nologin$/m);
+    assert.match(sysusers,
+      /^u hepta-state-authority -:hepta-state-authority .* \/var\/lib\/hepta-paper-state-authority \/usr\/sbin\/nologin$/m);
     assert.equal((sysusers.match(/^m .* hepta-runtime-handoff$/gm) || []).length, 2);
-    assert.doesNotMatch(sysusers, /docker|secret|credential|authority/i);
+    assert.doesNotMatch(sysusers, /^m hepta-paper hepta-state-authority$/m);
+    assert.doesNotMatch(sysusers, /docker|secret|credential/i);
     assert.match(
       tmpfiles,
       /^d \/var\/lib\/hepta-paper 0710 hepta-paper hepta-runtime-handoff -$/m,
@@ -480,8 +487,10 @@ test('systemd bootstrap, isolated layout service, and installer form a fresh-hos
       'autonomous-submission-dispatcher.service',
     ]) {
       const unit = fs.readFileSync(path.join(DEPLOY_ROOT, name), 'utf8');
-      assert.match(unit,
-        /^Requires=hepta-paper-host-bootstrap\.service autonomous-submission-handoff-layout-provision\.service$/m);
+      const expectedRequires = name === 'autonomous-research-supervisor.service'
+        ? 'Requires=hepta-paper-host-bootstrap.service autonomous-submission-handoff-layout-provision.service hepta-paper-state-authority.service'
+        : 'Requires=hepta-paper-host-bootstrap.service autonomous-submission-handoff-layout-provision.service';
+      assert.match(unit, new RegExp(`^${expectedRequires.replaceAll('.', '\\.')}$`, 'm'));
       assert.match(unit, /^Wants=.*autonomous-submission-handoff-layout-provision\.path/m);
       assert.doesNotMatch(unit, /^ExecStartPre=\+/m);
       assert.match(unit, /^Restart=always$/m);
@@ -538,6 +547,7 @@ test('systemd bootstrap, isolated layout service, and installer form a fresh-hos
         path.join(os.tmpdir(), 'hepta-host-install-destdir-'),
       );
       t.after(() => fs.rmSync(installRoot, { recursive: true, force: true }));
+      provisionLocalReleaseAttestorDeploymentFixture(installRoot);
       const installation = spawnSync(installerPath, [
         '--root',
         installRoot,
@@ -583,6 +593,25 @@ test('systemd bootstrap, isolated layout service, and installer form a fresh-hos
         )),
         0o755,
       );
+      for (const launcher of [
+        'codex-openclaw-managed',
+        'hepta-paper-state-authority-client',
+        'hepta-paper-release-attestor-client',
+      ]) {
+        const expectedInstallerUid = process.getuid() === 0 ? 0 : process.getuid();
+        const expectedInstallerGid = process.getuid() === 0 ? 0 : process.getgid();
+        const installedLauncher = path.join(
+          installRoot,
+          'usr',
+          'libexec',
+          'hepta-paper',
+          launcher,
+        );
+        assert.equal(mode(installedLauncher), 0o755, launcher);
+        const stat = fs.statSync(installedLauncher);
+        assert.equal(stat.uid, expectedInstallerUid, launcher);
+        assert.equal(stat.gid, expectedInstallerGid, launcher);
+      }
       assert.equal(
         mode(path.join(
           installRoot,
@@ -604,6 +633,7 @@ test('systemd bootstrap, isolated layout service, and installer form a fresh-hos
       'fstatat(',
       'getsgent(',
       'getgrouplist(',
+      'SUPERVISOR_RUNTIME_GROUP',
       'require_exact_public_group_memberships(',
       'autonomous_submission_handoff_persistent_supplementary_group_forbidden',
       'autonomous_submission_handoff_primary_group_shadow_members_invalid',

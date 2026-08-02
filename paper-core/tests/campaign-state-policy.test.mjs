@@ -11,6 +11,9 @@ import {
   selectReadyCampaignNodes,
   selectFutureRoundNodeIds,
 } from '../../paper-domain/automation/campaign-state-policy.mjs';
+import {
+  trustedAutonomousManuscriptRenderFailureIsPermanent,
+} from '../../paper-application/automation/campaign-agent-node-orchestrator.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
 
@@ -31,8 +34,37 @@ test('campaign domain policy owns projection, ready selection and retry semantic
     terminal: false,
   });
   assert.equal(decideNodeFailureTransition({ attemptCount: 1, maxAttempts: 3 }, { retryable: true }).status, 'queued');
+  assert.equal(decideNodeFailureTransition({ attemptCount: 1, maxAttempts: 3 }, { retryable: false }).status, 'failed_terminal');
   assert.equal(decideNodeFailureTransition({ attemptCount: 3, maxAttempts: 3 }, { retryable: true }).status, 'failed_terminal');
+  assert.equal(decideNodeFailureTransition({ attemptCount: 1, maxAttempts: 3, preparedIntegrationStatus: 'integrated' }, { retryable: false }).status, 'failed_terminal');
+  assert.equal(decideNodeFailureTransition({ attemptCount: 3, maxAttempts: 3, preparedIntegrationStatus: 'integrated' }, { retryable: true }).status, 'queued');
+  assert.equal(decideNodeFailureTransition({ attemptCount: 4, maxAttempts: 3, preparedIntegrationStatus: 'integrated' }, { retryable: true }).status, 'failed_terminal');
   assert.equal(decideManualNodeRetry({ status: 'failed_terminal' }).apply, true);
+});
+
+test('deterministic trusted manuscript claim authority failures are terminal', () => {
+  for (const message of [
+    'trusted_autonomous_manuscript_empirical_claim_lineage_required',
+    'trusted_autonomous_manuscript_empirical_claim_lineage_identity_invalid',
+    'trusted_autonomous_manuscript_empirical_claim_lineage_binding_invalid',
+    'trusted_autonomous_manuscript_claim_id_duplicate',
+    'trusted_autonomous_manuscript_render_verification_failed:empirical_claim_universe_authority_hash_mismatch:claim-a',
+  ]) {
+    assert.equal(trustedAutonomousManuscriptRenderFailureIsPermanent(new Error(message)), true);
+  }
+  assert.equal(trustedAutonomousManuscriptRenderFailureIsPermanent(
+    new Error('trusted_autonomous_manuscript_render_verification_failed:empirical_assertion_untyped_result_prose'),
+  ), false);
+  assert.equal(trustedAutonomousManuscriptRenderFailureIsPermanent(
+    new Error(
+      'trusted_autonomous_manuscript_render_verification_failed:'
+      + 'empirical_claim_universe_manuscript_unreadable:main.tex,'
+      + 'empirical_claim_universe_authority_count_mismatch',
+    ),
+  ), false);
+  assert.equal(trustedAutonomousManuscriptRenderFailureIsPermanent(
+    new Error('server_is_overloaded'),
+  ), false);
 });
 
 test('early convergence skips only round work and preserves immutable terminal definitions', () => {

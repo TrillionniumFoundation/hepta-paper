@@ -81,10 +81,25 @@ function createWritingCampaignExecutor({ runtime, onExecute = null } = {}) {
         onExecute?.(input);
         fs.writeFileSync(path.join(input.workspacePath, 'main.tex'), 'after\n');
         fs.writeFileSync(path.join(input.workspacePath, 'NEW.md'), 'new\n');
-        return {
+        const payload = {
+          version: 1,
+          kind: 'AgentExecutionReceipt',
           status: 'agent_execution_completed',
-          agentExecutionReceiptHash: 'sha256:writer-fixture',
-          usage: { totalTokens: 5 },
+          executorId: 'workspace-attempt-writing-fixture',
+          changedPaths: ['NEW.md', 'main.tex'],
+          externalModelInvocationPerformed: false,
+          externalActionPerformed: false,
+          usage: {
+            input: 0,
+            output: 0,
+            cacheRead: 0,
+            cacheWrite: 0,
+            totalTokens: 0,
+          },
+        };
+        return {
+          ...payload,
+          agentExecutionReceiptHash: hashRecord('AgentExecutionReceipt', payload),
         };
       },
     },
@@ -509,6 +524,7 @@ test('integration replay after a crash before the durable mark is idempotent and
       if (integrationCount === 1) {
         const error = new Error('injected_crash_after_integration_before_mark');
         error.retryable = true;
+        error.receipt = input.result;
         throw error;
       }
       return receipt;

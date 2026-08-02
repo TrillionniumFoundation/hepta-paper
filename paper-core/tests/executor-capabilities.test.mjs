@@ -3,6 +3,7 @@ import test from 'node:test';
 import { createAgentBackendRouter } from '../../paper-adapters/automation/agent-backend-router.mjs';
 import { buildExecutorCapabilities, evaluateExecutorCapabilityRequest } from '../../paper-ports/executor-capabilities.mjs';
 import { assertWorkerRunnerPort } from '../../paper-ports/worker-runner-port.mjs';
+import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 function executor(executorId, overrides = {}) {
   const capabilities = buildExecutorCapabilities({
@@ -18,7 +19,18 @@ function executor(executorId, overrides = {}) {
   return {
     executorId,
     capabilities: () => capabilities,
-    async execute() { return { status: 'agent_execution_completed', agentExecutionReceiptHash: `sha256:${executorId}` }; },
+    async execute() {
+      const payload = {
+        status: 'agent_execution_completed',
+        executorId,
+        externalModelInvocationPerformed: false,
+        usageComplete: true,
+      };
+      return {
+        ...payload,
+        agentExecutionReceiptHash: hashRecord('AgentExecutionReceipt', payload),
+      };
+    },
   };
 }
 

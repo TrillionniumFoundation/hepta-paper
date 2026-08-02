@@ -6,6 +6,7 @@ import {
 } from '../../paper-adapters/automation/autonomous-submission-portal-descriptor-reader.mjs';
 import {
   autonomousSubmissionPortalPublicDescriptorHash,
+  createAutonomousSubmissionPortalDescriptor,
 } from '../../paper-adapters/automation/autonomous-submission-portal-public-adapter.mjs';
 import {
   inspectAutonomousSubmissionDispatcherReadiness,
@@ -27,6 +28,18 @@ export function resolveAutonomousSubmissionPortalDescriptorBinding({
     allowPrivateConfigurationFallback: false,
     rejectPortalCredential: true,
   });
+  const readiness = descriptor ? createAutonomousSubmissionPortalDescriptor({
+    configuration: descriptor,
+    expectedConfigurationHash: String(
+      environment.HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIGURATION_HASH || '',
+    ).trim() || null,
+    expectedDescriptorHash: String(
+      environment.HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_HASH || '',
+    ).trim() || null,
+  }) : null;
+  if (readiness?.fullProductionReady !== true) {
+    throw new Error('autonomous_submission_portal_full_production_binding_required');
+  }
   return Object.freeze({
     descriptor,
     descriptorHash: descriptor

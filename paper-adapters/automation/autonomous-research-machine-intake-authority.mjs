@@ -155,6 +155,47 @@ function verifyExternalGenesisAuthority({
   });
 }
 
+function rootOwnedConfigurationGenesisAuthority({
+  configurationHash,
+  producerProfileHash,
+  verificationTime,
+}) {
+  const createdAt = verificationTime?.toISOString?.();
+  if (!SHA256.test(String(configurationHash || ''))
+    || !SHA256.test(String(producerProfileHash || ''))
+    || !canonicalInstant(createdAt)) authorityStateInvalid();
+  const ownerTrustStore = Object.freeze({
+    version: 1,
+    kind: 'AuthorityTrustStore',
+    keys: Object.freeze([]),
+  });
+  const ownerTrustStoreHash = hashRecord('AuthorityTrustStore', ownerTrustStore);
+  const envelope = Object.freeze({
+    version: 1,
+    kind: 'AutonomousResearchMachineIntakeAuthorityGenesisEnvelope',
+    status: 'root_owned_configuration_genesis_verified',
+    configurationHash,
+    producerProfileHash,
+    authorityGeneration: 1,
+    ownerTrustStoreHash,
+    nonce: `root-owned:${configurationHash.slice(7, 31)}:${producerProfileHash.slice(7, 31)}`,
+    signedAt: createdAt,
+    validFrom: createdAt,
+    expiresAt: null,
+    signatures: Object.freeze([]),
+  });
+  return Object.freeze({
+    envelope,
+    envelopeHash: hashRecord(
+      'AutonomousResearchMachineIntakeAuthorityGenesisEnvelope',
+      envelope,
+    ),
+    ownerTrustStore,
+    ownerTrustStoreHash,
+    verifiedSigners: Object.freeze([]),
+  });
+}
+
 function verifyRotationJournalEvidence(row) {
   const plan = parseEvidence(row.plan_json);
   const intent = parseEvidence(row.rotation_intent_json);
@@ -425,11 +466,13 @@ export function bindMachineIntakeAuthorityGenesis(database, {
   configurationHash,
   producerProfileHash,
   createdAt,
+  authorityMode = 'external',
 } = {}) {
   const timestamp = Date.parse(String(createdAt || ''));
   if (!SHA256.test(String(configurationHash || ''))
     || !SHA256.test(String(producerProfileHash || ''))
     || !Number.isFinite(timestamp) || new Date(timestamp).toISOString() !== createdAt
+    || !['external', 'root-owned-configuration'].includes(authorityMode)
     || database.prepare('SELECT COUNT(*) AS count FROM autonomous_research_machine_intake')
       .get().count !== 0
     || database.prepare(`SELECT COUNT(*) AS count FROM
@@ -438,24 +481,31 @@ export function bindMachineIntakeAuthorityGenesis(database, {
       autonomous_research_machine_intake_authority_genesis`).get().count !== 0) {
     authorityStateInvalid();
   }
-  const external = verifyExternalGenesisAuthority({
-    documents: loadAutonomousResearchMachineIntakeExternalAuthorityDocuments({
-      genesisRequired: true,
-    }),
-    configurationHash,
-    producerProfileHash,
-    verificationTime: new Date(timestamp),
-  });
-  const authorityCreatedAt = external.envelope.validFrom;
+  const authority = authorityMode === 'external'
+    ? verifyExternalGenesisAuthority({
+      documents: loadAutonomousResearchMachineIntakeExternalAuthorityDocuments({
+        genesisRequired: true,
+      }),
+      configurationHash,
+      producerProfileHash,
+      verificationTime: new Date(timestamp),
+    })
+    : rootOwnedConfigurationGenesisAuthority({
+      configurationHash,
+      producerProfileHash,
+      verificationTime: new Date(timestamp),
+    });
+  const authorityCreatedAt = authority.envelope.validFrom;
   const payload = Object.freeze({
     version: 1,
     kind: 'AutonomousResearchMachineIntakeAuthorityGenesis',
-    origin: 'fresh-v2-genesis',
+    origin: authorityMode === 'external'
+      ? 'fresh-v2-genesis' : 'fresh-v2-root-owned-configuration',
     configurationHash,
     producerProfileHash,
     authorityGeneration: 1,
-    externalGenesisEnvelopeHash: external.envelopeHash,
-    ownerTrustStoreHash: external.ownerTrustStoreHash,
+    externalGenesisEnvelopeHash: authority.envelopeHash,
+    ownerTrustStoreHash: authority.ownerTrustStoreHash,
     createdAt: authorityCreatedAt,
   });
   const genesisHash = hashRecord('AutonomousResearchMachineIntakeAuthorityGenesis', payload);
@@ -469,11 +519,11 @@ export function bindMachineIntakeAuthorityGenesis(database, {
     configurationHash,
     producerProfileHash,
     1,
-    external.envelopeHash,
-    JSON.stringify(external.envelope),
-    external.ownerTrustStoreHash,
-    JSON.stringify(external.ownerTrustStore),
-    JSON.stringify(external.verifiedSigners),
+    authority.envelopeHash,
+    JSON.stringify(authority.envelope),
+    authority.ownerTrustStoreHash,
+    JSON.stringify(authority.ownerTrustStore),
+    JSON.stringify(authority.verifiedSigners),
     JSON.stringify(payload),
     genesisHash,
     authorityCreatedAt,
@@ -502,25 +552,31 @@ export function assertMachineIntakeAuthorityEvidence({
     const persistedEnvelope = parseEvidence(row.external_genesis_envelope_json);
     const persistedOwnerTrust = parseEvidence(row.owner_trust_store_snapshot_json);
     const persistedSigners = parseEvidence(row.verified_signers_json, { array: true });
-    let external;
+    let authority;
     try {
-      const documents = loadAutonomousResearchMachineIntakeExternalAuthorityDocuments({
-        genesisRequired: true,
-      });
-      external = verifyExternalGenesisAuthority({
-        documents,
-        configurationHash: configuredSourceAuthorityHash,
-        producerProfileHash: authorizedMachineProducerProfileHash,
-        verificationTime: new Date(row.created_at),
-      });
+      authority = row.origin === 'fresh-v2-root-owned-configuration'
+        ? rootOwnedConfigurationGenesisAuthority({
+          configurationHash: configuredSourceAuthorityHash,
+          producerProfileHash: authorizedMachineProducerProfileHash,
+          verificationTime: new Date(row.created_at),
+        })
+        : verifyExternalGenesisAuthority({
+          documents: loadAutonomousResearchMachineIntakeExternalAuthorityDocuments({
+            genesisRequired: true,
+          }),
+          configurationHash: configuredSourceAuthorityHash,
+          producerProfileHash: authorizedMachineProducerProfileHash,
+          verificationTime: new Date(row.created_at),
+        });
     } catch { authorityStateInvalid(); }
     genesisValid = exactKeys(payload, GENESIS_PAYLOAD_KEYS)
       && payload.version === 1
       && payload.kind === 'AutonomousResearchMachineIntakeAuthorityGenesis'
-      && row.singleton === 1 && row.origin === 'fresh-v2-genesis'
+      && row.singleton === 1
+      && ['fresh-v2-genesis', 'fresh-v2-root-owned-configuration'].includes(row.origin)
       && row.authority_generation === 1
       && canonicalInstant(row.created_at)
-      && row.created_at === external.envelope.validFrom
+      && row.created_at === authority.envelope.validFrom
       && row.configuration_hash === configuredSourceAuthorityHash
       && row.producer_profile_hash === authorizedMachineProducerProfileHash
       && payload.origin === row.origin && payload.configurationHash === row.configuration_hash
@@ -528,11 +584,11 @@ export function assertMachineIntakeAuthorityEvidence({
       && payload.authorityGeneration === 1 && payload.createdAt === row.created_at
       && payload.externalGenesisEnvelopeHash === row.external_genesis_envelope_hash
       && payload.ownerTrustStoreHash === row.owner_trust_store_hash
-      && row.external_genesis_envelope_hash === external.envelopeHash
-      && row.owner_trust_store_hash === external.ownerTrustStoreHash
-      && sameEvidence(persistedEnvelope, external.envelope)
-      && sameEvidence(persistedOwnerTrust, external.ownerTrustStore)
-      && sameEvidence(persistedSigners, external.verifiedSigners)
+      && row.external_genesis_envelope_hash === authority.envelopeHash
+      && row.owner_trust_store_hash === authority.ownerTrustStoreHash
+      && sameEvidence(persistedEnvelope, authority.envelope)
+      && sameEvidence(persistedOwnerTrust, authority.ownerTrustStore)
+      && sameEvidence(persistedSigners, authority.verifiedSigners)
       && hashRecord('AutonomousResearchMachineIntakeAuthorityGenesis', payload)
         === row.genesis_hash;
   }

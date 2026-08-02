@@ -143,7 +143,9 @@ export function acquireAutonomousResearchOnlineSchemaTransitionLocks({
       }
       const candidate = schemaTransitionDatabasePath(runtimeRoot, instance);
       assertSchemaTransitionNoSidecars(candidate);
-      const beforeIdentity = schemaTransitionFileIdentity(candidate);
+      const beforeIdentity = schemaTransitionFileIdentity(candidate, {
+        databaseRole: instance.role,
+      });
       if (instance.schemaHash === planInstance.preSchemaHash
         && (fileSha256HashSync(candidate) !== planInstance.sourceSha256
           || hashRecord(
@@ -159,7 +161,9 @@ export function acquireAutonomousResearchOnlineSchemaTransitionLocks({
         fail('autonomous_research_online_schema_transition_journal_mode_not_delete');
       }
       database.exec('BEGIN EXCLUSIVE;');
-      if (!schemaTransitionSameIdentity(beforeIdentity, schemaTransitionFileIdentity(candidate))) {
+      if (!schemaTransitionSameIdentity(beforeIdentity, schemaTransitionFileIdentity(candidate, {
+        databaseRole: instance.role,
+      }))) {
         database.exec('ROLLBACK;');
         database.close();
         fail('autonomous_research_online_schema_transition_database_identity_changed');

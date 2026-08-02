@@ -579,14 +579,20 @@ test('backup and restore drill close over all databases without mutating product
   const clock = fixedClock();
   const authority = createAuthority(clock);
   const backupRoot = path.join(setup.runtimeRoot, 'backups', 'autonomous-research-state');
-  const backup = await createAutonomousResearchStateBackup({
-    runtimeRoot: setup.runtimeRoot,
-    backupRoot,
-    stateDatabaseManifest,
-    authorityClient: authority.client,
-    authorityTrust: authority.trust,
-    clock,
-  });
+  const previousUmask = process.umask(0o000);
+  let backup;
+  try {
+    backup = await createAutonomousResearchStateBackup({
+      runtimeRoot: setup.runtimeRoot,
+      backupRoot,
+      stateDatabaseManifest,
+      authorityClient: authority.client,
+      authorityTrust: authority.trust,
+      clock,
+    });
+  } finally {
+    process.umask(previousUmask);
+  }
   assert.equal(backup.status, 'autonomous_research_state_backup_recorded');
   assert.equal(backup.databaseCount, 10);
   for (const [candidate, content] of before) assert.deepEqual(fs.readFileSync(candidate), content);
@@ -622,6 +628,22 @@ test('backup and restore drill close over all databases without mutating product
     backup.bundlePath,
     'AUTONOMOUS_RESEARCH_STATE_BACKUP.json',
   ), 'utf8'));
+  assert.equal(fs.statSync(backup.bundlePath).mode & 0o777, 0o700);
+  assert.equal(fs.statSync(path.join(backup.bundlePath, 'databases')).mode & 0o777, 0o700);
+  for (const entry of bundle.content.databases) {
+    const databasePath = path.join(backup.bundlePath, entry.backupRelativePath);
+    assert.equal(fs.lstatSync(databasePath).isSymbolicLink(), false);
+    assert.equal(fs.statSync(databasePath).nlink, 1);
+    assert.equal(fs.statSync(databasePath).mode & 0o777, 0o600);
+  }
+  assert.equal(fs.statSync(path.join(
+    backup.bundlePath,
+    'AUTONOMOUS_RESEARCH_STATE_BACKUP.json',
+  )).mode & 0o777, 0o600);
+  assert.equal(fs.statSync(path.join(
+    backup.bundlePath,
+    'RESTORE_DRILL_RECEIPT.json',
+  )).mode & 0o777, 0o600);
   const restoreReceipt = JSON.parse(fs.readFileSync(path.join(
     backup.bundlePath,
     'RESTORE_DRILL_RECEIPT.json',

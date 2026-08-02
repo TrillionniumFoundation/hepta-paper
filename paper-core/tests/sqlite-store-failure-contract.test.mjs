@@ -36,6 +36,7 @@ test('SQLite query distinguishes legitimate no-row results from operational fail
   const noRows = store.query('SELECT * FROM sample WHERE id=?;', [404]);
   assert.equal(noRows.ok, true);
   assert.deepEqual(noRows.rows, []);
+  assert.equal(noRows.stdout, '');
 
   assert.throws(() => store.query('SELECT * FROM missing_table;'), /no such table: missing_table/);
   assert.throws(() => store.query('SELECT FROM sample;'), /syntax error/);

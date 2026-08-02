@@ -11,26 +11,84 @@ import {
 } from '../../paper-composition/bootstrap/operator-persistence-composition.mjs';
 import { assertWorkspaceLayoutPhysicallyDecoupled, defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 import { currentCodeProvenance } from '../src/code-provenance.mjs';
-import { inspectIsolatedVerificationPreflight } from '../src/isolated-verification-policy.mjs';
-import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
-import { sha256FileSync } from '../../workflow-kernel/runtime/file-utils.mjs';
+import {
+  inspectIsolatedVerificationPreflight,
+  isolatedVerificationCodeProvenanceMatches,
+} from '../src/isolated-verification-policy.mjs';
+import { buildIsolatedVerificationReceipt } from '../src/isolated-verification-receipt-contract.mjs';
+import {
+  inspectIsolatedVerificationCapabilityManifest,
+  publishIsolatedVerificationReceiptArtifacts,
+} from './isolated-verification-receipt-publication.mjs';
+import { assertWorkspaceReleaseReady } from '../src/release-state-repository.mjs';
+import { sha256StableFileSyncNoFollow } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { prepareImmutableLegacyMatrixReference } from '../../migration/legacy-matrix-reference.mjs';
 import { prepareIsolatedRuntimeStore } from './isolated-runtime-store.mjs';
 import { inspectTrackedProductionGraph } from '../verification/tracked-production-graph.mjs';
+import { releaseIntegrityEvidence } from './release-integrity-evidence.mjs';
+import {
+  bindIdentityBoundTemporaryDirectory,
+  createNonReentrantCleanup,
+  prepareImmutableReleaseWorkspace,
+} from '../../paper-composition/bootstrap/immutable-release-workspace-composition.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const mode = process.argv[2] || 'test';
 if (!['test', 'ci', 'release'].includes(mode)) throw new Error(`Unsupported isolated verification mode: ${mode}`);
-const provenanceBefore = currentCodeProvenance();
+function currentVerificationCodeProvenance({
+  allowReleaseCommitEnvironment,
+  selectedWorkspaceRoot = workspaceRoot,
+} = {}) {
+  return Object.freeze({
+    ...currentCodeProvenance({
+      workspaceRoot: selectedWorkspaceRoot,
+      allowReleaseCommitEnvironment,
+    }),
+    evidenceEnvironment: 'verification',
+    evidenceClass: 'technical_conformance',
+  });
+}
+const inheritedReleaseCommit = mode === 'release'
+  ? process.env.HEPTA_RELEASE_COMMIT || null
+  : null;
+const provenanceBefore = currentVerificationCodeProvenance({
+  allowReleaseCommitEnvironment: mode !== 'release',
+});
 const verificationPreflight = inspectIsolatedVerificationPreflight({
   mode,
   codeProvenance: provenanceBefore,
+  declaredReleaseCommit: inheritedReleaseCommit,
 });
+const releaseStateSnapshot = mode === 'release'
+  ? assertWorkspaceReleaseReady({ workspaceRoot })
+  : null;
+const immutableReleaseWorkspace = mode === 'release'
+  ? prepareImmutableReleaseWorkspace({
+    candidateWorkspaceRoot: workspaceRoot,
+    expectedCodeProvenance: provenanceBefore,
+    expectedReleaseStateSnapshot: releaseStateSnapshot,
+    codeProvenanceMatches: isolatedVerificationCodeProvenanceMatches,
+    inspectReleaseState({ workspaceRoot: selectedWorkspaceRoot, expectedSnapshotHash }) {
+      return assertWorkspaceReleaseReady({
+        workspaceRoot: selectedWorkspaceRoot,
+        expectedSnapshotHash,
+      });
+    },
+  })
+  : null;
+const executionWorkspaceRoot = immutableReleaseWorkspace?.workspaceRoot || workspaceRoot;
+const cleanupImmutableReleaseWorkspace = createNonReentrantCleanup(
+  () => immutableReleaseWorkspace?.cleanup(),
+);
+if (immutableReleaseWorkspace) process.once('exit', cleanupImmutableReleaseWorkspace);
 const productionGraphTracking = mode === 'release'
-  ? inspectTrackedProductionGraph({ workspaceRoot })
+  ? inspectTrackedProductionGraph({ workspaceRoot: executionWorkspaceRoot })
   : null;
 const verificationPreflightBlockers = [
   ...verificationPreflight.blockers,
+  ...(releaseStateSnapshot && releaseStateSnapshot.headCommit !== provenanceBefore.commit
+    ? ['isolated_verification_release_state_commit_mismatch']
+    : []),
   ...(productionGraphTracking?.blockers || []),
 ];
 if (verificationPreflightBlockers.length) {
@@ -43,21 +101,45 @@ if (mode === 'release') {
     runtimeRoot: productionRuntimeRoot,
   });
 }
+const releaseSigningKey = mode === 'release'
+  ? releaseIntegrityEvidence.loadExistingReleaseSigningKey(
+    productionRuntimeRoot,
+    { includePrivate: true },
+  )
+  : null;
+const releaseSigningKeyIdentity = releaseSigningKey
+  ? Object.freeze({
+    publicKeyPem: releaseSigningKey.publicKeyPem,
+    publicKeyFingerprint: releaseSigningKey.publicKeyFingerprint,
+  })
+  : null;
+if (Buffer.isBuffer(releaseSigningKey?.privateKeyPem)) releaseSigningKey.privateKeyPem.fill(0);
 const isolatedRuntimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), `hepta-paper-${mode}-`));
+const ownedIsolatedRuntimeRoot = bindIdentityBoundTemporaryDirectory(isolatedRuntimeRoot);
+const cleanupIsolatedRuntimeRoot = createNonReentrantCleanup(
+  () => ownedIsolatedRuntimeRoot.cleanup(),
+);
 const isolatedDb = path.join(isolatedRuntimeRoot, 'hepta-paper.sqlite');
 const productionDb = path.join(productionRuntimeRoot, 'hepta-paper.sqlite');
 
 if (mode === 'release' && fs.existsSync(productionDb)) {
-  const preflight = spawnSync(process.execPath, ['paper-core/bin/hepta-store.mjs', 'status', '--require-trust-clean'], { cwd: workspaceRoot, env: process.env, encoding: 'utf8' });
+  const preflight = spawnSync(process.execPath, ['paper-core/bin/hepta-store.mjs', 'status', '--require-trust-clean'], { cwd: executionWorkspaceRoot, env: process.env, encoding: 'utf8' });
   if (preflight.status !== 0) throw new Error(`production_store_trust_preflight_blocked:${String(preflight.stdout || preflight.stderr || '').slice(-2000)}`);
 }
 
 function sha(file) {
-  return fs.existsSync(file) ? sha256FileSync(file) : null;
+  try {
+    return sha256StableFileSyncNoFollow(file);
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  }
 }
 
 const productionHashBefore = sha(productionDb);
 const legacyReference = prepareImmutableLegacyMatrixReference();
+const cleanupLegacyReference = createNonReentrantCleanup(() => legacyReference.cleanup());
+process.once('exit', cleanupLegacyReference);
 const productionLogicalBefore = fs.existsSync(productionDb)
   ? buildSqliteLogicalIntegrityReport({ dbPath: productionDb, store: createReadOnlyPaperStore({ dbPath: productionDb }) })
   : null;
@@ -78,11 +160,6 @@ prepareIsolatedRuntimeStore({
     }
   },
 });
-const provenance = {
-  ...provenanceBefore,
-  evidenceEnvironment: 'verification',
-  evidenceClass: 'technical_conformance',
-};
 const env = {
   ...process.env,
   HEPTA_PAPER_RUNTIME_ROOT: isolatedRuntimeRoot,
@@ -90,93 +167,145 @@ const env = {
   HEPTA_PRODUCTION_RUNTIME_ROOT: productionRuntimeRoot,
   HEPTA_EVIDENCE_ENVIRONMENT: 'verification',
   HEPTA_EVIDENCE_CLASS: 'technical_conformance',
-  HEPTA_RELEASE_COMMIT: provenance.commit || '',
+  HEPTA_RELEASE_COMMIT: provenanceBefore.commit || '',
   HEPTA_LEGACY_REFERENCE_PREPARED: '1',
   HEPTA_LEGACY_REFERENCE_ARCHIVE: legacyReference.archivePath,
   PAPER_FACTORY_LEGACY_ROOT: legacyReference.root,
 };
 const startedAt = new Date().toISOString();
 const result = spawnSync('npm', ['run', `${mode}:inner`], {
-  cwd: workspaceRoot,
+  cwd: executionWorkspaceRoot,
   env,
   encoding: 'utf8',
   stdio: ['inherit', 'inherit', 'inherit'],
 });
-const productionHashAfter = sha(productionDb);
-const provenanceAfter = currentCodeProvenance();
-const sourceMutated = provenanceBefore.commit !== provenanceAfter.commit
-  || provenanceBefore.commitTree !== provenanceAfter.commitTree
-  || provenanceBefore.worktreeStateHash !== provenanceAfter.worktreeStateHash;
 const productionLogicalAfter = fs.existsSync(productionDb)
   ? buildSqliteLogicalIntegrityReport({ dbPath: productionDb, store: createReadOnlyPaperStore({ dbPath: productionDb }) })
   : null;
-const productionLogicalMutated = productionLogicalBefore?.logicalDatabaseHash
-  !== productionLogicalAfter?.logicalDatabaseHash;
-const productionLogicalBlocked = Boolean(
-  productionLogicalBefore?.blockers?.length || productionLogicalAfter?.blockers?.length,
-);
-const payload = {
-  version: 1,
-  kind: 'IsolatedVerificationReceipt',
-  status: result.status === 0
-    && productionHashBefore === productionHashAfter
-    && !productionLogicalMutated
-    && !productionLogicalBlocked
-    && !sourceMutated
-    ? 'isolated_verification_passed'
-    : 'isolated_verification_blocked',
-  mode,
-  codeProvenance: provenance,
-  completedCodeProvenance: provenanceAfter,
-  sourceMutatedDuringVerification: sourceMutated,
-  productionGraphTracking: productionGraphTracking
-    ? {
-      version: productionGraphTracking.version,
-      kind: productionGraphTracking.kind,
-      status: productionGraphTracking.status,
-      moduleCount: productionGraphTracking.moduleCount,
-      edgeCount: productionGraphTracking.edgeCount,
-      trackedModuleCount: productionGraphTracking.trackedModuleCount,
-      indexBoundModuleCount: productionGraphTracking.indexBoundModuleCount,
-      productionGraphManifestHash: productionGraphTracking.productionGraphManifestHash,
-    }
-    : null,
-  startedAt,
-  completedAt: new Date().toISOString(),
-  exitCode: result.status,
+const productionHashAfter = sha(productionDb);
+const provenanceAfter = currentVerificationCodeProvenance({
+  allowReleaseCommitEnvironment: mode !== 'release',
+  selectedWorkspaceRoot: executionWorkspaceRoot,
+});
+const completedReleaseStateSnapshot = mode === 'release'
+  ? assertWorkspaceReleaseReady({
+    workspaceRoot: executionWorkspaceRoot,
+    expectedSnapshotHash: releaseStateSnapshot.workspaceReleaseStateSnapshotHash,
+  })
+  : null;
+const graphReceiptProjection = productionGraphTracking
+  ? Object.freeze({
+    version: productionGraphTracking.version,
+    kind: productionGraphTracking.kind,
+    status: productionGraphTracking.status,
+    moduleCount: productionGraphTracking.moduleCount,
+    edgeCount: productionGraphTracking.edgeCount,
+    trackedModuleCount: productionGraphTracking.trackedModuleCount,
+    indexBoundModuleCount: productionGraphTracking.indexBoundModuleCount,
+    allProductionModulesTracked: productionGraphTracking.allProductionModulesTracked,
+    productionGraphManifestHash: productionGraphTracking.productionGraphManifestHash,
+    blockers: Object.freeze([...(productionGraphTracking.blockers || [])]),
+  })
+  : null;
+const capabilityManifest = path.join(
   isolatedRuntimeRoot,
+  'audits',
+  'capability-verification',
+  'CAPABILITY_VERIFICATION_MANIFEST.json',
+);
+const completedAt = new Date().toISOString();
+const capabilityManifestInspection = mode === 'release'
+  ? inspectIsolatedVerificationCapabilityManifest({
+    capabilityManifestPath: capabilityManifest,
+    expectedCodeProvenance: provenanceBefore,
+    notAfter: completedAt,
+  })
+  : null;
+const receipt = buildIsolatedVerificationReceipt({
+  mode,
+  codeProvenance: provenanceBefore,
+  completedCodeProvenance: provenanceAfter,
+  releaseStateSnapshot,
+  completedReleaseStateSnapshot,
+  productionGraphTracking: graphReceiptProjection,
+  startedAt,
+  completedAt,
+  exitCode: result.status,
   isolatedStoreHash: sha(isolatedDb),
   productionStoreHashBefore: productionHashBefore,
   productionStoreHashAfter: productionHashAfter,
-  productionStoreMutated: productionHashBefore !== productionHashAfter,
   productionLogicalHashBefore: productionLogicalBefore?.logicalDatabaseHash || null,
   productionLogicalHashAfter: productionLogicalAfter?.logicalDatabaseHash || null,
-  productionLogicalStoreMutated: productionLogicalMutated,
   productionLogicalIntegrityStatusBefore: productionLogicalBefore?.status || null,
   productionLogicalIntegrityStatusAfter: productionLogicalAfter?.status || null,
-  evidenceEnvironment: 'verification',
-  evidenceClass: 'technical_conformance',
-};
-const receipt = { ...payload, isolatedVerificationReceiptHash: hashRecord('IsolatedVerificationReceipt', payload) };
+  productionLogicalIntegrityBlockersBefore: productionLogicalBefore?.blockers || [],
+  productionLogicalIntegrityBlockersAfter: productionLogicalAfter?.blockers || [],
+  blockers: capabilityManifestInspection?.blockers || [],
+});
+let outputDocument = receipt;
 if (mode === 'release') {
-  const outputRoot = path.join(productionRuntimeRoot, 'release-evidence', 'verification-receipts');
-  fs.mkdirSync(outputRoot, { recursive: true });
-  const name = `${provenance.packageVersion}-${String(provenance.commit || 'unknown').slice(0, 12)}-${Date.now()}.json`;
-  fs.writeFileSync(path.join(outputRoot, name), `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o444 });
-  const capabilityManifest = path.join(isolatedRuntimeRoot, 'audits', 'capability-verification', 'CAPABILITY_VERIFICATION_MANIFEST.json');
-  if (fs.existsSync(capabilityManifest)) {
-    const currentRoot = path.join(productionRuntimeRoot, 'release-evidence', 'current');
-    fs.mkdirSync(currentRoot, { recursive: true });
-    const currentManifest = path.join(currentRoot, 'CAPABILITY_VERIFICATION_MANIFEST.json');
-    if (fs.existsSync(currentManifest)) fs.chmodSync(currentManifest, 0o644);
-    fs.copyFileSync(capabilityManifest, currentManifest);
-    fs.chmodSync(currentManifest, 0o444);
+  const signature = releaseIntegrityEvidence.signReleasePayload(
+    receipt,
+    productionRuntimeRoot,
+    { allowKeyCreation: false },
+  );
+  if (!releaseIntegrityEvidence.verifyReleaseIntegritySignature(receipt, signature, {
+    pinnedPublicKeyPem: releaseSigningKeyIdentity.publicKeyPem,
+    pinnedPublicKeyFingerprint: releaseSigningKeyIdentity.publicKeyFingerprint,
+  })) {
+    throw new Error('isolated_verification_release_signature_identity_mismatch');
   }
+  outputDocument = Object.freeze({ ...receipt, signature });
+  const assertPublicationBoundary = () => {
+    const current = currentVerificationCodeProvenance({ allowReleaseCommitEnvironment: false });
+    if (!isolatedVerificationCodeProvenanceMatches(provenanceBefore, current)) {
+      throw new Error('isolated_verification_publication_code_provenance_changed');
+    }
+    const releaseState = assertWorkspaceReleaseReady({
+      workspaceRoot,
+      expectedSnapshotHash: releaseStateSnapshot.workspaceReleaseStateSnapshotHash,
+    });
+    if (releaseState.headCommit !== current.commit) {
+      throw new Error('isolated_verification_publication_release_state_commit_mismatch');
+    }
+    const immutableCurrent = currentVerificationCodeProvenance({
+      allowReleaseCommitEnvironment: false,
+      selectedWorkspaceRoot: executionWorkspaceRoot,
+    });
+    if (!isolatedVerificationCodeProvenanceMatches(provenanceBefore, immutableCurrent)) {
+      throw new Error('isolated_verification_immutable_workspace_provenance_changed');
+    }
+    assertWorkspaceReleaseReady({
+      workspaceRoot: executionWorkspaceRoot,
+      expectedSnapshotHash: releaseStateSnapshot.workspaceReleaseStateSnapshotHash,
+    });
+  };
+  publishIsolatedVerificationReceiptArtifacts({
+    runtimeRoot: productionRuntimeRoot,
+    signedDocument: outputDocument,
+    capabilityManifestPath: receipt.status === 'isolated_verification_passed'
+      ? capabilityManifest
+      : null,
+    signCurrentPointer(pointer) {
+      return releaseIntegrityEvidence.signReleasePayload(
+        pointer,
+        productionRuntimeRoot,
+        { allowKeyCreation: false },
+      );
+    },
+    beforePublish: assertPublicationBoundary,
+    afterPublish: assertPublicationBoundary,
+  });
 }
-process.stdout.write(`${JSON.stringify(receipt, null, 2)}\n`);
-legacyReference.cleanup();
-if (receipt.status === 'isolated_verification_passed') fs.rmSync(isolatedRuntimeRoot, { recursive: true, force: true });
+process.stdout.write(`${JSON.stringify(outputDocument, null, 2)}\n`);
+cleanupLegacyReference();
+process.removeListener('exit', cleanupLegacyReference);
+if (immutableReleaseWorkspace) {
+  cleanupImmutableReleaseWorkspace();
+  process.removeListener('exit', cleanupImmutableReleaseWorkspace);
+}
+if (receipt.status === 'isolated_verification_passed') cleanupIsolatedRuntimeRoot();
 else process.stderr.write(`Isolated verification runtime retained: ${isolatedRuntimeRoot}\n`);
-if (result.status !== 0 || receipt.productionStoreMutated || receipt.productionLogicalStoreMutated || productionLogicalBlocked || sourceMutated) {
+if (receipt.status !== 'isolated_verification_passed') {
   process.exitCode = result.status || 1;
 }

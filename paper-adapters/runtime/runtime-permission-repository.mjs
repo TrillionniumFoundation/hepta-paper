@@ -1,13 +1,26 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { isPathWithin } from '../../workflow-kernel/runtime/path-utils.mjs';
+import {
+  emptyRuntimePermissionApplyResult,
+  executeLockedRuntimePermissionPlan,
+  rollbackCommittedRuntimePermissionPlan,
+  rollbackRuntimePermissionRows,
+} from './runtime-permission-execution-lock.mjs';
+import {
+  RUNTIME_PERMISSION_SCAN_LIMITS,
+  resolveRuntimePermissionLimits,
+} from './runtime-permission-scan-limits.mjs';
+
+export { RUNTIME_PERMISSION_SCAN_LIMITS };
 
 const NO_FOLLOW = fs.constants.O_NOFOLLOW || 0;
 const DIRECTORY_ONLY = fs.constants.O_DIRECTORY || 0;
 
 export const RUNTIME_PERMISSION_POLICY = Object.freeze({
-  version: 2,
+  version: 3,
   kind: 'RuntimePermissionPolicy',
   directoryMode: '0700',
   writableRegularFileMode: '0600',
@@ -19,7 +32,11 @@ export const RUNTIME_PERMISSION_POLICY = Object.freeze({
   symbolicLinks: 'forbidden',
   multiplyLinkedRegularFiles: 'forbidden',
   specialFiles: 'forbidden',
-  mutation: 'descriptor_relative_fchmod_only',
+  mutation: 'descriptor_relative_fchmod_with_best_effort_failure_rollback',
+  inventory: 'complete_descriptor_relative_scan_with_hash_bound_bounded_report_pages',
+  executionPlan: 'fully_materialized_bounded_plan_required_before_first_mutation',
+  executionLock: 'runtime_root_scoped_exclusive_lock_with_locked_inventory_revalidation',
+  writerQuiescence: 'caller_confirmed_cooperative_runtime_writer_quiescence_required',
 });
 
 function octalMode(mode) {
@@ -58,10 +75,13 @@ function sameObject(left, right) {
     && typeOf(left) === typeOf(right);
 }
 
-function sameIdentity(identity, stat) {
+function sameCompleteIdentity(identity, stat) {
   return identity.device === String(stat.dev)
     && identity.inode === String(stat.ino)
-    && identity.type === typeOf(stat);
+    && identity.type === typeOf(stat)
+    && identity.linkCount === Number(stat.nlink)
+    && identity.size === Number(stat.size)
+    && identity.mtimeNs === String(stat.mtimeNs);
 }
 
 function descriptorAccessPath(descriptor, { directory = false } = {}) {
@@ -91,23 +111,69 @@ function descriptorEntryPath(descriptor, name) {
   return path.join(descriptorAccessPath(descriptor, { directory: true }), name);
 }
 
-function openedRealPath(descriptor, { directory = false } = {}) {
-  return fs.realpathSync.native(descriptorAccessPath(descriptor, { directory }));
-}
-
 function blocker(relativePath, reason, details = null) {
   return Object.freeze({
     relativePath,
     reason,
-    ...(details ? { details } : {}),
+    ...(details ? { details: Object.freeze({ ...details }) } : {}),
   });
 }
 
-function sorted(rows) {
-  return [...rows].sort((left, right) => (
-    left.relativePath.localeCompare(right.relativePath)
-      || String(left.reason || '').localeCompare(String(right.reason || ''))
-  ));
+function pageMetadata(totalCount, reportedCount, limit) {
+  const omittedCount = totalCount - reportedCount;
+  return Object.freeze({ limit, totalCount, reportedCount, omittedCount, truncated: omittedCount > 0 });
+}
+
+function createBoundedRowAccumulator(kind, reportLimit) {
+  const digest = crypto.createHash('sha256');
+  digest.update(`${kind}\0`);
+  const rows = [];
+  let count = 0;
+  return {
+    get count() { return count; },
+    add(value) {
+      const row = Object.freeze(value);
+      const rowHash = hashRecord(`${kind}Row`, row);
+      digest.update(`${count}\0${rowHash}\0`);
+      count += 1;
+      if (rows.length < reportLimit) rows.push(row);
+      return row;
+    },
+    finish() {
+      const page = Object.freeze([...rows]);
+      return Object.freeze({
+        rows: page, count, rowsHash: `sha256:${digest.digest('hex')}`,
+        page: pageMetadata(count, page.length, reportLimit),
+      });
+    },
+  };
+}
+
+function readBoundedDirectoryNames(descriptor, maximumDirectoryEntries) {
+  const directory = fs.opendirSync(descriptorAccessPath(descriptor, { directory: true }));
+  const names = [];
+  try {
+    while (true) {
+      const entry = directory.readSync();
+      if (entry === null) {
+        return Object.freeze({
+          exceeded: false, names: Object.freeze(names.sort()), observedAtLeast: names.length,
+        });
+      }
+      if (names.length >= maximumDirectoryEntries) {
+        return Object.freeze({
+          exceeded: true, names: Object.freeze([]), observedAtLeast: names.length + 1,
+        });
+      }
+      names.push(entry.name);
+    }
+  } finally {
+    try {
+      directory.closeSync();
+    } catch (error) {
+      if (error?.code !== 'ERR_DIR_CLOSED') throw error;
+    }
+  }
 }
 
 function targetModeFor(stat) {
@@ -142,7 +208,7 @@ function openRoot(runtimeRoot) {
     if (!sameObject(observed, pinned) || !pinned.isDirectory()) {
       throw new Error('runtime_permission_root_identity_changed');
     }
-    const realPath = openedRealPath(descriptor, { directory: true });
+    const realPath = fs.realpathSync.native(descriptorAccessPath(descriptor, { directory: true }));
     return { descriptor, resolved, realPath, identity: identityOf(pinned) };
   } catch (error) {
     fs.closeSync(descriptor);
@@ -151,153 +217,222 @@ function openRoot(runtimeRoot) {
 }
 
 function entryStillInsideRoot(root, descriptor, { directory = false } = {}) {
-  const realPath = openedRealPath(descriptor, { directory });
+  const realPath = fs.realpathSync.native(descriptorAccessPath(descriptor, { directory }));
   return isPathWithin(root.realPath, realPath);
 }
 
-function scanRuntimePermissionTree(runtimeRoot, { maximumEntries = 100_000 } = {}) {
-  const planned = [];
-  const skipped = [];
-  const blockers = [];
-  let root;
+function scanRuntimePermissionTree(runtimeRoot, limits) {
+  const {
+    maximumEntries, maximumDirectoryEntries, maximumDepth, reportLimit,
+    maximumExecutePlanEntries,
+  } = limits;
+  const plannedRows = createBoundedRowAccumulator('RuntimePermissionPlannedRows', reportLimit);
+  const skippedRows = createBoundedRowAccumulator('RuntimePermissionSkippedRows', reportLimit);
+  const blockerRows = createBoundedRowAccumulator('RuntimePermissionBlockerRows', reportLimit);
+  const executionPlan = [];
+  let executionPlanComplete = true;
+  let inventoryComplete = true;
+  let entryLimitReached = false;
   let entriesSeen = 0;
+  let maximumDepthObserved = 0;
+  let root;
 
+  const addBlocker = (relativePath, reason, details = null, incomplete = false) => {
+    if (incomplete) inventoryComplete = false;
+    blockerRows.add(blocker(relativePath, reason, details));
+  };
+  const reserveEntry = () => {
+    if (entryLimitReached) return false;
+    if (entriesSeen < maximumEntries) {
+      entriesSeen += 1;
+      return true;
+    }
+    entryLimitReached = true;
+    addBlocker('.', 'runtime_permission_entry_limit_exceeded', {
+      maximumEntries, entriesSeen,
+    }, true);
+    return false;
+  };
   const recordSafeEntry = (relativePath, stat) => {
     const row = permissionRecord(relativePath, stat);
     if (row.currentMode === row.targetMode) {
-      skipped.push(Object.freeze({ ...row, reason: 'already_compliant' }));
+      skippedRows.add(Object.freeze({ ...row, reason: 'already_compliant' }));
     } else {
-      planned.push(row);
+      const planned = plannedRows.add(row);
+      if (executionPlan.length < maximumExecutePlanEntries) executionPlan.push(planned);
+      else executionPlanComplete = false;
     }
   };
-
-  const visitDirectory = (descriptor, relativePath, initialStat) => {
-    if (entriesSeen >= maximumEntries) {
-      blockers.push(blocker(relativePath, 'runtime_permission_entry_limit_exceeded', { maximumEntries }));
-      return;
-    }
-    entriesSeen += 1;
+  const visitDirectory = (descriptor, relativePath, initialStat, depth) => {
+    maximumDepthObserved = Math.max(maximumDepthObserved, depth);
     recordSafeEntry(relativePath, initialStat);
-    let names;
+    let listing;
     try {
-      names = fs.readdirSync(descriptorAccessPath(descriptor, { directory: true })).sort();
+      listing = readBoundedDirectoryNames(descriptor, maximumDirectoryEntries);
     } catch (error) {
-      blockers.push(blocker(relativePath, 'runtime_permission_directory_read_failed', { code: error?.code || 'unknown' }));
+      addBlocker(relativePath, 'runtime_permission_directory_read_failed', {
+        code: error?.code || error?.message || 'unknown',
+      }, true);
       return;
     }
-    for (const name of names) {
-      if (entriesSeen >= maximumEntries) {
-        blockers.push(blocker(relativePath, 'runtime_permission_entry_limit_exceeded', { maximumEntries }));
-        break;
-      }
+    if (listing.exceeded) {
+      addBlocker(relativePath, 'runtime_permission_directory_entry_limit_exceeded', {
+        maximumDirectoryEntries, observedAtLeast: listing.observedAtLeast,
+      }, true);
+      return;
+    }
+    for (const name of listing.names) {
       const childRelative = relativePath === '.' ? name : `${relativePath}/${name}`;
-      let observed;
+      if (!reserveEntry()) break;
       let childDescriptor;
-      let counted = false;
       try {
         const candidate = descriptorEntryPath(descriptor, name);
-        observed = fs.lstatSync(candidate, { bigint: true });
-        const observedType = typeOf(observed);
+        const observed = fs.lstatSync(candidate, { bigint: true });
         if (observed.isSymbolicLink()) {
-          entriesSeen += 1;
-          counted = true;
-          blockers.push(blocker(childRelative, 'runtime_permission_symbolic_link_forbidden'));
+          addBlocker(childRelative, 'runtime_permission_symbolic_link_forbidden', {
+            identity: identityOf(observed),
+          });
           continue;
         }
         if (!observed.isDirectory() && !observed.isFile()) {
-          entriesSeen += 1;
-          counted = true;
-          blockers.push(blocker(childRelative, 'runtime_permission_special_file_forbidden', { type: observedType }));
+          addBlocker(childRelative, 'runtime_permission_special_file_forbidden', {
+            type: typeOf(observed), identity: identityOf(observed),
+          });
           continue;
         }
-        childDescriptor = fs.openSync(
-          candidate,
-          fs.constants.O_RDONLY | NO_FOLLOW | (observed.isDirectory() ? DIRECTORY_ONLY : 0),
-        );
+        childDescriptor = fs.openSync(candidate, fs.constants.O_RDONLY | NO_FOLLOW
+          | (observed.isDirectory() ? DIRECTORY_ONLY : 0));
         const pinned = fs.fstatSync(childDescriptor, { bigint: true });
         if (!sameObject(observed, pinned)) {
-          entriesSeen += 1;
-          counted = true;
-          blockers.push(blocker(childRelative, 'runtime_permission_entry_identity_changed'));
+          addBlocker(childRelative, 'runtime_permission_entry_identity_changed', {
+            observedIdentity: identityOf(observed), pinnedIdentity: identityOf(pinned),
+          }, true);
           continue;
         }
         if (!entryStillInsideRoot(root, childDescriptor, { directory: pinned.isDirectory() })) {
-          entriesSeen += 1;
-          counted = true;
-          blockers.push(blocker(childRelative, 'runtime_permission_entry_escaped_root'));
+          addBlocker(childRelative, 'runtime_permission_entry_escaped_root', null, true);
           continue;
         }
         if (pinned.isFile() && Number(pinned.nlink) !== 1) {
-          entriesSeen += 1;
-          counted = true;
-          blockers.push(blocker(childRelative, 'runtime_permission_multiply_linked_file_forbidden', {
-            linkCount: Number(pinned.nlink),
-          }));
+          addBlocker(childRelative, 'runtime_permission_multiply_linked_file_forbidden', {
+            identity: identityOf(pinned), linkCount: Number(pinned.nlink),
+          });
           continue;
         }
-        if (pinned.isDirectory()) {
-          visitDirectory(childDescriptor, childRelative, pinned);
-          counted = true;
-        } else {
-          entriesSeen += 1;
-          counted = true;
+        if (!pinned.isDirectory()) {
           recordSafeEntry(childRelative, pinned);
+          continue;
+        }
+        const childDepth = depth + 1;
+        maximumDepthObserved = Math.max(maximumDepthObserved, childDepth);
+        if (childDepth > maximumDepth) {
+          recordSafeEntry(childRelative, pinned);
+          addBlocker(childRelative, 'runtime_permission_depth_limit_exceeded', {
+            maximumDepth, observedDepth: childDepth,
+          }, true);
+        } else {
+          visitDirectory(childDescriptor, childRelative, pinned, childDepth);
         }
       } catch (error) {
-        if (!counted) entriesSeen += 1;
-        blockers.push(blocker(childRelative, 'runtime_permission_entry_open_failed', {
+        addBlocker(childRelative, 'runtime_permission_entry_open_failed', {
           code: error?.code || error?.message || 'unknown',
-        }));
+        }, true);
       } finally {
         if (childDescriptor !== undefined) fs.closeSync(childDescriptor);
       }
     }
-    const after = fs.fstatSync(descriptor, { bigint: true });
-    if (!sameObject(initialStat, after)
-      || String(initialStat.mtimeNs) !== String(after.mtimeNs)
-      || Number(initialStat.size) !== Number(after.size)) {
-      blockers.push(blocker(relativePath, 'runtime_permission_directory_changed_during_scan'));
+    try {
+      const after = fs.fstatSync(descriptor, { bigint: true });
+      if (!sameObject(initialStat, after)
+        || String(initialStat.mtimeNs) !== String(after.mtimeNs)
+        || Number(initialStat.size) !== Number(after.size)) {
+        addBlocker(relativePath, 'runtime_permission_directory_changed_during_scan', null, true);
+      }
+    } catch (error) {
+      addBlocker(relativePath, 'runtime_permission_directory_reinspection_failed', {
+        code: error?.code || error?.message || 'unknown',
+      }, true);
     }
   };
 
   try {
     root = openRoot(runtimeRoot);
-    visitDirectory(root.descriptor, '.', fs.fstatSync(root.descriptor, { bigint: true }));
+    if (reserveEntry()) {
+      visitDirectory(root.descriptor, '.', fs.fstatSync(root.descriptor, { bigint: true }), 0);
+    }
     const currentRoot = fs.lstatSync(root.resolved, { bigint: true });
-    if (!sameIdentity(root.identity, currentRoot) || currentRoot.isSymbolicLink()) {
-      blockers.push(blocker('.', 'runtime_permission_root_identity_changed'));
+    if (!sameCompleteIdentity(root.identity, currentRoot) || currentRoot.isSymbolicLink()) {
+      addBlocker('.', 'runtime_permission_root_identity_changed', null, true);
     }
   } catch (error) {
-    blockers.push(blocker('.', error?.message || 'runtime_permission_root_open_failed', {
+    addBlocker('.', error?.message || 'runtime_permission_root_open_failed', {
       code: error?.code || 'unknown',
-    }));
+    }, true);
   } finally {
     if (root?.descriptor !== undefined) fs.closeSync(root.descriptor);
   }
-
-  const orderedPlanned = sorted(planned);
-  const orderedSkipped = sorted(skipped);
-  const orderedBlockers = sorted(blockers);
-  const inventory = {
+  if (!executionPlanComplete) {
+    addBlocker('.', 'runtime_permission_execute_plan_limit_exceeded', {
+      maximumExecutePlanEntries, plannedCount: plannedRows.count,
+    });
+  }
+  const planned = plannedRows.finish();
+  const skipped = skippedRows.finish();
+  const blockers = blockerRows.finish();
+  const inventoryPayload = {
+    version: 1,
+    kind: 'RuntimePermissionInventoryEvidence',
     runtimeRoot: path.resolve(runtimeRoot),
     runtimeRealRoot: root?.realPath || null,
     rootIdentity: root?.identity || null,
     policy: RUNTIME_PERMISSION_POLICY,
-    planned: orderedPlanned,
-    skipped: orderedSkipped,
-    blockers: orderedBlockers,
+    scanLimits: Object.freeze({
+      maximumEntries, maximumDirectoryEntries, maximumDepth, maximumExecutePlanEntries,
+    }),
+    inventoryComplete,
+    executionPlanComplete,
     entriesSeen,
+    maximumDepthObserved,
+    plannedCount: planned.count,
+    plannedRowsHash: planned.rowsHash,
+    skippedCount: skipped.count,
+    skippedRowsHash: skipped.rowsHash,
+    blockerCount: blockers.count,
+    blockerRowsHash: blockers.rowsHash,
   };
+  const inventoryEvidence = Object.freeze({
+    ...inventoryPayload,
+    inventoryHash: hashRecord('RuntimePermissionInventory', inventoryPayload),
+  });
   return Object.freeze({
-    ...inventory,
-    inventoryHash: hashRecord('RuntimePermissionInventory', inventory),
+    runtimeRoot: inventoryEvidence.runtimeRoot,
+    runtimeRealRoot: inventoryEvidence.runtimeRealRoot,
+    rootIdentity: inventoryEvidence.rootIdentity,
+    inventoryComplete,
+    executionPlanComplete,
+    entriesSeen,
+    maximumDepthObserved,
+    planned: planned.rows,
+    plannedCount: planned.count,
+    plannedRowsHash: planned.rowsHash,
+    skipped: skipped.rows,
+    skippedCount: skipped.count,
+    skippedRowsHash: skipped.rowsHash,
+    blockers: blockers.rows,
+    blockerCount: blockers.count,
+    blockerRowsHash: blockers.rowsHash,
+    reportPages: Object.freeze({
+      planned: planned.page, skipped: skipped.page, blockers: blockers.page,
+    }),
+    executionPlan: Object.freeze([...executionPlan]),
+    inventoryEvidence,
+    inventoryHash: inventoryEvidence.inventoryHash,
   });
 }
-
 function openRelativeEntry(root, row) {
   if (row.relativePath === '.') {
     const stat = fs.fstatSync(root.descriptor, { bigint: true });
-    if (!sameIdentity(row.identity, stat)) throw new Error('runtime_permission_entry_identity_changed');
+    if (!sameCompleteIdentity(row.identity, stat)) throw new Error('runtime_permission_entry_identity_changed');
     return { descriptor: root.descriptor, close: false, stat };
   }
   const components = row.relativePath.split('/');
@@ -321,7 +456,7 @@ function openRelativeEntry(root, row) {
       }
     }
     const stat = fs.fstatSync(descriptor, { bigint: true });
-    if (!sameIdentity(row.identity, stat)) throw new Error('runtime_permission_entry_identity_changed');
+    if (!sameCompleteIdentity(row.identity, stat)) throw new Error('runtime_permission_entry_identity_changed');
     if (stat.isFile() && Number(stat.nlink) !== 1) {
       throw new Error('runtime_permission_multiply_linked_file_forbidden');
     }
@@ -332,84 +467,183 @@ function openRelativeEntry(root, row) {
   }
 }
 
-function applyRuntimePermissionPlan(initial) {
-  const applied = [];
-  const blockers = [];
-  let root;
+function openCurrentPlanEntry(root, initial, row) {
+  const currentRoot = fs.lstatSync(root.resolved, { bigint: true });
+  if (!sameCompleteIdentity(initial.rootIdentity, currentRoot)
+    || currentRoot.isSymbolicLink()) {
+    throw new Error('runtime_permission_root_identity_changed');
+  }
+  let opened;
   try {
+    opened = openRelativeEntry(root, row);
+    if (octalMode(modeNumber(opened.stat)) !== row.currentMode) {
+      throw new Error('runtime_permission_entry_mode_changed');
+    }
+    return opened;
+  } catch (error) {
+    if (opened?.close) fs.closeSync(opened.descriptor);
+    throw error;
+  }
+}
+
+function applyRuntimePermissionPlan(initial, reportLimit) {
+  const appliedRows = createBoundedRowAccumulator('RuntimePermissionAppliedRows', reportLimit);
+  const blockerRows = createBoundedRowAccumulator('RuntimePermissionApplyBlockerRows', reportLimit);
+  const mutatedRows = [];
+  let rolledBackCount = 0;
+  let rollbackIncomplete = false;
+  let root;
+  let phase = 'plan_validation';
+  let activeRow = null;
+  try {
+    if (!initial.inventoryComplete
+      || !initial.executionPlanComplete
+      || initial.executionPlan.length !== initial.plannedCount) {
+      throw new Error('runtime_permission_execute_plan_incomplete');
+    }
     root = openRoot(initial.runtimeRoot);
-    if (!initial.rootIdentity || !sameIdentity(initial.rootIdentity, fs.fstatSync(root.descriptor, { bigint: true }))) {
+    if (!initial.rootIdentity || root.realPath !== initial.runtimeRealRoot
+      || !sameCompleteIdentity(initial.rootIdentity, fs.fstatSync(root.descriptor, { bigint: true }))) {
       throw new Error('runtime_permission_root_identity_changed');
     }
-    for (const row of initial.planned) {
-      let opened;
+    for (const row of initial.executionPlan) {
+      activeRow = row;
+      const opened = openCurrentPlanEntry(root, initial, row);
+      if (opened.close) fs.closeSync(opened.descriptor);
+    }
+    phase = 'apply';
+    for (const row of initial.executionPlan) {
+      activeRow = row;
+      const opened = openCurrentPlanEntry(root, initial, row);
       try {
-        const currentRoot = fs.lstatSync(root.resolved, { bigint: true });
-        if (!sameIdentity(initial.rootIdentity, currentRoot) || currentRoot.isSymbolicLink()) {
-          throw new Error('runtime_permission_root_identity_changed');
-        }
-        opened = openRelativeEntry(root, row);
-        if (octalMode(modeNumber(opened.stat)) !== row.currentMode) {
-          throw new Error('runtime_permission_entry_mode_changed');
-        }
         const targetMode = Number.parseInt(row.targetMode, 8);
         fs.fchmodSync(opened.descriptor, targetMode);
+        mutatedRows.push(row);
         const verified = fs.fstatSync(opened.descriptor, { bigint: true });
-        if (!sameIdentity(row.identity, verified) || modeNumber(verified) !== targetMode) {
+        if (!sameCompleteIdentity(row.identity, verified)
+          || modeNumber(verified) !== targetMode) {
           throw new Error('runtime_permission_post_chmod_verification_failed');
         }
-        applied.push(Object.freeze({ ...row, appliedMode: octalMode(modeNumber(verified)) }));
-      } catch (error) {
-        blockers.push(blocker(row.relativePath, error?.message || 'runtime_permission_apply_failed', {
-          code: error?.code || 'unknown',
-        }));
-        break;
       } finally {
-        if (opened?.close) fs.closeSync(opened.descriptor);
+        if (opened.close) fs.closeSync(opened.descriptor);
       }
     }
+    for (const row of mutatedRows) {
+      appliedRows.add(Object.freeze({ ...row, appliedMode: row.targetMode }));
+    }
   } catch (error) {
-    blockers.push(blocker('.', error?.message || 'runtime_permission_apply_root_failed', {
-      code: error?.code || 'unknown',
+    blockerRows.add(Object.freeze({
+      ...blocker(activeRow?.relativePath || '.',
+        error?.message || 'runtime_permission_apply_failed',
+        { code: error?.code || 'unknown' }),
+      phase,
     }));
+    const rollback = rollbackRuntimePermissionRows({
+      root, rows: mutatedRows, openEntry: openRelativeEntry,
+      sameIdentity: sameCompleteIdentity,
+      reportLimit,
+      recordBlocker: blockerRows.add,
+    });
+    ({ rolledBackCount, rollbackIncomplete } = rollback);
   } finally {
     if (root?.descriptor !== undefined) fs.closeSync(root.descriptor);
   }
-  return Object.freeze({ applied: sorted(applied), blockers: sorted(blockers) });
+  const applied = appliedRows.finish();
+  const blockers = blockerRows.finish();
+  return Object.freeze({
+    applied: applied.rows, appliedCount: applied.count,
+    appliedRowsHash: applied.rowsHash, appliedPage: applied.page,
+    blockers: blockers.rows, blockerCount: blockers.count,
+    blockerRowsHash: blockers.rowsHash,
+    mutationAttemptCount: mutatedRows.length,
+    rolledBackCount,
+    rollbackIncomplete,
+  });
 }
 
-export function auditRuntimePermissions({ runtimeRoot, execute = false, maximumEntries = 100_000 } = {}) {
+export function auditRuntimePermissions({
+  runtimeRoot, execute = false, maximumEntries, maximumDirectoryEntries,
+  maximumDepth, reportLimit, maximumExecutePlanEntries,
+  writerQuiescenceConfirmed = false,
+} = {}) {
   if (!runtimeRoot) throw new Error('runtime_permission_root_required');
-  if (!Number.isSafeInteger(maximumEntries) || maximumEntries < 1) {
-    throw new Error('runtime_permission_maximum_entries_invalid');
-  }
-  const initial = scanRuntimePermissionTree(runtimeRoot, { maximumEntries });
-  let applied = [];
-  let applyBlockers = [];
-  let postcondition = null;
-  if (execute && initial.blockers.length === 0) {
-    const result = applyRuntimePermissionPlan(initial);
-    applied = result.applied;
-    applyBlockers = result.blockers;
-    postcondition = scanRuntimePermissionTree(runtimeRoot, { maximumEntries });
-  }
-  const blockers = sorted([
-    ...initial.blockers.map((row) => ({ ...row, phase: 'initial_scan' })),
-    ...applyBlockers.map((row) => ({ ...row, phase: 'apply' })),
-    ...(postcondition?.blockers || []).map((row) => ({ ...row, phase: 'postcondition_scan' })),
-  ]);
-  if (execute && postcondition && postcondition.planned.length !== 0) {
-    blockers.push(blocker('.', 'runtime_permission_postcondition_not_compliant', {
-      remainingPlannedCount: postcondition.planned.length,
-    }));
-  }
+  const limits = resolveRuntimePermissionLimits({
+    maximumEntries, maximumDirectoryEntries, maximumDepth, reportLimit,
+    maximumExecutePlanEntries,
+  });
+  const initial = scanRuntimePermissionTree(runtimeRoot, limits);
+  const emptyApply = (blockerInput = null) => emptyRuntimePermissionApplyResult({
+    reportLimit: limits.reportLimit,
+    blockerInput,
+    createAccumulator: createBoundedRowAccumulator,
+    createBlocker: blocker,
+  });
+  const {
+    applied, postcondition, lockedInventory, executionLock, executionBlockers,
+  } = executeLockedRuntimePermissionPlan({
+    runtimeRoot, execute, limits, initial, writerQuiescenceConfirmed,
+    scan: scanRuntimePermissionTree,
+    apply: applyRuntimePermissionPlan,
+    rollback: (locked, recordBlocker) => rollbackCommittedRuntimePermissionPlan({
+      initial: locked, openRoot, openEntry: openRelativeEntry,
+      sameIdentity: sameCompleteIdentity,
+      reportLimit: limits.reportLimit,
+      recordBlocker,
+    }),
+    empty: emptyApply,
+  });
+  const postconditionBlocker = execute && applied.blockerCount === 0
+    && postcondition
+    && postcondition.plannedCount !== 0
+    ? blocker('.', 'runtime_permission_postcondition_not_compliant', {
+      remainingPlannedCount: postcondition.plannedCount,
+    }) : null;
+  const visibleBlockers = Object.freeze([
+    ...initial.blockers.map((row) => Object.freeze({ ...row, phase: 'initial_scan' })),
+    ...applied.blockers,
+    ...executionBlockers,
+    ...(postcondition?.blockers || []).map((row) => Object.freeze(
+      { ...row, phase: 'postcondition_scan' },
+    )),
+    ...(postconditionBlocker
+      ? [Object.freeze({ ...postconditionBlocker, phase: 'postcondition' })] : []),
+  ].slice(0, limits.reportLimit));
+  const blockerSources = Object.freeze({
+    initialScan: Object.freeze({ count: initial.blockerCount, rowsHash: initial.blockerRowsHash }),
+    planOrApply: Object.freeze({ count: applied.blockerCount, rowsHash: applied.blockerRowsHash }),
+    executionLock: Object.freeze({
+      count: executionBlockers.length,
+      rowsHash: hashRecord('RuntimePermissionExecutionBlockerRows', executionBlockers),
+    }),
+    postconditionScan: Object.freeze({
+      count: postcondition?.blockerCount || 0, rowsHash: postcondition?.blockerRowsHash || null,
+    }),
+    postcondition: Object.freeze({
+      count: postconditionBlocker ? 1 : 0,
+      rowsHash: hashRecord('RuntimePermissionPostconditionBlockerRows',
+        postconditionBlocker ? [postconditionBlocker] : []),
+    }),
+  });
+  const blockerCount = Object.values(blockerSources).reduce(
+    (total, value) => total + value.count, 0,
+  );
+  const blockerRowsHash = hashRecord('RuntimePermissionReceiptBlockerRows', blockerSources);
   const status = execute
-    ? (blockers.length
+    ? (blockerCount
       ? 'runtime_permissions_blocked'
-      : (initial.planned.length ? 'runtime_permissions_hardened' : 'runtime_permissions_already_compliant'))
-    : (initial.blockers.length
+      : (initial.plannedCount
+        ? 'runtime_permissions_hardened'
+        : 'runtime_permissions_already_compliant'))
+    : (initial.blockerCount
       ? 'runtime_permissions_audit_blocked'
-      : (initial.planned.length ? 'runtime_permissions_changes_planned' : 'runtime_permissions_compliant'));
+      : (initial.plannedCount
+        ? 'runtime_permissions_changes_planned'
+        : 'runtime_permissions_compliant'));
+  const reportPages = Object.freeze({
+    limit: limits.reportLimit, planned: initial.reportPages.planned,
+    applied: applied.appliedPage, skipped: initial.reportPages.skipped,
+    blockers: pageMetadata(blockerCount, visibleBlockers.length, limits.reportLimit),
+  });
   const payload = {
     version: 1,
     kind: 'RuntimePermissionHygieneReceipt',
@@ -418,17 +652,32 @@ export function auditRuntimePermissions({ runtimeRoot, execute = false, maximumE
     runtimeRoot: initial.runtimeRoot,
     runtimeRealRoot: initial.runtimeRealRoot,
     policy: RUNTIME_PERMISSION_POLICY,
+    limits,
     planned: initial.planned,
-    applied,
+    applied: applied.applied,
     skipped: initial.skipped,
-    blockers: sorted(blockers),
+    blockers: visibleBlockers,
+    reportPages,
     summary: {
       entriesSeen: initial.entriesSeen,
-      plannedCount: initial.planned.length,
-      appliedCount: applied.length,
-      skippedCount: initial.skipped.length,
-      blockerCount: blockers.length,
+      maximumDepthObserved: initial.maximumDepthObserved,
+      inventoryComplete: initial.inventoryComplete,
+      executionPlanComplete: initial.executionPlanComplete,
+      plannedCount: initial.plannedCount,
+      appliedCount: applied.appliedCount,
+      mutationAttemptCount: applied.mutationAttemptCount,
+      rolledBackCount: applied.rolledBackCount,
+      rollbackIncomplete: applied.rollbackIncomplete,
+      skippedCount: initial.skippedCount,
+      blockerCount,
     },
+    initialInventory: initial.inventoryEvidence,
+    lockedInventory,
+    postconditionInventory: postcondition?.inventoryEvidence || null,
+    writerQuiescenceConfirmed: Boolean(writerQuiescenceConfirmed),
+    executionLock,
+    appliedRowsHash: applied.appliedRowsHash,
+    blockerRowsHash,
     initialInventoryHash: initial.inventoryHash,
     postconditionInventoryHash: postcondition?.inventoryHash || null,
   };

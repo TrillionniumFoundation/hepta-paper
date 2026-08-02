@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createCodexAgentExecutor } from '../../paper-adapters/automation/codex-agent-executor.mjs';
+import { preflightCodexFormalReviewer } from '../../paper-adapters/automation/codex-formal-reviewer-preflight.mjs';
 import { preflightCodexResearchAuthor } from '../../paper-adapters/automation/codex-research-author-preflight.mjs';
 import { createOllamaStructuredAgentExecutor } from '../../paper-adapters/automation/ollama-structured-agent-executor.mjs';
 import { createOpenClawAgentExecutor } from '../../paper-adapters/automation/openclaw-agent-executor.mjs';
@@ -23,9 +24,11 @@ import {
 } from './autonomous-research-provider-configuration.mjs';
 import {
   composeReviewerPrincipalExecutorPool,
+  composeReviewerSessionExecutorPool,
 } from './reviewer-principal-pool-composition.mjs';
 import {
-  inspectConfiguredAutonomousResearchAuthorIdentity,
+  buildAutonomousResearchReviewerSessionPrincipalPool,
+  inspectAutonomousResearchAuthorRuntimeIdentity,
 } from './autonomous-research-runtime-principal-preflight.mjs';
 import {
   inspectCampaignPreparationPrincipalAuthorityBindings,
@@ -83,7 +86,9 @@ export function composeCampaignWorkerExecution({
   expectedProviderConfigurationHash = null,
   reviewerPrincipalExecutorPool = null,
   preflightResearchAuthor = preflightCodexResearchAuthor,
+  preflightFormalReviewer = preflightCodexFormalReviewer,
   reviewerPrincipalPoolComposer = composeReviewerPrincipalExecutorPool,
+  reviewerSessionPoolComposer = composeReviewerSessionExecutorPool,
   assertExternalSideEffectReady = null,
 } = {}) {
   if (!runtimeRoot || !campaignExecutionContext || !services) {
@@ -210,7 +215,7 @@ export function composeCampaignWorkerExecution({
     ? services.clock : undefined;
   const authorIdentityAttestation = independentReviewRequested
     && (reviewerPoolConfigPath || expectedRuntimePrincipalBinding)
-    ? inspectConfiguredAutonomousResearchAuthorIdentity({
+    ? inspectAutonomousResearchAuthorRuntimeIdentity({
       environment,
       author: researchAuthorPreflight,
       ...(reviewerClock ? { clock: reviewerClock } : {}),
@@ -233,6 +238,51 @@ export function composeCampaignWorkerExecution({
       ...(reviewerClock ? { clock: reviewerClock } : {}),
     });
     effectiveReviewerPrincipalExecutorPool = reviewerPrincipalPoolComposition.executorPool;
+  }
+  const formalReviewerProvider = boundProviderConfiguration
+    ? boundProviderConfiguration.formalReviewer.provider
+    : configuredValue(
+      options['formal-review-provider'],
+      environment.HEPTA_FORMAL_REVIEW_PROVIDER,
+      'codex',
+    );
+  if (!effectiveReviewerPrincipalExecutorPool && independentReviewRequested
+    && !reviewerPoolConfigPath && formalReviewerProvider === 'codex'
+    && provider === 'codex') {
+    const reviewerPreflight = preflightFormalReviewer({
+      codexBinary: boundProviderConfiguration
+        ? boundProviderConfiguration.formalReviewer.codexBinary
+        : configuredValue(
+          options['formal-review-codex-binary'],
+          environment.HEPTA_FORMAL_REVIEW_CODEX_BINARY,
+          'codex',
+        ),
+      codexHome: boundProviderConfiguration
+        ? boundProviderConfiguration.formalReviewer.codexHome
+        : configuredValue(
+          options['formal-review-codex-home'],
+          environment.HEPTA_FORMAL_REVIEW_CODEX_HOME,
+        ) || null,
+      model: boundProviderConfiguration
+        ? boundProviderConfiguration.formalReviewer.model
+        : modelConfiguration.formalReviewModel,
+      authorProvider: provider === 'codex' ? 'codex' : provider,
+      authorCodexHome: provider === 'codex'
+        ? researchAuthorPreflight?.codexHome || primaryCodexHome : null,
+      environment,
+      spawnSyncImpl,
+    });
+    reviewerPrincipalPoolComposition = reviewerSessionPoolComposer({
+      inspection: buildAutonomousResearchReviewerSessionPrincipalPool({
+        author: researchAuthorPreflight,
+        reviewer: reviewerPreflight,
+      }),
+      runtimeRoot,
+      workspaceRegistry,
+      assertExternalSideEffectReady,
+    });
+    effectiveReviewerPrincipalExecutorPool =
+      reviewerPrincipalPoolComposition.executorPool;
   }
   const actualReviewerPoolHash = effectiveReviewerPrincipalExecutorPool?.pool
     ?.researchPrincipalPoolHash || null;
@@ -263,11 +313,7 @@ export function composeCampaignWorkerExecution({
         : modelConfiguration.formalReviewModel,
       provider: boundProviderConfiguration
         ? boundProviderConfiguration.formalReviewer.provider
-        : configuredValue(
-          options['formal-review-provider'],
-          environment.HEPTA_FORMAL_REVIEW_PROVIDER,
-          'codex',
-        ),
+        : formalReviewerProvider,
       codexBinary: boundProviderConfiguration
         ? boundProviderConfiguration.formalReviewer.codexBinary
         : configuredValue(
@@ -318,7 +364,7 @@ export function composeCampaignWorkerExecution({
     reviewerPrincipalExecutorPool: effectiveReviewerPrincipalExecutorPool,
     researchPrincipalPool: effectiveReviewerPrincipalExecutorPool?.pool || null,
     reviewerPrincipalPoolConfigurationHash:
-      reviewerPrincipalPoolComposition?.configuration.configurationHash || null,
+      reviewerPrincipalPoolComposition?.configuration?.configurationHash || null,
     empiricalExecutor,
     workerRunner,
     runtimeImages,

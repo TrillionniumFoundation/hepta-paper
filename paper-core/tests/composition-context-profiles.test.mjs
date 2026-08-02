@@ -722,6 +722,7 @@ function automationStatusTestStore({
   quickCheck = 'ok',
   failedCountName = null,
   omitCampaignNodeLeaseColumn = false,
+  countForSql = () => 0,
 } = {}) {
   const columns = {
     paper_campaigns: ['campaign_id', 'status', 'updated_at'],
@@ -736,7 +737,7 @@ function automationStatusTestStore({
       const tableInfo = sql.match(/^PRAGMA table_info\('([^']+)'\);$/);
       if (tableInfo) return { ok: true, rows: (columns[tableInfo[1]] || []).map((name) => ({ name })) };
       if (failedCountName && sql.includes(failedCountName)) return { ok: false, error: 'injected query failure' };
-      return { ok: true, rows: [{ count: 0 }] };
+      return { ok: true, rows: [{ count: countForSql(sql) }] };
     },
   };
 }
@@ -768,6 +769,125 @@ test('automation status operational inspection verifies quick-check, required sc
   assert.ok(corruptOrIncomplete.blockers.includes('automation_store_quick_check_failed'));
   assert.ok(corruptOrIncomplete.blockers.includes(
     'automation_store_required_columns_missing:campaign_nodes:lease_expires_at',
+  ));
+});
+
+test('automation status preserves legacy terminal queued evidence without hiding actionable residue', () => {
+  const policyCount = (sql) => {
+    if (sql.includes("json_extract(c.spec_json,'$.terminalSiblingSettlementPolicyVersion')=1")) return 0;
+    if (sql.includes("json_extract(c.spec_json,'$.terminalSiblingSettlementPolicyVersion')=0")) return 2538;
+    if (sql.includes('AND NOT (json_type')) return 0;
+    if (sql.includes("n.status='queued' AND c.status IN")) return 2538;
+    return 0;
+  };
+  const preserved = inspectAutomationStoreOperationalIntegrity({
+    store: automationStatusTestStore({ countForSql: policyCount }),
+    now: new Date('2026-08-02T00:00:00.000Z'),
+  });
+  assert.equal(preserved.terminalCampaignQueuedNodeCount, 2538);
+  assert.equal(preserved.reconcilableTerminalCampaignQueuedNodeCount, 0);
+  assert.equal(preserved.preservedLegacyTerminalCampaignQueuedNodeCount, 2538);
+  assert.equal(preserved.invalidTerminalCampaignSettlementPolicyQueuedNodeCount, 0);
+  assert.equal(preserved.status, 'automation_store_operational_integrity_verified');
+  assert.equal(preserved.degraded, false);
+
+  const reconcilable = inspectAutomationStoreOperationalIntegrity({
+    store: automationStatusTestStore({
+      countForSql: (sql) => (
+        sql.includes("json_extract(c.spec_json,'$.terminalSiblingSettlementPolicyVersion')=1") ? 1 : 0
+      ),
+    }),
+    now: new Date('2026-08-02T00:00:00.000Z'),
+  });
+  assert.equal(reconcilable.reconcilableTerminalCampaignQueuedNodeCount, 1);
+  assert.equal(reconcilable.status, 'automation_store_operational_integrity_degraded');
+  assert.equal(reconcilable.degraded, true);
+
+  const invalidPolicy = inspectAutomationStoreOperationalIntegrity({
+    store: automationStatusTestStore({
+      countForSql: (sql) => (sql.includes('AND NOT (json_type') ? 1 : 0),
+    }),
+    now: new Date('2026-08-02T00:00:00.000Z'),
+  });
+  assert.equal(invalidPolicy.invalidTerminalCampaignSettlementPolicyQueuedNodeCount, 1);
+  assert.equal(invalidPolicy.status, 'automation_store_operational_integrity_degraded');
+  assert.equal(invalidPolicy.degraded, true);
+});
+
+test('automation status classifies terminal settlement policy with SQLite JSON semantics', (t) => {
+  const { root, runtimeRoot } = temporaryRoots(t, 'hepta-operational-integrity-policy-');
+  const store = createDefaultPaperStore({ root, runtimeRoot });
+  t.after(() => store.close());
+  const policies = [
+    ['missing', '{}'],
+    ['legacy-zero', '{"terminalSiblingSettlementPolicyVersion":0}'],
+    ['reconcilable-one', '{"terminalSiblingSettlementPolicyVersion":1}'],
+    ['integer-two', '{"terminalSiblingSettlementPolicyVersion":2}'],
+    ['text-zero', '{"terminalSiblingSettlementPolicyVersion":"0"}'],
+    ['real-one', '{"terminalSiblingSettlementPolicyVersion":1.0}'],
+    ['boolean-false', '{"terminalSiblingSettlementPolicyVersion":false}'],
+    ['json-null', '{"terminalSiblingSettlementPolicyVersion":null}'],
+    ['object', '{"terminalSiblingSettlementPolicyVersion":{}}'],
+    ['array', '{"terminalSiblingSettlementPolicyVersion":[]}'],
+  ];
+  const createdAt = '2026-08-02T00:00:00.000Z';
+  for (const [id, specJson] of policies) {
+    assert.equal(store.execute(`INSERT INTO paper_campaigns(
+      campaign_id,paper_id,status,revision,current_round,max_rounds,spec_json,
+      created_at,updated_at
+    ) VALUES(
+      'policy-${id}','paper-${id}','failed',1,0,1,'${specJson}',
+      '${createdAt}','${createdAt}'
+    );`).ok, true);
+    assert.equal(store.execute(`INSERT INTO campaign_nodes(
+      node_id,campaign_id,kind,status,dependencies_json,spec_json,created_at,updated_at
+    ) VALUES(
+      'policy-${id}:node','policy-${id}','agent','queued','[]','{}',
+      '${createdAt}','${createdAt}'
+    );`).ok, true);
+  }
+
+  const classified = inspectAutomationStoreOperationalIntegrity({
+    store,
+    now: new Date(createdAt),
+  });
+  assert.equal(classified.queryReady, true);
+  assert.equal(classified.terminalCampaignQueuedNodeCount, 10);
+  assert.equal(classified.preservedLegacyTerminalCampaignQueuedNodeCount, 2);
+  assert.equal(classified.reconcilableTerminalCampaignQueuedNodeCount, 1);
+  assert.equal(classified.invalidTerminalCampaignSettlementPolicyQueuedNodeCount, 7);
+  assert.equal(classified.status, 'automation_store_operational_integrity_degraded');
+
+  assert.equal(store.execute(`UPDATE campaign_nodes SET status='skipped'
+    WHERE campaign_id NOT IN ('policy-missing','policy-legacy-zero');`).ok, true);
+  const preservedOnly = inspectAutomationStoreOperationalIntegrity({
+    store,
+    now: new Date(createdAt),
+  });
+  assert.equal(preservedOnly.terminalCampaignQueuedNodeCount, 2);
+  assert.equal(preservedOnly.preservedLegacyTerminalCampaignQueuedNodeCount, 2);
+  assert.equal(preservedOnly.reconcilableTerminalCampaignQueuedNodeCount, 0);
+  assert.equal(preservedOnly.invalidTerminalCampaignSettlementPolicyQueuedNodeCount, 0);
+  assert.equal(preservedOnly.status, 'automation_store_operational_integrity_verified');
+  assert.equal(preservedOnly.degraded, false);
+
+  assert.equal(store.execute(`UPDATE paper_campaigns SET spec_json='{'
+    WHERE campaign_id='policy-missing';`).ok, true);
+  const malformed = inspectAutomationStoreOperationalIntegrity({
+    store,
+    now: new Date(createdAt),
+  });
+  assert.equal(malformed.status, 'automation_store_operational_integrity_blocked');
+  assert.equal(malformed.queryReady, false);
+  assert.equal(malformed.degraded, true);
+  assert.ok(malformed.blockers.includes(
+    'automation_store_operational_query_failed:reconcilableTerminalCampaignQueuedNodeCount',
+  ));
+  assert.ok(malformed.blockers.includes(
+    'automation_store_operational_query_failed:preservedLegacyTerminalCampaignQueuedNodeCount',
+  ));
+  assert.ok(malformed.blockers.includes(
+    'automation_store_operational_query_failed:invalidTerminalCampaignSettlementPolicyQueuedNodeCount',
   ));
 });
 

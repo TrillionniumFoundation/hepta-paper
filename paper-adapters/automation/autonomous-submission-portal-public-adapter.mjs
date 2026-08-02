@@ -12,7 +12,7 @@ import {
   inspectAutonomousSubmissionPortalIdentitySeparation,
 } from './autonomous-submission-portal-identity-attestation.mjs';
 import { hasExactObjectKeys } from '../../workflow-kernel/exact-object-keys.mjs';
-import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}$/;
@@ -45,6 +45,57 @@ const PUBLIC_CONFIG_KEYS_V3 = Object.freeze([
   ...PUBLIC_CONFIG_KEYS_V2,
   'localOriginIdentityAttestationBundles', 'portalIdentityAttestationBundle',
 ]);
+
+function expectedHash(value, code) {
+  if (value === null || value === undefined) return null;
+  const selected = String(value || '').toLowerCase();
+  if (!SHA256.test(selected)) throw new Error(code);
+  return selected;
+}
+
+function readIntegrityPortalJsonDocument(filePath, errorCode) {
+  const selectedPath = path.resolve(String(filePath || ''));
+  let descriptor = null;
+  try {
+    const resolvedPath = fs.realpathSync(selectedPath);
+    const pathStat = fs.lstatSync(selectedPath);
+    const currentUid = typeof process.getuid === 'function'
+      ? process.getuid() : pathStat.uid;
+    if (selectedPath !== resolvedPath || !pathStat.isFile()
+      || pathStat.isSymbolicLink() || pathStat.nlink !== 1
+      || pathStat.size < 2 || pathStat.size > 1024 * 1024
+      || (pathStat.mode & 0o022) !== 0
+      || (pathStat.uid !== 0 && pathStat.uid !== currentUid)) {
+      throw new Error('invalid');
+    }
+    descriptor = fs.openSync(
+      selectedPath,
+      fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0),
+    );
+    const before = fs.fstatSync(descriptor);
+    if (!before.isFile() || before.nlink !== 1
+      || before.size !== pathStat.size || before.dev !== pathStat.dev
+      || before.ino !== pathStat.ino || (before.mode & 0o022) !== 0) {
+      throw new Error('invalid');
+    }
+    const bytes = fs.readFileSync(descriptor);
+    const after = fs.fstatSync(descriptor);
+    if (bytes.length !== before.size || after.size !== before.size
+      || after.dev !== before.dev || after.ino !== before.ino
+      || after.mtimeMs !== before.mtimeMs || after.nlink !== 1) {
+      throw new Error('invalid');
+    }
+    const value = JSON.parse(bytes.toString('utf8'));
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('invalid');
+    }
+    return Object.freeze({ value, fileHash: hashBytes(bytes) });
+  } catch {
+    throw new Error(errorCode);
+  } finally {
+    if (descriptor !== null) fs.closeSync(descriptor);
+  }
+}
 
 export function buildAutonomousSubmissionPortalConfiguration({
   version = 1,
@@ -128,24 +179,28 @@ export function buildAutonomousSubmissionPortalConfiguration({
   });
 }
 
-export function readAutonomousSubmissionPortalConfiguration({ configPath } = {}) {
-  const candidate = path.resolve(String(configPath || ''));
-  let parsed;
-  try {
-    const stat = fs.lstatSync(candidate);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 1024 * 1024) {
-      throw new Error('invalid');
-    }
-    parsed = JSON.parse(fs.readFileSync(candidate, 'utf8'));
-  } catch { throw new Error('autonomous_submission_portal_configuration_file_invalid'); }
+export function readAutonomousSubmissionPortalConfiguration({
+  configPath,
+  expectedConfigurationHash = null,
+} = {}) {
+  const { value: parsed } = readIntegrityPortalJsonDocument(
+    configPath,
+    'autonomous_submission_portal_configuration_file_invalid',
+  );
   const expectedKeys = parsed?.version === 3
     ? CONFIG_KEYS_V3 : parsed?.version === 2 ? CONFIG_KEYS_V2 : CONFIG_KEYS_V1;
+  const selected = buildAutonomousSubmissionPortalConfiguration(parsed);
+  const pinnedConfigurationHash = expectedHash(
+    expectedConfigurationHash,
+    'autonomous_submission_portal_configuration_pin_invalid',
+  );
   if (!hasExactObjectKeys(parsed, expectedKeys)
-    || JSON.stringify(buildAutonomousSubmissionPortalConfiguration(parsed))
-      !== JSON.stringify(parsed)) {
+    || JSON.stringify(selected) !== JSON.stringify(parsed)
+    || (pinnedConfigurationHash !== null
+      && selected.configurationHash !== pinnedConfigurationHash)) {
     throw new Error('autonomous_submission_portal_configuration_verification_failed');
   }
-  return parsed;
+  return selected;
 }
 
 export function buildAutonomousSubmissionPortalPublicConfiguration(input = {}) {
@@ -254,22 +309,27 @@ export function deriveAutonomousSubmissionPortalPublicConfiguration({
 export function readAutonomousSubmissionPortalPublicConfiguration({
   configPath,
   expectedConfigurationHash = null,
+  expectedDescriptorHash = null,
 } = {}) {
-  const candidate = path.resolve(String(configPath || ''));
-  let parsed;
-  try {
-    const stat = fs.lstatSync(candidate);
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 1024 * 1024) {
-      throw new Error('invalid');
-    }
-    parsed = JSON.parse(fs.readFileSync(candidate, 'utf8'));
-  } catch {
-    throw new Error('autonomous_submission_portal_public_configuration_file_invalid');
-  }
+  const { value: parsed } = readIntegrityPortalJsonDocument(
+    configPath,
+    'autonomous_submission_portal_public_configuration_file_invalid',
+  );
   const selected = buildAutonomousSubmissionPortalPublicConfiguration(parsed);
+  const pinnedConfigurationHash = expectedHash(
+    expectedConfigurationHash,
+    'autonomous_submission_portal_public_configuration_pin_invalid',
+  );
+  const pinnedDescriptorHash = expectedHash(
+    expectedDescriptorHash,
+    'autonomous_submission_portal_descriptor_pin_invalid',
+  );
   if (JSON.stringify(selected) !== JSON.stringify(parsed)
-    || (expectedConfigurationHash !== null
-      && selected.configurationHash !== expectedConfigurationHash)) {
+    || (pinnedConfigurationHash !== null
+      && selected.configurationHash !== pinnedConfigurationHash)
+    || (pinnedDescriptorHash !== null
+      && autonomousSubmissionPortalPublicDescriptorHash(selected)
+        !== pinnedDescriptorHash)) {
     throw new Error('autonomous_submission_portal_public_configuration_verification_failed');
   }
   return selected;
@@ -341,29 +401,64 @@ function inspectPublicTrust({
 
 export function createAutonomousSubmissionPortalDescriptor({
   configuration,
+  expectedConfigurationHash = null,
+  expectedDescriptorHash = null,
   requiredLocalOriginIdentitySubjectHashes = [],
   clock = { now: () => new Date() },
 } = {}) {
   const selected = configuration?.kind === 'AutonomousSubmissionPortalPublicConfiguration'
     ? buildAutonomousSubmissionPortalPublicConfiguration(configuration)
     : buildAutonomousSubmissionPortalConfiguration(configuration);
+  const publicConfiguration = selected.kind === 'AutonomousSubmissionPortalPublicConfiguration'
+    ? selected : deriveAutonomousSubmissionPortalPublicConfiguration({
+      configuration: selected,
+    });
+  const descriptorHash = autonomousSubmissionPortalPublicDescriptorHash(publicConfiguration);
+  const pinnedConfigurationHash = expectedHash(
+    expectedConfigurationHash,
+    'autonomous_submission_portal_configuration_pin_invalid',
+  );
+  const pinnedDescriptorHash = expectedHash(
+    expectedDescriptorHash,
+    'autonomous_submission_portal_descriptor_pin_invalid',
+  );
+  if ((pinnedConfigurationHash !== null
+      && selected.configurationHash !== pinnedConfigurationHash)
+    || (pinnedDescriptorHash !== null && descriptorHash !== pinnedDescriptorHash)) {
+    throw new Error('autonomous_submission_portal_configuration_pin_mismatch');
+  }
   const trust = inspectPublicTrust({
     configuration: selected,
     requiredLocalOriginIdentitySubjectHashes,
     clock,
   });
+  const configurationIdentityPinned = pinnedConfigurationHash !== null;
+  const descriptorPinned = pinnedDescriptorHash !== null;
+  const configurationPinned = configurationIdentityPinned && descriptorPinned;
+  const boundedReady = trust.cryptographicAuthorityReady
+    && trust.identityIndependenceReady;
+  const fullProductionReady = selected.version === 3
+    && configurationPinned && boundedReady;
   return Object.freeze({
     version: 1,
     kind: 'AutonomousSubmissionPortalDescriptor',
     portalId: selected.portalId,
     configurationHash: selected.configurationHash,
+    portalDescriptorHash: descriptorHash,
+    configurationIdentityPinned,
+    descriptorPinned,
+    configurationPinned,
+    boundedReady,
+    fullProductionReady,
     idempotencyLookupSupported: true,
     signedCompletedReceiptSupported: trust.cryptographicAuthorityReady,
     cryptographicAuthorityReady: trust.cryptographicAuthorityReady,
     identityIndependenceReady: trust.identityIndependenceReady,
-    evidenceProfile: trust.identityIndependenceReady
+    evidenceProfile: fullProductionReady
       ? 'pinned-signed-independent-submission-portal-v3'
-      : 'bounded-submission-portal-v1',
+      : trust.identityIndependenceReady
+        ? 'signed-independent-submission-portal-v3-bounded'
+        : 'bounded-submission-portal-v1',
     trustSetHash: trust.trustSetHash,
     signatureVerificationPolicyHash: trust.signatureVerificationPolicyHash,
     identitySeparationInspection: trust.identityInspection,

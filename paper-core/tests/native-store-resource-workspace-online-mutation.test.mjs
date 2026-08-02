@@ -7,7 +7,11 @@ import { DatabaseSync } from 'node:sqlite';
 
 import {
   executeAutomationRuntimeReconciliation,
+  planAutomationRuntimeReconciliation,
 } from '../../paper-adapters/automation/automation-runtime-reconciler.mjs';
+import {
+  executeLegacyTerminalActiveResidueSettlement,
+} from '../../paper-adapters/automation/legacy-terminal-active-residue-settlement.mjs';
 import {
   createExternallyFencedSqliteMutationTransaction,
 } from '../../paper-adapters/automation/externally-fenced-sqlite-mutation-plan.mjs';
@@ -15,6 +19,7 @@ import {
   NATIVE_STORE_AUTOMATION_RUNTIME_RECONCILIATION_MUTATION_PLANS,
   NATIVE_STORE_AUTOMATION_RUNTIME_RECONCILIATION_OPERATION_ID,
   NATIVE_STORE_AUTOMATION_RUNTIME_RECONCILIATION_WRITER_PLAN_HASH,
+  NATIVE_STORE_LEGACY_TERMINAL_ACTIVE_RESIDUE_SETTLEMENT_OPERATION_ID,
 } from '../../paper-adapters/automation/native-store-automation-runtime-reconciliation-mutation-plan.mjs';
 import {
   createSqliteResourceGovernor,
@@ -89,11 +94,15 @@ function seedNativeStore(offline) {
     ['reconcile-expired', 'paper-expired', 'node-expired', 'agent'],
     ['reconcile-idle', 'paper-idle', 'node-idle', 'agent'],
     ['reconcile-terminal', 'paper-terminal', 'node-terminal', 'agent'],
+    ['reconcile-terminal-other', 'paper-terminal-other', 'node-terminal-other', 'agent'],
+    ['reconcile-terminal-active', 'paper-terminal-active', 'node-terminal-active', 'agent'],
     ['workspace-campaign', 'paper-workspace', 'workspace-node', 'draft'],
   ]) {
     campaigns.createCampaign({
       campaignId,
       paperId,
+      ...(campaignId.startsWith('reconcile-terminal')
+        ? { terminalSiblingSettlementPolicyVersion: 1 } : {}),
       nodes: [{ nodeId, kind, dependencies: [] }],
     });
   }
@@ -108,6 +117,17 @@ function seedNativeStore(offline) {
   assert.equal(offline.execute(`UPDATE paper_campaigns SET
       status='failed',stop_reason='fixture-terminal'
     WHERE campaign_id='reconcile-terminal'`).ok, true);
+  assert.equal(offline.execute(`UPDATE paper_campaigns SET
+      status='failed',stop_reason='fixture-terminal-other'
+    WHERE campaign_id='reconcile-terminal-other'`).ok, true);
+  assert.equal(offline.execute(`UPDATE paper_campaigns SET
+      status='failed',stop_reason='fixture-terminal-active'
+    WHERE campaign_id='reconcile-terminal-active'`).ok, true);
+  assert.equal(offline.execute(`UPDATE campaign_nodes SET
+      status='running',lease_owner='terminal-dead-worker',
+      attempt_id='terminal-active-attempt',lease_generation=3,node_revision=4,
+      lease_expires_at='${PAST}'
+    WHERE node_id='node-terminal-active'`).ok, true);
   assert.equal(offline.execute(`INSERT INTO automation_resource_leases(
       lease_id,scope,owner_id,agent,cpu,gpu,memory_mib,
       acquired_at,renewed_at,expires_at
@@ -224,11 +244,11 @@ function fixture(t) {
   });
 }
 
-test('native-store tail plans pin all twelve remaining DML operations', () => {
+test('native-store tail plans pin all thirteen remaining DML operations', () => {
   assert.equal(Object.keys(NATIVE_STORE_RESOURCE_WORKSPACE_MUTATION_PLANS).length, 9);
   assert.equal(Object.keys(
     NATIVE_STORE_AUTOMATION_RUNTIME_RECONCILIATION_MUTATION_PLANS,
-  ).length, 1);
+  ).length, 2);
   assert.equal(Object.keys(NATIVE_STORE_QUALITY_RELEASE_MUTATION_PLANS).length, 2);
   for (const value of [
     NATIVE_STORE_RESOURCE_WORKSPACE_WRITER_PLAN_HASH,
@@ -254,6 +274,57 @@ test('native-store tail plans pin all twelve remaining DML operations', () => {
   );
 });
 
+test('strict legacy terminal residue settlement uses its least-privilege fixed plan', (t) => {
+  const f = fixture(t);
+  const campaignId = 'legacy-terminal-online-fixture';
+  const nodeId = 'legacy-terminal-online-node';
+  f.database.prepare(`INSERT INTO paper_campaigns(
+    campaign_id,paper_id,status,revision,current_round,max_rounds,spec_json,
+    created_at,updated_at
+  ) VALUES(?,?,?,?,0,1,?,?,?)`).run(
+    campaignId,
+    'legacy-terminal-online-paper',
+    'failed',
+    3,
+    JSON.stringify({ legacyCampaign: true }),
+    PAST,
+    PAST,
+  );
+  f.database.prepare(`INSERT INTO campaign_nodes(
+    node_id,campaign_id,kind,round_index,status,priority,dependencies_json,
+    spec_json,lease_owner,lease_expires_at,attempt_id,lease_generation,
+    node_revision,max_attempts,created_at,updated_at
+  ) VALUES(?,?,'agent',0,'running',100,'[]','{}','legacy-dead-worker',
+    ?,'legacy-attempt',2,4,3,?,?)`).run(nodeId, campaignId, PAST, PAST, PAST);
+  f.database.prepare(`INSERT INTO campaign_nodes(
+    node_id,campaign_id,kind,round_index,status,priority,dependencies_json,
+    spec_json,max_attempts,created_at,updated_at
+  ) VALUES(?,?,'agent',0,'queued',100,'[]','{}',3,?,?)`).run(
+    'legacy-terminal-preserved-queued', campaignId, PAST, PAST,
+  );
+  const receiptLedger = createSqliteReceiptLedger({
+    store: f.strictStore,
+    clock: fixedClock(),
+    issuerCapability: issueAutomationReconcilerWriter(),
+  });
+  const receipt = executeLegacyTerminalActiveResidueSettlement({
+    store: f.strictStore,
+    clock: fixedClock(),
+    campaignId,
+    receiptLedger,
+  });
+  assert.equal(receipt.settledNodeCount, 1);
+  assert.equal(receipt.preservedQueuedNodeCount, 1);
+  assert.equal(f.database.prepare(`SELECT status FROM campaign_nodes
+    WHERE node_id=?`).get(nodeId).status, 'skipped');
+  assert.equal(f.database.prepare(`SELECT status FROM campaign_nodes
+    WHERE node_id='legacy-terminal-preserved-queued'`).get().status, 'queued');
+  assert.deepEqual(f.operationIds, [
+    NATIVE_STORE_LEGACY_TERMINAL_ACTIVE_RESIDUE_SETTLEMENT_OPERATION_ID,
+  ]);
+  assert.equal(f.genericWriteAttempts(), 0);
+});
+
 test('strict runtime reconciliation applies every planned row and receipt atomically', (t) => {
   const f = fixture(t);
   const receiptLedger = createSqliteReceiptLedger({
@@ -270,18 +341,122 @@ test('strict runtime reconciliation applies every planned row and receipt atomic
   assert.equal(receipt.removedResourceLeaseCount, 1);
   assert.equal(receipt.removedWaiterCount, 1);
   assert.equal(receipt.pausedNoProgressCampaignCount, 1);
-  assert.equal(receipt.closedTerminalCampaignQueuedNodeCount, 1);
+  assert.equal(receipt.closedTerminalCampaignQueuedNodeCount, 2);
+  assert.equal(receipt.closedTerminalCampaignActiveNodeCount, 1);
   assert.equal(f.database.prepare(`SELECT status FROM campaign_nodes
     WHERE node_id='node-expired'`).get().status, 'queued');
   assert.equal(f.database.prepare(`SELECT status FROM paper_campaigns
     WHERE campaign_id='reconcile-idle'`).get().status, 'paused');
   assert.equal(f.database.prepare(`SELECT status FROM campaign_nodes
     WHERE node_id='node-terminal'`).get().status, 'skipped');
+  assert.equal(f.database.prepare(`SELECT status FROM campaign_nodes
+    WHERE node_id='node-terminal-other'`).get().status, 'skipped');
+  assert.equal(f.database.prepare(`SELECT status FROM campaign_nodes
+    WHERE node_id='node-terminal-active'`).get().status, 'skipped');
+  assert.equal(f.database.prepare(`SELECT count(*) AS count FROM campaign_events
+    WHERE node_id='node-terminal-active'
+      AND kind='campaign_terminal_active_child_settled'`).get().count, 1);
   assert.equal(f.database.prepare(`SELECT count(*) AS count FROM receipt_ledger
     WHERE stream='automation-reconciliation'`).get().count, 1);
   assert.deepEqual(f.operationIds, [
     NATIVE_STORE_AUTOMATION_RUNTIME_RECONCILIATION_OPERATION_ID,
   ]);
+  assert.equal(f.genericWriteAttempts(), 0);
+});
+
+test('strict campaign-scoped reconciliation closes only the selected policy-v1 lineage', (t) => {
+  const f = fixture(t);
+  for (const [table, idColumn, id, campaignId, nodeId] of [
+    ['automation_resource_leases', 'lease_id', 'scoped-expired-lease',
+      'reconcile-terminal', 'node-terminal'],
+    ['automation_resource_leases', 'lease_id', 'other-expired-lease',
+      'reconcile-terminal-other', 'node-terminal-other'],
+    ['automation_resource_waiters', 'waiter_id', 'scoped-expired-waiter',
+      'reconcile-terminal', 'node-terminal'],
+    ['automation_resource_waiters', 'waiter_id', 'other-expired-waiter',
+      'reconcile-terminal-other', 'node-terminal-other'],
+  ]) {
+    const timingColumns = table === 'automation_resource_leases'
+      ? 'acquired_at,renewed_at' : 'requested_at,renewed_at';
+    f.database.prepare(`INSERT INTO ${table}(
+      ${idColumn},scope,owner_id,campaign_id,node_id,agent,cpu,gpu,memory_mib,
+      ${timingColumns},expires_at
+    ) VALUES(?,?,?,?,?,1,0,0,0,?,?,?)`).run(
+      id,
+      'global',
+      'dead-scoped-owner',
+      campaignId,
+      nodeId,
+      PAST,
+      PAST,
+      PAST,
+    );
+  }
+  const plan = planAutomationRuntimeReconciliation({
+    store: f.strictStore,
+    clock: fixedClock(),
+    campaignId: 'reconcile-terminal',
+  });
+  assert.equal(plan.campaignId, 'reconcile-terminal');
+  assert.deepEqual(plan.terminalCampaignQueuedNodes.map((node) => node.node_id),
+    ['node-terminal']);
+  assert.deepEqual(plan.expiredResourceLeases.map((lease) => lease.lease_id),
+    ['scoped-expired-lease']);
+  assert.deepEqual(plan.expiredWaiters.map((waiter) => waiter.waiter_id),
+    ['scoped-expired-waiter']);
+  for (const rows of [
+    plan.expiredNodes,
+    plan.noProgressCampaigns,
+    plan.terminalCampaignActiveNodes,
+    plan.preservedLegacyTerminalNodes,
+  ]) assert.deepEqual(rows, []);
+  const receiptLedger = createSqliteReceiptLedger({
+    store: f.strictStore,
+    clock: fixedClock(),
+    issuerCapability: issueAutomationReconcilerWriter(),
+  });
+  const receipt = executeAutomationRuntimeReconciliation({
+    store: f.strictStore,
+    clock: fixedClock(),
+    receiptLedger,
+    campaignId: 'reconcile-terminal',
+  });
+  assert.equal(receipt.campaignId, 'reconcile-terminal');
+  assert.equal(receipt.closedTerminalCampaignQueuedNodeCount, 1);
+  assert.equal(receipt.removedResourceLeaseCount, 1);
+  assert.equal(receipt.removedWaiterCount, 1);
+  assert.equal(receipt.after.campaignId, 'reconcile-terminal');
+  assert.equal(receipt.after.status, 'automation_runtime_reconciliation_clean');
+  assert.equal(f.database.prepare(`SELECT status FROM campaign_nodes
+    WHERE node_id='node-terminal'`).get().status, 'skipped');
+  assert.equal(f.database.prepare(`SELECT status FROM campaign_nodes
+    WHERE node_id='node-terminal-other'`).get().status, 'queued');
+  assert.equal(f.database.prepare(`SELECT status FROM campaign_nodes
+    WHERE node_id='node-terminal-active'`).get().status, 'running');
+  assert.equal(f.database.prepare(`SELECT status FROM campaign_nodes
+    WHERE node_id='node-expired'`).get().status, 'running');
+  assert.equal(f.database.prepare(`SELECT status FROM paper_campaigns
+    WHERE campaign_id='reconcile-idle'`).get().status, 'running');
+  for (const [table, idColumn, removedId, preservedId] of [
+    ['automation_resource_leases', 'lease_id', 'scoped-expired-lease',
+      'other-expired-lease'],
+    ['automation_resource_waiters', 'waiter_id', 'scoped-expired-waiter',
+      'other-expired-waiter'],
+  ]) {
+    assert.equal(f.database.prepare(`SELECT count(*) count FROM ${table}
+      WHERE ${idColumn}=?`).get(removedId).count, 0);
+    assert.equal(f.database.prepare(`SELECT count(*) count FROM ${table}
+      WHERE ${idColumn}=?`).get(preservedId).count, 1);
+  }
+  assert.equal(f.database.prepare(`SELECT count(*) count FROM campaign_events
+    WHERE campaign_id='reconcile-terminal'
+      AND kind='campaign_terminal_child_closed'`).get().count, 1);
+  assert.equal(f.database.prepare(`SELECT count(*) count FROM campaign_events
+    WHERE campaign_id='reconcile-terminal-other'
+      AND kind='campaign_terminal_child_closed'`).get().count, 0);
+  const ledgerReceipt = f.database.prepare(`SELECT receipt_json FROM receipt_ledger
+    WHERE stream='automation-reconciliation'`).get();
+  assert.equal(JSON.parse(ledgerReceipt.receipt_json).campaignId, 'reconcile-terminal');
   assert.equal(f.genericWriteAttempts(), 0);
 });
 

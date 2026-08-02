@@ -1,0 +1,28 @@
+{
+  "version": 2,
+  "kind": "LocalResearchExecutionReleaseAttestorDaemonConfiguration",
+  "mode": "probe",
+  "backendId": "host-release-attestor",
+  "backendVersion": "dedicated-uid-v2",
+  "socketPath": "/run/hepta-paper-release-probe/probe.sock",
+  "socketPolicy": {
+    "idleTimeoutMs": 5000,
+    "requestDeadlineMs": 10000,
+    "maximumConcurrentConnections": 32
+  },
+  "signerSocketPath": "/run/hepta-paper-release-attestor/signer.sock",
+  "signerKeyId": "replace-release-key-id",
+  "signerKeyVersion": "replace-key-version",
+  "signerPublicKey": {
+    "publicKeyPath": "/etc/hepta-paper/release-attestor/release-attestor-ed25519-public.pem",
+    "publicKeySpkiHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "authority": {
+    "keyId": "replace-probe-key-id",
+    "keyVersion": "replace-key-version",
+    "subjectId": "release-attestor-probe-production",
+    "organization": "Replace With Independent Probe Organization",
+    "privateKeyPath": "/var/lib/hepta-paper-release-probe/private/release-attestor-probe-ed25519.pem",
+    "publicKeySpkiHash": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  }
+}

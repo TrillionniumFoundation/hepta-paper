@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+
 import {
   campaignAutomationOutputDirectory,
   findCampaignManuscript,
@@ -13,6 +15,41 @@ import {
 } from './theorem-specification-finalizer.mjs';
 import { materializeEmpiricalAssertionAuthority } from './empirical-assertion-authority.mjs';
 import { renderTrustedAutonomousManuscript } from './trusted-autonomous-manuscript-renderer.mjs';
+import {
+  autonomousManuscriptEvidenceRefBindings,
+} from './autonomous-manuscript-ir-materialization.mjs';
+import {
+  readVerifiedAutonomousManuscriptAuthorityRecords,
+} from './trusted-autonomous-manuscript-authority-reader.mjs';
+
+function prepareAutonomousManuscriptEvidenceRefBindings({
+  workspace,
+  empiricalAssertionAuthority,
+  formalVerificationReceipt = null,
+} = {}) {
+  const root = fs.realpathSync(resolveCampaignWorkspace(workspace));
+  const {
+    proposal,
+    policyAuthorization,
+    seedBundle,
+    formalSupportAuthority,
+    priorArtReceipt,
+    empiricalClaimLineage,
+  } = readVerifiedAutonomousManuscriptAuthorityRecords(
+    root,
+    formalVerificationReceipt,
+  );
+  return autonomousManuscriptEvidenceRefBindings({
+    proposal,
+    policyAuthorization,
+    seedBundle,
+    empiricalClaimLineage,
+    empiricalAssertionAuthority,
+    formalSupportAuthority,
+    formalVerificationReceipt,
+    priorArtReceipt,
+  });
+}
 
 export function createCampaignWorkspacePrimitivesAdapter({ runtimeRoot } = {}) {
   if (!runtimeRoot) throw new Error('runtimeRoot is required');
@@ -40,6 +77,7 @@ export function createCampaignWorkspacePrimitivesAdapter({ runtimeRoot } = {}) {
         campaignId,
         nodes: campaignNodes,
       }),
+    prepareAutonomousManuscriptEvidenceRefBindings,
     renderTrustedAutonomousManuscript,
     finalizeTheoremSpecification,
     readTheoremSpecification: readFinalizedTheoremSpecification,

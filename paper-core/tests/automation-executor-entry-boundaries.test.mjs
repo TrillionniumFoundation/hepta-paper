@@ -22,7 +22,10 @@ import {
 } from '../../paper-adapters/runtime/runtime-resource-mounts.mjs';
 import {
   buildCampaignAgentInstructions,
+  buildCampaignAgentExecutionRequest,
+  buildFormalProofRepairRequest,
 } from '../../paper-application/automation/campaign-agent-policy.mjs';
+import { buildCampaignBenchmarkSelector } from '../../paper-domain/automation/campaign-benchmark-selector.mjs';
 import {
   buildCampaignWorkerAllowedRoots,
   buildCampaignWorkerRuntimeImageConfiguration,
@@ -89,6 +92,78 @@ test('campaign coder contract writes canonical metric artifacts only through HEP
   });
   assert.equal(blocked.status, 'empirical_output_contract_invalid');
   assert.deepEqual(blocked.blockers, ['empirical_output_directory_binding_invalid']);
+});
+
+test('system benchmark coder contract locates cases under each cell challenge', () => {
+  const instructions = buildCampaignAgentInstructions({
+    kind: 'coder-r',
+    manuscript: 'main.tex',
+    language: 'r',
+    benchmarkSelector: buildCampaignBenchmarkSelector({
+      benchmarkId: 'finance_asset_pricing_benchmark',
+    }),
+  });
+  assert.match(instructions, /iterate cell\.challenge\.cases, never cell\.cases/i);
+  assert.match(instructions, /cell\.cases does not exist/i);
+});
+
+test('formal author contract requires source types canonical with kernel check output', () => {
+  const instructions = buildCampaignAgentInstructions({
+    kind: 'formal-author', manuscript: 'main.tex',
+  });
+  assert.match(instructions, /explicit '∀ \(\.\.\.\)' form/);
+  assert.match(instructions, /'Nat\.min', never bare 'min'/);
+  assert.match(instructions, /SYSTEM_ALLOWED_FORMAL_AXIOMS=\[\]/);
+  assert.match(instructions, /expanding 'Nat\.min_def'/);
+  assert.match(instructions, /rather than using 'Nat\.min_le_left' or 'Nat\.min_le_right'/);
+  assert.match(instructions, /change \(if loss ≤ cap then loss else cap\) ≤ cap/);
+  assert.match(instructions, /RESEARCH_WORKER_PLAN\.json.*system-finalized after your turn/);
+  assert.match(instructions, /do not calculate or self-author their SHA-256 values/);
+});
+
+test('formal author and repair execution requests pin the kernel-audited loss-cap proof', () => {
+  const campaign = {
+    campaignId: 'campaign-formal-proof-contract',
+    paperId: 'paper-formal-proof-contract',
+    spec: {
+      datasetMounts: [],
+      manuscript: 'main.tex',
+      paperQualityProfiles: ['formal_theorem_or_proof'],
+    },
+  };
+  const author = buildCampaignAgentExecutionRequest({
+    campaign,
+    node: { kind: 'formal-author', nodeId: 'formal-author' },
+    workspace: '/tmp/formal-author',
+    manuscript: 'main.tex',
+    reviews: [],
+    executionBudget: { remainingTokenCount: 10_000, remainingWallTimeMs: 60_000 },
+  });
+  const repair = buildFormalProofRepairRequest({
+    campaign,
+    workspace: '/tmp/formal-repair',
+    manuscript: 'main.tex',
+    diagnostics: '{"axioms":["propext"]}',
+    iteration: 1,
+    remainingTokenCount: 10_000,
+  });
+  for (const request of [author, repair]) {
+    assert.match(request.instructions, /use this already kernel-audited declaration verbatim/);
+    assert.match(request.instructions, /theorem loss_cap_upper_bound : ∀ \(loss cap : Nat\), Nat\.min loss cap ≤ cap := by/);
+    assert.match(request.instructions, /change \(if loss ≤ cap then loss else cap\) ≤ cap/);
+    assert.match(request.instructions, /Do not replace its change step with rw, simp, omega/);
+  }
+});
+
+test('formal reviewer copies system-finalized domain identities without comparing hash domains', () => {
+  const instructions = buildCampaignAgentInstructions({
+    kind: 'formal-review', manuscript: 'main.tex',
+  });
+  assert.match(instructions, /Copy claimId, theoremName, manuscriptClaimHash/);
+  assert.match(instructions, /manuscriptClaimHash is the domain-separated ManuscriptClaimIdentity/);
+  assert.match(instructions, /not manuscriptSource\.contentHash/);
+  assert.match(instructions, /sourceManuscriptHash is a domain-separated FormalManuscriptCorpus record hash/);
+  assert.match(instructions, /comparing those two different hash domains is invalid/);
 });
 
 test('generic campaign writers cannot invent research evidence or scholarly identities', () => {

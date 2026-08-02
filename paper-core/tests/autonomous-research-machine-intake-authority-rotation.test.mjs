@@ -1206,3 +1206,46 @@ test('fresh v2 authority initialization is atomic, retryable, and fixed-anchor b
   }]);
   unchanged.close();
 });
+
+test('fresh v2 root-owned configuration genesis does not require external signers', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-intake-root-owned-genesis-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const runtimeRoot = path.join(root, 'runtime');
+  const target = targetFiles(root);
+  installAutonomousResearchMachineIntakeExternalAuthorityTestDouble(() => {
+    throw new Error('external-authority-must-not-be-read');
+  });
+  const repository = createAutonomousResearchMachineIntakeRepository({
+    runtimeRoot,
+    authorizedSourceAuthorityHash: target.configuration.configurationHash,
+    authorizedMachineProducerProfileHash: target.profile.producerProfileHash,
+    machineProducerAppendAuthority: { consumeAppendAuthorization() {} },
+    genesisAuthorityMode: 'root-owned-configuration',
+  });
+  assert.equal(repository.readStatus().configuredAuthorityGeneration, 1);
+  repository.close();
+  const databasePath = path.join(
+    runtimeRoot,
+    'autonomous-research',
+    'machine-intake',
+    'machine-intake.sqlite',
+  );
+  const database = new DatabaseSync(databasePath, { readOnly: true });
+  const genesis = database.prepare(`SELECT * FROM
+    autonomous_research_machine_intake_authority_genesis WHERE singleton=1`).get();
+  database.close();
+  assert.equal(genesis.origin, 'fresh-v2-root-owned-configuration');
+  assert.equal(
+    JSON.parse(genesis.external_genesis_envelope_json).status,
+    'root_owned_configuration_genesis_verified',
+  );
+  assert.deepEqual(JSON.parse(genesis.verified_signers_json), []);
+  const restarted = createAutonomousResearchMachineIntakeRepository({
+    runtimeRoot,
+    authorizedSourceAuthorityHash: target.configuration.configurationHash,
+    authorizedMachineProducerProfileHash: target.profile.producerProfileHash,
+    machineProducerAppendAuthority: { consumeAppendAuthorization() {} },
+  });
+  assert.equal(restarted.readStatus().configuredAuthorityGeneration, 1);
+  restarted.close();
+});

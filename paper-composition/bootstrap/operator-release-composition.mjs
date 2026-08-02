@@ -6,5 +6,6 @@ export {
   createOffhostWormSnapshot,
   drillOffhostWormRestore,
   resolveLatestReleaseEvidencePointer,
+  selectLatestVerifiedReleaseEvidence,
   verifyOffhostWormTarget,
 } from '../../paper-adapters/archives/offhost-worm-repository.mjs';

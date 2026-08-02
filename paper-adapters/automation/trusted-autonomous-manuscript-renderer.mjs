@@ -24,6 +24,10 @@ import {
   empiricalPresentationMarkerDeclaration,
   verifyEmpiricalAssertionAuthority,
 } from '../../paper-domain/research/empirical-assertion-contract.mjs';
+import {
+  deriveEmpiricalClaimUniverseIdentity,
+} from '../../paper-domain/research/empirical-claim-contract.mjs';
+import { hasExactObjectKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { isPathWithin } from '../../workflow-kernel/runtime/path-utils.mjs';
 import {
@@ -43,11 +47,97 @@ import {
   VENUE_REQUIREMENT_IR_PATH,
 } from './trusted-autonomous-manuscript-authority-reader.mjs';
 
-function empiricalClaimsFromAuthority(authority, empiricalClaim) {
+const SHA256 = /^sha256:[0-9a-f]{64}$/;
+const EMPIRICAL_LINEAGE_KEYS = Object.freeze([
+  'version',
+  'kind',
+  'status',
+  'paperId',
+  'proposalHash',
+  'seedBundleHash',
+  'proposalClaimId',
+  'scientificClaimKey',
+  'proposalClaimRecordHash',
+  'proposalClaimScope',
+  'proposalClaimScopeHash',
+  'statementRenderingPolicy',
+  'manuscriptClaimText',
+  'analysisProtocolTemplateHash',
+  'empiricalClaimUniverseHash',
+  'manuscriptCorpusHash',
+  'protocolHypotheses',
+  'autonomousEmpiricalClaimLineageHash',
+]);
+const EMPIRICAL_LINEAGE_HYPOTHESIS_KEYS = Object.freeze([
+  'claimId',
+  'manuscriptClaimHash',
+  'proposalClaimRecordHash',
+  'metric',
+  'comparator',
+  'alternative',
+  'minimumEffect',
+  'acceptanceRequired',
+]);
+
+export function analysisProtocolTemplateHashFromAuthorityArtifacts(root, authority) {
+  const hashes = new Set();
+  const inspected = new Set();
+  for (const entry of authority.entries) {
+    for (const evidence of [entry.original]) {
+      const identity = `${evidence?.artifactPath || ''}:${evidence?.artifactHash || ''}`;
+      if (inspected.has(identity)) continue;
+      inspected.add(identity);
+      const read = readScopedFileSync({
+        scopeRoot: root,
+        candidate: path.resolve(root, evidence?.artifactPath || ''),
+      });
+      if (read.status !== 'scoped_file_read_verified'
+        || read.hash !== evidence?.artifactHash
+        || read.bytes > 16 * 1024 * 1024) {
+        throw new Error('trusted_autonomous_manuscript_analysis_protocol_template_authority_invalid');
+      }
+      let result;
+      try { result = JSON.parse(read.content.toString('utf8')); }
+      catch {
+        throw new Error('trusted_autonomous_manuscript_analysis_protocol_template_authority_invalid');
+      }
+      const artifactTemplateHashes = [
+        result?.operatorDatasetHarnessAuthority?.analysisProtocolHash,
+        result?.operatorDatasetHarnessAuthority?.authority?.analysisProtocolHash,
+        result?.datasetEvaluationDependencyReceipt?.analysisProtocolHash,
+      ].filter((value) => value !== undefined && value !== null);
+      if (!artifactTemplateHashes.length
+        || artifactTemplateHashes.some((value) => !SHA256.test(String(value || '')))
+        || new Set(artifactTemplateHashes).size !== 1) {
+        throw new Error('trusted_autonomous_manuscript_analysis_protocol_template_authority_invalid');
+      }
+      hashes.add(artifactTemplateHashes[0]);
+    }
+  }
+  if (hashes.size !== 1) {
+    throw new Error('trusted_autonomous_manuscript_analysis_protocol_template_authority_invalid');
+  }
+  return [...hashes][0];
+}
+
+export function empiricalClaimsFromAuthority(
+  authority,
+  empiricalClaim,
+  {
+    empiricalClaimLineage = null,
+    proposal = null,
+    seedBundle = null,
+    manuscriptPath = 'main.tex',
+    analysisProtocolTemplateHash = null,
+  } = {},
+) {
   const proposalClaimRecordHash = hashRecord('AutonomousResearchClaimRecord', empiricalClaim);
   const byId = new Map();
   for (const entry of authority.entries) {
-    if (entry.proposalClaimRecordHash !== proposalClaimRecordHash) {
+    if (entry.proposalClaimRecordHash !== proposalClaimRecordHash
+      || !SHA256.test(String(entry.manuscriptClaimHash || ''))
+      || !SHA256.test(String(entry.empiricalClaimUniverseHash || ''))
+      || !SHA256.test(String(entry.analysisProtocolHash || ''))) {
       throw new Error('trusted_autonomous_manuscript_proposal_claim_binding_invalid');
     }
     const declaration = Object.freeze({
@@ -60,14 +150,124 @@ function empiricalClaimsFromAuthority(authority, empiricalClaim) {
       proposalClaimRecordHash,
     });
     const existing = byId.get(entry.claimId);
-    if (existing && JSON.stringify(existing) !== JSON.stringify(declaration)) {
-      throw new Error('trusted_autonomous_manuscript_claim_declaration_conflict');
-    }
-    if (!existing) byId.set(entry.claimId, declaration);
+    if (existing) throw new Error('trusted_autonomous_manuscript_claim_id_duplicate');
+    byId.set(entry.claimId, Object.freeze({
+      declaration,
+      manuscriptClaimHash: entry.manuscriptClaimHash,
+      empiricalClaimUniverseHash: entry.empiricalClaimUniverseHash,
+    }));
   }
   if (!byId.size) throw new Error('trusted_autonomous_manuscript_claims_missing');
   const text = renderAutonomousEmpiricalClaimStatement(empiricalClaim.text);
-  return [...byId.values()].map((declaration) => Object.freeze({ declaration, text }));
+  if (!empiricalClaimLineage) {
+    if (byId.size !== 1) {
+      throw new Error('trusted_autonomous_manuscript_empirical_claim_lineage_required');
+    }
+    return [...byId.values()].map(({ declaration }) => Object.freeze({ declaration, text }));
+  }
+  const {
+    autonomousEmpiricalClaimLineageHash,
+    ...lineagePayload
+  } = empiricalClaimLineage;
+  const proposalClaimScope = Object.freeze({
+    statement: empiricalClaim.text,
+    assumptions: empiricalClaim.assumptions,
+    quantifiers: empiricalClaim.quantifiers,
+    negativeBoundaries: empiricalClaim.negativeBoundaries,
+    evidenceObligations: empiricalClaim.empiricalObligations,
+  });
+  if (!hasExactObjectKeys(empiricalClaimLineage, EMPIRICAL_LINEAGE_KEYS)
+    || empiricalClaimLineage.version !== 1
+    || empiricalClaimLineage.kind !== 'AutonomousEmpiricalClaimLineage'
+    || empiricalClaimLineage.status !== 'autonomous_empirical_claim_lineage_bound'
+    || !SHA256.test(String(autonomousEmpiricalClaimLineageHash || ''))
+    || hashRecord('AutonomousEmpiricalClaimLineage', lineagePayload)
+      !== autonomousEmpiricalClaimLineageHash
+    || empiricalClaimLineage.paperId !== authority.paperId
+    || (proposal && empiricalClaimLineage.proposalHash
+      !== proposal.machineProposedScientificClaimSetHash)
+    || (seedBundle && empiricalClaimLineage.seedBundleHash
+      !== seedBundle.autonomousResearchSeedContractBundleHash)
+    || empiricalClaimLineage.proposalClaimId !== empiricalClaim.id
+    || empiricalClaimLineage.scientificClaimKey !== empiricalClaim.scientificClaimKey
+    || empiricalClaimLineage.proposalClaimRecordHash !== proposalClaimRecordHash
+    || hashRecord('AutonomousEmpiricalProposalClaimScope',
+      empiricalClaimLineage.proposalClaimScope)
+      !== empiricalClaimLineage.proposalClaimScopeHash
+    || hashRecord('AutonomousEmpiricalProposalClaimScope',
+      empiricalClaimLineage.proposalClaimScope)
+      !== hashRecord('AutonomousEmpiricalProposalClaimScope', proposalClaimScope)
+    || empiricalClaimLineage.statementRenderingPolicy
+      !== 'deterministic-latex-source-escaping-v1'
+    || empiricalClaimLineage.manuscriptClaimText !== text
+    || !SHA256.test(String(empiricalClaimLineage.analysisProtocolTemplateHash || ''))
+    || empiricalClaimLineage.analysisProtocolTemplateHash !== analysisProtocolTemplateHash
+    || !SHA256.test(String(empiricalClaimLineage.empiricalClaimUniverseHash || ''))
+    || !SHA256.test(String(empiricalClaimLineage.manuscriptCorpusHash || ''))
+    || !Array.isArray(empiricalClaimLineage.protocolHypotheses)
+    || !empiricalClaimLineage.protocolHypotheses.length) {
+    throw new Error('trusted_autonomous_manuscript_empirical_claim_lineage_invalid');
+  }
+  const manuscriptContentHash = hashBytes(Buffer.from(text, 'utf8'));
+  const orderedClaimCorpus = empiricalClaimLineage.protocolHypotheses.map((binding) => {
+    if (!hasExactObjectKeys(binding, EMPIRICAL_LINEAGE_HYPOTHESIS_KEYS)
+      || !SHA256.test(String(binding.manuscriptClaimHash || ''))
+      || !SHA256.test(String(binding.proposalClaimRecordHash || ''))
+      || !Number.isFinite(binding.minimumEffect)
+      || typeof binding.acceptanceRequired !== 'boolean') {
+      throw new Error('trusted_autonomous_manuscript_empirical_claim_lineage_binding_invalid');
+    }
+    return Object.freeze({
+      claimId: binding.claimId,
+      metric: binding.metric,
+      comparator: binding.comparator,
+      alternative: binding.alternative,
+      minimumEffect: binding.minimumEffect,
+      acceptanceRequired: binding.acceptanceRequired,
+      proposalClaimRecordHash: binding.proposalClaimRecordHash,
+      manuscriptPath,
+      manuscriptContentHash,
+    });
+  });
+  const empiricalClaimIdentity = deriveEmpiricalClaimUniverseIdentity({
+    manuscriptPath,
+    claims: orderedClaimCorpus,
+  });
+  const {
+    manuscriptCorpusHash,
+    claimIdentities: derivedClaims,
+    empiricalClaimUniverseHash,
+  } = empiricalClaimIdentity;
+  if (manuscriptCorpusHash !== empiricalClaimLineage.manuscriptCorpusHash
+    || empiricalClaimUniverseHash !== empiricalClaimLineage.empiricalClaimUniverseHash) {
+    throw new Error('trusted_autonomous_manuscript_empirical_claim_lineage_identity_invalid');
+  }
+  const seen = new Set();
+  const ordered = empiricalClaimLineage.protocolHypotheses.map((binding, index) => {
+    const record = byId.get(binding?.claimId);
+    const derived = derivedClaims[index];
+    if (!record || seen.has(binding.claimId)
+      || binding.manuscriptClaimHash !== derived.manuscriptClaimHash
+      || binding.manuscriptClaimHash !== record.manuscriptClaimHash
+      || record.empiricalClaimUniverseHash !== empiricalClaimUniverseHash
+      || binding.proposalClaimRecordHash !== record.declaration.proposalClaimRecordHash
+      || binding.metric !== record.declaration.metric
+      || binding.comparator !== record.declaration.comparator
+      || binding.alternative !== record.declaration.alternative
+      || Number(binding.minimumEffect) !== Number(record.declaration.minimumEffect)
+      || binding.acceptanceRequired !== record.declaration.acceptanceRequired) {
+      throw new Error('trusted_autonomous_manuscript_empirical_claim_lineage_binding_invalid');
+    }
+    seen.add(binding.claimId);
+    return Object.freeze({
+      declaration: record.declaration,
+      text: empiricalClaimLineage.manuscriptClaimText,
+    });
+  });
+  if (seen.size !== byId.size) {
+    throw new Error('trusted_autonomous_manuscript_empirical_claim_lineage_bijection_invalid');
+  }
+  return Object.freeze(ordered);
 }
 
 function assertionBlock(entry) {
@@ -264,7 +464,14 @@ export function renderTrustedAutonomousManuscript({
     root,
     formalVerificationReceipt,
   );
-  const claims = empiricalClaimsFromAuthority(authority, empiricalClaim);
+  const claims = empiricalClaimsFromAuthority(authority, empiricalClaim, {
+    empiricalClaimLineage,
+    proposal,
+    seedBundle,
+    manuscriptPath,
+    analysisProtocolTemplateHash: empiricalClaimLineage
+      ? analysisProtocolTemplateHashFromAuthorityArtifacts(root, authority) : null,
+  });
   const presentationAuthority = buildEmpiricalPresentationAuthority(authority);
   const presentationArtifacts = empiricalPresentationArtifactContents(authority);
   const manuscriptIrFinalization = finalizeAutonomousManuscriptIrInWorkspace({
@@ -289,6 +496,7 @@ export function renderTrustedAutonomousManuscript({
     authorityBindings: manuscriptIrFinalization.authorityBindings,
     priorArtReceipt,
     agentExecutionReceipt: selectedAgentExecutionReceipt,
+    sourceDraftFileHash: manuscriptIrFinalization.sourceDraftFileHash,
     requireAgentAuthoredProse,
   });
   if (!manuscriptIrVerification.valid) {
@@ -359,20 +567,48 @@ export function renderTrustedAutonomousManuscript({
     expectedExperimentRegistryHash: authority.experimentRegistryHash,
   });
   const expectedClaimHashes = new Map(authority.entries.map((entry) => [entry.claimId, entry.manuscriptClaimHash]));
-  if (claimUniverse.status !== 'empirical_claim_universe_verified'
-    || claimUniverse.claims.length !== expectedClaimHashes.size
-    || claimUniverse.claims.some((claim) => expectedClaimHashes.get(claim.claimId) !== claim.manuscriptClaimHash)
-    || assertionUniverse.status !== 'empirical_assertion_universe_verified'
-    || assertionUniverse.trustedFormalSupportAuthorityHash
-      !== formalSupportAuthority.autonomousFormalSupportSurfaceAuthorityHash
-    || assertionUniverse.formalSupports.length !== 1
-    || assertionBinding.status !== 'empirical_assertion_universe_binding_verified'
-    || assertionBinding.empiricalPresentationAuthorityHash
-      !== presentationAuthority.empiricalPresentationAuthorityHash
-    || assertionBinding.presentationBindings.length !== presentationAuthority.entryCount) {
-    throw new Error(`trusted_autonomous_manuscript_render_verification_failed:${[
-      ...claimUniverse.blockers, ...assertionUniverse.blockers, ...assertionBinding.blockers,
-    ].join(',')}`);
+  const renderVerificationBlockers = [
+    ...claimUniverse.blockers,
+    ...assertionUniverse.blockers,
+    ...assertionBinding.blockers,
+  ];
+  if (claimUniverse.status !== 'empirical_claim_universe_verified') {
+    renderVerificationBlockers.push('empirical_claim_universe_status_invalid');
+  }
+  if (claimUniverse.claims.length !== expectedClaimHashes.size) {
+    renderVerificationBlockers.push('empirical_claim_universe_authority_count_mismatch');
+  }
+  for (const claim of claimUniverse.claims) {
+    if (!expectedClaimHashes.has(claim.claimId)) {
+      renderVerificationBlockers.push(`empirical_claim_universe_authority_claim_missing:${claim.claimId}`);
+    } else if (expectedClaimHashes.get(claim.claimId) !== claim.manuscriptClaimHash) {
+      renderVerificationBlockers.push(`empirical_claim_universe_authority_hash_mismatch:${claim.claimId}`);
+    }
+  }
+  if (assertionUniverse.status !== 'empirical_assertion_universe_verified') {
+    renderVerificationBlockers.push('empirical_assertion_universe_status_invalid');
+  }
+  if (assertionUniverse.trustedFormalSupportAuthorityHash
+    !== formalSupportAuthority.autonomousFormalSupportSurfaceAuthorityHash) {
+    renderVerificationBlockers.push('autonomous_formal_support_authority_hash_mismatch');
+  }
+  if (assertionUniverse.formalSupports.length !== 1) {
+    renderVerificationBlockers.push('autonomous_formal_support_surface_count_mismatch');
+  }
+  if (assertionBinding.status !== 'empirical_assertion_universe_binding_verified') {
+    renderVerificationBlockers.push('empirical_assertion_universe_binding_status_invalid');
+  }
+  if (assertionBinding.empiricalPresentationAuthorityHash
+    !== presentationAuthority.empiricalPresentationAuthorityHash) {
+    renderVerificationBlockers.push('empirical_presentation_authority_hash_mismatch');
+  }
+  if (assertionBinding.presentationBindings.length !== presentationAuthority.entryCount) {
+    renderVerificationBlockers.push('empirical_presentation_authority_count_mismatch');
+  }
+  const uniqueRenderVerificationBlockers = [...new Set(renderVerificationBlockers)];
+  if (uniqueRenderVerificationBlockers.length) {
+    throw new Error(`trusted_autonomous_manuscript_render_verification_failed:${
+      uniqueRenderVerificationBlockers.join(',')}`);
   }
   const manuscriptIrFileHash = hashBytes(fs.readFileSync(
     path.resolve(root, manuscriptIrFinalization.irPath || 'AUTONOMOUS_MANUSCRIPT_IR.json'),

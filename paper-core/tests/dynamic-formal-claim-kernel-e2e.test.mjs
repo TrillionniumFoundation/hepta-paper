@@ -71,6 +71,14 @@ function formalAgentReceipt({ agentId, role, structuredOutput = null, changedPat
     changedPaths,
     structuredOutput,
     finalOutput: structuredOutput ? JSON.stringify(structuredOutput) : '',
+    usage: Object.freeze({
+      input: 12,
+      output: 8,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 20,
+    }),
+    externalModelInvocationPerformed: true,
     externalActionPerformed: false,
   };
   return Object.freeze({
@@ -718,4 +726,6 @@ test('agent-authored dynamic Lean claim closes through canonical bindings, the r
       const { formalSemanticReviewEnvelopeHash: _hash, ...payload } = reviewEnvelope;
       return payload;
     })()));
+  assert.equal(reviewEnvelope.usage.totalTokens, 20);
+  assert.match(reviewEnvelope.agentExecutionUsageBindingHash, /^sha256:/);
 });

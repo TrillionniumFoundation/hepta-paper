@@ -1,4 +1,5 @@
 import { buildCampaignFormalReviewEnvelope } from './campaign-formal-review-envelope.mjs';
+import { finalizeCampaignFormalWorkerPlan } from './campaign-formal-worker-plan-finalizer.mjs';
 
 export function createCampaignAgentPrimitivesAdapter({
   agentExecutor,
@@ -30,7 +31,10 @@ export function createCampaignAgentPrimitivesAdapter({
       ...input,
       signedReviewerReceiptVerifier:
         reviewerPrincipalExecutorPool?.verifySignedReviewerReceipt || null,
+      sessionReviewerReceiptVerifier:
+        reviewerPrincipalExecutorPool?.verifySessionReviewerReceipt || null,
     }),
+    finalizeFormalWorkerPlan: finalizeCampaignFormalWorkerPlan,
     executeFormalProofSearchOperations(input) {
       if (!formalProofSearchOperationsExecutor?.execute) {
         throw new Error('formal_proof_search_operations_executor_required');

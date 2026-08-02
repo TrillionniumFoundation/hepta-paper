@@ -141,6 +141,28 @@ function canonicalDraft(value) {
   });
 }
 
+function canonicalDraftPayload(canonical) {
+  return Object.freeze({
+    version: 1,
+    kind: 'EvidenceBoundManuscriptIRDraft',
+    paperId: canonical.paperId,
+    title: canonical.title,
+    sections: canonical.sections,
+  });
+}
+
+function canonicalDraftHash(canonical) {
+  return hashBytes(Buffer.from(
+    JSON.stringify(canonicalDraftPayload(canonical)),
+    'utf8',
+  ));
+}
+
+export function evidenceBoundManuscriptIrDraftHash(value) {
+  const canonical = canonicalDraft(value);
+  return canonical.blockers.length ? null : canonicalDraftHash(canonical);
+}
+
 function canonicalAuthorityBindings(values) {
   if (!Array.isArray(values) || !values.length || values.length > 512) return null;
   const bindings = values.map((value) => {
@@ -165,16 +187,25 @@ function agentReceiptVerification(receipt) {
   });
 }
 
-function canonicalAuthorship({ agentExecutionReceipt, sourceDraftHash } = {}) {
+function canonicalAuthorship({
+  agentExecutionReceipt,
+  sourceDraftHash,
+  sourceDraftFileHash = undefined,
+} = {}) {
   const receiptVerification = agentReceiptVerification(agentExecutionReceipt);
   if (!receiptVerification.valid) return null;
   const changedPaths = Array.isArray(agentExecutionReceipt?.changedPaths)
     ? agentExecutionReceipt.changedPaths.map(String) : [];
   const agentModifiedDraft = changedPaths.includes(EVIDENCE_BOUND_MANUSCRIPT_IR_DRAFT_PATH);
   const postimageBinding = agentExecutionReceipt?.agentWorkspacePostimageBinding || null;
+  const canonicalSourceDraftFileHash = agentModifiedDraft
+    ? sourceDraftFileHash === undefined
+      ? sourceDraftHash
+      : canonicalHash(sourceDraftFileHash)
+    : null;
   if (agentModifiedDraft && !verifyAgentWorkspacePostimageBinding(postimageBinding, {
     requiredPath: EVIDENCE_BOUND_MANUSCRIPT_IR_DRAFT_PATH,
-    requiredHash: sourceDraftHash,
+    requiredHash: canonicalSourceDraftFileHash,
   })) return null;
   return Object.freeze({
     mode: agentModifiedDraft ? 'agent-authored-evidence-bound-prose' : 'system-seeded-evidence-bound-prose',
@@ -187,6 +218,14 @@ function canonicalAuthorship({ agentExecutionReceipt, sourceDraftHash } = {}) {
     agentWorkspacePostimageBindingHash:
       postimageBinding?.agentWorkspacePostimageBindingHash || null,
   });
+}
+
+function receiptSourceDraftFileHash(agentExecutionReceipt) {
+  const files = agentExecutionReceipt?.agentWorkspacePostimageBinding?.files;
+  if (!Array.isArray(files)) return undefined;
+  return canonicalHash(files.find(
+    (entry) => entry?.path === EVIDENCE_BOUND_MANUSCRIPT_IR_DRAFT_PATH,
+  )?.hash) || undefined;
 }
 
 function evidenceReferenceBlockers(sections, authorityBindings, priorArtReceipt) {
@@ -236,13 +275,7 @@ export function buildEvidenceBoundManuscriptIrDraft({
   if (canonical.blockers.length) {
     throw new Error(`evidence_bound_manuscript_ir_draft_invalid:${canonical.blockers.join(',')}`);
   }
-  return Object.freeze({
-    version: 1,
-    kind: 'EvidenceBoundManuscriptIRDraft',
-    paperId: canonical.paperId,
-    title: canonical.title,
-    sections: canonical.sections,
-  });
+  return canonicalDraftPayload(canonical);
 }
 
 export function finalizeEvidenceBoundManuscriptIr({
@@ -250,11 +283,16 @@ export function finalizeEvidenceBoundManuscriptIr({
   authorityBindings,
   priorArtReceipt = null,
   agentExecutionReceipt = null,
+  sourceDraftFileHash = undefined,
 } = {}) {
   const canonical = canonicalDraft(draft);
   const bindings = canonicalAuthorityBindings(authorityBindings);
-  const sourceDraftHash = hashBytes(Buffer.from(JSON.stringify(draft || null), 'utf8'));
-  const authorship = canonicalAuthorship({ agentExecutionReceipt, sourceDraftHash });
+  const sourceDraftHash = canonicalDraftHash(canonical);
+  const authorship = canonicalAuthorship({
+    agentExecutionReceipt,
+    sourceDraftHash,
+    sourceDraftFileHash,
+  });
   const blockers = [...canonical.blockers];
   if (!bindings) blockers.push('evidence_bound_manuscript_ir_authority_bindings_invalid');
   if (!authorship) blockers.push('evidence_bound_manuscript_ir_agent_receipt_invalid');
@@ -297,6 +335,7 @@ export function verifyEvidenceBoundManuscriptIr(ir, {
   authorityBindings = null,
   priorArtReceipt = null,
   agentExecutionReceipt = null,
+  sourceDraftFileHash = undefined,
   requireAgentAuthoredProse = false,
 } = {}) {
   const blockers = [];
@@ -322,6 +361,9 @@ export function verifyEvidenceBoundManuscriptIr(ir, {
     authorityBindings: expectedBindings,
     priorArtReceipt,
     agentExecutionReceipt,
+    sourceDraftFileHash: sourceDraftFileHash === undefined
+      ? receiptSourceDraftFileHash(agentExecutionReceipt)
+      : sourceDraftFileHash,
   });
   if (JSON.stringify(rebuilt) !== JSON.stringify(ir)) {
     blockers.push('evidence_bound_manuscript_ir_not_canonical');

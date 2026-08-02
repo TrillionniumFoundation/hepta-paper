@@ -5,6 +5,8 @@ export function assertPriorArtRetrievalPort(value, {
 } = {}) {
   if (!value || value.kind !== 'PriorArtRetrievalPort'
     || typeof value.retrieve !== 'function'
+    || ![true, false].includes(value.configurationPinned)
+    || ![true, false].includes(value.fullProductionReady)
     || ![true, false].includes(value.cryptographicAuthorityReady)
     || ![true, false].includes(value.identityIndependenceReady)
     || (value.identityIndependenceReady === true
@@ -17,7 +19,11 @@ export function assertPriorArtRetrievalPort(value, {
         || typeof value.authorityFor !== 'function'
         || typeof value.verifyAuthority !== 'function'
         || typeof value.verifyAuthorityBundle !== 'function'
-        || typeof value.authorityTrustConfiguration !== 'function'))) {
+        || typeof value.authorityTrustConfiguration !== 'function'))
+    || (value.fullProductionReady === true
+      && (value.configurationPinned !== true
+        || value.cryptographicAuthorityReady !== true
+        || value.identityIndependenceReady !== true))) {
     throw new Error('prior_art_retrieval_port_invalid');
   }
   if (expectedConfigurationHash

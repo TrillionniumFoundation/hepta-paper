@@ -11,7 +11,7 @@ import {
   priorArtEvidenceHashes,
   verifyPriorArtEvidenceReceipt,
 } from '../../paper-domain/research/prior-art-evidence-contract.mjs';
-import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { isPathWithin } from '../../workflow-kernel/runtime/path-utils.mjs';
 import { readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
 import { writeDurableJsonSync } from '../runtime/durable-json-repository.mjs';
@@ -21,6 +21,9 @@ import {
 import {
   buildEvidenceEntailmentSourceDocument,
 } from '../../paper-domain/research/evidence-entailment-source-document.mjs';
+import {
+  evidenceEntailmentClaimClassesForEvidenceKind,
+} from '../../paper-domain/research/evidence-entailment-contract.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 
@@ -127,11 +130,21 @@ function priorArtSourceDocuments(priorArtReceipt) {
 function formalReplayRecords(value, rows = [], seen = new Set()) {
   if (!value || typeof value !== 'object' || seen.has(value)) return rows;
   seen.add(value);
-  if (value.formalCertificateReplayReceiptHash) rows.push(value);
+  if (value.kind === 'FormalCertificateReplayReceipt'
+    && value.formalCertificateReplayReceiptHash) rows.push(value);
   for (const child of Array.isArray(value) ? value : Object.values(value)) {
     formalReplayRecords(child, rows, seen);
   }
   return rows;
+}
+
+function formalVerificationSourceRecord(value) {
+  if (!value) return null;
+  const {
+    workspaceAttemptIntegration: _workspaceAttemptIntegration,
+    ...record
+  } = value;
+  return Object.freeze(record);
 }
 
 export function autonomousManuscriptEvidenceSourceDocuments({
@@ -197,7 +210,7 @@ export function autonomousManuscriptEvidenceSourceDocuments({
       evidenceKind: 'formal_verification',
       recordHashTag: 'CampaignFormalVerificationReceipt',
       recordHashField: 'campaignFormalVerificationReceiptHash',
-      record: formalVerificationReceipt,
+      record: formalVerificationSourceRecord(formalVerificationReceipt),
     }),
     ...formalReplayRecords(formalVerificationReceipt).map((receipt) => sourceDocument({
       evidenceKind: 'formal_kernel_replay',
@@ -212,6 +225,27 @@ export function autonomousManuscriptEvidenceSourceDocuments({
     document,
   ]));
   return Object.freeze([...unique.values()]);
+}
+
+export function autonomousManuscriptEvidenceRefBindings(input = {}) {
+  const authorityBindings = autonomousManuscriptAuthorityBindings(input);
+  const sourceDocuments = autonomousManuscriptEvidenceSourceDocuments(input);
+  const sourceDocumentKeys = new Set(sourceDocuments.map((document) => (
+    `${document.evidenceKind}:${document.evidenceHash}`
+  )));
+  return Object.freeze(authorityBindings.flatMap((authorityBinding) => {
+    const claimClasses = evidenceEntailmentClaimClassesForEvidenceKind(
+      authorityBinding.kind,
+    );
+    return sourceDocumentKeys.has(`${authorityBinding.kind}:${authorityBinding.hash}`)
+      && claimClasses.length
+      ? [Object.freeze({
+        kind: authorityBinding.kind,
+        hash: authorityBinding.hash,
+        claimClasses,
+      })]
+      : [];
+  }));
 }
 
 function defaultTitle(proposal) {
@@ -323,13 +357,22 @@ export function buildDefaultAutonomousManuscriptIrDraft({
   });
 }
 
-function readJson(root, relative, blocker) {
+function readJsonWithFileHash(root, relative, blocker) {
   const read = readScopedFileSync({ scopeRoot: root, candidate: path.join(root, relative) });
   if (read.status !== 'scoped_file_read_verified' || read.bytes > 8 * 1024 * 1024) {
     throw new Error(blocker);
   }
-  try { return JSON.parse(read.content.toString('utf8')); }
+  try {
+    return Object.freeze({
+      document: JSON.parse(read.content.toString('utf8')),
+      fileHash: hashBytes(read.content),
+    });
+  }
   catch { throw new Error(blocker); }
+}
+
+function readJson(root, relative, blocker) {
+  return readJsonWithFileHash(root, relative, blocker).document;
 }
 
 export function finalizeAutonomousManuscriptIrInWorkspace({
@@ -355,10 +398,12 @@ export function finalizeAutonomousManuscriptIrInWorkspace({
   const defaultDraft = buildDefaultAutonomousManuscriptIrDraft({
     proposal, policyAuthorization, seedBundle, priorArtReceipt,
   });
-  const draft = fs.existsSync(draftPath)
-    ? readJson(root, EVIDENCE_BOUND_MANUSCRIPT_IR_DRAFT_PATH,
+  const draftSource = fs.existsSync(draftPath)
+    ? readJsonWithFileHash(root, EVIDENCE_BOUND_MANUSCRIPT_IR_DRAFT_PATH,
       'autonomous_manuscript_ir_draft_invalid')
-    : defaultDraft;
+    : Object.freeze({ document: defaultDraft, fileHash: null });
+  const draft = draftSource.document;
+  const sourceDraftFileHash = draftSource.fileHash;
   const substantiveProseInspection = requireAgentAuthoredProse
     ? inspectAutonomousManuscriptSubstantiveAgentProse({
       draft,
@@ -391,6 +436,7 @@ export function finalizeAutonomousManuscriptIrInWorkspace({
       authorityBindings,
       priorArtReceipt,
       agentExecutionReceipt: candidate,
+      sourceDraftFileHash,
     });
     if (attempt.authorship?.agentModifiedDraft === true) {
       selectedAgentExecutionReceipt = candidate;
@@ -409,6 +455,7 @@ export function finalizeAutonomousManuscriptIrInWorkspace({
       draft,
       authorityBindings,
       priorArtReceipt,
+      sourceDraftFileHash,
     });
   }
   if (ir.status !== 'evidence_bound_manuscript_ir_verified') {
@@ -419,6 +466,7 @@ export function finalizeAutonomousManuscriptIrInWorkspace({
     authorityBindings,
     priorArtReceipt,
     agentExecutionReceipt: selectedAgentExecutionReceipt,
+    sourceDraftFileHash,
     requireAgentAuthoredProse,
   });
   if (!verification.valid) {
@@ -433,6 +481,7 @@ export function finalizeAutonomousManuscriptIrInWorkspace({
     agentExecutionReceipt: selectedAgentExecutionReceipt,
     agentDraft: draft,
     systemSeedDraft: defaultDraft,
+    sourceDraftFileHash,
     substantiveProseInspection,
   });
 }

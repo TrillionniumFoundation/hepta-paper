@@ -234,6 +234,12 @@ export function finalizeTheoremSpecification({
     || selectedProposalClaimIds.some((claimId) => !proposalById.has(claimId)))) {
     throw new Error('theorem_specification_proposal_claim_mapping_invalid');
   }
+  const authoritativeClaimKeyByDraftKey = new Map(draft.claims.map((claim) => [
+    claim.claimKey,
+    proposalAuthority
+      ? proposalById.get(claim.proposalClaimId)?.scientificClaimKey
+      : claim.claimKey,
+  ]));
   const claims = draft.claims.map((claim, index) => {
     const { proposalClaimId, ...draftClaim } = claim;
     const theorem = formalClaimUniverse.theorems[index];
@@ -241,15 +247,10 @@ export function finalizeTheoremSpecification({
       throw new Error(`theorem_specification_claim_statement_mismatch:${index + 1}`);
     }
     const authoritativeProposalClaim = proposalAuthority ? proposalById.get(proposalClaimId) : null;
-    if (authoritativeProposalClaim && (claim.claimKey !== authoritativeProposalClaim.scientificClaimKey
-      || PROPOSAL_SCOPE_FIELDS.some((field) => (
-        JSON.stringify(claim[field]) !== JSON.stringify(authoritativeProposalClaim[field])
-      )))) {
-      throw new Error(`theorem_specification_proposal_scientific_scope_mismatch:${index + 1}`);
-    }
     return {
       ...draftClaim,
-      proofDependencyClaimKeys: draftClaim.proofDependencyClaimKeys || [],
+      proofDependencyClaimKeys: (draftClaim.proofDependencyClaimKeys || [])
+        .map((claimKey) => authoritativeClaimKeyByDraftKey.get(claimKey) || claimKey),
       ...(proposalAuthority ? {
         claimKey: authoritativeProposalClaim.scientificClaimKey,
         ...Object.fromEntries(PROPOSAL_SCOPE_FIELDS.map((field) => [

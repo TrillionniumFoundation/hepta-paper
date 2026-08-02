@@ -15,6 +15,9 @@ import {
   bootstrapCampaignExecutionContext,
 } from '../../paper-composition/bootstrap/campaign-execution-context-bootstrap.mjs';
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
+import {
+  canonicalCampaignDefinition,
+} from '../../paper-adapters/persistence/campaign-definition-codec.mjs';
 import { createSqliteCampaignStore } from '../../paper-adapters/persistence/sqlite-campaign-store.mjs';
 import { createSystemClock } from '../../paper-adapters/runtime/system-clock.mjs';
 import {
@@ -130,7 +133,7 @@ test('composition reconciles the SQLite receipt mirror once before read-only run
   const clock = createSystemClock();
   const store = createDefaultPaperStore({ root, runtimeRoot });
   const campaigns = createSqliteCampaignStore({ store, clock });
-  campaigns.createCampaign({
+  const campaignPlan = canonicalCampaignDefinition({
     campaignId: 'autonomous-research:mirror-order-paper',
     paperId: 'mirror-order-paper',
     budgets: {
@@ -151,6 +154,10 @@ test('composition reconciles the SQLite receipt mirror once before read-only run
       dependencies: [],
       maxAttempts: 1,
     }],
+  });
+  campaigns.createCampaign({
+    ...campaignPlan,
+    campaignPlanHash: hashRecord('PaperCampaignPlan', campaignPlan),
   });
   store.close();
   const events = [];

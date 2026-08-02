@@ -43,7 +43,6 @@ function independentReviewValid({
   reviewerReceiptVerificationAuthority,
 } = {}) {
   const output = receipt?.structuredOutput;
-  const signedReceipt = receipt?.signedReviewerReceipt;
   if (!verifyAgentExecutionReceipt(receipt)
     || !hasExactObjectKeys(output, REVIEW_KEYS)
     || output.version !== 1
@@ -59,7 +58,35 @@ function independentReviewValid({
       !== JSON.stringify(REQUIRED_GENERIC_FORMAL_DOMAIN_PROFILE_IDS)
     || JSON.stringify(output.reviewedProfileEvidenceHashes)
       !== JSON.stringify(expectedProfileEvidenceHashes(coverageReceipt))
-    || receipt.reviewerCryptographicAuthorityReady !== true
+    || receipt.researchPrincipalPoolHash
+      !== reviewerReceiptVerificationAuthority.researchPrincipalPoolHash
+    || receipt.reviewerTrustSetHash
+      !== reviewerReceiptVerificationAuthority.reviewerTrustSetHash
+    || receipt.reviewerSignatureVerificationPolicyHash
+      !== reviewerReceiptVerificationAuthority.reviewerSignatureVerificationPolicyHash) {
+    return false;
+  }
+  const sessionMode = reviewerReceiptVerificationAuthority?.version === 3
+    && reviewerReceiptVerificationAuthority?.authorityMode
+      === 'fresh-isolated-session'
+    && reviewerReceiptVerificationAuthority?.sessionIsolationReady === true
+    && reviewerReceiptVerificationAuthority?.cryptographicAuthorityReady === false
+    && reviewerReceiptVerificationAuthority?.identityIndependenceReady === true;
+  if (sessionMode) {
+    return receipt.reviewEvidenceMode === 'fresh-isolated-session'
+      && receipt.reviewerCryptographicAuthorityReady === false
+      && receipt.reviewerIdentityIndependenceReady === true
+      && receipt.signedReviewerReceipt === undefined
+      && receipt.signedReviewerReceiptHash === undefined
+      && typeof reviewerReceiptVerificationAuthority
+        .verifySessionReviewerReceipt === 'function'
+      && reviewerReceiptVerificationAuthority.verifySessionReviewerReceipt({
+        receipt,
+        expected: { role: 'formal-review' },
+      }) === true;
+  }
+  const signedReceipt = receipt?.signedReviewerReceipt;
+  if (receipt.reviewerCryptographicAuthorityReady !== true
     || receipt.reviewerIdentityIndependenceReady !== true
     || receipt.signedReviewerReceiptHash !== signedReceipt?.signedReviewerReceiptHash
     || signedReceipt?.version !== 2
@@ -68,12 +95,6 @@ function independentReviewValid({
     || reviewerReceiptVerificationAuthority?.version !== 2
     || reviewerReceiptVerificationAuthority?.cryptographicAuthorityReady !== true
     || reviewerReceiptVerificationAuthority?.identityIndependenceReady !== true
-    || receipt.researchPrincipalPoolHash
-      !== reviewerReceiptVerificationAuthority.researchPrincipalPoolHash
-    || receipt.reviewerTrustSetHash
-      !== reviewerReceiptVerificationAuthority.reviewerTrustSetHash
-    || receipt.reviewerSignatureVerificationPolicyHash
-      !== reviewerReceiptVerificationAuthority.reviewerSignatureVerificationPolicyHash
     || typeof reviewerReceiptVerificationAuthority.verifySignedReviewerReceipt !== 'function') {
     return false;
   }

@@ -11,6 +11,9 @@ import {
   empiricalAssertionAuthorityEntriesMatch,
   readMaterializedEmpiricalAssertionAuthority,
 } from './empirical-assertion-authority.mjs';
+import {
+  revalidateTrustedAutonomousManuscriptWorkspace,
+} from './trusted-autonomous-manuscript-revalidation.mjs';
 
 function bibKeys(workspace, manuscriptSource = '') {
   const keys = new Set();
@@ -324,6 +327,9 @@ export function runManuscriptQualityChecks({
   expectedEmpiricalAssertionAuthority = null,
   expectedEmpiricalAssertionUniverse = null,
   expectedEmpiricalAssertionUniverseBinding = null,
+  trustedAutonomousManuscriptRenderReceipt = null,
+  trustedAutonomousManuscriptAgentExecutionReceipt = null,
+  trustedAutonomousManuscriptCampaignNodes = null,
 } = {}) {
   const workspace = path.resolve(workspacePath || '');
   const manuscript = path.resolve(workspace, manuscriptPath);
@@ -358,6 +364,20 @@ export function runManuscriptQualityChecks({
     const legacyMarkerTokens = corpus.documents.flatMap((document) => document.source.split(/\r?\n/)
       .flatMap((line, index) => /HEPTA_RESULT\b/i.test(line)
         ? [`${document.sourcePath}:${index + 1}`] : []));
+    const requiresTrustedAutonomousManuscriptAuthority = Boolean(
+      trustedAutonomousManuscriptRenderReceipt,
+    );
+    const trustedAutonomousManuscriptRevalidation =
+      requiresTrustedAutonomousManuscriptAuthority
+        ? revalidateTrustedAutonomousManuscriptWorkspace({
+          workspacePath: workspace,
+          manuscriptPath,
+          paperId: expectedPaperId,
+          campaignId: expectedCampaignId,
+          campaignNodes: trustedAutonomousManuscriptCampaignNodes || [],
+          trustedAutonomousManuscriptRenderReceipt,
+          agentExecutionReceipt: trustedAutonomousManuscriptAgentExecutionReceipt,
+        }) : null;
     let provenance = corpus.documents.flatMap((document) => resultMarkers(document.source, document.sourcePath))
       .map((marker) => verifyResultMarker(workspace, marker));
     let experimentRegistryVerification = null;
@@ -430,16 +450,24 @@ export function runManuscriptQualityChecks({
       }
     }
     const graphicInspections = graphics.map((graphic) => inspectGraphic(graphic, workspace));
-    const boundPresentationArtifacts = new Map((empiricalAssertionUniverseBinding?.presentationBindings || [])
-      .filter((binding) => binding.artifactPath && binding.artifactHash)
-      .map((binding) => [binding.artifactPath, binding.artifactHash]));
+    const boundPresentationArtifacts = new Map([
+      ...(empiricalAssertionUniverseBinding?.presentationBindings || [])
+        .filter((binding) => binding.artifactPath && binding.artifactHash)
+        .map((binding) => [binding.artifactPath, binding.artifactHash]),
+      ...(trustedAutonomousManuscriptRevalidation?.passed
+        ? trustedAutonomousManuscriptRevalidation.presentationArtifacts
+          .map((artifact) => [artifact.path, artifact.hash])
+        : []),
+    ]);
     details.referencedGraphicCount = graphics.length;
     details.missingGraphics = graphicInspections.filter((graphic) => !graphic.path)
       .map((graphic) => `${graphic.sourcePath}:${graphic.reference}`);
-    details.invalidGraphics = (requiresEmpiricalArtifacts || requiresTrustedEmpiricalAuthority)
+    details.invalidGraphics = (requiresEmpiricalArtifacts || requiresTrustedEmpiricalAuthority
+      || requiresTrustedAutonomousManuscriptAuthority)
       ? graphicInspections.filter((graphic) => graphic.path && !graphic.valid)
       : [];
-    details.unsupportedEmpiricalGraphics = (requiresEmpiricalArtifacts || requiresTrustedEmpiricalAuthority)
+    details.unsupportedEmpiricalGraphics = (requiresEmpiricalArtifacts
+      || requiresTrustedEmpiricalAuthority || requiresTrustedAutonomousManuscriptAuthority)
       ? graphicInspections.filter((graphic) => graphic.path
         && boundPresentationArtifacts.get(graphic.path) !== graphic.hash)
       : [];
@@ -447,9 +475,16 @@ export function runManuscriptQualityChecks({
     details.missingInputs = corpus.missingInputs;
     details.resultProvenanceMarkerCount = provenance.length;
     details.invalidResultProvenance = requiresTrustedEmpiricalAuthority
+      || requiresTrustedAutonomousManuscriptAuthority
       ? provenance : provenance.filter((marker) => !marker.valid);
     details.legacyEmpiricalResultMarkers = legacyMarkerTokens;
-    details.trustedResultAuthorityRequired = Boolean(requiresTrustedEmpiricalAuthority);
+    details.trustedResultAuthorityRequired = Boolean(
+      requiresTrustedEmpiricalAuthority || requiresTrustedAutonomousManuscriptAuthority,
+    );
+    details.trustedAutonomousManuscriptAuthorityRequired =
+      requiresTrustedAutonomousManuscriptAuthority;
+    details.trustedAutonomousManuscriptRevalidation =
+      trustedAutonomousManuscriptRevalidation;
     details.experimentRegistryVerification = experimentRegistryVerification;
     details.empiricalAssertionAuthority = empiricalAssertionAuthority;
     details.empiricalAssertionUniverse = empiricalAssertionUniverse;
@@ -465,20 +500,25 @@ export function runManuscriptQualityChecks({
     details.empiricalArtifactCount = empiricalFiles.length;
     details.trustedPresentationArtifactCount = boundPresentationArtifacts.size;
     details.manuscriptCorpusFiles = corpus.documents.map((document) => document.sourcePath);
-    details.unboundEmpiricalNumericClaims = requiresTrustedEmpiricalAuthority ? []
+    details.unboundEmpiricalNumericClaims = requiresTrustedEmpiricalAuthority
+      || requiresTrustedAutonomousManuscriptAuthority ? []
       : findUnboundEmpiricalNumericClaims(corpus, provenance, {
         strict: Boolean(requiresEmpiricalArtifacts),
       });
-    details.unboundEmpiricalAssertions = requiresTrustedEmpiricalAuthority ? []
+    details.unboundEmpiricalAssertions = requiresTrustedEmpiricalAuthority
+      || requiresTrustedAutonomousManuscriptAuthority ? []
       : findUnboundEmpiricalAssertions(corpus, provenance);
     if (details.missingGraphics.length) blockers.push('missing_figure_artifacts');
     if (details.invalidGraphics.length) blockers.push('invalid_figure_artifacts');
     if (details.unsupportedEmpiricalGraphics.length) blockers.push('empirical_figure_artifacts_unsupported');
     if (details.missingInputs.length) blockers.push('missing_table_or_input_artifacts');
-    if (!requiresTrustedEmpiricalAuthority && details.invalidResultProvenance.length) blockers.push('claim_result_provenance_mismatch');
+    if (!requiresTrustedEmpiricalAuthority && !requiresTrustedAutonomousManuscriptAuthority
+      && details.invalidResultProvenance.length) blockers.push('claim_result_provenance_mismatch');
     if (requiresTrustedEmpiricalAuthority && experimentRegistryVerification?.valid !== true) blockers.push('empirical_result_registry_authority_invalid');
-    if (requiresTrustedEmpiricalAuthority && legacyMarkerTokens.length) blockers.push('legacy_empirical_result_marker_forbidden');
-    if (requiresTrustedEmpiricalAuthority && provenance.length) {
+    if ((requiresTrustedEmpiricalAuthority || requiresTrustedAutonomousManuscriptAuthority)
+      && legacyMarkerTokens.length) blockers.push('legacy_empirical_result_marker_forbidden');
+    if ((requiresTrustedEmpiricalAuthority || requiresTrustedAutonomousManuscriptAuthority)
+      && provenance.length) {
       blockers.push('claim_result_provenance_mismatch', 'empirical_result_artifact_authority_missing');
     }
     if (requiresTrustedEmpiricalAuthority && details.unsupportedTypedEmpiricalSurfaces.length) {
@@ -487,7 +527,15 @@ export function runManuscriptQualityChecks({
     if (requiresTrustedEmpiricalAuthority && empiricalAssertionBlockers.length) {
       blockers.push('empirical_assertion_authority_binding_invalid', ...empiricalAssertionBlockers);
     }
-    if (!requiresTrustedEmpiricalAuthority && empiricalFiles.length && provenance.length === 0) {
+    if (requiresTrustedAutonomousManuscriptAuthority
+      && trustedAutonomousManuscriptRevalidation?.passed !== true) {
+      blockers.push(
+        'trusted_autonomous_manuscript_revalidation_invalid',
+        ...(trustedAutonomousManuscriptRevalidation?.blockers || []),
+      );
+    }
+    if (!requiresTrustedEmpiricalAuthority && !requiresTrustedAutonomousManuscriptAuthority
+      && empiricalFiles.length && provenance.length === 0) {
       blockers.push('empirical_claim_provenance_missing');
     }
     if ((requiresEmpiricalArtifacts || empiricalFiles.length > 0) && details.unboundEmpiricalNumericClaims.length) {
@@ -507,7 +555,13 @@ export function runManuscriptQualityChecks({
     mode,
     requiresEmpiricalArtifacts: Boolean(requiresEmpiricalArtifacts),
     requiresTrustedEmpiricalAuthority: Boolean(requiresTrustedEmpiricalAuthority),
+    requiresTrustedAutonomousManuscriptAuthority: Boolean(
+      trustedAutonomousManuscriptRenderReceipt,
+    ),
     experimentRegistryHash: requiresTrustedEmpiricalAuthority ? experimentRegistry?.experimentRegistryHash || null : null,
+    trustedAutonomousManuscriptRenderReceiptHash:
+      trustedAutonomousManuscriptRenderReceipt
+        ?.trustedAutonomousManuscriptRenderReceiptHash || null,
     manuscriptPath,
     manuscriptHash: hashBytes(source),
     manuscriptCorpusHash: hashRecord('ManuscriptTexCorpus', corpus.documents.map((document) => ({

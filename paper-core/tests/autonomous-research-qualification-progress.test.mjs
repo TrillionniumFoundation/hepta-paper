@@ -234,3 +234,116 @@ test('production qualification rebuilds the persisted reviewer authority binding
     },
   }), /qualification_runtime_principal_binding_invalid/);
 });
+
+test('production qualification uses the internal reviewer session pool by default', async () => {
+  const providerConfiguration = resolveAutonomousResearchProviderConfiguration({
+    environment: {
+      HEPTA_RESEARCH_AUTHOR_PROVIDER: 'codex',
+      HEPTA_RESEARCH_AUTHOR_MODEL: 'author-model',
+      HEPTA_FORMAL_REVIEW_PROVIDER: 'codex',
+      HEPTA_FORMAL_REVIEW_MODEL: 'reviewer-model',
+    },
+  });
+  const author = Object.freeze({
+    effectivePrincipalId: 'qualification-session-author',
+    codexHome: '/qualification-shared-home',
+    capabilityReceipt: Object.freeze({
+      codexResearchAuthorCapabilityReceiptHash: H('session-author-capability'),
+      credentialRootIdentityHash: H('session-shared-credential-root'),
+    }),
+  });
+  const reviewer = Object.freeze({
+    effectivePrincipalId: 'qualification-session-reviewer',
+    capabilityReceipt: Object.freeze({ role: 'fresh-session-reviewer' }),
+  });
+  const authorIdentityAttestation = Object.freeze({
+    configurationHash: H('session-author-identity-configuration'),
+    subject: Object.freeze({
+      autonomousResearchAuthorSessionIdentitySubjectHash:
+        H('session-author-identity-subject'),
+    }),
+  });
+  const reviewerEvidenceAuthority = Object.freeze({
+    version: 3,
+    kind: 'ReviewerReceiptVerificationAuthority',
+    authorityMode: 'fresh-isolated-session',
+    sessionIsolationReady: true,
+    cryptographicAuthorityReady: false,
+    identityIndependenceReady: true,
+    researchPrincipalPoolHash: H('session-reviewer-pool'),
+    reviewerTrustSetHash: H('session-reviewer-trust'),
+    reviewerSignatureVerificationPolicyHash: H('session-reviewer-policy'),
+    verifySignedReviewerReceipt: () => false,
+    verifySessionReviewerReceipt: () => true,
+  });
+  const reviewerSessionPoolInspection = Object.freeze({
+    pool: Object.freeze({
+      researchPrincipalPoolHash: reviewerEvidenceAuthority.researchPrincipalPoolHash,
+    }),
+    trustInspection: Object.freeze({ kind: 'fixture-session-trust' }),
+  });
+  const runtimePrincipalBinding = buildAutonomousResearchRuntimePrincipalBinding({
+    authorPrincipalId: author.effectivePrincipalId,
+    authorIdentityConfigurationHash: authorIdentityAttestation.configurationHash,
+    authorIdentitySubjectHash:
+      authorIdentityAttestation.subject
+        .autonomousResearchAuthorSessionIdentitySubjectHash,
+    authorCapabilityReceiptHash:
+      author.capabilityReceipt.codexResearchAuthorCapabilityReceiptHash,
+    authorCredentialRootIdentityHash:
+      author.capabilityReceipt.credentialRootIdentityHash,
+    researchPrincipalPoolHash: reviewerEvidenceAuthority.researchPrincipalPoolHash,
+    reviewerTrustSetHash: reviewerEvidenceAuthority.reviewerTrustSetHash,
+    reviewerSignatureVerificationPolicyHash:
+      reviewerEvidenceAuthority.reviewerSignatureVerificationPolicyHash,
+  });
+  let sessionBuilderCalls = 0;
+  let authorityFactoryCalls = 0;
+  const provider = createAutonomousResearchQualificationContextProvider({
+    schemaVersionReceipt: Object.freeze({ version: 1 }),
+    providerConfiguration,
+    expectedProviderConfigurationHash:
+      providerConfiguration.autonomousResearchProviderConfigurationHash,
+    environment: {},
+    clock: { now: () => new Date(START) },
+    preflightAuthor: () => author,
+    preflightReviewer: () => reviewer,
+    authorIdentityInspector: () => authorIdentityAttestation,
+    reviewerReceiptAuthorityComposer: () => {
+      throw new Error('external_reviewer_pool_must_not_be_loaded');
+    },
+    reviewerSessionPoolBuilder(input) {
+      sessionBuilderCalls += 1;
+      assert.equal(input.author, author);
+      assert.equal(input.reviewer, reviewer);
+      return reviewerSessionPoolInspection;
+    },
+    reviewerReceiptVerificationAuthorityFactory(input) {
+      authorityFactoryCalls += 1;
+      assert.equal(input.pool, reviewerSessionPoolInspection.pool);
+      assert.equal(input.trustInspection, reviewerSessionPoolInspection.trustInspection);
+      return reviewerEvidenceAuthority;
+    },
+    probeModelAvailability: () => Object.freeze({ ready: true }),
+    codeProvenanceProvider: () => Object.freeze({ status: 'fixture' }),
+    runtimeImageStatusComposer: () => Object.freeze({
+      blockers: Object.freeze([]),
+      inspection: Object.freeze({ ready: true }),
+    }),
+    pinnedImageDigestInspector: (profile) => H(profile.name || profile.image),
+    releaseAttestorInspector: () => Object.freeze({ ready: true }),
+  });
+  const result = await provider({
+    preparation: {
+      launchMode: 'production-run',
+      autonomousResearchProviderConfigurationHash:
+        providerConfiguration.autonomousResearchProviderConfigurationHash,
+      runtimePrincipalBinding,
+      runtimePrincipalBindingHash: runtimePrincipalBinding.runtimePrincipalBindingHash,
+    },
+  });
+  assert.equal(sessionBuilderCalls, 1);
+  assert.equal(authorityFactoryCalls, 1);
+  assert.equal(result.reviewerEvidenceAuthority, reviewerEvidenceAuthority);
+  assert.deepEqual(result.runtimePrincipalBinding, runtimePrincipalBinding);
+});

@@ -38,12 +38,17 @@ function fileContentHash(candidate) {
   return `sha256:${digest.digest('hex')}`;
 }
 
-function integrityFile(candidate, { executable = false, maximumBytes = MAXIMUM_CONFIG_BYTES } = {}) {
+function integrityFile(candidate, {
+  executable = false,
+  maximumBytes = MAXIMUM_CONFIG_BYTES,
+  singleLink = false,
+} = {}) {
   const requested = path.resolve(String(candidate || ''));
   const resolved = fs.realpathSync(requested);
   const stat = fs.lstatSync(resolved);
   if ((!executable && requested !== resolved) || !stat.isFile() || stat.isSymbolicLink()
     || stat.size < 1 || stat.size > maximumBytes || (stat.mode & 0o022) !== 0
+    || (singleLink && stat.nlink !== 1)
     || (executable && (stat.mode & 0o111) === 0)) {
     throw new Error('runtime_reproducibility_integrity_file_invalid');
   }
@@ -295,7 +300,8 @@ function commandConfiguration(value, configPath, environment, platform) {
     || value.args.some((item) => typeof item !== 'string' || item.length > 4096)
     || !Array.isArray(value.environmentAllowlist || [])
     || value.environmentAllowlist.some((key) => !ENVIRONMENT_KEY.test(String(key))
-      || /^(?:DOCKER|BUILDKIT|BUILDX)_/.test(String(key)))
+      || /^(?:DOCKER|BUILDKIT|BUILDX)_/.test(String(key))
+      || key === 'HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG_HASH')
     || !Number.isSafeInteger(Number(value.timeoutMs))
     || Number(value.timeoutMs) < 1000 || Number(value.timeoutMs) > 4 * 60 * 60 * 1000) {
     throw new Error('runtime_reproducibility_verifier_command_invalid');
@@ -391,11 +397,20 @@ function assertPairwiseIndependence(left, right) {
 
 export function readRuntimeImageReproducibilityProcessConfiguration({
   configPath = null,
+  expectedConfigurationHash = null,
   environment = process.env,
 } = {}) {
   const requested = configPath || environment.HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG;
   if (!requested) throw new Error('runtime_reproducibility_configuration_path_required');
-  const resolvedConfigPath = integrityFile(requested);
+  const configuredExpectedHash = expectedConfigurationHash
+    ?? environment.HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG_HASH
+    ?? null;
+  const normalizedExpectedHash = configuredExpectedHash === null
+    ? null : String(configuredExpectedHash || '').toLowerCase();
+  if (normalizedExpectedHash !== null && !SHA256.test(normalizedExpectedHash)) {
+    throw new Error('runtime_reproducibility_configuration_pin_mismatch');
+  }
+  const resolvedConfigPath = integrityFile(requested, { singleLink: true });
   let value;
   try { value = JSON.parse(fs.readFileSync(resolvedConfigPath, 'utf8')); }
   catch { throw new Error('runtime_reproducibility_configuration_json_invalid'); }
@@ -479,6 +494,14 @@ export function readRuntimeImageReproducibilityProcessConfiguration({
     trustIdentityHash,
     verifiers: publicVerifiers,
   });
+  const configurationIdentityHash = hashRecord(
+    'RuntimeImageReproducibilityProcessConfigurationIdentity',
+    payload,
+  );
+  if (normalizedExpectedHash !== null
+    && normalizedExpectedHash !== configurationIdentityHash) {
+    throw new Error('runtime_reproducibility_configuration_pin_mismatch');
+  }
   return Object.freeze({
     configPath: resolvedConfigPath,
     platform: payload.platform,
@@ -492,10 +515,8 @@ export function readRuntimeImageReproducibilityProcessConfiguration({
     trustIdentityHash: payload.trustIdentityHash,
     verifierTrust: publicVerifiers,
     verifiers,
-    configurationIdentityHash: hashRecord(
-      'RuntimeImageReproducibilityProcessConfigurationIdentity',
-      payload,
-    ),
+    configurationIdentityHash,
+    configurationPinned: normalizedExpectedHash !== null,
     privateSigningKeyLoaded: false,
   });
 }

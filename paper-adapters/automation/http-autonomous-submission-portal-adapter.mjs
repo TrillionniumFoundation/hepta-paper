@@ -104,6 +104,8 @@ function verifiedReceipt(document, request, selected, submissionRequestVerifier,
 
 export function createHttpAutonomousSubmissionPortalAdapter({
   configuration,
+  expectedConfigurationHash = null,
+  expectedDescriptorHash = null,
   environment = process.env,
   fetchImpl = globalThis.fetch,
   submissionRequestVerifier,
@@ -128,6 +130,8 @@ export function createHttpAutonomousSubmissionPortalAdapter({
   }
   const descriptor = createAutonomousSubmissionPortalDescriptor({
     configuration: selected,
+    expectedConfigurationHash,
+    expectedDescriptorHash,
     requiredLocalOriginIdentitySubjectHashes,
     clock,
   });
@@ -146,6 +150,11 @@ export function createHttpAutonomousSubmissionPortalAdapter({
     portalId: selected.portalId,
     configurationHash: selected.configurationHash,
     portalDescriptorHash,
+    configurationIdentityPinned: descriptor.configurationIdentityPinned,
+    descriptorPinned: descriptor.descriptorPinned,
+    configurationPinned: descriptor.configurationPinned,
+    boundedReady: descriptor.boundedReady,
+    fullProductionReady: descriptor.fullProductionReady,
     idempotencyLookupSupported: true,
     singleUseDispatchCapabilityEnforced: true,
     authoritativeLookupCapabilityIssued: cryptographicLookupAuthorityReady,
@@ -158,9 +167,7 @@ export function createHttpAutonomousSubmissionPortalAdapter({
     // separation from every signed local-origin identity in its pinned set.
     cryptographicAuthorityReady: cryptographicLookupAuthorityReady,
     identityIndependenceReady,
-    evidenceProfile: identityIndependenceReady
-      ? 'pinned-signed-independent-submission-portal-v3'
-      : 'bounded-submission-portal-v1',
+    evidenceProfile: descriptor.evidenceProfile,
     trustSetHash,
     signatureVerificationPolicyHash,
     identitySeparationInspection: identityInspection,

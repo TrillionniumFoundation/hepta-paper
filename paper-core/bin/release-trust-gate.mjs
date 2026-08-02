@@ -10,10 +10,14 @@ import { buildReleaseTrustLayerGate } from '../../paper-domain/governance/releas
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const runtimeRoot = defaultPaperRuntimeRoot();
-const releaseCommit = currentCodeProvenance().commit;
+const codeProvenance = currentCodeProvenance({
+  workspaceRoot,
+  allowReleaseCommitEnvironment: false,
+});
+const releaseCommit = codeProvenance.commit;
 const capabilityCount = Object.keys(CAPABILITY_CATALOG).length;
-const implementation = validateCapabilityOperationalEvidence({ runtimeRoot });
-const conformance = loadCapabilityConformanceProofs({ runtimeRoot, workspaceRoot, capabilityCatalog: CAPABILITY_CATALOG, releaseCommit });
+const implementation = validateCapabilityOperationalEvidence({ runtimeRoot, codeProvenance });
+const conformance = loadCapabilityConformanceProofs({ runtimeRoot, workspaceRoot, capabilityCatalog: CAPABILITY_CATALOG, releaseCommit, codeProvenance });
 const operational = loadCapabilityOperationalProofs({ runtimeRoot, workspaceRoot, capabilityCatalog: CAPABILITY_CATALOG, releaseCommit });
 const payload = buildReleaseTrustLayerGate({
   releaseCommit,

@@ -6,16 +6,40 @@ import { resolveImmutableLegacyMatrixArchive } from '../../migration/legacy-matr
 import {
   createOffhostWormSnapshot,
   drillOffhostWormRestore,
-  resolveLatestReleaseEvidencePointer,
+  selectLatestVerifiedReleaseEvidence,
   verifyOffhostWormTarget,
 } from '../../paper-composition/bootstrap/operator-release-composition.mjs';
 import {
   composeAutonomousResearchStateBackupService,
 } from '../../paper-composition/bootstrap/autonomous-research-state-backup-composition.mjs';
 import { defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
+import { releaseIntegrityEvidence } from './release-integrity-evidence.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const runtimeRoot = defaultPaperRuntimeRoot();
+function localManifestAuthority() {
+  const pinned = releaseIntegrityEvidence.loadExistingReleaseSigningKey(runtimeRoot);
+  const verifyManifestSignature = (payload, signature) => (
+    releaseIntegrityEvidence.verifyReleaseIntegritySignature(payload, signature, {
+      pinnedPublicKeyPem: pinned.publicKeyPem,
+      pinnedPublicKeyFingerprint: pinned.publicKeyFingerprint,
+    })
+  );
+  return Object.freeze({
+    signManifest(payload) {
+      const signature = releaseIntegrityEvidence.signReleasePayload(
+        payload,
+        runtimeRoot,
+        { allowKeyCreation: false },
+      );
+      if (!verifyManifestSignature(payload, signature)) {
+        throw new Error('offhost_worm_manifest_signing_key_changed');
+      }
+      return signature;
+    },
+    verifyManifestSignature,
+  });
+}
 const contractPath = path.join(workspaceRoot, 'paper-core', 'config', 'offhost-worm-contract.v1.json');
 const contract = JSON.parse(fs.readFileSync(contractPath, 'utf8'));
 const command = process.argv[2] || 'status';
@@ -31,11 +55,11 @@ const authorityConfigurationPath = authorityConfigIndex >= 0
   : process.env.HEPTA_AUTONOMOUS_RESEARCH_STATE_BACKUP_AUTHORITY_CONFIG
     ? path.resolve(process.env.HEPTA_AUTONOMOUS_RESEARCH_STATE_BACKUP_AUTHORITY_CONFIG)
     : null;
-const pointerPath = resolveLatestReleaseEvidencePointer(runtimeRoot);
 let result;
 if (command === 'status') result = verifyOffhostWormTarget({ workspaceRoot, contract });
 else if (command === 'snapshot') {
-  const pointer = pointerPath && fs.existsSync(pointerPath) ? JSON.parse(fs.readFileSync(pointerPath, 'utf8')) : null;
+  const manifestAuthority = execute ? localManifestAuthority() : {};
+  const releaseEvidence = selectLatestVerifiedReleaseEvidence(runtimeRoot);
   const stateBackup = composeAutonomousResearchStateBackupService({
     workspaceRoot,
     runtimeRoot,
@@ -53,17 +77,34 @@ else if (command === 'snapshot') {
       ),
     }];
   const sources = [
-    { role: 'release_evidence_pointer', path: pointerPath || '' },
-    { role: 'release_evidence_bundle', path: pointer?.bundlePath || '' },
-    { role: 'release_evidence_signature', path: pointer?.signaturePath || '' },
+    ...releaseEvidence.sources,
     { role: 'legacy_reference_archive', path: resolveImmutableLegacyMatrixArchive() },
     { role: 'legacy_differential_fixture', path: path.join(workspaceRoot, 'migration', 'fixtures', 'legacy-differential-reference-v1.tar.gz') },
     ...stateSources,
   ];
-  result = createOffhostWormSnapshot({ workspaceRoot, contract, sources, execute });
+  result = createOffhostWormSnapshot({
+    workspaceRoot,
+    runtimeRoot,
+    contract,
+    sources,
+    sourceBlockers: releaseEvidence.blockers,
+    execute,
+    ...manifestAuthority,
+  });
 } else if (command === 'restore-drill') {
   const manifestIndex = process.argv.indexOf('--manifest');
-  result = drillOffhostWormRestore({ manifestPath: manifestIndex >= 0 ? path.resolve(process.argv[manifestIndex + 1]) : null });
+  if (manifestIndex >= 0
+    && (!process.argv[manifestIndex + 1]
+      || process.argv[manifestIndex + 1].startsWith('--'))) {
+    throw new Error('offhost_worm_manifest_value_required');
+  }
+  result = drillOffhostWormRestore({
+    manifestPath: manifestIndex >= 0 ? path.resolve(process.argv[manifestIndex + 1]) : null,
+    targetMountRoot: path.resolve(
+      process.env.HEPTA_OFFHOST_WORM_ROOT || contract.targetMountRoot,
+    ),
+    verifyManifestSignature: localManifestAuthority().verifyManifestSignature,
+  });
 } else throw new Error(`Unknown offhost WORM command: ${command}`);
 process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 if (result.status.endsWith('_blocked')) process.exitCode = 1;

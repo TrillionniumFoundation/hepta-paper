@@ -1,4 +1,6 @@
 import {
+  buildAgentPostprocessingFailureUsageReceipt,
+  buildAgentExecutionUsageBinding,
   verifyAgentExecutionReceipt,
 } from '../../paper-domain/evidence/agent-execution-receipt-contract.mjs';
 
@@ -10,6 +12,42 @@ export function requireVerifiedAgentReceipt(receipt, label) {
     throw error;
   }
   return receipt;
+}
+
+export function agentExecutionUsageFields(receipt) {
+  const binding = buildAgentExecutionUsageBinding(receipt);
+  if (!binding) {
+    const error = new Error('agent_execution_usage_binding_invalid');
+    error.retryable = false;
+    error.receipt = receipt || null;
+    throw error;
+  }
+  return Object.freeze({
+    agentExecutionReceiptHash: receipt.agentExecutionReceiptHash,
+    agentExecutionReceipt: receipt,
+    usage: binding.usage,
+    agentExecutionUsageBindingHash: binding.agentExecutionUsageBindingHash,
+    agentExecutionUsageBinding: binding,
+  });
+}
+
+export function attachSuccessfulAgentReceipt(error, receipt) {
+  if (!error || typeof error !== 'object') return error;
+  if (error.receipt && error.receipt !== receipt) {
+    error.postprocessingReceipt = error.receipt;
+  }
+  const meteringReceipt = buildAgentPostprocessingFailureUsageReceipt(receipt);
+  error.agentExecutionReceipt = receipt;
+  error.receipt = meteringReceipt || receipt;
+  try {
+    const fields = agentExecutionUsageFields(receipt);
+    error.usage = fields.usage;
+    error.agentExecutionUsageBinding = fields.agentExecutionUsageBinding;
+    error.agentExecutionUsageBindingHash = fields.agentExecutionUsageBindingHash;
+  } catch {
+    // The verified execution receipt remains attached even when legacy usage is absent.
+  }
+  return error;
 }
 
 export async function runNestedAgent({

@@ -71,6 +71,15 @@ export function convergeAutonomousSubmissionHandoff({
       || quickCheck !== 'ok') {
       throw new Error('autonomous_submission_handoff_cutover_verification_failed');
     }
+    const checkpoint = handoffStore.checkpoint({ mode: 'TRUNCATE' });
+    const journal = handoffStore.execute(
+      'PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;',
+    );
+    if (checkpoint.ok !== true || journal.ok !== true) {
+      throw new Error(
+        checkpoint.error || journal.error || 'autonomous_submission_handoff_journal_failed',
+      );
+    }
     return Object.freeze({
       ...receipt,
       ready: true,

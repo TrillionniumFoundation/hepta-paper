@@ -63,6 +63,9 @@ async function main() {
         configurationIdentityHash: generated.context.configuration.configurationIdentityHash,
         trustIdentityHash: generated.context.configuration.trustIdentityHash,
         independentVerifierCount: generated.context.configuration.verifierTrust.length,
+        configurationPinned: generated.context.configuration.configurationPinned === true,
+        fullProductionReady:
+          generated.context.configurationInspection.fullProductionReady === true,
         privateSigningKeyLoaded: false,
       }),
       externalActionPerformed: false,

@@ -20,7 +20,15 @@ function configuredPortalConfiguration(environment) {
 
 function configuredPortalDescriptor(environment) {
   const configuration = configuredPortalConfiguration(environment);
-  return configuration ? createAutonomousSubmissionPortalDescriptor({ configuration }) : null;
+  return configuration ? createAutonomousSubmissionPortalDescriptor({
+    configuration,
+    expectedConfigurationHash: String(
+      environment.HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIGURATION_HASH || '',
+    ).trim() || null,
+    expectedDescriptorHash: String(
+      environment.HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_HASH || '',
+    ).trim() || null,
+  }) : null;
 }
 
 export function composeAutonomousResearchSubmissionServices({

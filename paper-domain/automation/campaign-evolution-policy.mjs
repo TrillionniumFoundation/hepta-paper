@@ -1,4 +1,7 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  assertAutonomousResearchDirectLocalRunBudgetWaiverBinding,
+} from './autonomous-research-launch-mode-policy.mjs';
 
 export const CAMPAIGN_BUDGET_KEYS = Object.freeze(['maxWallTimeMs', 'maxAgentCalls', 'maxCpuJobs', 'maxGpuJobs', 'maxTokenCount', 'maxCostUsd', 'maxMemoryMiB']);
 export const EXHAUSTED_CAMPAIGN_BUDGETS = Object.freeze({
@@ -19,8 +22,12 @@ function normalizedOverrides(previousBudgets, budgetOverrides) {
   const overrides = Object.fromEntries(Object.entries(budgetOverrides || {}).filter(([, value]) => value !== undefined));
   for (const key of Object.keys(overrides)) {
     if (!CAMPAIGN_BUDGET_KEYS.includes(key)) throw new Error(`unsupported_campaign_budget:${key}`);
-    const value = Number(overrides[key]);
-    if (!Number.isFinite(value) || value < 0) throw new Error(`invalid_campaign_budget:${key}`);
+    const value = overrides[key];
+    const integerBudget = key !== 'maxCostUsd';
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0
+      || (integerBudget && !Number.isSafeInteger(value))) {
+      throw new Error(`invalid_campaign_budget:${key}`);
+    }
     if (value < Number(previousBudgets[key] ?? 0)) throw new Error(`campaign_budget_cannot_decrease:${key}`);
     overrides[key] = value;
   }
@@ -71,6 +78,18 @@ export function evolveCampaignForResume({ campaign, budgetOverrides = {} } = {})
     throw new Error(`campaign_not_resumable:${campaign.stopReason || 'stopped'}`);
   }
   const previousBudgets = campaign.spec?.budgets || {};
+  if (campaign.spec?.localOnly === true || campaign.spec?.directLocalRunBudgetWaiver
+    || campaign.spec?.autonomousResearchPreparation) {
+    assertAutonomousResearchDirectLocalRunBudgetWaiverBinding({
+      launchMode: campaign.spec?.autonomousResearchPreparation?.launchMode || null,
+      localOnly: campaign.spec?.localOnly === true,
+      budgets: previousBudgets,
+      waiver: campaign.spec?.directLocalRunBudgetWaiver || null,
+      campaignId: campaign.campaignId || campaign.spec?.campaignId || null,
+      paperId: campaign.paperId || campaign.spec?.paperId || null,
+      preparation: campaign.spec?.autonomousResearchPreparation || null,
+    });
+  }
   const overrides = normalizedOverrides(previousBudgets, budgetOverrides);
   if (exhausted) {
     const [requiredKey, usageKey] = exhausted;
@@ -78,6 +97,18 @@ export function evolveCampaignForResume({ campaign, budgetOverrides = {} } = {})
   }
   const { campaignPlanHash: previousCampaignPlanHash = null, ...campaignPayload } = campaign.spec;
   const nextPayload = Object.freeze({ ...campaignPayload, budgets: Object.freeze({ ...previousBudgets, ...overrides }) });
+  if (nextPayload.localOnly === true || nextPayload.directLocalRunBudgetWaiver
+    || nextPayload.autonomousResearchPreparation) {
+    assertAutonomousResearchDirectLocalRunBudgetWaiverBinding({
+      launchMode: nextPayload.autonomousResearchPreparation?.launchMode || null,
+      localOnly: nextPayload.localOnly === true,
+      budgets: nextPayload.budgets,
+      waiver: nextPayload.directLocalRunBudgetWaiver || null,
+      campaignId: campaign.campaignId || nextPayload.campaignId || null,
+      paperId: campaign.paperId || nextPayload.paperId || null,
+      preparation: nextPayload.autonomousResearchPreparation || null,
+    });
+  }
   const nextSpec = Object.freeze({ ...nextPayload, campaignPlanHash: hashRecord('PaperCampaignPlan', nextPayload) });
   return Object.freeze({
     nextSpec,

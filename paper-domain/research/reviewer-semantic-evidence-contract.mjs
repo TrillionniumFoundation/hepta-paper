@@ -119,7 +119,9 @@ export function reviewerSemanticReviewHash({
   unsignedAgentExecutionReceipt,
 } = {}) {
   if (!verifyAgentExecutionReceipt(unsignedAgentExecutionReceipt)) {
-    throw new Error('reviewer_semantic_review_unsigned_receipt_invalid');
+    const error = new Error('reviewer_semantic_review_unsigned_receipt_invalid');
+    error.retryable = false;
+    throw error;
   }
   const context = unsignedAgentExecutionReceipt.reviewerExecutionAuthorityContext;
   const semantics = semanticOutput(unsignedAgentExecutionReceipt);
@@ -135,7 +137,9 @@ export function reviewerSemanticReviewHash({
   if (!verifyReviewerExecutionAuthorityContext(context)
     || unsignedAgentExecutionReceipt.role !== 'independent-review'
     || !SHA256.test(promptHash) || !childSessionId || !resolvedModel) {
-    throw new Error('reviewer_semantic_review_invalid');
+    const error = new Error('reviewer_semantic_review_invalid');
+    error.retryable = false;
+    throw error;
   }
   return hashRecord('ReviewerSemanticReview', {
     campaignId: context.campaignId,
@@ -214,6 +218,135 @@ function outerSemanticsMatch(review, canonical) {
     'childSessionId', 'promptHash', 'resolvedModel', 'reviewAttemptId',
     'campaignId', 'campaignPlanHash', 'paperId', 'nodeId', 'roundIndex',
   ].every((field) => review?.[field] === canonical[field]);
+}
+
+export function verifyFreshIsolatedReviewerSessionReceipt(receipt, expected = {}) {
+  if (!verifyAgentExecutionReceipt(receipt)
+    || receipt?.reviewEvidenceMode !== 'fresh-isolated-session'
+    || receipt?.reviewerCryptographicAuthorityReady !== false
+    || receipt?.reviewerIdentityIndependenceReady !== true
+    || receipt?.codexProviderCredentialSharingPermitted !== true
+    || receipt?.codexFreshEphemeralSessionRequired !== true
+    || receipt?.codexAuthorContextInheritanceForbidden !== true
+    || receipt?.codexFrozenArtifactReviewRequired !== true
+    || ![
+      'fresh_ephemeral_no_resume',
+      'fresh_stateless_completion_no_resume',
+      'fresh_one_shot_codex_app_server_no_resume',
+    ].includes(receipt?.sessionIsolation)
+    || receipt?.contextInheritance !== 'forbidden'
+    || receipt?.codexReviewerAssuranceScope
+      !== 'ephemeral_session_frozen_artifact_and_role_separation'
+    || !canonicalText(receipt?.childSessionId)
+    || receipt?.childSessionId !== receipt?.sessionId
+    || !SAFE_ID.test(String(receipt?.reviewPrincipalId || ''))
+    || ![
+      receipt?.reviewPrincipalDescriptorHash,
+      receipt?.researchPrincipalPoolHash,
+      receipt?.reviewerProviderAccountIdentityHash,
+      receipt?.reviewerCredentialRootIdentityHash,
+      receipt?.reviewerTrustDomainIdentityHash,
+      receipt?.reviewerSignerIdentityHash,
+      receipt?.reviewerTrustSetHash,
+      receipt?.reviewerSignatureVerificationPolicyHash,
+    ].every((value) => SHA256.test(String(value || '')))) {
+    return false;
+  }
+  const role = String(receipt.role || '');
+  if (!['formal-review', 'independent-review'].includes(role)) return false;
+  if (role === 'independent-review'
+    && !verifyReviewerExecutionAuthorityContext(
+      receipt.reviewerExecutionAuthorityContext,
+      Object.fromEntries(Object.entries(expected).filter(([field]) => (
+        ['campaignId', 'campaignPlanHash', 'paperId', 'nodeId', 'roundIndex',
+          'reviewAttemptId', 'manuscriptHash'].includes(field)
+      ))),
+    )) {
+    return false;
+  }
+  return Object.entries(expected).every(([field, value]) => {
+    if (value === undefined || value === null
+      || ['campaignId', 'campaignPlanHash', 'paperId', 'nodeId', 'roundIndex',
+        'reviewAttemptId', 'manuscriptHash'].includes(field)) {
+      return true;
+    }
+    return receipt[field] === value;
+  });
+}
+
+export function deriveVerifiedIsolatedReviewerSemanticReview(review, {
+  expected = {},
+  sessionVerifier = null,
+} = {}) {
+  const unsigned = review?.unsignedAgentExecutionReceipt;
+  const verifier = typeof sessionVerifier === 'function'
+    ? sessionVerifier : ({ receipt, expected: selectedExpected }) => (
+      verifyFreshIsolatedReviewerSessionReceipt(receipt, selectedExpected)
+    );
+  let sessionVerified = false;
+  try {
+    sessionVerified = verifier({ receipt: unsigned, expected }) === true;
+  } catch {
+    sessionVerified = false;
+  }
+  if (!sessionVerified
+    || review?.unsignedAgentExecutionReceiptHash !== unsigned?.agentExecutionReceiptHash) {
+    throw new Error('isolated_reviewer_session_receipt_invalid');
+  }
+  const context = unsigned.reviewerExecutionAuthorityContext;
+  if (!verifyReviewerExecutionAuthorityContext(context, expected)) {
+    throw new Error('isolated_reviewer_execution_authority_context_invalid');
+  }
+  const semantics = semanticOutput(unsigned);
+  const childSessionId = canonicalText(
+    unsigned.childSessionId || unsigned.sessionId || unsigned.sessionKey,
+  );
+  const promptHash = String(unsigned.promptHash || '');
+  const resolvedModel = canonicalText(unsigned.resolvedModel || unsigned.model);
+  const reviewHash = reviewerSemanticReviewHash({
+    unsignedAgentExecutionReceipt: unsigned,
+  });
+  const canonical = Object.freeze({
+    reviewerId: canonicalText(review?.reviewerId) || childSessionId,
+    role: unsigned.role || 'independent-review',
+    ...semantics,
+    reviewHash,
+    manuscriptHash: context.manuscriptHash,
+    childSessionId,
+    promptHash,
+    resolvedModel,
+    reviewPrincipalId: unsigned.reviewPrincipalId,
+    reviewPrincipalDescriptorHash: unsigned.reviewPrincipalDescriptorHash,
+    reviewerProviderAccountIdentityHash: unsigned.reviewerProviderAccountIdentityHash,
+    reviewerCredentialRootIdentityHash: unsigned.reviewerCredentialRootIdentityHash,
+    reviewerTrustDomainIdentityHash: unsigned.reviewerTrustDomainIdentityHash,
+    reviewerSignerIdentityHash: unsigned.reviewerSignerIdentityHash,
+    signedReviewerReceiptHash: null,
+    signedReviewerReceipt: null,
+    unsignedAgentExecutionReceiptHash: unsigned.agentExecutionReceiptHash,
+    unsignedAgentExecutionReceipt: unsigned,
+    signatureVerificationReceiptHash: null,
+    researchPrincipalPoolHash: unsigned.researchPrincipalPoolHash,
+    reviewEvidenceMode: 'fresh-isolated-session',
+    reviewAttemptId: context.reviewAttemptId,
+    campaignId: context.campaignId,
+    campaignPlanHash: context.campaignPlanHash,
+    paperId: context.paperId,
+    nodeId: context.nodeId,
+    roundIndex: context.roundIndex,
+    selectedExecutorId: unsigned.selectedExecutorId || unsigned.executorId || null,
+  });
+  if (!outerSemanticsMatch(review, canonical)
+    || review?.reviewEvidenceMode !== canonical.reviewEvidenceMode
+    || review?.signedReviewerReceipt !== null
+    || review?.signedReviewerReceiptHash !== null
+    || review?.signatureVerificationReceiptHash !== null
+    || review?.researchPrincipalPoolHash !== canonical.researchPrincipalPoolHash
+    || JSON.stringify(review?.unsignedAgentExecutionReceipt)
+      !== JSON.stringify(canonical.unsignedAgentExecutionReceipt)) {
+    throw new Error('isolated_reviewer_outer_semantics_mismatch');
+  }
+  return canonical;
 }
 
 export function deriveVerifiedSignedReviewerSemanticReview(review, {

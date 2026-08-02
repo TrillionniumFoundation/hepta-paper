@@ -47,14 +47,28 @@ function observedDate(clock) {
 }
 
 function configurationInspection(configuration, blockers = []) {
-  const uniqueBlockers = Object.freeze([...new Set(blockers.filter(Boolean))].sort());
+  const boundedReady = Boolean(configuration) && blockers.length === 0;
+  const uniqueBlockers = Object.freeze([...new Set([
+    ...blockers,
+    ...(configuration && configuration.configurationPinned !== true
+      ? ['runtime_reproducibility_configuration_not_pinned'] : []),
+  ].filter(Boolean))].sort());
+  const fullProductionReady = boundedReady
+    && configuration.configurationPinned === true
+    && uniqueBlockers.length === 0;
   const payload = Object.freeze({
-    version: 1,
+    version: 2,
     kind: 'RuntimeImageReproducibilityConfigurationInspection',
-    status: uniqueBlockers.length
+    status: fullProductionReady
+      ? 'runtime_image_reproducibility_configuration_ready'
+      : uniqueBlockers.length
       ? 'runtime_image_reproducibility_configuration_blocked'
-      : 'runtime_image_reproducibility_configuration_ready',
-    ready: uniqueBlockers.length === 0,
+      : 'runtime_image_reproducibility_configuration_bounded',
+    ready: fullProductionReady,
+    boundedReady,
+    fullProductionReady,
+    configured: Boolean(configuration),
+    configurationPinned: configuration?.configurationPinned === true,
     configurationIdentityHash: configuration?.configurationIdentityHash || null,
     trustIdentityHash: configuration?.trustIdentityHash || null,
     verifierServiceIdentityHashes: configuration
@@ -190,6 +204,12 @@ export function composeRuntimeImageReproducibilityRequest({
     environment,
     codeProvenance,
   });
+  if (context.configurationInspection.fullProductionReady !== true) {
+    throw new Error(
+      context.configurationInspection.blockers[0]
+      || 'runtime_reproducibility_configuration_not_ready',
+    );
+  }
   const requestedAt = observedDate(clock);
   const maximumCommandMs = Math.max(
     ...context.configuration.verifiers.map((item) => item.command.timeoutMs),
@@ -245,6 +265,12 @@ export function composeRuntimeImageReproducibilityStatus({
     });
   } catch (error) {
     return blockedReport([stableConfigurationBlocker(error)]);
+  }
+  if (context.configurationInspection.fullProductionReady !== true) {
+    return blockedReport(
+      context.configurationInspection.blockers,
+      context.configurationInspection,
+    );
   }
   const repository = createRuntimeImageReproducibilityReceiptRepository({
     runtimeRoot,

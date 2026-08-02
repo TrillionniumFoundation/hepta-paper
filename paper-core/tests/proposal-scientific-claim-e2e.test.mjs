@@ -206,14 +206,34 @@ test('signed exact scientific claims flow from proposal materialization through 
       kind: 'TheoremSpecificationDraft',
       claims: [{ ...theoremDraftClaim, [field]: [`DIFFERENT ${field}`] }],
     }, null, 2)}\n`);
-    assert.throws(() => finalizeTheoremSpecification({
+    const canonicalized = finalizeTheoremSpecification({
       workspace,
       manuscriptPath: 'main.tex',
       paperId: plan.paperId,
       campaignId: plan.campaignId,
       approvedProposalSeed: plan.approvedProposalSeed,
-    }), /theorem_specification_proposal_scientific_scope_mismatch/);
+    });
+    assert.equal(canonicalized.status, 'theorem_specification_finalized');
+    const canonical = JSON.parse(fs.readFileSync(path.join(workspace, 'THEOREM_SPEC.json'), 'utf8'));
+    assert.deepEqual(canonical.claims[0][field], scientificClaimDocument().claims[0][field]);
+    fs.rmSync(path.join(workspace, 'THEOREM_SPEC.json'));
   }
+  fs.writeFileSync(path.join(workspace, 'THEOREM_SPEC_DRAFT.json'), `${JSON.stringify({
+    version: 1,
+    kind: 'TheoremSpecificationDraft',
+    claims: [{ ...theoremDraftClaim, claimKey: 'agent-local-key' }],
+  }, null, 2)}\n`);
+  const remapped = finalizeTheoremSpecification({
+    workspace,
+    manuscriptPath: 'main.tex',
+    paperId: plan.paperId,
+    campaignId: plan.campaignId,
+    approvedProposalSeed: plan.approvedProposalSeed,
+  });
+  assert.equal(remapped.status, 'theorem_specification_finalized');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(workspace, 'THEOREM_SPEC.json'), 'utf8'))
+    .claims[0].claimKey, theoremDraftClaim.claimKey);
+  fs.rmSync(path.join(workspace, 'THEOREM_SPEC.json'));
   fs.writeFileSync(path.join(workspace, 'THEOREM_SPEC_DRAFT.json'), `${JSON.stringify({
     version: 1,
     kind: 'TheoremSpecificationDraft',

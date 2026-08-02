@@ -39,10 +39,8 @@ const DEFAULT_EXECUTION_TIMEOUT_MS = (4 * 60 * 60 + 15 * 60) * 1000;
 // other non-zero code) is an infrastructure or policy failure and must never
 // authorize a mutating renewal.
 const SEMANTIC_NOT_READY_EXIT_CODE = 2;
-const REVIEWER_SERVICE_CREDENTIAL_ROOT_REFERENCE_ID =
-  'formal-reviewer-service-credential-root';
-const REVIEWER_POOL_REFERENCE_ID = 'formal-reviewer-principal';
-const MAXIMUM_OPAQUE_CREDENTIAL_BYTES = 64 * 1024;
+const PORTAL_DESCRIPTOR_HASH_ENVIRONMENT_VARIABLE =
+  'HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_HASH';
 
 const STEP_COMMANDS = Object.freeze({
   migration: new Set(['store']),
@@ -104,103 +102,6 @@ function isCompleteSemanticNotReadyOutput(output, invocation) {
   ));
 }
 
-function reviewerServiceCredentialOverrides({ plan, invocation, overrides }) {
-  if (!Object.prototype.hasOwnProperty.call(
-    invocation.environmentReferences,
-    'HEPTA_REVIEWER_PRINCIPAL_POOL_CONFIG',
-  )) return Object.freeze({});
-  const references = new Map(plan.referenceBindings.map((item) => (
-    [item.referenceId, item]
-  )));
-  const pool = references.get(REVIEWER_POOL_REFERENCE_ID);
-  const root = references.get(REVIEWER_SERVICE_CREDENTIAL_ROOT_REFERENCE_ID);
-  const variableNames =
-    pool?.documentPins?.reviewerServiceTokenEnvironmentVariables;
-  let rootStat;
-  try {
-    rootStat = fs.lstatSync(root?.resolvedPath || '', { bigint: true });
-  } catch (cause) {
-    throw new Error(
-      'strict_full_auto_acceptance_reviewer_service_credential_root_invalid',
-      { cause },
-    );
-  }
-  if (root?.kind !== 'opaque-directory-reference'
-    || !rootStat.isDirectory() || rootStat.isSymbolicLink()
-    || fs.realpathSync(root.resolvedPath) !== root.resolvedPath
-    || (Number(rootStat.mode) & 0o077) !== 0
-    || String(rootStat.uid) !== String(process.getuid?.())
-    || !Array.isArray(variableNames) || variableNames.length < 4
-    || variableNames.length > 16
-    || new Set(variableNames).size !== variableNames.length
-    || variableNames.some(
-      (name) => !/^[A-Z][A-Z0-9_]{1,122}_FILE$/.test(String(name || '')),
-    )) {
-    throw new Error(
-      'strict_full_auto_acceptance_reviewer_service_credential_root_invalid',
-    );
-  }
-  const observedRootIdentity = strictFullAutoAcceptanceHash({
-    version: 1,
-    kind: 'OpaqueSecretReferenceIdentity',
-    referenceId: root.referenceId,
-    subjectId: root.subjectId,
-    resolvedPath: root.resolvedPath,
-    device: String(rootStat.dev),
-    inode: String(rootStat.ino),
-    mode: Number(rootStat.mode) & 0o7777,
-    uid: String(rootStat.uid),
-    gid: String(rootStat.gid),
-    size: String(rootStat.size),
-    mtimeNanoseconds: String(rootStat.mtimeNs),
-  });
-  if (observedRootIdentity !== root.identity) {
-    throw new Error(
-      'strict_full_auto_acceptance_reviewer_service_credential_root_changed',
-    );
-  }
-  const selected = {};
-  const fileIdentities = new Set();
-  for (const name of variableNames) {
-    if (Object.prototype.hasOwnProperty.call(overrides, name)
-      || Object.prototype.hasOwnProperty.call(
-        plan.operationalEnvironment,
-        name,
-      )) {
-      throw new Error(
-        `strict_full_auto_acceptance_reviewer_service_credential_conflict:${name}`,
-      );
-    }
-    const candidate = path.join(root.resolvedPath, name);
-    let stat;
-    try {
-      stat = fs.lstatSync(candidate, { bigint: true });
-    } catch (cause) {
-      throw new Error(
-        `strict_full_auto_acceptance_reviewer_service_credential_invalid:${name}`,
-        { cause },
-      );
-    }
-    const fileIdentity = `${String(stat.dev)}:${String(stat.ino)}`;
-    if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1n
-      || fs.realpathSync(candidate) !== candidate
-      || path.dirname(candidate) !== root.resolvedPath
-      || (Number(stat.mode) & 0o077) !== 0
-      || String(stat.uid) !== String(process.getuid?.())
-      || stat.size < 1n || stat.size > BigInt(MAXIMUM_OPAQUE_CREDENTIAL_BYTES)
-      || fileIdentities.has(fileIdentity)) {
-      throw new Error(
-        `strict_full_auto_acceptance_reviewer_service_credential_invalid:${name}`,
-      );
-    }
-    fileIdentities.add(fileIdentity);
-    // Only the path is delivered. This process deliberately never opens or
-    // reads the opaque credential bytes.
-    selected[name] = candidate;
-  }
-  return Object.freeze(selected);
-}
-
 export class StrictFullAutoAcceptanceCommandRunner {
   constructor({
     workspaceRoot,
@@ -238,8 +139,12 @@ export class StrictFullAutoAcceptanceCommandRunner {
     const overrides = Object.fromEntries(Object.entries(invocation.environmentReferences)
       .map(([name, referenceId]) => {
         const reference = references.get(referenceId);
-        return [name, name.endsWith('_HASH')
-          ? reference?.documentPins?.configurationHash : reference?.resolvedPath];
+        const value = name === PORTAL_DESCRIPTOR_HASH_ENVIRONMENT_VARIABLE
+          ? reference?.documentPins?.portalDescriptorHash
+          : name.endsWith('_HASH')
+            ? reference?.documentPins?.configurationHash
+            : reference?.resolvedPath;
+        return [name, value];
       }));
     for (const name of Object.keys(overrides)) {
       if (Object.prototype.hasOwnProperty.call(plan.operationalEnvironment, name)) {
@@ -251,11 +156,6 @@ export class StrictFullAutoAcceptanceCommandRunner {
       stepId: step.stepId,
     });
     Object.assign(overrides, plan.operationalEnvironment);
-    Object.assign(overrides, reviewerServiceCredentialOverrides({
-      plan,
-      invocation,
-      overrides,
-    }));
     // Bind the public Elan installation through the HEPTA-namespaced plan
     // surface instead of admitting an arbitrary ambient ELAN_HOME.
     overrides.ELAN_HOME = plan.operationalEnvironment.HEPTA_FORMAL_ELAN_HOME;

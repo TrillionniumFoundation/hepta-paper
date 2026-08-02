@@ -151,7 +151,10 @@ export function assertFormalDomainQualificationRecoveryJournalSequence(
     if (entry.stage === 'evidence') {
       if (entry.event !== 'evidence_completed'
         || entry.idempotencyKey !== operationId
-        || stageIndex !== ORDERED_OPERATION_STAGES.length
+        || ![
+          ORDERED_OPERATION_STAGES.length - 1,
+          ORDERED_OPERATION_STAGES.length,
+        ].includes(stageIndex)
         || stageStarted) {
         throw new Error(
           'formal_domain_qualification_recovery_journal_sequence_invalid',

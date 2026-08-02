@@ -51,9 +51,12 @@ const observedNow = (clock) => observedExternallyFencedSqliteMutationNow(
   'autonomous_research_online_runtime_activation_clock_invalid',
 );
 
-function fileIdentity(candidate) {
+function fileIdentity(candidate, { databaseRole = null } = {}) {
   const stat = fs.lstatSync(candidate, { bigint: true });
-  if (!stat.isFile() || stat.isSymbolicLink() || (Number(stat.mode) & 0o022) !== 0) {
+  const mode = Number(stat.mode);
+  const groupWritePermitted = databaseRole === 'submission-handoff';
+  if (!stat.isFile() || stat.isSymbolicLink() || mode & 0o002
+    || (!groupWritePermitted && mode & 0o020)) {
     fail('autonomous_research_online_runtime_activation_database_unsafe');
   }
   return Object.freeze({
@@ -63,14 +66,17 @@ function fileIdentity(candidate) {
   });
 }
 
-function openInventoryDatabase({ runtimeRoot, instance }) {
+export function openAutonomousResearchOnlineRuntimeActivationDatabase({
+  runtimeRoot,
+  instance,
+}) {
   const root = path.resolve(runtimeRoot);
   const candidate = path.resolve(root, String(instance?.sourceRelativePath || ''));
   if (!instance?.sourceRelativePath
     || !pathWithin(root, candidate)
     || !fs.existsSync(candidate)
     || !pathWithin(fs.realpathSync(root), fs.realpathSync(candidate))
-    || JSON.stringify(fileIdentity(candidate))
+    || JSON.stringify(fileIdentity(candidate, { databaseRole: instance.role }))
       !== JSON.stringify(instance.sourceFileIdentity)) {
     fail('autonomous_research_online_runtime_activation_database_identity_changed');
   }
@@ -208,7 +214,7 @@ export function activateAutonomousResearchOnlineMutationRuntime({
   createAuthorityEvidenceCacheWriter =
     createAutonomousResearchOnlineAuthorityEvidenceCacheWriter,
   schemaTransitionReadiness,
-  openDatabase = openInventoryDatabase,
+  openDatabase = openAutonomousResearchOnlineRuntimeActivationDatabase,
   clock = { now: () => new Date() },
 } = {}) {
   const manifest = assertAutonomousResearchOnlineWriterOperationManifest(writerManifest);

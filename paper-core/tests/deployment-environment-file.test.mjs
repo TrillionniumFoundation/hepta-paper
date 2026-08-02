@@ -23,6 +23,11 @@ test('deployment readiness environment loads only owner-private non-secret polic
     'HEPTA_DYNAMIC_FORMAL_CLAIMS_ENABLED=1',
     'HEPTA_DYNAMIC_FORMAL_PROJECT_ROOT=/srv/hepta/formal',
     'HEPTA_DYNAMIC_FORMAL_PROJECT_CLOSURE_HASH=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    'HEPTA_PRIOR_ART_SERVICE_CONFIG_HASH=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+    'HEPTA_EXTERNAL_REPLAY_CONFIG_HASH=sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+    'HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG_HASH=sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+    'HEPTA_ADVANCED_NUMERICAL_PLUGIN_QUALIFICATION_REGISTRY_HASH=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+    'HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_HASH=sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
     'HEPTA_RESEARCH_AUTHOR_MODEL=\"pinned-model\"',
     '',
   ].join('\n'));
@@ -40,10 +45,15 @@ test('deployment readiness environment loads only owner-private non-secret polic
   assert.match(result.inspection.fileHash, /^sha256:[0-9a-f]{64}$/);
   assert.equal(result.inspection.credentialMaterialLoaded, false);
   assert.deepEqual(result.inspection.loadedKeys, [
+    'HEPTA_ADVANCED_NUMERICAL_PLUGIN_QUALIFICATION_REGISTRY_HASH',
+    'HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_HASH',
     'HEPTA_DYNAMIC_FORMAL_CLAIMS_ENABLED',
     'HEPTA_DYNAMIC_FORMAL_PROJECT_CLOSURE_HASH',
     'HEPTA_DYNAMIC_FORMAL_PROJECT_ROOT',
+    'HEPTA_EXTERNAL_REPLAY_CONFIG_HASH',
+    'HEPTA_PRIOR_ART_SERVICE_CONFIG_HASH',
     'HEPTA_RESEARCH_AUTHOR_MODEL',
+    'HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG_HASH',
   ]);
   assert.equal(JSON.stringify(result.inspection).includes('pinned-model'), false);
 });

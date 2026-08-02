@@ -30,6 +30,13 @@ function rounded(value) {
   return Number(value.toFixed(12));
 }
 
+function samePortableJsonNumber(left, right) {
+  if (left === right) return true;
+  if (!Number.isFinite(left) || !Number.isFinite(right)) return false;
+  const scale = Math.max(1, Math.abs(left), Math.abs(right));
+  return Math.abs(left - right) <= (Number.EPSILON * scale * 4);
+}
+
 function scalar(parts, minimum, maximum) {
   return rounded(minimum + ((maximum - minimum) * unit(parts)));
 }
@@ -317,7 +324,8 @@ export function evaluateSystemBenchmarkCellResponses({ protocol, challenge, orac
       continue;
     }
     seen.add(caseId);
-    if (protocol.arm === 'baseline' && value !== Number(publicById.get(caseId).referenceResponse)) {
+    if (protocol.arm === 'baseline'
+      && !samePortableJsonNumber(value, Number(publicById.get(caseId).referenceResponse))) {
       blockers.push('benchmark_baseline_not_repository_reference');
       continue;
     }

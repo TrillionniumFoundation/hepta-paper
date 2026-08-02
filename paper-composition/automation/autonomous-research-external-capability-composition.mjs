@@ -20,7 +20,9 @@ import {
   preflightReviewerPrincipalPool,
 } from './reviewer-principal-pool-composition.mjs';
 import {
-  inspectConfiguredAutonomousResearchAuthorIdentity,
+  autonomousResearchAuthorIdentitySubjectHash,
+  buildAutonomousResearchReviewerSessionPrincipalPool,
+  inspectAutonomousResearchAuthorRuntimeIdentity,
 } from './autonomous-research-runtime-principal-preflight.mjs';
 import {
   createAutonomousSubmissionPortalDescriptor,
@@ -53,6 +55,45 @@ import {
   autonomousSubmissionRequestVerifierReady as submissionRequestVerifierReady,
   configuredAutonomousResearchPriorArtMode as configuredPriorArtMode,
 } from './autonomous-research-external-capability-configuration.mjs';
+
+function isolatedReviewerSessionTrustSurface({ author, reviewer } = {}) {
+  try {
+    return reviewerTrustSurface(
+      buildAutonomousResearchReviewerSessionPrincipalPool({ author, reviewer }),
+    );
+  } catch {
+    return null;
+  }
+}
+
+function authorIdentityTrustSurface(inspection) {
+  if (!inspection) return null;
+  const subjectHash = autonomousResearchAuthorIdentitySubjectHash(inspection);
+  const cryptographicAuthorityReady = inspection.cryptographicAuthorityReady === true;
+  const stablePolicyPinned = inspection.stablePolicyPinned === true;
+  const fullProductionReady = inspection.ready === true
+    && inspection.configurationPinned === true
+    && stablePolicyPinned
+    && cryptographicAuthorityReady
+    && subjectHash !== null;
+  return Object.freeze({
+    status: inspection.status || null,
+    ready: inspection.ready === true,
+    identityMode: inspection.identityMode
+      || (cryptographicAuthorityReady ? 'external-cryptographic-attestation' : null),
+    cryptographicAuthorityReady,
+    sessionIsolationReady: inspection.sessionIsolationReady === true,
+    configurationPinned: inspection.configurationPinned === true,
+    stablePolicyPinned,
+    configurationVersion: inspection.configurationVersion || null,
+    configurationHash: inspection.configurationHash || null,
+    subjectHash,
+    trustSetHash: inspection.trustSetHash || null,
+    signatureVerificationPolicyHash:
+      inspection.signatureVerificationPolicyHash || null,
+    fullProductionReady,
+  });
+}
 
 export function inspectConfiguredAutonomousResearchCapabilityScope({
   environment,
@@ -90,14 +131,16 @@ export function inspectConfiguredAutonomousResearchCapabilityScope({
     }
   };
   const authorIdentityAttestation = inspect('research-author-identity', () => (
-    inspectConfiguredAutonomousResearchAuthorIdentity({
+    inspectAutonomousResearchAuthorRuntimeIdentity({
       environment,
       author: providerInspections?.researchAuthorPreflight || null,
       clock,
     })
   ));
-  const authorIdentitySubjectHash = authorIdentityAttestation?.subject
-    ?.externalPrincipalIdentityAttestationSubjectHash || null;
+  const authorIdentitySubjectHash = autonomousResearchAuthorIdentitySubjectHash(
+    authorIdentityAttestation,
+  );
+  const authorIdentityInspection = authorIdentityTrustSurface(authorIdentityAttestation);
   const requiredOriginIdentitySubjectHashes = authorIdentitySubjectHash
     ? Object.freeze([authorIdentitySubjectHash]) : Object.freeze([]);
   const reviewerPoolConfigPath = String(
@@ -121,19 +164,31 @@ export function inspectConfiguredAutonomousResearchCapabilityScope({
     blockers.push('reviewer-principal-pool:research-author-preflight-required');
   }
   const priorArtConfigPath = String(environment.HEPTA_PRIOR_ART_SERVICE_CONFIG || '').trim();
+  const priorArtExpectedConfigurationHash = String(
+    environment.HEPTA_PRIOR_ART_SERVICE_CONFIG_HASH || '',
+  ).trim().toLowerCase() || null;
   if (priorArtConfigPath) {
     priorArtRetriever = inspect('prior-art-service', () => createHttpPriorArtRetrievalAdapter({
-      configuration: readPriorArtServiceConfiguration({ configPath: priorArtConfigPath }),
+      configuration: readPriorArtServiceConfiguration({
+        configPath: priorArtConfigPath,
+        expectedConfigurationHash: priorArtExpectedConfigurationHash,
+      }),
+      expectedConfigurationHash: priorArtExpectedConfigurationHash,
       environment,
       clock,
     }));
   }
   const externalReplayConfigPath = String(environment.HEPTA_EXTERNAL_REPLAY_CONFIG || '').trim();
+  const externalReplayExpectedConfigurationHash = String(
+    environment.HEPTA_EXTERNAL_REPLAY_CONFIG_HASH || '',
+  ).trim().toLowerCase() || null;
   if (externalReplayConfigPath) {
     externalReplay = inspect('external-replay-service', () => createHttpExternalResearchReplayAdapter({
       configuration: readExternalResearchReplayServiceConfiguration({
         configPath: externalReplayConfigPath,
+        expectedConfigurationHash: externalReplayExpectedConfigurationHash,
       }),
+      expectedConfigurationHash: externalReplayExpectedConfigurationHash,
       environment,
       requiredLocalOriginIdentitySubjectHashes: requiredOriginIdentitySubjectHashes,
       clock,
@@ -170,6 +225,12 @@ export function inspectConfiguredAutonomousResearchCapabilityScope({
             environment,
             allowPrivateConfigurationFallback: false,
           }),
+        expectedConfigurationHash: String(
+          environment.HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIGURATION_HASH || '',
+        ).trim() || null,
+        expectedDescriptorHash: String(
+          environment.HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_HASH || '',
+        ).trim() || null,
         requiredLocalOriginIdentitySubjectHashes: requiredOriginIdentitySubjectHashes,
         clock,
       })
@@ -192,6 +253,12 @@ export function inspectConfiguredAutonomousResearchCapabilityScope({
   }
   const reviewerPrincipalCount = reviewerPool?.reviewerPrincipalCount || 1;
   const reviewerTrustDomainCount = reviewerPool?.reviewerTrustDomainCount || 1;
+  const reviewerSessionTrustSurface = reviewerPoolInspection
+    ? reviewerTrustSurface(reviewerPoolInspection)
+    : isolatedReviewerSessionTrustSurface({
+      author: providerInspections?.researchAuthorPreflight,
+      reviewer: providerInspections?.formalReviewPreflight,
+    });
   const externalSubmissionProfiles = venueRegistry?.profiles?.some((profile) => (
     profile.externalSubmissionEnabled
   )) === true;
@@ -221,7 +288,7 @@ export function inspectConfiguredAutonomousResearchCapabilityScope({
   const externalCapabilityTrustInspection =
     buildAutonomousResearchExternalCapabilityTrustInspection({
       priorArt: priorArtRetriever,
-      reviewerPool: reviewerTrustSurface(reviewerPoolInspection),
+      reviewerPool: reviewerSessionTrustSurface,
       externalReplay,
       submissionPortal,
     });
@@ -278,7 +345,8 @@ export function inspectConfiguredAutonomousResearchCapabilityScope({
       ...(contentMode === 'agent-evidence-bound'
         && !signedConfigurationReady(submissionMetadataAuthority)
         ? ['signed-submission-metadata-profile'] : []),
-      ...(reviewerTrustDomainCount >= 3 ? [] : ['independent-reviewer-trust-domains']),
+      ...(reviewerSessionTrustSurface?.identityIndependenceReady === true
+        ? [] : ['independent-reviewer-session-isolation']),
       ...(externalSubmissionProfiles && !submissionPortal
         ? ['submission-portal-service'] : []),
       ...(externalSubmissionProfiles && !submissionMetadataProfile
@@ -301,13 +369,30 @@ export function inspectConfiguredAutonomousResearchCapabilityScope({
     empiricalFamilies,
     blockers: Object.freeze(blockers),
     authorIdentityAttestationReady: authorIdentityAttestation?.ready === true,
+    authorIdentityCryptographicAuthorityReady:
+      authorIdentityInspection?.cryptographicAuthorityReady === true,
+    authorIdentityFullProductionReady:
+      authorIdentityInspection?.fullProductionReady === true,
+    authorIdentityAttestation: authorIdentityInspection,
     authorIdentitySubjectHash,
     reviewerPrincipalPoolHash: reviewerPool?.researchPrincipalPoolHash || null,
     priorArtServiceConfigured: Boolean(priorArtRetriever),
+    priorArtServiceConfigurationPinned:
+      priorArtRetriever?.configurationPinned === true,
+    priorArtServiceFullProductionReady:
+      priorArtRetriever?.fullProductionReady === true,
+    priorArtServiceConfigurationHash:
+      priorArtRetriever?.configurationHash || null,
     priorArtAuthorityTrustConfiguration:
       priorArtRetriever?.cryptographicAuthorityReady === true
         ? priorArtRetriever.authorityTrustConfiguration() : null,
     externalReplayServiceConfigured: Boolean(externalReplay),
+    externalReplayServiceConfigurationPinned:
+      externalReplay?.configurationPinned === true,
+    externalReplayServiceCrashRecoveryReady:
+      externalReplay?.crashRecoveryReady === true,
+    externalReplayServiceFullProductionReady:
+      externalReplay?.fullProductionReady === true,
     externalResearchReplayReceiptVerifier:
       externalReplayReceiptVerificationSurface(externalReplay?.receiptVerifier),
     externalResearchReplayConfigurationHash:
@@ -342,7 +427,6 @@ export function inspectConfiguredAutonomousResearchCapabilityScope({
 
 export function composeAutonomousResearchExternalCapabilities({
   paperId,
-  refereeCount,
   requestedContentMode,
   dynamicFormalClaimsEnabled,
   reviewerPrincipalPoolInspection = null,
@@ -371,19 +455,25 @@ export function composeAutonomousResearchExternalCapabilities({
   let effectivePriorArtRetriever = priorArtRetriever;
   let effectiveExternalResearchReplay = externalResearchReplay;
   let effectiveAutonomousSubmissionPortal = autonomousSubmissionPortal;
-  const authorIdentitySubjectHash = authorIdentityAttestation?.subject
-    ?.externalPrincipalIdentityAttestationSubjectHash || null;
+  const authorIdentitySubjectHash = autonomousResearchAuthorIdentitySubjectHash(
+    authorIdentityAttestation,
+  );
   const requiredOriginIdentitySubjectHashes = authorIdentitySubjectHash
     ? Object.freeze([authorIdentitySubjectHash]) : Object.freeze([]);
   const externalReplayConfigPath = String(
     environment.HEPTA_EXTERNAL_REPLAY_CONFIG || '',
   ).trim();
+  const externalReplayExpectedConfigurationHash = String(
+    environment.HEPTA_EXTERNAL_REPLAY_CONFIG_HASH || '',
+  ).trim().toLowerCase() || null;
   if (!effectiveExternalResearchReplay && externalReplayConfigPath) {
     try {
       effectiveExternalResearchReplay = createHttpExternalResearchReplayAdapter({
         configuration: readExternalResearchReplayServiceConfiguration({
           configPath: externalReplayConfigPath,
+          expectedConfigurationHash: externalReplayExpectedConfigurationHash,
         }),
+        expectedConfigurationHash: externalReplayExpectedConfigurationHash,
         environment,
         requiredLocalOriginIdentitySubjectHashes: requiredOriginIdentitySubjectHashes,
         clock,
@@ -395,10 +485,17 @@ export function composeAutonomousResearchExternalCapabilities({
   const priorArtConfigPath = String(
     environment.HEPTA_PRIOR_ART_SERVICE_CONFIG || '',
   ).trim();
+  const priorArtExpectedConfigurationHash = String(
+    environment.HEPTA_PRIOR_ART_SERVICE_CONFIG_HASH || '',
+  ).trim().toLowerCase() || null;
   if (!effectivePriorArtRetriever && priorArtConfigPath) {
     try {
       effectivePriorArtRetriever = createHttpPriorArtRetrievalAdapter({
-        configuration: readPriorArtServiceConfiguration({ configPath: priorArtConfigPath }),
+        configuration: readPriorArtServiceConfiguration({
+          configPath: priorArtConfigPath,
+          expectedConfigurationHash: priorArtExpectedConfigurationHash,
+        }),
+        expectedConfigurationHash: priorArtExpectedConfigurationHash,
         environment,
         clock,
       });
@@ -454,6 +551,12 @@ export function composeAutonomousResearchExternalCapabilities({
             environment,
             allowPrivateConfigurationFallback: false,
           }),
+        expectedConfigurationHash: String(
+          environment.HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIGURATION_HASH || '',
+        ).trim() || null,
+        expectedDescriptorHash: String(
+          environment.HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_HASH || '',
+        ).trim() || null,
         requiredLocalOriginIdentitySubjectHashes: requiredOriginIdentitySubjectHashes,
         clock,
       });
@@ -550,8 +653,10 @@ export function composeAutonomousResearchExternalCapabilities({
       : effectiveVenueProfileRegistry ? 'profile-selected-v1' : 'disabled',
     externalPrerequisites: Object.freeze([
       ...(!effectivePriorArtRetriever ? ['structured-prior-art-service'] : []),
-      ...(reviewerPrincipalPoolInspection?.pool.reviewerTrustDomainCount >= refereeCount
-        ? [] : ['independent-reviewer-trust-domains']),
+      ...(reviewerPrincipalPoolInspection?.identityIndependenceReady === true
+        && (reviewerPrincipalPoolInspection?.cryptographicAuthorityReady === true
+          || reviewerPrincipalPoolInspection?.sessionIsolationReady === true)
+        ? [] : ['independent-reviewer-session-isolation']),
       ...(!effectiveExternalResearchReplay ? ['external-replay-service'] : []),
       ...(!effectiveVenueProfileRegistry ? ['venue-profile-registry'] : []),
       ...(requestedContentMode === 'agent-evidence-bound'

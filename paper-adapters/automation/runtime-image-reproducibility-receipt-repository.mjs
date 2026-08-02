@@ -77,7 +77,7 @@ function safeReadMirror(candidate) {
 }
 
 function ensureSchema(database) {
-  database.exec('PRAGMA journal_mode=WAL;');
+  database.exec('PRAGMA journal_mode=DELETE;');
   database.exec('PRAGMA synchronous=FULL;');
   database.exec(`CREATE TABLE IF NOT EXISTS runtime_image_reproducibility_receipt (
     singleton_id INTEGER PRIMARY KEY CHECK(singleton_id=1),

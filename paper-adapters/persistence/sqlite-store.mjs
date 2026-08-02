@@ -139,7 +139,10 @@ function createPort({
     }
     try {
       const rows = invoke(database.prepare(String(sql || '')), 'all', parameters).map((row) => ({ ...row }));
-      return { ok: true, status: 0, stdout: JSON.stringify(rows), stderr: '', error: null, rows };
+      // StorePort v3 exposes query data through `rows`. Serializing an
+      // unbounded result a second time can exceed the JavaScript string limit
+      // even though SQLite returned the rows successfully.
+      return { ok: true, status: 0, stdout: '', stderr: '', error: null, rows };
     } catch (error) {
       if (state && !state.failure) state.failure = error;
       if (!state && database.isTransaction) {

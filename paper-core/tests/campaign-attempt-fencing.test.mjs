@@ -73,8 +73,29 @@ function claimAndStart(
   });
 }
 
+function nonModelAgentExecutionReceipt(fixtureStatus) {
+  const payload = {
+    version: 1,
+    kind: 'AgentExecutionReceipt',
+    executorId: 'campaign-attempt-fencing-fixture',
+    status: 'agent_execution_completed',
+    externalModelInvocationPerformed: false,
+    externalActionPerformed: false,
+    fixtureStatus,
+  };
+  return {
+    ...payload,
+    agentExecutionReceiptHash: hashRecord('AgentExecutionReceipt', payload),
+  };
+}
+
 function integrationResult(integrationKey) {
-  return { status: 'prepared', workspaceAttemptIntegration: { workspaceAttemptIntegrationDescriptorHash: integrationKey } };
+  return {
+    ...nonModelAgentExecutionReceipt('prepared'),
+    workspaceAttemptIntegration: {
+      workspaceAttemptIntegrationDescriptorHash: integrationKey,
+    },
+  };
 }
 
 function integrationReceipt(integrationKey) {
@@ -435,6 +456,9 @@ test('stale post-marker attempt becomes durable uncertain after database reopen'
 test('stale post-result attempt is memoized by prepared recovery after database reopen', async (t) => {
   const state = fixture(t, 'campaign-reopen-post-result');
   state.campaigns.createCampaign(plan('reopen-post-result'));
+  const preparedResult = nonModelAgentExecutionReceipt(
+    'durable-provider-result',
+  );
   const running = claimAndStart(
     state.campaigns,
     'reopen-post-result',
@@ -454,7 +478,7 @@ test('stale post-result attempt is memoized by prepared recovery after database 
     workerId: 'worker-before-reopen',
     attemptId: running.attemptId,
     leaseGeneration: running.leaseGeneration,
-    result: { status: 'durable-provider-result' },
+    result: preparedResult,
   });
   state.clock.advance(2000);
 
@@ -468,13 +492,13 @@ test('stale post-result attempt is memoized by prepared recovery after database 
     executor: {
       execute: async () => {
         executionCount += 1;
-        return { status: 'duplicate-provider-call' };
+        return nonModelAgentExecutionReceipt('duplicate-provider-call');
       },
     },
   });
   assert.equal(executionCount, 0);
   assert.equal(result.campaign.status, 'completed');
-  assert.deepEqual(result.nodes[0].result, { status: 'durable-provider-result' });
+  assert.deepEqual(result.nodes[0].result, preparedResult);
   const recovery = reopened.campaigns.listEvents('reopen-post-result')
     .find((item) => item.kind === 'campaign_node_lease_recovered');
   assert.equal(recovery.event.detail.recoveryDisposition,
@@ -484,13 +508,16 @@ test('stale post-result attempt is memoized by prepared recovery after database 
 test('campaign engine integrates a recovered prepared result without invoking the executor again', async (t) => {
   const { clock, campaigns } = fixture(t, 'campaign-engine-prepared-recovery');
   campaigns.createCampaign(plan('engine-prepared-recovery'));
+  const preparedResult = nonModelAgentExecutionReceipt(
+    'prepared-before-crash',
+  );
   const first = claimAndStart(campaigns, 'engine-prepared-recovery', 'worker-a', 1);
   campaigns.prepareNodeResult({
     nodeId: first.nodeId,
     workerId: 'worker-a',
     attemptId: first.attemptId,
     leaseGeneration: first.leaseGeneration,
-    result: { status: 'prepared-before-crash' },
+    result: preparedResult,
   });
   clock.advance(2000);
   let executionCount = 0;
@@ -499,11 +526,16 @@ test('campaign engine integrates a recovered prepared result without invoking th
     campaignStore: campaigns,
     concurrency: 1,
     pollMs: 1,
-    executor: { execute: async () => { executionCount += 1; return { status: 'duplicate' }; } },
+    executor: {
+      execute: async () => {
+        executionCount += 1;
+        return nonModelAgentExecutionReceipt('duplicate');
+      },
+    },
   });
   assert.equal(executionCount, 0);
   assert.equal(run.campaign.status, 'completed');
-  assert.deepEqual(run.nodes[0].result, { status: 'prepared-before-crash' });
+  assert.deepEqual(run.nodes[0].result, preparedResult);
 });
 
 test('node result, usage, completion event and campaign projection roll back as one unit', (t) => {
@@ -768,6 +800,57 @@ test('an integrated prepared result completes after lease recovery without anoth
   assert.equal(completed.status, 'completed');
 });
 
+test('a non-retryable failure after integration is terminal', (t) => {
+  const { campaigns } = fixture(t, 'campaign-integrated-non-retryable');
+  campaigns.createCampaign(plan('integrated-non-retryable'));
+  const running = claimAndStart(
+    campaigns,
+    'integrated-non-retryable',
+    'worker-a',
+  );
+  const integrationKey = 'sha256:integrated-non-retryable';
+  campaigns.prepareNodeResult({
+    nodeId: running.nodeId,
+    workerId: 'worker-a',
+    attemptId: running.attemptId,
+    leaseGeneration: running.leaseGeneration,
+    result: integrationResult(integrationKey),
+    requiresIntegration: true,
+    integrationKey,
+  });
+  campaigns.beginNodeResultIntegration({
+    nodeId: running.nodeId,
+    workerId: 'worker-a',
+    attemptId: running.attemptId,
+    leaseGeneration: running.leaseGeneration,
+    integrationKey,
+    integrationLeaseSeconds: 30,
+  });
+  campaigns.markNodeResultIntegrated({
+    nodeId: running.nodeId,
+    workerId: 'worker-a',
+    attemptId: running.attemptId,
+    leaseGeneration: running.leaseGeneration,
+    integrationKey,
+    integrationReceipt: integrationReceipt(integrationKey),
+  });
+  const failed = campaigns.failNode({
+    nodeId: running.nodeId,
+    workerId: 'worker-a',
+    attemptId: running.attemptId,
+    leaseGeneration: running.leaseGeneration,
+    failureClass: 'agent_usage_unknown_terminal',
+    failureDetail: { reason: 'fixture_non_retryable' },
+    retryable: false,
+  });
+  assert.equal(failed.status, 'failed_terminal');
+  assert.equal(failed.attemptCount, 1);
+  assert.equal(
+    campaigns.getCampaign('integrated-non-retryable').status,
+    'failed',
+  );
+});
+
 test('prepared result and integration receipt corruption fail closed on read', (t) => {
   const { store, campaigns } = fixture(t, 'campaign-prepared-corruption');
   campaigns.createCampaign(plan('prepared-corruption'));
@@ -803,6 +886,7 @@ test('integration conflicts abandon a poisoned prepared result and re-execute th
         error.code = 'workspace_attempt_integration_conflict';
         error.retryable = true;
         error.abandonPreparedResult = true;
+        error.receipt = result;
         throw error;
       }
       return integrationReceipt(result.workspaceAttemptIntegration.workspaceAttemptIntegrationDescriptorHash);

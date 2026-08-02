@@ -152,10 +152,12 @@ export function bootstrapAutonomousSubmissionHandoffContext({
   let store = null;
   try {
     const coordinator = outboxOverride || readOnly ? null
-      : mutationCoordinator || configuredHandoffMutationCoordinator({
-        runtimeRoot,
-        environment,
-      });
+      : mutationCoordinator || (requireExternallyFenced
+        ? configuredHandoffMutationCoordinator({
+          runtimeRoot,
+          environment,
+        })
+        : null);
     if (!outboxOverride) {
       try {
         store = openAutonomousSubmissionHandoffStore({
@@ -184,7 +186,7 @@ export function bootstrapAutonomousSubmissionHandoffContext({
         autonomousSubmissionRequestVerifier,
         autonomousSubmissionDispatchAuthority: dispatchAuthority,
         handoffOnly,
-        dedicatedHandoffRequired: true,
+        dedicatedHandoffRequired: requireExternallyFenced,
       });
     return Object.freeze({
       version: 1,

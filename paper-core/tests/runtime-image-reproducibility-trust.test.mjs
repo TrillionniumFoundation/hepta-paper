@@ -23,6 +23,8 @@ import {
 } from '../../paper-adapters/automation/runtime-image-registry.mjs';
 import {
   composeRuntimeImageReproducibilityStatus,
+  composeRuntimeImageReproducibilityVerification,
+  inspectRuntimeImageReproducibilityConfiguration,
 } from '../../paper-composition/automation/runtime-image-reproducibility-composition.mjs';
 import {
   buildRuntimeImageReproducibilityReceipt,
@@ -198,9 +200,18 @@ function fixture(t, mutateConfiguration = undefined) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-runtime-repro-trust-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const provisioned = verifierConfiguration(root, mutateConfiguration);
-  const configuration = readRuntimeImageReproducibilityProcessConfiguration({
+  const boundedConfiguration = readRuntimeImageReproducibilityProcessConfiguration({
     configPath: provisioned.configPath,
     environment: { PATH: process.env.PATH },
+  });
+  const environment = Object.freeze({
+    PATH: process.env.PATH,
+    HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG_HASH:
+      boundedConfiguration.configurationIdentityHash,
+  });
+  const configuration = readRuntimeImageReproducibilityProcessConfiguration({
+    configPath: provisioned.configPath,
+    environment,
   });
   const inputs = inspectRuntimeImageBuildInputClosures({
     repositoryRoot: REPOSITORY_ROOT,
@@ -315,8 +326,106 @@ function fixture(t, mutateConfiguration = undefined) {
       );
     },
   };
-  return { root, ...provisioned, configuration, inputs, request, responses, receipt, verificationContext };
+  return {
+    root,
+    ...provisioned,
+    environment,
+    configuration,
+    inputs,
+    request,
+    responses,
+    receipt,
+    verificationContext,
+  };
 }
+
+test('production configuration requires an exact out-of-band identity pin and single link',
+  async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-runtime-repro-pin-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const configured = verifierConfiguration(root);
+  const environment = { PATH: process.env.PATH };
+  const bounded = readRuntimeImageReproducibilityProcessConfiguration({
+    configPath: configured.configPath,
+    environment,
+  });
+  assert.equal(bounded.configurationPinned, false);
+  const boundedInspection = inspectRuntimeImageReproducibilityConfiguration({
+    configPath: configured.configPath,
+    environment,
+  });
+  assert.equal(boundedInspection.boundedReady, true);
+  assert.equal(boundedInspection.ready, false);
+  assert.equal(boundedInspection.fullProductionReady, false);
+  assert.deepEqual(boundedInspection.blockers, [
+    'runtime_reproducibility_configuration_not_pinned',
+  ]);
+  const codeProvenance = {
+    version: 2,
+    packageVersion: 'fixture',
+    commit: 'a'.repeat(40),
+    commitTree: 'b'.repeat(40),
+    treeDirty: false,
+    repositoryContentHash: H('repo'),
+    worktreeStateHash: H('worktree'),
+  };
+  const absentRuntimeRoot = path.join(root, 'unprovisioned-runtime');
+  const status = composeRuntimeImageReproducibilityStatus({
+    runtimeRoot: absentRuntimeRoot,
+    repositoryRoot: REPOSITORY_ROOT,
+    configPath: configured.configPath,
+    environment,
+    now: NOW,
+    codeProvenance,
+  });
+  assert.equal(status.ready, false);
+  assert.equal(
+    status.configuration.configurationIdentityHash,
+    bounded.configurationIdentityHash,
+  );
+  assert.deepEqual(status.blockers, [
+    'runtime_reproducibility_configuration_not_pinned',
+  ]);
+  assert.equal(fs.existsSync(absentRuntimeRoot), false);
+
+  const pinnedEnvironment = {
+    ...environment,
+    HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG_HASH: bounded.configurationIdentityHash,
+  };
+  const pinned = readRuntimeImageReproducibilityProcessConfiguration({
+    configPath: configured.configPath,
+    environment: pinnedEnvironment,
+  });
+  assert.equal(pinned.configurationPinned, true);
+  assert.equal(
+    inspectRuntimeImageReproducibilityConfiguration({
+      configPath: configured.configPath,
+      environment: pinnedEnvironment,
+    }).fullProductionReady,
+    true,
+  );
+  assert.throws(() => readRuntimeImageReproducibilityProcessConfiguration({
+    configPath: configured.configPath,
+    expectedConfigurationHash: H('different-runtime-configuration'),
+    environment,
+  }), /runtime_reproducibility_configuration_pin_mismatch/);
+  let verifierCalls = 0;
+  await assert.rejects(() => composeRuntimeImageReproducibilityVerification({
+    action: 'verify',
+    repositoryRoot: REPOSITORY_ROOT,
+    configPath: configured.configPath,
+    environment,
+    codeProvenance,
+    runProcess() { verifierCalls += 1; },
+  }), /runtime_reproducibility_configuration_not_pinned/);
+  assert.equal(verifierCalls, 0);
+
+  fs.linkSync(configured.configPath, path.join(root, 'runtime-reproducibility-hardlink.json'));
+  assert.throws(() => readRuntimeImageReproducibilityProcessConfiguration({
+    configPath: configured.configPath,
+    environment,
+  }), /runtime_reproducibility_integrity_file_invalid/);
+});
 
 test('two independent Ed25519 verifier responses bind identical complete OCI digest sets', (t) => {
   const value = fixture(t);
@@ -583,14 +692,21 @@ test('configuration requires an explicit bounded dual-build cost authority', (t)
 test('configuration clears Docker endpoint injection and invocation rechecks executable identity', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-runtime-repro-docker-env-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const forbidden = verifierConfiguration(root, (value) => {
-    value.verifiers[0].command.environmentAllowlist = ['DOCKER_HOST'];
-    return value;
-  });
-  assert.throws(() => readRuntimeImageReproducibilityProcessConfiguration({
-    configPath: forbidden.configPath,
-    environment: { PATH: process.env.PATH, DOCKER_HOST: 'tcp://attacker.invalid:2375' },
-  }), /runtime_reproducibility_verifier_command_invalid/);
+  for (const forbiddenKey of [
+    'DOCKER_HOST',
+    'HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG_HASH',
+  ]) {
+    const forbiddenRoot = path.join(root, forbiddenKey.toLowerCase());
+    fs.mkdirSync(forbiddenRoot);
+    const forbidden = verifierConfiguration(forbiddenRoot, (value) => {
+      value.verifiers[0].command.environmentAllowlist = [forbiddenKey];
+      return value;
+    });
+    assert.throws(() => readRuntimeImageReproducibilityProcessConfiguration({
+      configPath: forbidden.configPath,
+      environment: { PATH: process.env.PATH, DOCKER_HOST: 'tcp://attacker.invalid:2375' },
+    }), /runtime_reproducibility_verifier_command_invalid/);
+  }
 
   const value = fixture(t);
   fs.appendFileSync(value.configuration.verifiers[0].command.executable, '// drift\n');
@@ -702,7 +818,7 @@ test('status is read-only and a missing receipt can never become a verified repo
     runtimeRoot,
     repositoryRoot: REPOSITORY_ROOT,
     configPath: value.configPath,
-    environment: { PATH: process.env.PATH },
+    environment: value.environment,
     now: NOW,
     codeProvenance: {
       version: 2,

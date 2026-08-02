@@ -1,10 +1,11 @@
-import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
   verifyAgentExecutionReceipt,
   verifyAgentWorkspacePostimageBinding,
 } from '../evidence/agent-execution-receipt-contract.mjs';
 import {
   buildEvidenceBoundManuscriptIrDraft,
+  evidenceBoundManuscriptIrDraftHash,
 } from '../research/evidence-bound-manuscript-ir.mjs';
 import {
   EVIDENCE_ENTAILMENT_CONTRACT_PATH,
@@ -86,7 +87,10 @@ function nearSystemSeedBlock(tokens, systemSeedBlocks) {
 function canonicalDraft(value) {
   try {
     const rebuilt = buildEvidenceBoundManuscriptIrDraft(value || {});
-    return JSON.stringify(rebuilt) === JSON.stringify(value) ? rebuilt : null;
+    return evidenceBoundManuscriptIrDraftHash(rebuilt)
+      === evidenceBoundManuscriptIrDraftHash(value)
+      ? rebuilt
+      : null;
   } catch {
     return null;
   }
@@ -310,7 +314,9 @@ export function verifyTrustedAutonomousManuscriptRenderReceipt(receipt, {
     ) : null;
   const recomputedInspection = substantiveProof?.inspection || null;
   const recomputedAgentDraftHash = receipt?.agentAuthoredSourceDraft
-    ? hashBytes(Buffer.from(JSON.stringify(receipt.agentAuthoredSourceDraft), 'utf8')) : null;
+    ? evidenceBoundManuscriptIrDraftHash(receipt.agentAuthoredSourceDraft) : null;
+  const minimalAgentDraft = minimalMode && receipt?.agentAuthoredSourceDraft !== null
+    && receipt?.agentAuthoredSourceDraft !== undefined;
   if (agentMode && (receipt?.requireAgentAuthoredProse !== true
     || receipt?.agentAuthoredRenderedProseAccepted !== true
     || receipt?.substantiveAgentProseVerified !== true
@@ -331,21 +337,37 @@ export function verifyTrustedAutonomousManuscriptRenderReceipt(receipt, {
     || !sha(receipt?.agentWorkspacePostimageBindingHash))) {
     blockers.push('trusted_autonomous_manuscript_substantive_agent_proof_invalid');
   }
-  if (minimalMode && (receipt?.agentAuthoredRenderedProseAccepted !== false
-    || receipt?.substantiveAgentProseVerified !== false
+  if (minimalMode && (receipt?.substantiveAgentProseVerified !== false
     || receipt?.substantiveAgentProseInspection !== null
     || receipt?.substantiveAgentProseInspectionHash !== null
-    || receipt?.systemSeedManuscriptIrDraft !== null
     || receipt?.systemSeedManuscriptIrDraftHash !== null
-    || receipt?.agentAuthoredSourceDraft !== null
     || receipt?.substantivelyRewrittenSectionCount !== 0
-    || receipt?.substantivelyRewrittenBlockCount !== 0)) {
+    || receipt?.substantivelyRewrittenBlockCount !== 0
+    || (minimalAgentDraft && (
+      receipt?.agentAuthoredRenderedProseAccepted !== true
+      || canonicalDraft(receipt?.agentAuthoredSourceDraft) === null
+      || canonicalDraft(receipt?.systemSeedManuscriptIrDraft) === null
+      || receipt?.agentAuthoredSourceDraftHash !== recomputedAgentDraftHash
+      || !sha(receipt?.agentAuthoredRenderedProseReceiptHash)
+      || !sha(receipt?.agentAuthoredSourceDraftHash)
+      || !sha(receipt?.agentAuthoredSourceDraftFileHash)
+      || !sha(receipt?.agentWorkspacePostimageBindingHash)
+    ))
+    || (!minimalAgentDraft && (
+      receipt?.agentAuthoredRenderedProseAccepted !== false
+      || receipt?.agentAuthoredRenderedProseReceiptHash !== null
+      || receipt?.agentAuthoredSourceDraftHash !== null
+      || receipt?.agentAuthoredSourceDraftFileHash !== null
+      || receipt?.agentWorkspacePostimageBindingHash !== null
+      || receipt?.systemSeedManuscriptIrDraft !== null
+    )))) {
     blockers.push('trusted_autonomous_manuscript_minimal_mode_proof_invalid');
   }
   if (requireAgentAuthored && !agentMode) {
     blockers.push('trusted_autonomous_manuscript_agent_authorship_required');
   }
-  if (agentExecutionReceipt) {
+  const agentExecutionProofRequired = agentMode || minimalAgentDraft;
+  if (agentExecutionReceipt && agentExecutionProofRequired) {
     const postimageBinding = agentExecutionReceipt.agentWorkspacePostimageBinding || null;
     if (!verifyAgentExecutionReceipt(agentExecutionReceipt)
       || agentExecutionReceipt.agentExecutionReceiptHash
@@ -358,7 +380,7 @@ export function verifyTrustedAutonomousManuscriptRenderReceipt(receipt, {
       })) {
       blockers.push('trusted_autonomous_manuscript_agent_execution_proof_invalid');
     }
-  } else if (agentMode) {
+  } else if (agentExecutionProofRequired) {
     blockers.push('trusted_autonomous_manuscript_agent_execution_receipt_required');
   }
   if (requireExternalSubmission && (!sha(receipt?.venueProfileSelectionHash)

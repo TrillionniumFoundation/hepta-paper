@@ -6,7 +6,7 @@ import { resolveWorkspaceLayout } from '../src/workspace-layout.mjs';
 import { parseStrictCliArguments } from '../src/strict-cli-arguments.mjs';
 
 const args = parseStrictCliArguments(process.argv.slice(2), {
-  booleanFlags: ['execute', 'help'],
+  booleanFlags: ['execute', 'help', 'writer-quiesced'],
   positional: false,
 });
 
@@ -14,9 +14,10 @@ if (args.help) {
   process.stdout.write(`${JSON.stringify({
     version: 1,
     kind: 'RuntimePermissionMaintenanceUsage',
-    usage: 'npm run runtime:permissions [-- --execute]',
+    usage: 'npm run runtime:permissions [-- --execute --writer-quiesced]',
     defaultBehavior: 'read_only_audit',
-    executeBehavior: 'descriptor_relative_owner_only_permission_hardening',
+    executeBehavior:
+      'locked_descriptor_relative_owner_only_permission_hardening_after_confirmed_writer_quiescence',
   }, null, 2)}\n`);
 } else {
   const layout = resolveWorkspaceLayout();
@@ -34,6 +35,7 @@ if (args.help) {
   const report = auditRuntimePermissions({
     runtimeRoot,
     execute: Boolean(args.execute),
+    writerQuiescenceConfirmed: Boolean(args['writer-quiesced']),
   });
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
   if (report.blockers.length) process.exitCode = 2;

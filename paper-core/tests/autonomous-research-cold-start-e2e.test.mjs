@@ -5,6 +5,9 @@ import path from 'node:path';
 import test from 'node:test';
 
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  agentExecutionReceiptPayload,
+} from '../../paper-domain/evidence/agent-execution-receipt-contract.mjs';
 import { prepareAutonomousResearchLoop } from '../../paper-application/automation/autonomous-research-readiness.mjs';
 import {
   enqueuePreparedAutonomousResearchCampaign,
@@ -272,9 +275,28 @@ test('empty-runtime recurring intake survives restart and publishes only its bou
   const pricedFakeExecutor = {
     verifySignedReviewerReceipt: fake.executor.verifySignedReviewerReceipt,
     async execute(input) {
-      return Object.freeze({
+      const payload = Object.freeze({
         ...await fake.executor.execute(input),
-        usage: Object.freeze({ totalTokens: 0, costUsd: 0 }),
+        version: 1,
+        kind: 'AgentExecutionReceipt',
+        status: 'agent_execution_completed',
+        executorId: 'cold-start-e2e-fixture',
+        externalModelInvocationPerformed: false,
+        usage: Object.freeze({
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          totalTokens: 0,
+          costUsd: 0,
+        }),
+      });
+      return Object.freeze({
+        ...payload,
+        agentExecutionReceiptHash: hashRecord(
+          'AgentExecutionReceipt',
+          agentExecutionReceiptPayload(payload),
+        ),
       });
     },
   };

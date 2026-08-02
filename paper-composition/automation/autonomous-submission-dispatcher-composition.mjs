@@ -25,6 +25,9 @@ import {
   signAutonomousSubmissionDispatcherCycleReceipt,
 } from '../../paper-adapters/automation/autonomous-submission-dispatcher-cycle-signer.mjs';
 import {
+  assertAutonomousSubmissionPortalCanaryAuthorityIndependentFromDispatcher,
+} from '../../paper-adapters/automation/autonomous-submission-dispatcher-cycle-verifier.mjs';
+import {
   autonomousSubmissionDispatcherProcessIdentity,
   inspectAutonomousSubmissionDispatcherStoragePreflight,
 } from '../../paper-adapters/automation/autonomous-submission-dispatcher-storage-preflight.mjs';
@@ -34,6 +37,8 @@ export async function deliverAutonomousSubmissionStatesIfReady({
   states = [],
   portalVerifierReady,
   portalIdentityIndependenceReady,
+  portalFullProductionReady,
+  livePortalCanaryReady,
   storagePreflight,
   portal,
   outbox,
@@ -44,6 +49,8 @@ export async function deliverAutonomousSubmissionStatesIfReady({
 } = {}) {
   if (portalVerifierReady !== true
     || portalIdentityIndependenceReady !== true
+    || portalFullProductionReady !== true
+    || livePortalCanaryReady !== true
     || storagePreflight?.ready !== true) return Object.freeze([]);
   const results = [];
   for (const state of states) {
@@ -109,16 +116,21 @@ export async function dispatchAutonomousSubmissionHandoffs({
       services.autonomousSubmissionPortal.identityIndependenceReady === true;
     const storagePreflight = storagePreflightOverride
       || inspectAutonomousSubmissionDispatcherStoragePreflight({ runtimeRoot });
+    const signingConfiguration = challenges.length > 0
+      ? readAutonomousSubmissionDispatcherCycleSigningConfiguration({ environment })
+      : null;
     const portalCanaries = new Map();
     for (const challenge of challenges) {
       let canary = null;
+      let authorityIndependence = null;
       const portalBindingVerified = challenge.portalId
           === services.autonomousSubmissionPortal.portalId
         && challenge.portalConfigurationHash
           === services.autonomousSubmissionPortal.configurationHash
         && challenge.portalDescriptorHash === services.portalDescriptorHash
         && services.autonomousSubmissionPortal.portalDescriptorHash
-          === services.portalDescriptorHash;
+          === services.portalDescriptorHash
+        && services.autonomousSubmissionPortal.fullProductionReady === true;
       if (portalBindingVerified
         && typeof services.autonomousSubmissionPortal.probeReadiness === 'function') {
         try {
@@ -126,26 +138,39 @@ export async function dispatchAutonomousSubmissionHandoffs({
             challenge,
             signal,
           });
+          authorityIndependence =
+            assertAutonomousSubmissionPortalCanaryAuthorityIndependentFromDispatcher({
+              verificationReceipt: canary.signatureVerificationReceipt,
+              identity: signingConfiguration.identity,
+            });
         } catch { canary = null; }
       }
       portalCanaries.set(challenge.challengeHash, Object.freeze({
         portalBindingVerified,
         canary,
+        authorityIndependence,
       }));
     }
     const states = context.services.autonomousSubmissionOutbox
       .listDispatchableAutonomousSubmissions({ campaignId, limit: Number(limit) });
-    const liveCanaryGateReady = challenges.length === 0
-      || challenges.every((challenge) => (
+    const liveCanaryGateReady = challenges.length > 0
+      && challenges.every((challenge) => (
         portalCanaries.get(challenge.challengeHash)?.canary?.ready === true
         && portalCanaries.get(challenge.challengeHash)?.canary
           ?.externalActionPerformed === false
+        && portalCanaries.get(challenge.challengeHash)
+          ?.authorityIndependence?.independent === true
       ));
-    const results = liveCanaryGateReady
+    const deliveryGateReady = liveCanaryGateReady
+      && services.autonomousSubmissionPortal.fullProductionReady === true;
+    const results = deliveryGateReady
       ? await deliverAutonomousSubmissionStatesIfReady({
       states,
       portalVerifierReady,
       portalIdentityIndependenceReady,
+      portalFullProductionReady:
+        services.autonomousSubmissionPortal.fullProductionReady,
+      livePortalCanaryReady: liveCanaryGateReady,
       storagePreflight,
       portal: services.autonomousSubmissionPortal,
       outbox: context.services.autonomousSubmissionOutbox,
@@ -159,8 +184,6 @@ export async function dispatchAutonomousSubmissionHandoffs({
     );
     const cycleReceipts = [];
     if (challenges.length > 0) {
-      const signingConfiguration =
-        readAutonomousSubmissionDispatcherCycleSigningConfiguration({ environment });
       const handoff = inspectAutonomousSubmissionDispatcherHandoffState({ runtimeRoot });
       const processIdentity = processIdentityOverride
         || autonomousSubmissionDispatcherProcessIdentity();
@@ -186,6 +209,9 @@ export async function dispatchAutonomousSubmissionHandoffs({
           portalDescriptorHash: services.portalDescriptorHash,
           portalBindingVerified: challengeCanary?.portalBindingVerified === true,
           livePortalCanaryReceiptHash: canary?.canaryReceiptHash || null,
+          livePortalCanaryAuthorityIndependenceHash:
+            challengeCanary?.authorityIndependence
+              ?.portalCanaryAuthorityIndependenceHash || null,
           cutoverId: handoff.cutoverId,
           handoffInstanceNonce: handoff.handoffInstanceNonce,
           handoffDatabaseIdentityHash: handoff.handoffDatabaseIdentityHash,
@@ -203,10 +229,16 @@ export async function dispatchAutonomousSubmissionHandoffs({
           portalBindingVerified: challengeCanary?.portalBindingVerified === true,
           portalVerifierReady,
           portalIdentityIndependenceReady,
+          portalFullProductionReady:
+            services.autonomousSubmissionPortal.fullProductionReady === true,
           livePortalCanaryVerified: canary?.ready === true,
           livePortalCanaryReceiptHash: canary?.canaryReceiptHash || null,
           livePortalCanaryVerificationReceiptHash:
             canary?.pinnedExternalEvidenceVerificationReceiptHash || null,
+          livePortalCanaryVerificationVerifiedAt:
+            canary?.signatureVerificationReceipt?.verifiedAt || null,
+          livePortalCanaryAuthorityIndependentFromDispatcher:
+            challengeCanary?.authorityIndependence?.independent === true,
           livePortalCanaryExternalActionPerformed:
             canary?.externalActionPerformed ?? null,
           livePortalCanaryEvidence: canary?.evidence || null,
@@ -241,7 +273,9 @@ export async function dispatchAutonomousSubmissionHandoffs({
         }));
       }
     }
-    const status = results.some((result) => (
+    const status = states.length > 0 && !deliveryGateReady
+      ? 'autonomous_submission_dispatcher_blocked'
+      : results.some((result) => (
       result.status === 'autonomous_submission_delivery_explicit_failure'
     ))
       ? 'autonomous_submission_dispatcher_explicit_failure'
@@ -253,7 +287,14 @@ export async function dispatchAutonomousSubmissionHandoffs({
       kind: 'AutonomousSubmissionDispatcherReport',
       status,
       ready: status === 'autonomous_submission_dispatcher_completed'
-        && cycleReceipts.every((receipt) => receipt.ready === true),
+        && services.autonomousSubmissionPortal.fullProductionReady === true
+        && liveCanaryGateReady
+        && cycleReceipts.length > 0
+        && cycleReceipts.every((receipt) => receipt.ready === true)
+        && (states.length === 0 || results.length === states.length),
+      portalFullProductionReady:
+        services.autonomousSubmissionPortal.fullProductionReady === true,
+      livePortalCanaryGateReady: liveCanaryGateReady,
       inspectedCampaignCount: new Set(states.map((state) => state.request.campaignId)).size,
       inspectedHandoffCount: states.length,
       networkActionPerformed,

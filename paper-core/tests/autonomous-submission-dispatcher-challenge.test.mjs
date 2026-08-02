@@ -3,7 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 import {
@@ -130,17 +130,28 @@ function fixture(t) {
   return { root, runtimeRoot, cutover };
 }
 
-function runPublisher({ scriptPath, runtimeRoot, hash, barrierPath }) {
-  return new Promise((resolve) => {
-    const child = spawn(process.execPath, [scriptPath, runtimeRoot, hash, barrierPath], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+function runPublisher({ scriptPath, runtimeRoot, hash, barrierPath, readyPath }) {
+  const child = spawn(process.execPath, [
+    scriptPath, runtimeRoot, hash, barrierPath, readyPath,
+  ], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const completion = new Promise((resolve) => {
     let stdout = '';
     let stderr = '';
     child.stdout.on('data', (chunk) => { stdout += chunk; });
     child.stderr.on('data', (chunk) => { stderr += chunk; });
     child.on('close', (status) => resolve({ status, stdout, stderr }));
   });
+  return Object.freeze({ child, completion });
+}
+
+async function waitForFiles(candidates, timeoutMs = 15_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!candidates.every((candidate) => fs.existsSync(candidate))) {
+    if (Date.now() >= deadline) throw new Error('publisher_ready_timeout');
+    await new Promise((resolve) => { setTimeout(resolve, 5); });
+  }
 }
 
 test('exchange publish never exposes partial final files and converges concurrent writers', async (t) => {
@@ -169,7 +180,9 @@ test('exchange publish never exposes partial final files and converges concurren
   ).href;
   fs.writeFileSync(scriptPath, `import fs from 'node:fs';
 import { publishDispatcherExchangeDocument } from ${JSON.stringify(exchangeModule)};
-const [runtimeRoot, hash, barrierPath] = process.argv.slice(2);
+const [runtimeRoot, hash, barrierPath, readyPath] = process.argv.slice(2);
+process.umask(0o077);
+fs.writeFileSync(readyPath, 'ready\\n', { flag: 'wx', mode: 0o600 });
 const waitArray = new Int32Array(new SharedArrayBuffer(4));
 while (!fs.existsSync(barrierPath)) Atomics.wait(waitArray, 0, 0, 5);
 const result = publishDispatcherExchangeDocument({
@@ -180,18 +193,32 @@ const result = publishDispatcherExchangeDocument({
 });
 process.stdout.write(JSON.stringify(result));
 `, { mode: 0o700 });
-  const publishers = [1, 2].map(() => runPublisher({
+  const publisherCount = 8;
+  const readyPaths = Array.from({ length: publisherCount }, (_, index) => (
+    path.join(root, `publisher-ready-${index}`)
+  ));
+  const publishers = readyPaths.map((readyPath) => runPublisher({
     scriptPath,
     runtimeRoot,
     hash: concurrentHash,
     barrierPath,
+    readyPath,
   }));
+  t.after(() => {
+    for (const { child } of publishers) {
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    }
+  });
+  await waitForFiles(readyPaths);
   fs.writeFileSync(barrierPath, 'go\n', { mode: 0o600 });
-  const results = await Promise.all(publishers);
+  const results = await Promise.all(publishers.map(({ completion }) => completion));
   assert.ok(results.every((result) => result.status === 0),
     results.map((result) => result.stderr).join('\n'));
   const publications = results.map((result) => JSON.parse(result.stdout));
-  assert.deepEqual(publications.map((result) => result.published).sort(), [false, true]);
+  assert.deepEqual(publications.map((result) => result.published).sort(), [
+    ...Array.from({ length: publisherCount - 1 }, () => false),
+    true,
+  ]);
   const target = dispatcherExchangeFilePath({
     runtimeRoot,
     kind: 'dispatcher-cycles',
@@ -202,6 +229,104 @@ process.stdout.write(JSON.stringify(result));
     kind: 'ConcurrentFixtureExchange',
     hash: concurrentHash,
   });
+  assert.equal(fs.lstatSync(path.dirname(target)).mode & 0o7777, 0o2750);
+  assert.deepEqual(fs.readdirSync(path.dirname(target))
+    .filter((name) => name.startsWith(`.publish-${concurrentHash.slice(7)}-`)), []);
+});
+
+test('exchange directory converges a same-owner umask-masked EEXIST target', (t) => {
+  const { runtimeRoot } = fixture(t);
+  const selected = autonomousSubmissionDispatcherExchangeDirectory({
+    runtimeRoot,
+    kind: 'dispatcher-cycles',
+  });
+  fs.mkdirSync(selected, { mode: 0o700 });
+  fs.chmodSync(selected, 0o2700);
+  assert.equal(autonomousSubmissionDispatcherExchangeDirectory({
+    runtimeRoot,
+    kind: 'dispatcher-cycles',
+    create: true,
+  }), selected);
+  assert.equal(fs.lstatSync(selected).mode & 0o7777, 0o2750);
+});
+
+test('exchange directory creation still fails closed on an unsafe EEXIST target', (t) => {
+  const { runtimeRoot } = fixture(t);
+  const selected = autonomousSubmissionDispatcherExchangeDirectory({
+    runtimeRoot,
+    kind: 'dispatcher-cycles',
+  });
+  fs.writeFileSync(selected, 'not a directory\n', { mode: 0o640 });
+  assert.throws(() => autonomousSubmissionDispatcherExchangeDirectory({
+    runtimeRoot,
+    kind: 'dispatcher-cycles',
+    create: true,
+  }), /autonomous_submission_dispatcher_exchange_directory_unsafe/);
+});
+
+test('exchange directory creation never follows a pre-existing symlink', (t) => {
+  const { root, runtimeRoot } = fixture(t);
+  const selected = autonomousSubmissionDispatcherExchangeDirectory({
+    runtimeRoot,
+    kind: 'dispatcher-cycles',
+  });
+  const outside = path.join(root, 'outside-directory');
+  fs.mkdirSync(outside, { mode: 0o700 });
+  fs.chmodSync(outside, 0o700);
+  fs.symlinkSync(outside, selected, 'dir');
+  assert.throws(() => autonomousSubmissionDispatcherExchangeDirectory({
+    runtimeRoot,
+    kind: 'dispatcher-cycles',
+    create: true,
+  }), /autonomous_submission_dispatcher_exchange_directory_unsafe/);
+  assert.equal(fs.lstatSync(outside).mode & 0o7777, 0o700);
+});
+
+test('exchange directory creation never chmods a replacement symlink target', (t) => {
+  const { root, runtimeRoot } = fixture(t);
+  const selected = autonomousSubmissionDispatcherExchangeDirectory({
+    runtimeRoot,
+    kind: 'dispatcher-cycles',
+  });
+  const outside = path.join(root, 'replacement-outside-directory');
+  const displaced = path.join(root, 'displaced-created-directory');
+  fs.mkdirSync(outside, { mode: 0o700 });
+  fs.chmodSync(outside, 0o700);
+  const scriptPath = path.join(root, 'replacement-race.mjs');
+  const exchangeModule = new URL(
+    '../../paper-adapters/automation/autonomous-submission-dispatcher-exchange-repository.mjs',
+    import.meta.url,
+  ).href;
+  fs.writeFileSync(scriptPath, `import fs from 'node:fs';
+import { autonomousSubmissionDispatcherExchangeDirectory } from ${JSON.stringify(exchangeModule)};
+const [runtimeRoot, selected, outside, displaced] = process.argv.slice(2);
+const originalMkdirSync = fs.mkdirSync;
+fs.mkdirSync = (candidate, options) => {
+  const result = originalMkdirSync(candidate, options);
+  if (candidate === selected) {
+    fs.renameSync(selected, displaced);
+    fs.symlinkSync(outside, selected, 'dir');
+  }
+  return result;
+};
+try {
+  autonomousSubmissionDispatcherExchangeDirectory({
+    runtimeRoot,
+    kind: 'dispatcher-cycles',
+    create: true,
+  });
+  process.exitCode = 2;
+} catch (error) {
+  if (error?.message !== 'autonomous_submission_dispatcher_exchange_directory_unsafe') {
+    throw error;
+  }
+}
+`, { mode: 0o700 });
+  const result = spawnSync(process.execPath, [
+    scriptPath, runtimeRoot, selected, outside, displaced,
+  ], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(fs.lstatSync(outside).mode & 0o7777, 0o700);
 });
 
 test('plan-bound challenge converges only through an externally signed resident cycle', (t) => {

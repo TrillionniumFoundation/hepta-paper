@@ -8,6 +8,67 @@ import {
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const NO_FOLLOW = fs.constants.O_NOFOLLOW || 0;
+const DIRECTORY_ONLY = fs.constants.O_DIRECTORY || 0;
+const EXCHANGE_DIRECTORY_MODE = 0o2750;
+const EXCHANGE_DIRECTORY_MODE_BIGINT = 0o2750n;
+
+function sameDirectoryIdentity(left, right) {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function pathBindsToDirectory(selected, expected) {
+  try {
+    const before = fs.lstatSync(selected, { bigint: true });
+    if (!before.isDirectory() || before.isSymbolicLink()
+      || !sameDirectoryIdentity(before, expected)
+      || fs.realpathSync.native(selected) !== selected) return false;
+    const after = fs.lstatSync(selected, { bigint: true });
+    return after.isDirectory() && !after.isSymbolicLink()
+      && sameDirectoryIdentity(after, expected);
+  } catch {
+    return false;
+  }
+}
+
+function convergePinnedExchangeDirectory({ selected, create }) {
+  if (DIRECTORY_ONLY === 0 || NO_FOLLOW === 0) {
+    throw new Error('autonomous_submission_dispatcher_exchange_directory_unsafe');
+  }
+  let descriptor;
+  try {
+    try {
+      descriptor = fs.openSync(
+        selected,
+        fs.constants.O_RDONLY | DIRECTORY_ONLY | NO_FOLLOW,
+      );
+    } catch {
+      throw new Error('autonomous_submission_dispatcher_exchange_directory_unsafe');
+    }
+    let opened = fs.fstatSync(descriptor, { bigint: true });
+    if (!opened.isDirectory() || !pathBindsToDirectory(selected, opened)) {
+      throw new Error('autonomous_submission_dispatcher_exchange_directory_unsafe');
+    }
+    const mode = opened.mode & 0o7777n;
+    if (mode !== EXCHANGE_DIRECTORY_MODE_BIGINT) {
+      const currentUid = typeof process.getuid === 'function'
+        ? BigInt(process.getuid()) : null;
+      if (!create || currentUid === null || opened.uid !== currentUid
+        || (mode & ~EXCHANGE_DIRECTORY_MODE_BIGINT) !== 0n) {
+        throw new Error('autonomous_submission_dispatcher_exchange_directory_unsafe');
+      }
+      fs.fchmodSync(descriptor, EXCHANGE_DIRECTORY_MODE);
+      opened = fs.fstatSync(descriptor, { bigint: true });
+    }
+    if (!opened.isDirectory()
+      || (opened.mode & 0o7777n) !== EXCHANGE_DIRECTORY_MODE_BIGINT
+      || !pathBindsToDirectory(selected, opened)) {
+      throw new Error('autonomous_submission_dispatcher_exchange_directory_unsafe');
+    }
+    return selected;
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+  }
+}
 
 function baseDirectory(runtimeRoot) {
   const directory = path.dirname(autonomousSubmissionHandoffDatabasePath({ runtimeRoot }));
@@ -30,18 +91,16 @@ export function autonomousSubmissionDispatcherExchangeDirectory({
   }
   const base = baseDirectory(runtimeRoot);
   const selected = path.join(base, kind);
-  if (!fs.existsSync(selected)) {
-    if (!create) return selected;
-    fs.mkdirSync(selected, { mode: 0o2750 });
-    fs.chmodSync(selected, 0o2750);
+  if (create) {
+    try {
+      fs.mkdirSync(selected, { mode: EXCHANGE_DIRECTORY_MODE });
+    } catch (error) {
+      if (error?.code !== 'EEXIST') throw error;
+    }
+  } else if (!fs.existsSync(selected)) {
+    return selected;
   }
-  const stat = fs.lstatSync(selected);
-  if (!stat.isDirectory() || stat.isSymbolicLink()
-    || fs.realpathSync(selected) !== selected
-    || (stat.mode & 0o7777) !== 0o2750) {
-    throw new Error('autonomous_submission_dispatcher_exchange_directory_unsafe');
-  }
-  return selected;
+  return convergePinnedExchangeDirectory({ selected, create });
 }
 
 export function dispatcherExchangeFilePath({ runtimeRoot, kind, hash } = {}) {

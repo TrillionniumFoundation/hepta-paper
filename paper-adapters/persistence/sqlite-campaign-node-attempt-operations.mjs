@@ -12,7 +12,8 @@ import { mapCampaignNodeRow as parseNode } from './sqlite-campaign-row-mappers.m
 function terminalSiblingSettlement({ sibling, terminalNodeId, terminalFailureHash,
   now, eventStatement }) {
   const integrationStatus = String(sibling.preparedIntegrationStatus || 'none');
-  const outcomeUncertain = ['integrating', 'integrated'].includes(integrationStatus);
+  const outcomeUncertain = integrationStatus === 'integrating'
+    || (sibling.status !== 'queued' && integrationStatus === 'integrated');
   const status = outcomeUncertain ? 'external_outcome_uncertain' : 'skipped';
   const failureClass = outcomeUncertain
     ? 'campaign_terminal_sibling_outcome_uncertain'
@@ -131,7 +132,14 @@ export function createCampaignNodeAttemptOperations({
       const terminalSiblingSettlements = status === 'failed_terminal'
         ? store.query(`SELECT * FROM campaign_nodes
           WHERE campaign_id=${sqlText(node.campaignId)} AND node_id<>${sqlText(nodeId)}
-            AND status IN ('leased','running') ORDER BY node_id;`).rows
+            AND (status IN ('leased','running') OR (status='queued'
+              AND EXISTS(SELECT 1 FROM paper_campaigns policy
+                WHERE policy.campaign_id=campaign_nodes.campaign_id
+                  AND json_type(policy.spec_json,
+                    '$.terminalSiblingSettlementPolicyVersion')='integer'
+                  AND json_extract(policy.spec_json,
+                    '$.terminalSiblingSettlementPolicyVersion')=1)))
+            ORDER BY node_id;`).rows
           .map(parseNode)
           .map((sibling) => terminalSiblingSettlement({
             sibling,
@@ -167,7 +175,7 @@ export function createCampaignNodeAttemptOperations({
                 ? `lease_owner=${sqlText(sibling.leaseOwner)}` : 'lease_owner IS NULL';
               const attemptCondition = sibling.attemptId
                 ? `attempt_id=${sqlText(sibling.attemptId)}` : 'attempt_id IS NULL';
-              const update = `UPDATE campaign_nodes SET status=${sqlText(settlement.status)},failure_class=${sqlText(settlement.failureClass)},failure_json=${sqlJson(settlement.failureDetail)},failure_sha256=${sqlText(settlement.failureHash)},lease_owner=NULL,lease_expires_at=NULL,attempt_id=NULL,node_revision=node_revision+1,updated_at=${sqlText(now)} WHERE node_id=${sqlText(sibling.nodeId)} AND campaign_id=${sqlText(node.campaignId)} AND status=${sqlText(sibling.status)} AND ${ownerCondition} AND ${attemptCondition} AND lease_generation=${Number(sibling.leaseGeneration || 0)} AND node_revision=${Number(sibling.nodeRevision || 0)} AND prepared_integration_status=${sqlText(sibling.preparedIntegrationStatus || 'none')} AND EXISTS(SELECT 1 FROM paper_campaigns c WHERE c.campaign_id=campaign_nodes.campaign_id AND c.status='running');`;
+              const update = `UPDATE campaign_nodes SET status=${sqlText(settlement.status)},failure_class=${sqlText(settlement.failureClass)},failure_json=${sqlJson(settlement.failureDetail)},failure_sha256=${sqlText(settlement.failureHash)},lease_owner=NULL,lease_expires_at=NULL,attempt_id=NULL,node_revision=node_revision+1,updated_at=${sqlText(now)} WHERE node_id=${sqlText(sibling.nodeId)} AND campaign_id=${sqlText(node.campaignId)} AND status=${sqlText(sibling.status)} AND ${ownerCondition} AND ${attemptCondition} AND lease_generation=${Number(sibling.leaseGeneration || 0)} AND node_revision=${Number(sibling.nodeRevision || 0)} AND prepared_integration_status=${sqlText(sibling.preparedIntegrationStatus || 'none')} AND EXISTS(SELECT 1 FROM paper_campaigns c WHERE c.campaign_id=campaign_nodes.campaign_id AND c.status='running') AND (status<>'queued' OR EXISTS(SELECT 1 FROM paper_campaigns policy WHERE policy.campaign_id=campaign_nodes.campaign_id AND json_type(policy.spec_json,'$.terminalSiblingSettlementPolicyVersion')='integer' AND json_extract(policy.spec_json,'$.terminalSiblingSettlementPolicyVersion')=1));`;
               return [guarded(update), settlement.eventRow.sql];
             }),
             `UPDATE paper_campaigns SET ${usageSql(usageDelta)},updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(node.campaignId)} AND status='running';`,

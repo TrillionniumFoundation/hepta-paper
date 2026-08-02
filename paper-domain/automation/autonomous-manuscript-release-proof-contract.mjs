@@ -8,14 +8,27 @@ import {
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 
+// Workspace isolation appends transport metadata after the campaign node has
+// minted its domain result. The outer PaperCampaignNodeResult hash binds that
+// metadata; the executor-owned result hash deliberately does not.
+export function campaignTrustedAutonomousManuscriptResultPayload(result) {
+  const {
+    campaignTrustedAutonomousManuscriptResultHash: _claimedResultHash,
+    workspaceAttemptIntegration: _workspaceAttemptIntegration,
+    ...payload
+  } = result || {};
+  return payload;
+}
+
 export function inspectAutonomousManuscriptReleaseProof(
   proof,
   expected = {},
-  { requireAgentAuthored = false } = {},
+  { requireAgentAuthored = false, requireReadableProof = false } = {},
 ) {
   const result = proof?.result || null;
   const receipt = result?.trustedAutonomousManuscriptRenderReceipt || null;
-  const { campaignTrustedAutonomousManuscriptResultHash: claimedResultHash, ...resultPayload } = result || {};
+  const claimedResultHash = result?.campaignTrustedAutonomousManuscriptResultHash || null;
+  const resultPayload = campaignTrustedAutonomousManuscriptResultPayload(result);
   const agentReceipt = result?.agentExecutionReceipt || null;
   const mergeReceipt = agentReceipt?.isolatedAgentMergeReceipt || null;
   const verification = verifyTrustedAutonomousManuscriptRenderReceipt(receipt, {
@@ -34,6 +47,7 @@ export function inspectAutonomousManuscriptReleaseProof(
     submissionMetadataReceiptHash: expected.submissionMetadataReceiptHash,
     agentExecutionReceipt: agentReceipt,
     requireAgentAuthored,
+    requireReadableProof,
     requireExternalSubmission: expected.requireExternalSubmission === true,
   });
   const valid = Boolean(proof)

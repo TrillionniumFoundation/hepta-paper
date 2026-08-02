@@ -520,7 +520,13 @@ const plans = [
       lease_owner,attempt_id,lease_generation,node_revision,
       prepared_integration_status
       FROM campaign_nodes WHERE campaign_id=? AND node_id<>?
-        AND status IN ('leased','running')
+        AND (status IN ('leased','running') OR (status='queued'
+          AND EXISTS(SELECT 1 FROM paper_campaigns policy
+            WHERE policy.campaign_id=campaign_nodes.campaign_id
+              AND json_type(policy.spec_json,
+                '$.terminalSiblingSettlementPolicyVersion')='integer'
+              AND json_extract(policy.spec_json,
+                '$.terminalSiblingSettlementPolicyVersion')=1)))
         AND EXISTS(SELECT 1 FROM paper_campaigns c
           WHERE c.campaign_id=campaign_nodes.campaign_id AND c.status='running')
       ORDER BY node_id`, 'all'),
@@ -533,7 +539,13 @@ const plans = [
         AND lease_generation=? AND node_revision=?
         AND prepared_integration_status=?
         AND EXISTS(SELECT 1 FROM paper_campaigns c
-          WHERE c.campaign_id=campaign_nodes.campaign_id AND c.status='running')`),
+          WHERE c.campaign_id=campaign_nodes.campaign_id AND c.status='running')
+        AND (status<>'queued' OR EXISTS(SELECT 1 FROM paper_campaigns policy
+          WHERE policy.campaign_id=campaign_nodes.campaign_id
+            AND json_type(policy.spec_json,
+              '$.terminalSiblingSettlementPolicyVersion')='integer'
+            AND json_extract(policy.spec_json,
+              '$.terminalSiblingSettlementPolicyVersion')=1))`),
     statement(S.updateCampaignUsage, `UPDATE paper_campaigns SET ${USAGE_SET},updated_at=?
       WHERE campaign_id=? AND status='running'`),
   ]),

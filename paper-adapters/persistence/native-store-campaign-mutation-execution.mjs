@@ -404,7 +404,8 @@ function applyCompleteNodeExternalAction(transaction, input) {
 
 function terminalSiblingSettlement({ sibling, input }) {
   const integrationStatus = String(sibling.prepared_integration_status || 'none');
-  const outcomeUncertain = ['integrating', 'integrated'].includes(integrationStatus);
+  const outcomeUncertain = integrationStatus === 'integrating'
+    || (sibling.status !== 'queued' && integrationStatus === 'integrated');
   const status = outcomeUncertain ? 'external_outcome_uncertain' : 'skipped';
   const failureClass = outcomeUncertain
     ? 'campaign_terminal_sibling_outcome_uncertain'

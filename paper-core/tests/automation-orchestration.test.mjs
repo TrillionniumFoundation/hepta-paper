@@ -1057,6 +1057,13 @@ test('production artifact revalidation selects only a hash-valid manuscript resu
     includeProof: true,
   });
   const proof = release.trustedAutonomousManuscriptResult;
+  const integratedResult = Object.freeze({
+    ...proof.result,
+    workspaceAttemptIntegration: Object.freeze({
+      workspaceAttemptIntegrationDescriptorHash:
+        hashRecord('FixtureWorkspaceAttemptIntegrationDescriptor', { campaignId }),
+    }),
+  });
   const candidate = Object.freeze({
     ...proof,
     campaignId,
@@ -1066,7 +1073,8 @@ test('production artifact revalidation selects only a hash-valid manuscript resu
     role: 'writer',
     roundIndex: 1,
     status: 'completed',
-    resultSha256: proof.resultHash,
+    result: integratedResult,
+    resultSha256: hashRecord('PaperCampaignNodeResult', integratedResult),
   });
   const qualityCalls = [];
   const primitives = {
@@ -1158,6 +1166,7 @@ test('production artifact revalidation selects only a hash-valid manuscript resu
   const validResult = candidate.result;
   const {
     campaignTrustedAutonomousManuscriptResultHash: _resultHash,
+    workspaceAttemptIntegration,
     ...validResultPayload
   } = validResult;
   const tamperedReceipt = {
@@ -1174,6 +1183,7 @@ test('production artifact revalidation selects only a hash-valid manuscript resu
       'CampaignTrustedAutonomousManuscriptResult',
       tamperedResultPayload,
     ),
+    workspaceAttemptIntegration,
   };
   const tamperedCandidate = {
     ...candidate,

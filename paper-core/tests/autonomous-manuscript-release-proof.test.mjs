@@ -21,6 +21,9 @@ import {
   verifyAutonomousResearchReleaseBinding,
 } from '../../paper-domain/automation/autonomous-research-release-binding-contract.mjs';
 import {
+  inspectAutonomousManuscriptReleaseProof,
+} from '../../paper-domain/automation/autonomous-manuscript-release-proof-contract.mjs';
+import {
   buildAgentWorkspacePostimageBinding,
 } from '../../paper-domain/evidence/agent-execution-receipt-contract.mjs';
 import {
@@ -530,6 +533,108 @@ test('production release qualification is inseparable from agent, merge, postima
   ]) assert.equal(verifyAutonomousResearchReleaseBinding(candidate, {
     authorityObservedAt: '2026-07-19T00:00:00.000Z',
   }).valid, false, label);
+});
+
+test('manuscript release proof keeps workspace integration transport outside its domain hash', () => {
+  const release = genericManuscriptReleaseFixture({
+    paperId: PAPER_ID,
+    campaignId: CAMPAIGN_ID,
+    campaignPlanHash: HASH('plan'),
+    launchMode: 'production-run',
+    externalSubmission: true,
+    includeProof: true,
+  });
+  const proof = release.trustedAutonomousManuscriptResult;
+  const result = Object.freeze({
+    ...proof.result,
+    workspaceAttemptIntegration: Object.freeze({
+      workspaceAttemptIntegrationDescriptorHash: HASH('workspace-attempt-integration'),
+    }),
+  });
+  const integratedProof = Object.freeze({
+    ...proof,
+    result,
+    resultHash: hashRecord('PaperCampaignNodeResult', result),
+  });
+  const binding = release.releaseBinding;
+  const expected = Object.freeze({
+    paperId: binding.paperId,
+    campaignId: binding.campaignId,
+    manuscriptPath: binding.manuscriptPath,
+    renderedManuscriptHash: binding.renderedManuscriptHash,
+    evidenceBoundManuscriptIrHash: binding.evidenceBoundManuscriptIrHash,
+    manuscriptIrFileHash: binding.manuscriptIrFileHash,
+    agentAuthoredSourceDraftHash: binding.agentAuthoredSourceDraftHash,
+    agentAuthoredSourceDraftFileHash: binding.agentAuthoredSourceDraftFileHash,
+    venueProfileSelectionHash: binding.venueProfileSelectionHash,
+    venueRequirementIrHash: binding.venueRequirementIrHash,
+    venueTemplateAssetHash:
+      binding.venueProfileSelection?.venueTemplateAsset?.templateAssetHash || null,
+    venueTemplateAssetPath:
+      binding.venueProfileSelection?.venueTemplateAsset?.relativePath || null,
+    submissionMetadataReceiptHash: binding.submissionMetadataReceiptHash,
+    requireExternalSubmission: true,
+  });
+  const inspection = inspectAutonomousManuscriptReleaseProof(
+    integratedProof,
+    expected,
+    { requireAgentAuthored: true },
+  );
+  assert.equal(inspection.valid, true);
+  const integratedBinding = createAutonomousResearchReleaseBinding({
+    campaignId: binding.campaignId,
+    paperId: binding.paperId,
+    campaignPlanHash: binding.campaignPlanHash,
+    preparation: release.preparation,
+    manuscriptPath: binding.manuscriptPath,
+    renderedManuscriptHash: binding.renderedManuscriptHash,
+    evidenceBoundManuscriptIrHash: binding.evidenceBoundManuscriptIrHash,
+    manuscriptIrFileHash: binding.manuscriptIrFileHash,
+    agentAuthoredSourceDraft: release.sourceDraft,
+    agentAuthoredSourceDraftFileHash: binding.agentAuthoredSourceDraftFileHash,
+    trustedAutonomousManuscriptResult: integratedProof,
+    refereeConvergenceDecision: release.refereeConvergenceDecision,
+    reviewerEvidenceAuthority: release.reviewerEvidenceAuthority,
+    researchReport: release.researchReport,
+    experimentIrExecutionAuthorityReceipt:
+      release.experimentIrExecutionAuthorityReceipt,
+    experimentReplayReceipt: release.experimentReplayReceipt,
+  });
+  assert.equal(integratedBinding.fullResearchQualificationEligible, true);
+  assert.equal(verifyAutonomousResearchReleaseBinding(integratedBinding).valid, true);
+
+  const tamperedProof = Object.freeze({
+    ...integratedProof,
+    result: Object.freeze({
+      ...result,
+      workspaceAttemptIntegration: Object.freeze({
+        workspaceAttemptIntegrationDescriptorHash: HASH('tampered-integration'),
+      }),
+    }),
+  });
+  assert.equal(inspectAutonomousManuscriptReleaseProof(
+    tamperedProof,
+    expected,
+    { requireAgentAuthored: true },
+  ).valid, false);
+  assert.equal(verifyAutonomousResearchReleaseBinding(Object.freeze({
+    ...integratedBinding,
+    manuscriptRenderNodeResult: tamperedProof.result,
+    manuscriptRenderNodeResultHash: hashRecord(
+      'PaperCampaignNodeResult',
+      tamperedProof.result,
+    ),
+  })).valid, false);
+
+  const unknownTransportResult = Object.freeze({
+    ...result,
+    workspaceAttemptIntegrationExtra: Object.freeze({ forged: true }),
+  });
+  assert.equal(inspectAutonomousManuscriptReleaseProof(Object.freeze({
+    ...integratedProof,
+    result: unknownTransportResult,
+    resultHash: hashRecord('PaperCampaignNodeResult', unknownTransportResult),
+  }), expected, { requireAgentAuthored: true }).valid, false);
 });
 
 test('production release cannot downgrade to a rehashed bounded qualification scope', () => {

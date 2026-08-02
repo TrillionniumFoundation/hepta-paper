@@ -1,8 +1,8 @@
 import { requiredRevalidationForChanges } from '../../paper-domain/automation/referee-convergence.mjs';
 import { evaluateManuscriptPromotion } from '../../paper-domain/quality/manuscript-promotion-gate.mjs';
 import {
-  verifyTrustedAutonomousManuscriptRenderReceipt,
-} from '../../paper-domain/automation/trusted-autonomous-manuscript-render-contract.mjs';
+  inspectAutonomousManuscriptReleaseProof,
+} from '../../paper-domain/automation/autonomous-manuscript-release-proof-contract.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
   inspectAutonomousResearchProductionProfilePreparation,
@@ -32,28 +32,29 @@ function authoritativeManuscriptResult({ primitives, campaign, context, workspac
     workspace,
     relative: manuscript,
   });
-  const candidates = (context.campaignNodes || []).filter((candidate) => {
+  const candidates = (context.campaignNodes || []).filter((candidate) => (
+    candidate?.status === 'completed'
+      && ['manuscript-integrate', 'revise'].includes(candidate?.kind)
+  )).filter((candidate) => {
     const result = candidate?.result;
     const receipt = result?.trustedAutonomousManuscriptRenderReceipt;
-    const { campaignTrustedAutonomousManuscriptResultHash: claimedHash, ...payload } = result || {};
-    return candidate?.status === 'completed'
-      && ['manuscript-integrate', 'revise'].includes(candidate?.kind)
-      && result?.kind === 'CampaignTrustedAutonomousManuscriptResult'
-      && hashRecord('PaperCampaignNodeResult', result) === candidate?.resultSha256
-      && hashRecord('CampaignTrustedAutonomousManuscriptResult', payload) === claimedHash
-      && result?.trustedAutonomousManuscriptRenderReceiptHash
-        === receipt?.trustedAutonomousManuscriptRenderReceiptHash
-      && result?.agentExecutionReceiptHash === receipt?.agentAuthoredRenderedProseReceiptHash
-      && verifyTrustedAutonomousManuscriptRenderReceipt(receipt, {
-        paperId: campaign.paperId,
-        campaignId: campaign.campaignId,
-        manuscriptPath: manuscript,
-        manuscriptHash: currentManuscriptHash,
-        agentExecutionReceipt: result?.agentExecutionReceipt || null,
-        requireAgentAuthored: receipt?.requireAgentAuthoredProse === true,
-        requireReadableProof: receipt?.formalSupportTemplateId === null
-          && receipt?.formalSupportRegistryHash === null,
-      }).valid;
+    const proof = inspectAutonomousManuscriptReleaseProof({
+      nodeId: candidate?.nodeId || null,
+      attemptId: candidate?.attemptId || null,
+      leaseGeneration: candidate?.leaseGeneration || null,
+      resultHash: candidate?.resultSha256 || null,
+      result,
+    }, {
+      paperId: campaign.paperId,
+      campaignId: campaign.campaignId,
+      manuscriptPath: manuscript,
+      renderedManuscriptHash: currentManuscriptHash,
+    }, {
+      requireAgentAuthored: receipt?.requireAgentAuthoredProse === true,
+      requireReadableProof: receipt?.formalSupportTemplateId === null
+        && receipt?.formalSupportRegistryHash === null,
+    });
+    return proof.valid;
   }).sort((left, right) => (
     Number(Boolean(right.sourceClosureTerminal || right.spec?.sourceClosureTerminal))
       - Number(Boolean(left.sourceClosureTerminal || left.spec?.sourceClosureTerminal))

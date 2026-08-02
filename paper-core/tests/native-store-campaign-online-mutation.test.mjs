@@ -22,7 +22,12 @@ import {
 import { buildPaperCampaignPlan } from '../../paper-domain/automation/campaign-plan.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
-function plan(campaignId, { maxAgentCalls = 10, budgets = {}, nodes = null } = {}) {
+function plan(campaignId, {
+  maxAgentCalls = 10,
+  budgets = {},
+  nodes = null,
+  terminalSiblingSettlementPolicyVersion = null,
+} = {}) {
   return Object.freeze({
     version: 2,
     kind: 'PaperCampaignPlan',
@@ -30,6 +35,9 @@ function plan(campaignId, { maxAgentCalls = 10, budgets = {}, nodes = null } = {
     paperId: `${campaignId}:paper`,
     sourceWorkspace: '/tmp',
     maxRounds: 1,
+    ...(terminalSiblingSettlementPolicyVersion === null ? {} : {
+      terminalSiblingSettlementPolicyVersion,
+    }),
     budgets: Object.freeze({ maxAgentCalls, ...budgets }),
     nodes: Object.freeze(nodes || [Object.freeze({
       nodeId: `${campaignId}:writer`,
@@ -288,14 +296,33 @@ test('strict terminal failure atomically settles ordinary and integrating siblin
   const fixtureState = fixture(t);
   const campaignId = 'strict-terminal-sibling-settlement';
   fixtureState.campaigns.createCampaign(plan(campaignId, {
-    nodes: Object.freeze(['terminal', 'ordinary', 'integrating'].map((kind) => Object.freeze({
+    terminalSiblingSettlementPolicyVersion: 1,
+    nodes: Object.freeze([
+      ...['terminal', 'ordinary', 'integrating'].map((kind) => Object.freeze({
       nodeId: `${campaignId}:${kind}`,
       kind,
       roundIndex: 1,
       priority: 10,
       maxAttempts: 1,
       dependencies: Object.freeze([]),
-    }))),
+      })),
+      Object.freeze({
+        nodeId: `${campaignId}:queued-dependent`,
+        kind: 'queued-dependent',
+        roundIndex: 1,
+        priority: 20,
+        maxAttempts: 1,
+        dependencies: Object.freeze([`${campaignId}:terminal`]),
+      }),
+      Object.freeze({
+        nodeId: `${campaignId}:queued-independent`,
+        kind: 'queued-independent',
+        roundIndex: 1,
+        priority: 20,
+        maxAttempts: 1,
+        dependencies: Object.freeze([]),
+      }),
+    ]),
   }));
   const workerId = 'worker:terminal-sibling-settlement';
   const claims = fixtureState.campaigns.claimReady({ campaignId, workerId, limit: 3 });
@@ -349,6 +376,16 @@ test('strict terminal failure atomically settles ordinary and integrating siblin
     'campaign_terminal_sibling_outcome_uncertain');
   assert.equal(byKind.get('integrating').preparedIntegrationStatus, 'integrating');
   assert.ok(byKind.get('integrating').preparedResultHash);
+  for (const kind of ['queued-dependent', 'queued-independent']) {
+    const queued = byKind.get(kind);
+    assert.equal(queued.status, 'skipped');
+    assert.equal(queued.failureClass, 'campaign_terminal_sibling_cancelled');
+    assert.equal(queued.failureDetail.previousStatus, 'queued');
+    assert.equal(queued.failureDetail.terminalNodeId, fences.get('terminal').nodeId);
+    assert.equal(queued.failureDetail.terminalFailureHash, terminalFailureHash);
+    assert.equal(queued.attemptId, null);
+    assert.equal(queued.leaseOwner, null);
+  }
 
   for (const kind of ['ordinary', 'integrating']) {
     const node = byKind.get(kind);
@@ -390,10 +427,236 @@ test('strict terminal failure atomically settles ordinary and integrating siblin
     /campaign_node_lease_lost|campaign_node_attempt_fence_check_failed/,
   );
   assert.equal(fixtureState.campaigns.listEvents(campaignId)
-    .filter((event) => event.kind === 'campaign_terminal_sibling_settled').length, 2);
+    .filter((event) => event.kind === 'campaign_terminal_sibling_settled').length, 4);
   assert.ok(fixtureState.operationIds.includes(
     NATIVE_STORE_CAMPAIGN_OPERATION_IDS.failNode,
   ));
+  assert.equal(fixtureState.genericWriteAttempts(), 0);
+});
+
+test('strict terminal failure skips a queued peer whose integration already completed', (t) => {
+  const fixtureState = fixture(t);
+  const campaignId = 'strict-terminal-queued-integrated';
+  fixtureState.campaigns.createCampaign(plan(campaignId, {
+    terminalSiblingSettlementPolicyVersion: 1,
+    nodes: Object.freeze(['terminal', 'integrated-retry'].map((kind) => Object.freeze({
+      nodeId: `${campaignId}:${kind}`,
+      kind,
+      roundIndex: 1,
+      priority: 10,
+      maxAttempts: 1,
+      dependencies: Object.freeze([]),
+    }))),
+  }));
+  const workerId = 'worker:terminal-queued-integrated';
+  const claims = fixtureState.campaigns.claimReady({ campaignId, workerId, limit: 2 });
+  const fences = new Map(claims.map((claim) => [claim.kind, Object.freeze({
+    nodeId: claim.nodeId,
+    workerId,
+    attemptId: claim.attemptId,
+    leaseGeneration: claim.leaseGeneration,
+  })]));
+  for (const fence of fences.values()) fixtureState.campaigns.startNode(fence);
+
+  const retryFence = fences.get('integrated-retry');
+  const integrationKey = 'sha256:strict-terminal-queued-integrated';
+  fixtureState.campaigns.prepareNodeResult({
+    ...retryFence,
+    result: {
+      status: 'prepared',
+      workspaceAttemptIntegration: {
+        workspaceAttemptIntegrationDescriptorHash: integrationKey,
+      },
+    },
+    requiresIntegration: true,
+    integrationKey,
+  });
+  fixtureState.campaigns.beginNodeResultIntegration({ ...retryFence, integrationKey });
+  fixtureState.campaigns.markNodeResultIntegrated({
+    ...retryFence,
+    integrationKey,
+    integrationReceipt: integrationReceipt(integrationKey),
+  });
+  const queued = fixtureState.campaigns.failNode({
+    ...retryFence,
+    retryable: true,
+    failureClass: 'post_integration_retry',
+    failureDetail: { integrationCompleted: true },
+  });
+  assert.equal(queued.status, 'queued');
+  assert.equal(queued.preparedIntegrationStatus, 'integrated');
+
+  fixtureState.campaigns.failNode({
+    ...fences.get('terminal'),
+    retryable: false,
+    failureClass: 'strict_terminal_failure',
+  });
+  const settled = fixtureState.campaigns.listNodes(campaignId)
+    .find((node) => node.kind === 'integrated-retry');
+  assert.equal(settled.status, 'skipped');
+  assert.equal(settled.failureClass, 'campaign_terminal_sibling_cancelled');
+  assert.equal(settled.failureDetail.previousStatus, 'queued');
+  assert.equal(settled.failureDetail.preparedIntegrationStatus, 'integrated');
+  assert.equal(settled.attemptId, null);
+  assert.equal(fixtureState.campaigns.getCampaign(campaignId).status, 'failed');
+  assert.equal(fixtureState.genericWriteAttempts(), 0);
+});
+
+test('strict queued peer settlement failure rolls back the full terminal transaction', (t) => {
+  const fixtureState = fixture(t, {
+    failStatementId: NATIVE_STORE_CAMPAIGN_STATEMENT_IDS.settleTerminalSiblingNodes,
+    failStatementOccurrence: 2,
+  });
+  const campaignId = 'strict-terminal-queued-rollback';
+  fixtureState.campaigns.createCampaign(plan(campaignId, {
+    terminalSiblingSettlementPolicyVersion: 1,
+    nodes: Object.freeze([
+      Object.freeze({
+        nodeId: `${campaignId}:terminal`,
+        kind: 'terminal',
+        priority: 10,
+        dependencies: Object.freeze([]),
+        maxAttempts: 1,
+      }),
+      Object.freeze({
+        nodeId: `${campaignId}:active`,
+        kind: 'active',
+        priority: 10,
+        dependencies: Object.freeze([]),
+        maxAttempts: 1,
+      }),
+      Object.freeze({
+        nodeId: `${campaignId}:z-queued`,
+        kind: 'z-queued',
+        priority: 20,
+        dependencies: Object.freeze([`${campaignId}:terminal`]),
+        maxAttempts: 1,
+      }),
+    ]),
+  }));
+  const workerId = 'worker:terminal-queued-rollback';
+  const claims = fixtureState.campaigns.claimReady({ campaignId, workerId, limit: 2 });
+  const fences = new Map(claims.map((claim) => [claim.kind, Object.freeze({
+    nodeId: claim.nodeId,
+    workerId,
+    attemptId: claim.attemptId,
+    leaseGeneration: claim.leaseGeneration,
+  })]));
+  for (const fence of fences.values()) fixtureState.campaigns.startNode(fence);
+  assert.throws(() => fixtureState.campaigns.failNode({
+    ...fences.get('terminal'),
+    retryable: false,
+    failureClass: 'strict_terminal_failure',
+  }), /injected_native_campaign_statement_failure|campaign_node_lease_lost/);
+  assert.equal(fixtureState.campaigns.getCampaign(campaignId).status, 'running');
+  assert.deepEqual(
+    fixtureState.campaigns.listNodes(campaignId).map((node) => node.status).sort(),
+    ['queued', 'running', 'running'],
+  );
+  assert.equal(fixtureState.campaigns.listEvents(campaignId)
+    .filter((event) => ['campaign_node_failed', 'campaign_terminal_sibling_settled']
+      .includes(event.kind)).length, 0);
+  assert.equal(fixtureState.genericWriteAttempts(), 0);
+});
+
+test('legacy terminal failure preserves queued peers outside policy v1', (t) => {
+  const fixtureState = fixture(t);
+  const campaignId = 'legacy-terminal-queued-preserved';
+  fixtureState.campaigns.createCampaign(plan(campaignId, {
+    nodes: Object.freeze([
+      Object.freeze({
+        nodeId: `${campaignId}:terminal`,
+        kind: 'terminal',
+        priority: 10,
+        dependencies: Object.freeze([]),
+        maxAttempts: 1,
+      }),
+      Object.freeze({
+        nodeId: `${campaignId}:queued`,
+        kind: 'queued',
+        priority: 20,
+        dependencies: Object.freeze([`${campaignId}:terminal`]),
+        maxAttempts: 1,
+      }),
+    ]),
+  }));
+  const workerId = 'worker:legacy-terminal-queued';
+  const [claimed] = fixtureState.campaigns.claimReady({ campaignId, workerId, limit: 1 });
+  const fence = Object.freeze({
+    nodeId: claimed.nodeId,
+    workerId,
+    attemptId: claimed.attemptId,
+    leaseGeneration: claimed.leaseGeneration,
+  });
+  fixtureState.campaigns.startNode(fence);
+  fixtureState.campaigns.failNode({
+    ...fence,
+    retryable: false,
+    failureClass: 'legacy_terminal_failure',
+  });
+  assert.equal(fixtureState.campaigns.getCampaign(campaignId).status, 'failed');
+  assert.deepEqual(
+    fixtureState.campaigns.listNodes(campaignId).map((node) => node.status).sort(),
+    ['failed_terminal', 'queued'],
+  );
+  assert.equal(fixtureState.campaigns.listEvents(campaignId)
+    .filter((event) => event.kind === 'campaign_terminal_sibling_settled').length, 0);
+});
+
+test('strict policy-v1 terminal failure closes a campaign-sized queued lineage', (t) => {
+  const fixtureState = fixture(t);
+  const campaignId = 'strict-terminal-high-cardinality';
+  const terminalNodeId = `${campaignId}:terminal`;
+  fixtureState.campaigns.createCampaign(plan(campaignId, {
+    terminalSiblingSettlementPolicyVersion: 1,
+    nodes: Object.freeze([
+      Object.freeze({
+        nodeId: terminalNodeId,
+        kind: 'terminal',
+        priority: 10,
+        dependencies: Object.freeze([]),
+        maxAttempts: 1,
+      }),
+      ...Array.from({ length: 45 }, (_, index) => Object.freeze({
+        nodeId: `${campaignId}:queued-${String(index).padStart(2, '0')}`,
+        kind: `queued-${index}`,
+        priority: 20,
+        dependencies: Object.freeze([terminalNodeId]),
+        maxAttempts: 1,
+      })),
+    ]),
+  }));
+  const workerId = 'worker:terminal-high-cardinality';
+  const [claimed] = fixtureState.campaigns.claimReady({ campaignId, workerId, limit: 1 });
+  const fence = Object.freeze({
+    nodeId: claimed.nodeId,
+    workerId,
+    attemptId: claimed.attemptId,
+    leaseGeneration: claimed.leaseGeneration,
+  });
+  fixtureState.campaigns.startNode(fence);
+  fixtureState.campaigns.failNode({
+    ...fence,
+    retryable: false,
+    failureClass: 'strict_terminal_failure',
+    failureDetail: Object.freeze({ highCardinality: true }),
+  });
+  const nodes = fixtureState.campaigns.listNodes(campaignId);
+  assert.equal(fixtureState.campaigns.getCampaign(campaignId).status, 'failed');
+  assert.equal(nodes.filter((node) => node.status === 'failed_terminal').length, 1);
+  assert.equal(nodes.filter((node) => node.status === 'skipped').length, 45);
+  assert.equal(nodes.some((node) => ['queued', 'leased', 'running'].includes(node.status)), false);
+  for (const node of nodes.filter((candidate) => candidate.status === 'skipped')) {
+    assert.equal(node.failureClass, 'campaign_terminal_sibling_cancelled');
+    assert.equal(node.failureDetail.previousStatus, 'queued');
+    assert.equal(node.failureDetail.terminalNodeId, terminalNodeId);
+    assert.equal(
+      node.failureSha256,
+      hashRecord('PaperCampaignNodeFailure', node.failureDetail),
+    );
+  }
+  assert.equal(fixtureState.campaigns.listEvents(campaignId)
+    .filter((event) => event.kind === 'campaign_terminal_sibling_settled').length, 45);
   assert.equal(fixtureState.genericWriteAttempts(), 0);
 });
 

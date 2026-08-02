@@ -72,6 +72,25 @@ function agentExecutionResult(detail = {}, {
   };
 }
 
+function integrationReceipt(integrationKey) {
+  const payload = Object.freeze({
+    version: 1,
+    kind: 'WorkspaceAttemptIntegrationReceipt',
+    descriptorHash: integrationKey,
+    changedPaths: Object.freeze([]),
+    alreadyIntegratedPaths: Object.freeze([]),
+    status: 'workspace_attempt_integrated',
+    externalActionPerformed: false,
+  });
+  return Object.freeze({
+    ...payload,
+    workspaceAttemptIntegrationReceiptHash: hashRecord(
+      'WorkspaceAttemptIntegrationReceipt',
+      payload,
+    ),
+  });
+}
+
 function bindReleaseAuthority(plan) {
   const bound = {
     ...plan,
@@ -254,6 +273,88 @@ test('operator cancellation aborts an active agent node and leaves campaign canc
   assert.ok(result.nodes.every((node) => ['skipped', 'failed_terminal'].includes(node.status)));
 });
 
+test('generic terminal failure skips a queued peer whose integration already completed', (t) => {
+  const { root, campaignStore } = fixture(t);
+  const campaignId = 'generic-terminal-queued-integrated';
+  campaignStore.createCampaign({
+    version: 2,
+    kind: 'PaperCampaignPlan',
+    campaignId,
+    paperId: 'generic-terminal-queued-integrated-paper',
+    sourceWorkspace: root,
+    maxRounds: 1,
+    terminalSiblingSettlementPolicyVersion: 1,
+    budgets: {
+      maxWallTimeMs: 60_000,
+      maxAgentCalls: 4,
+      maxCpuJobs: 0,
+      maxGpuJobs: 0,
+      maxTokenCount: 1_000,
+      maxCostUsd: 1,
+      maxMemoryMiB: 8_192,
+    },
+    nodes: ['terminal', 'integrated-retry'].map((kind) => ({
+      nodeId: `${campaignId}:${kind}`,
+      kind,
+      roundIndex: 1,
+      dependencies: [],
+      priority: 10,
+      maxAttempts: 1,
+    })),
+  });
+  const workerId = 'worker:generic-terminal-queued-integrated';
+  const claims = campaignStore.claimReady({ campaignId, workerId, limit: 2 });
+  const fences = new Map(claims.map((claim) => [claim.kind, Object.freeze({
+    nodeId: claim.nodeId,
+    workerId,
+    attemptId: claim.attemptId,
+    leaseGeneration: claim.leaseGeneration,
+  })]));
+  for (const fence of fences.values()) campaignStore.startNode(fence);
+
+  const retryFence = fences.get('integrated-retry');
+  const integrationKey = 'sha256:generic-terminal-queued-integrated';
+  campaignStore.prepareNodeResult({
+    ...retryFence,
+    result: {
+      status: 'prepared',
+      workspaceAttemptIntegration: {
+        workspaceAttemptIntegrationDescriptorHash: integrationKey,
+      },
+    },
+    requiresIntegration: true,
+    integrationKey,
+  });
+  campaignStore.beginNodeResultIntegration({ ...retryFence, integrationKey });
+  campaignStore.markNodeResultIntegrated({
+    ...retryFence,
+    integrationKey,
+    integrationReceipt: integrationReceipt(integrationKey),
+  });
+  const queued = campaignStore.failNode({
+    ...retryFence,
+    retryable: true,
+    failureClass: 'post_integration_retry',
+    failureDetail: { integrationCompleted: true },
+  });
+  assert.equal(queued.status, 'queued');
+  assert.equal(queued.preparedIntegrationStatus, 'integrated');
+
+  campaignStore.failNode({
+    ...fences.get('terminal'),
+    retryable: false,
+    failureClass: 'generic_terminal_failure',
+  });
+  const settled = campaignStore.listNodes(campaignId)
+    .find((node) => node.kind === 'integrated-retry');
+  assert.equal(settled.status, 'skipped');
+  assert.equal(settled.failureClass, 'campaign_terminal_sibling_cancelled');
+  assert.equal(settled.failureDetail.previousStatus, 'queued');
+  assert.equal(settled.failureDetail.preparedIntegrationStatus, 'integrated');
+  assert.equal(settled.attemptId, null);
+  assert.equal(campaignStore.getCampaign(campaignId).status, 'failed');
+});
+
 test('terminal concurrent failure fences and settles active sibling attempts', async (t) => {
   const { root, campaignStore } = fixture(t);
   const campaignId = 'terminal-sibling-settlement-campaign';
@@ -264,6 +365,7 @@ test('terminal concurrent failure fences and settles active sibling attempts', a
     paperId: 'terminal-sibling-settlement-paper',
     sourceWorkspace: root,
     maxRounds: 1,
+    terminalSiblingSettlementPolicyVersion: 1,
     budgets: {
       maxWallTimeMs: 60_000,
       maxAgentCalls: 3,
@@ -273,15 +375,25 @@ test('terminal concurrent failure fences and settles active sibling attempts', a
       maxCostUsd: 1,
       maxMemoryMiB: 8_192,
     },
-    nodes: [1, 2, 3].map((ordinal) => ({
-      nodeId: `${campaignId}:1:referee-${ordinal}`,
-      kind: `referee-${ordinal}`,
-      role: `referee-${ordinal}`,
-      roundIndex: 1,
-      dependencies: [],
-      priority: 10,
-      maxAttempts: 1,
-    })),
+    nodes: [
+      ...[1, 2, 3].map((ordinal) => ({
+        nodeId: `${campaignId}:1:referee-${ordinal}`,
+        kind: `referee-${ordinal}`,
+        role: `referee-${ordinal}`,
+        roundIndex: 1,
+        dependencies: [],
+        priority: 10,
+        maxAttempts: 1,
+      })),
+      {
+        nodeId: `${campaignId}:2:queued-after-terminal`,
+        kind: 'queued-after-terminal',
+        roundIndex: 2,
+        dependencies: [`${campaignId}:1:referee-2`],
+        priority: 20,
+        maxAttempts: 1,
+      },
+    ],
   });
   let startedCount = 0;
   let resolveAllStarted;
@@ -332,13 +444,18 @@ test('terminal concurrent failure fences and settles active sibling attempts', a
 
   assert.equal(result.campaign.status, 'failed');
   assert.equal(result.nodes.filter((node) => node.status === 'failed_terminal').length, 1);
-  assert.equal(result.nodes.filter((node) => node.status === 'skipped').length, 2);
+  assert.equal(result.nodes.filter((node) => node.status === 'skipped').length, 3);
   assert.equal(result.nodes.some((node) => ['leased', 'running'].includes(node.status)), false);
   for (const node of result.nodes.filter((candidate) => candidate.status === 'skipped')) {
     assert.equal(node.failureClass, 'campaign_terminal_sibling_cancelled');
     assert.equal(node.leaseOwner, null);
     assert.equal(node.leaseExpiresAt, null);
     const fence = attemptFences.get(node.nodeId);
+    if (!fence) {
+      assert.equal(node.failureDetail.previousStatus, 'queued');
+      assert.equal(node.attemptId, null);
+      continue;
+    }
     assert.throws(
       () => campaignStore.renewNodeLease({ ...fence, leaseSeconds: 10 }),
       /campaign_node_lease_renew_failed|campaign_node_lease_lost/,

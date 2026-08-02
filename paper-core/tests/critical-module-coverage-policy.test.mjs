@@ -43,6 +43,8 @@ const REQUIRED_NEW_TRUST_TARGETS = Object.freeze([
   'paper-adapters/runtime/release-dependency-tree.mjs',
   'paper-adapters/build-package/local-release-attestor-runtime.mjs',
   'paper-adapters/build-package/local-release-attestor-socket.mjs',
+  'paper-adapters/automation/local-autonomous-research-state-authority-socket.mjs',
+  'paper-adapters/runtime/atomic-unix-socket-publication.mjs',
   'paper-adapters/build-package/research-execution-release-attestor-inspection.mjs',
   'paper-adapters/build-package/research-execution-release-attestor-inspection-support.mjs',
   'paper-adapters/research-verify/dynamic-formal-execution-authority.mjs',

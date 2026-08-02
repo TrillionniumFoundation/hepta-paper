@@ -82,6 +82,7 @@ const AUTOMATION_TESTS = Object.freeze([...new Set([
   'paper-core/tests/codex-openclaw-managed-failure-binding.test.mjs',
   'paper-core/tests/codex-openclaw-managed-model-support.test.mjs',
   'paper-core/tests/codex-openclaw-managed-recovery-usage.test.mjs',
+  'paper-core/tests/atomic-unix-socket-publication.test.mjs',
   'paper-core/tests/local-release-attestor-runtime.test.mjs',
   'paper-core/tests/local-release-attestor-deployment-preflight.test.mjs',
   'paper-core/tests/release-evidence-selection.test.mjs',

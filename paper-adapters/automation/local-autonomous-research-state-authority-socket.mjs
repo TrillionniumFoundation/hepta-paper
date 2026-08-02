@@ -1,10 +1,11 @@
-import fs from 'node:fs';
 import net from 'node:net';
+
+import { listenOnAtomicUnixSocket } from '../runtime/atomic-unix-socket-publication.mjs';
 
 const DEFAULT_MAXIMUM_MESSAGE_BYTES = 256 * 1024 * 1024;
 
-function fail(code) {
-  throw new Error(code);
+function fail(code, cause) {
+  throw new Error(code, cause ? { cause } : undefined);
 }
 
 function validSocketPath(socketPath) {
@@ -75,16 +76,6 @@ export function requestLocalAutonomousResearchStateAuthority({
   });
 }
 
-function removeStaleSocket(socketPath) {
-  try {
-    const stat = fs.lstatSync(socketPath);
-    if (!stat.isSocket()) fail('local_state_authority_socket_path_conflict');
-    fs.unlinkSync(socketPath);
-  } catch (error) {
-    if (error?.code !== 'ENOENT') throw error;
-  }
-}
-
 export async function startLocalAutonomousResearchStateAuthorityServer({
   authority,
   socketPath,
@@ -97,7 +88,6 @@ export async function startLocalAutonomousResearchStateAuthorityServer({
     || !Number.isSafeInteger(maximumMessageBytes) || maximumMessageBytes < 1024) {
     fail('local_state_authority_server_configuration_invalid');
   }
-  removeStaleSocket(socketPath);
   let queue = Promise.resolve();
   const server = net.createServer({ allowHalfOpen: true }, (socket) => {
     const chunks = [];
@@ -127,28 +117,18 @@ export async function startLocalAutonomousResearchStateAuthorityServer({
       queue = queue.then(operation, operation);
     });
   });
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(socketPath, () => {
-      server.off('error', reject);
-      resolve();
-    });
-  });
-  fs.chmodSync(socketPath, socketMode);
+  let publication;
+  try {
+    publication = await listenOnAtomicUnixSocket({ server, socketPath, socketMode });
+  } catch (error) {
+    if (error?.message === 'atomic_unix_socket_path_conflict') {
+      fail('local_state_authority_socket_path_conflict', error);
+    }
+    fail('local_state_authority_socket_publication_failed', error);
+  }
   return Object.freeze({
     server,
-    close: () => new Promise((resolve, reject) => {
-      server.close((error) => {
-        try { fs.unlinkSync(socketPath); }
-        catch (unlinkError) {
-          if (unlinkError?.code !== 'ENOENT' && !error) {
-            reject(unlinkError);
-            return;
-          }
-        }
-        if (error) reject(error);
-        else resolve();
-      });
-    }),
+    socketPath: publication.socketPath,
+    close: () => publication.close(),
   });
 }

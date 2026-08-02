@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 
+import { listenOnAtomicUnixSocket } from '../runtime/atomic-unix-socket-publication.mjs';
+
 const MAXIMUM_MESSAGE_BYTES = 1024 * 1024;
 export const DEFAULT_LOCAL_RELEASE_ATTESTOR_SOCKET_POLICY = Object.freeze({
   idleTimeoutMs: 5_000,
@@ -117,13 +119,6 @@ export async function startLocalReleaseAttestorServer({
     throw new Error('local_release_attestor_handler_required');
   }
   fs.mkdirSync(path.dirname(selectedSocketPath), { recursive: true, mode: 0o750 });
-  try {
-    const stat = fs.lstatSync(selectedSocketPath);
-    if (!stat.isSocket()) throw new Error('not socket');
-    fs.unlinkSync(selectedSocketPath);
-  } catch (error) {
-    if (error?.code !== 'ENOENT') throw new Error('local_release_attestor_socket_invalid');
-  }
   let activeConnections = 0;
   const server = net.createServer((connection) => {
     connection.on('error', () => {});
@@ -182,20 +177,19 @@ export async function startLocalReleaseAttestorServer({
   });
   server.maxConnections = selectedSocketPolicy.maximumConcurrentConnections;
   server.dropMaxConnection = true;
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(selectedSocketPath, resolve);
-  });
-  fs.chmodSync(selectedSocketPath, 0o660);
+  let publication;
+  try {
+    publication = await listenOnAtomicUnixSocket({
+      server,
+      socketPath: selectedSocketPath,
+      socketMode: 0o660,
+    });
+  } catch (error) {
+    throw new Error('local_release_attestor_socket_invalid', { cause: error });
+  }
   return Object.freeze({
     socketPath: selectedSocketPath,
     socketPolicy: selectedSocketPolicy,
-    close: () => new Promise((resolve, reject) => {
-      server.close((error) => {
-        try { fs.unlinkSync(selectedSocketPath); } catch {}
-        if (error) reject(error);
-        else resolve();
-      });
-    }),
+    close: () => publication.close(),
   });
 }

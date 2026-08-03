@@ -3,8 +3,8 @@ import { hasExactPlainObjectKeys as exactKeys } from '../../workflow-kernel/exac
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 
 export const AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_CAMPAIGN_ID =
-  'autonomous-research:local-auto-20260730-56';
-export const AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_PAPER_ID = 'local-auto-20260730-56';
+  'autonomous-research:local-auto-20260730-57';
+export const AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_PAPER_ID = 'local-auto-20260730-57';
 export const AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_OBJECTIVE =
   'Evaluate a deterministic bounded candidate intervention under the fixed finance_asset_pricing_benchmark protocol, including treatment, control, ablation, and an isolated deterministic rerun.';
 

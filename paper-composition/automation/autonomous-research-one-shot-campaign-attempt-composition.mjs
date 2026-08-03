@@ -634,7 +634,7 @@ export async function composeFixedAutonomousResearchOneShotCampaignAttempt({
     },
   );
   const candidateReservation = buildAutonomousResearchOneShotCampaignAttemptReservation({
-    attemptId: `campaign-56-${idempotencyKey.slice(-24)}`,
+    attemptId: `campaign-57-${idempotencyKey.slice(-24)}`,
     idempotencyKey,
     campaignId: AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_CAMPAIGN_ID,
     protectedCampaignId: AUTONOMOUS_RESEARCH_ONE_SHOT_PROTECTED_CAMPAIGN_ID,

@@ -4,6 +4,23 @@ import { AUTONOMOUS_RESEARCH_ONE_SHOT_EVENT_KEYS as EVENT_KEYS,
   AUTONOMOUS_RESEARCH_ONE_SHOT_RECEIPT_KEYS as RECEIPT_KEYS,
   AUTONOMOUS_RESEARCH_ONE_SHOT_RESERVATION_KEYS as RESERVATION_KEYS }
   from './autonomous-research-one-shot-campaign-attempt-keys.data.mjs';
+import {
+  autonomousResearchOneShotProviderRuntimeBindingHash,
+  verifyAutonomousResearchOneShotProviderRuntimeBinding,
+} from './autonomous-research-one-shot-provider-runtime-binding.mjs';
+import {
+  AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_CAMPAIGN_ID,
+  AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_OBJECTIVE,
+  AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_PAPER_ID,
+  verifyAutonomousResearchOneShotTargetCampaignDefinition,
+} from './autonomous-research-one-shot-target-campaign.mjs';
+
+export { autonomousResearchOneShotProviderRuntimeBindingHash };
+export {
+  AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_CAMPAIGN_ID,
+  AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_OBJECTIVE,
+  AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_PAPER_ID,
+};
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,255}$/;
@@ -14,10 +31,7 @@ const SAFE_ENVIRONMENT_KEY = /^[A-Z][A-Z0-9_]{0,127}$/;
 const SENSITIVE_ENVIRONMENT_KEY = /(?:TOKEN|SECRET|PASSWORD|CREDENTIAL|COOKIE|API_KEY|AUTHORIZATION)/;
 const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 export const AUTONOMOUS_RESEARCH_ONE_SHOT_PROTECTED_CAMPAIGN_ID = 'autonomous-research:local-auto-20260730-51';
-export const AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_CAMPAIGN_ID = 'autonomous-research:local-auto-20260730-52';
-export const AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_PAPER_ID = 'local-auto-20260730-52';
 export const AUTONOMOUS_RESEARCH_ONE_SHOT_PROVIDER_CONFIGURATION_HASH = 'sha256:7fe1d221302fb8e5b1c1c7ccb33ea341311d00a994ff9b3f6dd433af82964792';
-export const AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_OBJECTIVE = 'Evaluate a deterministic bounded candidate intervention under the fixed finance_asset_pricing_benchmark protocol, including treatment, control, ablation, and an isolated deterministic rerun.';
 export const AUTONOMOUS_RESEARCH_ONE_SHOT_FORBIDDEN_PREPARE_ENVIRONMENT_KEYS =
   Object.freeze([
     'HEPTA_AUTONOMOUS_EXTERNAL_QUALIFICATION_CONFIG', 'HEPTA_EXTERNAL_REPLAY_CONFIG',
@@ -162,45 +176,6 @@ function protectedCampaignDefinitionValid(value) {
     && value.ledgerCount === 0 && SHA256.test(String(value.logicalStateHash || ''));
 }
 
-function targetCampaignDefinitionValid(value) {
-  const worker = value?.worker;
-  const budgets = value?.budgets;
-  return exactKeys(value, [
-    'budgets', 'campaignId', 'datasetMountsHash', 'effectiveLaunchMode',
-    'humanSubjects', 'localOnly', 'objective', 'paperId', 'privateData',
-    'protocolFamily', 'refereeCount', 'requireCampaignAbsentAtLaunch',
-    'requireLaunchReady', 'requestedLaunchMode', 'revisionRounds',
-    'unlimitedAggregateCost', 'unlimitedAggregateTokens', 'version', 'worker',
-  ].sort())
-    && value.version === 1
-    && value.campaignId === AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_CAMPAIGN_ID
-    && value.paperId === AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_PAPER_ID
-    && value.objective === AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_OBJECTIVE
-    && value.protocolFamily === 'finance_asset_pricing_benchmark'
-    && value.revisionRounds === 3 && value.refereeCount === 3
-    && value.requestedLaunchMode === 'local-run'
-    && value.effectiveLaunchMode === 'golden-bootstrap'
-    && value.localOnly === true && value.humanSubjects === false
-    && value.privateData === false && value.unlimitedAggregateTokens === true
-    && value.unlimitedAggregateCost === true && value.requireLaunchReady === true
-    && value.requireCampaignAbsentAtLaunch === true
-    && SHA256.test(String(value.datasetMountsHash || ''))
-    && exactKeys(worker, [
-      'agentSlots', 'concurrency', 'cpuSlots', 'gpuSlots', 'memoryMiB',
-    ].sort())
-    && worker.concurrency === 8 && worker.agentSlots === 4
-    && worker.cpuSlots === 4 && worker.gpuSlots === 1 && worker.memoryMiB === 8192
-    && exactKeys(budgets, [
-      'maxAgentCalls', 'maxCostUsd', 'maxCpuJobs', 'maxGpuJobs',
-      'maxMemoryMiB', 'maxTokenCount', 'maxWallTimeMs',
-    ].sort())
-    && budgets.maxWallTimeMs === 7_200_000 && budgets.maxAgentCalls === 201
-    && budgets.maxCpuJobs === 14_400 && budgets.maxGpuJobs === 16
-    && budgets.maxMemoryMiB === 8192
-    && budgets.maxTokenCount === Number.MAX_SAFE_INTEGER
-    && budgets.maxCostUsd === Number.MAX_SAFE_INTEGER;
-}
-
 function preparationPolicyValid(binding) {
   const policy = binding?.preparationPolicy;
   const projection = binding?.environmentProjection;
@@ -209,6 +184,7 @@ function preparationPolicyValid(binding) {
   const sourceExecutionSnapshot = binding?.sourceExecutionSnapshot;
   const protectedCampaignDefinition = binding?.protectedCampaignDefinition;
   const targetCampaignDefinition = binding?.targetCampaignDefinition;
+  const providerRuntimeBinding = binding?.providerRuntimeBinding;
   if (!SHA256.test(String(binding?.codeProvenanceHash || ''))
     || !SHA256.test(String(binding?.sourceExecutionSnapshotHash || ''))
     || !SHA256.test(String(
@@ -218,6 +194,7 @@ function preparationPolicyValid(binding) {
       !== AUTONOMOUS_RESEARCH_ONE_SHOT_PROVIDER_CONFIGURATION_HASH
     || !SHA256.test(String(binding?.protectedCampaignFingerprintHash || ''))
     || !SHA256.test(String(binding?.targetCampaignDefinitionHash || ''))
+    || !SHA256.test(String(binding?.providerRuntimeBindingHash || ''))
     || !codeProvenance || codeProvenance.version !== 2
     || !GIT_OBJECT_ID.test(String(codeProvenance.commit || ''))
     || !GIT_OBJECT_ID.test(String(codeProvenance.commitTree || ''))
@@ -239,9 +216,14 @@ function preparationPolicyValid(binding) {
       !== autonomousResearchOneShotProtectedCampaignFingerprintHash(
         protectedCampaignDefinition,
       )
-    || !targetCampaignDefinitionValid(targetCampaignDefinition)
+    || !verifyAutonomousResearchOneShotTargetCampaignDefinition(targetCampaignDefinition)
     || binding.targetCampaignDefinitionHash
       !== autonomousResearchOneShotTargetCampaignDefinitionHash(targetCampaignDefinition)
+    || !verifyAutonomousResearchOneShotProviderRuntimeBinding(providerRuntimeBinding)
+    || providerRuntimeBinding.providerConfigurationHash
+      !== AUTONOMOUS_RESEARCH_ONE_SHOT_PROVIDER_CONFIGURATION_HASH
+    || binding.providerRuntimeBindingHash
+      !== autonomousResearchOneShotProviderRuntimeBindingHash(providerRuntimeBinding)
     || !exactKeys(policy, [
     'allowedExternalActionKinds',
     'contentMode',

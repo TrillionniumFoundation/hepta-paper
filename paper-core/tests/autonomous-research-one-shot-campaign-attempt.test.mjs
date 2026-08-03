@@ -14,6 +14,7 @@ import {
   autonomousResearchOneShotCampaignCodeProvenanceHash,
   autonomousResearchOneShotCampaignEnvironmentProjectionHash,
   autonomousResearchOneShotProtectedCampaignFingerprintHash,
+  autonomousResearchOneShotProviderRuntimeBindingHash,
   autonomousResearchOneShotCampaignSourceExecutionSnapshotHash,
   autonomousResearchOneShotTargetCampaignDefinitionHash,
   buildAutonomousResearchOneShotCampaignAttemptReservation,
@@ -28,6 +29,7 @@ import {
   composeFixedAutonomousResearchOneShotCampaignAttempt,
   composeAutonomousResearchOneShotCampaignAttempt,
   fixedAutonomousResearchOneShotProviderEnvironment,
+  inspectAutonomousResearchOneShotProviderRuntimeBinding,
 } from '../../paper-composition/automation/autonomous-research-one-shot-campaign-attempt-composition.mjs';
 import {
   resolveAutonomousResearchProviderConfiguration,
@@ -136,6 +138,47 @@ test('fixed provider projection is immutable and matches the protected hash', ()
   assert.equal(environment.PRESERVED_UNRELATED_VALUE, 'preserved');
 });
 
+test('provider runtime binding captures the managed profile and config identities', () => {
+  const providerConfiguration = {
+    autonomousResearchProviderConfigurationHash:
+      AUTONOMOUS_RESEARCH_ONE_SHOT_PROVIDER_CONFIGURATION_HASH,
+    researchAuthor: { provider: 'codex', codexHome: '/author' },
+    formalReviewer: { provider: 'codex', codexHome: '/reviewer' },
+  };
+  const binding = inspectAutonomousResearchOneShotProviderRuntimeBinding({
+    providerConfiguration,
+    environment: {},
+    preflightAuthor: () => ({
+      codexHome: '/author',
+      capabilityReceipt: {
+        codexResearchAuthorCapabilityReceiptHash: H('author-capability'),
+        credentialConfigIdentityHash: H('author-config'),
+        openClawManagedAuthProfileIdentityHash: H('profile'),
+        openClawManagedRuntimeProvenanceHash: H('runtime'),
+        openClawManagedAuthSourceIdentityHash: H('auth-source'),
+      },
+    }),
+    preflightReviewer: () => ({
+      capabilityReceipt: {
+        codexFormalReviewerCapabilityReceiptHash: H('reviewer-capability'),
+        credentialConfigIdentityHash: H('reviewer-config'),
+        openClawManagedAuthProfileIdentityHash: H('profile'),
+        openClawManagedRuntimeProvenanceHash: H('runtime'),
+        openClawManagedAuthSourceIdentityHash: H('auth-source'),
+      },
+    }),
+  });
+  assert.equal(binding.researchAuthorCredentialConfigIdentityHash, H('author-config'));
+  assert.equal(binding.formalReviewerCredentialConfigIdentityHash, H('reviewer-config'));
+  assert.notEqual(
+    autonomousResearchOneShotProviderRuntimeBindingHash(binding),
+    autonomousResearchOneShotProviderRuntimeBindingHash({
+      ...binding,
+      researchAuthorOpenClawManagedAuthProfileIdentityHash: H('other-profile'),
+    }),
+  );
+});
+
 test('execute rejects provider mismatch before creating the control journal', async () => {
   let journalFactoryCalls = 0;
   await assert.rejects(
@@ -201,6 +244,7 @@ test('execute rejects source blockers before creating the control journal', asyn
         };
       },
       codeProvenanceInspector: () => ({ treeDirty: false }),
+      providerRuntimeBindingInspector: () => providerRuntimeBinding(),
       sourceSnapshotInspector: () => ({ blockers: ['dirty_source'] }),
       journalRepositoryFactory() {
         journalFactoryCalls += 1;
@@ -254,6 +298,7 @@ test('execute reports dirty code provenance before creating the control journal'
         };
       },
       codeProvenanceInspector: () => ({ treeDirty: true }),
+      providerRuntimeBindingInspector: () => providerRuntimeBinding(),
       sourceSnapshotInspector() {
         snapshotInspectorCalls += 1;
         throw new Error('snapshot_must_not_run');
@@ -268,6 +313,23 @@ test('execute reports dirty code provenance before creating the control journal'
   assert.equal(snapshotInspectorCalls, 0);
   assert.equal(journalFactoryCalls, 0);
 });
+
+function providerRuntimeBinding() {
+  return {
+    version: 1,
+    kind: 'AutonomousResearchOneShotProviderRuntimeBinding',
+    providerConfigurationHash:
+      AUTONOMOUS_RESEARCH_ONE_SHOT_PROVIDER_CONFIGURATION_HASH,
+    researchAuthorCapabilityReceiptHash: H('author-capability'),
+    formalReviewerCapabilityReceiptHash: H('reviewer-capability'),
+    researchAuthorCredentialConfigIdentityHash: H('author-config'),
+    formalReviewerCredentialConfigIdentityHash: H('reviewer-config'),
+    researchAuthorOpenClawManagedAuthProfileIdentityHash: H('author-profile'),
+    formalReviewerOpenClawManagedAuthProfileIdentityHash: H('reviewer-profile'),
+    openClawManagedRuntimeProvenanceHash: H('managed-runtime'),
+    openClawManagedAuthSourceIdentityHash: H('managed-auth-source'),
+  };
+}
 
 function executionBinding() {
   const codeProvenance = {
@@ -339,6 +401,7 @@ function executionBinding() {
   const environmentProjection = {
     HEPTA_AUTONOMOUS_RESEARCH_CONTENT_MODE: 'deterministic-bounded',
   };
+  const runtimeBinding = providerRuntimeBinding();
   return {
     version: 1,
     codeProvenance,
@@ -351,6 +414,9 @@ function executionBinding() {
       ),
     autonomousResearchProviderConfigurationHash:
       AUTONOMOUS_RESEARCH_ONE_SHOT_PROVIDER_CONFIGURATION_HASH,
+    providerRuntimeBinding: runtimeBinding,
+    providerRuntimeBindingHash:
+      autonomousResearchOneShotProviderRuntimeBindingHash(runtimeBinding),
     protectedCampaignDefinition,
     protectedCampaignFingerprintHash:
       autonomousResearchOneShotProtectedCampaignFingerprintHash(

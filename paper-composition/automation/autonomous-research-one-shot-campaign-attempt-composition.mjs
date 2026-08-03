@@ -11,6 +11,7 @@ import {
   autonomousResearchOneShotCampaignCodeProvenanceHash,
   autonomousResearchOneShotCampaignEnvironmentProjectionHash,
   autonomousResearchOneShotProtectedCampaignFingerprintHash,
+  autonomousResearchOneShotProviderRuntimeBindingHash,
   autonomousResearchOneShotCampaignSourceExecutionSnapshotHash,
   autonomousResearchOneShotTargetCampaignDefinitionHash,
   buildAutonomousResearchOneShotCampaignAttemptReservation,
@@ -20,6 +21,8 @@ import {
   createCampaignOneShotAttemptJournalRepository,
 } from '../../paper-adapters/automation/campaign-one-shot-attempt-journal-repository.mjs';
 import { currentCodeProvenance } from '../../paper-adapters/runtime/code-provenance.mjs';
+import { preflightCodexResearchAuthor } from '../../paper-adapters/automation/codex-research-author-preflight.mjs';
+import { preflightCodexFormalReviewer } from '../../paper-adapters/automation/codex-formal-reviewer-preflight.mjs';
 import {
   inspectWorkspaceExecutionSnapshot,
   sourceTreeExcludedNames,
@@ -378,6 +381,7 @@ export function buildAutonomousResearchOneShotCampaignExecutionBinding({
   protectedCampaignDefinition,
   datasetMounts,
   providerConfigurationHash,
+  providerRuntimeBinding,
 } = {}) {
   const options = AUTONOMOUS_RESEARCH_ONE_SHOT_CAMPAIGN_OPTIONS;
   const environmentProjection = Object.freeze({
@@ -416,6 +420,9 @@ export function buildAutonomousResearchOneShotCampaignExecutionBinding({
     sourceExecutionSnapshotHash:
       autonomousResearchOneShotCampaignSourceExecutionSnapshotHash(sourceExecutionSnapshot),
     autonomousResearchProviderConfigurationHash: providerConfigurationHash,
+    providerRuntimeBinding,
+    providerRuntimeBindingHash:
+      autonomousResearchOneShotProviderRuntimeBindingHash(providerRuntimeBinding),
     protectedCampaignDefinition,
     protectedCampaignFingerprintHash:
       autonomousResearchOneShotProtectedCampaignFingerprintHash(
@@ -442,6 +449,55 @@ export function buildAutonomousResearchOneShotCampaignExecutionBinding({
       allowedRecoveryActions: Object.freeze(['status']),
       forbiddenActions: Object.freeze(['converge', 'resume']),
     }),
+  });
+}
+
+export function inspectAutonomousResearchOneShotProviderRuntimeBinding({
+  providerConfiguration,
+  environment,
+  preflightAuthor = preflightCodexResearchAuthor,
+  preflightReviewer = preflightCodexFormalReviewer,
+} = {}) {
+  const author = preflightAuthor({
+    ...providerConfiguration.researchAuthor,
+    environment,
+  });
+  const reviewer = preflightReviewer({
+    ...providerConfiguration.formalReviewer,
+    authorProvider: providerConfiguration.researchAuthor.provider,
+    authorCodexHome: author.codexHome,
+    environment,
+  });
+  const authorReceipt = author.capabilityReceipt;
+  const reviewerReceipt = reviewer.capabilityReceipt;
+  if (!authorReceipt || !reviewerReceipt
+    || authorReceipt.openClawManagedRuntimeProvenanceHash
+      !== reviewerReceipt.openClawManagedRuntimeProvenanceHash
+    || authorReceipt.openClawManagedAuthSourceIdentityHash
+      !== reviewerReceipt.openClawManagedAuthSourceIdentityHash) {
+    throw new Error('autonomous_research_one_shot_provider_runtime_binding_invalid');
+  }
+  return Object.freeze({
+    version: 1,
+    kind: 'AutonomousResearchOneShotProviderRuntimeBinding',
+    providerConfigurationHash:
+      providerConfiguration.autonomousResearchProviderConfigurationHash,
+    researchAuthorCapabilityReceiptHash:
+      authorReceipt.codexResearchAuthorCapabilityReceiptHash,
+    formalReviewerCapabilityReceiptHash:
+      reviewerReceipt.codexFormalReviewerCapabilityReceiptHash,
+    researchAuthorCredentialConfigIdentityHash:
+      authorReceipt.credentialConfigIdentityHash,
+    formalReviewerCredentialConfigIdentityHash:
+      reviewerReceipt.credentialConfigIdentityHash,
+    researchAuthorOpenClawManagedAuthProfileIdentityHash:
+      authorReceipt.openClawManagedAuthProfileIdentityHash,
+    formalReviewerOpenClawManagedAuthProfileIdentityHash:
+      reviewerReceipt.openClawManagedAuthProfileIdentityHash,
+    openClawManagedRuntimeProvenanceHash:
+      authorReceipt.openClawManagedRuntimeProvenanceHash,
+    openClawManagedAuthSourceIdentityHash:
+      authorReceipt.openClawManagedAuthSourceIdentityHash,
   });
 }
 
@@ -478,6 +534,8 @@ export async function composeFixedAutonomousResearchOneShotCampaignAttempt({
   campaignAction = composeAutonomousResearchCampaignAction,
   journalRepositoryFactory = createCampaignOneShotAttemptJournalRepository,
   providerConfigurationResolver = resolveAutonomousResearchProviderConfiguration,
+  providerRuntimeBindingInspector =
+    inspectAutonomousResearchOneShotProviderRuntimeBinding,
   readOnlyStoreFactory = createReadOnlyPaperStore,
   campaignStoreFactory = createSqliteCampaignStore,
 } = {}) {
@@ -513,6 +571,10 @@ export async function composeFixedAutonomousResearchOneShotCampaignAttempt({
     !== AUTONOMOUS_RESEARCH_ONE_SHOT_PROVIDER_CONFIGURATION_HASH) {
     throw new Error('autonomous_research_one_shot_provider_configuration_mismatch');
   }
+  const providerRuntimeBinding = providerRuntimeBindingInspector({
+    providerConfiguration,
+    environment: fixedEnvironment,
+  });
   const store = readOnlyStoreFactory({ root, runtimeRoot });
   const campaignStore = campaignStoreFactory({ store, clock });
   let protectedCampaignDefinition;
@@ -558,6 +620,7 @@ export async function composeFixedAutonomousResearchOneShotCampaignAttempt({
     datasetMounts,
     providerConfigurationHash:
       providerConfiguration.autonomousResearchProviderConfigurationHash,
+    providerRuntimeBinding,
   });
   const idempotencyKey = hashRecord(
     'AutonomousResearchOneShotCampaignAttemptIdempotencyKey',
@@ -566,10 +629,11 @@ export async function composeFixedAutonomousResearchOneShotCampaignAttempt({
       codeProvenanceHash: executionBinding.codeProvenanceHash,
       sourceExecutionSnapshotHash: executionBinding.sourceExecutionSnapshotHash,
       targetCampaignDefinitionHash: executionBinding.targetCampaignDefinitionHash,
+      providerRuntimeBindingHash: executionBinding.providerRuntimeBindingHash,
     },
   );
   const candidateReservation = buildAutonomousResearchOneShotCampaignAttemptReservation({
-    attemptId: `campaign-52-${idempotencyKey.slice(-24)}`,
+    attemptId: `campaign-53-${idempotencyKey.slice(-24)}`,
     idempotencyKey,
     campaignId: AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_CAMPAIGN_ID,
     protectedCampaignId: AUTONOMOUS_RESEARCH_ONE_SHOT_PROTECTED_CAMPAIGN_ID,

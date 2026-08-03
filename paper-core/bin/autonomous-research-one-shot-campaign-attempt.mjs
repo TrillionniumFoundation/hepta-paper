@@ -6,6 +6,10 @@ import { fileURLToPath } from 'node:url';
 import {
   composeFixedAutonomousResearchOneShotCampaignAttempt,
 } from '../../paper-composition/automation/autonomous-research-one-shot-campaign-attempt-composition.mjs';
+import {
+  AUTONOMOUS_RESEARCH_ONE_SHOT_PROTECTED_CAMPAIGN_ID,
+  AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_CAMPAIGN_ID,
+} from '../../paper-domain/automation/autonomous-research-one-shot-campaign-attempt.mjs';
 import { parseStrictCliArguments } from '../src/strict-cli-arguments.mjs';
 import {
   defaultPaperAssetRoot,
@@ -21,7 +25,7 @@ export function usage() {
     kind: 'AutonomousResearchOneShotCampaignAttemptUsage',
     usage: 'autonomous-research-one-shot-campaign-attempt --action execute|status [options]',
     actions: {
-      execute: 'execute the fixed create-only Campaign 52 attempt through its append-only journal',
+      execute: 'execute the fixed create-only campaign attempt through its append-only journal',
       status: 'inspect one exact attempt without provider, network, or campaign mutation',
     },
     options: {
@@ -32,8 +36,8 @@ export function usage() {
       '--control-root PATH': 'dedicated sibling control-state root outside native runtime',
     },
     safety: {
-      fixedCampaignId: 'autonomous-research:local-auto-20260730-52',
-      protectedCampaignId: 'autonomous-research:local-auto-20260730-51',
+      fixedCampaignId: AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_CAMPAIGN_ID,
+      protectedCampaignId: AUTONOMOUS_RESEARCH_ONE_SHOT_PROTECTED_CAMPAIGN_ID,
       createOnly: true,
       prepareProviderFree: true,
       providerAndLaunchMarkersRequired: true,

@@ -42,7 +42,15 @@ export function createCampaignLifecycleOperations({ store, clock, mutation, guar
       }
       const now = clock.nowIso();
       const admitted = initialExecutionState.status === 'paused';
-      const statements = [`INSERT INTO paper_campaigns(campaign_id,paper_id,status,max_rounds,spec_json,created_at,updated_at,last_resumed_at,parent_campaign_id,supersedes_campaign_id,recovery_of_campaign_id,current_phase) VALUES(${sqlText(spec.campaignId)},${sqlText(spec.paperId)},${sqlText(admitted ? 'paused' : 'queued')},${Math.max(1, Number(spec.maxRounds || 1))},${sqlJson(spec)},${sqlText(now)},${sqlText(now)},${admitted ? 'NULL' : sqlText(now)},${spec.parentCampaignId ? sqlText(spec.parentCampaignId) : 'NULL'},${spec.supersedesCampaignId ? sqlText(spec.supersedesCampaignId) : 'NULL'},${spec.recoveryOfCampaignId ? sqlText(spec.recoveryOfCampaignId) : 'NULL'},${sqlText(admitted ? initialExecutionState.phase : 'queued')});`];
+      const paperMetadata = {
+        source: 'paper_campaign_creation',
+        campaignId: spec.campaignId,
+        campaignPlanHash: spec.campaignPlanHash,
+      };
+      const statements = [
+        `INSERT OR IGNORE INTO papers(slug,title,status,venue_target,paper_type,canonical_dir,source_dir,submission_dir,metadata_json,created_at,updated_at) VALUES(${sqlText(spec.paperId)},${sqlText(spec.paperId)},'draft',${sqlText(spec.venueTarget || '')},'campaign',${sqlText(spec.sourceWorkspace)},${sqlText(spec.sourceWorkspace)},'submission',${sqlJson(paperMetadata)},${sqlText(now)},${sqlText(now)});`,
+        `INSERT INTO paper_campaigns(campaign_id,paper_id,status,max_rounds,spec_json,created_at,updated_at,last_resumed_at,parent_campaign_id,supersedes_campaign_id,recovery_of_campaign_id,current_phase) VALUES(${sqlText(spec.campaignId)},${sqlText(spec.paperId)},${sqlText(admitted ? 'paused' : 'queued')},${Math.max(1, Number(spec.maxRounds || 1))},${sqlJson(spec)},${sqlText(now)},${sqlText(now)},${admitted ? 'NULL' : sqlText(now)},${spec.parentCampaignId ? sqlText(spec.parentCampaignId) : 'NULL'},${spec.supersedesCampaignId ? sqlText(spec.supersedesCampaignId) : 'NULL'},${spec.recoveryOfCampaignId ? sqlText(spec.recoveryOfCampaignId) : 'NULL'},${sqlText(admitted ? initialExecutionState.phase : 'queued')});`,
+      ];
       for (const node of spec.nodes) {
         statements.push(`INSERT INTO campaign_nodes(node_id,campaign_id,kind,round_index,status,priority,dependencies_json,spec_json,max_attempts,created_at,updated_at,role) VALUES(${sqlText(node.nodeId)},${sqlText(spec.campaignId)},${sqlText(node.kind)},${Number(node.roundIndex || 0)},'queued',${Number(node.priority || 100)},${sqlJson(node.dependencies || [])},${sqlJson(node)},${Math.max(1, Number(node.maxAttempts || 3))},${sqlText(now)},${sqlText(now)},${node.role ? sqlText(node.role) : 'NULL'});`);
       }

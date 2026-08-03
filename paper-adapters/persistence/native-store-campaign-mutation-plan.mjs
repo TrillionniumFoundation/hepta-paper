@@ -85,6 +85,7 @@ export const NATIVE_STORE_CAMPAIGN_STATEMENT_IDS = Object.freeze({
     'campaign.lease.reserve-infrastructure-usage.v1',
   claimNode: 'campaign.lease.claim-node.v1',
   completeNode: 'campaign.integration.complete-node.v1',
+  createCampaignPaper: 'campaign.lifecycle.create-paper.v1',
   createCampaign: 'campaign.lifecycle.create-campaign.v1',
   createCampaignNode: 'campaign.lifecycle.create-node.v1',
   createCampaignStart: 'campaign.lifecycle.create-start.v1',
@@ -201,6 +202,10 @@ const plans = [
           WHERE c.campaign_id=campaign_nodes.campaign_id AND c.status='running')`),
   ]),
   operation(NATIVE_STORE_CAMPAIGN_OPERATION_IDS.createCampaign, [
+    statement(S.createCampaignPaper, `INSERT OR IGNORE INTO papers(
+      slug,title,status,venue_target,paper_type,canonical_dir,source_dir,
+      submission_dir,metadata_json,created_at,updated_at
+    ) VALUES(?,?,'draft',?,'campaign',?,?,'submission',?,?,?)`),
     statement(S.createCampaign, `INSERT INTO paper_campaigns(
       campaign_id,paper_id,status,max_rounds,spec_json,created_at,updated_at,
       last_resumed_at,parent_campaign_id,supersedes_campaign_id,recovery_of_campaign_id,current_phase

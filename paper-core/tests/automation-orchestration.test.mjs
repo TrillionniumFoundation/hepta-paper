@@ -32,6 +32,7 @@ import {
 } from '../../paper-application/automation/campaign-execution-budget-policy.mjs';
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { createSqliteCampaignStore } from '../../paper-adapters/persistence/sqlite-campaign-store.mjs';
+import { createTheoremQualityRevisionSink } from '../../paper-adapters/automation/theorem-quality-revision-sink.mjs';
 import { buildPaperCampaignPlan } from '../../paper-domain/automation/campaign-plan.mjs';
 import { buildExecutorCapabilities } from '../../paper-ports/executor-capabilities.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
@@ -910,6 +911,16 @@ test('campaign operations persist pause resume retry cancel and usage', (t) => {
   const campaigns = createSqliteCampaignStore({ store, clock });
   const plan = buildPaperCampaignPlan({ paperId: 'paper', sourceWorkspace: root, campaignId: 'campaign', maxRounds: 1 });
   campaigns.createCampaign(plan);
+  assert.equal(store.query('SELECT slug FROM papers WHERE slug=?', ['paper']).rows[0].slug, 'paper');
+  assert.equal(createTheoremQualityRevisionSink({ store, clock }).record({
+    paperId: 'paper',
+    sourceWorkspace: root,
+    report: {
+      passed: false,
+      blockers: ['theorem_proof_status_missing'],
+      theoremManuscriptReadinessPolicyHash: hashRecord('FixturePolicy', {}),
+    },
+  }).status, 'theorem_quality_revision_requests_materialized');
   const [prePauseLease] = campaigns.claimReady({ campaignId: 'campaign', workerId: 'pre-pause-worker' });
   assert.equal(campaigns.pauseCampaign('campaign').status, 'paused');
   assert.equal(campaigns.listNodes('campaign').find((node) => node.nodeId === prePauseLease.nodeId).status, 'queued');

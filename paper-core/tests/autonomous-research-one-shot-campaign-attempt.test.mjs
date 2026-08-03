@@ -30,6 +30,7 @@ import {
   composeAutonomousResearchOneShotCampaignAttempt,
   fixedAutonomousResearchOneShotProviderEnvironment,
   inspectAutonomousResearchOneShotProviderRuntimeBinding,
+  projectAutonomousResearchCampaignTerminalResult,
 } from '../../paper-composition/automation/autonomous-research-one-shot-campaign-attempt-composition.mjs';
 import {
   resolveAutonomousResearchProviderConfiguration,
@@ -86,6 +87,27 @@ test('one-shot CLI forwards strict status input without dataset loading', async 
   assert.equal(captured.attemptId, 'attempt-1');
   assert.deepEqual(captured.datasetMounts, []);
   assert.equal(JSON.parse(output.text()).status, 'inspection');
+});
+
+test('one-shot terminal projection recognizes application campaign statuses', () => {
+  assert.deepEqual(
+    projectAutonomousResearchCampaignTerminalResult({
+      status: 'autonomous_research_campaign_completed',
+    }),
+    {
+      terminalStatus: 'completed',
+      outcome: { campaignStatus: 'autonomous_research_campaign_completed' },
+    },
+  );
+  assert.deepEqual(
+    projectAutonomousResearchCampaignTerminalResult({
+      status: 'autonomous_research_campaign_failed',
+    }),
+    {
+      terminalStatus: 'failed_terminal',
+      outcome: { campaignStatus: 'autonomous_research_campaign_failed' },
+    },
+  );
 });
 
 test('one-shot CLI loads execute mounts and rejects malformed command input', async (t) => {

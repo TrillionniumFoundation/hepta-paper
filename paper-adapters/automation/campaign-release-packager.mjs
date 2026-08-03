@@ -6,6 +6,9 @@ import { createPaperBuildArtifactAcceptance, createPaperTask } from '../../paper
 import { createAutomationPromotionCandidate, createAutonomousResearchReleaseBinding, createCampaignReleaseBundle, verifyCampaignReleaseBundle } from '../../paper-domain/automation/campaign-release-contracts.mjs';
 import { assertCampaignReleasePackagerPort } from '../../paper-ports/campaign-release-packager-port.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  campaignTrustedAutonomousManuscriptAuthorshipReceipt,
+} from '../../paper-domain/automation/autonomous-manuscript-release-proof-contract.mjs';
 import { verifyCampaignResearchSourceSnapshot } from '../../paper-domain/automation/campaign-research-contract.mjs';
 import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
 import { createTrustedExperimentRegistryAuthorityVerifier } from '../research-verify/experiment-registry-authority-verifier.mjs';
@@ -379,8 +382,12 @@ export function createCampaignReleasePackager({
         expectedEvidenceBoundManuscriptIrHash:
           manuscriptIr?.evidenceBoundManuscriptIrHash || null,
         expectedManuscriptAuthorPrincipalId:
-          trustedAutonomousManuscriptResult?.result?.agentExecutionReceipt?.principalId
-          || trustedAutonomousManuscriptResult?.result?.agentExecutionReceipt?.agentId
+          campaignTrustedAutonomousManuscriptAuthorshipReceipt(
+            trustedAutonomousManuscriptResult?.result,
+          )?.principalId
+          || campaignTrustedAutonomousManuscriptAuthorshipReceipt(
+            trustedAutonomousManuscriptResult?.result,
+          )?.agentId
           || null,
       }));
       if (executionSignal?.aborted) throw new Error('campaign_release_packaging_cancelled');

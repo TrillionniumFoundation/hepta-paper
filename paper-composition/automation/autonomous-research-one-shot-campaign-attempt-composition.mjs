@@ -501,15 +501,16 @@ export function inspectAutonomousResearchOneShotProviderRuntimeBinding({
   });
 }
 
-function campaignTerminalResult(report) {
+export function projectAutonomousResearchCampaignTerminalResult(report) {
   const status = report?.campaign?.status || report?.status || null;
-  if (status === 'completed') {
+  if (status === 'completed' || status === 'autonomous_research_campaign_completed') {
     return Object.freeze({
       terminalStatus: 'completed',
       outcome: Object.freeze({ campaignStatus: status }),
     });
   }
-  if (['failed', 'cancelled'].includes(status)) {
+  if (['failed', 'cancelled', 'autonomous_research_campaign_failed',
+    'autonomous_research_campaign_cancelled'].includes(status)) {
     return Object.freeze({
       terminalStatus: 'failed_terminal',
       outcome: Object.freeze({ campaignStatus: status }),
@@ -633,7 +634,7 @@ export async function composeFixedAutonomousResearchOneShotCampaignAttempt({
     },
   );
   const candidateReservation = buildAutonomousResearchOneShotCampaignAttemptReservation({
-    attemptId: `campaign-53-${idempotencyKey.slice(-24)}`,
+    attemptId: `campaign-54-${idempotencyKey.slice(-24)}`,
     idempotencyKey,
     campaignId: AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_CAMPAIGN_ID,
     protectedCampaignId: AUTONOMOUS_RESEARCH_ONE_SHOT_PROTECTED_CAMPAIGN_ID,
@@ -716,7 +717,7 @@ export async function composeFixedAutonomousResearchOneShotCampaignAttempt({
           action: 'launch',
           requireCampaignAbsentAtLaunch: true,
         });
-        return campaignTerminalResult(report);
+        return projectAutonomousResearchCampaignTerminalResult(report);
       },
       async inspectLaunchOutcome() {
         const report = await campaignAction({
@@ -727,7 +728,10 @@ export async function composeFixedAutonomousResearchOneShotCampaignAttempt({
         if (!['completed', 'failed', 'cancelled'].includes(status)) {
           return Object.freeze({ terminal: false });
         }
-        return Object.freeze({ terminal: true, ...campaignTerminalResult(report) });
+        return Object.freeze({
+          terminal: true,
+          ...projectAutonomousResearchCampaignTerminalResult(report),
+        });
       },
     });
   } finally {

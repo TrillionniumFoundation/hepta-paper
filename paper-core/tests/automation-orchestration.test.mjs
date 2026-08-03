@@ -24,6 +24,7 @@ import {
 } from '../../paper-application/automation/campaign-quality-release-orchestrator.mjs';
 import {
   executeCampaignAgentNode,
+  selectTrustedAutonomousManuscriptAuthorshipReceipt,
 } from '../../paper-application/automation/campaign-agent-node-orchestrator.mjs';
 import { createResourceGovernor } from '../../paper-application/automation/resource-governor.mjs';
 import {
@@ -70,6 +71,95 @@ function temporary(t, prefix) {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   return root;
 }
+
+test('trusted manuscript result projects the receipt selected by rendering', () => {
+  const currentReceipt = fixtureAgentReceipt('current-reviser', []);
+  const priorAuthorshipReceipt = fixtureAgentReceipt(
+    'prior-author',
+    ['AUTONOMOUS_MANUSCRIPT_IR_DRAFT.json'],
+  );
+  assert.equal(selectTrustedAutonomousManuscriptAuthorshipReceipt({
+    renderReceipt: {
+      agentAuthoredRenderedProseReceiptHash:
+        priorAuthorshipReceipt.agentExecutionReceiptHash,
+    },
+    agentExecutionReceipts: [currentReceipt, priorAuthorshipReceipt],
+  }), priorAuthorshipReceipt);
+  assert.throws(
+    () => selectTrustedAutonomousManuscriptAuthorshipReceipt({
+      renderReceipt: { agentAuthoredRenderedProseReceiptHash: hashRecord('Missing', {}) },
+      agentExecutionReceipts: [currentReceipt],
+    }),
+    /trusted_autonomous_manuscript_authorship_receipt_projection_invalid/,
+  );
+});
+
+test('revision result retains prior authorship proof when the current agent makes no draft edit', async () => {
+  const paperId = 'paper-authorship-projection';
+  const campaignId = 'campaign-authorship-projection';
+  const release = genericManuscriptReleaseFixture({ paperId, campaignId });
+  const currentReceipt = fixtureAgentReceipt('current-reviser', []);
+  const priorAuthorshipReceipt = fixtureAgentReceipt(
+    'prior-author',
+    ['AUTONOMOUS_MANUSCRIPT_IR_DRAFT.json'],
+  );
+  const result = await executeCampaignAgentNode({
+    primitives: {
+      agent: { async execute() { return currentReceipt; } },
+      workspace: {
+        prepareEmpiricalAssertionAuthority() { return {}; },
+        prepareAutonomousManuscriptEvidenceRefBindings() { return null; },
+        renderTrustedAutonomousManuscript() {
+          return {
+            agentAuthoredRenderedProseReceiptHash:
+              priorAuthorshipReceipt.agentExecutionReceiptHash,
+            trustedAutonomousManuscriptRenderReceiptHash:
+              hashRecord('TrustedRenderReceipt', { campaignId }),
+            manuscriptIrPath: 'AUTONOMOUS_MANUSCRIPT_IR.json',
+            evidenceEntailmentContractPath: 'AUTONOMOUS_MANUSCRIPT_ENTAILMENT.json',
+            presentationArtifacts: [],
+          };
+        },
+      },
+    },
+    campaign: {
+      campaignId,
+      paperId,
+      spec: {
+        autonomousResearchPreparation: release.preparation,
+        scientificClaimAuthority: { claimAuthorityType: 'machine-policy-authorized' },
+        paperQualityProfiles: [],
+        datasetMounts: [],
+        languages: ['latex'],
+      },
+    },
+    node: { nodeId: '1:revise', kind: 'revise', role: 'writer', roundIndex: 1 },
+    context: {
+      campaignNodes: [{
+        kind: 'manuscript-integrate',
+        status: 'completed',
+        result: { agentExecutionReceipt: priorAuthorshipReceipt },
+      }],
+      reviews: [],
+      qualityGateBlockers: [],
+    },
+    workspace: '/tmp',
+    manuscript: 'main.tex',
+    executionBudget: { remainingTokenCount: 1000, remainingWallTimeMs: 1000 },
+  });
+  assert.equal(result.agentExecutionReceiptHash, currentReceipt.agentExecutionReceiptHash);
+  assert.equal(result.agentExecutionReceipt, currentReceipt);
+  assert.equal(
+    result.authorshipAgentExecutionReceiptHash,
+    priorAuthorshipReceipt.agentExecutionReceiptHash,
+  );
+  assert.equal(result.authorshipAgentExecutionReceipt, priorAuthorshipReceipt);
+  assert.deepEqual(result.changedPaths, [
+    'AUTONOMOUS_MANUSCRIPT_ENTAILMENT.json',
+    'AUTONOMOUS_MANUSCRIPT_IR.json',
+    'main.tex',
+  ]);
+});
 
 function openClawPolicy(agentId = 'fixture', workspace = process.cwd()) {
   const runtimeConfig = {

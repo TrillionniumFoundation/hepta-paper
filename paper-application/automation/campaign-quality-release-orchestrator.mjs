@@ -1,6 +1,7 @@
 import { requiredRevalidationForChanges } from '../../paper-domain/automation/referee-convergence.mjs';
 import { evaluateManuscriptPromotion } from '../../paper-domain/quality/manuscript-promotion-gate.mjs';
 import {
+  campaignTrustedAutonomousManuscriptAuthorshipReceipt,
   inspectAutonomousManuscriptReleaseProof,
 } from '../../paper-domain/automation/autonomous-manuscript-release-proof-contract.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
@@ -243,7 +244,9 @@ export function executeCampaignQualityRevalidationNode({ primitives, campaign, n
       trustedAutonomousManuscriptResult
         ?.result?.trustedAutonomousManuscriptRenderReceipt || null,
     trustedAutonomousManuscriptAgentExecutionReceipt:
-      trustedAutonomousManuscriptResult?.result?.agentExecutionReceipt || null,
+      campaignTrustedAutonomousManuscriptAuthorshipReceipt(
+        trustedAutonomousManuscriptResult?.result,
+      ),
     trustedAutonomousManuscriptCampaignNodes: context.campaignNodes || [],
   });
   if (!receipt.passed) {
@@ -382,8 +385,9 @@ export async function executeCampaignPackageNode({
   }
   const renderReceipt = trustedAutonomousManuscriptResult
     ?.result?.trustedAutonomousManuscriptRenderReceipt || null;
-  const authorReceipt = trustedAutonomousManuscriptResult
-    ?.result?.agentExecutionReceipt || null;
+  const authorReceipt = campaignTrustedAutonomousManuscriptAuthorshipReceipt(
+    trustedAutonomousManuscriptResult?.result,
+  );
   const authorPrincipalId = authorReceipt?.principalId || authorReceipt?.agentId || null;
   const requireEvidenceEntailmentReview = preparation?.launchMode === 'production-run';
   const evidenceEntailmentReviewReceipt = requireEvidenceEntailmentReview

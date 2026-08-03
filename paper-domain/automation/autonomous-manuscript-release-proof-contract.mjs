@@ -20,6 +20,10 @@ export function campaignTrustedAutonomousManuscriptResultPayload(result) {
   return payload;
 }
 
+export function campaignTrustedAutonomousManuscriptAuthorshipReceipt(result) {
+  return result?.authorshipAgentExecutionReceipt || result?.agentExecutionReceipt || null;
+}
+
 export function inspectAutonomousManuscriptReleaseProof(
   proof,
   expected = {},
@@ -29,7 +33,7 @@ export function inspectAutonomousManuscriptReleaseProof(
   const receipt = result?.trustedAutonomousManuscriptRenderReceipt || null;
   const claimedResultHash = result?.campaignTrustedAutonomousManuscriptResultHash || null;
   const resultPayload = campaignTrustedAutonomousManuscriptResultPayload(result);
-  const agentReceipt = result?.agentExecutionReceipt || null;
+  const agentReceipt = campaignTrustedAutonomousManuscriptAuthorshipReceipt(result);
   const mergeReceipt = agentReceipt?.isolatedAgentMergeReceipt || null;
   const verification = verifyTrustedAutonomousManuscriptRenderReceipt(receipt, {
     paperId: expected.paperId,
@@ -61,7 +65,8 @@ export function inspectAutonomousManuscriptReleaseProof(
       === claimedResultHash
     && result.trustedAutonomousManuscriptRenderReceiptHash
       === receipt?.trustedAutonomousManuscriptRenderReceiptHash
-    && result.agentExecutionReceiptHash === receipt?.agentAuthoredRenderedProseReceiptHash
+    && (result.authorshipAgentExecutionReceiptHash || result.agentExecutionReceiptHash)
+      === receipt?.agentAuthoredRenderedProseReceiptHash
     && agentReceipt?.isolatedAgentMergeReceiptHash
       === mergeReceipt?.isolatedAgentMergeReceiptHash
     && verifyIsolatedAgentMergeReceipt(mergeReceipt, {

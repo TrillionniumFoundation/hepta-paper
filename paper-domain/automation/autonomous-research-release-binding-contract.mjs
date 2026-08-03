@@ -15,7 +15,10 @@ import {
   autonomousVenueReleaseBindingFields,
   verifyAutonomousVenueReleaseBinding,
 } from './autonomous-venue-release-binding.mjs';
-import { inspectAutonomousManuscriptReleaseProof } from './autonomous-manuscript-release-proof-contract.mjs';
+import {
+  campaignTrustedAutonomousManuscriptAuthorshipReceipt,
+  inspectAutonomousManuscriptReleaseProof,
+} from './autonomous-manuscript-release-proof-contract.mjs';
 import {
   assertAutonomousResearchProductionProfilePreparation,
   verifyAutonomousResearchProductionPriorArtAuthority,
@@ -399,7 +402,8 @@ export function createAutonomousResearchReleaseBinding({
     agentExecutionReceiptHash:
       renderReceipt?.agentAuthoredRenderedProseReceiptHash || null,
     isolatedAgentMergeReceiptHash: manuscriptProof.valid
-      ? manuscriptProof.result.agentExecutionReceipt?.isolatedAgentMergeReceiptHash || null
+      ? campaignTrustedAutonomousManuscriptAuthorshipReceipt(manuscriptProof.result)
+        ?.isolatedAgentMergeReceiptHash || null
       : null,
     agentAuthoredSourceDraftHash: renderReceipt?.agentAuthoredSourceDraftHash || null,
     agentAuthoredSourceDraftFileHash:

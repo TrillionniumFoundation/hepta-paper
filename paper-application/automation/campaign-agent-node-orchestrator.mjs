@@ -72,6 +72,24 @@ export function trustedAutonomousManuscriptRenderFailureIsPermanent(value) {
     )));
 }
 
+export function selectTrustedAutonomousManuscriptAuthorshipReceipt({
+  renderReceipt,
+  agentExecutionReceipts,
+} = {}) {
+  const expectedHash = renderReceipt?.agentAuthoredRenderedProseReceiptHash || null;
+  const selected = (agentExecutionReceipts || []).find((candidate) => (
+    candidate?.agentExecutionReceiptHash === expectedHash
+  )) || null;
+  if (!selected) {
+    const error = new Error(
+      'trusted_autonomous_manuscript_authorship_receipt_projection_invalid',
+    );
+    error.retryable = false;
+    throw error;
+  }
+  return selected;
+}
+
 export async function executeCampaignResearchVerificationNode({
   primitives,
   campaign,
@@ -220,6 +238,8 @@ export async function executeCampaignAgentNode({
     const requireAgentAuthoredProse = manuscriptProductionMode
       === 'agent-authored-evidence-bound-ir-v1';
     try {
+      const manuscriptAgentExecutionReceipts =
+        collectCampaignManuscriptAgentExecutionReceipts(context.campaignNodes, receipt);
       const renderReceipt = primitives.workspace.renderTrustedAutonomousManuscript({
         workspace,
         manuscriptPath: manuscript,
@@ -228,11 +248,14 @@ export async function executeCampaignAgentNode({
         authority: empiricalAssertionAuthority,
         formalVerificationReceipt: context.formalVerificationNode?.result || null,
         agentExecutionReceipt: receipt,
-        agentExecutionReceipts:
-          collectCampaignManuscriptAgentExecutionReceipts(context.campaignNodes, receipt),
+        agentExecutionReceipts: manuscriptAgentExecutionReceipts,
         requireAgentAuthoredProse,
         manuscriptProductionMode: manuscriptProductionMode === 'agent-authored-evidence-bound-ir-v1'
           ? manuscriptProductionMode : 'minimal-report-evidence-bound-ir-v1',
+      });
+      const authorshipReceipt = selectTrustedAutonomousManuscriptAuthorshipReceipt({
+        renderReceipt,
+        agentExecutionReceipts: manuscriptAgentExecutionReceipts,
       });
       const changedPaths = Object.freeze([...new Set([
         ...(receipt.changedPaths || []),
@@ -245,9 +268,9 @@ export async function executeCampaignAgentNode({
         version: 1,
         kind: 'CampaignTrustedAutonomousManuscriptResult',
         status: 'campaign_trusted_autonomous_manuscript_completed',
-        agentExecutionReceiptHash: receipt.agentExecutionReceiptHash,
-        agentExecutionReceipt: receipt,
         ...usageFields,
+        authorshipAgentExecutionReceiptHash: authorshipReceipt.agentExecutionReceiptHash,
+        authorshipAgentExecutionReceipt: authorshipReceipt,
         changedPaths,
         trustedAutonomousManuscriptRenderReceiptHash:
           renderReceipt.trustedAutonomousManuscriptRenderReceiptHash,

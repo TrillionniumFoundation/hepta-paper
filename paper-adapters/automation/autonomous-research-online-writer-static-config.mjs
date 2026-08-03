@@ -112,6 +112,8 @@ export const PROVENANCE_ONLY_SOURCES = new Set([
 ]);
 export const SQL_MIGRATION_ROOT = 'store/migrations';
 export const NON_WRITER_EXCLUSIONS = Object.freeze({
+  'paper-adapters/automation/campaign-one-shot-attempt-journal-repository.mjs':
+    'append-only one-shot control-state journal in a dedicated root outside every registered research runtime database',
   'paper-adapters/automation/externally-fenced-sqlite-mutation-plan.mjs':
     'coordinator-internal pinned statement executor; never reachable as an unfenced repository writer',
   'paper-adapters/automation/externally-fenced-sqlite-mutation-recovery.mjs':

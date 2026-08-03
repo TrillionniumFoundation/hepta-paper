@@ -12,6 +12,8 @@ import {
 } from '../verification/critical-module-coverage-policy.mjs';
 
 const EXPECTED_AUDITED_CAPS = Object.freeze({
+  'paper-domain/automation/autonomous-research-one-shot-campaign-attempt.mjs': 87,
+  'paper-adapters/automation/campaign-one-shot-attempt-journal-repository.mjs': 60,
   'paper-adapters/automation/workspace-attempt-repository.mjs': 110,
   'paper-adapters/automation/isolated-agent-executor.mjs': 60,
   'paper-application/automation/campaign-node-executor.mjs': 110,
@@ -45,6 +47,10 @@ const REQUIRED_NEW_TRUST_TARGETS = Object.freeze([
   'paper-adapters/build-package/local-release-attestor-socket.mjs',
   'paper-adapters/automation/local-autonomous-research-state-authority-socket.mjs',
   'paper-adapters/runtime/atomic-unix-socket-publication.mjs',
+  'paper-domain/automation/autonomous-research-one-shot-campaign-attempt.mjs',
+  'paper-adapters/automation/campaign-one-shot-attempt-journal-repository.mjs',
+  'paper-composition/automation/autonomous-research-one-shot-campaign-attempt-composition.mjs',
+  'paper-core/bin/autonomous-research-one-shot-campaign-attempt.mjs',
   'paper-adapters/build-package/research-execution-release-attestor-inspection.mjs',
   'paper-adapters/build-package/research-execution-release-attestor-inspection-support.mjs',
   'paper-adapters/research-verify/dynamic-formal-execution-authority.mjs',

@@ -77,6 +77,7 @@ export async function composeAutonomousResearchCampaignAction({
   serviceOverrides = {},
   executorOverride = null,
   campaignRunner = undefined,
+  requireCampaignAbsentAtLaunch = false,
   productionReadinessInspector = queryAutomationReadiness,
   releaseAttestorSpawnSyncImpl = undefined,
   readinessClock = null,
@@ -86,6 +87,21 @@ export async function composeAutonomousResearchCampaignAction({
   runtimeSignal = null,
   worker = {},
 } = {}) {
+  if (typeof requireCampaignAbsentAtLaunch !== 'boolean') {
+    throw new Error('autonomous_research_require_campaign_absent_at_launch_invalid');
+  }
+  if (requireCampaignAbsentAtLaunch && action !== 'launch') {
+    throw new Error(
+      'autonomous_research_require_campaign_absent_at_launch_requires_launch_action',
+    );
+  }
+  const assertCampaignAbsentAtLaunch = (campaign) => {
+    if (requireCampaignAbsentAtLaunch && campaign) {
+      throw new Error(
+        `autonomous_research_campaign_already_exists_at_launch:${campaign.campaignId}`,
+      );
+    }
+  };
   if (localOnly === true
     && launchMode !== AUTONOMOUS_RESEARCH_LAUNCH_MODES.GOLDEN_BOOTSTRAP) {
     throw new Error('autonomous_research_local_mode_requires_bounded_launch_mode');
@@ -185,6 +201,7 @@ export async function composeAutonomousResearchCampaignAction({
   };
   try {
     existing = campaignStore?.getCampaign(id) || null;
+    assertCampaignAbsentAtLaunch(existing);
     if (existing) {
       resolvePersistedAutonomousResearchLaunchMode({
         campaign: existing,
@@ -372,6 +389,7 @@ export async function composeAutonomousResearchCampaignAction({
       context = campaignExecutionContext.context;
       campaignStore = context.services.campaignStore;
       existing = campaignStore.getCampaign(id);
+      assertCampaignAbsentAtLaunch(existing);
       if (dispatchMutation) verifyAutonomousResearchSupervisorReadinessAuthorization({
         authorization: supervisorDispatchAuthorization,
         campaign: existing,
@@ -585,6 +603,9 @@ export async function composeAutonomousResearchCampaignAction({
         receiptPointerRepository,
         clock: context.services.clock,
       }) : null;
+    if (requireCampaignAbsentAtLaunch) {
+      assertCampaignAbsentAtLaunch(campaignStore.getCampaign(id));
+    }
     const executionReport = await executeAutonomousResearchCampaign({
       action,
       localOnly,

@@ -42,6 +42,24 @@ function exception({
 }
 
 export const CRITICAL_COVERAGE_TARGET_OVERRIDES = Object.freeze({
+  'paper-domain/automation/autonomous-research-one-shot-campaign-attempt.mjs': exception({
+    lines: 55,
+    functions: 40,
+    maxUncoveredBranchBlocks: 87,
+    trustBoundary: true,
+    reviewedAttackSurface: ['binding-integrity', 'phase-transition', 'terminal-replay'],
+    rationale:
+      'One-shot authority contract validates exact nested bindings and all recovery phases; direct tests cover immutable provider projection, CAS replay, terminal recovery, and mutation gating.',
+  }),
+  'paper-adapters/automation/campaign-one-shot-attempt-journal-repository.mjs': exception({
+    lines: 55,
+    functions: 40,
+    maxUncoveredBranchBlocks: 60,
+    trustBoundary: true,
+    reviewedAttackSurface: ['append-only-journal', 'filesystem-identity', 'side-effect-permit'],
+    rationale:
+      'Journal adapter retains SQLite and filesystem fault branches; tests cover canonical hash chains, no-replace triggers, commit ambiguity, stale replay, and single-use permits.',
+  }),
   'paper-adapters/automation/workspace-attempt-repository.mjs': exception({
     lines: 80,
     functions: 85,

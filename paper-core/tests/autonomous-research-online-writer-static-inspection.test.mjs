@@ -113,6 +113,18 @@ test('production writer discovery is complete and binds derived-cache provenance
     journalExclusions.map((entry) => entry.entrypoint).sort(),
     ['expectedAuthorityJournalSqliteSchemaIdentity', 'moduleSchemaProvisioning'],
   );
+  assert.deepEqual(
+    inspection.excludedCandidates.filter((entry) => (
+      entry.sourceFile ===
+        'paper-adapters/automation/campaign-one-shot-attempt-journal-repository.mjs'
+    )),
+    [{
+      sourceFile:
+        'paper-adapters/automation/campaign-one-shot-attempt-journal-repository.mjs',
+      reason:
+        'append-only one-shot control-state journal in a dedicated root outside every registered research runtime database',
+    }],
+  );
   const excludedEntrypointsFor = (sourceFile) => inspection.excludedCandidates
     .filter((entry) => entry.sourceFile === sourceFile && entry.entrypoint)
     .map((entry) => entry.entrypoint)

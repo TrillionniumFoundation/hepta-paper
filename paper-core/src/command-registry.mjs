@@ -274,6 +274,28 @@ const ROUTES = Object.freeze([
   }),
   route({
     group: 'operator',
+    name: 'autonomous-research-one-shot-campaign-attempt',
+    argv: ['node', 'paper-core/bin/autonomous-research-one-shot-campaign-attempt.mjs'],
+    npmScript: 'automation:autonomous-research-one-shot-campaign-attempt',
+    mutability: 'argument-dependent',
+    effects: {
+      externalAction: 'argument-dependent',
+      networkUse: 'argument-dependent',
+      credentialUse: 'argument-dependent',
+      providerCost: 'argument-dependent',
+    },
+    forwardingPolicy: 'registry',
+    forwardedArgumentSchema: {
+      booleanFlags: ['help'],
+      valueFlags: [
+        'action', 'root', 'runtime-root', 'control-root',
+        'dataset-mount-file', 'attempt-id',
+      ],
+      positional: false,
+    },
+  }),
+  route({
+    group: 'operator',
     name: 'strict-full-auto-acceptance',
     argv: ['node', 'paper-core/bin/strict-full-auto-acceptance.mjs'],
     npmScript: 'automation:strict-full-auto-acceptance',

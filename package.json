@@ -84,6 +84,7 @@
     "automation:autonomous-research-supervisor-health": "node paper-core/bin/autonomous-research-supervisor-health.mjs",
     "automation:nested-runtime-platform-qualification": "node paper-core/bin/nested-runtime-platform-qualification.mjs",
     "automation:autonomous-research-state-backup": "node paper-core/bin/autonomous-research-state-backup.mjs",
+    "automation:autonomous-research-one-shot-campaign-attempt": "node paper-core/bin/autonomous-research-one-shot-campaign-attempt.mjs",
     "automation:autonomous-research-state-provision": "node paper-core/bin/autonomous-research-state-provision.mjs",
     "automation:autonomous-research-state-partial-root-maintenance": "node paper-core/bin/autonomous-research-state-partial-root-maintenance.mjs",
     "automation:autonomous-research-online-schema-transition": "node paper-core/bin/autonomous-research-online-schema-transition.mjs",

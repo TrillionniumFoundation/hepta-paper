@@ -172,7 +172,8 @@ export function evaluateManuscriptPromotion({
   }
   const experimentRegistry = researchReport?.capabilities?.experimentRegistry || null;
   const experiments = values(experimentRegistry?.experiments);
-  const experimentRegistryRequired = empiricalProfile || experiments.length > 0;
+  const experimentRegistryRequired = Boolean(researchReport)
+    && (empiricalProfile || experiments.length > 0);
   const experimentRegistryVerification = verifyExperimentRegistry(experimentRegistry, {
     expectedPaperId: paperTask?.paperId || null,
     expectedCampaignId,
@@ -187,13 +188,15 @@ export function evaluateManuscriptPromotion({
     blockers.push('experiment_registry_required_for_promotion');
     blockers.push(...values(experimentRegistry?.incompleteExperimentIds).map((item) => `experiment_not_accepted:${item}`));
   }
-  if (empiricalProfile && experiments.length === 0) {
+  if (experimentRegistryRequired && empiricalProfile && experiments.length === 0) {
     blockers.push('experiment_registry_empty_for_empirical_profile');
   }
-  if (empiricalProfile && Number(experimentRegistry?.academicExperimentCount || 0) < 1) {
+  if (experimentRegistryRequired
+    && empiricalProfile
+    && Number(experimentRegistry?.academicExperimentCount || 0) < 1) {
     blockers.push('synthetic_conformance_evidence_not_academic');
   }
-  if (empiricalProfile) {
+  if (experimentRegistryRequired && empiricalProfile) {
     blockers.push(...empiricalClaimPromotionBijectionBlockers(
       researchReport?.capabilities?.claimRegistry,
       experimentRegistry,

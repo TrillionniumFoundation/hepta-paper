@@ -341,7 +341,15 @@ function renderSource({
     text,
     `% HEPTA_EMPIRICAL_CLAIM_END ${declaration.claimId}`,
   ]);
-  const sectionLines = manuscriptIr.sections.flatMap((section) => [
+  let appendixStarted = false;
+  const sectionLines = manuscriptIr.sections.flatMap((section) => {
+    const formalProofSupplement = /(?:formal[\s_-]+proof[\s_-]+supplement|appendix)/iu.test(
+      `${section.sectionId || ''} ${section.heading || ''}`,
+    );
+    const appendixPrefix = formalProofSupplement && !appendixStarted ? ['\\appendix'] : [];
+    if (formalProofSupplement) appendixStarted = true;
+    return [
+    ...appendixPrefix,
     `\\section{${latexEscapeEvidenceBoundText(section.heading)}}`,
     ...section.blocks.flatMap((block) => {
       if (block.type !== 'slot') return evidenceBoundProseBlock(block, priorArtReceipt);
@@ -353,7 +361,8 @@ function renderSource({
       ];
       throw new Error(`trusted_autonomous_manuscript_slot_unsupported:${block.slot}`);
     }),
-  ]);
+    ];
+  });
   const bibliographyStyle = venueProfileSelection?.profile?.bibliographyStyle
     || 'inline-evidence-v1';
   const citationStyle = venueProfileSelection?.profile?.citationStyle

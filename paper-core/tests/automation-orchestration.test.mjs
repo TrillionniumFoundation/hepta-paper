@@ -23,6 +23,7 @@ import {
   executeCampaignQualityRevalidationNode,
 } from '../../paper-application/automation/campaign-quality-release-orchestrator.mjs';
 import {
+  campaignNodesForEmpiricalAssertionAuthority,
   executeCampaignAgentNode,
   selectTrustedAutonomousManuscriptAuthorshipReceipt,
 } from '../../paper-application/automation/campaign-agent-node-orchestrator.mjs';
@@ -72,6 +73,22 @@ function temporary(t, prefix) {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   return root;
 }
+
+test('revision referees use the authority snapshot available to the reviser', () => {
+  const priorReplay = { kind: 'revalidate-empirical-reproduce', roundIndex: 1 };
+  const currentPrimary = { kind: 'revalidate-empirical', roundIndex: 2 };
+  const currentReplay = { kind: 'revalidate-empirical-reproduce', roundIndex: 2 };
+  const revise = { kind: 'revise', roundIndex: 2 };
+  const campaignNodes = [priorReplay, currentPrimary, currentReplay, revise];
+  assert.deepEqual(campaignNodesForEmpiricalAssertionAuthority({
+    campaignNodes,
+    node: { kind: 'revision-referee-1', roundIndex: 2 },
+  }), [priorReplay, revise]);
+  assert.equal(campaignNodesForEmpiricalAssertionAuthority({
+    campaignNodes,
+    node: { kind: 'referee-1', roundIndex: 2 },
+  }), campaignNodes);
+});
 
 test('trusted manuscript result projects the receipt selected by rendering', () => {
   const currentReceipt = fixtureAgentReceipt('current-reviser', []);

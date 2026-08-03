@@ -108,6 +108,15 @@ test('one-shot terminal projection recognizes application campaign statuses', ()
       outcome: { campaignStatus: 'autonomous_research_campaign_failed' },
     },
   );
+  assert.deepEqual(
+    projectAutonomousResearchCampaignTerminalResult({
+      status: 'autonomous_research_campaign_stopped',
+    }),
+    {
+      terminalStatus: 'failed_terminal',
+      outcome: { campaignStatus: 'autonomous_research_campaign_stopped' },
+    },
+  );
 });
 
 test('one-shot CLI loads execute mounts and rejects malformed command input', async (t) => {

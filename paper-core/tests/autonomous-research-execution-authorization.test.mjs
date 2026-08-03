@@ -434,8 +434,12 @@ test('machine intake create is atomically persisted paused and admitted-not-auth
   const created = operations.createCampaign(plan);
   assert.equal(created.status, 'paused');
   assert.equal(transactions.length, 1);
-  assert.match(transactions[0][0], /'paused'/);
-  assert.match(transactions[0][0], /'admitted-not-authorized'/);
+  assert.match(transactions[0][0], /INSERT OR IGNORE INTO papers/);
+  const campaignInsert = transactions[0].find((statement) => (
+    statement.includes('INSERT INTO paper_campaigns')
+  ));
+  assert.match(campaignInsert, /'paused'/);
+  assert.match(campaignInsert, /'admitted-not-authorized'/);
   assert.doesNotMatch(transactions[0].join('\n'), /SET status='running'/);
 
   const forged = structuredClone(plan);

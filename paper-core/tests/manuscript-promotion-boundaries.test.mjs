@@ -41,6 +41,17 @@ function fixture(t, manuscript, extraFiles = {}) {
   return { root, source, runtimeRoot: path.join(root, 'runtime'), task, row: { task, state: { compileStatus: 'compiled_pdf_present', blockers: [] }, artifacts: {} } };
 }
 
+test('convergence does not require the final experiment registry before research verification', () => {
+  const gate = evaluateManuscriptPromotion({
+    paperTask: { paperId: 'paper', paperQualityProfile: 'empirical_or_experiment' },
+    requireResearchQuality: false,
+    requirePaperQuality: false,
+    boundary: 'automation_convergence',
+  });
+  assert.equal(gate.blockers.some((blocker) => blocker.startsWith('experiment_registry')), false);
+  assert.equal(gate.blockers.includes('synthetic_conformance_evidence_not_academic'), false);
+});
+
 test('package verifier failure is retained by final ArtifactPackage and submission manifest', async (t) => {
   const input = fixture(t, '\\documentclass{article}\\begin{document}x\\end{document}\n', { '.env': 'SECRET=fixture\n' });
   const pkg = await withArtifactWriteContext(services(), () => runPackageAdapter({ ...input, execute: true }));

@@ -40,6 +40,17 @@ function completedEmpiricalOutcome(campaignNodes) {
   });
 }
 
+export function campaignNodesForEmpiricalAssertionAuthority({ campaignNodes, node } = {}) {
+  if (!/^revision-referee-\d+$/.test(String(node?.kind || ''))) {
+    return campaignNodes || [];
+  }
+  return (campaignNodes || []).filter((candidate) => {
+    const classification = campaignEmpiricalNodeClassification(candidate?.kind);
+    return candidate?.roundIndex !== node.roundIndex
+      || (!classification.revalidate && !classification.revalidateReplay);
+  });
+}
+
 function blockedResult(result) {
   const error = new Error(`campaign_research_verification_blocked:${(result?.researchPromotionBlockers || []).join(',') || 'result_invalid'}`);
   error.retryable = false;
@@ -154,7 +165,10 @@ export async function executeCampaignAgentNode({
       workspace,
       paperId: campaign.paperId,
       campaignId: campaign.campaignId,
-      campaignNodes: context.campaignNodes,
+      campaignNodes: campaignNodesForEmpiricalAssertionAuthority({
+        campaignNodes: context.campaignNodes,
+        node,
+      }),
     })
     : null;
   const empiricalOutcomeObserved = ['manuscript-integrate', 'revise'].includes(node.kind)

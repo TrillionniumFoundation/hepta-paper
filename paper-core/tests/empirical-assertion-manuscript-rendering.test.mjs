@@ -1089,8 +1089,11 @@ test('system renderer rebuilds the evidence-bound manuscript only from verified 
     }, {
       sectionId: 'methods',
       heading: 'Bound Methods',
-      blocks: [{ type: 'slot', blockId: 'empirical-claims-slot', slot: 'empirical_claims' },
-        { type: 'slot', blockId: 'formal-support-slot', slot: 'formal_support' }],
+      blocks: [{ type: 'slot', blockId: 'empirical-claims-slot', slot: 'empirical_claims' }],
+    }, {
+      sectionId: 'formal-proof-supplement',
+      heading: 'Formal Proof Supplement',
+      blocks: [{ type: 'slot', blockId: 'formal-support-slot', slot: 'formal_support' }],
     }, {
       sectionId: 'results',
       heading: 'Bound Results',
@@ -1416,6 +1419,7 @@ test('system renderer rebuilds the evidence-bound manuscript only from verified 
   }).valid, false);
   assert.match(agentRendered, /Agent Evidence Synthesis/);
   assert.match(agentRendered, /model-authored paragraph is admitted only through/);
+  assert.match(agentRendered, /\\appendix\s+\\section\{Formal Proof Supplement\}/);
 
   const unreceiptedDraft = structuredClone(agentDraft);
   unreceiptedDraft.sections[0].blocks[0].text = 'Unreceipted replacement prose.';

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 
 import {
@@ -9,16 +10,19 @@ import {
   AUTONOMOUS_RESEARCH_ONE_SHOT_PROTECTED_CAMPAIGN_ID,
   AUTONOMOUS_RESEARCH_ONE_SHOT_PROVIDER_CONFIGURATION_HASH,
   AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_CAMPAIGN_ID,
-  AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_OBJECTIVE,
-  AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_PAPER_ID,
-  autonomousResearchOneShotCampaignCodeProvenanceHash,
-  autonomousResearchOneShotCampaignEnvironmentProjectionHash,
   autonomousResearchOneShotProtectedCampaignFingerprintHash,
   autonomousResearchOneShotProviderRuntimeBindingHash,
   autonomousResearchOneShotCampaignSourceExecutionSnapshotHash,
   autonomousResearchOneShotTargetCampaignDefinitionHash,
   buildAutonomousResearchOneShotCampaignAttemptReservation,
+  canonicalAutonomousResearchOneShotCampaignAttemptJson,
+  verifyAutonomousResearchOneShotCampaignExecutionBindingForHistoricalAudit,
+  verifyAutonomousResearchOneShotCampaignAttemptReservationForHistoricalAudit,
 } from '../../paper-domain/automation/autonomous-research-one-shot-campaign-attempt.mjs';
+import { canonicalAutonomousResearchOneShotSnapshot } from '../../paper-domain/automation/autonomous-research-one-shot-canonical-json.mjs';
+import {
+  verifyAutonomousResearchOneShotHistoricalTargetCampaignDefinition,
+} from '../../paper-domain/automation/autonomous-research-one-shot-target-campaign.mjs';
 import {
   createCampaignOneShotAttemptJournalRepository,
 } from '../../paper-adapters/automation/campaign-one-shot-attempt-journal-repository.mjs';
@@ -28,21 +32,31 @@ import {
 import {
   composeFixedAutonomousResearchOneShotCampaignAttempt,
   composeAutonomousResearchOneShotCampaignAttempt,
+  autonomousResearchOneShotCampaignAttemptIdempotencyKey,
+  createAutonomousResearchOneShotPrepareSideEffectGuard,
+  fixedAutonomousResearchOneShotPrepareEnvironment,
   fixedAutonomousResearchOneShotProviderEnvironment,
   inspectAutonomousResearchOneShotProviderRuntimeBinding,
   projectAutonomousResearchCampaignTerminalResult,
+  selectAutonomousResearchOneShotCampaignAttemptReservation,
 } from '../../paper-composition/automation/autonomous-research-one-shot-campaign-attempt-composition.mjs';
+import {
+  assertAutonomousResearchOneShotProviderCanaryReceiptBound,
+  canonicalAutonomousResearchOneShotDatasetMounts,
+  createAutonomousResearchOneShotCampaignExecutionBindingFence,
+} from '../../paper-composition/automation/autonomous-research-one-shot-campaign-execution-fence.mjs';
 import {
   resolveAutonomousResearchProviderConfiguration,
 } from '../../paper-composition/automation/autonomous-research-provider-configuration.mjs';
-import {
-  composeAutonomousResearchCampaignAction,
-} from '../../paper-composition/automation/autonomous-research-campaign-composition.mjs';
 import {
   loadDatasetMounts,
   main as runOneShotCampaignAttemptCli,
 } from '../bin/autonomous-research-one-shot-campaign-attempt.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  executionBinding,
+  providerRuntimeBinding,
+} from './support/autonomous-research-one-shot-campaign-attempt-fixture.mjs';
 
 function H(label) {
   return hashRecord('AutonomousResearchOneShotCampaignAttemptTestHash', { label });
@@ -150,15 +164,24 @@ test('one-shot CLI loads execute mounts and rejects malformed command input', as
     /autonomous_research_one_shot_dataset_mount_file_required/);
 });
 
-test('fixed provider projection is immutable and matches the protected hash', () => {
+test('one-shot prepare environment is isolated from hostile provider ambient state', () => {
   const runtimeRoot = '/data/home-data/hepta-paper-runtime/native-runtime';
+  const forbiddenEnvironment = Object.fromEntries(
+    AUTONOMOUS_RESEARCH_ONE_SHOT_FORBIDDEN_PREPARE_ENVIRONMENT_KEYS
+      .map((key) => [key, `/private/hostile/${key}.json`]),
+  );
   const environment = fixedAutonomousResearchOneShotProviderEnvironment({
     runtimeRoot,
     environment: {
       HEPTA_RESEARCH_AUTHOR_MODEL: 'arbitrary-model',
       HEPTA_FORMAL_REVIEW_CODEX_HOME: '/tmp/arbitrary-home',
+      HEPTA_AUTONOMOUS_RESEARCH_CONTENT_MODE: 'agent-evidence-bound',
+      ...forbiddenEnvironment,
       PRESERVED_UNRELATED_VALUE: 'preserved',
     },
+  });
+  const prepareEnvironment = fixedAutonomousResearchOneShotPrepareEnvironment({
+    runtimeRoot,
   });
   const configuration = resolveAutonomousResearchProviderConfiguration({ environment });
   assert.equal(configuration.autonomousResearchProviderConfigurationHash,
@@ -167,6 +190,35 @@ test('fixed provider projection is immutable and matches the protected hash', ()
   assert.equal(configuration.formalReviewer.codexHome,
     '/data/home-data/hepta-paper-runtime/openclaw-managed-codex/formal-reviewer');
   assert.equal(environment.PRESERVED_UNRELATED_VALUE, 'preserved');
+  assert.equal(environment.HEPTA_PRIOR_ART_SERVICE_CONFIG,
+    forbiddenEnvironment.HEPTA_PRIOR_ART_SERVICE_CONFIG);
+  assert.equal(prepareEnvironment.HEPTA_AUTONOMOUS_RESEARCH_CONTENT_MODE,
+    'deterministic-bounded');
+  assert.equal(prepareEnvironment.PRESERVED_UNRELATED_VALUE, undefined);
+  for (const key of AUTONOMOUS_RESEARCH_ONE_SHOT_FORBIDDEN_PREPARE_ENVIRONMENT_KEYS) {
+    assert.equal(Object.hasOwn(prepareEnvironment, key), false);
+  }
+  assert.equal(Object.isFrozen(prepareEnvironment), true);
+  const prepareSideEffectGuard =
+    createAutonomousResearchOneShotPrepareSideEffectGuard();
+  for (const action of [
+    'campaign_readiness_composition',
+    'campaign_readiness_composition_preflight',
+  ]) {
+    prepareSideEffectGuard({ action });
+    prepareSideEffectGuard.assertCurrent({ action });
+    prepareSideEffectGuard.markStarted({ action });
+  }
+  for (const action of ['bounded_prior_art_retrieval', 'provider_live_canary']) {
+    for (const guard of [
+      prepareSideEffectGuard,
+      prepareSideEffectGuard.assertCurrent,
+      prepareSideEffectGuard.markStarted,
+    ]) {
+      assert.throws(() => guard({ action }),
+        /autonomous_research_one_shot_prepare_external_action_forbidden/);
+    }
+  }
 });
 
 test('provider runtime binding captures the managed profile and config identities', () => {
@@ -207,6 +259,76 @@ test('provider runtime binding captures the managed profile and config identitie
       ...binding,
       researchAuthorOpenClawManagedAuthProfileIdentityHash: H('other-profile'),
     }),
+  );
+});
+
+test('fixed attempt replay binds the complete execution snapshot and refuses preseeded launch', () => {
+  const currentBinding = executionBinding();
+  const currentKey = autonomousResearchOneShotCampaignAttemptIdempotencyKey(
+    currentBinding,
+  );
+  const attemptId = `campaign-57-${currentKey.slice(-24)}`;
+  const candidateReservation = buildAutonomousResearchOneShotCampaignAttemptReservation({
+    attemptId,
+    idempotencyKey: currentKey,
+    campaignId: AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_CAMPAIGN_ID,
+    protectedCampaignId: AUTONOMOUS_RESEARCH_ONE_SHOT_PROTECTED_CAMPAIGN_ID,
+    executionBinding: currentBinding,
+    reservedAt: '2026-08-03T00:00:01.000Z',
+  });
+  const staleProtectedCampaignDefinition = {
+    ...currentBinding.protectedCampaignDefinition,
+    logicalStateHash: H('stale-protected-logical-state'),
+  };
+  const staleBinding = {
+    ...currentBinding,
+    protectedCampaignDefinition: staleProtectedCampaignDefinition,
+    protectedCampaignFingerprintHash:
+      autonomousResearchOneShotProtectedCampaignFingerprintHash(
+        staleProtectedCampaignDefinition,
+      ),
+  };
+  assert.notEqual(
+    autonomousResearchOneShotCampaignAttemptIdempotencyKey(staleBinding),
+    currentKey,
+  );
+  const preseededReservation = buildAutonomousResearchOneShotCampaignAttemptReservation({
+    attemptId,
+    idempotencyKey: currentKey,
+    campaignId: AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_CAMPAIGN_ID,
+    protectedCampaignId: AUTONOMOUS_RESEARCH_ONE_SHOT_PROTECTED_CAMPAIGN_ID,
+    executionBinding: staleBinding,
+    reservedAt: '2026-08-03T00:00:00.000Z',
+  });
+  assert.throws(
+    () => selectAutonomousResearchOneShotCampaignAttemptReservation({
+      existing: {
+        reservation: preseededReservation,
+        headPhase: 'attempt_reserved',
+      },
+      candidateReservation,
+    }),
+    /autonomous_research_one_shot_existing_reservation_binding_mismatch/,
+  );
+  assert.throws(
+    () => selectAutonomousResearchOneShotCampaignAttemptReservation({
+      existing: {
+        reservation: candidateReservation,
+        headPhase: 'provider_completed',
+      },
+      candidateReservation,
+    }),
+    /autonomous_research_one_shot_existing_provider_completion_not_launch_authority/,
+  );
+  assert.equal(
+    selectAutonomousResearchOneShotCampaignAttemptReservation({
+      existing: {
+        reservation: candidateReservation,
+        headPhase: 'provider_started',
+      },
+      candidateReservation,
+    }),
+    candidateReservation,
   );
 });
 
@@ -345,136 +467,427 @@ test('execute reports dirty code provenance before creating the control journal'
   assert.equal(journalFactoryCalls, 0);
 });
 
-function providerRuntimeBinding() {
-  return {
+test('execute rejects dataset mount drift before journal or external actions', async () => {
+  let journalFactoryCalls = 0;
+  let campaignActionCalls = 0;
+  let providerActionCalls = 0;
+  const binding = executionBinding();
+  const protectedCampaign = {
+    campaignId: AUTONOMOUS_RESEARCH_ONE_SHOT_PROTECTED_CAMPAIGN_ID,
+    paperId: 'local-auto-20260730-51',
+    status: 'failed',
+  };
+  const nodes = [{
+    status: 'failed_terminal',
+    leaseOwner: null,
+    failureClass: 'agent_usage_unknown_terminal',
+  }, ...Array.from({ length: 65 }, () => ({
+    status: 'skipped',
+    leaseOwner: null,
+    failureClass: null,
+  }))];
+  await assert.rejects(
+    () => composeFixedAutonomousResearchOneShotCampaignAttempt({
+      workspaceRoot: '/tmp/workspace',
+      root: '/tmp/assets',
+      runtimeRoot: '/data/home-data/hepta-paper-runtime/native-runtime',
+      controlRoot: '/tmp/runtime/one-shot-control',
+      datasetMounts: [{ name: 'hostile-unbound-dataset' }],
+      environment: {
+        HEPTA_AUTONOMOUS_RESEARCH_CONTENT_MODE: 'agent-evidence-bound',
+        HEPTA_PRIOR_ART_SERVICE_CONFIG: '/private/hostile/prior-art.json',
+      },
+      providerConfigurationResolver: () => ({
+        autonomousResearchProviderConfigurationHash:
+          AUTONOMOUS_RESEARCH_ONE_SHOT_PROVIDER_CONFIGURATION_HASH,
+      }),
+      providerRuntimeBindingInspector: () => providerRuntimeBinding(),
+      readOnlyStoreFactory: () => ({
+        query: () => ({ ok: true, rows: [{ count: 0 }] }),
+        close() {},
+      }),
+      campaignStoreFactory: () => ({
+        getCampaign: (campaignId) => campaignId
+          === AUTONOMOUS_RESEARCH_ONE_SHOT_PROTECTED_CAMPAIGN_ID
+          ? protectedCampaign : null,
+        listNodes: () => nodes,
+      }),
+      codeProvenanceInspector: () => binding.codeProvenance,
+      sourceSnapshotInspector: () => ({
+        ...binding.sourceExecutionSnapshot,
+        blockers: [],
+      }),
+      campaignAction() {
+        campaignActionCalls += 1;
+        throw new Error('campaign_action_must_not_run');
+      },
+      providerCanaryRunner() {
+        providerActionCalls += 1;
+        throw new Error('provider_action_must_not_run');
+      },
+      journalRepositoryFactory() {
+        journalFactoryCalls += 1;
+        throw new Error('journal_must_not_be_created');
+      },
+    }),
+    /autonomous_research_one_shot_execution_binding_invalid/,
+  );
+  assert.equal(journalFactoryCalls, 0);
+  assert.equal(campaignActionCalls, 0);
+  assert.equal(providerActionCalls, 0);
+});
+
+test('one-shot dataset mounts are isolated from caller mutation', () => {
+  const callerDatasetMounts = [{
+    name: 'fixed-dataset',
+    readOnly: true,
+    authority: { hashes: [H('dataset-authority')] },
+  }];
+  const boundDatasetMounts =
+    canonicalAutonomousResearchOneShotDatasetMounts(callerDatasetMounts);
+  callerDatasetMounts[0].name = 'mutated-after-binding';
+  callerDatasetMounts[0].authority.hashes.push(H('hostile-late-hash'));
+  callerDatasetMounts.push({ name: 'hostile-late-mount' });
+
+  assert.deepEqual(boundDatasetMounts, [{
+    authority: { hashes: [H('dataset-authority')] },
+    name: 'fixed-dataset',
+    readOnly: true,
+  }]);
+  assert.equal(Object.isFrozen(boundDatasetMounts), true);
+  assert.equal(Object.isFrozen(boundDatasetMounts[0]), true);
+  assert.equal(Object.isFrozen(boundDatasetMounts[0].authority.hashes), true);
+});
+
+test('one-shot canonical snapshots reject non-JSON own keys and invalid byte limits', () => {
+  const symbolKey = Symbol('hidden');
+  const value = { visible: true, [symbolKey]: 'must-not-be-discarded' };
+  assert.throws(
+    () => canonicalAutonomousResearchOneShotSnapshot(value, {
+      code: 'canonical_snapshot_invalid', maximumBytes: 1024,
+    }),
+    /canonical_snapshot_invalid/,
+  );
+  for (const maximumBytes of [undefined, 0, -1, 1.5, Number.NaN, Infinity]) {
+    assert.throws(
+      () => canonicalAutonomousResearchOneShotSnapshot({ visible: true }, {
+        code: 'canonical_snapshot_invalid', maximumBytes,
+      }),
+      /canonical_snapshot_invalid/,
+    );
+  }
+  const arrayWithCustomPrototype = [];
+  Object.setPrototypeOf(arrayWithCustomPrototype, Object.create(Array.prototype));
+  assert.throws(
+    () => canonicalAutonomousResearchOneShotSnapshot(arrayWithCustomPrototype, {
+      code: 'canonical_snapshot_invalid', maximumBytes: 1024,
+    }),
+    /canonical_snapshot_invalid/,
+  );
+});
+
+function providerCanaryPairReceipt(now, runtimeBinding = providerRuntimeBinding()) {
+  const canary = (role) => {
+    const author = role === 'research_author';
+    const payload = {
+      version: 1,
+      kind: 'CodexModelAvailabilityCanaryReceipt',
+      status: 'codex_model_live_canary_verified',
+      selectedModelExecutionCanaryVerified: true,
+      observedAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + 15 * 60 * 1000).toISOString(),
+      externalActionPerformed: true,
+      externalActionScope: 'single_read_only_ephemeral_model_canary',
+      credentialConfigIdentityHash: author
+        ? runtimeBinding.researchAuthorCredentialConfigIdentityHash
+        : runtimeBinding.formalReviewerCredentialConfigIdentityHash,
+      openClawManagedAuthProfileIdentityHash: author
+        ? runtimeBinding.researchAuthorOpenClawManagedAuthProfileIdentityHash
+        : runtimeBinding.formalReviewerOpenClawManagedAuthProfileIdentityHash,
+      openClawManagedRuntimeProvenanceHash:
+        runtimeBinding.openClawManagedRuntimeProvenanceHash,
+      openClawManagedAuthSourceIdentityHash:
+        runtimeBinding.openClawManagedAuthSourceIdentityHash,
+      role,
+    };
+    return {
+      ...payload,
+      codexModelAvailabilityCanaryReceiptHash: hashRecord(
+        'CodexModelAvailabilityCanaryReceipt',
+        payload,
+      ),
+    };
+  };
+  const author = canary('research_author');
+  const reviewer = canary('formal_reviewer');
+  const payload = {
     version: 1,
-    kind: 'AutonomousResearchOneShotProviderRuntimeBinding',
-    providerConfigurationHash:
-      AUTONOMOUS_RESEARCH_ONE_SHOT_PROVIDER_CONFIGURATION_HASH,
-    researchAuthorCapabilityReceiptHash: H('author-capability'),
-    formalReviewerCapabilityReceiptHash: H('reviewer-capability'),
-    researchAuthorCredentialConfigIdentityHash: H('author-config'),
-    formalReviewerCredentialConfigIdentityHash: H('reviewer-config'),
-    researchAuthorOpenClawManagedAuthProfileIdentityHash: H('author-profile'),
-    formalReviewerOpenClawManagedAuthProfileIdentityHash: H('reviewer-profile'),
-    openClawManagedRuntimeProvenanceHash: H('managed-runtime'),
-    openClawManagedAuthSourceIdentityHash: H('managed-auth-source'),
+    kind: 'AutonomousResearchProviderCanaryPairReceipt',
+    status: 'autonomous_research_provider_canary_pair_verified',
+    verified: true,
+    autonomousResearchProviderConfigurationHash:
+      runtimeBinding.providerConfigurationHash,
+    researchAuthorCapabilityReceiptHash:
+      runtimeBinding.researchAuthorCapabilityReceiptHash,
+    formalReviewerCapabilityReceiptHash:
+      runtimeBinding.formalReviewerCapabilityReceiptHash,
+    researchAuthorProviderCanaryReceiptHash:
+      author.codexModelAvailabilityCanaryReceiptHash,
+    formalReviewerProviderCanaryReceiptHash:
+      reviewer.codexModelAvailabilityCanaryReceiptHash,
+    researchAuthorProviderCanaryReceipt: author,
+    formalReviewerProviderCanaryReceipt: reviewer,
+    observedAt: now.toISOString(),
+    freshnessIntervalMs: 15 * 60 * 1000,
+    externalActionPerformed: true,
+    externalActionScope: 'two_read_only_ephemeral_model_canaries',
+  };
+  return {
+    ...payload,
+    providerCanaryPairReceiptHash: hashRecord(
+      'AutonomousResearchProviderCanaryPairReceipt',
+      payload,
+    ),
   };
 }
 
-function executionBinding() {
-  const codeProvenance = {
-    version: 2,
-    kind: 'CodeProvenance',
-    commit: 'a'.repeat(40),
-    commitTree: 'b'.repeat(40),
-    treeDirty: false,
-    indexStateHash: H('index'),
-    repositoryContentHash: H('repository'),
-    worktreeStateHash: H('worktree'),
-  };
-  const sourceExecutionSnapshot = {
-    version: 1,
-    merkleHash: H('merkle'),
-    manifestHash: H('manifest'),
-  };
-  const protectedCampaignDefinition = {
-    version: 1,
-    campaignId: AUTONOMOUS_RESEARCH_ONE_SHOT_PROTECTED_CAMPAIGN_ID,
-    status: 'failed',
-    failedTerminalNodeCount: 1,
-    skippedNodeCount: 65,
-    activeNodeCount: 0,
-    nodeLeaseCount: 0,
-    resourceLeaseCount: 0,
-    waiterCount: 0,
-    failureClass: 'agent_usage_unknown_terminal',
-    submissionCount: 0,
-    outboxCount: 0,
-    ledgerCount: 0,
-    logicalStateHash: H('protected-logical-state'),
-  };
-  const targetCampaignDefinition = {
-    version: 1,
-    campaignId: AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_CAMPAIGN_ID,
-    paperId: AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_PAPER_ID,
-    objective: AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_OBJECTIVE,
-    protocolFamily: 'finance_asset_pricing_benchmark',
-    revisionRounds: 3,
-    refereeCount: 3,
-    requestedLaunchMode: 'local-run',
-    effectiveLaunchMode: 'golden-bootstrap',
-    localOnly: true,
-    humanSubjects: false,
-    privateData: false,
-    unlimitedAggregateTokens: true,
-    unlimitedAggregateCost: true,
-    requireLaunchReady: true,
-    requireCampaignAbsentAtLaunch: true,
-    datasetMountsHash: H('dataset-mounts'),
-    worker: {
-      concurrency: 8,
-      agentSlots: 4,
-      cpuSlots: 4,
-      gpuSlots: 1,
-      memoryMiB: 8192,
-    },
-    budgets: {
-      maxWallTimeMs: 7_200_000,
-      maxAgentCalls: 201,
-      maxCpuJobs: 14_400,
-      maxGpuJobs: 16,
-      maxMemoryMiB: 8192,
-      maxTokenCount: Number.MAX_SAFE_INTEGER,
-      maxCostUsd: Number.MAX_SAFE_INTEGER,
-    },
-  };
-  const environmentProjection = {
-    HEPTA_AUTONOMOUS_RESEARCH_CONTENT_MODE: 'deterministic-bounded',
-  };
+test('one-shot canary capabilities must match the reserved runtime binding', () => {
+  const now = new Date('2026-08-03T00:00:00.000Z');
   const runtimeBinding = providerRuntimeBinding();
-  return {
-    version: 1,
-    codeProvenance,
-    codeProvenanceHash:
-      autonomousResearchOneShotCampaignCodeProvenanceHash(codeProvenance),
-    sourceExecutionSnapshot,
-    sourceExecutionSnapshotHash:
-      autonomousResearchOneShotCampaignSourceExecutionSnapshotHash(
-        sourceExecutionSnapshot,
-      ),
-    autonomousResearchProviderConfigurationHash:
-      AUTONOMOUS_RESEARCH_ONE_SHOT_PROVIDER_CONFIGURATION_HASH,
-    providerRuntimeBinding: runtimeBinding,
-    providerRuntimeBindingHash:
-      autonomousResearchOneShotProviderRuntimeBindingHash(runtimeBinding),
-    protectedCampaignDefinition,
-    protectedCampaignFingerprintHash:
-      autonomousResearchOneShotProtectedCampaignFingerprintHash(
-        protectedCampaignDefinition,
-      ),
+  const receipt = providerCanaryPairReceipt(now, runtimeBinding);
+  assert.equal(assertAutonomousResearchOneShotProviderCanaryReceiptBound({
+    receipt,
+    expectedProviderConfigurationHash: runtimeBinding.providerConfigurationHash,
+    expectedProviderRuntimeBinding: runtimeBinding,
+    now,
+  }), receipt);
+  assert.throws(
+    () => assertAutonomousResearchOneShotProviderCanaryReceiptBound({
+      receipt,
+      expectedProviderConfigurationHash: runtimeBinding.providerConfigurationHash,
+      expectedProviderRuntimeBinding: {
+        ...runtimeBinding,
+        researchAuthorCapabilityReceiptHash: H('drifted-author-capability'),
+      },
+      now,
+    }),
+    /autonomous_research_one_shot_provider_canary_capability_mismatch/,
+  );
+  assert.throws(
+    () => assertAutonomousResearchOneShotProviderCanaryReceiptBound({
+      receipt,
+      expectedProviderConfigurationHash: runtimeBinding.providerConfigurationHash,
+      expectedProviderRuntimeBinding: {
+        ...runtimeBinding,
+        researchAuthorCredentialConfigIdentityHash: H('drifted-author-config'),
+      },
+      now,
+    }),
+    /autonomous_research_one_shot_provider_canary_capability_mismatch/,
+  );
+});
+
+function historicalAttemptChain(ordinal, { terminal = true } = {}) {
+  const paperId = `local-auto-20260730-${ordinal}`;
+  const campaignId = `autonomous-research:${paperId}`;
+  const currentBinding = executionBinding();
+  const targetCampaignDefinition = {
+    ...currentBinding.targetCampaignDefinition,
+    campaignId,
+    paperId,
+    datasetMountsHash:
+      'sha256:586dd4d1edb5ca3efee48d02726a1c7cf2044a6afe81b34bc5821c1e97d9c520',
+  };
+  let executionBindingValue = {
+    ...currentBinding,
     targetCampaignDefinition,
     targetCampaignDefinitionHash:
       autonomousResearchOneShotTargetCampaignDefinitionHash(targetCampaignDefinition),
-    environmentProjection,
-    preparationPolicy: {
-      version: 1,
-      mode: 'deterministic-bounded-offline-v1',
-      contentMode: 'deterministic-bounded',
-      providerFreeRequired: true,
-      allowedExternalActionKinds: [],
-      forbiddenEnvironmentKeys:
-        AUTONOMOUS_RESEARCH_ONE_SHOT_FORBIDDEN_PREPARE_ENVIRONMENT_KEYS,
-      environmentProjectionHash:
-        autonomousResearchOneShotCampaignEnvironmentProjectionHash(environmentProjection),
-    },
-    campaignLaunchPolicy: {
-      version: 1,
-      createOnly: true,
-      allowedRecoveryActions: ['status'],
-      forbiddenActions: ['converge', 'resume'],
-    },
   };
+  if (ordinal === 52) {
+    executionBindingValue = Object.fromEntries(
+      Object.entries(executionBindingValue).filter(([key]) => ![
+        'providerRuntimeBinding',
+        'providerRuntimeBindingHash',
+      ].includes(key)),
+    );
+  }
+  const attemptId = `historical-attempt-${ordinal}`;
+  const idempotencyKey = H(`historical-idempotency-${ordinal}`);
+  const reservedAt = '2026-08-03T00:00:00.000Z';
+  const reservationPayload = {
+    version: 1,
+    kind: 'AutonomousResearchOneShotCampaignAttemptReservation',
+    status: 'attempt_reserved',
+    attemptId,
+    idempotencyKey,
+    campaignId,
+    protectedCampaignId: AUTONOMOUS_RESEARCH_ONE_SHOT_PROTECTED_CAMPAIGN_ID,
+    executionBinding: executionBindingValue,
+    executionBindingHash: hashRecord(
+      'AutonomousResearchOneShotCampaignExecutionBinding',
+      executionBindingValue,
+    ),
+    reservedAt,
+  };
+  const reservation = {
+    ...reservationPayload,
+    autonomousResearchOneShotCampaignAttemptReservationHash: hashRecord(
+      'AutonomousResearchOneShotCampaignAttemptReservation',
+      reservationPayload,
+    ),
+  };
+  const initialEvidence = {
+    reservationHash:
+      reservation.autonomousResearchOneShotCampaignAttemptReservationHash,
+  };
+  const initialEventPayload = {
+    version: 1,
+    kind: 'AutonomousResearchOneShotCampaignAttemptEvent',
+    attemptId,
+    idempotencyKey,
+    campaignId,
+    reservationHash:
+      reservation.autonomousResearchOneShotCampaignAttemptReservationHash,
+    sequence: 1,
+    eventId: hashRecord('AutonomousResearchOneShotCampaignAttemptEventId', {
+      attemptId,
+      phase: 'attempt_reserved',
+      reservationHash:
+        reservation.autonomousResearchOneShotCampaignAttemptReservationHash,
+      sequence: 1,
+    }),
+    phase: 'attempt_reserved',
+    previousEventHash: null,
+    evidence: initialEvidence,
+    evidenceHash: hashRecord(
+      'AutonomousResearchOneShotCampaignAttemptEventEvidence',
+      initialEvidence,
+    ),
+    recordedAt: reservedAt,
+  };
+  const initialEvent = {
+    ...initialEventPayload,
+    autonomousResearchOneShotCampaignAttemptEventHash: hashRecord(
+      'AutonomousResearchOneShotCampaignAttemptEvent',
+      initialEventPayload,
+    ),
+  };
+  if (!terminal) return { reservation, events: [initialEvent], terminalReceipt: null };
+
+  const completedAt = '2026-08-03T00:00:01.000Z';
+  const terminalReceiptPayload = {
+    version: 1,
+    kind: 'AutonomousResearchOneShotCampaignAttemptTerminalReceipt',
+    status: 'autonomous_research_one_shot_campaign_attempt_terminal',
+    attemptId,
+    idempotencyKey,
+    campaignId,
+    reservationHash:
+      reservation.autonomousResearchOneShotCampaignAttemptReservationHash,
+    terminalStatus: 'blocked_pre_provider',
+    lastPhase: 'attempt_reserved',
+    lastEventHash:
+      initialEvent.autonomousResearchOneShotCampaignAttemptEventHash,
+    outcome: null,
+    outcomeHash: null,
+    providerMayHaveStarted: false,
+    providerCompleted: false,
+    launchMayHaveStarted: false,
+    completedAt,
+  };
+  const terminalReceipt = {
+    ...terminalReceiptPayload,
+    autonomousResearchOneShotCampaignAttemptTerminalReceiptHash: hashRecord(
+      'AutonomousResearchOneShotCampaignAttemptTerminalReceipt',
+      terminalReceiptPayload,
+    ),
+  };
+  const terminalEvidence = {
+    terminalReceiptHash:
+      terminalReceipt.autonomousResearchOneShotCampaignAttemptTerminalReceiptHash,
+  };
+  const terminalEventPayload = {
+    ...initialEventPayload,
+    sequence: 2,
+    eventId: hashRecord('AutonomousResearchOneShotCampaignAttemptEventId', {
+      attemptId,
+      phase: 'terminal',
+      reservationHash:
+        reservation.autonomousResearchOneShotCampaignAttemptReservationHash,
+      sequence: 2,
+    }),
+    phase: 'terminal',
+    previousEventHash:
+      initialEvent.autonomousResearchOneShotCampaignAttemptEventHash,
+    evidence: terminalEvidence,
+    evidenceHash: hashRecord(
+      'AutonomousResearchOneShotCampaignAttemptEventEvidence',
+      terminalEvidence,
+    ),
+    recordedAt: completedAt,
+  };
+  const terminalEvent = {
+    ...terminalEventPayload,
+    autonomousResearchOneShotCampaignAttemptEventHash: hashRecord(
+      'AutonomousResearchOneShotCampaignAttemptEvent',
+      terminalEventPayload,
+    ),
+  };
+  return { reservation, events: [initialEvent, terminalEvent], terminalReceipt };
+}
+
+function insertHistoricalAttempt(databasePath, chain) {
+  const database = new DatabaseSync(databasePath);
+  database.exec('BEGIN IMMEDIATE;');
+  try {
+    const { reservation, events, terminalReceipt } = chain;
+    database.prepare(`INSERT INTO campaign_one_shot_attempts(
+      attempt_id,idempotency_key,campaign_id,protected_campaign_id,
+      execution_binding_hash,reservation_hash,reservation_json,reserved_at)
+      VALUES(?,?,?,?,?,?,?,?);`).run(
+      reservation.attemptId,
+      reservation.idempotencyKey,
+      reservation.campaignId,
+      reservation.protectedCampaignId,
+      reservation.executionBindingHash,
+      reservation.autonomousResearchOneShotCampaignAttemptReservationHash,
+      canonicalAutonomousResearchOneShotCampaignAttemptJson(reservation),
+      reservation.reservedAt,
+    );
+    const insertEvent = database.prepare(`INSERT INTO campaign_one_shot_attempt_events(
+      event_id,attempt_id,sequence,phase,previous_event_hash,event_hash,
+      event_json,recorded_at) VALUES(?,?,?,?,?,?,?,?);`);
+    for (const event of events) {
+      insertEvent.run(
+        event.eventId,
+        event.attemptId,
+        event.sequence,
+        event.phase,
+        event.previousEventHash,
+        event.autonomousResearchOneShotCampaignAttemptEventHash,
+        canonicalAutonomousResearchOneShotCampaignAttemptJson(event),
+        event.recordedAt,
+      );
+    }
+    if (terminalReceipt) {
+      database.prepare(`INSERT INTO campaign_one_shot_attempt_terminal_receipts(
+        attempt_id,receipt_hash,receipt_json,terminal_event_hash,completed_at)
+        VALUES(?,?,?,?,?);`).run(
+        reservation.attemptId,
+        terminalReceipt.autonomousResearchOneShotCampaignAttemptTerminalReceiptHash,
+        canonicalAutonomousResearchOneShotCampaignAttemptJson(terminalReceipt),
+        events.at(-1).autonomousResearchOneShotCampaignAttemptEventHash,
+        terminalReceipt.completedAt,
+      );
+    }
+    database.exec('COMMIT;');
+  } catch (error) {
+    database.exec('ROLLBACK;');
+    throw error;
+  } finally {
+    database.close();
+  }
 }
 
 function fixture(t, label, repositoryOptions = {}) {
@@ -525,10 +938,12 @@ function callbacks(counts, overrides = {}) {
       counts.prepare += 1;
       return { evidence: { providerFree: true } };
     },
+    async assertProviderActionReady() {},
     async executeProviderAction() {
       counts.provider += 1;
       return { evidence: { providerReceiptHash: H('provider-receipt') } };
     },
+    async assertLaunchActionReady() {},
     async launchCampaign() {
       counts.launch += 1;
       return {
@@ -543,6 +958,181 @@ function callbacks(counts, overrides = {}) {
     ...overrides,
   };
 }
+
+function withSourceExecutionSnapshotDrift(binding, label) {
+  const sourceExecutionSnapshot = {
+    ...binding.sourceExecutionSnapshot,
+    merkleHash: H(label),
+  };
+  return {
+    ...binding,
+    sourceExecutionSnapshot,
+    sourceExecutionSnapshotHash:
+      autonomousResearchOneShotCampaignSourceExecutionSnapshotHash(
+        sourceExecutionSnapshot,
+      ),
+  };
+}
+
+test('fresh execution-binding drift blocks before the provider marker', async (t) => {
+  const { repository, reservation } = fixture(t, 'pre-provider-binding-drift');
+  const counts = { preconditions: 0, prepare: 0, provider: 0, launch: 0, monitor: 0 };
+  let currentExecutionBinding = reservation.executionBinding;
+  const fence = createAutonomousResearchOneShotCampaignExecutionBindingFence({
+    expectedExecutionBinding: reservation.executionBinding,
+    inspectCurrentExecutionBinding: () => currentExecutionBinding,
+  });
+  const report = await composeAutonomousResearchOneShotCampaignAttempt({
+    repository,
+    reservation,
+    ...callbacks(counts, {
+      async prepareCampaign() {
+        counts.prepare += 1;
+        currentExecutionBinding = withSourceExecutionSnapshotDrift(
+          reservation.executionBinding,
+          'pre-provider-drift',
+        );
+        return { evidence: { providerFree: true } };
+      },
+      async assertProviderActionReady() {
+        fence.assertCurrent({ phase: 'pre_provider' });
+      },
+    }),
+  });
+
+  assert.equal(report.terminalReceipt.terminalStatus, 'blocked_pre_provider');
+  assert.equal(report.terminalReceipt.lastPhase, 'prepare_verified');
+  assert.equal(counts.provider, 0);
+  assert.equal(counts.launch, 0);
+  assert.equal(report.inspection.events.some((event) => (
+    event.phase === 'provider_started'
+  )), false);
+});
+
+test('provider marker-window drift is recovered without provider execution', async (t) => {
+  const { repository, reservation } = fixture(t, 'provider-marker-binding-drift');
+  const counts = { preconditions: 0, prepare: 0, provider: 0, launch: 0, monitor: 0 };
+  const driftedExecutionBinding = withSourceExecutionSnapshotDrift(
+    reservation.executionBinding,
+    'provider-marker-drift',
+  );
+  let inspectionCount = 0;
+  const fence = createAutonomousResearchOneShotCampaignExecutionBindingFence({
+    expectedExecutionBinding: reservation.executionBinding,
+    inspectCurrentExecutionBinding() {
+      inspectionCount += 1;
+      return inspectionCount === 1
+        ? reservation.executionBinding : driftedExecutionBinding;
+    },
+  });
+  const report = await composeAutonomousResearchOneShotCampaignAttempt({
+    repository,
+    reservation,
+    ...callbacks(counts, {
+      async assertProviderActionReady() {
+        fence.assertCurrent({ phase: 'pre_provider' });
+      },
+      async executeProviderAction() {
+        fence.assertCurrent({ phase: 'provider_started' });
+        counts.provider += 1;
+        return { evidence: { providerReceiptHash: H('provider-receipt') } };
+      },
+    }),
+  });
+
+  assert.equal(report.terminalReceipt.terminalStatus, 'recovered_incomplete');
+  assert.equal(report.terminalReceipt.lastPhase, 'provider_started');
+  assert.equal(counts.provider, 0);
+  assert.equal(counts.launch, 0);
+});
+
+test('fresh execution-binding drift blocks before the launch marker', async (t) => {
+  const { repository, reservation } = fixture(t, 'pre-launch-binding-drift');
+  const counts = { preconditions: 0, prepare: 0, provider: 0, launch: 0, monitor: 0 };
+  let currentExecutionBinding = reservation.executionBinding;
+  const fence = createAutonomousResearchOneShotCampaignExecutionBindingFence({
+    expectedExecutionBinding: reservation.executionBinding,
+    inspectCurrentExecutionBinding: () => currentExecutionBinding,
+  });
+  const report = await composeAutonomousResearchOneShotCampaignAttempt({
+    repository,
+    reservation,
+    ...callbacks(counts, {
+      async assertProviderActionReady() {
+        fence.assertCurrent({ phase: 'pre_provider' });
+      },
+      async executeProviderAction() {
+        counts.provider += 1;
+        fence.assertCurrent({ phase: 'post_provider_canary' });
+        return { evidence: { providerReceiptHash: H('provider-receipt') } };
+      },
+      async assertLaunchActionReady() {
+        currentExecutionBinding = withSourceExecutionSnapshotDrift(
+          reservation.executionBinding,
+          'pre-launch-drift',
+        );
+        fence.assertCurrent({ phase: 'pre_launch' });
+      },
+    }),
+  });
+
+  assert.equal(report.terminalReceipt.terminalStatus, 'blocked_post_provider');
+  assert.equal(report.terminalReceipt.lastPhase, 'provider_completed');
+  assert.equal(counts.provider, 1);
+  assert.equal(counts.launch, 0);
+  assert.equal(report.inspection.events.some((event) => (
+    event.phase === 'launch_started'
+  )), false);
+});
+
+test('launch marker-window drift is recovered without campaign launch', async (t) => {
+  const { repository, reservation } = fixture(t, 'launch-marker-binding-drift');
+  const counts = { preconditions: 0, prepare: 0, provider: 0, launch: 0, monitor: 0 };
+  const driftedExecutionBinding = withSourceExecutionSnapshotDrift(
+    reservation.executionBinding,
+    'launch-marker-drift',
+  );
+  let inspectionCount = 0;
+  const fence = createAutonomousResearchOneShotCampaignExecutionBindingFence({
+    expectedExecutionBinding: reservation.executionBinding,
+    inspectCurrentExecutionBinding() {
+      inspectionCount += 1;
+      return inspectionCount < 5
+        ? reservation.executionBinding : driftedExecutionBinding;
+    },
+  });
+  const report = await composeAutonomousResearchOneShotCampaignAttempt({
+    repository,
+    reservation,
+    ...callbacks(counts, {
+      async assertProviderActionReady() {
+        fence.assertCurrent({ phase: 'pre_provider' });
+      },
+      async executeProviderAction() {
+        fence.assertCurrent({ phase: 'provider_started' });
+        counts.provider += 1;
+        fence.assertCurrent({ phase: 'post_provider_canary' });
+        return { evidence: { providerReceiptHash: H('provider-receipt') } };
+      },
+      async assertLaunchActionReady() {
+        fence.assertCurrent({ phase: 'pre_launch' });
+      },
+      async launchCampaign() {
+        fence.assertCurrent({ phase: 'launch_started' });
+        counts.launch += 1;
+        return {
+          terminalStatus: 'completed',
+          outcome: { campaignStatus: 'completed' },
+        };
+      },
+    }),
+  });
+
+  assert.equal(report.terminalReceipt.terminalStatus, 'recovered_incomplete');
+  assert.equal(report.terminalReceipt.lastPhase, 'launch_started');
+  assert.equal(counts.provider, 1);
+  assert.equal(counts.launch, 0);
+});
 
 test('one-shot composition completes once and terminal replay is side-effect free', async (t) => {
   const { repository, reservation } = fixture(t, 'complete');
@@ -564,6 +1154,46 @@ test('one-shot composition completes once and terminal replay is side-effect fre
   });
   assert.equal(replay.terminalReceipt.autonomousResearchOneShotCampaignAttemptTerminalReceiptHash,
     first.terminalReceipt.autonomousResearchOneShotCampaignAttemptTerminalReceiptHash);
+  assert.deepEqual(counts,
+    { preconditions: 1, prepare: 1, provider: 1, launch: 1, monitor: 0 });
+});
+
+test('isolated prepare stays offline and provider runs only after durable marker', async (t) => {
+  const { repository, reservation } = fixture(t, 'offline-prepare-boundary');
+  const counts = { preconditions: 0, prepare: 0, provider: 0, launch: 0, monitor: 0 };
+  const prepareEnvironment = fixedAutonomousResearchOneShotPrepareEnvironment({
+    runtimeRoot: '/data/home-data/hepta-paper-runtime/native-runtime',
+  });
+  const report = await composeAutonomousResearchOneShotCampaignAttempt({
+    repository,
+    reservation,
+    ...callbacks(counts, {
+      async prepareCampaign() {
+        counts.prepare += 1;
+        assert.equal(counts.provider, 0);
+        assert.equal(prepareEnvironment.HEPTA_AUTONOMOUS_RESEARCH_CONTENT_MODE,
+          'deterministic-bounded');
+        for (const key of AUTONOMOUS_RESEARCH_ONE_SHOT_FORBIDDEN_PREPARE_ENVIRONMENT_KEYS) {
+          assert.equal(Object.hasOwn(prepareEnvironment, key), false);
+        }
+        return { evidence: { providerFree: true } };
+      },
+      async executeProviderAction({ inspection }) {
+        counts.provider += 1;
+        assert.equal(inspection.headPhase, 'provider_started');
+        const durable = repository.inspectAttempt({
+          attemptId: reservation.attemptId,
+        });
+        assert.equal(durable.headPhase, 'provider_started');
+        assert.deepEqual(durable.events.at(-1).evidence, {
+          action: 'provider',
+          status: 'external_action_marker_committed',
+        });
+        return { evidence: { providerReceiptHash: H('offline-boundary-provider') } };
+      },
+    }),
+  });
+  assert.equal(report.terminalReceipt.terminalStatus, 'completed');
   assert.deepEqual(counts,
     { preconditions: 1, prepare: 1, provider: 1, launch: 1, monitor: 0 });
 });
@@ -618,6 +1248,15 @@ test('external action permit is single-use and invalid after head advancement', 
   assert.equal(first.repository.assertExternalActionSideEffectPermit({
     transition: providerTransition,
   }), true);
+  assert.equal(first.repository.assertExternalActionMarkerCurrent({
+    transition: providerTransition,
+  }), true);
+  assert.throws(
+    () => first.repository.assertExternalActionMarkerCurrent({
+      transition: { ...providerTransition },
+    }),
+    /campaign_one_shot_attempt_external_action_owner_invalid/,
+  );
   assert.throws(
     () => first.repository.assertExternalActionSideEffectPermit({
       transition: providerTransition,
@@ -642,6 +1281,12 @@ test('external action permit is single-use and invalid after head advancement', 
       transition: staleTransition,
     }),
     /campaign_one_shot_attempt_external_action_permit_stale/,
+  );
+  assert.throws(
+    () => second.repository.assertExternalActionMarkerCurrent({
+      transition: staleTransition,
+    }),
+    /campaign_one_shot_attempt_external_action_owner_stale/,
   );
 });
 
@@ -671,6 +1316,98 @@ test('journal schema tampering is detected before any later mutation', (t) => {
   );
 });
 
+test('historical journal audit rejects recomputed chains and never grants mutation', async (t) => {
+  const { repository, reservation: currentReservation } = fixture(t, 'historical-audit');
+  repository.reserveAttempt({ reservation: currentReservation });
+  const terminal = historicalAttemptChain(56);
+  const incomplete = historicalAttemptChain(55, { terminal: false });
+  const legacyProviderBindingFree = historicalAttemptChain(52);
+  insertHistoricalAttempt(repository.databasePath, terminal);
+  insertHistoricalAttempt(repository.databasePath, incomplete);
+  insertHistoricalAttempt(repository.databasePath, legacyProviderBindingFree);
+
+  assert.throws(
+    () => repository.inspectAttempt({ attemptId: terminal.reservation.attemptId }),
+    /campaign_one_shot_attempt_journal_reservation_invalid/,
+  );
+  assert.throws(
+    () => repository.reserveAttempt({ reservation: terminal.reservation }),
+    /campaign_one_shot_attempt_journal_reservation_invalid/,
+  );
+
+  for (const historical of [terminal, incomplete, legacyProviderBindingFree]) {
+    assert.throws(
+      () => repository.inspectHistoricalAttempt({
+        attemptId: historical.reservation.attemptId,
+      }),
+      /autonomous_research_one_shot_historical_attempt_anchor_invalid/,
+    );
+  }
+  const legacyBinding = legacyProviderBindingFree.reservation.executionBinding;
+  assert.equal(
+    verifyAutonomousResearchOneShotCampaignExecutionBindingForHistoricalAudit(
+      legacyBinding,
+    ),
+    true,
+  );
+  const currentProviderBinding = executionBinding();
+  assert.equal(
+    verifyAutonomousResearchOneShotCampaignExecutionBindingForHistoricalAudit({
+      ...legacyBinding,
+      providerRuntimeBinding: currentProviderBinding.providerRuntimeBinding,
+      providerRuntimeBindingHash: currentProviderBinding.providerRuntimeBindingHash,
+    }),
+    false,
+  );
+  const campaign53Binding = historicalAttemptChain(53).reservation.executionBinding;
+  assert.equal(
+    verifyAutonomousResearchOneShotCampaignExecutionBindingForHistoricalAudit(
+      Object.fromEntries(
+        Object.entries(campaign53Binding).filter(([key]) => ![
+          'providerRuntimeBinding',
+          'providerRuntimeBindingHash',
+        ].includes(key)),
+      ),
+    ),
+    false,
+  );
+
+  const currentStatus = await composeFixedAutonomousResearchOneShotCampaignAttempt({
+    action: 'status',
+    workspaceRoot: '/tmp/current-audit-workspace',
+    root: '/tmp/current-audit-assets',
+    runtimeRoot: path.join(path.dirname(repository.controlRoot), 'native-runtime'),
+    controlRoot: repository.controlRoot,
+    datasetMounts: [],
+    attemptId: currentReservation.attemptId,
+  });
+  assert.equal(currentStatus.recoveryDisposition.status, 'resume_preconditions');
+
+  const issuedTarget = terminal.reservation.executionBinding.targetCampaignDefinition;
+  assert.equal(
+    verifyAutonomousResearchOneShotHistoricalTargetCampaignDefinition(issuedTarget),
+    true,
+  );
+  for (const paperId of [
+    'local-auto-20260730-51',
+    'local-auto-20260730-58',
+    'local-auto-20260731-56',
+  ]) {
+    assert.equal(verifyAutonomousResearchOneShotHistoricalTargetCampaignDefinition({
+      ...issuedTarget,
+      paperId,
+      campaignId: `autonomous-research:${paperId}`,
+    }), false);
+  }
+  assert.equal(
+    verifyAutonomousResearchOneShotCampaignAttemptReservationForHistoricalAudit({
+      ...terminal.reservation,
+      autonomousResearchOneShotCampaignAttemptReservationHash: H('tampered-history'),
+    }),
+    false,
+  );
+});
+
 test('provider failure becomes recovered-incomplete and is never replayed', async (t) => {
   const { repository, reservation } = fixture(t, 'provider-failure');
   const counts = { preconditions: 0, prepare: 0, provider: 0, launch: 0, monitor: 0 };
@@ -697,50 +1434,66 @@ test('provider failure becomes recovered-incomplete and is never replayed', asyn
   assert.equal(counts.launch, 0);
 });
 
-test('launch-started recovery monitors without issuing another launch', async (t) => {
-  const { repository, reservation } = fixture(t, 'launch-recovery');
+test('preexisting provider completion cannot win a replay race and authorize launch', async (t) => {
+  const { repository, reservation } = fixture(t, 'preseeded-provider-completion');
   let inspection = repository.reserveAttempt({ reservation });
-  for (const [phase, evidence] of [
-    ['preconditions_verified', { ready: true }],
-    ['prepare_verified', { providerFree: true }],
-    ['provider_started', { action: 'provider' }],
-    ['provider_completed', { providerReceiptHash: H('provider') }],
-    ['launch_started', { action: 'launch' }],
-  ]) {
-    const head = inspection.events.at(-1);
-    inspection = repository.appendEvent({
-      attemptId: reservation.attemptId,
-      phase,
-      evidence,
-      expectedSequence: head.sequence + 1,
-      expectedPhase: head.phase,
-      expectedPreviousEventHash:
-        head.autonomousResearchOneShotCampaignAttemptEventHash,
-    });
-  }
+  inspection = appendPhase(repository, inspection, 'preconditions_verified');
+  inspection = appendPhase(repository, inspection, 'prepare_verified', {
+    providerFree: true,
+  });
+  inspection = appendPhase(repository, inspection, 'provider_started', {
+    action: 'provider',
+    status: 'external_action_marker_committed',
+  });
+  appendPhase(repository, inspection, 'provider_completed', {
+    providerReceiptHash: H('preseeded-provider-receipt'),
+  });
+  const counts = { preconditions: 0, prepare: 0, provider: 0, launch: 0, monitor: 0 };
+  await assert.rejects(
+    () => composeAutonomousResearchOneShotCampaignAttempt({
+      repository,
+      reservation,
+      ...callbacks(counts),
+    }),
+    /autonomous_research_one_shot_existing_provider_completion_not_launch_authority/,
+  );
+  assert.equal(counts.provider, 0);
+  assert.equal(counts.launch, 0);
+  assert.equal(
+    repository.inspectAttempt({ attemptId: reservation.attemptId }).headPhase,
+    'provider_completed',
+  );
+});
+
+test('concurrent provider completion cannot become invocation launch authority', async (t) => {
+  const { repository, reservation } = fixture(t, 'concurrent-provider-completion');
   const counts = { preconditions: 0, prepare: 0, provider: 0, launch: 0, monitor: 0 };
   const report = await composeAutonomousResearchOneShotCampaignAttempt({
     repository,
     reservation,
     ...callbacks(counts, {
-      async inspectLaunchOutcome() {
-        counts.monitor += 1;
-        return { terminal: false };
+      async prepareCampaign({ inspection }) {
+        counts.prepare += 1;
+        let concurrent = appendPhase(
+          repository,
+          inspection,
+          'prepare_verified',
+          { providerFree: true },
+        );
+        concurrent = appendPhase(repository, concurrent, 'provider_started', {
+          action: 'provider',
+          status: 'external_action_marker_committed',
+        });
+        appendPhase(repository, concurrent, 'provider_completed', {
+          providerReceiptHash: H('concurrent-provider-receipt'),
+        });
+        return { evidence: { providerFree: true } };
       },
     }),
   });
-  assert.equal(report.status,
-    'autonomous_research_one_shot_campaign_attempt_monitor_only');
-  assert.equal(counts.monitor, 1);
+  assert.equal(counts.provider, 0);
   assert.equal(counts.launch, 0);
-});
-
-test('create-only campaign guard is accepted only by launch', async () => {
-  await assert.rejects(
-    () => composeAutonomousResearchCampaignAction({
-      action: 'status',
-      requireCampaignAbsentAtLaunch: true,
-    }),
-    /autonomous_research_require_campaign_absent_at_launch_requires_launch_action/,
-  );
+  assert.equal(report.terminalReceipt.terminalStatus, 'blocked_post_provider');
+  assert.equal(report.terminalReceipt.lastPhase, 'provider_completed');
+  assert.equal(report.terminalReceipt.launchMayHaveStarted, false);
 });

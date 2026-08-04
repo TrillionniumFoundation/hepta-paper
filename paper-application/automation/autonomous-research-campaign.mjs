@@ -423,6 +423,7 @@ export async function executeAutonomousResearchCampaign({
   datasetMounts = [],
   budgets = {},
   campaignStore,
+  requireCampaignAbsentAtLaunch = false,
   executor = null,
   workspaceMaterializer = null,
   preparedMaterialization = null,
@@ -446,11 +447,26 @@ export async function executeAutonomousResearchCampaign({
   if (!['launch', 'status', 'resume', 'converge'].includes(action)) {
     throw new Error(`autonomous_research_campaign_action_invalid:${action}`);
   }
+  if (typeof requireCampaignAbsentAtLaunch !== 'boolean') {
+    throw new Error('autonomous_research_require_campaign_absent_at_launch_invalid');
+  }
+  if (requireCampaignAbsentAtLaunch && action !== 'launch') {
+    throw new Error(
+      'autonomous_research_require_campaign_absent_at_launch_requires_launch_action',
+    );
+  }
+  if (requireCampaignAbsentAtLaunch
+    && typeof store.createCampaignExclusive !== 'function') {
+    throw new Error('autonomous_research_campaign_exclusive_create_store_required');
+  }
   const preparation = loopPreparationFrom(readinessReport);
   const id = campaignId || (preparation?.proposal?.paperId
     ? `autonomous-research:${preparation.proposal.paperId}` : null);
   if (!id) throw new Error('autonomous_research_campaign_id_required');
   let campaign = store.getCampaign(id);
+  if (requireCampaignAbsentAtLaunch && campaign) {
+    throw new Error(`autonomous_research_campaign_already_exists_at_launch:${id}`);
+  }
   let executionResult = null;
   let dispatchAuthorizationConsumed = false;
   if (campaign) {
@@ -478,7 +494,27 @@ export async function executeAutonomousResearchCampaign({
         !== preparation.seedBinding.autonomousResearchSeedBindingHash) {
       throw new Error('autonomous_research_prepared_campaign_plan_invalid');
     }
-    campaign = store.createCampaign(plan);
+    if (requireCampaignAbsentAtLaunch && runtime?.assertExternalSideEffectReady) {
+      const request = Object.freeze({
+        action: 'autonomous_research_campaign_exclusive_create',
+        campaignId: id,
+      });
+      await runtime.assertExternalSideEffectReady(request);
+      runtime.assertExternalSideEffectReady.assertCurrent?.(request);
+    }
+    try {
+      campaign = requireCampaignAbsentAtLaunch
+        ? store.createCampaignExclusive(plan)
+        : store.createCampaign(plan);
+    } catch (error) {
+      if (requireCampaignAbsentAtLaunch
+        && (error?.code === 'campaign_exclusive_create_conflict'
+          || String(error?.message || error)
+            .startsWith('campaign_exclusive_create_conflict:'))) {
+        throw new Error(`autonomous_research_campaign_already_exists_at_launch:${id}`);
+      }
+      throw error;
+    }
   }
   if (!campaign) throw new Error(`autonomous_research_campaign_not_found:${id}`);
   const convergeResumeRequested = action === 'converge'

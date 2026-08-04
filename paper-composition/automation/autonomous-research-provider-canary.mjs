@@ -30,6 +30,7 @@ export async function runAutonomousResearchProviderCanaryPair({
   betweenCanaryChecks = null,
   beforePreflightAction = null,
   beforeCanaryAction = null,
+  beforeModelInvocation = null,
   afterCanaryAction = null,
   onExternalSideEffectStarted = null,
   providerCanaryReservation = null,
@@ -91,6 +92,7 @@ export async function runAutonomousResearchProviderCanaryPair({
         environment,
         spawnSyncImpl,
         clock,
+        beforeModelInvocation,
       });
     } catch (error) {
       const action = providerCanaryAction({ role: 'research_author', error });
@@ -115,6 +117,7 @@ export async function runAutonomousResearchProviderCanaryPair({
         environment,
         spawnSyncImpl,
         clock,
+        beforeModelInvocation,
       });
     } catch (error) {
       const action = providerCanaryAction({ role: 'formal_reviewer', error });

@@ -86,6 +86,31 @@ function fixture(t) {
   return { parent, runtimeRoot, databasePaths };
 }
 
+function runtimeTreeSnapshot(runtimeRoot) {
+  const entries = [];
+  const visit = (candidate) => {
+    const identity = fs.lstatSync(candidate, { bigint: true });
+    const relative = path.relative(runtimeRoot, candidate) || '.';
+    entries.push(Object.freeze({
+      relative,
+      mode: String(identity.mode),
+      size: String(identity.size),
+      modifiedNs: String(identity.mtimeNs),
+      changedNs: String(identity.ctimeNs),
+      contentHash: identity.isFile()
+        ? crypto.createHash('sha256').update(fs.readFileSync(candidate)).digest('hex')
+        : null,
+    }));
+    if (identity.isDirectory()) {
+      for (const name of fs.readdirSync(candidate).sort()) {
+        visit(path.join(candidate, name));
+      }
+    }
+  };
+  visit(runtimeRoot);
+  return entries;
+}
+
 function createAuthority(clock) {
   const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519');
   const trust = Object.freeze({
@@ -529,6 +554,62 @@ test('production backup CLI fails closed for help, invalid actions, and incomple
   assert.match(missingStartupAuthorities.stderr,
     /autonomous_research_state_reconcile_and_renew_authority_configuration_required/);
 });
+
+test('autonomous state maintenance help bypasses composition and is filesystem-zero-write',
+  (t) => {
+    const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-state-help-'));
+    const runtimeRoot = path.join(parent, 'runtime');
+    fs.mkdirSync(runtimeRoot, { recursive: true, mode: 0o700 });
+    const databasePath = path.join(runtimeRoot, 'hepta-paper.sqlite');
+    const database = new DatabaseSync(databasePath);
+    database.exec(`
+PRAGMA journal_mode=WAL;
+PRAGMA wal_autocheckpoint=0;
+CREATE TABLE help_zero_write_fixture(id INTEGER PRIMARY KEY);
+INSERT INTO help_zero_write_fixture DEFAULT VALUES;
+`);
+    t.after(() => {
+      database.close();
+      fs.rmSync(parent, { recursive: true, force: true });
+    });
+    assert.equal(fs.existsSync(`${databasePath}-shm`), true);
+    assert.equal(fs.existsSync(`${databasePath}-wal`), true);
+
+    const blockingLoader = `data:text/javascript,${encodeURIComponent(`
+export async function resolve(specifier, context, nextResolve) {
+  if (specifier.includes('paper-composition/')) {
+    throw new Error('composition_loaded_during_help');
+  }
+  return nextResolve(specifier, context);
+}
+`)}`;
+    const before = runtimeTreeSnapshot(runtimeRoot);
+    const commands = [
+      ['autonomous-research-state-backup.mjs',
+        /signed linearizable authority-head protocol/u, false],
+      ['autonomous-research-state-provision.mjs',
+        /external machine-intake genesis authority/u, true],
+      ['autonomous-research-online-schema-transition.mjs',
+        /Plan never creates transition/u, true],
+    ];
+    for (const [entrypoint, expectedHelp, blockComposition] of commands) {
+      const result = spawnSync(process.execPath, [
+        '--no-warnings',
+        ...(blockComposition ? ['--experimental-loader', blockingLoader] : []),
+        path.join(repositoryRoot, 'paper-core', 'bin', entrypoint),
+        '--help', '--runtime-root', runtimeRoot,
+      ], {
+        cwd: repositoryRoot,
+        encoding: 'utf8',
+        env: { ...process.env, HEPTA_PAPER_RUNTIME_ROOT: runtimeRoot },
+        timeout: 30000,
+      });
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+      assert.equal(result.stderr, '');
+      assert.match(result.stdout, expectedHelp);
+      assert.deepEqual(runtimeTreeSnapshot(runtimeRoot), before, entrypoint);
+    }
+  });
 
 test('production authority adapter accepts only a public-key-only identity document', (t) => {
   const setup = fixture(t);

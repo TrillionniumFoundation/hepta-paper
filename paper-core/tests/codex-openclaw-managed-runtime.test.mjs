@@ -47,7 +47,10 @@ function installFixtureOpenClawRuntimePackage(value, {
       'export function agentCommand() {}',
       'export function ensureAuthProfileStore() {}',
     ],
-    configRuntimePath: ['export function loadConfig() { return {}; }'],
+    configRuntimePath: [
+      "import fs from 'node:fs';",
+      "export function loadConfig() { return JSON.parse(fs.readFileSync(process.env.OPENCLAW_CONFIG_PATH, 'utf8')); }",
+    ],
     agentHarnessRuntimePath: [
       "import path from 'node:path';",
       'export function resolveAgentDir(_cfg, agentId) {',
@@ -939,6 +942,55 @@ test('managed execution rejects a wrong, missing, or invalid locked profile befo
   }
 });
 
+test('managed availability canary never retries a transient provider response', async () => {
+  const value = fixture();
+  let agentCommandCalls = 0;
+  try {
+    await assert.rejects(() => executeCodexOpenClawManaged({
+      args: ['--sandbox', 'read-only', '--cd', value.workspace, '-'],
+      stdin: 'HEPTA_CODEX_MODEL_CANARY_CHALLENGE abc. Return HEPTA_CODEX_CANARY_RESPONSE.',
+      environment: value.environment,
+      modelRuntimeLoader: injectedModelRuntime(async () => {
+        agentCommandCalls += 1;
+        return assistantMessage('', {
+          stopReason: 'error',
+          errorCode: 'temporarily_unavailable',
+          completionStopReason: 'error',
+          finishReason: 'error',
+        });
+      }),
+    }), (error) => {
+      assert.equal(error.code, 'codex_openclaw_managed_transient_provider_response');
+      assert.equal(error.attemptTrace.length, 1);
+      return true;
+    });
+    assert.equal(agentCommandCalls, 1);
+    assertManagedRuntimeClean(value);
+  } finally {
+    value.cleanup();
+  }
+});
+
+test('managed execution requires an agent-scoped single-attempt retry policy', async () => {
+  const value = fixture();
+  let agentCommandCalls = 0;
+  try {
+    fs.writeFileSync(value.openclawConfigPath, '{}\n', { mode: 0o600 });
+    await assert.rejects(() => executeCodexOpenClawManaged({
+      args: ['--sandbox', 'read-only', '--cd', value.workspace, '-'],
+      stdin: 'HEPTA_CODEX_MODEL_CANARY_CHALLENGE abc. Return HEPTA_CODEX_CANARY_RESPONSE.',
+      environment: value.environment,
+      modelRuntimeLoader: injectedModelRuntime(async () => {
+        agentCommandCalls += 1;
+        return assistantMessage('HEPTA_CODEX_CANARY_RESPONSE:42');
+      }),
+    }), /codex_openclaw_managed_single_attempt_policy_required/);
+    assert.equal(agentCommandCalls, 0);
+  } finally {
+    value.cleanup();
+  }
+});
+
 test('managed app-server execution fails closed on fallback, tool use, pending tools, or delivery', async () => {
   const cases = [
     {
@@ -958,6 +1010,30 @@ test('managed app-server execution fails closed on fallback, tool use, pending t
             result: 'success',
             stage: 'assistant',
           }],
+        },
+      }),
+    },
+    {
+      name: 'same-model internal retry',
+      expected: /codex_openclaw_managed_multiple_provider_attempts_observed/,
+      externalActionPerformed: false,
+      externalSideEffectPerformed: false,
+      response: () => assistantMessage('HEPTA_CODEX_CANARY_RESPONSE:42', {
+        executionTrace: {
+          winnerProvider: 'openai',
+          winnerModel: 'gpt-5.6-sol',
+          fallbackUsed: false,
+          runner: 'embedded',
+          attempts: [
+            {
+              provider: 'openai', model: 'gpt-5.6-sol',
+              result: 'same_model_rate_limit', stage: 'assistant',
+            },
+            {
+              provider: 'openai', model: 'gpt-5.6-sol',
+              result: 'success', stage: 'assistant',
+            },
+          ],
         },
       }),
     },
@@ -1041,7 +1117,7 @@ test('managed app-server execution fails closed on fallback, tool use, pending t
   }
 });
 
-test('managed app-server execution fails closed if the locked session binding changes', async () => {
+test('managed app-server disposal failure supersedes an earlier cleanup failure', async () => {
   const value = fixture();
   let disposeCalls = 0;
   try {
@@ -1058,15 +1134,19 @@ test('managed app-server execution fails closed if the locked session binding ch
       }, {
         onDispose() {
           disposeCalls += 1;
-          throw new Error('fixture disposal failure must not mask cleanup');
+          throw new Error('fixture disposal detail must remain private');
         },
       }),
     }), (error) => {
       assert.equal(
         error.code,
-        'codex_openclaw_managed_session_cleanup_entry_binding_changed',
+        'codex_openclaw_managed_agent_runtime_disposal_failed',
       );
       assert.equal(error.retryable, false);
+      assert.equal(
+        error.attemptTrace.at(-1).errorClass,
+        'runtime_disposal_failed',
+      );
       assert.deepEqual(error.usage, {
         input: 10,
         output: 10,
@@ -1090,6 +1170,11 @@ test('managed app-server execution fails closed if the locked session binding ch
           allowLegacyAudit: true,
         },
       ), true);
+      assert.equal(
+        JSON.stringify({ message: error.message, ...error })
+          .includes('fixture disposal detail'),
+        false,
+      );
       return true;
     });
     assert.equal(disposeCalls, 1);

@@ -1,5 +1,3 @@
-import path from 'node:path';
-
 import {
   AUTONOMOUS_RESEARCH_ONE_SHOT_FORBIDDEN_PREPARE_ENVIRONMENT_KEYS,
   AUTONOMOUS_RESEARCH_ONE_SHOT_CAMPAIGN_ATTEMPT_PHASES,
@@ -21,8 +19,6 @@ import {
   createCampaignOneShotAttemptJournalRepository,
 } from '../../paper-adapters/automation/campaign-one-shot-attempt-journal-repository.mjs';
 import { currentCodeProvenance } from '../../paper-adapters/runtime/code-provenance.mjs';
-import { preflightCodexResearchAuthor } from '../../paper-adapters/automation/codex-research-author-preflight.mjs';
-import { preflightCodexFormalReviewer } from '../../paper-adapters/automation/codex-formal-reviewer-preflight.mjs';
 import {
   inspectWorkspaceExecutionSnapshot,
   sourceTreeExcludedNames,
@@ -45,6 +41,39 @@ import {
 import {
   runAutonomousResearchProviderCanaryPair,
 } from './autonomous-research-provider-canary.mjs';
+import {
+  autonomousResearchOneShotCampaignAttemptFailureOutcome as failureOutcome,
+  autonomousResearchOneShotCampaignAttemptMonitorReport as monitorReport,
+} from './autonomous-research-one-shot-campaign-attempt-failure.mjs';
+import {
+  assertAutonomousResearchOneShotProviderCanaryReceiptBound,
+  canonicalAutonomousResearchOneShotDatasetMounts,
+  createAutonomousResearchOneShotCampaignExecutionBindingFence,
+  createAutonomousResearchOneShotExternalActionGate,
+  inspectAutonomousResearchOneShotProviderRuntimeBinding,
+} from './autonomous-research-one-shot-campaign-execution-fence.mjs';
+import {
+  autonomousResearchOneShotCampaignAttemptIdempotencyKey,
+  selectAutonomousResearchOneShotCampaignAttemptReservation,
+} from './autonomous-research-one-shot-campaign-attempt-replay.mjs';
+import {
+  createAutonomousResearchOneShotPrepareSideEffectGuard,
+  fixedAutonomousResearchOneShotPrepareEnvironment,
+  fixedAutonomousResearchOneShotProviderEnvironment,
+} from './autonomous-research-one-shot-provider-environment.mjs';
+
+export {
+  autonomousResearchOneShotCampaignAttemptIdempotencyKey,
+  selectAutonomousResearchOneShotCampaignAttemptReservation,
+} from './autonomous-research-one-shot-campaign-attempt-replay.mjs';
+export {
+  createAutonomousResearchOneShotPrepareSideEffectGuard,
+  fixedAutonomousResearchOneShotPrepareEnvironment,
+  fixedAutonomousResearchOneShotProviderEnvironment,
+} from './autonomous-research-one-shot-provider-environment.mjs';
+export {
+  inspectAutonomousResearchOneShotProviderRuntimeBinding,
+} from './autonomous-research-one-shot-campaign-execution-fence.mjs';
 
 const PHASES = new Set(AUTONOMOUS_RESEARCH_ONE_SHOT_CAMPAIGN_ATTEMPT_PHASES);
 
@@ -79,36 +108,6 @@ export const AUTONOMOUS_RESEARCH_ONE_SHOT_CAMPAIGN_OPTIONS = Object.freeze({
     maxCostUsd: Number.MAX_SAFE_INTEGER,
   }),
 });
-
-export function fixedAutonomousResearchOneShotProviderEnvironment({
-  runtimeRoot,
-  environment = {},
-} = {}) {
-  if (!runtimeRoot) {
-    throw new Error('autonomous_research_one_shot_runtime_root_required');
-  }
-  const managedProviderRoot = path.join(
-    path.dirname(path.resolve(runtimeRoot)),
-    'openclaw-managed-codex',
-  );
-  const codexBinary = path.join(
-    path.resolve(runtimeRoot),
-    'local-run',
-    'bin',
-    'codex-openclaw-managed',
-  );
-  return Object.freeze({
-    ...environment,
-    HEPTA_RESEARCH_AUTHOR_PROVIDER: 'codex',
-    HEPTA_RESEARCH_AUTHOR_CODEX_BINARY: codexBinary,
-    HEPTA_RESEARCH_AUTHOR_CODEX_HOME: path.join(managedProviderRoot, 'research-author'),
-    HEPTA_RESEARCH_AUTHOR_MODEL: 'gpt-5.6-sol',
-    HEPTA_FORMAL_REVIEW_PROVIDER: 'codex',
-    HEPTA_FORMAL_REVIEW_CODEX_BINARY: codexBinary,
-    HEPTA_FORMAL_REVIEW_CODEX_HOME: path.join(managedProviderRoot, 'formal-reviewer'),
-    HEPTA_FORMAL_REVIEW_MODEL: 'gpt-5.6-sol',
-  });
-}
 
 function requireFunction(value, code) {
   if (typeof value !== 'function') throw new Error(code);
@@ -166,15 +165,6 @@ function finalize(repository, inspection, terminalStatus, outcome) {
   });
 }
 
-function failureOutcome(error, phase) {
-  return Object.freeze({
-    version: 1,
-    kind: 'AutonomousResearchOneShotCampaignAttemptFailure',
-    phase,
-    errorCode: String(error?.code || error?.message || 'unknown_error').slice(0, 1024),
-  });
-}
-
 function terminalStatusForFailure(phase) {
   if (['attempt_reserved', 'preconditions_verified', 'prepare_verified'].includes(phase)) {
     return 'blocked_pre_provider';
@@ -201,7 +191,9 @@ export async function composeAutonomousResearchOneShotCampaignAttempt({
   reservation,
   inspectPreconditions,
   prepareCampaign,
+  assertProviderActionReady,
   executeProviderAction,
+  assertLaunchActionReady,
   launchCampaign,
   inspectLaunchOutcome,
 } = {}) {
@@ -213,8 +205,12 @@ export async function composeAutonomousResearchOneShotCampaignAttempt({
     'autonomous_research_one_shot_campaign_preconditions_inspector_required');
   requireFunction(prepareCampaign,
     'autonomous_research_one_shot_campaign_prepare_action_required');
+  requireFunction(assertProviderActionReady,
+    'autonomous_research_one_shot_campaign_provider_fence_required');
   requireFunction(executeProviderAction,
     'autonomous_research_one_shot_campaign_provider_action_required');
+  requireFunction(assertLaunchActionReady,
+    'autonomous_research_one_shot_campaign_launch_fence_required');
   requireFunction(launchCampaign,
     'autonomous_research_one_shot_campaign_launch_action_required');
   requireFunction(inspectLaunchOutcome,
@@ -222,6 +218,13 @@ export async function composeAutonomousResearchOneShotCampaignAttempt({
 
   let inspection = repository.reserveAttempt({ reservation });
   if (inspection.terminalReceipt) return terminalReport(inspection);
+  if (inspection.headPhase === 'provider_completed') {
+    throw new Error(
+      'autonomous_research_one_shot_existing_provider_completion_not_launch_authority',
+    );
+  }
+  let providerCompletedByThisInvocation = false;
+  let ownedExternalActionPhase = null;
 
   while (!inspection.terminalReceipt) {
     const phase = inspection.headPhase;
@@ -241,51 +244,56 @@ export async function composeAutonomousResearchOneShotCampaignAttempt({
         continue;
       }
       if (phase === 'prepare_verified') {
+        await assertProviderActionReady({ reservation, inspection });
         const transition = append(repository, inspection, 'provider_started', {
           action: 'provider',
           status: 'external_action_marker_committed',
         });
-        repository.assertExternalActionSideEffectPermit({ transition });
+        if (await repository.assertExternalActionSideEffectPermit({ transition }) !== true) {
+          throw new Error('autonomous_research_one_shot_provider_permit_denied');
+        }
+        ownedExternalActionPhase = 'provider_started';
         inspection = transition;
         const result = await executeProviderAction({ reservation, inspection });
-        inspection = append(repository, inspection, 'provider_completed',
+        const providerCompletion = append(repository, inspection, 'provider_completed',
           evidenceFromResult(result,
             'autonomous_research_one_shot_campaign_provider_result_invalid'));
+        providerCompletedByThisInvocation =
+          providerCompletion.mutationDisposition?.phase === 'provider_completed'
+          && providerCompletion.mutationDisposition?.commitAcknowledged === true
+          && providerCompletion.mutationDisposition?.markerRemainsCurrent === true
+          && providerCompletion.mutationDisposition?.status
+            === 'appended_by_this_call';
+        ownedExternalActionPhase = null;
+        inspection = providerCompletion;
         continue;
       }
       if (phase === 'provider_started') {
-        inspection = finalize(repository, inspection, 'recovered_incomplete', {
-          version: 1,
-          kind: 'AutonomousResearchOneShotCampaignAttemptRecovery',
-          recoveryDisposition: inspection.recoveryDisposition.status,
-        });
-        continue;
+        return monitorReport(inspection);
       }
       if (phase === 'provider_completed') {
+        if (!providerCompletedByThisInvocation) {
+          throw new Error(
+            'autonomous_research_one_shot_provider_completion_not_invocation_authority',
+          );
+        }
+        await assertLaunchActionReady({ reservation, inspection });
         const transition = append(repository, inspection, 'launch_started', {
           action: 'launch',
           status: 'external_action_marker_committed',
         });
-        repository.assertExternalActionSideEffectPermit({ transition });
+        if (await repository.assertExternalActionSideEffectPermit({ transition }) !== true) {
+          throw new Error('autonomous_research_one_shot_launch_permit_denied');
+        }
+        ownedExternalActionPhase = 'launch_started';
         inspection = transition;
         const result = terminalResult(await launchCampaign({ reservation, inspection }));
         inspection = finalize(repository, inspection, result.terminalStatus, result.outcome);
         continue;
       }
       if (phase === 'launch_started') {
-        const observed = await inspectLaunchOutcome({ reservation, inspection });
-        if (observed === null || observed?.terminal === false) {
-          return Object.freeze({
-            version: 1,
-            kind: 'AutonomousResearchOneShotCampaignAttemptCompositionReport',
-            status: 'autonomous_research_one_shot_campaign_attempt_monitor_only',
-            inspection,
-            terminalReceipt: null,
-          });
-        }
-        const result = terminalResult(observed);
-        inspection = finalize(repository, inspection, result.terminalStatus, result.outcome);
-        continue;
+        await inspectLaunchOutcome({ reservation, inspection });
+        return monitorReport(inspection);
       }
       throw new Error(`autonomous_research_one_shot_campaign_phase_unsupported:${phase}`);
     } catch (error) {
@@ -293,6 +301,8 @@ export async function composeAutonomousResearchOneShotCampaignAttempt({
         attemptId: inspection.reservation.attemptId,
       });
       if (latest?.terminalReceipt) return terminalReport(latest);
+      if (['provider_started', 'launch_started'].includes(latest?.headPhase)
+        && ownedExternalActionPhase !== latest.headPhase) return monitorReport(latest);
       const failurePhase = latest?.headPhase || phase;
       const terminalStatus = terminalStatusForFailure(failurePhase);
       const terminal = finalize(repository, latest, terminalStatus,
@@ -452,55 +462,6 @@ export function buildAutonomousResearchOneShotCampaignExecutionBinding({
   });
 }
 
-export function inspectAutonomousResearchOneShotProviderRuntimeBinding({
-  providerConfiguration,
-  environment,
-  preflightAuthor = preflightCodexResearchAuthor,
-  preflightReviewer = preflightCodexFormalReviewer,
-} = {}) {
-  const author = preflightAuthor({
-    ...providerConfiguration.researchAuthor,
-    environment,
-  });
-  const reviewer = preflightReviewer({
-    ...providerConfiguration.formalReviewer,
-    authorProvider: providerConfiguration.researchAuthor.provider,
-    authorCodexHome: author.codexHome,
-    environment,
-  });
-  const authorReceipt = author.capabilityReceipt;
-  const reviewerReceipt = reviewer.capabilityReceipt;
-  if (!authorReceipt || !reviewerReceipt
-    || authorReceipt.openClawManagedRuntimeProvenanceHash
-      !== reviewerReceipt.openClawManagedRuntimeProvenanceHash
-    || authorReceipt.openClawManagedAuthSourceIdentityHash
-      !== reviewerReceipt.openClawManagedAuthSourceIdentityHash) {
-    throw new Error('autonomous_research_one_shot_provider_runtime_binding_invalid');
-  }
-  return Object.freeze({
-    version: 1,
-    kind: 'AutonomousResearchOneShotProviderRuntimeBinding',
-    providerConfigurationHash:
-      providerConfiguration.autonomousResearchProviderConfigurationHash,
-    researchAuthorCapabilityReceiptHash:
-      authorReceipt.codexResearchAuthorCapabilityReceiptHash,
-    formalReviewerCapabilityReceiptHash:
-      reviewerReceipt.codexFormalReviewerCapabilityReceiptHash,
-    researchAuthorCredentialConfigIdentityHash:
-      authorReceipt.credentialConfigIdentityHash,
-    formalReviewerCredentialConfigIdentityHash:
-      reviewerReceipt.credentialConfigIdentityHash,
-    researchAuthorOpenClawManagedAuthProfileIdentityHash:
-      authorReceipt.openClawManagedAuthProfileIdentityHash,
-    formalReviewerOpenClawManagedAuthProfileIdentityHash:
-      reviewerReceipt.openClawManagedAuthProfileIdentityHash,
-    openClawManagedRuntimeProvenanceHash:
-      authorReceipt.openClawManagedRuntimeProvenanceHash,
-    openClawManagedAuthSourceIdentityHash:
-      authorReceipt.openClawManagedAuthSourceIdentityHash,
-  });
-}
-
 export function projectAutonomousResearchCampaignTerminalResult(report) {
   const status = report?.campaign?.status || report?.status || null;
   if (status === 'completed' || status === 'autonomous_research_campaign_completed') {
@@ -553,7 +514,7 @@ export async function composeFixedAutonomousResearchOneShotCampaignAttempt({
     });
     try {
       if (!attemptId) throw new Error('autonomous_research_one_shot_attempt_id_required');
-      const inspection = repository.inspectAttempt({ attemptId });
+      const inspection = repository.inspectHistoricalAttempt({ attemptId });
       if (!inspection) throw new Error('autonomous_research_one_shot_attempt_missing');
       return inspection;
     } finally {
@@ -561,10 +522,12 @@ export async function composeFixedAutonomousResearchOneShotCampaignAttempt({
     }
   }
 
+  const boundDatasetMounts = canonicalAutonomousResearchOneShotDatasetMounts(datasetMounts);
   const fixedEnvironment = fixedAutonomousResearchOneShotProviderEnvironment({
-    runtimeRoot,
-    environment,
+    runtimeRoot, environment,
   });
+  const prepareEnvironment = fixedAutonomousResearchOneShotPrepareEnvironment({ runtimeRoot });
+  const prepareSideEffectGuard = createAutonomousResearchOneShotPrepareSideEffectGuard();
   const providerConfiguration = providerConfigurationResolver({
     environment: fixedEnvironment,
   });
@@ -572,67 +535,62 @@ export async function composeFixedAutonomousResearchOneShotCampaignAttempt({
     !== AUTONOMOUS_RESEARCH_ONE_SHOT_PROVIDER_CONFIGURATION_HASH) {
     throw new Error('autonomous_research_one_shot_provider_configuration_mismatch');
   }
-  const providerRuntimeBinding = providerRuntimeBindingInspector({
-    providerConfiguration,
-    environment: fixedEnvironment,
-  });
-  const store = readOnlyStoreFactory({ root, runtimeRoot });
-  const campaignStore = campaignStoreFactory({ store, clock });
-  let protectedCampaignDefinition;
-  let targetCampaign;
-  try {
-    protectedCampaignDefinition = inspectAutonomousResearchOneShotProtectedCampaign({
-      store,
-      campaignStore,
+  const inspectExecutionBinding = () => {
+    const providerRuntimeBinding = providerRuntimeBindingInspector({
+      providerConfiguration,
+      environment: fixedEnvironment,
     });
-    targetCampaign = campaignStore.getCampaign(
-      AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_CAMPAIGN_ID,
-    );
-  } finally {
-    store.close();
-  }
-  if (targetCampaign) {
-    throw new Error('autonomous_research_one_shot_target_campaign_already_exists');
-  }
-  const codeProvenance = codeProvenanceInspector({
-    workspaceRoot,
-    allowReleaseCommitEnvironment: false,
-  });
-  if (codeProvenance?.treeDirty !== false) {
-    throw new Error(
-      'autonomous_research_one_shot_source_snapshot_blocked:dirty_git_worktree',
-    );
-  }
-  const snapshot = sourceSnapshotInspector(workspaceRoot, {
-    excludeNames: sourceTreeExcludedNames(workspaceRoot),
-  });
-  if (snapshot.blockers?.length) {
-    throw new Error(`autonomous_research_one_shot_source_snapshot_blocked:${snapshot.blockers.join(',')}`);
-  }
-  const sourceExecutionSnapshot = Object.freeze({
-    version: 1,
-    merkleHash: snapshot.merkleHash,
-    manifestHash: snapshot.manifestHash,
-  });
-  const executionBinding = buildAutonomousResearchOneShotCampaignExecutionBinding({
-    codeProvenance,
-    sourceExecutionSnapshot,
-    protectedCampaignDefinition,
-    datasetMounts,
-    providerConfigurationHash:
-      providerConfiguration.autonomousResearchProviderConfigurationHash,
-    providerRuntimeBinding,
-  });
-  const idempotencyKey = hashRecord(
-    'AutonomousResearchOneShotCampaignAttemptIdempotencyKey',
-    {
-      campaignId: AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_CAMPAIGN_ID,
-      codeProvenanceHash: executionBinding.codeProvenanceHash,
-      sourceExecutionSnapshotHash: executionBinding.sourceExecutionSnapshotHash,
-      targetCampaignDefinitionHash: executionBinding.targetCampaignDefinitionHash,
-      providerRuntimeBindingHash: executionBinding.providerRuntimeBindingHash,
-    },
-  );
+    const store = readOnlyStoreFactory({ root, runtimeRoot });
+    const campaignStore = campaignStoreFactory({ store, clock });
+    let protectedCampaignDefinition;
+    let targetCampaign;
+    try {
+      protectedCampaignDefinition = inspectAutonomousResearchOneShotProtectedCampaign({
+        store,
+        campaignStore,
+      });
+      targetCampaign = campaignStore.getCampaign(
+        AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_CAMPAIGN_ID,
+      );
+    } finally {
+      store.close();
+    }
+    if (targetCampaign) {
+      throw new Error('autonomous_research_one_shot_target_campaign_already_exists');
+    }
+    const codeProvenance = codeProvenanceInspector({
+      workspaceRoot,
+      allowReleaseCommitEnvironment: false,
+    });
+    if (codeProvenance?.treeDirty !== false) {
+      throw new Error(
+        'autonomous_research_one_shot_source_snapshot_blocked:dirty_git_worktree',
+      );
+    }
+    const snapshot = sourceSnapshotInspector(workspaceRoot, {
+      excludeNames: sourceTreeExcludedNames(workspaceRoot),
+    });
+    if (snapshot.blockers?.length) {
+      throw new Error(`autonomous_research_one_shot_source_snapshot_blocked:${snapshot.blockers.join(',')}`);
+    }
+    const sourceExecutionSnapshot = Object.freeze({
+      version: 1,
+      merkleHash: snapshot.merkleHash,
+      manifestHash: snapshot.manifestHash,
+    });
+    return buildAutonomousResearchOneShotCampaignExecutionBinding({
+      codeProvenance,
+      sourceExecutionSnapshot,
+      protectedCampaignDefinition,
+      datasetMounts: boundDatasetMounts,
+      providerConfigurationHash:
+        providerConfiguration.autonomousResearchProviderConfigurationHash,
+      providerRuntimeBinding,
+    });
+  };
+  const executionBinding = inspectExecutionBinding();
+  const idempotencyKey =
+    autonomousResearchOneShotCampaignAttemptIdempotencyKey(executionBinding);
   const candidateReservation = buildAutonomousResearchOneShotCampaignAttemptReservation({
     attemptId: `campaign-57-${idempotencyKey.slice(-24)}`,
     idempotencyKey,
@@ -649,7 +607,15 @@ export async function composeFixedAutonomousResearchOneShotCampaignAttempt({
   });
   try {
     const existing = repository.inspectAttempt({ idempotencyKey });
-    const reservation = existing?.reservation || candidateReservation;
+    const reservation = selectAutonomousResearchOneShotCampaignAttemptReservation({
+      existing,
+      candidateReservation,
+    });
+    const executionBindingFence =
+      createAutonomousResearchOneShotCampaignExecutionBindingFence({
+        expectedExecutionBinding: reservation.executionBinding,
+        inspectCurrentExecutionBinding: inspectExecutionBinding,
+      });
     const budgetWaiver = resolveAutonomousResearchDirectLocalRunBudgetWaiver({
       launchMode: AUTONOMOUS_RESEARCH_ONE_SHOT_CAMPAIGN_OPTIONS.requestedLaunchMode,
       campaignId: AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_CAMPAIGN_ID,
@@ -668,13 +634,12 @@ export async function composeFixedAutonomousResearchOneShotCampaignAttempt({
       protocolFamily: AUTONOMOUS_RESEARCH_ONE_SHOT_CAMPAIGN_OPTIONS.protocolFamily,
       root,
       runtimeRoot,
-      datasetMounts,
+      datasetMounts: boundDatasetMounts,
       revisionRounds: 3,
       refereeCount: 3,
       budgets: AUTONOMOUS_RESEARCH_ONE_SHOT_CAMPAIGN_OPTIONS.budgets,
       humanSubjects: false,
       privateData: false,
-      environment: fixedEnvironment,
       worker: AUTONOMOUS_RESEARCH_ONE_SHOT_CAMPAIGN_OPTIONS.worker,
     });
     return await composeAutonomousResearchOneShotCampaignAttempt({
@@ -690,7 +655,10 @@ export async function composeFixedAutonomousResearchOneShotCampaignAttempt({
         }) });
       },
       async prepareCampaign() {
-        const report = await campaignAction({ ...campaignArguments, action: 'prepare' });
+        const report = await campaignAction({
+          ...campaignArguments, action: 'prepare', environment: prepareEnvironment,
+          assertExternalSideEffectReady: prepareSideEffectGuard,
+        });
         if (report?.autonomousExecutionLaunchReady !== true) {
           throw new Error('autonomous_research_one_shot_prepare_not_launch_ready');
         }
@@ -699,22 +667,53 @@ export async function composeFixedAutonomousResearchOneShotCampaignAttempt({
           proposalHash: report.proposal?.machineProposedScientificClaimSetHash || null,
         }) });
       },
-      async executeProviderAction() {
+      async assertProviderActionReady() {
+        executionBindingFence.assertCurrent({ phase: 'pre_provider' });
+      },
+      async executeProviderAction({ inspection }) {
+        const sideEffectGate = createAutonomousResearchOneShotExternalActionGate({
+          repository, transition: inspection, executionBindingFence,
+          phase: 'provider_started',
+        });
+        sideEffectGate.assertCurrent();
         const receipt = await providerCanaryRunner({
           providerConfiguration,
           expectedProviderConfigurationHash:
             AUTONOMOUS_RESEARCH_ONE_SHOT_PROVIDER_CONFIGURATION_HASH,
           environment: fixedEnvironment,
           clock,
+          beforePreflightAction: sideEffectGate,
+          beforeCanaryAction: sideEffectGate, beforeModelInvocation: sideEffectGate.assertCurrent,
+          betweenCanaryChecks: sideEffectGate,
+          onExternalSideEffectStarted: sideEffectGate,
         });
+        assertAutonomousResearchOneShotProviderCanaryReceiptBound({
+          receipt,
+          expectedProviderConfigurationHash:
+            reservation.executionBinding.autonomousResearchProviderConfigurationHash,
+          expectedProviderRuntimeBinding:
+            reservation.executionBinding.providerRuntimeBinding,
+          now: clock.now(),
+        });
+        sideEffectGate.assertCurrent();
         return Object.freeze({ evidence: Object.freeze({
           providerCanaryPairReceiptHash: receipt.providerCanaryPairReceiptHash,
         }) });
       },
-      async launchCampaign() {
+      async assertLaunchActionReady() {
+        executionBindingFence.assertCurrent({ phase: 'pre_launch' });
+      },
+      async launchCampaign({ inspection }) {
+        const sideEffectGate = createAutonomousResearchOneShotExternalActionGate({
+          repository, transition: inspection, executionBindingFence,
+          phase: 'launch_started',
+        });
+        sideEffectGate.assertCurrent();
         const report = await campaignAction({
           ...campaignArguments,
           action: 'launch',
+          environment: fixedEnvironment,
+          assertExternalSideEffectReady: sideEffectGate,
           requireCampaignAbsentAtLaunch: true,
         });
         return projectAutonomousResearchCampaignTerminalResult(report);
@@ -723,6 +722,7 @@ export async function composeFixedAutonomousResearchOneShotCampaignAttempt({
         const report = await campaignAction({
           ...campaignArguments,
           action: 'status',
+          environment: fixedEnvironment,
         });
         const status = report?.campaign?.status || report?.status || null;
         if (!['completed', 'failed', 'cancelled'].includes(status)) {

@@ -755,6 +755,18 @@ test('SQLite campaign persistence is composed from bounded operation modules', (
     const source = fs.readFileSync(path.join(workspaceRoot, 'paper-adapters/persistence', moduleName), 'utf8');
     assert.ok(source.split(/\n/).length - 1 <= 250, moduleName);
   }
+  const creationModuleName = 'sqlite-campaign-creation-operations.mjs';
+  const lifecycleSource = fs.readFileSync(path.join(
+    workspaceRoot,
+    'paper-adapters/persistence/sqlite-campaign-lifecycle-operations.mjs',
+  ), 'utf8');
+  assert.match(lifecycleSource, new RegExp(creationModuleName.replaceAll('.', '\\.')));
+  const creationSource = fs.readFileSync(path.join(
+    workspaceRoot,
+    'paper-adapters/persistence',
+    creationModuleName,
+  ), 'utf8');
+  assert.ok(creationSource.split(/\n/).length - 1 <= 250, creationModuleName);
   const reservationSource = fs.readFileSync(path.join(
     workspaceRoot,
     'paper-adapters/persistence/sqlite-campaign-node-infrastructure-reservations.mjs',

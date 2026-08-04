@@ -79,11 +79,50 @@ const RUNTIME_MODULE_BINDING_KEYS = Object.freeze([
   'runtimeFilePathHash',
   'runtimeRole',
 ]);
+const SINGLE_ATTEMPT_RETRY_POLICY_KEYS = Object.freeze([
+  'base', 'max', 'min', 'perProfile',
+]);
 
 function exactKeys(value, expected) {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value)
     && JSON.stringify(Object.keys(value).sort())
       === JSON.stringify([...expected].sort()));
+}
+
+export function verifyOpenClawManagedSingleAttemptPolicy(configuration, agentId) {
+  const matches = Array.isArray(configuration?.agents?.list)
+    ? configuration.agents.list.filter((entry) => entry?.id === agentId)
+    : [];
+  const policy = matches.length === 1 ? matches[0].runRetries : null;
+  return exactKeys(policy, SINGLE_ATTEMPT_RETRY_POLICY_KEYS)
+    && policy.base === 1
+    && policy.perProfile === 0
+    && policy.min === 1
+    && policy.max === 1;
+}
+
+export function assertOpenClawManagedSingleAttemptPolicy({
+  openclawConfigPath,
+  agentId,
+} = {}) {
+  try {
+    const requested = path.resolve(String(openclawConfigPath || ''));
+    const linkStat = fs.lstatSync(requested);
+    const stat = fs.statSync(requested);
+    if (linkStat.isSymbolicLink() || !linkStat.isFile() || !stat.isFile()
+      || fs.realpathSync(requested) !== requested
+      || (stat.mode & 0o077) !== 0
+      || (typeof process.getuid === 'function' && stat.uid !== process.getuid())) {
+      throw new Error('openclaw config is not private and canonical');
+    }
+    const configuration = JSON.parse(fs.readFileSync(requested, 'utf8'));
+    if (!verifyOpenClawManagedSingleAttemptPolicy(configuration, agentId)) {
+      throw new Error('single-attempt policy is absent');
+    }
+    return true;
+  } catch {
+    throw runtimeError('codex_openclaw_managed_single_attempt_policy_required');
+  }
 }
 
 function runtimeModuleBinding(descriptor, located, ordinal) {
@@ -307,6 +346,7 @@ export function readCodexOpenClawManagedConfiguration({
   if (path.dirname(openclawConfigPath) !== openclawStateDir) {
     throw runtimeError('codex_openclaw_managed_openclaw_source_mismatch');
   }
+  assertOpenClawManagedSingleAttemptPolicy({ openclawConfigPath, agentId });
   const requestedBinary = String(section.openclaw_binary || '').trim();
   if (!requestedBinary || !path.isAbsolute(requestedBinary)) {
     throw runtimeError('codex_openclaw_managed_openclaw_binary_invalid');
@@ -469,6 +509,9 @@ export async function loadOpenClawModelRuntime(configuration) {
   let sessionStorePath;
   try {
     cfg = configRuntime.loadConfig();
+    if (!verifyOpenClawManagedSingleAttemptPolicy(cfg, configuration.agentId)) {
+      throw new Error('single-attempt policy changed during runtime load');
+    }
     const requestedAgentDir = agentHarnessRuntime.resolveAgentDir(
       cfg,
       configuration.agentId,

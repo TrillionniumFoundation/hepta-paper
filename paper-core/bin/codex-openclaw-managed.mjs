@@ -28,6 +28,39 @@ const CONFIGURE_USAGE = Object.freeze([
   '  [--force]',
 ]);
 
+const CONFIGURE_BOOLEAN_FLAGS = Object.freeze(['force', 'help']);
+const CONFIGURE_VALUE_FLAGS = Object.freeze([
+  'agent', 'auth-profile-id', 'home', 'maximum-context-bytes',
+  'maximum-file-count', 'model', 'openclaw-binary',
+  'openclaw-config-path', 'openclaw-state-dir', 'principal-role',
+  'thinking',
+]);
+const CONFIGURE_OPTION_TOKENS = new Set([
+  ...CONFIGURE_BOOLEAN_FLAGS,
+  ...CONFIGURE_VALUE_FLAGS,
+].map((name) => `--${name}`));
+const SAFE_CONFIGURE_ERROR_PREFIXES = new Set([
+  'boolean_cli_option_does_not_take_value',
+  'duplicate_cli_option',
+  'empty_cli_option_value',
+  'missing_cli_option_value',
+]);
+
+function projectManagedCliFailureCode(error) {
+  const candidate = String(error?.code || error?.message || '').trim();
+  const separator = candidate.indexOf(':');
+  if (separator > 0 && candidate.indexOf(':', separator + 1) < 0) {
+    const prefix = candidate.slice(0, separator);
+    const option = candidate.slice(separator + 1);
+    if (SAFE_CONFIGURE_ERROR_PREFIXES.has(prefix)
+      && CONFIGURE_OPTION_TOKENS.has(option)) return candidate;
+  }
+  if (/^(?:empty_cli_option|unexpected_cli_argument_separator|unknown_cli_option:|unexpected_cli_positional:|too_many_cli_positionals:)/.test(candidate)) {
+    return 'codex_openclaw_managed_command_invalid';
+  }
+  return managedRuntime.projectFailureCode(candidate);
+}
+
 function writeUsage(lines) {
   process.stdout.write(`${lines.join('\n')}\n`);
 }
@@ -78,13 +111,8 @@ async function main(args = process.argv.slice(2)) {
   }
   if (args[0] === 'configure') {
     const options = parseStrictCliArguments(args.slice(1), {
-      booleanFlags: ['force', 'help'],
-      valueFlags: [
-        'agent', 'auth-profile-id', 'home', 'maximum-context-bytes',
-        'maximum-file-count', 'model', 'openclaw-binary',
-        'openclaw-config-path', 'openclaw-state-dir', 'principal-role',
-        'thinking',
-      ],
+      booleanFlags: CONFIGURE_BOOLEAN_FLAGS,
+      valueFlags: CONFIGURE_VALUE_FLAGS,
       positional: false,
     });
     if (options.help) {
@@ -139,9 +167,7 @@ async function main(args = process.argv.slice(2)) {
 }
 
 main().catch((error) => {
-  const candidate = String(error?.code || error?.message || '');
-  const code = /^[a-z0-9][a-z0-9_:-]{0,160}$/.test(candidate)
-    ? candidate : 'codex_openclaw_managed_failed';
+  const code = projectManagedCliFailureCode(error);
   process.stderr.write(`${code}\n`);
   const failureEvidence = managedRuntime.buildFailureEvidence(error);
   if (failureEvidence) process.stderr.write(`${JSON.stringify(failureEvidence)}\n`);

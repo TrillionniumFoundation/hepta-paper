@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { preflightCodexResearchAuthor } from '../../paper-adapters/automation/codex-research-author-preflight.mjs';
@@ -43,6 +44,31 @@ function fixture(t, { loggedIn = true, privateHome = true, privateConfig = true,
   ].join('\n'), { mode: 0o700 });
   fs.chmodSync(binary, 0o700);
   return { root, codexHome, binary };
+}
+
+function liveCanaryFailureSpawn(stderr) {
+  return (_binary, args) => {
+    if (args[0] === '--version') {
+      return { status: 0, signal: null, stdout: 'codex-cli 99.1.0\n', stderr: '' };
+    }
+    if (args[0] === 'exec' && args[1] === '--help') {
+      return { status: 0, signal: null, stdout: '--model MODEL\n', stderr: '' };
+    }
+    if (args[0] === 'login' && args[1] === 'status') {
+      return { status: 0, signal: null, stdout: 'Logged in\n', stderr: '' };
+    }
+    assert.equal(args.includes('--ephemeral'), true);
+    return { status: 86, signal: null, stdout: '', stderr };
+  };
+}
+
+function captureError(callback) {
+  try {
+    callback();
+  } catch (error) {
+    return error;
+  }
+  assert.fail('expected callback to throw');
 }
 
 test('read-only Codex preflight retries one transient version probe failure', (t) => {
@@ -151,6 +177,32 @@ test('research author live canary proves the selected model can execute and bind
   assert.equal(JSON.stringify(canary).includes(codexHome), false);
 });
 
+test('research author live canary rechecks synchronous authority immediately before invocation', (t) => {
+  const { codexHome, binary } = fixture(t);
+  let invocationFenceCalls = 0;
+  const canary = probeCodexModelAvailability({
+    codexBinary: binary,
+    codexHome,
+    model: 'gpt-research-fixture',
+    beforeModelInvocation() { invocationFenceCalls += 1; },
+  });
+  assert.equal(canary.selectedModelExecutionCanaryVerified, true);
+  assert.equal(invocationFenceCalls, 1);
+
+  let modelInvocations = 0;
+  assert.throws(() => probeCodexModelAvailability({
+    codexBinary: binary,
+    codexHome,
+    model: 'gpt-research-fixture',
+    spawnSyncImpl(command, args, options) {
+      if (args[0] === 'exec' && args.includes('--ephemeral')) modelInvocations += 1;
+      return spawnSync(command, args, options);
+    },
+    beforeModelInvocation() { throw new Error('fixture_invocation_authority_stale'); },
+  }), /fixture_invocation_authority_stale/);
+  assert.equal(modelInvocations, 0);
+});
+
 test('research author live canary rejects a runtime that merely echoes its prompt', (t) => {
   const { codexHome, binary } = fixture(t, { canaryMode: 'echo' });
   assert.throws(() => probeCodexModelAvailability({
@@ -159,6 +211,60 @@ test('research author live canary rejects a runtime that merely echoes its promp
     model: 'gpt-research-fixture',
     errorPrefix: 'research_author_codex',
   }), /research_author_codex_model_live_canary_failed/);
+});
+
+test('unmanaged live canary stderr cannot self-assert quota or leak diagnostics', (t) => {
+  const { codexHome, binary } = fixture(t);
+  const quotaDetail = [
+    'insufficient_quota',
+    'credential=sk-live-canary-secret',
+    'path=/private/provider/account.json',
+    'response=provider-specific prose',
+  ].join(' ');
+  const quotaOptions = {
+    codexBinary: binary,
+    codexHome,
+    model: 'gpt-research-fixture',
+    errorPrefix: 'research_author_codex',
+    spawnSyncImpl: liveCanaryFailureSpawn(quotaDetail),
+  };
+  const firstQuota = captureError(() => probeCodexModelAvailability(quotaOptions));
+  const secondQuota = captureError(() => probeCodexModelAvailability(quotaOptions));
+  assert.equal(firstQuota.message, 'research_author_codex_model_live_canary_failed');
+  assert.equal(firstQuota.failureClass, 'unknown');
+  assert.match(firstQuota.diagnosticHash, /^sha256:[0-9a-f]{64}$/);
+  assert.equal(secondQuota.diagnosticHash, firstQuota.diagnosticHash);
+
+  const unknownDetail = [
+    'opaque-provider-failure',
+    'credential=sk-unknown-secret',
+    'path=/private/provider/unknown.json',
+    'response=unstructured upstream prose',
+  ].join(' ');
+  const unknownOptions = {
+    ...quotaOptions,
+    spawnSyncImpl: liveCanaryFailureSpawn(unknownDetail),
+  };
+  const firstUnknown = captureError(() => probeCodexModelAvailability(unknownOptions));
+  const secondUnknown = captureError(() => probeCodexModelAvailability(unknownOptions));
+  assert.equal(firstUnknown.failureClass, 'unknown');
+  assert.equal(secondUnknown.diagnosticHash, firstUnknown.diagnosticHash);
+  assert.equal(firstUnknown.diagnosticHash, firstQuota.diagnosticHash);
+
+  for (const [error, rawDetail] of [
+    [firstQuota, quotaDetail],
+    [firstUnknown, unknownDetail],
+  ]) {
+    assert.deepEqual(Object.keys(error).sort(), [
+      'diagnosticHash', 'failureClass', 'retryable',
+    ]);
+    assert.equal(error.stdout, undefined);
+    assert.equal(error.stderr, undefined);
+    assert.equal(error.cause, undefined);
+    assert.equal(JSON.stringify({ message: error.message, ...error }).includes(rawDetail), false);
+    assert.equal(JSON.stringify({ message: error.message, ...error }).includes('sk-'), false);
+    assert.equal(JSON.stringify({ message: error.message, ...error }).includes('/private/'), false);
+  }
 });
 
 test('preflighted research author revalidates binary and credential identity before every call', async (t) => {

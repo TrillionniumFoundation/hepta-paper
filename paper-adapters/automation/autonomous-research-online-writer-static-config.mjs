@@ -330,6 +330,8 @@ export const NON_WRITER_ENTRYPOINT_EXCLUSIONS = Object.freeze({
     'coordinator callback helper; the enclosing literal campaign operation is the independent boundary',
   'paper-adapters/persistence/native-store-campaign-mutation-execution.mjs:applyNativeStoreCampaignMutation':
     'coordinator callback dispatcher; public literal campaign operation bindings are inspected directly',
+  'paper-adapters/persistence/sqlite-campaign-creation-operations.mjs:prepareCampaignCreation':
+    'pure campaign-creation payload builder; createCampaign and createCampaignExclusive provide the two literal coordinator bindings',
   'paper-adapters/persistence/sqlite-campaign-lifecycle-terminal-operations.mjs:terminalCampaign':
     'pure terminal-campaign payload builder invoked only by failCampaign and stopCampaign literal bindings',
   'paper-adapters/persistence/sqlite-campaign-mutation-boundary.mjs:guarded':
@@ -504,6 +506,7 @@ export const DIRECT_SQL_ALLOWED_ENTRYPOINT_EXCLUSIONS = new Set([
   'paper-adapters/persistence/native-store-campaign-mutation-execution.mjs:applyExtendCampaign',
   'paper-adapters/persistence/native-store-campaign-mutation-execution.mjs:applyLifecycleMutation',
   'paper-adapters/persistence/native-store-campaign-mutation-execution.mjs:applyNativeStoreCampaignMutation',
+  'paper-adapters/persistence/sqlite-campaign-creation-operations.mjs:prepareCampaignCreation',
   'paper-adapters/persistence/sqlite-campaign-lifecycle-terminal-operations.mjs:terminalCampaign',
   'paper-adapters/persistence/sqlite-campaign-mutation-boundary.mjs:guarded',
   'paper-adapters/persistence/sqlite-campaign-mutation-boundary.mjs:legacyTransaction',

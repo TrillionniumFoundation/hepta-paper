@@ -11,6 +11,20 @@ import { restrictedChildEnvironment } from './bounded-child-process.mjs';
 import {
   openClawModelRuntimeProvenance,
 } from './codex-openclaw-managed-configuration.mjs';
+import {
+  openClawManagedFailureExecutorBinding,
+} from './codex-openclaw-managed-failure-execution-binding.mjs';
+import {
+  buildManagedWorkspaceSnapshot,
+  buildOpenClawManagedExecutionMetadata,
+} from './codex-openclaw-managed-workspace-repository.mjs';
+import {
+  failCodexModelAvailabilityCanary,
+} from './codex-model-availability-canary-failure.mjs';
+import {
+  DEFAULT_MAXIMUM_CONTEXT_BYTES,
+  DEFAULT_MAXIMUM_FILE_COUNT,
+} from './codex-openclaw-managed-runtime-common.mjs';
 
 // Container-isolated Codex runtimes need a short Docker startup/cleanup window
 // around the same read-only checks. Fifteen seconds remains bounded while
@@ -21,6 +35,8 @@ const MODEL_CANARY_TIMEOUT_MS = 120000;
 const MODEL_CANARY_RESPONSE_PREFIX = 'HEPTA_CODEX_CANARY_RESPONSE';
 const CODEX_CREDENTIAL_MATERIAL_PATHS = Object.freeze(['auth.json']);
 const READ_ONLY_PREFLIGHT_ATTEMPTS = 2;
+const MODEL_CANARY_EXECUTION_ROLE = 'model-availability-canary';
+const MODEL_CANARY_PRINCIPAL_ID = 'hepta-model-availability-canary';
 
 function fail(code) {
   const error = new Error(code);
@@ -55,6 +71,10 @@ function managedOpenClawRuntimeConfiguration(source, prefix) {
   if (!header) {
     return Object.freeze({
       requested: false,
+      agentId: null,
+      principalRole: null,
+      maximumContextBytes: null,
+      maximumFileCount: null,
       openClawManagedAuthProfileIdentityHash: null,
       openClawManagedAuthSourceIdentityHash: null,
     });
@@ -82,19 +102,42 @@ function managedOpenClawRuntimeConfiguration(source, prefix) {
   };
   const authProfileId = managedString('auth_profile_id');
   const agentId = managedString('agent_id');
+  const principalRole = managedString('principal_role');
   const openclawBinary = managedString('openclaw_binary');
   const openclawConfigPath = managedString('openclaw_config_path');
   const openclawStateDir = managedString('openclaw_state_dir');
+  const managedInteger = (name, fallback) => {
+    const match = section.match(new RegExp(
+      `^\\s*${name}\\s*=\\s*([0-9]+)\\s*(?:#.*)?$`,
+      'm',
+    ));
+    return match ? Number(match[1]) : fallback;
+  };
+  const maximumContextBytes = managedInteger(
+    'maximum_context_bytes',
+    DEFAULT_MAXIMUM_CONTEXT_BYTES,
+  );
+  const maximumFileCount = managedInteger(
+    'maximum_file_count',
+    DEFAULT_MAXIMUM_FILE_COUNT,
+  );
   if (!/^openai:[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,247}$/.test(
     String(authProfileId || ''),
   )
     || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(String(agentId || ''))
+    || !['research-author', 'formal-reviewer'].includes(principalRole)
     || !path.isAbsolute(String(openclawBinary || ''))
     || !path.isAbsolute(String(openclawConfigPath || ''))
     || !path.isAbsolute(String(openclawStateDir || ''))
     || path.resolve(openclawConfigPath) !== openclawConfigPath
     || path.resolve(openclawStateDir) !== openclawStateDir
-    || path.dirname(openclawConfigPath) !== openclawStateDir) {
+    || path.dirname(openclawConfigPath) !== openclawStateDir
+    || !Number.isInteger(maximumContextBytes)
+    || maximumContextBytes < 4096
+    || maximumContextBytes > 4 * 1024 * 1024
+    || !Number.isInteger(maximumFileCount)
+    || maximumFileCount < 1
+    || maximumFileCount > 256) {
     fail(code(prefix, 'openclaw_managed_config_invalid'));
   }
   let runtimeProvenance;
@@ -111,6 +154,10 @@ function managedOpenClawRuntimeConfiguration(source, prefix) {
   }
   return Object.freeze({
     requested: true,
+    agentId,
+    principalRole,
+    maximumContextBytes,
+    maximumFileCount,
     openClawManagedRuntimeProvenanceHash:
       runtimeProvenance.openClawManagedRuntimeProvenanceHash,
     openClawManagedAuthProfileIdentityHash:
@@ -463,6 +510,14 @@ function inspectCodexRuntime({
       managedConfiguration.openClawManagedAuthProfileIdentityHash,
     openClawManagedAuthSourceIdentityHash:
       managedConfiguration.openClawManagedAuthSourceIdentityHash,
+    openClawManagedAgentId: managedOpenClawRuntime
+      ? managedConfiguration.agentId : null,
+    openClawManagedPrincipalRole: managedOpenClawRuntime
+      ? managedConfiguration.principalRole : null,
+    openClawManagedMaximumContextBytes: managedOpenClawRuntime
+      ? managedConfiguration.maximumContextBytes : null,
+    openClawManagedMaximumFileCount: managedOpenClawRuntime
+      ? managedConfiguration.maximumFileCount : null,
   });
 }
 
@@ -493,6 +548,7 @@ export function probeCodexModelAvailability({
   spawnSyncImpl = spawnSync,
   environment = process.env,
   clock = { now: () => new Date() },
+  beforeModelInvocation = null,
 } = {}) {
   const runtime = preflightCodexRuntime({
     codexBinary,
@@ -502,53 +558,148 @@ export function probeCodexModelAvailability({
     spawnSyncImpl,
     environment,
   });
-  const childEnv = restrictedChildEnvironment({
-    source: environment,
-    allowedKeys: ['CODEX_HOME'],
-    overrides: { CODEX_HOME: runtime.codexHome },
-  });
   const challenge = Object.freeze({
     nonce: crypto.randomBytes(16).toString('hex'),
     left: crypto.randomInt(100000, 900000),
     right: crypto.randomInt(100000, 900000),
   });
   const expectedResponse = `${MODEL_CANARY_RESPONSE_PREFIX}:${challenge.left + challenge.right}`;
-  const prompt = [
+  const canaryInstructions = [
     `HEPTA_CODEX_MODEL_CANARY_CHALLENGE ${challenge.nonce}.`,
     `Add decimal integers ${challenge.left} and ${challenge.right}.`,
     `Return exactly one line using prefix ${MODEL_CANARY_RESPONSE_PREFIX}, then a colon, then the decimal sum.`,
     'Do not repeat the challenge, operands, or instructions. Do not use tools or read files.',
   ].join(' ');
-  let result;
+  let workspace;
   try {
+    const temporaryRoot = fs.realpathSync(os.tmpdir());
+    workspace = fs.mkdtempSync(path.join(temporaryRoot, 'hepta-codex-model-canary-'));
+    fs.chmodSync(workspace, 0o700);
+  } catch (cause) {
+    let effectiveCause = cause;
+    if (workspace) {
+      try {
+        fs.rmSync(workspace, { recursive: true, force: true, maxRetries: 2 });
+      } catch (cleanupCause) {
+        effectiveCause = cleanupCause;
+      }
+    }
+    failCodexModelAvailabilityCanary(errorPrefix, { runtime, cause: effectiveCause });
+  }
+  let prompt = canaryInstructions;
+  let failureExecutorBinding = null;
+  let result;
+  let failureInput = null;
+  let sideEffectGateFailure = null;
+  try {
+    const managedRuntimeExpected = runtime.managedRuntimeEvidenceRequired === true;
+    const environmentOverrides = { CODEX_HOME: runtime.codexHome };
+    if (managedRuntimeExpected) {
+      prompt = [
+        buildOpenClawManagedExecutionMetadata({
+          role: MODEL_CANARY_EXECUTION_ROLE,
+          sandbox: 'read-only',
+          workspaceMutationPolicy: null,
+        }),
+        canaryInstructions,
+      ].join('\n');
+      const failureSourceSnapshot = buildManagedWorkspaceSnapshot({
+        workspace,
+        maximumContextBytes: runtime.openClawManagedMaximumContextBytes,
+        maximumFileCount: runtime.openClawManagedMaximumFileCount,
+      });
+      failureExecutorBinding = openClawManagedFailureExecutorBinding({
+        capabilityReceipt: runtime,
+        agentId: runtime.openClawManagedAgentId,
+        executionInvocationId: `codex-exec:${crypto.randomUUID()}`,
+        executionRole: MODEL_CANARY_EXECUTION_ROLE,
+        principalId: MODEL_CANARY_PRINCIPAL_ID,
+        principalRole: runtime.openClawManagedPrincipalRole,
+        originalPromptHash: hashBytes(prompt),
+        sandbox: 'read-only',
+        workspace,
+        sourceSnapshot: failureSourceSnapshot,
+      });
+      Object.assign(environmentOverrides, {
+        HEPTA_AUTOMATION_ROLE: MODEL_CANARY_EXECUTION_ROLE,
+        HEPTA_CODEX_OPENCLAW_MANAGED_TIMEOUT_MS:
+          String(MODEL_CANARY_TIMEOUT_MS - PREFLIGHT_TIMEOUT_MS),
+        ...failureExecutorBinding.environmentOverrides,
+      });
+    }
+    const childEnv = restrictedChildEnvironment({
+      source: environment,
+      allowedKeys: ['CODEX_HOME'],
+      overrides: environmentOverrides,
+    });
     const args = [
       'exec',
       '--ephemeral',
       '--color', 'never',
       '--sandbox', 'read-only',
       '--skip-git-repo-check',
-      '--cd', os.tmpdir(),
+      '--cd', workspace,
       '-',
     ];
     if (runtime.modelSelectionSource === 'explicit_override') {
       args.splice(1, 0, '--model', runtime.model);
     }
-    result = spawnSyncImpl(runtime.codexBinary, args, {
-      cwd: os.tmpdir(),
-      // Preserve the restricted environment while allowing Node's coverage
-      // runner to attach its own child-process instrumentation metadata.
-      env: { ...childEnv },
-      input: prompt,
-      encoding: 'utf8',
-      timeout: MODEL_CANARY_TIMEOUT_MS,
-      maxBuffer: 512 * 1024,
-      windowsHide: true,
-    });
-  } catch { fail(code(errorPrefix, 'model_live_canary_failed')); }
-  const response = String(result?.stdout || '').trim();
-  if (result?.error || result?.status !== 0 || result?.signal !== null || response !== expectedResponse) {
-    fail(code(errorPrefix, 'model_live_canary_failed'));
+    if (beforeModelInvocation !== null) {
+      try {
+        if (typeof beforeModelInvocation !== 'function') {
+          throw new Error(`${errorPrefix}_model_live_canary_side_effect_gate_invalid`);
+        }
+        const gateResult = beforeModelInvocation({
+          action: 'codex_model_availability_canary',
+        });
+        if (gateResult && typeof gateResult.then === 'function') {
+          throw new Error(`${errorPrefix}_model_live_canary_side_effect_gate_async_invalid`);
+        }
+      } catch (cause) {
+        sideEffectGateFailure = cause;
+      }
+    }
+    if (!sideEffectGateFailure) {
+      try {
+        result = spawnSyncImpl(runtime.codexBinary, args, {
+          cwd: workspace,
+          // Preserve the restricted environment while allowing Node's coverage
+          // runner to attach its own child-process instrumentation metadata.
+          env: { ...childEnv },
+          input: prompt,
+          encoding: 'utf8',
+          timeout: MODEL_CANARY_TIMEOUT_MS,
+          maxBuffer: 512 * 1024,
+          windowsHide: true,
+        });
+      } catch (cause) {
+        failureInput = { cause };
+      }
+    }
+    const response = String(result?.stdout || '').trim();
+    if (!sideEffectGateFailure && !failureInput
+      && (result?.error || result?.status !== 0
+      || result?.signal !== null || response !== expectedResponse)) {
+      failureInput = { result };
+    }
+  } catch (cause) {
+    failureInput = { cause };
+  } finally {
+    try {
+      fs.rmSync(workspace, { recursive: true, force: true, maxRetries: 2 });
+    } catch (cause) {
+      failureInput = { cause };
+    }
   }
+  if (sideEffectGateFailure) throw sideEffectGateFailure;
+  if (failureInput) {
+    failCodexModelAvailabilityCanary(errorPrefix, {
+      runtime,
+      failureExecutorBinding,
+      ...failureInput,
+    });
+  }
+  const response = String(result?.stdout || '').trim();
   const observed = clock?.now ? clock.now() : null;
   const observedAt = observed instanceof Date ? observed : new Date(observed);
   if (!Number.isFinite(observedAt.getTime())) {
@@ -565,6 +716,12 @@ export function probeCodexModelAvailability({
     codexBinaryIdentityHash: runtime.codexBinaryIdentityHash,
     credentialRootIdentityHash: runtime.credentialRootIdentityHash,
     credentialConfigIdentityHash: runtime.credentialConfigIdentityHash,
+    openClawManagedAuthProfileIdentityHash:
+      runtime.openClawManagedAuthProfileIdentityHash || null,
+    openClawManagedAuthSourceIdentityHash:
+      runtime.openClawManagedAuthSourceIdentityHash || null,
+    openClawManagedRuntimeProvenanceHash:
+      runtime.openClawManagedRuntimeProvenanceHash || null,
     authenticationStatus: runtime.authenticationStatus,
     selectedModelExecutionCanaryVerified: true,
     challengeHash: hashRecord('CodexModelAvailabilityChallenge', challenge),

@@ -3,6 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  projectOpenClawManagedFailureCode,
+} from './codex-openclaw-managed-failure-code.mjs';
 
 export const CONFIG_SECTION = 'hepta_openclaw_managed';
 export const CONFIG_VERSION = 4;
@@ -47,8 +50,9 @@ const BASE_ENVIRONMENT_KEYS = Object.freeze([
 ]);
 
 export function runtimeError(code, { retryable = false } = {}) {
-  const error = new Error(code);
-  error.code = code;
+  const safeCode = projectOpenClawManagedFailureCode(code);
+  const error = new Error(safeCode);
+  error.code = safeCode;
   error.retryable = retryable;
   return error;
 }

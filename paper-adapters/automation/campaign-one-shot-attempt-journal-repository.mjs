@@ -37,6 +37,7 @@ import {
 } from './campaign-one-shot-attempt-journal-support.mjs';
 import {
   inspectCampaignOneShotAttemptFromPort as inspectionFromPort,
+  inspectHistoricalCampaignOneShotAttemptFromPort as historicalInspectionFromPort,
 } from './campaign-one-shot-attempt-journal-inspection.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
@@ -113,6 +114,7 @@ export function createCampaignOneShotAttemptJournalRepository({
   let initialDirectoryIdentity = null;
   let initialDatabaseIdentity = null;
   const externalActionPermits = new WeakMap();
+  const externalActionOwners = new WeakMap();
 
   function nowIso() {
     const value = clock.now();
@@ -317,6 +319,13 @@ export function createCampaignOneShotAttemptJournalRepository({
 
   function inspectAttempt({ attemptId = null, idempotencyKey = null } = {}) {
     return withReadOnlyPort((port) => inspectionFromPort(port, {
+      attemptId,
+      idempotencyKey,
+    }));
+  }
+
+  function inspectHistoricalAttempt({ attemptId = null, idempotencyKey = null } = {}) {
+    return withReadOnlyPort((port) => historicalInspectionFromPort(port, {
       attemptId,
       idempotencyKey,
     }));
@@ -532,11 +541,13 @@ export function createCampaignOneShotAttemptJournalRepository({
       }),
     });
     if (externalActionMarker && newlyCommittedCurrentMarker) {
-      externalActionPermits.set(transition, Object.freeze({
+      const owner = Object.freeze({
         attemptId,
         phase,
         eventHash: expectedEvent.autonomousResearchOneShotCampaignAttemptEventHash,
-      }));
+      });
+      externalActionPermits.set(transition, owner);
+      externalActionOwners.set(transition, owner);
     }
     return transition;
   }
@@ -555,6 +566,24 @@ export function createCampaignOneShotAttemptJournalRepository({
     if (current?.headPhase !== permit.phase || current.headEventHash !== permit.eventHash
       || current.terminalReceipt !== null) {
       throw invalid('campaign_one_shot_attempt_external_action_permit_stale');
+    }
+    return true;
+  }
+
+  function assertExternalActionMarkerCurrent({ transition } = {}) {
+    assertOpen();
+    const owner = externalActionOwners.get(transition);
+    if (!owner || !['provider_started', 'launch_started'].includes(owner.phase)
+      || transition?.mutationDisposition?.status !== 'appended_by_this_call'
+      || transition.mutationDisposition.commitAcknowledged !== true
+      || transition.mutationDisposition.phase !== owner.phase
+      || transition.mutationDisposition.eventHash !== owner.eventHash) {
+      throw invalid('campaign_one_shot_attempt_external_action_owner_invalid');
+    }
+    const current = inspectAttempt({ attemptId: owner.attemptId });
+    if (current?.headPhase !== owner.phase || current.headEventHash !== owner.eventHash
+      || current.terminalReceipt !== null) {
+      throw invalid('campaign_one_shot_attempt_external_action_owner_stale');
     }
     return true;
   }
@@ -661,8 +690,10 @@ export function createCampaignOneShotAttemptJournalRepository({
     schemaContractHash: CAMPAIGN_ONE_SHOT_ATTEMPT_JOURNAL_SCHEMA_CONTRACT_HASH,
     reserveAttempt,
     appendEvent,
+    assertExternalActionMarkerCurrent,
     assertExternalActionSideEffectPermit,
     finalizeAttempt,
+    inspectHistoricalAttempt,
     inspectAttempt,
     close() { closed = true; },
   });

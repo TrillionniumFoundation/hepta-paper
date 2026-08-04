@@ -84,7 +84,7 @@ test('managed Codex machine entrypoint has bounded help and strict configure par
     /^codex-openclaw-managed 3 bridge=[a-f0-9]{16} runtime=(?:[a-f0-9]{16}|unavailable)/);
 
   for (const [args, expected] of [
-    [['configure', '--unknown'], /unknown_cli_option:--unknown/],
+    [['configure', '--unknown'], /codex_openclaw_managed_command_invalid/],
     [['configure', '--home'], /missing_cli_option_value:--home/],
     [['configure', '--force', '--force'], /duplicate_cli_option:--force/],
     [['not-a-command'], /codex_openclaw_managed_command_invalid/],
@@ -93,6 +93,16 @@ test('managed Codex machine entrypoint has bounded help and strict configure par
     assert.notEqual(result.status, 0, args.join(' '));
     assert.match(result.stderr, expected, args.join(' '));
   }
+
+  const sensitiveUnknown = runNode('codex-openclaw-managed', [
+    'configure', '--sk-live-secret-token',
+  ]);
+  assert.notEqual(sensitiveUnknown.status, 0);
+  assert.match(
+    sensitiveUnknown.stderr,
+    /codex_openclaw_managed_command_invalid/,
+  );
+  assert.doesNotMatch(sensitiveUnknown.stderr, /sk-live-secret-token/);
 });
 
 test('state-authority client keeps a no-argument pinned socket contract', async (t) => {

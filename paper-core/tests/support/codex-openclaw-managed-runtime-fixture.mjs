@@ -98,7 +98,14 @@ export function fixture() {
   fs.writeFileSync(path.join(workspace, 'main.tex'), 'before\n', { mode: 0o600 });
   fs.writeFileSync(path.join(workspace, 'THEOREM_SPEC.json'), '{"claims":[]}\n', { mode: 0o600 });
   fs.writeFileSync(openclaw, '#!/bin/sh\nexit 0\n', { mode: 0o700 });
-  fs.writeFileSync(openclawConfigPath, '{}\n', { mode: 0o600 });
+  fs.writeFileSync(openclawConfigPath, `${JSON.stringify({
+    agents: {
+      list: [{
+        id: 'hepta-paper-worker',
+        runRetries: { base: 1, perProfile: 0, min: 1, max: 1 },
+      }],
+    },
+  })}\n`, { mode: 0o600 });
   fs.writeFileSync(sessionStorePath, '{}\n', { mode: 0o600 });
   provisionCodexOpenClawManagedHome({
     home,

@@ -34,6 +34,49 @@ import {
   aggregateManagedUsage,
   normalizeManagedUsage,
 } from './codex-openclaw-managed-usage-evidence.mjs';
+import {
+  projectOpenClawManagedFailureCode,
+} from './codex-openclaw-managed-failure-code.mjs';
+
+const AGENT_RUNTIME_DISPOSAL_FAILURE_CODE =
+  'codex_openclaw_managed_agent_runtime_disposal_failed';
+
+function agentRuntimeDisposalFailure({
+  primaryFailure = null,
+  completedResult = null,
+  runtime = null,
+} = {}) {
+  const sourceTrace = Array.isArray(primaryFailure?.attemptTrace)
+    && primaryFailure.attemptTrace.length > 0
+    ? primaryFailure.attemptTrace
+    : completedResult?.attemptTrace || [];
+  const runtimeProvenance = primaryFailure?.runtimeProvenance
+    || completedResult?.runtimeProvenance
+    || runtime?.runtimeProvenance
+    || null;
+  if (!sourceTrace.length) {
+    return runtimeError(AGENT_RUNTIME_DISPOSAL_FAILURE_CODE, {
+      retryable: false,
+    });
+  }
+  const disposalTrace = Object.freeze(sourceTrace.map(
+    (attempt, index, attempts) => (index === attempts.length - 1
+      ? Object.freeze({
+        ...attempt,
+        outcome: 'transient_provider_failure',
+        stopReason: 'error',
+        errorClass: 'runtime_disposal_failed',
+      }) : attempt),
+  ));
+  return errorWithAttemptTrace(
+    AGENT_RUNTIME_DISPOSAL_FAILURE_CODE,
+    disposalTrace,
+    {
+      retryable: false,
+      runtimeProvenance,
+    },
+  );
+}
 
 export async function callManagedModel({
   configuration,
@@ -41,8 +84,14 @@ export async function callManagedModel({
   prompt,
   timeoutMs,
   signal = null,
+  maximumAttempts = MAXIMUM_MODEL_ATTEMPTS,
   modelRuntimeLoader = loadOpenClawModelRuntime,
 } = {}) {
+  if (!Number.isSafeInteger(maximumAttempts)
+    || maximumAttempts < 1
+    || maximumAttempts > MAXIMUM_MODEL_ATTEMPTS) {
+    throw runtimeError('codex_openclaw_managed_model_attempt_limit_invalid');
+  }
   const abortScope = completionAbortScope(signal, timeoutMs);
   const attemptTrace = [];
   const startedAt = Date.now();
@@ -62,7 +111,7 @@ export async function callManagedModel({
       );
     }
     verifyExplicitProfileAvailable({ runtime, configuration });
-    for (let attempt = 1; attempt <= MAXIMUM_MODEL_ATTEMPTS; attempt += 1) {
+    for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
       if (abortScope.signal.aborted) {
         throw errorWithAttemptTrace(
           abortScope.timedOut()
@@ -125,8 +174,9 @@ export async function callManagedModel({
             usage: failedUsage,
           }));
           throw errorWithAttemptTrace(
-            String(error?.code || error?.message
-              || 'codex_openclaw_managed_session_cleanup_failed'),
+            projectOpenClawManagedFailureCode(
+              error?.code || error?.message,
+            ),
             attemptTrace,
             { retryable: Boolean(failedUsage) && error?.retryable === true },
           );
@@ -239,6 +289,20 @@ export async function callManagedModel({
         }));
         throw errorWithAttemptTrace(
           'codex_openclaw_managed_model_resolution_mismatch',
+          attemptTrace,
+          { retryable: false },
+        );
+      }
+      if (Array.isArray(response?.meta?.executionTrace?.attempts)
+        && response.meta.executionTrace.attempts.length !== 1) {
+        attemptTrace.push(modelAttemptRecord({
+          ...attemptRecordFields,
+          outcome: 'transient_provider_failure',
+          stopReason: stopReason || 'error',
+          errorClass: 'multiple_provider_attempts',
+        }));
+        throw errorWithAttemptTrace(
+          'codex_openclaw_managed_multiple_provider_attempts_observed',
           attemptTrace,
           { retryable: false },
         );
@@ -377,7 +441,7 @@ export async function callManagedModel({
           { retryable: false },
         );
       }
-      if (attempt < MAXIMUM_MODEL_ATTEMPTS) continue;
+      if (attempt < maximumAttempts) continue;
       throw errorWithAttemptTrace(
         'codex_openclaw_managed_transient_provider_response',
         attemptTrace,
@@ -395,25 +459,11 @@ export async function callManagedModel({
         await runtime.disposeRegisteredAgentHarnesses();
       }
     } catch {
-      if (!primaryFailure) {
-        const code = 'codex_openclaw_managed_agent_runtime_disposal_failed';
-        if (completedResult?.attemptTrace?.length) {
-          const disposalTrace = Object.freeze(completedResult.attemptTrace.map(
-            (attempt, index, attempts) => (index === attempts.length - 1
-              ? Object.freeze({
-                ...attempt,
-                outcome: 'transient_provider_failure',
-                stopReason: 'error',
-                errorClass: 'runtime_disposal_failed',
-              }) : attempt),
-          ));
-          throw errorWithAttemptTrace(code, disposalTrace, {
-            retryable: false,
-            runtimeProvenance: completedResult.runtimeProvenance,
-          });
-        }
-        throw runtimeError(code);
-      }
+      throw agentRuntimeDisposalFailure({
+        primaryFailure,
+        completedResult,
+        runtime,
+      });
     } finally {
       abortScope.cleanup();
     }

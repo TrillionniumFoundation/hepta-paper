@@ -1,15 +1,34 @@
 #!/usr/bin/env node
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import {
-  composeAutonomousResearchOnlineSchemaTransitionService,
-} from '../../paper-composition/automation/autonomous-research-online-schema-transition-composition.mjs';
 import { parseStrictCliArguments } from '../src/strict-cli-arguments.mjs';
 import { defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+function isMainModule() {
+  if (!process.argv[1]) return false;
+  const modulePath = fileURLToPath(import.meta.url);
+  try {
+    return fs.realpathSync(path.resolve(process.argv[1])) === fs.realpathSync(modulePath);
+  } catch {
+    return path.resolve(process.argv[1]) === path.resolve(modulePath);
+  }
+}
+
+const invokedAsEntrypoint = isMainModule();
+
+let defaultComposeService = null;
+if (!invokedAsEntrypoint) {
+  ({
+    composeAutonomousResearchOnlineSchemaTransitionService: defaultComposeService,
+  } = await import(
+    '../../paper-composition/automation/autonomous-research-online-schema-transition-composition.mjs'
+  ));
+}
 
 export function autonomousResearchOnlineSchemaTransitionUsage() {
   return [
@@ -104,10 +123,13 @@ export function parseAutonomousResearchOnlineSchemaTransitionArguments(argv = []
 export function runAutonomousResearchOnlineSchemaTransition({
   argv = process.argv.slice(2),
   root = workspaceRoot,
-  composeService = composeAutonomousResearchOnlineSchemaTransitionService,
+  composeService = defaultComposeService,
 } = {}) {
   const options = parseAutonomousResearchOnlineSchemaTransitionArguments(argv);
   if (options.help) return autonomousResearchOnlineSchemaTransitionUsage();
+  if (typeof composeService !== 'function') {
+    throw new Error('autonomous_research_online_schema_transition_composition_required');
+  }
   const service = composeService({
     workspaceRoot: root,
     runtimeRoot: options.runtimeRoot,
@@ -126,16 +148,24 @@ export function runAutonomousResearchOnlineSchemaTransition({
     });
 }
 
-const invokedAsEntrypoint = process.argv[1]
-  && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (invokedAsEntrypoint) {
-  try {
-    const report = runAutonomousResearchOnlineSchemaTransition();
+  Promise.resolve().then(async () => {
+    const options = parseAutonomousResearchOnlineSchemaTransitionArguments(process.argv.slice(2));
+    if (options.help) return autonomousResearchOnlineSchemaTransitionUsage();
+    const {
+      composeAutonomousResearchOnlineSchemaTransitionService,
+    } = await import(
+      '../../paper-composition/automation/autonomous-research-online-schema-transition-composition.mjs'
+    );
+    return runAutonomousResearchOnlineSchemaTransition({
+      composeService: composeAutonomousResearchOnlineSchemaTransitionService,
+    });
+  }).then((report) => {
     process.stdout.write(`${typeof report === 'string'
       ? report : JSON.stringify(report, null, 2)}\n`);
     if (typeof report !== 'string' && report.ready !== true) process.exitCode = 2;
-  } catch (error) {
+  }).catch((error) => {
     process.stderr.write(`${String(error?.stack || error)}\n`);
     process.exitCode = 1;
-  }
+  });
 }

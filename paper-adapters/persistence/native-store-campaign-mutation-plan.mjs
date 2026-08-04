@@ -37,6 +37,8 @@ export const NATIVE_STORE_CAMPAIGN_OPERATION_IDS = Object.freeze({
     'native-store.campaign-lease.completeNodeExternalAction.v1',
   completeNode: 'native-store.campaign-prepared-integration.completeNode.v1',
   createCampaign: 'native-store.campaign-lifecycle.createCampaign.v1',
+  createCampaignExclusive:
+    'native-store.campaign-lifecycle.createCampaignExclusive.v1',
   extendCampaign: 'native-store.campaign-lifecycle.extendCampaign.v1',
   failCampaign: 'native-store.campaign-lifecycle.failCampaign.v1',
   failNode: 'native-store.campaign-lease.failNode.v1',
@@ -183,6 +185,25 @@ const USAGE_BUDGET = `agent_call_count+?<=coalesce(json_extract(spec_json,'$.bud
 const event = () => statement(S.eventInsert, EVENT_INSERT_SQL);
 const projection = () => statement(S.projectCampaign, PROJECTION_SQL);
 
+const campaignCreationStatements = Object.freeze([
+  statement(S.createCampaignPaper, `INSERT OR IGNORE INTO papers(
+    slug,title,status,venue_target,paper_type,canonical_dir,source_dir,
+    submission_dir,metadata_json,created_at,updated_at
+  ) VALUES(?,?,'draft',?,'campaign',?,?,'submission',?,?,?)`),
+  statement(S.createCampaign, `INSERT INTO paper_campaigns(
+    campaign_id,paper_id,status,max_rounds,spec_json,created_at,updated_at,
+    last_resumed_at,parent_campaign_id,supersedes_campaign_id,recovery_of_campaign_id,current_phase
+  ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`),
+  statement(S.createCampaignNode, `INSERT INTO campaign_nodes(
+    node_id,campaign_id,kind,round_index,status,priority,dependencies_json,
+    spec_json,max_attempts,created_at,updated_at,role
+  ) VALUES(?,?,?,?,'queued',?,?,?,?,?,?,?)`),
+  statement(S.createCampaignStart, `UPDATE paper_campaigns SET
+    status='running',current_phase='dispatching',updated_at=?
+    WHERE campaign_id=? AND status='queued'`),
+  event(),
+]);
+
 const plans = [
   operation(NATIVE_STORE_CAMPAIGN_OPERATION_IDS.assertLiveNodeAttempt, [
     statement(S.assertIntegratedAttempt, `UPDATE campaign_nodes SET node_revision=node_revision
@@ -201,24 +222,10 @@ const plans = [
         AND EXISTS(SELECT 1 FROM paper_campaigns c
           WHERE c.campaign_id=campaign_nodes.campaign_id AND c.status='running')`),
   ]),
-  operation(NATIVE_STORE_CAMPAIGN_OPERATION_IDS.createCampaign, [
-    statement(S.createCampaignPaper, `INSERT OR IGNORE INTO papers(
-      slug,title,status,venue_target,paper_type,canonical_dir,source_dir,
-      submission_dir,metadata_json,created_at,updated_at
-    ) VALUES(?,?,'draft',?,'campaign',?,?,'submission',?,?,?)`),
-    statement(S.createCampaign, `INSERT INTO paper_campaigns(
-      campaign_id,paper_id,status,max_rounds,spec_json,created_at,updated_at,
-      last_resumed_at,parent_campaign_id,supersedes_campaign_id,recovery_of_campaign_id,current_phase
-    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`),
-    statement(S.createCampaignNode, `INSERT INTO campaign_nodes(
-      node_id,campaign_id,kind,round_index,status,priority,dependencies_json,
-      spec_json,max_attempts,created_at,updated_at,role
-    ) VALUES(?,?,?,?,'queued',?,?,?,?,?,?,?)`),
-    statement(S.createCampaignStart, `UPDATE paper_campaigns SET
-      status='running',current_phase='dispatching',updated_at=?
-      WHERE campaign_id=? AND status='queued'`),
-    event(),
-  ]),
+  operation(NATIVE_STORE_CAMPAIGN_OPERATION_IDS.createCampaign,
+    campaignCreationStatements),
+  operation(NATIVE_STORE_CAMPAIGN_OPERATION_IDS.createCampaignExclusive,
+    campaignCreationStatements),
   operation(NATIVE_STORE_CAMPAIGN_OPERATION_IDS.cancelNodeInfrastructureDeferred, [
     event(),
     statement(S.infrastructureReservationEvents, `SELECT event_json,event_sha256

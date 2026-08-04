@@ -1,17 +1,20 @@
 import {
   verifyOpenClawManagedFailureEvidence,
 } from './codex-openclaw-managed-usage-evidence.mjs';
-
-const MANAGED_RUNTIME_FAILURE_CODE_PATTERN =
-  /^codex_openclaw_managed_[a-z0-9_:-]{1,128}$/;
+import {
+  isKnownOpenClawManagedFailureCode,
+  OPENCLAW_MANAGED_UNCLASSIFIED_FAILURE_CODE,
+  projectOpenClawManagedFailureCode,
+} from './codex-openclaw-managed-failure-code.mjs';
 
 export function managedRuntimeFailureRetryable(
   code,
   verifiedFailureEvidence = null,
 ) {
   if (!code) return true;
-  return !String(code).startsWith('codex_openclaw_managed_')
-    || (verifiedFailureEvidence?.version === 5
+  const safeCode = projectOpenClawManagedFailureCode(code);
+  return safeCode !== OPENCLAW_MANAGED_UNCLASSIFIED_FAILURE_CODE
+    && (verifiedFailureEvidence?.version === 5
       && verifiedFailureEvidence?.usageComplete === true
       && verifiedFailureEvidence?.failureDisposition === 'retryable');
 }
@@ -31,16 +34,26 @@ export function parseManagedRuntimeFailureProtocol(stderr) {
   while (lines.at(-1) === '') lines.pop();
   if (!lines.length) return null;
   const finalLine = lines.at(-1);
-  if (MANAGED_RUNTIME_FAILURE_CODE_PATTERN.test(finalLine)) {
+  if (isKnownOpenClawManagedFailureCode(finalLine)) {
     return lines.length === 1
       ? Object.freeze({ code: finalLine, evidence: null, valid: true })
       : Object.freeze({ code: null, evidence: null, valid: false });
   }
-  const evidence = strictObject(finalLine);
-  const code = lines.length > 1 ? lines.at(-2) : null;
-  if (!evidence || !MANAGED_RUNTIME_FAILURE_CODE_PATTERN.test(code)) {
-    return Object.freeze({ code: null, evidence: null, valid: false });
+  if (lines.length === 1) {
+    return Object.freeze({
+      code: projectOpenClawManagedFailureCode(finalLine),
+      evidence: null,
+      valid: false,
+    });
   }
+  const evidence = strictObject(finalLine);
+  const candidate = lines.at(-2);
+  if (!evidence || !isKnownOpenClawManagedFailureCode(candidate)) {
+    const code = evidence
+      ? projectOpenClawManagedFailureCode(candidate) : null;
+    return Object.freeze({ code, evidence: null, valid: false });
+  }
+  const code = projectOpenClawManagedFailureCode(candidate);
   return Object.freeze({ code, evidence, valid: true });
 }
 

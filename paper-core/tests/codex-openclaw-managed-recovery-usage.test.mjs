@@ -1271,7 +1271,7 @@ test('managed model preserves a structured business blocker mentioning a non-del
   }
 });
 
-test('managed model exhausts exactly three overloads high medium low without profile fallback', async () => {
+test('managed availability canary makes one high-thinking attempt without profile fallback', async () => {
   const value = fixture();
   const prepareCalls = [];
   const completionCalls = [];
@@ -1293,7 +1293,7 @@ test('managed model exhausts exactly three overloads high medium low without pro
     }), (error) => {
       assert.equal(error.message, 'codex_openclaw_managed_transient_provider_response');
       assert.deepEqual(error.usage, {
-        input: 30, output: 30, cacheRead: 0, cacheWrite: 0, totalTokens: 60,
+        input: 10, output: 10, cacheRead: 0, cacheWrite: 0, totalTokens: 20,
       });
       const evidence = buildOpenClawManagedFailureEvidence(error);
       const configuration = readCodexOpenClawManagedConfiguration({
@@ -1350,22 +1350,22 @@ test('managed model exhausts exactly three overloads high medium low without pro
       return true;
     });
     assert.equal(prepareCalls.length, 1);
-    assert.equal(completionCalls.length, 3);
+    assert.equal(completionCalls.length, 1);
     assert.deepEqual(
       prepareCalls[0].externalCliProfileIds,
       [AUTH_PROFILE_ID],
     );
     assert.deepEqual(
       completionCalls.map((call) => call.provider),
-      Array(3).fill('openai'),
+      ['openai'],
     );
     assert.deepEqual(
       completionCalls.map((call) => call.thinking),
-      ['high', 'medium', 'low'],
+      ['high'],
     );
     assert.equal(
       new Set(completionCalls.map((call) => call.sessionId)).size,
-      3,
+      1,
     );
     assertManagedRuntimeClean(value);
     assert.equal(

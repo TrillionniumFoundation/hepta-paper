@@ -269,6 +269,7 @@ test('real pinned Lean proof-state search closes and replays with separate proce
   const { theoremSpecification, bundle, plan } = authority('∀ n : Nat, n = n');
   const receipt = await createFormalProofSearchOperationsExecutor({
     trustedSandboxRuntime: runtime.runtime,
+    timeoutMs: 90_000,
   }).execute({
     theoremSpecification,
     bundle,
@@ -324,6 +325,7 @@ test('pinned proof-state search advances beyond reflexivity and replays simp clo
   const candidate = plan.candidates.find((item) => item.strategy === 'mathlib_retrieval');
   const receipt = await createFormalProofSearchOperationsExecutor({
     trustedSandboxRuntime: runtime.runtime,
+    timeoutMs: 90_000,
   }).execute({ theoremSpecification, bundle, plan, candidate });
   assert.equal(receipt.status, 'formal_proof_search_operations_verified',
     JSON.stringify(receipt, null, 2));

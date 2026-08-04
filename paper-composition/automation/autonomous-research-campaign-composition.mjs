@@ -615,6 +615,7 @@ export async function composeAutonomousResearchCampaignAction({
       datasetMounts,
       budgets: existing ? budgets : effectiveBudgets,
       campaignStore,
+      requireCampaignAbsentAtLaunch,
       executor,
       preparedMaterialization: materialization,
       ...(campaignRunner ? { campaignRunner } : {}),

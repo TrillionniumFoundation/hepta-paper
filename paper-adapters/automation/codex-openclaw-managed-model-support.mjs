@@ -9,6 +9,9 @@ import {
   aggregateManagedUsage,
   managedUsageHash,
 } from './codex-openclaw-managed-usage-evidence.mjs';
+import {
+  projectOpenClawManagedFailureCode,
+} from './codex-openclaw-managed-failure-code.mjs';
 
 const QUOTA_FAILURE_DETAIL =
   /(?:^|[^a-z0-9])(?:quota|usage[_ -]?limit|insufficient[_ -]?quota|(?:insufficient|no|out[_ -]+of)[_ -]+credits|credits[_ -]+(?:exhausted|depleted))(?:$|[^a-z0-9])/;
@@ -168,12 +171,17 @@ export function errorWithAttemptTrace(code, attempts, {
 }
 
 export function failureWithCompletedManagedUsage(error, managed) {
+  const code = projectOpenClawManagedFailureCode(
+    error?.code || error?.message,
+  );
   if (Array.isArray(error?.attemptTrace) && error.attemptTrace.length > 0) {
-    return error;
+    if (error.code === code && error.message === code) return error;
+    return errorWithAttemptTrace(code, error.attemptTrace, {
+      retryable: error?.retryable === true,
+      runtimeProvenance: error?.runtimeProvenance
+        || managed?.runtimeProvenance || null,
+    });
   }
-  const candidate = String(error?.code || error?.message || '').trim();
-  const code = /^codex_openclaw_managed_[a-z0-9_:-]{1,128}$/.test(candidate)
-    ? candidate : 'codex_openclaw_managed_postprocessing_failed';
   return errorWithAttemptTrace(code, managed?.attemptTrace || [], {
     retryable: error?.retryable === true,
     runtimeProvenance: managed?.runtimeProvenance || null,
@@ -328,7 +336,7 @@ export function validCodexAppServerExecutionTrace(trace, model, {
     && trace.fallbackUsed === false
     && trace.runner === 'embedded'
     && Array.isArray(trace.attempts)
-    && trace.attempts.length >= 1
+    && trace.attempts.length === 1
     && trace.attempts.every((attempt) => (
       attempt?.provider === model.provider
       && attempt?.model === model.modelId
@@ -346,6 +354,7 @@ export function codexAppServerTraceViolatesPin(trace, model) {
     trace.fallbackUsed !== false
     || trace.runner !== 'embedded'
     || !Array.isArray(trace.attempts)
+    || trace.attempts.length !== 1
     || (trace.winnerProvider && trace.winnerProvider !== model.provider)
     || (trace.winnerModel && trace.winnerModel !== model.modelId)
     || (Array.isArray(trace.attempts) && trace.attempts.some((attempt) => (

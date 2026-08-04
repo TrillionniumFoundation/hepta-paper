@@ -3,10 +3,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { buildLegacyCapabilityMatrixV3 } from '../../migration/legacy-capability-matrix-v3.mjs';
 import { bootstrapBatchInventoryContext } from '../../paper-composition/bootstrap/batch-inventory-context-bootstrap.mjs';
+import {
+  finalizeExternalIntakeDocuments,
+  withCleanExternalIntakeCodeProvenance,
+} from '../../paper-composition/bootstrap/external-intake-generation-policy.mjs';
 import { withArtifactWriteContext } from '../../paper-composition/bootstrap/operator-artifact-composition.mjs';
-import { currentCodeProvenance } from '../src/code-provenance.mjs';
 import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
-import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { sha256FileSync } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { capabilityTargetBindings } from '../../paper-composition/bootstrap/operator-governance-composition.mjs';
 import { fileURLToPath } from 'node:url';
@@ -31,17 +33,19 @@ if (args.help) {
   const runtimeRoot = defaultPaperRuntimeRoot();
   const root = defaultPaperAssetRoot();
   const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-  const matrix = buildLegacyCapabilityMatrixV3({ runtimeRoot });
-  const provenance = currentCodeProvenance();
-  const context = bootstrapBatchInventoryContext({
-    root,
-    runtimeRoot,
-    mode: 'external-intake-generation',
-    execute: false,
-    writeReport: true,
-    readOnly: false,
-    allowMissingReadOnlyStore: false,
-  });
+  await withCleanExternalIntakeCodeProvenance({
+    workspaceRoot,
+    generate: async (provenance, assertProvenanceStillCurrent) => {
+      const matrix = buildLegacyCapabilityMatrixV3({ runtimeRoot });
+      const context = bootstrapBatchInventoryContext({
+        root,
+        runtimeRoot,
+        mode: 'external-intake-generation',
+        execute: false,
+        writeReport: true,
+        readOnly: false,
+        allowMissingReadOnlyStore: false,
+      });
 
 function sha256File(file) {
   return fs.existsSync(file) ? sha256FileSync(file) : null;
@@ -59,7 +63,6 @@ function boundRuntimeDocument(relative) {
     version: 2,
     kind: 'CapabilityOwnerAcceptanceRequest',
     status: 'capability_family_owner_signature_required',
-    codeProvenance: provenance,
     entryCount: matrix.entries.length,
     familyCount: matrix.ownerAcceptanceFamilyManifest.families.length,
     familyManifestHash: matrix.ownerAcceptanceFamilyManifest.familyManifestHash,
@@ -82,7 +85,6 @@ function boundRuntimeDocument(relative) {
     version: 1,
     kind: 'AuthorityOnboardingPacket',
     status: 'external_public_keys_and_signed_documents_required',
-    codeProvenance: provenance,
     requiredRoles: ['proposal_approver', 'academic_evidence_authority', 'independent_referee', 'submission_operator', 'live_executor_authorizer'],
     trustStorePath: 'runtime/trust/AUTHORITY_TRUST_STORE.json',
     publicKeysOnly: true,
@@ -135,7 +137,6 @@ function boundRuntimeDocument(relative) {
     version: 1,
     kind: 'CapabilityOperationalProofPlan',
     status: 'production_bound_receipts_required',
-    codeProvenance: provenance,
     applicableEntryCount: matrix.summary.operationallyNotProven + matrix.summary.operationallyProven,
     currentlyProven: matrix.summary.operationallyProven,
     capabilities: Object.keys(matrix.capabilityCatalog).sort().map((capabilityId) => ({
@@ -178,7 +179,6 @@ function boundRuntimeDocument(relative) {
     version: 1,
     kind: 'RealPaperProductionChainRequest',
     status: 'external_authorities_and_evidence_required',
-    codeProvenance: provenance,
     paperId,
     subject: {
       mainTex: path.relative(root, mainTex),
@@ -208,7 +208,6 @@ function boundRuntimeDocument(relative) {
     version: 1,
     kind: 'OffhostWormOnboardingPacket',
     status: 'external_distinct_device_and_operator_required',
-    codeProvenance: provenance,
     contractPath: path.relative(workspaceRoot, offhostWormContractPath),
     contractHash: sha256File(offhostWormContractPath),
     currentProtectionLevel: 'same_host_external_disk',
@@ -225,21 +224,26 @@ function boundRuntimeDocument(relative) {
     connectedSameHostDiskInsufficientForOffsiteQualification: true,
     completionInferredFromPacket: false,
   };
+  const documents = finalizeExternalIntakeDocuments({
+    codeProvenance: provenance,
+    payloads: {
+      'OWNER_ACCEPTANCE_REQUEST.json': ownerPayload,
+      'AUTHORITY_ONBOARDING_PACKET.json': authorityPayload,
+      'AUTHORITY_TRUST_STORE_TEMPLATE.json': authorityTrustStoreTemplate,
+      'OWNER_TRUST_STORE_TEMPLATE.json': ownerTrustStoreTemplate,
+      'CAPABILITY_OWNER_ACCEPTANCE_TEMPLATE.json': ownerAcceptanceTemplate,
+      'OPERATIONAL_PROOF_PLAN.json': operationalPayload,
+      'OPERATIONAL_RECEIPT_TEMPLATES.json': operationalReceiptTemplates,
+      'REAL_PAPER_PRODUCTION_CHAIN_REQUEST.json': productionChainPayload,
+      'OFFHOST_WORM_ONBOARDING_PACKET.json': offhostWormPayload,
+    },
+  });
+  assertProvenanceStillCurrent();
   const outputs = [];
-  for (const [name, payload, role] of [
-    ['OWNER_ACCEPTANCE_REQUEST.json', ownerPayload, 'owner_acceptance_request'],
-    ['AUTHORITY_ONBOARDING_PACKET.json', authorityPayload, 'authority_onboarding_packet'],
-    ['AUTHORITY_TRUST_STORE_TEMPLATE.json', authorityTrustStoreTemplate, 'authority_trust_store_template'],
-    ['OWNER_TRUST_STORE_TEMPLATE.json', ownerTrustStoreTemplate, 'owner_trust_store_template'],
-    ['CAPABILITY_OWNER_ACCEPTANCE_TEMPLATE.json', ownerAcceptanceTemplate, 'owner_acceptance_template'],
-    ['OPERATIONAL_PROOF_PLAN.json', operationalPayload, 'operational_proof_plan'],
-    ['OPERATIONAL_RECEIPT_TEMPLATES.json', operationalReceiptTemplates, 'operational_receipt_templates'],
-    ['REAL_PAPER_PRODUCTION_CHAIN_REQUEST.json', productionChainPayload, 'real_paper_production_chain_request'],
-    ['OFFHOST_WORM_ONBOARDING_PACKET.json', offhostWormPayload, 'offhost_worm_onboarding_packet'],
-  ]) {
-    const bound = { ...payload, documentHash: hashRecord(payload.kind, payload) };
-    outputs.push(await repository.writeJson(path.join(outputRoot, name), bound, { role }));
+  for (const { name, document, role } of documents) {
+    outputs.push(await repository.writeJson(path.join(outputRoot, name), document, { role }));
   }
+  assertProvenanceStillCurrent();
   process.stdout.write(`${JSON.stringify({
     status: 'external_intake_packets_generated',
     outputRoot,
@@ -249,5 +253,7 @@ function boundRuntimeDocument(relative) {
   }, null, 2)}\n`);
   }).finally(() => {
     context.services.persistenceSession.close?.();
+  });
+    },
   });
 }

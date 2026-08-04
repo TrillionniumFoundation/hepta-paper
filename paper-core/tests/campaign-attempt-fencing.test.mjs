@@ -5,6 +5,9 @@ import path from 'node:path';
 import test from 'node:test';
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { createSqliteCampaignStore } from '../../paper-adapters/persistence/sqlite-campaign-store.mjs';
+import {
+  createCampaignLifecycleOperations,
+} from '../../paper-adapters/persistence/sqlite-campaign-lifecycle-operations.mjs';
 import { runPaperCampaign as executePaperCampaign } from '../../paper-application/automation/campaign-engine.mjs';
 import { createCampaignEmpiricalCellRunner } from '../../paper-application/automation/campaign-empirical-cell-budget.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
@@ -138,6 +141,10 @@ test('campaign creation idempotency binds the complete campaign and DAG definiti
   assert.equal(replay.createdAt, created.createdAt);
   assert.equal(campaigns.listNodes(definition.campaignId).length, 2);
   assert.equal(campaigns.listEvents(definition.campaignId).filter((event) => event.kind === 'campaign_created').length, 1);
+  assert.throws(
+    () => campaigns.createCampaignExclusive(definition),
+    /campaign_exclusive_create_conflict:definition-idempotency/,
+  );
 
   const mutations = [
     (value) => ({ ...value, paperId: 'different-paper' }),
@@ -161,6 +168,36 @@ test('campaign creation idempotency binds the complete campaign and DAG definiti
     assert.deepEqual(store.query("SELECT node_id,kind,round_index,priority,dependencies_json,spec_json,max_attempts,role FROM campaign_nodes WHERE campaign_id='definition-idempotency' ORDER BY node_id;").rows, beforeNodes);
   }
   assert.equal(campaigns.listEvents(definition.campaignId).filter((event) => event.kind === 'campaign_created').length, 1);
+});
+
+test('exclusive campaign creation fails closed when a uniqueness race reveals a winner', () => {
+  const definition = plan('exclusive-create-race');
+  let snapshotReads = 0;
+  const operations = createCampaignLifecycleOperations({
+    clock: { nowIso: () => '2026-07-13T00:00:00.001Z' },
+    eventStatement: () => ({ sql: 'SELECT 1;' }),
+    mutation() {
+      const error = new Error('UNIQUE constraint failed: paper_campaigns.campaign_id');
+      error.code = 'campaign_create_failed';
+      throw error;
+    },
+    readCampaignDefinitionSnapshot() {
+      snapshotReads += 1;
+      return snapshotReads === 1
+        ? { campaign: null, nodes: [] }
+        : { campaign: { campaignId: definition.campaignId }, nodes: [] };
+    },
+    getApi: () => ({
+      getCampaign() { throw new Error('exclusive_create_race_must_not_return_campaign'); },
+    }),
+  });
+
+  assert.throws(
+    () => operations.createCampaignExclusive(definition),
+    (error) => error?.code === 'campaign_exclusive_create_conflict'
+      && error?.cause?.code === 'campaign_create_failed',
+  );
+  assert.equal(snapshotReads, 2);
 });
 
 test('campaign store exposes one canonical camelCase projection', (t) => {

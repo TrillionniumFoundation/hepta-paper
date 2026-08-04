@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {
   issueAutonomousResearchSupervisorDispatchAuthorization,
@@ -26,12 +27,111 @@ import {
   validateOperatorDatasetAuthorityDocument,
 } from '../../../paper-domain/automation/operator-dataset-harness-contract.mjs';
 import { hashRecord } from '../../../workflow-kernel/record-hash.mjs';
+import { createDefaultPaperStore } from '../../../paper-adapters/persistence/store-provider.mjs';
+import { createSqliteCampaignStore } from '../../../paper-adapters/persistence/sqlite-campaign-store.mjs';
+import { createSystemClock } from '../../../paper-adapters/runtime/system-clock.mjs';
+import { createSystemScheduler } from '../../../paper-adapters/runtime/system-scheduler.mjs';
+import { createRandomIdGenerator } from '../../../paper-adapters/runtime/random-id-generator.mjs';
 import {
   bindGenericGoldenPreparationFixture,
   genericManuscriptReleaseFixture,
 } from './autonomous-research-generalization-fixture.mjs';
+import { createFormalMutationFenceTracker } from './formal-mutation-fence-tracker.mjs';
 
 const H = (label) => hashRecord('AutonomousCampaignTestHash', { label });
+
+function fakeAgentExecutionReceipt(detail = {}, {
+  status = 'agent_execution_completed',
+} = {}) {
+  const payload = {
+    ...detail,
+    version: 1,
+    kind: 'AgentExecutionReceipt',
+    executorId: 'autonomous-research-campaign-fixture',
+    status,
+    externalModelInvocationPerformed: false,
+    externalActionPerformed: false,
+  };
+  return Object.freeze({
+    ...payload,
+    agentExecutionReceiptHash: hashRecord('AgentExecutionReceipt', payload),
+  });
+}
+
+export function testWorkspace(t) {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-autonomous-campaign-'));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const assetRoot = path.join(base, 'assets');
+  const runtimeRoot = path.join(base, 'runtime');
+  fs.mkdirSync(assetRoot);
+  fs.mkdirSync(runtimeRoot);
+  const clock = createSystemClock();
+  const store = createDefaultPaperStore({ root: assetRoot, runtimeRoot });
+  t.after(() => store.close?.());
+  return {
+    runtimeRoot,
+    clock,
+    campaignStore: createSqliteCampaignStore({ store, clock }),
+  };
+}
+
+export function fakeExecutor({
+  failWriterOnce = false,
+  forbidden = false,
+  assertFormalMutationFences = false,
+} = {}) {
+  const calls = [];
+  let writerFailed = false;
+  const formalMutationFence = assertFormalMutationFences
+    ? createFormalMutationFenceTracker() : null;
+  return {
+    calls,
+    executor: {
+      async execute({ node, allNodes }) {
+        if (forbidden) throw new Error('completed_campaign_reexecuted');
+        calls.push(node.kind);
+        if (failWriterOnce && node.kind === 'writer' && !writerFailed) {
+          writerFailed = true;
+          const error = new Error('transient_fake_author_failure');
+          error.retryable = true;
+          error.receipt = fakeAgentExecutionReceipt({
+            nodeKind: node.kind,
+            failureCode: error.message,
+          }, { status: 'agent_execution_failed' });
+          throw error;
+        }
+        formalMutationFence?.beforeExecute({ node, allNodes });
+        return fakeAgentExecutionReceipt({
+          nodeKind: node.kind,
+          ...(formalMutationFence?.resultFor(node) || {}),
+          ...(node.kind === 'convergence' ? {
+            qualityGates: [],
+            thresholds: {},
+          } : {}),
+          ...(/^(?:revision-)?referee-/.test(node.kind) ? {
+            reviewerId: `independent-review:test:${node.kind}`,
+            childSessionId: `independent-session:${node.kind}`,
+            reviewHash: H(node.nodeId),
+            manuscriptHash: H(`manuscript:${node.roundIndex}`),
+            verdict: 'accept',
+            score: 1,
+            criticalFindingCount: 0,
+          } : {}),
+        });
+      },
+    },
+  };
+}
+
+export function runtime(clock) {
+  return {
+    concurrency: 1,
+    pollMs: 1,
+    clock,
+    scheduler: createSystemScheduler(),
+    idGenerator: createRandomIdGenerator(),
+  };
+}
 
 export function authorizedDatasetMount(base, name = 'autonomous-dataset') {
   const source = path.join(base, name);

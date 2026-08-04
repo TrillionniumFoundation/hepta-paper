@@ -1,9 +1,14 @@
 import {
   deriveAutonomousResearchOneShotCampaignAttemptRecoveryDisposition,
+  deriveAutonomousResearchOneShotCampaignAttemptRecoveryDispositionForHistoricalAudit,
   verifyAutonomousResearchOneShotCampaignAttemptEvent,
+  verifyAutonomousResearchOneShotCampaignAttemptEventForHistoricalAudit,
   verifyAutonomousResearchOneShotCampaignAttemptEventSequence,
+  verifyAutonomousResearchOneShotCampaignAttemptEventSequenceForHistoricalAudit,
   verifyAutonomousResearchOneShotCampaignAttemptReservation,
+  verifyAutonomousResearchOneShotCampaignAttemptReservationForHistoricalAudit,
   verifyAutonomousResearchOneShotCampaignAttemptTerminalReceipt,
+  verifyAutonomousResearchOneShotCampaignAttemptTerminalReceiptForHistoricalAudit,
 } from '../../paper-domain/automation/autonomous-research-one-shot-campaign-attempt.mjs';
 import { stableStringify } from '../../workflow-kernel/record-hash.mjs';
 import { canonicalRowJson } from './campaign-one-shot-attempt-journal-support.mjs';
@@ -12,12 +17,12 @@ function invalid(code) {
   return new Error(code);
 }
 
-function eventFromRow(row, reservation, previousEvent) {
+function eventFromRow(row, reservation, previousEvent, verifyEvent) {
   const event = canonicalRowJson(
     row.event_json,
     'campaign_one_shot_attempt_journal_event_json_invalid',
   );
-  if (!verifyAutonomousResearchOneShotCampaignAttemptEvent(event, {
+  if (!verifyEvent(event, {
     reservation,
     previousEvent,
   }) || row.event_id !== event.eventId
@@ -36,6 +41,55 @@ export function inspectCampaignOneShotAttemptFromPort(port, {
   attemptId = null,
   idempotencyKey = null,
 } = {}) {
+  return inspectCampaignOneShotAttemptFromPortWithAuditPolicy(
+    port,
+    { attemptId, idempotencyKey },
+    {
+      deriveRecoveryDisposition:
+        deriveAutonomousResearchOneShotCampaignAttemptRecoveryDisposition,
+      verifyEvent: verifyAutonomousResearchOneShotCampaignAttemptEvent,
+      verifyEventSequence:
+        verifyAutonomousResearchOneShotCampaignAttemptEventSequence,
+      verifyReservation:
+        verifyAutonomousResearchOneShotCampaignAttemptReservation,
+      verifyTerminalReceipt:
+        verifyAutonomousResearchOneShotCampaignAttemptTerminalReceipt,
+    },
+  );
+}
+
+export function inspectHistoricalCampaignOneShotAttemptFromPort(port, {
+  attemptId = null,
+  idempotencyKey = null,
+} = {}) {
+  return inspectCampaignOneShotAttemptFromPortWithAuditPolicy(
+    port,
+    { attemptId, idempotencyKey },
+    {
+      deriveRecoveryDisposition:
+        deriveAutonomousResearchOneShotCampaignAttemptRecoveryDispositionForHistoricalAudit,
+      verifyEvent:
+        verifyAutonomousResearchOneShotCampaignAttemptEventForHistoricalAudit,
+      verifyEventSequence:
+        verifyAutonomousResearchOneShotCampaignAttemptEventSequenceForHistoricalAudit,
+      verifyReservation:
+        verifyAutonomousResearchOneShotCampaignAttemptReservationForHistoricalAudit,
+      verifyTerminalReceipt:
+        verifyAutonomousResearchOneShotCampaignAttemptTerminalReceiptForHistoricalAudit,
+    },
+  );
+}
+
+function inspectCampaignOneShotAttemptFromPortWithAuditPolicy(port, {
+  attemptId = null,
+  idempotencyKey = null,
+} = {}, {
+  deriveRecoveryDisposition,
+  verifyEvent,
+  verifyEventSequence,
+  verifyReservation,
+  verifyTerminalReceipt,
+}) {
   if (!attemptId && !idempotencyKey) {
     throw invalid('campaign_one_shot_attempt_journal_lookup_invalid');
   }
@@ -52,7 +106,7 @@ export function inspectCampaignOneShotAttemptFromPort(port, {
     row.reservation_json,
     'campaign_one_shot_attempt_journal_reservation_json_invalid',
   );
-  if (!verifyAutonomousResearchOneShotCampaignAttemptReservation(reservation)
+  if (!verifyReservation(reservation)
     || row.attempt_id !== reservation.attemptId
     || row.idempotency_key !== reservation.idempotencyKey
     || row.campaign_id !== reservation.campaignId
@@ -70,11 +124,11 @@ export function inspectCampaignOneShotAttemptFromPort(port, {
   const events = [];
   let previousEvent = null;
   for (const eventRow of eventRows) {
-    const event = eventFromRow(eventRow, reservation, previousEvent);
+    const event = eventFromRow(eventRow, reservation, previousEvent, verifyEvent);
     events.push(event);
     previousEvent = event;
   }
-  if (!verifyAutonomousResearchOneShotCampaignAttemptEventSequence({
+  if (!verifyEventSequence({
     reservation,
     events,
   })) throw invalid('campaign_one_shot_attempt_journal_event_sequence_invalid');
@@ -96,7 +150,7 @@ export function inspectCampaignOneShotAttemptFromPort(port, {
     );
     const preterminal = events.at(-2);
     if (head?.phase !== 'terminal' || !preterminal
-      || !verifyAutonomousResearchOneShotCampaignAttemptTerminalReceipt(
+      || !verifyTerminalReceipt(
         terminalReceipt,
         { reservation, lastEvent: preterminal },
       )
@@ -117,12 +171,11 @@ export function inspectCampaignOneShotAttemptFromPort(port, {
     throw invalid('campaign_one_shot_attempt_journal_terminal_receipt_missing');
   }
   const frozenEvents = Object.freeze(events);
-  const recoveryDisposition =
-    deriveAutonomousResearchOneShotCampaignAttemptRecoveryDisposition({
-      reservation,
-      events: frozenEvents,
-      terminalReceipt,
-    });
+  const recoveryDisposition = deriveRecoveryDisposition({
+    reservation,
+    events: frozenEvents,
+    terminalReceipt,
+  });
   return Object.freeze({
     version: 1,
     kind: 'CampaignOneShotAttemptJournalInspection',

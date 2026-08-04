@@ -16,11 +16,11 @@ test('production writer discovery is complete and binds derived-cache provenance
     manifest: AUTONOMOUS_RESEARCH_ONLINE_WRITER_OPERATION_MANIFEST,
   });
   assert.equal(inspection.status, 'autonomous_research_online_writer_static_coverage_complete');
-  assert.equal(inspection.operationCount, 205);
+  assert.equal(inspection.operationCount, 206);
   assert.equal(
     AUTONOMOUS_RESEARCH_ONLINE_WRITER_OPERATION_MANIFEST.operations
       .filter((operation) => operation.coordinatorIntegrated).length,
-    133,
+    134,
   );
   assert.deepEqual(inspection.blockers, []);
   const legacySettlementOperationId =

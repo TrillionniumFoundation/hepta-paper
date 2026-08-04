@@ -43,6 +43,12 @@ export function preflightCodexResearchAuthor({
       runtime.openClawManagedAuthProfileIdentityHash,
     openClawManagedAuthSourceIdentityHash:
       runtime.openClawManagedAuthSourceIdentityHash,
+    openClawManagedAgentId: runtime.openClawManagedAgentId,
+    openClawManagedPrincipalRole: runtime.openClawManagedPrincipalRole,
+    openClawManagedMaximumContextBytes:
+      runtime.openClawManagedMaximumContextBytes,
+    openClawManagedMaximumFileCount:
+      runtime.openClawManagedMaximumFileCount,
     selectedModelExecutionCanaryVerified: false,
     workspaceWriteRequired: true,
     dynamicAttemptWorkspaceRequired: true,

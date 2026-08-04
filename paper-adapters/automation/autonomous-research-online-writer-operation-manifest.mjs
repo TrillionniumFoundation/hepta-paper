@@ -142,9 +142,11 @@ const GROUPS = Object.freeze([
   group('native-store', 'paper-adapters/persistence/legacy-history-translator-repository.mjs', [
     'persistLegacyNativeTranslations',
   ], 'cross-database-maintenance'),
+  group('native-store', 'paper-adapters/persistence/sqlite-campaign-creation-operations.mjs', [
+    'createCampaign', 'createCampaignExclusive',
+  ], null, 'campaign-lifecycle'),
   group('native-store', 'paper-adapters/persistence/sqlite-campaign-lifecycle-operations.mjs', [
-    'createCampaign', 'skipFutureRounds', 'pauseCampaign', 'resumeCampaign',
-    'extendCampaign', 'cancelCampaign',
+    'skipFutureRounds', 'pauseCampaign', 'resumeCampaign', 'extendCampaign', 'cancelCampaign',
   ], null, 'campaign-lifecycle'),
   group('native-store', 'paper-adapters/persistence/sqlite-campaign-lifecycle-terminal-operations.mjs', [
     'cancelNode', 'retryNode', 'recordUsage', 'failCampaign', 'stopCampaign',

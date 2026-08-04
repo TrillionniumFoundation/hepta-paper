@@ -175,12 +175,13 @@ function fixture(t, {
 
 test('every campaign DML entrypoint binds a unique fixed strict-store operation', () => {
   const expected = Object.values(NATIVE_STORE_CAMPAIGN_OPERATION_IDS).sort();
-  assert.equal(expected.length, 25);
+  assert.equal(expected.length, 26);
   assert.equal(new Set(expected).size, expected.length);
   assert.deepEqual(Object.keys(NATIVE_STORE_CAMPAIGN_MUTATION_PLANS).sort(), expected);
 
   const sources = [
     'paper-adapters/persistence/sqlite-campaign-store.mjs',
+    'paper-adapters/persistence/sqlite-campaign-creation-operations.mjs',
     'paper-adapters/persistence/sqlite-campaign-lifecycle-operations.mjs',
     'paper-adapters/persistence/sqlite-campaign-lifecycle-terminal-operations.mjs',
     'paper-adapters/persistence/sqlite-campaign-lease-operations.mjs',

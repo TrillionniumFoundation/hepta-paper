@@ -1,15 +1,34 @@
 #!/usr/bin/env node
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import {
-  composeConfiguredAutonomousResearchStateProvisioningService,
-} from '../../paper-composition/bootstrap/autonomous-research-state-provisioning-input-composition.mjs';
 import { parseStrictCliArguments } from '../src/strict-cli-arguments.mjs';
 import { defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+function isMainModule() {
+  if (!process.argv[1]) return false;
+  const modulePath = fileURLToPath(import.meta.url);
+  try {
+    return fs.realpathSync(path.resolve(process.argv[1])) === fs.realpathSync(modulePath);
+  } catch {
+    return path.resolve(process.argv[1]) === path.resolve(modulePath);
+  }
+}
+
+const invokedAsEntrypoint = isMainModule();
+
+let defaultComposeService = null;
+if (!invokedAsEntrypoint) {
+  ({
+    composeConfiguredAutonomousResearchStateProvisioningService: defaultComposeService,
+  } = await import(
+    '../../paper-composition/bootstrap/autonomous-research-state-provisioning-input-composition.mjs'
+  ));
+}
 
 export function autonomousResearchStateProvisioningUsage() {
   return [
@@ -136,10 +155,13 @@ export function runAutonomousResearchStateProvisioning({
   argv = process.argv.slice(2),
   root = workspaceRoot,
   environment = process.env,
-  composeService = composeConfiguredAutonomousResearchStateProvisioningService,
+  composeService = defaultComposeService,
 } = {}) {
   const options = parseAutonomousResearchStateProvisioningArguments(argv);
   if (options.help) return autonomousResearchStateProvisioningUsage();
+  if (typeof composeService !== 'function') {
+    throw new Error('autonomous_research_state_provisioning_composition_required');
+  }
   const service = composeService({
     workspaceRoot: root,
     runtimeRoot: options.runtimeRoot,
@@ -157,16 +179,24 @@ export function runAutonomousResearchStateProvisioning({
     });
 }
 
-const invokedAsEntrypoint = process.argv[1]
-  && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
 if (invokedAsEntrypoint) {
-  try {
-    const report = runAutonomousResearchStateProvisioning();
+  Promise.resolve().then(async () => {
+    const options = parseAutonomousResearchStateProvisioningArguments(process.argv.slice(2));
+    if (options.help) return autonomousResearchStateProvisioningUsage();
+    const {
+      composeConfiguredAutonomousResearchStateProvisioningService,
+    } = await import(
+      '../../paper-composition/bootstrap/autonomous-research-state-provisioning-input-composition.mjs'
+    );
+    return runAutonomousResearchStateProvisioning({
+      composeService: composeConfiguredAutonomousResearchStateProvisioningService,
+    });
+  }).then((report) => {
     process.stdout.write(`${typeof report === 'string'
       ? report : JSON.stringify(report, null, 2)}\n`);
     if (typeof report !== 'string' && report.ready !== true) process.exitCode = 2;
-  } catch (error) {
+  }).catch((error) => {
     process.stderr.write(`${String(error?.stack || error)}\n`);
     process.exitCode = 1;
-  }
+  });
 }

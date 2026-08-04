@@ -79,6 +79,12 @@ export function preflightCodexFormalReviewer({
       runtime.openClawManagedAuthProfileIdentityHash,
     openClawManagedAuthSourceIdentityHash:
       runtime.openClawManagedAuthSourceIdentityHash,
+    openClawManagedAgentId: runtime.openClawManagedAgentId,
+    openClawManagedPrincipalRole: runtime.openClawManagedPrincipalRole,
+    openClawManagedMaximumContextBytes:
+      runtime.openClawManagedMaximumContextBytes,
+    openClawManagedMaximumFileCount:
+      runtime.openClawManagedMaximumFileCount,
     selectedModelExecutionCanaryVerified: false,
     readOnlyReviewRequired: true,
     dynamicAttemptWorkspaceRequired: true,

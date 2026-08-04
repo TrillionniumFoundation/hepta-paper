@@ -5,10 +5,18 @@ import { restrictedChildEnvironment, runBoundedChildProcess } from './bounded-ch
 import { createAgentExecutorTemplate, isExternalAgentCancellation } from './agent-executor-template.mjs';
 import { readOnlyMutationBlockers } from './workspace-change-tracker.mjs';
 import { inspectCodexRuntimeIdentity, preflightCodexRuntime } from './codex-runtime-preflight.mjs';
-import { openClawManagedFailureExecutorBinding } from './codex-openclaw-managed-failure-execution-binding.mjs';
 import { inspectManagedRuntimeFailure, managedRuntimeFailureRetryable } from './codex-openclaw-managed-failure-protocol.mjs';
-import { buildOpenClawManagedExecutionMetadata, OPENCLAW_MANAGED_EXECUTION_EVIDENCE_FIELD,
-  verifyOpenClawManagedExecutionEvidence } from './codex-openclaw-managed-runtime.mjs';
+import {
+  managedCapabilityReceiptValid,
+  managedFailureExecutorBindingForWorkspace,
+  openClawManagedCapabilityIdentityMatches,
+  openClawManagedRuntimeExpected,
+} from './codex-openclaw-managed-executor-capability.mjs';
+import {
+  buildOpenClawManagedExecutionMetadata,
+  OPENCLAW_MANAGED_EXECUTION_EVIDENCE_FIELD,
+  verifyOpenClawManagedExecutionEvidence,
+} from './codex-openclaw-managed-runtime.mjs';
 const MANAGED_RUNTIME_MAXIMUM_CLEANUP_RESERVE_MS = 90_000;
 function parseStructuredOutput(text) {
   const source = String(text || '').trim();
@@ -38,11 +46,7 @@ function codexRuntimeIdentityMatchesCapability(runtime, capability) {
     && runtime?.modelSelectionSource === capability?.modelSelectionSource
     && runtime?.executionTransport === (capability?.executionTransport || 'codex_cli')
     && runtime?.authenticationAuthorityMode === (capability?.authenticationAuthorityMode || 'codex_home')
-    && runtime?.managedRuntimeEvidenceRequired === (capability?.managedRuntimeEvidenceRequired === true)
-    && runtime?.openClawManagedConfigurationHash === (capability?.openClawManagedConfigurationHash || null)
-    && runtime?.openClawManagedRuntimeProvenanceHash === (capability?.openClawManagedRuntimeProvenanceHash || null)
-    && runtime?.openClawManagedAuthProfileIdentityHash === (capability?.openClawManagedAuthProfileIdentityHash || null)
-    && runtime?.openClawManagedAuthSourceIdentityHash === (capability?.openClawManagedAuthSourceIdentityHash || null);
+    && openClawManagedCapabilityIdentityMatches(runtime, capability);
 }
 function codexRuntimeMatchesCapability(runtime, capability) {
   return codexRuntimeIdentityMatchesCapability(runtime, capability)
@@ -59,18 +63,6 @@ function capabilityPostflightFailureRetryable(failureCode, capabilityPrefix) {
     `${capabilityPrefix}_version_unverified`,
     `${capabilityPrefix}_openclaw_managed_runtime_required`,
   ]).has(failureCode);
-}
-function openClawManagedRuntimeExpected(capabilityReceipt) {
-  return /^codex-openclaw-managed\s+3\b/.test(String(capabilityReceipt?.codexVersion || ''));
-}
-
-function managedCapabilityReceiptValid(receipt) {
-  if (!openClawManagedRuntimeExpected(receipt)) return true;
-  return receipt.executionTransport === 'openclaw_user_locked_codex_app_server'
-    && receipt.authenticationAuthorityMode === 'openclaw_user_locked_profile_fail_closed'
-    && receipt.managedRuntimeEvidenceRequired === true
-    && [receipt.openClawManagedConfigurationHash, receipt.openClawManagedRuntimeProvenanceHash, receipt.openClawManagedAuthProfileIdentityHash, receipt.openClawManagedAuthSourceIdentityHash]
-      .every((value) => /^sha256:[a-f0-9]{64}$/.test(String(value || '')));
 }
 export function createCodexAgentExecutor({
   codexBinary = 'codex',
@@ -114,7 +106,10 @@ export function createCodexAgentExecutor({
       || formalReviewerCapabilityReceipt?.assuranceScope
         !== 'ephemeral_session_frozen_artifact_and_role_separation'
       || formalReviewerCapabilityReceipt?.providerAccountIndependenceVerified !== false
-      || !managedCapabilityReceiptValid(formalReviewerCapabilityReceipt)
+      || !managedCapabilityReceiptValid(
+        formalReviewerCapabilityReceipt,
+        'formal-reviewer',
+      )
       || !codexHome || !resolvedModel || !principalId) {
       throw new Error('codex_formal_reviewer_capability_receipt_invalid');
     }
@@ -138,7 +133,10 @@ export function createCodexAgentExecutor({
       || researchAuthorCapabilityReceipt.dynamicAttemptWorkspaceRequired !== true
       || researchAuthorCapabilityReceipt.freshEphemeralSessionRequired !== true
       || researchAuthorCapabilityReceipt.priorAgentContextInheritanceForbidden !== true
-      || !managedCapabilityReceiptValid(researchAuthorCapabilityReceipt)
+      || !managedCapabilityReceiptValid(
+        researchAuthorCapabilityReceipt,
+        'research-author',
+      )
       || !codexHome || !resolvedModel || !principalId) {
       throw new Error('codex_research_author_capability_receipt_invalid');
     }
@@ -216,7 +214,7 @@ export function createCodexAgentExecutor({
       const promptDigest = promptHash(prompt);
       const localSessionId = `codex-exec:${crypto.randomUUID()}`;
       const failureExecutorBinding = managedRuntimeExpected
-        ? openClawManagedFailureExecutorBinding({
+        ? managedFailureExecutorBindingForWorkspace({
           capabilityReceipt,
           executionInvocationId: localSessionId,
           executionRole: role,
@@ -354,7 +352,9 @@ export function createCodexAgentExecutor({
       if (managedFailureEvidence && !managedFailureEvidenceVerified) {
         blockers.push('codex_openclaw_managed_failure_usage_evidence_invalid');
       }
-      const structuredOutput = parsedStructuredOutput
+      const managedOutputAuthorized = !managedRuntimeExpected
+        || (managedExecutionEvidenceVerified && blockers.length === 0);
+      const structuredOutput = parsedStructuredOutput && managedOutputAuthorized
         ? Object.freeze(Object.fromEntries(Object.entries(parsedStructuredOutput)
           .filter(([key]) => key !== OPENCLAW_MANAGED_EXECUTION_EVIDENCE_FIELD)))
         : null;
@@ -384,11 +384,12 @@ export function createCodexAgentExecutor({
         stdoutHash: processResult.stdoutHash,
         stderrHash: processResult.stderrHash,
         outputTruncated: processResult.outputTruncated,
-        finalOutput: processResult.stdout.slice(-12000),
+        finalOutput: managedOutputAuthorized ? processResult.stdout.slice(-12000) : '',
         structuredOutput,
-        stderrTail: managedFailureEvidenceVerified ? `${managedRuntimeFailureCode}\n`
+        stderrTail: managedRuntimeExpected
+          ? managedRuntimeFailureCode ? `${managedRuntimeFailureCode}\n` : ''
           : processResult.stderr.slice(-12000),
-        error: processResult.error?.message || null,
+        error: managedRuntimeExpected ? null : processResult.error?.message || null,
         ...(capabilityPostflightFailure ? {
           details: Object.freeze({ capabilityRuntimePostflight: capabilityPostflightFailure }),
         } : {}),

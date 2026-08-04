@@ -7,9 +7,17 @@ import {
   withCodexOpenClawManagedSessionStoreLifecycleLock,
 } from './codex-openclaw-managed-lifecycle.mjs';
 import {
+  assertOpenClawManagedSingleAttemptPolicy,
+} from './codex-openclaw-managed-configuration.mjs';
+import {
   PRIVATE_DIRECTORY_MODE,
   runtimeError,
 } from './codex-openclaw-managed-runtime-common.mjs';
+import {
+  OPENCLAW_MANAGED_UNCLASSIFIED_FAILURE_CODE,
+  isKnownOpenClawManagedCleanupFailureCode,
+  projectOpenClawManagedFailureCode,
+} from './codex-openclaw-managed-failure-code.mjs';
 
 function managedOneShotSessionIdentity(configuration, attemptId) {
   const segment = `hepta-managed-one-shot-${attemptId}`;
@@ -114,10 +122,14 @@ function unexpectedManagedOneShotArtifacts(runtime, attemptId) {
   });
 }
 
-function exactManagedCleanupFailureCode(error, fallback) {
-  const code = String(error?.code || '');
-  return /^codex_openclaw_managed_session_cleanup_[a-z0-9_]+$/.test(code)
-    ? code : fallback;
+function projectManagedCleanupFailureCode(error, fallback) {
+  const code = String(error?.code || '').trim();
+  if (isKnownOpenClawManagedCleanupFailureCode(code)) {
+    return projectOpenClawManagedFailureCode(code);
+  }
+  return isKnownOpenClawManagedCleanupFailureCode(fallback)
+    ? projectOpenClawManagedFailureCode(fallback)
+    : OPENCLAW_MANAGED_UNCLASSIFIED_FAILURE_CODE;
 }
 
 async function cleanupManagedOneShotSession({
@@ -214,7 +226,7 @@ async function cleanupManagedOneShotSession({
     }
     sessionEntryRemoved = true;
   } catch (error) {
-    sessionFailureCode = exactManagedCleanupFailureCode(
+    sessionFailureCode = projectManagedCleanupFailureCode(
       error,
       sessionFailureFallbackCode,
     );
@@ -238,7 +250,7 @@ async function cleanupManagedOneShotSession({
         );
       }
     } catch (error) {
-      artifactFailureCode = exactManagedCleanupFailureCode(
+      artifactFailureCode = projectManagedCleanupFailureCode(
         error,
         'codex_openclaw_managed_session_cleanup_artifact_scope_invalid',
       );
@@ -258,7 +270,7 @@ async function cleanupManagedOneShotSession({
         }
       }
     } catch (error) {
-      artifactFailureCode ||= exactManagedCleanupFailureCode(
+      artifactFailureCode ||= projectManagedCleanupFailureCode(
         error,
         'codex_openclaw_managed_session_cleanup_artifact_scope_invalid',
       );
@@ -382,6 +394,10 @@ async function runManagedOneShotAgentCommandUnderLock({
     sessionBindingBeforeHash =
       managedOneShotSessionBindingHash(preparedEntry);
     sessionPrepared = true;
+    assertOpenClawManagedSingleAttemptPolicy({
+      openclawConfigPath: configuration.openclawConfigPath,
+      agentId: configuration.agentId,
+    });
     result = await runtime.agentCommand({
       message: prompt,
       agentId: configuration.agentId,

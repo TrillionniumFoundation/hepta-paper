@@ -113,6 +113,7 @@ export function buildOpenClawManagedFailureExecutionBinding({
 }
 
 export function expectedOpenClawManagedFailureExecutionBinding({
+  agentId,
   executionInvocationId,
   originalPromptHash,
   configurationHash,
@@ -122,8 +123,22 @@ export function expectedOpenClawManagedFailureExecutionBinding({
   executionRole,
   sandbox,
   workspace,
+  sourceSnapshotHash,
+  sourceSnapshotFileCount,
+  sourceSnapshotBytes,
 } = {}) {
+  if (!SAFE_AGENT_ID.test(String(agentId || ''))
+    || !SHA256.test(String(sourceSnapshotHash || ''))
+    || !Number.isSafeInteger(sourceSnapshotFileCount)
+    || sourceSnapshotFileCount < 0
+    || !Number.isSafeInteger(sourceSnapshotBytes)
+    || sourceSnapshotBytes < 0) {
+    throw runtimeError(
+      'codex_openclaw_managed_expected_failure_execution_binding_invalid',
+    );
+  }
   return Object.freeze({
+    agentId,
     executionInvocationId,
     originalPromptHash,
     configurationHash,
@@ -133,11 +148,15 @@ export function expectedOpenClawManagedFailureExecutionBinding({
     executionRole,
     sandbox,
     workspacePathHash: workspacePathHash(workspace),
+    sourceSnapshotHash,
+    sourceSnapshotFileCount,
+    sourceSnapshotBytes,
   });
 }
 
 export function openClawManagedFailureExecutorBinding({
   capabilityReceipt,
+  agentId,
   executionInvocationId,
   executionRole,
   principalId,
@@ -145,6 +164,7 @@ export function openClawManagedFailureExecutorBinding({
   originalPromptHash,
   sandbox,
   workspace,
+  sourceSnapshot,
 } = {}) {
   return Object.freeze({
     environmentOverrides: Object.freeze({
@@ -153,6 +173,7 @@ export function openClawManagedFailureExecutorBinding({
     }),
     expectedFailureExecutionBinding:
       expectedOpenClawManagedFailureExecutionBinding({
+        agentId,
         executionInvocationId,
         originalPromptHash,
         configurationHash:
@@ -164,6 +185,9 @@ export function openClawManagedFailureExecutorBinding({
         executionRole,
         sandbox,
         workspace,
+        sourceSnapshotHash: sourceSnapshot?.snapshotHash,
+        sourceSnapshotFileCount: sourceSnapshot?.fileCount,
+        sourceSnapshotBytes: sourceSnapshot?.byteCount,
       }),
   });
 }
@@ -203,6 +227,7 @@ export function verifyOpenClawManagedFailureExecutionBinding(
   if (!structurallyValid) return false;
   if (expected === null) return true;
   const expectedKeys = [
+    'agentId',
     'configurationHash',
     'executionInvocationId',
     'executionRole',
@@ -211,6 +236,9 @@ export function verifyOpenClawManagedFailureExecutionBinding(
     'principalId',
     'principalRole',
     'sandbox',
+    'sourceSnapshotBytes',
+    'sourceSnapshotFileCount',
+    'sourceSnapshotHash',
     'workspacePathHash',
   ];
   return expectedKeys.every((key) => binding[key] === expected?.[key]);

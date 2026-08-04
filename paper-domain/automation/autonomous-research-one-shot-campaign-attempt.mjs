@@ -5,40 +5,32 @@ import { AUTONOMOUS_RESEARCH_ONE_SHOT_EVENT_KEYS as EVENT_KEYS,
   AUTONOMOUS_RESEARCH_ONE_SHOT_RESERVATION_KEYS as RESERVATION_KEYS }
   from './autonomous-research-one-shot-campaign-attempt-keys.data.mjs';
 import {
-  autonomousResearchOneShotProviderRuntimeBindingHash,
-  verifyAutonomousResearchOneShotProviderRuntimeBinding,
-} from './autonomous-research-one-shot-provider-runtime-binding.mjs';
+  assertAutonomousResearchOneShotJsonShape,
+  canonicalAutonomousResearchOneShotSnapshot,
+} from './autonomous-research-one-shot-canonical-json.mjs';
 import {
-  AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_CAMPAIGN_ID,
-  AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_OBJECTIVE,
-  AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_PAPER_ID,
-  verifyAutonomousResearchOneShotTargetCampaignDefinition,
-} from './autonomous-research-one-shot-target-campaign.mjs';
+  verifyAutonomousResearchOneShotCampaignExecutionBinding,
+  verifyAutonomousResearchOneShotCampaignExecutionBindingForHistoricalAudit,
+} from './autonomous-research-one-shot-campaign-execution-binding.mjs';
+import {
+  AUTONOMOUS_RESEARCH_ONE_SHOT_HISTORICAL_ATTEMPT_ANCHORS,
+} from './autonomous-research-one-shot-historical-attempt-anchors.data.mjs';
 
-export { autonomousResearchOneShotProviderRuntimeBindingHash };
+export { autonomousResearchOneShotProviderRuntimeBindingHash }
+  from './autonomous-research-one-shot-provider-runtime-binding.mjs';
+export * from './autonomous-research-one-shot-campaign-execution-binding.mjs';
 export {
   AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_CAMPAIGN_ID,
+  AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_DATASET_MOUNTS_HASH,
   AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_OBJECTIVE,
   AUTONOMOUS_RESEARCH_ONE_SHOT_TARGET_PAPER_ID,
-};
+} from './autonomous-research-one-shot-target-campaign.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,255}$/;
 const MAXIMUM_BINDING_BYTES = 64 * 1024;
 const MAXIMUM_EVIDENCE_BYTES = 128 * 1024;
 const MAXIMUM_OUTCOME_BYTES = 128 * 1024;
-const SAFE_ENVIRONMENT_KEY = /^[A-Z][A-Z0-9_]{0,127}$/;
-const SENSITIVE_ENVIRONMENT_KEY = /(?:TOKEN|SECRET|PASSWORD|CREDENTIAL|COOKIE|API_KEY|AUTHORIZATION)/;
-const GIT_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
-export const AUTONOMOUS_RESEARCH_ONE_SHOT_PROTECTED_CAMPAIGN_ID = 'autonomous-research:local-auto-20260730-51';
-export const AUTONOMOUS_RESEARCH_ONE_SHOT_PROVIDER_CONFIGURATION_HASH = 'sha256:7fe1d221302fb8e5b1c1c7ccb33ea341311d00a994ff9b3f6dd433af82964792';
-export const AUTONOMOUS_RESEARCH_ONE_SHOT_FORBIDDEN_PREPARE_ENVIRONMENT_KEYS =
-  Object.freeze([
-    'HEPTA_AUTONOMOUS_EXTERNAL_QUALIFICATION_CONFIG', 'HEPTA_EXTERNAL_REPLAY_CONFIG',
-    'HEPTA_EXTERNAL_REPLAY_CONFIG_HASH', 'HEPTA_EXTERNAL_REPLAY_SERVICE_TOKEN_FILE',
-    'HEPTA_PRIOR_ART_SERVICE_CONFIG', 'HEPTA_PRIOR_ART_SERVICE_CONFIG_HASH',
-    'HEPTA_PRIOR_ART_SERVICE_TOKEN_FILE',
-  ].sort());
 
 export const AUTONOMOUS_RESEARCH_ONE_SHOT_CAMPAIGN_ATTEMPT_PHASES = Object.freeze([
   'attempt_reserved', 'preconditions_verified', 'prepare_verified', 'provider_started',
@@ -66,218 +58,6 @@ function invalid(code) {
 function canonicalInstant(value) {
   const milliseconds = Date.parse(String(value || ''));
   return Number.isFinite(milliseconds) && new Date(milliseconds).toISOString() === value;
-}
-
-function deepFreeze(value) {
-  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
-  for (const child of Object.values(value)) deepFreeze(child);
-  return Object.freeze(value);
-}
-
-function assertJsonShape(value, code, depth = 0) {
-  if (depth > 64) invalid(code);
-  if (value === null || typeof value === 'string' || typeof value === 'boolean') return;
-  if (typeof value === 'number') {
-    if (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value))) {
-      invalid(code);
-    }
-    return;
-  }
-  if (!value || typeof value !== 'object') invalid(code);
-  const prototype = Object.getPrototypeOf(value);
-  if (!Array.isArray(value) && prototype !== Object.prototype) invalid(code);
-  const descriptors = Object.entries(Object.getOwnPropertyDescriptors(value))
-    .filter(([key]) => !(Array.isArray(value) && key === 'length'))
-    .map(([, descriptor]) => descriptor);
-  if (descriptors.some((descriptor) => (
-    !Object.hasOwn(descriptor, 'value') || descriptor.enumerable !== true
-  ))) invalid(code);
-  if (Array.isArray(value)) {
-    if (Object.keys(value).length !== value.length) invalid(code);
-    value.forEach((child) => assertJsonShape(child, code, depth + 1));
-    return;
-  }
-  for (const [key, child] of Object.entries(value)) {
-    if (!key || key.length > 256 || child === undefined) invalid(code);
-    assertJsonShape(child, code, depth + 1);
-  }
-}
-
-function canonicalSnapshot(value, { code, maximumBytes, allowNull = false }) {
-  if (value === null && allowNull) return null;
-  assertJsonShape(value, code);
-  const source = stableStringify(value);
-  if (Buffer.byteLength(source) > maximumBytes) invalid(code);
-  return deepFreeze(JSON.parse(source));
-}
-
-export function autonomousResearchOneShotCampaignEnvironmentProjectionHash(projection) {
-  const canonicalProjection = canonicalSnapshot(projection, {
-    code: 'autonomous_research_one_shot_campaign_environment_projection_invalid',
-    maximumBytes: 32 * 1024,
-  });
-  return hashRecord(
-    'AutonomousResearchOneShotCampaignEnvironmentProjection',
-    canonicalProjection,
-  );
-}
-
-function executionBindingRecordHash(kind, value) {
-  const canonicalValue = canonicalSnapshot(value, {
-    code: 'autonomous_research_one_shot_campaign_execution_binding_record_invalid',
-    maximumBytes: MAXIMUM_BINDING_BYTES,
-  });
-  return hashRecord(kind, canonicalValue);
-}
-
-export function autonomousResearchOneShotCampaignCodeProvenanceHash(value) {
-  return executionBindingRecordHash(
-    'AutonomousResearchOneShotCampaignCodeProvenance',
-    value,
-  );
-}
-
-export function autonomousResearchOneShotCampaignSourceExecutionSnapshotHash(value) {
-  return executionBindingRecordHash(
-    'AutonomousResearchOneShotCampaignSourceExecutionSnapshot',
-    value,
-  );
-}
-
-export function autonomousResearchOneShotProtectedCampaignFingerprintHash(value) {
-  return executionBindingRecordHash(
-    'AutonomousResearchOneShotProtectedCampaignFingerprint',
-    value,
-  );
-}
-
-export function autonomousResearchOneShotTargetCampaignDefinitionHash(value) {
-  return executionBindingRecordHash(
-    'AutonomousResearchOneShotTargetCampaignDefinition',
-    value,
-  );
-}
-
-function protectedCampaignDefinitionValid(value) {
-  return exactKeys(value, [
-    'activeNodeCount', 'campaignId', 'failedTerminalNodeCount', 'failureClass',
-    'ledgerCount', 'logicalStateHash', 'nodeLeaseCount', 'outboxCount',
-    'resourceLeaseCount', 'skippedNodeCount', 'status', 'submissionCount',
-    'version', 'waiterCount',
-  ].sort())
-    && value.version === 1
-    && value.campaignId === AUTONOMOUS_RESEARCH_ONE_SHOT_PROTECTED_CAMPAIGN_ID
-    && value.status === 'failed'
-    && value.failedTerminalNodeCount === 1 && value.skippedNodeCount === 65
-    && value.activeNodeCount === 0 && value.nodeLeaseCount === 0
-    && value.resourceLeaseCount === 0 && value.waiterCount === 0
-    && value.failureClass === 'agent_usage_unknown_terminal'
-    && value.submissionCount === 0 && value.outboxCount === 0
-    && value.ledgerCount === 0 && SHA256.test(String(value.logicalStateHash || ''));
-}
-
-function preparationPolicyValid(binding) {
-  const policy = binding?.preparationPolicy;
-  const projection = binding?.environmentProjection;
-  const launchPolicy = binding?.campaignLaunchPolicy;
-  const codeProvenance = binding?.codeProvenance;
-  const sourceExecutionSnapshot = binding?.sourceExecutionSnapshot;
-  const protectedCampaignDefinition = binding?.protectedCampaignDefinition;
-  const targetCampaignDefinition = binding?.targetCampaignDefinition;
-  const providerRuntimeBinding = binding?.providerRuntimeBinding;
-  if (!SHA256.test(String(binding?.codeProvenanceHash || ''))
-    || !SHA256.test(String(binding?.sourceExecutionSnapshotHash || ''))
-    || !SHA256.test(String(
-      binding?.autonomousResearchProviderConfigurationHash || '',
-    ))
-    || binding.autonomousResearchProviderConfigurationHash
-      !== AUTONOMOUS_RESEARCH_ONE_SHOT_PROVIDER_CONFIGURATION_HASH
-    || !SHA256.test(String(binding?.protectedCampaignFingerprintHash || ''))
-    || !SHA256.test(String(binding?.targetCampaignDefinitionHash || ''))
-    || !SHA256.test(String(binding?.providerRuntimeBindingHash || ''))
-    || !codeProvenance || codeProvenance.version !== 2
-    || !GIT_OBJECT_ID.test(String(codeProvenance.commit || ''))
-    || !GIT_OBJECT_ID.test(String(codeProvenance.commitTree || ''))
-    || codeProvenance.treeDirty !== false
-    || !SHA256.test(String(codeProvenance.indexStateHash || ''))
-    || !SHA256.test(String(codeProvenance.repositoryContentHash || ''))
-    || !SHA256.test(String(codeProvenance.worktreeStateHash || ''))
-    || binding.codeProvenanceHash
-      !== autonomousResearchOneShotCampaignCodeProvenanceHash(codeProvenance)
-    || !sourceExecutionSnapshot
-    || !SHA256.test(String(sourceExecutionSnapshot.merkleHash || ''))
-    || !SHA256.test(String(sourceExecutionSnapshot.manifestHash || ''))
-    || binding.sourceExecutionSnapshotHash
-      !== autonomousResearchOneShotCampaignSourceExecutionSnapshotHash(
-        sourceExecutionSnapshot,
-      )
-    || !protectedCampaignDefinitionValid(protectedCampaignDefinition)
-    || binding.protectedCampaignFingerprintHash
-      !== autonomousResearchOneShotProtectedCampaignFingerprintHash(
-        protectedCampaignDefinition,
-      )
-    || !verifyAutonomousResearchOneShotTargetCampaignDefinition(targetCampaignDefinition)
-    || binding.targetCampaignDefinitionHash
-      !== autonomousResearchOneShotTargetCampaignDefinitionHash(targetCampaignDefinition)
-    || !verifyAutonomousResearchOneShotProviderRuntimeBinding(providerRuntimeBinding)
-    || providerRuntimeBinding.providerConfigurationHash
-      !== AUTONOMOUS_RESEARCH_ONE_SHOT_PROVIDER_CONFIGURATION_HASH
-    || binding.providerRuntimeBindingHash
-      !== autonomousResearchOneShotProviderRuntimeBindingHash(providerRuntimeBinding)
-    || !exactKeys(policy, [
-    'allowedExternalActionKinds',
-    'contentMode',
-    'environmentProjectionHash',
-    'forbiddenEnvironmentKeys',
-    'mode',
-    'providerFreeRequired',
-    'version',
-  ].sort())
-    || policy.version !== 1
-    || policy.mode !== 'deterministic-bounded-offline-v1'
-    || policy.contentMode !== 'deterministic-bounded'
-    || policy.providerFreeRequired !== true
-    || !Array.isArray(policy.allowedExternalActionKinds)
-    || policy.allowedExternalActionKinds.length !== 0
-    || !Array.isArray(policy.forbiddenEnvironmentKeys)
-    || stableStringify(policy.forbiddenEnvironmentKeys)
-      !== stableStringify(AUTONOMOUS_RESEARCH_ONE_SHOT_FORBIDDEN_PREPARE_ENVIRONMENT_KEYS)
-    || !SHA256.test(String(policy.environmentProjectionHash || ''))
-    || !projection || typeof projection !== 'object' || Array.isArray(projection)
-    || Object.getPrototypeOf(projection) !== Object.prototype
-    || Object.entries(projection).some(([key, value]) => (
-      !SAFE_ENVIRONMENT_KEY.test(key)
-      || SENSITIVE_ENVIRONMENT_KEY.test(key)
-      || typeof value !== 'string'
-      || Buffer.byteLength(value) > 4096
-      || AUTONOMOUS_RESEARCH_ONE_SHOT_FORBIDDEN_PREPARE_ENVIRONMENT_KEYS.includes(key)
-    ))
-    || projection.HEPTA_AUTONOMOUS_RESEARCH_CONTENT_MODE !== policy.contentMode
-    || policy.environmentProjectionHash
-      !== autonomousResearchOneShotCampaignEnvironmentProjectionHash(projection)
-    || !exactKeys(launchPolicy, [
-      'allowedRecoveryActions',
-      'createOnly',
-      'forbiddenActions',
-      'version',
-    ].sort())
-    || launchPolicy.version !== 1
-    || launchPolicy.createOnly !== true
-    || stableStringify(launchPolicy.allowedRecoveryActions) !== stableStringify(['status'])
-    || stableStringify(launchPolicy.forbiddenActions)
-      !== stableStringify(['converge', 'resume'])) return false;
-  return true;
-}
-
-export function verifyAutonomousResearchOneShotCampaignExecutionBinding(value) {
-  try {
-    const binding = canonicalSnapshot(value, {
-      code: 'autonomous_research_one_shot_campaign_attempt_binding_invalid',
-      maximumBytes: MAXIMUM_BINDING_BYTES,
-    });
-    return stableStringify(binding) === stableStringify(value)
-      && preparationPolicyValid(binding);
-  } catch { return false; }
 }
 
 function snapshotHash(kind, value) {
@@ -309,7 +89,10 @@ function terminalReceiptPayload(value) {
 }
 
 export function canonicalAutonomousResearchOneShotCampaignAttemptJson(value) {
-  assertJsonShape(value, 'autonomous_research_one_shot_campaign_attempt_json_invalid');
+  assertAutonomousResearchOneShotJsonShape(
+    value,
+    'autonomous_research_one_shot_campaign_attempt_json_invalid',
+  );
   return stableStringify(value);
 }
 
@@ -321,7 +104,7 @@ export function buildAutonomousResearchOneShotCampaignAttemptReservation({
   executionBinding,
   reservedAt,
 } = {}) {
-  const binding = canonicalSnapshot(executionBinding, {
+  const binding = canonicalAutonomousResearchOneShotSnapshot(executionBinding, {
     code: 'autonomous_research_one_shot_campaign_attempt_binding_invalid',
     maximumBytes: MAXIMUM_BINDING_BYTES,
   });
@@ -331,7 +114,7 @@ export function buildAutonomousResearchOneShotCampaignAttemptReservation({
     || !SAFE_ID.test(String(protectedCampaignId || ''))
     || campaignId === protectedCampaignId
     || !canonicalInstant(reservedAt)
-    || !preparationPolicyValid(binding)
+    || !verifyAutonomousResearchOneShotCampaignExecutionBinding(binding)
     || binding.targetCampaignDefinition.campaignId !== campaignId
     || binding.protectedCampaignDefinition.campaignId !== protectedCampaignId) {
     invalid('autonomous_research_one_shot_campaign_attempt_reservation_invalid');
@@ -361,6 +144,16 @@ export function buildAutonomousResearchOneShotCampaignAttemptReservation({
 }
 
 export function verifyAutonomousResearchOneShotCampaignAttemptReservation(value) {
+  return verifyAutonomousResearchOneShotCampaignAttemptReservationWithBindingPolicy(
+    value,
+    verifyAutonomousResearchOneShotCampaignExecutionBinding,
+  );
+}
+
+function verifyAutonomousResearchOneShotCampaignAttemptReservationWithBindingPolicy(
+  value,
+  verifyExecutionBinding,
+) {
   if (!exactKeys(value, RESERVATION_KEYS)
     || value.version !== 1
     || value.kind !== 'AutonomousResearchOneShotCampaignAttemptReservation'
@@ -374,13 +167,13 @@ export function verifyAutonomousResearchOneShotCampaignAttemptReservation(value)
     || !SHA256.test(String(value.executionBindingHash || ''))) return false;
   let binding;
   try {
-    binding = canonicalSnapshot(value.executionBinding, {
+    binding = canonicalAutonomousResearchOneShotSnapshot(value.executionBinding, {
       code: 'autonomous_research_one_shot_campaign_attempt_binding_invalid',
       maximumBytes: MAXIMUM_BINDING_BYTES,
     });
   } catch { return false; }
   if (stableStringify(binding) !== stableStringify(value.executionBinding)
-    || !preparationPolicyValid(binding)
+    || !verifyExecutionBinding(binding)
     || binding.targetCampaignDefinition.campaignId !== value.campaignId
     || binding.protectedCampaignDefinition.campaignId !== value.protectedCampaignId
     || hashRecord('AutonomousResearchOneShotCampaignExecutionBinding', binding)
@@ -389,6 +182,15 @@ export function verifyAutonomousResearchOneShotCampaignAttemptReservation(value)
   return SHA256.test(String(claimedHash || ''))
     && hashRecord('AutonomousResearchOneShotCampaignAttemptReservation', payload)
       === claimedHash;
+}
+
+export function verifyAutonomousResearchOneShotCampaignAttemptReservationForHistoricalAudit(
+  value,
+) {
+  return verifyAutonomousResearchOneShotCampaignAttemptReservationWithBindingPolicy(
+    value,
+    verifyAutonomousResearchOneShotCampaignExecutionBindingForHistoricalAudit,
+  );
 }
 
 export function buildAutonomousResearchOneShotCampaignAttemptEvent({
@@ -419,7 +221,7 @@ export function buildAutonomousResearchOneShotCampaignAttemptEvent({
       && PHASE_INDEX.get(phase) !== PHASE_INDEX.get(previousEvent.phase) + 1)) {
     invalid('autonomous_research_one_shot_campaign_attempt_event_transition_invalid');
   }
-  const canonicalEvidence = canonicalSnapshot(evidence, {
+  const canonicalEvidence = canonicalAutonomousResearchOneShotSnapshot(evidence, {
     code: 'autonomous_research_one_shot_campaign_attempt_event_evidence_invalid',
     maximumBytes: MAXIMUM_EVIDENCE_BYTES,
     allowNull: phase !== 'attempt_reserved',
@@ -477,6 +279,17 @@ export function verifyAutonomousResearchOneShotCampaignAttemptEvent(value, {
   reservation = null,
   previousEvent = undefined,
 } = {}) {
+  return verifyAutonomousResearchOneShotCampaignAttemptEventWithReservationPolicy(
+    value,
+    { reservation, previousEvent },
+    verifyAutonomousResearchOneShotCampaignAttemptReservation,
+  );
+}
+
+function verifyAutonomousResearchOneShotCampaignAttemptEventWithReservationPolicy(value, {
+  reservation = null,
+  previousEvent = undefined,
+} = {}, verifyReservation) {
   if (!exactKeys(value, EVENT_KEYS)
     || value.version !== 1
     || value.kind !== 'AutonomousResearchOneShotCampaignAttemptEvent'
@@ -493,7 +306,7 @@ export function verifyAutonomousResearchOneShotCampaignAttemptEvent(value, {
     || !canonicalInstant(value.recordedAt)) return false;
   let evidence;
   try {
-    evidence = canonicalSnapshot(value.evidence, {
+    evidence = canonicalAutonomousResearchOneShotSnapshot(value.evidence, {
       code: 'autonomous_research_one_shot_campaign_attempt_event_evidence_invalid',
       maximumBytes: MAXIMUM_EVIDENCE_BYTES,
       allowNull: value.phase !== 'attempt_reserved',
@@ -502,7 +315,7 @@ export function verifyAutonomousResearchOneShotCampaignAttemptEvent(value, {
   if (stableStringify(evidence) !== stableStringify(value.evidence)
     || snapshotHash('AutonomousResearchOneShotCampaignAttemptEventEvidence', evidence)
       !== value.evidenceHash) return false;
-  if (reservation && (!verifyAutonomousResearchOneShotCampaignAttemptReservation(reservation)
+  if (reservation && (!verifyReservation(reservation)
     || value.attemptId !== reservation.attemptId
     || value.idempotencyKey !== reservation.idempotencyKey
     || value.campaignId !== reservation.campaignId
@@ -517,9 +330,11 @@ export function verifyAutonomousResearchOneShotCampaignAttemptEvent(value, {
           reservationHash:
             reservation.autonomousResearchOneShotCampaignAttemptReservationHash,
         })) return false;
-    } else if (!verifyAutonomousResearchOneShotCampaignAttemptEvent(previousEvent, {
-      reservation,
-    }) || value.sequence !== previousEvent.sequence + 1
+    } else if (!verifyAutonomousResearchOneShotCampaignAttemptEventWithReservationPolicy(
+      previousEvent,
+      { reservation },
+      verifyReservation,
+    ) || value.sequence !== previousEvent.sequence + 1
       || value.previousEventHash
         !== previousEvent.autonomousResearchOneShotCampaignAttemptEventHash
       || Date.parse(value.recordedAt) < Date.parse(previousEvent.recordedAt)
@@ -534,24 +349,60 @@ export function verifyAutonomousResearchOneShotCampaignAttemptEvent(value, {
     && hashRecord('AutonomousResearchOneShotCampaignAttemptEvent', payload) === claimedHash;
 }
 
+export function verifyAutonomousResearchOneShotCampaignAttemptEventForHistoricalAudit(
+  value,
+  {
+    reservation = null,
+    previousEvent = undefined,
+  } = {},
+) {
+  return verifyAutonomousResearchOneShotCampaignAttemptEventWithReservationPolicy(
+    value,
+    { reservation, previousEvent },
+    verifyAutonomousResearchOneShotCampaignAttemptReservationForHistoricalAudit,
+  );
+}
+
 export function verifyAutonomousResearchOneShotCampaignAttemptEventSequence({
   reservation,
   events,
 } = {}) {
-  if (!verifyAutonomousResearchOneShotCampaignAttemptReservation(reservation)
+  return verifyAutonomousResearchOneShotCampaignAttemptEventSequenceWithReservationPolicy(
+    { reservation, events },
+    verifyAutonomousResearchOneShotCampaignAttemptReservation,
+    verifyAutonomousResearchOneShotCampaignAttemptEvent,
+  );
+}
+
+function verifyAutonomousResearchOneShotCampaignAttemptEventSequenceWithReservationPolicy({
+  reservation,
+  events,
+} = {}, verifyReservation, verifyEvent) {
+  if (!verifyReservation(reservation)
     || !Array.isArray(events) || events.length < 1
     || events.length > AUTONOMOUS_RESEARCH_ONE_SHOT_CAMPAIGN_ATTEMPT_PHASES.length) {
     return false;
   }
   let previous = null;
   for (const event of events) {
-    if (!verifyAutonomousResearchOneShotCampaignAttemptEvent(event, {
-      reservation,
-      previousEvent: previous,
-    })) return false;
+    if (!verifyEvent(
+      event,
+      { reservation, previousEvent: previous },
+    )) return false;
     previous = event;
   }
   return true;
+}
+
+export function verifyAutonomousResearchOneShotCampaignAttemptEventSequenceForHistoricalAudit({
+  reservation,
+  events,
+} = {}) {
+  return verifyAutonomousResearchOneShotCampaignAttemptEventSequenceWithReservationPolicy(
+    { reservation, events },
+    verifyAutonomousResearchOneShotCampaignAttemptReservationForHistoricalAudit,
+    verifyAutonomousResearchOneShotCampaignAttemptEventForHistoricalAudit,
+  );
 }
 
 export function buildAutonomousResearchOneShotCampaignAttemptTerminalReceipt({
@@ -581,7 +432,7 @@ export function buildAutonomousResearchOneShotCampaignAttemptTerminalReceipt({
       && lastEvent.phase !== 'launch_started')) {
     invalid('autonomous_research_one_shot_campaign_attempt_terminal_status_invalid');
   }
-  const canonicalOutcome = canonicalSnapshot(outcome, {
+  const canonicalOutcome = canonicalAutonomousResearchOneShotSnapshot(outcome, {
     code: 'autonomous_research_one_shot_campaign_attempt_terminal_outcome_invalid',
     maximumBytes: MAXIMUM_OUTCOME_BYTES,
     allowNull: true,
@@ -622,6 +473,23 @@ export function verifyAutonomousResearchOneShotCampaignAttemptTerminalReceipt(va
   reservation = null,
   lastEvent = null,
 } = {}) {
+  return verifyAutonomousResearchOneShotCampaignAttemptTerminalReceiptWithAuditPolicy(
+    value,
+    { reservation, lastEvent },
+    verifyAutonomousResearchOneShotCampaignAttemptReservation,
+    verifyAutonomousResearchOneShotCampaignAttemptEvent,
+  );
+}
+
+function verifyAutonomousResearchOneShotCampaignAttemptTerminalReceiptWithAuditPolicy(
+  value,
+  {
+    reservation = null,
+    lastEvent = null,
+  } = {},
+  verifyReservation,
+  verifyEvent,
+) {
   if (!exactKeys(value, RECEIPT_KEYS)
     || value.version !== 1
     || value.kind !== 'AutonomousResearchOneShotCampaignAttemptTerminalReceipt'
@@ -640,7 +508,7 @@ export function verifyAutonomousResearchOneShotCampaignAttemptTerminalReceipt(va
     || !canonicalInstant(value.completedAt)) return false;
   let outcome;
   try {
-    outcome = canonicalSnapshot(value.outcome, {
+    outcome = canonicalAutonomousResearchOneShotSnapshot(value.outcome, {
       code: 'autonomous_research_one_shot_campaign_attempt_terminal_outcome_invalid',
       maximumBytes: MAXIMUM_OUTCOME_BYTES,
       allowNull: true,
@@ -649,13 +517,13 @@ export function verifyAutonomousResearchOneShotCampaignAttemptTerminalReceipt(va
   if (stableStringify(outcome) !== stableStringify(value.outcome)
     || snapshotHash('AutonomousResearchOneShotCampaignAttemptTerminalOutcome', outcome)
       !== value.outcomeHash) return false;
-  if (reservation && (!verifyAutonomousResearchOneShotCampaignAttemptReservation(reservation)
+  if (reservation && (!verifyReservation(reservation)
     || value.attemptId !== reservation.attemptId
     || value.idempotencyKey !== reservation.idempotencyKey
     || value.campaignId !== reservation.campaignId
     || value.reservationHash
       !== reservation.autonomousResearchOneShotCampaignAttemptReservationHash)) return false;
-  if (lastEvent && (!verifyAutonomousResearchOneShotCampaignAttemptEvent(lastEvent, {
+  if (lastEvent && (!verifyEvent(lastEvent, {
     reservation,
   }) || value.lastPhase !== lastEvent.phase
     || value.lastEventHash
@@ -681,12 +549,39 @@ export function verifyAutonomousResearchOneShotCampaignAttemptTerminalReceipt(va
       === claimedHash;
 }
 
+export function verifyAutonomousResearchOneShotCampaignAttemptTerminalReceiptForHistoricalAudit(
+  value,
+  {
+    reservation = null,
+    lastEvent = null,
+  } = {},
+) {
+  return verifyAutonomousResearchOneShotCampaignAttemptTerminalReceiptWithAuditPolicy(
+    value,
+    { reservation, lastEvent },
+    verifyAutonomousResearchOneShotCampaignAttemptReservationForHistoricalAudit,
+    verifyAutonomousResearchOneShotCampaignAttemptEventForHistoricalAudit,
+  );
+}
+
 export function deriveAutonomousResearchOneShotCampaignAttemptRecoveryDisposition({
   reservation,
   events,
   terminalReceipt = null,
 } = {}) {
-  if (!verifyAutonomousResearchOneShotCampaignAttemptEventSequence({ reservation, events })) {
+  return deriveAutonomousResearchOneShotCampaignAttemptRecoveryDispositionWithAuditPolicy(
+    { reservation, events, terminalReceipt },
+    verifyAutonomousResearchOneShotCampaignAttemptEventSequence,
+    verifyAutonomousResearchOneShotCampaignAttemptTerminalReceipt,
+  );
+}
+
+function deriveAutonomousResearchOneShotCampaignAttemptRecoveryDispositionWithAuditPolicy({
+  reservation,
+  events,
+  terminalReceipt = null,
+} = {}, verifyEventSequence, verifyTerminalReceipt) {
+  if (!verifyEventSequence({ reservation, events })) {
     invalid('autonomous_research_one_shot_campaign_attempt_sequence_invalid');
   }
   const head = events.at(-1);
@@ -695,7 +590,7 @@ export function deriveAutonomousResearchOneShotCampaignAttemptRecoveryDispositio
   }
   if (head.phase === 'terminal') {
     const previous = events.at(-2);
-    if (!previous || !verifyAutonomousResearchOneShotCampaignAttemptTerminalReceipt(
+    if (!previous || !verifyTerminalReceipt(
       terminalReceipt,
       { reservation, lastEvent: previous },
     ) || head.evidence?.terminalReceiptHash
@@ -729,4 +624,68 @@ export function deriveAutonomousResearchOneShotCampaignAttemptRecoveryDispositio
     monitorOnly,
     terminalReceipt: null,
   });
+}
+
+export function deriveAutonomousResearchOneShotCampaignAttemptRecoveryDispositionForHistoricalAudit({
+  reservation,
+  events,
+  terminalReceipt = null,
+} = {}) {
+  const currentReservation =
+    verifyAutonomousResearchOneShotCampaignAttemptReservation(reservation);
+  if (!currentReservation
+    && !verifyAutonomousResearchOneShotHistoricalCampaignAttemptAnchor({
+      reservation,
+      events,
+      terminalReceipt,
+    })) {
+    invalid('autonomous_research_one_shot_historical_attempt_anchor_invalid');
+  }
+  const disposition =
+    deriveAutonomousResearchOneShotCampaignAttemptRecoveryDispositionWithAuditPolicy(
+    { reservation, events, terminalReceipt },
+    verifyAutonomousResearchOneShotCampaignAttemptEventSequenceForHistoricalAudit,
+    verifyAutonomousResearchOneShotCampaignAttemptTerminalReceiptForHistoricalAudit,
+  );
+  if (currentReservation) return disposition;
+  return Object.freeze({
+    ...disposition,
+    status: 'historical_audit_only',
+    mayAppendProviderStarted: false,
+    mayAppendLaunchStarted: false,
+    monitorOnly: false,
+  });
+}
+
+export function verifyAutonomousResearchOneShotHistoricalCampaignAttemptAnchor({
+  reservation,
+  events,
+  terminalReceipt = null,
+} = {}) {
+  const anchor = AUTONOMOUS_RESEARCH_ONE_SHOT_HISTORICAL_ATTEMPT_ANCHORS[
+    reservation?.campaignId
+  ];
+  if (!anchor || !Array.isArray(events) || events.length !== anchor.headSequence) {
+    return false;
+  }
+  const head = events.at(-1);
+  const eventChainHash = hashRecord(
+    'AutonomousResearchOneShotHistoricalCampaignAttemptEventChain',
+    {
+      version: 1,
+      campaignId: reservation.campaignId,
+      eventHashes: events.map(
+        (event) => event?.autonomousResearchOneShotCampaignAttemptEventHash,
+      ),
+    },
+  );
+  return reservation.attemptId === anchor.attemptId
+    && reservation.idempotencyKey === anchor.idempotencyKey
+    && reservation.autonomousResearchOneShotCampaignAttemptReservationHash
+      === anchor.reservationHash
+    && head?.sequence === anchor.headSequence
+    && head?.autonomousResearchOneShotCampaignAttemptEventHash === anchor.headEventHash
+    && eventChainHash === anchor.eventChainHash
+    && terminalReceipt?.autonomousResearchOneShotCampaignAttemptTerminalReceiptHash
+      === anchor.terminalReceiptHash;
 }

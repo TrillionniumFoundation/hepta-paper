@@ -650,6 +650,10 @@ test('managed Codex receipts bind both session fields to the verified explicit-p
 
   let postflightVersionCalls = 0;
   let postflightModelCalls = 0;
+  const postflightSensitiveStructuredOutput = {
+    ...formalReviewDocument,
+    summary: 'credential=sk-postflight-secret path=/private/postflight provider prose',
+  };
   const postflightFailureExecutor = createCodexAgentExecutor({
     codexBinary: binary,
     codexHome,
@@ -681,7 +685,7 @@ test('managed Codex receipts bind both session fields to the verified explicit-p
           preflight.capabilityReceipt.openClawManagedAuthProfileIdentityHash,
         authSourceIdentityHash:
           preflight.capabilityReceipt.openClawManagedAuthSourceIdentityHash,
-        structuredOutput: formalReviewDocument,
+        structuredOutput: postflightSensitiveStructuredOutput,
       });
     },
     timeoutMs: 5000,
@@ -724,6 +728,12 @@ test('managed Codex receipts bind both session fields to the verified explicit-p
         true,
       );
       assert.equal(error.receipt.usage.totalTokens, 20);
+      assert.equal(error.receipt.finalOutput, '');
+      assert.equal(error.receipt.structuredOutput, null);
+      const serialized = JSON.stringify({ message: error.message, ...error });
+      for (const sensitive of [
+        'sk-postflight-secret', '/private/postflight', 'provider prose',
+      ]) assert.equal(serialized.includes(sensitive), false);
       return true;
     },
   );

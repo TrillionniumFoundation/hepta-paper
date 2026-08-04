@@ -9,6 +9,10 @@ import {
 import {
   verifyOpenClawManagedFailureExecutionBinding,
 } from './codex-openclaw-managed-failure-execution-binding.mjs';
+import {
+  isKnownOpenClawManagedFailureCode,
+  projectOpenClawManagedFailureCode,
+} from './codex-openclaw-managed-failure-code.mjs';
 
 const MANAGED_USAGE_KEYS = Object.freeze([
   'cacheRead', 'cacheWrite', 'input', 'output', 'totalTokens',
@@ -327,14 +331,15 @@ function managedFailureExternalEffectProjection(entries) {
 }
 
 export function buildOpenClawManagedFailureEvidence(error) {
-  const failureCode = String(error?.code || error?.message || '').trim();
+  const failureCode = projectOpenClawManagedFailureCode(
+    error?.code || error?.message,
+  );
   const attempts = Array.isArray(error?.attemptTrace) ? error.attemptTrace : [];
   const entries = attempts.map(managedAttemptUsageEntry);
   const usage = aggregateManagedUsage(entries.map((entry) => entry.usage));
   const failureExecutionBinding =
     error?.openClawManagedFailureExecutionBinding || null;
-  if (!/^codex_openclaw_managed_[a-z0-9_:-]{1,128}$/.test(failureCode)
-    || !entries.length
+  if (!entries.length
     || !verifyOpenClawModelRuntimeProvenance(error?.runtimeProvenance)
     || (failureExecutionBinding
       && !verifyOpenClawManagedFailureExecutionBinding(
@@ -367,8 +372,13 @@ export function buildOpenClawManagedFailureEvidence(error) {
       failureCode,
       openClawManagedRuntimeProvenance: error.runtimeProvenance,
       modelAttemptCount: incompleteEntries.length,
-      attemptTrace: Object.freeze([...attempts]),
-      attemptTraceHash: error.attemptTraceHash,
+      // Failure evidence crosses a process and durable-receipt boundary. Keep
+      // only the exact usage/effect projection here: the source attempt trace
+      // also contains runtime-supplied diagnostic strings (for example
+      // stopReason and executionTrace.reason) which are not evidence fields
+      // and may contain provider prose or credential material.
+      attemptTrace: Object.freeze([...incompleteEntries]),
+      attemptTraceHash: modelAttemptTraceHash(incompleteEntries),
       attemptUsageEntries: Object.freeze(incompleteEntries),
       attemptUsageEntriesHash: hashRecord(
         'OpenClawManagedCodexAppServerIncompleteAttemptUsageEntries',
@@ -398,8 +408,8 @@ export function buildOpenClawManagedFailureEvidence(error) {
     failureCode,
     openClawManagedRuntimeProvenance: error.runtimeProvenance,
     modelAttemptCount: entries.length,
-    attemptTrace: Object.freeze([...attempts]),
-    attemptTraceHash: error.attemptTraceHash,
+    attemptTrace: Object.freeze([...entries]),
+    attemptTraceHash: modelAttemptTraceHash(entries),
     attemptUsageEntries: Object.freeze(entries),
     attemptUsageEntriesHash: hashRecord(
       'OpenClawManagedCodexAppServerAttemptUsageEntries',
@@ -435,8 +445,10 @@ export function verifyOpenClawManagedFailureEvidence(evidence, {
     openClawManagedCodexFailureUsageEvidenceHash: claimedHash,
     ...payload
   } = evidence;
+  const expectedFailureCode = projectOpenClawManagedFailureCode(failureCode);
   const entries = payload.attemptUsageEntries;
-  if (!/^sha256:[0-9a-f]{64}$/.test(
+  if (!isKnownOpenClawManagedFailureCode(payload.failureCode)
+    || !/^sha256:[0-9a-f]{64}$/.test(
     String(expectedRuntimeProvenanceHash || ''),
   ) || !verifyOpenClawModelRuntimeProvenance(
     payload.openClawManagedRuntimeProvenance,
@@ -469,13 +481,15 @@ export function verifyOpenClawManagedFailureEvidence(evidence, {
       Object.keys(evidence).length === (payload.version === 5 ? 19 : 18)
       && payload.kind === 'OpenClawManagedCodexFailureUsageEvidence'
       && payload.status === 'openclaw_managed_codex_execution_failed'
-      && payload.failureCode === failureCode
+      && payload.failureCode === expectedFailureCode
       && Array.isArray(entries) && entries.length > 0
       && payload.modelAttemptCount === entries.length
       && Array.isArray(attemptTrace)
       && attemptTrace.length === entries.length
       && payload.attemptTraceHash === modelAttemptTraceHash(attemptTrace)
       && JSON.stringify(projectedEntries) === JSON.stringify(entries)
+      && (payload.version !== 5
+        || JSON.stringify(attemptTrace) === JSON.stringify(entries))
       && entries.some((entry) => entry.usageCompleteness === 'unknown_invalid')
       && entries.every((entry, index) => (
         validManagedIncompleteAttemptUsageEntry(entry, index)
@@ -515,13 +529,15 @@ export function verifyOpenClawManagedFailureEvidence(evidence, {
       Object.keys(evidence).length === (payload.version === 5 ? 19 : 18)
       && payload.kind === 'OpenClawManagedCodexFailureUsageEvidence'
       && payload.status === 'openclaw_managed_codex_execution_failed'
-      && payload.failureCode === failureCode
+      && payload.failureCode === expectedFailureCode
       && Array.isArray(entries) && entries.length > 0
       && payload.modelAttemptCount === entries.length
       && Array.isArray(attemptTrace)
       && attemptTrace.length === entries.length
       && payload.attemptTraceHash === modelAttemptTraceHash(attemptTrace)
       && JSON.stringify(projectedEntries) === JSON.stringify(entries)
+      && (payload.version !== 5
+        || JSON.stringify(attemptTrace) === JSON.stringify(entries))
       && entries.every((entry, index) => validManagedAttemptUsageEntry(entry, index)
         && entry.model === model
         && entry.authProfileIdentityHash === expectedAuthProfileIdentityHash)
@@ -552,7 +568,7 @@ export function verifyOpenClawManagedFailureEvidence(evidence, {
     && payload.version === 1
     && payload.kind === 'OpenClawManagedCodexFailureUsageEvidence'
     && payload.status === 'openclaw_managed_codex_execution_failed'
-    && payload.failureCode === failureCode
+    && payload.failureCode === expectedFailureCode
     && Array.isArray(entries) && entries.length > 0
     && payload.modelAttemptCount === entries.length
     && /^sha256:[0-9a-f]{64}$/.test(String(payload.attemptTraceHash || ''))

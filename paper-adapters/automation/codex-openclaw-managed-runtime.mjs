@@ -12,6 +12,8 @@ import {
 } from './codex-openclaw-managed-execution-evidence.mjs';
 import {
   buildOpenClawManagedFailureExecutionBinding,
+  OPENCLAW_MANAGED_INVOCATION_ID_ENV,
+  OPENCLAW_MANAGED_PRINCIPAL_ID_ENV,
 } from './codex-openclaw-managed-failure-execution-binding.mjs';
 import {
   isCodexAvailabilityCanary,
@@ -84,6 +86,14 @@ function bindManagedFailureExecution(error, failureExecutionBinding) {
   }
 }
 
+function managedFailureExecutionBindingRequested(environment) {
+  return Boolean(
+    environment?.[OPENCLAW_MANAGED_INVOCATION_ID_ENV]
+      || environment?.[OPENCLAW_MANAGED_PRINCIPAL_ID_ENV]
+      || environment?.HEPTA_AUTOMATION_ROLE,
+  );
+}
+
 export async function executeCodexOpenClawManaged({
   args,
   stdin,
@@ -105,18 +115,47 @@ export async function executeCodexOpenClawManaged({
     throw runtimeError('codex_openclaw_managed_prompt_required');
   }
   if (isCodexAvailabilityCanary(originalPrompt, execution.sandbox)) {
-    const managed = await callManagedModel({
-      configuration,
-      model,
-      prompt: originalPrompt,
-      timeoutMs,
-      signal,
-      modelRuntimeLoader,
-    });
+    let failureExecutionBinding = null;
+    if (managedFailureExecutionBindingRequested(environment)) {
+      const executionMetadata = parseOpenClawManagedExecutionMetadata(
+        originalPrompt,
+        execution.sandbox,
+      );
+      const snapshot = buildManagedWorkspaceSnapshot({
+        workspace: execution.workspace,
+        maximumContextBytes: configuration.maximumContextBytes,
+        maximumFileCount: configuration.maximumFileCount,
+      });
+      failureExecutionBinding = buildOpenClawManagedFailureExecutionBinding({
+        environment,
+        originalPrompt,
+        execution,
+        executionMetadata,
+        configuration,
+        snapshot,
+      });
+    }
+    let managed;
+    try {
+      managed = await callManagedModel({
+        configuration,
+        model,
+        prompt: originalPrompt,
+        timeoutMs,
+        signal,
+        maximumAttempts: 1,
+        modelRuntimeLoader,
+      });
+    } catch (error) {
+      throw bindManagedFailureExecution(error, failureExecutionBinding);
+    }
     if (!/^HEPTA_CODEX_CANARY_RESPONSE:-?\d+$/.test(managed.text)) {
-      throw failureWithCompletedManagedUsage(
-        runtimeError('codex_openclaw_managed_canary_response_invalid'),
-        managed,
+      throw bindManagedFailureExecution(
+        failureWithCompletedManagedUsage(
+          runtimeError('codex_openclaw_managed_canary_response_invalid'),
+          managed,
+        ),
+        failureExecutionBinding,
       );
     }
     return Object.freeze({ stdout: `${managed.text}\n`, changedPaths: Object.freeze([]) });

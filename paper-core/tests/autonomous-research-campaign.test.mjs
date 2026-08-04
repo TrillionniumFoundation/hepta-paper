@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
@@ -15,48 +14,25 @@ import { createAutonomousResearchQualificationStateRepository } from '../../pape
 import { materializeAutonomousResearchWorkspace } from '../../paper-adapters/automation/autonomous-research-workspace-materializer.mjs';
 import { preflightAutonomousEmpiricalRuntimes } from '../../paper-adapters/automation/autonomous-empirical-runtime-preflight.mjs';
 import { AUTOMATION_RUNTIME_IMAGES } from '../../paper-adapters/automation/runtime-image-registry.mjs';
-import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
-import { createSqliteCampaignStore } from '../../paper-adapters/persistence/sqlite-campaign-store.mjs';
-import { createSystemClock } from '../../paper-adapters/runtime/system-clock.mjs';
-import { createSystemScheduler } from '../../paper-adapters/runtime/system-scheduler.mjs';
-import { createRandomIdGenerator } from '../../paper-adapters/runtime/random-id-generator.mjs';
 import {
   MANUSCRIPT_RELEASE_PROOF_FIELDS,
 } from '../../paper-domain/automation/full-research-release-qualification-inspection.mjs';
 import {
   createAutonomousResearchReleaseBinding,
 } from '../../paper-domain/automation/autonomous-research-release-binding-contract.mjs';
-import {
-  createFormalMutationFenceTracker,
-} from './support/formal-mutation-fence-tracker.mjs';
 import { buildPaperCampaignPlan } from '../../paper-domain/automation/campaign-plan.mjs';
 import { readEmpiricalClaimUniverse } from '../../paper-adapters/research-verify/empirical-claim-universe-reader.mjs';
 import { renderAutonomousEmpiricalClaimStatement } from '../../paper-domain/automation/autonomous-empirical-claim-lineage-contract.mjs';
 import {
   authorizedDatasetMount,
+  fakeExecutor,
   machineDispatchOptions,
   qualifiedGoldenContext,
+  runtime,
+  testWorkspace,
 } from './support/autonomous-research-campaign-test-builders.mjs';
 
 const H = (label) => hashRecord('AutonomousCampaignTestHash', { label });
-
-function fakeAgentExecutionReceipt(detail = {}, {
-  status = 'agent_execution_completed',
-} = {}) {
-  const payload = {
-    ...detail,
-    version: 1,
-    kind: 'AgentExecutionReceipt',
-    executorId: 'autonomous-research-campaign-fixture',
-    status,
-    externalModelInvocationPerformed: false,
-    externalActionPerformed: false,
-  };
-  return Object.freeze({
-    ...payload,
-    agentExecutionReceiptHash: hashRecord('AgentExecutionReceipt', payload),
-  });
-}
 
 function empiricalRuntimeCapabilityInspection({ wrongDigestLanguage = null } = {}) {
   return preflightAutonomousEmpiricalRuntimes({
@@ -201,82 +177,6 @@ function trustedDatasetAuthorityReceipt(mount) {
     operatorDatasetHarnessAuthorityReceiptHash:
       hashRecord('OperatorDatasetHarnessAuthorityReceipt', payload),
   });
-}
-
-function testWorkspace(t) {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-autonomous-campaign-'));
-  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
-  const assetRoot = path.join(base, 'assets');
-  const runtimeRoot = path.join(base, 'runtime');
-  fs.mkdirSync(assetRoot);
-  fs.mkdirSync(runtimeRoot);
-  const clock = createSystemClock();
-  const store = createDefaultPaperStore({ root: assetRoot, runtimeRoot });
-  t.after(() => store.close?.());
-  return {
-    runtimeRoot,
-    clock,
-    campaignStore: createSqliteCampaignStore({ store, clock }),
-  };
-}
-
-function fakeExecutor({
-  failWriterOnce = false,
-  forbidden = false,
-  assertFormalMutationFences = false,
-} = {}) {
-  const calls = [];
-  let writerFailed = false;
-  const formalMutationFence = assertFormalMutationFences
-    ? createFormalMutationFenceTracker() : null;
-  return {
-    calls,
-    executor: {
-      async execute({ node, allNodes }) {
-        if (forbidden) throw new Error('completed_campaign_reexecuted');
-        calls.push(node.kind);
-        if (failWriterOnce && node.kind === 'writer' && !writerFailed) {
-          writerFailed = true;
-          const error = new Error('transient_fake_author_failure');
-          error.retryable = true;
-          error.receipt = fakeAgentExecutionReceipt({
-            nodeKind: node.kind,
-            failureCode: error.message,
-          }, { status: 'agent_execution_failed' });
-          throw error;
-        }
-        formalMutationFence?.beforeExecute({ node, allNodes });
-        return fakeAgentExecutionReceipt({
-          nodeKind: node.kind,
-          ...(formalMutationFence?.resultFor(node) || {}),
-          ...(node.kind === 'convergence' ? {
-            qualityGates: [],
-            thresholds: {},
-          } : {}),
-          ...(/^(?:revision-)?referee-/.test(node.kind)
-            ? {
-              reviewerId: `independent-review:test:${node.kind}`,
-              childSessionId: `independent-session:${node.kind}`,
-              reviewHash: H(node.nodeId),
-              manuscriptHash: H(`manuscript:${node.roundIndex}`),
-              verdict: 'accept',
-              score: 1,
-              criticalFindingCount: 0,
-            } : {}),
-        });
-      },
-    },
-  };
-}
-
-function runtime(clock) {
-  return {
-    concurrency: 1,
-    pollMs: 1,
-    clock,
-    scheduler: createSystemScheduler(),
-    idGenerator: createRandomIdGenerator(),
-  };
 }
 
 function releaseAuthority(campaignId, paperId, preparationReport) {
@@ -1477,4 +1377,124 @@ test('prepared campaign enqueue is idempotent and binds the persisted plan ident
   assert.equal(repeated.status, 'autonomous_research_campaign_already_enqueued');
   assert.equal(repeated.created, false);
   assert.equal(repeated.campaign.campaignId, first.campaign.campaignId);
+});
+
+test('create-only launch rejects both pre-existing and concurrently won campaigns', async (t) => {
+  const fixture = testWorkspace(t);
+  await assert.rejects(() => executeAutonomousResearchCampaign({
+    action: 'launch',
+    campaignId: 'autonomous-research:exclusive-invalid-flag',
+    campaignStore: fixture.campaignStore,
+    requireCampaignAbsentAtLaunch: 'true',
+  }), /autonomous_research_require_campaign_absent_at_launch_invalid/);
+  await assert.rejects(() => executeAutonomousResearchCampaign({
+    action: 'status',
+    campaignId: 'autonomous-research:exclusive-invalid-action',
+    campaignStore: fixture.campaignStore,
+    requireCampaignAbsentAtLaunch: true,
+  }), /autonomous_research_require_campaign_absent_at_launch_requires_launch_action/);
+  await assert.rejects(() => executeAutonomousResearchCampaign({
+    action: 'launch',
+    campaignId: 'autonomous-research:exclusive-missing-store-operation',
+    campaignStore: {
+      createCampaign: (...args) => fixture.campaignStore.createCampaign(...args),
+      getCampaign: (...args) => fixture.campaignStore.getCampaign(...args),
+      listNodes: (...args) => fixture.campaignStore.listNodes(...args),
+      resumeCampaign: (...args) => fixture.campaignStore.resumeCampaign(...args),
+    },
+    requireCampaignAbsentAtLaunch: true,
+  }), /autonomous_research_campaign_exclusive_create_store_required/);
+  const existingDataset = authorizedDatasetMount(
+    fixture.runtimeRoot, 'exclusive-existing-dataset');
+  const existingPreparation = await preparation('exclusive-existing-paper', [existingDataset]);
+  const existingRepository = createAutonomousResearchWorkspaceRepository({
+    runtimeRoot: fixture.runtimeRoot,
+    paperId: existingPreparation.proposal.paperId,
+  });
+  const existingMaterialization = materializeAutonomousResearchWorkspace({
+    repository: existingRepository,
+    loopPreparation: existingPreparation,
+    datasetMounts: [existingDataset],
+  });
+  const existingCampaignId = 'autonomous-research:exclusive-existing-paper';
+  fixture.campaignStore.createCampaign(buildAutonomousResearchCampaignPlan({
+    loopPreparation: existingPreparation,
+    materialization: existingMaterialization,
+    datasetMounts: [existingDataset],
+    campaignId: existingCampaignId,
+  }));
+  await assert.rejects(() => executeAutonomousResearchCampaign({
+    action: 'launch',
+    campaignId: existingCampaignId,
+    campaignStore: fixture.campaignStore,
+    requireCampaignAbsentAtLaunch: true,
+  }), /autonomous_research_campaign_already_exists_at_launch/);
+  const raceDataset = authorizedDatasetMount(fixture.runtimeRoot, 'exclusive-race-dataset');
+  const racePreparation = await preparation('exclusive-race-paper', [raceDataset]);
+  const raceRepository = createAutonomousResearchWorkspaceRepository({
+    runtimeRoot: fixture.runtimeRoot,
+    paperId: racePreparation.proposal.paperId,
+  });
+  const raceMaterialization = materializeAutonomousResearchWorkspace({
+    repository: raceRepository,
+    loopPreparation: racePreparation,
+    datasetMounts: [raceDataset],
+  });
+  const raceCampaignId = 'autonomous-research:exclusive-race-paper';
+  let exclusiveCreateCalls = 0;
+  const raceStore = {
+    createCampaign: (...args) => fixture.campaignStore.createCampaign(...args),
+    createCampaignExclusive(plan) {
+      exclusiveCreateCalls += 1;
+      fixture.campaignStore.createCampaign(plan);
+      return fixture.campaignStore.createCampaignExclusive(plan);
+    },
+    getCampaign: (...args) => fixture.campaignStore.getCampaign(...args),
+    listNodes: (...args) => fixture.campaignStore.listNodes(...args),
+    resumeCampaign: (...args) => fixture.campaignStore.resumeCampaign(...args),
+  };
+  const executor = fakeExecutor();
+  const creationGateCalls = [];
+  const creationGate = async (request) => {
+    creationGateCalls.push(`ready:${request.action}:${request.campaignId}`);
+  };
+  creationGate.assertCurrent = (request) => {
+    creationGateCalls.push(`current:${request.action}:${request.campaignId}`);
+  };
+  const launchOptions = {
+    action: 'launch',
+    readinessReport: racePreparation,
+    campaignId: raceCampaignId,
+    datasetMounts: [raceDataset],
+    requireCampaignAbsentAtLaunch: true,
+    preparedMaterialization: raceMaterialization,
+    executor: executor.executor,
+    runtime: {
+      ...runtime(fixture.clock),
+      assertExternalSideEffectReady: creationGate,
+    },
+  };
+  await assert.rejects(() => executeAutonomousResearchCampaign({
+    ...launchOptions, campaignStore: raceStore,
+  }), /autonomous_research_campaign_already_exists_at_launch/);
+  assert.equal(exclusiveCreateCalls, 1);
+  assert.equal(executor.calls.length, 0);
+  assert.deepEqual(creationGateCalls, [
+    `ready:autonomous_research_campaign_exclusive_create:${raceCampaignId}`,
+    `current:autonomous_research_campaign_exclusive_create:${raceCampaignId}`,
+  ]);
+  assert.equal(fixture.campaignStore.getCampaign(raceCampaignId).campaignId, raceCampaignId);
+  const throwingStore = (error) => ({
+    ...raceStore,
+    getCampaign: () => null,
+    createCampaignExclusive() { throw error; },
+  });
+  await assert.rejects(() => executeAutonomousResearchCampaign({
+    ...launchOptions,
+    campaignStore: throwingStore({ toString: () => 'campaign_exclusive_create_conflict:x' }),
+  }), /autonomous_research_campaign_already_exists_at_launch/);
+  await assert.rejects(() => executeAutonomousResearchCampaign({
+    ...launchOptions,
+    campaignStore: throwingStore(new Error('exclusive_create_unexpected_failure')),
+  }), /exclusive_create_unexpected_failure/);
 });

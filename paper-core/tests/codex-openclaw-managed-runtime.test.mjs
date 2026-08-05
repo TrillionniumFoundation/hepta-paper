@@ -644,6 +644,15 @@ test('managed response normalizes bounded blocked-status and reported-check alia
     status: 'blocked',
     checksRun: [{ check: 'inspect', status: 'passed', detail: 'unexpected' }],
   }), /codex_openclaw_managed_structured_output_invalid/);
+  assert.throws(() => validateStructuredResponse({
+    ...parsed,
+    status: 'completed',
+  }), /codex_openclaw_managed_structured_output_invalid/);
+  assert.throws(() => validateStructuredResponse({
+    ...parsed,
+    status: 'blocked',
+    blockers: [],
+  }), /codex_openclaw_managed_structured_output_invalid/);
 });
 
 test('managed snapshot excludes credential-like paths and fails when required input is omitted', () => {

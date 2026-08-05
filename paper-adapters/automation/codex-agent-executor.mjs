@@ -358,6 +358,7 @@ export function createCodexAgentExecutor({
         ? Object.freeze(Object.fromEntries(Object.entries(parsedStructuredOutput)
           .filter(([key]) => key !== OPENCLAW_MANAGED_EXECUTION_EVIDENCE_FIELD)))
         : null;
+      if (managedRuntimeExpected && managedOutputAuthorized && structuredOutput?.status === 'blocked') blockers.push('codex_openclaw_managed_model_reported_blocked');
       const verifiedSessionId = managedExecutionEvidenceVerified
         ? managedExecutionEvidence.completionInvocationId
         : localSessionId;
@@ -481,7 +482,7 @@ export function createCodexAgentExecutor({
           || blockers.join(',') || payload.error || `agent exited ${payload.exitCode}`,
         retryable: !cancelled && !blockers.includes('read_only_agent_modified_workspace')
           && parsedManagedRuntimeFailureProtocol?.valid !== false
-          && !blockers.includes('codex_openclaw_managed_failure_usage_evidence_invalid')
+          && !blockers.includes('codex_openclaw_managed_failure_usage_evidence_invalid') && !blockers.includes('codex_openclaw_managed_model_reported_blocked')
           && managedRuntimeFailureRetryable(
             managedRuntimeFailureCode,
             managedFailureEvidenceVerified ? managedFailureEvidence : null,

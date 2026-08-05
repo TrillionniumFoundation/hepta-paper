@@ -648,6 +648,64 @@ test('managed Codex receipts bind both session fields to the verified explicit-p
   assert.match(managedPrompt, /Return the required structured JSON directly\./);
   assert.doesNotMatch(managedPrompt, /Prefer editing files with tools/);
 
+  const modelReportedBlockedOutput = {
+    status: 'blocked',
+    summary: 'cannot complete the bounded review',
+    checksRun: [],
+    blockers: ['missing bounded evidence'],
+  };
+  const modelReportedBlockedExecutor = createCodexAgentExecutor({
+    codexBinary: binary,
+    codexHome,
+    model: 'fixture-managed-codex',
+    principalId: preflight.effectivePrincipalId,
+    formalReviewerCapabilityReceipt: preflight.capabilityReceipt,
+    spawnSyncImpl,
+    spawnImpl: () => managedCodexChild({
+      runtimeProvenance: openClawRuntime.runtimeProvenance,
+      configurationHash:
+        preflight.capabilityReceipt.openClawManagedConfigurationHash,
+      authProfileIdentityHash:
+        preflight.capabilityReceipt.openClawManagedAuthProfileIdentityHash,
+      authSourceIdentityHash:
+        preflight.capabilityReceipt.openClawManagedAuthSourceIdentityHash,
+      structuredOutput: modelReportedBlockedOutput,
+    }),
+    timeoutMs: 5000,
+  });
+  await assert.rejects(
+    () => modelReportedBlockedExecutor.execute({
+      role: 'formal-review',
+      workspacePath: root,
+      instructions: 'Report a bounded business blocker.',
+      sandbox: 'read-only',
+      outputTokenBudget: 8192,
+    }),
+    (error) => {
+      assert.equal(
+        error.message,
+        'codex_openclaw_managed_model_reported_blocked',
+      );
+      assert.equal(error.retryable, false);
+      assert.equal(error.receipt.status, 'agent_execution_failed');
+      assert.deepEqual(error.receipt.blockers, [
+        'codex_openclaw_managed_model_reported_blocked',
+      ]);
+      assert.deepEqual(
+        error.receipt.structuredOutput,
+        modelReportedBlockedOutput,
+      );
+      assert.equal(error.receipt.usage.totalTokens, 20);
+      assert.match(
+        error.receipt.openClawManagedCodexExecutionHash,
+        /^sha256:[a-f0-9]{64}$/,
+      );
+      assert.equal(error.receipt.externalModelInvocationPerformed, true);
+      assert.equal(error.receipt.externalSideEffectPerformed, false);
+      return true;
+    },
+  );
+
   let postflightVersionCalls = 0;
   let postflightModelCalls = 0;
   const postflightSensitiveStructuredOutput = {

@@ -50,6 +50,9 @@ export function validateStructuredResponse(parsed) {
   if (!['completed', 'blocked'].includes(status)) {
     throw runtimeError(INVALID_OUTPUT, { retryable: true });
   }
+  if ((status === 'completed') !== (blockers.length === 0)) {
+    throw runtimeError(INVALID_OUTPUT, { retryable: true });
+  }
   const reportedChecks = validateReportedChecks(
     parsed.checksRun ?? parsed.checks,
   );

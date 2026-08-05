@@ -25,6 +25,9 @@ import {
   verifyExplicitProfileAvailable,
 } from './codex-openclaw-managed-model-support.mjs';
 import {
+  validateStructuredResponse,
+} from './codex-openclaw-managed-response-policy.mjs';
+import {
   runtimeError,
   safeEnvironment,
   sha256,
@@ -37,7 +40,6 @@ import {
   parseExecArguments,
   parseManagedStructuredOutput,
   parseOpenClawManagedExecutionMetadata,
-  validateStructuredResponse,
   verifyManagedConfigurationUnchanged,
   verifyManagedWorkspaceSnapshot,
   verifyWorkspaceSeparatedFromManagedState,

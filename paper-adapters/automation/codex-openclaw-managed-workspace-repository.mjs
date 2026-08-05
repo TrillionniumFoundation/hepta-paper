@@ -521,7 +521,7 @@ export function managedPrompt({
     sandbox === 'read-only'
       ? 'This is read-only. The top-level edits field MUST be an empty array.'
       : 'For every requested file change, include one top-level edits entry {"path":"relative/path","content":"complete replacement file content"}. Use only paths inside the workspace and include each path at most once.',
-    'Return exactly one valid JSON object and no markdown. In addition to role-specific fields, include top-level status ("completed" or "blocked"), summary (string), edits (array), checksRun (array of strings), and blockers (array of strings). Never claim that tools or checks were executed; checksRun may list only static inspections performed from the supplied snapshot.',
+    'Return exactly one valid JSON object and no markdown. In addition to role-specific fields, include top-level status (exactly "completed" when blockers is empty, otherwise exactly "blocked"), summary (string), edits (array), checksRun (a flat array of strings only, never objects), and blockers (a flat array of strings only). Never return a status such as "completed_with_blockers". Never claim that tools or checks were executed; checksRun may list only static inspections performed from the supplied snapshot.',
     'Encode literal backslashes correctly inside JSON strings, especially in TeX, Lean, R, Python, and paths.',
     `Workspace snapshot manifest hash: ${snapshot.snapshotHash}. File count: ${snapshot.fileCount}. Source bytes: ${snapshot.byteCount}.`,
     `Original task:\n${String(originalPrompt || '')}`,
@@ -713,30 +713,4 @@ export function applyManagedEdits({
     fs.rmSync(stagingRoot, { recursive: true, force: true });
   }
   return Object.freeze([...new Set(changedPaths)].sort());
-}
-
-function validateStringArray(value, code) {
-  if (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string')) {
-    throw runtimeError(code);
-  }
-  return Object.freeze(value.map((entry) => entry.trim()));
-}
-
-export function validateStructuredResponse(parsed) {
-  if (!parsed || !['completed', 'blocked'].includes(parsed.status)
-    || typeof parsed.summary !== 'string'
-    || !Array.isArray(parsed.edits)) {
-    throw runtimeError('codex_openclaw_managed_structured_output_invalid', {
-      retryable: true,
-    });
-  }
-  const blockers = validateStringArray(
-    parsed.blockers,
-    'codex_openclaw_managed_structured_output_invalid',
-  ).filter(Boolean);
-  const reportedChecks = validateStringArray(
-    parsed.checksRun ?? parsed.checks,
-    'codex_openclaw_managed_structured_output_invalid',
-  );
-  return Object.freeze({ blockers, reportedChecks });
 }

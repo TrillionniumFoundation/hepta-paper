@@ -24,6 +24,12 @@ import {
   openClawModelRuntimeProvenance,
   verifyOpenClawModelRuntimeProvenance,
 } from '../../paper-adapters/automation/codex-openclaw-managed-configuration.mjs';
+import {
+  normalizeStructuredResponse,
+} from '../../paper-adapters/automation/codex-openclaw-managed-model-call.mjs';
+import {
+  validateStructuredResponse,
+} from '../../paper-adapters/automation/codex-openclaw-managed-response-policy.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
   AUTH_PROFILE_ID,
@@ -597,6 +603,47 @@ test('structured parser accepts only an exact JSON object', () => {
   );
   assert.equal(parseManagedStructuredOutput('[]'), null);
   assert.equal(parseManagedStructuredOutput('not json'), null);
+});
+
+test('managed response normalizes bounded blocked-status and reported-check aliases', () => {
+  const parsed = {
+    status: 'completed_with_blockers',
+    summary: 'bounded revision completed with unresolved checks',
+    edits: [],
+    checksRun: [
+      { check: 'inspect manuscript', status: 'passed', surfaceCount: 3 },
+      { check: 'compile manuscript', status: 'not_run', reason: 'tool-free runtime' },
+      {
+        check: 'clear theorem blocker',
+        status: 'passed',
+        clearedBlocker: 'theorem_evidence_manifest_missing',
+      },
+    ],
+    blockers: ['compile_not_run'],
+  };
+  const validation = validateStructuredResponse(parsed);
+  assert.deepEqual(validation, {
+    status: 'blocked',
+    blockers: ['compile_not_run'],
+    reportedChecks: [
+      'inspect manuscript [passed]',
+      'compile manuscript [not_run]',
+      'clear theorem blocker [passed]',
+    ],
+  });
+  assert.equal(
+    normalizeStructuredResponse(parsed, validation, {}).status,
+    'blocked',
+  );
+  assert.throws(() => validateStructuredResponse({
+    ...parsed,
+    blockers: [],
+  }), /codex_openclaw_managed_structured_output_invalid/);
+  assert.throws(() => validateStructuredResponse({
+    ...parsed,
+    status: 'blocked',
+    checksRun: [{ check: 'inspect', status: 'passed', detail: 'unexpected' }],
+  }), /codex_openclaw_managed_structured_output_invalid/);
 });
 
 test('managed snapshot excludes credential-like paths and fails when required input is omitted', () => {

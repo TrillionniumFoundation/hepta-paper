@@ -488,7 +488,7 @@ export function normalizeStructuredResponse(parsed, validation, managedAuth) {
   delete roleOutput[OPENCLAW_MANAGED_EXECUTION_EVIDENCE_FIELD];
   return {
     ...roleOutput,
-    status: parsed.status,
+    status: validation.status,
     checksRun: [],
     blockers: validation.blockers,
     [OPENCLAW_MANAGED_EXECUTION_EVIDENCE_FIELD]: managedAuth,

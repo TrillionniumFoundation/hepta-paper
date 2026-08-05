@@ -8,6 +8,9 @@ import {
   preflightAutonomousEmpiricalRuntimes,
 } from '../../paper-adapters/automation/autonomous-empirical-runtime-preflight.mjs';
 import {
+  preflightLocalOllamaResearchAgent,
+} from '../../paper-adapters/automation/ollama-local-agent-preflight.mjs';
+import {
   inspectAutonomousResearchAuthorIdentity,
   readAutonomousResearchAuthorIdentityConfiguration,
 } from '../../paper-adapters/automation/autonomous-research-author-identity-configuration.mjs';
@@ -302,8 +305,10 @@ export function inspectAutonomousResearchRuntimePrincipals({
   preflightReviewer = preflightCodexFormalReviewer,
   preflightEmpiricalRuntime = preflightAutonomousEmpiricalRuntimes,
   preflightReviewerPrincipalPool = defaultPreflightReviewerPrincipalPool,
+  preflightLocalOllamaAgent = preflightLocalOllamaResearchAgent,
   spawnSyncImpl = undefined,
   clock = { now: () => new Date() },
+  localOnly = false,
 } = {}) {
   const blockers = [];
   let author = null;
@@ -318,74 +323,103 @@ export function inspectAutonomousResearchRuntimePrincipals({
   } catch (error) {
     blockers.push(`autonomous_empirical_runtime_preflight_failed:${errorCode(error)}`);
   }
-  try {
-    author = preflightAuthor({
-      ...authorConfiguration,
-      environment,
-      ...(spawnSyncImpl ? { spawnSyncImpl } : {}),
-    });
-  } catch (error) {
-    blockers.push(`autonomous_research_author_preflight_failed:${errorCode(error)}`);
-  }
-  try {
-    authorIdentityAttestation = inspectAutonomousResearchAuthorRuntimeIdentity({
-      environment,
-      author,
-      clock,
-    });
-  } catch (error) {
-    const code = errorCode(error);
-    blockers.push(code === 'autonomous_research_author_identity_configuration_pin_invalid'
-      ? code
-      : `autonomous_research_author_identity_preflight_failed:${code}`);
-  }
-  const reviewerPrincipalPoolConfigPath = String(
-    environment.HEPTA_REVIEWER_PRINCIPAL_POOL_CONFIG || '',
-  ).trim();
-  if (author && reviewerPrincipalPoolConfigPath) {
+  const localOllama = localOnly === true
+    && authorConfiguration?.provider === 'ollama'
+    && reviewerConfiguration?.provider === 'ollama';
+  if (localOllama) {
     try {
-      reviewerPrincipalPoolInspection = preflightReviewerPrincipalPool({
-        configPath: reviewerPrincipalPoolConfigPath,
-        authorProvider: authorConfiguration.provider,
-        authorCodexHome: author.codexHome || authorConfiguration.codexHome,
+      author = preflightLocalOllamaAgent({
+        role: 'research-author',
+        model: authorConfiguration.model,
         environment,
-        preflightReviewer,
-        authorIdentityAttestation,
-        clock,
         ...(spawnSyncImpl ? { spawnSyncImpl } : {}),
       });
-      const primaryReviewer = reviewerPrincipalPoolInspection.entries.find((entry) => (
-        entry.descriptor.roles.includes('formal-review')
-      ));
-      reviewer = primaryReviewer ? Object.freeze({
-        ...primaryReviewer.preflight,
-        effectivePrincipalId: primaryReviewer.descriptor.principalId,
-      }) : null;
-      if (reviewerPrincipalPoolInspection.pool.reviewerPrincipalCount < refereeCount
-        || reviewerPrincipalPoolInspection.pool.reviewerTrustDomainCount < refereeCount) {
-        blockers.push(
-          'autonomous_research_reviewer_pool_referee_coverage_insufficient',
-        );
-      }
     } catch (error) {
-      blockers.push(`autonomous_research_reviewer_pool_preflight_failed:${errorCode(error)}`);
+      blockers.push(`autonomous_research_author_preflight_failed:${errorCode(error)}`);
     }
-  } else if (author) {
     try {
-      reviewer = preflightReviewer({
-        ...reviewerConfiguration,
-        authorProvider: authorConfiguration.provider,
-        authorCodexHome: author.codexHome || authorConfiguration.codexHome,
+      reviewer = preflightLocalOllamaAgent({
+        role: 'formal-reviewer',
+        model: reviewerConfiguration.model,
         environment,
         ...(spawnSyncImpl ? { spawnSyncImpl } : {}),
       });
-      reviewerPrincipalPoolInspection =
-        buildAutonomousResearchReviewerSessionPrincipalPool({ author, reviewer });
     } catch (error) {
       blockers.push(`autonomous_research_reviewer_preflight_failed:${errorCode(error)}`);
     }
+    if (author && reviewer && author.effectivePrincipalId === reviewer.effectivePrincipalId) {
+      blockers.push('autonomous_research_local_ollama_principals_not_distinct');
+    }
   } else {
-    blockers.push('autonomous_research_reviewer_preflight_requires_author');
+    try {
+      author = preflightAuthor({
+        ...authorConfiguration,
+        environment,
+        ...(spawnSyncImpl ? { spawnSyncImpl } : {}),
+      });
+    } catch (error) {
+      blockers.push(`autonomous_research_author_preflight_failed:${errorCode(error)}`);
+    }
+    try {
+      authorIdentityAttestation = inspectAutonomousResearchAuthorRuntimeIdentity({
+        environment,
+        author,
+        clock,
+      });
+    } catch (error) {
+      const code = errorCode(error);
+      blockers.push(code === 'autonomous_research_author_identity_configuration_pin_invalid'
+        ? code
+        : `autonomous_research_author_identity_preflight_failed:${code}`);
+    }
+    const reviewerPrincipalPoolConfigPath = String(
+      environment.HEPTA_REVIEWER_PRINCIPAL_POOL_CONFIG || '',
+    ).trim();
+    if (author && reviewerPrincipalPoolConfigPath) {
+      try {
+        reviewerPrincipalPoolInspection = preflightReviewerPrincipalPool({
+          configPath: reviewerPrincipalPoolConfigPath,
+          authorProvider: authorConfiguration.provider,
+          authorCodexHome: author.codexHome || authorConfiguration.codexHome,
+          environment,
+          preflightReviewer,
+          authorIdentityAttestation,
+          clock,
+          ...(spawnSyncImpl ? { spawnSyncImpl } : {}),
+        });
+        const primaryReviewer = reviewerPrincipalPoolInspection.entries.find((entry) => (
+          entry.descriptor.roles.includes('formal-review')
+        ));
+        reviewer = primaryReviewer ? Object.freeze({
+          ...primaryReviewer.preflight,
+          effectivePrincipalId: primaryReviewer.descriptor.principalId,
+        }) : null;
+        if (reviewerPrincipalPoolInspection.pool.reviewerPrincipalCount < refereeCount
+          || reviewerPrincipalPoolInspection.pool.reviewerTrustDomainCount < refereeCount) {
+          blockers.push(
+            'autonomous_research_reviewer_pool_referee_coverage_insufficient',
+          );
+        }
+      } catch (error) {
+        blockers.push(`autonomous_research_reviewer_pool_preflight_failed:${errorCode(error)}`);
+      }
+    } else if (author) {
+      try {
+        reviewer = preflightReviewer({
+          ...reviewerConfiguration,
+          authorProvider: authorConfiguration.provider,
+          authorCodexHome: author.codexHome || authorConfiguration.codexHome,
+          environment,
+          ...(spawnSyncImpl ? { spawnSyncImpl } : {}),
+        });
+        reviewerPrincipalPoolInspection =
+          buildAutonomousResearchReviewerSessionPrincipalPool({ author, reviewer });
+      } catch (error) {
+        blockers.push(`autonomous_research_reviewer_preflight_failed:${errorCode(error)}`);
+      }
+    } else {
+      blockers.push('autonomous_research_reviewer_preflight_requires_author');
+    }
   }
   return Object.freeze({
     author,

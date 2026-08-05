@@ -1,5 +1,7 @@
 import path from 'node:path';
 import { createCodexAgentExecutor } from '../../paper-adapters/automation/codex-agent-executor.mjs';
+import { createOllamaStructuredAgentExecutor } from '../../paper-adapters/automation/ollama-structured-agent-executor.mjs';
+import { preflightLocalOllamaResearchAgent } from '../../paper-adapters/automation/ollama-local-agent-preflight.mjs';
 import { preflightCodexFormalReviewer } from '../../paper-adapters/automation/codex-formal-reviewer-preflight.mjs';
 import { createIsolatedAgentExecutor } from '../../paper-adapters/automation/isolated-agent-executor.mjs';
 
@@ -14,20 +16,51 @@ export function bootstrapFormalReviewAgentExecutor({
   codexHome = process.env.HEPTA_FORMAL_REVIEW_CODEX_HOME || null,
   authorProvider = null,
   authorCodexHome = null,
+  localOnly = false,
   runtimeRoot,
   workspaceRegistry,
   createCodexExecutor = createCodexAgentExecutor,
+  createOllamaExecutor = createOllamaStructuredAgentExecutor,
   createIsolatedExecutor = createIsolatedAgentExecutor,
   preflightCodexReviewer = preflightCodexFormalReviewer,
+  preflightOllamaReviewer = preflightLocalOllamaResearchAgent,
   spawnSyncImpl = undefined,
   environment = undefined,
 } = {}) {
   if (!authorAgentId) throw new Error('formal_review_author_principal_required');
-  if (!['codex', 'openclaw'].includes(provider)) throw new Error(`formal_review_provider_unsupported:${provider}`);
+  if (!['codex', 'openclaw', 'ollama'].includes(provider)
+    || (provider === 'ollama' && localOnly !== true)) {
+    throw new Error(`formal_review_provider_unsupported:${provider}`);
+  }
   if (provider === 'openclaw' && (!reviewerAgentId || reviewerAgentId === authorAgentId)) {
     throw new Error('formal_review_agent_principal_must_be_distinct');
   }
   if (!runtimeRoot) throw new Error('formal_review_agent_runtime_root_required');
+  if (provider === 'ollama') {
+    const preflight = preflightOllamaReviewer({
+      role: 'formal-reviewer',
+      model,
+      ...(environment ? { environment } : {}),
+      ...(spawnSyncImpl ? { spawnSyncImpl } : {}),
+    });
+    const effectiveReviewerPrincipal = preflight.effectivePrincipalId;
+    if (!effectiveReviewerPrincipal || effectiveReviewerPrincipal === authorAgentId) {
+      throw new Error('formal_review_agent_principal_must_be_distinct');
+    }
+    const delegate = createOllamaExecutor({
+      model: preflight.model,
+      ollamaHost: preflight.ollamaHost,
+      principalId: effectiveReviewerPrincipal,
+      maximumOutputTokens: 8192,
+    });
+    return createIsolatedExecutor({
+      delegate,
+      isolationRoot: path.join(runtimeRoot, 'automation-formal-review-workspaces'),
+      keepWorkspaces: false,
+      keepFailedWorkspaces: true,
+      workspaceRegistry,
+    });
+  }
   if (provider === 'openclaw') {
     if (!reviewerCapabilityProfilePath || !expectedReviewerCapabilityProfileHash) {
       throw new Error('formal_review_agent_capability_profile_required');

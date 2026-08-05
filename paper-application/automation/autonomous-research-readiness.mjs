@@ -92,6 +92,8 @@ export async function prepareAutonomousResearchLoop({
   machineIntake = null,
   machineIntakeAdmission = null,
   launchMode = AUTONOMOUS_RESEARCH_LAUNCH_MODES.GOLDEN_BOOTSTRAP,
+  localOnly = false,
+  localProviderRoleSeparation = false,
   directLocalRunCliProvenance = null,
   createdAt = null,
   assertExternalSideEffectReady = null,
@@ -106,6 +108,9 @@ export async function prepareAutonomousResearchLoop({
         { campaignId, paperId },
       ))) {
     throw new Error('autonomous_research_direct_local_run_cli_provenance_invalid');
+  }
+  if (localProviderRoleSeparation === true && localOnly !== true) {
+    throw new Error('autonomous_research_local_provider_role_separation_scope_invalid');
   }
   const productionProfileInputInspection =
     inspectAutonomousResearchProductionProfileInputs({
@@ -315,6 +320,8 @@ export async function prepareAutonomousResearchLoop({
     empiricalExecutionProfileSelection,
     runtimeImageReproducibilityInspection,
     launchMode,
+    localOnly,
+    localProviderRoleSeparation,
     observedAt: createdAt,
     campaignReleaseAuthority,
     fullResearchQualificationInspection: null,

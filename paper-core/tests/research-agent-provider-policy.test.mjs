@@ -58,6 +58,42 @@ test('research-grade campaigns reject silent OpenClaw or Ollama author fallback'
   }
 });
 
+test('research-grade Ollama is allowed only when every persisted plan is explicitly local-only', () => {
+  const localFormal = plan({
+    localOnly: true,
+    paperQualityRequirements: {
+      formalVerificationRequired: true,
+      empiricalVerificationRequired: true,
+      researchVerificationRequired: true,
+    },
+    researchVerificationRequired: true,
+    nodes: [{ kind: 'writer' }, { kind: 'formal-verify' }],
+  });
+  const policy = resolveCampaignAgentProviderPolicy({
+    requestedProvider: 'ollama',
+    plans: [localFormal],
+  });
+  assert.equal(policy.selectedProvider, 'ollama');
+  assert.equal(policy.allPlansLocalOnly, true);
+  assert.equal(policy.localProviderExceptionApplied, true);
+  assert.equal(policy.assuranceScope, 'explicit-local-only-ollama-research-author-v1');
+  assert.equal(verifyCampaignAgentProviderPolicy(policy, { plans: [localFormal] }), true);
+  const nonLocalFormal = plan({
+    paperQualityRequirements: localFormal.paperQualityRequirements,
+    researchVerificationRequired: true,
+    nodes: localFormal.nodes,
+  });
+  assert.throws(() => resolveCampaignAgentProviderPolicy({
+    requestedProvider: 'ollama',
+    plans: [localFormal, nonLocalFormal],
+  }), /research_grade_agent_provider_not_approved:ollama/);
+  assert.throws(() => resolveCampaignAgentProviderPolicy({
+    requestedProvider: 'openclaw',
+    plans: [localFormal],
+  }), /research_grade_agent_provider_not_approved:openclaw/);
+  assert.equal(verifyCampaignAgentProviderPolicy(policy, { plans: [nonLocalFormal] }), false);
+});
+
 test('draft-only campaigns preserve explicit provider selection', () => {
   const draft = plan();
   assert.equal(campaignRequiresResearchGradeAuthor([draft]), false);

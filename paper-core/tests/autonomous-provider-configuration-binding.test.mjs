@@ -225,6 +225,109 @@ test('autonomous provider surface accepts only Codex or auto for both principals
   }
 });
 
+test('local-only provider configuration binds explicit Ollama principals without weakening default verification', () => {
+  const options = {
+    'agent-provider': 'ollama',
+    model: 'fixture-local-author',
+    'formal-review-provider': 'ollama',
+    'formal-review-model': 'fixture-local-reviewer',
+  };
+  assert.throws(() => resolveAutonomousResearchProviderConfiguration({ options }),
+    /autonomous_research_research_author_provider_unsupported:ollama/);
+  const configuration = resolveAutonomousResearchProviderConfiguration({
+    options,
+    localOnly: true,
+  });
+  assert.deepEqual(configuration.researchAuthor, {
+    provider: 'ollama',
+    codexBinary: null,
+    codexHome: null,
+    model: 'fixture-local-author',
+  });
+  assert.deepEqual(configuration.formalReviewer, {
+    provider: 'ollama',
+    codexBinary: null,
+    codexHome: null,
+    model: 'fixture-local-reviewer',
+  });
+  assert.equal(verifyAutonomousResearchProviderConfiguration(configuration), false);
+  assert.equal(verifyAutonomousResearchProviderConfiguration(configuration, {
+    allowLocalOnlyOllama: true,
+  }), true);
+  assert.throws(() => requireAutonomousResearchProviderConfiguration(configuration),
+    /autonomous_research_provider_configuration_invalid/);
+  assert.equal(requireAutonomousResearchProviderConfiguration(configuration, {
+    allowLocalOnlyOllama: true,
+  }), configuration);
+  assert.throws(() => resolveAutonomousResearchProviderConfiguration({
+    localOnly: true,
+    options: {
+      ...options,
+      'formal-review-provider': 'codex',
+    },
+  }), /autonomous_research_local_ollama_principals_must_use_same_provider/);
+});
+
+test('local-only Ollama readiness probes local roles without projecting Codex identities or reviewer pools', async () => {
+  const configuration = resolveAutonomousResearchProviderConfiguration({
+    localOnly: true,
+    options: {
+      'agent-provider': 'ollama',
+      model: 'fixture-local-model',
+      'formal-review-provider': 'ollama',
+      'formal-review-model': 'fixture-local-model',
+    },
+  });
+  const calls = [];
+  const report = await composeAutonomousResearchReadiness({
+    paperId: 'local-ollama-readiness',
+    localOnly: true,
+    providerConfiguration: configuration,
+    expectedProviderConfigurationHash:
+      configuration.autonomousResearchProviderConfigurationHash,
+    preflightAuthor() { throw new Error('Codex author preflight must not run'); },
+    preflightReviewer() { throw new Error('Codex reviewer preflight must not run'); },
+    preflightLocalOllamaAgent({ role, model }) {
+      calls.push({ role, model });
+      return Object.freeze({
+        effectivePrincipalId: `ollama-local-${role}-fixture`,
+        model,
+        ollamaHost: 'http://127.0.0.1:11434',
+        capabilityReceipt: Object.freeze({
+          version: 1,
+          kind: 'LocalOllamaResearchAgentCapabilityReceipt',
+          status: 'local_ollama_research_agent_capability_ready',
+          localOnly: true,
+          provider: 'ollama',
+          role,
+          model,
+        }),
+      });
+    },
+    preflightEmpiricalRuntime() { throw new Error('fixture_runtime_unavailable'); },
+  });
+  assert.deepEqual(calls, [
+    { role: 'research-author', model: 'fixture-local-model' },
+    { role: 'formal-reviewer', model: 'fixture-local-model' },
+  ]);
+  assert.equal(report.loopPreparation.researchPrincipalPool, null);
+  assert.equal(report.loopPreparation.researchPrincipalPoolHash, null);
+  assert.equal(report.loopPreparation.principalSeparation.status,
+    'autonomous_research_principal_separation_blocked');
+  assert.equal(report.loopPreparation.qualificationEligibility.localOnly, true);
+  assert.equal(report.loopPreparation.qualificationEligibility
+    .localProviderRoleSeparation, true);
+  assert.equal(report.loopPreparation.qualificationEligibility
+    .localPrincipalIndependenceRequired, false);
+  assert.equal(report.loopPreparation.qualificationEligibility.launchBlockers.includes(
+    'autonomous_research_qualification_principal_separation_invalid',
+  ), false);
+  assert.equal(report.runtimePrincipalPreflight.blockers.some((blocker) => (
+    blocker.includes('Codex') || blocker.includes('author_preflight_failed')
+      || blocker.includes('reviewer_preflight_failed')
+  )), false);
+});
+
 test('legacy provider bindings permit only read-only status and all mismatches fail closed', () => {
   const configuration = resolveAutonomousResearchProviderConfiguration({
     options: { model: 'persisted-author', 'formal-review-model': 'persisted-reviewer' },

@@ -112,9 +112,9 @@ function usage() {
       providerTokenBudgetAssurance: 'prompt_only_not_a_hard_provider_limit',
     },
     providerConfiguration: {
-      researchAuthor: '--agent-provider auto|codex (auto resolves to codex)',
-      formalReviewer: '--formal-review-provider auto|codex (auto resolves to codex)',
-      supportedProvider: 'codex',
+      researchAuthor: '--agent-provider auto|codex, plus explicit ollama for local-run only (auto resolves to codex)',
+      formalReviewer: '--formal-review-provider auto|codex, plus explicit ollama for local-run only (auto resolves to codex)',
+      supportedProvider: 'codex; ollama only when both principals are explicitly local-run',
       unsupportedProvidersFailClosed: true,
     },
     externalQualification: {

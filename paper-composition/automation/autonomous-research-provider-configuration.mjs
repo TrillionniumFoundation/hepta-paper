@@ -16,10 +16,10 @@ function configured(...values) {
   return values.map((value) => String(value || '').trim()).find(Boolean) || null;
 }
 
-function normalizedProvider(value, role) {
+function normalizedProvider(value, role, { localOnly = false } = {}) {
   const provider = configured(value, 'codex').toLowerCase();
   const selected = provider === 'auto' ? 'codex' : provider;
-  if (selected !== 'codex') {
+  if (selected !== 'codex' && !(localOnly === true && selected === 'ollama')) {
     throw new Error(`autonomous_research_${role}_provider_unsupported:${selected}`);
   }
   return selected;
@@ -35,18 +35,26 @@ function normalizedHome(value) {
   return candidate ? path.resolve(candidate) : null;
 }
 
-function principalConfiguration({ provider, codexBinary, codexHome, model }, role) {
+function principalConfiguration({ provider, codexBinary, codexHome, model }, role, {
+  localOnly = false,
+} = {}) {
+  const selectedProvider = normalizedProvider(provider, role, { localOnly });
+  const selectedModel = configured(model);
+  if (selectedProvider === 'ollama' && !selectedModel) {
+    throw new Error(`autonomous_research_${role}_ollama_model_required`);
+  }
   return Object.freeze({
-    provider: normalizedProvider(provider, role),
-    codexBinary: normalizedBinary(codexBinary),
-    codexHome: normalizedHome(codexHome),
-    model: configured(model),
+    provider: selectedProvider,
+    codexBinary: selectedProvider === 'codex' ? normalizedBinary(codexBinary) : null,
+    codexHome: selectedProvider === 'codex' ? normalizedHome(codexHome) : null,
+    model: selectedModel,
   });
 }
 
 export function resolveAutonomousResearchProviderConfiguration({
   options = {},
   environment = {},
+  localOnly = false,
 } = {}) {
   const payload = {
     version: 1,
@@ -69,7 +77,7 @@ export function resolveAutonomousResearchProviderConfiguration({
         environment.CODEX_HOME,
       ),
       model: configured(options.model, environment.HEPTA_RESEARCH_AUTHOR_MODEL),
-    }, 'research_author'),
+    }, 'research_author', { localOnly }),
     formalReviewer: principalConfiguration({
       provider: configured(
         options['formal-review-provider'],
@@ -92,8 +100,12 @@ export function resolveAutonomousResearchProviderConfiguration({
         options['formal-review-model'],
         environment.HEPTA_FORMAL_REVIEW_MODEL,
       ),
-    }, 'formal_reviewer'),
+    }, 'formal_reviewer', { localOnly }),
   };
+  const providers = [payload.researchAuthor.provider, payload.formalReviewer.provider];
+  if (providers.includes('ollama') && !providers.every((provider) => provider === 'ollama')) {
+    throw new Error('autonomous_research_local_ollama_principals_must_use_same_provider');
+  }
   return Object.freeze({
     ...payload,
     autonomousResearchProviderConfigurationHash:
@@ -101,7 +113,9 @@ export function resolveAutonomousResearchProviderConfiguration({
   });
 }
 
-export function verifyAutonomousResearchProviderConfiguration(configuration) {
+export function verifyAutonomousResearchProviderConfiguration(configuration, {
+  allowLocalOnlyOllama = false,
+} = {}) {
   if (!hasExactObjectKeys(configuration, CONFIGURATION_KEYS)
     || configuration.version !== 1
     || configuration.kind !== 'AutonomousResearchProviderConfiguration'
@@ -110,7 +124,11 @@ export function verifyAutonomousResearchProviderConfiguration(configuration) {
     || !hasExactObjectKeys(configuration.formalReviewer, PRINCIPAL_KEYS)) return false;
   let normalized;
   try {
+    const localOllama = configuration.researchAuthor.provider === 'ollama'
+      || configuration.formalReviewer.provider === 'ollama';
+    if (localOllama && allowLocalOnlyOllama !== true) return false;
     normalized = resolveAutonomousResearchProviderConfiguration({
+      localOnly: localOllama,
       options: {
         'agent-provider': configuration.researchAuthor.provider,
         'codex-binary': configuration.researchAuthor.codexBinary,
@@ -129,9 +147,11 @@ export function verifyAutonomousResearchProviderConfiguration(configuration) {
 
 export function requireAutonomousResearchProviderConfiguration(
   configuration,
-  { expectedHash = null } = {},
+  { expectedHash = null, allowLocalOnlyOllama = false } = {},
 ) {
-  if (!verifyAutonomousResearchProviderConfiguration(configuration)) {
+  if (!verifyAutonomousResearchProviderConfiguration(configuration, {
+    allowLocalOnlyOllama,
+  })) {
     throw new Error('autonomous_research_provider_configuration_invalid');
   }
   if (expectedHash

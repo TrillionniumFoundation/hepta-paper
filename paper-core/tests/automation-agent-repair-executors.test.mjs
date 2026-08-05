@@ -15,7 +15,7 @@ test('structured Ollama adapter enforces schema and per-node output budgets', as
     model: 'fixture-model',
     fetchImpl: async (_url, options) => {
       request = JSON.parse(options.body);
-      return { ok: true, json: async () => ({ response: JSON.stringify({ status: 'completed', summary: 'edited', edits: [{ path: 'main.tex', content: 'after\n' }], checks: [], blockers: [] }), done_reason: 'stop', eval_count: 23 }) };
+      return { ok: true, json: async () => ({ response: JSON.stringify({ status: 'completed', summary: 'edited', edits: [{ path: 'main.tex', content: 'after\n' }], checks: [], blockers: [] }), done_reason: 'stop', prompt_eval_count: 29, eval_count: 23 }) };
     },
   });
   const receipt = await executor.execute({ role: 'writer', workspacePath: root, instructions: 'edit', outputTokenBudget: 777 });

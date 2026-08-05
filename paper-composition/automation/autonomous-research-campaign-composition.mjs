@@ -63,6 +63,7 @@ export async function composeAutonomousResearchCampaignAction({
   environment = process.env,
   preflightAuthor = undefined,
   preflightReviewer = undefined,
+  preflightLocalOllamaAgent = undefined,
   preflightEmpiricalRuntime = undefined,
   externalQualificationConfigPath = null,
   externalQualificationClient = null,
@@ -110,6 +111,7 @@ export async function composeAutonomousResearchCampaignAction({
   const providerConfiguration = resolveAutonomousResearchProviderConfiguration({
     options: initialWorkerOptions,
     environment,
+    localOnly,
   });
   const providerConfigurationHash =
     providerConfiguration.autonomousResearchProviderConfigurationHash;
@@ -502,6 +504,7 @@ export async function composeAutonomousResearchCampaignAction({
         autonomousSubmissionPortal,
         ...(preflightAuthor ? { preflightAuthor } : {}),
         ...(preflightReviewer ? { preflightReviewer } : {}),
+        ...(preflightLocalOllamaAgent ? { preflightLocalOllamaAgent } : {}),
         ...(preflightEmpiricalRuntime ? { preflightEmpiricalRuntime } : {}),
         assertExternalSideEffectReady,
       });

@@ -8,6 +8,7 @@ import { PassThrough } from 'node:stream';
 import test from 'node:test';
 import { createCodexAgentExecutor } from '../../paper-adapters/automation/codex-agent-executor.mjs';
 import { createOllamaStructuredAgentExecutor } from '../../paper-adapters/automation/ollama-structured-agent-executor.mjs';
+import { preflightLocalOllamaResearchAgent } from '../../paper-adapters/automation/ollama-local-agent-preflight.mjs';
 import { createOpenClawAgentExecutor, openClawAgentCapabilityProfileHash } from '../../paper-adapters/automation/openclaw-agent-executor.mjs';
 import {
   createOpenClawRuntimeConfigurationResolver,
@@ -217,6 +218,41 @@ test('agent executor capability declarations remain exact across provider strate
     maximumOutputTokens: 512,
     provider: 'ollama',
   });
+});
+
+test('local Ollama research preflight binds model content and distinct role principals', () => {
+  const calls = [];
+  const spawnSyncImpl = (binary, args, options) => {
+    calls.push({ binary, args, host: options.env.OLLAMA_HOST });
+    return {
+      status: 0,
+      signal: null,
+      stdout: 'FROM /models/blobs/sha256-fixture\nPARAMETER num_ctx 131072\n',
+      stderr: '',
+    };
+  };
+  const author = preflightLocalOllamaResearchAgent({
+    role: 'research-author', model: 'fixture/model:v1', spawnSyncImpl,
+  });
+  const reviewer = preflightLocalOllamaResearchAgent({
+    role: 'formal-reviewer', model: 'fixture/model:v1', spawnSyncImpl,
+  });
+  assert.notEqual(author.effectivePrincipalId, reviewer.effectivePrincipalId);
+  assert.equal(author.capabilityReceipt.provider, 'ollama');
+  assert.equal(author.capabilityReceipt.localOnly, true);
+  assert.equal(author.capabilityReceipt.modelIdentityHash,
+    reviewer.capabilityReceipt.modelIdentityHash);
+  assert.match(author.capabilityReceipt.localOllamaResearchAgentCapabilityReceiptHash,
+    /^sha256:[0-9a-f]{64}$/);
+  assert.deepEqual(calls.map((call) => call.host), [
+    'http://127.0.0.1:11434', 'http://127.0.0.1:11434',
+  ]);
+  assert.throws(() => preflightLocalOllamaResearchAgent({
+    role: 'writer', model: 'fixture/model:v1', spawnSyncImpl,
+  }), /role_invalid/);
+  assert.throws(() => preflightLocalOllamaResearchAgent({
+    role: 'research-author', model: '../invalid model', spawnSyncImpl,
+  }), /model_invalid/);
 });
 
 test('Codex receipt golden preserves fields, workspace diff, prompt hash and provider output', async (t) => {
@@ -580,7 +616,7 @@ test('Ollama receipt golden preserves structured edits and token accounting', as
     maximumOutputTokens: 1024,
     fetchImpl: async (_url, options) => {
       providerRequest = JSON.parse(options.body);
-      return { ok: true, json: async () => ({ response: stdout, done_reason: 'stop', eval_count: 17 }) };
+      return { ok: true, json: async () => ({ response: stdout, done_reason: 'stop', prompt_eval_count: 31, eval_count: 17 }) };
     },
   });
   const receipt = await executor.execute({
@@ -621,6 +657,9 @@ test('Ollama receipt golden preserves structured edits and token accounting', as
     stdoutTail: stdout,
     startedAt: '<started-at>',
     completedAt: '<completed-at>',
+    externalModelInvocationPerformed: true,
+    usageComplete: true,
+    usage: { cacheRead: 0, cacheWrite: 0, input: 31, output: 17, totalTokens: 48 },
     externalActionPerformed: false,
     externalActionVerification: 'local_provider_without_agent_tools',
     agentExecutionReceiptHash: '<receipt-hash>',
@@ -643,7 +682,7 @@ test('Ollama receipts omit content-identical no-op edits', async (t) => {
     timeoutMs: 5000,
     fetchImpl: async () => ({
       ok: true,
-      json: async () => ({ response: stdout, done_reason: 'stop', eval_count: 7 }),
+      json: async () => ({ response: stdout, done_reason: 'stop', prompt_eval_count: 13, eval_count: 7 }),
     }),
   });
   const receipt = await executor.execute({
@@ -653,6 +692,76 @@ test('Ollama receipts omit content-identical no-op edits', async (t) => {
   });
   assert.deepEqual(receipt.changedPaths, []);
   assert.equal(fs.readFileSync(path.join(root, 'main.tex'), 'utf8'), 'unchanged\n');
+});
+
+test('Ollama formal review uses the exact semantic-review schema, bounded authority files, distinct principal, and complete usage', async (t) => {
+  const root = temporary(t, 'hepta-ollama-formal-review-');
+  const theoremSpecificationHash = sha256('theorem-specification');
+  fs.writeFileSync(path.join(root, 'main.tex'), 'The claim is true.\n');
+  fs.writeFileSync(path.join(root, 'THEOREM_SPEC.json'), JSON.stringify({
+    theoremSpecificationHash,
+    claims: [{ claimId: 'claim-1', theoremName: 'claim_one' }],
+  }));
+  fs.writeFileSync(path.join(root, 'RESEARCH_WORKER_PLAN.json'), '{"workers":[]}\n');
+  fs.writeFileSync(path.join(root, 'Claim.lean'), 'theorem claim_one : True := by trivial\n');
+  const structuredOutput = {
+    version: 1,
+    kind: 'FormalClaimSemanticReview',
+    theoremSpecificationHash,
+    reviews: [{
+      claimId: 'claim-1',
+      theoremName: 'claim_one',
+      manuscriptClaimHash: sha256('manuscript'),
+      theoremTypeHash: sha256('type'),
+      sourceStatementHash: sha256('source'),
+      status: 'formal_semantic_review_verified',
+      semanticEquivalenceVerified: true,
+      verdict: 'equivalent',
+    }],
+  };
+  let providerRequest = null;
+  const executor = createOllamaStructuredAgentExecutor({
+    model: 'fixture-ollama',
+    principalId: 'ollama-local-formal-reviewer-v1',
+    fetchImpl: async (_url, options) => {
+      providerRequest = JSON.parse(options.body);
+      return {
+        ok: true,
+        json: async () => ({
+          response: JSON.stringify(structuredOutput),
+          done_reason: 'stop',
+          prompt_eval_count: 73,
+          eval_count: 41,
+        }),
+      };
+    },
+  });
+  const receipt = await executor.execute({
+    role: 'formal-review',
+    workspacePath: root,
+    instructions: 'Return a FormalClaimSemanticReview for every claim.',
+    sandbox: 'read-only',
+    outputTokenBudget: 8192,
+  });
+  assert.equal(receipt.executorId,
+    'ollama-structured-agent-v1:ollama-local-formal-reviewer-v1');
+  assert.equal(receipt.agentId, 'ollama-local-formal-reviewer-v1');
+  assert.equal(receipt.status, 'agent_execution_completed');
+  assert.deepEqual(receipt.structuredOutput, structuredOutput);
+  assert.deepEqual(receipt.usage,
+    { cacheRead: 0, cacheWrite: 0, input: 73, output: 41, totalTokens: 114 });
+  assert.equal(receipt.externalModelInvocationPerformed, true);
+  assert.deepEqual(receipt.changedPaths, []);
+  assert.deepEqual(providerRequest.format.required,
+    ['version', 'kind', 'theoremSpecificationHash', 'reviews']);
+  assert.match(providerRequest.prompt, /THEOREM_SPEC\.json/);
+  assert.match(providerRequest.prompt, /RESEARCH_WORKER_PLAN\.json/);
+  assert.match(providerRequest.prompt, /Claim\.lean/);
+  assert.doesNotMatch(providerRequest.prompt, /edits MUST be an empty array/);
+  assert.throws(() => createOllamaStructuredAgentExecutor({
+    model: 'fixture-ollama',
+    principalId: '../invalid',
+  }), /principalId is invalid/);
 });
 
 test('shared preflight and workspace validation retain provider error codes', async (t) => {
@@ -749,6 +858,8 @@ test('shared failure wrapping retains cancellation and read-only sandbox semanti
       ok: true,
       json: async () => ({
         response: JSON.stringify({ status: 'completed', summary: 'invalid edit', edits: [{ path: 'main.tex', content: 'after\n' }], checks: [], blockers: [] }),
+        prompt_eval_count: 11,
+        eval_count: 5,
       }),
     }),
   });
@@ -869,6 +980,8 @@ test('Ollama structured edits reject symlink parents and symlink targets without
       ok: true,
       json: async () => ({
         response: JSON.stringify({ status: 'completed', summary: 'edit', edits: [edit], checks: [], blockers: [] }),
+        prompt_eval_count: 11,
+        eval_count: 5,
       }),
     }),
   });

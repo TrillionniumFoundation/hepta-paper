@@ -4,6 +4,7 @@ import { createCodexAgentExecutor } from '../../paper-adapters/automation/codex-
 import { preflightCodexFormalReviewer } from '../../paper-adapters/automation/codex-formal-reviewer-preflight.mjs';
 import { preflightCodexResearchAuthor } from '../../paper-adapters/automation/codex-research-author-preflight.mjs';
 import { createOllamaStructuredAgentExecutor } from '../../paper-adapters/automation/ollama-structured-agent-executor.mjs';
+import { preflightLocalOllamaResearchAgent } from '../../paper-adapters/automation/ollama-local-agent-preflight.mjs';
 import { createOpenClawAgentExecutor } from '../../paper-adapters/automation/openclaw-agent-executor.mjs';
 import { createAgentBackendRouter } from '../../paper-adapters/automation/agent-backend-router.mjs';
 import { createIsolatedAgentExecutor } from '../../paper-adapters/automation/isolated-agent-executor.mjs';
@@ -87,6 +88,7 @@ export function composeCampaignWorkerExecution({
   reviewerPrincipalExecutorPool = null,
   preflightResearchAuthor = preflightCodexResearchAuthor,
   preflightFormalReviewer = preflightCodexFormalReviewer,
+  preflightLocalOllamaAgent = preflightLocalOllamaResearchAgent,
   reviewerPrincipalPoolComposer = composeReviewerPrincipalExecutorPool,
   reviewerSessionPoolComposer = composeReviewerSessionExecutorPool,
   assertExternalSideEffectReady = null,
@@ -110,8 +112,13 @@ export function composeCampaignWorkerExecution({
   const expectedHash = expectedProviderConfigurationHash
     || planProviderConfigurationHashes[0]
     || null;
+  const localOnlyCampaign = plans.length > 0
+    && plans.every((plan) => plan?.localOnly === true);
   const boundProviderConfiguration = providerConfiguration
-    ? requireAutonomousResearchProviderConfiguration(providerConfiguration, { expectedHash })
+    ? requireAutonomousResearchProviderConfiguration(providerConfiguration, {
+      expectedHash,
+      allowLocalOnlyOllama: localOnlyCampaign,
+    })
     : null;
   if (expectedHash && !boundProviderConfiguration) {
     throw new Error('autonomous_research_provider_configuration_required');
@@ -136,6 +143,9 @@ export function composeCampaignWorkerExecution({
   });
   const modelConfiguration = resolveCampaignWorkerModelConfiguration({ options, environment });
   const provider = researchAuthorProviderPolicy.selectedProvider;
+  if (provider === 'ollama' && !localOnlyCampaign) {
+    throw new Error('research_grade_agent_provider_not_approved:ollama');
+  }
   const primaryOpenClawAgentId = options['openclaw-agent'] || 'hepta-paper-worker';
   const primaryCodexModel = boundProviderConfiguration
     ? boundProviderConfiguration.researchAuthor.model
@@ -145,7 +155,6 @@ export function composeCampaignWorkerExecution({
     model: primaryCodexModel || undefined,
   });
   const ollamaModel = ['auto', 'ollama'].includes(provider) ? discoverOllamaModel(options, spawnSyncImpl) : null;
-  const ollama = ollamaModel ? createOllamaStructuredAgentExecutor({ model: ollamaModel }) : null;
   const primaryCodexHome = boundProviderConfiguration
     ? boundProviderConfiguration.researchAuthor.codexHome
     : configuredValue(
@@ -161,7 +170,8 @@ export function composeCampaignWorkerExecution({
       environment.HEPTA_RESEARCH_AUTHOR_CODEX_BINARY,
       'codex',
     );
-  const researchAuthorPreflight = researchAuthorProviderPolicy.researchGradeRequired && provider === 'codex'
+  const researchAuthorPreflight = researchAuthorProviderPolicy.researchGradeRequired
+    && provider === 'codex'
     ? preflightResearchAuthor({
       codexBinary: primaryCodexBinary,
       codexHome: primaryCodexHome,
@@ -169,7 +179,20 @@ export function composeCampaignWorkerExecution({
       spawnSyncImpl,
       environment,
     })
-    : null;
+    : provider === 'ollama' ? preflightLocalOllamaAgent({
+      role: 'research-author',
+      model: ollamaModel,
+      spawnSyncImpl,
+      environment,
+    }) : null;
+  const primaryOllamaPrincipal = researchAuthorPreflight?.effectivePrincipalId
+    || 'ollama-local-research-author-v1';
+  const ollama = ollamaModel ? createOllamaStructuredAgentExecutor({
+    model: ollamaModel,
+    ollamaHost: researchAuthorPreflight?.ollamaHost || 'http://127.0.0.1:11434',
+    principalId: primaryOllamaPrincipal,
+    maximumOutputTokens: 8192,
+  }) : null;
   const primaryCodexPrincipal = researchAuthorPreflight?.effectivePrincipalId || 'hepta-primary-codex-v1';
   const codex = createCodexAgentExecutor({
     codexBinary: researchAuthorPreflight?.codexBinary || primaryCodexBinary,
@@ -191,7 +214,8 @@ export function composeCampaignWorkerExecution({
     workspaceRegistry,
     assertExternalSideEffectReady,
   });
-  const authorAgentId = provider === 'codex' ? primaryCodexPrincipal : primaryOpenClawAgentId;
+  const authorAgentId = provider === 'codex' ? primaryCodexPrincipal
+    : provider === 'ollama' ? primaryOllamaPrincipal : primaryOpenClawAgentId;
   const independentReviewRequested = plans.some((plan) => (plan.nodes || []).some((node) => (
     node.kind === 'formal-verify' || isCampaignRefereeNode(node.kind)
   )));
@@ -208,7 +232,7 @@ export function composeCampaignWorkerExecution({
   if (expectedReviewerPoolHashes.length > 1) {
     throw new Error('reviewer_principal_pool_hash_mismatch');
   }
-  const reviewerPoolConfigPath = String(
+  const reviewerPoolConfigPath = localOnlyCampaign ? '' : String(
     environment.HEPTA_REVIEWER_PRINCIPAL_POOL_CONFIG || '',
   ).trim();
   const reviewerClock = typeof services.clock?.now === 'function'
@@ -330,6 +354,7 @@ export function composeCampaignWorkerExecution({
           || null,
       authorProvider: provider === 'codex' ? 'codex' : provider,
       authorCodexHome: provider === 'codex' ? primaryCodexHome : null,
+      localOnly: localOnlyCampaign,
       reviewerAgentId: configuredValue(
         options['formal-review-agent'],
         environment.HEPTA_OPENCLAW_FORMAL_REVIEW_AGENT,

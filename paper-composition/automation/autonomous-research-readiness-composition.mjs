@@ -222,6 +222,7 @@ export async function composeAutonomousResearchReadiness({
   providerPricingInspection = null,
   preflightAuthor,
   preflightReviewer,
+  preflightLocalOllamaAgent,
   preflightEmpiricalRuntime,
   preflightReviewerPrincipalPool,
   spawnSyncImpl = undefined,
@@ -229,11 +230,20 @@ export async function composeAutonomousResearchReadiness({
 } = {}) {
   const inspectionClock = createReadinessInspectionClock({ createdAt, clock });
   const effectiveProviderConfiguration = requireAutonomousResearchProviderConfiguration(
-    providerConfiguration || resolveAutonomousResearchProviderConfiguration({ environment }),
-    { expectedHash: expectedProviderConfigurationHash },
+    providerConfiguration || resolveAutonomousResearchProviderConfiguration({
+      environment,
+      localOnly,
+    }),
+    {
+      expectedHash: expectedProviderConfigurationHash,
+      allowLocalOnlyOllama: localOnly === true,
+    },
   );
   const authorConfiguration = effectiveProviderConfiguration.researchAuthor;
   const reviewerConfiguration = effectiveProviderConfiguration.formalReviewer;
+  const localProviderRoleSeparation = localOnly === true
+    && authorConfiguration.provider === 'ollama'
+    && reviewerConfiguration.provider === 'ollama';
   const principalInspection = inspectAutonomousResearchRuntimePrincipals({
     authorConfiguration,
     reviewerConfiguration,
@@ -241,10 +251,12 @@ export async function composeAutonomousResearchReadiness({
     environment,
     preflightAuthor,
     preflightReviewer,
+    preflightLocalOllamaAgent,
     preflightEmpiricalRuntime,
     preflightReviewerPrincipalPool,
     spawnSyncImpl,
     clock: inspectionClock,
+    localOnly,
   });
   const {
     author,
@@ -476,6 +488,8 @@ export async function composeAutonomousResearchReadiness({
     machineIntakeAdmission,
     assertExternalSideEffectReady,
     launchMode: effectiveLaunchMode,
+    localOnly,
+    localProviderRoleSeparation,
     directLocalRunCliProvenance,
     createdAt,
   });

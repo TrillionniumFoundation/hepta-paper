@@ -291,6 +291,8 @@ export function evaluateAutonomousResearchQualificationEligibility({
   autonomousResearchLoopPreparationReportHash = null,
   autonomousResearchMachineIntakeAdmissionHash = null,
   launchMode = null,
+  localOnly = false,
+  localProviderRoleSeparation = false,
   observedAt = null,
   campaignReleaseAuthority = null,
   fullResearchQualificationInspection = null,
@@ -315,11 +317,13 @@ export function evaluateAutonomousResearchQualificationEligibility({
     || seedBinding?.seedBundleHash !== seedBundle?.autonomousResearchSeedContractBundleHash) {
     launchBlockers.push('autonomous_research_qualification_seed_binding_invalid');
   }
-  if (!recordHashValid(
+  const localRoleSeparationAccepted = localOnly === true
+    && localProviderRoleSeparation === true;
+  if (!localRoleSeparationAccepted && (!recordHashValid(
     principalSeparation,
     'AutonomousResearchPrincipalSeparation',
     'autonomousResearchPrincipalSeparationHash',
-  ) || principalSeparation?.status !== 'autonomous_research_principal_separation_ready') {
+  ) || principalSeparation?.status !== 'autonomous_research_principal_separation_ready')) {
     launchBlockers.push('autonomous_research_qualification_principal_separation_invalid');
   }
   if (!recordHashValid(
@@ -493,6 +497,9 @@ export function evaluateAutonomousResearchQualificationEligibility({
     campaignFullyQualified,
     boundedGoldenCapabilityQualificationVerified,
     fullAutomaticResearchWritingReady,
+    localOnly: localOnly === true,
+    localProviderRoleSeparation: localRoleSeparationAccepted,
+    localPrincipalIndependenceRequired: !localRoleSeparationAccepted,
     launchBlockers: uniqueLaunchBlockers,
     qualificationBlockers: uniqueQualificationBlockers,
     externalTrust: Object.freeze({

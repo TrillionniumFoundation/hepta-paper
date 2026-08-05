@@ -13,44 +13,13 @@ import {
 } from '../runtime/scoped-file-materialization-repository.mjs';
 import { isPathWithin } from '../../workflow-kernel/runtime/path-utils.mjs';
 
-function boundedLeanFiles(root, maximum = 10) {
-  const selected = [];
-  const visit = (directory, relativeDirectory = '') => {
-    if (selected.length >= maximum) return;
-    const entries = fs.readdirSync(directory, { withFileTypes: true })
-      .sort((left, right) => left.name.localeCompare(right.name));
-    for (const entry of entries) {
-      if (selected.length >= maximum) break;
-      if (entry.isSymbolicLink()) continue;
-      const relative = relativeDirectory ? `${relativeDirectory}/${entry.name}` : entry.name;
-      if (entry.isDirectory()) {
-        if (!['.git', 'node_modules', '.lake', 'build'].includes(entry.name)) {
-          visit(path.join(directory, entry.name), relative);
-        }
-      } else if (entry.isFile() && entry.name.endsWith('.lean')) {
-        selected.push(relative);
-      }
-    }
-  };
-  visit(root);
-  return selected;
-}
-
 function sourceFiles(root) {
-  const preferred = [
-    'THEOREM_SPEC.json', 'RESEARCH_WORKER_PLAN.json',
-    'PROPOSAL_CLAIM_PROOF_EVIDENCE_REPRO_SEED_CONTRACTS.json',
-    'main.tex', 'paper.tex', 'manuscript.tex', 'AUTONOMOUS_MANUSCRIPT_IR_DRAFT.json',
-    'AUTONOMOUS_MANUSCRIPT_IR.json', 'RESEARCH_PLAN.md', 'references.bib',
-    'lean-toolchain', 'lakefile.lean', 'lakefile.toml',
-    'run.py', 'analysis.py', 'run.mjs', 'analysis.mjs',
-    'run.R', 'analysis.R', 'run.jl', 'analysis.jl',
-  ];
+  const preferred = ['main.tex', 'paper.tex', 'manuscript.tex', 'RESEARCH_PLAN.md', 'references.bib', 'run.py', 'analysis.py', 'run.mjs', 'analysis.mjs', 'run.R', 'analysis.R', 'run.jl', 'analysis.jl'];
   const selected = preferred.filter((name) => fs.existsSync(path.join(root, name)));
   const experiments = fs.existsSync(path.join(root, 'experiments'))
     ? fs.readdirSync(path.join(root, 'experiments'), { withFileTypes: true }).filter((entry) => entry.isFile()).map((entry) => `experiments/${entry.name}`).slice(0, 12)
     : [];
-  return [...new Set([...selected, ...boundedLeanFiles(root), ...experiments])].slice(0, 20);
+  return [...new Set([...selected, ...experiments])].slice(0, 20);
 }
 
 const OUTPUT_SCHEMA = Object.freeze({
@@ -78,55 +47,7 @@ const OUTPUT_SCHEMA = Object.freeze({
   additionalProperties: false,
 });
 
-const FORMAL_REVIEW_OUTPUT_SCHEMA = Object.freeze({
-  type: 'object',
-  required: ['version', 'kind', 'theoremSpecificationHash', 'reviews'],
-  properties: {
-    version: { type: 'integer', enum: [1, 2] },
-    kind: { type: 'string', enum: ['FormalClaimSemanticReview'] },
-    theoremSpecificationHash: { type: 'string', pattern: '^sha256:[0-9a-f]{64}$' },
-    reviews: {
-      type: 'array',
-      minItems: 1,
-      items: {
-        type: 'object',
-        required: [
-          'claimId', 'theoremName', 'manuscriptClaimHash', 'theoremTypeHash',
-          'sourceStatementHash', 'status', 'semanticEquivalenceVerified', 'verdict',
-        ],
-        properties: {
-          claimId: { type: 'string' },
-          theoremName: { type: 'string' },
-          manuscriptClaimHash: { type: 'string', pattern: '^sha256:[0-9a-f]{64}$' },
-          theoremTypeHash: { type: 'string', pattern: '^sha256:[0-9a-f]{64}$' },
-          sourceStatementHash: { type: 'string', pattern: '^sha256:[0-9a-f]{64}$' },
-          status: { type: 'string', enum: ['formal_semantic_review_verified', 'formal_semantic_review_rejected'] },
-          semanticEquivalenceVerified: { type: 'boolean' },
-          verdict: { type: 'string', enum: ['equivalent', 'not_equivalent'] },
-          proposalClaimId: { type: 'string' },
-          proposalClaimRecordHash: { type: 'string', pattern: '^sha256:[0-9a-f]{64}$' },
-          proposalClaimTextHash: { type: 'string', pattern: '^sha256:[0-9a-f]{64}$' },
-          proposalToTheoremSemanticVerified: { type: 'boolean' },
-          proposalToTheoremVerdict: { type: 'string', enum: ['equivalent', 'not_equivalent'] },
-          approvedNarrowingRationale: { type: ['string', 'null'] },
-        },
-        additionalProperties: false,
-      },
-    },
-  },
-  additionalProperties: false,
-});
-
-async function runOllama({
-  ollamaHost,
-  model,
-  prompt,
-  outputSchema,
-  timeoutMs,
-  maximumOutputTokens,
-  fetchImpl,
-  signal = null,
-}) {
+async function runOllama({ ollamaHost, model, prompt, timeoutMs, maximumOutputTokens, fetchImpl, signal = null }) {
   const controller = new AbortController();
   let termination = null;
   const abort = () => {
@@ -136,7 +57,7 @@ async function runOllama({
   };
   if (signal?.aborted) abort();
   if (termination === 'external') {
-    return { exitCode: null, stdout: '', stderr: '', error: null, doneReason: null, promptEvalCount: null, evalCount: null, invocationStarted: false, aborted: true, timedOut: false };
+    return { exitCode: null, stdout: '', stderr: '', error: null, doneReason: null, evalCount: 0, aborted: true, timedOut: false };
   }
   signal?.addEventListener('abort', abort, { once: true });
   const timer = setTimeout(() => {
@@ -151,7 +72,7 @@ async function runOllama({
       body: JSON.stringify({
         model,
         prompt,
-        format: outputSchema,
+        format: OUTPUT_SCHEMA,
         stream: false,
         keep_alive: '10m',
         options: { temperature: 0.1, num_predict: maximumOutputTokens },
@@ -167,9 +88,7 @@ async function runOllama({
         stderr: timedOut ? 'ollama provider timed out' : '',
         error: timedOut ? new Error('ollama provider timed out') : null,
         doneReason: null,
-        promptEvalCount: null,
-        evalCount: null,
-        invocationStarted: true,
+        evalCount: 0,
         aborted: !timedOut,
         timedOut,
       };
@@ -180,9 +99,7 @@ async function runOllama({
       stderr: String(body.error || ''),
       error: response.ok ? null : new Error(body.error || `ollama_http_${response.status}`),
       doneReason: body.done_reason || null,
-      promptEvalCount: body.prompt_eval_count,
-      evalCount: body.eval_count,
-      invocationStarted: true,
+      evalCount: Number(body.eval_count || 0),
       aborted: false,
       timedOut: false,
     };
@@ -193,9 +110,7 @@ async function runOllama({
       stderr: String(error?.message || error),
       error,
       doneReason: null,
-      promptEvalCount: null,
-      evalCount: null,
-      invocationStarted: true,
+      evalCount: 0,
       aborted: termination === 'external',
       timedOut: termination === 'timeout',
     };
@@ -208,22 +123,13 @@ async function runOllama({
 export function createOllamaStructuredAgentExecutor({
   model,
   ollamaHost = process.env.OLLAMA_HOST || 'http://127.0.0.1:11434',
-  principalId = null,
   fetchImpl = globalThis.fetch,
   timeoutMs = 20 * 60 * 1000,
   maximumContextBytes = 200000,
-  maximumOutputTokens = 8192,
+  maximumOutputTokens = 4096,
 } = {}) {
   if (!model) throw new Error('Ollama model is required');
-  const selectedPrincipalId = principalId === null || principalId === undefined
-    ? null : String(principalId).trim();
-  if (selectedPrincipalId
-    && !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(selectedPrincipalId)) {
-    throw new Error('Ollama principalId is invalid');
-  }
-  const executorId = selectedPrincipalId
-    ? `ollama-structured-agent-v1:${selectedPrincipalId}`
-    : 'ollama-structured-agent-v1';
+  const executorId = 'ollama-structured-agent-v1';
   return createAgentExecutorTemplate({
     kind: 'OllamaStructuredAgentExecutor',
     executorId,
@@ -258,26 +164,15 @@ export function createOllamaStructuredAgentExecutor({
         sources.push({ path: relative, content });
       }
       const effectiveOutputTokens = Math.max(128, Math.min(8192, Number(outputTokenBudget || maximumOutputTokens)));
-      const formalReviewMode = role === 'formal-review'
-        || String(instructions).includes('FormalClaimSemanticReview');
-      const outputSchema = formalReviewMode ? FORMAL_REVIEW_OUTPUT_SCHEMA : OUTPUT_SCHEMA;
       const prompt = [
         `Role: ${role}.`,
         String(instructions),
-        formalReviewMode
-          ? 'Return only the FormalClaimSemanticReview JSON document requested above. Do not add status, summary, edits, checks, blockers, Markdown, or prose.'
-          : 'Return JSON only. Do not claim tools were used. Schema:',
-        formalReviewMode ? ''
-          : '{"status":"completed|blocked","summary":"...","edits":[{"path":"relative/path","content":"complete replacement content"}],"checks":["..."],"blockers":["..."]}',
+        'Return JSON only. Do not claim tools were used. Schema:',
+        '{"status":"completed|blocked","summary":"...","edits":[{"path":"relative/path","content":"complete replacement content"}],"checks":["..."],"blockers":["..."]}',
         'Inside JSON string values, encode every literal backslash as \\\\; this is mandatory for TeX, code, and paths.',
-        formalReviewMode ? ''
-          : 'Include any additional role-specific fields requested in the instructions at the top level.',
+        'Include any additional role-specific fields requested in the instructions at the top level.',
         `Keep the complete JSON response within ${effectiveOutputTokens} output tokens. Be concise.`,
-        formalReviewMode
-          ? 'This is a read-only semantic review. Do not modify or propose edits to any file.'
-          : sandbox === 'read-only'
-            ? 'This is read-only review: edits MUST be an empty array.'
-            : 'Every edit must contain complete file content and use a relative path inside the workspace.',
+        sandbox === 'read-only' ? 'This is read-only review: edits MUST be an empty array.' : 'Every edit must contain complete file content and use a relative path inside the workspace.',
         workspaceMutationPolicy
           ? `The runtime enforces this exact workspace mutation policy: ${JSON.stringify(workspaceMutationPolicy)}`
           : '',
@@ -288,16 +183,7 @@ export function createOllamaStructuredAgentExecutor({
       const promptDigest = promptHash(prompt);
       const sessionId = `ollama-exec:${crypto.randomUUID()}`;
       const startedAt = new Date().toISOString();
-      const result = await runOllama({
-        ollamaHost,
-        model,
-        prompt,
-        outputSchema,
-        timeoutMs: Math.min(Number(requestedTimeout || timeoutMs), timeoutMs),
-        maximumOutputTokens: effectiveOutputTokens,
-        fetchImpl,
-        signal,
-      });
+      const result = await runOllama({ ollamaHost, model, prompt, timeoutMs: Math.min(Number(requestedTimeout || timeoutMs), timeoutMs), maximumOutputTokens: effectiveOutputTokens, fetchImpl, signal });
       const cancelled = isExternalAgentCancellation({
         ...result,
         aborted: result.aborted || signal?.aborted === true,
@@ -306,42 +192,19 @@ export function createOllamaStructuredAgentExecutor({
       if (!cancelled) {
         try { response = JSON.parse(result.stdout); } catch { /* handled below */ }
       }
-      const usageReady = Number.isSafeInteger(result.promptEvalCount)
-        && result.promptEvalCount >= 0
-        && Number.isSafeInteger(result.evalCount)
-        && result.evalCount >= 0;
-      const usage = usageReady ? Object.freeze({
-        cacheRead: 0,
-        cacheWrite: 0,
-        input: result.promptEvalCount,
-        output: result.evalCount,
-        totalTokens: result.promptEvalCount + result.evalCount,
-      }) : null;
-      const responseEdits = formalReviewMode ? [] : response?.edits;
       const blockers = [];
       if (cancelled) {
         blockers.push('ollama_agent_cancelled');
       } else {
         if (result.exitCode !== 0 || result.error) blockers.push('ollama_agent_process_failed');
         if (result.doneReason === 'length') blockers.push('ollama_agent_output_truncated');
-        if (result.exitCode === 0 && !usageReady) blockers.push('ollama_agent_usage_invalid');
-        if (formalReviewMode) {
-          if (!response || response.kind !== 'FormalClaimSemanticReview'
-            || ![1, 2].includes(response.version)
-            || !/^sha256:[0-9a-f]{64}$/.test(String(response.theoremSpecificationHash || ''))
-            || !Array.isArray(response.reviews) || !response.reviews.length) {
-            blockers.push('ollama_agent_invalid_json');
-          }
-          if (sandbox !== 'read-only') blockers.push('ollama_formal_review_requires_read_only');
-        } else {
-          if (!response || !Array.isArray(responseEdits)) blockers.push('ollama_agent_invalid_json');
-          if (sandbox === 'read-only' && responseEdits?.length) blockers.push('read_only_agent_returned_edits');
-        }
+        if (!response || !Array.isArray(response.edits)) blockers.push('ollama_agent_invalid_json');
+        if (sandbox === 'read-only' && response?.edits?.length) blockers.push('read_only_agent_returned_edits');
       }
       const changedPaths = [];
       if (!blockers.length && sandbox !== 'read-only') {
         const edits = [];
-        for (const edit of responseEdits) {
+        for (const edit of response.edits) {
           try {
             const relative = normalizeScopedRelativePath(edit.path);
             const destination = path.resolve(workspace, ...relative.split('/'));
@@ -386,37 +249,30 @@ export function createOllamaStructuredAgentExecutor({
         }
       }
       const completedAt = new Date().toISOString();
-      const responseBlockers = formalReviewMode
-        ? [] : Array.isArray(response?.blockers) ? response.blockers : [];
       const payload = {
         providerMode: 'local:ollama',
-        ...(selectedPrincipalId ? { agentId: selectedPrincipalId } : {}),
         model,
         resolvedModel: model,
         promptHash: promptDigest,
         sessionId,
         childSessionId: sessionId,
         maximumOutputTokens: effectiveOutputTokens,
-        outputTokenCount: Number.isSafeInteger(result.evalCount) ? result.evalCount : 0,
+        outputTokenCount: result.evalCount,
         outputDoneReason: result.doneReason,
         role,
-        status: !blockers.length && (formalReviewMode || response?.status !== 'blocked')
-          ? 'agent_execution_completed' : 'agent_execution_failed',
+        status: !blockers.length && response?.status !== 'blocked' ? 'agent_execution_completed' : 'agent_execution_failed',
         changedPaths: [...new Set(changedPaths)].sort(),
         summary: response?.summary || null,
         structuredOutput: response,
         finalOutput: result.stdout,
         checksRun: Array.isArray(response?.checks) ? response.checks : [],
-        blockers: [...blockers, ...responseBlockers],
+        blockers: [...blockers, ...(Array.isArray(response?.blockers) ? response.blockers : [])],
         stdoutHash: `sha256:${crypto.createHash('sha256').update(result.stdout).digest('hex')}`,
         stderrHash: `sha256:${crypto.createHash('sha256').update(result.stderr).digest('hex')}`,
         stderrTail: result.stderr.slice(-4000),
         stdoutTail: result.stdout.slice(-4000),
         startedAt,
         completedAt,
-        externalModelInvocationPerformed: result.invocationStarted === true,
-        usageComplete: usageReady,
-        ...(usage ? { usage } : {}),
         externalActionPerformed: false,
         externalActionVerification: 'local_provider_without_agent_tools',
       };

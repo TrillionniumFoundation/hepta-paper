@@ -135,68 +135,6 @@ test('formal reviewer composition requires a distinct principal and preserves at
   assert.equal(isolationOptions.keepFailedWorkspaces, true);
 });
 
-test('formal reviewer permits Ollama only for explicit local-only execution and preserves distinct isolated identity', () => {
-  assert.throws(() => bootstrapFormalReviewAgentExecutor({
-    provider: 'ollama',
-    authorAgentId: 'ollama-local-research-author-v1',
-    model: 'fixture-local-model',
-    runtimeRoot: '/runtime',
-  }), /formal_review_provider_unsupported:ollama/);
-  const delegate = Object.freeze({ kind: 'local-ollama-reviewer' });
-  const isolated = Object.freeze({ kind: 'isolated-local-ollama-reviewer' });
-  let ollamaOptions = null;
-  let isolationOptions = null;
-  let preflightOptions = null;
-  const result = bootstrapFormalReviewAgentExecutor({
-    provider: 'ollama',
-    localOnly: true,
-    authorAgentId: 'ollama-local-research-author-v1',
-    model: 'fixture-local-model',
-    runtimeRoot: '/runtime',
-    workspaceRegistry: { kind: 'workspace-registry' },
-    preflightOllamaReviewer(options) {
-      preflightOptions = options;
-      return {
-        effectivePrincipalId: 'ollama-local-formal-reviewer-v1',
-        model: 'fixture-local-model',
-        ollamaHost: 'http://127.0.0.1:11434',
-      };
-    },
-    createOllamaExecutor(options) { ollamaOptions = options; return delegate; },
-    createIsolatedExecutor(options) { isolationOptions = options; return isolated; },
-  });
-  assert.equal(result, isolated);
-  assert.deepEqual(preflightOptions, {
-    role: 'formal-reviewer',
-    model: 'fixture-local-model',
-  });
-  assert.deepEqual(ollamaOptions, {
-    model: 'fixture-local-model',
-    ollamaHost: 'http://127.0.0.1:11434',
-    principalId: 'ollama-local-formal-reviewer-v1',
-    maximumOutputTokens: 8192,
-  });
-  assert.equal(isolationOptions.delegate, delegate);
-  assert.equal(isolationOptions.isolationRoot,
-    '/runtime/automation-formal-review-workspaces');
-  assert.equal(isolationOptions.keepWorkspaces, false);
-  assert.equal(isolationOptions.keepFailedWorkspaces, true);
-  assert.throws(() => bootstrapFormalReviewAgentExecutor({
-    provider: 'ollama',
-    localOnly: true,
-    authorAgentId: 'same-local-principal',
-    model: 'fixture-local-model',
-    runtimeRoot: '/runtime',
-    preflightOllamaReviewer() {
-      return {
-        effectivePrincipalId: 'same-local-principal',
-        model: 'fixture-local-model',
-        ollamaHost: 'http://127.0.0.1:11434',
-      };
-    },
-  }), /formal_review_agent_principal_must_be_distinct/);
-});
-
 test('formal reviewer positive path uses the real process-backed Codex composition without a stub executor', async (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-formal-review-composition-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

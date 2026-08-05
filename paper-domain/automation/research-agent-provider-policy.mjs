@@ -26,14 +26,8 @@ export function resolveCampaignAgentProviderPolicy({ requestedProvider = 'auto',
   const requested = String(requestedProvider || 'auto').trim().toLowerCase();
   if (!PROVIDERS.has(requested)) throw new Error(`campaign_agent_provider_unknown:${requested || '<empty>'}`);
   const researchGradeRequired = campaignRequiresResearchGradeAuthor(plans);
-  const allPlansLocalOnly = Array.isArray(plans) && plans.length > 0
-    && plans.every((plan) => plan?.localOnly === true);
   const selectedProvider = researchGradeRequired && requested === 'auto' ? 'codex' : requested;
-  const localProviderExceptionApplied = researchGradeRequired
-    && allPlansLocalOnly && selectedProvider === 'ollama';
-  if (researchGradeRequired
-    && !APPROVED_RESEARCH_AUTHOR_PROVIDERS.includes(selectedProvider)
-    && !localProviderExceptionApplied) {
+  if (researchGradeRequired && !APPROVED_RESEARCH_AUTHOR_PROVIDERS.includes(selectedProvider)) {
     throw new Error(`research_grade_agent_provider_not_approved:${selectedProvider}`);
   }
   const payload = {
@@ -43,11 +37,8 @@ export function resolveCampaignAgentProviderPolicy({ requestedProvider = 'auto',
     requestedProvider: requested,
     selectedProvider,
     researchGradeRequired,
-    allPlansLocalOnly,
-    localProviderExceptionApplied,
-    assuranceScope: localProviderExceptionApplied
-      ? 'explicit-local-only-ollama-research-author-v1'
-      : researchGradeRequired ? 'preflighted-codex-research-author-v1'
+    assuranceScope: researchGradeRequired
+      ? 'preflighted-codex-research-author-v1'
       : 'draft-agent-provider-selection-v1',
     approvedResearchAuthorProviders: APPROVED_RESEARCH_AUTHOR_PROVIDERS,
     campaignPlanHashes: Object.freeze((Array.isArray(plans) ? plans : [])

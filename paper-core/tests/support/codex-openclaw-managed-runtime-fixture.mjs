@@ -191,6 +191,7 @@ export function injectedModelRuntime(completion, {
   onPrepare = null,
   onCompletion = null,
   onDispose = null,
+  gatewayRpc = null,
 } = {}) {
   return async (configuration) => {
     if (onLoad) onLoad(configuration);
@@ -330,6 +331,20 @@ export function injectedModelRuntime(completion, {
       },
       resolveSessionFilePath(sessionId) {
         return path.join(sessionsDir, `${sessionId}.jsonl`);
+      },
+      async callGatewayFromCli(method, options, params, extra) {
+        if (!gatewayRpc) throw new Error('unexpected Gateway RPC');
+        return await gatewayRpc({
+          method,
+          options,
+          params,
+          extra,
+          sessionStore,
+          persistSessionStore,
+          sessionsDir,
+          internalRunsDir,
+          materializeResult,
+        });
       },
       async agentCommand(options, runtime) {
         if (onCompletion) onCompletion(options);

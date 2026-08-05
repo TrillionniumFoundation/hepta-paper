@@ -12,23 +12,25 @@ const USAGE = Object.freeze([
   '  --version',
   '  exec [Codex-compatible options] -',
   '  login status',
-  '  configure --home PATH --agent ID --auth-profile-id ID --model MODEL',
+  '  configure --home PATH --agent ID --model MODEL [--auth-profile-id ID]',
 ]);
 
 const CONFIGURE_USAGE = Object.freeze([
   'Usage: codex-openclaw-managed configure [options]',
   '  --home <path>',
   '  --agent <agent-id>',
-  '  --auth-profile-id <profile-id>',
+  '  --auth-profile-id <profile-id> (required unless --gateway-transport)',
   '  --model <model>',
   '  --principal-role <research-author|formal-reviewer>',
   '  [--openclaw-binary <path>] [--openclaw-config-path <path>]',
   '  [--openclaw-state-dir <path>] [--thinking <level>]',
   '  [--maximum-context-bytes <bytes>] [--maximum-file-count <count>]',
-  '  [--force]',
+  '  [--gateway-transport] [--force]',
 ]);
 
-const CONFIGURE_BOOLEAN_FLAGS = Object.freeze(['force', 'help']);
+const CONFIGURE_BOOLEAN_FLAGS = Object.freeze([
+  'force', 'gateway-transport', 'help',
+]);
 const CONFIGURE_VALUE_FLAGS = Object.freeze([
   'agent', 'auth-profile-id', 'home', 'maximum-context-bytes',
   'maximum-file-count', 'model', 'openclaw-binary',
@@ -135,6 +137,7 @@ async function main(args = process.argv.slice(2)) {
       thinking: options.thinking || 'adaptive',
       maximumContextBytes: Number(options['maximum-context-bytes'] || '900000'),
       maximumFileCount: Number(options['maximum-file-count'] || '96'),
+      gatewayTransport: options['gateway-transport'] === true,
       force: options.force === true,
     });
     process.stdout.write('OpenClaw-managed Codex home configured\n');

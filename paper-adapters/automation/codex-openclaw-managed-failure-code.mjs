@@ -13,6 +13,7 @@ const KNOWN_OPENCLAW_MANAGED_FAILURE_CODES = new Set([
   'codex_openclaw_managed_agent_runtime_invalid',
   'codex_openclaw_managed_auth_profile_binding_failed',
   'codex_openclaw_managed_auth_profile_binding_invalid',
+  'codex_openclaw_managed_auth_binding_mode_invalid',
   'codex_openclaw_managed_auth_profile_id_invalid',
   'codex_openclaw_managed_auth_profile_unavailable',
   'codex_openclaw_managed_canary_response_invalid',

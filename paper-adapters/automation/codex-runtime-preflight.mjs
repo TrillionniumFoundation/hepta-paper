@@ -75,7 +75,9 @@ function managedOpenClawRuntimeConfiguration(source, prefix) {
       principalRole: null,
       maximumContextBytes: null,
       maximumFileCount: null,
+      openClawManagedAuthBindingMode: null,
       openClawManagedAuthProfileIdentityHash: null,
+      openClawManagedGatewayRouteIdentityHash: null,
       openClawManagedAuthSourceIdentityHash: null,
     });
   }
@@ -100,7 +102,10 @@ function managedOpenClawRuntimeConfiguration(source, prefix) {
     }
     return null;
   };
-  const authProfileId = managedString('auth_profile_id');
+  const gatewayTransport = /^\s*gateway_transport\s*=\s*true\s*(?:#.*)?$/m.test(section);
+  const authBindingMode = managedString('auth_binding_mode') || (gatewayTransport
+    ? 'current-agent-gateway-oauth' : 'user-locked');
+  const authProfileId = managedString('auth_profile_id') ?? null;
   const agentId = managedString('agent_id');
   const principalRole = managedString('principal_role');
   const openclawBinary = managedString('openclaw_binary');
@@ -121,9 +126,13 @@ function managedOpenClawRuntimeConfiguration(source, prefix) {
     'maximum_file_count',
     DEFAULT_MAXIMUM_FILE_COUNT,
   );
-  if (!/^openai:[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,247}$/.test(
-    String(authProfileId || ''),
-  )
+  if ((gatewayTransport
+    ? (authBindingMode !== 'current-agent-gateway-oauth'
+      || authProfileId !== null)
+    : (authBindingMode !== 'user-locked'
+      || !/^openai:[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,247}$/.test(
+        String(authProfileId || ''),
+      )))
     || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(String(agentId || ''))
     || !['research-author', 'formal-reviewer'].includes(principalRole)
     || !path.isAbsolute(String(openclawBinary || ''))
@@ -141,6 +150,7 @@ function managedOpenClawRuntimeConfiguration(source, prefix) {
     fail(code(prefix, 'openclaw_managed_config_invalid'));
   }
   let runtimeProvenance;
+  let gatewayRouteIdentityHash = null;
   try {
     const resolvedOpenClawBinary = fs.realpathSync(openclawBinary);
     const binaryStat = fs.statSync(resolvedOpenClawBinary);
@@ -149,6 +159,21 @@ function managedOpenClawRuntimeConfiguration(source, prefix) {
     runtimeProvenance = openClawModelRuntimeProvenance(
       resolvedOpenClawBinary,
     );
+    if (gatewayTransport) {
+      gatewayRouteIdentityHash = hashRecord(
+        'OpenClawManagedGatewayRouteIdentity',
+        {
+          version: 1,
+          agentId,
+          authBindingMode: 'current-agent-gateway-oauth-route',
+          openclawConfigPathHash: hashBytes(openclawConfigPath),
+          openclawConfigContentHash:
+            hashBytes(fs.readFileSync(openclawConfigPath)),
+          openclawStateDirPathHash: hashBytes(openclawStateDir),
+          transport: 'openclaw-gateway-runtime-direct-rpc',
+        },
+      );
+    }
   } catch {
     fail(code(prefix, 'openclaw_managed_runtime_provenance_invalid'));
   }
@@ -158,13 +183,16 @@ function managedOpenClawRuntimeConfiguration(source, prefix) {
     principalRole,
     maximumContextBytes,
     maximumFileCount,
+    gatewayTransport,
+    openClawManagedAuthBindingMode: gatewayTransport
+      ? 'current-agent-gateway-oauth-route' : 'user-locked-profile',
     openClawManagedRuntimeProvenanceHash:
       runtimeProvenance.openClawManagedRuntimeProvenanceHash,
-    openClawManagedAuthProfileIdentityHash:
-      hashRecord('OpenClawManagedAuthProfileIdentity', {
-        provider: 'openai',
-        authProfileId,
+    openClawManagedAuthProfileIdentityHash: gatewayTransport ? null
+      : hashRecord('OpenClawManagedAuthProfileIdentity', {
+        provider: 'openai', authProfileId,
       }),
+    openClawManagedGatewayRouteIdentityHash: gatewayRouteIdentityHash,
     openClawManagedAuthSourceIdentityHash:
       hashRecord('OpenClawManagedAuthSourceIdentity', {
         agentId,
@@ -388,8 +416,9 @@ function inspectCodexRuntime({
   const normalizedSelectedModel = managedOpenClawRuntime
     ? String(selectedModel).replace(/^openai\//, '')
     : selectedModel;
-  const modelSelectionSource = explicitModel
-    ? 'explicit_override' : 'codex_home_config';
+  const modelSelectionSource = managedConfiguration.gatewayTransport
+    ? 'openclaw_agent_default_verified'
+    : explicitModel ? 'explicit_override' : 'codex_home_config';
   const credentialMaterialBeforeChecks = credentialMaterialIdentities(root, errorPrefix);
   const credentialMaterialIdentityBeforeChecks = hashRecord(
     'CodexCredentialMaterialIdentitySet',
@@ -498,9 +527,15 @@ function inspectCodexRuntime({
       modelOptionVerified: true,
     } : {}),
     executionTransport: managedOpenClawRuntime
-      ? 'openclaw_user_locked_codex_app_server' : 'codex_cli',
+      ? managedConfiguration.gatewayTransport
+        ? 'openclaw_gateway_direct_rpc'
+        : 'openclaw_user_locked_codex_app_server'
+      : 'codex_cli',
     authenticationAuthorityMode: managedOpenClawRuntime
-      ? 'openclaw_user_locked_profile_fail_closed' : 'codex_home',
+      ? managedConfiguration.gatewayTransport
+        ? 'openclaw_current_agent_gateway_oauth'
+        : 'openclaw_user_locked_profile_fail_closed'
+      : 'codex_home',
     managedRuntimeEvidenceRequired: managedOpenClawRuntime,
     openClawManagedConfigurationHash: managedOpenClawRuntime
       ? hashBytes(configBytes) : null,
@@ -508,6 +543,10 @@ function inspectCodexRuntime({
       ? managedConfiguration.openClawManagedRuntimeProvenanceHash : null,
     openClawManagedAuthProfileIdentityHash:
       managedConfiguration.openClawManagedAuthProfileIdentityHash,
+    openClawManagedGatewayRouteIdentityHash:
+      managedConfiguration.openClawManagedGatewayRouteIdentityHash,
+    openClawManagedAuthBindingMode:
+      managedConfiguration.openClawManagedAuthBindingMode,
     openClawManagedAuthSourceIdentityHash:
       managedConfiguration.openClawManagedAuthSourceIdentityHash,
     openClawManagedAgentId: managedOpenClawRuntime
@@ -718,6 +757,10 @@ export function probeCodexModelAvailability({
     credentialConfigIdentityHash: runtime.credentialConfigIdentityHash,
     openClawManagedAuthProfileIdentityHash:
       runtime.openClawManagedAuthProfileIdentityHash || null,
+    openClawManagedGatewayRouteIdentityHash:
+      runtime.openClawManagedGatewayRouteIdentityHash || null,
+    openClawManagedAuthBindingMode:
+      runtime.openClawManagedAuthBindingMode || null,
     openClawManagedAuthSourceIdentityHash:
       runtime.openClawManagedAuthSourceIdentityHash || null,
     openClawManagedRuntimeProvenanceHash:

@@ -186,6 +186,9 @@ export function createCodexAgentExecutor({
         verifiedCodexBinary = freshRuntime.codexBinary;
       }
       const managedRuntimeExpected = openClawManagedRuntimeExpected(capabilityReceipt);
+      const managedGatewayRuntime = managedRuntimeExpected
+        && capabilityReceipt?.openClawManagedAuthBindingMode
+          === 'current-agent-gateway-oauth-route';
       const prompt = [
         managedRuntimeExpected
           ? buildOpenClawManagedExecutionMetadata({
@@ -334,8 +337,12 @@ export function createCodexAgentExecutor({
           changedPaths: changes,
           expectedConfigurationHash: capabilityReceipt?.openClawManagedConfigurationHash,
           expectedRuntimeProvenanceHash: capabilityReceipt?.openClawManagedRuntimeProvenanceHash,
+          expectedAuthBindingMode:
+            capabilityReceipt?.openClawManagedAuthBindingMode,
           expectedAuthProfileIdentityHash:
             capabilityReceipt?.openClawManagedAuthProfileIdentityHash,
+          expectedGatewayRouteIdentityHash:
+            capabilityReceipt?.openClawManagedGatewayRouteIdentityHash,
           expectedAuthSourceIdentityHash:
             capabilityReceipt?.openClawManagedAuthSourceIdentityHash,
         });
@@ -373,7 +380,8 @@ export function createCodexAgentExecutor({
         sessionId: verifiedSessionId,
         childSessionId: verifiedSessionId,
         sessionIsolation: managedExecutionEvidenceVerified
-          ? 'fresh_one_shot_codex_app_server_no_resume' : 'fresh_ephemeral_no_resume',
+          ? managedExecutionEvidence.sessionIsolation
+          : 'fresh_ephemeral_no_resume',
         contextInheritance: 'forbidden',
         maximumOutputTokens: outputTokenBudget ? Math.max(128, Number(outputTokenBudget)) : null,
         role,
@@ -411,14 +419,19 @@ export function createCodexAgentExecutor({
           ? false : managedFailureEvidenceVerified
             ? managedFailureEvidence.externalSideEffectPerformed : null,
         externalActionVerification: managedExecutionEvidenceVerified
-          ? 'openclaw_user_locked_codex_app_server_no_tools_or_delivery'
+          ? managedGatewayRuntime
+            ? 'openclaw_current_agent_gateway_rpc_no_tools_or_delivery'
+            : 'openclaw_user_locked_codex_app_server_no_tools_or_delivery'
           : managedFailureEvidenceVerified
-            ? 'openclaw_user_locked_codex_app_server_failure_evidence'
+            ? managedGatewayRuntime
+              ? 'openclaw_current_agent_gateway_rpc_failure_evidence'
+              : 'openclaw_user_locked_codex_app_server_failure_evidence'
             : 'codex_sandbox_policy',
         ...(managedExecutionEvidenceVerified ? {
           ...(managedExecutionEvidence.usage ? { usage: managedExecutionEvidence.usage } : {}),
-          codexExecutionTransport: 'openclaw_user_locked_codex_app_server',
-          codexAuthenticationAuthorityMode: 'openclaw_user_locked_profile_fail_closed',
+          codexExecutionTransport: capabilityReceipt.executionTransport,
+          codexAuthenticationAuthorityMode:
+            capabilityReceipt.authenticationAuthorityMode,
           openClawManagedCodexExecutionHash: managedExecutionEvidence.openClawManagedCodexExecutionHash,
           openClawManagedExecutionEvidence: managedExecutionEvidence,
           openClawCompletionInvocationId: managedExecutionEvidence.completionInvocationId,
@@ -429,10 +442,19 @@ export function createCodexAgentExecutor({
           openClawManagedRuntimeProvenanceHash: managedExecutionEvidence
             .openClawManagedRuntimeProvenance.openClawManagedRuntimeProvenanceHash,
           openClawManagedAuthProfileIdentityHash: managedExecutionEvidence.openClawManagedAuthProfileIdentityHash,
+          openClawManagedGatewayRouteIdentityHash:
+            managedExecutionEvidence.openClawManagedGatewayRouteIdentityHash
+              || null,
+          openClawManagedAuthBindingMode:
+            managedExecutionEvidence.openClawManagedAuthBindingMode
+              || 'user-locked-profile',
           openClawManagedAuthSourceIdentityHash: managedExecutionEvidence.openClawManagedAuthSourceIdentityHash,
           credentialMaterialExported: false,
           simpleCompletionModelRun: false,
-          codexAppServerOneShot: true,
+          codexAppServerOneShot:
+            managedExecutionEvidence.codexAppServerOneShot,
+          gatewayDirectRpcOneShot:
+            managedExecutionEvidence.gatewayDirectRpcOneShot === true,
           toolExecutionEnabled: false,
           messageDeliveryEnabled: false,
         } : {}),

@@ -76,6 +76,9 @@ function installFixtureOpenClawRuntimePackage(value, {
       'export async function updateSessionStore() {}',
       'export function getSessionEntry() { return null; }',
     ],
+    gatewayRuntimePath: [
+      'export async function callGatewayFromCli() {}',
+    ],
   };
   const packageExports = {};
   const runtimePaths = {};
@@ -148,7 +151,7 @@ test('managed Codex home stores only non-secret OpenClaw routing configuration',
   }
 });
 
-test('managed runtime binds the exact four public export files loaded for execution', async (context) => {
+test('managed runtime binds every public export file loaded for execution', async (context) => {
   preserveOpenClawSourceEnvironment(context);
   const value = fixture();
   try {

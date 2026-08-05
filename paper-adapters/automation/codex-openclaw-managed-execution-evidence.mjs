@@ -38,8 +38,51 @@ export function managedAuthEvidence({
       { retryable: false },
     );
   }
+  const gateway = configuration.gatewayTransport === true;
+  const transportEvidence = gateway ? {
+    openClawManagedAuthBindingMode:
+      'current-agent-gateway-oauth-route',
+    openClawManagedGatewayRouteIdentityHash:
+      configuration.openClawManagedGatewayRouteIdentityHash,
+    completionTransport: 'openclaw-gateway-runtime-direct-rpc',
+    profileSelection: 'openclaw-current-agent-gateway-oauth-route',
+    authProfileBindingMode: 'not-profile-bound',
+    authProfileBindingVerified: false,
+    gatewayRouteBindingVerified: true,
+    profileSelectionObservable: false,
+    profileFailoverPermitted: null,
+    runtimeHarness: 'openclaw',
+    codexAppServerOneShot: false,
+    gatewayDirectRpcOneShot: true,
+    promptSurface: 'openclaw-gateway-agent-rpc-user-prompt-only',
+    promptPersistence: 'suppressed-by-gateway-request',
+    sessionIsolation: 'fresh_one_shot_openclaw_gateway_no_resume',
+    codexAppServerStateCleanupPerformed: false,
+    gatewaySessionStateCleanupPerformed: true,
+    contextInheritance:
+      'provider-visible-context-forbidden-and-observed-empty',
+    residentSkillCatalogInjectionObserved: false,
+    providerToolSurfaceObservedEmpty: true,
+    sideEffectTelemetryMode:
+      'openclaw-optional-positive-evidence-none-observed',
+    transportFallbackObserved: false,
+    modelFallbackObserved: false,
+  } : {
+    completionTransport: 'openclaw-codex-app-server-agent-command',
+    profileSelection: 'openclaw-managed-user-locked-profile',
+    authProfileBindingMode: 'codex-app-server-user-locked-session',
+    authProfileBindingVerified: true,
+    profileFailoverPermitted: false,
+    runtimeHarness: 'codex',
+    codexAppServerOneShot: true,
+    promptSurface: 'openclaw-agent-command-single-user',
+    promptPersistence: 'openclaw-user-turn-transcript-suppressed',
+    sessionIsolation: 'fresh_one_shot_codex_app_server_no_resume',
+    codexAppServerStateCleanupPerformed: false,
+    contextInheritance: 'forbidden',
+  };
   const payload = {
-    version: 6,
+    version: gateway ? 7 : 6,
     kind: 'OpenClawManagedCodexExecution',
     status: 'openclaw_managed_codex_execution_completed',
     provider: managed.resolvedProvider,
@@ -64,34 +107,23 @@ export function managedAuthEvidence({
     openClawManagedAuthSourceIdentityHash:
       configuration.openClawManagedAuthSourceIdentityHash,
     changedPaths,
-    completionTransport: 'openclaw-codex-app-server-agent-command',
-    profileSelection: 'openclaw-managed-user-locked-profile',
-    authProfileBindingMode: 'codex-app-server-user-locked-session',
-    authProfileBindingVerified: true,
-    profileFailoverPermitted: false,
+    ...transportEvidence,
     runtimeFallbackObserved: false,
     credentialMaterialCopied: false,
-    runtimeHarness: 'codex',
     toolsDisabled: true,
     toolExecutionEnabled: false,
     openClawDynamicToolsAllowlist: [],
     nativeToolSurfaceEnabled: false,
     nativeToolCallsObserved: 0,
     simpleCompletionModelRun: false,
-    codexAppServerOneShot: true,
     messageDeliveryEnabled: false,
     externalDeliveryObserved: false,
-    promptSurface: 'openclaw-agent-command-single-user',
-    promptPersistence: 'openclaw-user-turn-transcript-suppressed',
     sessionStatePersistence: 'openclaw-entry-and-managed-artifacts-removed',
     sessionCleanupScope:
       'openclaw-session-store-artifacts-and-temporary-workspace-only',
-    codexAppServerStateCleanupPerformed: false,
-    sessionIsolation: 'fresh_one_shot_codex_app_server_no_resume',
     sessionCleanupVerified: managed.attemptTrace.every(
       (attempt) => attempt.sessionCleanupVerified === true,
     ),
-    contextInheritance: 'forbidden',
     modelReportedChecks: validation.reportedChecks,
     usage,
     usageHash: managedUsageHash(usage),
@@ -106,12 +138,15 @@ export function managedAuthEvidence({
   return Object.freeze({
     ...payload,
     openClawManagedCodexExecutionHash:
-      hashRecord('OpenClawManagedCodexAppServerExecution', payload),
+      hashRecord(gateway
+        ? 'OpenClawManagedGatewayExecution'
+        : 'OpenClawManagedCodexAppServerExecution', payload),
   });
 }
 
 function validManagedAttemptTrace(payload) {
   const attempts = payload?.attemptTrace;
+  const gateway = payload?.version === 7;
   const canonicalUsageRequired = payload?.version >= 5;
   const sha256Pattern = /^sha256:[0-9a-f]{64}$/;
   const model = {
@@ -137,12 +172,21 @@ function validManagedAttemptTrace(payload) {
       || attemptIds.has(attempt.attemptId)
       || attempt.provider !== payload.provider
       || attempt.model !== payload.model
-      || attempt.authProfileIdentityHash
-        !== payload.openClawManagedAuthProfileIdentityHash
+      || (gateway
+        ? (attempt.authBindingMode !== 'current-agent-gateway-oauth-route'
+          || attempt.authProfileIdentityHash !== null
+          || attempt.gatewayRouteIdentityHash
+            !== payload.openClawManagedGatewayRouteIdentityHash)
+        : (attempt.authProfileIdentityHash
+            !== payload.openClawManagedAuthProfileIdentityHash
+          || ![undefined, 'user-locked-profile'].includes(
+            attempt.authBindingMode,
+          )
+          || ![undefined, null].includes(attempt.gatewayRouteIdentityHash)))
       || !SAFE_THINKING.has(attempt.thinking)
       || (attempt.resolvedThinking !== null
         && !SAFE_THINKING.has(attempt.resolvedThinking))
-      || attempt.authProfileOverrideSource !== 'user'
+      || attempt.authProfileOverrideSource !== (gateway ? null : 'user')
       || attempt.runtimeFallbackUsed !== false
       || attempt.sessionCleanupVerified !== true
       || !sha256Pattern.test(String(
@@ -166,7 +210,9 @@ function validManagedAttemptTrace(payload) {
       || attempt.toolCallsObserved !== 0
       || attempt.pendingToolCallCount !== 0
       || attempt.externalDeliveryObserved !== false
-      || ![null, 'codex'].includes(attempt.agentHarnessId)
+      || ![null, gateway ? 'openclaw' : 'codex'].includes(
+        attempt.agentHarnessId,
+      )
       || ![null, 'auth-profile'].includes(attempt.requestAuthMode)
       || (attempt.responseTextHash !== null
         && !sha256Pattern.test(String(attempt.responseTextHash || '')))
@@ -186,7 +232,7 @@ function validManagedAttemptTrace(payload) {
         || attempt.stopReason !== 'stop'
         || attempt.errorClass !== null
         || attempt.responseErrorHash !== null
-        || attempt.agentHarnessId !== 'codex'
+        || attempt.agentHarnessId !== (gateway ? 'openclaw' : 'codex')
         || attempt.requestAuthMode !== 'auth-profile'
         || !sha256Pattern.test(
           String(attempt.responseTextHash || ''),
@@ -213,7 +259,7 @@ function validManagedAttemptTrace(payload) {
       && payload.usageHash === managedUsageHash(aggregateUsage)))
     && payload.successfulAttemptId === successfulAttempt.attemptId
     && payload.completionInvocationId
-      === `openclaw-codex-app-server:${successfulAttempt.attemptId}`
+      === `${gateway ? 'openclaw-gateway-agent-rpc' : 'openclaw-codex-app-server'}:${successfulAttempt.attemptId}`
     && payload.successfulResponseHash === successfulAttempt.responseTextHash
     && payload.successfulSessionBindingHash
       === successfulAttempt.sessionBindingAfterHash
@@ -223,13 +269,91 @@ function validManagedAttemptTrace(payload) {
       === JSON.stringify(expectedThinking);
 }
 
+function validManagedAuthenticationBinding(payload, {
+  expectedAuthBindingMode,
+  expectedAuthProfileIdentityHash,
+  expectedGatewayRouteIdentityHash,
+} = {}) {
+  if (payload?.version === 7) {
+    return (expectedAuthBindingMode === undefined
+        || expectedAuthBindingMode === 'current-agent-gateway-oauth-route')
+      && payload.openClawManagedAuthBindingMode
+        === 'current-agent-gateway-oauth-route'
+      && payload.openClawManagedAuthProfileIdentityHash === null
+      && (expectedAuthProfileIdentityHash === undefined
+        || expectedAuthProfileIdentityHash === null)
+      && /^sha256:[0-9a-f]{64}$/.test(
+        String(expectedGatewayRouteIdentityHash || ''),
+      )
+      && payload.openClawManagedGatewayRouteIdentityHash
+        === expectedGatewayRouteIdentityHash;
+  }
+  return (expectedAuthBindingMode === undefined
+      || expectedAuthBindingMode === 'user-locked-profile')
+    && /^sha256:[0-9a-f]{64}$/.test(
+      String(expectedAuthProfileIdentityHash || ''),
+    )
+    && payload.openClawManagedAuthProfileIdentityHash
+      === expectedAuthProfileIdentityHash
+    && [undefined, null].includes(expectedGatewayRouteIdentityHash);
+}
+
+function validManagedTransportEvidence(payload) {
+  if (payload?.version === 7) {
+    return payload.completionTransport
+        === 'openclaw-gateway-runtime-direct-rpc'
+      && payload.profileSelection
+        === 'openclaw-current-agent-gateway-oauth-route'
+      && payload.authProfileBindingMode === 'not-profile-bound'
+      && payload.authProfileBindingVerified === false
+      && payload.gatewayRouteBindingVerified === true
+      && payload.profileSelectionObservable === false
+      && payload.profileFailoverPermitted === null
+      && payload.runtimeHarness === 'openclaw'
+      && payload.codexAppServerOneShot === false
+      && payload.gatewayDirectRpcOneShot === true
+      && payload.promptSurface
+        === 'openclaw-gateway-agent-rpc-user-prompt-only'
+      && payload.promptPersistence === 'suppressed-by-gateway-request'
+      && payload.sessionIsolation
+        === 'fresh_one_shot_openclaw_gateway_no_resume'
+      && payload.codexAppServerStateCleanupPerformed === false
+      && payload.gatewaySessionStateCleanupPerformed === true
+      && payload.contextInheritance
+        === 'provider-visible-context-forbidden-and-observed-empty'
+      && payload.residentSkillCatalogInjectionObserved === false
+      && payload.providerToolSurfaceObservedEmpty === true
+      && payload.sideEffectTelemetryMode
+        === 'openclaw-optional-positive-evidence-none-observed'
+      && payload.transportFallbackObserved === false
+      && payload.modelFallbackObserved === false;
+  }
+  return payload.completionTransport
+      === 'openclaw-codex-app-server-agent-command'
+    && payload.profileSelection === 'openclaw-managed-user-locked-profile'
+    && payload.authProfileBindingMode
+      === 'codex-app-server-user-locked-session'
+    && payload.authProfileBindingVerified === true
+    && payload.profileFailoverPermitted === false
+    && payload.runtimeHarness === 'codex'
+    && payload.codexAppServerOneShot === true
+    && payload.promptSurface === 'openclaw-agent-command-single-user'
+    && payload.promptPersistence
+      === 'openclaw-user-turn-transcript-suppressed'
+    && payload.codexAppServerStateCleanupPerformed === false
+    && payload.sessionIsolation === 'fresh_one_shot_codex_app_server_no_resume'
+    && payload.contextInheritance === 'forbidden';
+}
+
 export function verifyOpenClawManagedExecutionEvidence(evidence, {
   originalPromptHash,
   model,
   changedPaths,
   expectedConfigurationHash,
   expectedRuntimeProvenanceHash,
+  expectedAuthBindingMode,
   expectedAuthProfileIdentityHash,
+  expectedGatewayRouteIdentityHash,
   expectedAuthSourceIdentityHash,
   allowLegacyVersion4 = false,
 } = {}) {
@@ -242,14 +366,13 @@ export function verifyOpenClawManagedExecutionEvidence(evidence, {
   )].sort();
   return Boolean(
     evidence
-    && (payload.version === 6
+    && ([6, 7].includes(payload.version)
       || (allowLegacyVersion4 === true && payload.version === 4))
     && payload.kind === 'OpenClawManagedCodexExecution'
     && payload.status === 'openclaw_managed_codex_execution_completed'
-    && hashRecord(
-      'OpenClawManagedCodexAppServerExecution',
-      payload,
-    ) === claimedHash
+    && hashRecord(payload.version === 7
+      ? 'OpenClawManagedGatewayExecution'
+      : 'OpenClawManagedCodexAppServerExecution', payload) === claimedHash
     && payload.provider === 'openai'
     && payload.model === model
     && payload.originalPromptHash === originalPromptHash
@@ -263,22 +386,18 @@ export function verifyOpenClawManagedExecutionEvidence(evidence, {
       payload.openClawManagedRuntimeProvenance,
       { expectedProvenanceHash: expectedRuntimeProvenanceHash },
     )
-    && /^sha256:[0-9a-f]{64}$/.test(String(expectedAuthProfileIdentityHash || ''))
-    && payload.openClawManagedAuthProfileIdentityHash
-      === expectedAuthProfileIdentityHash
+    && validManagedAuthenticationBinding(payload, {
+      expectedAuthBindingMode,
+      expectedAuthProfileIdentityHash,
+      expectedGatewayRouteIdentityHash,
+    })
     && /^sha256:[0-9a-f]{64}$/.test(String(expectedAuthSourceIdentityHash || ''))
     && payload.openClawManagedAuthSourceIdentityHash
       === expectedAuthSourceIdentityHash
     && JSON.stringify(payload.changedPaths) === JSON.stringify(expectedChangedPaths)
-    && payload.completionTransport === 'openclaw-codex-app-server-agent-command'
-    && payload.profileSelection === 'openclaw-managed-user-locked-profile'
-    && payload.authProfileBindingMode
-      === 'codex-app-server-user-locked-session'
-    && payload.authProfileBindingVerified === true
-    && payload.profileFailoverPermitted === false
+    && validManagedTransportEvidence(payload)
     && payload.runtimeFallbackObserved === false
     && payload.credentialMaterialCopied === false
-    && payload.runtimeHarness === 'codex'
     && payload.toolsDisabled === true
     && payload.toolExecutionEnabled === false
     && Array.isArray(payload.openClawDynamicToolsAllowlist)
@@ -286,20 +405,13 @@ export function verifyOpenClawManagedExecutionEvidence(evidence, {
     && payload.nativeToolSurfaceEnabled === false
     && payload.nativeToolCallsObserved === 0
     && payload.simpleCompletionModelRun === false
-    && payload.codexAppServerOneShot === true
     && payload.messageDeliveryEnabled === false
     && payload.externalDeliveryObserved === false
-    && payload.promptSurface === 'openclaw-agent-command-single-user'
-    && payload.promptPersistence
-      === 'openclaw-user-turn-transcript-suppressed'
     && payload.sessionStatePersistence
       === 'openclaw-entry-and-managed-artifacts-removed'
     && payload.sessionCleanupScope
       === 'openclaw-session-store-artifacts-and-temporary-workspace-only'
-    && payload.codexAppServerStateCleanupPerformed === false
-    && payload.sessionIsolation === 'fresh_one_shot_codex_app_server_no_resume'
     && payload.sessionCleanupVerified === true
-    && payload.contextInheritance === 'forbidden'
     && Array.isArray(payload.modelReportedChecks)
     && (payload.version === 4
       ? validLegacyManagedUsage(payload.usage)

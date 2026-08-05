@@ -18,6 +18,9 @@ import {
   isKnownOpenClawManagedCleanupFailureCode,
   projectOpenClawManagedFailureCode,
 } from './codex-openclaw-managed-failure-code.mjs';
+import {
+  runOpenClawManagedGatewayOneShot,
+} from './codex-openclaw-managed-gateway-transport.mjs';
 
 function managedOneShotSessionIdentity(configuration, attemptId) {
   const segment = `hepta-managed-one-shot-${attemptId}`;
@@ -399,34 +402,34 @@ async function runManagedOneShotAgentCommandUnderLock({
       agentId: configuration.agentId,
     });
     result = await runtime.agentCommand({
-      message: prompt,
-      agentId: configuration.agentId,
-      provider: model.provider,
-      model: model.modelId,
-      sessionId: identity.sessionId,
-      sessionKey: identity.sessionKey,
-      runId: attemptId,
-      lane: `hepta-paper-managed:${attemptId}`,
-      thinking,
-      timeout: String(Math.max(1, Math.ceil(timeoutMs / 1000))),
-      abortSignal,
-      senderIsOwner: true,
-      allowModelOverride: true,
-      deliver: false,
-      json: false,
-      toolsAllow: [],
-      disableMessageTool: true,
-      bootstrapContextMode: 'lightweight',
-      workspaceDir: attemptWorkspace,
-      cwd: attemptWorkspace,
-      cleanupBundleMcpOnRunEnd: true,
-      cleanupCliLiveSessionOnRunEnd: true,
-      oneShotCliRun: true,
-      sessionEffects: 'internal',
-      preserveUserFacingSessionModelState: true,
-      suppressPromptPersistence: true,
-      skipInitialSessionTouch: true,
-      messageChannel: 'internal',
+        message: prompt,
+        agentId: configuration.agentId,
+        provider: model.provider,
+        model: model.modelId,
+        sessionId: identity.sessionId,
+        sessionKey: identity.sessionKey,
+        runId: attemptId,
+        lane: `hepta-paper-managed:${attemptId}`,
+        thinking,
+        timeout: String(Math.max(1, Math.ceil(timeoutMs / 1000))),
+        abortSignal,
+        senderIsOwner: true,
+        allowModelOverride: true,
+        deliver: false,
+        json: false,
+        toolsAllow: [],
+        disableMessageTool: true,
+        bootstrapContextMode: 'lightweight',
+        workspaceDir: attemptWorkspace,
+        cwd: attemptWorkspace,
+        cleanupBundleMcpOnRunEnd: true,
+        cleanupCliLiveSessionOnRunEnd: true,
+        oneShotCliRun: true,
+        sessionEffects: 'internal',
+        preserveUserFacingSessionModelState: true,
+        suppressPromptPersistence: true,
+        skipInitialSessionTouch: true,
+        messageChannel: 'internal',
     }, runtime.silentRuntime);
   } catch (error) {
     thrown = error;
@@ -470,6 +473,25 @@ async function runManagedOneShotAgentCommandUnderLock({
 }
 
 export async function runManagedOneShotAgentCommand(options = {}) {
+  if (options.configuration?.gatewayTransport === true) {
+    const identity = managedOneShotSessionIdentity(
+      options.configuration,
+      options.attemptId,
+    );
+    const attemptWorkspace = fs.mkdtempSync(
+      path.join(os.tmpdir(), 'hepta-managed-gateway-rpc-'),
+    );
+    fs.chmodSync(attemptWorkspace, PRIVATE_DIRECTORY_MODE);
+    assertOpenClawManagedSingleAttemptPolicy({
+      openclawConfigPath: options.configuration.openclawConfigPath,
+      agentId: options.configuration.agentId,
+    });
+    return await runOpenClawManagedGatewayOneShot({
+      ...options,
+      sessionKey: identity.sessionKey,
+      attemptWorkspace,
+    });
+  }
   return await withCodexOpenClawManagedSessionStoreLifecycleLock(
     () => runManagedOneShotAgentCommandUnderLock(options),
     {

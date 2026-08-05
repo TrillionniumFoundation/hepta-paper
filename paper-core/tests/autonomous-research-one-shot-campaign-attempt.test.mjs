@@ -21,6 +21,9 @@ import {
 } from '../../paper-domain/automation/autonomous-research-one-shot-campaign-attempt.mjs';
 import { canonicalAutonomousResearchOneShotSnapshot } from '../../paper-domain/automation/autonomous-research-one-shot-canonical-json.mjs';
 import {
+  verifyAutonomousResearchOneShotProviderRuntimeBinding,
+} from '../../paper-domain/automation/autonomous-research-one-shot-provider-runtime-binding.mjs';
+import {
   verifyAutonomousResearchOneShotHistoricalTargetCampaignDefinition,
 } from '../../paper-domain/automation/autonomous-research-one-shot-target-campaign.mjs';
 import {
@@ -55,6 +58,8 @@ import {
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
   executionBinding,
+  gatewayProviderRuntimeBinding,
+  legacyProviderRuntimeBinding,
   providerRuntimeBinding,
 } from './support/autonomous-research-one-shot-campaign-attempt-fixture.mjs';
 
@@ -221,7 +226,7 @@ test('one-shot prepare environment is isolated from hostile provider ambient sta
   }
 });
 
-test('provider runtime binding captures the managed profile and config identities', () => {
+test('provider runtime binding v2 captures the profile auth union and config identities', () => {
   const providerConfiguration = {
     autonomousResearchProviderConfigurationHash:
       AUTONOMOUS_RESEARCH_ONE_SHOT_PROVIDER_CONFIGURATION_HASH,
@@ -236,7 +241,9 @@ test('provider runtime binding captures the managed profile and config identitie
       capabilityReceipt: {
         codexResearchAuthorCapabilityReceiptHash: H('author-capability'),
         credentialConfigIdentityHash: H('author-config'),
-        openClawManagedAuthProfileIdentityHash: H('profile'),
+        openClawManagedAuthProfileIdentityHash: H('author-profile'),
+        openClawManagedAuthBindingMode: 'user-locked-profile',
+        openClawManagedGatewayRouteIdentityHash: null,
         openClawManagedRuntimeProvenanceHash: H('runtime'),
         openClawManagedAuthSourceIdentityHash: H('auth-source'),
       },
@@ -245,14 +252,28 @@ test('provider runtime binding captures the managed profile and config identitie
       capabilityReceipt: {
         codexFormalReviewerCapabilityReceiptHash: H('reviewer-capability'),
         credentialConfigIdentityHash: H('reviewer-config'),
-        openClawManagedAuthProfileIdentityHash: H('profile'),
+        openClawManagedAuthProfileIdentityHash: H('reviewer-profile'),
+        openClawManagedAuthBindingMode: 'user-locked-profile',
+        openClawManagedGatewayRouteIdentityHash: null,
         openClawManagedRuntimeProvenanceHash: H('runtime'),
         openClawManagedAuthSourceIdentityHash: H('auth-source'),
       },
     }),
   });
+  assert.equal(binding.version, 2);
+  assert.equal(binding.openClawManagedAuthBindingMode, 'user-locked-profile');
+  assert.equal(binding.openClawManagedGatewayRouteIdentityHash, null);
+  assert.equal(
+    binding.researchAuthorOpenClawManagedAuthProfileIdentityHash,
+    H('author-profile'),
+  );
+  assert.equal(
+    binding.formalReviewerOpenClawManagedAuthProfileIdentityHash,
+    H('reviewer-profile'),
+  );
   assert.equal(binding.researchAuthorCredentialConfigIdentityHash, H('author-config'));
   assert.equal(binding.formalReviewerCredentialConfigIdentityHash, H('reviewer-config'));
+  assert.equal(verifyAutonomousResearchOneShotProviderRuntimeBinding(binding), true);
   assert.notEqual(
     autonomousResearchOneShotProviderRuntimeBindingHash(binding),
     autonomousResearchOneShotProviderRuntimeBindingHash({
@@ -260,6 +281,80 @@ test('provider runtime binding captures the managed profile and config identitie
       researchAuthorOpenClawManagedAuthProfileIdentityHash: H('other-profile'),
     }),
   );
+});
+
+test('provider runtime binding v2 captures one shared Gateway route without profiles', () => {
+  const providerConfiguration = {
+    autonomousResearchProviderConfigurationHash:
+      AUTONOMOUS_RESEARCH_ONE_SHOT_PROVIDER_CONFIGURATION_HASH,
+    researchAuthor: { provider: 'codex', codexHome: '/author' },
+    formalReviewer: { provider: 'codex', codexHome: '/reviewer' },
+  };
+  const capabilityReceipt = (role) => ({
+    [`codex${role === 'author' ? 'ResearchAuthor' : 'FormalReviewer'}CapabilityReceiptHash`]:
+      H(`${role}-capability`),
+    credentialConfigIdentityHash: H(`${role}-config`),
+    openClawManagedAuthProfileIdentityHash: null,
+    openClawManagedAuthBindingMode: 'current-agent-gateway-oauth-route',
+    openClawManagedGatewayRouteIdentityHash: H('gateway-route'),
+    openClawManagedRuntimeProvenanceHash: H('runtime'),
+    openClawManagedAuthSourceIdentityHash: H('auth-source'),
+  });
+  const binding = inspectAutonomousResearchOneShotProviderRuntimeBinding({
+    providerConfiguration,
+    environment: {},
+    preflightAuthor: () => ({
+      codexHome: '/author',
+      capabilityReceipt: capabilityReceipt('author'),
+    }),
+    preflightReviewer: () => ({
+      capabilityReceipt: capabilityReceipt('reviewer'),
+    }),
+  });
+  assert.equal(binding.version, 2);
+  assert.equal(
+    binding.openClawManagedAuthBindingMode,
+    'current-agent-gateway-oauth-route',
+  );
+  assert.equal(binding.researchAuthorOpenClawManagedAuthProfileIdentityHash, null);
+  assert.equal(binding.formalReviewerOpenClawManagedAuthProfileIdentityHash, null);
+  assert.equal(binding.openClawManagedGatewayRouteIdentityHash, H('gateway-route'));
+  assert.equal(verifyAutonomousResearchOneShotProviderRuntimeBinding(binding), true);
+
+  assert.throws(
+    () => inspectAutonomousResearchOneShotProviderRuntimeBinding({
+      providerConfiguration,
+      environment: {},
+      preflightAuthor: () => ({
+        codexHome: '/author',
+        capabilityReceipt: capabilityReceipt('author'),
+      }),
+      preflightReviewer: () => ({
+        capabilityReceipt: {
+          ...capabilityReceipt('reviewer'),
+          openClawManagedGatewayRouteIdentityHash: H('other-gateway-route'),
+        },
+      }),
+    }),
+    /autonomous_research_one_shot_provider_runtime_binding_invalid/,
+  );
+});
+
+test('provider runtime binding verifier retains strict version 1 support', () => {
+  const legacyBinding = legacyProviderRuntimeBinding();
+  assert.equal(verifyAutonomousResearchOneShotProviderRuntimeBinding(legacyBinding), true);
+  assert.equal(verifyAutonomousResearchOneShotProviderRuntimeBinding({
+    ...legacyBinding,
+    openClawManagedGatewayRouteIdentityHash: null,
+  }), false);
+  assert.equal(verifyAutonomousResearchOneShotProviderRuntimeBinding({
+    ...providerRuntimeBinding(),
+    researchAuthorOpenClawManagedAuthProfileIdentityHash: null,
+  }), false);
+  assert.equal(verifyAutonomousResearchOneShotProviderRuntimeBinding({
+    ...gatewayProviderRuntimeBinding(),
+    formalReviewerOpenClawManagedAuthProfileIdentityHash: H('reviewer-profile'),
+  }), false);
 });
 
 test('fixed attempt replay binds the complete execution snapshot and refuses preseeded launch', () => {
@@ -604,6 +699,12 @@ function providerCanaryPairReceipt(now, runtimeBinding = providerRuntimeBinding(
       openClawManagedAuthProfileIdentityHash: author
         ? runtimeBinding.researchAuthorOpenClawManagedAuthProfileIdentityHash
         : runtimeBinding.formalReviewerOpenClawManagedAuthProfileIdentityHash,
+      ...(runtimeBinding.version === 2 ? {
+        openClawManagedAuthBindingMode:
+          runtimeBinding.openClawManagedAuthBindingMode,
+        openClawManagedGatewayRouteIdentityHash:
+          runtimeBinding.openClawManagedGatewayRouteIdentityHash,
+      } : {}),
       openClawManagedRuntimeProvenanceHash:
         runtimeBinding.openClawManagedRuntimeProvenanceHash,
       openClawManagedAuthSourceIdentityHash:
@@ -685,6 +786,36 @@ test('one-shot canary capabilities must match the reserved runtime binding', () 
     }),
     /autonomous_research_one_shot_provider_canary_capability_mismatch/,
   );
+
+  const gatewayRuntimeBinding = gatewayProviderRuntimeBinding();
+  const gatewayReceipt = providerCanaryPairReceipt(now, gatewayRuntimeBinding);
+  assert.equal(assertAutonomousResearchOneShotProviderCanaryReceiptBound({
+    receipt: gatewayReceipt,
+    expectedProviderConfigurationHash: gatewayRuntimeBinding.providerConfigurationHash,
+    expectedProviderRuntimeBinding: gatewayRuntimeBinding,
+    now,
+  }), gatewayReceipt);
+  assert.throws(
+    () => assertAutonomousResearchOneShotProviderCanaryReceiptBound({
+      receipt: gatewayReceipt,
+      expectedProviderConfigurationHash: gatewayRuntimeBinding.providerConfigurationHash,
+      expectedProviderRuntimeBinding: {
+        ...gatewayRuntimeBinding,
+        openClawManagedGatewayRouteIdentityHash: H('drifted-gateway-route'),
+      },
+      now,
+    }),
+    /autonomous_research_one_shot_provider_canary_capability_mismatch/,
+  );
+
+  const legacyRuntimeBinding = legacyProviderRuntimeBinding();
+  const legacyReceipt = providerCanaryPairReceipt(now, legacyRuntimeBinding);
+  assert.equal(assertAutonomousResearchOneShotProviderCanaryReceiptBound({
+    receipt: legacyReceipt,
+    expectedProviderConfigurationHash: legacyRuntimeBinding.providerConfigurationHash,
+    expectedProviderRuntimeBinding: legacyRuntimeBinding,
+    now,
+  }), legacyReceipt);
 });
 
 function historicalAttemptChain(ordinal, { terminal = true } = {}) {

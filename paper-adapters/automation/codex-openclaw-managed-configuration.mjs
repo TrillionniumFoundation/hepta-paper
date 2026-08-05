@@ -58,6 +58,12 @@ export const OPENCLAW_MODEL_RUNTIME_PACKAGE_EXPORTS = Object.freeze([
       'getSessionEntry',
     ]),
   }),
+  Object.freeze({
+    locationProperty: 'gatewayRuntimePath',
+    packageName: 'openclaw',
+    packageExport: './plugin-sdk/gateway-runtime',
+    requiredExports: Object.freeze(['callGatewayFromCli']),
+  }),
 ]);
 
 const SHA256 = /^sha256:[a-f0-9]{64}$/;
@@ -323,11 +329,6 @@ export function readCodexOpenClawManagedConfiguration({
     SAFE_ROLE,
     'codex_openclaw_managed_principal_role_invalid',
   );
-  const authProfileId = assertSafeString(
-    section.auth_profile_id,
-    SAFE_AUTH_PROFILE_ID,
-    'codex_openclaw_managed_auth_profile_id_invalid',
-  );
   const thinking = String(section.thinking || 'adaptive').trim().toLowerCase();
   if (!SAFE_THINKING.has(thinking)) {
     throw runtimeError('codex_openclaw_managed_thinking_invalid');
@@ -335,6 +336,28 @@ export function readCodexOpenClawManagedConfiguration({
   if (Number(section.version) !== CONFIG_VERSION || section.managed_auth !== true) {
     throw runtimeError('codex_openclaw_managed_config_version_invalid');
   }
+  if (section.gateway_transport !== undefined
+    && typeof section.gateway_transport !== 'boolean') {
+    throw runtimeError('codex_openclaw_managed_config_invalid');
+  }
+  const gatewayTransport = section.gateway_transport === true;
+  const configuredAuthBindingMode = gatewayTransport
+    ? 'current-agent-gateway-oauth' : 'user-locked-profile';
+  if ((gatewayTransport
+      && section.auth_binding_mode !== configuredAuthBindingMode)
+    || (!gatewayTransport
+      && section.auth_binding_mode !== undefined
+      && section.auth_binding_mode !== configuredAuthBindingMode)) {
+    throw runtimeError('codex_openclaw_managed_auth_binding_mode_invalid');
+  }
+  if (gatewayTransport && section.auth_profile_id !== undefined) {
+    throw runtimeError('codex_openclaw_managed_auth_binding_mode_invalid');
+  }
+  const authProfileId = gatewayTransport ? null : assertSafeString(
+    section.auth_profile_id,
+    SAFE_AUTH_PROFILE_ID,
+    'codex_openclaw_managed_auth_profile_id_invalid',
+  );
   const openclawStateDir = canonicalAbsoluteDirectory(
     section.openclaw_state_dir,
     'codex_openclaw_managed_openclaw_state_dir_invalid',
@@ -386,7 +409,20 @@ export function readCodexOpenClawManagedConfiguration({
     principalRole,
     authProfileId,
     openClawManagedAuthProfileIdentityHash:
-      openClawManagedAuthProfileIdentityHash(authProfileId),
+      gatewayTransport ? null : openClawManagedAuthProfileIdentityHash(authProfileId),
+    openClawManagedGatewayRouteIdentityHash: gatewayTransport ? hashRecord(
+      'OpenClawManagedGatewayRouteIdentity',
+      {
+        version: 1,
+        agentId,
+        authBindingMode: 'current-agent-gateway-oauth-route',
+        openclawConfigContentHash:
+          sha256(fs.readFileSync(openclawConfigPath)),
+        openclawConfigPathHash: sha256(openclawConfigPath),
+        openclawStateDirPathHash: sha256(openclawStateDir),
+        transport: 'openclaw-gateway-runtime-direct-rpc',
+      },
+    ) : null,
     openClawManagedAuthSourceIdentityHash:
       openClawManagedAuthSourceIdentityHash({
         agentId,
@@ -394,6 +430,9 @@ export function readCodexOpenClawManagedConfiguration({
         openclawStateDir,
       }),
     thinking,
+    gatewayTransport,
+    openClawManagedAuthBindingMode: gatewayTransport
+      ? 'current-agent-gateway-oauth-route' : 'user-locked-profile',
     openclawBinary,
     openclawConfigPath,
     openclawStateDir,
@@ -473,17 +512,20 @@ export async function loadOpenClawModelRuntime(configuration) {
     configRuntime,
     agentHarnessRuntime,
     sessionStoreRuntime,
+    gatewayRuntime,
   ] = await Promise.all([
     import(pathToFileURL(located.agentCommandRuntimePath).href),
     import(pathToFileURL(located.configRuntimePath).href),
     import(pathToFileURL(located.agentHarnessRuntimePath).href),
     import(pathToFileURL(located.sessionStoreRuntimePath).href),
+    import(pathToFileURL(located.gatewayRuntimePath).href),
   ]);
   const runtimeModules = {
     agentCommandRuntimePath: agentCommandRuntime,
     configRuntimePath: configRuntime,
     agentHarnessRuntimePath: agentHarnessRuntime,
     sessionStoreRuntimePath: sessionStoreRuntime,
+    gatewayRuntimePath: gatewayRuntime,
   };
   if (OPENCLAW_MODEL_RUNTIME_PACKAGE_EXPORTS.some((descriptor) => (
     descriptor.requiredExports.some((name) => (
@@ -579,6 +621,7 @@ export async function loadOpenClawModelRuntime(configuration) {
     resolveSessionFilePath: sessionStoreRuntime.resolveSessionFilePath,
     upsertSessionEntry: sessionStoreRuntime.upsertSessionEntry,
     updateSessionStore: sessionStoreRuntime.updateSessionStore,
+    callGatewayFromCli: gatewayRuntime.callGatewayFromCli,
     silentRuntime,
     packageRoot: located.packageRoot,
     runtimeProvenance,

@@ -206,12 +206,18 @@ export function aggregateManagedUsage(usages) {
 }
 
 function managedAttemptUsageEntry(attempt) {
+  const gateway = attempt?.authBindingMode
+    === 'current-agent-gateway-oauth-route';
   const payload = {
     attemptNumber: attempt?.attemptNumber,
     attemptId: attempt?.attemptId,
     provider: attempt?.provider,
     model: attempt?.model,
     authProfileIdentityHash: attempt?.authProfileIdentityHash,
+    ...(gateway ? {
+      authBindingMode: attempt.authBindingMode,
+      gatewayRouteIdentityHash: attempt.gatewayRouteIdentityHash,
+    } : {}),
     usage: attempt?.usage,
     usageHash: attempt?.usageHash,
     toolCallsObserved: Number(attempt?.toolCallsObserved || 0),
@@ -230,14 +236,23 @@ function managedAttemptUsageEntry(attempt) {
 function validManagedAttemptUsageEntry(entry, index) {
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
   const { attemptUsageEntryHash: claimedHash, ...payload } = entry;
-  return Object.keys(entry).length === 11
+  const gateway = entry.authBindingMode
+    === 'current-agent-gateway-oauth-route';
+  return Object.keys(entry).length === (gateway ? 13 : 11)
     && entry.attemptNumber === index + 1
     && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
       String(entry.attemptId || ''),
     )
     && entry.provider === 'openai'
     && typeof entry.model === 'string' && Boolean(entry.model)
-    && /^sha256:[0-9a-f]{64}$/.test(String(entry.authProfileIdentityHash || ''))
+    && (gateway
+      ? entry.authProfileIdentityHash === null
+        && /^sha256:[0-9a-f]{64}$/.test(
+          String(entry.gatewayRouteIdentityHash || ''),
+        )
+      : /^sha256:[0-9a-f]{64}$/.test(
+        String(entry.authProfileIdentityHash || ''),
+      ) && !Object.hasOwn(entry, 'gatewayRouteIdentityHash'))
     && validCanonicalManagedUsage(entry.usage)
     && entry.usageHash === hashRecord(
       'OpenClawManagedCodexAppServerAttemptUsage',
@@ -257,12 +272,18 @@ function validManagedAttemptUsageEntry(entry, index) {
 function managedIncompleteAttemptUsageEntry(attempt) {
   const usage = validCanonicalManagedUsage(attempt?.usage)
     ? attempt.usage : null;
+  const gateway = attempt?.authBindingMode
+    === 'current-agent-gateway-oauth-route';
   const payload = {
     attemptNumber: attempt?.attemptNumber,
     attemptId: attempt?.attemptId,
     provider: attempt?.provider,
     model: attempt?.model,
     authProfileIdentityHash: attempt?.authProfileIdentityHash,
+    ...(gateway ? {
+      authBindingMode: attempt.authBindingMode,
+      gatewayRouteIdentityHash: attempt.gatewayRouteIdentityHash,
+    } : {}),
     usageCompleteness: usage ? 'complete' : 'unknown_invalid',
     usage,
     usageHash: usage ? attempt?.usageHash : null,
@@ -284,14 +305,23 @@ function validManagedIncompleteAttemptUsageEntry(entry, index) {
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return false;
   const { attemptUsageEntryHash: claimedHash, ...payload } = entry;
   const complete = entry.usageCompleteness === 'complete';
-  return Object.keys(entry).length === 13
+  const gateway = entry.authBindingMode
+    === 'current-agent-gateway-oauth-route';
+  return Object.keys(entry).length === (gateway ? 15 : 13)
     && entry.attemptNumber === index + 1
     && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
       String(entry.attemptId || ''),
     )
     && entry.provider === 'openai'
     && typeof entry.model === 'string' && Boolean(entry.model)
-    && /^sha256:[0-9a-f]{64}$/.test(String(entry.authProfileIdentityHash || ''))
+    && (gateway
+      ? entry.authProfileIdentityHash === null
+        && /^sha256:[0-9a-f]{64}$/.test(
+          String(entry.gatewayRouteIdentityHash || ''),
+        )
+      : /^sha256:[0-9a-f]{64}$/.test(
+        String(entry.authProfileIdentityHash || ''),
+      ) && !Object.hasOwn(entry, 'gatewayRouteIdentityHash'))
     && ['complete', 'unknown_invalid'].includes(entry.usageCompleteness)
     && entry.externalModelInvocationPerformed === true
     && Number.isSafeInteger(entry.toolCallsObserved)
@@ -310,6 +340,30 @@ function validManagedIncompleteAttemptUsageEntry(entry, index) {
       'OpenClawManagedCodexAppServerIncompleteAttemptUsageEntry',
       payload,
     );
+}
+
+function managedAttemptAuthBindingMatches(entry, {
+  expectedAuthBindingMode,
+  expectedAuthProfileIdentityHash,
+  expectedGatewayRouteIdentityHash,
+} = {}) {
+  const gateway = entry?.authBindingMode
+    === 'current-agent-gateway-oauth-route';
+  if (gateway) {
+    return (expectedAuthBindingMode === undefined
+        || expectedAuthBindingMode === 'current-agent-gateway-oauth-route')
+      && entry.authProfileIdentityHash === null
+      && (expectedAuthProfileIdentityHash === undefined
+        || expectedAuthProfileIdentityHash === null)
+      && /^sha256:[0-9a-f]{64}$/.test(
+        String(expectedGatewayRouteIdentityHash || ''),
+      )
+      && entry.gatewayRouteIdentityHash === expectedGatewayRouteIdentityHash;
+  }
+  return (expectedAuthBindingMode === undefined
+      || expectedAuthBindingMode === 'user-locked-profile')
+    && entry.authProfileIdentityHash === expectedAuthProfileIdentityHash
+    && [undefined, null].includes(expectedGatewayRouteIdentityHash);
 }
 
 function managedFailureExternalEffectProjection(entries) {
@@ -336,9 +390,16 @@ export function buildOpenClawManagedFailureEvidence(error) {
   );
   const attempts = Array.isArray(error?.attemptTrace) ? error.attemptTrace : [];
   const entries = attempts.map(managedAttemptUsageEntry);
+  const gatewayExecution = entries.every((entry) => (
+    entry.authBindingMode === 'current-agent-gateway-oauth-route'
+  ));
+  if (!gatewayExecution && entries.some((entry) => (
+    Object.hasOwn(entry, 'authBindingMode')
+  ))) return null;
   const usage = aggregateManagedUsage(entries.map((entry) => entry.usage));
   const failureExecutionBinding =
     error?.openClawManagedFailureExecutionBinding || null;
+  if (gatewayExecution && !failureExecutionBinding) return null;
   if (!entries.length
     || !verifyOpenClawModelRuntimeProvenance(error?.runtimeProvenance)
     || (failureExecutionBinding
@@ -346,7 +407,8 @@ export function buildOpenClawManagedFailureEvidence(error) {
         failureExecutionBinding,
       ))
     || error?.attemptTraceHash !== modelAttemptTraceHash(attempts)) return null;
-  const evidenceVersion = failureExecutionBinding ? 5 : 4;
+  const evidenceVersion = gatewayExecution ? 6
+    : failureExecutionBinding ? 5 : 4;
   const executionBindingField = failureExecutionBinding
     ? { failureExecutionBinding } : {};
   if (!usage
@@ -435,7 +497,9 @@ export function buildOpenClawManagedFailureEvidence(error) {
 export function verifyOpenClawManagedFailureEvidence(evidence, {
   failureCode,
   model,
+  expectedAuthBindingMode,
   expectedAuthProfileIdentityHash,
+  expectedGatewayRouteIdentityHash,
   expectedRuntimeProvenanceHash,
   expectedFailureExecutionBinding = null,
   allowLegacyAudit = false,
@@ -447,6 +511,14 @@ export function verifyOpenClawManagedFailureEvidence(evidence, {
   } = evidence;
   const expectedFailureCode = projectOpenClawManagedFailureCode(failureCode);
   const entries = payload.attemptUsageEntries;
+  const gatewayEntries = Array.isArray(entries) && entries.every((entry) => (
+    entry?.authBindingMode === 'current-agent-gateway-oauth-route'
+  ));
+  if ((payload.version === 6 && !gatewayEntries)
+    || (payload.version !== 6 && Array.isArray(entries)
+      && entries.some((entry) => Object.hasOwn(entry || {}, 'authBindingMode')))) {
+    return false;
+  }
   if (!isKnownOpenClawManagedFailureCode(payload.failureCode)
     || !/^sha256:[0-9a-f]{64}$/.test(
     String(expectedRuntimeProvenanceHash || ''),
@@ -454,7 +526,7 @@ export function verifyOpenClawManagedFailureEvidence(evidence, {
     payload.openClawManagedRuntimeProvenance,
     { expectedProvenanceHash: expectedRuntimeProvenanceHash },
   )) return false;
-  const currentExecutionEvidence = payload.version === 5
+  const currentExecutionEvidence = [5, 6].includes(payload.version)
     && expectedFailureExecutionBinding !== null
     && typeof expectedFailureExecutionBinding === 'object'
     && !Array.isArray(expectedFailureExecutionBinding)
@@ -466,7 +538,7 @@ export function verifyOpenClawManagedFailureEvidence(evidence, {
     && [1, 4].includes(payload.version)
     && !Object.hasOwn(payload, 'failureExecutionBinding');
   if (!currentExecutionEvidence && !legacyAuditEvidence) return false;
-  if ([4, 5].includes(payload.version) && payload.usageComplete === false) {
+  if ([4, 5, 6].includes(payload.version) && payload.usageComplete === false) {
     const attemptTrace = payload.attemptTrace;
     const projectedEntries = Array.isArray(attemptTrace)
       ? attemptTrace.map(managedIncompleteAttemptUsageEntry) : null;
@@ -478,7 +550,7 @@ export function verifyOpenClawManagedFailureEvidence(evidence, {
     const externalEffects = Array.isArray(entries)
       ? managedFailureExternalEffectProjection(entries) : null;
     return Boolean(
-      Object.keys(evidence).length === (payload.version === 5 ? 19 : 18)
+      Object.keys(evidence).length === ([5, 6].includes(payload.version) ? 19 : 18)
       && payload.kind === 'OpenClawManagedCodexFailureUsageEvidence'
       && payload.status === 'openclaw_managed_codex_execution_failed'
       && payload.failureCode === expectedFailureCode
@@ -488,13 +560,17 @@ export function verifyOpenClawManagedFailureEvidence(evidence, {
       && attemptTrace.length === entries.length
       && payload.attemptTraceHash === modelAttemptTraceHash(attemptTrace)
       && JSON.stringify(projectedEntries) === JSON.stringify(entries)
-      && (payload.version !== 5
+      && (![5, 6].includes(payload.version)
         || JSON.stringify(attemptTrace) === JSON.stringify(entries))
       && entries.some((entry) => entry.usageCompleteness === 'unknown_invalid')
       && entries.every((entry, index) => (
         validManagedIncompleteAttemptUsageEntry(entry, index)
         && entry.model === model
-        && entry.authProfileIdentityHash === expectedAuthProfileIdentityHash
+        && managedAttemptAuthBindingMatches(entry, {
+          expectedAuthBindingMode,
+          expectedAuthProfileIdentityHash,
+          expectedGatewayRouteIdentityHash,
+        })
       ))
       && payload.attemptUsageEntriesHash === hashRecord(
         'OpenClawManagedCodexAppServerIncompleteAttemptUsageEntries',
@@ -517,7 +593,7 @@ export function verifyOpenClawManagedFailureEvidence(evidence, {
       )
     );
   }
-  if ([4, 5].includes(payload.version) && payload.usageComplete === true) {
+  if ([4, 5, 6].includes(payload.version) && payload.usageComplete === true) {
     const attemptTrace = payload.attemptTrace;
     const projectedEntries = Array.isArray(attemptTrace)
       ? attemptTrace.map(managedAttemptUsageEntry) : null;
@@ -526,7 +602,7 @@ export function verifyOpenClawManagedFailureEvidence(evidence, {
     const externalEffects = Array.isArray(entries)
       ? managedFailureExternalEffectProjection(entries) : null;
     return Boolean(
-      Object.keys(evidence).length === (payload.version === 5 ? 19 : 18)
+      Object.keys(evidence).length === ([5, 6].includes(payload.version) ? 19 : 18)
       && payload.kind === 'OpenClawManagedCodexFailureUsageEvidence'
       && payload.status === 'openclaw_managed_codex_execution_failed'
       && payload.failureCode === expectedFailureCode
@@ -536,11 +612,15 @@ export function verifyOpenClawManagedFailureEvidence(evidence, {
       && attemptTrace.length === entries.length
       && payload.attemptTraceHash === modelAttemptTraceHash(attemptTrace)
       && JSON.stringify(projectedEntries) === JSON.stringify(entries)
-      && (payload.version !== 5
+      && (![5, 6].includes(payload.version)
         || JSON.stringify(attemptTrace) === JSON.stringify(entries))
       && entries.every((entry, index) => validManagedAttemptUsageEntry(entry, index)
         && entry.model === model
-        && entry.authProfileIdentityHash === expectedAuthProfileIdentityHash)
+        && managedAttemptAuthBindingMatches(entry, {
+          expectedAuthBindingMode,
+          expectedAuthProfileIdentityHash,
+          expectedGatewayRouteIdentityHash,
+        }))
       && payload.attemptUsageEntriesHash === hashRecord(
         'OpenClawManagedCodexAppServerAttemptUsageEntries',
         { entries },
@@ -574,7 +654,11 @@ export function verifyOpenClawManagedFailureEvidence(evidence, {
     && /^sha256:[0-9a-f]{64}$/.test(String(payload.attemptTraceHash || ''))
     && entries.every((entry, index) => validManagedAttemptUsageEntry(entry, index)
       && entry.model === model
-      && entry.authProfileIdentityHash === expectedAuthProfileIdentityHash)
+      && managedAttemptAuthBindingMatches(entry, {
+        expectedAuthBindingMode,
+        expectedAuthProfileIdentityHash,
+        expectedGatewayRouteIdentityHash,
+      }))
     && payload.attemptUsageEntriesHash === hashRecord(
       'OpenClawManagedCodexAppServerAttemptUsageEntries',
       { entries },

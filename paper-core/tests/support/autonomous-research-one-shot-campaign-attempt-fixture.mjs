@@ -22,7 +22,7 @@ const H = (label) => hashRecord(
 
 export function providerRuntimeBinding() {
   return {
-    version: 1,
+    version: 2,
     kind: 'AutonomousResearchOneShotProviderRuntimeBinding',
     providerConfigurationHash:
       AUTONOMOUS_RESEARCH_ONE_SHOT_PROVIDER_CONFIGURATION_HASH,
@@ -32,9 +32,31 @@ export function providerRuntimeBinding() {
     formalReviewerCredentialConfigIdentityHash: H('reviewer-config'),
     researchAuthorOpenClawManagedAuthProfileIdentityHash: H('author-profile'),
     formalReviewerOpenClawManagedAuthProfileIdentityHash: H('reviewer-profile'),
+    openClawManagedAuthBindingMode: 'user-locked-profile',
+    openClawManagedGatewayRouteIdentityHash: null,
     openClawManagedRuntimeProvenanceHash: H('managed-runtime'),
     openClawManagedAuthSourceIdentityHash: H('managed-auth-source'),
   };
+}
+
+export function gatewayProviderRuntimeBinding() {
+  return {
+    ...providerRuntimeBinding(),
+    researchAuthorOpenClawManagedAuthProfileIdentityHash: null,
+    formalReviewerOpenClawManagedAuthProfileIdentityHash: null,
+    openClawManagedAuthBindingMode: 'current-agent-gateway-oauth-route',
+    openClawManagedGatewayRouteIdentityHash: H('managed-gateway-route'),
+  };
+}
+
+export function legacyProviderRuntimeBinding() {
+  const binding = Object.fromEntries(
+    Object.entries(providerRuntimeBinding()).filter(([key]) => ![
+      'openClawManagedAuthBindingMode',
+      'openClawManagedGatewayRouteIdentityHash',
+    ].includes(key)),
+  );
+  return { ...binding, version: 1 };
 }
 
 export function executionBinding() {

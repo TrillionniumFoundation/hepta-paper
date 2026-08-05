@@ -75,6 +75,7 @@ export function provisionCodexOpenClawManagedHome({
   thinking = 'adaptive',
   maximumContextBytes = DEFAULT_MAXIMUM_CONTEXT_BYTES,
   maximumFileCount = DEFAULT_MAXIMUM_FILE_COUNT,
+  gatewayTransport = false,
   force = false,
 } = {}) {
   const requestedHome = path.resolve(String(home || ''));
@@ -96,7 +97,7 @@ export function provisionCodexOpenClawManagedHome({
     SAFE_ROLE,
     'codex_openclaw_managed_principal_role_invalid',
   );
-  const safeAuthProfileId = assertSafeString(
+  const safeAuthProfileId = gatewayTransport === true ? null : assertSafeString(
     authProfileId,
     SAFE_AUTH_PROFILE_ID,
     'codex_openclaw_managed_auth_profile_id_invalid',
@@ -128,13 +129,16 @@ export function provisionCodexOpenClawManagedHome({
     'managed_auth = true',
     `agent_id = ${JSON.stringify(safeAgent)}`,
     `principal_role = ${JSON.stringify(safeRole)}`,
-    `auth_profile_id = ${JSON.stringify(safeAuthProfileId)}`,
+    ...(gatewayTransport === true
+      ? ['auth_binding_mode = "current-agent-gateway-oauth"']
+      : [`auth_profile_id = ${JSON.stringify(safeAuthProfileId)}`]),
     `openclaw_binary = ${JSON.stringify(resolvedOpenClawBinary)}`,
     `openclaw_config_path = ${JSON.stringify(resolvedOpenClawConfigPath)}`,
     `openclaw_state_dir = ${JSON.stringify(resolvedOpenClawStateDir)}`,
     `thinking = ${JSON.stringify(safeThinking)}`,
     `maximum_context_bytes = ${Number(maximumContextBytes)}`,
     `maximum_file_count = ${Number(maximumFileCount)}`,
+    ...(gatewayTransport === true ? ['gateway_transport = true'] : []),
     '',
   ].join('\n');
   if (fs.existsSync(configPath)) {

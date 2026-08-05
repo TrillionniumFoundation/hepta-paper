@@ -71,6 +71,7 @@ test('managed Codex machine entrypoint has bounded help and strict configure par
   assert.equal(configureHelp.status, 0, configureHelp.stderr);
   assert.match(configureHelp.stdout, /--auth-profile-id/);
   assert.match(configureHelp.stdout, /--principal-role/);
+  assert.match(configureHelp.stdout, /--gateway-transport/);
 
   const execHelp = runNode('codex-openclaw-managed', ['exec', '--help']);
   assert.equal(execHelp.status, 0, execHelp.stderr);

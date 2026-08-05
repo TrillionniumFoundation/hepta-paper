@@ -117,7 +117,11 @@ export function modelAttemptRecord({
     provider: model.provider,
     model: model.modelId,
     authProfileIdentityHash:
-      configuration.openClawManagedAuthProfileIdentityHash,
+      configuration.gatewayTransport
+        ? null : configuration.openClawManagedAuthProfileIdentityHash,
+    authBindingMode: configuration.openClawManagedAuthBindingMode,
+    gatewayRouteIdentityHash:
+      configuration.openClawManagedGatewayRouteIdentityHash,
     thinking,
     resolvedThinking: resolvedThinking || null,
     outcome,
@@ -126,7 +130,8 @@ export function modelAttemptRecord({
     responseTextHash: responseText ? sha256(String(responseText)) : null,
     responseErrorHash: responseErrorText
       ? sha256(String(responseErrorText)) : null,
-    authProfileOverrideSource: 'user',
+    authProfileOverrideSource: configuration.gatewayTransport
+      ? null : 'user',
     runtimeFallbackUsed: normalizedTrace?.fallbackUsed ?? false,
     executionTrace: normalizedTrace,
     executionTraceHash: normalizedTrace

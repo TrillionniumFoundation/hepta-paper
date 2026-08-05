@@ -110,7 +110,9 @@ export async function callManagedModel({
         'codex_openclaw_managed_model_runtime_provenance_invalid',
       );
     }
-    verifyExplicitProfileAvailable({ runtime, configuration });
+    if (!configuration.gatewayTransport) {
+      verifyExplicitProfileAvailable({ runtime, configuration });
+    }
     for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
       if (abortScope.signal.aborted) {
         throw errorWithAttemptTrace(
@@ -140,6 +142,15 @@ export async function callManagedModel({
           timeoutMs: remainingTimeoutMs,
         });
       } catch (error) {
+        if (abortScope.signal.aborted) {
+          throw errorWithAttemptTrace(
+            abortScope.timedOut()
+              ? 'codex_openclaw_managed_model_timeout'
+              : 'codex_openclaw_managed_model_cancelled',
+            attemptTrace,
+            { retryable: abortScope.timedOut() },
+          );
+        }
         const failedInvocation = error?.managedInvocationFailure;
         const failedResponse = failedInvocation?.result || null;
         const failedUsage = normalizeManagedUsage(
@@ -275,10 +286,13 @@ export async function callManagedModel({
         );
       }
       if (response && (
-        agentMeta?.sessionId !== attemptId
+        (!configuration.gatewayTransport
+          && agentMeta?.sessionId !== attemptId)
         || agentMeta?.provider !== model.provider
         || agentMeta?.model !== model.modelId
-        || agentMeta?.agentHarnessId !== 'codex'
+        || agentMeta?.agentHarnessId !== (
+          configuration.gatewayTransport ? 'openclaw' : 'codex'
+        )
         || response?.meta?.requestShaping?.authMode !== 'auth-profile'
       )) {
         attemptTrace.push(modelAttemptRecord({
@@ -346,17 +360,28 @@ export async function callManagedModel({
         runtime.internalRunsDir,
         `${attemptId}.jsonl`,
       );
+      const expectedGatewaySessionFile = path.join(
+        runtime.sessionsDir,
+        `${agentMeta?.sessionId}.jsonl`,
+      );
       const completed = !thrown
         && stopReason === 'stop'
         && responseText
-        && agentMeta?.sessionId === attemptId
+        && (configuration.gatewayTransport
+          ? Boolean(agentMeta?.sessionId)
+          : agentMeta?.sessionId === attemptId)
         && agentMeta?.provider === model.provider
         && agentMeta?.model === model.modelId
-        && agentMeta?.agentHarnessId === 'codex'
+        && agentMeta?.agentHarnessId === (
+          configuration.gatewayTransport ? 'openclaw' : 'codex'
+        )
         && (reportedSessionFile === undefined
           || (path.isAbsolute(String(reportedSessionFile || ''))
-            && path.resolve(reportedSessionFile)
-              === expectedInternalSessionFile))
+            && [
+              expectedInternalSessionFile,
+              ...(configuration.gatewayTransport
+                ? [expectedGatewaySessionFile] : []),
+            ].includes(path.resolve(reportedSessionFile))))
         && response?.meta?.requestShaping?.authMode === 'auth-profile'
         && SAFE_THINKING.has(
           String(response?.meta?.requestShaping?.thinking || ''),
@@ -390,7 +415,9 @@ export async function callManagedModel({
         completedResult = Object.freeze({
           text: responseText,
           completionInvocationId:
-            `openclaw-codex-app-server:${attemptId}`,
+            configuration.gatewayTransport
+              ? `openclaw-gateway-agent-rpc:${attemptId}`
+              : `openclaw-codex-app-server:${attemptId}`,
           successfulAttemptId: attemptId,
           successfulResponseHash: successfulAttempt.responseTextHash,
           successfulSessionBindingHash:
@@ -403,6 +430,7 @@ export async function callManagedModel({
           attemptCount: attempt,
           thinking: successfulAttempt.resolvedThinking || thinking,
           runtimeProvenance: runtime.runtimeProvenance,
+          gatewayAgentRoute: configuration.gatewayTransport === true,
         });
         return completedResult;
       }

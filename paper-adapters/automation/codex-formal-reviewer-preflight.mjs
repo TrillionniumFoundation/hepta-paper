@@ -77,6 +77,10 @@ export function preflightCodexFormalReviewer({
       runtime.openClawManagedRuntimeProvenanceHash,
     openClawManagedAuthProfileIdentityHash:
       runtime.openClawManagedAuthProfileIdentityHash,
+    openClawManagedGatewayRouteIdentityHash:
+      runtime.openClawManagedGatewayRouteIdentityHash,
+    openClawManagedAuthBindingMode:
+      runtime.openClawManagedAuthBindingMode,
     openClawManagedAuthSourceIdentityHash:
       runtime.openClawManagedAuthSourceIdentityHash,
     openClawManagedAgentId: runtime.openClawManagedAgentId,

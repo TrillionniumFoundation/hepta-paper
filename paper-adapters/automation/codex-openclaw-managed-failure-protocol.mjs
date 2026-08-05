@@ -14,7 +14,7 @@ export function managedRuntimeFailureRetryable(
   if (!code) return true;
   const safeCode = projectOpenClawManagedFailureCode(code);
   return safeCode !== OPENCLAW_MANAGED_UNCLASSIFIED_FAILURE_CODE
-    && (verifiedFailureEvidence?.version === 5
+    && ([5, 6].includes(verifiedFailureEvidence?.version)
       && verifiedFailureEvidence?.usageComplete === true
       && verifiedFailureEvidence?.failureDisposition === 'retryable');
 }
@@ -78,8 +78,12 @@ export function inspectManagedRuntimeFailure({
     && verifyOpenClawManagedFailureEvidence(evidence, {
       failureCode: code,
       model,
+      expectedAuthBindingMode:
+        capabilityReceipt?.openClawManagedAuthBindingMode,
       expectedAuthProfileIdentityHash:
         capabilityReceipt?.openClawManagedAuthProfileIdentityHash,
+      expectedGatewayRouteIdentityHash:
+        capabilityReceipt?.openClawManagedGatewayRouteIdentityHash,
       expectedRuntimeProvenanceHash:
         capabilityReceipt?.openClawManagedRuntimeProvenanceHash,
       expectedFailureExecutionBinding:

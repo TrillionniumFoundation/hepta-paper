@@ -25,6 +25,9 @@ import {
   verifyExplicitProfileAvailable,
 } from './codex-openclaw-managed-model-support.mjs';
 import {
+  verifyOpenClawManagedGatewayRoute,
+} from './codex-openclaw-managed-gateway-transport.mjs';
+import {
   validateStructuredResponse,
 } from './codex-openclaw-managed-response-policy.mjs';
 import {
@@ -251,7 +254,11 @@ export async function verifyCodexOpenClawManagedLogin({
         'codex_openclaw_managed_model_runtime_provenance_invalid',
       );
     }
-    verifyExplicitProfileAvailable({ runtime, configuration });
+    if (configuration.gatewayTransport) {
+      await verifyOpenClawManagedGatewayRoute({ runtime, configuration });
+    } else {
+      verifyExplicitProfileAvailable({ runtime, configuration });
+    }
     return Object.freeze({ agentId: configuration.agentId });
   } catch (error) {
     primaryFailure = error?.code

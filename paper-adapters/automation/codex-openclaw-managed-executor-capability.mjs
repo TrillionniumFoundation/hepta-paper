@@ -8,6 +8,25 @@ import {
 const SHA256 = /^sha256:[a-f0-9]{64}$/;
 const SAFE_AGENT_ID = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 
+function managedAuthBindingMode(value) {
+  if (value?.openClawManagedAuthBindingMode) {
+    return value.openClawManagedAuthBindingMode;
+  }
+  return SHA256.test(String(value?.openClawManagedAuthProfileIdentityHash || ''))
+    && !value?.openClawManagedGatewayRouteIdentityHash
+    ? 'user-locked-profile' : null;
+}
+
+function managedAuthBindingValid(value) {
+  const mode = managedAuthBindingMode(value);
+  const profile = value?.openClawManagedAuthProfileIdentityHash ?? null;
+  const route = value?.openClawManagedGatewayRouteIdentityHash ?? null;
+  return mode === 'user-locked-profile'
+    ? SHA256.test(String(profile || '')) && route === null
+    : mode === 'current-agent-gateway-oauth-route'
+      && profile === null && SHA256.test(String(route || ''));
+}
+
 export function openClawManagedRuntimeExpected(capabilityReceipt) {
   return /^codex-openclaw-managed\s+3\b/.test(
     String(capabilityReceipt?.codexVersion || ''),
@@ -23,6 +42,9 @@ export function openClawManagedCapabilityIdentityMatches(runtime, capability) {
       === (capability?.openClawManagedRuntimeProvenanceHash || null)
     && runtime?.openClawManagedAuthProfileIdentityHash
       === (capability?.openClawManagedAuthProfileIdentityHash || null)
+    && runtime?.openClawManagedGatewayRouteIdentityHash
+      === (capability?.openClawManagedGatewayRouteIdentityHash || null)
+    && managedAuthBindingMode(runtime) === managedAuthBindingMode(capability)
     && runtime?.openClawManagedAuthSourceIdentityHash
       === (capability?.openClawManagedAuthSourceIdentityHash || null)
     && runtime?.openClawManagedAgentId
@@ -40,14 +62,21 @@ export function managedCapabilityReceiptValid(
   expectedPrincipalRole,
 ) {
   if (!openClawManagedRuntimeExpected(receipt)) return true;
-  return receipt.executionTransport === 'openclaw_user_locked_codex_app_server'
-    && receipt.authenticationAuthorityMode
-      === 'openclaw_user_locked_profile_fail_closed'
+  const mode = managedAuthBindingMode(receipt);
+  const transportValid = mode === 'user-locked-profile'
+    ? receipt.executionTransport === 'openclaw_user_locked_codex_app_server'
+      && receipt.authenticationAuthorityMode
+        === 'openclaw_user_locked_profile_fail_closed'
+    : mode === 'current-agent-gateway-oauth-route'
+      && receipt.executionTransport === 'openclaw_gateway_direct_rpc'
+      && receipt.authenticationAuthorityMode
+        === 'openclaw_current_agent_gateway_oauth';
+  return transportValid
+    && managedAuthBindingValid(receipt)
     && receipt.managedRuntimeEvidenceRequired === true
     && [
       receipt.openClawManagedConfigurationHash,
       receipt.openClawManagedRuntimeProvenanceHash,
-      receipt.openClawManagedAuthProfileIdentityHash,
       receipt.openClawManagedAuthSourceIdentityHash,
     ].every((value) => SHA256.test(String(value || '')))
     && SAFE_AGENT_ID.test(String(receipt.openClawManagedAgentId || ''))

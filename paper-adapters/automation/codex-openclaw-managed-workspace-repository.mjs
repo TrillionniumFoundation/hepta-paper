@@ -462,6 +462,13 @@ export function verifyManagedConfigurationUnchanged(configuration, environment) 
     || current.principalRole !== configuration.principalRole
     || current.authProfileId !== configuration.authProfileId
     || current.model !== configuration.model
+    || current.gatewayTransport !== configuration.gatewayTransport
+    || current.openClawManagedAuthBindingMode
+      !== configuration.openClawManagedAuthBindingMode
+    || current.openClawManagedAuthProfileIdentityHash
+      !== configuration.openClawManagedAuthProfileIdentityHash
+    || current.openClawManagedGatewayRouteIdentityHash
+      !== configuration.openClawManagedGatewayRouteIdentityHash
     || current.openclawConfigPath !== configuration.openclawConfigPath
     || current.openclawStateDir !== configuration.openclawStateDir
     || current.openClawManagedAuthSourceIdentityHash

@@ -185,14 +185,25 @@ function sessionPoolReviewerVerified(receipt, {
 function managedCodexReviewerSessionVerified(receipt) {
   const evidence = receipt?.openClawManagedExecutionEvidence;
   const model = receipt?.resolvedModel || receipt?.model || null;
+  const gateway = receipt?.openClawManagedAuthBindingMode
+    === 'current-agent-gateway-oauth-route';
+  const transportVerified = gateway
+    ? receipt?.sessionIsolation
+        === 'fresh_one_shot_openclaw_gateway_no_resume'
+      && receipt?.codexExecutionTransport === 'openclaw_gateway_direct_rpc'
+      && receipt?.codexAuthenticationAuthorityMode
+        === 'openclaw_current_agent_gateway_oauth'
+      && receipt?.codexAppServerOneShot === false
+      && receipt?.gatewayDirectRpcOneShot === true
+    : receipt?.sessionIsolation
+        === 'fresh_one_shot_codex_app_server_no_resume'
+      && receipt?.codexExecutionTransport
+        === 'openclaw_user_locked_codex_app_server'
+      && receipt?.codexAuthenticationAuthorityMode
+        === 'openclaw_user_locked_profile_fail_closed'
+      && receipt?.codexAppServerOneShot === true;
   return Boolean(
-    receipt?.sessionIsolation
-      === 'fresh_one_shot_codex_app_server_no_resume'
-    && receipt?.codexExecutionTransport
-      === 'openclaw_user_locked_codex_app_server'
-    && receipt?.codexAuthenticationAuthorityMode
-      === 'openclaw_user_locked_profile_fail_closed'
-    && receipt?.codexAppServerOneShot === true
+    transportVerified
     && receipt?.simpleCompletionModelRun === false
     && receipt?.toolExecutionEnabled === false
     && receipt?.messageDeliveryEnabled === false
@@ -216,8 +227,12 @@ function managedCodexReviewerSessionVerified(receipt) {
         receipt?.openClawManagedConfigurationHash,
       expectedRuntimeProvenanceHash:
         receipt?.openClawManagedRuntimeProvenanceHash,
+      expectedAuthBindingMode:
+        receipt?.openClawManagedAuthBindingMode,
       expectedAuthProfileIdentityHash:
         receipt?.openClawManagedAuthProfileIdentityHash,
+      expectedGatewayRouteIdentityHash:
+        receipt?.openClawManagedGatewayRouteIdentityHash,
       expectedAuthSourceIdentityHash:
         receipt?.openClawManagedAuthSourceIdentityHash,
     })

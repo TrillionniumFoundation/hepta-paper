@@ -48,6 +48,7 @@ const AUTOMATION_TESTS = Object.freeze([...new Set([
   'paper-core/tests/autonomous-research-campaign.test.mjs',
   'paper-core/tests/autonomous-research-campaign-boundary.test.mjs',
   'paper-core/tests/autonomous-research-one-shot-campaign-attempt.test.mjs',
+  'paper-core/tests/autonomous-research-one-shot-provider-runtime-binding.test.mjs',
   'paper-core/tests/autonomous-research-one-shot-campaign-race.test.mjs',
   'paper-core/tests/autonomous-research-one-shot-campaign-safety.test.mjs',
   'paper-core/tests/autonomous-research-maintenance-help-symlink.test.mjs',

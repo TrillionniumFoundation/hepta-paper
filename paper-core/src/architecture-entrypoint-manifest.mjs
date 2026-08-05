@@ -148,6 +148,14 @@ export const ARCHITECTURE_ENTRYPOINT_MANIFEST = Object.freeze({
         'getSessionEntry',
       ]),
     }),
+    Object.freeze({
+      importer: 'paper-adapters/automation/codex-openclaw-managed-configuration.mjs',
+      expression: 'pathToFileURL(located.gatewayRuntimePath).href',
+      locationProperty: 'gatewayRuntimePath',
+      packageName: 'openclaw',
+      packageExport: './plugin-sdk/gateway-runtime',
+      requiredExports: Object.freeze(['callGatewayFromCli']),
+    }),
   ]),
 });
 

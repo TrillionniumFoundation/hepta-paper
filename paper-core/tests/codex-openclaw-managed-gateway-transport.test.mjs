@@ -175,7 +175,6 @@ function gatewayRuntime(value, {
   omitGatewayOAuth = false,
   patchFailure = null,
   patchDelayMs = 0,
-  wrongResolvedRuntime = false,
   deleteFailuresBeforeSuccess = 0,
   deleteFailureKind = 'transport',
   deleteResponseLost = false,
@@ -267,7 +266,10 @@ function gatewayRuntime(value, {
           resolved: {
             modelProvider: 'openai',
             model: 'gpt-5.6-sol',
-            agentRuntime: wrongResolvedRuntime ? 'acp' : 'openclaw',
+            // sessions.patch reports configured session-runtime metadata.
+            // Raw modelRun turns below independently request the OpenClaw
+            // harness and prove it in the terminal agent response.
+            agentRuntime: { id: 'codex', source: 'model' },
           },
         };
       }
@@ -566,7 +568,7 @@ test('gateway login fails closed when the exact agent OAuth binding is absent', 
     value.cleanup();
   }
 });
-test('managed one-shot uses direct Gateway RPC and cleans its exact session', async () => {
+test('managed one-shot accepts configured Codex metadata, uses the raw OpenClaw harness, and cleans its exact session', async () => {
   const value = fixture();
   try {
     configureGatewayFixture(value);
@@ -1335,31 +1337,6 @@ for (const [usageFailure, mutateUsage] of [
     }
   });
 }
-
-test('non-OpenClaw resolved runtime is deleted without provider dispatch', async () => {
-  const value = fixture();
-  try {
-    configureGatewayFixture(value);
-    const runtime = gatewayRuntime(value, { wrongResolvedRuntime: true });
-    await assert.rejects(
-      executeCodexOpenClawManaged({
-        args: [
-          '--model', 'gpt-5.6-sol', '--sandbox', 'read-only',
-          '--cd', value.workspace, '-',
-        ],
-        stdin: 'HEPTA_CODEX_MODEL_CANARY_CHALLENGE abc. Return HEPTA_CODEX_CANARY_RESPONSE.',
-        environment: value.environment,
-        timeoutMs: 5000,
-        modelRuntimeLoader: runtime.loader,
-      }),
-      /codex_openclaw_managed_session_binding_failed/,
-    );
-    assert.equal(runtime.calls.some((entry) => entry.method === 'agent'), false);
-    assertManagedRuntimeClean(value);
-  } finally {
-    value.cleanup();
-  }
-});
 
 test('expired dispatch deadline cleans the session without invoking agent', async () => {
   const value = fixture();

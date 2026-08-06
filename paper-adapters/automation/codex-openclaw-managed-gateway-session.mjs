@@ -28,7 +28,6 @@ function gatewaySessionProjection(patched, model, thinking) {
     modelOverride: entry?.modelOverride ?? null,
     resolvedProvider: patched?.resolved?.modelProvider ?? null,
     resolvedModel: patched?.resolved?.model ?? null,
-    resolvedAgentRuntime: patched?.resolved?.agentRuntime ?? null,
     thinkingLevel: entry?.thinkingLevel ?? null,
     inheritedToolAllow: entry?.inheritedToolAllow ?? null,
     inheritedToolDeny: entry?.inheritedToolDeny ?? null,
@@ -58,7 +57,6 @@ export function validateGatewaySessionPatch(patched, {
     || projection.modelOverride !== null
     || projection.resolvedProvider !== model.provider
     || projection.resolvedModel !== model.modelId
-    || projection.resolvedAgentRuntime !== 'openclaw'
     || projection.thinkingLevel !== thinking
     || projection.inheritedToolAllow !== null
     || !sameArray(projection.inheritedToolDeny, MANAGED_NO_TOOL_DENYLIST)

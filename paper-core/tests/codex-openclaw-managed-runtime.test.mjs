@@ -195,6 +195,27 @@ test('managed runtime binds every public export file loaded for execution', asyn
   }
 });
 
+test('managed runtime rejects a symlinked internal-run artifact root', async (context) => {
+  preserveOpenClawSourceEnvironment(context);
+  const value = fixture();
+  const outside = path.join(value.root, 'outside-internal-runs');
+  try {
+    installFixtureOpenClawRuntimePackage(value);
+    fs.mkdirSync(outside, { mode: 0o700 });
+    fs.rmdirSync(value.internalRunsDir);
+    fs.symlinkSync(outside, value.internalRunsDir);
+    const configuration = readCodexOpenClawManagedConfiguration({
+      environment: value.environment,
+    });
+    await assert.rejects(
+      loadOpenClawModelRuntime(configuration),
+      /codex_openclaw_managed_agent_runtime_invalid/,
+    );
+  } finally {
+    value.cleanup();
+  }
+});
+
 test('managed runtime rejects a public export file changed during dynamic import', async (context) => {
   preserveOpenClawSourceEnvironment(context);
   const value = fixture();

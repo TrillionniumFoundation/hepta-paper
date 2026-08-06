@@ -309,7 +309,7 @@ function managedFailureFixture(t) {
     formalReviewerCapabilityReceipt: preflight.capabilityReceipt,
     spawnSyncImpl,
     spawnImpl,
-    timeoutMs: 5000,
+    timeoutMs: 300000,
   });
   return {
     binary,

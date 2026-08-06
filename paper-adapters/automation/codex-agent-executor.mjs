@@ -14,7 +14,31 @@ import {
   OPENCLAW_MANAGED_EXECUTION_EVIDENCE_FIELD,
   verifyOpenClawManagedExecutionEvidence,
 } from './codex-openclaw-managed-runtime.mjs';
-const MANAGED_RUNTIME_MAXIMUM_CLEANUP_RESERVE_MS = 90_000;
+import {
+  GATEWAY_CLEANUP_WINDOW_MS,
+} from './codex-openclaw-managed-gateway-reconciliation.mjs';
+const MANAGED_RUNTIME_MAXIMUM_CLEANUP_RESERVE_MS = 300_000;
+const MANAGED_RUNTIME_MINIMUM_MODEL_WINDOW_MS = 1_250;
+export function managedRuntimeTimeoutBudget(effectiveTimeoutMs) {
+  const selectedTimeoutMs = Number(effectiveTimeoutMs);
+  if (!Number.isSafeInteger(selectedTimeoutMs)
+    || selectedTimeoutMs < (
+      GATEWAY_CLEANUP_WINDOW_MS + MANAGED_RUNTIME_MINIMUM_MODEL_WINDOW_MS
+    )) {
+    throw new Error('codex_agent_managed_timeout_budget_invalid');
+  }
+  const cleanupReserveMs = Math.max(
+    GATEWAY_CLEANUP_WINDOW_MS,
+    Math.min(
+      MANAGED_RUNTIME_MAXIMUM_CLEANUP_RESERVE_MS,
+      Math.floor(selectedTimeoutMs / 4),
+    ),
+  );
+  return Object.freeze({
+    cleanupReserveMs,
+    innerTimeoutMs: selectedTimeoutMs - cleanupReserveMs,
+  });
+}
 function parseStructuredOutput(text) {
   const source = String(text || '').trim();
   if (!source) return null;
@@ -146,14 +170,9 @@ export function createCodexAgentExecutor({
         Number(requestedTimeout || timeoutMs),
         timeoutMs,
       );
-      const managedRuntimeCleanupReserveMs = Math.min(
-        MANAGED_RUNTIME_MAXIMUM_CLEANUP_RESERVE_MS,
-        Math.floor(effectiveTimeoutMs / 5),
-      );
-      const managedRuntimeInnerTimeoutMs = Math.max(
-        250,
-        effectiveTimeoutMs - managedRuntimeCleanupReserveMs,
-      );
+      const managedRuntimeInnerTimeoutMs = managedRuntimeExpected
+        ? managedRuntimeTimeoutBudget(effectiveTimeoutMs).innerTimeoutMs
+        : effectiveTimeoutMs;
       const processResult = await runBoundedChildProcess({
         spawnImpl,
         executable: verifiedCodexBinary,

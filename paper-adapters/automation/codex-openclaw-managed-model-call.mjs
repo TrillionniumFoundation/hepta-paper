@@ -142,15 +142,6 @@ export async function callManagedModel({
           timeoutMs: remainingTimeoutMs,
         });
       } catch (error) {
-        if (abortScope.signal.aborted) {
-          throw errorWithAttemptTrace(
-            abortScope.timedOut()
-              ? 'codex_openclaw_managed_model_timeout'
-              : 'codex_openclaw_managed_model_cancelled',
-            attemptTrace,
-            { retryable: abortScope.timedOut() },
-          );
-        }
         const failedInvocation = error?.managedInvocationFailure;
         const failedResponse = failedInvocation?.result || null;
         const failedUsage = normalizeManagedUsage(
@@ -190,6 +181,15 @@ export async function callManagedModel({
             ),
             attemptTrace,
             { retryable: Boolean(failedUsage) && error?.retryable === true },
+          );
+        }
+        if (abortScope.signal.aborted) {
+          throw errorWithAttemptTrace(
+            abortScope.timedOut()
+              ? 'codex_openclaw_managed_model_timeout'
+              : 'codex_openclaw_managed_model_cancelled',
+            attemptTrace,
+            { retryable: abortScope.timedOut() },
           );
         }
         throw error;
@@ -290,10 +290,15 @@ export async function callManagedModel({
           && agentMeta?.sessionId !== attemptId)
         || agentMeta?.provider !== model.provider
         || agentMeta?.model !== model.modelId
-        || agentMeta?.agentHarnessId !== (
+        || (agentMeta?.agentHarnessId !== (
           configuration.gatewayTransport ? 'openclaw' : 'codex'
-        )
-        || response?.meta?.requestShaping?.authMode !== 'auth-profile'
+        ) && !(configuration.gatewayTransport
+          && thrown
+          && agentMeta?.agentHarnessId === undefined))
+        || (configuration.gatewayTransport && thrown
+          ? (response?.meta?.requestShaping?.authMode !== undefined
+            && response.meta.requestShaping.authMode !== 'auth-profile')
+          : response?.meta?.requestShaping?.authMode !== 'auth-profile')
       )) {
         attemptTrace.push(modelAttemptRecord({
           ...attemptRecordFields,
@@ -354,6 +359,45 @@ export async function callManagedModel({
           attemptTrace,
           { retryable: false },
         );
+      }
+      const terminalValidationFailureClasses = Object.freeze({
+        codex_openclaw_managed_agent_command_failed:
+          'gateway_response_invalid',
+        codex_openclaw_managed_agent_policy_violation:
+          'policy_violation',
+        codex_openclaw_managed_model_resolution_mismatch:
+          'model_resolution_mismatch',
+        codex_openclaw_managed_runtime_fallback_observed:
+          'fallback_violation',
+      });
+      const terminalValidationFailureClass =
+        thrown?.managedGatewayTerminalValidationFailure === true
+          ? terminalValidationFailureClasses[thrown?.code] || null
+          : null;
+      if (terminalValidationFailureClass) {
+        attemptTrace.push(modelAttemptRecord({
+          ...attemptRecordFields,
+          outcome: 'transient_provider_failure',
+          stopReason: stopReason || 'error',
+          errorClass: terminalValidationFailureClass,
+        }));
+        throw errorWithAttemptTrace(thrown.code, attemptTrace, {
+          retryable: false,
+        });
+      }
+      if (['codex_openclaw_managed_model_timeout',
+        'codex_openclaw_managed_model_cancelled'].includes(thrown?.code)) {
+        const timeoutFailure = thrown.code
+          === 'codex_openclaw_managed_model_timeout';
+        attemptTrace.push(modelAttemptRecord({
+          ...attemptRecordFields,
+          outcome: 'transient_provider_failure',
+          stopReason: timeoutFailure ? 'timeout' : 'aborted',
+          errorClass: timeoutFailure ? 'timeout' : 'aborted',
+        }));
+        throw errorWithAttemptTrace(thrown.code, attemptTrace, {
+          retryable: timeoutFailure && Boolean(attemptUsage),
+        });
       }
       const reportedSessionFile = agentMeta?.sessionFile;
       const expectedInternalSessionFile = path.join(
@@ -438,7 +482,7 @@ export async function callManagedModel({
         stopReason,
         errorCode: thrown?.code,
         errorType: thrown?.reason || thrown?.type || thrown?.name,
-        errorMessage: thrown?.message || response?.meta?.error?.message,
+        errorMessage: response?.meta?.error?.message || thrown?.message,
         errorText: responseErrorText,
         text: responseText,
       });

@@ -1,53 +1,205 @@
-import fs from 'node:fs';
-import path from 'node:path';
-
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  GATEWAY_ABORT_WINDOW_MS,
+  GATEWAY_ARTIFACT_QUIET_WINDOW_MS,
+  GATEWAY_SESSION_DELETE_WINDOW_MS,
+  GATEWAY_TERMINAL_WAIT_WINDOW_MS,
+  GATEWAY_RECONCILIATION_INITIAL_DELAY_MS,
+  GATEWAY_RECONCILIATION_MAXIMUM_DELAY_MS,
+  GATEWAY_RPC_ATTEMPT_TIMEOUT_MS,
+  assertGatewayArtifactNamespacesEmpty,
+  assertGatewayArtifactNamespacesQuiet,
+  closeGatewayArtifactScope,
+  closeGatewayAttemptWorkspace,
+  openGatewayArtifactScope,
+  openGatewayAttemptWorkspace,
+  removeGatewayAttemptWorkspace,
+  removeGatewaySessionArtifacts,
+  retryableGatewayFailure,
+  retryGatewayTransport,
+  validateGatewayCleanupDescription,
+  waitForGatewayReconciliation,
+} from './codex-openclaw-managed-gateway-reconciliation.mjs';
 import {
   runtimeError,
 } from './codex-openclaw-managed-runtime-common.mjs';
+import {
+  isKnownOpenClawManagedCleanupFailureCode,
+} from './codex-openclaw-managed-failure-code.mjs';
+import {
+  parseOpenClawManagedGatewayInvocation,
+  parseOpenClawManagedGatewayResponse,
+} from './codex-openclaw-managed-gateway-response.mjs';
+import {
+  agentTerminalResponseObserved,
+  completeGatewayTerminalEvidence,
+  gatewayAgentTimeoutBudget,
+  gatewaySessionCas,
+  gatewayTerminalObserved,
+  openGatewayDispatchDeadline,
+  validateGatewaySessionPatch,
+} from './codex-openclaw-managed-gateway-session.mjs';
+
+export { parseOpenClawManagedGatewayResponse };
+export { gatewayAgentTimeoutBudget };
 
 const GATEWAY_RPC_CLIENT = 'gateway-client';
 const GATEWAY_RPC_MODE = 'backend';
 const GATEWAY_RPC_SCOPES = Object.freeze(['operator.admin']);
-const GATEWAY_CLEANUP_TIMEOUT_MS = 30_000;
 const GATEWAY_WAIT_SLICE_MS = 25_000;
 const MANAGED_NO_TOOL_DENYLIST = Object.freeze(['*']);
+const SAFE_GATEWAY_CODE = /^[A-Z][A-Z0-9_]{0,63}$/;
+const SESSION_CHANGED_REASON = 'session-changed';
 
 function objectRecord(value) {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
-function sameArray(left, right) {
-  return JSON.stringify(left) === JSON.stringify(right);
-}
-
-function gatewayRpcExtra({ expectFinal = false } = {}) {
+function gatewayRpcExtra({ expectFinal = false, signal = null } = {}) {
   return Object.freeze({
     clientName: GATEWAY_RPC_CLIENT,
     mode: GATEWAY_RPC_MODE,
     scopes: GATEWAY_RPC_SCOPES,
     progress: false,
     expectFinal,
+    ...(signal ? { signal } : {}),
   });
 }
 
+function safeGatewayFailure(error, signal) {
+  const signalAborted = signal?.aborted === true;
+  if (error?.name === 'AbortError') {
+    return Object.freeze({
+      kind: 'abort', code: null, reason: null, retryable: false,
+      retryAfterMs: null,
+    });
+  }
+  if (error?.name === 'GatewayTransportError'
+    && ['closed', 'timeout'].includes(error?.kind)
+    && objectRecord(error?.connectionDetails)) {
+    return Object.freeze({
+      kind: 'transport', code: null, reason: null, retryable: true,
+      retryAfterMs: null,
+    });
+  }
+  if (error?.name === 'GatewayClientRequestError') {
+    const code = SAFE_GATEWAY_CODE.test(String(error?.gatewayCode || ''))
+      ? String(error.gatewayCode) : null;
+    const retryAfterMs = Number(error?.retryAfterMs);
+    return Object.freeze({
+      kind: 'server',
+      code,
+      reason: error?.details?.reason === SESSION_CHANGED_REASON
+        ? SESSION_CHANGED_REASON : null,
+      retryable: error?.retryable === true,
+      retryAfterMs: Number.isSafeInteger(retryAfterMs)
+        && retryAfterMs > 0 && retryAfterMs <= 60_000
+        ? retryAfterMs : null,
+    });
+  }
+  if (signalAborted) {
+    return Object.freeze({
+      kind: 'abort', code: null, reason: null, retryable: false,
+      retryAfterMs: null,
+    });
+  }
+  return Object.freeze({
+    kind: 'unknown', code: null, reason: null, retryable: false,
+    retryAfterMs: null,
+  });
+}
+
+function projectedGatewayError(error, signal) {
+  const failure = safeGatewayFailure(error, signal);
+  const code = failure.kind === 'abort'
+    ? 'codex_openclaw_managed_model_cancelled'
+    : 'codex_openclaw_managed_agent_command_failed';
+  const projected = runtimeError(code, { retryable: false });
+  Object.defineProperty(projected, 'gatewayFailure', {
+    configurable: false,
+    enumerable: false,
+    writable: false,
+    value: failure,
+  });
+  return projected;
+}
+
 async function gatewayRpc(runtime, method, params, {
+  dispatchDeadline = null,
   timeoutMs,
   expectFinal = false,
+  onDispatch = null,
+  signal = null,
 } = {}) {
-  try {
-    return await runtime.callGatewayFromCli(
-      method,
-      {
-        json: true,
-        timeout: String(Math.max(1, Math.floor(timeoutMs))),
-      },
-      params,
-      gatewayRpcExtra({ expectFinal }),
+  let selectedParams = params;
+  let selectedTimeoutMs = timeoutMs;
+  let dispatchScope = null;
+  if (signal?.aborted) {
+    throw projectedGatewayError(
+      Object.assign(new Error('aborted'), { name: 'AbortError' }),
+      signal,
     );
-  } catch {
-    throw runtimeError('codex_openclaw_managed_agent_command_failed');
   }
+  if (dispatchDeadline !== null) {
+    if (method !== 'agent') {
+      throw runtimeError('codex_openclaw_managed_agent_command_failed');
+    }
+    const finalBudget = gatewayAgentTimeoutBudget(
+      Number(dispatchDeadline) - Date.now(),
+    );
+    selectedParams = Object.freeze({
+      ...params,
+      timeout: finalBudget.serverTimeoutSeconds,
+    });
+    selectedTimeoutMs = finalBudget.clientTimeoutMs;
+    dispatchScope = openGatewayDispatchDeadline(signal, dispatchDeadline);
+  }
+  const selectedSignal = dispatchScope?.signal || signal;
+  if (typeof onDispatch === 'function') onDispatch();
+  try {
+    let response;
+    try {
+      response = await runtime.callGatewayFromCli(
+        method,
+        { json: true, timeout: String(Math.floor(selectedTimeoutMs)) },
+        selectedParams,
+        gatewayRpcExtra({ expectFinal, signal: selectedSignal }),
+      );
+    } catch (error) {
+      if (dispatchScope?.deadlineExpired()) {
+        throw runtimeError('codex_openclaw_managed_model_timeout');
+      }
+      throw projectedGatewayError(error, selectedSignal);
+    }
+    if (dispatchScope?.deadlineExpired()) {
+      throw runtimeError('codex_openclaw_managed_model_timeout');
+    }
+    return response;
+  } finally {
+    dispatchScope?.close();
+  }
+}
+
+function gatewayAgentOAuthBindingAvailable(runtime) {
+  let store;
+  try {
+    store = runtime.ensureAuthProfileStore(runtime.agentDir, {
+      allowKeychainPrompt: false,
+      config: runtime.cfg,
+      readOnly: true,
+      syncExternalCli: false,
+    });
+  } catch {
+    return false;
+  }
+  return Object.values(store?.profiles || {}).some((credential) => (
+    credential?.provider === 'openai'
+    && credential?.type === 'oauth'
+    && ['refresh', 'access', 'token'].some((field) => (
+      typeof credential?.[field] === 'string'
+      && credential[field].length > 0
+    ))
+  ));
 }
 
 export async function verifyOpenClawManagedGatewayRoute({
@@ -55,9 +207,23 @@ export async function verifyOpenClawManagedGatewayRoute({
   configuration,
   timeoutMs = 10_000,
 } = {}) {
-  const identity = await gatewayRpc(runtime, 'agent.identity.get', {
-    agentId: configuration.agentId,
-  }, { timeoutMs });
+  if (!gatewayAgentOAuthBindingAvailable(runtime)) {
+    throw runtimeError(
+      'codex_openclaw_managed_login_unavailable',
+      { retryable: true },
+    );
+  }
+  let identity;
+  try {
+    identity = await gatewayRpc(runtime, 'agent.identity.get', {
+      agentId: configuration.agentId,
+    }, { timeoutMs });
+  } catch {
+    throw runtimeError(
+      'codex_openclaw_managed_login_unavailable',
+      { retryable: true },
+    );
+  }
   if (!objectRecord(identity) || identity.agentId !== configuration.agentId) {
     throw runtimeError('codex_openclaw_managed_login_unavailable');
   }
@@ -67,341 +233,17 @@ export async function verifyOpenClawManagedGatewayRoute({
   });
 }
 
-function explicitAuthProfileObserved(value) {
-  if (Array.isArray(value)) return value.some(explicitAuthProfileObserved);
-  if (!objectRecord(value)) return false;
-  return Object.entries(value).some(([key, entry]) => (
-    (['authProfileId', 'authProfileOverride', 'effectiveAuthProfileId']
-      .includes(key) && entry !== null && entry !== undefined)
-    || explicitAuthProfileObserved(entry)
-  ));
-}
-
-function externalActionObserved(result) {
-  const falseFields = [
-    'didSendViaMessagingTool',
-    'didDeliverSourceReplyViaMessageTool',
-    'didSendDeterministicApprovalPrompt',
-  ];
-  const emptyArrayFields = [
-    'messagingToolSentTexts',
-    'messagingToolSentMediaUrls',
-    'messagingToolSentTargets',
-    'messagingToolSourceReplyPayloads',
-    'acceptedSessionSpawns',
-  ];
-  const toolSummary = result?.meta?.toolSummary;
-  return falseFields.some((key) => Object.hasOwn(result || {}, key)
-      && result[key] !== false)
-    || emptyArrayFields.some((key) => Object.hasOwn(result || {}, key)
-      && !sameArray(result[key], []))
-    || (Object.hasOwn(result || {}, 'successfulCronAdds')
-      && result.successfulCronAdds !== 0)
-    || (Object.hasOwn(result || {}, 'deliverySucceeded')
-      && result.deliverySucceeded !== false)
-    || Object.hasOwn(result || {}, 'deliveryStatus')
-    || (toolSummary !== undefined
-      && (!objectRecord(toolSummary) || toolSummary.calls !== 0))
-    || (Object.hasOwn(result?.meta || {}, 'pendingToolCalls')
-      && !sameArray(result.meta.pendingToolCalls, []));
-}
-
-function validDiagnosticSkillCatalog(skills) {
-  if (!objectRecord(skills)
-    || !Number.isSafeInteger(skills.promptChars)
-    || skills.promptChars < 0
-    || !Array.isArray(skills.entries)
-    || (skills.hash !== undefined
-      && !/^[0-9a-f]{64}$/.test(String(skills.hash)))) {
-    return false;
-  }
-  if ((skills.promptChars === 0) !== (skills.entries.length === 0)) {
-    return false;
-  }
-  return skills.entries.every((entry) => (
-    objectRecord(entry)
-    && typeof entry.name === 'string'
-    && entry.name.trim().length > 0
-    && Number.isSafeInteger(entry.blockChars)
-    && entry.blockChars >= 0
-  ));
-}
-
-function isolatedSystemPromptReport(report, {
-  model,
-  sessionId,
-  sessionKey,
-} = {}) {
-  return Boolean(
-    objectRecord(report)
-    && report.sessionId === sessionId
-    && report.sessionKey === sessionKey
-    && report.provider === model.provider
-    && report.model === model.modelId
-    && report.systemPrompt?.chars === 0
-    && report.systemPrompt?.projectContextChars === 0
-    && report.systemPrompt?.nonProjectContextChars === 0
-    && sameArray(report.injectedWorkspaceFiles, [])
-    // OpenClaw reports the resident skill catalog even for a raw model run.
-    // The actual provider-visible prompt is `systemPrompt`, which must remain
-    // empty; the catalog is accepted only as well-formed diagnostic metadata.
-    && validDiagnosticSkillCatalog(report.skills)
-    && report.tools?.listChars === 0
-    && report.tools?.schemaChars === 0
-    && sameArray(report.tools?.entries, [])
-    && report.currentTurn?.runtimeContextChars === 0
-  );
-}
-
-export function parseOpenClawManagedGatewayResponse(response, {
-  configuration,
-  model,
-  runId,
-  sessionId,
-  sessionKey,
-  thinking,
-} = {}) {
-  const result = response?.result;
-  const meta = result?.meta;
-  const agentMeta = meta?.agentMeta;
-  const executionTrace = meta?.executionTrace;
-  const attempts = executionTrace?.attempts;
-  const payload = result?.payloads?.[0];
-  if (!objectRecord(response)
-    || response.runId !== runId
-    || response.status !== 'ok'
-    || response.summary !== 'completed'
-    || !objectRecord(result)
-    || !Array.isArray(result.payloads)
-    || result.payloads.length !== 1
-    || !objectRecord(payload)
-    || JSON.stringify(Object.keys(payload).sort())
-      !== JSON.stringify(['mediaUrl', 'text'])
-    || payload.mediaUrl !== null
-    || typeof payload.text !== 'string'
-    || !payload.text.trim()
-    || !objectRecord(meta)
-    || !objectRecord(agentMeta)) {
-    throw runtimeError('codex_openclaw_managed_agent_command_failed');
-  }
-  if (explicitAuthProfileObserved(response)) {
-    throw runtimeError('codex_openclaw_managed_model_resolution_mismatch');
-  }
-  if (agentMeta.sessionId !== sessionId
-    || (agentMeta.sessionKey !== undefined && agentMeta.sessionKey !== sessionKey)
-    || (agentMeta.agentId !== undefined
-      && agentMeta.agentId !== configuration.agentId)
-    || agentMeta.provider !== model.provider
-    || agentMeta.model !== model.modelId
-    || agentMeta.agentHarnessId !== 'openclaw'
-    || meta?.requestShaping?.authMode !== 'auth-profile'
-    || meta?.requestShaping?.thinking !== thinking
-    || meta.stopReason !== 'stop'
-    || meta.aborted !== false
-    || meta.error !== undefined
-    || meta.completion?.stopReason !== 'stop'
-    || meta.completion?.finishReason !== 'stop'
-    || !Number.isSafeInteger(agentMeta.usage?.input)
-    || agentMeta.usage.input < 0
-    || !Number.isSafeInteger(agentMeta.usage?.output)
-    || agentMeta.usage.output < 0
-    || !Number.isSafeInteger(
-      agentMeta.usage?.totalTokens ?? agentMeta.usage?.total,
-    )
-    || (agentMeta.usage?.totalTokens ?? agentMeta.usage?.total) <= 0) {
-    throw runtimeError('codex_openclaw_managed_model_resolution_mismatch');
-  }
-  if (!Array.isArray(attempts)
-    || attempts.length !== 1
-    || attempts[0]?.provider !== model.provider
-    || attempts[0]?.model !== model.modelId
-    || attempts[0]?.result !== 'success'
-    || executionTrace.winnerProvider !== model.provider
-    || executionTrace.winnerModel !== model.modelId
-    || executionTrace.fallbackUsed !== false
-    || executionTrace.runner !== 'embedded') {
-    throw runtimeError('codex_openclaw_managed_runtime_fallback_observed');
-  }
-  if (externalActionObserved(result)
-    || !isolatedSystemPromptReport(meta.systemPromptReport, {
-      model,
-      sessionId,
-      sessionKey,
-    })) {
-    throw runtimeError('codex_openclaw_managed_agent_policy_violation');
-  }
-  return result;
-}
-
-function gatewaySessionProjection(patched, model, thinking) {
-  const entry = patched?.entry;
-  return Object.freeze({
-    key: patched?.key || null,
-    sessionId: entry?.sessionId || null,
-    lifecycleRevision: entry?.lifecycleRevision || null,
-    updatedAt: entry?.updatedAt ?? null,
-    authProfileOverride: entry?.authProfileOverride ?? null,
-    providerOverride: entry?.providerOverride ?? null,
-    modelOverride: entry?.modelOverride ?? null,
-    resolvedProvider: patched?.resolved?.modelProvider ?? null,
-    resolvedModel: patched?.resolved?.model ?? null,
-    thinkingLevel: entry?.thinkingLevel ?? null,
-    inheritedToolAllow: entry?.inheritedToolAllow ?? null,
-    inheritedToolDeny: entry?.inheritedToolDeny ?? null,
-    execSecurity: entry?.execSecurity ?? null,
-    elevatedLevel: entry?.elevatedLevel ?? null,
-    subagentRole: entry?.subagentRole ?? null,
-    subagentControlScope: entry?.subagentControlScope ?? null,
-    sendPolicy: entry?.sendPolicy ?? null,
-    requestedProvider: model.provider,
-    requestedModel: model.modelId,
-    requestedThinking: thinking,
-  });
-}
-
-function validateGatewaySessionPatch(patched, {
-  model,
-  sessionKey,
-  thinking,
-} = {}) {
-  const projection = gatewaySessionProjection(patched, model, thinking);
-  if (patched?.ok !== true
-    || projection.key !== sessionKey
-    || !projection.sessionId
-    || !Number.isFinite(projection.updatedAt)
-    || projection.authProfileOverride !== null
-    || projection.providerOverride !== null
-    || projection.modelOverride !== null
-    || projection.resolvedProvider !== model.provider
-    || projection.resolvedModel !== model.modelId
-    || projection.thinkingLevel !== thinking
-    || projection.inheritedToolAllow !== null
-    || !sameArray(projection.inheritedToolDeny, MANAGED_NO_TOOL_DENYLIST)
-    || projection.execSecurity !== 'deny'
-    || projection.elevatedLevel !== 'off'
-    || projection.subagentRole !== 'leaf'
-    || projection.subagentControlScope !== 'none'
-    || projection.sendPolicy !== 'deny') {
-    throw runtimeError('codex_openclaw_managed_session_binding_failed');
-  }
-  return Object.freeze({
-    sessionId: projection.sessionId,
-    lifecycleRevision: projection.lifecycleRevision,
-    updatedAt: projection.updatedAt,
-    bindingHash: hashRecord(
-      'OpenClawManagedGatewaySessionBinding',
-      {
-        ...projection,
-        lifecycleRevision: null,
-        updatedAt: null,
-      },
-    ),
-  });
-}
-
-function gatewaySessionCas(patched, sessionKey) {
-  const entry = patched?.entry;
-  if (patched?.ok !== true
-    || patched.key !== sessionKey
-    || !objectRecord(entry)
-    || typeof entry.sessionId !== 'string'
-    || !entry.sessionId.trim()
-    || (entry.lifecycleRevision !== undefined
-      && entry.lifecycleRevision !== null
-      && (typeof entry.lifecycleRevision !== 'string'
-        || !entry.lifecycleRevision.trim()))
-    || !Number.isFinite(entry.updatedAt)) return null;
-  return Object.freeze({
-    sessionId: entry.sessionId,
-    lifecycleRevision: entry.lifecycleRevision || null,
-    updatedAt: entry.updatedAt,
-    bindingHash: null,
-  });
-}
-
-function validateAcceptedAgentResponse(response, {
-  attemptId,
-  configuration,
-  sessionKey,
-} = {}) {
-  if (!objectRecord(response)
-    || response.runId !== attemptId
-    || response.status !== 'accepted'
-    || response.sessionKey !== sessionKey
-    || (response.agentId !== undefined
-      && response.agentId !== configuration.agentId)) {
-    throw runtimeError('codex_openclaw_managed_agent_command_failed');
-  }
-}
-
-function gatewayTerminalObserved(wait) {
-  return Boolean(wait && (
-    wait.status === 'ok'
-    || wait.status === 'error'
-    || (wait.status === 'timeout'
-      && (wait.endedAt !== undefined
-        || wait.stopReason !== undefined
-        || wait.error !== undefined))
-  ));
-}
-
-function removeExactRegularArtifact(candidate, roots) {
-  const resolved = path.resolve(String(candidate || ''));
-  if (!roots.some((root) => resolved.startsWith(`${root}${path.sep}`))) {
-    throw runtimeError(
-      'codex_openclaw_managed_session_cleanup_artifact_scope_invalid',
-    );
-  }
-  if (!fs.existsSync(resolved)) return;
-  const stat = fs.lstatSync(resolved);
-  if (!stat.isFile() || stat.isSymbolicLink()) {
-    throw runtimeError(
-      'codex_openclaw_managed_session_cleanup_artifact_scope_invalid',
-    );
-  }
-  fs.rmSync(resolved, { force: true });
-  if (fs.existsSync(resolved)) {
-    throw runtimeError(
-      'codex_openclaw_managed_session_cleanup_artifact_removal_failed',
-    );
-  }
-}
-
-function exactGatewayArtifacts(runtime, sessionId, runId) {
-  const suffixes = [
-    '.jsonl',
-    '.trajectory.jsonl',
-    '.trajectory-path.json',
-    '.jsonl.codex-app-server.json',
-    '.jsonl.codex-app-server.json.migrated',
-  ];
-  return [...new Set([sessionId, runId])].flatMap((identity) => (
-    [runtime.sessionsDir, runtime.internalRunsDir].flatMap((directory) => (
-      suffixes.map((suffix) => path.join(directory, `${identity}${suffix}`))
-    ))
-  ));
-}
-
-function gatewayArtifactResidue(runtime, sessionId, runId) {
-  const prefixes = [...new Set([sessionId, runId])].map((entry) => `${entry}.`);
-  return [runtime.sessionsDir, runtime.internalRunsDir].flatMap((directory) => {
-    if (!fs.existsSync(directory)) return [];
-    return fs.readdirSync(directory)
-      .filter((entry) => prefixes.some((prefix) => entry.startsWith(prefix)))
-      .map((entry) => path.join(directory, entry));
-  });
-}
-
 async function abortGatewayRun(runtime, {
   attemptId,
   configuration,
   sessionKey,
+  timeoutMs,
 } = {}) {
   const response = await gatewayRpc(runtime, 'sessions.abort', {
     key: sessionKey,
     runId: attemptId,
     agentId: configuration.agentId,
-  }, { timeoutMs: GATEWAY_CLEANUP_TIMEOUT_MS });
+  }, { timeoutMs });
   if (response?.ok !== true
     || !['aborted', 'no-active-run'].includes(response.status)
     || (response.abortedRunId !== null
@@ -413,17 +255,22 @@ async function abortGatewayRun(runtime, {
 
 async function awaitGatewayTerminal(runtime, {
   attemptId,
-  abortSignal,
   deadline,
 } = {}) {
   for (;;) {
-    const remaining = Math.max(1, deadline - Date.now());
-    const wait = await gatewayRpc(runtime, 'agent.wait', {
-      runId: attemptId,
-      timeoutMs: Math.min(GATEWAY_WAIT_SLICE_MS, remaining),
-    }, {
-      timeoutMs: Math.min(GATEWAY_WAIT_SLICE_MS, remaining) + 5_000,
-    });
+    const wait = await retryGatewayTransport(async (remainingMs) => {
+      const waitTimeoutMs = Math.min(GATEWAY_WAIT_SLICE_MS, remainingMs);
+      return await gatewayRpc(runtime, 'agent.wait', {
+        runId: attemptId,
+        timeoutMs: waitTimeoutMs,
+      }, {
+        timeoutMs: Math.min(
+          GATEWAY_RPC_ATTEMPT_TIMEOUT_MS,
+          remainingMs,
+          waitTimeoutMs + 5_000,
+        ),
+      });
+    }, { allowUnavailable: true, deadline });
     if (wait?.runId !== attemptId) {
       throw runtimeError('codex_openclaw_managed_agent_command_failed');
     }
@@ -435,7 +282,185 @@ async function awaitGatewayTerminal(runtime, {
       && wait.stopReason === undefined
       && wait.error === undefined;
     if (!pollingTimeout) return wait;
-    if (abortSignal?.aborted || Date.now() >= deadline) return wait;
+    if (Date.now() >= deadline) return wait;
+  }
+}
+
+async function settleGatewayRunForCleanup(runtime, {
+  attemptId,
+  configuration,
+  sessionKey,
+} = {}) {
+  const abortDeadline = Date.now() + GATEWAY_ABORT_WINDOW_MS;
+  const terminalDeadline = Date.now() + GATEWAY_TERMINAL_WAIT_WINDOW_MS;
+  const [abortOutcome, terminalOutcome] = await Promise.allSettled([
+    retryGatewayTransport(
+      async (remainingMs) => await abortGatewayRun(runtime, {
+        attemptId,
+        configuration,
+        sessionKey,
+        timeoutMs: Math.min(GATEWAY_RPC_ATTEMPT_TIMEOUT_MS, remainingMs),
+      }),
+      { allowUnavailable: true, deadline: abortDeadline },
+    ),
+    awaitGatewayTerminal(runtime, {
+      attemptId,
+      deadline: terminalDeadline,
+    }),
+  ]);
+  return Object.freeze({
+    abortVerified: abortOutcome.status === 'fulfilled',
+    terminalVerified: terminalOutcome.status === 'fulfilled'
+      && gatewayTerminalObserved(terminalOutcome.value),
+  });
+}
+
+async function deleteGatewaySessionBarrier(runtime, {
+  configuration,
+  deadline,
+  prepared: initialPrepared,
+  sessionKey,
+} = {}) {
+  if (!initialPrepared) {
+    throw runtimeError(
+      'codex_openclaw_managed_session_cleanup_entry_inspection_failed',
+    );
+  }
+  let prepared = initialPrepared;
+  let delayMs = GATEWAY_RECONCILIATION_INITIAL_DELAY_MS;
+  let deletionAttempted = false;
+  for (;;) {
+    const described = await retryGatewayTransport(
+      async (remainingMs) => await gatewayRpc(
+        runtime,
+        'sessions.describe',
+        { key: sessionKey },
+        {
+          timeoutMs: Math.min(
+            GATEWAY_RPC_ATTEMPT_TIMEOUT_MS,
+            remainingMs,
+          ),
+        },
+      ),
+      { allowUnavailable: true, deadline },
+    );
+    const description = validateGatewayCleanupDescription(described, {
+      prepared,
+      sessionKey,
+    });
+    if (!description) {
+      if (deletionAttempted) return Object.freeze({ prepared });
+      throw runtimeError(
+        'codex_openclaw_managed_session_cleanup_entry_disappeared_during_delete',
+      );
+    }
+    const deletionCas = Object.freeze({
+      ...prepared,
+      updatedAt: description.updatedAt,
+    });
+    prepared = deletionCas;
+    let deleted;
+    try {
+      const remainingMs = Math.max(1, deadline - Date.now());
+      deletionAttempted = true;
+      deleted = await gatewayRpc(runtime, 'sessions.delete', {
+        key: sessionKey,
+        agentId: configuration.agentId,
+        deleteTranscript: false,
+        expectedSessionId: deletionCas.sessionId,
+        expectedSessionUpdatedAt: deletionCas.updatedAt,
+        emitLifecycleHooks: false,
+      }, {
+        timeoutMs: Math.min(
+          GATEWAY_RPC_ATTEMPT_TIMEOUT_MS,
+          remainingMs,
+        ),
+      });
+    } catch (error) {
+      const sessionChanged = error?.gatewayFailure?.kind === 'server'
+        && error.gatewayFailure.reason === SESSION_CHANGED_REASON;
+      if ((!sessionChanged
+          && !retryableGatewayFailure(error, { allowUnavailable: true }))
+        || Date.now() >= deadline) throw error;
+      await waitForGatewayReconciliation({ deadline, delayMs });
+      delayMs = Math.min(
+        GATEWAY_RECONCILIATION_MAXIMUM_DELAY_MS,
+        delayMs * 2,
+      );
+      continue;
+    }
+    if (deleted?.ok === true
+      && deleted.key === sessionKey
+      && deleted.deleted === true
+      && Array.isArray(deleted.archived)
+      && deleted.archived.length === 0) {
+      return Object.freeze({ prepared });
+    }
+    throw runtimeError(
+      'codex_openclaw_managed_session_cleanup_entry_delete_failed',
+    );
+  }
+}
+
+async function fenceUnknownGatewayPatch(runtime, {
+  configuration,
+  deadline,
+  sessionKey,
+} = {}) {
+  const deleted = await retryGatewayTransport(
+    async (remainingMs) => await gatewayRpc(
+      runtime,
+      'sessions.delete',
+      {
+        key: sessionKey,
+        agentId: configuration.agentId,
+        deleteTranscript: false,
+        emitLifecycleHooks: false,
+      },
+      {
+        timeoutMs: Math.min(
+          GATEWAY_RPC_ATTEMPT_TIMEOUT_MS,
+          remainingMs,
+        ),
+      },
+    ),
+    { allowUnavailable: true, deadline },
+  );
+  if (deleted?.ok !== true
+    || deleted.key !== sessionKey
+    || typeof deleted.deleted !== 'boolean'
+    || !Array.isArray(deleted.archived)
+    || deleted.archived.length !== 0) {
+    throw runtimeError(
+      'codex_openclaw_managed_session_cleanup_entry_delete_failed',
+    );
+  }
+  for (let inspection = 0; inspection < 2; inspection += 1) {
+    const described = await retryGatewayTransport(
+      async (remainingMs) => await gatewayRpc(
+        runtime,
+        'sessions.describe',
+        { key: sessionKey },
+        {
+          timeoutMs: Math.min(
+            GATEWAY_RPC_ATTEMPT_TIMEOUT_MS,
+            remainingMs,
+          ),
+        },
+      ),
+      { allowUnavailable: true, deadline },
+    );
+    if (!objectRecord(described) || described.session !== null) {
+      throw runtimeError(
+        'codex_openclaw_managed_session_cleanup_entry_remained',
+      );
+    }
+    if (inspection === 0) {
+      await waitForGatewayReconciliation({
+        deadline,
+        delayMs: GATEWAY_ARTIFACT_QUIET_WINDOW_MS,
+      });
+    }
   }
 }
 
@@ -452,30 +477,31 @@ export async function runOpenClawManagedGatewayOneShot({
   timeoutMs,
 } = {}) {
   const deadline = Date.now() + Math.max(1, timeoutMs);
-  const roots = [
-    path.resolve(runtime.sessionsDir),
-    path.resolve(runtime.internalRunsDir),
-  ];
   let prepared = null;
   let result = null;
   let primaryFailure = null;
-  let abortPromise = null;
-  let runTerminationVerified = false;
+  let artifactScope = null;
+  let attemptWorkspaceScope = null;
+  let artifactNamespaceReady = false;
+  let patchAttempted = false;
   let dispatchAttempted = false;
-  const abort = () => {
-    if (prepared && dispatchAttempted && !abortPromise) {
-      abortPromise = abortGatewayRun(runtime, {
-        attemptId,
-        configuration,
-        sessionKey,
-      }).then(
-        (response) => Object.freeze({ ok: true, response, error: null }),
-        (error) => Object.freeze({ ok: false, response: null, error }),
-      );
-    }
-  };
-  abortSignal?.addEventListener('abort', abort, { once: true });
+  let terminalResponseObserved = false;
+  let terminalEvidenceComplete = false;
+  let dispatchOutcomeUncertain = false;
   try {
+    attemptWorkspaceScope = openGatewayAttemptWorkspace(attemptWorkspace);
+    artifactScope = openGatewayArtifactScope(runtime, {
+      agentId: configuration.agentId,
+      openclawStateDir: configuration.openclawStateDir,
+    });
+    assertGatewayArtifactNamespacesEmpty(artifactScope, [attemptId]);
+    const existing = await gatewayRpc(runtime, 'sessions.describe', {
+      key: sessionKey,
+    }, { timeoutMs: Math.max(1, deadline - Date.now()) });
+    if (!objectRecord(existing) || existing.session !== null) {
+      throw runtimeError('codex_openclaw_managed_session_binding_failed');
+    }
+    patchAttempted = true;
     const patched = await gatewayRpc(runtime, 'sessions.patch', {
       key: sessionKey,
       agentId: configuration.agentId,
@@ -488,6 +514,13 @@ export async function runOpenClawManagedGatewayOneShot({
       sendPolicy: 'deny',
     }, { timeoutMs: Math.max(1, deadline - Date.now()) });
     prepared = gatewaySessionCas(patched, sessionKey);
+    if (prepared) {
+      assertGatewayArtifactNamespacesEmpty(
+        artifactScope,
+        [attemptId, prepared.sessionId],
+      );
+      artifactNamespaceReady = true;
+    }
     prepared = validateGatewaySessionPatch(patched, {
       model,
       sessionKey,
@@ -503,7 +536,6 @@ export async function runOpenClawManagedGatewayOneShot({
       sessionKey,
       thinking,
       deliver: false,
-      timeout: Math.max(1, Math.ceil(timeoutMs / 1000)),
       lane: `hepta-paper-managed:${attemptId}`,
       cleanupBundleMcpOnRunEnd: true,
       modelRun: true,
@@ -515,194 +547,167 @@ export async function runOpenClawManagedGatewayOneShot({
       disableMessageTool: true,
       idempotencyKey: attemptId,
     });
-    dispatchAttempted = true;
-    const accepted = await gatewayRpc(
-      runtime,
-      'agent',
-      agentParams,
-      { timeoutMs: Math.max(1, deadline - Date.now()) },
-    );
-    validateAcceptedAgentResponse(accepted, {
-      attemptId,
-      configuration,
-      sessionKey,
-    });
-    if (abortSignal?.aborted) abort();
-    let terminal = await awaitGatewayTerminal(runtime, {
-      attemptId,
-      abortSignal,
-      deadline: abortSignal?.aborted
-        ? Date.now() + GATEWAY_CLEANUP_TIMEOUT_MS : deadline,
-    });
-    runTerminationVerified = gatewayTerminalObserved(terminal);
-    if (abortSignal?.aborted || Date.now() >= deadline) {
-      abort();
-      const abortOutcome = await abortPromise;
-      terminal = await awaitGatewayTerminal(runtime, {
-        attemptId,
-        abortSignal: null,
-        deadline: Date.now() + GATEWAY_CLEANUP_TIMEOUT_MS,
-      });
-      runTerminationVerified = gatewayTerminalObserved(terminal);
-      if (!abortOutcome.ok && !runTerminationVerified) {
-        throw abortOutcome.error;
-      }
+    let terminalResponse;
+    try {
+      terminalResponse = await gatewayRpc(
+        runtime,
+        'agent',
+        agentParams,
+        {
+          dispatchDeadline: deadline,
+          expectFinal: true,
+          onDispatch() { dispatchAttempted = true; },
+          signal: abortSignal,
+        },
+      );
+    } catch (error) {
+      // Once the side-effecting RPC has been entered, an exception never
+      // proves that the provider was not invoked. agent.wait can prove only
+      // that the run ended; it cannot recover the final result or usage.
+      if (dispatchAttempted) dispatchOutcomeUncertain = true;
+      throw error;
     }
-    const terminalResponse = await gatewayRpc(
-      runtime,
-      'agent',
-      agentParams,
-      { timeoutMs: GATEWAY_CLEANUP_TIMEOUT_MS },
+    terminalResponseObserved = agentTerminalResponseObserved(
+      terminalResponse,
+      attemptId,
     );
-    if (terminalResponse?.status === 'accepted'
-      || terminalResponse?.status === 'in_flight'
-      || terminal?.status === 'timeout') {
+    if (!terminalResponseObserved) {
+      dispatchOutcomeUncertain = true;
       throw runtimeError('codex_openclaw_managed_agent_command_failed');
     }
-    result = parseOpenClawManagedGatewayResponse(terminalResponse, {
-      configuration,
-      model,
-      runId: attemptId,
-      sessionId: prepared.sessionId,
-      sessionKey,
-      thinking,
-    });
-    runTerminationVerified = true;
+    terminalEvidenceComplete = completeGatewayTerminalEvidence(
+      terminalResponse,
+      {
+        attemptId,
+        configuration,
+        model,
+        sessionId: prepared.sessionId,
+        sessionKey,
+      },
+    );
+    result = terminalResponse.result;
+    let invocation;
+    try {
+      invocation = parseOpenClawManagedGatewayInvocation(
+        terminalResponse,
+        {
+          configuration,
+          model,
+          runId: attemptId,
+          sessionId: prepared.sessionId,
+          sessionKey,
+          thinking,
+        },
+      );
+    } catch (error) {
+      if (error && typeof error === 'object') {
+        Object.defineProperty(
+          error,
+          'managedGatewayTerminalValidationFailure',
+          { enumerable: false, value: true },
+        );
+      }
+      throw error;
+    }
+    result = invocation.result;
+    if (invocation.thrown) throw invocation.thrown;
   } catch (error) {
     primaryFailure = error;
-  } finally {
-    abortSignal?.removeEventListener('abort', abort);
   }
 
-  if (primaryFailure && dispatchAttempted) {
-    try {
-      abort();
-      const abortOutcome = abortPromise ? await abortPromise : null;
-      const terminal = await awaitGatewayTerminal(runtime, {
-        attemptId,
-        abortSignal: null,
-        deadline: Date.now() + GATEWAY_CLEANUP_TIMEOUT_MS,
-      });
-      runTerminationVerified = gatewayTerminalObserved(terminal);
-      if (abortOutcome && !abortOutcome.ok && !runTerminationVerified) {
-        throw abortOutcome.error;
-      }
-    } catch (error) {
-      primaryFailure = error;
-    }
+  if (primaryFailure && dispatchAttempted && !terminalResponseObserved) {
+    dispatchOutcomeUncertain = true;
+    await settleGatewayRunForCleanup(runtime, {
+      attemptId,
+      configuration,
+      sessionKey,
+    });
   }
 
   let cleanupFailure = null;
-  let sessionEntryRemoved = false;
-  let artifactsRemoved = false;
-  let attemptWorkspaceRemoved = false;
-  if (!prepared) {
+  let patchEntryAbsenceVerified = false;
+  if (patchAttempted && !prepared && !dispatchAttempted) {
     try {
-      const described = await gatewayRpc(runtime, 'sessions.describe', {
-        key: sessionKey,
-      }, { timeoutMs: GATEWAY_CLEANUP_TIMEOUT_MS });
-      if (objectRecord(described?.session)
-        && typeof described.session.sessionId === 'string'
-        && described.session.sessionId.trim()) {
-        prepared = Object.freeze({
-          sessionId: described.session.sessionId,
-          lifecycleRevision: null,
-          updatedAt: null,
-          bindingHash: null,
-        });
-      }
-    } catch { /* the primary failure remains authoritative */ }
-  }
-  if (prepared) {
-    try {
-      if (dispatchAttempted && !runTerminationVerified) {
-        throw runtimeError(
-          'codex_openclaw_managed_session_cleanup_entry_delete_failed',
-        );
-      }
-      const latestPatch = await gatewayRpc(runtime, 'sessions.patch', {
-        key: sessionKey,
-        agentId: configuration.agentId,
-      }, { timeoutMs: GATEWAY_CLEANUP_TIMEOUT_MS });
-      const latest = gatewaySessionCas(latestPatch, sessionKey);
-      if (!latest) {
-        throw runtimeError(
-          'codex_openclaw_managed_session_cleanup_entry_inspection_failed',
-        );
-      }
-      if (latest.sessionId !== prepared.sessionId
-        || (prepared.bindingHash !== null
-          && validateGatewaySessionPatch(latestPatch, {
-            model,
-            sessionKey,
-            thinking,
-          }).bindingHash !== prepared.bindingHash)) {
-        throw runtimeError(
-          'codex_openclaw_managed_session_cleanup_entry_binding_changed',
-        );
-      }
-      prepared = Object.freeze({
-        ...latest,
-        bindingHash: prepared.bindingHash,
+      await fenceUnknownGatewayPatch(runtime, {
+        configuration,
+        deadline: Date.now() + GATEWAY_SESSION_DELETE_WINDOW_MS,
+        sessionKey,
       });
-      const deleted = await gatewayRpc(runtime, 'sessions.delete', {
-        key: sessionKey,
-        agentId: configuration.agentId,
-        deleteTranscript: true,
-        expectedSessionId: prepared.sessionId,
-        ...(prepared.lifecycleRevision ? {
-          expectedLifecycleRevision: prepared.lifecycleRevision,
-        } : {}),
-        expectedSessionUpdatedAt: prepared.updatedAt,
-        emitLifecycleHooks: false,
-      }, { timeoutMs: GATEWAY_CLEANUP_TIMEOUT_MS });
-      if (deleted?.ok !== true
-        || deleted.key !== sessionKey
-        || deleted.deleted !== true
-        || !Array.isArray(deleted.archived)) {
-        throw runtimeError(
-          'codex_openclaw_managed_session_cleanup_entry_delete_failed',
-        );
-      }
+      assertGatewayArtifactNamespacesEmpty(artifactScope, [attemptId]);
+      patchEntryAbsenceVerified = true;
+    } catch {
+      cleanupFailure = runtimeError(
+        'codex_openclaw_managed_session_cleanup_entry_inspection_failed',
+      );
+    }
+  }
+  let sessionEntryRemoved = !patchAttempted || patchEntryAbsenceVerified;
+  let artifactsRemoved = !dispatchAttempted;
+  let attemptWorkspaceRemoved = false;
+  const preserveUncertainDispatch = dispatchOutcomeUncertain
+    || (dispatchAttempted && !terminalEvidenceComplete);
+  if (!cleanupFailure && !preserveUncertainDispatch && prepared) {
+    try {
+      const deletion = await deleteGatewaySessionBarrier(runtime, {
+        configuration,
+        deadline: Date.now() + GATEWAY_SESSION_DELETE_WINDOW_MS,
+        prepared,
+        sessionKey,
+      });
+      prepared = deletion.prepared || prepared;
       sessionEntryRemoved = true;
-      for (const archived of deleted.archived) {
-        removeExactRegularArtifact(archived, roots);
-      }
-      for (const artifact of exactGatewayArtifacts(
-        runtime,
-        prepared.sessionId,
-        attemptId,
-      )) removeExactRegularArtifact(artifact, roots);
-      if (gatewayArtifactResidue(
-        runtime,
-        prepared.sessionId,
-        attemptId,
-      ).length !== 0) {
+      if (!artifactNamespaceReady) {
         throw runtimeError(
           'codex_openclaw_managed_session_cleanup_artifact_residue_detected',
         );
       }
+      removeGatewaySessionArtifacts(
+        artifactScope,
+        [attemptId, prepared.sessionId],
+      );
+      await assertGatewayArtifactNamespacesQuiet(
+        artifactScope,
+        [attemptId, prepared.sessionId],
+      );
       artifactsRemoved = true;
-      const described = await gatewayRpc(runtime, 'sessions.describe', {
-        key: sessionKey,
-      }, { timeoutMs: GATEWAY_CLEANUP_TIMEOUT_MS });
-      if (!objectRecord(described) || described.session !== null) {
-        throw runtimeError(
-          'codex_openclaw_managed_session_cleanup_entry_remained',
-        );
-      }
     } catch (error) {
-      cleanupFailure = error;
+      cleanupFailure = isKnownOpenClawManagedCleanupFailureCode(error?.code)
+        ? error
+        : runtimeError(
+          'codex_openclaw_managed_session_cleanup_entry_delete_failed',
+        );
     }
+  } else if (!cleanupFailure
+    && patchAttempted
+    && !prepared
+    && !patchEntryAbsenceVerified
+    && !preserveUncertainDispatch) {
+    cleanupFailure = runtimeError(
+      'codex_openclaw_managed_session_cleanup_entry_inspection_failed',
+    );
   }
   try {
-    fs.rmSync(attemptWorkspace, { recursive: true, force: true });
-    if (fs.existsSync(attemptWorkspace)) throw new Error('workspace remained');
+    removeGatewayAttemptWorkspace(attemptWorkspaceScope);
     attemptWorkspaceRemoved = true;
   } catch {
     cleanupFailure ||= runtimeError(
       'codex_openclaw_managed_session_cleanup_temporary_workspace_removal_failed',
     );
+  } finally {
+    try {
+      closeGatewayAttemptWorkspace(attemptWorkspaceScope);
+    } catch {
+      cleanupFailure ||= runtimeError(
+        'codex_openclaw_managed_session_cleanup_temporary_workspace_removal_failed',
+      );
+    }
+    try {
+      closeGatewayArtifactScope(artifactScope);
+    } catch {
+      cleanupFailure ||= runtimeError(
+        'codex_openclaw_managed_session_cleanup_artifact_scope_invalid',
+      );
+    }
   }
   if (cleanupFailure) {
     if (result) {
@@ -714,7 +719,7 @@ export async function runOpenClawManagedGatewayOneShot({
     }
     throw cleanupFailure;
   }
-  if (primaryFailure) throw primaryFailure;
+  if (primaryFailure && !result) throw primaryFailure;
   const sessionCleanup = Object.freeze({
     sessionEntryRemoved,
     artifactsRemoved,
@@ -722,7 +727,7 @@ export async function runOpenClawManagedGatewayOneShot({
   });
   return Object.freeze({
     result,
-    thrown: null,
+    thrown: primaryFailure,
     sessionBindingBeforeHash: prepared.bindingHash,
     sessionBindingAfterHash: prepared.bindingHash,
     sessionCleanup,

@@ -21,6 +21,47 @@ import {
 import {
   runOpenClawManagedGatewayOneShot,
 } from './codex-openclaw-managed-gateway-transport.mjs';
+import {
+  closeGatewayAttemptWorkspace,
+  openGatewayAttemptWorkspace,
+  removeGatewayAttemptWorkspace,
+} from './codex-openclaw-managed-gateway-reconciliation.mjs';
+
+function createdDirectoryIdentity(candidate) {
+  const stat = fs.lstatSync(candidate, { bigint: true });
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw runtimeError(
+      'codex_openclaw_managed_session_cleanup_temporary_workspace_removal_failed',
+    );
+  }
+  return Object.freeze({
+    device: String(stat.dev),
+    inode: String(stat.ino),
+  });
+}
+
+function removeCreatedGatewayAttemptWorkspace(candidate, expectedIdentity) {
+  if (!candidate || !fs.existsSync(candidate)) return;
+  let pinned = null;
+  let failure = null;
+  try {
+    pinned = openGatewayAttemptWorkspace(candidate);
+    if (pinned.workspace.identity.device !== expectedIdentity?.device
+      || pinned.workspace.identity.inode !== expectedIdentity?.inode) {
+      throw runtimeError(
+        'codex_openclaw_managed_session_cleanup_temporary_workspace_removal_failed',
+      );
+    }
+    removeGatewayAttemptWorkspace(pinned);
+  } catch (error) {
+    failure = error;
+  } finally {
+    try { closeGatewayAttemptWorkspace(pinned); } catch (error) {
+      failure ||= error;
+    }
+  }
+  if (failure) throw failure;
+}
 
 function managedOneShotSessionIdentity(configuration, attemptId) {
   const segment = `hepta-managed-one-shot-${attemptId}`;
@@ -478,19 +519,36 @@ export async function runManagedOneShotAgentCommand(options = {}) {
       options.configuration,
       options.attemptId,
     );
-    const attemptWorkspace = fs.mkdtempSync(
-      path.join(os.tmpdir(), 'hepta-managed-gateway-rpc-'),
-    );
-    fs.chmodSync(attemptWorkspace, PRIVATE_DIRECTORY_MODE);
     assertOpenClawManagedSingleAttemptPolicy({
       openclawConfigPath: options.configuration.openclawConfigPath,
       agentId: options.configuration.agentId,
     });
-    return await runOpenClawManagedGatewayOneShot({
-      ...options,
-      sessionKey: identity.sessionKey,
-      attemptWorkspace,
-    });
+    let attemptWorkspace = null;
+    let attemptWorkspaceIdentity = null;
+    try {
+      attemptWorkspace = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'hepta-managed-gateway-rpc-'),
+      );
+      attemptWorkspaceIdentity = createdDirectoryIdentity(attemptWorkspace);
+      fs.chmodSync(attemptWorkspace, PRIVATE_DIRECTORY_MODE);
+      return await runOpenClawManagedGatewayOneShot({
+        ...options,
+        sessionKey: identity.sessionKey,
+        attemptWorkspace,
+      });
+    } catch (error) {
+      try {
+        removeCreatedGatewayAttemptWorkspace(
+          attemptWorkspace,
+          attemptWorkspaceIdentity,
+        );
+      } catch {
+        throw runtimeError(
+          'codex_openclaw_managed_session_cleanup_temporary_workspace_removal_failed',
+        );
+      }
+      throw error;
+    }
   }
   return await withCodexOpenClawManagedSessionStoreLifecycleLock(
     () => runManagedOneShotAgentCommandUnderLock(options),

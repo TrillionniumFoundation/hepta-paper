@@ -67,6 +67,25 @@ export const OPENCLAW_MODEL_RUNTIME_PACKAGE_EXPORTS = Object.freeze([
 ]);
 
 const SHA256 = /^sha256:[a-f0-9]{64}$/;
+
+function canonicalOwnedRuntimeDirectory(candidate, expected) {
+  const selected = path.resolve(String(candidate || ''));
+  const required = path.resolve(String(expected || ''));
+  const linkStat = fs.lstatSync(selected, { bigint: true });
+  const stat = fs.statSync(selected, { bigint: true });
+  if (selected !== required
+    || fs.realpathSync.native(selected) !== required
+    || linkStat.isSymbolicLink()
+    || !linkStat.isDirectory()
+    || !stat.isDirectory()
+    || (typeof process.getuid === 'function'
+      && Number(stat.uid) !== process.getuid())
+    || (stat.mode & 0o002n) !== 0n) {
+    throw new Error('managed runtime directory is not canonical');
+  }
+  return selected;
+}
+
 const RUNTIME_PROVENANCE_KEYS = Object.freeze([
   'kind',
   'moduleBindings',
@@ -549,6 +568,7 @@ export async function loadOpenClawModelRuntime(configuration) {
   let cfg;
   let agentDir;
   let sessionStorePath;
+  let internalRunsDir;
   try {
     cfg = configRuntime.loadConfig();
     if (!verifyOpenClawManagedSingleAttemptPolicy(cfg, configuration.agentId)) {
@@ -584,9 +604,12 @@ export async function loadOpenClawModelRuntime(configuration) {
       expectedSessionsDir,
       'sessions.json',
     );
+    canonicalOwnedRuntimeDirectory(expectedSessionsDir, expectedSessionsDir);
+    internalRunsDir = canonicalOwnedRuntimeDirectory(
+      path.join(configuration.openclawStateDir, 'internal-agent-runs'),
+      path.join(configuration.openclawStateDir, 'internal-agent-runs'),
+    );
     if (sessionStorePath !== expectedSessionStorePath
-      || fs.realpathSync(expectedSessionsDir) !== expectedSessionsDir
-      || !fs.statSync(expectedSessionsDir).isDirectory()
       || (fs.existsSync(sessionStorePath)
         && (fs.realpathSync(sessionStorePath) !== expectedSessionStorePath
           || !fs.statSync(sessionStorePath).isFile()))) {
@@ -609,10 +632,7 @@ export async function loadOpenClawModelRuntime(configuration) {
     agentDir,
     sessionStorePath,
     sessionsDir: path.dirname(sessionStorePath),
-    internalRunsDir: path.join(
-      configuration.openclawStateDir,
-      'internal-agent-runs',
-    ),
+    internalRunsDir,
     agentCommand: agentCommandRuntime.agentCommand,
     ensureAuthProfileStore: agentCommandRuntime.ensureAuthProfileStore,
     disposeRegisteredAgentHarnesses:

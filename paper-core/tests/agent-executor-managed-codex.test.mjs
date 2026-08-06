@@ -518,7 +518,7 @@ test('managed Codex receipts bind both session fields to the verified explicit-p
       structuredOutput: formalReviewDocument,
       onPrompt(prompt) { managedPrompt = prompt; },
     }),
-    timeoutMs: 5000,
+    timeoutMs: 300000,
   });
   const receipt = await executor.execute({
     role: 'formal-review',
@@ -671,7 +671,7 @@ test('managed Codex receipts bind both session fields to the verified explicit-p
         preflight.capabilityReceipt.openClawManagedAuthSourceIdentityHash,
       structuredOutput: modelReportedBlockedOutput,
     }),
-    timeoutMs: 5000,
+    timeoutMs: 300000,
   });
   await assert.rejects(
     () => modelReportedBlockedExecutor.execute({
@@ -746,7 +746,7 @@ test('managed Codex receipts bind both session fields to the verified explicit-p
         structuredOutput: postflightSensitiveStructuredOutput,
       });
     },
-    timeoutMs: 5000,
+    timeoutMs: 300000,
   });
   await assert.rejects(
     () => postflightFailureExecutor.execute({
@@ -809,7 +809,7 @@ test('managed Codex receipts bind both session fields to the verified explicit-p
     spawnImpl: () => failedChildProcess(
       'codex_openclaw_managed_required_snapshot_omitted\n',
     ),
-    timeoutMs: 5000,
+    timeoutMs: 300000,
   });
   await assert.rejects(
     () => snapshotFailureExecutor.execute({
@@ -857,7 +857,7 @@ test('managed Codex receipts bind both session fields to the verified explicit-p
       formalReviewerCapabilityReceipt: preflight.capabilityReceipt,
       spawnSyncImpl,
       spawnImpl: () => failedChildProcess(`${truncatedFailureCode}\n`),
-      timeoutMs: 5000,
+      timeoutMs: 300000,
     });
     await assert.rejects(
       () => truncatedFailureExecutor.execute({
@@ -911,7 +911,7 @@ test('managed Codex receipts bind both session fields to the verified explicit-p
       formalReviewerCapabilityReceipt: preflight.capabilityReceipt,
       spawnSyncImpl,
       spawnImpl: () => failedChildProcess(`${candidate.code}\n`),
-      timeoutMs: 5000,
+      timeoutMs: 300000,
     });
     await assert.rejects(
       () => cleanupFailureExecutor.execute({
@@ -951,7 +951,7 @@ test('managed Codex receipts bind both session fields to the verified explicit-p
         preflight.capabilityReceipt.openClawManagedAuthSourceIdentityHash,
       structuredOutput: formalReviewDocument,
     }),
-    timeoutMs: 5000,
+    timeoutMs: 300000,
   });
   await assert.rejects(
     () => legacyDowngradeExecutor.execute({

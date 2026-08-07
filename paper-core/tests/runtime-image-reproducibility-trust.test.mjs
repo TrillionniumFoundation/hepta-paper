@@ -871,6 +871,9 @@ test('canonical context closure covers every entry and rejects undeclared or ign
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const context = path.join(root, 'context');
   fs.cpSync(path.join(REPOSITORY_ROOT, 'runtime-images/python-gpu'), context, { recursive: true });
+  // Normalize only the disposable copy so this fixture also works from a sealed release tree.
+  fs.chmodSync(context, 0o700);
+  fs.chmodSync(path.join(context, 'Dockerfile'), 0o600);
   write(path.join(context, 'undeclared.txt'), 'attacker input\n', 0o644);
   assert.throws(() => inspectRuntimeImageBuildInputClosures({
     repositoryRoot: root,

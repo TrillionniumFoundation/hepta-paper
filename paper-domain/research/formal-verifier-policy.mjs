@@ -3,8 +3,30 @@ export const PRODUCTION_LEAN_TOOLCHAIN = 'leanprover/lean4:v4.30.0';
 // Reviewed content root of the pinned upstream Lean distribution. Runtime
 // measurement alone is not authority: a modified kernel must fail against an
 // independently versioned trust anchor before it can issue certificates.
-export const PRODUCTION_LEAN_TOOLCHAIN_ROOT_MERKLE_HASHES = Object.freeze({
+export const PRODUCTION_LEAN_UPSTREAM_TOOLCHAIN_ROOT_MERKLE_HASHES = Object.freeze({
   [PRODUCTION_LEAN_TOOLCHAIN]: 'sha256:a0d6d66cf58068c29c5330136a1577e3706b62ea1596dc1b93e55a83a2fb8f75',
+});
+
+// Reviewed deployment seal of the exact upstream tree above.  The path set,
+// bytes and symlink targets are identical; only 0755/0644 modes are tightened
+// to 0555/0444 before root ownership and read-only publication.
+export const PRODUCTION_LEAN_TOOLCHAIN_ROOT_MERKLE_HASHES = Object.freeze({
+  [PRODUCTION_LEAN_TOOLCHAIN]: 'sha256:0a5aa55f3cb699a0a1a583ecb909fca0f1899a76cdfc1cad48686d3f2f991ce7',
+});
+
+// Elan's mutable aliases and launcher output are not part of the production
+// trust root.  Resolve the reviewed distribution through this code-pinned
+// layout, then verify its complete content Merkle before executing Lake or
+// Lean.  A toolchain upgrade must update the identifier, layout and Merkle in
+// the same reviewed change.
+export const PRODUCTION_LEAN_RUNTIME_LAYOUTS = Object.freeze({
+  [PRODUCTION_LEAN_TOOLCHAIN]: Object.freeze({
+    toolchainRootRelative: 'toolchains/leanprover--lean4---v4.30.0',
+    lakeRelative: 'bin/lake',
+    leanRelative: 'bin/lean',
+    lakeExecutableHash: 'sha256:d3e1f322c08d87f0d5850132a0b0309c1edbe53d641276b344717da448c8bc8b',
+    leanExecutableHash: 'sha256:3e0d0d3d801675359f2d4cf9815bfdb417b20b92fdd9d48b3b14c95bbae28bbf',
+  }),
 });
 
 // This is a code-reviewed upstream release anchor, not deployment-supplied

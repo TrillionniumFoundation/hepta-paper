@@ -221,14 +221,84 @@ jobs:
           key: ${{ runner.os }}-mathlib-v4.30.0-c5ea003-${{ hashFiles('paper-domain/research/formal-verifier-policy.mjs', 'paper-core/bin/prepare-ci-mathlib-cache.mjs') }}
       - name: Materialize pinned Lean and formal runtime
         run: |
-          if [ ! -x "$HOME/.elan/bin/elan" ]; then
-            curl -fsSL https://github.com/leanprover/elan/releases/download/v4.2.3/elan-x86_64-unknown-linux-gnu.tar.gz -o /tmp/elan.tar.gz
-            echo 'df0b2b3a439961ffcbb3985214365ffe40f49bc871df04dff268c7d8e21ca8b2  /tmp/elan.tar.gz' | sha256sum -c -
-            tar -xzf /tmp/elan.tar.gz -C /tmp elan-init
-            /tmp/elan-init -y --default-toolchain "$ELAN_TOOLCHAIN"
+          cached_toolchain="$HOME/.elan/toolchains/leanprover--lean4---v4.30.0"
+          if [ -d "$cached_toolchain" ] && [ ! -L "$cached_toolchain" ]; then
+            upstream_toolchain="$cached_toolchain"
+          else
+            bootstrap_root="$RUNNER_TEMP/hepta-elan-bootstrap"
+            upstream_elan_home="$RUNNER_TEMP/hepta-elan-upstream"
+            install -d -m 0700 "$bootstrap_root"
+            test ! -e "$upstream_elan_home"
+            curl -fsSL https://github.com/leanprover/elan/releases/download/v4.2.3/elan-x86_64-unknown-linux-gnu.tar.gz -o "$bootstrap_root/elan.tar.gz"
+            echo "df0b2b3a439961ffcbb3985214365ffe40f49bc871df04dff268c7d8e21ca8b2  $bootstrap_root/elan.tar.gz" | sha256sum -c -
+            tar -xzf "$bootstrap_root/elan.tar.gz" -C "$bootstrap_root" elan-init
+            ELAN_HOME="$upstream_elan_home" "$bootstrap_root/elan-init" \
+              -y --no-modify-path --default-toolchain "$ELAN_TOOLCHAIN"
+            upstream_toolchain="$upstream_elan_home/toolchains/leanprover--lean4---v4.30.0"
           fi
-          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
-          ELAN_TOOLCHAIN="$ELAN_TOOLCHAIN" "$HOME/.elan/bin/elan" which lake
+          HEPTA_CI_UPSTREAM_TOOLCHAIN="$upstream_toolchain" \
+            node --input-type=module - <<'NODE'
+          import path from 'node:path';
+          import { inspectLeanToolchainRootContent } from './paper-adapters/research-verify/lean-toolchain-identity.mjs';
+          import {
+            PRODUCTION_LEAN_TOOLCHAIN,
+            PRODUCTION_LEAN_UPSTREAM_TOOLCHAIN_ROOT_MERKLE_HASHES,
+          } from './paper-domain/research/formal-verifier-policy.mjs';
+          const root = path.resolve(process.env.HEPTA_CI_UPSTREAM_TOOLCHAIN || '');
+          const expected = PRODUCTION_LEAN_UPSTREAM_TOOLCHAIN_ROOT_MERKLE_HASHES[
+            PRODUCTION_LEAN_TOOLCHAIN
+          ];
+          const identity = inspectLeanToolchainRootContent({
+            toolchain: PRODUCTION_LEAN_TOOLCHAIN,
+            toolchainRoot: root,
+            lakeExecutable: path.join(root, 'bin/lake'),
+            leanExecutable: path.join(root, 'bin/lean'),
+            expectedToolchainRootMerkleHash: expected,
+            forbidGroupOrOtherWrite: true,
+            forceContentRehash: true,
+          });
+          if (identity.status !== 'lean_toolchain_root_content_verified'
+            || identity.toolchainRootMerkleHash !== expected) {
+            throw new Error(`upstream_ci_lean_toolchain_invalid:${
+              identity.blockers?.join(',') || identity.status
+            }`);
+          }
+          NODE
+          sealed_elan_home=/opt/hepta-paper/elan
+          sealed_toolchain="$sealed_elan_home/toolchains/leanprover--lean4---v4.30.0"
+          sudo test ! -e "$sealed_elan_home"
+          sudo install -d -o root -g root -m 0755 "$sealed_elan_home/toolchains"
+          sudo cp -RP -- "$upstream_toolchain" "$sealed_toolchain"
+          sudo chown -hR root:root "$sealed_elan_home"
+          sudo /usr/bin/python3 -I - "$sealed_elan_home" <<'PY'
+          import os
+          import stat
+          import sys
+          stack = [sys.argv[1]]
+          while stack:
+              selected = stack.pop()
+              for attribute in os.listxattr(selected, follow_symlinks=False):
+                  os.removexattr(selected, attribute, follow_symlinks=False)
+              if stat.S_ISDIR(os.lstat(selected).st_mode):
+                  with os.scandir(selected) as entries:
+                      stack.extend(entry.path for entry in entries)
+          PY
+          sudo find "$sealed_toolchain" -xdev -type f ! -perm /111 -exec chmod 0444 {} +
+          sudo find "$sealed_toolchain" -xdev -type f -perm /111 -exec chmod 0555 {} +
+          sudo find "$sealed_toolchain" -xdev -type d -exec chmod 0555 {} +
+          sudo chmod 0555 "$sealed_elan_home" "$sealed_elan_home/toolchains"
+          ELAN_HOME="$sealed_elan_home" node --input-type=module - <<'NODE'
+          import { resolvePinnedLakeExecutable } from './paper-adapters/research-verify/pinned-lake-executable-resolver.mjs';
+          const result = resolvePinnedLakeExecutable({
+            environment: process.env,
+            forceContentRehash: true,
+          });
+          if (result.status !== 'formal_pinned_lake_resolved') {
+            throw new Error(`sealed_ci_lean_toolchain_invalid:${result.blockers.join(',')}`);
+          }
+          process.stdout.write(`${result.toolchainIdentity.toolchainRootMerkleHash}\n`);
+          NODE
+          echo "ELAN_HOME=$sealed_elan_home" >> "$GITHUB_ENV"
           mkdir -p .ci-cache
           if [ -s .ci-cache/formal-sandbox-alpine.tar ]; then
             docker load --input .ci-cache/formal-sandbox-alpine.tar
@@ -256,7 +326,7 @@ jobs:
         run: npm run test:academic-docker-operational
       - name: Run process-isolated typed numeric oracle recomputation
         run: npm run test:typed-numeric-process-operational
-      - name: Run real dynamic theorem kernel and fresh replay
+      - name: Run unified zero-skip formal operational gate
         run: npm run test:dynamic-formal-kernel-operational
       - name: Recheck topology budget closure and architecture capabilities
         run: node --test --test-concurrency=1 paper-core/tests/autonomous-research-resource-budget-closure.test.mjs paper-core/tests/architecture-conformance.test.mjs

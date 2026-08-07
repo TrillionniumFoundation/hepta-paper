@@ -882,6 +882,91 @@ test('Lake verifier covers runner, snapshot, audit-output, and declaration bindi
   assert.deepEqual(sorted.auditTargets, ['Main.lean', 'Second.lean']);
 });
 
+test('immutable Lake audit rejects mixed runtime identities across source-scoped invocations', async (t) => {
+  const mainSource = [
+    'import Init',
+    'theorem immutableAlpha : ∀ n : Nat, n = n := by intro n; rfl',
+    '',
+  ].join('\n');
+  const secondSource = [
+    'import Init',
+    'theorem immutableBeta : ∀ n : Nat, n = n := by intro n; rfl',
+    '',
+  ].join('\n');
+  const root = temporaryLakeProject(t, { source: mainSource });
+  fs.writeFileSync(path.join(root, 'Second.lean'), secondSource);
+  const alpha = leanSourceDeclarationRecords(mainSource)[0];
+  const beta = leanSourceDeclarationRecords(secondSource)[0];
+  const bindings = [
+    dynamicFormalBinding({
+      declaration: alpha,
+      claimId: 'claim-immutable-alpha',
+      sourceFile: 'Main.lean',
+    }),
+    dynamicFormalBinding({
+      declaration: beta,
+      claimId: 'claim-immutable-beta',
+      sourceFile: 'Second.lean',
+    }),
+  ];
+  const invocationTargets = [];
+  const verifier = createLakeFormalVerifier({
+    projectRoot: root,
+    requireImmutableExecutionClosure: true,
+    toolchainIdentityProvider: fixtureToolchainIdentityProvider,
+    commandRunnerFactory: () => Object.freeze({
+      async run(spec) {
+        const target = spec.args.at(-1);
+        invocationTargets.push(target);
+        const theoremName = target === 'Main.lean'
+          ? 'immutableAlpha'
+          : 'immutableBeta';
+        return trustedExecution({
+          stdout: [
+            `${theoremName} : ∀ n : Nat, n = n`,
+            `'${theoremName}' does not depend on any axioms`,
+          ].join('\n'),
+          identitySuffix: theoremName,
+        });
+      },
+    }),
+  });
+  const result = await verifier.verify({ claimBindings: bindings });
+  assert.equal(result.status, 'formal_certificate_blocked');
+  assert.deepEqual(invocationTargets, ['Main.lean', 'Second.lean']);
+  assert.ok(result.formalProjectSnapshotSealReceiptHash);
+  assert.ok(result.blockers.includes(
+    'formal_immutable_audit_runtime_identity_mismatch',
+  ));
+
+  const stableInvocationTargets = [];
+  const stableVerifier = createLakeFormalVerifier({
+    projectRoot: root,
+    requireImmutableExecutionClosure: true,
+    toolchainIdentityProvider: fixtureToolchainIdentityProvider,
+    commandRunnerFactory: () => Object.freeze({
+      async run(spec) {
+        const target = spec.args.at(-1);
+        stableInvocationTargets.push(target);
+        const theoremName = target === 'Main.lean'
+          ? 'immutableAlpha'
+          : 'immutableBeta';
+        return trustedExecution({
+          stdout: [
+            `${theoremName} : ∀ n : Nat, n = n`,
+            `'${theoremName}' does not depend on any axioms`,
+          ].join('\n'),
+          identitySuffix: 'immutable-stable-runtime',
+        });
+      },
+    }),
+  });
+  const stable = await stableVerifier.verify({ claimBindings: bindings });
+  assert.equal(stable.status, 'formal_claim_verified', JSON.stringify(stable));
+  assert.deepEqual(stableInvocationTargets, ['Main.lean', 'Second.lean']);
+  assert.ok(stable.formalProjectSnapshotSealReceiptHash);
+});
+
 test('Lake replay rejects every project and authority identity divergence before promotion', async (t) => {
   const root = temporaryLakeProject(t);
   const stableRunner = { run: async () => trustedExecution({ identitySuffix: 'replay-matrix' }) };

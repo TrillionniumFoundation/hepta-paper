@@ -207,6 +207,9 @@ export async function executeLakeFormalWorker({
   }
   const commandRunnerFactory = (executionRoot, executionScopeRoot = executionRoot) => workerRunnerFactory({
     allowedExecutables: [executable],
+    expectedExecutableHashes: {
+      [executable]: pinnedRuntime.lakeExecutableHash,
+    },
     allowedRoots: [executionScopeRoot],
     ...(sandboxRuntime ? {
       dockerImage: sandboxRuntime.image,
@@ -233,6 +236,9 @@ export async function executeLakeFormalWorker({
       leanExecutable: pinnedRuntime.leanExecutable,
       lakeExecutable: pinnedRuntime.lakeExecutable,
       expectedToolchainRootMerkleHash: PRODUCTION_LEAN_TOOLCHAIN_ROOT_MERKLE_HASHES[pinnedRuntime.toolchain] || null,
+      requiredOwnerUid: 0,
+      requiredOwnerGid: 0,
+      forbidGroupOrOtherWrite: true,
     }),
     executionEnvironment: dynamicFormalExecutionEnvironment,
     requireImmutableExecutionClosure: Boolean(dynamicFormalExecutionAuthority),

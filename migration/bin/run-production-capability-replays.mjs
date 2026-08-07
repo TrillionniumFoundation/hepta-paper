@@ -291,6 +291,10 @@ async function replayFormalVerifier(root) {
       toolchainRoot: pinnedRuntime.toolchainRoot,
       leanExecutable: pinnedRuntime.leanExecutable,
       lakeExecutable: pinnedRuntime.lakeExecutable,
+      expectedToolchainRootMerkleHash: pinnedRuntime.expectedToolchainRootMerkleHash,
+      requiredOwnerUid: 0,
+      requiredOwnerGid: 0,
+      forbidGroupOrOtherWrite: true,
     }),
   });
   const certificate = await verifier.verify({ timeoutMs: 120000 });

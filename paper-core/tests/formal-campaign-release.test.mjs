@@ -19,6 +19,9 @@ import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
   createReadOnlyAutonomousSubmissionHandoffOutboxFixture,
 } from './support/autonomous-submission-handoff-fixture.mjs';
+import {
+  trustedProductionLakeOrSkip,
+} from './support/trusted-production-lake-preflight.mjs';
 
 const FORMAL_SANDBOX_IMAGE_DIGEST = 'sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc';
 const FORMAL_SANDBOX_RUNTIME = createPinnedFormalSandboxRuntime({
@@ -65,6 +68,11 @@ test('approved proposal seed closes through writer theorem, system spec, Lean re
     imageDigest: FORMAL_SANDBOX_IMAGE_DIGEST,
   }), /formal_sandbox_runtime_image_reference_not_digest_pinned/);
   assert.equal(FORMAL_SANDBOX_RUNTIME.imageDigest, FORMAL_SANDBOX_IMAGE_DIGEST);
+  const preflight = trustedProductionLakeOrSkip(t, {
+    expectedSandboxImageDigest: FORMAL_SANDBOX_IMAGE_DIGEST,
+  });
+  if (!preflight) return;
+  assert.equal(preflight.formalSandboxRuntime.imageDigest, FORMAL_SANDBOX_IMAGE_DIGEST);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-formal-campaign-release-'));
   const workspace = path.join(root, 'source');
   const runtimeRoot = path.join(root, 'runtime');
@@ -154,7 +162,7 @@ test('approved proposal seed closes through writer theorem, system spec, Lean re
     execute: true,
     serviceOverrides: {
       store,
-      trustedFormalSandboxRuntime: FORMAL_SANDBOX_RUNTIME,
+      trustedFormalSandboxRuntime: preflight.formalSandboxRuntime,
       autonomousSubmissionOutbox:
         createReadOnlyAutonomousSubmissionHandoffOutboxFixture(),
     },
@@ -374,6 +382,7 @@ test('approved proposal seed closes through writer theorem, system spec, Lean re
   };
   const executor = createCampaignNodeExecutor({
     runtimeRoot,
+    trustedFormalSandboxRuntime: preflight.formalSandboxRuntime,
     researchVerifier: context.services.researchVerifier,
     releasePackager: context.services.releasePackager,
     agentExecutor,

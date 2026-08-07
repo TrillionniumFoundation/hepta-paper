@@ -6,7 +6,10 @@ import {
 import {
   verifyTypedTheoremDependencyGraph,
 } from '../../paper-domain/research/typed-theorem-dependency-graph.mjs';
-import { PRODUCTION_LEAN_TOOLCHAIN } from '../../paper-domain/research/formal-verifier-policy.mjs';
+import {
+  PRODUCTION_LEAN_RUNTIME_LAYOUTS,
+  PRODUCTION_LEAN_TOOLCHAIN,
+} from '../../paper-domain/research/formal-verifier-policy.mjs';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { createOsSandboxedWorkerRunner } from '../runtime/os-sandboxed-worker-runner.mjs';
 import {
@@ -20,6 +23,8 @@ import {
 import { resolvePinnedLakeExecutable } from './pinned-lake-executable-resolver.mjs';
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const PRODUCTION_LAKE_EXECUTABLE_HASH =
+  PRODUCTION_LEAN_RUNTIME_LAYOUTS[PRODUCTION_LEAN_TOOLCHAIN].lakeExecutableHash;
 
 function tacticCandidates(strategy, dependencyNames, binderNames) {
   const argumentsSource = binderNames.length ? ` ${binderNames.join(' ')}` : '';
@@ -253,6 +258,7 @@ export function createFormalTheoremDependencyGraphOperationsExecutor({
   dynamicFormalExecutionAuthority = null,
   dynamicFormalExecutionEnvironment = process.env,
   dynamicFormalExecutionSpawnSync = undefined,
+  resolvePinnedRuntime = resolvePinnedLakeExecutable,
 } = {}) {
   const repository = createFormalProofSearchWorkspaceRepository({
     temporaryRoot,
@@ -295,16 +301,17 @@ export function createFormalTheoremDependencyGraphOperationsExecutor({
       try {
         const initialFormalExecutionSnapshotReceipt = project
           ? repository.assertExecutionSnapshotCurrent({ projectRoot: project.root }) : null;
-        const pinned = resolvePinnedLakeExecutable({
+        const pinned = resolvePinnedRuntime({
           environment: dynamicFormalExecutionEnvironment,
-          ...(dynamicFormalExecutionSpawnSync
-            ? { spawnSyncImpl: dynamicFormalExecutionSpawnSync } : {}),
         });
         if (pinned.status !== 'formal_pinned_lake_resolved') {
           throw new Error(`formal_theorem_dependency_lake_unavailable:${pinned.blockers.join(',')}`);
         }
         const createRunner = (executionProject) => workerRunnerFactory({
           allowedExecutables: [pinned.executable],
+          expectedExecutableHashes: {
+            [pinned.executable]: pinned.lakeExecutableHash,
+          },
           allowedRoots: [executionProject.scopeRoot],
           ...(trustedSandboxRuntime ? {
             dockerImage: trustedSandboxRuntime.image,
@@ -586,7 +593,9 @@ export function verifyFormalTheoremDependencyGraphOperationReceipt(value, {
     for (const tactic of [...(receipt.tacticReceipts || []), receipt.replayReceipt].filter(Boolean)) {
       const { formalTheoremDependencyTacticReceiptHash: tacticHash, ...tacticPayload } = tactic;
       if (tacticHash !== hashRecord('FormalTheoremDependencyTacticReceipt', tacticPayload)
-        || tactic.networkAccessAllowed !== false) {
+        || tactic.networkAccessAllowed !== false
+        || tactic.executionIdentity?.runtimeExecutableSnapshotHash
+          !== PRODUCTION_LAKE_EXECUTABLE_HASH) {
         blockers.push(`formal_theorem_dependency_tactic_receipt_invalid:${receipt.claimId}`);
       }
     }

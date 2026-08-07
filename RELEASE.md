@@ -61,6 +61,14 @@ Freeze the exact source commit and ensure its worktree is clean. From that same
 untagged `release_ready` commit, run the following sequence without changing any
 source, index, untracked file, release marker or tag between steps:
 
+The release environment must explicitly set
+`ELAN_HOME=/opt/hepta-paper/elan`. That path is the reviewed root-owned,
+non-group/other-writable sealed Lean distribution with no ACLs or extended
+attributes; release verification never
+executes an ambient Elan launcher to discover it. A user-owned `~/.elan`, an
+implicit `HOME` fallback or a toolchain whose complete Merkle differs from the
+code-pinned sealed root fails closed.
+
 1. Provision the bounded local release-integrity key once with
    `node paper-core/bin/release-integrity-key.mjs --action provision --execute`.
    Provisioning is explicit, refuses an existing partial or mismatched pair, and
@@ -98,7 +106,10 @@ differentials require the live legacy working directory.
 The gate requires the full local selftest, architecture coverage, one
 deduplicated repository-wide full-system coverage run, and a strict operational
 Docker gate that executes both pinned Python and R academic dataset harnesses
-through original and replay runs. It also requires the cold-volume contract,
+through original and replay runs. It also runs the unified formal operational
+gate across the dynamic kernel, campaign release, both proof-search paths and
+the typed dependency graph, requiring a complete terminal TAP summary with
+22/22 passing and zero skipped tests. It also requires the cold-volume contract,
 both differentials, physical workspace separation, read-only native-store
 health and logical integrity, an isolated verification runtime, a backup/restore
 drill, the immutable archive and a deletion/restore drill. The

@@ -6,6 +6,9 @@ import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import {
+  parseFormalOperationalTapSummary,
+} from '../bin/dynamic-formal-kernel-operational.mjs';
+import {
   HEPTA_PAPER_COMMAND_REGISTRY,
   classifyNpmScriptSurface,
   generatedNpmRouteScripts,
@@ -31,6 +34,52 @@ function jsonLines(output) {
     try { return [JSON.parse(candidate)]; } catch { return []; }
   });
 }
+
+function formalOperationalTap(overrides = {}) {
+  const counts = {
+    tests: 22,
+    suites: 0,
+    pass: 22,
+    fail: 0,
+    cancelled: 0,
+    skipped: 0,
+    todo: 0,
+    ...overrides,
+  };
+  return [
+    'TAP version 13',
+    '1..22',
+    ...Object.entries(counts).map(([name, value]) => `# ${name} ${value}`),
+    '# duration_ms 109123.456',
+    '',
+  ].join('\n');
+}
+
+test('formal operational TAP parser requires one complete 22/22 terminal block at EOF', () => {
+  assert.equal(parseFormalOperationalTapSummary(formalOperationalTap()).valid, true);
+  const valid = formalOperationalTap();
+  const cases = {
+    skip: formalOperationalTap({ skipped: 1, pass: 21 }),
+    forgedPrefix: `# skipped 0\n${valid}`,
+    duplicateSummary: `${valid.trimEnd()}\n# tests 22\n`,
+    missingPlan: valid.replace('1..22\n', ''),
+    missingDuration: valid.replace('# duration_ms 109123.456\n', ''),
+    truncated: valid.slice(0, -20),
+    trailingGarbage: `${valid.trimEnd()}\ntrailing garbage\n`,
+    testDrift: formalOperationalTap({ tests: 21 }),
+    passDrift: formalOperationalTap({ pass: 21 }),
+    failure: formalOperationalTap({ fail: 1, pass: 21 }),
+    cancellation: formalOperationalTap({ cancelled: 1 }),
+    todo: formalOperationalTap({ todo: 1 }),
+  };
+  for (const [name, candidate] of Object.entries(cases)) {
+    assert.equal(
+      parseFormalOperationalTapSummary(candidate).valid,
+      false,
+      name,
+    );
+  }
+});
 
 test('root package declares the pinned reference and a non-duplicated verification surface', () => {
   assert.deepEqual(packageJson.heptaPaper?.referencePackages, [{
@@ -94,10 +143,23 @@ test('root package declares the pinned reference and a non-duplicated verificati
   assert.doesNotMatch(scripts['release:inner'], /coverage:repository/);
   assert.match(scripts['release:inner'], /coverage:system/);
   assert.match(scripts['release:inner'], /npm run test:academic-docker-operational/);
+  assert.equal(
+    scripts['release:inner'].split(' && ')
+      .filter((step) => step === 'npm run test:dynamic-formal-kernel-operational').length,
+    1,
+  );
   assert.match(scripts['release:inner'], /npm run assets:cold-volume-release-gate/);
   assert.match(scripts['release:inner'], /npm run assets:cold-volume-cas-release-gate/);
   assert.match(scripts['release:inner'], /npm run store:restore-drill/);
   const releaseSteps = scripts['release:inner'].split(' && ');
+  assert.ok(
+    releaseSteps.indexOf('npm run test:academic-docker-operational')
+      < releaseSteps.indexOf('npm run test:dynamic-formal-kernel-operational'),
+  );
+  assert.ok(
+    releaseSteps.indexOf('npm run test:dynamic-formal-kernel-operational')
+      < releaseSteps.indexOf('npm run test:migration-differential'),
+  );
   assert.equal(
     releaseSteps.filter((step) => step === 'npm run legacy:deletion-drill').length,
     1,
@@ -133,8 +195,19 @@ test('root package declares the pinned reference and a non-duplicated verificati
   );
   assert.match(dynamicFormalOperationalRunner,
     /HEPTA_DYNAMIC_FORMAL_KERNEL_OPERATIONAL_MODE: 'strict'/);
-  assert.match(dynamicFormalOperationalRunner,
-    /dynamic_formal_kernel_operational_skip_count_invalid/);
+  assert.match(dynamicFormalOperationalRunner, /formal_operational_tap_summary_invalid/);
+  const formalOperationalRunner = fs.readFileSync(
+    path.join(root, 'paper-core/bin/dynamic-formal-kernel-operational.mjs'),
+    'utf8',
+  );
+  assert.match(formalOperationalRunner, /HEPTA_FORMAL_OPERATIONAL_MODE: 'strict'/);
+  assert.match(formalOperationalRunner, /formal_operational_tap_summary_invalid/);
+  for (const required of [
+    'dynamic-formal-claim-kernel-e2e.test.mjs',
+    'formal-campaign-release.test.mjs',
+    'formal-proof-search-operations.test.mjs',
+    'typed-theorem-dependency-graph.test.mjs',
+  ]) assert.match(formalOperationalRunner, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   for (const required of [
     'paper-core/tests/academic-docker-operational-prerequisites.test.mjs',
     'paper-core/tests/hepta-store-restore-drill-exit.test.mjs',
@@ -164,7 +237,30 @@ test('dynamic formal operational runner fails non-zero instead of skipping a mis
     assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
     assert.match(
       `${result.stdout}\n${result.stderr}`,
-      /dynamic_formal_kernel_operational_prerequisite_failed/,
+      /formal_operational_prerequisite_failed/,
+    );
+  } finally {
+    fs.rmSync(isolatedElanHome, { recursive: true, force: true });
+  }
+});
+
+test('unified formal operational runner fails non-zero instead of accepting skips', () => {
+  const isolatedElanHome = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-missing-formal-elan-'));
+  try {
+    const standaloneEnvironment = { ...process.env };
+    delete standaloneEnvironment.NODE_TEST_CONTEXT;
+    const result = spawnSync(process.execPath, [
+      'paper-core/bin/dynamic-formal-kernel-operational.mjs',
+    ], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...standaloneEnvironment, ELAN_HOME: isolatedElanHome },
+      timeout: 30_000,
+    });
+    assert.notEqual(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(
+      `${result.stdout}\n${result.stderr}`,
+      /formal_operational_prerequisite_failed|formal_operational_tap_summary_invalid/,
     );
   } finally {
     fs.rmSync(isolatedElanHome, { recursive: true, force: true });

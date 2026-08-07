@@ -96,6 +96,9 @@ export function executeDynamicFormalSandboxProbe({
       });
       const runner = sandboxProbeRunnerFactory({
         allowedExecutables: [pinnedRuntime.leanExecutable],
+        expectedExecutableHashes: {
+          [pinnedRuntime.leanExecutable]: pinnedRuntime.leanExecutableHash,
+        },
         allowedRoots: [snapshot.scopeRoot],
         dockerImage: formalSandboxRuntimeConfiguration.image,
         allowedContainerImages: [formalSandboxRuntimeConfiguration.image],

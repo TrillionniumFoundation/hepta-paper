@@ -54,7 +54,7 @@ export const SYSTEM_BENCHMARK_HARNESS_TARGETS = Object.freeze([
   Object.freeze({ path: "paper-adapters/runtime/execution-snapshot.mjs", sha256: "sha256:91117577269673eeb00d6fcf49dfff97bb600b9f8df90acb9888d68f2cd55b00" }),
   Object.freeze({ path: "paper-adapters/runtime/os-sandbox-worker-execution-finalizer.mjs", sha256: "sha256:1b58f1209f994f670163003ddf3786eea8e972152fb6cb604d0733f6a9792f35" }),
   Object.freeze({ path: "paper-adapters/runtime/os-sandbox-worker-runtime-support.mjs", sha256: "sha256:d8379c48fe14c55cbd8679acb3680e2f32b210c69560a61cb908e47fe8f7eacb" }),
-  Object.freeze({ path: "paper-adapters/runtime/os-sandboxed-worker-runner.mjs", sha256: "sha256:0adcf90288f0087d7714d183dc6c06d8f7f851bd1a2306ddee154d67f6747504" }),
+  Object.freeze({ path: "paper-adapters/runtime/os-sandboxed-worker-runner.mjs", sha256: "sha256:6fe1909261c782d65ddacba1b29a5dc2eae8c1ece0e04e9b2b20d1795f4df921" }),
   Object.freeze({ path: "paper-adapters/runtime/runtime-resource-mounts.mjs", sha256: "sha256:2a1ca5606e523896ae4c38b66d0ffc899a921c88bd4b45c2353806d08e5755b0" }),
   Object.freeze({ path: "paper-adapters/runtime/sandbox-backend-probe.mjs", sha256: "sha256:df6548a6bbcdc04aafeed0c89e5eceafa2a6c1c3465c762b25746f5c52ed99b0" }),
   Object.freeze({ path: "paper-adapters/runtime/scoped-file-materialization-operation-journal-repository.mjs", sha256: "sha256:836ec8c0dff3e0e8d391497ca7e57474dd7823d660aba08373bb71ee966bb26b" }),

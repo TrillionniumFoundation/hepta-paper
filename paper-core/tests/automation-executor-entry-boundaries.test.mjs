@@ -21,6 +21,10 @@ import {
   executableRuntimePathSupported,
 } from '../../paper-adapters/runtime/runtime-resource-mounts.mjs';
 import {
+  createOsSandboxedWorkerRunner,
+  fileSha256Hash,
+} from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
+import {
   buildCampaignAgentInstructions,
   buildCampaignAgentExecutionRequest,
   buildFormalProofRepairRequest,
@@ -72,6 +76,42 @@ test('sandbox recognizes a plan-bound Elan toolchain below a custom ELAN_HOME', 
     '/opt/hepta-paper/elan/not-toolchains/lean/bin/lean',
     '/srv/hepta-paper/formal/project',
   ), false);
+});
+
+test('trusted factory executable hashes reject substitution before execution identity issuance', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-trusted-executable-hash-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const source = path.join(root, 'source');
+  const executable = path.join(root, 'lake');
+  fs.mkdirSync(source);
+  fs.writeFileSync(path.join(source, 'Main.lean'), 'example : True := by trivial\n');
+  fs.writeFileSync(executable, '#!/bin/sh\nexit 0\n');
+  fs.chmodSync(executable, 0o755);
+  const expectedHash = fileSha256Hash(executable);
+  let executions = 0;
+  const runner = createOsSandboxedWorkerRunner({
+    allowedExecutables: [executable],
+    expectedExecutableHashes: { [executable]: expectedHash },
+    allowedRoots: [source],
+    probe: {
+      available: true,
+      backend: 'bubblewrap',
+      status: 'os_sandbox_available',
+      processLimit: { available: true, mechanism: 'fixture' },
+    },
+    executor() { executions += 1; return { status: 0, stdout: '', stderr: '' }; },
+  });
+  fs.writeFileSync(executable, '#!/bin/sh\nexit 7\n');
+  fs.chmodSync(executable, 0o755);
+  const receipt = runner.run({
+    executable,
+    args: [],
+    cwd: source,
+    sourceRoot: source,
+  });
+  assert.equal(receipt.ok, false);
+  assert.ok(receipt.blockers.includes('worker_expected_executable_hash_mismatch'));
+  assert.equal(executions, 0);
 });
 
 test('campaign coder contract writes canonical metric artifacts only through HEPTA_OUTPUT_DIR', () => {

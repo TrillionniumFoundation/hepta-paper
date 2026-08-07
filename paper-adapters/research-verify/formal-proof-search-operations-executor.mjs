@@ -8,7 +8,10 @@ import {
 } from '../../paper-domain/research/formal-proof-strategy-registry.mjs';
 import { verifyFormalProofSearchPlan, verifyTypedTheoremObligationBundle } from '../../paper-domain/research/typed-theorem-proof-search-contract.mjs';
 import { searchTypedTheoremDslCounterexample } from '../../paper-domain/research/typed-theorem-dsl.mjs';
-import { PRODUCTION_LEAN_TOOLCHAIN } from '../../paper-domain/research/formal-verifier-policy.mjs';
+import {
+  PRODUCTION_LEAN_RUNTIME_LAYOUTS,
+  PRODUCTION_LEAN_TOOLCHAIN,
+} from '../../paper-domain/research/formal-verifier-policy.mjs';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { createOsSandboxedWorkerRunner } from '../runtime/os-sandboxed-worker-runner.mjs';
 import {
@@ -30,6 +33,8 @@ import { resolvePinnedLakeExecutable } from './pinned-lake-executable-resolver.m
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAXIMUM_INFRASTRUCTURE_RETRIES = 1;
+const PRODUCTION_LAKE_EXECUTABLE_HASH =
+  PRODUCTION_LEAN_RUNTIME_LAYOUTS[PRODUCTION_LEAN_TOOLCHAIN].lakeExecutableHash;
 export {
   buildPinnedMathlibSymbolSearchReceipt,
   FORMAL_PROOF_SEARCH_TACTIC_PORTFOLIO,
@@ -279,6 +284,7 @@ export function createFormalProofSearchOperationsExecutor({
   dynamicFormalExecutionAuthority = null,
   dynamicFormalExecutionEnvironment = process.env,
   dynamicFormalExecutionSpawnSync = undefined,
+  resolvePinnedRuntime = resolvePinnedLakeExecutable,
 } = {}) {
   const workspaceRepository = createFormalProofSearchWorkspaceRepository({
     temporaryRoot,
@@ -345,26 +351,6 @@ export function createFormalProofSearchOperationsExecutor({
         }
         const initialFormalExecutionSnapshotReceipt =
           workspaceRepository.assertExecutionSnapshotCurrent({ projectRoot: project.root });
-        const pinned = resolvePinnedLakeExecutable({
-          environment: dynamicFormalExecutionEnvironment,
-          ...(dynamicFormalExecutionSpawnSync
-            ? { spawnSyncImpl: dynamicFormalExecutionSpawnSync } : {}),
-        });
-        if (pinned.status !== 'formal_pinned_lake_resolved') {
-          throw new Error(`formal_proof_search_pinned_lake_unavailable:${pinned.blockers.join(',')}`);
-        }
-        const runner = workerRunnerFactory({
-          allowedExecutables: [pinned.executable],
-          allowedRoots: [project.scopeRoot],
-          ...(trustedSandboxRuntime ? {
-            dockerImage: trustedSandboxRuntime.image,
-            allowedContainerImages: [trustedSandboxRuntime.image],
-          } : {}),
-          maximumTimeoutMs: timeoutMs,
-          maximumCpuSeconds: Math.ceil(timeoutMs / 1000),
-          maximumPids: 64,
-          maximumCapturedBytes: 2 * 1024 * 1024,
-        });
         const mathlibSymbolSearchReceipt = candidate.requiredOperations
           .includes('pinned_mathlib_symbol_search')
           ? buildPinnedMathlibSymbolSearchReceipt({ root: project.root, dsl }) : null;
@@ -413,6 +399,27 @@ export function createFormalProofSearchOperationsExecutor({
           payload.finalFormalExecutionSnapshotReceipt = finalFormalExecutionSnapshotReceipt;
           return Object.freeze({ ...payload, formalProofSearchOperationReceiptHash: hashRecord('FormalProofSearchOperationReceipt', payload) });
         }
+        const pinned = resolvePinnedRuntime({
+          environment: dynamicFormalExecutionEnvironment,
+        });
+        if (pinned.status !== 'formal_pinned_lake_resolved') {
+          throw new Error(`formal_proof_search_pinned_lake_unavailable:${pinned.blockers.join(',')}`);
+        }
+        const runner = workerRunnerFactory({
+          allowedExecutables: [pinned.executable],
+          expectedExecutableHashes: {
+            [pinned.executable]: pinned.lakeExecutableHash,
+          },
+          allowedRoots: [project.scopeRoot],
+          ...(trustedSandboxRuntime ? {
+            dockerImage: trustedSandboxRuntime.image,
+            allowedContainerImages: [trustedSandboxRuntime.image],
+          } : {}),
+          maximumTimeoutMs: timeoutMs,
+          maximumCpuSeconds: Math.ceil(timeoutMs / 1000),
+          maximumPids: 64,
+          maximumCapturedBytes: 2 * 1024 * 1024,
+        });
         const operationReceipts = [];
         let selected = null;
         for (const { tactic } of formalProofStrategyPreparation.proofTermSynthesis.candidates) {
@@ -604,6 +611,8 @@ export function verifyFormalProofSearchOperationReceipt(receipt, {
         ))
       || operation?.networkAccessAllowed !== false
       || !operation?.executionIdentity?.runtimeIdentityHash
+      || operation?.executionIdentity?.runtimeExecutableSnapshotHash
+        !== PRODUCTION_LAKE_EXECUTABLE_HASH
       || !operation?.executionProcessIdentityHash)) {
       blockers.push('formal_proof_search_tactic_execution_lineage_invalid');
     }
@@ -621,6 +630,8 @@ export function verifyFormalProofSearchOperationReceipt(receipt, {
           && !verifyDockerWorkerContainerRecoveryReceipt(
             replay.dockerWorkerContainerRecoveryReceipt,
           ))
+        || replay?.executionIdentity?.runtimeExecutableSnapshotHash
+          !== PRODUCTION_LAKE_EXECUTABLE_HASH
         || !replayMatches(selected, replay))) {
       blockers.push('formal_proof_search_replay_lineage_invalid');
     }

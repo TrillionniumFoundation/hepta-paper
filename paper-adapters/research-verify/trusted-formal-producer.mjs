@@ -167,9 +167,9 @@ function nativeRuntimeBlockers(result, runtime) {
   return uniqueTrustedFormalBlockers([
     ...(identity.backend !== 'docker' || replayIdentity.backend !== 'docker'
       || normalizeContainerImageDigest(identity.containerImageDigest)
-        !== runtime.imageDigest
+        !== runtime?.imageDigest
       || normalizeContainerImageDigest(replayIdentity.containerImageDigest)
-        !== runtime.imageDigest
+        !== runtime?.imageDigest
       || result?.isolation?.immutableContainerImageVerified !== true
       || result?.isolation?.kernelNetworkIsolationVerified !== true
       || result?.isolation?.sourceReadOnlyVerified !== true
@@ -185,6 +185,37 @@ function nativeRuntimeBlockers(result, runtime) {
         !== toolchain?.leanToolchainContentIdentityHash
       ? ['trusted_formal_native_toolchain_identity_mismatch'] : []),
   ]);
+}
+
+// This inspector performs no execution and issues no trusted evidence.  It is
+// intentionally reusable by callers that need to explain why an already
+// authoritative native formal result cannot be projected into research
+// evidence.  The producer below remains the sole authority that can emit the
+// `trusted_formal_evidence_projected` status.
+export function inspectTrustedFormalNativeProjectionInputs({
+  root,
+  nativeResearchWorkerExecution,
+  campaignResearchSourceSnapshot,
+  runtime,
+  requestHints = [],
+  claimBindings = [],
+} = {}) {
+  const source = authoritativeSource({
+    root,
+    nativeResearchWorkerExecution,
+    campaignResearchSourceSnapshot,
+  });
+  const blockers = uniqueTrustedFormalBlockers([
+    ...source.blockers,
+    ...nativeRuntimeBlockers(source.receipt?.result, runtime),
+    ...requestHintBlockers(requestHints, {
+      root,
+      sourcePath: source.absolutePath,
+      sourceHash: source.read?.hash,
+      claimBindings,
+    }),
+  ]);
+  return Object.freeze({ source: Object.freeze(source), blockers });
 }
 
 function verifyAuthoritativeFormalNode({
@@ -333,21 +364,20 @@ export async function produceTrustedFormalEvidence({
       expectedClaimBindings: claimBindings,
     },
   );
-  const source = authoritativeSource({
-    root,
-    nativeResearchWorkerExecution,
-    campaignResearchSourceSnapshot,
-  });
+  const projectionInputInspection =
+    inspectTrustedFormalNativeProjectionInputs({
+      root,
+      nativeResearchWorkerExecution,
+      campaignResearchSourceSnapshot,
+      runtime,
+      requestHints,
+      claimBindings,
+    });
+  const { source, blockers: projectionInputBlockers } =
+    projectionInputInspection;
   const blockers = uniqueTrustedFormalBlockers([
     ...nativeVerification.blockers.map((item) => `native_formal:${item}`),
-    ...source.blockers,
-    ...nativeRuntimeBlockers(source.receipt?.result, runtime),
-    ...requestHintBlockers(requestHints, {
-      root,
-      sourcePath: source.absolutePath,
-      sourceHash: source.read?.hash,
-      claimBindings,
-    }),
+    ...projectionInputBlockers,
   ]);
   if (!nativeVerification.valid || blockers.length) {
     return block('native_projection_preflight', blockers);

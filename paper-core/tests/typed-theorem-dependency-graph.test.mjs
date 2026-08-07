@@ -6,9 +6,6 @@ import {
   verifyFormalTheoremDependencyGraphOperationReceipt,
 } from '../../paper-adapters/research-verify/formal-theorem-dependency-graph-operations-executor.mjs';
 import {
-  inspectConfiguredPinnedFormalSandboxRuntime,
-} from '../../paper-adapters/research-verify/pinned-formal-sandbox-runtime-configuration.mjs';
-import {
   executeCampaignFormalVerificationNode,
 } from '../../paper-application/automation/campaign-formal-verification-node-orchestrator.mjs';
 import {
@@ -26,6 +23,9 @@ import {
 import { leanTypeIdentity } from '../../paper-domain/research/lean-type-identity.mjs';
 import { createTheoremSpecification } from '../../paper-domain/research/theorem-specification.mjs';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  trustedProductionLakeOrSkip,
+} from './support/trusted-production-lake-preflight.mjs';
 
 const digest = (label) => hashRecord('TypedTheoremDependencyGraphFixture', { label });
 
@@ -408,13 +408,13 @@ test('Real Mathlib dependency graphs fail closed before execution without build 
 
 test('real Docker Lean closes and separately replays shared-lemma imports with zero skip', {
   timeout: 4 * 60 * 1000,
-}, async () => {
-  const runtime = inspectConfiguredPinnedFormalSandboxRuntime();
-  assert.equal(runtime.ready, true, runtime.blockers.join(','));
+}, async (t) => {
+  const preflight = trustedProductionLakeOrSkip(t);
+  if (!preflight) return;
   const { theoremSpecification, bundle, graph } = graphAuthority();
   const plan = createFormalProofSearchPlan(bundle);
   const receipt = await createFormalTheoremDependencyGraphOperationsExecutor({
-    trustedSandboxRuntime: runtime.runtime,
+    trustedSandboxRuntime: preflight.formalSandboxRuntime,
   }).execute({
     theoremSpecification,
     bundle,

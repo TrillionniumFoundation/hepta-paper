@@ -209,6 +209,8 @@ const AUTOMATION_TESTS = Object.freeze([...new Set([
   'paper-core/tests/formal-claim-universe-reader.test.mjs',
   'paper-core/tests/formal-project-closure.test.mjs',
   'paper-core/tests/dynamic-formal-project-closure-readiness.test.mjs',
+  'paper-core/tests/lean-toolchain-identity.test.mjs',
+  'paper-core/tests/pinned-lake-executable-resolver.test.mjs',
   'paper-core/tests/pinned-formal-sandbox-runtime-configuration.test.mjs',
   'paper-core/tests/formal-review-agent-bootstrap.test.mjs',
   'paper-core/tests/pinned-external-evidence-verifier.test.mjs',

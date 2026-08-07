@@ -68,16 +68,34 @@ import { createWorkerExecutionIdentityIssuer } from './worker-execution-identity
 
 export function createOsSandboxedWorkerRunner({
   allowedExecutables = [], allowedRoots = [], allowedOutputRoots = [], allowGpu = false, bubblewrap = 'bwrap', prlimit = 'prlimit', docker = 'docker', dockerImage = null,
+  expectedExecutableHashes = {},
   allowedContainerImages = [], allowedDatasetRoots = [], trustedDatasetSupervisorImages = [],
   maximumTimeoutMs = 120000, maximumMemoryBytes = 1024 * 1024 * 1024, maximumCpuSeconds = 120, maximumPids = 128, maximumOutputBytes = 256 * 1024 * 1024, maximumCapturedBytes = 4 * 1024 * 1024,
   executor = spawnSync, probe = null, imageDigestResolver = null, datasetSnapshotObserver = null, runtimeExecutableSnapshotObserver = null, workspaceSnapshotObserver = null,
   dockerContainerRecoveryExecutor = spawnSync,
 } = {}) {
+  const expectedExecutableHashEntries = expectedExecutableHashes instanceof Map
+    ? [...expectedExecutableHashes.entries()]
+    : Object.entries(expectedExecutableHashes || {});
+  const trustedExecutableHashes = new Map(expectedExecutableHashEntries.map(([candidate, hash]) => {
+    const resolved = resolveExecutable(candidate);
+    const expected = String(hash || '').toLowerCase();
+    if (!resolved || !/^sha256:[0-9a-f]{64}$/.test(expected)) {
+      throw new Error('worker_expected_executable_hash_invalid');
+    }
+    return [resolved, expected];
+  }));
   const allowedExecutableEntries = allowedExecutables.map((value) => Object.freeze({
     requested: String(value),
     invocationPath: resolveExecutableInvocationPath(value),
     resolvedExecutable: resolveExecutable(value),
+    expectedHash: trustedExecutableHashes.get(resolveExecutable(value)) || null,
   }));
+  if ([...trustedExecutableHashes.keys()].some((candidate) => (
+    !allowedExecutableEntries.some((entry) => entry.resolvedExecutable === candidate)
+  ))) {
+    throw new Error('worker_expected_executable_not_allowlisted');
+  }
   const resolveAllowedExecutable = (executable) => {
     const requested = String(executable || '');
     const invocationPath = resolveExecutableInvocationPath(executable);
@@ -249,6 +267,10 @@ export function createOsSandboxedWorkerRunner({
       if (expectedExecutionClass === 'explicit-container' && activeExecutionIdentity?.containerExecutable !== String(containerExecutable || '')) blockers.push('worker_container_executable_identity_mismatch');
       if (expectedExecutionClass === 'hybrid-docker' && (activeExecutionIdentity?.hostExecutable !== resolvedExecutable || activeExecutionIdentity?.hostExecutableHash !== resolvedExecutableHash || activeExecutionIdentity?.executableInvocationPath !== executableInvocationPath || activeExecutionIdentity?.executableInvocationName !== executableInvocationName)) blockers.push('worker_hybrid_executable_identity_mismatch');
       if (expectedExecutionClass === 'host' && (activeExecutionIdentity?.executable !== String(executable || '') || activeExecutionIdentity?.executableInvocationPath !== executableInvocationPath || activeExecutionIdentity?.executableInvocationName !== executableInvocationName || activeExecutionIdentity?.resolvedExecutable !== resolvedExecutable || activeExecutionIdentity?.executableHash !== resolvedExecutableHash)) blockers.push('worker_host_executable_identity_mismatch');
+      if (allowedExecutable.entry?.expectedHash
+        && resolvedExecutableHash !== allowedExecutable.entry.expectedHash) {
+        blockers.push('worker_expected_executable_hash_mismatch');
+      }
       if (executionBackend === 'docker' && !/^sha256:[0-9a-f]{64}$/i.test(String(containerImageDigest || ''))) blockers.push('worker_container_image_digest_unavailable');
       if (containerImage) {
         if (!imageIdentity.allowlisted) blockers.push('worker_container_image_not_allowlisted');

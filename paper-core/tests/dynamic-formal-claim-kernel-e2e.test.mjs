@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 import { createAgentResearchContentProducer } from '../../paper-adapters/automation/agent-research-content-producer.mjs';
@@ -12,17 +11,12 @@ import {
   readFinalizedTheoremSpecification,
 } from '../../paper-adapters/automation/theorem-specification-finalizer.mjs';
 import { canonicalClaimsFromWorkerPlan } from '../../paper-adapters/research-verify/canonical-claim-registry-reader.mjs';
-import { createLeanToolchainIdentityProvider } from '../../paper-adapters/research-verify/lean-toolchain-identity.mjs';
 import { createLakeFormalVerifier } from '../../paper-adapters/research-verify/lake-formal-verifier.mjs';
 import { executeLakeFormalWorker } from '../../paper-adapters/research-verify/lake-formal-worker.mjs';
 import {
   independentlyVerifyFormalReadableProofWorkerResult,
 } from '../../paper-adapters/research-verify/formal-readable-proof-verifier.mjs';
 import { leanSourceDeclarationRecords } from '../../paper-adapters/research-verify/lean-source-contracts.mjs';
-import { resolvePinnedLakeExecutable } from '../../paper-adapters/research-verify/pinned-lake-executable-resolver.mjs';
-import {
-  inspectConfiguredPinnedFormalSandboxRuntime,
-} from '../../paper-adapters/research-verify/pinned-formal-sandbox-runtime-configuration.mjs';
 import {
   bindFormalReviewsToWorkers,
 } from '../../paper-adapters/research-verify/worker-runtime.mjs';
@@ -36,9 +30,6 @@ import {
 } from '../../paper-domain/automation/autonomous-formal-support-registry.mjs';
 import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
 import {
-  PRODUCTION_LEAN_TOOLCHAIN_ROOT_MERKLE_HASHES,
-} from '../../paper-domain/research/formal-verifier-policy.mjs';
-import {
   buildDynamicFormalClaimSeed,
   dynamicFormalLeanTypeSourceValid,
   verifyDynamicFormalClaimSeed,
@@ -50,6 +41,9 @@ import {
 import { leanTypeIdentity } from '../../paper-domain/research/lean-type-identity.mjs';
 import { buildExecutorCapabilities } from '../../paper-ports/executor-capabilities.mjs';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  trustedProductionLakeOrSkip,
+} from './support/trusted-production-lake-preflight.mjs';
 
 const FIXED_TIME = '2026-07-19T00:00:00.000Z';
 
@@ -85,51 +79,6 @@ function formalAgentReceipt({ agentId, role, structuredOutput = null, changedPat
     ...payload,
     agentExecutionReceiptHash: hashRecord('AgentExecutionReceipt', payload),
   });
-}
-
-function trustedProductionLakePreflight() {
-  const runtime = resolvePinnedLakeExecutable();
-  if (runtime.status !== 'formal_pinned_lake_resolved') {
-    return { ready: false, reason: runtime.blockers.join(',') || runtime.status };
-  }
-  const probe = spawnSync(runtime.executable, ['--version'], {
-    encoding: 'utf8',
-    env: { ...process.env, ELAN_TOOLCHAIN: runtime.toolchain },
-    timeout: 10_000,
-  });
-  if (probe.status !== 0 || probe.error) {
-    return {
-      ready: false,
-      reason: String(probe.error?.message || probe.stderr || probe.stdout || 'lake_version_probe_failed').trim(),
-    };
-  }
-  const identity = createLeanToolchainIdentityProvider({
-    toolchain: runtime.toolchain,
-    toolchainRoot: runtime.toolchainRoot,
-    leanExecutable: runtime.leanExecutable,
-    lakeExecutable: runtime.lakeExecutable,
-    expectedToolchainRootMerkleHash:
-      PRODUCTION_LEAN_TOOLCHAIN_ROOT_MERKLE_HASHES[runtime.toolchain] || null,
-  }).inspect();
-  if (identity.status !== 'lean_toolchain_identity_verified') {
-    return { ready: false, reason: identity.blockers.join(',') || identity.status };
-  }
-  const formalSandbox = inspectConfiguredPinnedFormalSandboxRuntime({
-    environment: process.env,
-  });
-  if (!formalSandbox.ready) {
-    return {
-      ready: false,
-      reason: formalSandbox.blockers.join(',') || 'os_sandbox_runtime_unavailable',
-    };
-  }
-  return {
-    ready: true,
-    runtime,
-    identity,
-    sandbox: formalSandbox.sandbox,
-    formalSandboxRuntime: formalSandbox.runtime,
-  };
 }
 
 test('dynamic exact-type audit rejects agent command and comment injection before execution', async (t) => {
@@ -294,14 +243,8 @@ test('dynamic exact-type audit rejects agent command and comment injection befor
 test('agent-authored dynamic Lean claim closes through canonical bindings, the real kernel, and fresh replay', {
   timeout: 5 * 60 * 1000,
 }, async (t) => {
-  const preflight = trustedProductionLakePreflight();
-  if (!preflight.ready) {
-    if (process.env.HEPTA_DYNAMIC_FORMAL_KERNEL_OPERATIONAL_MODE === 'strict') {
-      throw new Error(`dynamic_formal_kernel_operational_prerequisite_failed:${preflight.reason}`);
-    }
-    t.skip(`trusted production Lake unavailable: ${preflight.reason}`);
-    return;
-  }
+  const preflight = trustedProductionLakeOrSkip(t);
+  if (!preflight) return;
 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-dynamic-formal-kernel-e2e-'));
   const workspace = path.join(root, 'source');

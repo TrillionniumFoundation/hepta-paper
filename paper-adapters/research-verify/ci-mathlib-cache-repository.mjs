@@ -77,6 +77,13 @@ function lakeRunner({ root, environment }) {
         ELAN_TOOLCHAIN: PRODUCTION_LEAN_TOOLCHAIN,
       },
     });
+    const after = resolvePinnedLakeExecutable({ environment });
+    if (after.status !== 'formal_pinned_lake_resolved'
+      || after.toolchainIdentity?.leanToolchainContentIdentityHash
+        !== pinned.toolchainIdentity?.leanToolchainContentIdentityHash
+      || after.lakeExecutableHash !== pinned.lakeExecutableHash) {
+      throw new Error('ci_mathlib_cache_toolchain_changed_during_command');
+    }
     if (result.error || result.status !== 0) {
       throw new Error(`ci_mathlib_cache_lake_command_failed:${args.join('_')}:${String(
         result.stderr || result.stdout || result.error?.message || '',

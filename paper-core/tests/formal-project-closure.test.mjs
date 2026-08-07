@@ -188,6 +188,87 @@ test('Lake formal build timeout has a Mathlib-sized default, a hard ceiling, and
   ]);
 });
 
+test('immutable Lake verification rejects an empty audit target set after sealing and before execution', async (t) => {
+  const fixture = formalDependencyFixture(t);
+  const toolchainIdentity = Object.freeze({
+    status: 'lean_toolchain_identity_verified',
+    toolchain: 'leanprover/lean4:v4.30.0',
+    leanToolchainContentIdentityHash:
+      'sha256:fixture-immutable-toolchain-content',
+    blockers: Object.freeze([]),
+  });
+  let sealed = 0;
+  let cleaned = 0;
+  const verifier = createLakeFormalVerifier({
+    projectRoot: fixture.projectRoot,
+    dependencyScopeRoot: fixture.scopeRoot,
+    requireImmutableExecutionClosure: true,
+    toolchainIdentityProvider: Object.freeze({
+      inspect: () => toolchainIdentity,
+    }),
+    projectSnapshotRepository: Object.freeze({
+      materialize() {
+        return Object.freeze({
+          root: fixture.projectRoot,
+          scopeRoot: fixture.scopeRoot,
+          seal() {
+            sealed += 1;
+            return Object.freeze({
+              writableFileCount: 0,
+              writableDirectoryCount: 0,
+              formalProjectSnapshotSealReceiptHash:
+                'sha256:fixture-immutable-snapshot-seal',
+            });
+          },
+          cleanup() { cleaned += 1; },
+        });
+      },
+    }),
+    commandRunnerFactory() {
+      throw new Error('immutable_fixture_runner_must_not_be_created');
+    },
+  });
+  const result = await verifier.verify({ claimBindings: [] });
+  assert.equal(result.status, 'formal_certificate_blocked');
+  assert.ok(result.blockers.includes(
+    'formal_immutable_execution_audit_target_required',
+  ));
+  assert.equal(sealed, 1);
+  assert.equal(cleaned, 1);
+
+  const unsealedVerifier = createLakeFormalVerifier({
+    projectRoot: fixture.projectRoot,
+    dependencyScopeRoot: fixture.scopeRoot,
+    requireImmutableExecutionClosure: true,
+    toolchainIdentityProvider: Object.freeze({
+      inspect: () => toolchainIdentity,
+    }),
+    projectSnapshotRepository: Object.freeze({
+      materialize() {
+        return Object.freeze({
+          root: fixture.projectRoot,
+          scopeRoot: fixture.scopeRoot,
+          seal: () => Object.freeze({
+            writableFileCount: 1,
+            writableDirectoryCount: 0,
+            formalProjectSnapshotSealReceiptHash:
+              'sha256:fixture-writable-snapshot-seal',
+          }),
+          cleanup() {},
+        });
+      },
+    }),
+    commandRunnerFactory() {
+      throw new Error('unsealed_fixture_runner_must_not_be_created');
+    },
+  });
+  const unsealed = await unsealedVerifier.verify({ claimBindings: [] });
+  assert.equal(unsealed.status, 'formal_certificate_blocked');
+  assert.ok(unsealed.blockers.includes(
+    'formal_immutable_execution_snapshot_not_sealed',
+  ));
+});
+
 test('Lake replay rejects a mode-only change in a package dependency before re-execution', async (t) => {
   if (process.platform === 'win32') {
     t.skip('POSIX file modes are required');

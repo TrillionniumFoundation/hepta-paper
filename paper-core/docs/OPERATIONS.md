@@ -368,8 +368,13 @@ HEPTA_PRODUCTION_MATHLIB_BUILD_AUTHORITY_CONFIG=/run/hepta-authority/production-
 HEPTA_PRODUCTION_MATHLIB_BUILD_AUTHORITY_CONFIGURATION_HASH=sha256:<externally-pinned-configuration-hash>
 ```
 
-The reviewed host deployment also sets `ELAN_HOME=/opt/hepta-paper/elan` and
-keeps the complete project owned by the `hepta-paper` service principal with no
+The reviewed host deployment also sets `ELAN_HOME=/opt/hepta-paper/elan`.
+The complete Lean distribution at that path is sealed `root:root`, with
+directories/executables at `0555`, data files at `0444`, and no writable or
+symlinked ancestor, special mode bit, ACL or extended attribute. The resolver
+uses its code-pinned layout and full-tree Merkle directly and never executes an
+ambient Elan launcher. The complete
+Mathlib project remains owned by the `hepta-paper` service principal with no
 write bits. The probe must be a regular closure member containing `import Mathlib`; status
 recomputes the complete source, dependency, `.lake/build` and Lake-metadata
 closure. The deployment-supplied expected hash must match the measurement, but

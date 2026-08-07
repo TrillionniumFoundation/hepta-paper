@@ -343,13 +343,7 @@ export function inspectConfiguredDynamicFormalProjectClosure({
     const toolchainIdentity = pinned?.status === 'formal_pinned_lake_resolved'
       ? (inspectToolchain
           ? inspectToolchain(pinned)
-          : createLeanToolchainIdentityProvider({
-            toolchain: PRODUCTION_LEAN_TOOLCHAIN,
-            toolchainRoot: pinned.toolchainRoot,
-            leanExecutable: pinned.leanExecutable,
-            lakeExecutable: pinned.lakeExecutable,
-            expectedToolchainRootMerkleHash: expectedToolchainMerkle,
-          }).inspect())
+          : pinned.toolchainIdentity)
       : null;
     details.toolchain = PRODUCTION_LEAN_TOOLCHAIN;
     details.toolchainRootMerkleHash = toolchainIdentity?.toolchainRootMerkleHash || null;
@@ -497,6 +491,9 @@ export function inspectConfiguredDynamicFormalProjectClosure({
           leanExecutable: pinned.leanExecutable,
           lakeExecutable: pinned.lakeExecutable,
           expectedToolchainRootMerkleHash: expectedToolchainMerkle,
+          requiredOwnerUid: 0,
+          requiredOwnerGid: 0,
+          forbidGroupOrOtherWrite: true,
         }).inspect({ forceContentRehash: true });
       if (postProbeToolchainIdentity?.status !== 'lean_toolchain_identity_verified'
         || postProbeToolchainIdentity.toolchainRootMerkleHash !== expectedToolchainMerkle

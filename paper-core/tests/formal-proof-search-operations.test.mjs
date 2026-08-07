@@ -12,9 +12,6 @@ import {
   verifyFormalProofSearchOperationReceipt,
 } from '../../paper-adapters/research-verify/formal-proof-search-operations-executor.mjs';
 import {
-  inspectConfiguredPinnedFormalSandboxRuntime,
-} from '../../paper-adapters/research-verify/pinned-formal-sandbox-runtime-configuration.mjs';
-import {
   createFormalProofSearchPlan,
   createTypedTheoremObligationBundle,
 } from '../../paper-domain/research/typed-theorem-proof-search-contract.mjs';
@@ -22,14 +19,33 @@ import {
   buildFormalProofStrategyPreparation,
 } from '../../paper-domain/research/formal-proof-strategy-registry.mjs';
 import {
+  PRODUCTION_LEAN_RUNTIME_LAYOUTS,
+  PRODUCTION_LEAN_TOOLCHAIN,
+} from '../../paper-domain/research/formal-verifier-policy.mjs';
+import {
   buildTypedTheoremDslFromLeanType,
   searchTypedTheoremDslCounterexample,
 } from '../../paper-domain/research/typed-theorem-dsl.mjs';
 import { leanTypeIdentity } from '../../paper-domain/research/lean-type-identity.mjs';
 import { createTheoremSpecification } from '../../paper-domain/research/theorem-specification.mjs';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  trustedProductionLakeOrSkip,
+} from './support/trusted-production-lake-preflight.mjs';
 
 const digest = (label) => hashRecord('FormalProofSearchOperationsFixture', { label });
+const PRODUCTION_LAKE_EXECUTABLE_HASH =
+  PRODUCTION_LEAN_RUNTIME_LAYOUTS[PRODUCTION_LEAN_TOOLCHAIN].lakeExecutableHash;
+
+function fixturePinnedRuntime() {
+  return Object.freeze({
+    status: 'formal_pinned_lake_resolved',
+    executable: '/fixture/pinned/lake',
+    lakeExecutable: '/fixture/pinned/lake',
+    lakeExecutableHash: PRODUCTION_LAKE_EXECUTABLE_HASH,
+    blockers: Object.freeze([]),
+  });
+}
 
 function dynamicSpecification(leanTypeSource, { allowedImports = ['Init'] } = {}) {
   const statement = `Authorized formal claim for ${leanTypeSource}.`;
@@ -263,12 +279,12 @@ test('pinned local Mathlib search binds query, source index, results, and source
 
 test('real pinned Lean proof-state search closes and replays with separate process receipts', {
   timeout: 3 * 60 * 1000,
-}, async () => {
-  const runtime = inspectConfiguredPinnedFormalSandboxRuntime();
-  assert.equal(runtime.ready, true, runtime.blockers.join(','));
+}, async (t) => {
+  const preflight = trustedProductionLakeOrSkip(t);
+  if (!preflight) return;
   const { theoremSpecification, bundle, plan } = authority('∀ n : Nat, n = n');
   const receipt = await createFormalProofSearchOperationsExecutor({
-    trustedSandboxRuntime: runtime.runtime,
+    trustedSandboxRuntime: preflight.formalSandboxRuntime,
     timeoutMs: 90_000,
   }).execute({
     theoremSpecification,
@@ -318,13 +334,13 @@ test('real pinned Lean proof-state search closes and replays with separate proce
 
 test('pinned proof-state search advances beyond reflexivity and replays simp closure', {
   timeout: 3 * 60 * 1000,
-}, async () => {
-  const runtime = inspectConfiguredPinnedFormalSandboxRuntime();
-  assert.equal(runtime.ready, true, runtime.blockers.join(','));
+}, async (t) => {
+  const preflight = trustedProductionLakeOrSkip(t);
+  if (!preflight) return;
   const { theoremSpecification, bundle, plan } = authority('∀ n : Nat, n + 0 = n');
   const candidate = plan.candidates.find((item) => item.strategy === 'mathlib_retrieval');
   const receipt = await createFormalProofSearchOperationsExecutor({
-    trustedSandboxRuntime: runtime.runtime,
+    trustedSandboxRuntime: preflight.formalSandboxRuntime,
     timeoutMs: 90_000,
   }).execute({ theoremSpecification, bundle, plan, candidate });
   assert.equal(receipt.status, 'formal_proof_search_operations_verified',
@@ -373,6 +389,7 @@ test('counterexample candidate terminates with a hash-bound refutation witness b
 test('timeout and runner crash cannot be presented as an executed proof-search strategy', async () => {
   const { theoremSpecification, bundle, plan } = authority('∀ n : Nat, n = n');
   const timeoutExecutor = createFormalProofSearchOperationsExecutor({
+    resolvePinnedRuntime: fixturePinnedRuntime,
     workerRunnerFactory: () => ({
       async run() {
         return {
@@ -398,6 +415,7 @@ test('timeout and runner crash cannot be presented as an executed proof-search s
   }).valid, false);
 
   const crashExecutor = createFormalProofSearchOperationsExecutor({
+    resolvePinnedRuntime: fixturePinnedRuntime,
     workerRunnerFactory: () => ({ async run() { throw new Error('fixture-runner-crash'); } }),
   });
   await assert.rejects(() => crashExecutor.execute({
@@ -409,9 +427,10 @@ test('Docker SIGPIPE is retried once with hash-bound infrastructure failure evid
   const { theoremSpecification, bundle, plan } = authority('∀ n : Nat, n = n');
   let calls = 0;
   const runtimeIdentityHash = digest('sigpipe-runtime');
-  const runtimeExecutableSnapshotHash = digest('sigpipe-executable');
+  const runtimeExecutableSnapshotHash = PRODUCTION_LAKE_EXECUTABLE_HASH;
   const containerImageDigest = digest('sigpipe-image');
   const executor = createFormalProofSearchOperationsExecutor({
+    resolvePinnedRuntime: fixturePinnedRuntime,
     workerRunnerFactory: () => ({
       async run() {
         calls += 1;

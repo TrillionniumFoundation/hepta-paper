@@ -365,7 +365,8 @@ test('workspace decoupling uses real paths and rejects every source, asset, runt
   assert.equal(externalLayout.physicallyDecoupled, true);
   assert.deepEqual(externalLayout.decouplingBlockers, []);
 
-  const nestedRuntime = path.join(workspaceRoot, 'runtime');
+  const nestedRuntime = path.join(workspaceRoot, '.hepta-missing-runtime-overlap-test');
+  assert.equal(fs.existsSync(nestedRuntime), false);
   const nestedLayout = resolveWorkspaceLayout({
     assetRoot: external.root,
     runtimeRoot: nestedRuntime,
@@ -391,6 +392,88 @@ test('workspace decoupling uses real paths and rejects every source, asset, runt
   });
   assert.equal(linkedLayout.physicallyDecoupled, false);
   assert.ok(linkedLayout.decouplingBlockers.includes('workspace_layout_paths_overlap:workspaceRoot:runtimeRoot'));
+
+  fs.unlinkSync(linkedRuntime);
+  const cycleRuntime = path.join(path.dirname(linkedRuntime), 'runtime-cycle');
+  fs.symlinkSync(cycleRuntime, linkedRuntime, 'dir');
+  fs.symlinkSync(linkedRuntime, cycleRuntime, 'dir');
+  const cyclicLayout = resolveWorkspaceLayout({
+    assetRoot: external.root,
+    runtimeRoot: linkedRuntime,
+    legacyRoot: path.join(path.dirname(external.root), 'legacy'),
+  });
+  assert.equal(cyclicLayout.physicallyDecoupled, false);
+  assert.ok(cyclicLayout.decouplingBlockers.includes('workspace_layout_path_resolution_failed:runtimeRoot'));
+
+  const nonDirectory = path.join(path.dirname(linkedRuntime), 'not-a-directory');
+  fs.writeFileSync(nonDirectory, 'not-a-directory');
+  const nonDirectoryLayout = resolveWorkspaceLayout({
+    assetRoot: external.root,
+    runtimeRoot: path.join(nonDirectory, 'runtime'),
+    legacyRoot: path.join(path.dirname(external.root), 'legacy'),
+  });
+  assert.equal(nonDirectoryLayout.physicallyDecoupled, false);
+  assert.ok(nonDirectoryLayout.decouplingBlockers.includes('workspace_layout_path_resolution_failed:runtimeRoot'));
+
+  const danglingBridge = path.join(path.dirname(linkedRuntime), 'dangling-bridge');
+  fs.symlinkSync(path.join(nestedRuntime, 'child'), danglingBridge, 'dir');
+  const traversalRuntime = path.join(path.dirname(linkedRuntime), 'traversal-runtime');
+  fs.symlinkSync('dangling-bridge/../runtime', traversalRuntime, 'dir');
+  const traversalLayout = resolveWorkspaceLayout({
+    assetRoot: external.root,
+    runtimeRoot: traversalRuntime,
+    legacyRoot: path.join(path.dirname(external.root), 'legacy'),
+  });
+  assert.equal(traversalLayout.physicallyDecoupled, false);
+  assert.ok(traversalLayout.decouplingBlockers.includes('workspace_layout_path_resolution_failed:runtimeRoot'));
+
+  const physicalParent = path.join(path.dirname(linkedRuntime), 'physical-parent');
+  const parentAlias = path.join(path.dirname(linkedRuntime), 'parent-alias');
+  fs.mkdirSync(physicalParent);
+  fs.symlinkSync(physicalParent, parentAlias, 'dir');
+  fs.symlinkSync(
+    path.relative(physicalParent, nestedRuntime),
+    path.join(physicalParent, 'runtime-link'),
+    'dir',
+  );
+  const aliasedParentLayout = resolveWorkspaceLayout({
+    assetRoot: external.root,
+    runtimeRoot: path.join(parentAlias, 'runtime-link'),
+    legacyRoot: path.join(path.dirname(external.root), 'legacy'),
+  });
+  assert.equal(aliasedParentLayout.physicallyDecoupled, false);
+  assert.ok(aliasedParentLayout.decouplingBlockers.includes('workspace_layout_paths_overlap:workspaceRoot:runtimeRoot'));
+
+  const consumerAlias = path.join(path.dirname(linkedRuntime), 'consumer-alias');
+  fs.symlinkSync(path.join(workspaceRoot, 'paper-core'), consumerAlias, 'dir');
+  const consumerResolvedRuntime = path.join(path.dirname(linkedRuntime), 'consumer-runtime');
+  const consumerLayout = resolveWorkspaceLayout({
+    assetRoot: external.root,
+    runtimeRoot: `${consumerAlias}${path.sep}..${path.sep}${path.basename(consumerResolvedRuntime)}`,
+    legacyRoot: path.join(path.dirname(external.root), 'legacy'),
+  });
+  assert.equal(consumerLayout.runtimeRoot, consumerResolvedRuntime);
+  assert.equal(consumerLayout.realPaths.runtimeRoot, consumerResolvedRuntime);
+  assert.equal(consumerLayout.physicallyDecoupled, true);
+  assert.deepEqual(consumerLayout.decouplingBlockers, []);
+
+  const filesystemRootLayout = resolveWorkspaceLayout({
+    assetRoot: external.root,
+    runtimeRoot: path.parse(workspaceRoot).root,
+    legacyRoot: path.join(path.dirname(external.root), 'legacy'),
+  });
+  assert.equal(filesystemRootLayout.physicallyDecoupled, false);
+  assert.ok(filesystemRootLayout.decouplingBlockers.includes('workspace_layout_paths_overlap:workspaceRoot:runtimeRoot'));
+
+  const filesystemRootAlias = path.join(path.dirname(linkedRuntime), 'filesystem-root-alias');
+  fs.symlinkSync(path.parse(workspaceRoot).root, filesystemRootAlias, 'dir');
+  const filesystemRootAliasLayout = resolveWorkspaceLayout({
+    assetRoot: external.root,
+    runtimeRoot: filesystemRootAlias,
+    legacyRoot: path.join(path.dirname(external.root), 'legacy'),
+  });
+  assert.equal(filesystemRootAliasLayout.physicallyDecoupled, false);
+  assert.ok(filesystemRootAliasLayout.decouplingBlockers.includes('workspace_layout_paths_overlap:workspaceRoot:runtimeRoot'));
 });
 
 test('batch inventory bootstrap is a minimal read/report context with no stage or campaign mutation capability', (t) => {

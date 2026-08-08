@@ -7,6 +7,8 @@ import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 
 import { releaseIntegrityEvidence } from '../bin/release-integrity-evidence.mjs';
+import * as releaseIntegrityKeyManagement from '../bin/release-integrity-key-management.mjs';
+import * as releaseIntegritySigning from '../bin/release-integrity-signing.mjs';
 import {
   inspectLocalReleaseIntegrityKey as inspectLocalReleaseIntegrityKeyPrimitive,
   loadExistingLocalReleaseIntegritySigningKey,
@@ -49,6 +51,32 @@ function keyPaths(runtimeRoot) {
     publicPath: path.join(keyRoot, 'release-integrity-ed25519-public.pem'),
   };
 }
+
+test('key-management compatibility facade preserves its exact public surface', () => {
+  assert.deepEqual(Object.keys(releaseIntegrityKeyManagement), [
+    'LOCAL_RELEASE_INTEGRITY_AUTHORITY_LIMIT',
+    'inspectLocalReleaseIntegrityKey',
+    'loadExistingLocalReleaseIntegritySigningKey',
+    'provisionLocalReleaseIntegrityKey',
+  ]);
+});
+
+test('narrow release signing API exposes only existing-key payload signing', (t) => {
+  assert.deepEqual(Object.keys(releaseIntegritySigning), ['signReleasePayload']);
+  const selected = fixture(t);
+  provisionLocalReleaseIntegrityKey({
+    runtimeRoot: selected.runtimeRoot,
+    execute: true,
+  });
+  const payload = { version: 1, kind: 'NarrowReleaseSigningApiFixture' };
+  const signature = releaseIntegritySigning.signReleasePayload(
+    payload,
+    selected.runtimeRoot,
+    { environment: NON_ISOLATED_TEST_ENVIRONMENT },
+  );
+  assert.equal(signature.kind, 'ReleaseIntegritySignature');
+  assert.equal(releaseIntegrityEvidence.verifyReleaseIntegritySignature(payload, signature), true);
+});
 
 function sha256File(candidate) {
   return crypto.createHash('sha256').update(fs.readFileSync(candidate)).digest('hex');

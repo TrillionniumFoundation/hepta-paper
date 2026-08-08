@@ -416,8 +416,6 @@ test('legacy cleanup is retired from the production adapter and mode surfaces', 
 
 test('contract implementations have one domain owner and the receipt ledger is immutable', () => {
   const compatibilityFiles = [
-    'paper-core/src/paper-contracts.mjs',
-    'paper-core/src/paper-contract-primitives.mjs',
     ...fs.readdirSync(path.join(workspaceRoot, 'paper-core', 'src', 'contracts')).map((name) => `paper-core/src/contracts/${name}`),
   ];
   for (const relative of compatibilityFiles) {
@@ -442,6 +440,8 @@ test('zero-consumer infrastructure facades and recovery APIs stay retired', () =
     'paper-core/src/offhost-worm-repository.mjs': 'paper-adapters/archives/offhost-worm-repository.mjs',
     'paper-core/src/external-intake-verifier.mjs': 'paper-adapters/governance/external-intake-verifier.mjs',
     'paper-core/src/sqlite-logical-integrity.mjs': 'paper-adapters/persistence/sqlite-logical-integrity.mjs',
+    'paper-core/src/paper-contracts.mjs': 'paper-domain/contracts/index.mjs',
+    'paper-core/src/paper-contract-primitives.mjs': 'paper-domain/contracts/primitives.mjs',
     'paper-adapters/journal-manage/contracts.mjs': 'paper-domain/journal/contracts.mjs',
     'paper-adapters/journal-manage/selection.mjs': 'paper-domain/journal/selection.mjs',
     'paper-adapters/journal-manage/review-authority.mjs': 'paper-domain/journal/review-authority.mjs',
@@ -451,6 +451,16 @@ test('zero-consumer infrastructure facades and recovery APIs stay retired', () =
     assert.equal(fs.existsSync(path.join(workspaceRoot, relative)), false, relative);
     assert.equal(fs.existsSync(path.join(workspaceRoot, owner)), true, owner);
   }
+  assert.equal(
+    fs.existsSync(path.join(workspaceRoot, 'migration', 'p1-matrix-candidates.mjs')),
+    false,
+    'unconsumed P1 candidate generator must remain retired',
+  );
+  assert.equal(
+    fs.existsSync(path.join(workspaceRoot, 'paper-core', 'verification', 'review-group-checkpoint.mjs')),
+    false,
+    'historical dirty-worktree checkpoint executable must remain retired',
+  );
   const productionBins = fs.readdirSync(path.join(workspaceRoot, 'paper-core', 'bin'))
     .filter((name) => name.endsWith('.mjs'))
     .map((name) => fs.readFileSync(path.join(workspaceRoot, 'paper-core', 'bin', name), 'utf8'))
@@ -501,6 +511,28 @@ test('TaskFlow remains explicitly experimental and workflow state remains native
   assert.equal(batch.includes('runWorkflowStages'), false);
   assert.equal(batch.includes('createPaperStageHandlers'), false);
   assert.equal(batch.includes("../compat/"), false);
+});
+
+test('experimental provider sandbox reaches release signing through a narrow API', () => {
+  const sandboxPath = 'paper-core/bin/run-real-paper-provider-sandbox.mjs';
+  const signingPath = 'paper-core/bin/release-integrity-signing.mjs';
+  const keyManagementPath = 'paper-core/bin/release-integrity-key-management.mjs';
+  const keyReaderPath = 'paper-core/bin/release-integrity-key-reader.mjs';
+  const keyProvisioningPath = 'paper-core/bin/release-integrity-key-provisioning.mjs';
+  const giantAggregatorPath = 'paper-core/bin/release-evidence-lib.mjs';
+  const sandboxSource = fs.readFileSync(path.join(workspaceRoot, sandboxPath), 'utf8');
+  const signingSource = fs.readFileSync(path.join(workspaceRoot, signingPath), 'utf8');
+  const experimental = architectureReachability(ARCHITECTURE_ENTRYPOINT_MANIFEST.experimental);
+
+  assert.match(sandboxSource, /from ['"]\.\/release-integrity-signing\.mjs['"]/u);
+  assert.doesNotMatch(sandboxSource, /release-evidence-lib\.mjs/u);
+  assert.match(signingSource, /export \{ signReleasePayload \}/u);
+  assert.doesNotMatch(signingSource, /release-evidence-lib\.mjs/u);
+  assert.equal(experimental.includes(signingPath), true);
+  assert.equal(experimental.includes(keyReaderPath), true);
+  assert.equal(experimental.includes(keyManagementPath), false);
+  assert.equal(experimental.includes(keyProvisioningPath), false);
+  assert.equal(experimental.includes(giantAggregatorPath), false);
 });
 
 test('automation plane stays independent from submission governance', () => {

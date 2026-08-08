@@ -1,0 +1,3095 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "metadata": {
+    "tools": {
+      "components": [
+        {
+          "type": "application",
+          "name": "hepta-source-supply-chain-security",
+          "version": "1"
+        }
+      ]
+    },
+    "component": {
+      "type": "application",
+      "bom-ref": "urn:hepta:npm-lock-component:e93063a28038c2b4e4547aa440a323243c6889affc90e43f7901daf79f9cb93a",
+      "name": "hepta-paper-workspace",
+      "version": "0.21.0",
+      "purl": "pkg:npm/hepta-paper-workspace@0.21.0",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": ""
+        },
+        {
+          "name": "hepta:npm:private-package",
+          "value": "true"
+        }
+      ]
+    },
+    "properties": [
+      {
+        "name": "hepta:sbom:evidence-class",
+        "value": "local_package_lock_inventory"
+      },
+      {
+        "name": "hepta:sbom:external-attestation",
+        "value": "false"
+      },
+      {
+        "name": "hepta:sbom:installed-environment-observed",
+        "value": "false"
+      },
+      {
+        "name": "hepta:sbom:package-json-sha256",
+        "value": "sha256:66001df23e77131d1fe09a7f9018e06fdf0204396f256186ef675d0dfffcc6d6"
+      },
+      {
+        "name": "hepta:sbom:package-lock-sha256",
+        "value": "sha256:e34b7244828cd7fbf457cf28c0b94a55a99e6f71fba97c422ee080b76a8d461e"
+      }
+    ]
+  },
+  "components": [
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:4cffc9aad9f4c92328fa232b66c30b916e141beb62dc8cd6089ea32d9fb5ec0d",
+      "name": "eslint-utils",
+      "version": "4.9.1",
+      "purl": "pkg:npm/%40eslint-community/eslint-utils@4.9.1",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/@eslint-community/eslint-utils"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "group": "@eslint-community",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "a61ad898d898a6947bce714476a81f5875d1e8d0a46442bb8705831d95238adff6fd4d2be97be40e5d12627a0ce751eaec584219d2c34facf1082398d617b1b1"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@eslint-community/eslint-utils/-/eslint-utils-4.9.1.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:7439db2b9ac2a6ffef6e89452df208975a07652cc52277644214074c7a654c98",
+      "name": "eslint-visitor-keys",
+      "version": "3.4.3",
+      "purl": "pkg:npm/eslint-visitor-keys@3.4.3",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/@eslint-community/eslint-utils/node_modules/eslint-visitor-keys"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "c2973e2d77a2ca28acc4f944914cd4eacbf24b57eb20edcc8318f57ddcbb3e6f1883382e6b1d8ddc56bf0ff6a0d56a9b3a9add23eb98eb031497cfdad86fa26a"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/eslint-visitor-keys/-/eslint-visitor-keys-3.4.3.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:fd06d9f5bf47d7313d4942749beff36affafaf723ff9310b84a18a6ec494f5de",
+      "name": "regexpp",
+      "version": "4.12.2",
+      "purl": "pkg:npm/%40eslint-community/regexpp@4.12.2",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/@eslint-community/regexpp"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "group": "@eslint-community",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "12b8924e5b79382f7fed25e445208085f4b1c684948019b7dce1fe224c1b769828aac4ac520ef2dee87e208088fd08380415abdd4da2dfd4699b271bc4cab87b"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@eslint-community/regexpp/-/regexpp-4.12.2.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:cc2b9033f42d87216591c248bd6d7a8e2c7f7af6a1082451813f5706d025c56b",
+      "name": "config-array",
+      "version": "0.23.5",
+      "purl": "pkg:npm/%40eslint/config-array@0.23.5",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/@eslint/config-array"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "group": "@eslint",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "63790a2ef0b576f4ce4fea0696a350d572ea2ba0f51d4d985cf739d8d98094965b30c583cc66173223d127c4d80f7f66b83fce4e395998d27889beddbd2acc04"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@eslint/config-array/-/config-array-0.23.5.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:2d40e6c7d1308b0b26722966f36fffca5bb97e7f1825c5db73b9b98eb193efa6",
+      "name": "config-helpers",
+      "version": "0.6.0",
+      "purl": "pkg:npm/%40eslint/config-helpers@0.6.0",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/@eslint/config-helpers"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "group": "@eslint",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "8a2e81c3d8c9db38b671603667ef7f419ffedc35fa930695e50f7ce83fc274fdcb6a9df0fe9810677ef7155edbc98fe2ecbe08447fc6e37239773d4296c09ba4"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@eslint/config-helpers/-/config-helpers-0.6.0.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:ff8208f44a386d16c34430c52023e894c48b7d93d9428c6496f20e2ad6c73a44",
+      "name": "core",
+      "version": "1.2.1",
+      "purl": "pkg:npm/%40eslint/core@1.2.1",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/@eslint/core"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "group": "@eslint",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "330704d4ff806780ba0d69698a7fce98e039e2698867ffb166e26241de12c81dbda00263377d145bdc2428da6d5b672da78704b2f8652d8fc2b10d6ea070e5a1"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@eslint/core/-/core-1.2.1.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:5f9964b89f79b2428a1f9b0e77436470997ef893b38e6b99e501bdf6ebf51550",
+      "name": "object-schema",
+      "version": "3.0.5",
+      "purl": "pkg:npm/%40eslint/object-schema@3.0.5",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/@eslint/object-schema"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "group": "@eslint",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "bea4da504831ce6f980d274495a77a3e24685f8b7c5460e30adb74e739f89d4f35d14231fee34457bfe5649e8ac054e12993b33b1cd7cb8f1d6be368ec765a33"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@eslint/object-schema/-/object-schema-3.0.5.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:2b4f77cdc5583a4b454a3c3d62d50002f658783b6918f26070e8daebb85bc060",
+      "name": "plugin-kit",
+      "version": "0.7.2",
+      "purl": "pkg:npm/%40eslint/plugin-kit@0.7.2",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/@eslint/plugin-kit"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "group": "@eslint",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "f82340cf182592ba4d7ff90acb0a907e4ef8423b5c7ae384ed09be005f26891bcf17fc2698ae7e3893a0561dc05534f744fda61f7f8539ac65139bfbda8c24d0"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@eslint/plugin-kit/-/plugin-kit-0.7.2.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:4357a6d62f3b9b9a0bccb6bbd6c13be04247014857bb3c676b8376647acbcd5e",
+      "name": "core",
+      "version": "0.19.2",
+      "purl": "pkg:npm/%40humanfs/core@0.19.2",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/@humanfs/core"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "group": "@humanfs",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "5215cd9be08531671b0a15f2c05c249a1aa3b373d10a67126bf85f0602c86fba10e4735bd704b489c5ac1ad48050d81e7c7788f9e06b03c2357f199b1ec19dbc"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@humanfs/core/-/core-0.19.2.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:2615aa082d9cd6b4dc06da2f99589753a21cbeefb87871f8e15b739f64dc758a",
+      "name": "node",
+      "version": "0.16.8",
+      "purl": "pkg:npm/%40humanfs/node@0.16.8",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/@humanfs/node"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "group": "@humanfs",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "804d5e40d67747efa44f3154a5d1a5a66cbc903643fcc2f21ea0f0aa3915408d0931d2350f9d6ccb51fde7c3cd5d890cdab01a73b7b9fc29c8299ac7b4f87705"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@humanfs/node/-/node-0.16.8.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:9fd3488b4bf381c9006913b99b21b2ee56a9b1ca2a4109d44bd15c89845d706e",
+      "name": "types",
+      "version": "0.15.0",
+      "purl": "pkg:npm/%40humanfs/types@0.15.0",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/@humanfs/types"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "group": "@humanfs",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "659d70d1aa10930b94b82ed87feeec75e68d7ea42288b71245b7c8d3ca00c6a2eda5742bf402155fb032ec72c3ba22d801a14fbbca0160dabf4088bd5111c9dd"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@humanfs/types/-/types-0.15.0.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:9bc8ebb55a492b4b4b437157aeb3a549b3b97cefced51b717822c9968d93468d",
+      "name": "module-importer",
+      "version": "1.0.1",
+      "purl": "pkg:npm/%40humanwhocodes/module-importer@1.0.1",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/@humanwhocodes/module-importer"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "group": "@humanwhocodes",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "6f1bde57857cbf961be277054d3deb3d281904ea429237cad32e28555549c08b8354144c0d7acfc9744bf7cf22e5aa7d9bd6e7c8412359f9b95a4066b5f7cb7c"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@humanwhocodes/module-importer/-/module-importer-1.0.1.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:d1d40ed6454bd17e1f7167ef3bc2c4eb6c13e18efda0a661c6c1da3aac21e710",
+      "name": "retry",
+      "version": "0.4.3",
+      "purl": "pkg:npm/%40humanwhocodes/retry@0.4.3",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/@humanwhocodes/retry"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "group": "@humanwhocodes",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "6d5d13828f4ae217cf09e93e68c027f35469a452afdb248341e328499baf4c04b2c0d4e7549080ac2644d855aaa6f21ab4abbb54c44b5a547511acef5610f285"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@humanwhocodes/retry/-/retry-0.4.3.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:150c8a3d62543a72d316c7190357557fa086fbd0ff7e21654e14076af59cc859",
+      "name": "esrecurse",
+      "version": "4.3.1",
+      "purl": "pkg:npm/%40types/esrecurse@4.3.1",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/@types/esrecurse"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "group": "@types",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "c490406c389fa398697df0c1b8797463ccb0b306e2029fd68bb63f1ad0204a5672200069a72babc55b9e38f13c2d440ec5d9608ba66a71eeeea04a6a3537a253"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@types/esrecurse/-/esrecurse-4.3.1.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:2570949addd2d3c12b9425056ff7cef1618a93158304d177c0d0f32d943c3ad5",
+      "name": "estree",
+      "version": "1.0.9",
+      "purl": "pkg:npm/%40types/estree@1.0.9",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/@types/estree"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "group": "@types",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "1a174f832d5e978fc898fd395f4e54c38730dbf33ddc10949a712f599352b650b310a304e05924f98a680393a21cd426a12ec269f6fc5dadcfc9af26d50af37a"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@types/estree/-/estree-1.0.9.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:35b2acd1b74ce8a9b8605bd1f5386ee352acc84adde460b8aae94724d657b212",
+      "name": "json-schema",
+      "version": "7.0.15",
+      "purl": "pkg:npm/%40types/json-schema@7.0.15",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/@types/json-schema"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "group": "@types",
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "e7e7cff0ff0c14d0be0326420f1ac1da991914f1b3a90594ce949ebae54bbe6f1531ca2b3586af06aa057312bc6d0cf842c6e7e2850411e9b8c032df732b061c"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/@types/json-schema/-/json-schema-7.0.15.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:a1aa7e0969c15f34540d0b07a88d74a2f93bf04ecf1b421f6dc83c478cbf83a2",
+      "name": "acorn",
+      "version": "8.17.0",
+      "purl": "pkg:npm/acorn@8.17.0",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/acorn"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "c5141b0dbf419f00da7d8367e95c25f37f436158ea5d86f55d51ad58067591c0dcea2c002f8860dc1d5d665462b8434578ed87e778051b78a7eb6d4074445502"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/acorn/-/acorn-8.17.0.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:667986f9aae46fdb0e13d9a237dc22ccb2e65dcd741d08f50dd8b6acb7095277",
+      "name": "acorn-jsx",
+      "version": "5.3.2",
+      "purl": "pkg:npm/acorn-jsx@5.3.2",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/acorn-jsx"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "aeaf6cf893617f4202863b435f196527b838d68664e52957b69d0b1f0c80e5c7a3c27eef2a62a9e293eb8ba60478fbf63d4eb9b00b1e81b5ed2229e60c50d781"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/acorn-jsx/-/acorn-jsx-5.3.2.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:738446e71cf22b7d588e5313360a0be3625275f1111d26248df3ea16469afb37",
+      "name": "ajv",
+      "version": "6.15.0",
+      "purl": "pkg:npm/ajv@6.15.0",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/ajv"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "7e0171ec77e8abad32b4ad9cec386717c8c8bf362038cc5fba08cb3923078cb20f81e9ea6bb4bba1a6a001352af7d995e8862f376b51982d309d3617ea23db33"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/ajv/-/ajv-6.15.0.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:619d2c2e35e4d8bcb7e7cb81112ecd96cffbf0fcd39ec06b03983dd1228ebe91",
+      "name": "balanced-match",
+      "version": "4.0.4",
+      "purl": "pkg:npm/balanced-match@4.0.4",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/balanced-match"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "04bae011c453c17da8ea01b118e08dc8cbc64a9df96287ee633c3d87520c4d198aaadb40659554ebb6dd6fd3ebdaf50703cfa3de2dad25f8cee82ebee26c864c"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/balanced-match/-/balanced-match-4.0.4.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:43662699bdfb51a0be2f0d69d384cafc2e2ab616083d9d8336d46402ff62e99a",
+      "name": "brace-expansion",
+      "version": "5.0.9",
+      "purl": "pkg:npm/brace-expansion@5.0.9",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/brace-expansion"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "49c43822ebc8105d533253fb66dfaf8c9ffff7394f6f64837315b13376e4f2ceade8619d27b28ed5d09c4e274e3c929e3d6df42c4ff6713ef00b23e1a3dfd6c6"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:d5dafb6b84f8a06efad11b0761ffb315f2b906054218763ccf2dda7c1a7e8084",
+      "name": "cross-spawn",
+      "version": "7.0.6",
+      "purl": "pkg:npm/cross-spawn@7.0.6",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/cross-spawn"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "b95d903963f69d6ceccb668ca7c69189b862f5d9731791e0879487681f4e893184c834e2249cb1d2ecb9d505ddc966ed00736e6b85c9cd429c6b73b3294777bc"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/cross-spawn/-/cross-spawn-7.0.6.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:71fbe637b05b4d27280aab8136d623390eacbf70fc7d44a925eee0eb3f89ae68",
+      "name": "debug",
+      "version": "4.4.3",
+      "purl": "pkg:npm/debug@4.4.3",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/debug"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "446c305a7c10be455f6af295b76d8518bc3ec5849dcc04709b4aeee83853540dee994e6165cdbc57790ee2cb6062bcab4e52e9baf808f468a28e5b408cd6dca8"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/debug/-/debug-4.4.3.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:96779998e4e7625a7999224bdc7e2a4367642a10b977062d504ef210e413cffc",
+      "name": "deep-is",
+      "version": "0.1.4",
+      "purl": "pkg:npm/deep-is@0.1.4",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/deep-is"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "a083f392c993838fccae289a6063bea245c34fbced9ffc37129b6fffe81221d31d2ac268d2ee027d834524fcbee1228cb82a86c36c319c0f9444c837b7c6bf6d"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/deep-is/-/deep-is-0.1.4.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:3888f9f8aea9e03d128a24cf43b5b49855bedfda24c23ce103224ee1d954cf72",
+      "name": "escape-string-regexp",
+      "version": "4.0.0",
+      "purl": "pkg:npm/escape-string-regexp@4.0.0",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/escape-string-regexp"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "4eda5c349dd7033c771aaf2c591cc96956a346cd2e57103660091d6f58e6d9890fcf81ba7a05050320379f9bed10865e7cf93959ae145db2ae4b97ca90959d80"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/escape-string-regexp/-/escape-string-regexp-4.0.0.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:34c8399ea982a2d6609a564cda9234f5bc1ac481317bbc022c81b89f4e83e658",
+      "name": "eslint",
+      "version": "10.7.0",
+      "purl": "pkg:npm/eslint@10.7.0",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/eslint"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "1954c3eecd6f74897a518bc07eb88e3de6350dff0b2198dfa1f2ef1f075ef9eac31c61ae1f2b8ceb1a3147198789e6e162e0f6a75bcde305a1d17ccf0114860d"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/eslint/-/eslint-10.7.0.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:1b15276ba21e5183233a1f736862b83258021df8a451d6ab1d36bebdd546cde9",
+      "name": "eslint-scope",
+      "version": "9.1.2",
+      "purl": "pkg:npm/eslint-scope@9.1.2",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/eslint-scope"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "c52f741f9d5c2b0d2396dc66be61f2d886a2d4b22aadf6f0e7b6fbf70fc9ecc7ef0df90890567e923eb30b7063b54c21d79d07b1249dc5765cb2ebfbda688315"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "BSD-2-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/eslint-scope/-/eslint-scope-9.1.2.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:95ecba6dd4d8021548349ab341cdfab408614738380f278f30ff37ef4f3b6c05",
+      "name": "eslint-visitor-keys",
+      "version": "5.0.1",
+      "purl": "pkg:npm/eslint-visitor-keys@5.0.1",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/eslint-visitor-keys"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "b43e34787c40df98743c421935e223907a034786238c9a77e1b88cd260efa6505efff981f881c2a870c657ba7117eecc9254ef8a085c08f3d90bbca75b28dd4c"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/eslint-visitor-keys/-/eslint-visitor-keys-5.0.1.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:62fa04daa18fb485f33b0ea8e7d6c3f434192d95c3bf8b9abc9698d648fdfc50",
+      "name": "espree",
+      "version": "11.2.0",
+      "purl": "pkg:npm/espree@11.2.0",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/espree"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "ee9dc3ad5108a295b50756af0062ee0928758ee6dcd351f624773c078aaa19b966839808f72ba60600028d6a3826521cd38b9fba0e3127749023c1e44bf460cf"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "BSD-2-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/espree/-/espree-11.2.0.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:2c622e4b8b23d6f1f44cb348289bf874e41ca0aa43b190e26d9313a9cce32bc7",
+      "name": "esquery",
+      "version": "1.7.0",
+      "purl": "pkg:npm/esquery@1.7.0",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/esquery"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "029e86d16430714fcb1ecbcbc0e3757c0417f59a7403663a63f709065f6bfc96d6f74672838ff36c6eb3cca6b639300b10b6ab60798abb41a1a4ce443beed3d2"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/esquery/-/esquery-1.7.0.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:efc6d71d17b1633c00825bd5a16af8697dcb68b34555a0c178407449d0909dbb",
+      "name": "esrecurse",
+      "version": "4.3.0",
+      "purl": "pkg:npm/esrecurse@4.3.0",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/esrecurse"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "2a67ca2f76fa1be457bcff0dd6faf74ead642ffa021609f63585c4b6a3fcfcbde929aa540381bc70555aa05dd2537db7083e17ca947f7df8a81e692d8bafd36a"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "BSD-2-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/esrecurse/-/esrecurse-4.3.0.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:cd48cf99875ba81c5f6c254e1d0c61bdbfd9d7a9675ded8e791c7052a2d7fad1",
+      "name": "estraverse",
+      "version": "5.3.0",
+      "purl": "pkg:npm/estraverse@5.3.0",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/estraverse"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "30c74046e54443388d4de243f0380caa6870475d41450fdc04ffa92ed61d4939dfdcc20ef1f15e8883446d7dfa65d3657d4ffb03d7f7814c38f41de842cbf004"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "BSD-2-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/estraverse/-/estraverse-5.3.0.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:05577f459761fcd0edb9393d427b4efdf67556300d7adb50fbb3632934d4e0b8",
+      "name": "esutils",
+      "version": "2.0.3",
+      "purl": "pkg:npm/esutils@2.0.3",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/esutils"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "915b1ca97938382a7af126747648042958baffc8a3df4d0a0564c9ab7d8ffdd61e5934b02b8d56c93c5a94dd5e46603967d514fcb5fd0fb1564a657d480631ea"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "BSD-2-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/esutils/-/esutils-2.0.3.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:c63adb6a52b3df5a236a4d90078b9417a5b2969096b7dcab998716d894098a4b",
+      "name": "fast-deep-equal",
+      "version": "3.1.3",
+      "purl": "pkg:npm/fast-deep-equal@3.1.3",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/fast-deep-equal"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "7f7a90f68432f63d808417bf1fd542f75c0b98a042094fe00ce9ca340606e61b303bb04b2a3d3d1dce4760dcfd70623efb19690c22200da8ad56cd3701347ce1"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/fast-deep-equal/-/fast-deep-equal-3.1.3.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:941dee8736515a6f76806b6a2cbce1a5826365a54508cdffd8eaed64aea3dbaa",
+      "name": "fast-json-stable-stringify",
+      "version": "2.1.0",
+      "purl": "pkg:npm/fast-json-stable-stringify@2.1.0",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/fast-json-stable-stringify"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "96177fc05f8b93df076684c2b6556b687b5f8795d88a32236a55dc93bb1a52db9a9d20f22ccc671e149710326a1f10fb9ac47c0f4b829aa964c23095f31bf01f"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/fast-json-stable-stringify/-/fast-json-stable-stringify-2.1.0.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:19aab0332c6f98fe9455c1001c06424124ce1b6c8001f37f850ae6752599627b",
+      "name": "fast-levenshtein",
+      "version": "2.0.6",
+      "purl": "pkg:npm/fast-levenshtein@2.0.6",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/fast-levenshtein"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "0c25eee887e1a9c92ced364a6371f1a77cbaaa9858e522599ab58c0eb29c11148e5d641d32153d220fcf62bcf2c3fba5f63388ca1d0de0cd2d6c2e61a1d83c77"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/fast-levenshtein/-/fast-levenshtein-2.0.6.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:788ecfc5b53c3cd2f1ca4b175a53809de571572d0682af1eee62caa01b3a0c68",
+      "name": "file-entry-cache",
+      "version": "8.0.0",
+      "purl": "pkg:npm/file-entry-cache@8.0.0",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/file-entry-cache"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "5d74d4c02be2b1ae6869c34644ff527cdb5804d00c8be44fc011666e564417b37bb301d8412ebf65f93b491c31e03e63dc21f6d7560d45ca350c430d55f6429d"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/file-entry-cache/-/file-entry-cache-8.0.0.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:2b0d45a113391cefe70aa5afe780e8fadad9f198ec631f2161b7b83703c8e268",
+      "name": "find-up",
+      "version": "5.0.0",
+      "purl": "pkg:npm/find-up@5.0.0",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/find-up"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "efcfcf5d3d7094b2c3813cc3b3bb23abd873cf4bd70fece7fbbc32a447b87d74310a6766a9f1ac10f4319a2092408dda8c557dd5b552b2f36dac94625ba9c69e"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/find-up/-/find-up-5.0.0.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:bfb0e76c7d5f8287beb6dbd71fa72fac68dea235c9e602075ad74cf825c129ab",
+      "name": "flat-cache",
+      "version": "4.0.1",
+      "purl": "pkg:npm/flat-cache@4.0.1",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/flat-cache"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "7fb71c14f2b7497147a71d795081b2449fc525072db8a674cd5b8dddfac1a381e72b771acbd5445b447ac8f6051c2d0082a86e90fcca8eadb6b790e6032a86cb"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/flat-cache/-/flat-cache-4.0.1.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:25d975ddfe4d68ba3a3aca541a7f5da4ab646b52839aa6a0e651286fe4b17e3e",
+      "name": "flatted",
+      "version": "3.4.2",
+      "purl": "pkg:npm/flatted@3.4.2",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/flatted"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "3e30ec7bb47385c3e4209c32e6deca3d641267d7006f341771a7ec7ad4280fbb0e2514251a290d6f1ef2669d8ea2d0e7272ac371bc91ab74ed6f5f2260eaa4c4"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "ISC"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/flatted/-/flatted-3.4.2.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:f2128e860749338734e43c7eddac653047642c0ac11046bc225882710b8df836",
+      "name": "glob-parent",
+      "version": "6.0.2",
+      "purl": "pkg:npm/glob-parent@6.0.2",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/glob-parent"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "5f1c08f043a1550816a7a8832feddbd2bf3a7f877a017eb3494e791df078c9d084b972d773915c61e3aefa79c67ed4b84c48eeff5d6bb782893d33206df9afe0"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "ISC"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/glob-parent/-/glob-parent-6.0.2.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:71731f6cbe09f5b5fc5ff4e0fe96aaefce411eb05b21b1301ea4bc6b65d99c0a",
+      "name": "ignore",
+      "version": "5.3.2",
+      "purl": "pkg:npm/ignore@5.3.2",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/ignore"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "86c053354a904c3c245ad71d608da2d3a63f9d4044b0d10324a8d676280bbde832f240ee2404bcb91969924710a721172f467fa630f2e4706632344227682afa"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/ignore/-/ignore-5.3.2.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:b1ac21ad45b750ac9bad82fae727b48d1a37ad0ddbfca5265591aea8857545c2",
+      "name": "imurmurhash",
+      "version": "0.1.4",
+      "purl": "pkg:npm/imurmurhash@0.1.4",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/imurmurhash"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "2665cc67ac2ebc398b88712697dca4cea3ba97015ba1fd061b822470668435d0910c398c5679f2eece47b0880709b6aad30d8cc8f843aa48535204b62d4d8f1c"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/imurmurhash/-/imurmurhash-0.1.4.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:63f231e769a1729f9ed6cdc823669deedb39f41adb15726995570b86ffc29728",
+      "name": "is-extglob",
+      "version": "2.1.1",
+      "purl": "pkg:npm/is-extglob@2.1.1",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/is-extglob"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "49b29b00d90deb4dd58b88c466fe3d2de549327e321b0b1bcd9c28ac4a32122badb0dde725875b3b7eb37e1189e90103a4e6481640ed9eae494719af9778eca1"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/is-extglob/-/is-extglob-2.1.1.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:97a78aeae899cd0fe3dc0e112f21028d7b28a2ace3d4b839b7114e8d97b67162",
+      "name": "is-glob",
+      "version": "4.0.3",
+      "purl": "pkg:npm/is-glob@4.0.3",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/is-glob"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "c5e9526b21c7dfa66013b6568658bba56df884d6cd97c3a3bf92959a4243e2105d0f7b61f137e4f6f61ab0b33e99758e6611648197f184b4a7af046be1e9524a"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/is-glob/-/is-glob-4.0.3.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:ad7a544cd7358e54397ff28a1459e560335acfa4762347c337fb7005bdeb7aab",
+      "name": "isexe",
+      "version": "2.0.0",
+      "purl": "pkg:npm/isexe@2.0.0",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/isexe"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "447c4c2e9f659ca1c61d19e0f5016144231b600715a67ebdb2648672addfdfac638155564e18f8aaa2db4cb96aed2b23f01f9f210d44b8210623694ab3241e23"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "ISC"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/isexe/-/isexe-2.0.0.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:e04e35a821239f83b36b29a8dfb63d6e5caacb80db8946deab5903e10c0fd510",
+      "name": "json-buffer",
+      "version": "3.0.1",
+      "purl": "pkg:npm/json-buffer@3.0.1",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/json-buffer"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "e1b57905f4769aa7d04c99be579b4f3dd7fe669ba1888bd3b8007983c91cad7399a534ff430c15456072c17d68cebea512e3dd6c7c70689966f46ea6236b1f49"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/json-buffer/-/json-buffer-3.0.1.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:bed29d3e1ce8bfdcef9ec06f76dd581fc42d728414319aee78800395c3f36a46",
+      "name": "json-schema-traverse",
+      "version": "0.4.1",
+      "purl": "pkg:npm/json-schema-traverse@0.4.1",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/json-schema-traverse"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "c5b6c21f9742614e53f0b704861ba1ec727cf075ee5b7aac237634cce64529f6441dca5688753f271ce4eb6f41aec69bfe63221d0b62f7030ffbce3944f7b756"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/json-schema-traverse/-/json-schema-traverse-0.4.1.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:6a3ec9c805556dbff3393c3ca475c8698d3372246116cca82a5421c8f486ab66",
+      "name": "json-stable-stringify-without-jsonify",
+      "version": "1.0.1",
+      "purl": "pkg:npm/json-stable-stringify-without-jsonify@1.0.1",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/json-stable-stringify-without-jsonify"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "05d6e8cbe97bb40dce196e858f21475a43f92ee0728f54e4df72e3caad1ac72cdd93dfff2528b6bb77cfd504a677528dc2ae9538a606940bbcec28ac562afa3f"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/json-stable-stringify-without-jsonify/-/json-stable-stringify-without-jsonify-1.0.1.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:cb47340b73f91bf9f80711cc5682f9cf8c92f76de6134c4576acb9cd0d9079dc",
+      "name": "keyv",
+      "version": "4.5.4",
+      "purl": "pkg:npm/keyv@4.5.4",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/keyv"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "a3154790747f1097f608d5e75b144b5ba9a0ec9c82094706d03b441a62f672d528d4f3538a7d4f52297eafffb8af93295600bf7e7d648ecc7b9a34ae8caa88a7"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/keyv/-/keyv-4.5.4.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:e440c3dbd28cb848dcd61f5bae9c16407d2ed19470221f39bcf083de8856e122",
+      "name": "levn",
+      "version": "0.4.1",
+      "purl": "pkg:npm/levn@0.4.1",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/levn"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "f9b4f6b87e04e4b184ee1fe7ddebdc4bfb109495c2a48a7aca6f0e589e5e57afbaec3b2a97f2da693eea24102ddabcdfa1aff94011818710e2c7574cb7691029"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/levn/-/levn-0.4.1.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:79e41483031d1cd0e53648f00cd886e33f56b0526c4a35706859e4b95225ab5e",
+      "name": "locate-path",
+      "version": "6.0.0",
+      "purl": "pkg:npm/locate-path@6.0.0",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/locate-path"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "88f64ae9e6236f146edee078fd667712c10830914ca80a28a65dd1fb3baad148dc026fcc3ba282c1e0e03df3f77a54f3b6828fdcab67547c539f63470520d553"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/locate-path/-/locate-path-6.0.0.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:f2e2e4fd26de67dadfa55996748f1d59b38c2506503b34ab9cc71a173c0cdf5c",
+      "name": "minimatch",
+      "version": "10.2.5",
+      "purl": "pkg:npm/minimatch@10.2.5",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/minimatch"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "3142e454b7ca1980c561e8cfd3b40ebab0cb2d0a5c8e4ec5c3eee35d2d91d9ccd1433479eb21d1bde5393432443af887fa111364a4a4224e5cf93db71a315432"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "BlueOak-1.0.0"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/minimatch/-/minimatch-10.2.5.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:9f847c3d04473988bc992e1c5ea557775ca1c3aff876805a1af4b05efe8afc78",
+      "name": "ms",
+      "version": "2.1.3",
+      "purl": "pkg:npm/ms@2.1.3",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/ms"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "e85973b9b4cb646dc9d9afcd542025784863ceae68c601f268253dc985ef70bb2fa1568726afece715c8ebf5d73fab73ed1f7100eb479d23bfb57b45dd645394"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:cad5986d18a61b5b538baa9e2f152d3b9ca92771d347b2a77b4d0fbdad4e3338",
+      "name": "natural-compare",
+      "version": "1.4.0",
+      "purl": "pkg:npm/natural-compare@1.4.0",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/natural-compare"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "396343f1e8b756d342f61ed5eb4a9f7f7495a1b1ebf7de824f0831b9b832418129836f7487d2746eec8408d3497b19059b9b0e6a38791b5d7a45803573c64c4b"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/natural-compare/-/natural-compare-1.4.0.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:d41279e64e0098d00596f007f7f178256aa83c8d26817ab53d40d222390afb16",
+      "name": "optionator",
+      "version": "0.9.4",
+      "purl": "pkg:npm/optionator@0.9.4",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/optionator"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "e88a50ee6294c5171934b20e6d1d21cfb971b1aa5248860d649c173c6785d264d5a862852178f50d070ca13db64b744e70bc98febcf43d669667d6b25a669df6"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/optionator/-/optionator-0.9.4.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:c399a0f1f96e168d361afcfb89dba3610e3b8cb0c866e70a0db13c4cda8a81f4",
+      "name": "p-limit",
+      "version": "3.1.0",
+      "purl": "pkg:npm/p-limit@3.1.0",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/p-limit"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "4d839a9ccdf01b0346b193767154d83c0af0e39e319d78f9aa6585d5b12801ce3e714fe897b19587ba1d7af8e9d4534776e1dcdca64c70576ec54e5773ab8945"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/p-limit/-/p-limit-3.1.0.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:c2db7c5e07b97ef5a1c59f163762c347b652e86773b8b2fd84f74a01107ffd0b",
+      "name": "p-locate",
+      "version": "5.0.0",
+      "purl": "pkg:npm/p-locate@5.0.0",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/p-locate"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "2da363b51594058fbecc1e6713f37071aa0cca548f93e4be647341d53cdd6cc24c9f2e9dca7a401aded7fed97f418ab74c8784ea7c47a696e8d8b1b29ab1b93f"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/p-locate/-/p-locate-5.0.0.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:271deb72c5722169e85629583650999b317c7b177ccae63ae5eebe68ca032d51",
+      "name": "path-exists",
+      "version": "4.0.0",
+      "purl": "pkg:npm/path-exists@4.0.0",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/path-exists"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "6a4f50cb943b8d86f65b071ecb9169be0d8aa0073f64884b48b392066466ca03ec1b091556dd1f65ad2aaed333fa6ead2530077d943c167981e0c1b82d6cbbff"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/path-exists/-/path-exists-4.0.0.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:9e83ab61ada43c428bb243d695cf27c4a84692c1cd5240d61edac4a742715a95",
+      "name": "path-key",
+      "version": "3.1.1",
+      "purl": "pkg:npm/path-key@3.1.1",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/path-key"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "a2399e374a9dfb2d23b3312da18e3caf43deab97703049089423aee90e5fe3595f92cc17b8ab58ae18284e92e7c887079b6e1486ac7ee53aa6d889d2c0b844e9"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/path-key/-/path-key-3.1.1.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:dda085ef51dc1abc51e38e6bbe22bf7159a8206f2c7a0e31d61dcad7333be617",
+      "name": "prelude-ls",
+      "version": "1.2.1",
+      "purl": "pkg:npm/prelude-ls@1.2.1",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/prelude-ls"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "be47033eb459a354192db9f944b18fa60fd698843ae6aa165a170629ffdbe5ea659246ab5f49bdcfca6909ab789a53aa52c5a9c8db9880edd5472ad81d2cd7e6"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/prelude-ls/-/prelude-ls-1.2.1.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:9cb34a612cfa64f048d2a4b44a7d1063ed4a18115c3c5671b1dc2df054b7b8c5",
+      "name": "punycode",
+      "version": "2.3.1",
+      "purl": "pkg:npm/punycode@2.3.1",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/punycode"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "bd8b7b503d54f5683ad77f2c84bb4b3af740bbef03b02fe2945b44547707fb0c9d712a4d136d007d239db9fe8c91115a84be4563b5f5a14ee7295645b5fabc16"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:0589a887ab65a02011e833ae0548dd591452f3744bd1e777be044bd2aed82dd1",
+      "name": "shebang-command",
+      "version": "2.0.0",
+      "purl": "pkg:npm/shebang-command@2.0.0",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/shebang-command"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "907c6bdb366962d766acdd6a0e3aeb5ff675ad1d641bc0f1fa09292b51b87979af5ecc26704d614d6056614ce5ada630d7fc99a7a62e0d8efb62dbdb3747660c"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/shebang-command/-/shebang-command-2.0.0.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:84687197c4e087f13ce671b19e89bf78b2575c525c2453c2cadaf1393c9e03e2",
+      "name": "shebang-regex",
+      "version": "3.0.0",
+      "purl": "pkg:npm/shebang-regex@3.0.0",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/shebang-regex"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "efef9d161b5cc77df9dee05aabc0c347836ec417ad0730bb6503a19934089c711de9b4ab5dd884cb30af1b4ed9e3851874b4a1594c97b7933fca1cfc7a471bd4"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/shebang-regex/-/shebang-regex-3.0.0.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:77b724785c5d5dbce835aed12643db14b522302d587e8ee081681fe531a9f6ef",
+      "name": "type-check",
+      "version": "0.4.0",
+      "purl": "pkg:npm/type-check@0.4.0",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/type-check"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "5e5794a1cf6ec065ea8d6c176944d9026ccc705679f39f10036befc7552be7121c8b15c83fef0b9c50e0469954df4bacead7aa765b2415fbbe69ee0aefd3a87b"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/type-check/-/type-check-0.4.0.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:8027601d7213d80158e8fa38a29974e71205e377e54f3c6e4754169e42693aaa",
+      "name": "uri-js",
+      "version": "4.4.1",
+      "purl": "pkg:npm/uri-js@4.4.1",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/uri-js"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "eeb294cb2df7435c9cf7ca50d430262edc17d74f45ed321f5a55b561da3c5a5d628b549e1e279e8741c77cf78bd9f3172bacf4b3c79c2acf5fac2b8b26f9dd06"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "BSD-2-Clause"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/uri-js/-/uri-js-4.4.1.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:18b979e2b40c55be9b670ca0928db1885d7c8f92580308c7e1491ad6b1a90bcb",
+      "name": "which",
+      "version": "2.0.2",
+      "purl": "pkg:npm/which@2.0.2",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/which"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "04b2374e5d535b73ef97bd25df2ab763ae22f9ac29c17aac181616924a8cb676d782b303fb28fbae15b492e103c7325a6171a3116e6881aa4a34c10a34c8e26c"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "ISC"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/which/-/which-2.0.2.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:4e1c7600ffad9d23976b17480deb4607f03f00e3364d8800752af4b7e95960c9",
+      "name": "word-wrap",
+      "version": "1.2.5",
+      "purl": "pkg:npm/word-wrap@1.2.5",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/word-wrap"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "04ddb607979a30c23d50cb63ac677983978260fa423c3532d052576d8b1a4f9cd8c6314e7244b9dd2403137a56915a16a475d56f706b61c10de13c1ae7907970"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/word-wrap/-/word-wrap-1.2.5.tgz"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "urn:hepta:npm-lock-component:45069f267cb16c12e0a960ceda68d7f8b0827dd32ed84c20ebac4d3b9d1af443",
+      "name": "yocto-queue",
+      "version": "0.1.0",
+      "purl": "pkg:npm/yocto-queue@0.1.0",
+      "properties": [
+        {
+          "name": "hepta:npm:package-lock-path",
+          "value": "node_modules/yocto-queue"
+        },
+        {
+          "name": "hepta:npm:development-dependency",
+          "value": "true"
+        },
+        {
+          "name": "hepta:npm:optional-dependency",
+          "value": "false"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-512",
+          "content": "ad592cbec9cd09d27fa2119ceb180fc3237c7a1782c6c88b33c9b1b84fedfe6395a897b03ee3b59a22e94c74224604ca08b7b12f831e00555a82db3b1e6359d9"
+        }
+      ],
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "externalReferences": [
+        {
+          "type": "distribution",
+          "url": "https://registry.npmjs.org/yocto-queue/-/yocto-queue-0.1.0.tgz"
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "urn:hepta:npm-lock-component:05577f459761fcd0edb9393d427b4efdf67556300d7adb50fbb3632934d4e0b8",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:0589a887ab65a02011e833ae0548dd591452f3744bd1e777be044bd2aed82dd1",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:84687197c4e087f13ce671b19e89bf78b2575c525c2453c2cadaf1393c9e03e2"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:150c8a3d62543a72d316c7190357557fa086fbd0ff7e21654e14076af59cc859",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:18b979e2b40c55be9b670ca0928db1885d7c8f92580308c7e1491ad6b1a90bcb",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:ad7a544cd7358e54397ff28a1459e560335acfa4762347c337fb7005bdeb7aab"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:19aab0332c6f98fe9455c1001c06424124ce1b6c8001f37f850ae6752599627b",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:1b15276ba21e5183233a1f736862b83258021df8a451d6ab1d36bebdd546cde9",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:150c8a3d62543a72d316c7190357557fa086fbd0ff7e21654e14076af59cc859",
+        "urn:hepta:npm-lock-component:2570949addd2d3c12b9425056ff7cef1618a93158304d177c0d0f32d943c3ad5",
+        "urn:hepta:npm-lock-component:cd48cf99875ba81c5f6c254e1d0c61bdbfd9d7a9675ded8e791c7052a2d7fad1",
+        "urn:hepta:npm-lock-component:efc6d71d17b1633c00825bd5a16af8697dcb68b34555a0c178407449d0909dbb"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:2570949addd2d3c12b9425056ff7cef1618a93158304d177c0d0f32d943c3ad5",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:25d975ddfe4d68ba3a3aca541a7f5da4ab646b52839aa6a0e651286fe4b17e3e",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:2615aa082d9cd6b4dc06da2f99589753a21cbeefb87871f8e15b739f64dc758a",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:4357a6d62f3b9b9a0bccb6bbd6c13be04247014857bb3c676b8376647acbcd5e",
+        "urn:hepta:npm-lock-component:9fd3488b4bf381c9006913b99b21b2ee56a9b1ca2a4109d44bd15c89845d706e",
+        "urn:hepta:npm-lock-component:d1d40ed6454bd17e1f7167ef3bc2c4eb6c13e18efda0a661c6c1da3aac21e710"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:271deb72c5722169e85629583650999b317c7b177ccae63ae5eebe68ca032d51",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:2b0d45a113391cefe70aa5afe780e8fadad9f198ec631f2161b7b83703c8e268",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:271deb72c5722169e85629583650999b317c7b177ccae63ae5eebe68ca032d51",
+        "urn:hepta:npm-lock-component:79e41483031d1cd0e53648f00cd886e33f56b0526c4a35706859e4b95225ab5e"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:2b4f77cdc5583a4b454a3c3d62d50002f658783b6918f26070e8daebb85bc060",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:e440c3dbd28cb848dcd61f5bae9c16407d2ed19470221f39bcf083de8856e122",
+        "urn:hepta:npm-lock-component:ff8208f44a386d16c34430c52023e894c48b7d93d9428c6496f20e2ad6c73a44"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:2c622e4b8b23d6f1f44cb348289bf874e41ca0aa43b190e26d9313a9cce32bc7",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:cd48cf99875ba81c5f6c254e1d0c61bdbfd9d7a9675ded8e791c7052a2d7fad1"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:2d40e6c7d1308b0b26722966f36fffca5bb97e7f1825c5db73b9b98eb193efa6",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:ff8208f44a386d16c34430c52023e894c48b7d93d9428c6496f20e2ad6c73a44"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:34c8399ea982a2d6609a564cda9234f5bc1ac481317bbc022c81b89f4e83e658",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:05577f459761fcd0edb9393d427b4efdf67556300d7adb50fbb3632934d4e0b8",
+        "urn:hepta:npm-lock-component:1b15276ba21e5183233a1f736862b83258021df8a451d6ab1d36bebdd546cde9",
+        "urn:hepta:npm-lock-component:2570949addd2d3c12b9425056ff7cef1618a93158304d177c0d0f32d943c3ad5",
+        "urn:hepta:npm-lock-component:2615aa082d9cd6b4dc06da2f99589753a21cbeefb87871f8e15b739f64dc758a",
+        "urn:hepta:npm-lock-component:2b0d45a113391cefe70aa5afe780e8fadad9f198ec631f2161b7b83703c8e268",
+        "urn:hepta:npm-lock-component:2b4f77cdc5583a4b454a3c3d62d50002f658783b6918f26070e8daebb85bc060",
+        "urn:hepta:npm-lock-component:2c622e4b8b23d6f1f44cb348289bf874e41ca0aa43b190e26d9313a9cce32bc7",
+        "urn:hepta:npm-lock-component:2d40e6c7d1308b0b26722966f36fffca5bb97e7f1825c5db73b9b98eb193efa6",
+        "urn:hepta:npm-lock-component:3888f9f8aea9e03d128a24cf43b5b49855bedfda24c23ce103224ee1d954cf72",
+        "urn:hepta:npm-lock-component:4cffc9aad9f4c92328fa232b66c30b916e141beb62dc8cd6089ea32d9fb5ec0d",
+        "urn:hepta:npm-lock-component:62fa04daa18fb485f33b0ea8e7d6c3f434192d95c3bf8b9abc9698d648fdfc50",
+        "urn:hepta:npm-lock-component:6a3ec9c805556dbff3393c3ca475c8698d3372246116cca82a5421c8f486ab66",
+        "urn:hepta:npm-lock-component:71731f6cbe09f5b5fc5ff4e0fe96aaefce411eb05b21b1301ea4bc6b65d99c0a",
+        "urn:hepta:npm-lock-component:71fbe637b05b4d27280aab8136d623390eacbf70fc7d44a925eee0eb3f89ae68",
+        "urn:hepta:npm-lock-component:738446e71cf22b7d588e5313360a0be3625275f1111d26248df3ea16469afb37",
+        "urn:hepta:npm-lock-component:788ecfc5b53c3cd2f1ca4b175a53809de571572d0682af1eee62caa01b3a0c68",
+        "urn:hepta:npm-lock-component:95ecba6dd4d8021548349ab341cdfab408614738380f278f30ff37ef4f3b6c05",
+        "urn:hepta:npm-lock-component:97a78aeae899cd0fe3dc0e112f21028d7b28a2ace3d4b839b7114e8d97b67162",
+        "urn:hepta:npm-lock-component:9bc8ebb55a492b4b4b437157aeb3a549b3b97cefced51b717822c9968d93468d",
+        "urn:hepta:npm-lock-component:b1ac21ad45b750ac9bad82fae727b48d1a37ad0ddbfca5265591aea8857545c2",
+        "urn:hepta:npm-lock-component:c63adb6a52b3df5a236a4d90078b9417a5b2969096b7dcab998716d894098a4b",
+        "urn:hepta:npm-lock-component:cad5986d18a61b5b538baa9e2f152d3b9ca92771d347b2a77b4d0fbdad4e3338",
+        "urn:hepta:npm-lock-component:cc2b9033f42d87216591c248bd6d7a8e2c7f7af6a1082451813f5706d025c56b",
+        "urn:hepta:npm-lock-component:d1d40ed6454bd17e1f7167ef3bc2c4eb6c13e18efda0a661c6c1da3aac21e710",
+        "urn:hepta:npm-lock-component:d41279e64e0098d00596f007f7f178256aa83c8d26817ab53d40d222390afb16",
+        "urn:hepta:npm-lock-component:d5dafb6b84f8a06efad11b0761ffb315f2b906054218763ccf2dda7c1a7e8084",
+        "urn:hepta:npm-lock-component:f2128e860749338734e43c7eddac653047642c0ac11046bc225882710b8df836",
+        "urn:hepta:npm-lock-component:f2e2e4fd26de67dadfa55996748f1d59b38c2506503b34ab9cc71a173c0cdf5c",
+        "urn:hepta:npm-lock-component:fd06d9f5bf47d7313d4942749beff36affafaf723ff9310b84a18a6ec494f5de",
+        "urn:hepta:npm-lock-component:ff8208f44a386d16c34430c52023e894c48b7d93d9428c6496f20e2ad6c73a44"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:35b2acd1b74ce8a9b8605bd1f5386ee352acc84adde460b8aae94724d657b212",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:3888f9f8aea9e03d128a24cf43b5b49855bedfda24c23ce103224ee1d954cf72",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:4357a6d62f3b9b9a0bccb6bbd6c13be04247014857bb3c676b8376647acbcd5e",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:9fd3488b4bf381c9006913b99b21b2ee56a9b1ca2a4109d44bd15c89845d706e"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:43662699bdfb51a0be2f0d69d384cafc2e2ab616083d9d8336d46402ff62e99a",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:619d2c2e35e4d8bcb7e7cb81112ecd96cffbf0fcd39ec06b03983dd1228ebe91"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:45069f267cb16c12e0a960ceda68d7f8b0827dd32ed84c20ebac4d3b9d1af443",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:4cffc9aad9f4c92328fa232b66c30b916e141beb62dc8cd6089ea32d9fb5ec0d",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:7439db2b9ac2a6ffef6e89452df208975a07652cc52277644214074c7a654c98"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:4e1c7600ffad9d23976b17480deb4607f03f00e3364d8800752af4b7e95960c9",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:5f9964b89f79b2428a1f9b0e77436470997ef893b38e6b99e501bdf6ebf51550",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:619d2c2e35e4d8bcb7e7cb81112ecd96cffbf0fcd39ec06b03983dd1228ebe91",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:62fa04daa18fb485f33b0ea8e7d6c3f434192d95c3bf8b9abc9698d648fdfc50",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:667986f9aae46fdb0e13d9a237dc22ccb2e65dcd741d08f50dd8b6acb7095277",
+        "urn:hepta:npm-lock-component:95ecba6dd4d8021548349ab341cdfab408614738380f278f30ff37ef4f3b6c05",
+        "urn:hepta:npm-lock-component:a1aa7e0969c15f34540d0b07a88d74a2f93bf04ecf1b421f6dc83c478cbf83a2"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:63f231e769a1729f9ed6cdc823669deedb39f41adb15726995570b86ffc29728",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:667986f9aae46fdb0e13d9a237dc22ccb2e65dcd741d08f50dd8b6acb7095277",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:6a3ec9c805556dbff3393c3ca475c8698d3372246116cca82a5421c8f486ab66",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:71731f6cbe09f5b5fc5ff4e0fe96aaefce411eb05b21b1301ea4bc6b65d99c0a",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:71fbe637b05b4d27280aab8136d623390eacbf70fc7d44a925eee0eb3f89ae68",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:9f847c3d04473988bc992e1c5ea557775ca1c3aff876805a1af4b05efe8afc78"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:738446e71cf22b7d588e5313360a0be3625275f1111d26248df3ea16469afb37",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:8027601d7213d80158e8fa38a29974e71205e377e54f3c6e4754169e42693aaa",
+        "urn:hepta:npm-lock-component:941dee8736515a6f76806b6a2cbce1a5826365a54508cdffd8eaed64aea3dbaa",
+        "urn:hepta:npm-lock-component:bed29d3e1ce8bfdcef9ec06f76dd581fc42d728414319aee78800395c3f36a46",
+        "urn:hepta:npm-lock-component:c63adb6a52b3df5a236a4d90078b9417a5b2969096b7dcab998716d894098a4b"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:7439db2b9ac2a6ffef6e89452df208975a07652cc52277644214074c7a654c98",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:77b724785c5d5dbce835aed12643db14b522302d587e8ee081681fe531a9f6ef",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:dda085ef51dc1abc51e38e6bbe22bf7159a8206f2c7a0e31d61dcad7333be617"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:788ecfc5b53c3cd2f1ca4b175a53809de571572d0682af1eee62caa01b3a0c68",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:bfb0e76c7d5f8287beb6dbd71fa72fac68dea235c9e602075ad74cf825c129ab"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:79e41483031d1cd0e53648f00cd886e33f56b0526c4a35706859e4b95225ab5e",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:c2db7c5e07b97ef5a1c59f163762c347b652e86773b8b2fd84f74a01107ffd0b"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:8027601d7213d80158e8fa38a29974e71205e377e54f3c6e4754169e42693aaa",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:9cb34a612cfa64f048d2a4b44a7d1063ed4a18115c3c5671b1dc2df054b7b8c5"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:84687197c4e087f13ce671b19e89bf78b2575c525c2453c2cadaf1393c9e03e2",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:941dee8736515a6f76806b6a2cbce1a5826365a54508cdffd8eaed64aea3dbaa",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:95ecba6dd4d8021548349ab341cdfab408614738380f278f30ff37ef4f3b6c05",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:96779998e4e7625a7999224bdc7e2a4367642a10b977062d504ef210e413cffc",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:97a78aeae899cd0fe3dc0e112f21028d7b28a2ace3d4b839b7114e8d97b67162",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:63f231e769a1729f9ed6cdc823669deedb39f41adb15726995570b86ffc29728"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:9bc8ebb55a492b4b4b437157aeb3a549b3b97cefced51b717822c9968d93468d",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:9cb34a612cfa64f048d2a4b44a7d1063ed4a18115c3c5671b1dc2df054b7b8c5",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:9e83ab61ada43c428bb243d695cf27c4a84692c1cd5240d61edac4a742715a95",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:9f847c3d04473988bc992e1c5ea557775ca1c3aff876805a1af4b05efe8afc78",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:9fd3488b4bf381c9006913b99b21b2ee56a9b1ca2a4109d44bd15c89845d706e",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:a1aa7e0969c15f34540d0b07a88d74a2f93bf04ecf1b421f6dc83c478cbf83a2",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:ad7a544cd7358e54397ff28a1459e560335acfa4762347c337fb7005bdeb7aab",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:b1ac21ad45b750ac9bad82fae727b48d1a37ad0ddbfca5265591aea8857545c2",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:bed29d3e1ce8bfdcef9ec06f76dd581fc42d728414319aee78800395c3f36a46",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:bfb0e76c7d5f8287beb6dbd71fa72fac68dea235c9e602075ad74cf825c129ab",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:25d975ddfe4d68ba3a3aca541a7f5da4ab646b52839aa6a0e651286fe4b17e3e",
+        "urn:hepta:npm-lock-component:cb47340b73f91bf9f80711cc5682f9cf8c92f76de6134c4576acb9cd0d9079dc"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:c2db7c5e07b97ef5a1c59f163762c347b652e86773b8b2fd84f74a01107ffd0b",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:c399a0f1f96e168d361afcfb89dba3610e3b8cb0c866e70a0db13c4cda8a81f4"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:c399a0f1f96e168d361afcfb89dba3610e3b8cb0c866e70a0db13c4cda8a81f4",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:45069f267cb16c12e0a960ceda68d7f8b0827dd32ed84c20ebac4d3b9d1af443"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:c63adb6a52b3df5a236a4d90078b9417a5b2969096b7dcab998716d894098a4b",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:cad5986d18a61b5b538baa9e2f152d3b9ca92771d347b2a77b4d0fbdad4e3338",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:cb47340b73f91bf9f80711cc5682f9cf8c92f76de6134c4576acb9cd0d9079dc",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:e04e35a821239f83b36b29a8dfb63d6e5caacb80db8946deab5903e10c0fd510"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:cc2b9033f42d87216591c248bd6d7a8e2c7f7af6a1082451813f5706d025c56b",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:5f9964b89f79b2428a1f9b0e77436470997ef893b38e6b99e501bdf6ebf51550",
+        "urn:hepta:npm-lock-component:71fbe637b05b4d27280aab8136d623390eacbf70fc7d44a925eee0eb3f89ae68",
+        "urn:hepta:npm-lock-component:f2e2e4fd26de67dadfa55996748f1d59b38c2506503b34ab9cc71a173c0cdf5c"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:cd48cf99875ba81c5f6c254e1d0c61bdbfd9d7a9675ded8e791c7052a2d7fad1",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:d1d40ed6454bd17e1f7167ef3bc2c4eb6c13e18efda0a661c6c1da3aac21e710",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:d41279e64e0098d00596f007f7f178256aa83c8d26817ab53d40d222390afb16",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:19aab0332c6f98fe9455c1001c06424124ce1b6c8001f37f850ae6752599627b",
+        "urn:hepta:npm-lock-component:4e1c7600ffad9d23976b17480deb4607f03f00e3364d8800752af4b7e95960c9",
+        "urn:hepta:npm-lock-component:77b724785c5d5dbce835aed12643db14b522302d587e8ee081681fe531a9f6ef",
+        "urn:hepta:npm-lock-component:96779998e4e7625a7999224bdc7e2a4367642a10b977062d504ef210e413cffc",
+        "urn:hepta:npm-lock-component:dda085ef51dc1abc51e38e6bbe22bf7159a8206f2c7a0e31d61dcad7333be617",
+        "urn:hepta:npm-lock-component:e440c3dbd28cb848dcd61f5bae9c16407d2ed19470221f39bcf083de8856e122"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:d5dafb6b84f8a06efad11b0761ffb315f2b906054218763ccf2dda7c1a7e8084",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:0589a887ab65a02011e833ae0548dd591452f3744bd1e777be044bd2aed82dd1",
+        "urn:hepta:npm-lock-component:18b979e2b40c55be9b670ca0928db1885d7c8f92580308c7e1491ad6b1a90bcb",
+        "urn:hepta:npm-lock-component:9e83ab61ada43c428bb243d695cf27c4a84692c1cd5240d61edac4a742715a95"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:dda085ef51dc1abc51e38e6bbe22bf7159a8206f2c7a0e31d61dcad7333be617",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:e04e35a821239f83b36b29a8dfb63d6e5caacb80db8946deab5903e10c0fd510",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:e440c3dbd28cb848dcd61f5bae9c16407d2ed19470221f39bcf083de8856e122",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:77b724785c5d5dbce835aed12643db14b522302d587e8ee081681fe531a9f6ef",
+        "urn:hepta:npm-lock-component:dda085ef51dc1abc51e38e6bbe22bf7159a8206f2c7a0e31d61dcad7333be617"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:e93063a28038c2b4e4547aa440a323243c6889affc90e43f7901daf79f9cb93a",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:34c8399ea982a2d6609a564cda9234f5bc1ac481317bbc022c81b89f4e83e658",
+        "urn:hepta:npm-lock-component:62fa04daa18fb485f33b0ea8e7d6c3f434192d95c3bf8b9abc9698d648fdfc50"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:efc6d71d17b1633c00825bd5a16af8697dcb68b34555a0c178407449d0909dbb",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:cd48cf99875ba81c5f6c254e1d0c61bdbfd9d7a9675ded8e791c7052a2d7fad1"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:f2128e860749338734e43c7eddac653047642c0ac11046bc225882710b8df836",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:97a78aeae899cd0fe3dc0e112f21028d7b28a2ace3d4b839b7114e8d97b67162"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:f2e2e4fd26de67dadfa55996748f1d59b38c2506503b34ab9cc71a173c0cdf5c",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:43662699bdfb51a0be2f0d69d384cafc2e2ab616083d9d8336d46402ff62e99a"
+      ]
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:fd06d9f5bf47d7313d4942749beff36affafaf723ff9310b84a18a6ec494f5de",
+      "dependsOn": []
+    },
+    {
+      "ref": "urn:hepta:npm-lock-component:ff8208f44a386d16c34430c52023e894c48b7d93d9428c6496f20e2ad6c73a44",
+      "dependsOn": [
+        "urn:hepta:npm-lock-component:35b2acd1b74ce8a9b8605bd1f5386ee352acc84adde460b8aae94724d657b212"
+      ]
+    }
+  ]
+}

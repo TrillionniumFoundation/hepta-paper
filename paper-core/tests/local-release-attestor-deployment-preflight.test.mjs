@@ -49,8 +49,10 @@ function runPreflight(value) {
   ], { cwd: WORKSPACE_ROOT, encoding: 'utf8' });
 }
 
-function runInstaller(root) {
-  return spawnSync(INSTALLER, ['--root', root, '--no-systemctl'], {
+function runInstaller(root, extraArguments = []) {
+  return spawnSync(INSTALLER, [
+    '--root', root, '--no-systemctl', ...extraArguments,
+  ], {
     cwd: WORKSPACE_ROOT,
     encoding: 'utf8',
     timeout: 30_000,
@@ -189,14 +191,69 @@ test('actual installer rejects v1, unknown, and out-of-range config with zero ta
     }
 });
 
+test('host installer parses explicit full-auto requests but blocks them before target mutation',
+  (t) => {
+    const root = fixtureRoot(t, 'hepta-full-auto-install-blocked-');
+    const before = contentSnapshot(root);
+    const result = runInstaller(root, ['--enable-full-auto']);
+    assert.equal(result.status, 78, result.stderr);
+    assert.match(
+      result.stderr,
+      /hepta_full_auto_enable_blocked:non_mutating_accepted_readiness_preflight_unavailable/,
+    );
+    assert.match(result.stderr, /production hold remains required/);
+    assert.deepEqual(contentSnapshot(root), before);
+    assert.equal(fs.existsSync(path.join(root, 'usr')), false);
+    assert.equal(fs.existsSync(path.join(root, 'etc')), false);
+
+    const duplicate = runInstaller(root, [
+      '--enable-full-auto',
+      '--enable-full-auto',
+    ]);
+    assert.equal(duplicate.status, 64, duplicate.stderr);
+    assert.match(duplicate.stderr, /duplicate option: --enable-full-auto/);
+    assert.deepEqual(contentSnapshot(root), before);
+  });
+
+test('host installer defaults to a persistent hold with no implicit automation start', () => {
+  const source = fs.readFileSync(INSTALLER, 'utf8');
+  const systemdTransaction = source.slice(source.indexOf(
+    'if [ "$manage_systemd" = yes ]; then',
+  ));
+  const enabledUnits = systemdTransaction.match(
+    /systemctl enable \\\n([\s\S]*?)\n  \/usr\/bin\/systemctl stop/,
+  )?.[1] || '';
+  for (const unit of [
+    'autonomous-research-supervisor.service',
+    'autonomous-submission-dispatcher.service',
+    'strict-full-auto-acceptance.service',
+    'strict-full-auto-acceptance.timer',
+  ]) {
+    assert.match(
+      systemdTransaction,
+      new RegExp(`systemctl disable --now[\\s\\S]*${unit.replaceAll('.', '\\.')}`),
+      unit,
+    );
+    assert.doesNotMatch(enabledUnits, new RegExp(unit.replaceAll('.', '\\.')), unit);
+  }
+  assert.doesNotMatch(
+    systemdTransaction,
+    /systemctl (?:start|restart)(?: --no-block)? [^\n]*(?:autonomous-research-supervisor|autonomous-submission-dispatcher|strict-full-auto-acceptance)/,
+  );
+  assert.match(systemdTransaction, /production hold active/);
+});
+
 test('host installer orders candidate preflight before compiler, install, and restart', () => {
   const source = fs.readFileSync(INSTALLER, 'utf8');
+  const fullAutoBlocker = source.indexOf('hepta_full_auto_enable_blocked:');
   const preflight = source.indexOf('--preflight-configuration-pair');
   const compiler = source.indexOf('compiler=/usr/bin/cc');
   const install = source.indexOf('/usr/bin/install -d');
   const restart = source.indexOf(
     '/usr/bin/systemctl restart hepta-paper-release-attestor.service',
   );
+  assert.ok(fullAutoBlocker > 0);
+  assert.ok(fullAutoBlocker < preflight);
   assert.ok(preflight > 0);
   assert.ok(preflight < compiler);
   assert.ok(compiler < install);

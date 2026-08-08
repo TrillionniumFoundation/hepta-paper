@@ -14,9 +14,17 @@ import {
   isSeedClusterInferenceProfile,
 } from './academic-analysis-inference-profile.mjs';
 import {
+  LOCAL_GOLDEN_DATASET_AUTHORITY_SCOPE,
+  LOCAL_GOLDEN_DATASET_EVIDENCE_CLASS,
+  isLocalGoldenDatasetAuthority,
   isOperatorDatasetBenchmarkFamily,
   validateOperatorDatasetAuthorityDocument,
 } from './operator-dataset-harness-contract.mjs';
+
+export {
+  LOCAL_GOLDEN_DATASET_AUTHORITY_SCOPE,
+  LOCAL_GOLDEN_DATASET_EVIDENCE_CLASS,
+};
 import {
   AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_PACKAGE,
   AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_REGISTRY,
@@ -43,6 +51,18 @@ const METRIC_SPECS = Object.freeze(Object.fromEntries(
 ));
 
 const BENCHMARK_HARNESS_VERSION = 1;
+
+function localGoldenDatasetMount(datasetMount) {
+  return Boolean(datasetMount
+    && isLocalGoldenDatasetAuthority(datasetMount.operatorDatasetAuthority));
+}
+
+function datasetAssuranceScope(datasetMount) {
+  if (!datasetMount) return 'synthetic-conformance-only-not-academic-promotion-v1';
+  return localGoldenDatasetMount(datasetMount)
+    ? 'local-operator-hidden-evaluation-only-v1'
+    : 'operator-authorized-hidden-evaluation-v1';
+}
 
 function expandedDeterministicSeedSchedule(seedSchedule, requiredCount, benchmarkFamily) {
   const expanded = [...seedSchedule];
@@ -72,7 +92,7 @@ function benchmarkHarness(benchmarkId, profile, datasetMount) {
     observationSchema: 'repository-challenge-keyed-candidate-responses-v1',
     aggregation: 'repository-evaluator-from-hidden-oracle-events-v1',
     fixtureAuthority: 'repository-owned-deterministic-public-challenge-with-host-held-oracle-v1',
-    assuranceScope: datasetMount ? 'operator-authorized-hidden-evaluation-v1' : 'synthetic-conformance-only-not-academic-promotion-v1',
+    assuranceScope: datasetAssuranceScope(datasetMount),
     arms: ['treatment', 'baseline', 'ablation'],
     requiredMetrics: [...profile.requiredMetrics],
     metricSpecs: profile.metricSpecs,
@@ -95,6 +115,7 @@ function benchmarkHarness(benchmarkId, profile, datasetMount) {
 }
 
 function buildExperimentDesign(benchmarkId, datasetMount, empiricalClaimUniverse = null) {
+  const localGolden = localGoldenDatasetMount(datasetMount);
   const benchmarkFamily = datasetMount?.benchmarkFamily || benchmarkId;
   const baseProfile = BUILTIN_BENCHMARKS[benchmarkFamily];
   const metricSpecs = METRIC_SPECS[benchmarkFamily];
@@ -173,7 +194,7 @@ function buildExperimentDesign(benchmarkId, datasetMount, empiricalClaimUniverse
     benchmarkId,
     benchmarkFamily,
     protocol: datasetMount ? 'authorized_dataset_comparison' : 'builtin_controlled_benchmark',
-    assuranceScope: datasetMount ? 'operator-authorized-hidden-evaluation-v1' : 'synthetic-conformance-only-not-academic-promotion-v1',
+    assuranceScope: datasetAssuranceScope(datasetMount),
     seedSchedule: scheduledProfile.seedSchedule,
     minimumRepetitions: scheduledProfile.minimumRepetitions,
     requiredMetrics: scheduledProfile.requiredMetrics,
@@ -187,10 +208,14 @@ function buildExperimentDesign(benchmarkId, datasetMount, empiricalClaimUniverse
     } : {}),
     analysisProtocolAuthority: empiricalClaimUniverse
       ? (datasetMount
-        ? 'operator-signed-template-plus-system-owned-manuscript-claim-binding-v1'
+        ? (localGolden
+          ? 'local-operator-signed-template-plus-system-owned-manuscript-claim-binding-v1'
+          : 'operator-signed-template-plus-system-owned-manuscript-claim-binding-v1')
         : 'repository-template-plus-system-owned-manuscript-claim-binding-v1')
       : (datasetMount
-        ? 'operator-signed-dataset-harness-authority-v1'
+        ? (localGolden
+          ? 'local-operator-signed-dataset-harness-authority-v1'
+          : 'operator-signed-dataset-harness-authority-v1')
         : 'repository-owned-synthetic-conformance-protocol-v1'),
     requireBaseline: true,
     requireAblation: true,
@@ -218,6 +243,13 @@ function buildExperimentDesign(benchmarkId, datasetMount, empiricalClaimUniverse
     datasetSplitManifestHash: datasetMount?.splitManifestHash || null,
     operatorDatasetHarnessDefinitionHash: datasetMount?.benchmarkHarnessDefinitionHash || null,
     operatorDatasetHarnessDocumentHash: datasetMount?.benchmarkHarnessDocumentHash || null,
+    ...(localGolden ? {
+      authorityScope: LOCAL_GOLDEN_DATASET_AUTHORITY_SCOPE,
+      evidenceClass: LOCAL_GOLDEN_DATASET_EVIDENCE_CLASS,
+      academicPromotionEligible: false,
+      externalTrustClaimed: false,
+      localGoldenRuntimeScope: datasetMount.operatorDatasetAuthority.localGoldenRuntimeScope,
+    } : {}),
     benchmarkHarness: harness,
     benchmarkHarnessHash: harness.benchmarkHarnessHash,
   };
@@ -281,10 +313,19 @@ export function buildCampaignBenchmarkSelector({ benchmarkId = null, datasetMoun
     || !/^sha256:[0-9a-f]{64}$/i.test(String(datasetMount.benchmarkHarnessDocumentHash || ''))
     || !isOperatorDatasetBenchmarkFamily(datasetMount.benchmarkFamily)
     || !Array.isArray(datasetMount.benchmarkSeedSchedule) || datasetMount.benchmarkSeedSchedule.length < 1
-    || !Number.isSafeInteger(Number(datasetMount.benchmarkMinimumRepetitions)))) {
+    || !Number.isSafeInteger(Number(datasetMount.benchmarkMinimumRepetitions))
+    || (isLocalGoldenDatasetAuthority(datasetAuthority?.authority) && (
+      datasetMount.authorityScope !== LOCAL_GOLDEN_DATASET_AUTHORITY_SCOPE
+      || datasetMount.evidenceClass !== LOCAL_GOLDEN_DATASET_EVIDENCE_CLASS
+      || datasetMount.academicPromotionEligible !== false
+      || datasetMount.externalTrustClaimed !== false
+      || JSON.stringify(datasetMount.localGoldenRuntimeScope)
+        !== JSON.stringify(datasetAuthority.authority.localGoldenRuntimeScope)
+    )))) {
     throw new Error(`campaign_benchmark_dataset_authorization_invalid:${id}`);
   }
   const experimentDesign = buildExperimentDesign(id, datasetMount, empiricalClaimUniverse);
+  const localGolden = localGoldenDatasetMount(datasetMount);
   const templateSelector = empiricalClaimUniverse
     ? buildCampaignBenchmarkSelector({ benchmarkId: id, datasetMounts, empiricalClaimUniverse: null })
     : null;
@@ -310,6 +351,13 @@ export function buildCampaignBenchmarkSelector({ benchmarkId = null, datasetMoun
     readOnlyDataset: datasetMount ? datasetMount.readOnly === true : null,
     experimentDesign,
     experimentDesignHash: experimentDesign.experimentDesignHash,
+    ...(localGolden ? {
+      authorityScope: LOCAL_GOLDEN_DATASET_AUTHORITY_SCOPE,
+      evidenceClass: LOCAL_GOLDEN_DATASET_EVIDENCE_CLASS,
+      academicPromotionEligible: false,
+      externalTrustClaimed: false,
+      localGoldenRuntimeScope: datasetMount.operatorDatasetAuthority.localGoldenRuntimeScope,
+    } : {}),
   };
   return Object.freeze({
     ...payload,

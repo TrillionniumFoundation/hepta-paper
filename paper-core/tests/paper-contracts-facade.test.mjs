@@ -7,7 +7,7 @@ import * as research from '../../paper-domain/contracts/research-contracts.mjs';
 import * as workflow from '../../paper-domain/contracts/workflow-contracts.mjs';
 import * as venue from '../../paper-domain/contracts/venue-contracts.mjs';
 
-test('paper-contracts remains a thin compatibility facade over bounded modules', () => {
+test('canonical contracts index exposes the bounded contract modules', () => {
   assert.equal(Object.keys(facade).length, 78);
   for (const module of [product, proposal, research, workflow, venue]) {
     for (const [name, value] of Object.entries(module)) assert.equal(facade[name], value, name);

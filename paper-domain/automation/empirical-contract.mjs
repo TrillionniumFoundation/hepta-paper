@@ -1,4 +1,9 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  LOCAL_GOLDEN_DATASET_AUTHORITY_SCOPE,
+  LOCAL_GOLDEN_DATASET_EVIDENCE_CLASS,
+  isLocalGoldenDatasetAuthority,
+} from './operator-dataset-harness-contract.mjs';
 
 export function datasetEnvironmentName(name) {
   return `HEPTA_DATASET_${String(name || '').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '').toUpperCase() || 'DATASET'}`;
@@ -109,6 +114,13 @@ export function normalizeDatasetMounts(mounts = []) {
       ...(mount?.operatorDatasetResearchSemanticsHash ? {
         operatorDatasetResearchSemanticsHash: mount.operatorDatasetResearchSemanticsHash,
       } : {}),
+      ...(mount?.authorityScope ? {
+        authorityScope: String(mount.authorityScope),
+        evidenceClass: String(mount.evidenceClass || ''),
+        academicPromotionEligible: mount.academicPromotionEligible === true,
+        externalTrustClaimed: mount.externalTrustClaimed === true,
+        localGoldenRuntimeScope: mount.localGoldenRuntimeScope,
+      } : {}),
       ...(mount?.operatorDatasetHarnessHandle ? { operatorDatasetHarnessHandle: mount.operatorDatasetHarnessHandle } : {}),
       ...(mount?.splitManifestHash ? { splitManifestHash: mount.splitManifestHash } : {}),
       ...(mount?.benchmarkHarnessDocumentHash ? { benchmarkHarnessDocumentHash: mount.benchmarkHarnessDocumentHash } : {}),
@@ -128,6 +140,17 @@ export function normalizeDatasetMounts(mounts = []) {
     if (normalized.licenseId.startsWith('LicenseRef-') && !/^sha256:[0-9a-f]{64}$/i.test(String(normalized.operatorAuthorizationHash || ''))) blockers.push('dataset_operator_authorization_missing');
     if (normalized.operatorDatasetAuthorityDocumentHash
       && normalized.operatorAuthorizationHash !== normalized.operatorDatasetAuthorityDocumentHash) blockers.push('dataset_operator_authority_identity_mismatch');
+    const localGoldenAuthorityVersion = normalized.operatorDatasetAuthority?.version === 4;
+    if ((localGoldenAuthorityVersion || normalized.authorityScope) && (
+      normalized.authorityScope !== LOCAL_GOLDEN_DATASET_AUTHORITY_SCOPE
+      || normalized.evidenceClass !== LOCAL_GOLDEN_DATASET_EVIDENCE_CLASS
+      || normalized.academicPromotionEligible !== false
+      || normalized.externalTrustClaimed !== false
+      || normalized.localGoldenRuntimeScope?.kind !== 'LocalGoldenDatasetRuntimeScope'
+      || !isLocalGoldenDatasetAuthority(normalized.operatorDatasetAuthority)
+      || JSON.stringify(normalized.localGoldenRuntimeScope)
+        !== JSON.stringify(normalized.operatorDatasetAuthority.localGoldenRuntimeScope)
+    )) blockers.push('dataset_local_golden_authority_scope_invalid');
     if (normalized.splitManifestHash && !/^sha256:[0-9a-f]{64}$/i.test(String(normalized.splitManifestHash))) blockers.push('dataset_split_manifest_hash_invalid');
     for (const field of ['operatorDatasetHarnessHandle', 'operatorDatasetAuthorityDocumentHash', 'operatorDatasetResearchSemanticsHash', 'benchmarkHarnessDocumentHash', 'benchmarkHarnessDefinitionHash', 'analysisProtocolHash']) {
       if (normalized[field] && !/^sha256:[0-9a-f]{64}$/i.test(String(normalized[field]))) blockers.push(`dataset_${field}_invalid`);

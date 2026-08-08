@@ -296,6 +296,31 @@ const ROUTES = Object.freeze([
   }),
   route({
     group: 'operator',
+    name: 'local-golden-dataset-provision',
+    argv: ['node', 'paper-core/bin/local-golden-dataset-provision.mjs'],
+    npmScript: 'automation:local-golden-dataset-provision',
+    mutability: 'argument-dependent',
+    effects: {
+      externalAction: 'none',
+      networkUse: 'none',
+      credentialUse: 'argument-dependent',
+      providerCost: 'none',
+    },
+    forwardingPolicy: 'registry',
+    forwardedArgumentSchema: {
+      booleanFlags: ['execute', 'help'],
+      valueFlags: [
+        'action', 'plan-id', 'runtime-root', 'control-root', 'isolation-id',
+        'dataset-name', 'dataset-root', 'dataset-license-id', 'split-assignments',
+        'harness-definition', 'analysis-protocol', 'research-semantics',
+        'authority-trust-store', 'authority-private-key', 'authority-key-id',
+        'signed-at', 'expires-at', 'mount-output',
+      ],
+      positional: false,
+    },
+  }),
+  route({
+    group: 'operator',
     name: 'strict-full-auto-acceptance',
     argv: ['node', 'paper-core/bin/strict-full-auto-acceptance.mjs'],
     npmScript: 'automation:strict-full-auto-acceptance',

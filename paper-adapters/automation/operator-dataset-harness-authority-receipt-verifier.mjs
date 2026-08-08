@@ -1,5 +1,8 @@
 import { verifyAuthoritySignatures, verifyAuthorityTimeWindow } from '../authority/authority-signatures.mjs';
-import { verifyOperatorDatasetHarnessAuthorityReceiptStructure } from '../../paper-domain/automation/operator-dataset-harness-contract.mjs';
+import {
+  operatorDatasetAuthorityTrustPolicy,
+  verifyOperatorDatasetHarnessAuthorityReceiptStructure,
+} from '../../paper-domain/automation/operator-dataset-harness-contract.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 const MAXIMUM_AUTHORITY_LIFETIME_MS = 31 * 24 * 60 * 60 * 1000;
@@ -28,10 +31,14 @@ export function createOperatorDatasetHarnessAuthorityReceiptVerifier({
     } catch {
       blockers.push('operator_dataset_authority_trust_store_unreadable');
     }
+    const trustPolicy = operatorDatasetAuthorityTrustPolicy(receipt?.authority || null, trustStore);
+    blockers.push(...trustPolicy.blockers.map(
+      (blocker) => `operator_dataset_authority:${blocker}`,
+    ));
     const signatureVerification = verifyAuthoritySignatures({
       document: receipt?.authority || null,
       trustStore,
-      requiredRoles: ['dataset_harness_operator'],
+      requiredRoles: [trustPolicy.requiredRole],
       minSignatures: 1,
     });
     blockers.push(...signatureVerification.blockers.map((blocker) => `operator_dataset_authority:${blocker}`));

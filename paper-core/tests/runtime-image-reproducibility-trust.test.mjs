@@ -345,6 +345,10 @@ test('production configuration requires an exact out-of-band identity pin and si
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const configured = verifierConfiguration(root);
   const environment = { PATH: process.env.PATH };
+  assert.throws(() => readRuntimeImageReproducibilityProcessConfiguration({
+    configPath: configured.configPath,
+    environment: { PATH: '' },
+  }), /runtime_reproducibility_interpreter_not_found/);
   const bounded = readRuntimeImageReproducibilityProcessConfiguration({
     configPath: configured.configPath,
     environment,

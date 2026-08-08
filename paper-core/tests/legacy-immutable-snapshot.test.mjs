@@ -268,17 +268,14 @@ test('a minimal forged immutable status document cannot satisfy release evidence
 });
 
 test('release bundle readiness consumes only the verified immutable selection', () => {
-  const source = fs.readFileSync(
-    path.join(workspaceRoot, 'paper-core', 'bin', 'release-evidence-lib.mjs'),
+  const captureSource = fs.readFileSync(
+    path.join(workspaceRoot, 'paper-core', 'bin', 'release-evidence-input-snapshot.mjs'),
     'utf8',
   );
-  const captureStart = source.indexOf('export function captureReleaseEvidenceInputSnapshot');
-  const buildStart = source.indexOf('export function buildReleaseEvidenceBundle');
-  const buildEnd = source.indexOf('export function writeSignedReleaseEvidence');
-  assert.ok(captureStart >= 0 && buildStart > captureStart);
-  assert.ok(buildStart >= 0 && buildEnd > buildStart);
-  const captureSource = source.slice(captureStart, buildStart);
-  const buildSource = source.slice(buildStart, buildEnd);
+  const buildSource = fs.readFileSync(
+    path.join(workspaceRoot, 'paper-core', 'bin', 'release-evidence-bundle.mjs'),
+    'utf8',
+  );
   assert.match(captureSource, /selectCurrentLegacyImmutableSnapshotReceipt\(\{/u);
   assert.doesNotMatch(buildSource, /selectCurrentLegacyImmutableSnapshotReceipt\(\{/u);
   assert.match(buildSource, /immutableSnapshotEvidence\.releaseEvidenceReady === true/u);

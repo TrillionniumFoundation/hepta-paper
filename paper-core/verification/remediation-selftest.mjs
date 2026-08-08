@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { buildCoreIntegrityReport, compareCoreFileRows } from '../../paper-adapters/runtime/core-integrity.mjs';
 import { heptaStorePath } from '../../paper-adapters/persistence/store-paths.mjs';
 import { summarizeRows } from '../../paper-application/reporting/batch-summary.mjs';
-import * as contractsFacade from '../src/paper-contracts.mjs';
+import * as contractsFacade from '../../paper-domain/contracts/index.mjs';
 import { buildRefereeReviewIntake as buildRefereeReviewIntakeDirect } from '../../paper-domain/contracts/referee-planning.mjs';
 import { buildRefereeApplyApprovalPacket as buildRefereeApplyApprovalPacketDirect } from '../../paper-domain/contracts/referee-application.mjs';
 import { buildRepairReconciliation as buildRepairReconciliationDirect } from '../../paper-domain/contracts/referee-closure.mjs';

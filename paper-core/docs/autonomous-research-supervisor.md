@@ -359,7 +359,12 @@ The installer clears the compiler environment, snapshots an exact regular-file
 allowlist into a root-only build directory, builds the native C helper with the
 checked hardening and warning-as-error flags, records source/compiler/binary
 hashes, installs and re-hashes every fragment/unit/binary, verifies all units,
-reloads systemd, and enables the complete resident chain. A non-mutating host
+reloads systemd, and enables only the core authority, handoff-layout, and
+backup chain. The research supervisor, submission dispatcher, and strict
+acceptance service/timer remain disabled and stopped as the default production
+hold. The explicit `--enable-full-auto` request currently fails before mutation
+because no repository command can prove current accepted readiness without
+acquiring a lease or launching verification processes. A non-mutating host
 image test uses
 `install-hepta-paper-systemd-host.sh --root DESTDIR --no-systemctl`; the
 installed manifest can be verified from that root with `sha256sum -c`.

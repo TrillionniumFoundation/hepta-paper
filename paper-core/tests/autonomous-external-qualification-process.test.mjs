@@ -565,14 +565,15 @@ test('process qualifier and distinct verifier enforce signature, time, and curre
     expiresAt: '2026-07-15T13:00:00.000Z',
   });
   const receiptValue = {
-    ...validReceipt,
-    publicKeyPem: publicKey.export({ type: 'spki', format: 'pem' }),
+    ...validReceipt, publicKeyPem: publicKey.export({ type: 'spki', format: 'pem' }),
   };
   const fixture = processFixture(t, {
     receiptValue,
-    lookupSignerPrivateKey:
-      privateKey.export({ type: 'pkcs8', format: 'pem' }),
+    lookupSignerPrivateKey: privateKey.export({ type: 'pkcs8', format: 'pem' }),
   });
+  assert.throws(() => readExternalResearchQualificationProcessConfiguration(
+    { configPath: fixture.configPath, environment: { PATH: '' } },
+  ), /external_qualification_interpreter_not_found/);
   const fixedVerifierCredentialTime = new Date('2026-07-15T11:59:00.000Z');
   fs.utimesSync(
     fixture.verifierPrivateKeyPath,

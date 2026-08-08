@@ -8,6 +8,12 @@ import {
   matchesRuntimeImageReproducibilityCanonicalBuild,
 } from '../../paper-domain/automation/runtime-image-reproducibility-build-policy.mjs';
 import { restrictedChildEnvironment } from './bounded-child-process.mjs';
+import {
+  createProcessFileContentHasher,
+  inspectProcessExecutableFileIdentity,
+  processExecutableFileIdentityMatches,
+  processInterpreterIdentityHash,
+} from './process-executable-identity.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{2,159}$/;
@@ -24,18 +30,17 @@ const VERIFICATION_COST_AUTHORITIES = new Set([
   'externally_operated_zero_cost',
 ]);
 
-function fileContentHash(candidate) {
-  const descriptor = fs.openSync(candidate, 'r');
-  const digest = crypto.createHash('sha256');
-  const buffer = Buffer.allocUnsafe(1024 * 1024);
-  try {
-    let bytesRead;
-    do {
-      bytesRead = fs.readSync(descriptor, buffer, 0, buffer.length, null);
-      if (bytesRead > 0) digest.update(buffer.subarray(0, bytesRead));
-    } while (bytesRead > 0);
-  } finally { fs.closeSync(descriptor); }
-  return `sha256:${digest.digest('hex')}`;
+const fileContentHash = createProcessFileContentHasher();
+
+function interpreterIdentity(executable, environment) {
+  return processInterpreterIdentityHash({
+    executable,
+    environment,
+    fileContentHash,
+    hashDomain: 'RuntimeReproducibilityInterpreterIdentity',
+    invalidInterpreterError: 'runtime_reproducibility_interpreter_invalid',
+    interpreterNotFoundError: 'runtime_reproducibility_interpreter_not_found',
+  });
 }
 
 function integrityFile(candidate, {
@@ -147,45 +152,6 @@ function credentialRootIdentity(candidate) {
     materialContentHashes: contents.materialContentHashes,
     credentialRootIdentityHash: hashRecord('RuntimeReproducibilityCredentialRootIdentity', payload),
   });
-}
-
-function executableOnPath(program, environment) {
-  for (const directory of String(environment.PATH || '').split(path.delimiter).filter(Boolean)) {
-    const candidate = path.resolve(directory, program);
-    try {
-      const stat = fs.statSync(candidate);
-      if (stat.isFile() && (stat.mode & 0o111) !== 0) return fs.realpathSync(candidate);
-    } catch { /* keep searching */ }
-  }
-  throw new Error('runtime_reproducibility_interpreter_not_found');
-}
-
-function interpreterIdentity(executable, environment) {
-  const descriptor = fs.openSync(executable, 'r');
-  const buffer = Buffer.alloc(4096);
-  let bytes;
-  try { bytes = fs.readSync(descriptor, buffer, 0, buffer.length, 0); }
-  finally { fs.closeSync(descriptor); }
-  const firstLine = buffer.subarray(0, bytes).toString('utf8').split(/\r?\n/, 1)[0];
-  if (!firstLine.startsWith('#!')) return null;
-  const words = firstLine.slice(2).trim().split(/\s+/).filter(Boolean);
-  if (!words.length) throw new Error('runtime_reproducibility_interpreter_invalid');
-  const launcher = fs.realpathSync(words[0]);
-  const executables = [launcher];
-  if (path.basename(launcher) === 'env') {
-    const program = words.find((word, index) => index > 0 && !word.startsWith('-'));
-    if (!program) throw new Error('runtime_reproducibility_interpreter_invalid');
-    executables.push(executableOnPath(program, environment));
-  }
-  return hashRecord('RuntimeReproducibilityInterpreterIdentity', executables.map((candidate) => {
-    const stat = fs.statSync(candidate);
-    return Object.freeze({
-      realpath: candidate,
-      device: String(stat.dev),
-      inode: String(stat.ino),
-      contentHash: fileContentHash(candidate),
-    });
-  }));
 }
 
 function childEnvironmentFor(command, environment) {
@@ -313,16 +279,21 @@ function commandConfiguration(value, configPath, environment, platform) {
   const stat = fs.statSync(executable);
   const credential = credentialRootIdentity(relativeToConfig(value.credentialRoot, configPath));
   const backend = backendConfiguration(value.backend, platform);
+  const executableIdentity = inspectProcessExecutableFileIdentity({
+    executable,
+    fileContentHash,
+    stat,
+  });
   const base = Object.freeze({
     serviceId: String(value.serviceId),
     principalId: String(value.principalId),
     protocol: PROTOCOL,
     configurationDirectory: path.dirname(configPath),
     executable,
-    executableContentHash: fileContentHash(executable),
-    executableDevice: String(stat.dev),
-    executableInode: String(stat.ino),
-    executableUid: Number(stat.uid),
+    executableContentHash: executableIdentity.contentHash,
+    executableDevice: executableIdentity.device,
+    executableInode: executableIdentity.inode,
+    executableUid: executableIdentity.uid,
     credentialRoot: credential.realpath,
     credentialRootIdentityHash: credential.credentialRootIdentityHash,
     credentialRootContentsIdentityHash: credential.contentsIdentityHash,
@@ -548,10 +519,19 @@ export async function invokeRuntimeImageReproducibilityVerifier(command, payload
     command.args,
     path.join(command.configurationDirectory, 'configuration.json'),
   );
-  if (executable !== command.executable || String(stat.dev) !== command.executableDevice
-    || String(stat.ino) !== command.executableInode
-    || Number(stat.uid) !== command.executableUid
-    || fileContentHash(executable) !== command.executableContentHash
+  if (executable !== command.executable
+    || !processExecutableFileIdentityMatches({
+      executable,
+      stat,
+      fileContentHash,
+      includeUid: true,
+      expected: {
+        contentHash: command.executableContentHash,
+        device: command.executableDevice,
+        inode: command.executableInode,
+        uid: command.executableUid,
+      },
+    })
     || credential.credentialRootIdentityHash !== command.credentialRootIdentityHash
     || credential.contentsIdentityHash !== command.credentialRootContentsIdentityHash
     || credential.materialIdentityHash !== command.credentialMaterialIdentityHash

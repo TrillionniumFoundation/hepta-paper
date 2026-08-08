@@ -91,7 +91,12 @@ For reboot-persistent convergence, install
 `paper-core/deploy/strict-full-auto-acceptance.service` and its
 `strict-full-auto-acceptance.timer`, copy
 `paper-core/deploy/strict-full-auto-acceptance.env.example` to
-`/etc/hepta-paper/strict-full-auto-acceptance.env`, and enable the timer.
+`/etc/hepta-paper/strict-full-auto-acceptance.env`. The reviewed host installer
+leaves the timer, service, resident research supervisor, and submission
+dispatcher disabled and stopped. Enable the timer only as a separate reviewed
+activation after the strict operator has produced current accepted readiness;
+`--enable-full-auto` on the installer remains fail-closed until that readiness
+can be proven by a non-mutating repository preflight.
 It starts the resident research and dispatcher units, retries failed preflight
 or external authority checks without a start-limit, and revalidates live
 acceptance every five minutes after each completed run. It does not receive the

@@ -74,7 +74,7 @@ async function sourceText(file) {
 
 async function assertNoOldControlPlaneImports() {
   const files = [
-    'paper-core/src/paper-contracts.mjs',
+    'paper-domain/contracts/index.mjs',
     'paper-core/src/paper-batch-runner.mjs',
     'paper-adapters/inventory/index.mjs',
     'paper-adapters/build-package/index.mjs',

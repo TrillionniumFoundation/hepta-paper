@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "kind": "SourceSupplyChainSecurityPolicy",
+  "assuranceBoundary": {
+    "sast": "bounded_high_confidence_source_patterns_not_complete_program_analysis",
+    "secretScan": "git_tracked_regular_text_files_high_confidence_patterns",
+    "sbom": "local_package_lock_inventory_not_external_attestation",
+    "container": "digest_identity_and_explicit_non_deployable_template_placeholder_policy_not_cve_database_scan"
+  },
+  "sbomPath": "paper-core/config/source-supply-chain-sbom.cdx.json",
+  "secretAllowlist": [
+    {
+      "path": "paper-adapters/build-package/research-execution-release-attestor-configuration.mjs",
+      "ruleId": "pem-private-key",
+      "lineSha256": "sha256:bb0c61d08c3dd59c4a158d0f5b31160914385d30fdc2766697a95ee2461f3897",
+      "reason": "Parser marker used to reject PEM key input; this line contains no private-key material."
+    },
+    {
+      "path": "paper-core/tests/autonomous-research-one-shot-campaign-safety.test.mjs",
+      "ruleId": "openai-project-key",
+      "lineSha256": "sha256:b23f8f97a4d334c297b8bafefa60db12e55a7b71c1673d592a37c6dfee5adfc2",
+      "reason": "Synthetic non-live token fixture used to verify output redaction."
+    },
+    {
+      "path": "paper-core/tests/autonomous-research-one-shot-campaign-safety.test.mjs",
+      "ruleId": "openai-project-key",
+      "lineSha256": "sha256:a7104b01e193834215006fc29c71e090b8a932b9395c54cccb5b61aec67745b3",
+      "reason": "Synthetic non-live token fixture used to verify output redaction."
+    },
+    {
+      "path": "paper-core/tests/autonomous-research-one-shot-campaign-safety.test.mjs",
+      "ruleId": "openai-project-key",
+      "lineSha256": "sha256:d457100460b358a42133c602ab84532b48e6c3da61ac096a1c1bee081f796b35",
+      "reason": "Synthetic non-live token fixture used to verify output redaction."
+    },
+    {
+      "path": "paper-core/tests/autonomous-research-one-shot-campaign-safety.test.mjs",
+      "ruleId": "openai-project-key",
+      "lineSha256": "sha256:e3022cd5e3a1db7f3ad639066201eead460fbd2125ecdc4badcec0639d7571a6",
+      "reason": "Synthetic non-live token fixture used to verify output redaction."
+    },
+    {
+      "path": "paper-core/tests/autonomous-research-resident-deployment-identity.test.mjs",
+      "ruleId": "pem-private-key",
+      "lineSha256": "sha256:4598a48ff998febb6aebc7a3eaa4b392c273b672392c06369429c0dec2b1f0e2",
+      "reason": "Synthetic unreadable private-key marker fixture used to verify fail-closed loading."
+    },
+    {
+      "path": "paper-core/tests/autonomous-research-resident-deployment-identity.test.mjs",
+      "ruleId": "pem-private-key",
+      "lineSha256": "sha256:3cb1abb6bf427afebd8d77132084f11d0c404b4c5ef85a0c63cc4426f2b8106c",
+      "reason": "Synthetic unreadable private-key marker fixture used to verify fail-closed loading."
+    },
+    {
+      "path": "paper-core/tests/autonomous-research-resident-deployment-identity.test.mjs",
+      "ruleId": "pem-private-key",
+      "lineSha256": "sha256:f376a3ada4bf83721240fe35833b2fd809ddcef73209c15d87316dbfefba06de",
+      "reason": "Synthetic unreadable private-key marker fixture used to verify fail-closed loading."
+    }
+  ]
+}

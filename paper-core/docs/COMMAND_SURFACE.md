@@ -158,6 +158,18 @@ external replay, and independent formal review inspections to resolve to one
 explicit non-golden paper before the paper-bound generic-domain convergence
 step may run.
 
+`hepta-paper operator local-golden-dataset-provision -- <arguments>` is the
+only supported surface for preparing a generic operator dataset harness for an
+isolated local golden campaign. It requires a read-only complete dataset
+manifest, explicit non-test split assignments, a host-hidden harness, a
+power-valid analysis protocol, research semantics and an Ed25519 operator key.
+Plan is read-only; execution requires both `--execute` and the exact current
+plan ID. Its signed authority is permanently marked
+`local_operator_dataset_authority`, `academicPromotionEligible=false` and
+`externalTrustClaimed=false`, and is bound to one canonical runtime root.
+Production and configured native roots are rejected. See
+`paper-core/docs/local-golden-dataset-provisioning.md`.
+
 `hepta-paper operator autonomous-state-backup -- <arguments>` is the canonical
 closed-inventory backup and restore-drill surface for autonomous trust state.
 It requires an independently administered authority-head client for both

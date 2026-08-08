@@ -4,9 +4,13 @@ import {
   deriveEmpiricalClaimUniverseIdentity,
 } from '../../paper-domain/research/empirical-claim-contract.mjs';
 import { hasExactObjectKeys as exactKeys } from '../../workflow-kernel/exact-object-keys.mjs';
-import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
-import { includedPath, safeManuscriptPath, trimAsciiWhitespace } from './latex-manuscript-reader-support.mjs';
+import {
+  extractMarkerDelimitedManuscriptSurfaces,
+  includedPath,
+  safeManuscriptPath,
+} from './latex-manuscript-reader-support.mjs';
 
 const INCLUDE_COMMAND = /\\(input|include)(?![A-Za-z@])/gi;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/;
@@ -40,18 +44,6 @@ function literalIncludes(masked, relative) {
   return { includes, blockers };
 }
 
-function lineRecords(latin1) {
-  const records = [];
-  let start = 0;
-  for (let cursor = 0; cursor <= latin1.length; cursor += 1) {
-    if (cursor !== latin1.length && latin1[cursor] !== '\n') continue;
-    const contentEnd = cursor > start && latin1[cursor - 1] === '\r' ? cursor - 1 : cursor;
-    records.push({ text: latin1.slice(start, contentEnd), byteStart: start, byteEnd: cursor < latin1.length ? cursor + 1 : cursor });
-    start = cursor + 1;
-  }
-  return records;
-}
-
 function validDeclaration(value) {
   return exactKeys(value, [
     'claimId', 'metric', 'comparator', 'alternative', 'minimumEffect', 'acceptanceRequired',
@@ -64,64 +56,19 @@ function validDeclaration(value) {
 }
 
 function extractClaims(relative, read) {
-  const latin1 = read.content.toString('latin1');
-  const blockers = [];
-  const claims = [];
-  let open = null;
-  for (const line of lineRecords(latin1)) {
-    const begin = line.text.match(BEGIN);
-    const end = line.text.match(END);
-    if (MARKER_TOKEN.test(line.text) && !begin && !end) {
-      blockers.push(`empirical_claim_universe_marker_malformed:${relative}:${line.byteStart}`);
-      continue;
-    }
-    if (begin) {
-      if (open) {
-        blockers.push(`empirical_claim_universe_marker_nested:${relative}:${line.byteStart}`);
-        continue;
-      }
-      let declaration = null;
-      try { declaration = JSON.parse(begin[1]); } catch { /* blocked below */ }
-      if (!validDeclaration(declaration)) {
-        blockers.push(`empirical_claim_universe_declaration_invalid:${relative}:${line.byteStart}`);
-        continue;
-      }
-      open = { declaration, markerByteStart: line.byteStart, bodyStart: line.byteEnd };
-      continue;
-    }
-    if (!end) continue;
-    if (!open) {
-      blockers.push(`empirical_claim_universe_marker_end_unpaired:${relative}:${line.byteStart}`);
-      continue;
-    }
-    if (end[1] !== open.declaration.claimId) {
-      blockers.push(`empirical_claim_universe_marker_id_mismatch:${relative}:${line.byteStart}`);
-      open = null;
-      continue;
-    }
-    const range = trimAsciiWhitespace(latin1, open.bodyStart, line.byteStart);
-    const bytes = read.content.subarray(range.byteStart, range.byteEnd);
-    const text = bytes.toString('utf8');
-    if (!bytes.length || !text.trim() || !Buffer.from(text, 'utf8').equals(bytes)) {
-      blockers.push(`empirical_claim_universe_claim_body_invalid:${relative}:${open.markerByteStart}`);
-      open = null;
-      continue;
-    }
-    claims.push({
-      declaration: open.declaration,
-      manuscriptPath: relative,
-      manuscriptFileHash: read.hash,
-      markerByteStart: open.markerByteStart,
-      markerByteEnd: line.byteEnd,
-      manuscriptByteStart: range.byteStart,
-      manuscriptByteEnd: range.byteEnd,
-      manuscriptContentHash: hashBytes(bytes),
-      text,
-    });
-    open = null;
-  }
-  if (open) blockers.push(`empirical_claim_universe_marker_unterminated:${relative}:${open.markerByteStart}`);
-  return { claims, blockers };
+  const extracted = extractMarkerDelimitedManuscriptSurfaces({
+    relative,
+    read,
+    beginPattern: BEGIN,
+    endPattern: END,
+    markerToken: MARKER_TOKEN,
+    blockerPrefix: 'empirical_claim_universe',
+    bodyInvalidSuffix: 'claim_body_invalid',
+    declarationValid: validDeclaration,
+    declarationIdentity: (declaration) => declaration.claimId,
+    bodyValid: ({ text }) => Boolean(text.trim()),
+  });
+  return { claims: extracted.surfaces, blockers: extracted.blockers };
 }
 
 export function readEmpiricalClaimUniverse({ sourceRoot, manuscriptPath = 'main.tex', maximumFiles = 128 } = {}) {

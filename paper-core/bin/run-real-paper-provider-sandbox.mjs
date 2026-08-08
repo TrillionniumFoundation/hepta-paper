@@ -7,7 +7,7 @@ import { bootstrapSubmissionContext } from '../../paper-composition/bootstrap/ca
 import { createDefaultPaperStore } from '../../paper-composition/bootstrap/operator-persistence-composition.mjs';
 import { defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 import { currentCodeProvenance } from '../src/code-provenance.mjs';
-import { signReleasePayload } from './release-evidence-lib.mjs';
+import { signReleasePayload } from './release-integrity-signing.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 process.env.HEPTA_EVIDENCE_ENVIRONMENT = 'provider_sandbox';

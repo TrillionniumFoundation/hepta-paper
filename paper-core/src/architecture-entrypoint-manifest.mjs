@@ -25,6 +25,7 @@ export const ARCHITECTURE_ENTRYPOINT_MANIFEST = Object.freeze({
     'paper-core/bin/runtime-r-source-cas.mjs',
     'paper-core/bin/autonomous-research-readiness.mjs',
     'paper-core/bin/autonomous-research-one-shot-campaign-attempt.mjs',
+    'paper-core/bin/local-golden-dataset-provision.mjs',
     'paper-core/bin/formal-domain-qualification.mjs',
     'paper-core/bin/generic-domain-capability-evidence.mjs',
     'paper-core/bin/strict-full-auto-acceptance.mjs',

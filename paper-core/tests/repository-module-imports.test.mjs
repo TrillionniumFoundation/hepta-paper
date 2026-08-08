@@ -62,6 +62,20 @@ const migrationSupportMarkers = Object.freeze([
   '/paper-core/bin/legacy-immutable-snapshot.mjs',
   '/paper-core/bin/retire-legacy-archive.mjs',
 ]);
+const architectureCategories = Object.freeze([
+  'production',
+  'compatibility',
+  'experimental',
+  'verification',
+  'maintenance',
+  'migrationSupport',
+]);
+const architectureMetricBudgets = Object.freeze({
+  production: Object.freeze({ lines: 750, functions: 50, dependencies: 20 }),
+  verification: Object.freeze({ lines: 900, testLines: 1500, functions: 80, dependencies: 25 }),
+  maintenance: Object.freeze({ lines: 900, functions: 80, dependencies: 25 }),
+  migrationSupport: Object.freeze({ lines: 900, functions: 80, dependencies: 30 }),
+});
 
 const layerImports = Object.freeze({
   'workflow-kernel': new Set(['workflow-kernel']),
@@ -200,6 +214,55 @@ function architectureMetrics(files) {
     });
 }
 
+function architectureBudgetViolations(metrics, moduleLabels) {
+  const violations = [];
+  for (const row of metrics) {
+    const labels = moduleLabels.get(row.file);
+    assert.ok(labels, `architecture_labels_missing:${row.file}`);
+    const effectiveLabels = new Set([
+      labels.canonicalOwnership,
+      ...labels.reachability,
+    ]);
+    const applicableBudgets = [...effectiveLabels]
+      .map((category) => [category, architectureMetricBudgets[category]])
+      .filter(([, budget]) => budget);
+    const metricLimits = Object.freeze({
+      lines: applicableBudgets.map(([category, budget]) => Object.freeze({
+        category,
+        limit: row.file.includes('/tests/') && budget.testLines
+          ? budget.testLines
+          : budget.lines,
+      })),
+      functions: applicableBudgets.map(([category, budget]) => Object.freeze({
+        category,
+        limit: budget.functions,
+      })),
+      dependencies: applicableBudgets.map(([category, budget]) => Object.freeze({
+        category,
+        limit: budget.dependencies,
+      })),
+    });
+    for (const metric of Object.keys(metricLimits)) {
+      if (metric === 'lines' && row.file.endsWith('.data.mjs')) continue;
+      const finiteLimits = metricLimits[metric].filter(({ limit }) => Number.isFinite(limit));
+      if (finiteLimits.length === 0) continue;
+      const strictestLimit = Math.min(...finiteLimits.map(({ limit }) => limit));
+      if (row[metric] <= strictestLimit) continue;
+      violations.push(Object.freeze({
+        file: row.file,
+        metric,
+        actual: row[metric],
+        limit: strictestLimit,
+        enforcedBy: Object.freeze(finiteLimits
+          .filter(({ limit }) => limit === strictestLimit)
+          .map(({ category }) => category)
+          .sort()),
+      }));
+    }
+  }
+  return violations;
+}
+
 function layerImportViolations(files) {
   const violations = [];
   for (const file of files) {
@@ -233,14 +296,18 @@ function classifyRepositoryModules() {
   ]);
   const allModules = moduleRoots.flatMap((root) => modulesUnder(path.join(workspaceRoot, root)))
     .map((relative) => path.join(workspaceRoot, relative));
-  const categories = Object.fromEntries([
-    'production',
-    'compatibility',
-    'experimental',
-    'verification',
-    'maintenance',
-    'migrationSupport',
-  ].map((category) => [category, new Set()]));
+  const reachable = Object.freeze({
+    production: productionReachable,
+    compatibility: compatibilityReachable,
+    experimental: experimentalReachable,
+    verification: verificationReachable,
+    maintenance: maintenanceReachable,
+    migrationSupport: migrationSupportReachable,
+  });
+  const categories = Object.fromEntries(
+    architectureCategories.map((category) => [category, new Set()]),
+  );
+  const moduleLabels = new Map();
   const unclassified = [];
   for (const file of allModules) {
     let category = null;
@@ -250,27 +317,57 @@ function classifyRepositoryModules() {
     else if (hasMarker(file, migrationSupportMarkers) || migrationSupportReachable.has(file)) category = 'migrationSupport';
     else if (hasMarker(file, verificationMarkers) || verificationReachable.has(file)) category = 'verification';
     else if (maintenanceReachable.has(file)) category = 'maintenance';
-    if (category) categories[category].add(file);
-    else unclassified.push(posix(path.relative(workspaceRoot, file)));
+    const relative = posix(path.relative(workspaceRoot, file));
+    if (category) {
+      categories[category].add(file);
+      moduleLabels.set(relative, Object.freeze({
+        canonicalOwnership: category,
+        reachability: Object.freeze(architectureCategories
+          .filter((candidate) => reachable[candidate].has(file))),
+      }));
+    } else {
+      unclassified.push(relative);
+    }
   }
   return Object.freeze({
     allModules,
     categories: Object.freeze(categories),
+    moduleLabels,
     unclassified: Object.freeze(unclassified.sort()),
-    reachable: Object.freeze({
-      production: productionReachable,
-      compatibility: compatibilityReachable,
-      experimental: experimentalReachable,
-      verification: verificationReachable,
-      maintenance: maintenanceReachable,
-      migrationSupport: migrationSupportReachable,
-    }),
+    reachable,
   });
 }
 
+test('experimental reachability cannot downgrade a shared maintenance module budget', () => {
+  const file = 'paper-core/experimental/shared-maintenance-over-budget-fixture.mjs';
+  const metrics = Object.freeze([Object.freeze({
+    file,
+    lines: 901,
+    functions: 1,
+    dependencies: 1,
+  })]);
+  const sharedLabels = new Map([[file, Object.freeze({
+    canonicalOwnership: 'experimental',
+    reachability: Object.freeze(['experimental', 'maintenance']),
+  })]]);
+  assert.deepEqual(architectureBudgetViolations(metrics, sharedLabels), [{
+    file,
+    metric: 'lines',
+    actual: 901,
+    limit: 900,
+    enforcedBy: ['maintenance'],
+  }]);
+
+  const experimentalOnlyLabels = new Map([[file, Object.freeze({
+    canonicalOwnership: 'experimental',
+    reachability: Object.freeze(['experimental']),
+  })]]);
+  assert.deepEqual(architectureBudgetViolations(metrics, experimentalOnlyLabels), []);
+});
+
 test('production inventory is reachable only from declared executable entrypoints', async () => {
   const taxonomy = classifyRepositoryModules();
-  const { categories, reachable } = taxonomy;
+  const { categories, moduleLabels, reachable } = taxonomy;
   const production = reachable.production;
   const compatibilityReachable = reachable.compatibility;
 
@@ -283,6 +380,17 @@ test('production inventory is reachable only from declared executable entrypoint
   assert.deepEqual(taxonomy.unclassified, []);
   const classified = Object.values(categories).flatMap((files) => [...files]);
   assert.equal(new Set(classified).size, taxonomy.allModules.length);
+  assert.equal(moduleLabels.size, taxonomy.allModules.length);
+  for (const category of architectureCategories) {
+    for (const file of reachable[category]) {
+      const relative = posix(path.relative(workspaceRoot, file));
+      assert.equal(
+        moduleLabels.get(relative)?.reachability.includes(category),
+        true,
+        `architecture_reachability_label_missing:${category}:${relative}`,
+      );
+    }
+  }
 
   for (const category of Object.keys(categories)) {
     assert.deepEqual(dependencyCycles(reachable[category]), [], category);
@@ -328,27 +436,16 @@ test('production inventory is reachable only from declared executable entrypoint
   assert.match(campaignComposition, /createApplicationCampaignNodeExecutor/);
   assert.match(campaignComposition, /createCampaignNodePrimitivesAdapter/);
 
-  const productionMetrics = architectureMetrics(categories.production);
   // File length is a coarse guardrail only; architecture-conformance applies
   // the stricter responsibility surface (public exports + dependency fanout).
-  assert.deepEqual(productionMetrics.filter((row) => row.lines > 750 && !row.file.endsWith('.data.mjs')), []);
-  assert.deepEqual(productionMetrics.filter((row) => row.functions > 50), []);
-  // Dependency fanout is capped independently, while architecture-conformance
-  // also combines fanout with the public export surface. Keep a small allowance
-  // for orchestration/verifier modules without encouraging line-count-only
-  // file slicing that merely hides one responsibility across facade modules.
-  assert.deepEqual(productionMetrics.filter((row) => row.dependencies > 20), []);
-
-  for (const category of ['verification', 'maintenance', 'migrationSupport']) {
-    const metrics = architectureMetrics(categories[category]);
-    assert.deepEqual(metrics.filter((row) => {
-      const limit = row.file.includes('/tests/') ? 1500 : 900;
-      return row.lines > limit && !row.file.endsWith('.data.mjs');
-    }), [], `${category}:lines`);
-    assert.deepEqual(metrics.filter((row) => row.functions > 80), [], `${category}:functions`);
-    const dependencyLimit = category === 'migrationSupport' ? 30 : 25;
-    assert.deepEqual(metrics.filter((row) => row.dependencies > dependencyLimit), [], `${category}:dependencies`);
-  }
+  // A module keeps one canonical owner for inventory purposes, but every
+  // reachable category remains an exposure label. The strictest applicable
+  // budget wins so an experimental entrypoint cannot weaken a maintenance,
+  // verification, migration-support, or production constraint.
+  assert.deepEqual(
+    architectureBudgetViolations(architectureMetrics(taxonomy.allModules), moduleLabels),
+    [],
+  );
 
   const runnerFile = path.join(workspaceRoot, 'paper-adapters/runtime/os-sandboxed-worker-runner.mjs');
   const removedIdentityInputReferences = [...production]

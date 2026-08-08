@@ -18,6 +18,10 @@ import {
 import { CAPABILITY_CATALOG } from '../../paper-domain/governance/capability-catalog.mjs';
 import { currentCodeProvenance } from '../../paper-adapters/runtime/code-provenance.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { createFormalCapabilityReplayRunners } from '../../migration/bin/production-capability-replay-formal-runners.mjs';
+import { createRuntimeCapabilityReplayRunners } from '../../migration/bin/production-capability-replay-runtime-runners.mjs';
+import { createSubmissionRepairCapabilityReplayRunners } from '../../migration/bin/production-capability-replay-submission-repair-runners.mjs';
+import { relativeModuleSpecifiers } from '../verification/javascript-module-specifiers.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
 const SHA = (label) => `sha256:${crypto.createHash('sha256').update(label).digest('hex')}`;
@@ -724,4 +728,57 @@ test('production replay binds the canonical source before and around publication
   for (const phase of ['preflight', 'postflight', 'prepublication', 'postpublication']) {
     assert.match(runner, new RegExp(`assertProductionSubjectUnchanged\\('${phase}'\\)`));
   }
+});
+
+test('production replay capability families stay in bounded runner groups', () => {
+  const runnerPath = path.join(
+    workspaceRoot,
+    'migration',
+    'bin',
+    'run-production-capability-replays.mjs',
+  );
+  const runner = fs.readFileSync(runnerPath, 'utf8');
+  const directDependencies = relativeModuleSpecifiers(runner);
+  assert.ok(directDependencies.length <= 25, directDependencies.join('\n'));
+  for (const group of [
+    './production-capability-replay-formal-runners.mjs',
+    './production-capability-replay-runtime-runners.mjs',
+    './production-capability-replay-submission-repair-runners.mjs',
+  ]) assert.ok(directDependencies.includes(group), group);
+  for (const delegatedDependency of [
+    'lake-formal-verifier.mjs',
+    'os-sandboxed-worker-runner.mjs',
+    'submission-executor-port.mjs',
+    'repair-executor.mjs',
+  ]) assert.equal(directDependencies.some((item) => item.endsWith(delegatedDependency)), false);
+
+  const formal = createFormalCapabilityReplayRunners({ workspaceRoot });
+  const runtime = createRuntimeCapabilityReplayRunners({});
+  const submissionRepair = createSubmissionRepairCapabilityReplayRunners({});
+  assert.deepEqual(Object.keys(formal), ['research.formal-verifier']);
+  assert.deepEqual(Object.keys(runtime), [
+    'runtime.sandboxed-worker-runner',
+    'runtime.artifact-repository',
+    'runtime.job-receipt-store',
+  ]);
+  assert.deepEqual(Object.keys(submissionRepair), [
+    'submission.executor-port',
+    'submission.delivery-runtime',
+    'submission.release-lock',
+    'repair.safe-apply',
+  ]);
+  const inlineResearch = [
+    'research.claim-registry',
+    'research.gap-planner',
+    'research.evidence-ingestor',
+    'research.evidence-quality-gate',
+    'research.experiment-registry',
+    'research.change-proposal',
+  ];
+  assert.deepEqual(
+    [...inlineResearch, ...Object.keys(formal), ...Object.keys(runtime), ...Object.keys(submissionRepair)].sort(),
+    Object.keys(CAPABILITY_CATALOG).sort(),
+  );
+  assert.match(runner, /for \(const capabilityId of Object\.keys\(CAPABILITY_CATALOG\)\.sort\(\)\)/u);
+  assert.match(runner, /conformanceReceiptHashes: verified\.map\(\(item\) => item\.conformanceReceiptHash\)/u);
 });

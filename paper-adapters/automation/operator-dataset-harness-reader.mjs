@@ -3,6 +3,10 @@ import path from 'node:path';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { isPathWithin } from '../../workflow-kernel/runtime/path-utils.mjs';
 import {
+  LOCAL_GOLDEN_DATASET_AUTHORITY_SCOPE,
+  LOCAL_GOLDEN_DATASET_EVIDENCE_CLASS,
+  isLocalGoldenDatasetAuthority,
+  operatorDatasetAuthorityTrustPolicy,
   validateOperatorDatasetHarnessEnvelope,
 } from '../../paper-domain/automation/operator-dataset-harness-contract.mjs';
 import { inspectStrictDatasetManifest } from '../runtime/execution-snapshot.mjs';
@@ -17,6 +21,35 @@ import {
 
 const MAXIMUM_ENVELOPE_BYTES = 8 * 1024 * 1024;
 const MAXIMUM_AUTHORITY_LIFETIME_MS = 31 * 24 * 60 * 60 * 1000;
+
+export function localGoldenDatasetRuntimeRootHash(runtimeRoot) {
+  let canonical = null;
+  try {
+    const requested = path.resolve(String(runtimeRoot || ''));
+    canonical = fs.realpathSync(requested);
+    if (canonical !== requested || !fs.lstatSync(canonical).isDirectory()) return null;
+  } catch { return null; }
+  return hashRecord('LocalGoldenDatasetRuntimeRoot', { runtimeRoot: canonical });
+}
+
+function localGoldenScopeBlockers(authority, datasetMount, runtimeRoot) {
+  if (!isLocalGoldenDatasetAuthority(authority)) return [];
+  const blockers = [];
+  const expectedRuntimeRootHash = localGoldenDatasetRuntimeRootHash(runtimeRoot);
+  if (!expectedRuntimeRootHash) blockers.push('local_golden_dataset_runtime_root_required');
+  else if (authority.localGoldenRuntimeScope.runtimeRootHash !== expectedRuntimeRootHash) {
+    blockers.push('local_golden_dataset_runtime_scope_mismatch');
+  }
+  if (datasetMount?.authorityScope !== LOCAL_GOLDEN_DATASET_AUTHORITY_SCOPE
+    || datasetMount?.evidenceClass !== LOCAL_GOLDEN_DATASET_EVIDENCE_CLASS
+    || datasetMount?.academicPromotionEligible !== false
+    || datasetMount?.externalTrustClaimed !== false
+    || JSON.stringify(datasetMount?.localGoldenRuntimeScope)
+      !== JSON.stringify(authority.localGoldenRuntimeScope)) {
+    blockers.push('local_golden_dataset_mount_scope_binding_invalid');
+  }
+  return blockers;
+}
 
 export function loadOperatorDatasetAuthorityTrustStoreSync({ runtimeRoot, trustStoreOverride = null } = {}) {
   if (trustStoreOverride) return trustStoreOverride;
@@ -97,10 +130,20 @@ export function rereadOperatorDatasetHarnessPrivateDefinition(datasetAuthorizati
   } catch (error) {
     blockers.push(String(error?.message || 'operator_dataset_harness_envelope_invalid'));
   }
+  if (validated) blockers.push(...localGoldenScopeBlockers(
+    validated.authority, datasetAuthorization, runtimeRoot,
+  ));
+  const trustPolicy = operatorDatasetAuthorityTrustPolicy(
+    validated?.authority || null,
+    authorityTrustStore,
+  );
+  blockers.push(...trustPolicy.blockers.map(
+    (blocker) => `operator_dataset_authority:${blocker}`,
+  ));
   const signatureVerification = verifyAuthoritySignatures({
     document: validated?.authority || null,
     trustStore: authorityTrustStore,
-    requiredRoles: ['dataset_harness_operator'],
+    requiredRoles: [trustPolicy.requiredRole],
     minSignatures: 1,
   });
   blockers.push(...signatureVerification.blockers.map((blocker) => `operator_dataset_authority:${blocker}`));
@@ -196,6 +239,9 @@ export function readOperatorDatasetHarness(datasetMount, {
       datasetManifestHash: datasetMount?.manifestHash,
     });
   } catch (error) { blockers.push(String(error?.message || 'operator_dataset_harness_envelope_invalid')); }
+  if (validated) blockers.push(...localGoldenScopeBlockers(
+    validated.authority, datasetMount, runtimeRoot,
+  ));
   if (validated && !validated.academicAnalysisProtocolEligible && !allowLegacyAnalysisProtocol) {
     blockers.push('operator_dataset_analysis_protocol_required');
   }
@@ -213,10 +259,17 @@ export function readOperatorDatasetHarness(datasetMount, {
   if (validated?.authority?.datasetLicenseId !== datasetMount?.licenseId) {
     blockers.push('operator_dataset_license_authority_mismatch');
   }
+  const trustPolicy = operatorDatasetAuthorityTrustPolicy(
+    validated?.authority || null,
+    authorityTrustStore,
+  );
+  blockers.push(...trustPolicy.blockers.map(
+    (blocker) => `operator_dataset_authority:${blocker}`,
+  ));
   const signatureVerification = verifyAuthoritySignatures({
     document: validated?.authority || null,
     trustStore: authorityTrustStore,
-    requiredRoles: ['dataset_harness_operator'],
+    requiredRoles: [trustPolicy.requiredRole],
     minSignatures: 1,
   });
   blockers.push(...signatureVerification.blockers.map((blocker) => `operator_dataset_authority:${blocker}`));
@@ -237,7 +290,7 @@ export function readOperatorDatasetHarness(datasetMount, {
     || datasetMount?.benchmarkHarnessDocumentHash !== envelopeRead.hash
     || datasetMount?.operatorDatasetHarnessHandle !== envelopeRead.hash
     || JSON.stringify(datasetMount?.operatorDatasetAuthority) !== JSON.stringify(validated.authority)
-    || (validated.authority.version === 3 && (
+    || ([3, 4].includes(validated.authority.version) && (
       datasetMount?.operatorDatasetResearchSemanticsHash
         !== hashRecord('OperatorDatasetResearchSemantics', validated.authority.researchSemantics)
       || JSON.stringify(datasetMount?.operatorDatasetResearchSemantics)
@@ -270,11 +323,18 @@ export function readOperatorDatasetHarness(datasetMount, {
     benchmarkFamily: validated?.definition?.benchmarkFamily || null,
     analysisProtocol: validated?.analysisProtocol || null,
     analysisProtocolHash: validated?.analysisProtocolHash || null,
-    ...(validated?.authority?.version === 3 ? {
+    ...([3, 4].includes(validated?.authority?.version) ? {
       operatorDatasetResearchSemantics: validated.authority.researchSemantics,
       operatorDatasetResearchSemanticsHash: hashRecord(
         'OperatorDatasetResearchSemantics', validated.authority.researchSemantics,
       ),
+    } : {}),
+    ...(isLocalGoldenDatasetAuthority(validated?.authority) ? {
+      authorityScope: LOCAL_GOLDEN_DATASET_AUTHORITY_SCOPE,
+      evidenceClass: LOCAL_GOLDEN_DATASET_EVIDENCE_CLASS,
+      academicPromotionEligible: false,
+      externalTrustClaimed: false,
+      localGoldenRuntimeScope: validated.authority.localGoldenRuntimeScope,
     } : {}),
     authority: validated?.authority || null,
     envelopeDocumentHash: envelopeRead.hash || null,
@@ -334,16 +394,24 @@ export function authorizeOperatorDatasetMount(datasetMount, {
     benchmarkMinimumRepetitions: validated.definition.minimumRepetitions,
     analysisProtocol: validated.analysisProtocol,
     analysisProtocolHash: validated.analysisProtocolHash,
-    ...(validated.authority.version === 3 ? {
+    ...([3, 4].includes(validated.authority.version) ? {
       operatorDatasetResearchSemantics: validated.authority.researchSemantics,
       operatorDatasetResearchSemanticsHash: hashRecord(
         'OperatorDatasetResearchSemantics', validated.authority.researchSemantics,
       ),
     } : {}),
+    ...(isLocalGoldenDatasetAuthority(validated.authority) ? {
+      authorityScope: LOCAL_GOLDEN_DATASET_AUTHORITY_SCOPE,
+      evidenceClass: LOCAL_GOLDEN_DATASET_EVIDENCE_CLASS,
+      academicPromotionEligible: false,
+      externalTrustClaimed: false,
+      localGoldenRuntimeScope: validated.authority.localGoldenRuntimeScope,
+    } : {}),
   });
   const resolution = readOperatorDatasetHarness(enriched, {
     authorityTrustStore,
     now,
+    runtimeRoot,
     privateEnvelopePath: envelopeRead.canonical,
     allowLegacyAnalysisProtocol,
   });

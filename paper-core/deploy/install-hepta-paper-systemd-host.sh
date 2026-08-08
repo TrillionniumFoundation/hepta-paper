@@ -11,6 +11,7 @@ fi
 
 install_root=/
 manage_systemd=yes
+enable_full_auto=no
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --root)
@@ -22,8 +23,16 @@ while [ "$#" -gt 0 ]; do
       manage_systemd=no
       shift
       ;;
+    --enable-full-auto)
+      if [ "$enable_full_auto" = yes ]; then
+        echo "duplicate option: --enable-full-auto" >&2
+        exit 64
+      fi
+      enable_full_auto=yes
+      shift
+      ;;
     *)
-      echo "usage: install-hepta-paper-systemd-host.sh [--root PATH --no-systemctl]" >&2
+      echo "usage: install-hepta-paper-systemd-host.sh [--root PATH --no-systemctl] [--enable-full-auto]" >&2
       exit 64
       ;;
   esac
@@ -35,6 +44,11 @@ esac
 if [ "$install_root" != / ] && [ "$manage_systemd" != no ]; then
   echo "--root requires --no-systemctl" >&2
   exit 64
+fi
+if [ "$enable_full_auto" = yes ]; then
+  echo "hepta_full_auto_enable_blocked:non_mutating_accepted_readiness_preflight_unavailable" >&2
+  echo "production hold remains required; use the strict acceptance operator separately and do not enable resident automation from the host installer" >&2
+  exit 78
 fi
 
 effective_uid=$(/usr/bin/id -u)
@@ -378,16 +392,17 @@ fi
 
 if [ "$manage_systemd" = yes ]; then
   /usr/bin/systemctl daemon-reload
-  /usr/bin/systemctl disable strict-full-auto-acceptance.service
+  /usr/bin/systemctl disable --now \
+    strict-full-auto-acceptance.timer \
+    strict-full-auto-acceptance.service \
+    autonomous-submission-dispatcher.service \
+    autonomous-research-supervisor.service
   /usr/bin/systemctl enable \
     hepta-paper-host-bootstrap.service \
     hepta-paper-state-authority.service \
     hepta-paper-release-attestor.service \
     hepta-paper-release-attestor-probe.service \
     autonomous-submission-handoff-layout-provision.path \
-    autonomous-research-supervisor.service \
-    autonomous-submission-dispatcher.service \
-    strict-full-auto-acceptance.timer \
     autonomous-research-state-backup-renew.timer
   /usr/bin/systemctl stop \
     strict-full-auto-acceptance.timer \
@@ -407,8 +422,6 @@ if [ "$manage_systemd" = yes ]; then
   /usr/bin/systemctl restart hepta-paper-release-attestor-probe.service
   /usr/bin/systemctl start autonomous-submission-handoff-layout-provision.path
   /usr/bin/systemctl restart autonomous-research-state-backup-renew.timer
-  /usr/bin/systemctl restart strict-full-auto-acceptance.timer
-  /usr/bin/systemctl start --no-block strict-full-auto-acceptance.service
 fi
 
-echo "hepta-paper systemd host installation completed"
+echo "hepta-paper systemd host installation completed (production hold active)"

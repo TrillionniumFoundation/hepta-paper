@@ -20,6 +20,8 @@ const AUTOMATION_TESTS = Object.freeze([...new Set([
   'paper-core/tests/automation-campaign.test.mjs',
   'paper-core/tests/automation-executor-entry-boundaries.test.mjs',
   'paper-core/tests/automation-executors.test.mjs',
+  'paper-core/tests/os-sandboxed-worker-dataset-exclusion.test.mjs',
+  'paper-core/tests/local-golden-dataset-provisioning.test.mjs',
   'paper-core/tests/automation-agent-repair-executors.test.mjs',
   'paper-core/tests/campaign-empirical-repair-semantics.test.mjs',
   'paper-core/tests/automation-orchestration.test.mjs',

@@ -122,6 +122,20 @@ test('root package declares the pinned reference and a non-duplicated verificati
   assert.deepEqual([...commands.values()].filter((names) => names.length > 1), []);
   assert.match(scripts['ci:inner'], /npm run safety:all/);
   assert.match(scripts['ci:selftest'], /^npm run static:check/);
+  assert.equal(
+    scripts['security:source-gate'],
+    'node paper-core/bin/source-supply-chain-security.mjs',
+  );
+  assert.equal(
+    scripts['security:sbom:write'],
+    'node paper-core/bin/source-supply-chain-security.mjs --write-sbom',
+  );
+  assert.equal(
+    scripts['security:npm-audit'],
+    'npm audit --audit-level=high --package-lock-only --ignore-scripts',
+  );
+  assert.match(scripts['static:check'], /npm run security:source-gate/);
+  assert.match(scripts['static:check'], /paper-core\/tests\/source-supply-chain-security\.test\.mjs/);
   assert.match(scripts['static:check'], /paper-core\/tests\/architecture-conformance\.test\.mjs/);
   assert.match(scripts['static:check'], /paper-core\/tests\/repository-module-imports\.test\.mjs/);
   assert.equal(
@@ -136,7 +150,8 @@ test('root package declares the pinned reference and a non-duplicated verificati
   assert.match(scripts.test, /^npm run static:check/);
   assert.equal(
     scripts['release:verify'],
-    'npm run static:check && npm run release:state-check -- --require-state release_ready'
+    'npm run static:check && npm run security:source-gate -- --require-deployable-templates'
+      + ' && npm run release:state-check -- --require-state release_ready'
       + ' && node paper-core/bin/run-isolated-verification.mjs release',
   );
   assert.doesNotMatch(scripts['release:inner'], /coverage:critical-modules/);
@@ -354,7 +369,7 @@ test('one declarative registry owns supported routes and npm command classificat
   assert.deepEqual(heptaPaperCiCommandMatrix().pullRequest, [
     {
       id: 'static-contracts',
-      npmScripts: ['static:check'],
+      npmScripts: ['static:check', 'security:npm-audit'],
     },
     {
       id: 'impacted-tests',
@@ -400,6 +415,8 @@ test('one declarative registry owns supported routes and npm command classificat
     'paper:governance-contracts',
     'lint',
     'release:state-check',
+    'security:npm-audit',
+    'security:source-gate',
     'static:check',
   ]) {
     assert.ok(surface.groups.verification.includes(name), name);
@@ -421,6 +438,7 @@ test('one declarative registry owns supported routes and npm command classificat
     'reference:baseline:accept',
     'runtime:hygiene',
     'runtime:permissions',
+    'security:sbom:write',
     'scripts:sync',
     'store:repair-ledger-integrity',
   ]) assert.ok(surface.groups.maintenance.includes(name), name);

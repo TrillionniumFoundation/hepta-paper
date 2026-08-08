@@ -56,12 +56,21 @@ can generate an evidence-bound manuscript IR, emit a bounded dynamic Lean claim,
 retrieve structured snapshot-bound prior art, use signed reviewers from distinct
 machine trust domains, perform local and off-host replay, independently recompute
 typed numeric oracles, rebuild the PDF from source in a fresh sandbox, revise
-against fresh referee evidence, and submit only after venue, metadata, source,
-PDF and page-limit compliance passes. These capabilities require preprovisioned
-machine services and credentials, but no per-campaign human checkpoint. The
+against fresh referee evidence, and prepare a local submission handoff only after
+venue, metadata, source, PDF and page-limit compliance passes. Research DAG
+execution can run without a per-campaign human checkpoint when its machine
+authorities are preprovisioned. Provider draft creation is a separate reversible
+capability. A live portal commit remains a third, separately qualified capability
+and requires a human-reviewed, hash-bound, single-use authorization for the exact
+package, venue, provider and account. The
 system does not claim universal scientific novelty, exhaustive prior art,
 natural-language-to-Lean equivalence, scientific truth, or venue acceptance,
 and it never self-signs missing dataset, provider-account or release trust.
+
+Capability reports label the strongest evidence actually established for each
+lane as `contract_fixture`, `real_runtime_fixture`, `live_model`, or
+`external_trust`. A stronger-sounding test name cannot promote evidence between
+those levels, and only `external_trust` can carry production authority.
 
 Budget-stopped campaigns can be continued in place only after an explicit
 budget increase. If strict referee convergence exhausts the configured rounds,

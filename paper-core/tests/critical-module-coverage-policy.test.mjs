@@ -3,12 +3,15 @@ import fs from 'node:fs';
 import test from 'node:test';
 
 import {
+  buildCriticalCoveragePolicy,
   buildCriticalCoverageTargetThresholds,
   CRITICAL_COVERAGE_DEFAULT_THRESHOLD,
   CRITICAL_COVERAGE_MAXIMUM_AUDITED_BRANCH_CAP,
   CRITICAL_COVERAGE_TARGET_OVERRIDES,
+  CRITICAL_COVERAGE_TARGET_REGISTRY,
   CRITICAL_COVERAGE_TRUST_BOUNDARY_THRESHOLD,
   validateCriticalCoveragePolicy,
+  validateCriticalCoverageTargetRegistry,
 } from '../verification/critical-module-coverage-policy.mjs';
 
 const EXPECTED_AUDITED_CAPS = Object.freeze({
@@ -40,67 +43,6 @@ const EXPECTED_AUDITED_CAPS = Object.freeze({
   'paper-adapters/automation/nested-runtime-platform-qualification-verifier.mjs': 54,
 });
 
-const REQUIRED_NEW_TRUST_TARGETS = Object.freeze([
-  'paper-adapters/runtime/immutable-release-workspace-repository.mjs',
-  'paper-adapters/runtime/release-dependency-tree.mjs',
-  'paper-adapters/build-package/local-release-attestor-runtime.mjs',
-  'paper-adapters/build-package/local-release-attestor-socket.mjs',
-  'paper-adapters/automation/local-autonomous-research-state-authority-socket.mjs',
-  'paper-adapters/runtime/atomic-unix-socket-publication.mjs',
-  'paper-domain/automation/autonomous-research-one-shot-campaign-attempt.mjs',
-  'paper-adapters/automation/campaign-one-shot-attempt-journal-repository.mjs',
-  'paper-composition/automation/autonomous-research-one-shot-campaign-attempt-composition.mjs',
-  'paper-core/bin/autonomous-research-one-shot-campaign-attempt.mjs',
-  'paper-adapters/build-package/research-execution-release-attestor-inspection.mjs',
-  'paper-adapters/build-package/research-execution-release-attestor-inspection-support.mjs',
-  'paper-adapters/research-verify/dynamic-formal-execution-authority.mjs',
-  'paper-adapters/research-verify/dynamic-formal-sandbox-probe-qualification-repository.mjs',
-  'paper-adapters/build-package/research-execution-release-kms-hardware-attestation.mjs',
-  'paper-domain/automation/research-execution-release-kms-hardware-attestation-contract.mjs',
-  'paper-adapters/automation/formal-domain-qualification-recovery-journal.mjs',
-  'paper-adapters/automation/http-recoverable-reviewer-executor-adapter.mjs',
-  'paper-adapters/automation/recoverable-reviewer-workspace-snapshot.mjs',
-  'paper-adapters/automation/opaque-runtime-credential-file.mjs',
-  'paper-adapters/automation/reviewer-principal-executor-pool.mjs',
-  'paper-adapters/automation/reviewer-principal-pool-configuration-reader.mjs',
-  'paper-adapters/automation/reviewer-principal-executor-recovery-port.mjs',
-  'paper-adapters/automation/reviewer-principal-signer-recovery-port.mjs',
-  'paper-adapters/automation/reviewer-principal-recovery-support.mjs',
-  'paper-composition/automation/formal-domain-qualification-external-evidence-composition.mjs',
-  'paper-composition/automation/reviewer-principal-pool-composition.mjs',
-  'paper-ports/external-research-replay-port.mjs',
-  'paper-ports/reviewer-receipt-signer-port.mjs',
-  'paper-adapters/runtime/docker-worker-container-recovery.mjs',
-  'paper-adapters/runtime/os-sandboxed-worker-runner.mjs',
-  'paper-adapters/runtime/runtime-resource-mounts.mjs',
-  'paper-domain/automation/nested-runtime-authority-independence-contract.mjs',
-  'paper-adapters/automation/strict-full-auto-acceptance-command-runner.mjs',
-  'paper-adapters/automation/strict-full-auto-acceptance-control-file-repository.mjs',
-  'paper-adapters/automation/strict-full-auto-acceptance-control-paths.mjs',
-  'paper-adapters/automation/strict-full-auto-acceptance-control-store-repository.mjs',
-  'paper-adapters/automation/strict-full-auto-acceptance-plan-control-store.mjs',
-  'paper-adapters/automation/strict-full-auto-acceptance-repository.mjs',
-  'paper-adapters/automation/strict-full-auto-acceptance-root-binding.mjs',
-  'paper-application/automation/strict-full-auto-acceptance-live-verification.mjs',
-  'paper-application/automation/strict-full-auto-acceptance-orchestrator.mjs',
-  'paper-application/automation/strict-full-auto-acceptance-state.mjs',
-  'paper-domain/automation/strict-full-auto-acceptance-plan.mjs',
-  'paper-domain/automation/strict-full-auto-acceptance-policy.mjs',
-  'paper-domain/research/native-formal-certificate-intake-v4.mjs',
-  'paper-domain/research/formal-certificate-intake.mjs',
-  'paper-domain/research/formal-certificate-intake-primitives.mjs',
-  'paper-domain/research/formal-certificate-native-closure.mjs',
-  'paper-domain/research/formal-certificate-intake-builder.mjs',
-  'paper-adapters/research-verify/trusted-formal-producer-contract.mjs',
-  'paper-adapters/research-verify/dynamic-formal-sandbox-probe-verifier.mjs',
-]);
-
-function trustTargetsFor(overrides = CRITICAL_COVERAGE_TARGET_OVERRIDES) {
-  return new Set(Object.entries(overrides)
-    .filter(([, override]) => override.trustBoundary)
-    .map(([relative]) => relative));
-}
-
 function changedOverride(relative, change) {
   return Object.freeze({
     ...CRITICAL_COVERAGE_TARGET_OVERRIDES,
@@ -131,9 +73,7 @@ test('critical coverage baselines and audited branch caps are exact', () => {
       ])),
     EXPECTED_AUDITED_CAPS,
   );
-  assert.equal(validateCriticalCoveragePolicy({
-    trustTargets: trustTargetsFor(),
-  }), true);
+  assert.equal(validateCriticalCoveragePolicy(), true);
 });
 
 test('critical coverage policy rejects silent threshold relaxation', () => {
@@ -148,30 +88,46 @@ test('critical coverage policy rejects silent threshold relaxation', () => {
     { trustBoundary: false },
   ]) {
     const overrides = changedOverride(relative, change);
-    assert.throws(() => validateCriticalCoveragePolicy({
-      trustTargets: trustTargetsFor(),
-      targetOverrides: overrides,
-    }), new RegExp(`critical_coverage_target_override_invalid:${relative}`));
+    assert.throws(() => validateCriticalCoveragePolicy({ targetOverrides: overrides }),
+      new RegExp(`critical_coverage_target_override_invalid:${relative}`));
   }
 });
 
-test('coverage runner consumes the reviewed policy and targets every new trust module', () => {
+test('coverage runner consumes the canonical registry instead of duplicate target sets', () => {
   const source = fs.readFileSync(
     new URL('../bin/critical-module-coverage.mjs', import.meta.url),
     'utf8',
   );
-  assert.match(source, /buildCriticalCoverageTargetThresholds/);
-  assert.doesNotMatch(source, /const TARGET_THRESHOLDS = new Map/);
-  for (const relative of REQUIRED_NEW_TRUST_TARGETS) {
-    assert.equal(
-      source.split(`'${relative}'`).length - 1,
-      2,
-      relative,
-    );
+  assert.match(source, /buildCriticalCoveragePolicy/);
+  assert.doesNotMatch(source, /const explicitlyTargetedModules/);
+  assert.doesNotMatch(source, /const TRUST_TARGETS = new Set/);
+});
+
+test('critical coverage targets, trust boundaries, and thresholds derive from one registry', () => {
+  assert.equal(validateCriticalCoverageTargetRegistry(), true);
+  const paths = CRITICAL_COVERAGE_TARGET_REGISTRY.map((entry) => entry.path);
+  assert.equal(new Set(paths).size, paths.length);
+  assert.equal(CRITICAL_COVERAGE_TARGET_REGISTRY.every((entry) => (
+    Object.keys(entry).sort().join(',') === 'path,trustBoundary'
+      && typeof entry.trustBoundary === 'boolean'
+  )), true);
+
+  const policy = buildCriticalCoveragePolicy();
+  assert.deepEqual(policy.targets, paths);
+  assert.deepEqual(
+    [...policy.trustTargets],
+    CRITICAL_COVERAGE_TARGET_REGISTRY
+      .filter((entry) => entry.trustBoundary)
+      .map((entry) => entry.path),
+  );
+  for (const [relative, override] of Object.entries(
+    CRITICAL_COVERAGE_TARGET_OVERRIDES,
+  )) {
+    assert.equal(paths.includes(relative), true, relative);
+    assert.equal(policy.trustTargets.has(relative), override.trustBoundary, relative);
   }
-  const thresholds = buildCriticalCoverageTargetThresholds({
-    trustTargets: trustTargetsFor(),
-  });
+
+  const thresholds = buildCriticalCoverageTargetThresholds();
   assert.deepEqual(thresholds.get(
     'paper-adapters/automation/http-recoverable-reviewer-executor-adapter.mjs',
   ), {
@@ -185,4 +141,42 @@ test('coverage runner consumes the reviewed policy and targets every new trust m
     ), 'rationale'),
     false,
   );
+});
+
+test('dynamic target derivation preserves order, deduplicates, and only upgrades trust', () => {
+  const upgraded = 'paper-domain/automation/analysis-statistics.mjs';
+  const leading = Object.freeze({
+    path: 'paper-domain/contracts/discovered-contract.mjs',
+    trustBoundary: false,
+  });
+  const trailing = Object.freeze({
+    path: 'paper-adapters/automation/discovered-online-state.mjs',
+    trustBoundary: true,
+  });
+  const policy = buildCriticalCoveragePolicy({
+    leadingTargets: [leading],
+    trailingTargets: [
+      Object.freeze({ path: upgraded, trustBoundary: true }),
+      trailing,
+    ],
+  });
+  assert.equal(policy.targets[0], leading.path);
+  assert.equal(policy.targets.at(-1), trailing.path);
+  assert.equal(policy.targets.filter((relative) => relative === upgraded).length, 1);
+  assert.equal(policy.trustTargets.has(upgraded), true);
+  assert.equal(policy.trustTargets.has(leading.path), false);
+  assert.equal(policy.trustTargets.has(trailing.path), true);
+});
+
+test('critical coverage registry rejects duplicate or malformed declarations', () => {
+  const valid = Object.freeze({ path: 'paper-domain/example.mjs', trustBoundary: false });
+  for (const targetRegistry of [
+    [valid, valid],
+    [{ path: '../escape.mjs', trustBoundary: false }],
+    [{ path: 'paper-domain/example.mjs', trustBoundary: 'false' }],
+    [{ ...valid, extra: true }],
+  ]) {
+    assert.throws(() => validateCriticalCoverageTargetRegistry({ targetRegistry }),
+      /critical_coverage_target_registry_invalid/);
+  }
 });

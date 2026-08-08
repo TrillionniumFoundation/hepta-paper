@@ -68,6 +68,13 @@ export function buildDatasetAuthorizationSet(datasetMounts = []) {
       operatorDatasetResearchSemanticsHash:
         mount.operatorDatasetResearchSemanticsHash || null,
     } : {}),
+    ...(mount?.authorityScope ? {
+      authorityScope: mount.authorityScope,
+      evidenceClass: mount.evidenceClass || null,
+      academicPromotionEligible: mount.academicPromotionEligible === true,
+      externalTrustClaimed: mount.externalTrustClaimed === true,
+      localGoldenRuntimeScope: mount.localGoldenRuntimeScope || null,
+    } : {}),
     splitManifestHash: mount?.splitManifestHash || null,
     readOnly: mount?.readOnly === true,
     benchmarkHarnessDocumentHash: mount?.benchmarkHarnessDocumentHash || null,

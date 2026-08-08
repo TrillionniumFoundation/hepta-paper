@@ -318,6 +318,73 @@ function appendFullCampaign({ nodes, campaignId, rounds, reviewers, executionPro
   );
 }
 
+function appendPackagePreparation({
+  nodes,
+  campaignId,
+  executionIntent,
+  formalRequested,
+  reviewers = 0,
+  includeReferees = false,
+}) {
+  const formalPreflight = formalRequested
+    ? node(campaignId, 'compile', [], {
+      priority: 10, language: 'latex', executionIntent,
+    }) : null;
+  const formal = formalRequested ? formalVerificationChain({
+    campaignId,
+    dependencies: [formalPreflight.nodeId],
+    executionIntent,
+    priority: 20,
+    sourceClosureTerminal: true,
+  }) : null;
+  const finalCompile = node(
+    campaignId,
+    'final-compile',
+    formal ? [formal.formalVerify.nodeId] : [],
+    {
+      priority: formal ? 30 : 10,
+      language: 'latex',
+      executionIntent,
+      ...(formal ? { sourceClosureTerminal: true, sourceMutationPolicy: 'forbid' } : {}),
+    },
+  );
+  const researchVerify = node(campaignId, 'research-verify', [
+    finalCompile.nodeId,
+    ...(formal ? [formal.formalVerify.nodeId] : []),
+  ], { priority: formal ? 30 : 20, executionIntent });
+  const referees = includeReferees
+    ? Array.from({ length: reviewers }, (_, index) => node(
+      campaignId,
+      `referee-${index + 1}`,
+      [finalCompile.nodeId],
+      {
+        roundIndex: 1,
+        priority: formal ? 40 : 30,
+        role: `referee-${index + 1}`,
+        executionIntent,
+      },
+    )) : [];
+  const packageNode = node(campaignId, 'package', [
+    finalCompile.nodeId,
+    researchVerify.nodeId,
+    ...referees.map((item) => item.nodeId),
+  ], {
+    roundIndex: includeReferees ? 2 : 1,
+    priority: formal
+      ? (includeReferees ? 50 : 40)
+      : (includeReferees ? 40 : 30),
+    executionIntent,
+  });
+  nodes.push(
+    ...(formalPreflight ? [formalPreflight] : []),
+    ...(formal ? [formal.theoremSpecification, formal.formalVerify] : []),
+    finalCompile,
+    researchVerify,
+    ...referees,
+    packageNode,
+  );
+}
+
 export function buildCampaignModeNodes({
   campaignId,
   mode,
@@ -335,34 +402,11 @@ export function buildCampaignModeNodes({
     appendFullCampaign({ nodes, campaignId, rounds, reviewers, executionProfiles, executionIntent, integrateManuscript: true, formalRequested, researchVerificationRequired });
   } else if (mode === PAPER_BATCH_MODES.LOCAL_BUILD) {
     nodes.push(node(campaignId, 'compile', [], { priority: 10, language: 'latex', executionIntent }));
-  } else if (mode === PAPER_BATCH_MODES.LOCAL_PACKAGE) {
-    const formalPreflight = formalRequested
-      ? node(campaignId, 'compile', [], { priority: 10, language: 'latex', executionIntent })
-      : null;
-    const formal = formalRequested ? formalVerificationChain({
-      campaignId,
-      dependencies: [formalPreflight.nodeId],
-      executionIntent,
-      priority: 20,
-      sourceClosureTerminal: true,
-    }) : null;
-    const finalCompile = node(campaignId, 'final-compile', formal ? [formal.formalVerify.nodeId] : [], {
-      priority: formal ? 30 : 10,
-      language: 'latex',
-      executionIntent,
-      ...(formal ? { sourceClosureTerminal: true, sourceMutationPolicy: 'forbid' } : {}),
+  } else if (mode === PAPER_BATCH_MODES.LOCAL_PACKAGE
+    || mode === PAPER_BATCH_MODES.REVIEWED_SUBMIT) {
+    appendPackagePreparation({
+      nodes, campaignId, executionIntent, formalRequested,
     });
-    const researchVerify = node(campaignId, 'research-verify', [
-      finalCompile.nodeId,
-      ...(formal ? [formal.formalVerify.nodeId] : []),
-    ], { priority: formal ? 30 : 20, executionIntent });
-    nodes.push(
-      ...(formalPreflight ? [formalPreflight] : []),
-      ...(formal ? [formal.theoremSpecification, formal.formalVerify] : []),
-      finalCompile,
-      researchVerify,
-      node(campaignId, 'package', [finalCompile.nodeId, researchVerify.nodeId], { roundIndex: 1, priority: formal ? 40 : 30, executionIntent }),
-    );
   } else if (mode === PAPER_BATCH_MODES.RESEARCH_VERIFY) {
     const formal = formalRequested ? formalVerificationChain({ campaignId, executionIntent, priority: 10 }) : null;
     nodes.push(
@@ -428,68 +472,14 @@ export function buildCampaignModeNodes({
     });
     nodes.push(node(campaignId, 'final-compile', [review.previousNodeId], { roundIndex: rounds, priority: 100, language: 'latex', executionIntent }));
   } else if (mode === PAPER_BATCH_MODES.LOCAL_DRY_RUN) {
-    const formalPreflight = formalRequested
-      ? node(campaignId, 'compile', [], { priority: 10, language: 'latex', executionIntent })
-      : null;
-    const formal = formalRequested ? formalVerificationChain({
+    appendPackagePreparation({
+      nodes,
       campaignId,
-      dependencies: [formalPreflight.nodeId],
       executionIntent,
-      priority: 20,
-      sourceClosureTerminal: true,
-    }) : null;
-    const finalCompile = node(campaignId, 'final-compile', formal ? [formal.formalVerify.nodeId] : [], {
-      priority: formal ? 30 : 10,
-      language: 'latex',
-      executionIntent,
-      ...(formal ? { sourceClosureTerminal: true, sourceMutationPolicy: 'forbid' } : {}),
+      formalRequested,
+      reviewers,
+      includeReferees: true,
     });
-    const researchVerify = node(campaignId, 'research-verify', [
-      finalCompile.nodeId,
-      ...(formal ? [formal.formalVerify.nodeId] : []),
-    ], { priority: formal ? 30 : 20, executionIntent });
-    const referees = Array.from({ length: reviewers }, (_, index) => node(campaignId, `referee-${index + 1}`, [finalCompile.nodeId], {
-      roundIndex: 1, priority: formal ? 40 : 30, role: `referee-${index + 1}`, executionIntent,
-    }));
-    nodes.push(
-      ...(formalPreflight ? [formalPreflight] : []),
-      ...(formal ? [formal.theoremSpecification, formal.formalVerify] : []),
-      finalCompile,
-      researchVerify,
-      ...referees,
-      node(campaignId, 'package', [finalCompile.nodeId, researchVerify.nodeId, ...referees.map((item) => item.nodeId)], {
-      roundIndex: 2, priority: formal ? 50 : 40, executionIntent,
-    }));
-  } else if (mode === PAPER_BATCH_MODES.REVIEWED_SUBMIT) {
-    const formalPreflight = formalRequested
-      ? node(campaignId, 'compile', [], { priority: 10, language: 'latex', executionIntent })
-      : null;
-    const formal = formalRequested ? formalVerificationChain({
-      campaignId,
-      dependencies: [formalPreflight.nodeId],
-      executionIntent,
-      priority: 20,
-      sourceClosureTerminal: true,
-    }) : null;
-    const finalCompile = node(campaignId, 'final-compile', formal ? [formal.formalVerify.nodeId] : [], {
-      priority: formal ? 30 : 10,
-      language: 'latex',
-      executionIntent,
-      ...(formal ? { sourceClosureTerminal: true, sourceMutationPolicy: 'forbid' } : {}),
-    });
-    const researchVerify = node(campaignId, 'research-verify', [
-      finalCompile.nodeId,
-      ...(formal ? [formal.formalVerify.nodeId] : []),
-    ], { priority: formal ? 30 : 20, executionIntent });
-    nodes.push(
-      ...(formalPreflight ? [formalPreflight] : []),
-      ...(formal ? [formal.theoremSpecification, formal.formalVerify] : []),
-      finalCompile,
-      researchVerify,
-      node(campaignId, 'package', [finalCompile.nodeId, researchVerify.nodeId], {
-        roundIndex: 1, priority: formal ? 40 : 30, executionIntent,
-      }),
-    );
   }
   return Object.freeze(nodes);
 }

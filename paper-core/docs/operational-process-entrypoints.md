@@ -35,6 +35,22 @@ Run the existing installer from the exact release tree:
 sudo /opt/hepta-paper/paper-core/deploy/install-hepta-paper-systemd-host.sh
 ```
 
+The default installation is a production hold. It enables and starts only the
+host bootstrap, state authority, release-attestor pair, handoff-layout watcher,
+and state-backup timer. It explicitly disables and stops the autonomous
+research supervisor, submission dispatcher, strict-acceptance service, and
+strict-acceptance timer. Installing reviewed units therefore cannot implicitly
+start research or submission.
+
+`--enable-full-auto` is parsed as an explicit high-risk request, but currently
+fails before any target or systemd mutation with
+`hepta_full_auto_enable_blocked:non_mutating_accepted_readiness_preflight_unavailable`.
+The strict `plan` action is non-mutating but does not prove live acceptance;
+the `status` action proves live readiness only by acquiring a persistent lease
+and running bound verification processes. Neither is a safe installer
+preflight. Keep activation as a separate reviewed operation until a repository
+command can prove current accepted readiness without mutation.
+
 The installer is deliberately not a configuration provisioner. Before it
 creates an installation target, compiles a helper, writes a unit, reloads
 systemd, or stops/restarts a service, it uses the candidate daemon parser to

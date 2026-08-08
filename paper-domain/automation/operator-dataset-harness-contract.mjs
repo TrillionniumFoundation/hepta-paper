@@ -16,6 +16,46 @@ const SPLITS = new Set(['train', 'validation', 'test', 'public']);
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 const SAFE_RELATIVE_PATH = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9_.\/-]{1,512}$/;
 
+export const LOCAL_GOLDEN_DATASET_AUTHORITY_SCOPE =
+  'local-operator-golden-runtime-only-v1';
+export const LOCAL_GOLDEN_DATASET_EVIDENCE_CLASS =
+  'local_operator_dataset_authority';
+export const LOCAL_GOLDEN_DATASET_AUTHORITY_ROLE =
+  'local_golden_dataset_operator';
+export const LOCAL_GOLDEN_DATASET_AUTHORITY_KEY_PURPOSE =
+  'local-golden-dataset-authority-v1';
+export const LOCAL_GOLDEN_DATASET_AUTHORITY_KIND =
+  'LocalGoldenDatasetHarnessAuthority';
+export const LOCAL_GOLDEN_DATASET_ENVELOPE_KIND =
+  'LocalGoldenDatasetHarnessEnvelope';
+
+function normalizedLocalGoldenRuntimeScope(value) {
+  if (!exactKeys(value, [
+    'version', 'kind', 'isolationId', 'runtimeRootHash',
+  ]) || value.version !== 1 || value.kind !== 'LocalGoldenDatasetRuntimeScope'
+    || !/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(String(value.isolationId || ''))
+    || !SHA256.test(String(value.runtimeRootHash || ''))) {
+    throw new Error('local_golden_dataset_runtime_scope_invalid');
+  }
+  return Object.freeze({
+    version: 1,
+    kind: 'LocalGoldenDatasetRuntimeScope',
+    isolationId: String(value.isolationId),
+    runtimeRootHash: String(value.runtimeRootHash).toLowerCase(),
+  });
+}
+
+export function isLocalGoldenDatasetAuthority(value) {
+  return Boolean(value?.version === 4
+    && value?.kind === LOCAL_GOLDEN_DATASET_AUTHORITY_KIND
+    && value?.authorityKeyPurpose === LOCAL_GOLDEN_DATASET_AUTHORITY_KEY_PURPOSE
+    && value?.authorityScope === LOCAL_GOLDEN_DATASET_AUTHORITY_SCOPE
+    && value?.evidenceClass === LOCAL_GOLDEN_DATASET_EVIDENCE_CLASS
+    && value?.academicPromotionEligible === false
+    && value?.externalTrustClaimed === false
+    && value?.localGoldenRuntimeScope?.kind === 'LocalGoldenDatasetRuntimeScope');
+}
+
 function semanticText(value, maximum = 2_000) {
   const normalized = String(value || '').normalize('NFKC').replace(/\s+/g, ' ').trim();
   return normalized && normalized.length <= maximum ? normalized : null;
@@ -204,15 +244,24 @@ export function validateOperatorDatasetSplitManifest(value, { datasetName = null
 
 export function validateOperatorDatasetAuthorityDocument(value, { datasetName = null, datasetManifestHash = null } = {}) {
   const legacy = value?.version === 1;
-  const researchSemanticAuthority = value?.version === 3;
+  const researchSemanticAuthority = [3, 4].includes(value?.version);
+  const localGoldenAuthority = value?.version === 4;
   const keys = [
     'version', 'kind', 'datasetName', 'datasetManifestHash', 'datasetLicenseId', 'datasetSplitManifestHash',
     'benchmarkHarnessDefinitionHash', 'benchmarkFamily', 'seedSchedule', 'minimumRepetitions',
     'workerExposurePolicy', 'signedAt', 'expiresAt', 'signatures',
     ...(!legacy ? ['analysisProtocolHash'] : []),
     ...(researchSemanticAuthority ? ['researchSemantics'] : []),
+    ...(localGoldenAuthority ? [
+      'authorityScope', 'evidenceClass', 'academicPromotionEligible',
+      'externalTrustClaimed', 'authorityKeyPurpose', 'localGoldenRuntimeScope',
+    ] : []),
   ];
-  if (!exactKeys(value, keys) || ![1, 2, 3].includes(value.version) || value.kind !== 'OperatorDatasetHarnessAuthority') {
+  const expectedAuthorityKind = localGoldenAuthority
+    ? LOCAL_GOLDEN_DATASET_AUTHORITY_KIND
+    : 'OperatorDatasetHarnessAuthority';
+  if (!exactKeys(value, keys) || ![1, 2, 3, 4].includes(value.version)
+    || value.kind !== expectedAuthorityKind) {
     throw new Error('operator_dataset_authority_document_shape_invalid');
   }
   const name = String(value.datasetName || '');
@@ -227,6 +276,11 @@ export function validateOperatorDatasetAuthorityDocument(value, { datasetName = 
         .researchSemantics;
     } catch { throw new Error('operator_dataset_research_semantics_invalid'); }
   }
+  let localGoldenRuntimeScope = null;
+  if (localGoldenAuthority) {
+    try { localGoldenRuntimeScope = normalizedLocalGoldenRuntimeScope(value.localGoldenRuntimeScope); }
+    catch { throw new Error('local_golden_dataset_runtime_scope_invalid'); }
+  }
   if (!/^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/.test(name) || (datasetName && name !== datasetName)
     || !SHA256.test(manifestHash) || (datasetManifestHash && manifestHash !== String(datasetManifestHash).toLowerCase())
     || !String(value.datasetLicenseId || '') || !SHA256.test(String(value.datasetSplitManifestHash || ''))
@@ -236,13 +290,20 @@ export function validateOperatorDatasetAuthorityDocument(value, { datasetName = 
     || seedSchedule.length < 1 || seedSchedule.some((seed) => !Number.isSafeInteger(seed))
     || !Number.isSafeInteger(minimumRepetitions) || minimumRepetitions < 1
     || value.workerExposurePolicy !== 'signed-complete-dataset-file-manifest-v1'
+    || (localGoldenAuthority && (
+      value.authorityScope !== LOCAL_GOLDEN_DATASET_AUTHORITY_SCOPE
+      || value.evidenceClass !== LOCAL_GOLDEN_DATASET_EVIDENCE_CLASS
+      || value.academicPromotionEligible !== false
+      || value.externalTrustClaimed !== false
+      || value.authorityKeyPurpose !== LOCAL_GOLDEN_DATASET_AUTHORITY_KEY_PURPOSE
+    ))
     || !Number.isFinite(Date.parse(String(value.signedAt || ''))) || !Number.isFinite(Date.parse(String(value.expiresAt || '')))
     || !Array.isArray(value.signatures) || value.signatures.length < 1) {
     throw new Error('operator_dataset_authority_document_invalid');
   }
   const normalized = Object.freeze({
     version: value.version,
-    kind: 'OperatorDatasetHarnessAuthority',
+    kind: expectedAuthorityKind,
     datasetName: name,
     datasetManifestHash: manifestHash,
     datasetLicenseId: String(value.datasetLicenseId),
@@ -250,6 +311,14 @@ export function validateOperatorDatasetAuthorityDocument(value, { datasetName = 
     benchmarkHarnessDefinitionHash: String(value.benchmarkHarnessDefinitionHash).toLowerCase(),
     ...(!legacy ? { analysisProtocolHash: String(value.analysisProtocolHash).toLowerCase() } : {}),
     ...(researchSemanticAuthority ? { researchSemantics } : {}),
+    ...(localGoldenAuthority ? {
+      authorityScope: LOCAL_GOLDEN_DATASET_AUTHORITY_SCOPE,
+      evidenceClass: LOCAL_GOLDEN_DATASET_EVIDENCE_CLASS,
+      academicPromotionEligible: false,
+      externalTrustClaimed: false,
+      authorityKeyPurpose: LOCAL_GOLDEN_DATASET_AUTHORITY_KEY_PURPOSE,
+      localGoldenRuntimeScope,
+    } : {}),
     benchmarkFamily: family,
     seedSchedule: Object.freeze(seedSchedule),
     minimumRepetitions,
@@ -270,7 +339,11 @@ export function validateOperatorDatasetAuthorityDocument(value, { datasetName = 
 export function validateOperatorDatasetHarnessEnvelope(value, { datasetName = null, datasetManifestHash = null } = {}) {
   const legacy = value?.version === 1;
   const keys = ['version', 'kind', 'authority', 'splitManifest', 'harnessDefinition', ...(!legacy ? ['analysisProtocol'] : [])];
-  if (!exactKeys(value, keys) || ![1, 2, 3].includes(value.version) || value.kind !== 'OperatorDatasetHarnessEnvelope'
+  const expectedEnvelopeKind = value?.version === 4
+    ? LOCAL_GOLDEN_DATASET_ENVELOPE_KIND
+    : 'OperatorDatasetHarnessEnvelope';
+  if (!exactKeys(value, keys) || ![1, 2, 3, 4].includes(value.version)
+    || value.kind !== expectedEnvelopeKind
     || value.authority?.version !== value.version) {
     throw new Error('operator_dataset_harness_envelope_shape_invalid');
   }
@@ -299,7 +372,7 @@ export function validateOperatorDatasetHarnessEnvelope(value, { datasetName = nu
       minimumRepetitions: harness.definition.minimumRepetitions,
     }) < analysis.analysisProtocol.power.requiredPairedObservations)
     || harness.definition.benchmarkFamily !== authority.authority.benchmarkFamily
-    || (authority.authority.version === 3 && split.splitManifest.entries.some(
+    || ([3, 4].includes(authority.authority.version) && split.splitManifest.entries.some(
       (entry) => !authority.authority.researchSemantics.eligibleSplits.includes(entry.split),
     ))
     || JSON.stringify(harness.definition.seedSchedule) !== JSON.stringify(authority.authority.seedSchedule)
@@ -313,6 +386,63 @@ export function validateOperatorDatasetHarnessEnvelope(value, { datasetName = nu
     analysisProtocol: analysis?.analysisProtocol || null,
     analysisProtocolHash: analysis?.analysisProtocolHash || null,
     academicAnalysisProtocolEligible: !legacy,
+    academicPromotionEligible: !isLocalGoldenDatasetAuthority(authority.authority),
+  });
+}
+
+function localGoldenTrustKey(value) {
+  return Boolean(value
+    && value.keyPurpose === LOCAL_GOLDEN_DATASET_AUTHORITY_KEY_PURPOSE
+    && value.authorityScope === LOCAL_GOLDEN_DATASET_AUTHORITY_SCOPE
+    && value.academicPromotionEligible === false
+    && value.externalTrustClaimed === false
+    && Array.isArray(value.roles)
+    && value.roles.length === 1
+    && value.roles[0] === LOCAL_GOLDEN_DATASET_AUTHORITY_ROLE);
+}
+
+function localGoldenTrustStore(value) {
+  return Boolean(value
+    && value.authorityScope === LOCAL_GOLDEN_DATASET_AUTHORITY_SCOPE
+    && value.evidenceClass === LOCAL_GOLDEN_DATASET_EVIDENCE_CLASS
+    && value.academicPromotionEligible === false
+    && value.externalTrustClaimed === false
+    && value.keyPurpose === LOCAL_GOLDEN_DATASET_AUTHORITY_KEY_PURPOSE);
+}
+
+export function operatorDatasetAuthorityTrustPolicy(authority, trustStore) {
+  const localAuthority = isLocalGoldenDatasetAuthority(authority);
+  const requiredRole = localAuthority
+    ? LOCAL_GOLDEN_DATASET_AUTHORITY_ROLE
+    : 'dataset_harness_operator';
+  const blockers = [];
+  const keys = Array.isArray(trustStore?.keys) ? trustStore.keys : [];
+  const keyById = new Map(keys.map((key) => [String(key?.keyId || ''), key]));
+  const signatures = Array.isArray(authority?.signatures) ? authority.signatures : [];
+  const signingKeys = signatures.map((signature) => keyById.get(String(signature?.keyId || '')))
+    .filter(Boolean);
+  if (localAuthority) {
+    if (!localGoldenTrustStore(trustStore)) {
+      blockers.push('local_golden_dataset_trust_store_scope_invalid');
+    }
+    if (signatures.length !== 1
+      || signatures[0]?.role !== LOCAL_GOLDEN_DATASET_AUTHORITY_ROLE
+      || signingKeys.length !== 1
+      || !localGoldenTrustKey(signingKeys[0])) {
+      blockers.push('local_golden_dataset_signing_key_purpose_invalid');
+    }
+  } else {
+    if (localGoldenTrustStore(trustStore)) {
+      blockers.push('local_golden_dataset_trust_store_forbids_nonlocal_authority');
+    }
+    if (signatures.some((signature) => signature?.role === LOCAL_GOLDEN_DATASET_AUTHORITY_ROLE)
+      || signingKeys.some((key) => localGoldenTrustKey(key))) {
+      blockers.push('local_golden_dataset_key_cannot_authorize_nonlocal_authority');
+    }
+  }
+  return Object.freeze({
+    requiredRole,
+    blockers: Object.freeze([...new Set(blockers)]),
   });
 }
 
@@ -347,6 +477,15 @@ export function verifyOperatorDatasetHarnessAuthorityReceiptStructure(receipt, {
   let authority = null;
   try { authority = validateOperatorDatasetAuthorityDocument(receipt.authority, { datasetName: dataset?.name, datasetManifestHash: dataset?.manifestHash }); }
   catch { return false; }
+  const localGoldenAuthority = isLocalGoldenDatasetAuthority(authority.authority);
+  if (localGoldenAuthority && (
+    receipt.authorityScope !== LOCAL_GOLDEN_DATASET_AUTHORITY_SCOPE
+    || receipt.evidenceClass !== LOCAL_GOLDEN_DATASET_EVIDENCE_CLASS
+    || receipt.academicPromotionEligible !== false
+    || receipt.externalTrustClaimed !== false
+    || JSON.stringify(receipt.localGoldenRuntimeScope)
+      !== JSON.stringify(authority.authority.localGoldenRuntimeScope)
+  )) return false;
   let analysis = null;
   const selectorAnalysisProtocol = selector?.experimentDesign?.analysisProtocolTemplate || selector?.analysisProtocol;
   const selectorAnalysisProtocolHash = selector?.experimentDesign?.analysisProtocolTemplateHash || selector?.analysisProtocolHash;
@@ -388,7 +527,7 @@ export function verifyOperatorDatasetHarnessAuthorityReceiptStructure(receipt, {
     && receipt.benchmarkFamily === authority.authority.benchmarkFamily
     && receipt.benchmarkFamily === dataset.benchmarkFamily
     && receipt.benchmarkFamily === selector.benchmarkFamily
-    && (authority.authority.version !== 3 || (
+    && (![3, 4].includes(authority.authority.version) || (
       receipt.operatorDatasetResearchSemanticsHash
         === hashRecord('OperatorDatasetResearchSemantics', authority.authority.researchSemantics)
       && receipt.operatorDatasetResearchSemanticsHash
@@ -397,6 +536,20 @@ export function verifyOperatorDatasetHarnessAuthorityReceiptStructure(receipt, {
         === JSON.stringify(authority.authority.researchSemantics)
       && JSON.stringify(dataset.operatorDatasetResearchSemantics)
         === JSON.stringify(authority.authority.researchSemantics)
+    ))
+    && (!localGoldenAuthority || (
+      dataset.authorityScope === LOCAL_GOLDEN_DATASET_AUTHORITY_SCOPE
+      && dataset.evidenceClass === LOCAL_GOLDEN_DATASET_EVIDENCE_CLASS
+      && dataset.academicPromotionEligible === false
+      && dataset.externalTrustClaimed === false
+      && JSON.stringify(dataset.localGoldenRuntimeScope)
+        === JSON.stringify(authority.authority.localGoldenRuntimeScope)
+      && selector.authorityScope === LOCAL_GOLDEN_DATASET_AUTHORITY_SCOPE
+      && selector.evidenceClass === LOCAL_GOLDEN_DATASET_EVIDENCE_CLASS
+      && selector.academicPromotionEligible === false
+      && selector.externalTrustClaimed === false
+      && JSON.stringify(selector.localGoldenRuntimeScope)
+        === JSON.stringify(authority.authority.localGoldenRuntimeScope)
     ))
     && receipt.operatorAuthorizationHash === authority.operatorDatasetAuthorityDocumentHash
     && JSON.stringify(receipt.authority) === JSON.stringify(authority.authority));

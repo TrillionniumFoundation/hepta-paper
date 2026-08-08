@@ -2,7 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
-import { verifyCampaignBenchmarkSelector } from '../../paper-domain/automation/campaign-benchmark-selector.mjs';
+import {
+  LOCAL_GOLDEN_DATASET_AUTHORITY_SCOPE,
+  LOCAL_GOLDEN_DATASET_EVIDENCE_CLASS,
+  verifyCampaignBenchmarkSelector,
+} from '../../paper-domain/automation/campaign-benchmark-selector.mjs';
 import {
   autonomousEmpiricalFamilyPluginProfileFor,
 } from '../../paper-domain/automation/autonomous-empirical-family-plugin-registry.mjs';
@@ -85,6 +89,8 @@ export function executeSystemBenchmarkHarness({
     armAdapterSet,
     selector.expected?.experimentDesign?.benchmarkHarness?.armProtocolSet,
   );
+  const localGoldenAuthority = selector.expected?.authorityScope
+    === LOCAL_GOLDEN_DATASET_AUTHORITY_SCOPE;
   if (!selector.valid || !adapterSetVerified || !experimentAttemptId || !SHA256.test(String(sourceLineageHash || ''))
     || !SHA256.test(String(sourceMerkleHash || '')) || !SHA256.test(String(sourceWorkspaceManifestHash || ''))
     || !Number.isSafeInteger(Number(attemptVersion)) || Number(attemptVersion) < 1
@@ -95,6 +101,7 @@ export function executeSystemBenchmarkHarness({
     || !Number.isSafeInteger(Number(memoryBytes)) || Number(memoryBytes) < 1
     || !Number.isSafeInteger(Number(maximumProcesses)) || Number(maximumProcesses) < 1
     || typeof nowEpochMs !== 'function'
+    || (localGoldenAuthority && localOnly !== true)
     || (researchContext !== null && (
       !Number.isSafeInteger(Number(maximumWallTimeMs)) || Number(maximumWallTimeMs) < 1
       || Number(absoluteDeadlineEpochMs) - Number(nowEpochMs()) > Number(maximumWallTimeMs)
@@ -118,6 +125,8 @@ export function executeSystemBenchmarkHarness({
         ...(!Number.isFinite(Number(absoluteDeadlineEpochMs)) ? ['benchmark_harness_absolute_deadline_required'] : []),
         ...(!Number.isSafeInteger(Number(aggregateCpuSeconds)) || Number(aggregateCpuSeconds) < 1 ? ['benchmark_harness_aggregate_cpu_budget_invalid'] : []),
         ...(!Number.isSafeInteger(Number(memoryBytes)) || Number(memoryBytes) < 1 ? ['benchmark_harness_memory_budget_invalid'] : []),
+        ...(localGoldenAuthority && localOnly !== true
+          ? ['local_golden_dataset_authority_requires_local_only_execution'] : []),
         ...(!Number.isSafeInteger(Number(maximumProcesses)) || Number(maximumProcesses) < 1 ? ['benchmark_harness_process_budget_invalid'] : []),
         ...(researchContext !== null && (
           !Number.isSafeInteger(Number(maximumWallTimeMs)) || Number(maximumWallTimeMs) < 1
@@ -479,6 +488,10 @@ export function executeSystemBenchmarkHarness({
         executionAssuranceProfile,
         academicPromotionEligible: academicPerCell
           && selector.expected.assuranceScope === 'operator-authorized-hidden-evaluation-v1',
+        ...(localGoldenAuthority ? {
+          evidenceClass: LOCAL_GOLDEN_DATASET_EVIDENCE_CLASS,
+          externalTrustClaimed: false,
+        } : {}),
         rawEventManifestHash,
         rawEventArtifactHash,
         rawEventArtifactBytes,
@@ -563,6 +576,10 @@ export function executeSystemBenchmarkHarness({
         executionAssuranceProfile,
         academicPromotionEligible: academicPerCell
           && selector.expected.assuranceScope === 'operator-authorized-hidden-evaluation-v1',
+        ...(localGoldenAuthority ? {
+          evidenceClass: LOCAL_GOLDEN_DATASET_EVIDENCE_CLASS,
+          externalTrustClaimed: false,
+        } : {}),
         datasetAuthorizations: authorizations.datasets,
         experimentAttemptId,
         sourceLineageHash,
@@ -615,7 +632,7 @@ export function executeSystemBenchmarkHarness({
   };
 
   const datasetBacked = selector.expected.selectorType === 'authorized_dataset_mount';
-  const academicPerCell = datasetBacked && localOnly !== true;
+  const academicPerCell = datasetBacked && !localGoldenAuthority && localOnly !== true;
   const executionAssuranceProfile = academicPerCell
     ? 'academic-per-cell-isolation-v1'
     : (datasetBacked ? 'local-bounded-hidden-evaluation-v1' : 'synthetic-conformance-v1');

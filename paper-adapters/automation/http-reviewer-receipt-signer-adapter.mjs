@@ -16,9 +16,11 @@ import {
 import {
   assertPinnedExternalEvidenceEnvelope,
   assertPinnedExternalEvidenceVerificationReceipt,
-  buildPinnedExternalEvidenceEnvelope,
   inspectPinnedExternalEvidenceTrustStore,
 } from '../authority/pinned-external-evidence-verifier.mjs';
+import {
+  createExternalPrincipalIdentityAttestationBundleCodec,
+} from '../authority/external-principal-identity-attestation-bundle-codec.mjs';
 import { hasExactObjectKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { resolveOpaqueRuntimeCredential } from './opaque-runtime-credential-file.mjs';
@@ -38,11 +40,13 @@ const CONFIG_KEYS_V3 = Object.freeze([
   ...CONFIG_KEYS_V2,
   'lookupEndpoint', 'resumeEndpoint',
 ]);
-const IDENTITY_BUNDLE_KEYS = Object.freeze([
-  'authorityEnvelope', 'bundleHash', 'kind', 'maximumLifetimeMs', 'signerKeyIds',
-  'signerRole', 'subject', 'trustStore', 'trustStoreHash', 'version',
-]);
 const IDENTITY_ATTESTOR_ROLE = 'external_principal_identity_attestor';
+const reviewerSignerIdentityAttestationBundleCodec =
+  createExternalPrincipalIdentityAttestationBundleCodec({
+    bundleKind: 'ReviewerSignerIdentityAttestationBundle',
+    signerRole: IDENTITY_ATTESTOR_ROLE,
+    invalidBundleError: 'reviewer_signer_identity_attestation_bundle_invalid',
+  });
 
 function requestAbortError(signal, code) {
   if (signal?.reason instanceof Error) return signal.reason;
@@ -82,49 +86,18 @@ export function buildReviewerSignerIdentityAttestationBundle({
   signerRole = IDENTITY_ATTESTOR_ROLE,
   maximumLifetimeMs = 15 * 60 * 1000,
 } = {}) {
-  const expectedKeyIds = canonicalKeyIds(signerKeyIds);
-  const trust = inspectPinnedExternalEvidenceTrustStore(trustStore, {
-    requiredRole: signerRole,
-    expectedKeyIds,
-  });
-  let canonicalEnvelope = null;
-  try { canonicalEnvelope = buildPinnedExternalEvidenceEnvelope(authorityEnvelope); }
-  catch { /* rejected below */ }
-  if (!verifyExternalPrincipalIdentityAttestationSubject(subject)
-    || !expectedKeyIds || signerRole !== IDENTITY_ATTESTOR_ROLE || !trust.ready
-    || !Number.isSafeInteger(Number(maximumLifetimeMs))
-    || Number(maximumLifetimeMs) < 1_000
-    || Number(maximumLifetimeMs) > 24 * 60 * 60 * 1000
-    || !canonicalEnvelope
-    || JSON.stringify(canonicalEnvelope) !== JSON.stringify(authorityEnvelope)
-    || canonicalEnvelope.subjectKind !== REVIEWER_IDENTITY_ATTESTATION_SUBJECT_KIND
-    || canonicalEnvelope.subjectHash
-      !== subject.externalPrincipalIdentityAttestationSubjectHash) {
-    throw new Error('reviewer_signer_identity_attestation_bundle_invalid');
-  }
-  const payload = {
-    version: 1,
-    kind: 'ReviewerSignerIdentityAttestationBundle',
+  return reviewerSignerIdentityAttestationBundleCodec.build({
     subject,
-    authorityEnvelope: canonicalEnvelope,
-    trustStore: trust.canonicalTrustStore,
-    trustStoreHash: trust.trustStoreHash,
-    signerKeyIds: expectedKeyIds,
-    signerRole: IDENTITY_ATTESTOR_ROLE,
-    maximumLifetimeMs: Number(maximumLifetimeMs),
-  };
-  return Object.freeze({
-    ...payload,
-    bundleHash: hashRecord('ReviewerSignerIdentityAttestationBundle', payload),
+    authorityEnvelope,
+    trustStore,
+    signerKeyIds,
+    signerRole,
+    maximumLifetimeMs,
   });
 }
 
 export function verifyReviewerSignerIdentityAttestationBundle(bundle) {
-  if (!hasExactObjectKeys(bundle, IDENTITY_BUNDLE_KEYS)) return false;
-  try {
-    return JSON.stringify(buildReviewerSignerIdentityAttestationBundle(bundle))
-      === JSON.stringify(bundle);
-  } catch { return false; }
+  return reviewerSignerIdentityAttestationBundleCodec.verify(bundle);
 }
 
 export function buildReviewerReceiptSignerServiceConfiguration({

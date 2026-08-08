@@ -50,6 +50,8 @@ export const EXPLICIT_NPM_SCRIPTS = Object.freeze({
     'safety:p0',
     'safety:p1',
     'safety:p2',
+    'security:npm-audit',
+    'security:source-gate',
     'scripts:check',
     'store:trust-status',
     'store:restore-drill',
@@ -80,6 +82,7 @@ export const EXPLICIT_NPM_SCRIPTS = Object.freeze({
     'reports:quarantine-stale',
     'runtime:hygiene',
     'runtime:permissions',
+    'security:sbom:write',
     'store:init',
     'store:repair-ledger-integrity',
   ]),
@@ -139,7 +142,7 @@ export const HEPTA_PAPER_CI_COMMAND_MATRIX = Object.freeze({
   pullRequest: Object.freeze([
     Object.freeze({
       id: 'static-contracts',
-      npmScripts: Object.freeze(['static:check']),
+      npmScripts: Object.freeze(['static:check', 'security:npm-audit']),
     }),
     Object.freeze({
       id: 'impacted-tests',
@@ -152,6 +155,7 @@ export const HEPTA_PAPER_CI_COMMAND_MATRIX = Object.freeze({
     Object.freeze({
       id: 'full-portable',
       npmScripts: Object.freeze([
+        'security:npm-audit',
         'ci:selftest',
         'coverage:architecture',
         'coverage:repository',

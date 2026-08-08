@@ -5,6 +5,12 @@ import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { hasExactObjectKeys as exactKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 import { FULL_RESEARCH_QUALIFICATION_ATTESTOR_ROLE } from '../../paper-domain/automation/full-research-qualification-contract.mjs';
 import { restrictedChildEnvironment } from './bounded-child-process.mjs';
+import {
+  createProcessFileContentHasher,
+  inspectProcessExecutableFileIdentity,
+  processExecutableFileIdentityMatches,
+  processInterpreterIdentityHash,
+} from './process-executable-identity.mjs';
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{2,159}$/;
 const SAFE_VERSION = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,159}$/;
@@ -16,7 +22,6 @@ const INDEPENDENT_VERIFIER_ROLE = 'external_qualification_independent_verifier';
 const MAXIMUM_CREDENTIAL_FILES = 10_000;
 const MAXIMUM_CREDENTIAL_BYTES = 256 * 1024 * 1024;
 const MAXIMUM_FILE_CONTENT_HASH_CACHE_ENTRIES = 256;
-const fileContentHashCache = new Map();
 const QUALIFICATION_COST_AUTHORITIES = new Set([
   'operator_declared_worst_case_usd',
   'externally_operated_zero_cost',
@@ -35,6 +40,23 @@ const SIGNER_KEYS = Object.freeze([
 ]);
 const TRUST_SET_KEYS = Object.freeze(['keys', 'kind', 'version']);
 
+const fileContentHash = createProcessFileContentHasher({
+  maximumCacheEntries: MAXIMUM_FILE_CONTENT_HASH_CACHE_ENTRIES,
+  regularFileRequiredError: 'external_qualification_integrity_file_invalid',
+  changedDuringHashError: 'external_qualification_integrity_file_changed_during_hash',
+});
+
+function interpreterIdentity(executable, environment) {
+  return processInterpreterIdentityHash({
+    executable,
+    environment,
+    fileContentHash,
+    hashDomain: 'ExternalQualificationInterpreterIdentity',
+    invalidInterpreterError: 'external_qualification_interpreter_invalid',
+    interpreterNotFoundError: 'external_qualification_interpreter_not_found',
+  });
+}
+
 function canonicalTimestamp(value) {
   const timestamp = typeof value === 'string' ? Date.parse(value) : Number.NaN;
   return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value
@@ -45,54 +67,6 @@ function organizationIdentity(value) {
   return typeof value === 'string'
     ? value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLowerCase()
     : null;
-}
-
-function fileStatIdentity(stat) {
-  return [
-    stat.dev,
-    stat.ino,
-    stat.mode,
-    stat.nlink,
-    stat.uid,
-    stat.gid,
-    stat.rdev,
-    stat.size,
-    stat.mtimeNs,
-    stat.ctimeNs,
-  ].join(':');
-}
-
-function fileContentHash(candidate) {
-  const descriptor = fs.openSync(candidate, 'r');
-  try {
-    const before = fs.fstatSync(descriptor, { bigint: true });
-    if (!before.isFile()) {
-      throw new Error('external_qualification_integrity_file_invalid');
-    }
-    const identity = fileStatIdentity(before);
-    const cached = fileContentHashCache.get(identity);
-    if (cached) {
-      fileContentHashCache.delete(identity);
-      fileContentHashCache.set(identity, cached);
-      return cached;
-    }
-    const digest = crypto.createHash('sha256');
-    const buffer = Buffer.allocUnsafe(1024 * 1024);
-    let bytesRead;
-    do {
-      bytesRead = fs.readSync(descriptor, buffer, 0, buffer.length, null);
-      if (bytesRead > 0) digest.update(buffer.subarray(0, bytesRead));
-    } while (bytesRead > 0);
-    if (fileStatIdentity(fs.fstatSync(descriptor, { bigint: true })) !== identity) {
-      throw new Error('external_qualification_integrity_file_changed_during_hash');
-    }
-    const contentHash = `sha256:${digest.digest('hex')}`;
-    fileContentHashCache.set(identity, contentHash);
-    if (fileContentHashCache.size > MAXIMUM_FILE_CONTENT_HASH_CACHE_ENTRIES) {
-      fileContentHashCache.delete(fileContentHashCache.keys().next().value);
-    }
-    return contentHash;
-  } finally { fs.closeSync(descriptor); }
 }
 
 function directoryContentsIdentity(root) {
@@ -175,46 +149,6 @@ function existingArgumentResourceIdentities(args, configPath) {
   }));
 }
 
-function executableOnPath(program, environment) {
-  for (const directory of String(environment.PATH || '').split(path.delimiter).filter(Boolean)) {
-    const candidate = path.resolve(directory, program);
-    try {
-      const stat = fs.statSync(candidate);
-      if (stat.isFile() && (stat.mode & 0o111) !== 0) return fs.realpathSync(candidate);
-    } catch { /* continue */ }
-  }
-  throw new Error('external_qualification_interpreter_not_found');
-}
-
-function interpreterIdentity(executable, environment) {
-  const descriptor = fs.openSync(executable, 'r');
-  const buffer = Buffer.alloc(4096);
-  let count;
-  try { count = fs.readSync(descriptor, buffer, 0, buffer.length, 0); }
-  finally { fs.closeSync(descriptor); }
-  const firstLine = buffer.subarray(0, count).toString('utf8').split(/\r?\n/, 1)[0];
-  if (!firstLine.startsWith('#!')) return null;
-  const words = firstLine.slice(2).trim().split(/\s+/).filter(Boolean);
-  if (!words.length) throw new Error('external_qualification_interpreter_invalid');
-  const launcher = fs.realpathSync(words[0]);
-  const executables = [launcher];
-  if (path.basename(launcher) === 'env') {
-    const program = words.find((word, index) => index > 0 && !word.startsWith('-'));
-    if (!program) throw new Error('external_qualification_interpreter_invalid');
-    executables.push(executableOnPath(program, environment));
-  }
-  const payload = Object.freeze(executables.map((candidate) => {
-    const stat = fs.statSync(candidate);
-    return Object.freeze({
-      realpath: candidate,
-      device: String(stat.dev),
-      inode: String(stat.ino),
-      contentHash: fileContentHash(candidate),
-    });
-  }));
-  return hashRecord('ExternalQualificationInterpreterIdentity', payload);
-}
-
 function childEnvironmentFor(command, environment) {
   return restrictedChildEnvironment({
     source: environment,
@@ -295,15 +229,20 @@ function commandConfiguration(value, label, configPath, environment) {
   const credentialRoot = credentialRootIdentity(
     relativeToConfig(value.credentialRoot, configPath),
   );
+  const executableIdentity = inspectProcessExecutableFileIdentity({
+    executable,
+    fileContentHash,
+    stat: executableStat,
+  });
   const command = Object.freeze({
     serviceId: String(value.serviceId),
     principalId: String(value.principalId),
     protocol: value.protocol,
     configurationDirectory: path.dirname(configPath),
     executable,
-    executableContentHash: fileContentHash(executable),
-    executableDevice: String(executableStat.dev),
-    executableInode: String(executableStat.ino),
+    executableContentHash: executableIdentity.contentHash,
+    executableDevice: executableIdentity.device,
+    executableInode: executableIdentity.inode,
     credentialRoot: credentialRoot.realpath,
     credentialRootIdentityHash: credentialRoot.credentialRootIdentityHash,
     credentialRootContentsIdentityHash: credentialRoot.contentsIdentityHash,
@@ -582,9 +521,16 @@ export async function invokeExternalResearchQualificationProcess(command, payloa
     path.join(command.configurationDirectory, 'configuration.json'),
   );
   if (executable !== command.executable
-    || String(executableStat.dev) !== command.executableDevice
-    || String(executableStat.ino) !== command.executableInode
-    || fileContentHash(executable) !== command.executableContentHash
+    || !processExecutableFileIdentityMatches({
+      executable,
+      stat: executableStat,
+      fileContentHash,
+      expected: {
+        contentHash: command.executableContentHash,
+        device: command.executableDevice,
+        inode: command.executableInode,
+      },
+    })
     || credential.credentialRootIdentityHash !== command.credentialRootIdentityHash
     || credential.contentsIdentityHash !== command.credentialRootContentsIdentityHash
     || JSON.stringify(credential.regularFileContentHashes)

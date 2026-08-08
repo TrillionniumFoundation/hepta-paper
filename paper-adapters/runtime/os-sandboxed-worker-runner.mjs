@@ -10,16 +10,11 @@ import {
 } from '../../paper-ports/executor-capabilities.mjs';
 import { inspectScopedPathSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
 import { isPathWithin } from '../../workflow-kernel/runtime/path-utils.mjs';
-import { sha256FileSync } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { runBoundedChildProcess } from '../automation/bounded-child-process.mjs';
 import {
-  inspectDockerImageDigest,
-  normalizeContainerImageDigest,
   probeDockerDaemon,
   probeOsSandbox,
   probeProcessLimit,
-  resolveExecutable,
-  resolveExecutableInvocationPath,
 } from './sandbox-backend-probe.mjs';
 export { probeOsSandbox } from './sandbox-backend-probe.mjs';
 import {
@@ -56,7 +51,6 @@ import {
   datasetRuntimePreflightBlockers,
   dockerSystemMounts,
   executableRuntimePathSupported,
-  explicitContainerRuntimeIdentityPayload,
   normalizeTrustedDatasetSupervisorImage,
   prepareUnprivilegedDatasetWorkspace,
 } from './os-sandbox-worker-runtime-support.mjs';
@@ -64,7 +58,11 @@ import {
   createOsSandboxWorkerExecutionFinalizer,
   removePrivateSandboxRoot,
 } from './os-sandbox-worker-execution-finalizer.mjs';
-import { createWorkerExecutionIdentityIssuer } from './worker-execution-identity-issuer.mjs';
+import {
+  createWorkerExecutionRuntimeIdentityResolver,
+  inspectWorkerExecutableHash,
+  prepareWorkerExecutableIdentityAllowlist,
+} from './os-sandbox-worker-execution-identity.mjs';
 
 export function createOsSandboxedWorkerRunner({
   allowedExecutables = [], allowedRoots = [], allowedOutputRoots = [], allowGpu = false, bubblewrap = 'bwrap', prlimit = 'prlimit', docker = 'docker', dockerImage = null,
@@ -74,37 +72,10 @@ export function createOsSandboxedWorkerRunner({
   executor = spawnSync, probe = null, imageDigestResolver = null, datasetSnapshotObserver = null, runtimeExecutableSnapshotObserver = null, workspaceSnapshotObserver = null,
   dockerContainerRecoveryExecutor = spawnSync,
 } = {}) {
-  const expectedExecutableHashEntries = expectedExecutableHashes instanceof Map
-    ? [...expectedExecutableHashes.entries()]
-    : Object.entries(expectedExecutableHashes || {});
-  const trustedExecutableHashes = new Map(expectedExecutableHashEntries.map(([candidate, hash]) => {
-    const resolved = resolveExecutable(candidate);
-    const expected = String(hash || '').toLowerCase();
-    if (!resolved || !/^sha256:[0-9a-f]{64}$/.test(expected)) {
-      throw new Error('worker_expected_executable_hash_invalid');
-    }
-    return [resolved, expected];
-  }));
-  const allowedExecutableEntries = allowedExecutables.map((value) => Object.freeze({
-    requested: String(value),
-    invocationPath: resolveExecutableInvocationPath(value),
-    resolvedExecutable: resolveExecutable(value),
-    expectedHash: trustedExecutableHashes.get(resolveExecutable(value)) || null,
-  }));
-  if ([...trustedExecutableHashes.keys()].some((candidate) => (
-    !allowedExecutableEntries.some((entry) => entry.resolvedExecutable === candidate)
-  ))) {
-    throw new Error('worker_expected_executable_not_allowlisted');
-  }
-  const resolveAllowedExecutable = (executable) => {
-    const requested = String(executable || '');
-    const invocationPath = resolveExecutableInvocationPath(executable);
-    const resolvedExecutable = resolveExecutable(executable);
-    const entry = allowedExecutableEntries.find((candidate) => candidate.requested === requested
-      && candidate.invocationPath === invocationPath
-      && candidate.resolvedExecutable === resolvedExecutable) || null;
-    return Object.freeze({ requested, invocationPath, resolvedExecutable, entry, allowlisted: Boolean(entry && invocationPath && resolvedExecutable) });
-  };
+  const resolveAllowedExecutable = prepareWorkerExecutableIdentityAllowlist({
+    allowedExecutables,
+    expectedExecutableHashes,
+  });
   const roots = allowedRoots.map((root) => path.resolve(root));
   const outputRoots = allowedOutputRoots.map((root) => path.resolve(root));
   const datasetRoots = allowedDatasetRoots.map((root) => path.resolve(root));
@@ -114,7 +85,6 @@ export function createOsSandboxedWorkerRunner({
     .filter(Boolean)
     .map((entry) => [entry.image, entry]));
   const issuedExecutionIdentities = new WeakMap();
-  const resolveImageDigest = imageDigestResolver || ((image) => inspectDockerImageDigest(docker, image));
   const trustedDatasetSupervisorProfiles = [...trustedDatasetSupervisors.values()];
   const availability = probe || probeOsSandbox({ bubblewrap, prlimit, docker, dockerImage, trustedDatasetSupervisorImages: trustedDatasetSupervisorProfiles });
   const backend = availability.backend || 'bubblewrap';
@@ -122,68 +92,18 @@ export function createOsSandboxedWorkerRunner({
     ? Object.freeze({ available: true, mechanism: 'docker-pids-cgroup' })
     : (availability.processLimit || probeProcessLimit(prlimit));
   const runnerId = `${backend}-kernel-isolation-worker-v4`;
-  const issueExecutionIdentity = createWorkerExecutionIdentityIssuer(issuedExecutionIdentities);
-  const resolveExecutionRuntimeIdentity = ({ executable, containerImage = null, containerExecutable = null } = {}) => {
-    const allowedExecutable = resolveAllowedExecutable(executable);
-    const resolvedExecutable = allowedExecutable.resolvedExecutable;
-    const executableInvocationPath = allowedExecutable.invocationPath;
-    const executableInvocationName = path.basename(String(executable || ''));
-    const executableAllowlisted = allowedExecutable.allowlisted;
-    if (containerImage) {
-      const requestedImage = String(containerImage);
-      const digest = normalizeContainerImageDigest(requestedImage) || normalizeContainerImageDigest(resolveImageDigest(requestedImage));
-      return issueExecutionIdentity(explicitContainerRuntimeIdentityPayload({
-        requestedImage, digest, containerExecutable, runnerId,
-        allowedImages: containerImages,
-        trustedDatasetSupervisors,
-      }));
-    }
-    if (backend === 'docker') {
-      const probedDigest = availability.image === dockerImage
-        ? normalizeContainerImageDigest(availability.imageDigest)
-        : null;
-      const digest = probedDigest || normalizeContainerImageDigest(dockerImage) || normalizeContainerImageDigest(resolveImageDigest(dockerImage));
-      let executableHash = null;
-      try { executableHash = resolvedExecutable ? sha256FileSync(resolvedExecutable) : null; } catch { executableHash = null; }
-      return issueExecutionIdentity({
-        version: 1,
-        kind: 'WorkerExecutionRuntimeIdentity',
-        runtimeType: 'container',
-        executionClass: 'hybrid-docker',
-        runnerId,
-        backend: 'docker',
-        requestedImage: dockerImage,
-        digest,
-        containerExecutable: null,
-        hostExecutable: resolvedExecutable,
-        hostExecutableHash: executableHash,
-        executableInvocationPath,
-        executableInvocationName,
-        available: Boolean(digest && executableHash),
-        allowlisted: executableAllowlisted,
-        cacheable: false,
-        hybridHostRuntime: true,
-      });
-    }
-    let executableHash = null;
-    try { executableHash = resolvedExecutable ? sha256FileSync(resolvedExecutable) : null; } catch { executableHash = null; }
-    const payload = {
-      version: 1,
-      kind: 'HostRuntimeIdentity',
-      runtimeType: 'host',
-      executionClass: 'host',
-      runnerId,
-      backend,
-      executable: String(executable || ''),
-      executableInvocationPath,
-      executableInvocationName,
-      resolvedExecutable,
-      executableHash,
-      available: Boolean(executableHash),
-      allowlisted: executableAllowlisted,
-    };
-    return issueExecutionIdentity({ ...payload, cacheable: false });
-  };
+  const resolveExecutionRuntimeIdentity = createWorkerExecutionRuntimeIdentityResolver({
+    availability,
+    backend,
+    containerImages,
+    docker,
+    dockerImage,
+    imageDigestResolver,
+    issuedExecutionIdentities,
+    resolveAllowedExecutable,
+    runnerId,
+    trustedDatasetSupervisors,
+  });
   const capabilities = buildExecutorCapabilities({
     executorId: runnerId,
     sandboxModes: ['kernel-isolated'],
@@ -251,8 +171,7 @@ export function createOsSandboxedWorkerRunner({
       const resolvedExecutable = allowedExecutable.resolvedExecutable;
       const executableInvocationPath = allowedExecutable.invocationPath;
       const executableInvocationName = path.basename(String(executable || ''));
-      let resolvedExecutableHash = null;
-      try { resolvedExecutableHash = resolvedExecutable ? sha256FileSync(resolvedExecutable) : null; } catch { resolvedExecutableHash = null; }
+      const resolvedExecutableHash = inspectWorkerExecutableHash(resolvedExecutable);
       const resolvedCwd = path.resolve(cwd || '.');
       const allowedRoot = roots.find((root) => isPathWithin(root, resolvedCwd));
       const resolvedSourceRoot = path.resolve(sourceRoot || allowedRoot || resolvedCwd);

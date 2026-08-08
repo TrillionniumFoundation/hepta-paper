@@ -534,12 +534,23 @@ test('systemd bootstrap, isolated layout service, and installer form a fresh-hos
     assert.match(installer, /hepta-paper-systemd-host\.manifest\.sha256/);
     assert.match(installer, /systemctl daemon-reload/);
     assert.match(installer,
-      /systemctl disable strict-full-auto-acceptance\.service/);
-    assert.match(installer, /systemctl enable/);
+      /systemctl disable --now \\\n    strict-full-auto-acceptance\.timer \\\n    strict-full-auto-acceptance\.service \\\n    autonomous-submission-dispatcher\.service \\\n    autonomous-research-supervisor\.service/);
+    const enabledUnits = installer.match(
+      /systemctl enable \\\n([\s\S]*?)\n  \/usr\/bin\/systemctl stop/,
+    )?.[1] || '';
+    assert.match(enabledUnits, /hepta-paper-state-authority\.service/);
+    assert.match(enabledUnits, /autonomous-research-state-backup-renew\.timer/);
+    assert.doesNotMatch(enabledUnits,
+      /autonomous-research-supervisor|autonomous-submission-dispatcher|strict-full-auto/);
+    assert.match(installer, /--enable-full-auto/);
     assert.match(installer,
+      /hepta_full_auto_enable_blocked:non_mutating_accepted_readiness_preflight_unavailable/);
+    assert.doesNotMatch(installer,
       /systemctl restart strict-full-auto-acceptance\.timer/);
-    assert.match(installer,
+    assert.doesNotMatch(installer,
       /systemctl start --no-block strict-full-auto-acceptance\.service/);
+    assert.match(installer,
+      /hepta-paper systemd host installation completed \(production hold active\)/);
     assert.equal(spawnSync('sh', ['-n', installerPath]).status, 0);
 
     if (commandAvailable('cc') && commandAvailable('systemd-analyze')) {

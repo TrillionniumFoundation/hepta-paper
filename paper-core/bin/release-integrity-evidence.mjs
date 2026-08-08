@@ -4,7 +4,7 @@ import path from 'node:path';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
   loadExistingLocalReleaseIntegritySigningKey,
-} from './release-integrity-key-management.mjs';
+} from './release-integrity-key-reader.mjs';
 import { releaseIntegrityFilesystem } from './release-integrity-filesystem.mjs';
 
 const {

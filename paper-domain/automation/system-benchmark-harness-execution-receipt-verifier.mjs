@@ -12,7 +12,11 @@ import {
   buildSystemBenchmarkCellChallenge,
   decodeSystemBenchmarkArmBatchChallengeEnvironment,
 } from './system-benchmark-challenge.mjs';
-import { verifyOperatorDatasetHarnessAuthorityReceiptStructure } from './operator-dataset-harness-contract.mjs';
+import {
+  LOCAL_GOLDEN_DATASET_AUTHORITY_SCOPE,
+  LOCAL_GOLDEN_DATASET_EVIDENCE_CLASS,
+  verifyOperatorDatasetHarnessAuthorityReceiptStructure,
+} from './operator-dataset-harness-contract.mjs';
 import {
   analysisProtocolResultDocumentFields,
   verifyHarnessAnalysisProtocolBinding,
@@ -86,11 +90,18 @@ export function verifySystemBenchmarkHarnessExecutionReceipt(receipt) {
   );
   if (!experimentIrBinding.valid) return false;
   const { researchResolved } = experimentIrBinding;
+  const localGoldenAuthority = selector.expected.authorityScope
+    === LOCAL_GOLDEN_DATASET_AUTHORITY_SCOPE;
   const localDatasetBatch = datasetBacked
     && receipt.executionIsolationMode === 'local-authorized-per-arm-batch-process-v1'
     && receipt.executionAssuranceProfile === 'local-bounded-hidden-evaluation-v1'
-    && receipt.academicPromotionEligible === false;
-  const academicDatasetExecution = datasetBacked && !localDatasetBatch;
+    && receipt.academicPromotionEligible === false
+    && (!localGoldenAuthority || (
+      receipt.evidenceClass === LOCAL_GOLDEN_DATASET_EVIDENCE_CLASS
+      && receipt.externalTrustClaimed === false
+    ));
+  const academicDatasetExecution = datasetBacked
+    && !localGoldenAuthority && !localDatasetBatch;
   const executionIsolationMode = academicDatasetExecution
     ? 'academic-per-cell-process-v1'
     : (datasetBacked ? 'local-authorized-per-arm-batch-process-v1' : 'synthetic-per-arm-batch-process-v1');
@@ -104,6 +115,11 @@ export function verifySystemBenchmarkHarnessExecutionReceipt(receipt) {
     || receipt.executionAssuranceProfile !== expectedExecutionAssuranceProfile
     || receipt.academicPromotionEligible !== (academicDatasetExecution
       && receipt.assuranceScope === 'operator-authorized-hidden-evaluation-v1')
+    || (localGoldenAuthority && (
+      receipt.evidenceClass !== LOCAL_GOLDEN_DATASET_EVIDENCE_CLASS
+      || receipt.externalTrustClaimed !== false
+      || !localDatasetBatch
+    ))
     || receipt.expectedProcessExecutionCount !== executionUnits.length
     || receipt.processExecutionCount !== executionUnits.length
     || receipt.armBatchExecutionCount !== executionUnits.length
@@ -369,6 +385,10 @@ export function verifySystemBenchmarkHarnessExecutionReceipt(receipt) {
     executionAssuranceProfile: expectedExecutionAssuranceProfile,
     academicPromotionEligible: academicDatasetExecution
       && selector.expected.assuranceScope === 'operator-authorized-hidden-evaluation-v1',
+    ...(localGoldenAuthority ? {
+      evidenceClass: LOCAL_GOLDEN_DATASET_EVIDENCE_CLASS,
+      externalTrustClaimed: false,
+    } : {}),
     rawEventManifestHash: receipt.rawEventManifestHash,
     rawEventArtifactHash: receipt.rawEventArtifactHash,
     rawEventArtifactBytes: receipt.rawEventArtifactBytes,

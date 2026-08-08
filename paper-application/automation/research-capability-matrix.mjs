@@ -26,6 +26,68 @@ const PROOF_SEARCH_BACKENDS = Object.freeze(FORMAL_PROOF_SEARCH_BACKENDS
     executionMode: entry.executionMode,
     productionQualification: entry.productionQualification,
   })));
+
+export const RESEARCH_CAPABILITY_EVIDENCE_LEVELS = Object.freeze([
+  Object.freeze({
+    id: 'contract_fixture',
+    establishes: 'typed contracts and deterministic fixture behavior',
+    productionAuthority: false,
+  }),
+  Object.freeze({
+    id: 'real_runtime_fixture',
+    establishes: 'the real runtime executes a controlled fixture workload',
+    productionAuthority: false,
+  }),
+  Object.freeze({
+    id: 'live_model',
+    establishes: 'a current live model executes a hash-bound campaign workload',
+    productionAuthority: false,
+  }),
+  Object.freeze({
+    id: 'external_trust',
+    establishes: 'an independent external authority accepts current production-bound evidence',
+    productionAuthority: true,
+  }),
+]);
+
+const RESEARCH_CAPABILITY_EVIDENCE_LEVEL_IDS = new Set(
+  RESEARCH_CAPABILITY_EVIDENCE_LEVELS.map((entry) => entry.id),
+);
+const RESEARCH_CAPABILITY_EVIDENCE_LEVEL_RANK = new Map(
+  RESEARCH_CAPABILITY_EVIDENCE_LEVELS.map((entry, index) => [entry.id, index]),
+);
+
+function strongestEvidenceLevel({
+  implemented,
+  qualified,
+  productionReady,
+  liveModelEvidenceReady = false,
+  explicitEvidenceLevel = null,
+}) {
+  if (explicitEvidenceLevel !== null
+    && !RESEARCH_CAPABILITY_EVIDENCE_LEVEL_IDS.has(explicitEvidenceLevel)) {
+    throw new Error(`research_capability_evidence_level_invalid:${explicitEvidenceLevel}`);
+  }
+  const inferredEvidenceLevel = productionReady === true
+    ? 'external_trust'
+    : liveModelEvidenceReady === true
+      ? 'live_model'
+      : qualified === true
+        ? 'real_runtime_fixture'
+        : implemented === true
+          ? 'contract_fixture'
+          : null;
+  if (explicitEvidenceLevel === null) return inferredEvidenceLevel;
+  if (inferredEvidenceLevel === null
+    || RESEARCH_CAPABILITY_EVIDENCE_LEVEL_RANK.get(explicitEvidenceLevel)
+      > RESEARCH_CAPABILITY_EVIDENCE_LEVEL_RANK.get(inferredEvidenceLevel)) {
+    throw new Error(
+      `research_capability_evidence_level_exceeds_readiness:${explicitEvidenceLevel}`,
+    );
+  }
+  return explicitEvidenceLevel;
+}
+
 function capability({
   id,
   implemented,
@@ -34,12 +96,24 @@ function capability({
   scope,
   blockers = [],
   limitations = [],
+  liveModelEvidenceReady = false,
+  explicitEvidenceLevel = null,
 }) {
+  const normalizedImplemented = implemented === true;
+  const normalizedQualified = qualified === true;
+  const normalizedProductionReady = productionReady === true;
   return Object.freeze({
     id,
-    implemented: implemented === true,
-    qualified: qualified === true,
-    productionReady: productionReady === true,
+    implemented: normalizedImplemented,
+    qualified: normalizedQualified,
+    productionReady: normalizedProductionReady,
+    strongestEvidenceLevel: strongestEvidenceLevel({
+      implemented: normalizedImplemented,
+      qualified: normalizedQualified,
+      productionReady: normalizedProductionReady,
+      liveModelEvidenceReady,
+      explicitEvidenceLevel,
+    }),
     scope: Object.freeze(scope),
     blockers: Object.freeze([...new Set(blockers.filter(Boolean))].sort()),
     limitations: Object.freeze([...limitations]),
@@ -61,8 +135,31 @@ export function buildResearchCapabilityMatrix(readiness = {}) {
     ));
   const genericBlockers = Array.isArray(readiness.genericDomainCapabilityBlockers)
     ? readiness.genericDomainCapabilityBlockers : [];
+  const liveModelEvidenceCapabilityIds = new Set(
+    Array.isArray(readiness.liveModelEvidenceCapabilityIds)
+      ? readiness.liveModelEvidenceCapabilityIds : [],
+  );
+  const explicitCapabilityEvidenceLevels =
+    readiness.explicitCapabilityEvidenceLevels
+      && typeof readiness.explicitCapabilityEvidenceLevels === 'object'
+      ? readiness.explicitCapabilityEvidenceLevels : {};
+  const submissionReadiness = readiness.autonomousSubmissionDispatcherReadiness || {};
+  const submissionHandoffReady = readiness.autonomousSubmissionHandoffReady === true;
+  const submissionDispatcherReady = readiness.autonomousSubmissionDispatcherReady === true;
+  const submissionProviderDraftReady =
+    readiness.autonomousSubmissionProviderDraftReady === true
+    || submissionDispatcherReady;
+  const capabilityEntry = (definition) => capability({
+    ...definition,
+    liveModelEvidenceReady:
+      liveModelEvidenceCapabilityIds.has(definition.id),
+    explicitEvidenceLevel:
+      explicitCapabilityEvidenceLevels[definition.id]
+      || definition.explicitEvidenceLevel
+      || null,
+  });
   const capabilities = Object.freeze([
-    capability({
+    capabilityEntry({
       id: 'theorem-specification',
       implemented: true,
       qualified: readiness.genericDomainCapabilityReady === true,
@@ -78,7 +175,7 @@ export function buildResearchCapabilityMatrix(readiness = {}) {
         'theorem generation is bounded by authorized claim lineage and registered formal scope',
       ],
     }),
-    capability({
+    capabilityEntry({
       id: 'formal-proof-search',
       implemented: true,
       qualified: readiness.dynamicFormalProjectClosureReady === true,
@@ -101,7 +198,7 @@ export function buildResearchCapabilityMatrix(readiness = {}) {
         'Coq and Isabelle remain unavailable until separately qualified adapters exist',
       ],
     }),
-    capability({
+    capabilityEntry({
       id: 'empirical-code-execution',
       implemented: true,
       qualified: readiness.academicEmpiricalReady === true,
@@ -120,7 +217,7 @@ export function buildResearchCapabilityMatrix(readiness = {}) {
         'generated code is evidence only after isolated execution and accepted replay',
       ],
     }),
-    capability({
+    capabilityEntry({
       id: 'typed-numerical-analysis',
       implemented: true,
       qualified: readiness.academicEmpiricalReady === true,
@@ -141,7 +238,7 @@ export function buildResearchCapabilityMatrix(readiness = {}) {
         'numeric agreement does not establish scientific validity or external validity',
       ],
     }),
-    capability({
+    capabilityEntry({
       id: 'autonomous-manuscript-release',
       implemented: true,
       qualified: readiness.fullResearchQualificationReady === true,
@@ -156,18 +253,56 @@ export function buildResearchCapabilityMatrix(readiness = {}) {
         'release readiness requires current independent qualification and reproducibility evidence',
       ],
     }),
-    capability({
-      id: 'live-submission',
-      implemented: readiness.autonomousSubmissionHandoffReady === true,
-      qualified: readiness.autonomousSubmissionDispatcherReady === true,
-      productionReady: readiness.autonomousSubmissionDispatcherReady === true,
+    capabilityEntry({
+      id: 'local-submission-handoff',
+      implemented: true,
+      qualified: submissionHandoffReady,
+      productionReady: submissionHandoffReady,
+      explicitEvidenceLevel: submissionHandoffReady
+        ? 'real_runtime_fixture'
+        : null,
       scope: {
-        localHandoffReady: readiness.autonomousSubmissionHandoffReady === true,
-        liveDispatcherReady: readiness.autonomousSubmissionDispatcherReady === true,
+        localHandoffReady: submissionHandoffReady,
+        externalPortalMutation: false,
       },
-      blockers: readiness.autonomousSubmissionDispatcherReadiness?.blockers || [],
+      blockers: submissionHandoffReady
+        ? [] : submissionReadiness.blockers || [],
       limitations: [
-        'local release handoff is not external portal submission authority',
+        'a local release handoff grants no external portal authority',
+      ],
+    }),
+    capabilityEntry({
+      id: 'submission-provider-draft',
+      implemented: true,
+      qualified: submissionProviderDraftReady,
+      productionReady: submissionProviderDraftReady
+        && submissionDispatcherReady,
+      scope: {
+        portalBindingVerified: submissionReadiness.portalBindingVerified === true,
+        providerDraftReady: submissionProviderDraftReady,
+        liveCommitAuthorized: false,
+      },
+      blockers: submissionProviderDraftReady
+        ? [] : submissionReadiness.blockers || [],
+      limitations: [
+        'draft creation is a reversible provider action and is not manuscript submission',
+      ],
+    }),
+    capabilityEntry({
+      id: 'live-submission-commit',
+      implemented: true,
+      qualified: submissionDispatcherReady,
+      productionReady: submissionDispatcherReady,
+      scope: {
+        liveDispatcherReady: submissionDispatcherReady,
+        portalBindingVerified: submissionReadiness.portalBindingVerified === true,
+        livePortalCanaryVerified: submissionReadiness.livePortalCanaryVerified === true,
+        humanReviewedSingleUseAuthorizationRequired: true,
+      },
+      blockers: submissionReadiness.blockers || [],
+      limitations: [
+        'the final live commit requires a human-reviewed hash-bound single-use authorization',
+        'portal qualification applies only to the exact provider, account, route, and venue scope',
       ],
     }),
   ]);
@@ -178,7 +313,7 @@ export function buildResearchCapabilityMatrix(readiness = {}) {
     && readiness.fullAutomaticResearchWritingReady === true
     && capabilityEntriesReady;
   const payload = {
-    version: 1,
+    version: 2,
     kind: 'ResearchCapabilityMatrix',
     status: fullyAutonomousProductionReady
       ? 'research_capabilities_production_ready'
@@ -187,6 +322,7 @@ export function buildResearchCapabilityMatrix(readiness = {}) {
       ? 'research_capability_entries_production_ready'
       : 'research_capability_entries_bounded_or_blocked',
     universalResearchClaimed: false,
+    evidenceLevelDefinitions: RESEARCH_CAPABILITY_EVIDENCE_LEVELS,
     fullyAutonomousProductionReady,
     deploymentEnvironmentInspection:
       readiness.deploymentEnvironmentInspection || null,

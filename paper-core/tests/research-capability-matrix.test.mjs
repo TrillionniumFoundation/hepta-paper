@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { buildResearchCapabilityMatrix } from '../../paper-application/automation/research-capability-matrix.mjs';
+import {
+  buildResearchCapabilityMatrix,
+  RESEARCH_CAPABILITY_EVIDENCE_LEVELS,
+} from '../../paper-application/automation/research-capability-matrix.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 test('capability matrix distinguishes implementation, qualification, and production readiness', () => {
@@ -41,11 +44,17 @@ test('capability matrix distinguishes implementation, qualification, and product
     matrix.capabilityEntriesStatus,
     'research_capability_entries_bounded_or_blocked',
   );
-  assert.equal(matrix.capabilities.length, 6);
+  assert.equal(matrix.version, 2);
+  assert.deepEqual(
+    matrix.evidenceLevelDefinitions.map((entry) => entry.id),
+    ['contract_fixture', 'real_runtime_fixture', 'live_model', 'external_trust'],
+  );
+  assert.equal(matrix.capabilities.length, 8);
   const formal = matrix.capabilities.find((entry) => entry.id === 'formal-proof-search');
   assert.equal(formal.implemented, true);
   assert.equal(formal.qualified, false);
   assert.equal(formal.productionReady, false);
+  assert.equal(formal.strongestEvidenceLevel, 'contract_fixture');
   assert.deepEqual(formal.scope.strategies, [
     'direct_elaboration',
     'mathlib_retrieval',
@@ -65,11 +74,57 @@ test('capability matrix distinguishes implementation, qualification, and product
   const empirical = matrix.capabilities.find((entry) => entry.id === 'empirical-code-execution');
   assert.equal(empirical.scope.benchmarkFamilies.length, 5);
   assert.deepEqual(empirical.scope.runtimeLanguages, ['python', 'r']);
-  const submission = matrix.capabilities.find((entry) => entry.id === 'live-submission');
-  assert.equal(submission.scope.localHandoffReady, true);
+  assert.equal(empirical.strongestEvidenceLevel, 'real_runtime_fixture');
+  const handoff = matrix.capabilities.find((entry) => entry.id === 'local-submission-handoff');
+  const draft = matrix.capabilities.find((entry) => entry.id === 'submission-provider-draft');
+  const submission = matrix.capabilities.find((entry) => entry.id === 'live-submission-commit');
+  assert.equal(handoff.scope.localHandoffReady, true);
+  assert.equal(handoff.qualified, true);
+  assert.equal(handoff.productionReady, true);
+  assert.equal(handoff.strongestEvidenceLevel, 'real_runtime_fixture');
+  assert.equal(draft.qualified, false);
+  assert.equal(submission.scope.humanReviewedSingleUseAuthorizationRequired, true);
+  assert.equal(submission.qualified, false);
   assert.equal(submission.productionReady, false);
   const { researchCapabilityMatrixHash, ...payload } = matrix;
   assert.equal(researchCapabilityMatrixHash, hashRecord('ResearchCapabilityMatrix', payload));
+});
+
+test('capability evidence levels never infer live-model evidence from runtime fixtures', () => {
+  const fixtureOnly = buildResearchCapabilityMatrix({
+    academicEmpiricalReady: true,
+  });
+  const empirical = fixtureOnly.capabilities.find(
+    (entry) => entry.id === 'empirical-code-execution',
+  );
+  assert.equal(empirical.strongestEvidenceLevel, 'real_runtime_fixture');
+
+  const live = buildResearchCapabilityMatrix({
+    academicEmpiricalReady: true,
+    liveModelEvidenceCapabilityIds: ['empirical-code-execution'],
+  });
+  assert.equal(
+    live.capabilities.find((entry) => entry.id === 'empirical-code-execution')
+      .strongestEvidenceLevel,
+    'live_model',
+  );
+  assert.throws(
+    () => buildResearchCapabilityMatrix({
+      explicitCapabilityEvidenceLevels: {
+        'formal-proof-search': 'production-by-name-only',
+      },
+    }),
+    /research_capability_evidence_level_invalid/,
+  );
+  assert.throws(
+    () => buildResearchCapabilityMatrix({
+      explicitCapabilityEvidenceLevels: {
+        'formal-proof-search': 'external_trust',
+      },
+    }),
+    /research_capability_evidence_level_exceeds_readiness/,
+  );
+  assert.equal(RESEARCH_CAPABILITY_EVIDENCE_LEVELS.at(-1).productionAuthority, true);
 });
 
 test('capability matrix cannot infer universal readiness from runtime availability', () => {

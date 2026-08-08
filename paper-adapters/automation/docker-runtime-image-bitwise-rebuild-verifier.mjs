@@ -8,6 +8,7 @@ import {
   buildRuntimeImageBitwiseRebuildEvidence,
 } from '../../paper-domain/automation/runtime-build-reproducibility-contract.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { makePrivateCopiedDirectoryTreeWritable } from '../../workflow-kernel/runtime/private-copied-directory-tree.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 
@@ -109,6 +110,7 @@ export function observeLocalDockerRuntimeImageRootfsRepeatability({
       const root = fs.mkdtempSync(path.join(os.tmpdir(), `hepta-runtime-rebuild-${ordinal}-`));
       const isolatedContext = path.join(root, 'context');
       fs.cpSync(sourceContext, isolatedContext, { recursive: true, errorOnExist: true });
+      makePrivateCopiedDirectoryTreeWritable({ root: isolatedContext });
       const copiedHash = definitionManifestHash(isolatedContext, definitionPaths, manifestPrefix);
       if (copiedHash !== expectedHash) throw new Error('runtime_rebuild_isolated_copy_manifest_mismatch');
       buildRoots.push(root);

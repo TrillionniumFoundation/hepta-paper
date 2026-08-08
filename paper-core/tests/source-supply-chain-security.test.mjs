@@ -59,6 +59,9 @@ function copyContainerIdentityFixture(temporary) {
     const destination = path.join(temporary, relative);
     fs.mkdirSync(path.dirname(destination), { recursive: true });
     fs.copyFileSync(path.join(root, relative), destination);
+    // Release candidates are sealed read-only.  copyFileSync preserves the
+    // source mode, so normalize fixture copies before the mutation checks.
+    fs.chmodSync(destination, 0o600);
   }
 }
 

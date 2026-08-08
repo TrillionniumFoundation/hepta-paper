@@ -5,11 +5,16 @@ import { createLakeFormalVerifier } from '../../paper-adapters/research-verify/l
 import { createLeanToolchainIdentityProvider } from '../../paper-adapters/research-verify/lean-toolchain-identity.mjs';
 import { resolvePinnedLakeExecutable } from '../../paper-adapters/research-verify/pinned-lake-executable-resolver.mjs';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { makePrivateCopiedDirectoryTreeWritable } from '../../workflow-kernel/runtime/private-copied-directory-tree.mjs';
 
 export function createFormalCapabilityReplayRunners({ workspaceRoot }) {
   async function replayFormalVerifier(root) {
     const projectRoot = path.join(root, 'formal-project');
     fs.cpSync(path.join(workspaceRoot, 'migration', 'fixtures', 'lean-adversarial'), projectRoot, { recursive: true });
+    // A sealed release has 0555 source directories.  cpSync preserves those
+    // modes, so normalize only the disposable replay copy for deterministic
+    // cleanup.
+    makePrivateCopiedDirectoryTreeWritable({ root: projectRoot });
     const commandRunner = {
       async run({ executable, args = [], cwd, timeoutMs = 120000 } = {}) {
         const result = spawnSync(executable, args, { cwd, encoding: 'utf8', timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024, env: { ...process.env, NO_PROXY: '*', no_proxy: '*' } });

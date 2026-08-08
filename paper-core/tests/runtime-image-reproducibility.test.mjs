@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import {
   AUTOMATION_RUNTIME_IMAGE_BUILD_DEFINITIONS,
@@ -46,6 +48,20 @@ function definitionHash(paths) {
 }
 
 const H = (value) => `sha256:${crypto.createHash('sha256').update(value).digest('hex')}`;
+
+function setFixtureTreeModes(root, { directoryMode, fileMode }) {
+  const pending = [root];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
+      assert.equal(entry.isSymbolicLink(), false);
+      const selected = path.join(current, entry.name);
+      if (entry.isDirectory()) pending.push(selected);
+      else fs.chmodSync(selected, fileMode);
+    }
+    fs.chmodSync(current, directoryMode);
+  }
+}
 
 test('self-authored dual-build hashes remain an untrusted rootfs diagnostic', () => {
   const imageDigest = H('same-image');
@@ -110,7 +126,16 @@ test('self-authored dual-build hashes remain an untrusted rootfs diagnostic', ()
   assert.equal(verifyRuntimeImageBitwiseRebuildEvidence(forged), false);
 });
 
-test('local Docker verifier performs a non-authoritative rootfs repeatability diagnostic', () => {
+test('local Docker verifier performs a non-authoritative rootfs repeatability diagnostic', (t) => {
+  const repositoryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-sealed-runtime-source-'));
+  const sealedContext = path.join(repositoryRoot, 'runtime-images', 'python-scientific');
+  fs.mkdirSync(path.dirname(sealedContext), { recursive: true });
+  fs.cpSync(path.resolve('runtime-images/python-scientific'), sealedContext, { recursive: true });
+  setFixtureTreeModes(sealedContext, { directoryMode: 0o555, fileMode: 0o444 });
+  t.after(() => {
+    setFixtureTreeModes(sealedContext, { directoryMode: 0o700, fileMode: 0o444 });
+    fs.rmSync(repositoryRoot, { recursive: true, force: true });
+  });
   const commands = [];
   let inspectionCount = 0;
   const imageDigest = H('docker-image');
@@ -136,6 +161,7 @@ test('local Docker verifier performs a non-authoritative rootfs repeatability di
     contextPath: 'runtime-images/python-scientific',
     definitionPaths: ['Dockerfile', 'requirements.lock', 'hepta-dataset-access-supervisor'],
     definitionManifestHash: RUNTIME_IMAGE_BUILD_REPRODUCIBILITY.python.definitionManifestHash,
+    repositoryRoot,
     spawnSyncImpl,
     randomUUID: () => `fixture-${++nonce}`,
     clock: () => new Date('2026-07-16T08:00:00.000Z'),
@@ -147,6 +173,7 @@ test('local Docker verifier performs a non-authoritative rootfs repeatability di
   assert.equal(builds.length, 2);
   assert.equal(builds.every((args) => args.includes('--no-cache') && args.includes('--pull=false')), true);
   assert.notEqual(builds[0].at(-1), builds[1].at(-1));
+  assert.equal(builds.every((args) => !fs.existsSync(path.dirname(args.at(-1)))), true);
   assert.equal(commands.filter((args) => args[0] === 'image' && args[1] === 'rm').length, 2);
 
   let mismatchInspection = 0;
@@ -156,6 +183,7 @@ test('local Docker verifier performs a non-authoritative rootfs repeatability di
     contextPath: 'runtime-images/python-scientific',
     definitionPaths: ['Dockerfile', 'requirements.lock', 'hepta-dataset-access-supervisor'],
     definitionManifestHash: RUNTIME_IMAGE_BUILD_REPRODUCIBILITY.python.definitionManifestHash,
+    repositoryRoot,
     spawnSyncImpl: (_executable, args) => {
       if (args[0] === 'image' && args[1] === 'inspect') {
         mismatchInspection += 1;

@@ -342,6 +342,40 @@ test('code provenance binds a stable clean, dirty, staged, and untracked reposit
   assert.notEqual(staged.repositoryContentHash, dirty.repositoryContentHash);
 });
 
+test('code provenance ignores a dirty submodule worktree only when explicitly requested', (t) => {
+  const parent = createProvenanceRepository(t);
+  const dependencySource = createProvenanceRepository(t);
+  fixtureGit(
+    parent,
+    '-c',
+    'protocol.file.allow=always',
+    'submodule',
+    'add',
+    '-q',
+    dependencySource,
+    'dependency',
+  );
+  fixtureGit(parent, 'commit', '-qam', 'add dependency');
+  fs.writeFileSync(
+    path.join(parent, 'dependency', 'source.mjs'),
+    'export const value = 2;\n',
+  );
+
+  const strict = currentCodeProvenance({
+    workspaceRoot: parent,
+    allowReleaseCommitEnvironment: false,
+  });
+  const closureQualified = currentCodeProvenance({
+    workspaceRoot: parent,
+    allowReleaseCommitEnvironment: false,
+    ignoreSubmoduleWorktreeStatus: true,
+  });
+  assert.equal(strict.treeDirty, true);
+  assert.equal(closureQualified.treeDirty, false);
+  assert.equal(closureQualified.commit, strict.commit);
+  assert.equal(closureQualified.commitTree, strict.commitTree);
+});
+
 test('code provenance exposes only a bounded error when a required Git command fails', (t) => {
   const root = createProvenanceRepository(t);
   const secret = 'private-git-stderr-material';

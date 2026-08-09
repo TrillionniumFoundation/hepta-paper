@@ -436,6 +436,11 @@ export function inspectProductionReleaseEnvironment({
     provenance = currentCodeProvenance({
       workspaceRoot: RELEASE_ENVIRONMENT_ROOT,
       allowReleaseCommitEnvironment: false,
+      // The sealed dependency closure below verifies both submodules by commit,
+      // tree and exact read-only content. The R source-CAS intentionally keeps
+      // hydrated archives whose bytes differ from its pointer worktree, so the
+      // parent Git status must not treat that qualified representation as drift.
+      ignoreSubmoduleWorktreeStatus: true,
     });
     dependencyInspection = assertReleaseDependencyTreeContract({
       workspaceRoot: RELEASE_ENVIRONMENT_ROOT,

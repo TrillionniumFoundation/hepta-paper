@@ -255,7 +255,9 @@ function repositoryState(indexState, entries) {
   });
 }
 
-function captureRepositorySnapshot(workspaceRoot) {
+function captureRepositorySnapshot(workspaceRoot, {
+  ignoreSubmoduleWorktreeStatus = false,
+} = {}) {
   const head = requiredObjectId(git('head', ['rev-parse', 'HEAD'], workspaceRoot), 'head');
   const commitTree = requiredObjectId(
     git('head_tree', ['rev-parse', 'HEAD^{tree}'], workspaceRoot),
@@ -265,7 +267,12 @@ function captureRepositorySnapshot(workspaceRoot) {
     'head_tags', ['tag', '--points-at', 'HEAD'], workspaceRoot, { emptyOutputAllowed: true },
   ).toString('utf8').split(/\r?\n/).filter(Boolean).sort();
   const worktreeStatus = git(
-    'worktree_status', ['status', '--porcelain=v1', '-z'], workspaceRoot,
+    'worktree_status', [
+      'status',
+      '--porcelain=v1',
+      '-z',
+      ...(ignoreSubmoduleWorktreeStatus ? ['--ignore-submodules=dirty'] : []),
+    ], workspaceRoot,
     { emptyOutputAllowed: true },
   );
   const paths = splitRepositoryPaths(git(
@@ -328,10 +335,10 @@ function parsePackage(packageFile) {
   return pkg;
 }
 
-function stableSnapshot(workspaceRoot) {
+function stableSnapshot(workspaceRoot, options) {
   for (let attempt = 0; attempt < MAX_SNAPSHOT_ATTEMPTS; attempt += 1) {
     try {
-      const before = captureRepositorySnapshot(workspaceRoot);
+      const before = captureRepositorySnapshot(workspaceRoot, options);
       const beforePackage = packageEntry(before);
       if (beforePackage?.record.kind !== 'file') {
         throw codedError('code_provenance_package_file_required');
@@ -339,7 +346,7 @@ function stableSnapshot(workspaceRoot) {
       const packageFile = hashFilesystemEntry(workspaceRoot, 'package.json', {
         includeContent: true,
       });
-      const after = captureRepositorySnapshot(workspaceRoot);
+      const after = captureRepositorySnapshot(workspaceRoot, options);
       if (exactSnapshotIdentity(before) === exactSnapshotIdentity(after)
         && packageMatchesSnapshot(packageFile, before)
         && packageMatchesSnapshot(packageFile, after)) {
@@ -355,10 +362,13 @@ function stableSnapshot(workspaceRoot) {
 export function currentCodeProvenance({
   workspaceRoot = HEPTA_WORKSPACE_ROOT,
   allowReleaseCommitEnvironment = true,
+  ignoreSubmoduleWorktreeStatus = false,
 } = {}) {
   const canonicalRoot = fs.realpathSync(workspaceRoot);
   const canonicalWorkspace = canonicalRoot === fs.realpathSync(HEPTA_WORKSPACE_ROOT);
-  const { snapshot, pkg } = stableSnapshot(canonicalRoot);
+  const { snapshot, pkg } = stableSnapshot(canonicalRoot, {
+    ignoreSubmoduleWorktreeStatus,
+  });
   const commit = (canonicalWorkspace && allowReleaseCommitEnvironment
     ? process.env.HEPTA_RELEASE_COMMIT
     : null) || snapshot.head;

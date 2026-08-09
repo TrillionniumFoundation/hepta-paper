@@ -23,10 +23,10 @@ export const SYSTEM_BENCHMARK_HARNESS_ROOTS = Object.freeze([
 
 export const SYSTEM_BENCHMARK_HARNESS_TARGETS = Object.freeze([
   Object.freeze({ path: "paper-adapters/artifacts/artifact-write-receipt-verifier.mjs", sha256: "sha256:37d05701cd51e66da6199cd322d8b500e3f58018dd1c8147edf528a58e589e53" }),
-  Object.freeze({ path: "paper-adapters/authority/authority-signatures.mjs", sha256: "sha256:47458cf08e5284f805b2112179afcb6b59b0727f661b69f0915a539c45a03ee2" }),
+  Object.freeze({ path: "paper-adapters/authority/authority-signatures.mjs", sha256: "sha256:7b2d1fd5cde9a982f919f7078a8f246095679c4ec7d51d3e6309026954afc372" }),
   Object.freeze({ path: "paper-adapters/automation/bounded-child-process.mjs", sha256: "sha256:615aff4e1883c4ec6e2d55feed2797d3559461a811f33c1fdac64ed5e8d39ef6" }),
   Object.freeze({ path: "paper-adapters/automation/empirical-contract-reader.mjs", sha256: "sha256:1e33941565df8e0d7565dacfb8d6dfda9a53933c59dab72309c6eba6fc7ee5ef" }),
-  Object.freeze({ path: "paper-adapters/automation/multi-language-empirical-executor.mjs", sha256: "sha256:d9b083ec28dcd2d0afb3ab88ea26ba8fa2ce916bae27991c52087102ca9d034c" }),
+  Object.freeze({ path: "paper-adapters/automation/multi-language-empirical-executor.mjs", sha256: "sha256:01a072985b6c1d64231e169982b5b452e3da8890bc955624d1e942786f19d751" }),
   Object.freeze({ path: "paper-adapters/automation/operator-dataset-harness-private-repository.mjs", sha256: "sha256:0a75783f4b9f8d26a134fa063c47c1302e1d5aadcacd5723c89624e37484ec19" }),
   Object.freeze({ path: "paper-adapters/automation/operator-dataset-harness-reader.mjs", sha256: "sha256:baa45e163c38d66661a4fceb7871febe64a6bb104be72cd639a6c8721854e52b" }),
   Object.freeze({ path: "paper-adapters/automation/system-benchmark-arm-adapter-repository.mjs", sha256: "sha256:42c2a72f83b02d2afcdbdac141f946046d8cc7689e45f4c7b71f1183240a630a" }),

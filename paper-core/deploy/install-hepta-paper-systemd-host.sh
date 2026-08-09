@@ -134,6 +134,7 @@ install-hepta-paper-systemd-host.sh
 codex-openclaw-managed
 hepta-paper-state-authority-client
 hepta-paper-release-attestor-client
+hepta-paper-release-env
 local-release-attestor-daemon.schema.json
 local-release-attestor-signer.config.example.json
 local-release-attestor-probe.config.example.json
@@ -226,7 +227,8 @@ done
 for launcher in \
   codex-openclaw-managed \
   hepta-paper-state-authority-client \
-  hepta-paper-release-attestor-client
+  hepta-paper-release-attestor-client \
+  hepta-paper-release-env
 do
   /usr/bin/install $owner_arguments -m 0755 \
     "$snapshot_root/$launcher" "$(target /usr/libexec/hepta-paper/$launcher)"
@@ -285,7 +287,7 @@ for artifact in $artifact_allowlist; do
     local-release-attestor-daemon.schema.json|local-release-attestor-*.config.example.json)
       manifest_path=usr/share/hepta-paper/deploy/$artifact
       ;;
-    codex-openclaw-managed|hepta-paper-state-authority-client|hepta-paper-release-attestor-client)
+    codex-openclaw-managed|hepta-paper-state-authority-client|hepta-paper-release-attestor-client|hepta-paper-release-env)
       manifest_path=usr/libexec/hepta-paper/$artifact
       ;;
     hepta-paper.sysusers.conf)
@@ -325,7 +327,7 @@ for artifact in $artifact_allowlist; do
     local-release-attestor-daemon.schema.json|local-release-attestor-*.config.example.json)
       installed_artifact=$(target "/usr/share/hepta-paper/deploy/$artifact")
       ;;
-    codex-openclaw-managed|hepta-paper-state-authority-client|hepta-paper-release-attestor-client)
+    codex-openclaw-managed|hepta-paper-state-authority-client|hepta-paper-release-attestor-client|hepta-paper-release-env)
       installed_artifact=$(target "/usr/libexec/hepta-paper/$artifact")
       ;;
     hepta-paper.sysusers.conf)
@@ -355,7 +357,8 @@ fi
 for launcher in \
   codex-openclaw-managed \
   hepta-paper-state-authority-client \
-  hepta-paper-release-attestor-client
+  hepta-paper-release-attestor-client \
+  hepta-paper-release-env
 do
   set -- $(/usr/bin/stat -c '%u %g %a' \
     "$(target /usr/libexec/hepta-paper/$launcher)")

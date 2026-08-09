@@ -20,7 +20,7 @@ import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
 import { readEmpiricalClaimUniverse } from './empirical-claim-universe-reader.mjs';
 import {
-  includedPath,
+  literalManuscriptIncludes,
   manuscriptLineRecords,
   safeManuscriptPath,
   trimAsciiWhitespace,
@@ -34,7 +34,6 @@ import {
   lineInsideEvidenceBoundManuscriptSurface,
 } from './evidence-bound-manuscript-surface-reader.mjs';
 
-const INCLUDE_COMMAND = /\\(input|include)(?![A-Za-z@])/gi;
 const BEGIN = /^\s*%\s*HEPTA_EMPIRICAL_ASSERTION_BEGIN\s+(\{.*\})\s*$/;
 const END = /^\s*%\s*HEPTA_EMPIRICAL_ASSERTION_END\s+([A-Za-z0-9][A-Za-z0-9_.:-]{0,191})\s*$/;
 const MARKER_TOKEN = /HEPTA_EMPIRICAL_ASSERTION_(?:BEGIN|END)/;
@@ -64,32 +63,6 @@ const SAFE_SECTION_TITLES = new Set([
   'formal protocol invariant', 'proof sketch', 'references', 'appendix',
   ...TRUSTED_AUTONOMOUS_MANUSCRIPT_SECTIONS.map((title) => title.toLowerCase()),
 ]);
-
-function literalIncludes(masked, relative) {
-  const includes = [];
-  const blockers = [];
-  INCLUDE_COMMAND.lastIndex = 0;
-  let match;
-  while ((match = INCLUDE_COMMAND.exec(masked)) !== null) {
-    let cursor = match.index + match[0].length;
-    while (cursor < masked.length && /\s/.test(masked[cursor])) cursor += 1;
-    if (masked[cursor] !== '{') {
-      blockers.push(`empirical_assertion_universe_include_not_literal:${relative}:${match.index}`);
-      continue;
-    }
-    const end = masked.indexOf('}', cursor + 1);
-    const value = end < 0 ? '' : masked.slice(cursor + 1, end);
-    if (end < 0 || value.includes('{')) {
-      blockers.push(`empirical_assertion_universe_include_not_literal:${relative}:${match.index}`);
-      continue;
-    }
-    const included = includedPath(relative, value);
-    if (!included) blockers.push(`empirical_assertion_universe_include_path_invalid:${relative}:${String(value).trim()}`);
-    else includes.push(Object.freeze({ path: included, offset: match.index, end: end + 1 }));
-    INCLUDE_COMMAND.lastIndex = end + 1;
-  }
-  return { includes, blockers };
-}
 
 function extractAssertions(relative, read) {
   const latin1 = read.content.toString('latin1');
@@ -416,7 +389,16 @@ export function readEmpiricalAssertionUniverse({
     for (const blocker of syntax.blockers) {
       blockers.push(`empirical_assertion_universe_dynamic_tex_unsupported:${relative}:${blocker.offset}`);
     }
-    const includeResult = literalIncludes(syntax.maskedSource, relative);
+    const includeResult = literalManuscriptIncludes({
+      masked: syntax.maskedSource,
+      relative,
+      blockerPrefix: 'empirical_assertion_universe',
+      mapInclude: ({ path: included, byteStart, byteEnd }) => ({
+        path: included,
+        offset: byteStart,
+        end: byteEnd,
+      }),
+    });
     blockers.push(...includeResult.blockers);
     const extracted = extractAssertions(relative, read);
     blockers.push(...extracted.blockers);

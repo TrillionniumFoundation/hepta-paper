@@ -19,7 +19,8 @@ import {
   evaluateEmpiricalResultContract,
   normalizeDatasetMounts,
 } from '../../paper-adapters/automation/empirical-contract-reader.mjs';
-import { createOsSandboxedWorkerRunner, directoryMerkleHash, inspectWorkspaceExecutionSnapshot, sourceTreeExcludedNames } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
+import { createOsSandboxedWorkerRunner } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
+import { directoryMerkleHash, inspectWorkspaceExecutionSnapshot, sourceTreeExcludedNames } from '../../paper-adapters/runtime/execution-snapshot.mjs';
 import { runResearchVerifyAdapter } from '../../paper-adapters/research-verify/index.mjs';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { buildCampaignResearchVerificationInput } from '../../paper-domain/automation/campaign-research-contract.mjs';
@@ -35,7 +36,21 @@ import {
   verifyIndependentRawEventArtifactRecomputation,
 } from '../../paper-adapters/research-verify/experiment-registry-authority-verifier.mjs';
 import { buildEmpiricalEnvironmentBom } from '../../paper-domain/automation/environment-bom-contract.mjs';
-import { empiricalClaimDeclarationsFromAnalysisProtocol } from '../../paper-domain/automation/analysis-protocol-contract.mjs';
+
+function fixtureEmpiricalClaimDeclarations(protocol) {
+  return protocol.hypotheses.map((hypothesis) => ({
+    claimId: `empirical:${hashRecord('EmpiricalClaimId', {
+      analysisProtocolHash: protocol.analysisProtocolHash,
+      hypothesisId: hypothesis.hypothesisId,
+    }).slice('sha256:'.length)}`,
+    metric: hypothesis.metric,
+    comparator: hypothesis.comparator,
+    alternative: hypothesis.alternative,
+    minimumEffect: hypothesis.minimumEffect,
+    acceptanceRequired: hypothesis.acceptanceRequired,
+    proposalClaimRecordHash: null,
+  }));
+}
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-empirical-authority-'));
@@ -65,7 +80,7 @@ function fixture(t) {
     ...selector.experimentDesign.analysisProtocol,
     analysisProtocolHash: selector.experimentDesign.analysisProtocolHash,
   };
-  const empiricalClaims = empiricalClaimDeclarationsFromAnalysisProtocol(protocol).map((declaration, index) => (
+  const empiricalClaims = fixtureEmpiricalClaimDeclarations(protocol).map((declaration, index) => (
     `% HEPTA_EMPIRICAL_CLAIM_BEGIN ${JSON.stringify(declaration)}\nFixture confirmatory hypothesis ${index + 1}.\n% HEPTA_EMPIRICAL_CLAIM_END ${declaration.claimId}`
   )).join('\n');
   fs.writeFileSync(path.join(source, 'main.tex'), `\\documentclass{article}\n\\begin{document}\n${empiricalClaims}\n\\end{document}\n`);

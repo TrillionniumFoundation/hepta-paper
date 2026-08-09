@@ -16,7 +16,7 @@ const BUNDLE_KEYS = Object.freeze([
   'signerRole', 'subject', 'trustStore', 'trustStoreHash', 'version',
 ]);
 
-function canonicalKeyIds(values) {
+export function canonicalExternalPrincipalKeyIds(values) {
   const selected = [...new Set((Array.isArray(values) ? values : []).map(String))].sort();
   return selected.length >= 1 && selected.length <= 4
     && selected.every((value) => SAFE_ID.test(value)) ? Object.freeze(selected) : null;
@@ -36,7 +36,7 @@ export function createExternalPrincipalIdentityAttestationBundleCodec({
     signerRole = expectedSignerRole,
     maximumLifetimeMs = 15 * 60 * 1000,
   } = {}) {
-    const expectedKeyIds = canonicalKeyIds(signerKeyIds);
+    const expectedKeyIds = canonicalExternalPrincipalKeyIds(signerKeyIds);
     const trust = inspectPinnedExternalEvidenceTrustStore(trustStore, {
       requiredRole: signerRole,
       expectedKeyIds,

@@ -362,7 +362,10 @@ test('tmpfiles creates a missing durable parent without touching an existing run
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-tmpfiles-root-'));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     const fragment = path.join(root, 'hepta-paper.test-tmpfiles.conf');
+    fs.mkdirSync(path.join(root, 'run'));
     fs.writeFileSync(fragment, [
+      `d /run/hepta-paper-deployment 0711 ${process.getuid()} ${process.getgid()} -`,
+      `f /run/hepta-paper-deployment/deployment.lock 0600 ${process.getuid()} ${process.getgid()} -`,
       `d /var/lib/hepta-paper 0710 ${process.getuid()} ${process.getgid()} -`,
       `d /var/lib/hepta-paper/strict-full-auto-acceptance-control 0700 ${process.getuid()} ${process.getgid()} -`,
       '',
@@ -373,6 +376,15 @@ test('tmpfiles creates a missing durable parent without touching an existing run
       fragment,
     ], { encoding: 'utf8' });
     assert.equal(first.status, 0, first.stderr);
+    const deploymentLock = path.join(
+      root,
+      'run',
+      'hepta-paper-deployment',
+      'deployment.lock',
+    );
+    assert.equal(mode(deploymentLock), 0o600);
+    assert.equal(fs.statSync(deploymentLock).nlink, 1);
+    assert.equal(fs.statSync(deploymentLock).size, 0);
     const durableParent = path.join(root, 'var', 'lib', 'hepta-paper');
     assert.equal(mode(durableParent), 0o710);
     assert.equal(
@@ -391,6 +403,7 @@ test('tmpfiles creates a missing durable parent without touching an existing run
     const runtimeBefore = fs.statSync(runtimeRoot);
     const databaseBefore = fs.statSync(databasePath);
     const databaseHashBefore = sha256(databasePath);
+    const deploymentLockBefore = fs.statSync(deploymentLock);
     const repeated = spawnSync('systemd-tmpfiles', [
       `--root=${root}`,
       '--create',
@@ -399,6 +412,7 @@ test('tmpfiles creates a missing durable parent without touching an existing run
     assert.equal(repeated.status, 0, repeated.stderr);
     const runtimeAfter = fs.statSync(runtimeRoot);
     const databaseAfter = fs.statSync(databasePath);
+    const deploymentLockAfter = fs.statSync(deploymentLock);
     assert.equal(runtimeAfter.dev, runtimeBefore.dev);
     assert.equal(runtimeAfter.ino, runtimeBefore.ino);
     assert.equal(runtimeAfter.uid, runtimeBefore.uid);
@@ -408,6 +422,9 @@ test('tmpfiles creates a missing durable parent without touching an existing run
     assert.equal(databaseAfter.uid, databaseBefore.uid);
     assert.equal(databaseAfter.gid, databaseBefore.gid);
     assert.equal(sha256(databasePath), databaseHashBefore);
+    assert.equal(deploymentLockAfter.dev, deploymentLockBefore.dev);
+    assert.equal(deploymentLockAfter.ino, deploymentLockBefore.ino);
+    assert.equal(deploymentLockAfter.size, 0);
   });
 
 test('systemd bootstrap, isolated layout service, and installer form a fresh-host chain',
@@ -431,6 +448,14 @@ test('systemd bootstrap, isolated layout service, and installer form a fresh-hos
     assert.doesNotMatch(sysusers, /docker|secret|credential/i);
     assert.match(
       tmpfiles,
+      /^d \/run\/hepta-paper-deployment 0711 root root -$/m,
+    );
+    assert.match(
+      tmpfiles,
+      /^f \/run\/hepta-paper-deployment\/deployment\.lock 0600 root root -$/m,
+    );
+    assert.match(
+      tmpfiles,
       /^d \/var\/lib\/hepta-paper 0710 hepta-paper hepta-runtime-handoff -$/m,
     );
     assert.match(
@@ -451,6 +476,9 @@ test('systemd bootstrap, isolated layout service, and installer form a fresh-hos
     assert.match(bootstrap, /^CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER$/m);
     assert.match(bootstrap, /^ProtectSystem=strict$/m);
     assert.match(bootstrap, /^ReadWritePaths=\/etc \/var\/lib$/m);
+    assert.match(bootstrap, /^RuntimeDirectory=hepta-paper-deployment$/m);
+    assert.match(bootstrap, /^RuntimeDirectoryMode=0711$/m);
+    assert.match(bootstrap, /^RuntimeDirectoryPreserve=yes$/m);
     assert.match(bootstrap, /^InaccessiblePaths=.*\/etc\/hepta-paper/m);
 
     const layout = fs.readFileSync(
@@ -608,6 +636,7 @@ test('systemd bootstrap, isolated layout service, and installer form a fresh-hos
         'codex-openclaw-managed',
         'hepta-paper-state-authority-client',
         'hepta-paper-release-attestor-client',
+        'hepta-paper-release-env',
       ]) {
         const expectedInstallerUid = process.getuid() === 0 ? 0 : process.getuid();
         const expectedInstallerGid = process.getuid() === 0 ? 0 : process.getgid();

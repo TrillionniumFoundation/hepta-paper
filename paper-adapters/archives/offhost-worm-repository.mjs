@@ -2,7 +2,6 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
   assertPinnedDirectoryChain,
   compareSemanticReleaseVersions,
@@ -14,6 +13,8 @@ import {
   publishSnapshotObject,
   removePinnedChildExact,
 } from './offhost-worm-security-repository.mjs';
+import { verifyOffhostWormTarget } from './offhost-worm-target-verification.mjs';
+import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 const NO_FOLLOW = fs.constants.O_NOFOLLOW || 0;
 const SHA256 = /^sha256:[a-f0-9]{64}$/;
 const RELEASE_COMMIT = /^[a-f0-9]{40}$/;
@@ -406,53 +407,7 @@ export function selectLatestVerifiedReleaseEvidence(runtimeRoot) {
 export function resolveLatestReleaseEvidencePointer(runtimeRoot) {
   return selectLatestVerifiedReleaseEvidence(runtimeRoot);
 }
-export function verifyOffhostWormTarget({ workspaceRoot, contract, mountAvailableOverride = null, distinctDeviceOverride = null } = {}) {
-  if (contract?.kind !== 'OffhostWormSnapshotContract' || contract?.version !== 1) throw new Error('v1 offhost WORM contract required');
-  const targetMountRoot = path.resolve(process.env.HEPTA_OFFHOST_WORM_ROOT || contract.targetMountRoot);
-  const mountProbe = spawnSync('findmnt', ['-rn', '--mountpoint', targetMountRoot, '-o', 'TARGET,SOURCE,FSTYPE'], { encoding: 'utf8' });
-  const mountAvailable = mountAvailableOverride === null ? mountProbe.status === 0 : Boolean(mountAvailableOverride);
-  let distinctDevice = false;
-  let targetPathSafe = false;
-  if (mountAvailable) {
-    try {
-      const workspace = assertSafeDirectory(workspaceRoot, 'offhost_worm_workspace_root_unsafe');
-      const target = assertSafeDirectory(targetMountRoot, 'offhost_worm_target_root_unsafe');
-      distinctDevice = fs.lstatSync(workspace.path).dev !== fs.lstatSync(target.path).dev;
-      targetPathSafe = true;
-    } catch {
-      distinctDevice = false;
-      targetPathSafe = false;
-    }
-  }
-  if (distinctDeviceOverride !== null) distinctDevice = Boolean(distinctDeviceOverride);
-  const blockers = [
-    ...(mountAvailable ? [] : ['offhost_worm_target_unavailable']),
-    ...(mountAvailable && !targetPathSafe ? ['offhost_worm_target_path_unsafe'] : []),
-    ...(contract.requireDistinctFilesystemDevice && !distinctDevice ? ['offhost_worm_target_not_distinct_device'] : []),
-  ];
-  return Object.freeze({
-    version: 1,
-    kind: 'OffhostWormTargetStatus',
-    status: blockers.length ? 'offhost_worm_target_blocked' : 'offhost_worm_target_ready',
-    contractId: contract.contractId,
-    targetMountRoot,
-    mountAvailable,
-    mountIdentity: mountAvailable ? String(mountProbe.stdout || '').trim() || 'test_override' : null,
-    distinctDevice,
-    currentProtectionLevel: contract.currentProtectionLevel || 'external_disk_unspecified_custody',
-    offHostOrOffsiteCustodyQualified: contract.offHostOrOffsiteCustodyQualified === true,
-    custodyStatus: contract.offHostOrOffsiteCustodyQualified === true
-      ? 'offhost_or_offsite_custody_qualified'
-      : 'offhost_or_offsite_custody_blocked',
-    custodyBlockers: contract.offHostOrOffsiteCustodyQualified === true
-      ? []
-      : [
-        ...(contract.offlineDetachmentOrObjectLockReceiptRequired ? ['offline_detachment_or_object_lock_receipt_missing'] : []),
-        ...(contract.independentCustodyAttestationRequired ? ['independent_custody_attestation_missing'] : []),
-      ],
-    blockers,
-  });
-}
+
 function hashPinnedFile(pinned, errorCode) {
   const hash = crypto.createHash('sha256');
   const buffer = Buffer.allocUnsafe(4 * 1024 * 1024);
@@ -527,6 +482,11 @@ export function createOffhostWormSnapshot({
   mountAvailableOverride = null,
   distinctDeviceOverride = null,
   immutableOverride = null,
+  custodyEvidenceOverride = null,
+  custodyTrustStoreOverride = null,
+  storageIdentityHashOverride = null,
+  custodyImmutableOverride = null,
+  custodyNow = new Date(),
   faultInjector = null,
   signManifest = null,
   verifyManifestSignature = null,
@@ -536,6 +496,11 @@ export function createOffhostWormSnapshot({
     contract,
     mountAvailableOverride,
     distinctDeviceOverride,
+    custodyEvidenceOverride,
+    custodyTrustStoreOverride,
+    storageIdentityHashOverride,
+    custodyImmutableOverride,
+    now: custodyNow,
   });
   const blockers = [
     ...target.blockers,
@@ -688,7 +653,7 @@ export function createOffhostWormSnapshot({
       contractId: contract.contractId,
       snapshotId,
       protectionLevel: target.currentProtectionLevel,
-      offHostOrOffsiteCustodyQualified: target.offHostOrOffsiteCustodyQualified,
+      offHostOrOffsiteCustodyQualified: false,
       objects,
     };
     const unsignedManifest = Object.freeze({
@@ -742,4 +707,4 @@ export function createOffhostWormSnapshot({
     }
   }
 }
-export { drillOffhostWormRestore };
+export { drillOffhostWormRestore, verifyOffhostWormTarget };

@@ -5,17 +5,23 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
+import { releaseIntegrityEvidence } from '../bin/release-integrity-evidence.mjs';
 import {
-  assertExactCleanCodeProvenance,
-  publishJsonArtifactSet,
   releaseAttestationCodeProvenance,
+} from '../bin/release-evidence-input-snapshot.mjs';
+import {
   retirementLifecycleStatus,
+} from '../bin/release-evidence-bundle.mjs';
+import {
   selectCurrentCapabilityVerificationManifest,
+} from '../bin/release-capability-manifest-selection.mjs';
+import {
   selectCurrentLegacyDeletionDrillReceipt,
+} from '../bin/release-evidence-legacy-deletion-drill.mjs';
+import {
   selectCurrentReleaseVerificationReceipt,
-  signReleasePayload,
-  writeNoClobberJsonFile,
-} from '../bin/release-evidence-lib.mjs';
+} from '../bin/release-verification-receipt-selection.mjs';
+import { signReleasePayload } from '../bin/release-integrity-signing.mjs';
 import { buildIsolatedVerificationReceipt } from '../src/isolated-verification-receipt-contract.mjs';
 import { publishIsolatedVerificationReceiptArtifacts } from '../bin/isolated-verification-receipt-publication.mjs';
 import {
@@ -25,6 +31,12 @@ import {
 import { currentCodeProvenance } from '../../paper-adapters/runtime/code-provenance.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { resolveImmutableLegacyMatrixArchive } from '../../migration/legacy-matrix-reference.mjs';
+
+const {
+  assertExactCleanCodeProvenance,
+  publishJsonArtifactSet,
+  writeNoClobberJsonFile,
+} = releaseIntegrityEvidence;
 
 const NOW = new Date('2026-08-01T04:00:00.000Z');
 const RELEASE_INTEGRITY_AUTHORITY_LIMIT =

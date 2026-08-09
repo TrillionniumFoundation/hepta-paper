@@ -17,6 +17,9 @@ import { resolveOpaqueRuntimeCredential } from './opaque-runtime-credential-file
 import {
   buildImmutableReviewerWorkspaceSnapshot,
 } from './recoverable-reviewer-workspace-snapshot.mjs';
+import {
+  canonicalExternalPrincipalKeyIds,
+} from '../authority/external-principal-identity-attestation-bundle-codec.mjs';
 
 export {
   buildImmutableReviewerWorkspaceSnapshot,
@@ -42,12 +45,6 @@ const PRINCIPAL_BINDING_FIELDS = Object.freeze([
 
 export const REVIEWER_EXECUTION_ATTESTOR_ROLE = 'reviewer_execution_attestor';
 
-function canonicalKeyIds(values) {
-  const selected = [...new Set((Array.isArray(values) ? values : []).map(String))].sort();
-  return selected.length >= 1 && selected.length <= 4
-    && selected.every((value) => SAFE_ID.test(value)) ? Object.freeze(selected) : null;
-}
-
 function httpsUrl(value, code) {
   let selected;
   try { selected = new URL(String(value || '')); }
@@ -71,7 +68,7 @@ export function buildRecoverableReviewerExecutorServiceConfiguration({
   outcomeSignerRole = REVIEWER_EXECUTION_ATTESTOR_ROLE,
   outcomeMaximumLifetimeMs = 15 * 60 * 1000,
 } = {}) {
-  const selectedKeyIds = canonicalKeyIds(outcomeSignerKeyIds);
+  const selectedKeyIds = canonicalExternalPrincipalKeyIds(outcomeSignerKeyIds);
   const trust = inspectPinnedExternalEvidenceTrustStore(outcomeTrustStore, {
     requiredRole: outcomeSignerRole,
     expectedKeyIds: selectedKeyIds || [],

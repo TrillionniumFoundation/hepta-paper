@@ -3,17 +3,23 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { releaseIntegrityEvidence } from '../bin/release-integrity-evidence.mjs';
 import {
   assertReleaseEvidenceInputSnapshotUnchanged,
   assertValidReleaseEvidenceInputSnapshot,
-  buildReleaseEvidenceBundle,
   buildReleaseEvidenceProofSetSnapshot,
+  projectReleaseEvidenceSemanticContract,
+} from '../bin/release-evidence-input-snapshot.mjs';
+import {
+  buildReleaseEvidenceBundle,
+} from '../bin/release-evidence-bundle.mjs';
+import {
   captureProductionStoreLogicalIntegrity,
   captureReleaseEvidenceRegularFile,
-  projectReleaseEvidenceSemanticContract,
-  publishJsonArtifactSet,
-} from '../bin/release-evidence-lib.mjs';
+} from '../bin/release-evidence-input-file-capture.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+
+const { publishJsonArtifactSet } = releaseIntegrityEvidence;
 
 const hash = (character) => `sha256:${character.repeat(64)}`;
 

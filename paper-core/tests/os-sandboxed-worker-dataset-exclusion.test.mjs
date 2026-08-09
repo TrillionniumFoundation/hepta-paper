@@ -5,8 +5,8 @@ import path from 'node:path';
 import test from 'node:test';
 import {
   createOsSandboxedWorkerRunner,
-  fileSha256Hash,
 } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
+import { fileSha256Hash } from '../../paper-adapters/runtime/execution-snapshot.mjs';
 
 test('sandbox excludes an in-workspace dataset from the execution snapshot and mounts only its sealed copy', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-in-workspace-dataset-exclusion-'));

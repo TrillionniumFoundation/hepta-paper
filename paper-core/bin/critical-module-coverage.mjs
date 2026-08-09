@@ -77,6 +77,7 @@ const explicitlyTargetedTests = [
   'paper-core/tests/autonomous-submission-request-verifier-composition.test.mjs',
   'paper-core/tests/hotcrp-api-connector.test.mjs',
   'paper-core/tests/journal-connector-coverage.test.mjs',
+  'paper-core/tests/portal-target-qualification.test.mjs',
   'paper-core/tests/ojs-api-connector.test.mjs',
   'paper-core/tests/openreview-api-connector.test.mjs',
   'paper-core/tests/openreview-submission-connector.test.mjs',

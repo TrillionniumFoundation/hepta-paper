@@ -5,7 +5,7 @@ import path from 'node:path';
 import { assertEmpiricalExecutorPort } from '../../paper-ports/empirical-executor-port.mjs';
 import { assertEmpiricalCachePort } from '../../paper-ports/empirical-cache-port.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
-import { inspectWorkspaceExecutionSnapshot, sourceTreeExcludedNames } from '../runtime/os-sandboxed-worker-runner.mjs';
+import { inspectWorkspaceExecutionSnapshot, sourceTreeExcludedNames } from '../runtime/execution-snapshot.mjs';
 import { isPathWithin } from '../../workflow-kernel/runtime/path-utils.mjs';
 import { sha256FileSync } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { verifyCampaignBenchmarkSelector } from '../../paper-domain/automation/campaign-benchmark-selector.mjs';

@@ -51,12 +51,20 @@ export async function loadAuthorityTrustStore({ runtimeRoot, trustStoreOverride 
   return readJsonIfExists(path.join(runtimeRoot, 'trust', 'AUTHORITY_TRUST_STORE.json'));
 }
 
-function trustKeyMap(trustStore = null) {
-  return new Map(
-    (Array.isArray(trustStore?.keys) ? trustStore.keys : [])
-      .filter((key) => key?.keyId)
-      .map((key) => [String(key.keyId), key]),
-  );
+function trustKeyIndex(trustStore = null) {
+  const keys = new Map();
+  const duplicateKeyIds = new Set();
+  for (const key of Array.isArray(trustStore?.keys) ? trustStore.keys : []) {
+    const keyId = String(key?.keyId || '');
+    if (!keyId) continue;
+    if (keys.has(keyId) || duplicateKeyIds.has(keyId)) {
+      keys.delete(keyId);
+      duplicateKeyIds.add(keyId);
+      continue;
+    }
+    keys.set(keyId, key);
+  }
+  return { keys, duplicateKeyIds };
 }
 
 export function verifyAuthoritySignatures({
@@ -75,7 +83,10 @@ export function verifyAuthoritySignatures({
     ? Math.max(1, requiredRoles.length)
     : Math.max(1, Number(minSignatures) || 1);
   if (signatures.length < requiredSignatureCount) blockers.push('authority_signatures_missing');
-  const keys = trustKeyMap(trustStore);
+  const { keys, duplicateKeyIds } = trustKeyIndex(trustStore);
+  for (const keyId of [...duplicateKeyIds].sort()) {
+    blockers.push(`${keyId}:duplicate_trust_key_id`);
+  }
   const seenKeyIds = new Set();
   const verifiedSignatures = [];
   const payload = authoritySigningPayload(document);
@@ -98,13 +109,29 @@ export function verifyAuthoritySignatures({
     if (!Array.isArray(trustedKey?.roles) || !trustedKey.roles.includes(role)) {
       signatureBlockers.push('signature_role_not_authorized_for_key');
     }
+    let trustedPublicKey = null;
+    let publicKeySpkiSha256 = null;
+    if (trustedKey) {
+      try {
+        trustedPublicKey = crypto.createPublicKey(trustedKey.publicKeyPem);
+        if (trustedPublicKey.asymmetricKeyType !== 'ed25519') {
+          signatureBlockers.push('trusted_key_type_not_ed25519');
+        } else {
+          publicKeySpkiSha256 = `sha256:${crypto.createHash('sha256')
+            .update(trustedPublicKey.export({ type: 'spki', format: 'der' }))
+            .digest('hex')}`;
+        }
+      } catch {
+        signatureBlockers.push('trusted_public_key_invalid');
+      }
+    }
     let cryptographicallyVerified = false;
     if (!signatureBlockers.length) {
       try {
         cryptographicallyVerified = crypto.verify(
           null,
           payload,
-          trustedKey.publicKeyPem,
+          trustedPublicKey,
           Buffer.from(String(signature.value || ''), 'base64'),
         );
       } catch {
@@ -114,13 +141,20 @@ export function verifyAuthoritySignatures({
     }
     blockers.push(...signatureBlockers.map((blocker) => `${keyId || 'unknown'}:${blocker}`));
     if (!signatureBlockers.length) {
-      verifiedSignatures.push({
+      const verifiedSignature = {
         keyId,
         role,
         subjectId: String(trustedKey.subjectId || keyId),
         organization: trustedKey.organization || null,
         cryptographicallyVerified,
+      };
+      Object.defineProperty(verifiedSignature, 'publicKeySpkiSha256', {
+        value: publicKeySpkiSha256,
+        configurable: false,
+        enumerable: false,
+        writable: false,
       });
+      verifiedSignatures.push(verifiedSignature);
     }
   }
   const verifiedRoles = new Set(verifiedSignatures.map((item) => item.role));

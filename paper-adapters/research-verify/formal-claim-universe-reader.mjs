@@ -6,44 +6,13 @@ import {
 } from '../../paper-domain/quality/latex-theorem-environment-syntax.mjs';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
-import { includedPath, safeManuscriptPath, trimAsciiWhitespace } from './latex-manuscript-reader-support.mjs';
+import {
+  literalManuscriptIncludes,
+  safeManuscriptPath,
+  trimAsciiWhitespace,
+} from './latex-manuscript-reader-support.mjs';
 
 const ENVIRONMENT_TOKEN = /\\(begin|end)\s*\{([^{}\r\n]+)\}(?:\s*\[[^\]\r\n]*\])?/g;
-const INCLUDE_COMMAND = /\\(input|include)(?![A-Za-z@])/gi;
-
-function literalIncludes(masked, relative) {
-  const includes = [];
-  const blockers = [];
-  INCLUDE_COMMAND.lastIndex = 0;
-  let match;
-  while ((match = INCLUDE_COMMAND.exec(masked)) !== null) {
-    let cursor = match.index + match[0].length;
-    while (cursor < masked.length && /\s/.test(masked[cursor])) cursor += 1;
-    if (masked[cursor] !== '{') {
-      blockers.push(`formal_claim_universe_include_not_literal:${relative}:${match.index}`);
-      continue;
-    }
-    const end = masked.indexOf('}', cursor + 1);
-    const value = end < 0 ? '' : masked.slice(cursor + 1, end);
-    if (end < 0 || value.includes('{')) {
-      blockers.push(`formal_claim_universe_include_not_literal:${relative}:${match.index}`);
-      continue;
-    }
-    const included = includedPath(relative, value);
-    if (!included) {
-      blockers.push(`formal_claim_universe_include_path_invalid:${relative}:${String(value || '').trim()}`);
-    } else {
-      includes.push(Object.freeze({
-        manuscriptPath: included,
-        byteStart: match.index,
-        byteEnd: end + 1,
-      }));
-    }
-    INCLUDE_COMMAND.lastIndex = end + 1;
-  }
-  return Object.freeze({ includes: Object.freeze(includes), blockers: Object.freeze(blockers) });
-}
-
 function environmentTokens(masked, formalEnvironmentSet) {
   return [...masked.matchAll(ENVIRONMENT_TOKEN)]
     .map((match) => Object.freeze({
@@ -179,7 +148,16 @@ export function readFormalClaimUniverse({ sourceRoot, manuscriptPath = 'main.tex
     }
     files.push(Object.freeze({ path: relative, hash: read.hash, bytes: read.bytes }));
     const macroSyntax = analyzeTheoremEnvironmentMacroDefinitions(read.content.toString('latin1'));
-    const includeSyntax = literalIncludes(macroSyntax.maskedSource, relative);
+    const includeSyntax = literalManuscriptIncludes({
+      masked: macroSyntax.maskedSource,
+      relative,
+      blockerPrefix: 'formal_claim_universe',
+      mapInclude: ({ path: included, byteStart, byteEnd }) => ({
+        manuscriptPath: included,
+        byteStart,
+        byteEnd,
+      }),
+    });
     fileReads.push(Object.freeze({ relative, read, includes: includeSyntax.includes }));
     blockers.push(...includeSyntax.blockers);
     for (const included of includeSyntax.includes) visit(included.manuscriptPath, depth + 1);

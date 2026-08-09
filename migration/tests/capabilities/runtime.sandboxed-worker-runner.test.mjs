@@ -5,10 +5,10 @@ import path from 'node:path';
 import test from 'node:test';
 import {
   createOsSandboxedWorkerRunner,
-  probeOsSandbox,
 } from '../../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
 import {
   dockerManifestMediaTypeAccepted,
+  probeOsSandbox,
 } from '../../../paper-adapters/runtime/sandbox-backend-probe.mjs';
 
 test('generic Docker fallback accepts platform-verified indexes without weakening trusted OCI manifests', () => {

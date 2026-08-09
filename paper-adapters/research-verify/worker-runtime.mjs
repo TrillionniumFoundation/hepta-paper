@@ -10,7 +10,7 @@ import { buildFormalClaimContract } from '../../paper-domain/research/formal-cla
 import { normalizeFormalProofObligationMappings } from '../../paper-domain/research/formal-proof-obligation-mapping.mjs';
 import { verifyTheoremSpecification } from '../../paper-domain/research/theorem-specification.mjs';
 import { verifyProposalClaimToTheoremBinding } from '../../paper-domain/research/proposal-claim-to-theorem-binding.mjs';
-import { directoryMerkleHash } from '../runtime/os-sandboxed-worker-runner.mjs';
+import { directoryMerkleHash } from '../runtime/execution-snapshot.mjs';
 import { canonicalClaimsFromWorkerPlan } from './canonical-claim-registry-reader.mjs';
 import { executeNativeResearchWorker, NATIVE_RESEARCH_WORKER_TYPES } from './native-research-worker-execution.mjs';
 import { NATIVE_RESEARCH_WORKER_JOB_LEASE_SECONDS, withJobAttemptLeaseHeartbeat } from './job-attempt-lease-heartbeat.mjs';

@@ -8,10 +8,14 @@ import test from 'node:test';
 
 import {
   inspectLegacyReferenceArchive,
-  releaseAttestationCodeProvenance,
-  retirementLifecycleStatus,
   selectCurrentLegacyImmutableSnapshotReceipt,
-} from '../bin/release-evidence-lib.mjs';
+} from '../bin/release-evidence-legacy-immutable-snapshot.mjs';
+import {
+  releaseAttestationCodeProvenance,
+} from '../bin/release-evidence-input-snapshot.mjs';
+import {
+  retirementLifecycleStatus,
+} from '../bin/release-evidence-bundle.mjs';
 import {
   attestLegacyImmutableSnapshot,
   expectedLegacyImmutableArchivePath,

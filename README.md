@@ -321,9 +321,17 @@ renamed external disk). A snapshot can qualify only on a distinct mounted
 filesystem with immutable objects and a successful restore drill. Local
 packets and signatures cannot satisfy that external-media requirement. This
 is currently a same-host external-disk protection level, not an off-host or
-offsite custody claim. Off-host/offsite qualification additionally requires an
-offline-detachment or object-storage Object Lock receipt and independent
-custody attestation. This
+offsite custody claim. Off-host/offsite qualification additionally requires a
+continuously verifiable object-storage Object Lock receipt and independent
+custody attestation. A static contract boolean is insufficient: the typed
+receipt and pinned-trust-store Ed25519 attestation must be fresh and bind the
+currently mounted UUID/PARTUUID storage identity plus the selected immutable
+snapshot manifest and object-set hashes. A historical offline-detachment
+receipt cannot qualify a disk that is currently reattached to the production
+host. `npm run offhost:worm-status` reports the same-host target
+for diagnosis only; `npm run offhost:worm-status -- --require-custody` is the
+fail-closed custody gate, and the sealed release environment always selects
+that strict mode. A diagnostic `ready` result is not production-exit evidence. This
 WORM target is independent of the `THUNDERO_EXT4` cold-data contract: the
 TOSHIBA volume must not be treated as a cold-data recovery source unless all 15
 declared entries and their hash-bound sentinel are actually present.

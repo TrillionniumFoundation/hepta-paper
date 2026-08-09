@@ -246,13 +246,37 @@ test('repository source and supply-chain gate is ready for this complete change 
   assert.equal(report.containers.deploymentTemplateInstantiationReady, false);
   assert.equal(report.containers.cveDatabaseScanPerformed, false);
   assert.equal(report.sbom.evidenceClass, 'local_package_lock_inventory_not_external_attestation');
+  assert.equal(report.deploymentProfile, 'source-inspection');
+  assert.equal(report.kubernetesProfileSelected, false);
+
+  const systemdHostProfile = inspectSourceSupplyChainSecurity({
+    workspaceRoot: root,
+    trackedPaths,
+    deploymentProfile: 'systemd-host',
+  });
+  assert.equal(systemdHostProfile.status, 'source_supply_chain_security_ready');
+  assert.equal(systemdHostProfile.deploymentProfile, 'systemd-host');
+  assert.equal(systemdHostProfile.deployableTemplatesRequired, false);
+  assert.equal(systemdHostProfile.kubernetesProfileSelected, false);
 
   const releaseProfile = inspectSourceSupplyChainSecurity({
     workspaceRoot: root,
     trackedPaths,
-    requireDeployableTemplates: true,
+    deploymentProfile: 'kubernetes',
   });
   assert.equal(releaseProfile.status, 'source_supply_chain_security_blocked');
+  assert.equal(releaseProfile.deploymentProfile, 'kubernetes');
   assert.equal(releaseProfile.deployableTemplatesRequired, true);
+  assert.equal(releaseProfile.kubernetesProfileSelected, true);
   assert.deepEqual(releaseProfile.blockers, ['deployment_container_templates_not_instantiated']);
+
+  assert.throws(
+    () => inspectSourceSupplyChainSecurity({
+      workspaceRoot: root,
+      trackedPaths,
+      deploymentProfile: 'systemd-host',
+      requireDeployableTemplates: true,
+    }),
+    /source_supply_chain_security_deployment_profile_invalid/u,
+  );
 });

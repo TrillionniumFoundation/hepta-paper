@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { writeSignedReleaseEvidence } from './release-evidence-lib.mjs';
+import { writeSignedReleaseEvidence } from './release-evidence-bundle.mjs';
 import { attestLegacyDeletionDrill } from './legacy-deletion-drill.mjs';
 import {
   defaultLegacyPaperFactoryRoot,

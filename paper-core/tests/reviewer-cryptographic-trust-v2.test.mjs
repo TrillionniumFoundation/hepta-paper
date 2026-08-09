@@ -8,6 +8,9 @@ import {
   assertPinnedExternalEvidenceEnvelope,
 } from '../../paper-adapters/authority/pinned-external-evidence-verifier.mjs';
 import {
+  canonicalExternalPrincipalKeyIds,
+} from '../../paper-adapters/authority/external-principal-identity-attestation-bundle-codec.mjs';
+import {
   buildReviewerReceiptSignerServiceConfiguration,
   createHttpReviewerReceiptSignerAdapter,
 } from '../../paper-adapters/automation/http-reviewer-receipt-signer-adapter.mjs';
@@ -75,6 +78,19 @@ import {
   trustStore,
   writeReviewerCryptographicTrustV2Json as writeJson,
 } from './support/reviewer-cryptographic-trust-v2-fixture.mjs';
+
+test('external principal key-id codec owns bounded canonicalization', () => {
+  assert.deepEqual(
+    canonicalExternalPrincipalKeyIds(['reviewer-b', 'reviewer-a', 'reviewer-b']),
+    ['reviewer-a', 'reviewer-b'],
+  );
+  for (const invalid of [
+    null,
+    [],
+    ['reviewer/a'],
+    ['a', 'b', 'c', 'd', 'e'],
+  ]) assert.equal(canonicalExternalPrincipalKeyIds(invalid), null);
+});
 
 test('reviewer v2 binds every receipt to pinned Ed25519 and signed identity separation', async (t) => {
   const fixture = strongPoolFixture(t);

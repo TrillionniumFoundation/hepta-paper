@@ -21,6 +21,11 @@ const REQUIRED_DEPLOYMENT_TEMPLATES = Object.freeze([
     expectedImageCount: 3,
   }),
 ]);
+const DEPLOYMENT_PROFILES = Object.freeze([
+  'source-inspection',
+  'systemd-host',
+  'kubernetes',
+]);
 const SAST_ROOTS = Object.freeze([
   'workflow-kernel/',
   'paper-domain/',
@@ -414,7 +419,15 @@ export function inspectSourceSupplyChainSecurity({
   policyPath = 'paper-core/config/source-supply-chain-security-policy.v1.json',
   trackedPaths = null,
   requireDeployableTemplates = false,
+  deploymentProfile = null,
 } = {}) {
+  const selectedDeploymentProfile = deploymentProfile === null
+    ? (requireDeployableTemplates ? 'kubernetes' : 'source-inspection')
+    : deploymentProfile;
+  if (!DEPLOYMENT_PROFILES.includes(selectedDeploymentProfile)
+    || (requireDeployableTemplates && selectedDeploymentProfile !== 'kubernetes')) {
+    throw new Error('source_supply_chain_security_deployment_profile_invalid');
+  }
   const policy = readSourceSupplyChainSecurityPolicy({ workspaceRoot, policyPath });
   const selectedTrackedPaths = trackedPaths || gitTrackedPaths({ workspaceRoot });
   const trackedText = readTrackedTextFiles({ workspaceRoot, trackedPaths: selectedTrackedPaths });
@@ -423,7 +436,8 @@ export function inspectSourceSupplyChainSecurity({
   const sast = inspectBoundedSast({ trackedText });
   const workflows = inspectWorkflowActionPins({ trackedText });
   const containers = inspectContainerIdentityPolicy({ workspaceRoot });
-  const deploymentTemplateBlockers = requireDeployableTemplates
+  const deployableTemplatesRequired = selectedDeploymentProfile === 'kubernetes';
+  const deploymentTemplateBlockers = deployableTemplatesRequired
     && !containers.deploymentTemplateInstantiationReady
     ? ['deployment_container_templates_not_instantiated']
     : [];
@@ -439,7 +453,9 @@ export function inspectSourceSupplyChainSecurity({
     version: 1,
     kind: 'SourceSupplyChainSecurityReport',
     status: blockers.length ? 'source_supply_chain_security_blocked' : 'source_supply_chain_security_ready',
-    deployableTemplatesRequired: requireDeployableTemplates,
+    deploymentProfile: selectedDeploymentProfile,
+    deployableTemplatesRequired,
+    kubernetesProfileSelected: selectedDeploymentProfile === 'kubernetes',
     assuranceBoundary: SOURCE_SECURITY_ASSURANCE_BOUNDARY,
     trackedPathCount: selectedTrackedPaths.length,
     sbom,

@@ -7,7 +7,7 @@ import test from 'node:test';
 
 import {
   releaseAttestationCodeProvenance,
-} from '../bin/release-evidence-lib.mjs';
+} from '../bin/release-evidence-input-snapshot.mjs';
 import {
   selectCurrentReleaseVerificationReceipt,
 } from '../bin/release-verification-receipt-selection.mjs';

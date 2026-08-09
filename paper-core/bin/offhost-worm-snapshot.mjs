@@ -44,6 +44,14 @@ const contractPath = path.join(workspaceRoot, 'paper-core', 'config', 'offhost-w
 const contract = JSON.parse(fs.readFileSync(contractPath, 'utf8'));
 const command = process.argv[2] || 'status';
 const execute = process.argv.includes('--execute');
+const requireCustodyCount = process.argv.filter((argument) => (
+  argument === '--require-custody'
+)).length;
+if (requireCustodyCount > 1) throw new Error('offhost_worm_require_custody_duplicate');
+if (requireCustodyCount === 1 && command !== 'status') {
+  throw new Error('offhost_worm_require_custody_status_only');
+}
+const requireCustody = requireCustodyCount === 1;
 const authorityConfigIndex = process.argv.indexOf('--authority-config');
 if (authorityConfigIndex >= 0
   && (!process.argv[authorityConfigIndex + 1]
@@ -56,7 +64,9 @@ const authorityConfigurationPath = authorityConfigIndex >= 0
     ? path.resolve(process.env.HEPTA_AUTONOMOUS_RESEARCH_STATE_BACKUP_AUTHORITY_CONFIG)
     : null;
 let result;
-if (command === 'status') result = verifyOffhostWormTarget({ workspaceRoot, contract });
+if (command === 'status') {
+  result = verifyOffhostWormTarget({ workspaceRoot, contract, requireCustody });
+}
 else if (command === 'snapshot') {
   const manifestAuthority = execute ? localManifestAuthority() : {};
   const releaseEvidence = selectLatestVerifiedReleaseEvidence(runtimeRoot);

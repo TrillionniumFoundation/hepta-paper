@@ -1,0 +1,66 @@
+#!/bin/sh
+set -efu
+
+# This is the pre-Node boundary. Keep every executable and application path
+# absolute: no caller-controlled PATH lookup or shell startup file is allowed
+# before Node imports the sealed release entrypoint.
+umask 077
+LC_ALL=C
+export LC_ALL
+
+test "$(/usr/bin/id -u)" = '0'
+release_uid="$(/usr/bin/id -u hepta-paper)"
+release_gid="$(/usr/bin/id -g hepta-paper)"
+case "$release_uid:$release_gid" in
+  *[!0-9:]*|:*|*:) exit 1 ;;
+esac
+group_option=--clear-groups
+case "${1-}" in
+  formal:gate|release:verify)
+    docker_group_record="$(/usr/bin/getent group docker)"
+    case "$docker_group_record" in
+      docker:*:*:*) ;;
+      *) exit 1 ;;
+    esac
+    docker_gid="${docker_group_record#*:*:}"
+    docker_gid="${docker_gid%%:*}"
+    case "$docker_gid" in
+      ''|*[!0-9]*) exit 1 ;;
+    esac
+    group_option="--groups=$docker_gid"
+    ;;
+esac
+
+deployment_lock_root=/run/hepta-paper-deployment
+deployment_lock=$deployment_lock_root/deployment.lock
+test ! -L /run
+test "$(/usr/bin/stat -c '%F:%u:%g:%a' /run)" = 'directory:0:0:755'
+test ! -L "$deployment_lock_root"
+test "$(/usr/bin/stat -c '%F:%u:%g:%a' "$deployment_lock_root")" = \
+  'directory:0:0:711'
+test ! -L "$deployment_lock"
+test "$(/usr/bin/stat -c '%F:%u:%g:%a:%h' "$deployment_lock")" = \
+  'regular empty file:0:0:600:1'
+exec 9<"$deployment_lock"
+test "$(/usr/bin/stat -Lc '%F:%u:%g:%a:%h' /proc/self/fd/9)" = \
+  'regular empty file:0:0:600:1'
+test "$(/usr/bin/stat -Lc '%d:%i' "$deployment_lock")" = \
+  "$(/usr/bin/stat -Lc '%d:%i' /proc/self/fd/9)"
+if ! /usr/bin/flock --shared --nonblock 9; then
+  echo 'release_environment_deployment_in_progress' >&2
+  exit 75
+fi
+
+exec /usr/bin/env -i \
+  PATH=/usr/bin:/bin \
+  LANG=C.UTF-8 \
+  LC_ALL=C.UTF-8 \
+  TZ=UTC \
+  HEPTA_RELEASE_ENV_LAUNCHER=sealed-v1 \
+  /usr/bin/setpriv \
+  --reuid "$release_uid" \
+  --regid "$release_gid" \
+  "$group_option" \
+  --no-new-privs \
+  /usr/bin/node \
+  /opt/hepta-paper/paper-core/bin/release-env.mjs "$@"

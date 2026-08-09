@@ -6,7 +6,7 @@ import test from 'node:test';
 import { buildPaperCampaignPlan } from '../../paper-domain/automation/campaign-plan.mjs';
 import { buildCampaignBenchmarkSelector } from '../../paper-domain/automation/campaign-benchmark-selector.mjs';
 import { datasetEnvironmentName, evaluateDatasetConsumptionContract, evaluateEmpiricalResultContract } from '../../paper-adapters/automation/empirical-contract-reader.mjs';
-import { directoryMerkleHash, sourceTreeExcludedNames } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
+import { directoryMerkleHash, sourceTreeExcludedNames } from '../../paper-adapters/runtime/execution-snapshot.mjs';
 
 test('non-release campaign DAG creates independent Python R GPU and LaTeX execution paths', () => {
   const plan = buildPaperCampaignPlan({

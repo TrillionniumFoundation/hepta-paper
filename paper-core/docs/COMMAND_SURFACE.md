@@ -107,7 +107,24 @@ read-only target-onboarding surface. `--kind journal|conference` and
 `--venue <id>` select a bounded view. `--require-family-prototype` proves only
 that a reusable candidate-family prototype exists; the stronger profile,
 target-adapter, sandbox, production and live gates are separate and
-fail-closed. The command never probes a portal or uses credentials.
+fail-closed. A qualification registry may promote at most two targets only when
+both its semantic hash and trust store are pinned and repository inspection has
+validated the registry plus every typed evidence-attestation signature; raw or
+unpinned registry objects have no promotion path. It never promotes
+`liveSubmissionReady`. The command never probes a portal or uses credentials.
+
+`hepta-paper operator portal-target-qualification -- <arguments>` verifies and
+locally imports that registry. `--action status` and `--action import-plan` are
+read-only. `--action import-execute --execute --plan-hash sha256:...` replays
+the same pinned plan under a lock and atomically installs one generation. The
+registry is limited to at most two targets, expires within seven days, requires
+owner and independent-observer signatures (plus a production authorizer for
+production entries) whose subject, organization, and canonical Ed25519 SPKI are
+all independent, and accepts only typed, non-fixture, independently signed
+evidence attestations within their per-type age and lifetime limits. Signed
+successor and revocation hashes prevent silent downgrade or rollback. It cannot
+create or consume a live-commit permit; final commit still requires the separate
+human-reviewed single-use authorization.
 
 `hepta-paper operator autonomous-supervisor -- <arguments>` is the canonical
 foreground resident controller for persisted autonomous-research campaigns.

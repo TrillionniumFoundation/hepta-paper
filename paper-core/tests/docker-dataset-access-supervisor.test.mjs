@@ -9,12 +9,12 @@ import { signAuthorityDocument } from '../../paper-adapters/authority/authority-
 import { createMultiLanguageEmpiricalExecutor } from '../../paper-adapters/automation/multi-language-empirical-executor.mjs';
 import { authorizeOperatorDatasetMount } from '../../paper-adapters/automation/operator-dataset-harness-reader.mjs';
 import { AUTOMATION_RUNTIME_IMAGES } from '../../paper-adapters/automation/runtime-image-registry.mjs';
-import { inspectStrictDatasetManifest } from '../../paper-adapters/runtime/execution-snapshot.mjs';
+import { fileSha256Hash, inspectStrictDatasetManifest } from '../../paper-adapters/runtime/execution-snapshot.mjs';
 import {
   createDockerDatasetSupervisorProbeWorkspace,
 } from '../../paper-adapters/runtime/docker-dataset-supervisor-probe-repository.mjs';
 import { probeTrustedDockerDatasetSupervisors } from '../../paper-adapters/runtime/sandbox-backend-probe.mjs';
-import { createOsSandboxedWorkerRunner, fileSha256Hash } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
+import { createOsSandboxedWorkerRunner } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
 import {
   buildCampaignBenchmarkSelector,
 } from '../../paper-domain/automation/campaign-benchmark-selector.mjs';

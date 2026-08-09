@@ -519,7 +519,6 @@ test('experimental provider sandbox reaches release signing through a narrow API
   const keyManagementPath = 'paper-core/bin/release-integrity-key-management.mjs';
   const keyReaderPath = 'paper-core/bin/release-integrity-key-reader.mjs';
   const keyProvisioningPath = 'paper-core/bin/release-integrity-key-provisioning.mjs';
-  const giantAggregatorPath = 'paper-core/bin/release-evidence-lib.mjs';
   const sandboxSource = fs.readFileSync(path.join(workspaceRoot, sandboxPath), 'utf8');
   const signingSource = fs.readFileSync(path.join(workspaceRoot, signingPath), 'utf8');
   const experimental = architectureReachability(ARCHITECTURE_ENTRYPOINT_MANIFEST.experimental);
@@ -532,7 +531,7 @@ test('experimental provider sandbox reaches release signing through a narrow API
   assert.equal(experimental.includes(keyReaderPath), true);
   assert.equal(experimental.includes(keyManagementPath), false);
   assert.equal(experimental.includes(keyProvisioningPath), false);
-  assert.equal(experimental.includes(giantAggregatorPath), false);
+  assert.equal(fs.existsSync(path.join(workspaceRoot, 'paper-core/bin/release-evidence-lib.mjs')), false);
 });
 
 test('automation plane stays independent from submission governance', () => {

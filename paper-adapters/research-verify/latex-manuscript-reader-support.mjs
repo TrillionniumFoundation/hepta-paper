@@ -2,6 +2,15 @@ import path from 'node:path';
 import { hashBytes } from '../../workflow-kernel/record-hash.mjs';
 
 const SAFE_LITERAL_INCLUDE_PATH = /^[A-Za-z0-9._/-]+$/;
+const INCLUDE_COMMAND = /\\(input|include)(?![A-Za-z@])/giu;
+
+function escapedAt(source, index) {
+  let backslashes = 0;
+  for (let cursor = index - 1; cursor >= 0 && source[cursor] === '\\'; cursor -= 1) {
+    backslashes += 1;
+  }
+  return backslashes % 2 === 1;
+}
 
 export function safeManuscriptPath(value) {
   const relative = String(value || '').replace(/\\/g, '/').replace(/^\.\//, '');
@@ -13,6 +22,53 @@ export function includedPath(currentPath, value) {
   const raw = String(value || '').trim();
   if (!raw || raw.startsWith('/') || !SAFE_LITERAL_INCLUDE_PATH.test(raw)) return null;
   return safeManuscriptPath(path.posix.normalize(path.posix.join(path.posix.dirname(currentPath), raw)));
+}
+
+export function literalManuscriptIncludes({
+  masked,
+  relative,
+  blockerPrefix,
+  mapInclude = ({ path: included, byteStart, byteEnd }) => ({
+    path: included,
+    byteStart,
+    byteEnd,
+  }),
+} = {}) {
+  const source = String(masked || '');
+  const includes = [];
+  const blockers = [];
+  INCLUDE_COMMAND.lastIndex = 0;
+  let match;
+  while ((match = INCLUDE_COMMAND.exec(source)) !== null) {
+    if (escapedAt(source, match.index)) continue;
+    let cursor = match.index + match[0].length;
+    while (cursor < source.length && /\s/u.test(source[cursor])) cursor += 1;
+    if (source[cursor] !== '{') {
+      blockers.push(`${blockerPrefix}_include_not_literal:${relative}:${match.index}`);
+      continue;
+    }
+    const end = source.indexOf('}', cursor + 1);
+    const value = end < 0 ? '' : source.slice(cursor + 1, end);
+    if (end < 0 || value.includes('{')) {
+      blockers.push(`${blockerPrefix}_include_not_literal:${relative}:${match.index}`);
+      continue;
+    }
+    const included = includedPath(relative, value);
+    if (!included) {
+      blockers.push(`${blockerPrefix}_include_path_invalid:${relative}:${String(value).trim()}`);
+    } else {
+      includes.push(Object.freeze(mapInclude({
+        path: included,
+        byteStart: match.index,
+        byteEnd: end + 1,
+      })));
+    }
+    INCLUDE_COMMAND.lastIndex = end + 1;
+  }
+  return Object.freeze({
+    includes: Object.freeze(includes),
+    blockers: Object.freeze(blockers),
+  });
 }
 
 export function trimAsciiWhitespace(latin1, start, end) {

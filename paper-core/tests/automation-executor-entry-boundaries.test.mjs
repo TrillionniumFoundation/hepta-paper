@@ -22,8 +22,8 @@ import {
 } from '../../paper-adapters/runtime/runtime-resource-mounts.mjs';
 import {
   createOsSandboxedWorkerRunner,
-  fileSha256Hash,
 } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
+import { fileSha256Hash } from '../../paper-adapters/runtime/execution-snapshot.mjs';
 import {
   buildCampaignAgentInstructions,
   buildCampaignAgentExecutionRequest,

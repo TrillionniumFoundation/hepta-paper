@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { paperWorkflowRow } from '../../paper-domain/contracts/index.mjs';
-import { directoryMerkleHash } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
+import { directoryMerkleHash } from '../../paper-adapters/runtime/execution-snapshot.mjs';
 import { PAPER_BATCH_MODES, assertPaperMode } from '../../paper-domain/workflow/mode-registry.mjs';
 import {
   defaultPaperAssetRoot,

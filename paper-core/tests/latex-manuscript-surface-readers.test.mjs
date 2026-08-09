@@ -6,6 +6,7 @@ import test from 'node:test';
 import { hashBytes } from '../../workflow-kernel/record-hash.mjs';
 import {
   extractMarkerDelimitedManuscriptSurfaces,
+  literalManuscriptIncludes,
 } from '../../paper-adapters/research-verify/latex-manuscript-reader-support.mjs';
 import {
   extractFormalSupportSurfaces,
@@ -25,6 +26,130 @@ function manuscriptRead(content) {
     hash: FILE_HASH,
   });
 }
+
+function includeSyntax(source, options = {}) {
+  return literalManuscriptIncludes({
+    masked: Buffer.from(source, 'utf8').toString('latin1'),
+    relative: 'main.tex',
+    blockerPrefix: 'fixture',
+    ...options,
+  });
+}
+
+test('shared literal include reader fails closed on malformed groups and unsafe paths', () => {
+  const malformed = [{
+    source: '\\input dynamic',
+    blocker: 'fixture_include_not_literal:main.tex:0',
+  }, {
+    source: '\\input{unterminated',
+    blocker: 'fixture_include_not_literal:main.tex:0',
+  }, {
+    source: '\\include{{nested}}',
+    blocker: 'fixture_include_not_literal:main.tex:0',
+  }, {
+    source: '\\input{/absolute}',
+    blocker: 'fixture_include_path_invalid:main.tex:/absolute',
+  }, {
+    source: '\\input{../escape}',
+    blocker: 'fixture_include_path_invalid:main.tex:../escape',
+  }, {
+    source: '\\include{bad name}',
+    blocker: 'fixture_include_path_invalid:main.tex:bad name',
+  }];
+  for (const { source, blocker } of malformed) {
+    const parsed = includeSyntax(source);
+    assert.deepEqual(parsed.includes, [], source);
+    assert.deepEqual(parsed.blockers, [blocker], source);
+    assert.equal(Object.isFrozen(parsed), true);
+    assert.equal(Object.isFrozen(parsed.includes), true);
+    assert.equal(Object.isFrozen(parsed.blockers), true);
+  }
+
+  const recovered = includeSyntax('\\input{{nested}}\n\\include{valid}');
+  assert.deepEqual(recovered.blockers, [
+    'fixture_include_not_literal:main.tex:0',
+  ]);
+  assert.deepEqual(recovered.includes, [{
+    path: 'valid.tex',
+    byteStart: Buffer.byteLength('\\input{{nested}}\n'),
+    byteEnd: Buffer.byteLength('\\input{{nested}}\n\\include{valid}'),
+  }]);
+});
+
+test('shared literal include reader preserves normalized paths and UTF-8 CRLF byte offsets', () => {
+  const prefix = 'α\r\n';
+  const command = '\\input {../shared/claim}';
+  const source = `${prefix}${command}\r\n`;
+  const parsed = includeSyntax(source, { relative: 'sections/main.tex' });
+  assert.deepEqual(parsed.blockers, []);
+  assert.deepEqual(parsed.includes, [{
+    path: 'shared/claim.tex',
+    byteStart: Buffer.byteLength(prefix),
+    byteEnd: Buffer.byteLength(prefix) + Buffer.byteLength(command),
+  }]);
+
+  const extensions = includeSyntax('\\input{chapter}\\include{appendix.tex}', {
+    relative: 'book/main.tex',
+  });
+  assert.deepEqual(extensions.blockers, []);
+  assert.deepEqual(extensions.includes.map(({ path: included }) => included), [
+    'book/chapter.tex',
+    'book/appendix.tex',
+  ]);
+});
+
+test('shared literal include reader ignores escaped commands without hiding later literals', () => {
+  const escaped = includeSyntax('\\\\input{ghost}\\n\\input{real}');
+  assert.deepEqual(escaped.blockers, []);
+  assert.deepEqual(escaped.includes, [{
+    path: 'real.tex',
+    byteStart: Buffer.byteLength('\\\\input{ghost}\\n'),
+    byteEnd: Buffer.byteLength('\\\\input{ghost}\\n\\input{real}'),
+  }]);
+
+  const oddBackslashRun = includeSyntax('\\\\\\input{visible}');
+  assert.deepEqual(oddBackslashRun.blockers, []);
+  assert.deepEqual(oddBackslashRun.includes, [{
+    path: 'visible.tex',
+    byteStart: 2,
+    byteEnd: Buffer.byteLength('\\\\\\input{visible}'),
+  }]);
+});
+
+test('shared literal include reader preserves all three caller result shapes', () => {
+  const source = '\\input{part}';
+  const byteEnd = Buffer.byteLength(source);
+  const cases = [{
+    label: 'empirical claim universe',
+    mapInclude: ({ path: included, byteStart }) => ({
+      path: included,
+      offset: byteStart,
+    }),
+    expected: { path: 'part.tex', offset: 0 },
+  }, {
+    label: 'empirical assertion universe',
+    mapInclude: ({ path: included, byteStart, byteEnd: end }) => ({
+      path: included,
+      offset: byteStart,
+      end,
+    }),
+    expected: { path: 'part.tex', offset: 0, end: byteEnd },
+  }, {
+    label: 'formal claim universe',
+    mapInclude: ({ path: included, byteStart, byteEnd: end }) => ({
+      manuscriptPath: included,
+      byteStart,
+      byteEnd: end,
+    }),
+    expected: { manuscriptPath: 'part.tex', byteStart: 0, byteEnd },
+  }];
+  for (const { label, mapInclude, expected } of cases) {
+    const parsed = includeSyntax(source, { mapInclude });
+    assert.deepEqual(parsed.blockers, [], label);
+    assert.deepEqual(parsed.includes, [expected], label);
+    assert.equal(Object.isFrozen(parsed.includes[0]), true, label);
+  }
+});
 
 test('shared marker reader preserves byte ranges, UTF-8 content hashes, and marker state', () => {
   const beginLine = 'FIXTURE_BEGIN {"id":"surface"}\r\n';

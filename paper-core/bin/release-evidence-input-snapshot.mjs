@@ -191,13 +191,16 @@ const SEMANTIC_CONTRACT_KEYS = Object.freeze({
     'receiptLedgerRowCount', 'invalidReceiptHashCount', 'invalidReceiptRows', 'blockers',
   ]),
   coldVolumeCas: Object.freeze([
-    'version', 'kind', 'status', 'casRoot', 'manifestPath', 'manifestHash', 'contractHash',
-    'objectCount', 'blockers',
+    'version', 'kind', 'status', 'casRoot', 'manifestPath', 'manifestHash', 'contractId',
+    'contractHash', 'entryCount', 'objectCount', 'blockers',
   ]),
   offhostWormStatus: Object.freeze([
     'version', 'kind', 'status', 'contractId', 'targetMountRoot', 'mountAvailable',
-    'mountIdentity', 'distinctDevice', 'currentProtectionLevel',
-    'offHostOrOffsiteCustodyQualified', 'custodyStatus', 'custodyBlockers', 'blockers',
+    'mountIdentity', 'distinctDevice', 'storageIdentityHash', 'custodyRequired',
+    'currentProtectionLevel',
+    'custodyDeclaredQualified', 'offHostOrOffsiteCustodyQualified', 'custodyStatus',
+    'custodyBlockers', 'custodyEvidenceStatus', 'custodyEvidenceBundleHash',
+    'custodyTrustStoreHash', 'custodyEvidenceExpiresAt', 'blockers',
   ]),
   trustLayerGate: Object.freeze([
     'version', 'kind', 'status', 'releaseCommit', 'capabilityCount', 'implementation',
@@ -384,6 +387,8 @@ export function captureReleaseEvidenceInputSnapshot({
       environment.HEPTA_COLD_OBJECT_STORE_ROOT
         || '/data/home-data/hepta-paper-cold-object-store',
     ),
+    contract: coldVolumeContract.document,
+    contractHash: coldVolumeContract.file.fileHash,
   });
   const offhostWormContractPath = path.join(
     workspaceRoot,
@@ -395,6 +400,7 @@ export function captureReleaseEvidenceInputSnapshot({
   const offhostWormStatus = verifyOffhostWormTarget({
     workspaceRoot,
     contract: offhostWormContract.document,
+    requireCustody: true,
   });
 
   const archiveRoot = path.dirname(archivePath);

@@ -19,8 +19,11 @@ As of this source revision:
   ambiguous `colt_alt` identifier is rejected rather than resolved by fallback;
 - four targets (`iclr`, `icml`, `neurips`, and `tmlr`) have a target-specific
   OpenReview prototype seed;
-- zero targets have a verified current portal binding, sandbox qualification,
-  independent connector attestation, or live-commit authorization.
+- the static catalog grants zero targets a verified current portal binding,
+  sandbox qualification, production qualification, or live-commit
+  authorization. A deployment may overlay one or two targets only through the
+  signed, expiring qualification registry described below. A registry may be
+  empty only to carry an explicit signed revocation generation.
 
 The historical profile data v1 remains available with its original 97 entries.
 Current profile data is v2: it replaces the composite `colt_alt` row with the
@@ -46,6 +49,42 @@ npm run automation:journal-connector-coverage -- --venue <venue-id>
 The stronger `--require-profile-resolved`, `--require-adapter-implemented`,
 `--require-sandbox-qualified`, `--require-production-qualified`, and
 `--require-live-ready` gates remain fail-closed.
+
+A deployment overlay requires an owner-private registry file, its current
+semantic-hash pin, and a separately pinned authority trust store. Inspect or
+import one generation with:
+
+```bash
+npm run automation:portal-target-qualification -- --action status \
+  --registry <active.json> --registry-hash sha256:... \
+  --trust-store <trust.json> --trust-store-hash sha256:... --require-ready
+npm run automation:portal-target-qualification -- --action import-plan \
+  --registry <active.json> --candidate <candidate.json> \
+  --candidate-hash sha256:... --trust-store <trust.json> \
+  --trust-store-hash sha256:...
+npm run automation:portal-target-qualification -- --action import-execute \
+  --execute --plan-hash sha256:... --registry <active.json> \
+  --candidate <candidate.json> --candidate-hash sha256:... \
+  --trust-store <trust.json> --trust-store-hash sha256:...
+```
+
+The execute command performs only a locked local atomic file replacement. It
+does not contact a portal, use credentials, or create or consume a live-commit
+permit. `journal-connector-coverage` consumes the verified overlay through the
+corresponding `--qualification-*` flags or `HEPTA_PORTAL_TARGET_QUALIFICATION_*`
+environment variables. Coverage promotion requires the exact semantic registry
+hash; an otherwise valid but unpinned status inspection cannot promote it.
+
+Each evidence item is a typed `PortalTargetQualificationEvidenceAttestation`,
+not an arbitrary evidence hash. Its artifact kind and verification-receipt kind
+are fixed per evidence type, it binds the canonical target subject and verifier
+policy, it has a type-specific maximum age and lifetime, and it carries its own
+Ed25519 verifier signature. Registry owner, observer, and production-authorizer
+signatures must use distinct subjects, organizations, and canonical SPKI
+fingerprints. A successor is bound to the exact predecessor registry hash;
+removal or downgrade requires the replaced qualification hash in the signed
+revocation set. Failed post-write verification restores the prior bytes (or
+removes an initial publication) before reporting failure.
 
 ## Contract and routing model
 
@@ -140,7 +179,7 @@ by the system.
 ## Target onboarding
 
 A target becomes sandbox-qualified only after all of the following are
-supplied and verified:
+supplied and verified by current, non-fixture external evidence:
 
 1. A single stable venue identity; conferences also require an exact edition
    and track.
@@ -148,13 +187,17 @@ supplied and verified:
 3. Current API/form schema evidence and a matching fingerprint.
 4. Written automation-policy or API authorization evidence.
 5. An isolated credential profile owned by the connector service.
-6. A no-side-effect live canary and golden fixture.
+6. A no-side-effect sandbox canary; fixture evidence cannot qualify a target.
 7. Provider-specific status mapping and idempotent reconciliation.
 8. An independently signed receipt path.
 
-Production and live-commit qualification additionally require the real account,
-current submission window, final human approval bound to the package and
-metadata hashes, and successful provider read-after-write evidence.
+Production qualification additionally requires signed dispatcher-challenge,
+cycle-recovery and portal-scoped production-authorization evidence. The owner,
+independent observer and production authorizer must be distinct principals from
+distinct organizations. These facts can promote the target binding and
+production coverage only. They never authorize live commit. The real account,
+current submission window, and final human approval bound to package and
+metadata hashes remain a separate, single-use authorization boundary.
 
 Numerical reference candidates use the same external-authority principle. A
 deployment may set

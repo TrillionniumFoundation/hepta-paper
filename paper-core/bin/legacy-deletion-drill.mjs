@@ -7,15 +7,14 @@ import { fileURLToPath } from 'node:url';
 import { buildLegacyCapabilityMatrixV3 } from '../../migration/legacy-capability-matrix-v3.mjs';
 import { currentCodeProvenance } from '../src/code-provenance.mjs';
 import { assertWorkspaceReleaseReady } from '../src/release-state-repository.mjs';
+import { releaseIntegrityEvidence } from './release-integrity-evidence.mjs';
 import {
-  assertExactCleanCodeProvenance,
-  ensurePrivateDirectoryWithinRuntime,
   inspectLegacyReferenceArchive,
+} from './release-evidence-legacy-immutable-snapshot.mjs';
+import {
   releaseAttestationCodeProvenance,
-  removeExactPublishedFile,
-  signReleasePayload,
-  writeNoClobberJsonFile,
-} from './release-evidence-lib.mjs';
+} from './release-evidence-input-snapshot.mjs';
+import { signReleasePayload } from './release-integrity-signing.mjs';
 import {
   defaultLegacyPaperFactoryRoot,
   defaultPaperAssetRoot,
@@ -28,6 +27,13 @@ import { copySqliteDatabase } from '../../paper-composition/bootstrap/operator-p
 import { prepareIsolatedRuntimeStore } from './isolated-runtime-store.mjs';
 import { parseStrictCliArguments } from '../src/strict-cli-arguments.mjs';
 import { bindIdentityBoundTemporaryDirectory } from '../../paper-composition/bootstrap/immutable-release-workspace-composition.mjs';
+
+const {
+  assertExactCleanCodeProvenance,
+  ensurePrivateDirectoryWithinRuntime,
+  removeExactPublishedFile,
+  writeNoClobberJsonFile,
+} = releaseIntegrityEvidence;
 
 const modulePath = fileURLToPath(import.meta.url);
 const defaultWorkspaceRoot = path.resolve(path.dirname(modulePath), '..', '..');

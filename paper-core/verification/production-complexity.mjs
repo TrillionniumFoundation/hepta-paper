@@ -157,6 +157,7 @@ export const PRODUCTION_COMPLEXITY_HIGH_RISK_PATHS = Object.freeze([
   'paper-adapters/automation/autonomous-research-supervisor-provider-canary-state-operations.mjs',
   'paper-adapters/runtime/os-sandbox-worker-execution-finalizer.mjs',
   'paper-adapters/runtime/os-sandboxed-worker-runner.mjs',
+  'paper-adapters/runtime/release-environment-entrypoint.mjs',
   'paper-adapters/runtime/scoped-file-materialization-repository.mjs',
   'paper-adapters/runtime/scoped-file-materialization-operation-journal-repository.mjs',
   'paper-adapters/runtime/scoped-file-materialization-recovery-entry-repository.mjs',

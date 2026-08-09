@@ -552,6 +552,131 @@ provider dispatch or other external action.
 
 ## Verification
 
+### Sealed production release environment
+
+Keep production on hold while qualifying a release. Run production release,
+formal, trust, restore and WORM status gates only through the installed sealed
+entrypoint:
+
+```bash
+/usr/libexec/hepta-paper/hepta-paper-release-env --help
+/usr/libexec/hepta-paper/hepta-paper-release-env release:state-gate
+/usr/libexec/hepta-paper/hepta-paper-release-env formal:gate
+/usr/libexec/hepta-paper/hepta-paper-release-env release:verify
+/usr/libexec/hepta-paper/hepta-paper-release-env store:restore-drill
+/usr/libexec/hepta-paper/hepta-paper-release-env offhost:worm-status
+/usr/libexec/hepta-paper/hepta-paper-release-env \
+  offhost:worm-restore-drill --manifest \
+  /media/qian-qi/TOSHIBA_CLEAN3/<snapshot>/manifest.json
+```
+
+The sealed `offhost:worm-status` action always dispatches `status
+--require-custody`. It exits nonzero unless the target is mounted safely on the
+required distinct device **and** custody is verified from current typed
+evidence. The contract's `offHostOrOffsiteCustodyQualified` boolean is only a
+declaration and cannot qualify custody by itself. The gate requires an
+immutable typed current Object Lock receipt, a pinned-trust-store
+Ed25519 attestation from a distinct custodian, and a live bounded validity
+window. The receipt must match the currently observed findmnt UUID/PARTUUID
+storage identity and the selected immutable snapshot manifest plus its exact
+object-set hash; an expired receipt, replaced disk, changed manifest, or changed
+object blocks. A past offline-detachment event is audit history only and cannot
+qualify a device that is mounted again on this host. Missing evidence is
+therefore a production-exit blocker, not an
+advisory. A direct `npm run offhost:worm-status` remains available as a
+same-host target diagnostic; even when that diagnostic reports the target
+ready, it is not production-exit evidence. Run
+`npm run offhost:worm-status -- --require-custody` for the source-tree form of
+the custody gate.
+
+Those artifacts are configured by absolute immutable paths and pins in the
+sealed WORM contract: `custodyEvidencePath`, `custodyTrustStorePath`,
+`custodyTrustStoreHash`, `custodySignerKeyIds`,
+`custodyEvidenceMaximumLifetimeMs`, and `custodySnapshotManifestPath`. The
+current contract intentionally supplies none of them and keeps
+`offHostOrOffsiteCustodyQualified=false`, so the production gate remains
+blocked while the connected disk provides same-host protection only.
+
+The installed, root-owned launcher verifies and opens the deployment authority,
+then runs `/usr/bin/env -i` and drops to the `hepta-paper` primary identity with
+`NoNewPrivileges=yes` before Node imports the JavaScript entrypoint. Only
+`formal:gate` and `release:verify` receive the host's exact Docker group; all
+other actions run without supplementary groups. The entrypoint accepts only its
+documented action table and rebuilds the child environment again without
+provider secrets. Non-help JavaScript actions also require the launcher's marker
+and inherited deployment-lock descriptor; invoking
+`node release-env.mjs <action>` directly fails closed. It fails before dispatch
+unless `/opt/hepta-paper` is the exact root-owned, read-only sealed release tree.
+
+The deployment-closure check does not trust the closure's self-hash alone. The
+current `HeptaDeploymentToolClosure` v2 schema must be exact and its
+`inheritedFromClosureHash` must be one of the code-pinned approved predecessor
+hashes; legacy v1 is accepted only when its own closure hash equals the separate
+exact v1 anchor. The gate
+recomputes the sealed trees for `elan`, the current code-pinned
+`codex-cli-0.144.1` directory, `core`, and
+`runtime-images/r-scientific/source-cas`, and independently verifies each
+submodule's `HEAD` commit and tree. Noncanonical JSON, extra fields, path or
+content drift, any directory not mode `0555`, any executable regular file not
+mode `0555`, any non-executable regular file not mode `0444`, and a
+symlink-substituted closure/tool/submodule root fail closed.
+Changing the Codex directory or lineage set therefore requires an explicit
+reviewed source change rather than an ambient deployment setting. Before a
+later v2-to-v2 source candidate is frozen, its pinned predecessor set must be
+updated to include the closure hash of the actually deployed approved release;
+the gate never learns or trusts that hash merely by observing whichever `/opt`
+tree happens to be live.
+
+State, formal, verification, trust, restore, cold-volume and WORM gates may run
+from an exact sealed `development` tree to report their own blockers; each child
+remains fail closed, and `release:verify` still enforces `release_ready`
+internally. Credential-bearing conformance replay, capability refresh and
+release attestation are deliberately outside this launcher because they require
+separately reviewed operator identities and mutation transactions. The closed
+`release:verify` action may read an already-provisioned release-integrity key and
+publish its owner-bound isolated-verification receipt, but it cannot provision,
+repair or rotate that key. The entrypoint cannot change the production hold,
+create a tag, write a WORM snapshot or run a live submission. WORM capture
+remains a separately authorized backup custody operation; the release entrypoint
+can only inspect or restore-drill an existing manifest.
+
+Membership in the Docker group is root-equivalent. The two Docker-dependent
+actions are therefore qualified only on a dedicated trusted verification host;
+this launcher is not a sandbox against malicious sealed test code. Cold-volume
+and WORM paths must be traversable by the reduced `hepta-paper` principal at a
+qualified mount point. An operator-home media mount or user-only ACL remains a
+production provisioning blocker; the launcher never retains root to bypass it.
+
+Invoke the installed path directly from a systemd-manager job or a verified
+clean root execution context. The `npm run release:env -- <action>` alias points
+to the same launcher for discovery, but npm has already started Node and is not
+a pre-Node security boundary. In particular, an inherited `NODE_OPTIONS` can
+affect npm before it reaches the package script.
+
+The launcher removes `LD_PRELOAD`, `LD_LIBRARY_PATH` and loader audit variables
+before it starts Node, but its initial `/bin/sh` is dynamically loaded before
+`env -i` can run. Consequently, the release claim requires those variables to
+be absent at the manager/root launch boundary. It does not claim immunity from
+a hostile host root or a library injected before the launcher begins. The
+JavaScript sanitizer and fixed child environment are a second boundary, not a
+retroactive dynamic-loader cleanup.
+
+The launcher also verifies `/run/hepta-paper-deployment/deployment.lock` as a root-owned,
+single-link, mode `0600` regular file, verifies its opened descriptor identity,
+and holds a nonblocking shared `flock` until the release action exits. All
+candidate-build and cutover paths must take the same lock exclusively before
+they inspect or replace `/opt/hepta-paper`. An exclusive holder makes the
+release launcher fail with `release_environment_deployment_in_progress`; an
+absent or malformed lock fails before Node starts. Do not create or repair the
+lock from this read/verification entrypoint.
+
+The native `store:restore-drill` action copies a qualified backup to a temporary
+database and never replaces or migrates `hepta-paper.sqlite`. It does write the
+restore receipt and administrative receipt-ledger row, and it may first create
+a qualified backup if none exists. Use the isolated `release:verify` runner
+when the required claim is that production database bytes remain unchanged by
+the complete verification suite.
+
 ```bash
 npm run reference:integrity
 npm run reference:selftest

@@ -9,11 +9,11 @@ import {
 import {
   runtimeImagesForCampaign,
 } from '../../paper-adapters/automation/runtime-image-registry.mjs';
+import { createOsSandboxedWorkerRunner } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
 import {
-  createOsSandboxedWorkerRunner,
   directoryMerkleHash,
   fileSha256Hash,
-} from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
+} from '../../paper-adapters/runtime/execution-snapshot.mjs';
 
 export function campaignDatasetContentHash(source) {
   const resolved = path.resolve(source);

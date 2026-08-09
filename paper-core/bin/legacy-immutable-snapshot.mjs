@@ -11,15 +11,21 @@ import {
   defaultLegacyPaperFactoryRoot,
   defaultPaperRuntimeRoot,
 } from '../src/workspace-layout.mjs';
+import { releaseIntegrityEvidence } from './release-integrity-evidence.mjs';
 import {
-  assertExactCleanCodeProvenance,
   inspectLegacyReferenceArchive,
-  publishJsonArtifactSet,
-  releaseAttestationCodeProvenance,
   selectCurrentLegacyImmutableSnapshotReceipt,
-  signReleasePayload,
-} from './release-evidence-lib.mjs';
+} from './release-evidence-legacy-immutable-snapshot.mjs';
+import {
+  releaseAttestationCodeProvenance,
+} from './release-evidence-input-snapshot.mjs';
+import { signReleasePayload } from './release-integrity-signing.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+
+const {
+  assertExactCleanCodeProvenance,
+  publishJsonArtifactSet,
+} = releaseIntegrityEvidence;
 
 const modulePath = fileURLToPath(import.meta.url);
 const defaultWorkspaceRoot = path.resolve(path.dirname(modulePath), '..', '..');

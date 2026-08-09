@@ -2,6 +2,10 @@
 import {
   JOURNAL_SUBMISSION_CONNECTOR_COVERAGE,
 } from '../../paper-domain/submission/journal-connector-coverage.mjs';
+import {
+  applyInspectedPortalTargetQualifications,
+  inspectPortalTargetQualification,
+} from '../../paper-composition/submission/portal-target-qualification-composition.mjs';
 import { parseStrictCliArguments } from '../src/strict-cli-arguments.mjs';
 
 const args = parseStrictCliArguments(process.argv.slice(2), {
@@ -15,7 +19,14 @@ const args = parseStrictCliArguments(process.argv.slice(2), {
     'require-production-qualified',
     'require-live-ready',
   ],
-  valueFlags: ['kind', 'venue'],
+  valueFlags: [
+    'kind',
+    'qualification-registry',
+    'qualification-registry-hash',
+    'qualification-trust-store',
+    'qualification-trust-store-hash',
+    'venue',
+  ],
   positional: false,
 });
 if (args.help) {
@@ -27,21 +38,47 @@ if (args.help) {
       '[--venue <venue-id>] [--require-family-prototype]',
       '[--require-profile-resolved] [--require-adapter-implemented]',
       '[--require-sandbox-qualified] [--require-production-qualified]',
-      '[--require-live-ready]',
+      '[--require-live-ready] [--qualification-registry PATH]',
+      '--qualification-registry-hash sha256:...',
+      '[--qualification-trust-store PATH --qualification-trust-store-hash sha256:...]',
     ].join(' '),
     mutation: 'read-only',
     externalAction: false,
   }, null, 2)}\n`);
   process.exit(0);
 }
+const qualificationRegistryPath = args['qualification-registry']
+  || process.env.HEPTA_PORTAL_TARGET_QUALIFICATION_REGISTRY || null;
+let coverage = JOURNAL_SUBMISSION_CONNECTOR_COVERAGE;
+let qualificationInspection = null;
+if (qualificationRegistryPath) {
+  qualificationInspection = inspectPortalTargetQualification({
+    registryPath: qualificationRegistryPath,
+    expectedRegistryHash: args['qualification-registry-hash']
+      || process.env.HEPTA_PORTAL_TARGET_QUALIFICATION_REGISTRY_HASH || null,
+    trustStorePath: args['qualification-trust-store']
+      || process.env.HEPTA_PORTAL_TARGET_QUALIFICATION_TRUST_STORE || null,
+    expectedTrustStoreHash: args['qualification-trust-store-hash']
+      || process.env.HEPTA_PORTAL_TARGET_QUALIFICATION_TRUST_STORE_HASH || null,
+  });
+  if (!qualificationInspection.ready) {
+    throw new Error(`portal_target_qualification_registry_blocked:${
+      qualificationInspection.blockers.join(',')}`);
+  }
+  coverage = applyInspectedPortalTargetQualifications(
+    JOURNAL_SUBMISSION_CONNECTOR_COVERAGE,
+    qualificationInspection,
+    { now: new Date() },
+  );
+}
 if (args.kind && !['conference', 'journal'].includes(args.kind)) {
   throw new Error(`journal_submission_connector_coverage_kind_invalid:${args.kind}`);
 }
 const venueEntries = args.venue
-  ? JOURNAL_SUBMISSION_CONNECTOR_COVERAGE.entries.filter((entry) => (
+  ? coverage.entries.filter((entry) => (
     entry.venueId === args.venue
   ))
-  : JOURNAL_SUBMISSION_CONNECTOR_COVERAGE.entries;
+  : coverage.entries;
 if (args.venue && venueEntries.length !== 1) {
   throw new Error(`journal_submission_connector_coverage_unknown_venue:${args.venue}`);
 }
@@ -83,6 +120,11 @@ const summary = {
     selectedEntries.filter((entry) => entry.liveSubmissionReady).length,
   discoveryRequiredCount:
     selectedEntries.filter((entry) => entry.discoveryRequired).length,
+  portalTargetQualificationRegistryHash:
+    qualificationInspection?.registryHash || null,
+  qualificationGeneration: qualificationInspection?.generation || null,
+  qualificationExpiresAt: qualificationInspection?.expiresAt || null,
+  humanSingleUseAuthorizationRequired: true,
   entries: args.summary ? undefined : selectedEntries,
 };
 process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);

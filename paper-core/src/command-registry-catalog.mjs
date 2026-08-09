@@ -79,6 +79,7 @@ export const EXPLICIT_NPM_SCRIPTS = Object.freeze({
     'offhost:worm-snapshot',
     'owner:refresh-local-admin',
     'reference:baseline:accept',
+    'release:env',
     'reports:quarantine-stale',
     'runtime:hygiene',
     'runtime:permissions',

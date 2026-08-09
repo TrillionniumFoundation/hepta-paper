@@ -8,41 +8,14 @@ import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
 import {
   extractMarkerDelimitedManuscriptSurfaces,
-  includedPath,
+  literalManuscriptIncludes,
   safeManuscriptPath,
 } from './latex-manuscript-reader-support.mjs';
 
-const INCLUDE_COMMAND = /\\(input|include)(?![A-Za-z@])/gi;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/;
 const BEGIN = /^\s*%\s*HEPTA_EMPIRICAL_CLAIM_BEGIN\s+(\{.*\})\s*$/;
 const END = /^\s*%\s*HEPTA_EMPIRICAL_CLAIM_END\s+([A-Za-z0-9][A-Za-z0-9_.:-]{0,159})\s*$/;
 const MARKER_TOKEN = /HEPTA_EMPIRICAL_CLAIM_(?:BEGIN|END)/;
-
-function literalIncludes(masked, relative) {
-  const includes = [];
-  const blockers = [];
-  INCLUDE_COMMAND.lastIndex = 0;
-  let match;
-  while ((match = INCLUDE_COMMAND.exec(masked)) !== null) {
-    let cursor = match.index + match[0].length;
-    while (cursor < masked.length && /\s/.test(masked[cursor])) cursor += 1;
-    if (masked[cursor] !== '{') {
-      blockers.push(`empirical_claim_universe_include_not_literal:${relative}:${match.index}`);
-      continue;
-    }
-    const end = masked.indexOf('}', cursor + 1);
-    const value = end < 0 ? '' : masked.slice(cursor + 1, end);
-    if (end < 0 || value.includes('{')) {
-      blockers.push(`empirical_claim_universe_include_not_literal:${relative}:${match.index}`);
-      continue;
-    }
-    const included = includedPath(relative, value);
-    if (!included) blockers.push(`empirical_claim_universe_include_path_invalid:${relative}:${String(value).trim()}`);
-    else includes.push(Object.freeze({ path: included, offset: match.index }));
-    INCLUDE_COMMAND.lastIndex = end + 1;
-  }
-  return { includes, blockers };
-}
 
 function validDeclaration(value) {
   return exactKeys(value, [
@@ -95,7 +68,15 @@ export function readEmpiricalClaimUniverse({ sourceRoot, manuscriptPath = 'main.
     for (const blocker of syntax.blockers) {
       blockers.push(`empirical_claim_universe_dynamic_tex_unsupported:${relative}:${blocker.offset}`);
     }
-    const includes = literalIncludes(syntax.maskedSource, relative);
+    const includes = literalManuscriptIncludes({
+      masked: syntax.maskedSource,
+      relative,
+      blockerPrefix: 'empirical_claim_universe',
+      mapInclude: ({ path: included, byteStart }) => ({
+        path: included,
+        offset: byteStart,
+      }),
+    });
     blockers.push(...includes.blockers);
     const extracted = extractClaims(relative, read);
     blockers.push(...extracted.blockers);

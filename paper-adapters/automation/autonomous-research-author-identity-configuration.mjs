@@ -8,6 +8,9 @@ import {
   buildPinnedExternalEvidenceEnvelope,
   inspectPinnedExternalEvidenceTrustStore,
 } from '../authority/pinned-external-evidence-verifier.mjs';
+import {
+  canonicalExternalPrincipalKeyIds,
+} from '../authority/external-principal-identity-attestation-bundle-codec.mjs';
 import { hasExactObjectKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
@@ -15,7 +18,6 @@ import {
   samePinnedFileIdentity,
 } from '../runtime/pinned-file-reader.mjs';
 
-const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}$/;
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const SUBJECT_KIND = 'ExternalPrincipalIdentityAttestationSubject';
 const SIGNER_ROLE = 'external_principal_identity_attestor';
@@ -35,12 +37,6 @@ const IDENTITY_POLICY_KEYS = Object.freeze([
   'providerAccountIdentityHash', 'serviceId', 'signerPublicKeySpkiHash',
   'trustDomainIdentityHash', 'version',
 ]);
-
-function canonicalKeyIds(values) {
-  const selected = [...new Set((Array.isArray(values) ? values : []).map(String))].sort();
-  return selected.length >= 1 && selected.length <= 4
-    && selected.every((value) => SAFE_ID.test(value)) ? Object.freeze(selected) : null;
-}
 
 function canonicalLifetime(value) {
   const selected = Number(value);
@@ -91,7 +87,7 @@ export function buildAutonomousResearchAuthorIdentityConfiguration({
   maximumLifetimeMs = 15 * 60 * 1000,
   identityPolicy = null,
 } = {}) {
-  const expectedKeyIds = canonicalKeyIds(signerKeyIds);
+  const expectedKeyIds = canonicalExternalPrincipalKeyIds(signerKeyIds);
   const lifetime = canonicalLifetime(maximumLifetimeMs);
   const trust = inspectPinnedExternalEvidenceTrustStore(trustStore, {
     requiredRole: signerRole,

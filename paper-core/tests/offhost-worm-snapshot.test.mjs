@@ -3,17 +3,188 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import {
   createOffhostWormSnapshot,
   drillOffhostWormRestore,
   resolveLatestReleaseEvidencePointer,
   selectLatestVerifiedReleaseEvidence,
+  verifyOffhostWormTarget,
 } from '../../paper-adapters/archives/offhost-worm-repository.mjs';
+import {
+  buildPinnedExternalEvidenceEnvelope,
+  inspectPinnedExternalEvidenceTrustStore,
+  pinnedExternalEvidenceSigningPayload,
+} from '../../paper-adapters/authority/pinned-external-evidence-verifier.mjs';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
+
+const WORKSPACE_ROOT = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+);
 
 const AUTHORITY_LIMIT =
   'build_and_archive_integrity_only_not_owner_academic_referee_or_submission_authority';
+const CUSTODY_NOW = new Date('2026-08-09T00:10:00.000Z');
+
+function custodyEvidenceFixture({ contract, targetMountRoot, receiptType = 'object_lock' }) {
+  const pair = crypto.generateKeyPairSync('ed25519');
+  const keyId = 'custody-key-1';
+  const custodianId = 'independent-custodian-1';
+  const role = 'offhost_worm_independent_custodian';
+  const trustStore = {
+    version: 1,
+    kind: 'AuthorityTrustStore',
+    keys: [{
+      keyId,
+      subjectId: custodianId,
+      organization: 'Independent Custody Fixture',
+      algorithm: 'ed25519',
+      publicKeyPem: pair.publicKey.export({ type: 'spki', format: 'pem' }),
+      roles: [role],
+      status: 'active',
+      effectiveFrom: '2026-08-08T00:00:00.000Z',
+      expiresAt: '2026-08-10T00:00:00.000Z',
+      revokedAt: null,
+    }],
+  };
+  const trust = inspectPinnedExternalEvidenceTrustStore(trustStore, {
+    requiredRole: role,
+    expectedKeyIds: [keyId],
+  });
+  assert.equal(trust.ready, true);
+  const storageIdentityHash = hashRecord('OffhostWormStorageIdentityFixture', {
+    targetMountRoot,
+  });
+  const snapshotId = (receiptType === 'object_lock' ? 'a' : 'b').repeat(64);
+  const snapshotRoot = path.join(targetMountRoot, 'hepta-paper-worm', snapshotId);
+  const objectRoot = path.join(snapshotRoot, 'objects');
+  fs.mkdirSync(objectRoot, { recursive: true });
+  const objectBytes = Buffer.from('qualified custody snapshot object\n');
+  const objectHash = hashBytes(objectBytes);
+  const objectPath = path.join(objectRoot, objectHash.replace(/^sha256:/u, ''));
+  fs.writeFileSync(objectPath, objectBytes, { mode: 0o444 });
+  const objects = [{
+    role: 'fixture',
+    sourceHash: objectHash,
+    objectPath,
+    objectHash,
+    immutable: true,
+  }];
+  const manifestPayload = {
+    version: 2,
+    kind: 'OffhostWormSnapshotManifest',
+    contractId: contract.contractId,
+    snapshotId,
+    protectionLevel: 'same_host_external_disk',
+    offHostOrOffsiteCustodyQualified: false,
+    objects,
+  };
+  const snapshotManifest = {
+    ...manifestPayload,
+    manifestHash: hashRecord('OffhostWormSnapshotManifest', manifestPayload),
+    signature: { fixture: true },
+  };
+  const custodySnapshotManifestPath = path.join(
+    snapshotRoot,
+    'OFFHOST_WORM_SNAPSHOT_MANIFEST.json',
+  );
+  fs.writeFileSync(
+    custodySnapshotManifestPath,
+    `${JSON.stringify(snapshotManifest, null, 2)}\n`,
+    { mode: 0o444 },
+  );
+  const selectedContract = {
+    ...contract,
+    offHostOrOffsiteCustodyQualified: true,
+    custodyEvidencePath: '/fixture/OFFHOST_WORM_CUSTODY_EVIDENCE.json',
+    custodyTrustStorePath: '/fixture/OFFHOST_WORM_CUSTODY_TRUST_STORE.json',
+    custodyTrustStoreHash: trust.trustStoreHash,
+    custodySignerKeyIds: [keyId],
+    custodyEvidenceMaximumLifetimeMs: 60 * 60 * 1000,
+    custodySnapshotManifestPath,
+  };
+  const receiptPayload = {
+    version: 1,
+    kind: 'OffhostWormCustodyReceipt',
+    contractId: contract.contractId,
+    receiptType,
+    targetMountRoot,
+    storageIdentityHash,
+    snapshotManifestHash: snapshotManifest.manifestHash,
+    snapshotObjectSetHash: hashRecord('OffhostWormSnapshotObjectSet', objects),
+    storageSubjectId: 'storage-provider-1',
+    custodyClass: 'offsite',
+    issuedAt: '2026-08-09T00:00:00.000Z',
+    expiresAt: '2026-08-09T00:45:00.000Z',
+  };
+  const receipt = {
+    ...receiptPayload,
+    receiptHash: hashRecord('OffhostWormCustodyReceipt', receiptPayload),
+  };
+  const subjectPayload = {
+    version: 1,
+    kind: 'OffhostWormCustodyAttestationSubject',
+    contractId: contract.contractId,
+    targetMountRoot,
+    custodyReceiptHash: receipt.receiptHash,
+    custodyClass: 'offsite',
+    independentCustodianId: custodianId,
+    attestedAt: '2026-08-09T00:05:00.000Z',
+    expiresAt: '2026-08-09T00:40:00.000Z',
+  };
+  const attestationSubject = {
+    ...subjectPayload,
+    offhostWormCustodyAttestationSubjectHash: hashRecord(
+      'OffhostWormCustodyAttestationSubject',
+      subjectPayload,
+    ),
+  };
+  const placeholder = buildPinnedExternalEvidenceEnvelope({
+    subjectKind: 'OffhostWormCustodyAttestationSubject',
+    subjectHash: attestationSubject.offhostWormCustodyAttestationSubjectHash,
+    signedAt: attestationSubject.attestedAt,
+    expiresAt: attestationSubject.expiresAt,
+    signatures: [{ keyId, role, algorithm: 'ed25519', value: 'placeholder' }],
+  });
+  const authorityEnvelope = buildPinnedExternalEvidenceEnvelope({
+    ...placeholder,
+    signatures: [{
+      keyId,
+      role,
+      algorithm: 'ed25519',
+      value: crypto.sign(
+        null,
+        pinnedExternalEvidenceSigningPayload(placeholder),
+        pair.privateKey,
+      ).toString('base64'),
+    }],
+  });
+  const bundlePayload = {
+    version: 1,
+    kind: 'OffhostWormCustodyEvidenceBundle',
+    receipt,
+    attestationSubject,
+    authorityEnvelope,
+  };
+  return Object.freeze({
+    contract: selectedContract,
+    storageIdentityHash,
+    objectPath,
+    trustStore,
+    evidence: {
+      ...bundlePayload,
+      custodyEvidenceBundleHash: hashRecord(
+        'OffhostWormCustodyEvidenceBundle',
+        bundlePayload,
+      ),
+    },
+  });
+}
+
 const TEST_MANIFEST_AUTHORITY = (() => {
   const pair = crypto.generateKeyPairSync('ed25519');
   const publicKeyPem = pair.publicKey.export({ type: 'spki', format: 'pem' });
@@ -271,6 +442,170 @@ test('release evidence selection rejects a valid-looking bundle signed by a fore
   assert.deepEqual(selection.blockers, ['offhost_release_signature_verification_failed']);
 });
 
+test('offhost target status requires qualified custody only in the explicit exit gate', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-offhost-custody-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const targetMountRoot = path.join(root, 'target');
+  fs.mkdirSync(targetMountRoot);
+  const contract = {
+    version: 1,
+    kind: 'OffhostWormSnapshotContract',
+    contractId: 'custody-fixture',
+    targetMountRoot,
+    requireDistinctFilesystemDevice: true,
+    offHostOrOffsiteCustodyQualified: false,
+    offlineDetachmentOrObjectLockReceiptRequired: true,
+    independentCustodyAttestationRequired: true,
+  };
+  const probe = {
+    workspaceRoot: root,
+    contract,
+    mountAvailableOverride: true,
+    distinctDeviceOverride: true,
+  };
+  const diagnostic = verifyOffhostWormTarget(probe);
+  assert.equal(diagnostic.status, 'offhost_worm_target_ready');
+  assert.equal(diagnostic.custodyRequired, false);
+  assert.deepEqual(diagnostic.blockers, []);
+  for (const blocker of [
+    'offhost_or_offsite_custody_not_qualified',
+    'offhost_worm_custody_freshness_policy_missing_or_invalid',
+    'offhost_worm_custody_evidence_missing',
+    'offhost_worm_custody_trust_store_missing',
+    'current_object_lock_receipt_missing',
+    'independent_custody_attestation_missing',
+  ]) assert.ok(diagnostic.custodyBlockers.includes(blocker), blocker);
+
+  const exitGate = verifyOffhostWormTarget({ ...probe, requireCustody: true });
+  assert.equal(exitGate.status, 'offhost_worm_target_blocked');
+  assert.equal(exitGate.custodyRequired, true);
+  assert.deepEqual(exitGate.blockers, diagnostic.custodyBlockers);
+
+  const staticBooleanOnly = verifyOffhostWormTarget({
+    ...probe,
+    contract: { ...contract, offHostOrOffsiteCustodyQualified: true },
+    requireCustody: true,
+  });
+  assert.equal(staticBooleanOnly.status, 'offhost_worm_target_blocked');
+  assert.equal(staticBooleanOnly.custodyDeclaredQualified, true);
+  assert.equal(staticBooleanOnly.offHostOrOffsiteCustodyQualified, false);
+  assert.ok(staticBooleanOnly.blockers.includes(
+    'current_object_lock_receipt_missing',
+  ));
+  assert.ok(staticBooleanOnly.blockers.includes('independent_custody_attestation_missing'));
+
+  const fixture = custodyEvidenceFixture({ contract, targetMountRoot });
+  const qualified = verifyOffhostWormTarget({
+    ...probe,
+    contract: fixture.contract,
+    custodyEvidenceOverride: fixture.evidence,
+    custodyTrustStoreOverride: fixture.trustStore,
+    storageIdentityHashOverride: fixture.storageIdentityHash,
+    custodyImmutableOverride: true,
+    now: CUSTODY_NOW,
+    requireCustody: true,
+  });
+  assert.equal(qualified.status, 'offhost_worm_target_ready');
+  assert.equal(qualified.offHostOrOffsiteCustodyQualified, true);
+  assert.equal(qualified.custodyEvidenceStatus, 'offhost_worm_custody_evidence_verified');
+  assert.deepEqual(qualified.custodyBlockers, []);
+  assert.deepEqual(qualified.blockers, []);
+
+  const historicalDetachment = custodyEvidenceFixture({
+    contract,
+    targetMountRoot,
+    receiptType: 'offline_detachment',
+  });
+  const reattached = verifyOffhostWormTarget({
+    ...probe,
+    contract: historicalDetachment.contract,
+    custodyEvidenceOverride: historicalDetachment.evidence,
+    custodyTrustStoreOverride: historicalDetachment.trustStore,
+    storageIdentityHashOverride: historicalDetachment.storageIdentityHash,
+    custodyImmutableOverride: true,
+    now: CUSTODY_NOW,
+    requireCustody: true,
+  });
+  assert.equal(reattached.status, 'offhost_worm_target_blocked');
+  assert.equal(reattached.offHostOrOffsiteCustodyQualified, false);
+  assert.ok(reattached.blockers.includes(
+    'current_object_lock_receipt_invalid_or_stale',
+  ));
+
+  const replacedStorage = verifyOffhostWormTarget({
+    ...probe,
+    contract: fixture.contract,
+    custodyEvidenceOverride: fixture.evidence,
+    custodyTrustStoreOverride: fixture.trustStore,
+    storageIdentityHashOverride: hashRecord('ReplacementStorageIdentity', {}),
+    custodyImmutableOverride: true,
+    now: CUSTODY_NOW,
+    requireCustody: true,
+  });
+  assert.equal(replacedStorage.status, 'offhost_worm_target_blocked');
+  assert.ok(replacedStorage.blockers.includes(
+    'current_object_lock_receipt_invalid_or_stale',
+  ));
+
+  const stale = verifyOffhostWormTarget({
+    ...probe,
+    contract: fixture.contract,
+    custodyEvidenceOverride: fixture.evidence,
+    custodyTrustStoreOverride: fixture.trustStore,
+    storageIdentityHashOverride: fixture.storageIdentityHash,
+    custodyImmutableOverride: true,
+    now: new Date('2026-08-09T00:45:00.000Z'),
+    requireCustody: true,
+  });
+  assert.equal(stale.status, 'offhost_worm_target_blocked');
+  assert.ok(stale.blockers.includes(
+    'current_object_lock_receipt_invalid_or_stale',
+  ));
+
+  fs.chmodSync(fixture.objectPath, 0o644);
+  fs.writeFileSync(fixture.objectPath, 'modified after custody attestation\n');
+  fs.chmodSync(fixture.objectPath, 0o444);
+  const modifiedSnapshot = verifyOffhostWormTarget({
+    ...probe,
+    contract: fixture.contract,
+    custodyEvidenceOverride: fixture.evidence,
+    custodyTrustStoreOverride: fixture.trustStore,
+    storageIdentityHashOverride: fixture.storageIdentityHash,
+    custodyImmutableOverride: true,
+    now: CUSTODY_NOW,
+    requireCustody: true,
+  });
+  assert.equal(modifiedSnapshot.status, 'offhost_worm_target_blocked');
+  assert.ok(modifiedSnapshot.blockers.includes(
+    'offhost_worm_custody_snapshot_object_invalid_or_changed',
+  ));
+  assert.throws(
+    () => verifyOffhostWormTarget({ ...probe, requireCustody: 'true' }),
+    /offhost_worm_require_custody_boolean_required/u,
+  );
+});
+
+test('offhost status CLI makes require-custody a fail-closed exit mode', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-offhost-cli-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const result = spawnSync(process.execPath, [
+    path.join(WORKSPACE_ROOT, 'paper-core', 'bin', 'offhost-worm-snapshot.mjs'),
+    'status',
+    '--require-custody',
+  ], {
+    cwd: WORKSPACE_ROOT,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      HEPTA_OFFHOST_WORM_ROOT: path.join(root, 'unmounted-target'),
+    },
+  });
+  assert.equal(result.status, 1, result.stderr);
+  const status = JSON.parse(result.stdout);
+  assert.equal(status.custodyRequired, true);
+  assert.ok(status.blockers.includes('offhost_worm_target_unavailable'));
+});
+
 test('offhost WORM snapshot binds immutable objects and supports restore verification', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-offhost-worm-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -309,6 +644,68 @@ test('offhost WORM snapshot binds immutable objects and supports restore verific
   assert.equal(mutableDrill.status, 'offhost_worm_restore_drill_blocked');
   assert.equal(mutableDrill.verifiedObjectCount, 0);
   assert.deepEqual(mutableDrill.blockers, ['offhost_worm_object_not_immutable:fixture']);
+});
+
+test('new snapshot never inherits a prior snapshot custody qualification', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-offhost-new-snapshot-custody-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const workspaceRoot = path.join(root, 'workspace');
+  const targetMountRoot = path.join(root, 'target');
+  fs.mkdirSync(workspaceRoot);
+  fs.mkdirSync(targetMountRoot);
+  const source = path.join(workspaceRoot, 'new-snapshot-source.json');
+  fs.writeFileSync(source, '{"snapshot":"B"}\n');
+  const contract = {
+    version: 1,
+    kind: 'OffhostWormSnapshotContract',
+    contractId: 'custody-fixture',
+    targetMountRoot,
+    requireDistinctFilesystemDevice: true,
+    requireFilesystemImmutableObjects: true,
+    offHostOrOffsiteCustodyQualified: false,
+    offlineDetachmentOrObjectLockReceiptRequired: true,
+    independentCustodyAttestationRequired: true,
+  };
+  const fixture = custodyEvidenceFixture({ contract, targetMountRoot });
+  const priorQualification = verifyOffhostWormTarget({
+    workspaceRoot,
+    contract: fixture.contract,
+    mountAvailableOverride: true,
+    distinctDeviceOverride: true,
+    custodyEvidenceOverride: fixture.evidence,
+    custodyTrustStoreOverride: fixture.trustStore,
+    storageIdentityHashOverride: fixture.storageIdentityHash,
+    custodyImmutableOverride: true,
+    now: CUSTODY_NOW,
+    requireCustody: true,
+  });
+  assert.equal(priorQualification.offHostOrOffsiteCustodyQualified, true);
+
+  const snapshot = createOffhostWormSnapshot({
+    workspaceRoot,
+    contract: fixture.contract,
+    sources: [{ role: 'new_snapshot_source', path: source }],
+    execute: true,
+    mountAvailableOverride: true,
+    distinctDeviceOverride: true,
+    immutableOverride: true,
+    custodyEvidenceOverride: fixture.evidence,
+    custodyTrustStoreOverride: fixture.trustStore,
+    storageIdentityHashOverride: fixture.storageIdentityHash,
+    custodyImmutableOverride: true,
+    custodyNow: CUSTODY_NOW,
+    ...TEST_MANIFEST_AUTHORITY,
+  });
+  assert.equal(snapshot.status, 'offhost_worm_snapshot_recorded');
+  assert.equal(snapshot.target.offHostOrOffsiteCustodyQualified, true);
+  const manifest = JSON.parse(fs.readFileSync(snapshot.manifestPath, 'utf8'));
+  assert.notEqual(manifest.snapshotId, 'a'.repeat(64));
+  assert.equal(manifest.offHostOrOffsiteCustodyQualified, false);
+  const { signature, ...signedManifest } = manifest;
+  assert.equal(
+    TEST_MANIFEST_AUTHORITY.verifyManifestSignature(signedManifest, signature),
+    true,
+  );
 });
 
 test('offhost WORM snapshot rejects a release source replaced after verified selection', (t) => {

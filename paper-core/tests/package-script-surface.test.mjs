@@ -150,9 +150,14 @@ test('root package declares the pinned reference and a non-duplicated verificati
   assert.match(scripts.test, /^npm run static:check/);
   assert.equal(
     scripts['release:verify'],
-    'npm run static:check && npm run security:source-gate -- --require-deployable-templates'
+    'npm run static:check && npm run security:source-gate -- --deployment-profile=systemd-host'
+      + ' && npm run security:npm-audit'
       + ' && npm run release:state-check -- --require-state release_ready'
       + ' && node paper-core/bin/run-isolated-verification.mjs release',
+  );
+  assert.equal(
+    scripts['release:env'],
+    '/usr/libexec/hepta-paper/hepta-paper-release-env',
   );
   assert.doesNotMatch(scripts['release:inner'], /coverage:critical-modules/);
   assert.doesNotMatch(scripts['release:inner'], /coverage:repository/);
@@ -165,6 +170,7 @@ test('root package declares the pinned reference and a non-duplicated verificati
   );
   assert.match(scripts['release:inner'], /npm run assets:cold-volume-release-gate/);
   assert.match(scripts['release:inner'], /npm run assets:cold-volume-cas-release-gate/);
+  assert.match(scripts['release:inner'], /npm run assets:cold-volume-cas-restore-drill/);
   assert.match(scripts['release:inner'], /npm run store:restore-drill/);
   const releaseSteps = scripts['release:inner'].split(' && ');
   assert.ok(
@@ -174,6 +180,14 @@ test('root package declares the pinned reference and a non-duplicated verificati
   assert.ok(
     releaseSteps.indexOf('npm run test:dynamic-formal-kernel-operational')
       < releaseSteps.indexOf('npm run test:migration-differential'),
+  );
+  assert.ok(
+    releaseSteps.indexOf('npm run assets:cold-volume-cas-release-gate')
+      < releaseSteps.indexOf('npm run assets:cold-volume-cas-restore-drill'),
+  );
+  assert.ok(
+    releaseSteps.indexOf('npm run assets:cold-volume-cas-restore-drill')
+      < releaseSteps.indexOf('npm run legacy:fixture-verify'),
   );
   assert.equal(
     releaseSteps.filter((step) => step === 'npm run legacy:deletion-drill').length,
@@ -193,6 +207,8 @@ test('root package declares the pinned reference and a non-duplicated verificati
     'node paper-core/bin/verify-cold-volume-contract.mjs --require-mounted');
   assert.equal(scripts['assets:cold-volume-cas-release-gate'],
     'node paper-core/bin/cold-volume-cas.mjs status --require-ready');
+  assert.equal(scripts['assets:cold-volume-cas-restore-drill'],
+    'node paper-core/bin/cold-volume-cas.mjs restore-drill');
   assert.match(scripts['coverage:system-inner'], /--test-coverage-branches=54/);
   assert.match(scripts['coverage:system-inner'], /--test-skip-pattern='\^academic-docker-operational:'/);
   assert.equal(scripts['test:academic-docker-operational'], 'node paper-core/bin/academic-docker-operational.mjs');
@@ -436,6 +452,7 @@ test('one declarative registry owns supported routes and npm command classificat
     'migration:salvage-verification-receipt',
     'owner:refresh-local-admin',
     'reference:baseline:accept',
+    'release:env',
     'runtime:hygiene',
     'runtime:permissions',
     'security:sbom:write',

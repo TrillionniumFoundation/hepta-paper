@@ -197,6 +197,20 @@ npm run offhost:worm-snapshot -- --execute \
   --authority-config /run/hepta-authority/backup-client.json
 ```
 
+The ordinary `npm run offhost:worm-status` command is a same-host mount and
+distinct-device diagnostic. It deliberately does not prevent snapshot capture
+before an operator transfers or detaches the media. It must not be used as a
+production-exit gate. Use
+`npm run offhost:worm-status -- --require-custody`, or the sealed
+`offhost:worm-status` action that fixes this option, to require qualified
+external/offsite custody and obtain a nonzero exit while either custody receipt
+is missing. The static contract declaration is not evidence. The strict gate
+loads immutable typed evidence and a hash-pinned trust store, verifies the
+independent Ed25519 custody signature and bounded time window, then requires
+the receipt to match the current findmnt UUID/PARTUUID storage identity and the
+selected snapshot manifest/object-set hashes. An old receipt, replacement
+device, modified manifest, mutable object, or content hash drift blocks.
+
 `HEPTA_AUTONOMOUS_RESEARCH_STATE_BACKUP_AUTHORITY_CONFIG` is the equivalent
 deployment-only environment input. Loading it verifies the pinned executable
 and public-key document but the resolver never invokes the broker. Missing or

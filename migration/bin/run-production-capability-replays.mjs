@@ -57,6 +57,53 @@ const replayWorkParent = path.join(runtimeRoot, 'conformance-proof');
 const fixedIso = '2026-07-13T05:45:00.000Z';
 const clock = Object.freeze({ now: () => new Date(fixedIso), nowIso: () => fixedIso });
 
+function privateFileIdentity(stat) {
+  return JSON.stringify({
+    dev: stat.dev,
+    gid: stat.gid,
+    ino: stat.ino,
+    mode: stat.mode,
+    mtimeMs: stat.mtimeMs,
+    nlink: stat.nlink,
+    size: stat.size,
+    uid: stat.uid,
+  });
+}
+
+function readCapabilityOwnerPrivateKey(selectedPath) {
+  const selected = path.resolve(String(selectedPath || ''));
+  if (!path.isAbsolute(String(selectedPath || ''))
+    || selected !== selectedPath
+    || fs.realpathSync(selected) !== selected
+    || selected === workspaceRoot
+    || selected.startsWith(`${workspaceRoot}${path.sep}`)) {
+    throw new Error('capability owner private key path invalid');
+  }
+  let descriptor;
+  try {
+    descriptor = fs.openSync(
+      selected,
+      fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0),
+    );
+    const before = fs.fstatSync(descriptor);
+    if (!before.isFile() || before.nlink !== 1
+      || before.uid !== process.getuid() || before.gid !== process.getgid()
+      || (before.mode & 0o7777) !== 0o600
+      || before.size < 64 || before.size > 16 * 1024) {
+      throw new Error('capability owner private key file invalid');
+    }
+    const bytes = fs.readFileSync(descriptor);
+    const after = fs.fstatSync(descriptor);
+    if (privateFileIdentity(before) !== privateFileIdentity(after)
+      || bytes.length !== before.size) {
+      throw new Error('capability owner private key changed during read');
+    }
+    return bytes.toString('utf8');
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+  }
+}
+
 if (!process.argv.includes('--execute')) throw new Error('production-source conformance replays require --execute');
 const inheritedReleaseCommit = process.env.HEPTA_RELEASE_COMMIT || null;
 const codeProvenanceProvider = () => currentCodeProvenance({
@@ -69,7 +116,6 @@ const codeProvenance = assertProductionCapabilityRefreshCodeProvenance({
 const codeProvenanceHash = capabilityVerificationCodeProvenanceHash(codeProvenance);
 const releaseCommit = codeProvenance.commit;
 if (!fs.existsSync(mainTex)) throw new Error(`production replay subject missing: ${mainTex}`);
-if (!fs.existsSync(privateKeyPath)) throw new Error('capability owner private key missing outside repository');
 if (!fs.existsSync(trustStorePath)) throw new Error('owner trust store missing');
 if (!releaseCommit) throw new Error('release commit missing');
 
@@ -79,8 +125,17 @@ process.env.HEPTA_EVIDENCE_CLASS = 'conformance';
 const trustStore = JSON.parse(fs.readFileSync(trustStorePath, 'utf8'));
 const ownerKey = (trustStore.keys || []).find((item) => item?.status === 'active' && item?.roles?.includes('capability_owner'));
 if (!ownerKey) throw new Error('active capability owner public key missing');
-const privateKeyPem = fs.readFileSync(privateKeyPath, 'utf8');
-const derivedPublic = crypto.createPublicKey(privateKeyPem).export({ type: 'spki', format: 'pem' });
+let privateKeyPem;
+try {
+  privateKeyPem = readCapabilityOwnerPrivateKey(privateKeyPath);
+} catch (error) {
+  throw new Error(`capability owner private key unavailable:${error.message}`);
+}
+const privateKey = crypto.createPrivateKey(privateKeyPem);
+if (privateKey.asymmetricKeyType !== 'ed25519') {
+  throw new Error('capability owner private key must be Ed25519');
+}
+const derivedPublic = crypto.createPublicKey(privateKey).export({ type: 'spki', format: 'pem' });
 if (String(derivedPublic).trim() !== String(ownerKey.publicKeyPem).trim()) throw new Error('capability owner private/public key mismatch');
 
 const paperTask = Object.freeze({ paperId, taskKey: `paper:${paperId}`, sourceWorkspace: sourceRoot });

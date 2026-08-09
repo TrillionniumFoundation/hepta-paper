@@ -19,6 +19,7 @@ import {
   inspectPinnedExternalEvidenceTrustStore,
 } from '../authority/pinned-external-evidence-verifier.mjs';
 import {
+  canonicalExternalPrincipalKeyIds,
   createExternalPrincipalIdentityAttestationBundleCodec,
 } from '../authority/external-principal-identity-attestation-bundle-codec.mjs';
 import { hasExactObjectKeys } from '../../workflow-kernel/exact-object-keys.mjs';
@@ -55,18 +56,12 @@ function requestAbortError(signal, code) {
   return error;
 }
 
-function canonicalKeyIds(values) {
-  const selected = [...new Set((Array.isArray(values) ? values : []).map(String))].sort();
-  return selected.length >= 1 && selected.length <= 4
-    && selected.every((value) => SAFE_ID.test(value)) ? Object.freeze(selected) : null;
-}
-
 export function reviewerReceiptSignerCryptographicIdentityHash({
   receiptTrustStoreHash,
   receiptSignerKeyIds,
   receiptSignerRole = REVIEWER_RECEIPT_SIGNER_ROLE,
 } = {}) {
-  const keyIds = canonicalKeyIds(receiptSignerKeyIds);
+  const keyIds = canonicalExternalPrincipalKeyIds(receiptSignerKeyIds);
   if (!SHA256.test(String(receiptTrustStoreHash || '')) || !keyIds
     || receiptSignerRole !== REVIEWER_RECEIPT_SIGNER_ROLE) {
     throw new Error('reviewer_receipt_signer_cryptographic_identity_invalid');
@@ -144,7 +139,7 @@ export function buildReviewerReceiptSignerServiceConfiguration({
     }
     payload.signerIdentityHash = selectedSignerIdentityHash;
   } else {
-    const expectedKeyIds = canonicalKeyIds(receiptSignerKeyIds);
+    const expectedKeyIds = canonicalExternalPrincipalKeyIds(receiptSignerKeyIds);
     const trust = inspectPinnedExternalEvidenceTrustStore(receiptTrustStore, {
       requiredRole: receiptSignerRole,
       expectedKeyIds,

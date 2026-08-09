@@ -112,8 +112,9 @@ export const COMMAND_REGISTRY_SUPPORT_ROUTES = Object.freeze([
     mutability: 'local-write',
     effects: { credentialUse: 'required' },
     npmCommand:
-      'npm run static:check && npm run security:source-gate -- --require-deployable-templates'
-        + ' && npm run release:state-check -- --require-state release_ready'
+      'npm run static:check && npm run security:source-gate -- --deployment-profile=systemd-host'
+      + ' && npm run security:npm-audit'
+      + ' && npm run release:state-check -- --require-state release_ready'
       + ' && node paper-core/bin/run-isolated-verification.mjs release',
   }),
   route({ group: 'verify', name: 'trust', argv: ['node', 'paper-core/bin/release-trust-gate.mjs'], npmScript: 'release:trust-gate' }),

@@ -316,6 +316,9 @@ test('release environment is rebuilt from a minimal deterministic allowlist', ()
   assert.equal(environment.HEPTA_PAPER_RUNTIME_ROOT, '/var/lib/hepta-paper/runtime');
   assert.equal(environment.PATH, '/usr/bin:/bin');
   assert.equal(environment.HOME, '/tmp/release-env-test/home');
+  assert.equal(environment.NPM_CONFIG_GLOBALCONFIG, '/tmp/release-env-test/npm-globalrc');
+  assert.equal(environment.NPM_CONFIG_USERCONFIG, '/tmp/release-env-test/npm-userrc');
+  assert.notEqual(environment.NPM_CONFIG_GLOBALCONFIG, environment.NPM_CONFIG_USERCONFIG);
   for (const forbidden of [
     'OPENAI_API_KEY',
     'ANTHROPIC_API_KEY',
@@ -464,7 +467,7 @@ test('deployment closure accepts an explicitly pinned v2 predecessor and rejects
 
 test('deployment closure defaults to the exact currently deployed v2 predecessor', (t) => {
   const deployedPredecessor =
-    'sha256:919eae755c00610947657fa85f7bb3036bbaff8c05246e2ef230fec7f5cf8dc3';
+    'sha256:f9783e5a14d8829c60c7a86ce316a6d0d9a664367bb5c19770594e15a2df1187';
   const fixture = deploymentClosureFixture(t, {
     inheritedFromClosureHash: deployedPredecessor,
   });

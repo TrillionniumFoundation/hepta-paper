@@ -27,6 +27,9 @@ function createScratchRoot() {
   for (const child of ['cache', 'config', 'home', 'npm-cache', 'tmp']) {
     fs.mkdirSync(path.join(root, child), { mode: 0o700 });
   }
+  for (const npmConfiguration of ['npm-globalrc', 'npm-userrc']) {
+    fs.writeFileSync(path.join(root, npmConfiguration), '', { mode: 0o600 });
+  }
   return root;
 }
 

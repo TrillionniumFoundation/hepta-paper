@@ -467,7 +467,7 @@ test('deployment closure accepts an explicitly pinned v2 predecessor and rejects
 
 test('deployment closure defaults to the exact currently deployed v2 predecessor', (t) => {
   const deployedPredecessor =
-    'sha256:f9783e5a14d8829c60c7a86ce316a6d0d9a664367bb5c19770594e15a2df1187';
+    'sha256:c2094b9f424b6264ba04ee24c1d91165a481e3be0d9b957eaeeba40d125cf89b';
   const fixture = deploymentClosureFixture(t, {
     inheritedFromClosureHash: deployedPredecessor,
   });

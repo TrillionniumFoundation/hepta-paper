@@ -462,6 +462,22 @@ test('deployment closure accepts an explicitly pinned v2 predecessor and rejects
   }), /release_environment_deployment_lineage_mismatch/u);
 });
 
+test('deployment closure defaults to the exact currently deployed v2 predecessor', (t) => {
+  const deployedPredecessor =
+    'sha256:919eae755c00610947657fa85f7bb3036bbaff8c05246e2ef230fec7f5cf8dc3';
+  const fixture = deploymentClosureFixture(t, {
+    inheritedFromClosureHash: deployedPredecessor,
+  });
+  const {
+    approvedPredecessorClosureHashes: ignored,
+    ...defaultLineageOptions
+  } = fixture.options;
+  assert.equal(
+    inspectDeploymentClosure(defaultLineageOptions).inheritedFromClosureHash,
+    deployedPredecessor,
+  );
+});
+
 test('deployment closure rejects hash, lineage and exact-schema tampering', async (t) => {
   await t.test('payload hash tamper', (subtest) => {
     const fixture = deploymentClosureFixture(subtest);

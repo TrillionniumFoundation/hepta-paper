@@ -51,7 +51,7 @@ export function createCampaignAdvancedNumericalExecutionAdapter({
     version: 1,
     kind: 'CampaignAdvancedNumericalExecutionPort',
     capabilities: () => capabilities,
-    async execute({ campaign, node, plan, workspace } = {}) {
+    async execute({ campaign, node, plan } = {}) {
       if (!verifyAdvancedNumericalCampaignExecutionPlan(plan, {
         campaignId: campaign?.campaignId,
         paperId: campaign?.paperId,

@@ -46,7 +46,6 @@ function advancedNumericalReleaseEvidenceValid({
   paperId,
   plan,
   evidence,
-  sourceTreeManifest,
 } = {}) {
   if (!plan && !evidence) return true;
   if (!plan || !evidence
@@ -192,7 +191,6 @@ export function createAutomationPromotionCandidate({
     paperId,
     plan: advancedNumericalExecutionPlan,
     evidence: advancedNumericalExecutionEvidence,
-    sourceTreeManifest,
   })) {
     throw new Error('automation_promotion_advanced_numerical_evidence_invalid');
   }
@@ -295,7 +293,6 @@ export function createCampaignReleaseBundle({
     paperId: promotionCandidate.paperId,
     plan: promotionCandidate.advancedNumericalExecutionPlan || null,
     evidence: promotionCandidate.advancedNumericalExecutionEvidence || null,
-    sourceTreeManifest: promotionCandidate.sourceTreeManifest,
   })) {
     throw new Error('campaign_release_advanced_numerical_evidence_invalid');
   }
@@ -480,7 +477,6 @@ export function verifyCampaignReleaseBundle(bundle, expected = {}, { experimentR
     paperId: bundle?.paperId,
     plan: bundle?.advancedNumericalExecutionPlan || null,
     evidence: bundle?.advancedNumericalExecutionEvidence || null,
-    sourceTreeManifest: candidate?.sourceTreeManifest,
   })
     || bundle?.advancedNumericalExecutionPlanHash
       !== candidate?.advancedNumericalExecutionPlanHash

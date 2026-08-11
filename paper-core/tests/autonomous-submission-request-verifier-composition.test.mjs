@@ -25,6 +25,9 @@ import {
   verifyAutonomousSubmissionPortalLookupOutcome,
 } from '../../paper-domain/automation/autonomous-submission-delivery-contract.mjs';
 import {
+  buildAutonomousLiveSubmissionAuthorizationSubject,
+} from '../../paper-domain/submission/autonomous-live-submission-authorization-contract.mjs';
+import {
   buildAutonomousVenueProfile,
   buildAutonomousVenueProfileRegistry,
   selectAutonomousVenueProfile,
@@ -128,6 +131,155 @@ function mutated(value, propertyPath, replacement = H(`mutated:${propertyPath}`)
   for (const segment of segments) owner = owner[segment];
   owner[key] = replacement;
   return copy;
+}
+
+function humanAuthorizedDispatchRequest(request, {
+  portalId,
+  serviceIdentityHash,
+  portalAccountIdentityHash,
+  portalTrustDomainIdentityHash,
+} = {}) {
+  const portalDescriptorHash = H('dispatch-portal-descriptor');
+  const subject = buildAutonomousLiveSubmissionAuthorizationSubject({
+    campaignId: request.campaignId,
+    paperId: request.paperId,
+    immutableCampaignPackageOutputHash: request.immutableCampaignPackageOutputHash,
+    campaignReleaseBundleHash: request.campaignReleaseBundleHash,
+    qualificationReceiptHash: request.qualificationReceiptHash,
+    researchClosureReceiptHash: request.researchClosureReceiptHash,
+    venueComplianceReceiptHash: request.venueComplianceReceiptHash,
+    submissionMetadataReceiptHash: request.submissionMetadataReceiptHash,
+    venueProfileSelectionHash: request.venueProfileSelectionHash,
+    venueId: request.venueId,
+    submissionPortalProfileId: request.submissionPortalProfileId,
+    portalId,
+    portalConfigurationHash: request.portalConfigurationHash,
+    portalDescriptorHash,
+    serviceIdentityHash,
+    portalAccountIdentityHash,
+    portalTrustDomainIdentityHash,
+  });
+  const authorizationDocument = Object.freeze({
+    version: 1,
+    kind: 'LiveSubmissionAuthorization',
+    paperId: request.paperId,
+    taskKey: request.campaignId,
+    allowLiveExternalAction: true,
+    environment: 'production',
+    portalAction: 'submit_manuscript',
+    singleUse: true,
+    nonce: 'submission-owner-human-permit-0001',
+    provider: portalId,
+    accountId: portalAccountIdentityHash,
+    authorizationSubjectHash: subject.liveSubmissionAuthorizationSubjectHash,
+    signedAt: '2026-07-19T00:01:00.000Z',
+    validFrom: '2026-07-19T00:01:00.000Z',
+    expiresAt: '2026-07-19T01:00:00.000Z',
+    responseDueAt: '2026-07-19T00:30:00.000Z',
+    signatures: Object.freeze([
+      Object.freeze({
+        keyId: 'submission-owner-operator',
+        role: 'submission_operator',
+        algorithm: 'ed25519',
+        value: 'fixture',
+      }),
+      Object.freeze({
+        keyId: 'submission-owner-executor',
+        role: 'live_executor_authorizer',
+        algorithm: 'ed25519',
+        value: 'fixture',
+      }),
+    ]),
+  });
+  const signatureVerification = Object.freeze({
+    status: 'authority_signatures_verified',
+    cryptographicSignaturesVerified: true,
+    requiredRoles: Object.freeze(['submission_operator', 'live_executor_authorizer']),
+    requiredSignatureCount: 2,
+    verifiedSignatures: Object.freeze([]),
+    verifiedRoles: Object.freeze(['live_executor_authorizer', 'submission_operator']),
+    verifiedSubjectIds: Object.freeze([
+      'submission-owner-executor',
+      'submission-owner-operator',
+    ]),
+    blockers: Object.freeze([]),
+  });
+  const timeWindow = Object.freeze({
+    valid: true,
+    signedAt: authorizationDocument.signedAt,
+    validFrom: authorizationDocument.validFrom,
+    expiresAt: authorizationDocument.expiresAt,
+    blockers: Object.freeze([]),
+  });
+  const authorizationPayload = Object.freeze({
+    version: 2,
+    kind: 'LiveSubmissionAuthorizationReceipt',
+    authorizationMode: 'autonomous_submission_handoff',
+    paperId: request.paperId,
+    taskKey: request.campaignId,
+    status: 'live_submission_authorization_verified',
+    liveExternalActionAuthorized: true,
+    cryptographicSignaturesVerified: true,
+    authorizationPath: 'fixture/LIVE_SUBMISSION_AUTHORIZATION.json',
+    authorizationSubject: subject,
+    authorizationSubjectHash: subject.liveSubmissionAuthorizationSubjectHash,
+    authorizationDocument,
+    authorizationDocumentHash: hashRecord(
+      'LiveSubmissionAuthorizationDocument', authorizationDocument,
+    ),
+    provider: portalId,
+    accountId: portalAccountIdentityHash,
+    portalRoute: request.submissionPortalProfileId,
+    portalAction: 'submit_manuscript',
+    environment: 'production',
+    nonce: authorizationDocument.nonce,
+    singleUse: true,
+    signedAt: authorizationDocument.signedAt,
+    validFrom: authorizationDocument.validFrom,
+    expiresAt: authorizationDocument.expiresAt,
+    authorizerSubjectIds: signatureVerification.verifiedSubjectIds,
+    signatureVerification,
+    timeWindow,
+    consumed: false,
+    responseDueAt: authorizationDocument.responseDueAt,
+    blockers: Object.freeze([]),
+    safety: Object.freeze({
+      humanReviewRequired: true,
+      dualControlRequired: true,
+      singleUseAuthorization: true,
+      authorizationLifetimeHoursMaximum: 24,
+      separatedDutiesEnforced: true,
+      grantsExecutionInsideOverlay: false,
+      externalActionPerformed: false,
+    }),
+  });
+  const humanAuthorizationReceipt = Object.freeze({
+    ...authorizationPayload,
+    liveSubmissionAuthorizationReceiptHash: hashRecord(
+      'LiveSubmissionAuthorizationReceipt', authorizationPayload,
+    ),
+  });
+  const payload = { ...request };
+  delete payload.requestHash;
+  Object.assign(payload, {
+    version: 7,
+    portalId,
+    portalDescriptorHash,
+    portalServiceIdentityHash: serviceIdentityHash,
+    portalAccountIdentityHash,
+    portalTrustDomainIdentityHash,
+    humanAuthorizationReceiptHash:
+      humanAuthorizationReceipt.liveSubmissionAuthorizationReceiptHash,
+    humanAuthorizationSubjectHash: subject.liveSubmissionAuthorizationSubjectHash,
+    humanAuthorizationNonce: humanAuthorizationReceipt.nonce,
+    humanAuthorizationExpiresAt: humanAuthorizationReceipt.expiresAt,
+    humanAuthorizationReceipt,
+    humanApprovalPerformed: true,
+  });
+  return Object.freeze({
+    ...payload,
+    requestHash: hashRecord('AutonomousSubmissionRequest', payload),
+  });
 }
 
 async function invokeComposedTrustFacets(verifier, inputs) {
@@ -356,8 +508,13 @@ test('submission receipt and delivery owner cover valid state transitions and in
     );
   }
 
+  const dispatchRequest = humanAuthorizedDispatchRequest(fixture.request, lookupInput);
+  const dispatchNotFound = buildAutonomousSubmissionAuthoritativeNotFoundReceipt({
+    ...lookupInput,
+    request: dispatchRequest,
+  });
   const initialPermit = buildAutonomousSubmissionDispatchPermit({
-    request: fixture.request,
+    request: dispatchRequest,
     portalId: lookupInput.portalId,
     attempt: 1,
     previousState: 'prepared',
@@ -366,11 +523,11 @@ test('submission receipt and delivery owner cover valid state transitions and in
     resolution: 'initial-dispatch',
   });
   assert.equal(verifyAutonomousSubmissionDispatchPermit(initialPermit, {
-    request: fixture.request,
+    request: dispatchRequest,
     portalId: lookupInput.portalId,
   }), true);
   const redrivePermit = buildAutonomousSubmissionDispatchPermit({
-    request: fixture.request,
+    request: dispatchRequest,
     portalId: lookupInput.portalId,
     attempt: 2,
     previousState: 'uncertain',
@@ -378,11 +535,11 @@ test('submission receipt and delivery owner cover valid state transitions and in
     dispatchStateReceiptHash: H('redrive-state'),
     resolution: 'remote-authoritative-not-found-redrive',
     authoritativeNotFoundReceiptHash:
-      notFound.autonomousSubmissionAuthoritativeNotFoundReceiptHash,
+      dispatchNotFound.autonomousSubmissionAuthoritativeNotFoundReceiptHash,
     onlineMutationSideEffectPermitHash: H('online-side-effect-permit'),
   });
   assert.equal(verifyAutonomousSubmissionDispatchPermit(redrivePermit, {
-    request: fixture.request,
+    request: dispatchRequest,
     portalId: lookupInput.portalId,
   }), true);
   for (const override of [
@@ -393,7 +550,7 @@ test('submission receipt and delivery owner cover valid state transitions and in
     { previousState: 'completed' },
     { resolution: 'remote-authoritative-not-found-redrive' },
   ]) assert.throws(() => buildAutonomousSubmissionDispatchPermit({
-    request: fixture.request,
+    request: dispatchRequest,
     portalId: lookupInput.portalId,
     attempt: 1,
     previousState: 'prepared',

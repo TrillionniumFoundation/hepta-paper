@@ -1541,6 +1541,9 @@ test('restart outbox revalidates persisted requests against current trust author
       return submissionRequestVerifier.verify(candidate)
         && candidate.requestHash === currentAuthorityHash;
     },
+    verifyHumanAuthorization(input) {
+      return submissionRequestVerifier.verifyHumanAuthorization(input);
+    },
   });
   const firstProcess = createAutonomousSubmissionOutboxRepository({
     store,

@@ -289,7 +289,13 @@ export function createHttpAutonomousSubmissionPortalAdapter({
     async submit({ request, sideEffectPermit, signal = null } = {}) {
       const humanAuthorization = autonomousLiveSubmissionAuthorizationBinding(request, {
         observedAt: clock.now(),
-        verifyAuthorityDocument: () => true,
+        verifyAuthorityDocument: (input) => (
+          submissionRequestVerifier.verifyHumanAuthorization?.({
+            receipt: request?.humanAuthorizationReceipt,
+            expectedSubject: input.expectedSubject,
+            observedAt: input.observedAt,
+          }) === true
+        ),
       });
       if (submissionRequestVerifier.verify(request) !== true
         || request.portalConfigurationHash !== selected.configurationHash

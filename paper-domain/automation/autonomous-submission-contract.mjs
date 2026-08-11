@@ -355,6 +355,8 @@ export function verifyAutonomousSubmissionRequest(request, {
 } = {}) {
   const observedAt = authorityObservedAt || request?.requestedAt || null;
   const { requestHash: claimedHash, ...payload } = request || {};
+  if (!SHA256.test(String(claimedHash || ''))
+    || hashRecord('AutonomousSubmissionRequest', payload) !== claimedHash) return false;
   const expectedIdempotencyKey = hashRecord('AutonomousSubmissionIdempotencyKey', {
     immutableCampaignPackageOutputHash: request?.immutableCampaignPackageOutputHash,
     venueId: request?.venueId,

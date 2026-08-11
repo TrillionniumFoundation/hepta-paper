@@ -166,6 +166,18 @@ export function createAutonomousSubmissionOutboxRepository({
   const S = dedicatedHandoffRequired
     ? AUTONOMOUS_SUBMISSION_HANDOFF_STATEMENT_IDS
     : NATIVE_STORE_SUBMISSION_DELIVERY_STATEMENT_IDS;
+  const currentHumanAuthorization = (request, observedAt) => (
+    autonomousLiveSubmissionAuthorizationBinding(request, {
+      observedAt,
+      verifyAuthorityDocument: (input) => (
+        submissionRequestVerifier.verifyHumanAuthorization?.({
+          receipt: request?.humanAuthorizationReceipt,
+          expectedSubject: input.expectedSubject,
+          observedAt: input.observedAt,
+        }) === true
+      ),
+    })
+  );
   const getRow = (messageId) => store.query(
     `SELECT * FROM submission_outbox WHERE delivery_kind='autonomous'
       AND message_id=${sqlText(messageId)} LIMIT 1;`,
@@ -178,10 +190,7 @@ export function createAutonomousSubmissionOutboxRepository({
     externallyFencedMutations,
     prepareAutonomousSubmission({ request, portalId } = {}) {
       if (submissionRequestVerifier.verify(request) !== true
-        || !autonomousLiveSubmissionAuthorizationBinding(request, {
-          observedAt: clockNow(clock),
-          verifyAuthorityDocument: () => true,
-        })) {
+        || !currentHumanAuthorization(request, clockNow(clock))) {
         throw new Error('autonomous_submission_delivery_request_invalid');
       }
       const messageId = autonomousSubmissionOutboxMessageId(request, {
@@ -287,10 +296,7 @@ export function createAutonomousSubmissionOutboxRepository({
       portalId,
       authoritativeNotFoundReceipt = null,
     } = {}) {
-      if (!autonomousLiveSubmissionAuthorizationBinding(request, {
-        observedAt: clockNow(clock),
-        verifyAuthorityDocument: () => true,
-      })) {
+      if (!currentHumanAuthorization(request, clockNow(clock))) {
         throw new Error('autonomous_submission_human_authorization_invalid');
       }
       const messageId = autonomousSubmissionOutboxMessageId(request, {

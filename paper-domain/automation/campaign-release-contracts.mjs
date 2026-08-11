@@ -20,6 +20,10 @@ import {
   researchSourceLineageValid,
   sourceRowsMerkleHash,
 } from './campaign-release-contract-helpers.mjs';
+import {
+  verifyAdvancedNumericalCampaignExecutionPlan,
+  verifyCampaignAdvancedNumericalExecutionResult,
+} from './advanced-numerical-campaign-execution-contract.mjs';
 
 const EMPIRICAL_ASSERTION_RELEASE_HASH_FIELDS = Object.freeze([
   'empiricalAssertionAuthorityHash',
@@ -34,6 +38,49 @@ function empiricalAssertionReleaseHashes(record) {
 
 function empiricalAssertionReleaseHashesMatch(left, right) {
   return EMPIRICAL_ASSERTION_RELEASE_HASH_FIELDS.every((field) => (left?.[field] || null) === (right?.[field] || null));
+}
+
+function advancedNumericalReleaseEvidenceValid({
+  campaignPlanHash,
+  campaignId,
+  paperId,
+  plan,
+  evidence,
+  sourceTreeManifest,
+} = {}) {
+  if (!plan && !evidence) return true;
+  if (!plan || !evidence
+    || !verifyAdvancedNumericalCampaignExecutionPlan(plan, {
+      campaignId,
+      paperId,
+      nodeId: evidence.nodeId,
+    })) return false;
+  const node = {
+    nodeId: evidence.nodeId,
+    kind: 'advanced-numerical-analysis',
+    attemptId: evidence.attemptId,
+    leaseGeneration: evidence.leaseGeneration,
+  };
+  const campaign = {
+    campaignId,
+    paperId,
+    spec: { campaignPlanHash },
+  };
+  const result = evidence.result;
+  return verifyCampaignAdvancedNumericalExecutionResult(result, {
+    campaign,
+    node,
+    plan,
+    requirePromotionEligible: true,
+  })
+    && evidence.executionPlanHash
+      === plan.advancedNumericalCampaignExecutionPlanHash
+    && evidence.executionReceiptHash
+      === result.advancedNumericalCampaignExecutionReceiptHash
+    && evidence.evidenceHash === result.advancedNumericalCampaignEvidenceHash
+    && evidence.evidenceDocumentHash === result.evidenceDocumentHash
+    && evidence.productionQualified === true
+    && evidence.promotionEligible === true;
 }
 
 function autonomousManuscriptSourceRowsMatch(binding, sourceTreeManifest) {
@@ -67,6 +114,8 @@ export function createAutomationPromotionCandidate({
   autonomousResearchReleaseBinding = null,
   createdAt,
   experimentRegistryAuthorityVerifier = null,
+  advancedNumericalExecutionPlan = null,
+  advancedNumericalExecutionEvidence = null,
 } = {}) {
   if (packageNode?.kind !== 'package') throw new Error('automation_promotion_package_node_required');
   if (finalCompileNode?.kind !== 'final-compile') throw new Error('automation_promotion_final_compile_node_required');
@@ -137,6 +186,16 @@ export function createAutomationPromotionCandidate({
       throw new Error('automation_promotion_research_report_not_verified');
     }
   } else throw new Error('automation_promotion_research_node_required');
+  if (!advancedNumericalReleaseEvidenceValid({
+    campaignPlanHash,
+    campaignId,
+    paperId,
+    plan: advancedNumericalExecutionPlan,
+    evidence: advancedNumericalExecutionEvidence,
+    sourceTreeManifest,
+  })) {
+    throw new Error('automation_promotion_advanced_numerical_evidence_invalid');
+  }
   const finalCompileResultHash = finalCompileNode.resultSha256 || null;
   if (!finalCompileResultHash || hashRecord('PaperCampaignNodeResult', finalCompileNode.result) !== finalCompileResultHash) throw new Error('automation_promotion_final_compile_result_hash_required');
   if (finalCompileNode.result?.sourceMerkleHash !== verifiedSourceMerkleHash
@@ -199,6 +258,16 @@ export function createAutomationPromotionCandidate({
         autonomousResearchReleaseBinding.autonomousResearchReleaseBindingHash,
       autonomousResearchReleaseBinding,
     } : {}),
+    ...(advancedNumericalExecutionPlan ? {
+      advancedNumericalExecutionPlanHash:
+        advancedNumericalExecutionPlan.advancedNumericalCampaignExecutionPlanHash,
+      advancedNumericalCampaignExecutionReceiptHash:
+        advancedNumericalExecutionEvidence.executionReceiptHash,
+      advancedNumericalCampaignEvidenceHash:
+        advancedNumericalExecutionEvidence.evidenceHash,
+      advancedNumericalExecutionPlan,
+      advancedNumericalExecutionEvidence,
+    } : {}),
     createdAt: explicitTimestamp(createdAt),
     externalActionPerformed: false,
   };
@@ -219,6 +288,16 @@ export function createCampaignReleaseBundle({
 } = {}) {
   if (!matchesRecordHash(promotionCandidate, 'AutomationPromotionCandidate', 'automationPromotionCandidateHash')) {
     throw new Error('campaign_release_promotion_candidate_hash_invalid');
+  }
+  if (!advancedNumericalReleaseEvidenceValid({
+    campaignPlanHash: promotionCandidate.campaignPlanHash,
+    campaignId: promotionCandidate.campaignId,
+    paperId: promotionCandidate.paperId,
+    plan: promotionCandidate.advancedNumericalExecutionPlan || null,
+    evidence: promotionCandidate.advancedNumericalExecutionEvidence || null,
+    sourceTreeManifest: promotionCandidate.sourceTreeManifest,
+  })) {
+    throw new Error('campaign_release_advanced_numerical_evidence_invalid');
   }
   if (promotionCandidate.autonomousResearchReleaseBinding) {
     const autonomousBindingVerification = verifyAutonomousResearchReleaseBinding(
@@ -366,6 +445,18 @@ export function createCampaignReleaseBundle({
       autonomousResearchReleaseBinding:
         promotionCandidate.autonomousResearchReleaseBinding,
     } : {}),
+    ...(promotionCandidate.advancedNumericalExecutionPlan ? {
+      advancedNumericalExecutionPlanHash:
+        promotionCandidate.advancedNumericalExecutionPlanHash,
+      advancedNumericalCampaignExecutionReceiptHash:
+        promotionCandidate.advancedNumericalCampaignExecutionReceiptHash,
+      advancedNumericalCampaignEvidenceHash:
+        promotionCandidate.advancedNumericalCampaignEvidenceHash,
+      advancedNumericalExecutionPlan:
+        promotionCandidate.advancedNumericalExecutionPlan,
+      advancedNumericalExecutionEvidence:
+        promotionCandidate.advancedNumericalExecutionEvidence,
+    } : {}),
     immutableCampaignPackageOutputHash: packageOutput.immutableCampaignPackageOutputHash,
     packageOutput: Object.freeze({ ...packageOutput }),
     createdAt: explicitTimestamp(createdAt),
@@ -383,6 +474,26 @@ export function verifyCampaignReleaseBundle(bundle, expected = {}, { experimentR
   const candidate = bundle?.promotionCandidate;
   if (!matchesRecordHash(candidate, 'AutomationPromotionCandidate', 'automationPromotionCandidateHash')) blockers.push('automation_promotion_candidate_hash_invalid');
   if (bundle?.automationPromotionCandidateHash !== candidate?.automationPromotionCandidateHash) blockers.push('campaign_release_candidate_binding_mismatch');
+  if (!advancedNumericalReleaseEvidenceValid({
+    campaignPlanHash: bundle?.campaignPlanHash,
+    campaignId: bundle?.campaignId,
+    paperId: bundle?.paperId,
+    plan: bundle?.advancedNumericalExecutionPlan || null,
+    evidence: bundle?.advancedNumericalExecutionEvidence || null,
+    sourceTreeManifest: candidate?.sourceTreeManifest,
+  })
+    || bundle?.advancedNumericalExecutionPlanHash
+      !== candidate?.advancedNumericalExecutionPlanHash
+    || bundle?.advancedNumericalCampaignExecutionReceiptHash
+      !== candidate?.advancedNumericalCampaignExecutionReceiptHash
+    || bundle?.advancedNumericalCampaignEvidenceHash
+      !== candidate?.advancedNumericalCampaignEvidenceHash
+    || JSON.stringify(bundle?.advancedNumericalExecutionPlan || null)
+      !== JSON.stringify(candidate?.advancedNumericalExecutionPlan || null)
+    || JSON.stringify(bundle?.advancedNumericalExecutionEvidence || null)
+      !== JSON.stringify(candidate?.advancedNumericalExecutionEvidence || null)) {
+    blockers.push('campaign_release_advanced_numerical_evidence_invalid');
+  }
   if (bundle?.autonomousResearchReleaseBinding || candidate?.autonomousResearchReleaseBinding) {
     const autonomousBindingVerification = verifyAutonomousResearchReleaseBinding(
       bundle?.autonomousResearchReleaseBinding,
@@ -408,6 +519,9 @@ export function verifyCampaignReleaseBundle(bundle, expected = {}, { experimentR
     'verifiedSourceMerkleHash', 'verifiedSourceWorkspaceManifestHash', 'campaignResearchSourceSnapshotHash',
     'researchVerifyNodeId', 'researchVerifyAttemptId', 'researchVerifyLeaseGeneration', 'experimentRegistryHash',
     'proposalClaimToTheoremBindingHash',
+    'advancedNumericalExecutionPlanHash',
+    'advancedNumericalCampaignExecutionReceiptHash',
+    'advancedNumericalCampaignEvidenceHash',
     ...EMPIRICAL_ASSERTION_RELEASE_HASH_FIELDS,
     'researchEvidenceCapsuleManifestHash', 'researchExecutionReleaseAttestationHash']
     .some((field) => bundle?.[field] !== candidate?.[field])) blockers.push('campaign_release_candidate_lineage_mismatch');
@@ -537,6 +651,9 @@ export function verifyCampaignReleaseBundle(bundle, expected = {}, { experimentR
     ['researchVerifyLeaseGeneration', 'campaign_release_research_lease_mismatch'],
     ['verifiedSourceMerkleHash', 'campaign_release_verified_source_merkle_mismatch'],
     ['verifiedSourceWorkspaceManifestHash', 'campaign_release_verified_source_manifest_mismatch'],
+    ['advancedNumericalExecutionPlanHash', 'campaign_release_advanced_numerical_plan_mismatch'],
+    ['advancedNumericalCampaignExecutionReceiptHash', 'campaign_release_advanced_numerical_receipt_mismatch'],
+    ['advancedNumericalCampaignEvidenceHash', 'campaign_release_advanced_numerical_evidence_mismatch'],
   ]) if (expected[field] && bundle?.[field] !== expected[field]) blockers.push(blocker);
   return Object.freeze({ valid: blockers.length === 0, blockers: [...new Set(blockers)] });
 }

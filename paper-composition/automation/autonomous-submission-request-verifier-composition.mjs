@@ -29,6 +29,9 @@ import {
   readConfiguredAutonomousSubmissionPortalDescriptorConfiguration,
 } from '../../paper-adapters/automation/autonomous-submission-portal-descriptor-reader.mjs';
 import {
+  autonomousSubmissionPortalPublicDescriptorHash,
+} from '../../paper-adapters/automation/autonomous-submission-portal-public-adapter.mjs';
+import {
   readAutonomousVenueProfileRegistry,
 } from '../../paper-adapters/automation/autonomous-venue-profile-registry-reader.mjs';
 import {
@@ -44,6 +47,10 @@ import {
   bootstrapSubmissionHandoffContext,
 } from '../bootstrap/submission-handoff-context-bootstrap.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
+import {
+  verifyAutonomousLiveSubmissionAuthorizationReceiptAuthority,
+} from '../../paper-adapters/submission/live-authorization.mjs';
 
 function observedNow(clock) {
   const value = typeof clock?.now === 'function' ? clock.now() : new Date();
@@ -52,6 +59,15 @@ function observedNow(clock) {
     throw new Error('autonomous_submission_request_verifier_clock_invalid');
   }
   return now;
+}
+
+function readCurrentLiveAuthorizationTrustStore(runtimeRoot) {
+  const trustRoot = path.join(path.resolve(runtimeRoot), 'trust');
+  const candidate = path.join(trustRoot, 'AUTHORITY_TRUST_STORE.json');
+  const read = readScopedFileSync({ scopeRoot: trustRoot, candidate });
+  if (read.status !== 'scoped_file_read_verified') return null;
+  try { return JSON.parse(read.content.toString('utf8')); }
+  catch { return null; }
 }
 
 function sameRecord(left, right) {
@@ -137,12 +153,14 @@ export function composePinnedAutonomousSubmissionRequestVerifier({
   const venueComplianceInspector = createLocalAutonomousVenueComplianceInspector({
     runtimeRoot,
   });
-  const trustedPortalConfigurationHash =
+  const trustedPortalConfiguration =
     readConfiguredAutonomousSubmissionPortalDescriptorConfiguration({
       environment,
       allowPrivateConfigurationFallback: allowPortalCredential,
       rejectPortalCredential: !allowPortalCredential,
-    })?.configurationHash || null;
+    });
+  const trustedPortalConfigurationHash =
+    trustedPortalConfiguration?.configurationHash || null;
   const venueConfigurationPath = String(
     environment.HEPTA_AUTONOMOUS_VENUE_PROFILE_CONFIG || '',
   ).trim();
@@ -170,11 +188,35 @@ export function composePinnedAutonomousSubmissionRequestVerifier({
 
   return createAutonomousSubmissionRequestVerifier({
     requireResearchClosure: true,
+    requireHumanAuthorization: true,
     verifyQualificationSignature,
     verifyIndependentQualificationEvidence,
+    verifyHumanAuthorization({ receipt, expectedSubject, observedAt } = {}) {
+      if (receipt?.authorizationSubjectHash
+          !== expectedSubject?.liveSubmissionAuthorizationSubjectHash) return false;
+      return verifyAutonomousLiveSubmissionAuthorizationReceiptAuthority({
+        document: receipt?.authorizationDocument,
+        receipt,
+        trustStore: readCurrentLiveAuthorizationTrustStore(runtimeRoot),
+        observedAt,
+      });
+    },
     verifyPortalConfigurationAuthority({ portalConfigurationHash, request } = {}) {
       return trustedPortalConfigurationHash !== null
         && portalConfigurationHash === trustedPortalConfigurationHash
+        && (request?.version !== 7 || (
+          request?.portalId === trustedPortalConfiguration.portalId
+          && request?.portalDescriptorHash
+            === autonomousSubmissionPortalPublicDescriptorHash(
+              trustedPortalConfiguration,
+            )
+          && request?.portalServiceIdentityHash
+            === trustedPortalConfiguration.serviceIdentityHash
+          && request?.portalAccountIdentityHash
+            === trustedPortalConfiguration.portalAccountIdentityHash
+          && request?.portalTrustDomainIdentityHash
+            === trustedPortalConfiguration.portalTrustDomainIdentityHash
+        ))
         && trustedVenue?.configurationPinned === true
         && trustedMetadata?.configurationPinned === true
         && request?.venueAuthorityConfigurationHash === trustedVenue.configurationHash
@@ -322,3 +364,4 @@ export function composePinnedAutonomousSubmissionRequestVerifier({
     },
   });
 }
+import path from 'node:path';

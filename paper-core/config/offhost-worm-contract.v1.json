@@ -1,8 +1,13 @@
 {
   "version": 1,
   "kind": "OffhostWormSnapshotContract",
-  "contractId": "hepta-paper-offhost-worm-toshiba-clean3-v1",
-  "targetMountRoot": "/media/qian-qi/TOSHIBA_CLEAN3",
+  "contractId": "hepta-paper-offhost-worm-toshiba-clean3-v2",
+  "targetMountRoot": "/mnt/hepta-paper-external",
+  "expectedStorageIdentity": {
+    "filesystemType": "ext4",
+    "filesystemUuid": "39324240-9c85-4d8a-a1b2-711f26c4ff77",
+    "partitionUuid": "7cb85044-3be4-4756-9c7e-bfd6be3eb49f"
+  },
   "requireDistinctFilesystemDevice": true,
   "requireFilesystemImmutableObjects": true,
   "currentProtectionLevel": "same_host_external_disk",

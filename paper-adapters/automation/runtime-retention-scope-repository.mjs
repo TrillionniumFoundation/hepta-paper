@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
-import { pathWithin, sha256FileSync } from '../../workflow-kernel/runtime/file-utils.mjs';
+import { pathWithin } from '../../workflow-kernel/runtime/file-utils.mjs';
+import { fileSha256HashSync } from '../runtime/pinned-file-reader.mjs';
 
 export const DEFAULT_RETENTION_POLICIES = Object.freeze({
   'automation-workspaces': Object.freeze({ maxBytes: 1024 ** 3, maxAgeMs: 7 * 86400000, keepNewest: 0 }),
@@ -32,6 +33,7 @@ const ALLOWED_DELETION_EVIDENCE = Object.freeze({
   'artifact-cas': 'cas_prefix_unreachable_complete_inventory',
 });
 const SHA256_PATTERN = /^sha256:[a-f0-9]{64}$/;
+const RETENTION_CATEGORY_LOCK_NAME = /^\.hepta-runtime-retention-[a-z0-9-]+\.lock$/;
 
 export function runtimeRetentionCategoryRoot(runtimeRoot, category) {
   return path.resolve(runtimeRoot, CATEGORY_RELATIVE_ROOTS[category] || category);
@@ -275,6 +277,8 @@ export function openPinnedRetentionCategory(runtimeRoot, category, expectedScope
     }
     return {
       scope,
+      runtimeDescriptor: runtime.descriptor,
+      runtimeDescriptorPath: runtime.descriptorPath,
       categoryDescriptor: categoryRoot.descriptor,
       categoryDescriptorPath: categoryRoot.descriptorPath,
       close() {
@@ -289,6 +293,27 @@ export function openPinnedRetentionCategory(runtimeRoot, category, expectedScope
   }
 }
 
+export function assertPinnedRetentionCategoryLive(
+  pinned,
+  runtimeRoot,
+  category,
+  expectedScope = pinned?.scope,
+) {
+  if (!pinned?.scope || !expectedScope) {
+    throw new Error('runtime_retention_scope_identity_changed');
+  }
+  const live = openPinnedRetentionCategory(runtimeRoot, category, expectedScope);
+  try {
+    if (!sameDirectoryIdentity(live.scope.runtimeRoot, pinned.scope.runtimeRoot)
+      || !sameDirectoryIdentity(live.scope.categoryRoot, pinned.scope.categoryRoot)) {
+      throw new Error('runtime_retention_scope_identity_changed');
+    }
+  } finally {
+    live.close();
+  }
+  return true;
+}
+
 function entryBytes(candidate) {
   const stat = fs.lstatSync(candidate);
   if (!stat.isDirectory() || stat.isSymbolicLink()) return stat.size;
@@ -298,7 +323,7 @@ function entryBytes(candidate) {
 export function retentionMemberHash(candidate) {
   const stat = fs.lstatSync(candidate);
   if (stat.isSymbolicLink()) return hashRecord('RuntimeRetentionSymlink', { target: fs.readlinkSync(candidate) });
-  if (stat.isFile()) return sha256FileSync(candidate);
+  if (stat.isFile()) return fileSha256HashSync(candidate);
   const rows = fs.readdirSync(candidate).sort().map((name) => ({ name, hash: retentionMemberHash(path.join(candidate, name)) }));
   return hashRecord('RuntimeRetentionDirectory', rows);
 }
@@ -329,48 +354,73 @@ export function retentionEntryHash(entry) {
   })));
 }
 
+export function listPinnedRuntimeRetentionEntries(root, category, pinned) {
+  const categoryRoot = runtimeRetentionCategoryRoot(root, category);
+  if (!pinned?.scope || !pinned?.categoryDescriptorPath) {
+    throw new Error('runtime_retention_pinned_category_required');
+  }
+  const allNames = fs.readdirSync(pinned.categoryDescriptorPath)
+    .filter((name) => !RETENTION_CATEGORY_LOCK_NAME.test(name));
+  const names = allNames
+    .filter((name) => category !== 'workspace-snapshots'
+      || !name.endsWith('.manifest.json')
+      || !allNames.includes(`${name.slice(0, -'.manifest.json'.length)}.tar.gz`));
+  const entries = names
+    .filter((name) => category !== 'backups'
+      || !/\.sqlite(?:\.restore-drill)?\.receipt\.json$/.test(name))
+    .map((name) => {
+      const candidate = path.join(categoryRoot, name);
+      const pinnedCandidate = path.join(pinned.categoryDescriptorPath, name);
+      const stat = fs.lstatSync(pinnedCandidate);
+      const possibleCompanions = category === 'backups' && name.endsWith('.sqlite')
+        ? [`${candidate}.receipt.json`, `${candidate}.restore-drill.receipt.json`]
+        : category === 'workspace-snapshots' && name.endsWith('.tar.gz')
+          ? [`${candidate.slice(0, -'.tar.gz'.length)}.manifest.json`]
+          : [];
+      const companionPaths = possibleCompanions.filter((companionPath) => fs.existsSync(
+        path.join(pinned.categoryDescriptorPath, path.basename(companionPath)),
+      ));
+      const companionPinnedPaths = companionPaths.map(
+        (item) => path.join(pinned.categoryDescriptorPath, path.basename(item)),
+      );
+      const companionStats = companionPinnedPaths.map((item) => fs.lstatSync(item));
+      return {
+        name,
+        path: candidate,
+        companionPaths,
+        bytes: entryBytes(pinnedCandidate)
+          + companionPinnedPaths.reduce((total, item) => total + entryBytes(item), 0),
+        modifiedAtMs: Math.max(stat.mtimeMs, ...companionStats.map((item) => item.mtimeMs)),
+        symbolicLink: stat.isSymbolicLink()
+          || companionStats.some((item) => item.isSymbolicLink()),
+        contentHash: retentionEntryHash({
+          path: pinnedCandidate,
+          companionPaths: companionPinnedPaths,
+        }),
+        categoryScope: pinned.scope,
+      };
+    })
+    .sort((left, right) => (
+      right.modifiedAtMs - left.modifiedAtMs || left.name.localeCompare(right.name)
+    ));
+  return Object.freeze({ entries, scope: pinned.scope, blocker: null });
+}
+
 export function listRuntimeRetentionEntries(root, category) {
   const categoryRoot = runtimeRetentionCategoryRoot(root, category);
-  if (!fs.existsSync(categoryRoot)) return Object.freeze({ entries: [], scope: null, blocker: null });
-  let pinned = null;
-  try { pinned = openPinnedRetentionCategory(root, category); } catch (error) {
-    return Object.freeze({ entries: [], scope: null, blocker: String(error?.message || error) });
+  if (!fs.existsSync(categoryRoot)) {
+    return Object.freeze({ entries: [], scope: null, blocker: null });
   }
+  let pinned = null;
   try {
-    const allNames = fs.readdirSync(pinned.categoryDescriptorPath);
-    const names = allNames
-      .filter((name) => category !== 'workspace-snapshots'
-        || !name.endsWith('.manifest.json')
-        || !allNames.includes(`${name.slice(0, -'.manifest.json'.length)}.tar.gz`));
-    const entries = names
-      .filter((name) => category !== 'backups' || !/\.sqlite(?:\.restore-drill)?\.receipt\.json$/.test(name))
-      .map((name) => {
-        const candidate = path.join(categoryRoot, name);
-        const pinnedCandidate = path.join(pinned.categoryDescriptorPath, name);
-        const stat = fs.lstatSync(pinnedCandidate);
-        const possibleCompanions = category === 'backups' && name.endsWith('.sqlite')
-          ? [`${candidate}.receipt.json`, `${candidate}.restore-drill.receipt.json`]
-          : category === 'workspace-snapshots' && name.endsWith('.tar.gz')
-            ? [`${candidate.slice(0, -'.tar.gz'.length)}.manifest.json`]
-            : [];
-        const companionPaths = possibleCompanions.filter((companionPath) => fs.existsSync(path.join(pinned.categoryDescriptorPath, path.basename(companionPath))));
-        const companionPinnedPaths = companionPaths.map((item) => path.join(pinned.categoryDescriptorPath, path.basename(item)));
-        const companionStats = companionPinnedPaths.map((item) => fs.lstatSync(item));
-        return {
-          name,
-          path: candidate,
-          companionPaths,
-          bytes: entryBytes(pinnedCandidate) + companionPinnedPaths.reduce((total, item) => total + entryBytes(item), 0),
-          modifiedAtMs: Math.max(stat.mtimeMs, ...companionStats.map((item) => item.mtimeMs)),
-          symbolicLink: stat.isSymbolicLink() || companionStats.some((item) => item.isSymbolicLink()),
-          contentHash: retentionEntryHash({ path: pinnedCandidate, companionPaths: companionPinnedPaths }),
-          categoryScope: pinned.scope,
-        };
-      })
-      .sort((left, right) => right.modifiedAtMs - left.modifiedAtMs || left.name.localeCompare(right.name));
-    return Object.freeze({ entries, scope: pinned.scope, blocker: null });
+    pinned = openPinnedRetentionCategory(root, category);
+    return listPinnedRuntimeRetentionEntries(root, category, pinned);
+  } catch (error) {
+    return Object.freeze({
+      entries: [], scope: null, blocker: String(error?.message || error),
+    });
   } finally {
-    pinned.close();
+    pinned?.close();
   }
 }
 

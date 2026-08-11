@@ -4,8 +4,24 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
-import { sha256FileSync } from '../../workflow-kernel/runtime/file-utils.mjs';
-import { verifyColdVolumeContract } from './cold-volume-contract.mjs';
+import { sha256StableFileSyncNoFollow } from '../../workflow-kernel/runtime/file-utils.mjs';
+import {
+  inspectColdVolumeReleaseScope,
+  verifyColdVolumeContract,
+} from './cold-volume-contract.mjs';
+import {
+  acquireColdVolumeCasImportLease,
+  coldVolumeCasImportArchivePath,
+  combineColdVolumeCasImportCleanupError,
+  inspectColdVolumeCasImportArchive,
+  openColdVolumeCasImportStaging,
+  openColdVolumeCasImportTempDirectory,
+  publishColdVolumeCasImportArchive,
+  releaseColdVolumeCasImportLease,
+  removeColdVolumeCasImportArchive,
+  removeColdVolumeCasImportTempDirectory,
+  sealColdVolumeCasImportArchive,
+} from './cold-volume-cas-import-staging.mjs';
 import {
   assertPinnedCasDirectoryChain,
   assertPinnedCasFileCurrent,
@@ -18,7 +34,6 @@ import {
   openPinnedCasChildDirectory,
   openPinnedCasJsonRecord,
   openPinnedCasRegularFile,
-  readPinnedCasJsonRecord,
 } from './cold-volume-cas-path-boundary.mjs';
 import {
   closePinnedCasObjectInspection,
@@ -27,48 +42,42 @@ import {
 } from './cold-volume-cas-object-inspection.mjs';
 import {
   publishPinnedCasBytes,
-  publishPinnedCasSourceFile,
   replacePinnedCasBytes,
 } from './cold-volume-cas-publication-repository.mjs';
+import {
+  expectedColdVolumeCasContractBinding,
+  isColdVolumeCasCurrentPointer,
+  validateColdVolumeCasManifest,
+} from './cold-volume-cas-record-validation.mjs';
 import {
   inspectPinnedCasArchiveListing,
   inspectRestoredCasEntryInventory,
 } from './cold-volume-cas-restore-boundary.mjs';
 
-const SHA256 = /^sha256:[a-f0-9]{64}$/;
-const CURRENT_POINTER_KEYS = Object.freeze(['kind', 'manifestHash', 'version']);
-const MANIFEST_KEYS = Object.freeze([
-  'contractHash', 'contractId', 'entries', 'entryCount', 'kind', 'manifestHash', 'version',
-]);
-const MANIFEST_ENTRY_KEYS = Object.freeze(['bytes', 'objectHash', 'relative']);
-
-function exactKeys(value, expected) {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
-    && JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...expected].sort());
-}
-
 function unique(values) { return [...new Set(values)]; }
 
-function hasControlCharacter(value) {
-  return [...String(value)].some((character) => {
-    const code = character.codePointAt(0);
-    return code < 32 || code === 127;
+function coldVolumeCasNotRequired(options = {}) {
+  const scope = inspectColdVolumeReleaseScope(options.contract);
+  if (!scope.releaseScopeRetired) return null;
+  let contractHash = options.contractHash || null;
+  if (!contractHash && options.contractPath) {
+    contractHash = sha256StableFileSyncNoFollow(options.contractPath);
+  }
+  if (!contractHash) contractHash = hashRecord('ColdVolumeMountContract', options.contract);
+  return Object.freeze({
+    version: 1,
+    kind: 'ColdVolumeCasStatus',
+    status: 'cold_volume_cas_not_required',
+    casRoot: options.casRoot,
+    manifestPath: null,
+    manifestHash: null,
+    contractHash,
+    contractId: options.contract?.contractId || null,
+    releaseScopeHash: scope.hash,
+    entryCount: 0,
+    objectCount: 0,
+    blockers: Object.freeze([]),
   });
-}
-
-function safeRelative(value) {
-  if (typeof value !== 'string' || !value || value.includes('\\')
-    || hasControlCharacter(value) || path.posix.isAbsolute(value)
-    || path.posix.normalize(value) !== value) return false;
-  const segments = value.split('/');
-  return segments.every((segment) => segment && segment !== '.' && segment !== '..');
-}
-
-function overlappingRelatives(values) {
-  const sorted = [...values].sort();
-  return sorted.some((relative, index) => sorted.some((other, otherIndex) => (
-    index !== otherIndex && other.startsWith(`${relative}/`)
-  )));
 }
 
 function currentManifest(casRootChain, casRoot) {
@@ -101,10 +110,7 @@ function currentManifest(casRootChain, casRoot) {
       return null;
     }
     const pointer = openedPointer.document;
-    if (!exactKeys(pointer, CURRENT_POINTER_KEYS)
-      || pointer.version !== 1
-      || pointer.kind !== 'ColdVolumeCasCurrentManifest'
-      || !SHA256.test(String(pointer.manifestHash || ''))) {
+    if (!isColdVolumeCasCurrentPointer(pointer)) {
       throw new Error('cold_volume_cas_current_pointer_unsafe_or_invalid');
     }
     const name = `${pointer.manifestHash.slice('sha256:'.length)}.json`;
@@ -170,98 +176,6 @@ function selectedManifestBindingBlockers(selectedManifest) {
   } catch (error) {
     return [error.message];
   }
-}
-
-function expectedContractBinding({ contract, contractPath = null, contractHash = null } = {}) {
-  const blockers = [];
-  if (!contract || typeof contract !== 'object' || Array.isArray(contract)
-    || contract.version !== 1 || contract.kind !== 'ColdVolumeMountContract'
-    || typeof contract.contractId !== 'string' || !contract.contractId
-    || hasControlCharacter(contract.contractId)) {
-    blockers.push('cold_volume_cas_contract_schema_invalid');
-  }
-  const entries = Array.isArray(contract?.entries) ? contract.entries : [];
-  if (!entries.length) blockers.push('cold_volume_cas_contract_entries_empty');
-  if (entries.some((relative) => !safeRelative(relative))) {
-    blockers.push('cold_volume_cas_contract_entry_relative_invalid');
-  }
-  if (new Set(entries).size !== entries.length) {
-    blockers.push('cold_volume_cas_contract_entry_relative_duplicate');
-  }
-  if (overlappingRelatives(entries)) blockers.push('cold_volume_cas_contract_entry_overlap');
-  let resolvedHash = contractHash;
-  if (resolvedHash === null && contractPath) {
-    try {
-      const file = readPinnedCasJsonRecord(
-        contractPath,
-        'cold_volume_cas_contract_file_unsafe',
-      );
-      if (hashRecord('ColdVolumeMountContract', file.document)
-        !== hashRecord('ColdVolumeMountContract', contract)) {
-        blockers.push('cold_volume_cas_contract_file_mismatch');
-      }
-      resolvedHash = file.fileHash;
-    } catch {
-      blockers.push('cold_volume_cas_contract_file_unsafe');
-    }
-  }
-  if (resolvedHash === null && contract && typeof contract === 'object') {
-    resolvedHash = hashRecord('ColdVolumeMountContract', contract);
-  }
-  if (!SHA256.test(String(resolvedHash || ''))) {
-    blockers.push('cold_volume_cas_contract_hash_invalid');
-  }
-  return Object.freeze({
-    blockers: unique(blockers),
-    contractHash: resolvedHash || null,
-    contractId: contract?.contractId || null,
-    entries: [...entries].sort(),
-  });
-}
-
-function validateManifest({ manifest, manifestPath, binding }) {
-  const blockers = [...binding.blockers];
-  if (!exactKeys(manifest, MANIFEST_KEYS)) blockers.push('cold_volume_cas_manifest_schema_invalid');
-  if (manifest?.version !== 1 || manifest?.kind !== 'ColdVolumeCasManifest') {
-    blockers.push('cold_volume_cas_manifest_contract_invalid');
-  }
-  if (manifest?.contractId !== binding.contractId
-    || manifest?.contractHash !== binding.contractHash) {
-    blockers.push('cold_volume_cas_manifest_contract_binding_mismatch');
-  }
-  const entries = Array.isArray(manifest?.entries) ? manifest.entries : [];
-  if (!entries.length) blockers.push('cold_volume_cas_manifest_entries_empty');
-  if (!Number.isSafeInteger(manifest?.entryCount)
-    || manifest.entryCount !== entries.length) blockers.push('cold_volume_cas_manifest_entry_count_invalid');
-  const relatives = [];
-  for (const entry of entries) {
-    if (!exactKeys(entry, MANIFEST_ENTRY_KEYS)) blockers.push('cold_volume_cas_manifest_entry_schema_invalid');
-    if (!safeRelative(entry?.relative)) blockers.push('cold_volume_cas_manifest_entry_relative_invalid');
-    else relatives.push(entry.relative);
-    if (!SHA256.test(String(entry?.objectHash || ''))) blockers.push('cold_volume_cas_manifest_object_hash_invalid');
-    if (!Number.isSafeInteger(entry?.bytes) || entry.bytes <= 0) {
-      blockers.push('cold_volume_cas_manifest_object_size_invalid');
-    }
-  }
-  if (new Set(relatives).size !== relatives.length) {
-    blockers.push('cold_volume_cas_manifest_entry_relative_duplicate');
-  }
-  if (overlappingRelatives(relatives)) blockers.push('cold_volume_cas_manifest_entry_overlap');
-  if (JSON.stringify([...relatives].sort()) !== JSON.stringify(binding.entries)) {
-    blockers.push('cold_volume_cas_manifest_inventory_mismatch');
-  }
-  const payload = manifest && typeof manifest === 'object' && !Array.isArray(manifest)
-    ? Object.fromEntries(Object.entries(manifest).filter(([key]) => key !== 'manifestHash'))
-    : null;
-  if (!SHA256.test(String(manifest?.manifestHash || '')) || !payload
-    || hashRecord('ColdVolumeCasManifest', payload) !== manifest.manifestHash) {
-    blockers.push('cold_volume_cas_manifest_hash_invalid');
-  }
-  if (SHA256.test(String(manifest?.manifestHash || ''))
-    && path.basename(manifestPath) !== `${manifest.manifestHash.slice('sha256:'.length)}.json`) {
-    blockers.push('cold_volume_cas_manifest_filename_mismatch');
-  }
-  return Object.freeze({ blockers: unique(blockers), entries });
 }
 
 function inspectColdVolumeCas({
@@ -358,8 +272,10 @@ function inspectColdVolumeCas({
       afterManifestRead();
     }
     const { manifest, manifestPath } = selectedManifest;
-    const binding = expectedContractBinding({ contract, contractHash, contractPath });
-    const validation = validateManifest({ binding, manifest, manifestPath });
+    const binding = expectedColdVolumeCasContractBinding({
+      contract, contractHash, contractPath,
+    });
+    const validation = validateColdVolumeCasManifest({ binding, manifest, manifestPath });
     const blockers = [
       ...validation.blockers,
       ...selectedManifestBindingBlockers(selectedManifest),
@@ -395,13 +311,39 @@ function inspectColdVolumeCas({
 }
 
 export function coldVolumeCasStatus(options = {}) {
+  const notRequired = coldVolumeCasNotRequired(options);
+  if (notRequired) return notRequired;
   const inspection = inspectColdVolumeCas(options);
   try { return inspection.status; }
   finally { closeInspection(inspection); }
 }
 
-export function importColdVolumeToCas({ assetRoot, contract, contractPath, casRoot, execute = false, mountAvailableOverride = null } = {}) {
-  const binding = expectedContractBinding({ contract, contractPath });
+export function importColdVolumeToCas({
+  assetRoot,
+  contract,
+  contractPath,
+  casRoot,
+  execute = false,
+  mountAvailableOverride = null,
+  stagingRoot = null,
+} = {}) {
+  const notRequired = coldVolumeCasNotRequired({ casRoot, contract, contractPath });
+  if (notRequired) {
+    return Object.freeze({
+      version: 1,
+      kind: 'ColdVolumeCasImportReceipt',
+      status: 'cold_volume_cas_import_not_required',
+      execute,
+      casRoot,
+      contractHash: notRequired.contractHash,
+      contractId: notRequired.contractId,
+      releaseScopeHash: notRequired.releaseScopeHash,
+      importedObjectCount: 0,
+      externalActionPerformed: false,
+      blockers: Object.freeze([]),
+    });
+  }
+  const binding = expectedColdVolumeCasContractBinding({ contract, contractPath });
   let contractStatus;
   try {
     contractStatus = verifyColdVolumeContract({ assetRoot, contract, contractPath, mountAvailableOverride });
@@ -430,14 +372,17 @@ export function importColdVolumeToCas({ assetRoot, contract, contractPath, casRo
     });
   }
   const contentRoot = path.join(path.resolve(contract.mountRoot), contract.contentRoot);
-  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-cold-cas-import-'));
   const entries = [];
   let casRootChain;
+  let importLease;
+  let importStaging;
+  let importTempDirectory;
   let manifestDirectory;
   let manifestChain;
   let manifestPinned;
   let objectsDirectory;
   let pointerPinned;
+  let importError = null;
   const publishedObjects = [];
   const shardDirectories = [];
   try {
@@ -448,6 +393,9 @@ export function importColdVolumeToCas({ assetRoot, contract, contractPath, casRo
     assertPinnedCasOwnedDirectory(
       casRootChain.at(-1), casRootChain.at(-1), 'cold_volume_cas_import_root_unsafe',
     );
+    importStaging = openColdVolumeCasImportStaging({ casRootChain, stagingRoot });
+    importLease = acquireColdVolumeCasImportLease(importStaging.directory);
+    importTempDirectory = openColdVolumeCasImportTempDirectory(importStaging.directory);
     objectsDirectory = openPinnedCasChildDirectory(casRootChain.at(-1), 'objects', {
       create: true,
       errorCode: 'cold_volume_cas_import_object_unsafe',
@@ -456,53 +404,90 @@ export function importColdVolumeToCas({ assetRoot, contract, contractPath, casRo
       casRootChain.at(-1), objectsDirectory, 'cold_volume_cas_import_object_unsafe',
     );
     for (const relative of [...contract.entries].sort()) {
-      const tempArchive = path.join(tempRoot, `${crypto.randomUUID()}.tar.gz`);
-      const tar = spawnSync('tar', [
-        '--sort=name', '--mtime=@0', '--owner=0', '--group=0', '--numeric-owner',
-        '-czf', tempArchive, '-C', contentRoot, '--', relative,
-      ], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
-      if (tar.status !== 0) throw new Error(tar.stderr || `cold_volume_cas_archive_failed:${relative}`);
-      const objectHash = sha256FileSync(tempArchive);
-      const token = objectHash.slice('sha256:'.length);
-      let shardDirectory;
-      shardDirectory = openPinnedCasChildDirectory(objectsDirectory, token.slice(0, 2), {
-        create: true,
-        errorCode: 'cold_volume_cas_import_object_unsafe',
-      });
-      shardDirectories.push(shardDirectory);
-      assertPinnedCasOwnedDirectory(
-        casRootChain.at(-1), shardDirectory, 'cold_volume_cas_import_object_unsafe',
+      const archiveName = `${crypto.randomUUID()}.tar.gz`;
+      const tempArchive = coldVolumeCasImportArchivePath(
+        importTempDirectory.directory, archiveName,
       );
-      const objectChain = Object.freeze([
-        ...casRootChain,
-        objectsDirectory,
-        shardDirectory,
-      ]);
-      const objectName = `${token}.tar.gz`;
-      const identity = publishPinnedCasSourceFile(
-        objectChain,
-        objectName,
-        tempArchive,
-        objectHash,
-        'cold_volume_cas_import_object_unsafe',
-      );
-      const pinned = openPinnedCasRegularFile(
-        null,
-        'cold_volume_cas_import_object_unsafe',
-        { directoryChain: objectChain, name: objectName },
-      );
-      assertPinnedCasPublishedFile(pinned, 'cold_volume_cas_import_object_unsafe');
-      if (hashPinnedCasFile(pinned, 'cold_volume_cas_import_object_unsafe') !== objectHash) {
-        fs.closeSync(pinned.descriptor);
-        throw new Error('cold_volume_cas_import_object_unsafe');
+      let tempArchiveIdentity = null;
+      let objectError = null;
+      try {
+        const tar = spawnSync('tar', [
+          '--sort=name', '--mtime=@0', '--owner=0', '--group=0', '--numeric-owner',
+          '-czf', `/proc/self/fd/3/${archiveName}`, '-C', contentRoot, '--', relative,
+        ], {
+          encoding: 'utf8',
+          maxBuffer: 16 * 1024 * 1024,
+          stdio: ['ignore', 'pipe', 'pipe', importTempDirectory.directory.descriptor],
+        });
+        tempArchiveIdentity = inspectColdVolumeCasImportArchive(
+          importTempDirectory.directory, archiveName,
+        );
+        if (tar.status !== 0 || !tempArchiveIdentity) {
+          throw new Error(tar.stderr || `cold_volume_cas_archive_failed:${relative}`);
+        }
+        tempArchiveIdentity = sealColdVolumeCasImportArchive(
+          importTempDirectory.directory, archiveName,
+        );
+        const objectHash = sha256StableFileSyncNoFollow(tempArchive);
+        const token = objectHash.slice('sha256:'.length);
+        let shardDirectory;
+        shardDirectory = openPinnedCasChildDirectory(objectsDirectory, token.slice(0, 2), {
+          create: true,
+          errorCode: 'cold_volume_cas_import_object_unsafe',
+        });
+        shardDirectories.push(shardDirectory);
+        assertPinnedCasOwnedDirectory(
+          casRootChain.at(-1), shardDirectory, 'cold_volume_cas_import_object_unsafe',
+        );
+        const objectChain = Object.freeze([
+          ...casRootChain,
+          objectsDirectory,
+          shardDirectory,
+        ]);
+        const objectName = `${token}.tar.gz`;
+        const identity = publishColdVolumeCasImportArchive({
+          directoryChain: objectChain,
+          errorCode: 'cold_volume_cas_import_object_unsafe',
+          expectedFileHash: objectHash,
+          name: objectName,
+          sourceDirectory: importTempDirectory.directory,
+          sourceName: archiveName,
+          sourcePath: tempArchive,
+        });
+        const pinned = openPinnedCasRegularFile(
+          null,
+          'cold_volume_cas_import_object_unsafe',
+          { directoryChain: objectChain, name: objectName },
+        );
+        assertPinnedCasPublishedFile(pinned, 'cold_volume_cas_import_object_unsafe');
+        if (hashPinnedCasFile(pinned, 'cold_volume_cas_import_object_unsafe') !== objectHash) {
+          fs.closeSync(pinned.descriptor);
+          throw new Error('cold_volume_cas_import_object_unsafe');
+        }
+        publishedObjects.push(Object.freeze({
+          expectedFileHash: objectHash,
+          name: objectName,
+          objectChain,
+          pinned,
+        }));
+        entries.push({ relative, objectHash, bytes: Number(identity.size) });
+      } catch (error) {
+        objectError = error;
+        throw error;
+      } finally {
+        try {
+          if (!tempArchiveIdentity) {
+            tempArchiveIdentity = inspectColdVolumeCasImportArchive(
+              importTempDirectory.directory, archiveName,
+            );
+          }
+          removeColdVolumeCasImportArchive(
+            importTempDirectory.directory, archiveName, tempArchiveIdentity,
+          );
+        } catch (cleanupError) {
+          throw combineColdVolumeCasImportCleanupError(objectError, cleanupError);
+        }
       }
-      publishedObjects.push(Object.freeze({
-        expectedFileHash: objectHash,
-        name: objectName,
-        objectChain,
-        pinned,
-      }));
-      entries.push({ relative, objectHash, bytes: Number(identity.size) });
     }
     const payload = {
       version: 1,
@@ -589,22 +574,59 @@ export function importColdVolumeToCas({ assetRoot, contract, contractPath, casRo
       externalActionPerformed: false,
       blockers: [],
     });
+  } catch (error) {
+    importError = error;
+    throw error;
   } finally {
-    if (pointerPinned?.descriptor !== undefined) fs.closeSync(pointerPinned.descriptor);
-    if (manifestPinned?.descriptor !== undefined) fs.closeSync(manifestPinned.descriptor);
+    const cleanupErrors = [];
+    const cleanup = (operation) => {
+      try { operation(); } catch (error) { cleanupErrors.push(error); }
+    };
+    if (pointerPinned?.descriptor !== undefined) cleanup(() => fs.closeSync(pointerPinned.descriptor));
+    if (manifestPinned?.descriptor !== undefined) cleanup(() => fs.closeSync(manifestPinned.descriptor));
     for (const published of publishedObjects) {
-      if (published.pinned?.descriptor !== undefined) fs.closeSync(published.pinned.descriptor);
+      if (published.pinned?.descriptor !== undefined) {
+        cleanup(() => fs.closeSync(published.pinned.descriptor));
+      }
+    }
+    if (importTempDirectory) {
+      cleanup(() => removeColdVolumeCasImportTempDirectory(
+        importStaging.directory, importTempDirectory,
+      ));
+      closePinnedCasDirectoryChain([importTempDirectory.directory]);
     }
     closePinnedCasDirectoryChain(manifestDirectory ? [manifestDirectory] : null);
     closePinnedCasDirectoryChain(shardDirectories);
     closePinnedCasDirectoryChain(objectsDirectory ? [objectsDirectory] : null);
+    if (importLease) cleanup(() => releaseColdVolumeCasImportLease(importLease));
+    closePinnedCasDirectoryChain(importStaging?.closeChain);
     closePinnedCasDirectoryChain(casRootChain);
-    fs.rmSync(tempRoot, { recursive: true, force: true });
+    if (cleanupErrors.length) {
+      const cleanupError = cleanupErrors.length === 1
+        ? cleanupErrors[0]
+        : new AggregateError(cleanupErrors, 'cold_volume_cas_import_cleanup_failed');
+      throw combineColdVolumeCasImportCleanupError(importError, cleanupError);
+    }
   }
 }
 
 export function drillColdVolumeCasRestore(options = {}) {
   const { casRoot } = options;
+  const notRequired = coldVolumeCasNotRequired(options);
+  if (notRequired) {
+    return Object.freeze({
+      version: 1,
+      kind: 'ColdVolumeCasRestoreDrillReceipt',
+      status: 'cold_volume_cas_restore_drill_not_required',
+      casRoot,
+      contractHash: notRequired.contractHash,
+      contractId: notRequired.contractId,
+      releaseScopeHash: notRequired.releaseScopeHash,
+      expectedObjectCount: 0,
+      restoredObjectCount: 0,
+      blockers: Object.freeze([]),
+    });
+  }
   const inspection = inspectColdVolumeCas(options);
   const { status } = inspection;
   let restoreRoot;

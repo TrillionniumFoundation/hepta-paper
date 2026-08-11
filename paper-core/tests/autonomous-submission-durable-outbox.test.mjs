@@ -19,8 +19,12 @@ import {
 import {
   buildAutonomousSubmissionPortalConfiguration,
   createHttpAutonomousSubmissionPortalAdapter,
+  deriveAutonomousSubmissionPortalPublicConfiguration,
   readAutonomousSubmissionPortalConfiguration,
 } from '../../paper-adapters/automation/http-autonomous-submission-portal-adapter.mjs';
+import {
+  autonomousSubmissionPortalPublicDescriptorHash,
+} from '../../paper-adapters/automation/autonomous-submission-portal-public-adapter.mjs';
 import {
   buildAutonomousSubmissionPortalIdentityAttestationBundle,
 } from '../../paper-adapters/automation/autonomous-submission-portal-identity-attestation.mjs';
@@ -57,6 +61,9 @@ import {
   assertAutonomousSubmissionPortalPort,
 } from '../../paper-ports/autonomous-submission-portal-port.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  buildAutonomousLiveSubmissionAuthorizationSubject,
+} from '../../paper-domain/submission/autonomous-live-submission-authorization-contract.mjs';
 
 const NOW = '2026-07-19T02:00:00.000Z';
 const H = (label) => hashRecord('AutonomousSubmissionDurableOutboxTest', { label });
@@ -113,6 +120,7 @@ const submissionRequestVerifier = Object.freeze({
     const { requestHash, ...payload } = request || {};
     return requestHash === hashRecord('AutonomousSubmissionRequest', payload);
   },
+  verifyHumanAuthorization() { return true; },
 });
 
 function deliverAutonomousSubmission(input) {
@@ -143,7 +151,22 @@ function recoverAutonomousResearchSubmission(input) {
   });
 }
 
-function requestFixture(portalConfigurationHash = H('portal-configuration')) {
+function requestFixture(portalConfiguration = null) {
+  const configuration = portalConfiguration && typeof portalConfiguration === 'object'
+    ? portalConfiguration : null;
+  const portalConfigurationHash = configuration?.configurationHash
+    || portalConfiguration || H('portal-configuration');
+  const portalId = configuration?.portalId || 'durable-portal';
+  const portalServiceIdentityHash = configuration?.serviceIdentityHash
+    || H('fixture-portal-service');
+  const portalAccountIdentityHash = configuration?.portalAccountIdentityHash
+    || H('portal-account');
+  const portalTrustDomainIdentityHash = configuration?.portalTrustDomainIdentityHash
+    || H('portal-trust-domain');
+  const portalDescriptorHash = configuration
+    ? autonomousSubmissionPortalPublicDescriptorHash(
+      deriveAutonomousSubmissionPortalPublicConfiguration({ configuration }),
+    ) : H('portal-descriptor');
   const idempotencyPayload = {
     immutableCampaignPackageOutputHash: H('package'),
     venueId: 'durable-journal',
@@ -152,10 +175,133 @@ function requestFixture(portalConfigurationHash = H('portal-configuration')) {
     qualificationReceiptHash: H('qualification'),
     submissionMetadataReceiptHash: H('metadata'),
     venueComplianceReceiptHash: H('compliance'),
+    researchClosureReceiptHash: H('research-closure'),
     portalConfigurationHash,
   };
+  const authorizationSubject = buildAutonomousLiveSubmissionAuthorizationSubject({
+    campaignId: 'campaign-durable-1',
+    paperId: 'paper-durable-1',
+    immutableCampaignPackageOutputHash:
+      idempotencyPayload.immutableCampaignPackageOutputHash,
+    campaignReleaseBundleHash: idempotencyPayload.campaignReleaseBundleHash,
+    qualificationReceiptHash: idempotencyPayload.qualificationReceiptHash,
+    researchClosureReceiptHash: idempotencyPayload.researchClosureReceiptHash,
+    venueComplianceReceiptHash: idempotencyPayload.venueComplianceReceiptHash,
+    submissionMetadataReceiptHash: idempotencyPayload.submissionMetadataReceiptHash,
+    venueProfileSelectionHash: H('venue-selection'),
+    venueId: idempotencyPayload.venueId,
+    submissionPortalProfileId: 'durable-portal-v1',
+    portalId,
+    portalConfigurationHash,
+    portalDescriptorHash,
+    serviceIdentityHash: portalServiceIdentityHash,
+    portalAccountIdentityHash,
+    portalTrustDomainIdentityHash,
+  });
+  const authorizationDocument = {
+    version: 1,
+    kind: 'LiveSubmissionAuthorization',
+    paperId: 'paper-durable-1',
+    taskKey: 'campaign-durable-1',
+    allowLiveExternalAction: true,
+    environment: 'production',
+    portalAction: 'submit_manuscript',
+    singleUse: true,
+    nonce: 'durable-human-permit-0001',
+    provider: portalId,
+    accountId: portalAccountIdentityHash,
+    authorizationSubjectHash:
+      authorizationSubject.liveSubmissionAuthorizationSubjectHash,
+    signedAt: '2026-07-19T01:59:00.000Z',
+    validFrom: '2026-07-19T01:59:00.000Z',
+    expiresAt: '2026-07-19T02:30:00.000Z',
+    responseDueAt: '2026-07-19T02:20:00.000Z',
+    signatures: [
+      { keyId: 'operator', role: 'submission_operator', algorithm: 'ed25519', value: 'fixture' },
+      { keyId: 'executor', role: 'live_executor_authorizer', algorithm: 'ed25519', value: 'fixture' },
+    ],
+  };
+  const signatureVerification = {
+    status: 'authority_signatures_verified',
+    cryptographicSignaturesVerified: true,
+    requiredRoles: ['submission_operator', 'live_executor_authorizer'],
+    requiredSignatureCount: 2,
+    verifiedSignatures: [],
+    verifiedRoles: ['live_executor_authorizer', 'submission_operator'],
+    verifiedSubjectIds: ['durable-executor-authorizer', 'durable-submission-operator'],
+    blockers: [],
+  };
+  const timeWindow = {
+    valid: true,
+    signedAt: authorizationDocument.signedAt,
+    validFrom: authorizationDocument.validFrom,
+    expiresAt: authorizationDocument.expiresAt,
+    blockers: [],
+  };
+  const authorizationReport = {
+    version: 2,
+    kind: 'LiveSubmissionAuthorizationReceipt',
+    authorizationMode: 'autonomous_submission_handoff',
+    paperId: 'paper-durable-1',
+    taskKey: 'campaign-durable-1',
+    status: 'live_submission_authorization_verified',
+    liveExternalActionAuthorized: true,
+    cryptographicSignaturesVerified: true,
+    authorizationPath: 'fixture/LIVE_SUBMISSION_AUTHORIZATION.json',
+    authorizationSubject,
+    authorizationSubjectHash:
+      authorizationSubject.liveSubmissionAuthorizationSubjectHash,
+    authorizationDocument,
+    authorizationDocumentHash: hashRecord(
+      'LiveSubmissionAuthorizationDocument', authorizationDocument,
+    ),
+    provider: portalId,
+    accountId: portalAccountIdentityHash,
+    portalRoute: 'durable-portal-v1',
+    portalAction: 'submit_manuscript',
+    environment: 'production',
+    nonce: authorizationDocument.nonce,
+    singleUse: true,
+    signedAt: authorizationDocument.signedAt,
+    validFrom: authorizationDocument.validFrom,
+    expiresAt: authorizationDocument.expiresAt,
+    authorizerSubjectIds: signatureVerification.verifiedSubjectIds,
+    signatureVerification,
+    timeWindow,
+    consumed: false,
+    responseDueAt: authorizationDocument.responseDueAt,
+    blockers: [],
+    safety: {
+      humanReviewRequired: true,
+      dualControlRequired: true,
+      singleUseAuthorization: true,
+      authorizationLifetimeHoursMaximum: 24,
+      separatedDutiesEnforced: true,
+      grantsExecutionInsideOverlay: false,
+      externalActionPerformed: false,
+    },
+  };
+  const humanAuthorizationReceipt = Object.freeze({
+    ...authorizationReport,
+    liveSubmissionAuthorizationReceiptHash: hashRecord(
+      'LiveSubmissionAuthorizationReceipt', authorizationReport,
+    ),
+  });
+  Object.assign(idempotencyPayload, {
+    portalId,
+    portalDescriptorHash,
+    portalServiceIdentityHash,
+    portalAccountIdentityHash,
+    portalTrustDomainIdentityHash,
+    humanAuthorizationReceiptHash:
+      humanAuthorizationReceipt.liveSubmissionAuthorizationReceiptHash,
+    humanAuthorizationSubjectHash:
+      authorizationSubject.liveSubmissionAuthorizationSubjectHash,
+    humanAuthorizationNonce: humanAuthorizationReceipt.nonce,
+    humanAuthorizationExpiresAt: humanAuthorizationReceipt.expiresAt,
+  });
   const payload = {
-    version: 3,
+    version: 7,
     kind: 'AutonomousSubmissionRequest',
     campaignId: 'campaign-durable-1',
     paperId: 'paper-durable-1',
@@ -169,6 +315,7 @@ function requestFixture(portalConfigurationHash = H('portal-configuration')) {
     sourceSnapshotHash: H('source'),
     sourceTreeManifestHash: H('tree'),
     researchEvidenceCapsuleManifestHash: H('capsule'),
+    researchClosureReceiptHash: idempotencyPayload.researchClosureReceiptHash,
     qualificationReceiptHash: idempotencyPayload.qualificationReceiptHash,
     venueComplianceReceiptHash: idempotencyPayload.venueComplianceReceiptHash,
     submissionMetadataReceiptHash: idempotencyPayload.submissionMetadataReceiptHash,
@@ -177,13 +324,53 @@ function requestFixture(portalConfigurationHash = H('portal-configuration')) {
     independentRebuiltPdfHash: H('independent-pdf'),
     pageCount: 7,
     portalConfigurationHash: idempotencyPayload.portalConfigurationHash,
+    portalId,
+    portalDescriptorHash,
+    portalServiceIdentityHash,
+    portalAccountIdentityHash,
+    portalTrustDomainIdentityHash,
+    humanAuthorizationReceiptHash:
+      humanAuthorizationReceipt.liveSubmissionAuthorizationReceiptHash,
+    humanAuthorizationSubjectHash:
+      authorizationSubject.liveSubmissionAuthorizationSubjectHash,
+    humanAuthorizationNonce: humanAuthorizationReceipt.nonce,
+    humanAuthorizationExpiresAt: humanAuthorizationReceipt.expiresAt,
+    humanAuthorizationReceipt,
     idempotencyKey: hashRecord('AutonomousSubmissionIdempotencyKey', idempotencyPayload),
-    humanApprovalPerformed: false,
+    humanApprovalPerformed: true,
     requestedAt: NOW,
   };
   return Object.freeze({
     ...payload,
     requestHash: hashRecord('AutonomousSubmissionRequest', payload),
+  });
+}
+
+function resealRequest(request, patch = {}) {
+  const { requestHash: _requestHash, ...payload } = request;
+  const selected = { ...payload, ...patch };
+  return Object.freeze({
+    ...selected,
+    requestHash: hashRecord('AutonomousSubmissionRequest', selected),
+  });
+}
+
+function expiredAuthorizationRequest(request) {
+  const receipt = structuredClone(request.humanAuthorizationReceipt);
+  receipt.authorizationDocument.expiresAt = '2026-07-19T01:59:30.000Z';
+  receipt.expiresAt = receipt.authorizationDocument.expiresAt;
+  receipt.timeWindow.expiresAt = receipt.expiresAt;
+  receipt.authorizationDocumentHash = hashRecord(
+    'LiveSubmissionAuthorizationDocument', receipt.authorizationDocument,
+  );
+  delete receipt.liveSubmissionAuthorizationReceiptHash;
+  receipt.liveSubmissionAuthorizationReceiptHash = hashRecord(
+    'LiveSubmissionAuthorizationReceipt', receipt,
+  );
+  return resealRequest(request, {
+    humanAuthorizationReceipt: receipt,
+    humanAuthorizationReceiptHash: receipt.liveSubmissionAuthorizationReceiptHash,
+    humanAuthorizationExpiresAt: receipt.expiresAt,
   });
 }
 
@@ -546,7 +733,7 @@ test('resident recovery discovers the campaign outbox and settles an uncertain d
   assert.equal(lookups, 1);
 });
 
-test('crash before remote call is redriven only after authoritative not-found lookup', async (t) => {
+test('crash before remote call requires a fresh human permit after authoritative not-found', async (t) => {
   const { outbox } = fixture(t);
   const request = requestFixture();
   const receipt = receiptFixture(request, 'crash-before');
@@ -554,7 +741,7 @@ test('crash before remote call is redriven only after authoritative not-found lo
   outbox.beginAutonomousSubmissionAttempt({ request, portalId: 'durable-portal' });
   let lookups = 0;
   let submits = 0;
-  const completed = await deliverAutonomousSubmission({
+  await assert.rejects(deliverAutonomousSubmission({
     outbox,
     request,
     portal: portal(request, {
@@ -566,11 +753,9 @@ test('crash before remote call is redriven only after authoritative not-found lo
         return receipt;
       },
     }),
-  });
-  assert.equal(completed.status, 'autonomous_submission_delivery_completed');
+  }), /autonomous_submission_human_authorization_already_consumed/);
   assert.equal(lookups, 1);
-  assert.equal(submits, 1);
-  assert.equal(completed.deliveryStateReceipt.attempt, 2);
+  assert.equal(submits, 0);
 });
 
 test('crash after remote accept leaves dispatching marker and restart queries instead of reposting', async (t) => {
@@ -685,7 +870,7 @@ test('HTTP portal lookup treats an unsigned 404 as uncertain and never mints red
     portalTrustDomainIdentityHash: H('portal-trust-domain'),
     tokenEnvironmentVariable: 'DURABLE_HTTP_TOKEN',
   });
-  const request = requestFixture(configuration.configurationHash);
+  const request = requestFixture(configuration);
   const observed = [];
   const adapter = createHttpAutonomousSubmissionPortalAdapter({
     configuration,
@@ -720,7 +905,7 @@ test('HTTP portal lookup treats an unsigned 404 as uncertain and never mints red
   assert.equal(observed.some(({ init }) => init.method === 'POST'), false);
 });
 
-test('HTTP portal accepts a pinned signed not-found outcome and authorizes one redrive', async (t) => {
+test('HTTP portal accepts pinned not-found evidence but redrive still needs fresh human authorization', async (t) => {
   const configuration = buildAutonomousSubmissionPortalConfiguration({
     version: 2,
     portalId: 'signed-durable-http-portal',
@@ -733,7 +918,7 @@ test('HTTP portal accepts a pinned signed not-found outcome and authorizes one r
     receiptSignerKeyIds: [PORTAL_SIGNER_KEY_ID],
     receiptSignerRole: PORTAL_SIGNER_ROLE,
   });
-  const request = requestFixture(configuration.configurationHash);
+  const request = requestFixture(configuration);
   const evidence = signedLookupEvidence({
     request,
     portalId: configuration.portalId,
@@ -773,11 +958,11 @@ test('HTTP portal accepts a pinned signed not-found outcome and authorizes one r
   const { outbox } = fixture(t);
   outbox.prepareAutonomousSubmission({ request, portalId: configuration.portalId });
   outbox.beginAutonomousSubmissionAttempt({ request, portalId: configuration.portalId });
-  outbox.beginAutonomousSubmissionAttempt({
+  assert.throws(() => outbox.beginAutonomousSubmissionAttempt({
     request,
     portalId: configuration.portalId,
     authoritativeNotFoundReceipt: lookup.authoritativeNotFoundReceipt,
-  });
+  }), /autonomous_submission_human_authorization_already_consumed/);
   assert.throws(() => outbox.beginAutonomousSubmissionAttempt({
     request,
     portalId: configuration.portalId,
@@ -798,7 +983,7 @@ test('HTTP portal v2 verifies pinned completed receipts for submit and lookup', 
     receiptSignerKeyIds: [PORTAL_SIGNER_KEY_ID],
     receiptSignerRole: PORTAL_SIGNER_ROLE,
   });
-  const request = requestFixture(configuration.configurationHash);
+  const request = requestFixture(configuration);
   const receipt = receiptFixture(request, 'signed-completed');
   const authorityEnvelope = signedPortalEnvelope({
     subjectKind: 'AutonomousSubmissionReceiptV5',
@@ -951,7 +1136,7 @@ test('HTTP portal v3 proves signed platform identity separation from local origi
   assert.deepEqual(readAutonomousSubmissionPortalConfiguration({
     configPath: configurationPath,
   }), configuration);
-  const request = requestFixture(configuration.configurationHash);
+  const request = requestFixture(configuration);
   const receipt = receiptFixture(request, 'signed-identity-v3');
   const authorityEnvelope = signedPortalEnvelope({
     subjectKind: 'AutonomousSubmissionReceiptV5',
@@ -1098,7 +1283,7 @@ test('v6 completed receipt survives SQLite restart and offline Ed25519 replay re
     receiptSignerKeyIds: [PORTAL_SIGNER_KEY_ID],
     receiptSignerRole: PORTAL_SIGNER_ROLE,
   });
-  const request = requestFixture(configuration.configurationHash);
+  const request = requestFixture(configuration);
   const legacyReceipt = receiptFixture(request, 'restart-v6');
   const authorityEnvelope = signedPortalEnvelope({
     subjectKind: 'AutonomousSubmissionReceiptV5',
@@ -1222,12 +1407,13 @@ test('HTTP portal classifies definite rejection separately from unknown remote o
     portalTrustDomainIdentityHash: H('portal-trust-domain'),
     tokenEnvironmentVariable: 'DURABLE_HTTP_TOKEN',
   });
-  const request = requestFixture(configuration.configurationHash);
+  const request = requestFixture(configuration);
   const make = (status) => createHttpAutonomousSubmissionPortalAdapter({
     configuration,
     environment: { DURABLE_HTTP_TOKEN: 'secret' },
     submissionRequestVerifier,
     dispatchCapability: submissionDispatchAuthority.portal,
+    clock: { now: () => new Date(NOW) },
     fetchImpl: async () => ({ ok: false, status }),
   });
   await assert.rejects(make(422).submit({
@@ -1246,6 +1432,43 @@ test('HTTP portal classifies definite rejection separately from unknown remote o
   }), (error) => (
     error.autonomousSubmissionOutcome === 'uncertain' && error.httpStatus === 503
   ));
+});
+
+test('missing, expired, and mismatched human permits fail before any provider POST', async () => {
+  const configuration = buildAutonomousSubmissionPortalConfiguration({
+    portalId: 'durable-human-permit-negative',
+    endpoint: 'https://submission.example.test/submit',
+    serviceIdentityHash: H('human-permit-negative-service'),
+    portalAccountIdentityHash: H('portal-account'),
+    portalTrustDomainIdentityHash: H('portal-trust-domain'),
+    tokenEnvironmentVariable: 'DURABLE_HTTP_TOKEN',
+  });
+  const request = requestFixture(configuration);
+  let networkCalls = 0;
+  const adapter = createHttpAutonomousSubmissionPortalAdapter({
+    configuration,
+    environment: { DURABLE_HTTP_TOKEN: 'secret' },
+    submissionRequestVerifier,
+    dispatchCapability: submissionDispatchAuthority.portal,
+    clock: { now: () => new Date(NOW) },
+    fetchImpl: async () => {
+      networkCalls += 1;
+      return { ok: false, status: 500 };
+    },
+  });
+  const missing = resealRequest(request, {
+    humanAuthorizationReceipt: null,
+    humanAuthorizationReceiptHash: null,
+  });
+  const expired = expiredAuthorizationRequest(request);
+  const mismatched = resealRequest(request, {
+    humanAuthorizationSubjectHash: H('mismatched-human-authorization-subject'),
+  });
+  for (const candidate of [missing, expired, mismatched]) {
+    await assert.rejects(adapter.submit({ request: candidate }),
+      /autonomous_submission_portal_request_invalid/);
+  }
+  assert.equal(networkCalls, 0);
 });
 
 test('submission boundaries require an explicit trusted request verifier', async (t) => {
@@ -1355,7 +1578,7 @@ test('HTTP lookup rejects stale authority before any network action', async () =
     portalTrustDomainIdentityHash: H('portal-trust-domain'),
     tokenEnvironmentVariable: 'DURABLE_HTTP_TOKEN',
   });
-  const request = requestFixture(configuration.configurationHash);
+  const request = requestFixture(configuration);
   let networkCalls = 0;
   const staleAuthorityVerifier = Object.freeze({
     version: 1,

@@ -9,6 +9,7 @@ import {
   parseFormalOperationalTapSummary,
 } from '../bin/dynamic-formal-kernel-operational.mjs';
 import {
+  AUTONOMOUS_RESEARCH_CLI_ARGUMENT_SCHEMA,
   HEPTA_PAPER_COMMAND_REGISTRY,
   classifyNpmScriptSurface,
   generatedNpmRouteScripts,
@@ -550,6 +551,13 @@ test('one declarative registry owns supported routes and npm command classificat
     credentialUse: 'argument-dependent',
     providerCost: 'argument-dependent',
   });
+  assert.deepEqual(
+    HEPTA_PAPER_COMMAND_REGISTRY.operator['autonomous-research'].forwardedArgumentSchema,
+    {
+      ...AUTONOMOUS_RESEARCH_CLI_ARGUMENT_SCHEMA,
+      repeatableValueFlags: [],
+    },
+  );
   assert.ok(HEPTA_PAPER_COMMAND_REGISTRY.operator['autonomous-research']
     .forwardedArgumentSchema.valueFlags.includes('external-qualification-config'));
   const autonomousValueFlags = HEPTA_PAPER_COMMAND_REGISTRY.operator['autonomous-research']

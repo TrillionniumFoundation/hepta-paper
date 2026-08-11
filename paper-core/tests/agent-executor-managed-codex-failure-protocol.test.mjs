@@ -1016,9 +1016,9 @@ test('live canary accepts quota only from invocation-bound managed v5 failure ev
     {
       version: 1,
       kind: 'AutonomousResearchOneShotCampaignAttemptFailure',
-      phase: 'provider_started',
       errorCode: 'unknown_error',
       failureClass: 'quota',
+      failingStage: 'provider_action',
       diagnosticHash: firstQuota.diagnosticHash,
     },
   );

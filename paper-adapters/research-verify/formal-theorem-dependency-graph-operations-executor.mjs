@@ -494,7 +494,125 @@ export function createFormalTheoremDependencyGraphOperationsExecutor({
 }
 
 function nodeMachine(receipt, graph) {
-  return graph.nodes.find((item) => item.claimId === receipt.claimId)?.machineSearchEligible === true;
+  return graph?.nodes?.find((item) => item.claimId === receipt?.claimId)
+    ?.machineSearchEligible === true;
+}
+
+function counterexampleSearchRequired(value, candidate) {
+  return candidate
+    ? candidate.requiredOperations?.includes('bounded_counterexample_search') === true
+    : value?.strategy === 'bounded_refutation_or_synthesis';
+}
+function expectedOperationStatus({ node, dependencies, counterexampleReceipt, selected, replay }) {
+  if (dependencies.some((item) => item?.status
+    !== 'formal_theorem_dependency_operation_verified')) return 'formal_theorem_dependency_operation_blocked_by_dependency';
+  if (node?.machineSearchEligible !== true) return 'formal_theorem_dependency_operation_semantic_review_only';
+  if (counterexampleReceipt?.status === 'bounded_counterexample_found') return 'formal_theorem_dependency_operation_refuted';
+  return selected && replay && replayMatches(selected, replay)
+    ? 'formal_theorem_dependency_operation_verified'
+    : 'formal_theorem_dependency_operation_search_exhausted';
+}
+
+const OPERATION_BLOCKER = Object.freeze({
+  formal_theorem_dependency_operation_blocked_by_dependency:
+    'formal_theorem_dependency_predecessor_not_kernel_verified',
+  formal_theorem_dependency_operation_semantic_review_only:
+    'typed_theorem_dsl_machine_search_not_available',
+  formal_theorem_dependency_operation_refuted:
+    'formal_proof_search_refuted_by_bounded_witness',
+  formal_theorem_dependency_operation_search_exhausted:
+    'formal_theorem_dependency_no_replayed_kernel_candidate',
+});
+function operationBlockers(status) {
+  return OPERATION_BLOCKER[status] ? [OPERATION_BLOCKER[status]] : [];
+}
+
+function verifyOperationSemantics({ value, receipt, graph, node, dependencies, candidate }) {
+  const blockers = [];
+  const dependencyVerified = dependencies.every((item) => (
+    item?.status === 'formal_theorem_dependency_operation_verified'
+  ));
+  const tacticReceipts = Array.isArray(receipt?.tacticReceipts)
+    ? receipt.tacticReceipts : [];
+  const replay = receipt?.replayReceipt || null;
+  let expectedCounterexample = null;
+  if (node?.machineSearchEligible === true
+    && dependencyVerified
+    && counterexampleSearchRequired(value, candidate)) {
+    try { expectedCounterexample = searchTypedTheoremDslCounterexample(node.typedTheoremDsl); }
+    catch { blockers.push(`formal_theorem_dependency_counterexample_rebuild_failed:${receipt.claimId}`); }
+  }
+  if (JSON.stringify(receipt?.counterexampleReceipt || null)
+    !== JSON.stringify(expectedCounterexample)) {
+    blockers.push(`formal_theorem_dependency_counterexample_receipt_invalid:${receipt.claimId}`);
+  }
+
+  let expectedTactics = [];
+  if (node?.machineSearchEligible === true && dependencyVerified
+    && expectedCounterexample?.status !== 'bounded_counterexample_found') {
+    try {
+      expectedTactics = tacticCandidates(
+        candidate?.strategy || value?.strategy,
+        dependencies.map((item) => item.leanDeclarationName),
+        node.typedTheoremDsl.binders.map((binder) => binder.name),
+      );
+    } catch {
+      blockers.push(`formal_theorem_dependency_strategy_invalid:${receipt.claimId}`);
+    }
+  }
+  const attemptedTactics = tacticReceipts.map((item) => item?.tactic);
+  const sequenceIsPrefix = attemptedTactics.every((tactic, index) => (
+    tactic === expectedTactics[index]
+  ));
+  const closedReceipts = tacticReceipts.filter((item) => (
+    item?.status === 'formal_theorem_dependency_tactic_closed'
+  ));
+  const selected = closedReceipts[0] || null;
+  const attemptedAllWithoutClosure = !selected
+    && tacticReceipts.length === expectedTactics.length;
+  const stoppedAtFirstClosure = selected
+    && closedReceipts.length === 1
+    && tacticReceipts[tacticReceipts.length - 1] === selected;
+  const executionExpected = node?.machineSearchEligible === true
+    && dependencyVerified
+    && expectedCounterexample?.status !== 'bounded_counterexample_found';
+  if ((!executionExpected && (tacticReceipts.length || replay))
+    || (executionExpected && (!sequenceIsPrefix
+      || (!attemptedAllWithoutClosure && !stoppedAtFirstClosure)))) {
+    blockers.push(`formal_theorem_dependency_tactic_sequence_invalid:${receipt.claimId}`);
+  }
+  if ((selected?.tactic || null) !== (receipt?.selectedTactic || null)
+    || Boolean(selected) !== Boolean(replay)) {
+    blockers.push(`formal_theorem_dependency_selected_tactic_invalid:${receipt.claimId}`);
+  }
+
+  if (tacticReceipts.some((item) => item?.phase !== 'original')
+    || (replay && (replay.phase !== 'replay' || replay.tactic !== selected?.tactic))) {
+    blockers.push(`formal_theorem_dependency_tactic_phase_invalid:${receipt.claimId}`);
+  }
+
+  const expectedStatus = expectedOperationStatus({
+    node,
+    dependencies,
+    counterexampleReceipt: expectedCounterexample,
+    selected,
+    replay,
+  });
+  const rebuilt = theoremOperationReceipt({
+    graph,
+    node,
+    dependencyReceipts: dependencies.filter(Boolean),
+    status: expectedStatus,
+    tacticReceipts,
+    replayReceipt: replay,
+    selectedTactic: selected?.tactic || null,
+    counterexampleReceipt: expectedCounterexample,
+    blockers: operationBlockers(expectedStatus),
+  });
+  if (JSON.stringify(rebuilt) !== JSON.stringify(receipt)) {
+    blockers.push(`formal_theorem_dependency_operation_semantics_invalid:${receipt.claimId}`);
+  }
+  return blockers;
 }
 
 export function verifyFormalTheoremDependencyGraphOperationReceipt(value, {
@@ -512,7 +630,10 @@ export function verifyFormalTheoremDependencyGraphOperationReceipt(value, {
     )) === true
   )) === true;
   if (dynamicFormalRequired) {
-    if (!verifyDynamicFormalExecutionAuthority(value?.dynamicFormalExecutionAuthority)) {
+    const dynamicAuthorityValid = verifyDynamicFormalExecutionAuthority(
+      value?.dynamicFormalExecutionAuthority,
+    );
+    if (!dynamicAuthorityValid) {
       blockers.push('formal_theorem_dependency_dynamic_formal_authority_invalid');
     } else if (expectedDynamicFormalExecutionAuthority
       && JSON.stringify(value.dynamicFormalExecutionAuthority)
@@ -530,7 +651,7 @@ export function verifyFormalTheoremDependencyGraphOperationReceipt(value, {
     ))) {
       blockers.push('formal_theorem_dependency_dynamic_formal_sandbox_identity_mismatch');
     }
-    if (dynamicTacticReceipts.some((tactic) => (
+    if (dynamicAuthorityValid && dynamicTacticReceipts.some((tactic) => (
       !verifyFormalExecutionSnapshotReceipt(
         tactic?.initialFormalExecutionSnapshotReceipt,
         {
@@ -599,7 +720,24 @@ export function verifyFormalTheoremDependencyGraphOperationReceipt(value, {
         blockers.push(`formal_theorem_dependency_tactic_receipt_invalid:${receipt.claimId}`);
       }
     }
+    if (node) blockers.push(...verifyOperationSemantics({
+      value, receipt, graph, node, dependencies, candidate,
+    }));
     byId.set(receipt.claimId, receipt);
+  }
+  const expectedStatus = receipts.length === graph?.topologicalOrder?.length
+    && receipts.every((item) => (
+      item.status === 'formal_theorem_dependency_operation_verified'
+    )) ? 'formal_theorem_dependency_graph_operations_verified'
+      : 'formal_theorem_dependency_graph_operations_partial';
+  const expectedFreshReplayComplete = receipts
+    .filter((item) => nodeMachine(item, graph))
+    .every((item) => item.replayMatched === true);
+  if (value?.status !== expectedStatus) {
+    blockers.push('formal_theorem_dependency_graph_status_invalid');
+  }
+  if (value?.freshReplayComplete !== expectedFreshReplayComplete) {
+    blockers.push('formal_theorem_dependency_graph_fresh_replay_summary_invalid');
   }
   return Object.freeze({
     valid: blockers.length === 0,

@@ -3,7 +3,24 @@ Description=Hepta Paper autonomous research supervisor
 Requires=hepta-paper-host-bootstrap.service autonomous-submission-handoff-layout-provision.service hepta-paper-state-authority.service
 After=hepta-paper-host-bootstrap.service autonomous-submission-handoff-layout-provision.service hepta-paper-state-authority.service network-online.target docker.service
 Wants=autonomous-submission-handoff-layout-provision.path network-online.target docker.service
-StartLimitIntervalSec=0
+# Missing provisioning is a skipped start, while repeated runtime failures are
+# bounded and require an operator to inspect the failed generation.
+ConditionPathExists=/opt/hepta-paper/paper-core/bin/hepta-paper.mjs
+ConditionPathExists=/etc/hepta-paper/autonomous-research-supervisor.env
+ConditionPathExists=/etc/hepta-paper/autonomous-research-provider.secrets.env
+ConditionPathExists=/var/lib/hepta-paper/runtime/autonomous-research/submission-handoff/submission-handoff.sqlite
+ConditionPathExists=/var/run/docker.sock
+ConditionPathExists=/srv/hepta-paper/assets
+ConditionPathExists=/srv/hepta-paper/datasets
+ConditionPathExists=/etc/hepta-paper/authority-rotation
+ConditionPathExists=/etc/hepta-paper/capabilities-public
+ConditionPathExists=/etc/hepta-paper/online-mutation-authority
+ConditionPathExists=/etc/hepta-paper/submission-handoff-authority
+ConditionPathExists=/etc/hepta-paper/state-backup-authority
+ConditionPathExists=/etc/hepta-paper/submission-portal
+ConditionPathExists=/etc/hepta-paper/submission-dispatcher-signer
+StartLimitIntervalSec=15min
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -30,6 +47,33 @@ EnvironmentFile=/etc/hepta-paper/autonomous-research-supervisor.env
 # Research/model/replay credentials only. Provisioning policy must reject the
 # token variable named by the submission portal configuration from this file.
 EnvironmentFile=/etc/hepta-paper/autonomous-research-provider.secrets.env
+# These conditions run as the research principal after the environment files
+# are loaded. They check presence/readability only; the application still
+# validates every configuration identity, hash, permission and trust binding.
+ExecCondition=/usr/bin/test -d ${HEPTA_PAPER_ASSET_ROOT}
+ExecCondition=/usr/bin/test -d ${HEPTA_AUTONOMOUS_RESEARCH_DATASET_ROOT}
+ExecCondition=/usr/bin/test -d ${HEPTA_PAPER_RUNTIME_ROOT}
+ExecCondition=/usr/bin/test -d ${HEPTA_RESEARCH_AUTHOR_CODEX_HOME}
+ExecCondition=/usr/bin/test -d ${HEPTA_FORMAL_REVIEW_CODEX_HOME}
+ExecCondition=/usr/bin/test -d ${ELAN_HOME}
+ExecCondition=/usr/bin/test -d ${HEPTA_DYNAMIC_FORMAL_PROJECT_ROOT}
+ExecCondition=/usr/bin/test -d ${HEPTA_DYNAMIC_FORMAL_PROJECT_SCOPE_ROOT}
+ExecCondition=/usr/bin/test -r ${HEPTA_AUTONOMOUS_RESEARCH_INTAKE_CONFIG}
+ExecCondition=/usr/bin/test -r ${HEPTA_AUTONOMOUS_RESEARCH_TOPIC_PRODUCER_PROFILE}
+ExecCondition=/usr/bin/test -r ${HEPTA_RUNTIME_IMAGE_REPRODUCIBILITY_CONFIG}
+ExecCondition=/usr/bin/test -r ${HEPTA_AUTONOMOUS_EXTERNAL_QUALIFICATION_CONFIG}
+ExecCondition=/usr/bin/test -r ${HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG}
+ExecCondition=/usr/bin/test -r ${HEPTA_ADVANCED_NUMERICAL_PLUGIN_QUALIFICATION_REGISTRY}
+ExecCondition=/usr/bin/test -r ${HEPTA_AUTONOMOUS_RESEARCH_ONLINE_MUTATION_AUTHORITY_PROCESS_CONFIG}
+ExecCondition=/usr/bin/test -r ${HEPTA_AUTONOMOUS_RESEARCH_ONLINE_MUTATION_AUTHORITY_CONFIG}
+ExecCondition=/usr/bin/test -r ${HEPTA_AUTONOMOUS_SUBMISSION_HANDOFF_MUTATION_AUTHORITY_PROCESS_CONFIG}
+ExecCondition=/usr/bin/test -r ${HEPTA_AUTONOMOUS_RESEARCH_STATE_BACKUP_AUTHORITY_CONFIG}
+ExecCondition=/usr/bin/test -r ${HEPTA_RESEARCH_AUTHOR_IDENTITY_CONFIG}
+ExecCondition=/usr/bin/test -r ${HEPTA_PRIOR_ART_SERVICE_CONFIG}
+ExecCondition=/usr/bin/test -r ${HEPTA_EXTERNAL_REPLAY_CONFIG}
+ExecCondition=/usr/bin/test -r ${HEPTA_AUTONOMOUS_VENUE_PROFILE_CONFIG}
+ExecCondition=/usr/bin/test -r ${HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_CONFIG}
+ExecCondition=/usr/bin/test -r ${HEPTA_AUTONOMOUS_SUBMISSION_METADATA_CONFIG}
 ExecStartPre=/usr/bin/test -w /var/lib/hepta-paper/runtime
 ExecStartPre=/usr/bin/test -O /var/lib/hepta-paper/runtime
 ExecStartPre=/usr/bin/test ! -g /var/lib/hepta-paper/runtime

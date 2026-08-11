@@ -286,11 +286,11 @@ test('release environment argument parser rejects passthrough and nonabsolute ma
   assert.deepEqual(parseReleaseEnvironmentArguments([
     'offhost:worm-restore-drill',
     '--manifest',
-    '/media/qian-qi/TOSHIBA_CLEAN3/snapshot/manifest.json',
+    '/mnt/hepta-paper-external/snapshot/manifest.json',
   ]), {
     help: false,
     action: 'offhost:worm-restore-drill',
-    manifestPath: '/media/qian-qi/TOSHIBA_CLEAN3/snapshot/manifest.json',
+    manifestPath: '/mnt/hepta-paper-external/snapshot/manifest.json',
   });
   assert.throws(
     () => parseReleaseEnvironmentArguments(['release:verify', '--', 'sh']),
@@ -467,7 +467,7 @@ test('deployment closure accepts an explicitly pinned v2 predecessor and rejects
 
 test('deployment closure defaults to the exact currently deployed v2 predecessor', (t) => {
   const deployedPredecessor =
-    'sha256:c2094b9f424b6264ba04ee24c1d91165a481e3be0d9b957eaeeba40d125cf89b';
+    'sha256:3dde5272fd12414d5d5f59be348228f2f1b0ffae6e2152f125c0ca1d2c0766ca';
   const fixture = deploymentClosureFixture(t, {
     inheritedFromClosureHash: deployedPredecessor,
   });
@@ -754,6 +754,82 @@ test('JavaScript launcher boundary rechecks marker, lock metadata and inherited 
     deploymentLock,
     descriptor,
   });
+  assert.throws(() => inspectReleaseEnvironmentLauncherBoundary({
+    ...options,
+    action: 'formal:gate',
+    dockerGroupGid: process.getgid() + 1,
+    supplementaryGroups: [
+      process.getgid(),
+      process.getgid() + 1,
+      process.getgid() + 2,
+    ],
+  }), /release_environment_execution_principal_invalid/u);
+  assert.deepEqual(inspectReleaseEnvironmentLauncherBoundary({
+    ...options,
+    action: 'store:trust-gate',
+    handoffGroupGid: process.getgid() + 2,
+    supplementaryGroups: [process.getgid(), process.getgid() + 2],
+  }), {
+    status: 'release_environment_launcher_boundary_verified',
+    deploymentLock,
+    descriptor,
+  });
+  assert.deepEqual(inspectReleaseEnvironmentLauncherBoundary({
+    ...options,
+    action: 'release:verify',
+    dockerGroupGid: process.getgid() + 1,
+    handoffGroupGid: process.getgid() + 2,
+    supplementaryGroups: [
+      process.getgid(),
+      process.getgid() + 1,
+      process.getgid() + 2,
+    ],
+  }), {
+    status: 'release_environment_launcher_boundary_verified',
+    deploymentLock,
+    descriptor,
+  });
+  assert.throws(() => inspectReleaseEnvironmentLauncherBoundary({
+    ...options,
+    action: 'store:trust-gate',
+    handoffGroupGid: process.getgid() + 2,
+  }), /release_environment_execution_principal_invalid/u);
+  assert.throws(() => inspectReleaseEnvironmentLauncherBoundary({
+    ...options,
+    action: 'release:verify',
+    dockerGroupGid: process.getgid() + 1,
+    handoffGroupGid: process.getgid() + 2,
+    supplementaryGroups: [process.getgid(), process.getgid() + 1],
+  }), /release_environment_execution_principal_invalid/u);
+  assert.throws(() => inspectReleaseEnvironmentLauncherBoundary({
+    ...options,
+    action: 'release:verify',
+    dockerGroupGid: process.getgid() + 1,
+    handoffGroupGid: process.getgid() + 1,
+    supplementaryGroups: [process.getgid(), process.getgid() + 1],
+  }), /release_environment_handoff_group_invalid/u);
+  assert.throws(() => inspectReleaseEnvironmentLauncherBoundary({
+    ...options,
+    action: 'store:trust-gate',
+    handoffRoot: path.join(fixture, 'missing-handoff-root'),
+    handoffGroupGid: null,
+  }), /release_environment_handoff_root_invalid/u);
+  const unsafeHandoffRoot = path.join(fixture, 'unsafe-handoff-root');
+  fs.mkdirSync(unsafeHandoffRoot, { mode: 0o770 });
+  assert.throws(() => inspectReleaseEnvironmentLauncherBoundary({
+    ...options,
+    action: 'store:trust-gate',
+    handoffRoot: unsafeHandoffRoot,
+    handoffGroupGid: null,
+  }), /release_environment_handoff_root_invalid/u);
+  const handoffRootSymlink = path.join(fixture, 'handoff-root-symlink');
+  fs.symlinkSync(unsafeHandoffRoot, handoffRootSymlink);
+  assert.throws(() => inspectReleaseEnvironmentLauncherBoundary({
+    ...options,
+    action: 'store:trust-gate',
+    handoffRoot: handoffRootSymlink,
+    handoffGroupGid: null,
+  }), /release_environment_handoff_root_invalid/u);
   fs.chmodSync(fixture, 0o777);
   assert.throws(
     () => inspectReleaseEnvironmentLauncherBoundary(options),
@@ -794,8 +870,13 @@ test('installed launcher is closure-bound and sanitizes before the first Node im
   assert.match(launcher, /^  --reuid "\$release_uid" \\/m);
   assert.match(launcher, /^  --regid "\$release_gid" \\/m);
   assert.match(launcher, /^group_option=--clear-groups$/m);
-  assert.match(launcher, /^  formal:gate\|release:verify\)$/m);
+  assert.match(launcher, /^resolve_named_group_gid\(\) \{$/m);
+  assert.match(launcher, /^  formal:gate\)$/m);
+  assert.match(launcher, /^  release:verify\)$/m);
+  assert.match(launcher, /^  store:trust-gate\)$/m);
   assert.match(launcher, /^    group_option="--groups=\$docker_gid"$/m);
+  assert.match(launcher, /^    group_option="--groups=\$docker_gid,\$handoff_gid"$/m);
+  assert.match(launcher, /^    group_option="--groups=\$handoff_gid"$/m);
   assert.match(launcher, /^  "\$group_option" \\/m);
   assert.match(launcher, /^  --no-new-privs \\/m);
   assert.match(launcher, /^  \/usr\/bin\/node \\/m);

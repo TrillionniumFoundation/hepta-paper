@@ -151,6 +151,38 @@ test('dataset consumption contract requires every declared worker mount in the e
     helperConnectionRead.status,
     'dataset_consumption_source_preflight_verified',
   );
+  const pythonHelperRead = evaluateDatasetConsumptionContract({
+    sourceText: [
+      'import os',
+      'DATASET_ROOT = "/datasets/trial data"',
+      'DATASET_ENV = "HEPTA_DATASET_TRIAL_DATA"',
+      'def consume_dataset():',
+      '    root = os.path.realpath(os.environ.get(DATASET_ENV, DATASET_ROOT))',
+      '    for base, _, names in os.walk(root):',
+      '        for name in names:',
+      '            path = os.path.join(base, name)',
+      '            with open(path, "rb") as stream:',
+      '                return stream.read()',
+    ].join('\n'),
+    datasetMounts: [mounts[0]],
+  });
+  assert.equal(
+    pythonHelperRead.status,
+    'dataset_consumption_source_preflight_verified',
+  );
+  const pythonListingOnly = evaluateDatasetConsumptionContract({
+    sourceText: [
+      'import os',
+      'DATASET_ENV = "HEPTA_DATASET_TRIAL_DATA"',
+      'root = os.environ.get(DATASET_ENV)',
+      'files = os.listdir(root)',
+    ].join('\n'),
+    datasetMounts: [mounts[0]],
+  });
+  assert.deepEqual(
+    pythonListingOnly.blockers,
+    ['declared_dataset_not_consumed:trial data'],
+  );
 });
 
 test('empirical metric gate compares repeated numeric outputs within tolerance', (t) => {

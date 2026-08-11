@@ -13,7 +13,10 @@ import {
   publishSnapshotObject,
   removePinnedChildExact,
 } from './offhost-worm-security-repository.mjs';
-import { verifyOffhostWormTarget } from './offhost-worm-target-verification.mjs';
+import {
+  assertOffhostWormTargetMountBinding,
+  verifyOffhostWormTarget,
+} from './offhost-worm-target-verification.mjs';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 const NO_FOLLOW = fs.constants.O_NOFOLLOW || 0;
 const SHA256 = /^sha256:[a-f0-9]{64}$/;
@@ -21,6 +24,7 @@ const RELEASE_COMMIT = /^[a-f0-9]{40}$/;
 const MAXIMUM_RELEASE_DOCUMENT_BYTES = 16 * 1024 * 1024;
 const RELEASE_SIGNATURE_AUTHORITY_LIMIT =
   'build_and_archive_integrity_only_not_owner_academic_referee_or_submission_authority';
+const TARGET_MOUNT_BINDING_ERROR = 'offhost_worm_target_mount_binding_changed';
 const POINTER_KEYS = Object.freeze([
   'bundleHash', 'bundlePath', 'commit', 'currentReleaseEvidencePointerHash', 'generatedAt',
   'kind', 'packageVersion', 'releaseEvidenceInputSnapshotHash', 'releaseStateSnapshotHash',
@@ -473,6 +477,11 @@ function publicSourceRow(source) {
     capturedBeforeSnapshot: Boolean(source.captured),
   });
 }
+function assertTargetMountBinding(target, pinnedTargetDirectory, mountedStorageOverride) {
+  return assertOffhostWormTargetMountBinding({
+    target, pinnedTargetDirectory, mountedStorageOverride,
+  });
+}
 export function createOffhostWormSnapshot({
   workspaceRoot,
   contract,
@@ -486,6 +495,7 @@ export function createOffhostWormSnapshot({
   custodyTrustStoreOverride = null,
   storageIdentityHashOverride = null,
   custodyImmutableOverride = null,
+  mountedStorageOverride = null,
   custodyNow = new Date(),
   faultInjector = null,
   signManifest = null,
@@ -500,6 +510,7 @@ export function createOffhostWormSnapshot({
     custodyTrustStoreOverride,
     storageIdentityHashOverride,
     custodyImmutableOverride,
+    mountedStorageOverride,
     now: custodyNow,
   });
   const blockers = [
@@ -560,6 +571,7 @@ export function createOffhostWormSnapshot({
   const objects = [];
   try {
     targetRoot = openPinnedDirectory(target.targetMountRoot, 'offhost_worm_target_root_unsafe');
+    assertTargetMountBinding(target, targetRoot, mountedStorageOverride);
     wormDirectory = ensurePinnedChildDirectory(
       targetRoot,
       'hepta-paper-worm',
@@ -588,6 +600,7 @@ export function createOffhostWormSnapshot({
         assertPinnedPathUnchanged(source.pinned, 'offhost_worm_source_changed_before_copy');
         faultInjector?.({ stage: 'before_source_copy', source, destination });
         assertPinnedDirectoryChain(directoryChain, 'offhost_worm_destination_chain_changed');
+        assertTargetMountBinding(target, targetRoot, mountedStorageOverride);
         publication = publishSnapshotObject(
           source,
           destination,
@@ -597,6 +610,7 @@ export function createOffhostWormSnapshot({
         objectHash = publication.objectHash;
         faultInjector?.({ stage: 'after_source_copy', source, destination });
         assertPinnedDirectoryChain(directoryChain, 'offhost_worm_destination_chain_changed');
+        assertTargetMountBinding(target, targetRoot, mountedStorageOverride);
         assertPinnedPathUnchanged(source.pinned, 'offhost_worm_source_changed_after_copy');
         if (objectHash !== source.sha256) {
           throw new Error('offhost_worm_object_hash_mismatch');
@@ -610,7 +624,7 @@ export function createOffhostWormSnapshot({
           immutable = filesystemImmutable(publication.descriptorPath);
           assertPinnedDirectoryChain(directoryChain, 'offhost_worm_destination_chain_changed');
         }
-      } catch {
+      } catch (error) {
         if (publication?.createdIdentity) {
           try {
             if (filesystemImmutable(publication.descriptorPath)) {
@@ -619,6 +633,7 @@ export function createOffhostWormSnapshot({
           } catch { /* Identity-bound removal below remains fail closed. */ }
           removePinnedChildExact(objectDirectory, publication.name, publication.createdIdentity);
         }
+        if (error?.message === TARGET_MOUNT_BINDING_ERROR) throw error;
         blockers.push(`offhost_worm_source_changed_or_copy_failed:${source.role}`);
       }
       objects.push({
@@ -668,6 +683,7 @@ export function createOffhostWormSnapshot({
     const manifest = Object.freeze({ ...unsignedManifest, signature });
     const manifestPath = path.join(snapshotRoot, 'OFFHOST_WORM_SNAPSHOT_MANIFEST.json');
     const manifestBytes = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
+    assertTargetMountBinding(target, targetRoot, mountedStorageOverride);
     const publication = publishManifestNoClobber(
       manifestPath,
       manifestBytes,
@@ -680,6 +696,7 @@ export function createOffhostWormSnapshot({
         [targetRoot, wormDirectory, snapshotDirectory, objectDirectory],
         'offhost_worm_destination_chain_changed',
       );
+      assertTargetMountBinding(target, targetRoot, mountedStorageOverride);
     } catch (error) {
       if (publication.createdIdentity) {
         removePinnedChildExact(snapshotDirectory, publication.name, publication.createdIdentity);
@@ -699,6 +716,20 @@ export function createOffhostWormSnapshot({
       copiedObjectCount: objects.length,
       immutableObjectCount: objects.filter((object) => object.immutable).length,
       blockers: [],
+    });
+  } catch (error) {
+    if (error?.message !== TARGET_MOUNT_BINDING_ERROR) throw error;
+    return Object.freeze({
+      version: 1,
+      kind: 'OffhostWormSnapshotReceipt',
+      status: 'offhost_worm_snapshot_blocked',
+      execute: true,
+      target,
+      sources: sourceRows,
+      objects,
+      copiedObjectCount: objects.length,
+      immutableObjectCount: objects.filter((object) => object.immutable).length,
+      blockers: [TARGET_MOUNT_BINDING_ERROR],
     });
   } finally {
     for (const source of preparedSources) fs.closeSync(source.pinned.descriptor);

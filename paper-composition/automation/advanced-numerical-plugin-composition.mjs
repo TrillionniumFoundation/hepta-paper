@@ -8,6 +8,12 @@ import {
 import {
   createOsSandboxedWorkerRunner,
 } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
+import {
+  createCampaignAdvancedNumericalExecutionAdapter,
+} from '../../paper-adapters/automation/campaign-advanced-numerical-execution-adapter.mjs';
+import {
+  verifyAdvancedNumericalCampaignExecutionPlan,
+} from '../../paper-domain/automation/advanced-numerical-campaign-execution-contract.mjs';
 
 export function composeAdvancedNumericalPluginRuntime({
   bundle,
@@ -79,4 +85,27 @@ export function composeConfiguredAdvancedNumericalPluginRuntime({
     ...runtime,
     runtimeConfiguration,
   });
+}
+
+export function composeCampaignAdvancedNumericalExecution({
+  plan,
+  configurationPath,
+  now,
+} = {}) {
+  if (!verifyAdvancedNumericalCampaignExecutionPlan(plan)) {
+    throw new Error('campaign_advanced_numerical_execution_plan_invalid');
+  }
+  const runtime = composeConfiguredAdvancedNumericalPluginRuntime({
+    configurationPath,
+    expectedConfigurationHash:
+      plan.pluginRuntimeIdentity.configurationHash,
+    requireProductionQualification: false,
+    now,
+  });
+  const execution = createCampaignAdvancedNumericalExecutionAdapter({ runtime });
+  if (execution.capabilities().pluginRuntimeIdentityHash
+    !== plan.pluginRuntimeIdentityHash) {
+    throw new Error('campaign_advanced_numerical_runtime_identity_mismatch');
+  }
+  return Object.freeze({ runtime, execution });
 }

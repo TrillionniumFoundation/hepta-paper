@@ -58,6 +58,13 @@ import {
   fixedAutonomousResearchOneShotPrepareEnvironment,
   fixedAutonomousResearchOneShotProviderEnvironment,
 } from './autonomous-research-one-shot-provider-environment.mjs';
+import {
+  AUTONOMOUS_RESEARCH_ONE_SHOT_PREFLIGHT_ACTIONS,
+  defaultAutonomousResearchOneShotDatasetAuthorityInspector as defaultDatasetAuthorityInspector,
+  inspectAutonomousResearchOneShotCampaignPreflight,
+} from './autonomous-research-one-shot-campaign-preflight.mjs';
+
+const PREFLIGHT_ACTIONS = new Set(AUTONOMOUS_RESEARCH_ONE_SHOT_PREFLIGHT_ACTIONS);
 
 export {
   autonomousResearchOneShotCampaignAttemptIdempotencyKey,
@@ -274,6 +281,13 @@ export function projectAutonomousResearchCampaignTerminalResult(report) {
   throw new Error(`autonomous_research_one_shot_campaign_not_terminal:${status || 'unknown'}`);
 }
 
+export function inspectFixedAutonomousResearchOneShotCampaignPreflight(options = {}) {
+  return inspectAutonomousResearchOneShotCampaignPreflight({
+    ...options,
+    inspectProtectedCampaign: inspectAutonomousResearchOneShotProtectedCampaign,
+  });
+}
+
 export async function composeFixedAutonomousResearchOneShotCampaignAttempt({
   action = 'execute',
   workspaceRoot,
@@ -292,12 +306,36 @@ export async function composeFixedAutonomousResearchOneShotCampaignAttempt({
   providerConfigurationResolver = resolveAutonomousResearchProviderConfiguration,
   providerRuntimeBindingInspector =
     inspectAutonomousResearchOneShotProviderRuntimeBinding,
+  datasetAuthorityInspector = defaultDatasetAuthorityInspector,
   readOnlyStoreFactory = createReadOnlyPaperStore,
   campaignStoreFactory = createSqliteCampaignStore,
+  nativeStoreSnapshotGuardFactory = undefined,
 } = {}) {
-  if (!['execute', 'status'].includes(action) || !workspaceRoot || !root
-    || !runtimeRoot || !controlRoot || !Array.isArray(datasetMounts)) {
+  if (![...PREFLIGHT_ACTIONS, 'execute', 'status'].includes(action)
+    || !workspaceRoot || !root || !runtimeRoot || !Array.isArray(datasetMounts)
+    || !controlRoot) {
     throw new Error('autonomous_research_one_shot_campaign_fixed_composition_invalid');
+  }
+  if (PREFLIGHT_ACTIONS.has(action)) {
+    return inspectFixedAutonomousResearchOneShotCampaignPreflight({
+      action,
+      workspaceRoot,
+      root,
+      runtimeRoot,
+      controlRoot,
+      datasetMounts,
+      environment,
+      clock,
+      codeProvenanceInspector,
+      sourceSnapshotInspector,
+      providerConfigurationResolver,
+      datasetAuthorityInspector,
+      readOnlyStoreFactory,
+      campaignStoreFactory,
+      journalRepositoryFactory,
+      ...(nativeStoreSnapshotGuardFactory
+        ? { nativeStoreSnapshotGuardFactory } : {}),
+    });
   }
   if (action === 'status') {
     const repository = journalRepositoryFactory({

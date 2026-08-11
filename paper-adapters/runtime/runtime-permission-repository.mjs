@@ -2,7 +2,15 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
-import { isPathWithin } from '../../workflow-kernel/runtime/path-utils.mjs';
+import {
+  DIRECTORY_ONLY,
+  NO_FOLLOW,
+  descriptorAccessPath,
+  descriptorEntryPath,
+  entryStillInsideRoot,
+  openRoot,
+  sameObject,
+} from './runtime-permission-descriptor-boundary.mjs';
 import {
   emptyRuntimePermissionApplyResult,
   executeLockedRuntimePermissionPlan,
@@ -13,14 +21,25 @@ import {
   RUNTIME_PERMISSION_SCAN_LIMITS,
   resolveRuntimePermissionLimits,
 } from './runtime-permission-scan-limits.mjs';
+import {
+  absentRuntimePermissionProtectedSharedLayout,
+  classifyRuntimePermissionProtectedSharedLayoutEntry,
+  inspectRuntimePermissionProtectedSharedLayout,
+} from './runtime-permission-protected-shared-layout.mjs';
+import {
+  identityOf,
+  modeNumber,
+  octalMode,
+  permissionRecord,
+  sameCompleteIdentity,
+  sameIdentityAfterModeChange,
+  typeOf,
+} from './runtime-permission-entry-policy.mjs';
 
 export { RUNTIME_PERMISSION_SCAN_LIMITS };
 
-const NO_FOLLOW = fs.constants.O_NOFOLLOW || 0;
-const DIRECTORY_ONLY = fs.constants.O_DIRECTORY || 0;
-
 export const RUNTIME_PERMISSION_POLICY = Object.freeze({
-  version: 3,
+  version: 4,
   kind: 'RuntimePermissionPolicy',
   directoryMode: '0700',
   writableRegularFileMode: '0600',
@@ -37,79 +56,11 @@ export const RUNTIME_PERMISSION_POLICY = Object.freeze({
   executionPlan: 'fully_materialized_bounded_plan_required_before_first_mutation',
   executionLock: 'runtime_root_scoped_exclusive_lock_with_locked_inventory_revalidation',
   writerQuiescence: 'caller_confirmed_cooperative_runtime_writer_quiescence_required',
+  protectedSharedLayout:
+    'preserve_exact_handoff_layout_modes_after_descriptor_relative_contract_detection',
+  protectedSharedLayoutQualification:
+    'preservation_only_native_layout_receipt_verification_remains_authoritative',
 });
-
-function octalMode(mode) {
-  return (Number(mode) & 0o777).toString(8).padStart(4, '0');
-}
-
-function modeNumber(stat) {
-  return Number(stat.mode & 0o777n);
-}
-
-function typeOf(stat) {
-  if (stat.isDirectory()) return 'directory';
-  if (stat.isFile()) return 'regular_file';
-  if (stat.isSymbolicLink()) return 'symbolic_link';
-  if (stat.isSocket()) return 'socket';
-  if (stat.isFIFO()) return 'fifo';
-  if (stat.isBlockDevice()) return 'block_device';
-  if (stat.isCharacterDevice()) return 'character_device';
-  return 'unknown';
-}
-
-function identityOf(stat) {
-  return Object.freeze({
-    device: String(stat.dev),
-    inode: String(stat.ino),
-    type: typeOf(stat),
-    linkCount: Number(stat.nlink),
-    size: Number(stat.size),
-    mtimeNs: String(stat.mtimeNs),
-  });
-}
-
-function sameObject(left, right) {
-  return String(left.dev) === String(right.dev)
-    && String(left.ino) === String(right.ino)
-    && typeOf(left) === typeOf(right);
-}
-
-function sameCompleteIdentity(identity, stat) {
-  return identity.device === String(stat.dev)
-    && identity.inode === String(stat.ino)
-    && identity.type === typeOf(stat)
-    && identity.linkCount === Number(stat.nlink)
-    && identity.size === Number(stat.size)
-    && identity.mtimeNs === String(stat.mtimeNs);
-}
-
-function descriptorAccessPath(descriptor, { directory = false } = {}) {
-  const expected = fs.fstatSync(descriptor, { bigint: true });
-  for (const base of ['/proc/self/fd', '/dev/fd']) {
-    const candidate = path.join(base, String(descriptor));
-    let probe;
-    try {
-      probe = fs.openSync(
-        directory ? path.join(candidate, '.') : candidate,
-        fs.constants.O_RDONLY | (directory ? DIRECTORY_ONLY : 0),
-      );
-      if (sameObject(expected, fs.fstatSync(probe, { bigint: true }))) return candidate;
-    } catch {
-      // A descriptor namespace is used only after its identity is proven.
-    } finally {
-      if (probe !== undefined) fs.closeSync(probe);
-    }
-  }
-  throw new Error('descriptor_relative_runtime_permission_io_unsupported');
-}
-
-function descriptorEntryPath(descriptor, name) {
-  if (!name || name === '.' || name === '..' || name.includes('/') || name.includes('\\') || name.includes('\0')) {
-    throw new Error('runtime_permission_entry_name_invalid');
-  }
-  return path.join(descriptorAccessPath(descriptor, { directory: true }), name);
-}
 
 function blocker(relativePath, reason, details = null) {
   return Object.freeze({
@@ -176,51 +127,6 @@ function readBoundedDirectoryNames(descriptor, maximumDirectoryEntries) {
   }
 }
 
-function targetModeFor(stat) {
-  if (stat.isDirectory()) return 0o700;
-  const currentMode = modeNumber(stat);
-  const executable = (currentMode & 0o111) !== 0;
-  const writable = (currentMode & 0o222) !== 0;
-  if (executable) return writable ? 0o700 : 0o500;
-  return writable ? 0o600 : 0o400;
-}
-
-function permissionRecord(relativePath, stat) {
-  const currentMode = modeNumber(stat);
-  const targetMode = targetModeFor(stat);
-  return Object.freeze({
-    relativePath,
-    type: typeOf(stat),
-    currentMode: octalMode(currentMode),
-    targetMode: octalMode(targetMode),
-    identity: identityOf(stat),
-  });
-}
-
-function openRoot(runtimeRoot) {
-  const resolved = path.resolve(runtimeRoot);
-  const observed = fs.lstatSync(resolved, { bigint: true });
-  if (observed.isSymbolicLink()) throw new Error('runtime_permission_root_symbolic_link_forbidden');
-  if (!observed.isDirectory()) throw new Error('runtime_permission_root_not_directory');
-  const descriptor = fs.openSync(resolved, fs.constants.O_RDONLY | DIRECTORY_ONLY | NO_FOLLOW);
-  try {
-    const pinned = fs.fstatSync(descriptor, { bigint: true });
-    if (!sameObject(observed, pinned) || !pinned.isDirectory()) {
-      throw new Error('runtime_permission_root_identity_changed');
-    }
-    const realPath = fs.realpathSync.native(descriptorAccessPath(descriptor, { directory: true }));
-    return { descriptor, resolved, realPath, identity: identityOf(pinned) };
-  } catch (error) {
-    fs.closeSync(descriptor);
-    throw error;
-  }
-}
-
-function entryStillInsideRoot(root, descriptor, { directory = false } = {}) {
-  const realPath = fs.realpathSync.native(descriptorAccessPath(descriptor, { directory }));
-  return isPathWithin(root.realPath, realPath);
-}
-
 function scanRuntimePermissionTree(runtimeRoot, limits) {
   const {
     maximumEntries, maximumDirectoryEntries, maximumDepth, reportLimit,
@@ -236,6 +142,7 @@ function scanRuntimePermissionTree(runtimeRoot, limits) {
   let entriesSeen = 0;
   let maximumDepthObserved = 0;
   let root;
+  let protectedSharedLayout = absentRuntimePermissionProtectedSharedLayout();
 
   const addBlocker = (relativePath, reason, details = null, incomplete = false) => {
     if (incomplete) inventoryComplete = false;
@@ -254,9 +161,20 @@ function scanRuntimePermissionTree(runtimeRoot, limits) {
     return false;
   };
   const recordSafeEntry = (relativePath, stat) => {
-    const row = permissionRecord(relativePath, stat);
-    if (row.currentMode === row.targetMode) {
-      skippedRows.add(Object.freeze({ ...row, reason: 'already_compliant' }));
+    const protection = classifyRuntimePermissionProtectedSharedLayoutEntry(
+      relativePath, stat, protectedSharedLayout,
+    );
+    if (protection.protected && !protection.valid) {
+      addBlocker(relativePath, protection.reason, protection.details);
+      return;
+    }
+    const preserveCurrentMode = protection.protected;
+    const row = permissionRecord(relativePath, stat, { preserveCurrentMode });
+    if (preserveCurrentMode || row.currentMode === row.targetMode) {
+      skippedRows.add(Object.freeze({
+        ...row,
+        reason: preserveCurrentMode ? 'protected_shared_layout' : 'already_compliant',
+      }));
     } else {
       const planned = plannedRows.add(row);
       if (executionPlan.length < maximumExecutePlanEntries) executionPlan.push(planned);
@@ -357,8 +275,30 @@ function scanRuntimePermissionTree(runtimeRoot, limits) {
 
   try {
     root = openRoot(runtimeRoot);
+    protectedSharedLayout = inspectRuntimePermissionProtectedSharedLayout(root);
+    if (protectedSharedLayout.status === 'invalid') {
+      addBlocker(
+        protectedSharedLayout.policy.anchorRelativePath,
+        'runtime_permission_protected_shared_layout_invalid',
+        {
+          failure: protectedSharedLayout.failure || null,
+          mismatchedRelativePaths: protectedSharedLayout.mismatchedRelativePaths || [],
+        },
+      );
+    }
     if (reserveEntry()) {
       visitDirectory(root.descriptor, '.', fs.fstatSync(root.descriptor, { bigint: true }), 0);
+    }
+    if (protectedSharedLayout.detected) {
+      const reinspection = inspectRuntimePermissionProtectedSharedLayout(root);
+      if (JSON.stringify(reinspection) !== JSON.stringify(protectedSharedLayout)) {
+        addBlocker(
+          protectedSharedLayout.policy.anchorRelativePath,
+          'runtime_permission_protected_shared_layout_changed_during_scan',
+          null,
+          true,
+        );
+      }
     }
     const currentRoot = fs.lstatSync(root.resolved, { bigint: true });
     if (!sameCompleteIdentity(root.identity, currentRoot) || currentRoot.isSymbolicLink()) {
@@ -386,6 +326,7 @@ function scanRuntimePermissionTree(runtimeRoot, limits) {
     runtimeRealRoot: root?.realPath || null,
     rootIdentity: root?.identity || null,
     policy: RUNTIME_PERMISSION_POLICY,
+    protectedSharedLayout,
     scanLimits: Object.freeze({
       maximumEntries, maximumDirectoryEntries, maximumDepth, maximumExecutePlanEntries,
     }),
@@ -408,6 +349,7 @@ function scanRuntimePermissionTree(runtimeRoot, limits) {
     runtimeRoot: inventoryEvidence.runtimeRoot,
     runtimeRealRoot: inventoryEvidence.runtimeRealRoot,
     rootIdentity: inventoryEvidence.rootIdentity,
+    protectedSharedLayout: inventoryEvidence.protectedSharedLayout,
     inventoryComplete,
     executionPlanComplete,
     entriesSeen,
@@ -429,10 +371,12 @@ function scanRuntimePermissionTree(runtimeRoot, limits) {
     inventoryHash: inventoryEvidence.inventoryHash,
   });
 }
-function openRelativeEntry(root, row) {
+function openRelativeEntry(root, row, { sameIdentity = sameCompleteIdentity } = {}) {
   if (row.relativePath === '.') {
     const stat = fs.fstatSync(root.descriptor, { bigint: true });
-    if (!sameCompleteIdentity(row.identity, stat)) throw new Error('runtime_permission_entry_identity_changed');
+    if (!sameIdentity(row.identity, stat)) {
+      throw new Error('runtime_permission_entry_identity_changed');
+    }
     return { descriptor: root.descriptor, close: false, stat };
   }
   const components = row.relativePath.split('/');
@@ -456,7 +400,9 @@ function openRelativeEntry(root, row) {
       }
     }
     const stat = fs.fstatSync(descriptor, { bigint: true });
-    if (!sameCompleteIdentity(row.identity, stat)) throw new Error('runtime_permission_entry_identity_changed');
+    if (!sameIdentity(row.identity, stat)) {
+      throw new Error('runtime_permission_entry_identity_changed');
+    }
     if (stat.isFile() && Number(stat.nlink) !== 1) {
       throw new Error('runtime_permission_multiply_linked_file_forbidden');
     }
@@ -467,11 +413,27 @@ function openRelativeEntry(root, row) {
   }
 }
 
-function openCurrentPlanEntry(root, initial, row) {
+function openRelativeEntryAfterModeChange(root, row) {
+  return openRelativeEntry(root, row, { sameIdentity: sameIdentityAfterModeChange });
+}
+
+function openCurrentPlanEntry(
+  root,
+  initial,
+  row,
+  { rootModeChanged = false, rootTargetMode = null } = {},
+) {
   const currentRoot = fs.lstatSync(root.resolved, { bigint: true });
-  if (!sameCompleteIdentity(initial.rootIdentity, currentRoot)
+  const sameRootIdentity = rootModeChanged
+    ? sameIdentityAfterModeChange
+    : sameCompleteIdentity;
+  if (!sameRootIdentity(initial.rootIdentity, currentRoot)
     || currentRoot.isSymbolicLink()) {
     throw new Error('runtime_permission_root_identity_changed');
+  }
+  if (rootModeChanged && rootTargetMode !== null
+    && octalMode(modeNumber(currentRoot)) !== rootTargetMode) {
+    throw new Error('runtime_permission_root_mode_changed');
   }
   let opened;
   try {
@@ -495,6 +457,7 @@ function applyRuntimePermissionPlan(initial, reportLimit) {
   let root;
   let phase = 'plan_validation';
   let activeRow = null;
+  let rootModeChanged = false;
   try {
     if (!initial.inventoryComplete
       || !initial.executionPlanComplete
@@ -512,15 +475,20 @@ function applyRuntimePermissionPlan(initial, reportLimit) {
       if (opened.close) fs.closeSync(opened.descriptor);
     }
     phase = 'apply';
+    const rootPlanRow = initial.executionPlan.find((row) => row.relativePath === '.');
     for (const row of initial.executionPlan) {
       activeRow = row;
-      const opened = openCurrentPlanEntry(root, initial, row);
+      const opened = openCurrentPlanEntry(root, initial, row, {
+        rootModeChanged,
+        rootTargetMode: rootPlanRow?.targetMode || null,
+      });
       try {
         const targetMode = Number.parseInt(row.targetMode, 8);
         fs.fchmodSync(opened.descriptor, targetMode);
         mutatedRows.push(row);
+        if (row.relativePath === '.') rootModeChanged = true;
         const verified = fs.fstatSync(opened.descriptor, { bigint: true });
-        if (!sameCompleteIdentity(row.identity, verified)
+        if (!sameIdentityAfterModeChange(row.identity, verified)
           || modeNumber(verified) !== targetMode) {
           throw new Error('runtime_permission_post_chmod_verification_failed');
         }
@@ -539,8 +507,8 @@ function applyRuntimePermissionPlan(initial, reportLimit) {
       phase,
     }));
     const rollback = rollbackRuntimePermissionRows({
-      root, rows: mutatedRows, openEntry: openRelativeEntry,
-      sameIdentity: sameCompleteIdentity,
+      root, rows: mutatedRows, openEntry: openRelativeEntryAfterModeChange,
+      sameIdentity: sameIdentityAfterModeChange,
       reportLimit,
       recordBlocker: blockerRows.add,
     });
@@ -585,8 +553,8 @@ export function auditRuntimePermissions({
     scan: scanRuntimePermissionTree,
     apply: applyRuntimePermissionPlan,
     rollback: (locked, recordBlocker) => rollbackCommittedRuntimePermissionPlan({
-      initial: locked, openRoot, openEntry: openRelativeEntry,
-      sameIdentity: sameCompleteIdentity,
+      initial: locked, openRoot, openEntry: openRelativeEntryAfterModeChange,
+      sameIdentity: sameIdentityAfterModeChange,
       reportLimit: limits.reportLimit,
       recordBlocker,
     }),

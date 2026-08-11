@@ -22,6 +22,9 @@ import {
 import {
   createAutonomousSubmissionCompletedReceiptVerifier,
 } from './autonomous-submission-completed-receipt-verifier.mjs';
+import {
+  autonomousLiveSubmissionAuthorizationBinding,
+} from '../../paper-domain/submission/autonomous-live-submission-authorization-contract.mjs';
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const ROW_STATUS = Object.freeze({
   prepared: 'pending',
@@ -36,6 +39,10 @@ const persistedCompletedReceiptVerifier =
 function authorizationHashes(...values) {
   return Object.freeze([...new Set(values.filter((value) => SHA256.test(String(value || ''))))]
     .sort());
+}
+
+function clockNow(clock) {
+  return typeof clock?.now === 'function' ? clock.now() : new Date(clock.nowIso());
 }
 
 function envelope({ request, portalId, stateReceipt }) {
@@ -74,6 +81,8 @@ function parseEnvelope(row, {
     || row?.provider !== stored.portalId
     || row?.account_id !== boundRequest.portalConfigurationHash
     || row?.nonce !== boundRequest.idempotencyKey
+    || row?.authorization_receipt_hash
+      !== boundRequest.humanAuthorizationReceiptHash
     || row?.status !== ROW_STATUS[receipt.state]
     || Number(row?.attempt_count) !== receipt.attempt
     || (request && (boundRequest.requestHash !== request.requestHash
@@ -168,7 +177,11 @@ export function createAutonomousSubmissionOutboxRepository({
     singleUseDispatchCapabilityIssued: true,
     externallyFencedMutations,
     prepareAutonomousSubmission({ request, portalId } = {}) {
-      if (submissionRequestVerifier.verify(request) !== true) {
+      if (submissionRequestVerifier.verify(request) !== true
+        || !autonomousLiveSubmissionAuthorizationBinding(request, {
+          observedAt: clockNow(clock),
+          verifyAuthorityDocument: () => true,
+        })) {
         throw new Error('autonomous_submission_delivery_request_invalid');
       }
       const messageId = autonomousSubmissionOutboxMessageId(request, {
@@ -208,7 +221,7 @@ export function createAutonomousSubmissionOutboxRepository({
             request.idempotencyKey,
             request.idempotencyKey,
             request.requestHash,
-            request.qualificationReceiptHash,
+            request.humanAuthorizationReceiptHash,
             request.portalConfigurationHash,
             request.venueId,
           );
@@ -216,6 +229,7 @@ export function createAutonomousSubmissionOutboxRepository({
         };
         const mutationAuthority = {
           authorizationReceiptHashes: authorizationHashes(
+            request.humanAuthorizationReceiptHash,
             request.qualificationReceiptHash,
             request.venueComplianceReceiptHash,
             request.submissionMetadataReceiptHash,
@@ -254,7 +268,7 @@ export function createAutonomousSubmissionOutboxRepository({
               ${sqlText(request.idempotencyKey)},'pending',0,${sqlJson(storedEnvelope)},
               ${sqlText(now)},${sqlText(now)},${sqlText(now)},
               ${sqlText(request.idempotencyKey)},${sqlText(request.idempotencyKey)},
-              ${sqlText(request.requestHash)},${sqlText(request.qualificationReceiptHash)},
+              ${sqlText(request.requestHash)},${sqlText(request.humanAuthorizationReceiptHash)},
               ${sqlText(request.portalConfigurationHash)},${sqlText(request.venueId)}
             );`);
           if (!write.ok) throw new Error(write.error || 'autonomous_submission_prepare_failed');
@@ -273,6 +287,12 @@ export function createAutonomousSubmissionOutboxRepository({
       portalId,
       authoritativeNotFoundReceipt = null,
     } = {}) {
+      if (!autonomousLiveSubmissionAuthorizationBinding(request, {
+        observedAt: clockNow(clock),
+        verifyAuthorityDocument: () => true,
+      })) {
+        throw new Error('autonomous_submission_human_authorization_invalid');
+      }
       const messageId = autonomousSubmissionOutboxMessageId(request, {
         requestVerifier: submissionRequestVerifier,
       });
@@ -312,10 +332,39 @@ export function createAutonomousSubmissionOutboxRepository({
       const reservationHash = autonomousSubmissionSideEffectReservationHash(request, {
         requestVerifier: submissionRequestVerifier,
       });
+      const authorizationConsumption = Object.freeze({
+        nonce: request.humanAuthorizationNonce,
+        authorizationReceiptHash: request.humanAuthorizationReceiptHash,
+        replayKey: request.idempotencyKey,
+        dispatchCycleHash:
+          stateReceipt.autonomousSubmissionDeliveryStateReceiptHash,
+        paperId: request.paperId,
+        messageId,
+        consumedAt: now,
+      });
+      const priorConsumption = store.query(`SELECT nonce FROM
+        submission_authorization_consumptions
+        WHERE nonce=${sqlText(authorizationConsumption.nonce)}
+        OR authorization_receipt_hash=${sqlText(
+    authorizationConsumption.authorizationReceiptHash)}
+        OR replay_key=${sqlText(authorizationConsumption.replayKey)} LIMIT 1;`).rows[0];
+      if (priorConsumption) {
+        throw new Error('autonomous_submission_human_authorization_already_consumed');
+      }
       let mutationReceipt = null;
       if (externallyFencedMutations) {
         const ledgerMutation = preparedSqliteReceiptLedgerMutation(ledger);
         const applyMutation = (transaction) => {
+          transaction.run(
+            S.consumeAutonomousAuthorization,
+            authorizationConsumption.nonce,
+            authorizationConsumption.authorizationReceiptHash,
+            authorizationConsumption.replayKey,
+            authorizationConsumption.dispatchCycleHash,
+            authorizationConsumption.paperId,
+            authorizationConsumption.messageId,
+            authorizationConsumption.consumedAt,
+          );
           const updated = transaction.run(
             S.beginAutonomousSubmissionAttempt,
             stateReceipt.attempt,
@@ -335,6 +384,7 @@ export function createAutonomousSubmissionOutboxRepository({
         };
         const mutationAuthority = {
           authorizationReceiptHashes: authorizationHashes(
+            request.humanAuthorizationReceiptHash,
             request.qualificationReceiptHash,
             request.venueComplianceReceiptHash,
           ),
@@ -356,6 +406,18 @@ export function createAutonomousSubmissionOutboxRepository({
         assertMutationReceipt(mutationReceipt);
       } else {
         suppliedStore.transaction((transaction) => {
+          const consumed = transaction.execute(`INSERT INTO submission_authorization_consumptions(
+            nonce,authorization_receipt_hash,replay_key,dispatch_cycle_hash,paper_id,message_id,
+            consumed_at) VALUES(${sqlText(authorizationConsumption.nonce)},
+            ${sqlText(authorizationConsumption.authorizationReceiptHash)},
+            ${sqlText(authorizationConsumption.replayKey)},
+            ${sqlText(authorizationConsumption.dispatchCycleHash)},
+            ${sqlText(authorizationConsumption.paperId)},
+            ${sqlText(authorizationConsumption.messageId)},
+            ${sqlText(authorizationConsumption.consumedAt)});`);
+          if (!consumed.ok) {
+            throw new Error('autonomous_submission_human_authorization_already_consumed');
+          }
           const updated = transaction.query(`UPDATE submission_outbox SET
             status='in_flight',attempt_count=${stateReceipt.attempt},
             payload_json=${sqlJson(storedEnvelope)},next_attempt_at=${sqlText(now)},

@@ -11,6 +11,9 @@ import {
 } from './campaign-agent-node-orchestrator.mjs';
 import { executeCampaignEmpiricalNode } from './campaign-empirical-node-orchestrator.mjs';
 import {
+  executeCampaignAdvancedNumericalNode,
+} from './campaign-advanced-numerical-node-orchestrator.mjs';
+import {
   executeCampaignConvergenceNode,
   executeCampaignPackageNode,
   executeCampaignQualityRevalidationNode,
@@ -37,6 +40,7 @@ async function executeOperation({
   input,
   experimentRegistryAuthorityVerifier,
   reviewerEvidenceAuthority,
+  advancedNumericalExecution,
 }) {
   const { workspace, manuscript } = primitives.workspace.describe({ sourceWorkspace: campaign.spec.sourceWorkspace });
   const common = {
@@ -51,6 +55,10 @@ async function executeOperation({
     executionResources: input.executionResources || null,
   };
   switch (context.operation) {
+    case 'advanced-numerical': return executeCampaignAdvancedNumericalNode({
+      ...common,
+      advancedNumericalExecution,
+    });
     case 'formal-verification': return executeCampaignFormalVerificationNode(common);
     case 'research-verification': return executeCampaignResearchVerificationNode(common);
     case 'agent': return executeCampaignAgentNode(common);
@@ -72,6 +80,7 @@ export function createCampaignNodeExecutor({
   signedReviewerReceiptVerifier = null,
   sessionReviewerReceiptVerifier = null,
   reviewerEvidenceAuthority = null,
+  advancedNumericalExecution = null,
 } = {}) {
   if (signedReviewerReceiptVerifier !== null
     && typeof signedReviewerReceiptVerifier !== 'function') {
@@ -109,6 +118,7 @@ export function createCampaignNodeExecutor({
         input,
         experimentRegistryAuthorityVerifier,
         reviewerEvidenceAuthority,
+        advancedNumericalExecution,
       });
       if (!workspaceAttempt) return result;
       return Object.freeze({

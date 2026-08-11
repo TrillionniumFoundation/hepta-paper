@@ -5,6 +5,9 @@ import { runResearchVerifyAdapter } from '../research-verify/index.mjs';
 import { assertCampaignResearchVerifierPort } from '../../paper-ports/campaign-research-verifier-port.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { verifyExperimentReplayReceipt, verifyExperimentRunReceipt } from '../../paper-domain/automation/experiment-run-contract.mjs';
+import {
+  buildCampaignEmpiricalAttemptId,
+} from '../../paper-domain/automation/campaign-empirical-attempt-identity.mjs';
 import { hashWorkspaceFile } from './campaign-node-workspace-support.mjs';
 import { inspectWorkspaceExecutionSnapshot, sourceTreeExcludedNames } from '../runtime/execution-snapshot.mjs';
 import { isPathWithin } from '../../workflow-kernel/runtime/path-utils.mjs';
@@ -19,6 +22,9 @@ import {
 import { recordCampaignExperimentReceipts } from './campaign-experiment-receipt-recorder.mjs';
 import { runCampaignExternalResearchReplay } from './campaign-external-research-replay.mjs';
 import { verifyCampaignFormalResearch } from './campaign-formal-research-verifier.mjs';
+import {
+  verifyCampaignAdvancedNumericalExecutionResult,
+} from '../../paper-domain/automation/advanced-numerical-campaign-execution-contract.mjs';
 
 export {
   runFencedFormalNativeResearchWorkers,
@@ -41,6 +47,15 @@ function replayProfile(kind) {
 
 function sourceClosureTerminal(node) {
   return Boolean(node?.sourceClosureTerminal || node?.spec?.sourceClosureTerminal);
+}
+
+function expectedCampaignEmpiricalAttemptId(campaign, node, receipt) {
+  return buildCampaignEmpiricalAttemptId({
+    campaignId: campaign.campaignId,
+    nodeId: node.nodeId,
+    attemptId: node.attemptId,
+    attemptVersion: receipt?.preDataAccessFreeze?.attemptVersion || 1,
+  });
 }
 
 export function createCampaignResearchVerifier({
@@ -271,6 +286,57 @@ export function createCampaignResearchVerifier({
       } else if (formalDependencyNodes.length || formalVerificationReceipt) {
         throw new Error('campaign_research_unrequested_formal_verification_dependency');
       }
+      const advancedNumericalPlan = campaign.spec.advancedNumericalExecutionPlan || null;
+      const advancedNumericalDependencyNodes = authoritativeNodes.filter((candidate) => (
+        directDependencies.has(candidate.nodeId)
+          && candidate.kind === 'advanced-numerical-analysis'
+      ));
+      let advancedNumericalExecutionEvidence = null;
+      if (advancedNumericalPlan) {
+        if (advancedNumericalDependencyNodes.length !== 1) {
+          throw new Error('campaign_research_advanced_numerical_dependency_required');
+        }
+        const advancedNode = assertCompletedNodeResult(
+          advancedNumericalDependencyNodes[0],
+          'advanced_numerical_node',
+        );
+        if (!verifyCampaignAdvancedNumericalExecutionResult(advancedNode.result, {
+          campaign,
+          node: advancedNode,
+          plan: advancedNumericalPlan,
+        })) {
+          throw new Error('campaign_research_advanced_numerical_evidence_invalid');
+        }
+        const {
+          workspaceAttemptIntegration: _workspaceAttemptIntegration,
+          ...advancedNumericalSemanticResult
+        } = advancedNode.result;
+        advancedNumericalExecutionEvidence = Object.freeze({
+          nodeId: advancedNode.nodeId,
+          attemptId: advancedNode.attemptId,
+          leaseGeneration: advancedNode.leaseGeneration,
+          nodeResultHash: advancedNode.resultSha256,
+          executionPlanHash:
+            advancedNumericalPlan.advancedNumericalCampaignExecutionPlanHash,
+          executionReceiptHash:
+            advancedNode.result.advancedNumericalCampaignExecutionReceiptHash,
+          evidenceHash: advancedNode.result.advancedNumericalCampaignEvidenceHash,
+          evidenceDocumentHash: advancedNode.result.evidenceDocumentHash,
+          productionQualified: advancedNode.result.productionQualified,
+          promotionEligible: advancedNode.result.promotionEligible,
+          result: Object.freeze(advancedNumericalSemanticResult),
+        });
+        if (!advancedNumericalExecutionEvidence.promotionEligible) {
+          const error = new Error(
+            'campaign_research_advanced_numerical_production_qualification_required',
+          );
+          error.retryable = false;
+          error.receipt = advancedNode.result;
+          throw error;
+        }
+      } else if (advancedNumericalDependencyNodes.length) {
+        throw new Error('campaign_research_unplanned_advanced_numerical_dependency');
+      }
       const latestReplayByProfile = new Map();
       for (const candidate of authoritativeNodes) {
         if (!directDependencies.has(candidate.nodeId) || candidate.status !== 'completed'
@@ -298,8 +364,10 @@ export function createCampaignResearchVerifier({
           || !verifyExperimentReplayReceipt(replayReceipt)
           || replayReceipt.originalExperimentRunReceiptHash !== originalRunReceipt.experimentRunReceiptHash
           || replayReceipt.replayExperimentRunReceiptHash !== replayRunReceipt.experimentRunReceiptHash
-          || originalRunReceipt.experimentAttemptId !== `${campaign.campaignId}:${originalNode.nodeId}:${originalNode.attemptId}`
-          || replayRunReceipt.experimentAttemptId !== `${campaign.campaignId}:${replayNode.nodeId}:${replayNode.attemptId}`
+          || originalRunReceipt.experimentAttemptId
+            !== expectedCampaignEmpiricalAttemptId(campaign, originalNode, originalRunReceipt)
+          || replayRunReceipt.experimentAttemptId
+            !== expectedCampaignEmpiricalAttemptId(campaign, replayNode, replayRunReceipt)
           || originalRunReceipt.sourceLineageHash !== currentSourceLineageHash
           || replayRunReceipt.sourceLineageHash !== currentSourceLineageHash
           || originalRunReceipt.sourceMerkleHash !== currentExecutionSnapshot.merkleHash
@@ -380,7 +448,13 @@ export function createCampaignResearchVerifier({
         formalReviewEnvelope: authoritativeFormalReceipt?.formalReviewEnvelope || formalReviewEnvelope,
         nativeResearchWorkerExecutionOverride: authoritativeFormalReceipt?.nativeResearchWorkerExecution || null,
         campaignExperiments,
-        campaignEvidenceContext,
+        campaignEvidenceContext: Object.freeze({
+          ...campaignEvidenceContext,
+          advancedNumericalCampaignExecutionReceiptHash:
+            advancedNumericalExecutionEvidence?.executionReceiptHash || null,
+          advancedNumericalCampaignEvidenceHash:
+            advancedNumericalExecutionEvidence?.evidenceHash || null,
+        }),
         campaignResearchSourceSnapshot,
         operatorDatasetHarnessAuthorityVerifier,
         rawEventRecomputationVerifier,
@@ -429,6 +503,11 @@ export function createCampaignResearchVerifier({
         externalReplayRequestHash: externalReplayRequest?.requestHash || null,
         externalResearchReplayReceiptHash:
           externalReplayReceipt?.externalResearchReplayReceiptHash || null,
+        advancedNumericalCampaignExecutionReceiptHash:
+          advancedNumericalExecutionEvidence?.executionReceiptHash || null,
+        advancedNumericalCampaignEvidenceHash:
+          advancedNumericalExecutionEvidence?.evidenceHash || null,
+        advancedNumericalExecutionEvidence,
         externalActionPerformed: Boolean(externalReplayReceipt),
       };
       return Object.freeze({

@@ -510,6 +510,46 @@ test('systemd bootstrap, isolated layout service, and installer form a fresh-hos
     assert.match(watcher, /^PathExists=.*submission-handoff\.sqlite$/m);
     assert.match(watcher, /^Requires=hepta-paper-host-bootstrap\.service$/m);
 
+    const residentProvisioningGuards = Object.freeze({
+      'autonomous-research-supervisor.service': Object.freeze([
+        'ConditionPathExists=/opt/hepta-paper/paper-core/bin/hepta-paper.mjs',
+        'ConditionPathExists=/etc/hepta-paper/autonomous-research-supervisor.env',
+        'ConditionPathExists=/etc/hepta-paper/autonomous-research-provider.secrets.env',
+        'ConditionPathExists=/var/lib/hepta-paper/runtime/autonomous-research/submission-handoff/submission-handoff.sqlite',
+        'ConditionPathExists=/var/run/docker.sock',
+        'ConditionPathExists=/srv/hepta-paper/assets',
+        'ConditionPathExists=/srv/hepta-paper/datasets',
+        'ConditionPathExists=/etc/hepta-paper/authority-rotation',
+        'ConditionPathExists=/etc/hepta-paper/capabilities-public',
+        'ConditionPathExists=/etc/hepta-paper/online-mutation-authority',
+        'ConditionPathExists=/etc/hepta-paper/submission-handoff-authority',
+        'ConditionPathExists=/etc/hepta-paper/state-backup-authority',
+        'ExecCondition=/usr/bin/test -d ${HEPTA_PAPER_ASSET_ROOT}',
+        'ExecCondition=/usr/bin/test -d ${HEPTA_AUTONOMOUS_RESEARCH_DATASET_ROOT}',
+        'ExecCondition=/usr/bin/test -d ${HEPTA_PAPER_RUNTIME_ROOT}',
+        'ExecCondition=/usr/bin/test -r ${HEPTA_AUTONOMOUS_RESEARCH_INTAKE_CONFIG}',
+        'ExecCondition=/usr/bin/test -r ${HEPTA_AUTONOMOUS_RESEARCH_TOPIC_PRODUCER_PROFILE}',
+        'ExecCondition=/usr/bin/test -r ${HEPTA_AUTONOMOUS_RESEARCH_ONLINE_MUTATION_AUTHORITY_PROCESS_CONFIG}',
+        'ExecCondition=/usr/bin/test -r ${HEPTA_AUTONOMOUS_RESEARCH_STATE_BACKUP_AUTHORITY_CONFIG}',
+      ]),
+      'autonomous-submission-dispatcher.service': Object.freeze([
+        'ConditionPathExists=/opt/hepta-paper/paper-core/bin/hepta-paper.mjs',
+        'ConditionPathExists=/etc/hepta-paper/autonomous-submission-dispatcher.env',
+        'ConditionPathExists=/etc/hepta-paper/autonomous-submission-dispatcher.secrets.env',
+        'ConditionPathExists=/var/lib/hepta-paper/runtime/autonomous-research/submission-handoff/submission-handoff.sqlite',
+        'ConditionPathExists=/srv/hepta-paper/assets',
+        'ConditionPathExists=/etc/hepta-paper/capabilities-public',
+        'ConditionPathExists=/etc/hepta-paper/submission-portal',
+        'ConditionPathExists=/etc/hepta-paper/submission-dispatcher-signer',
+        'ConditionPathExists=/etc/hepta-paper/release-attestor',
+        'ConditionPathExists=/etc/hepta-paper/submission-handoff-authority',
+        'ExecCondition=/usr/bin/test -d ${HEPTA_PAPER_ASSET_ROOT}',
+        'ExecCondition=/usr/bin/test -d ${HEPTA_PAPER_RUNTIME_ROOT}',
+        'ExecCondition=/usr/bin/test -r ${HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIG}',
+        'ExecCondition=/usr/bin/test -r ${HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_CONFIG}',
+        'ExecCondition=/usr/bin/test -r ${HEPTA_AUTONOMOUS_SUBMISSION_HANDOFF_MUTATION_AUTHORITY_PROCESS_CONFIG}',
+      ]),
+    });
     for (const name of [
       'autonomous-research-supervisor.service',
       'autonomous-submission-dispatcher.service',
@@ -521,12 +561,22 @@ test('systemd bootstrap, isolated layout service, and installer form a fresh-hos
       assert.match(unit, new RegExp(`^${expectedRequires.replaceAll('.', '\\.')}$`, 'm'));
       assert.match(unit, /^Wants=.*autonomous-submission-handoff-layout-provision\.path/m);
       assert.doesNotMatch(unit, /^ExecStartPre=\+/m);
+      assert.doesNotMatch(unit, /^ExecCondition=\+/m);
+      assert.doesNotMatch(unit, /^StartLimitIntervalSec=0$/m);
+      assert.match(unit, /^StartLimitIntervalSec=15min$/m);
+      assert.match(unit, /^StartLimitBurst=5$/m);
       assert.match(unit, /^Restart=always$/m);
+      for (const guard of residentProvisioningGuards[name]) {
+        assert.ok(unit.split('\n').includes(guard), `${name}:${guard}`);
+      }
     }
     const supervisor = fs.readFileSync(
       path.join(DEPLOY_ROOT, 'autonomous-research-supervisor.service'),
       'utf8',
     );
+    assert.match(supervisor,
+      /^InaccessiblePaths=\/etc\/hepta-paper\/submission-portal \/etc\/hepta-paper\/submission-dispatcher-signer$/m);
+    assert.doesNotMatch(supervisor, /^InaccessiblePaths=(?:-|.* -)/m);
     assert.match(supervisor, /^After=.*docker\.service$/m);
     assert.match(supervisor, /^Wants=.*docker\.service$/m);
     assert.match(supervisor,

@@ -126,6 +126,15 @@ CREATE TABLE IF NOT EXISTS submission_outbox(
   provider_capability_verification_receipt_hash TEXT,
   portal_route TEXT
 );
+CREATE TABLE IF NOT EXISTS submission_authorization_consumptions(
+  nonce TEXT PRIMARY KEY,
+  authorization_receipt_hash TEXT NOT NULL UNIQUE,
+  replay_key TEXT NOT NULL UNIQUE,
+  dispatch_cycle_hash TEXT NOT NULL UNIQUE,
+  paper_id TEXT NOT NULL,
+  message_id TEXT NOT NULL UNIQUE REFERENCES submission_outbox(message_id),
+  consumed_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS idx_handoff_outbox_status_time
   ON submission_outbox(status,next_attempt_at,created_at,message_id);
 CREATE INDEX IF NOT EXISTS idx_handoff_outbox_campaign

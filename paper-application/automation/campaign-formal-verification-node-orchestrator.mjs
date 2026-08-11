@@ -16,6 +16,9 @@ import {
 import {
   createTypedTheoremDependencyGraph,
 } from '../../paper-domain/research/typed-theorem-dependency-graph.mjs';
+import {
+  verifyCampaignResearchVerificationInput,
+} from '../../paper-domain/automation/campaign-research-contract.mjs';
 
 function syntheticFormalNode(node, kind, iteration) {
   const suffix = `${kind}:${iteration}`;
@@ -99,6 +102,19 @@ export async function executeCampaignFormalVerificationNode({
   executionSignal,
   executionResources = null,
 } = {}) {
+  const researchVerificationInput = campaign.spec?.researchVerificationInput || null;
+  const researchVerificationInputVerification = verifyCampaignResearchVerificationInput(
+    researchVerificationInput,
+    { paperId: campaign.paperId },
+  );
+  const formalPaperTaskKey = researchVerificationInputVerification.valid
+    ? researchVerificationInput.paperTask.taskKey : null;
+  if (!formalPaperTaskKey
+    || typeof primitives.agent.finalizeFormalWorkerPlan !== 'function') {
+    throw blockedFormalResult({
+      blockers: ['formal_worker_plan_task_binding_missing'],
+    });
+  }
   const theoremSpecification = primitives.workspace.readTheoremSpecification({
     workspace,
     manuscriptPath: manuscript,
@@ -132,6 +148,7 @@ export async function executeCampaignFormalVerificationNode({
       executionSignal,
     }),
     typedTheoremObligationBundle,
+    theoremSpecification,
     formalProofSearchPlan,
     candidate: formalProofSearchPlan.candidates[0],
   });
@@ -153,15 +170,12 @@ export async function executeCampaignFormalVerificationNode({
   let currentAuthorReceipt = initialAuthorReceipt;
 
   for (let iteration = 0; iteration < formalProofSearchPlan.candidateCount; iteration += 1) {
-    const formalPaperTaskKey = campaign.spec?.researchVerificationInput?.paperTask?.taskKey;
-    if (formalPaperTaskKey) {
-      primitives.agent.finalizeFormalWorkerPlan?.({
-        workspace,
-        paperId: campaign.paperId,
-        taskKey: formalPaperTaskKey,
-        theoremSpecification,
-      });
-    }
+    primitives.agent.finalizeFormalWorkerPlan({
+      workspace,
+      paperId: campaign.paperId,
+      taskKey: formalPaperTaskKey,
+      theoremSpecification,
+    });
     const formalProofSearchCandidate = formalProofSearchPlan.candidates[iteration];
     const multiTheorem = typedTheoremDependencyGraph.nodeCount > 1;
     const formalProofSearchOperationReceipt = multiTheorem ? null
@@ -345,6 +359,7 @@ export async function executeCampaignFormalVerificationNode({
         signal: executionSignal,
       }),
       typedTheoremObligationBundle,
+      theoremSpecification,
       formalProofSearchPlan,
       candidate: formalProofSearchPlan.candidates[repairIteration],
     });

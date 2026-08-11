@@ -27,6 +27,7 @@ import {
 import {
   buildHarnessAnalysisObservationAuthority,
   verifyHarnessAnalysisProtocolBinding,
+  verifyHarnessOperatorAnalysisProtocolAuthority,
 } from '../../paper-domain/automation/analysis-protocol-run-binding.mjs';
 import { validateOperatorDatasetHarnessDefinition } from '../../paper-domain/automation/operator-dataset-harness-contract.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
@@ -578,6 +579,40 @@ test('numeric residual, tolerance, convergence, condition, and property-oracle c
     assert.equal(evaluated.status, 'academic_analysis_protocol_blocked', blocker);
     assert.ok(evaluated.blockers.includes(blocker), `${blocker}:${JSON.stringify(evaluated.blockers)}`);
   }
+});
+
+test('dataset-backed local authority binds the operator analysis protocol without academic promotion', () => {
+  const fixture = protocolFixture('ml_algorithm_benchmark');
+  const operatorAuthority = {
+    analysisProtocol: fixture.design.analysisProtocol,
+    analysisProtocolHash: fixture.design.analysisProtocolHash,
+  };
+  const localReceipt = {
+    benchmarkSelector: {
+      selectorType: 'authorized_dataset_mount',
+      authorityScope: 'local-operator-golden-runtime-only-v1',
+      academicPromotionEligible: false,
+    },
+    operatorDatasetHarnessAuthority: operatorAuthority,
+  };
+  assert.equal(verifyHarnessOperatorAnalysisProtocolAuthority(
+    localReceipt, fixture.design,
+  ), true);
+  assert.equal(verifyHarnessOperatorAnalysisProtocolAuthority({
+    ...localReceipt,
+    operatorDatasetHarnessAuthority: {
+      ...operatorAuthority,
+      analysisProtocolHash: hashRecord('WrongOperatorProtocol', {}),
+    },
+  }, fixture.design), false);
+  assert.equal(verifyHarnessOperatorAnalysisProtocolAuthority({
+    benchmarkSelector: { selectorType: 'builtin_benchmark_suite' },
+    operatorDatasetHarnessAuthority: operatorAuthority,
+  }, fixture.design), false);
+  assert.equal(verifyHarnessOperatorAnalysisProtocolAuthority({
+    benchmarkSelector: { selectorType: 'builtin_benchmark_suite' },
+    operatorDatasetHarnessAuthority: null,
+  }, fixture.design), true);
 });
 
 test('self-minted property-oracle booleans cannot replace per-cell hidden-oracle recomputation evidence', () => {

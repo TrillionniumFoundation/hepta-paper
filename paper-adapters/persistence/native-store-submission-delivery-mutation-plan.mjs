@@ -56,6 +56,8 @@ export const NATIVE_STORE_SUBMISSION_DELIVERY_STATEMENT_IDS = Object.freeze({
     'submission.delivery.cursor.advance.v1',
   beginAutonomousSubmissionAttempt:
     'submission.delivery.autonomous.begin-attempt.v1',
+  consumeAutonomousAuthorization:
+    'submission.delivery.autonomous.authorization-consume.v1',
   claimOutbox:
     'submission.delivery.outbox.claim.v1',
   claimResponse:
@@ -178,6 +180,9 @@ const plans = [
     receiptInsert(false),
   ]),
   operation(O.beginAutonomousSubmissionAttempt, [
+    run(S.consumeAutonomousAuthorization, `INSERT INTO submission_authorization_consumptions(
+      nonce,authorization_receipt_hash,replay_key,dispatch_cycle_hash,paper_id,message_id,consumed_at
+    ) VALUES(?,?,?,?,?,?,?)`),
     run(S.beginAutonomousSubmissionAttempt, `UPDATE submission_outbox SET
       status='in_flight',attempt_count=?,payload_json=?,next_attempt_at=?,updated_at=?
       WHERE delivery_kind='autonomous' AND message_id=? AND status=?

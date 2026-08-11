@@ -1,27 +1,150 @@
 {
   "version": 1,
   "kind": "ColdVolumeMountContract",
-  "contractId": "ndu-nature-work-thundero-ext4-v1",
-  "mountRoot": "/media/qian-qi/THUNDERO_EXT4",
+  "contractId": "ndu-nature-work-toshiba-inventory-smr-v3",
+  "mountRoot": "/mnt/hepta-paper-external",
+  "expectedStorageIdentity": {
+    "filesystemType": "ext4",
+    "filesystemUuid": "39324240-9c85-4d8a-a1b2-711f26c4ff77",
+    "partitionUuid": "7cb85044-3be4-4756-9c7e-bfd6be3eb49f"
+  },
   "contentRoot": "paper_factory_cold/drafts/NDU_Nature_work",
   "sentinelRelativePath": "paper_factory_cold/HEPTA_COLD_VOLUME_MANIFEST.json",
-  "availabilityPolicy": "fail_closed_for_operational_replay",
-  "contentManifestRequiredWhenMounted": true,
-  "entries": [
-    "CNP_derivatives",
-    "CNP_derivatives_bartonly_batch5_after_cleanpilot",
-    "CNP_derivatives_bartonly_batch6_after_batch5",
-    "CNP_derivatives_bartonly_batch7_after_batch6",
-    "CNP_fmriprep_work",
-    "CNP_fmriprep_work_bartonly_batch5_after_cleanpilot",
-    "CNP_fmriprep_work_bartonly_batch6_after_batch5",
-    "CNP_fmriprep_work_bartonly_batch7_after_batch6",
-    "CNP_taskswitch_secondlevel_group_20260323_primary",
-    "derivatives",
-    "ds004323_probe/dump",
-    "ds004323_probe/fmriprep_ds004323_pilot_sub03_run01",
-    "fmriprep_work",
-    "fmriprep_work_fullsample",
-    "ndu_empirical_tests_20260326"
+  "availabilityPolicy": "inventory_only_not_release_blocking",
+  "contentManifestRequiredWhenMounted": false,
+  "storageAccessPolicy": {
+    "mediaTechnology": "smr",
+    "sourceReadPolicy": "sequential_read_only",
+    "writerPolicy": "single_writer_append_new_files_only",
+    "inPlaceMutationAllowed": false,
+    "coldCasRoot": "/data/home-data/hepta-paper-cold-object-store",
+    "coldCasPlacementPolicy": "must_not_share_cold_volume"
+  },
+  "rawDatasetRoots": [
+    {
+      "datasetId": "openneuro:ds000030",
+      "relativePath": "neural_datasets/ds000030-download",
+      "role": "raw_source_only_not_derived_artifact"
+    },
+    {
+      "datasetId": "openneuro:ds004323",
+      "relativePath": "neural_datasets/ds004323",
+      "role": "raw_source_only_not_derived_artifact"
+    },
+    {
+      "datasetId": "openneuro:ds005364",
+      "relativePath": "neural_datasets/ds005364",
+      "role": "raw_source_only_not_derived_artifact"
+    }
+  ],
+  "releaseScope": {
+    "releaseLine": "0.21",
+    "status": "historical_derived_entries_retired",
+    "decisionId": "retire-ndu-derived-v0.21-20260811",
+    "decisionDate": "2026-08-11",
+    "supersededContractId": "ndu-nature-work-thundero-ext4-v1",
+    "supersededContractFileSha256": "sha256:14910f0f3fcc421c216edeb3f88b77a6dc95612f750085d6b8424c544eb8b15f",
+    "activeEntryCount": 0,
+    "retiredEntryCount": 15,
+    "retiredInventoryHash": "sha256:1e61b97e31be781278512a5cf716642af0d0c86beddd9da25e21c255ab36ad38",
+    "coldCasRequired": false,
+    "rawDatasetRootsReleaseBlocking": false
+  },
+  "entries": [],
+  "retiredEntries": [
+    {
+      "relative": "CNP_derivatives",
+      "priorDisposition": "missing",
+      "reason": "operator_retired_from_v0.21_release_scope",
+      "relatedRawDatasetIds": ["openneuro:ds000030"]
+    },
+    {
+      "relative": "CNP_derivatives_bartonly_batch5_after_cleanpilot",
+      "priorDisposition": "missing",
+      "reason": "operator_retired_from_v0.21_release_scope",
+      "relatedRawDatasetIds": ["openneuro:ds000030"]
+    },
+    {
+      "relative": "CNP_derivatives_bartonly_batch6_after_batch5",
+      "priorDisposition": "missing",
+      "reason": "operator_retired_from_v0.21_release_scope",
+      "relatedRawDatasetIds": ["openneuro:ds000030"]
+    },
+    {
+      "relative": "CNP_derivatives_bartonly_batch7_after_batch6",
+      "priorDisposition": "missing",
+      "reason": "operator_retired_from_v0.21_release_scope",
+      "relatedRawDatasetIds": ["openneuro:ds000030"]
+    },
+    {
+      "relative": "CNP_fmriprep_work",
+      "priorDisposition": "rebuildable",
+      "reason": "operator_retired_from_v0.21_release_scope",
+      "relatedRawDatasetIds": ["openneuro:ds000030"]
+    },
+    {
+      "relative": "CNP_fmriprep_work_bartonly_batch5_after_cleanpilot",
+      "priorDisposition": "rebuildable",
+      "reason": "operator_retired_from_v0.21_release_scope",
+      "relatedRawDatasetIds": ["openneuro:ds000030"]
+    },
+    {
+      "relative": "CNP_fmriprep_work_bartonly_batch6_after_batch5",
+      "priorDisposition": "rebuildable",
+      "reason": "operator_retired_from_v0.21_release_scope",
+      "relatedRawDatasetIds": ["openneuro:ds000030"]
+    },
+    {
+      "relative": "CNP_fmriprep_work_bartonly_batch7_after_batch6",
+      "priorDisposition": "rebuildable",
+      "reason": "operator_retired_from_v0.21_release_scope",
+      "relatedRawDatasetIds": ["openneuro:ds000030"]
+    },
+    {
+      "relative": "CNP_taskswitch_secondlevel_group_20260323_primary",
+      "priorDisposition": "missing",
+      "reason": "operator_retired_from_v0.21_release_scope",
+      "relatedRawDatasetIds": ["openneuro:ds000030"]
+    },
+    {
+      "relative": "derivatives",
+      "priorDisposition": "missing",
+      "reason": "operator_retired_from_v0.21_release_scope",
+      "relatedRawDatasetIds": ["openneuro:ds005364"]
+    },
+    {
+      "relative": "ds004323_probe/dump",
+      "priorDisposition": "missing",
+      "reason": "operator_retired_from_v0.21_release_scope",
+      "relatedRawDatasetIds": ["openneuro:ds004323"]
+    },
+    {
+      "relative": "ds004323_probe/fmriprep_ds004323_pilot_sub03_run01",
+      "priorDisposition": "missing",
+      "reason": "operator_retired_from_v0.21_release_scope",
+      "relatedRawDatasetIds": ["openneuro:ds004323"]
+    },
+    {
+      "relative": "fmriprep_work",
+      "priorDisposition": "rebuildable",
+      "reason": "operator_retired_from_v0.21_release_scope",
+      "relatedRawDatasetIds": ["openneuro:ds005364"]
+    },
+    {
+      "relative": "fmriprep_work_fullsample",
+      "priorDisposition": "rebuildable",
+      "reason": "operator_retired_from_v0.21_release_scope",
+      "relatedRawDatasetIds": ["openneuro:ds005364"]
+    },
+    {
+      "relative": "ndu_empirical_tests_20260326",
+      "priorDisposition": "missing",
+      "reason": "operator_retired_from_v0.21_release_scope",
+      "relatedRawDatasetIds": [
+        "openneuro:ds000030",
+        "openneuro:ds004323",
+        "openneuro:ds005364"
+      ]
+    }
   ]
 }

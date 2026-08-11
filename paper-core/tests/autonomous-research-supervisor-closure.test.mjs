@@ -731,7 +731,8 @@ test('systemd and Kubernetes contracts host canonical resident probes without se
     'paper-core/docs/autonomous-research-supervisor.md'), 'utf8');
   assert.match(systemd, /hepta-paper\.mjs operator autonomous-supervisor --/);
   assert.match(systemd, /Restart=always/);
-  assert.match(systemd, /StartLimitIntervalSec=0/);
+  assert.match(systemd, /^StartLimitIntervalSec=15min$/m);
+  assert.match(systemd, /^StartLimitBurst=5$/m);
   assert.match(systemd, /^TimeoutStartSec=1h$/m);
   assert.match(systemd, /KillSignal=SIGTERM/);
   assert.match(systemd, /KillMode=mixed/);
@@ -759,6 +760,14 @@ test('systemd and Kubernetes contracts host canonical resident probes without se
   assert.match(systemd, /\/etc\/hepta-paper\/capabilities-public/);
   assert.match(systemd, /\/etc\/hepta-paper\/online-mutation-authority/);
   assert.match(systemd, /\/etc\/hepta-paper\/state-backup-authority/);
+  assert.match(systemd,
+    /^ConditionPathExists=\/etc\/hepta-paper\/submission-portal$/m);
+  assert.match(systemd,
+    /^ConditionPathExists=\/etc\/hepta-paper\/submission-dispatcher-signer$/m);
+  assert.match(systemd,
+    /^InaccessiblePaths=\/etc\/hepta-paper\/submission-portal \/etc\/hepta-paper\/submission-dispatcher-signer$/m);
+  assert.doesNotMatch(systemd,
+    /^InaccessiblePaths=.*(?:^|\s)-\/etc\/hepta-paper\/(?:submission-portal|submission-dispatcher-signer)/m);
   assert.match(systemd, /^PrivateTmp=yes$/m);
   assert.match(systemd,
     /^SupplementaryGroups=docker hepta-runtime-handoff$/m);

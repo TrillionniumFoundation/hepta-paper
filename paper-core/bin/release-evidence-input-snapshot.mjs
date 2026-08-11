@@ -173,8 +173,17 @@ function projectedContract(value, keys, label) {
 const SEMANTIC_CONTRACT_KEYS = Object.freeze({
   coldVolumeStatus: Object.freeze([
     'version', 'kind', 'status', 'contractId', 'contractHash', 'assetRoot', 'mountRoot',
-    'mountAvailable', 'mountIdentity', 'sentinelPath', 'sentinelHash', 'entryCount',
-    'contractValid', 'operationalReplayReady', 'blockers', 'rows',
+    'mountAvailable', 'mountIdentity', 'mountObservationHash',
+    'targetDirectoryIdentity', 'targetDeviceMajorMinor', 'targetMountId',
+    'mountDeviceMatchesTarget', 'mountIdMatchesTarget', 'mountBindingStable',
+    'expectedStorageIdentityHash', 'storageIdentityMatchesContract',
+    'storageAccessPolicyHash', 'coldCasRoot', 'dispositionHash', 'releaseScopeHash',
+    'releaseScopeRetired', 'releaseGateSatisfied', 'retiredEntryCount',
+    'retiredLogicalPathCount',
+    'rawDatasetRootCount', 'presentDispositionCount', 'rebuildableDispositionCount',
+    'missingDispositionCount', 'rawDatasetRows',
+    'sentinelPath', 'sentinelHash', 'entryCount', 'contractValid',
+    'operationalReplayReady', 'blockers', 'rows',
   ]),
   minimalDifferentialFixture: Object.freeze([
     'version', 'kind', 'status', 'manifestPath', 'archivePath', 'archiveSha256',
@@ -192,11 +201,14 @@ const SEMANTIC_CONTRACT_KEYS = Object.freeze({
   ]),
   coldVolumeCas: Object.freeze([
     'version', 'kind', 'status', 'casRoot', 'manifestPath', 'manifestHash', 'contractId',
-    'contractHash', 'entryCount', 'objectCount', 'blockers',
+    'contractHash', 'releaseScopeHash', 'entryCount', 'objectCount', 'blockers',
   ]),
   offhostWormStatus: Object.freeze([
     'version', 'kind', 'status', 'contractId', 'targetMountRoot', 'mountAvailable',
-    'mountIdentity', 'distinctDevice', 'storageIdentityHash', 'custodyRequired',
+    'mountIdentity', 'mountObservationHash', 'targetDirectoryIdentity',
+    'targetDeviceMajorMinor', 'targetMountId', 'mountDeviceMatchesTarget',
+    'mountIdMatchesTarget', 'expectedStorageIdentityHash',
+    'storageIdentityMatchesContract', 'distinctDevice', 'storageIdentityHash', 'custodyRequired',
     'currentProtectionLevel',
     'custodyDeclaredQualified', 'offHostOrOffsiteCustodyQualified', 'custodyStatus',
     'custodyBlockers', 'custodyEvidenceStatus', 'custodyEvidenceBundleHash',
@@ -375,6 +387,16 @@ export function captureReleaseEvidenceInputSnapshot({
     ...coldVolumeInspection,
     contractHash: coldVolumeContract.file.fileHash,
   });
+  const contractedColdCasRoot = path.resolve(
+    coldVolumeContract.document?.storageAccessPolicy?.coldCasRoot
+      || '/data/home-data/hepta-paper-cold-object-store',
+  );
+  const selectedColdCasRoot = path.resolve(
+    environment.HEPTA_COLD_OBJECT_STORE_ROOT || contractedColdCasRoot,
+  );
+  if (selectedColdCasRoot !== contractedColdCasRoot) {
+    throw new Error('release_evidence_cold_cas_root_contract_mismatch');
+  }
   const minimalDifferentialFixture = verifyLegacyDifferentialReference();
   const immutableMatrixReference = immutableLegacyMatrixReferenceStatus();
 
@@ -383,10 +405,7 @@ export function captureReleaseEvidenceInputSnapshot({
   const productionStoreLogicalIntegrity = productionStoreCapture.report;
 
   const coldVolumeCas = coldVolumeCasStatus({
-    casRoot: path.resolve(
-      environment.HEPTA_COLD_OBJECT_STORE_ROOT
-        || '/data/home-data/hepta-paper-cold-object-store',
-    ),
+    casRoot: selectedColdCasRoot,
     contract: coldVolumeContract.document,
     contractHash: coldVolumeContract.file.fileHash,
   });

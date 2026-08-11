@@ -24,6 +24,9 @@ import {
   removeScopedRegularFileSync,
   stageScopedRegularFileCopySync,
 } from '../runtime/scoped-file-materialization-repository.mjs';
+import {
+  EMPIRICAL_ASSERTION_AUTHORITY_PATH,
+} from './empirical-assertion-authority.mjs';
 
 const EXCLUDED = new Set(['.git', 'node_modules', 'runtime', '.artifact-cas', '.hepta-materialization-recovery', '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache']);
 const MAX_AGENT_WORKSPACE_FILE_BYTES = 8 * 1024 * 1024;
@@ -42,6 +45,9 @@ const RESEARCH_DATA_SUFFIXES = Object.freeze([
 ]);
 const OUTCOME_BEARING_WORKSPACE_PATHS = Object.freeze([
   'automation-results', 'results.json', 'results.csv', 'observation.json',
+]);
+const RETAINED_OVERSIZED_WORKSPACE_PATHS = Object.freeze([
+  EMPIRICAL_ASSERTION_AUTHORITY_PATH,
 ]);
 
 function excludedEntry(entry, candidate = null) {
@@ -124,7 +130,7 @@ function cloneTree(source, destination, sourceRoot = source, destinationRoot = d
   }
 }
 
-function baseline(root, excludedRoots = []) {
+function baseline(root, excludedRoots = [], retainedPaths = []) {
   const rows = new Map();
   const walk = (current) => {
     for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
@@ -142,7 +148,56 @@ function baseline(root, excludedRoots = []) {
     }
   };
   walk(root);
+  for (const relative of retainedPaths) {
+    try {
+      rows.set(relative, inspectScopedRegularFileSync({ scopeRoot: root, relative }).hash);
+    } catch (error) {
+      rows.set(relative, `unsafe:${error?.code || 'file_identity_failed'}`);
+    }
+  }
   return rows;
+}
+
+function retainedOversizedWorkspacePaths(source, oversizedRoots) {
+  return RETAINED_OVERSIZED_WORKSPACE_PATHS.filter((relative) => {
+    const absolute = path.resolve(source, relative);
+    if (!underExcludedRoot(absolute, oversizedRoots)) return false;
+    let stat;
+    try { stat = fs.lstatSync(absolute); }
+    catch (error) {
+      if (error?.code === 'ENOENT') return false;
+      throw error;
+    }
+    if (!stat.isFile() || stat.size > MAX_AGENT_WORKSPACE_FILE_BYTES) {
+      const error = new Error(`isolated_workspace_required_evidence_invalid:${relative}`);
+      error.retryable = false;
+      throw error;
+    }
+    return true;
+  });
+}
+
+function cloneRetainedWorkspaceFiles(source, destination, retainedPaths) {
+  for (const relative of retainedPaths) {
+    const destinationDirectory = path.dirname(path.resolve(destination, relative));
+    fs.mkdirSync(destinationDirectory, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
+    fs.chmodSync(destinationDirectory, PRIVATE_DIRECTORY_MODE);
+    let staged = null;
+    try {
+      staged = stageScopedRegularFileCopySync({
+        sourceRoot: source,
+        destinationRoot: destination,
+        relative,
+        destinationRelative: relative,
+        stageId: `isolated-clone-retained:${relative}`,
+        expectedHash: null,
+        destinationMode: PRIVATE_FILE_MODE,
+      });
+      commitStagedScopedFileSync(staged, { destinationRoot: destination, expectedHash: null });
+    } finally {
+      abortStagedScopedFileSync(staged);
+    }
+  }
 }
 
 function workspaceDelta(before, root) {
@@ -216,6 +271,7 @@ export function createIsolatedAgentExecutor({
       const explicitExcludes = [...new Set([...declaredExcludes, ...outcomeBearingExcludes])];
       const largeDirectoryExcludes = oversizedTopLevelDirectories(source, explicitExcludes);
       const isolationExcludes = [...new Set([...explicitExcludes, ...largeDirectoryExcludes])];
+      const retainedPaths = retainedOversizedWorkspacePaths(source, largeDirectoryExcludes);
       const skipSourceSymlinks = input.isolationPolicy?.skipSourceSymlinks === true;
       const context = input.context || {};
       const operationNodeId = context.operationNodeId || context.nodeId || input.role || 'node';
@@ -227,8 +283,9 @@ export function createIsolatedAgentExecutor({
         || `direct:${nodeKey}`,
       );
       const isolated = path.resolve(resolvedIsolationRoot, nodeKey);
-      const sourceBaseline = baseline(source, isolationExcludes);
+      const sourceBaseline = baseline(source, isolationExcludes, retainedPaths);
       cloneTree(source, isolated, source, resolvedIsolationRoot, isolationExcludes, skipSourceSymlinks);
+      cloneRetainedWorkspaceFiles(source, isolated, retainedPaths);
       const isolatedBaseline = baseline(isolated);
       const workspaceManifestHash = hashRecord('IsolatedWorkspaceManifest', [...isolatedBaseline.entries()].map(([relative, hash]) => ({ relative, hash })));
       const registryEntry = workspaceRegistry?.register({
@@ -393,7 +450,7 @@ export function createIsolatedAgentExecutor({
             .map((candidate) => path.relative(source, candidate).replace(/\\/g, '/'))
             .sort(),
         });
-        const sourcePostimage = baseline(source, isolationExcludes);
+        const sourcePostimage = baseline(source, isolationExcludes, retainedPaths);
         const isolatedAgentMergeReceipt = buildIsolatedAgentMergeReceipt({
           delegateExecutorId: receipt.executorId,
           delegateAgentExecutionReceipt: receipt,

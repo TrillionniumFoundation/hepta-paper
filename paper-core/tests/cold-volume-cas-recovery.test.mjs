@@ -2,15 +2,25 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import test from 'node:test';
 import {
   coldVolumeCasStatus,
   drillColdVolumeCasRestore,
   importColdVolumeToCas,
 } from '../../paper-adapters/archives/cold-volume-cas-repository.mjs';
+import {
+  closePinnedCasDirectoryChain,
+  openPinnedCasAbsoluteDirectoryChain,
+  openPinnedCasChildDirectory,
+} from '../../paper-adapters/archives/cold-volume-cas-path-boundary.mjs';
+import {
+  publishPinnedCasSourceFile,
+} from '../../paper-adapters/archives/cold-volume-cas-publication-repository.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { sha256FileSync } from '../../workflow-kernel/runtime/file-utils.mjs';
+
+const WORKSPACE_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-cold-cas-test-'));
@@ -95,6 +105,373 @@ test('cold-volume content imports to content-addressed objects and restores', (t
   assert.equal(drill.status, 'cold_volume_cas_restore_drill_passed');
   assert.equal(drill.restoredObjectCount, 1);
   assert.equal(drill.expectedObjectCount, 1);
+});
+
+test('formally retired release scope requires no CAS object, import, or restore drill', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-cold-cas-retired-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const casRoot = path.join(root, 'cas-must-not-be-created');
+  const contractPath = path.join(
+    WORKSPACE_ROOT, 'paper-core', 'config', 'cold-volume-contract.v1.json',
+  );
+  const contract = JSON.parse(fs.readFileSync(contractPath, 'utf8'));
+  const status = coldVolumeCasStatus({ casRoot, contract, contractPath });
+  assert.equal(status.status, 'cold_volume_cas_not_required');
+  assert.equal(status.objectCount, 0);
+  assert.deepEqual(status.blockers, []);
+  const imported = importColdVolumeToCas({
+    assetRoot: path.join(root, 'assets'), casRoot, contract, contractPath, execute: true,
+  });
+  assert.equal(imported.status, 'cold_volume_cas_import_not_required');
+  assert.equal(imported.importedObjectCount, 0);
+  assert.equal(imported.externalActionPerformed, false);
+  const drill = drillColdVolumeCasRestore({ casRoot, contract, contractPath });
+  assert.equal(drill.status, 'cold_volume_cas_restore_drill_not_required');
+  assert.equal(drill.expectedObjectCount, 0);
+  assert.equal(drill.restoredObjectCount, 0);
+  assert.equal(fs.existsSync(casRoot), false);
+});
+
+test('reimport preserves an existing CAS inode and consumes its temporary archive', (t) => {
+  const selected = fixture(t);
+  const first = importColdVolumeToCas({
+    ...selected, execute: true, mountAvailableOverride: true,
+  });
+  const manifest = JSON.parse(fs.readFileSync(first.manifestPath, 'utf8'));
+  const token = manifest.entries[0].objectHash.slice('sha256:'.length);
+  const objectPath = path.join(
+    selected.casRoot, 'objects', token.slice(0, 2), `${token}.tar.gz`,
+  );
+  const before = fs.statSync(objectPath, { bigint: true });
+
+  const second = importColdVolumeToCas({
+    ...selected, execute: true, mountAvailableOverride: true,
+  });
+  const after = fs.statSync(objectPath, { bigint: true });
+  assert.equal(second.status, 'cold_volume_cas_imported');
+  assert.equal(after.dev, before.dev);
+  assert.equal(after.ino, before.ino);
+  assert.equal(after.nlink, 1n);
+  assert.deepEqual(fs.readdirSync(path.join(selected.casRoot, '.staging')), []);
+});
+
+test('import uses private CAS-local staging and removes each archive immediately', (t) => {
+  const selected = fixture(t);
+  const supplement = path.join(selected.contentRoot, 'supplement');
+  fs.mkdirSync(supplement);
+  fs.writeFileSync(path.join(supplement, 'more.txt'), 'more evidence\n');
+  fs.symlinkSync(
+    supplement,
+    path.join(selected.assetRoot, 'drafts', 'NDU_Nature_work', 'supplement'),
+  );
+  selected.contract.entries.push('supplement');
+  fs.writeFileSync(
+    selected.contractPath,
+    `${JSON.stringify(selected.contract, null, 2)}\n`,
+  );
+
+  const originalUnlinkSync = fs.unlinkSync;
+  const removedArchives = [];
+  fs.unlinkSync = function observeImmediateArchiveRemoval(candidate, ...arguments_) {
+    if (String(candidate).endsWith('.tar.gz')
+      && String(candidate).startsWith('/proc/self/fd/')) {
+      const parent = path.dirname(String(candidate));
+      assert.deepEqual(fs.readdirSync(parent), [path.basename(String(candidate))]);
+      const stat = fs.statSync(candidate);
+      assert.equal(stat.nlink, 2);
+      removedArchives.push(Object.freeze({ dev: stat.dev, ino: stat.ino }));
+    }
+    return originalUnlinkSync.call(this, candidate, ...arguments_);
+  };
+  let imported;
+  try {
+    imported = importColdVolumeToCas({
+      ...selected, execute: true, mountAvailableOverride: true,
+    });
+  } finally { fs.unlinkSync = originalUnlinkSync; }
+
+  assert.equal(imported.status, 'cold_volume_cas_imported');
+  assert.equal(imported.importedObjectCount, 2);
+  assert.equal(removedArchives.length, 2);
+  const manifest = JSON.parse(fs.readFileSync(imported.manifestPath, 'utf8'));
+  for (const [index, entry] of manifest.entries.entries()) {
+    const token = entry.objectHash.slice('sha256:'.length);
+    const object = path.join(selected.casRoot, 'objects', token.slice(0, 2), `${token}.tar.gz`);
+    const stat = fs.statSync(object);
+    assert.equal(stat.dev, removedArchives[index].dev);
+    assert.equal(stat.ino, removedArchives[index].ino);
+    assert.equal(stat.nlink, 1);
+  }
+  const staging = path.join(selected.casRoot, '.staging');
+  const stagingStat = fs.statSync(staging);
+  assert.equal(stagingStat.mode & 0o7777, 0o700);
+  assert.equal(stagingStat.dev, fs.statSync(selected.casRoot).dev);
+  assert.deepEqual(fs.readdirSync(staging), []);
+});
+
+test('explicit import staging must be private and on the CAS filesystem', (t) => {
+  const selected = fixture(t);
+  const stagingRoot = path.join(selected.root, 'explicit-staging');
+  fs.mkdirSync(stagingRoot, { mode: 0o700 });
+  const imported = importColdVolumeToCas({
+    ...selected,
+    execute: true,
+    mountAvailableOverride: true,
+    stagingRoot,
+  });
+  assert.equal(imported.status, 'cold_volume_cas_imported');
+  assert.deepEqual(fs.readdirSync(stagingRoot), []);
+
+  const unsafe = fixture(t);
+  const publicStaging = path.join(unsafe.root, 'public-staging');
+  fs.mkdirSync(publicStaging, { mode: 0o755 });
+  assert.throws(() => importColdVolumeToCas({
+    ...unsafe,
+    execute: true,
+    mountAvailableOverride: true,
+    stagingRoot: publicStaging,
+  }), /cold_volume_cas_import_staging_unsafe/u);
+  assert.equal(fs.existsSync(path.join(unsafe.casRoot, 'objects')), false);
+});
+
+test('a process-held import lease serializes default CAS staging', async (t) => {
+  const selected = fixture(t);
+  fs.mkdirSync(selected.casRoot, { mode: 0o755 });
+  const stagingModule = new URL(
+    '../../paper-adapters/archives/cold-volume-cas-import-staging.mjs', import.meta.url,
+  ).href;
+  const pathBoundaryModule = new URL(
+    '../../paper-adapters/archives/cold-volume-cas-path-boundary.mjs', import.meta.url,
+  ).href;
+  const holderSource = `
+    import {
+      acquireColdVolumeCasImportLease,
+      openColdVolumeCasImportStaging,
+      releaseColdVolumeCasImportLease,
+    } from ${JSON.stringify(stagingModule)};
+    import {
+      closePinnedCasDirectoryChain,
+      openPinnedCasAbsoluteDirectoryChain,
+    } from ${JSON.stringify(pathBoundaryModule)};
+    const casRootChain = openPinnedCasAbsoluteDirectoryChain(
+      process.env.HEPTA_TEST_CAS_ROOT,
+      { errorCode: 'cold_volume_cas_import_root_unsafe' },
+    );
+    const staging = openColdVolumeCasImportStaging({ casRootChain, stagingRoot: null });
+    const lease = acquireColdVolumeCasImportLease(staging.directory);
+    try {
+      process.stdout.write('lease-ready\\n');
+      await new Promise((resolve) => process.stdin.once('data', resolve));
+    } finally {
+      releaseColdVolumeCasImportLease(lease);
+      closePinnedCasDirectoryChain(staging.closeChain);
+      closePinnedCasDirectoryChain(casRootChain);
+    }
+  `;
+  const holder = spawn(process.execPath, ['--input-type=module', '-e', holderSource], {
+    env: { ...process.env, HEPTA_TEST_CAS_ROOT: selected.casRoot },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  t.after(() => { if (holder.exitCode === null) holder.kill('SIGKILL'); });
+  let stderr = '';
+  holder.stderr.setEncoding('utf8');
+  holder.stderr.on('data', (chunk) => { stderr += chunk; });
+  const exited = new Promise((resolve) => holder.once('exit', (code, signal) => {
+    resolve({ code, signal });
+  }));
+  await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error('import_lease_holder_timeout')), 5000);
+    let output = '';
+    holder.stdout.setEncoding('utf8');
+    holder.stdout.on('data', (chunk) => {
+      output += chunk;
+      if (output.includes('lease-ready\n')) {
+        clearTimeout(timeout);
+        resolve();
+      }
+    });
+    holder.once('exit', (code) => {
+      clearTimeout(timeout);
+      if (!output.includes('lease-ready\n')) {
+        reject(new Error(`import_lease_holder_failed:${code}:${stderr}`));
+      }
+    });
+  });
+
+  assert.throws(() => importColdVolumeToCas({
+    ...selected, execute: true, mountAvailableOverride: true,
+  }), /cold_volume_cas_import_lease_unavailable/u);
+  assert.deepEqual(fs.readdirSync(path.join(selected.casRoot, '.staging')), [
+    '.cold-volume-cas-import.lock',
+  ]);
+  holder.stdin.end('release\n');
+  const outcome = await exited;
+  assert.deepEqual(outcome, { code: 0, signal: null }, stderr);
+  assert.deepEqual(fs.readdirSync(path.join(selected.casRoot, '.staging')), []);
+
+  const imported = importColdVolumeToCas({
+    ...selected, execute: true, mountAvailableOverride: true,
+  });
+  assert.equal(imported.status, 'cold_volume_cas_imported');
+});
+
+test('pre-existing regular or symlink import leases fail closed without removal', (t) => {
+  for (const kind of ['regular', 'symlink']) {
+    const selected = fixture(t);
+    const stagingRoot = path.join(selected.root, `explicit-staging-${kind}`);
+    const leasePath = path.join(stagingRoot, '.cold-volume-cas-import.lock');
+    fs.mkdirSync(stagingRoot, { mode: 0o700 });
+    if (kind === 'regular') {
+      fs.writeFileSync(leasePath, 'operator-owned lease\n', { mode: 0o600 });
+      fs.chmodSync(leasePath, 0o600);
+    } else {
+      const target = path.join(selected.root, 'operator-owned-lease-target');
+      fs.writeFileSync(target, 'do not follow\n');
+      fs.symlinkSync(target, leasePath);
+    }
+    const before = fs.lstatSync(leasePath, { bigint: true });
+    assert.throws(() => importColdVolumeToCas({
+      ...selected,
+      execute: true,
+      mountAvailableOverride: true,
+      stagingRoot,
+    }), /cold_volume_cas_import_lease_unavailable/u);
+    const after = fs.lstatSync(leasePath, { bigint: true });
+    assert.equal(after.dev, before.dev);
+    assert.equal(after.ino, before.ino);
+    assert.equal(after.isSymbolicLink(), kind === 'symlink');
+    if (kind === 'regular') {
+      assert.equal(fs.readFileSync(leasePath, 'utf8'), 'operator-owned lease\n');
+    }
+    assert.deepEqual(fs.readdirSync(stagingRoot), ['.cold-volume-cas-import.lock']);
+  }
+});
+
+test('source publication streams fixed buffers and preserves an existing object', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-cold-cas-stream-test-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const source = path.join(root, 'large-source.tar.gz');
+  const sourceDescriptor = fs.openSync(source, 'w');
+  const chunk = Buffer.alloc(1024 * 1024, 0x5a);
+  try {
+    for (let index = 0; index < 20; index += 1) {
+      fs.writeSync(sourceDescriptor, chunk, 0, chunk.length, index * chunk.length);
+    }
+    fs.fsyncSync(sourceDescriptor);
+  } finally { fs.closeSync(sourceDescriptor); }
+  const expectedHash = sha256FileSync(source);
+  const token = expectedHash.slice('sha256:'.length);
+  const objectName = `${token}.tar.gz`;
+  const casRoot = path.join(root, 'cas');
+  const casRootChain = openPinnedCasAbsoluteDirectoryChain(casRoot, { create: true });
+  const objectsDirectory = openPinnedCasChildDirectory(casRootChain.at(-1), 'objects', {
+    create: true,
+  });
+  const shardDirectory = openPinnedCasChildDirectory(objectsDirectory, token.slice(0, 2), {
+    create: true,
+  });
+  const objectChain = Object.freeze([...casRootChain, objectsDirectory, shardDirectory]);
+  const sourceIdentity = fs.statSync(source, { bigint: true });
+  const originalReadFileSync = fs.readFileSync;
+  const originalReadSync = fs.readSync;
+  const sourceReads = [];
+  fs.readFileSync = function rejectWholeSourceRead(candidate, ...arguments_) {
+    if (Number.isInteger(candidate)) {
+      const stat = fs.fstatSync(candidate, { bigint: true });
+      if (stat.dev === sourceIdentity.dev && stat.ino === sourceIdentity.ino) {
+        throw new Error('whole_source_read_forbidden');
+      }
+    }
+    return originalReadFileSync.call(this, candidate, ...arguments_);
+  };
+  fs.readSync = function observeSourceRead(descriptor, buffer, offset, length, ...arguments_) {
+    const stat = fs.fstatSync(descriptor, { bigint: true });
+    if (stat.dev === sourceIdentity.dev && stat.ino === sourceIdentity.ino) {
+      sourceReads.push(length);
+    }
+    return originalReadSync.call(this, descriptor, buffer, offset, length, ...arguments_);
+  };
+  try {
+    publishPinnedCasSourceFile(
+      objectChain, objectName, source, expectedHash, 'stream_publication_failed',
+    );
+    assert.ok(sourceReads.length >= 3);
+    assert.ok(Math.max(...sourceReads) <= 8 * 1024 * 1024);
+    const object = path.join(casRoot, 'objects', token.slice(0, 2), objectName);
+    const first = fs.statSync(object, { bigint: true });
+    assert.equal(first.mode & 0o7777n, 0o444n);
+    assert.equal(first.nlink, 1n);
+    assert.equal(sha256FileSync(object), expectedHash);
+
+    sourceReads.length = 0;
+    publishPinnedCasSourceFile(
+      objectChain, objectName, source, expectedHash, 'stream_publication_failed',
+    );
+    const second = fs.statSync(object, { bigint: true });
+    assert.equal(second.dev, first.dev);
+    assert.equal(second.ino, first.ino);
+    assert.equal(second.nlink, 1n);
+    assert.ok(sourceReads.length >= 5);
+    assert.ok(Math.max(...sourceReads) <= 4 * 1024 * 1024);
+  } finally {
+    fs.readFileSync = originalReadFileSync;
+    fs.readSync = originalReadSync;
+    closePinnedCasDirectoryChain([shardDirectory]);
+    closePinnedCasDirectoryChain([objectsDirectory]);
+    closePinnedCasDirectoryChain(casRootChain);
+  }
+});
+
+test('stream publication rejects source path replacement and removes target staging', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-cold-cas-stream-drift-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const source = path.join(root, 'source.tar.gz');
+  fs.writeFileSync(source, Buffer.alloc(12 * 1024 * 1024, 0x31));
+  const expectedHash = sha256FileSync(source);
+  const token = expectedHash.slice('sha256:'.length);
+  const casRoot = path.join(root, 'cas');
+  const casRootChain = openPinnedCasAbsoluteDirectoryChain(casRoot, { create: true });
+  const objectsDirectory = openPinnedCasChildDirectory(casRootChain.at(-1), 'objects', {
+    create: true,
+  });
+  const shardDirectory = openPinnedCasChildDirectory(objectsDirectory, token.slice(0, 2), {
+    create: true,
+  });
+  const objectChain = Object.freeze([...casRootChain, objectsDirectory, shardDirectory]);
+  const sourceIdentity = fs.statSync(source, { bigint: true });
+  const originalReadSync = fs.readSync;
+  let replaced = false;
+  fs.readSync = function replaceSourceAfterFirstRead(
+    descriptor, buffer, offset, length, ...arguments_
+  ) {
+    const bytesRead = originalReadSync.call(
+      this, descriptor, buffer, offset, length, ...arguments_,
+    );
+    const stat = fs.fstatSync(descriptor, { bigint: true });
+    if (!replaced && bytesRead > 0
+      && stat.dev === sourceIdentity.dev && stat.ino === sourceIdentity.ino) {
+      replaced = true;
+      fs.renameSync(source, path.join(root, 'relocated-source.tar.gz'));
+      fs.writeFileSync(source, Buffer.alloc(12 * 1024 * 1024, 0x32));
+    }
+    return bytesRead;
+  };
+  try {
+    assert.throws(() => publishPinnedCasSourceFile(
+      objectChain,
+      `${token}.tar.gz`,
+      source,
+      expectedHash,
+      'stream_publication_source_changed',
+    ), /stream_publication_source_changed/u);
+    assert.equal(replaced, true);
+    assert.deepEqual(fs.readdirSync(path.join(casRoot, 'objects', token.slice(0, 2))), []);
+  } finally {
+    fs.readSync = originalReadSync;
+    closePinnedCasDirectoryChain([shardDirectory]);
+    closePinnedCasDirectoryChain([objectsDirectory]);
+    closePinnedCasDirectoryChain(casRootChain);
+  }
 });
 
 test('current manifest pointer selects the last accepted import instead of the largest digest', (t) => {
@@ -425,6 +802,7 @@ test('execute import cannot escape through a preplaced object shard symlink', (t
     assetRoot, contract, casRoot, execute: true, mountAvailableOverride: true,
   }), /cold_volume_cas_import_object_unsafe/u);
   assert.deepEqual(fs.readdirSync(outside), []);
+  assert.deepEqual(fs.readdirSync(path.join(casRoot, '.staging')), []);
 });
 
 test('execute import cannot escape through a preplaced manifests symlink', (t) => {
@@ -439,6 +817,7 @@ test('execute import cannot escape through a preplaced manifests symlink', (t) =
     assetRoot, contract, casRoot, execute: true, mountAvailableOverride: true,
   }), /cold_volume_cas_import_manifest_unsafe/u);
   assert.deepEqual(fs.readdirSync(outside), []);
+  assert.deepEqual(fs.readdirSync(path.join(casRoot, '.staging')), []);
 });
 
 test('restore drill rejects an object whose extracted inventory exceeds its declared relative', (t) => {
@@ -529,7 +908,7 @@ test('restore drill rejects hardlinks, a file root, and an empty declared direct
   assert.ok(emptyDrill.blockers.includes('cold_volume_cas_restore_payload_empty:derivatives'));
 });
 
-test('cold-volume CAS release gate fails closed when the manifest is missing', (t) => {
+test('cold-volume CAS CLI rejects a root outside the contract', (t) => {
   const casRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-cold-cas-gate-test-'));
   t.after(() => fs.rmSync(casRoot, { recursive: true, force: true }));
   const cwd = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
@@ -537,38 +916,8 @@ test('cold-volume CAS release gate fails closed when the manifest is missing', (
   const status = spawnSync(process.execPath, ['paper-core/bin/cold-volume-cas.mjs', 'status'], {
     cwd, env, encoding: 'utf8',
   });
-  assert.equal(status.status, 0, status.stderr);
-  assert.equal(JSON.parse(status.stdout).status, 'cold_volume_cas_manifest_missing');
-
-  const releaseGate = spawnSync(process.execPath, [
-    'paper-core/bin/cold-volume-cas.mjs', 'status', '--require-ready',
-  ], { cwd, env, encoding: 'utf8' });
-  assert.equal(releaseGate.status, 1, releaseGate.stderr);
-  assert.equal(JSON.parse(releaseGate.stdout).status, 'cold_volume_cas_manifest_missing');
-
-  const manifestRoot = path.join(casRoot, 'manifests');
-  fs.mkdirSync(manifestRoot, { mode: 0o755 });
-  const invalidManifestPath = path.join(manifestRoot, `${'0'.repeat(64)}.json`);
-  fs.writeFileSync(invalidManifestPath, `${JSON.stringify({
-    version: 1,
-    kind: 'ColdVolumeCasManifest',
-    contractId: 'invalid-fixture',
-    contractHash: `sha256:${'1'.repeat(64)}`,
-    entryCount: 0,
-    entries: [],
-    manifestHash: `sha256:${'0'.repeat(64)}`,
-  })}\n`);
-  fs.chmodSync(invalidManifestPath, 0o444);
-  fs.writeFileSync(path.join(manifestRoot, 'current.json'), `${JSON.stringify({
-    version: 1,
-    kind: 'ColdVolumeCasCurrentManifest',
-    manifestHash: `sha256:${'0'.repeat(64)}`,
-  })}\n`, { mode: 0o444 });
-  const invalidGate = spawnSync(process.execPath, [
-    'paper-core/bin/cold-volume-cas.mjs', 'status', '--require-ready',
-  ], { cwd, env, encoding: 'utf8' });
-  assert.equal(invalidGate.status, 1, invalidGate.stderr);
-  assert.equal(JSON.parse(invalidGate.stdout).status, 'cold_volume_cas_blocked');
-  assert.ok(JSON.parse(invalidGate.stdout).blockers.includes('cold_volume_cas_manifest_hash_invalid'));
-  assert.ok(JSON.parse(invalidGate.stdout).blockers.includes('cold_volume_cas_manifest_entries_empty'));
+  assert.notEqual(status.status, 0);
+  assert.match(status.stderr, /cold_volume_cas_root_contract_mismatch/u);
+  assert.equal(status.stdout, '');
+  assert.deepEqual(fs.readdirSync(casRoot), []);
 });

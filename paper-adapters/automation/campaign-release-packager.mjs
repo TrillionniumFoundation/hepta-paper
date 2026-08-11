@@ -77,6 +77,8 @@ export function createCampaignReleasePackager({
       evidenceEntailmentReviewReceipt = null,
       reviewerEvidenceAuthority = null,
       experimentExecutionClosure = null,
+      advancedNumericalExecutionPlan = null,
+      advancedNumericalExecutionEvidence = null,
       runtimeRoot,
       createdAt,
       executionSignal = null,
@@ -278,6 +280,14 @@ export function createCampaignReleasePackager({
           autonomousResearchReleaseBindingHash:
             autonomousResearchReleaseBinding.autonomousResearchReleaseBindingHash,
         } : {}),
+        ...(advancedNumericalExecutionPlan ? {
+          advancedNumericalExecutionPlanHash:
+            advancedNumericalExecutionPlan.advancedNumericalCampaignExecutionPlanHash,
+          advancedNumericalCampaignExecutionReceiptHash:
+            advancedNumericalExecutionEvidence?.executionReceiptHash || null,
+          advancedNumericalCampaignEvidenceHash:
+            advancedNumericalExecutionEvidence?.evidenceHash || null,
+        } : {}),
       };
       const existing = readCampaignReleaseMaterializationSync({ runtimeRoot: resolvedRuntimeRoot, releaseRoot });
       if (existing) {
@@ -454,6 +464,8 @@ export function createCampaignReleasePackager({
         researchExecutionReleaseAttestation:
           packageResult.researchEvidenceCapsule?.researchExecutionReleaseAttestation || null,
         autonomousResearchReleaseBinding,
+        advancedNumericalExecutionPlan,
+        advancedNumericalExecutionEvidence,
         createdAt,
         experimentRegistryAuthorityVerifier,
       });

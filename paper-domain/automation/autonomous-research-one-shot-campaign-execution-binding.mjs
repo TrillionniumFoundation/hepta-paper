@@ -101,7 +101,7 @@ export function autonomousResearchOneShotTargetCampaignDefinitionHash(value) {
   );
 }
 
-function protectedCampaignDefinitionValid(value) {
+export function verifyAutonomousResearchOneShotProtectedCampaignDefinition(value) {
   return exactKeys(value, [
     'activeNodeCount', 'campaignId', 'failedTerminalNodeCount', 'failureClass',
     'ledgerCount', 'logicalStateHash', 'nodeLeaseCount', 'outboxCount',
@@ -139,7 +139,7 @@ function providerRuntimePolicyValid(binding, targetCampaignDefinition) {
       );
 }
 
-function codeProvenanceValid(value) {
+export function verifyAutonomousResearchOneShotCodeProvenance(value) {
   return exactKeys(value, CODE_PROVENANCE_KEYS)
     && value.version === 2 && value.kind === 'CodeProvenance'
     && typeof value.packageVersion === 'string' && value.packageVersion.length > 0
@@ -160,7 +160,7 @@ function codeProvenanceValid(value) {
     && value.evidenceClass.length > 0;
 }
 
-function sourceExecutionSnapshotValid(value) {
+export function verifyAutonomousResearchOneShotSourceExecutionSnapshot(value) {
   return exactKeys(value, SOURCE_EXECUTION_SNAPSHOT_KEYS)
     && value.version === 1
     && SHA256.test(String(value.merkleHash || ''))
@@ -184,15 +184,19 @@ function preparationPolicyValid(binding, verifyTargetCampaignDefinition) {
       !== AUTONOMOUS_RESEARCH_ONE_SHOT_PROVIDER_CONFIGURATION_HASH
     || !SHA256.test(String(binding?.protectedCampaignFingerprintHash || ''))
     || !SHA256.test(String(binding?.targetCampaignDefinitionHash || ''))
-    || !codeProvenanceValid(codeProvenance)
+    || !verifyAutonomousResearchOneShotCodeProvenance(codeProvenance)
     || binding.codeProvenanceHash
       !== autonomousResearchOneShotCampaignCodeProvenanceHash(codeProvenance)
-    || !sourceExecutionSnapshotValid(sourceExecutionSnapshot)
+    || !verifyAutonomousResearchOneShotSourceExecutionSnapshot(
+      sourceExecutionSnapshot,
+    )
     || binding.sourceExecutionSnapshotHash
       !== autonomousResearchOneShotCampaignSourceExecutionSnapshotHash(
         sourceExecutionSnapshot,
       )
-    || !protectedCampaignDefinitionValid(protectedCampaignDefinition)
+    || !verifyAutonomousResearchOneShotProtectedCampaignDefinition(
+      protectedCampaignDefinition,
+    )
     || binding.protectedCampaignFingerprintHash
       !== autonomousResearchOneShotProtectedCampaignFingerprintHash(
         protectedCampaignDefinition,

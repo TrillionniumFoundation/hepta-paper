@@ -98,9 +98,13 @@ activation after the strict operator has produced current accepted readiness;
 `--enable-full-auto` on the installer remains fail-closed until that readiness
 can be proven by a non-mutating repository preflight.
 It starts the resident research and dispatcher units, retries failed preflight
-or external authority checks without a start-limit, and revalidates live
-acceptance every five minutes after each completed run. It does not receive the
-submission portal secret and cannot manufacture a missing principal,
+or external authority checks subject to the units' five-start-per-15-minute
+limit, and revalidates live acceptance every five minutes after each completed
+run. Both research-side units require every secret-mask target to exist before
+systemd admits a start; the non-optional `InaccessiblePaths` bind therefore
+cannot be silently skipped and remains effective if the underlying secret is
+later rotated. They do not receive the submission portal secret and cannot
+manufacture a missing principal,
 credential, signature or KMS/HSM response; external authority provisioning
 remains a machine/deployment responsibility. Docker group access is
 root-equivalent, so use this unit only on the dedicated research host.
@@ -513,6 +517,13 @@ package attempt writes its hash-bound current-release authority; submission
 consumes that typed authority lookup, never a loose bundle. It never grants
 live-submission authority.
 
+For a signed local-golden dataset whose authority explicitly forbids academic
+promotion, use `--mode local-review-loop --local-only`. Add
+`--apply-manuscript` only when verified empirical outputs should be integrated
+into the working manuscript. These options do not weaken the full-campaign
+release gate: `full-campaign` still requires an academic-authorized dataset
+selector, and every campaign keeps external submission disabled.
+
 After a campaign completes, verify the handoff from an independent submission
 root with an explicit campaign identity:
 
@@ -567,7 +578,7 @@ entrypoint:
 /usr/libexec/hepta-paper/hepta-paper-release-env offhost:worm-status
 /usr/libexec/hepta-paper/hepta-paper-release-env \
   offhost:worm-restore-drill --manifest \
-  /media/qian-qi/TOSHIBA_CLEAN3/<snapshot>/manifest.json
+  /mnt/hepta-paper-external/<snapshot>/manifest.json
 ```
 
 The sealed `offhost:worm-status` action always dispatches `status
@@ -575,6 +586,8 @@ The sealed `offhost:worm-status` action always dispatches `status
 required distinct device **and** custody is verified from current typed
 evidence. The contract's `offHostOrOffsiteCustodyQualified` boolean is only a
 declaration and cannot qualify custody by itself. The gate requires an
+exact match to the contract-pinned ext4 filesystem UUID and partition UUID,
+then an
 immutable typed current Object Lock receipt, a pinned-trust-store
 Ed25519 attestation from a distinct custodian, and a live bounded validity
 window. The receipt must match the currently observed findmnt UUID/PARTUUID
@@ -597,11 +610,29 @@ current contract intentionally supplies none of them and keeps
 `offHostOrOffsiteCustodyQualified=false`, so the production gate remains
 blocked while the connected disk provides same-host protection only.
 
+The retired THUNDERO device is not a cold-volume dependency. The cold contract
+binds the same exact TOSHIBA UUID/PARTUUID as the WORM target, using a separate
+logical namespace on that single physical failure domain. Its three OpenNeuro
+roots are raw-source availability only: never relink, rename, or promote them
+as any of the 15 historical derived targets. Those targets are formally retired
+from the 0.21 active release scope. The contract retains their prior six
+rebuildable/nine missing dispositions as audit history, but active entry count
+is zero; the cold sentinel, CAS import, and CAS restore drill therefore report
+not-required. The three raw roots are non-release-blocking inventory. Treat the
+disk as SMR: use sequential reads, permit at most one append-new-files writer,
+and do not rewrite or compact files in place. Co-resident cold and WORM
+namespaces do not establish independent custody, Object Lock, or a second
+recovery failure domain.
+
 The installed, root-owned launcher verifies and opens the deployment authority,
 then runs `/usr/bin/env -i` and drops to the `hepta-paper` primary identity with
-`NoNewPrivileges=yes` before Node imports the JavaScript entrypoint. Only
-`formal:gate` and `release:verify` receive the host's exact Docker group; all
-other actions run without supplementary groups. The entrypoint accepts only its
+`NoNewPrivileges=yes` before Node imports the JavaScript entrypoint.
+`formal:gate` receives only the host's exact Docker group, `store:trust-gate`
+receives only the exact protected handoff group, and `release:verify` receives
+both because it runs both Docker gates and production handoff-store inspection.
+All other actions run without supplementary groups. The JavaScript boundary
+independently anchors the handoff GID to the root-owned mode-03770 handoff root
+and rejects missing, extra or colliding groups. The entrypoint accepts only its
 documented action table and rebuilds the child environment again without
 provider secrets. Non-help JavaScript actions also require the launcher's marker
 and inherited deployment-lock descriptor; invoking
@@ -797,6 +828,19 @@ lock; this is not a claim of a filesystem transaction against arbitrary
 non-cooperating processes. The apply path uses descriptor-relative `fchmod`,
 refuses symbolic links, special files, multiply linked files and path escapes,
 and attempts a reverse-order permission rollback if a later mutation fails.
+The descriptor-relative inventory recognizes the exact shared submission-handoff
+layout (`0710` runtime/research roots, `03770` handoff root, `0660` database and
+`02750` dispatcher directories with one common group) and preserves that whole
+subtree, including special permission bits, while still scanning every entry.
+At the production runtime root it additionally verifies the supervisor, root
+and dispatcher ownership roles before protection applies. Descendants must use
+the detected handoff group and a bounded non-executable file or setgid-capable
+directory mode; setuid, world-accessible and unexpected executable entries
+block the batch.
+This preservation is not a substitute for the native signed layout-receipt
+verifier. An incomplete or metadata-mismatched candidate layout blocks the
+entire permission batch, and a symbolic link, special file or multiply linked
+file below a protected path remains a blocker.
 The receipt exposes mutation attempts, successful rollbacks, and incomplete
 rollback explicitly; a blocked batch never reports committed applied rows. The
 command never follows a link or writes a receipt into the tree it is auditing. Retain

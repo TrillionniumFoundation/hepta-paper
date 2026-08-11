@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import os from 'node:os';
 import test from 'node:test';
 
 import {
@@ -8,6 +9,9 @@ import {
 import {
   executeCampaignFormalVerificationNode,
 } from '../../paper-application/automation/campaign-formal-verification-node-orchestrator.mjs';
+import {
+  buildCampaignResearchVerificationInput,
+} from '../../paper-domain/automation/campaign-research-contract.mjs';
 import {
   createFormalProofSearchPlan,
   createTypedTheoremObligationBundle,
@@ -21,6 +25,10 @@ import {
   verifyTypedTheoremDependencyGraph,
 } from '../../paper-domain/research/typed-theorem-dependency-graph.mjs';
 import { leanTypeIdentity } from '../../paper-domain/research/lean-type-identity.mjs';
+import {
+  PRODUCTION_LEAN_RUNTIME_LAYOUTS,
+  PRODUCTION_LEAN_TOOLCHAIN,
+} from '../../paper-domain/research/formal-verifier-policy.mjs';
 import { createTheoremSpecification } from '../../paper-domain/research/theorem-specification.mjs';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
@@ -28,6 +36,68 @@ import {
 } from './support/trusted-production-lake-preflight.mjs';
 
 const digest = (label) => hashRecord('TypedTheoremDependencyGraphFixture', { label });
+
+function deterministicGraphExecutor({ closeTactics }) {
+  let executionOrdinal = 0;
+  return createFormalTheoremDependencyGraphOperationsExecutor({
+    resolvePinnedRuntime() {
+      return Object.freeze({
+        status: 'formal_pinned_lake_resolved',
+        executable: '/fixture/pinned/lake',
+        blockers: Object.freeze([]),
+      });
+    },
+    workerRunnerFactory() {
+      return Object.freeze({
+        async run() {
+          executionOrdinal += 1;
+          const ok = closeTactics === true;
+          return Object.freeze({
+            ok,
+            exitCode: ok ? 0 : 1,
+            signal: null,
+            stdout: ok ? 'closed' : '',
+            stderr: ok ? '' : 'open goals',
+            blockers: Object.freeze([]),
+            runnerId: 'deterministic-formal-graph-runner-v1',
+            backend: 'fixture-isolated-process',
+            runtimeIdentityHash: digest('runtime'),
+            runtimeExecutableSnapshotHash:
+              PRODUCTION_LEAN_RUNTIME_LAYOUTS[PRODUCTION_LEAN_TOOLCHAIN]
+                .lakeExecutableHash,
+            containerImageDigest: null,
+            executionProcessIdentityHash: digest(`process:${executionOrdinal}`),
+            isolation: Object.freeze({ immutableWorkRootVerified: false }),
+          });
+        },
+      });
+    },
+  });
+}
+
+function rehashGraphOperation(receipt, mutate) {
+  const changed = structuredClone(receipt);
+  mutate(changed);
+  delete changed.formalTheoremDependencyGraphOperationReceiptHash;
+  changed.formalTheoremDependencyGraphOperationReceiptHash =
+    hashRecord('FormalTheoremDependencyGraphOperationReceipt', changed);
+  return changed;
+}
+
+function rehashGraphNodeOperation(receipt, index, mutate) {
+  const changed = structuredClone(receipt);
+  const nodeReceipt = changed.theoremOperationReceipts[index];
+  mutate(nodeReceipt);
+  delete nodeReceipt.formalTheoremDependencyOperationReceiptHash;
+  nodeReceipt.formalTheoremDependencyOperationReceiptHash =
+    hashRecord('FormalTheoremDependencyOperationReceipt', nodeReceipt);
+  changed.theoremOperationReceiptHashes[index] =
+    nodeReceipt.formalTheoremDependencyOperationReceiptHash;
+  delete changed.formalTheoremDependencyGraphOperationReceiptHash;
+  changed.formalTheoremDependencyGraphOperationReceiptHash =
+    hashRecord('FormalTheoremDependencyGraphOperationReceipt', changed);
+  return changed;
+}
 
 function agentReceipt(role, ordinal) {
   const payload = {
@@ -278,6 +348,7 @@ test('production formal orchestrator selects graph executor before the single-ob
   let singleCalls = 0;
   let graphCalls = 0;
   let agentCalls = 0;
+  let workerPlanFinalizerCalls = 0;
   const graphOperationReceipt = Object.freeze({
     version: 1,
     kind: 'FormalTheoremDependencyGraphOperationReceipt',
@@ -291,6 +362,13 @@ test('production formal orchestrator selects graph executor before the single-ob
         readTheoremSpecification() { return theoremSpecification; },
       },
       agent: {
+        finalizeFormalWorkerPlan(input) {
+          workerPlanFinalizerCalls += 1;
+          assert.equal(input.workspace, '/tmp/unused');
+          assert.equal(input.paperId, 'dependency-graph-paper');
+          assert.equal(input.taskKey, 'paper_factory:dependency-graph-paper');
+          assert.equal(input.theoremSpecification, theoremSpecification);
+        },
         async execute() {
           const role = agentCalls === 0 ? 'formal-author' : 'formal-review';
           agentCalls += 1;
@@ -339,7 +417,19 @@ test('production formal orchestrator selects graph executor before the single-ob
     campaign: {
       campaignId: 'dependency-graph-campaign',
       paperId: 'dependency-graph-paper',
-      spec: { sourceWorkspace: '/tmp/unused', datasetMounts: [] },
+      spec: {
+        sourceWorkspace: '/tmp/unused',
+        datasetMounts: [],
+        researchVerificationInput: buildCampaignResearchVerificationInput({
+          paperId: 'dependency-graph-paper',
+          paperTask: {
+            paperId: 'dependency-graph-paper',
+            taskKey: 'paper_factory:dependency-graph-paper',
+            semanticIdentityHash: digest('dependency-graph-paper-task'),
+          },
+          paperState: { evidenceRefs: [] },
+        }),
+      },
     },
     node: {
       nodeId: 'dependency-graph:formal',
@@ -358,6 +448,156 @@ test('production formal orchestrator selects graph executor before the single-ob
   assert.equal(singleCalls, 0);
   assert.equal(graphCalls, 1);
   assert.equal(agentCalls, 2);
+  assert.equal(workerPlanFinalizerCalls, 1);
+});
+
+test('operation verifier recomputes graph summaries and every terminal node state after rehash', async () => {
+  const verifiedAuthority = graphAuthority();
+  const verifiedPlan = createFormalProofSearchPlan(verifiedAuthority.bundle);
+  const verified = await deterministicGraphExecutor({ closeTactics: true }).execute({
+    ...verifiedAuthority,
+    candidate: verifiedPlan.candidates[0],
+  });
+  assert.equal(verifyFormalTheoremDependencyGraphOperationReceipt(verified, {
+    graph: verifiedAuthority.graph,
+    candidate: verifiedPlan.candidates[0],
+  }).valid, true);
+
+  const forgedStatus = rehashGraphOperation(verified, (receipt) => {
+    receipt.status = 'formal_theorem_dependency_graph_operations_partial';
+  });
+  assert.equal(verifyFormalTheoremDependencyGraphOperationReceipt(forgedStatus, {
+    graph: verifiedAuthority.graph,
+    candidate: verifiedPlan.candidates[0],
+  }).valid, false);
+  const forgedReplaySummary = rehashGraphOperation(verified, (receipt) => {
+    receipt.freshReplayComplete = false;
+  });
+  assert.equal(verifyFormalTheoremDependencyGraphOperationReceipt(forgedReplaySummary, {
+    graph: verifiedAuthority.graph,
+    candidate: verifiedPlan.candidates[0],
+  }).valid, false);
+  const forgedVerifiedNode = rehashGraphNodeOperation(verified, 0, (receipt) => {
+    receipt.status = 'formal_theorem_dependency_operation_search_exhausted';
+    receipt.blockers = ['formal_theorem_dependency_no_replayed_kernel_candidate'];
+    receipt.kernelVerifiedBeforeDownstreamImport = false;
+  });
+  assert.equal(verifyFormalTheoremDependencyGraphOperationReceipt(forgedVerifiedNode, {
+    graph: verifiedAuthority.graph,
+    candidate: verifiedPlan.candidates[0],
+  }).valid, false);
+
+  const exhausted = await deterministicGraphExecutor({ closeTactics: false }).execute({
+    ...verifiedAuthority,
+    candidate: verifiedPlan.candidates[0],
+  });
+  assert.deepEqual(exhausted.theoremOperationReceipts.map((item) => item.status), [
+    'formal_theorem_dependency_operation_search_exhausted',
+    'formal_theorem_dependency_operation_blocked_by_dependency',
+    'formal_theorem_dependency_operation_blocked_by_dependency',
+  ]);
+  assert.equal(verifyFormalTheoremDependencyGraphOperationReceipt(exhausted, {
+    graph: verifiedAuthority.graph,
+    candidate: verifiedPlan.candidates[0],
+  }).valid, true);
+  for (const index of [0, 1]) {
+    const forged = rehashGraphNodeOperation(exhausted, index, (receipt) => {
+      receipt.status = 'formal_theorem_dependency_operation_semantic_review_only';
+      receipt.blockers = ['typed_theorem_dsl_machine_search_not_available'];
+      receipt.semanticReviewOnly = true;
+    });
+    assert.equal(verifyFormalTheoremDependencyGraphOperationReceipt(forged, {
+      graph: verifiedAuthority.graph,
+      candidate: verifiedPlan.candidates[0],
+    }).valid, false);
+  }
+
+  const genericSpecification = createTheoremSpecification({
+    paperId: 'semantic-only-paper',
+    campaignId: 'semantic-only-campaign',
+    sourceManuscriptPath: 'main.tex',
+    sourceManuscriptHash: digest('semantic-manuscript'),
+    formalClaimUniverseHash: digest('semantic-universe'),
+    claims: [{
+      claimKey: 'semantic-only',
+      title: 'Semantic-only theorem',
+      statement: 'The author proposes a generic formalization.',
+      assumptions: ['No exact Lean type authority is supplied.'],
+      quantifiers: ['The prose scope is reviewed independently.'],
+      negativeBoundaries: ['Kernel closure is not machine semantic equivalence.'],
+      proofObligations: ['Review the proposed formalization.'],
+      proofDependencyClaimKeys: [],
+      evidenceObligations: [],
+      manuscriptIntent: 'existing',
+      manuscriptSource: {
+        path: 'main.tex', byteStart: 0, byteEnd: 5,
+        contentHash: digest('semantic-manuscript'),
+        formalClaimUniverseEntryHash: digest('semantic-entry'),
+      },
+    }],
+  });
+  const genericBundle = createTypedTheoremObligationBundle(genericSpecification);
+  const genericGraph = createTypedTheoremDependencyGraph({
+    theoremSpecification: genericSpecification,
+    bundle: genericBundle,
+  });
+  const genericPlan = createFormalProofSearchPlan(genericBundle);
+  const semanticOnly = await deterministicGraphExecutor({ closeTactics: true }).execute({
+    theoremSpecification: genericSpecification,
+    bundle: genericBundle,
+    graph: genericGraph,
+    candidate: genericPlan.candidates[0],
+  });
+  assert.equal(
+    semanticOnly.theoremOperationReceipts[0].status,
+    'formal_theorem_dependency_operation_semantic_review_only',
+  );
+  assert.equal(verifyFormalTheoremDependencyGraphOperationReceipt(semanticOnly, {
+    graph: genericGraph,
+    candidate: genericPlan.candidates[0],
+  }).valid, true);
+  const forgedSemantic = rehashGraphNodeOperation(semanticOnly, 0, (receipt) => {
+    receipt.status = 'formal_theorem_dependency_operation_refuted';
+    receipt.blockers = ['formal_proof_search_refuted_by_bounded_witness'];
+    receipt.semanticReviewOnly = false;
+  });
+  assert.equal(verifyFormalTheoremDependencyGraphOperationReceipt(forgedSemantic, {
+    graph: genericGraph,
+    candidate: genericPlan.candidates[0],
+  }).valid, false);
+
+  const authorityBindingHash = digest('refuted-authority-binding');
+  const authorityBundleHash = digest('refuted-authority-bundle');
+  const refutedAuthority = graphAuthority({ claims: [claim({
+    claimKey: 'false-finite-claim',
+    theoremName: 'falseFiniteClaim',
+    leanTypeSource: '∀ n : Nat, n = 0',
+    dependencies: [],
+    ordinal: 1,
+    authorityBindingHash,
+    authorityBundleHash,
+  })] });
+  const refutedPlan = createFormalProofSearchPlan(refutedAuthority.bundle);
+  const refuted = await deterministicGraphExecutor({ closeTactics: true }).execute({
+    ...refutedAuthority,
+    candidate: refutedPlan.candidates[2],
+  });
+  assert.equal(
+    refuted.theoremOperationReceipts[0].status,
+    'formal_theorem_dependency_operation_refuted',
+  );
+  assert.equal(verifyFormalTheoremDependencyGraphOperationReceipt(refuted, {
+    graph: refutedAuthority.graph,
+    candidate: refutedPlan.candidates[2],
+  }).valid, true);
+  const forgedRefuted = rehashGraphNodeOperation(refuted, 0, (receipt) => {
+    receipt.status = 'formal_theorem_dependency_operation_search_exhausted';
+    receipt.blockers = ['formal_theorem_dependency_no_replayed_kernel_candidate'];
+  });
+  assert.equal(verifyFormalTheoremDependencyGraphOperationReceipt(forgedRefuted, {
+    graph: refutedAuthority.graph,
+    candidate: refutedPlan.candidates[2],
+  }).valid, false);
 });
 
 test('Real Mathlib dependency graphs fail closed before execution without build authority', async () => {
@@ -415,6 +655,7 @@ test('real Docker Lean closes and separately replays shared-lemma imports with z
   const plan = createFormalProofSearchPlan(bundle);
   const receipt = await createFormalTheoremDependencyGraphOperationsExecutor({
     trustedSandboxRuntime: preflight.formalSandboxRuntime,
+    timeoutMs: 120_000,
   }).execute({
     theoremSpecification,
     bundle,

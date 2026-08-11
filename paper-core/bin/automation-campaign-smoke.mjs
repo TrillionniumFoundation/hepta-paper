@@ -8,6 +8,7 @@ import { createCampaignNodeExecutor } from '../../paper-composition/automation/c
 import { composeCampaignWorkerEmpiricalExecution } from '../../paper-composition/automation/campaign-worker-empirical-composition.mjs';
 import { createSystemScheduler, createRandomIdGenerator } from '../../paper-composition/bootstrap/operator-runtime-composition.mjs';
 import { buildPaperCampaignPlan } from '../../paper-domain/automation/campaign-plan.mjs';
+import { createPaperTask } from '../../paper-domain/contracts/workflow-contracts.mjs';
 import { runPaperCampaign } from '../../paper-application/automation/campaign-engine.mjs';
 
 const model = process.env.HEPTA_AGENT_MODEL;
@@ -35,9 +36,22 @@ try {
   const campaignRuntime = { clock, scheduler: createSystemScheduler(), idGenerator: createRandomIdGenerator() };
   const campaignStore = createSqliteCampaignStore({ store, clock });
   const existingId = resumeRoot ? store.query('SELECT campaign_id FROM paper_campaigns ORDER BY created_at LIMIT 1;').rows[0]?.campaign_id : null;
+  const paperTask = createPaperTask({
+    paperId: 'automation-smoke-paper',
+    title: 'Automation Smoke Study',
+    sourceWorkspace: paperRoot,
+    mainTex: path.join(paperRoot, 'main.tex'),
+  });
   const plan = existingId
     ? campaignStore.getCampaign(existingId).spec
-    : buildPaperCampaignPlan({ paperId: 'automation-smoke-paper', sourceWorkspace: paperRoot, campaignId: `automation-smoke-${Date.now()}`, maxRounds: maximumRounds, refereeCount: 3 });
+    : buildPaperCampaignPlan({
+      paperId: paperTask.paperId,
+      sourceWorkspace: paperRoot,
+      campaignId: `automation-smoke-${Date.now()}`,
+      maxRounds: maximumRounds,
+      refereeCount: 3,
+      paperTask,
+    });
   const campaignId = existingId || plan.campaignId;
   if (!existingId) campaignStore.createCampaign(plan);
   const { empiricalExecutor } = composeCampaignWorkerEmpiricalExecution({

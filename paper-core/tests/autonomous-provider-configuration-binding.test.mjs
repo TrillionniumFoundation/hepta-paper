@@ -313,6 +313,7 @@ test('one hash-bound configuration reaches readiness, worker composition, and qu
   let formalWorkerInput = null;
   const worker = composeCampaignWorkerExecution({
     options: {},
+    executionRequested: false,
     plans: [plan],
     runtimeRoot: path.join(fixture.root, 'runtime'),
     datasetMounts: [],

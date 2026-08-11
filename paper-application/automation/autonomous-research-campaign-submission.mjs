@@ -5,6 +5,9 @@ import {
   assertAutonomousVenueComplianceInspectorPort,
 } from '../../paper-ports/autonomous-venue-compliance-inspector-port.mjs';
 import {
+  resolveAutonomousSubmissionResearchClosure,
+} from '../../paper-domain/automation/autonomous-submission-research-closure.mjs';
+import {
   autonomousSubmissionAwareCampaignStatus,
   evaluateAutonomousSubmissionDeliveryReadiness,
   inspectPersistedAutonomousSubmissionDelivery,
@@ -31,6 +34,7 @@ export async function resolveAutonomousResearchCampaignSubmission({
   autonomousSubmissionOutbox,
   autonomousVenueComplianceInspector,
   autonomousSubmissionRequestVerifier,
+  verifyAutonomousSubmissionHumanAuthorization,
   requestedAt = null,
   localOnly = false,
 } = {}) {
@@ -76,6 +80,60 @@ export async function resolveAutonomousResearchCampaignSubmission({
         ?.autonomousSubmissionMetadataReceiptHash) {
       throw new Error('autonomous_submission_metadata_release_binding_invalid');
     }
+    if (typeof verifyAutonomousSubmissionHumanAuthorization !== 'function'
+      || typeof autonomousSubmissionRequestVerifier?.verifyHumanAuthorization
+        !== 'function') {
+      throw new Error('autonomous_submission_human_authorization_verifier_required');
+    }
+    const releaseBundle = campaignReleaseAuthority?.releaseBundle || null;
+    const researchClosureReceipt = resolveAutonomousSubmissionResearchClosure({
+      campaignId,
+      paperId: campaign.paperId,
+      venueId: venueProfileSelection.venueId,
+      campaignReleaseAuthority,
+      qualificationInspection,
+      venueComplianceReceipt,
+      requestedAt,
+      requireResearchClosure: true,
+      verifyQualificationSignature:
+        autonomousSubmissionRequestVerifier?.verifyQualificationSignature,
+      verifyIndependentQualificationEvidence:
+        autonomousSubmissionRequestVerifier
+          ?.verifyIndependentQualificationEvidence,
+    });
+    const humanAuthorizationReceipt =
+      await verifyAutonomousSubmissionHumanAuthorization({
+        campaignId,
+        paperId: campaign.paperId,
+        immutableCampaignPackageOutputHash:
+          releaseBundle?.immutableCampaignPackageOutputHash,
+        campaignReleaseBundleHash:
+          campaignReleaseAuthority?.campaignReleaseBundleHash,
+        qualificationReceiptHash: qualificationInspection?.qualificationReceiptHash,
+        researchClosureReceiptHash:
+          researchClosureReceipt.researchClosureReceiptHash,
+        venueComplianceReceiptHash:
+          venueComplianceReceipt?.autonomousVenueComplianceReceiptHash,
+        submissionMetadataReceiptHash:
+          venueComplianceReceipt?.submissionMetadataReceiptHash,
+        venueProfileSelectionHash:
+          venueProfileSelection?.autonomousVenueProfileSelectionReceiptHash,
+        venueId: venueProfileSelection?.venueId,
+        submissionPortalProfileId:
+          venueProfileSelection?.profile?.submissionPortalProfileId,
+        portalId: portal.portalId,
+        portalConfigurationHash: portal.configurationHash,
+        portalDescriptorHash: portal.portalDescriptorHash,
+        serviceIdentityHash: portal.serviceIdentityHash,
+        portalAccountIdentityHash: portal.portalAccountIdentityHash,
+        portalTrustDomainIdentityHash: portal.portalTrustDomainIdentityHash,
+        now: new Date(requestedAt),
+      });
+    if (humanAuthorizationReceipt?.status
+      !== 'live_submission_authorization_verified') {
+      throw new Error(`autonomous_submission_human_authorization_blocked:${
+        humanAuthorizationReceipt?.blockers?.join(',') || 'unknown'}`);
+    }
     const request = buildAutonomousSubmissionRequest({
       campaignId,
       paperId: campaign.paperId,
@@ -84,13 +142,19 @@ export async function resolveAutonomousResearchCampaignSubmission({
       qualificationInspection,
       venueComplianceReceipt,
       portalConfigurationHash: portal.configurationHash,
+      portalDescriptor: portal,
       requestedAt,
+      researchClosureReceipt,
       requireResearchClosure: true,
       verifyQualificationSignature:
         autonomousSubmissionRequestVerifier?.verifyQualificationSignature,
       verifyIndependentQualificationEvidence:
         autonomousSubmissionRequestVerifier
           ?.verifyIndependentQualificationEvidence,
+      humanAuthorizationReceipt,
+      requireHumanAuthorization: true,
+      verifyHumanAuthorization:
+        autonomousSubmissionRequestVerifier.verifyHumanAuthorization,
     });
     const delivery = prepareAutonomousSubmissionHandoff({
       outbox: autonomousSubmissionOutbox,

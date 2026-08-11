@@ -251,17 +251,25 @@ external-owner acceptance. Fourteen production-source-bound conformance
 replays are separate from production operational proof. Operational proof
 requires distinct externally trusted capability-owner and operational-observer
 signatures and remains 0/14 until such evidence is ingested.
+This independent operational layer is external-assurance reporting, not a code
+release blocker; implementation and release-bound conformance are the two
+blocking 14/14 layers. A local deployment must leave the external count at zero
+rather than manufacture nominally independent signers.
 
-The 15 unavailable `NDU_Nature_work` cold-data links are governed by
-`paper-core/config/cold-volume-contract.v1.json`. Contract verification is a
-release gate; operational replay stays fail-closed until the declared
-`THUNDERO_EXT4` mount and its hash-bound content manifest are present. The
-repository-wide coverage gate imports every production module and enforces a
-whole-repository baseline in addition to the stricter architecture-module gate.
-When that volume becomes available, its declared content can be imported into
-a content-addressed recovery store and independently restore-drilled. Release
-verification never treats a missing volume or absent CAS manifest as
-operational proof.
+The retired `THUNDERO_EXT4` volume is no longer part of the cold-data contract.
+`paper-core/config/cold-volume-contract.v1.json` now binds the exact ext4
+UUID/PARTUUID mounted at `/mnt/hepta-paper-external`. The three observed
+OpenNeuro dataset roots on that TOSHIBA disk are declared only as raw sources;
+they cannot masquerade as any of the 15 historical `NDU_Nature_work` derived
+artifacts. All 15 are formally retired from the 0.21 active release scope; the
+machine-readable retirement inventory preserves their prior six-rebuildable
+and nine-missing dispositions for audit. Active entry count is zero, so no
+sentinel, cold-CAS object, import, or restore drill is required for those
+retired artifacts. The three raw roots are also explicitly non-release-blocking.
+The SMR source remains sequential-read-only and permits only a single
+append-new-files writer with no in-place mutation. The repository-wide coverage
+gate imports every production module and enforces a whole-repository baseline
+in addition to the stricter architecture-module gate.
 
 Schema migrations 021–025 add generation fencing for jobs, attempt/revision
 fencing plus recoverable prepared results for campaign nodes, restore-proof
@@ -316,9 +324,10 @@ business gates, evidence validation, credentials, release locks, or authority.
 
 External-disk WORM onboarding is governed by
 `paper-core/config/offhost-worm-contract.v1.json`. The current external target
-is the ext4 volume mounted at `/media/qian-qi/TOSHIBA_CLEAN3` (the operator's
-renamed external disk). A snapshot can qualify only on a distinct mounted
-filesystem with immutable objects and a successful restore drill. Local
+is the ext4 volume mounted at the root-managed
+`/mnt/hepta-paper-external` path. A snapshot can qualify only on a distinct mounted
+filesystem whose filesystem UUID and partition UUID exactly match the pinned
+contract, with immutable objects and a successful restore drill. Local
 packets and signatures cannot satisfy that external-media requirement. This
 is currently a same-host external-disk protection level, not an off-host or
 offsite custody claim. Off-host/offsite qualification additionally requires a
@@ -331,10 +340,13 @@ receipt cannot qualify a disk that is currently reattached to the production
 host. `npm run offhost:worm-status` reports the same-host target
 for diagnosis only; `npm run offhost:worm-status -- --require-custody` is the
 fail-closed custody gate, and the sealed release environment always selects
-that strict mode. A diagnostic `ready` result is not production-exit evidence. This
-WORM target is independent of the `THUNDERO_EXT4` cold-data contract: the
-TOSHIBA volume must not be treated as a cold-data recovery source unless all 15
-declared entries and their hash-bound sentinel are actually present.
+that strict mode. A diagnostic `ready` result is not production-exit evidence.
+The cold-source and WORM namespaces are now co-resident on this one TOSHIBA
+device. They are logically separated but share one physical failure domain;
+neither namespace establishes independent custody for the other. Raw-source
+availability does not satisfy any missing or rebuildable derived disposition,
+and SMR-safe operation requires sequential source reads, one append-new-files
+writer, and no in-place mutation.
 
 The proposal build path may execute a local LaTeX build under
 `runtime/builds/<paper_id>/` and write `BUILD_ARTIFACT_ACCEPTANCE.json` for the

@@ -399,9 +399,12 @@ directory. Before state provisioning returns or online transition can begin,
 the unprivileged native verifier reopens the full chain with openat2, validates
 the root receipt and stable dev/inode/uid/gid/mode matrix, and requires the
 database link count to remain one. Later legitimate SQLite or exchange-file
-writes do not invalidate that historical no-content attestation. Residents
-contain only unprivileged metadata preflights and restart until this oneshot
-completes; they never inherit secrets into a privileged `ExecStartPre`.
+writes do not invalidate that historical no-content attestation. Resident unit
+conditions keep the processes inactive while the application tree, private
+environment files, offline-provisioned handoff database, roots, or required
+configuration files are absent. Once those guards pass, the residents contain
+only unprivileged metadata preflights; they never inherit secrets into a
+privileged `ExecStartPre`.
 
 The tmpfiles fragment creates only `/var/lib/hepta-paper` and the private
 strict-acceptance control root. It deliberately does not create `runtime`, so
@@ -714,6 +717,9 @@ public submission portal descriptor, its out-of-band configuration-hash pin,
 and its independent descriptor-hash pin. That descriptor deliberately omits
 the endpoint and token-variable name.
 It never mounts the complete portal configuration or the portal-token Secret.
+The systemd templates list those private paths as both start conditions and
+non-optional `InaccessiblePaths`, so a missing path skips the unit instead of
+weakening its mount namespace for the lifetime of a resident process.
 
 Live submission is owned by a second OS/Kubernetes principal running
 `autonomous-submission-dispatcher`. Only that principal mounts the complete
@@ -755,9 +761,12 @@ The auditable templates are:
 - `paper-core/deploy/autonomous-research-supervisor.k8s.yaml`
 - `paper-core/deploy/nested-runtime-platform-qualification.config.example.json`
 
-The systemd unit uses `Restart=always`, `KillSignal=SIGTERM`, `KillMode=mixed`
-so the foreground wrapper forwards one graceful stop before group-wide timeout
-enforcement, a strict read-only system view, and an explicit `ReadWritePaths`
+The resident systemd units use `Restart=always` with at most five starts in a
+15-minute interval. Repeated startup or runtime failure therefore remains
+fail-closed for operator inspection instead of creating an unbounded restart
+storm. `KillSignal=SIGTERM` and `KillMode=mixed` let the foreground wrapper
+forward one graceful stop before group-wide timeout enforcement. The units
+also retain a strict read-only system view and an explicit `ReadWritePaths`
 runtime root. The Kubernetes
 template uses `restartPolicy: Always`, `terminationGracePeriodSeconds`, a
 read-only root filesystem, a single SQLite writer with `Recreate`, separate

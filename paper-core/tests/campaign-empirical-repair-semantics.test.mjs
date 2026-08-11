@@ -20,6 +20,7 @@ import {
   assertLatexTechnicalRepairPreservesScientificContent,
 } from '../../paper-application/automation/campaign-empirical-repair-policy.mjs';
 import {
+  buildCampaignEmpiricalAttemptRootId,
   buildCampaignEmpiricalSpec,
 } from '../../paper-application/automation/campaign-empirical-spec-builder.mjs';
 import {
@@ -68,6 +69,33 @@ test('empirical auto-repair eligibility is technical-only and excludes scientifi
   assert.equal(empiricalResultContractTechnicalRepairEligible({
     blockers: ['empirical_results_json_missing', 'empirical_results_csv_missing'],
   }), true);
+});
+
+test('campaign empirical attempt ids avoid duplicate campaign scope and compact long replay ids', () => {
+  assert.equal(buildCampaignEmpiricalAttemptRootId({
+    campaignId: 'campaign',
+    nodeId: 'campaign:node',
+    attemptId: 'direct',
+  }), 'campaign:node:direct');
+  assert.equal(buildCampaignEmpiricalAttemptRootId({
+    campaignId: 'campaign',
+    nodeId: 'node',
+    attemptId: 'direct',
+  }), 'campaign:node:direct');
+  const campaignId =
+    'paper-campaign:airpassengers-live-golden-20260810:live-20260810-2';
+  const replay = buildCampaignEmpiricalAttemptRootId({
+    campaignId,
+    nodeId: `${campaignId}:0:empirical-reproduce-python`,
+    attemptId: '22b6fec0-de86-4f4a-b83d-5ed67c600d69',
+  });
+  assert.match(replay, /^empirical-attempt:[0-9a-f]{64}$/);
+  assert.equal(replay.length, 82);
+  assert.equal(replay, buildCampaignEmpiricalAttemptRootId({
+    campaignId,
+    nodeId: `${campaignId}:0:empirical-reproduce-python`,
+    attemptId: '22b6fec0-de86-4f4a-b83d-5ed67c600d69',
+  }));
 });
 
 test('LaTeX technical repair preserves scientific tokens and rejects result changes', () => {

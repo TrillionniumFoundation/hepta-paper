@@ -13,12 +13,20 @@ import {
   executeLockedRuntimePermissionPlan,
   rollbackRuntimePermissionRows,
 } from '../../paper-adapters/runtime/runtime-permission-execution-lock.mjs';
+import {
+  RUNTIME_PERMISSION_PROTECTED_SHARED_LAYOUT_POLICY,
+  verifyRuntimePermissionProductionSharedLayoutAuthority,
+} from '../../paper-adapters/runtime/runtime-permission-protected-shared-layout.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
 
 function mode(candidate) {
   return fs.lstatSync(candidate).mode & 0o777;
+}
+
+function fullMode(candidate) {
+  return fs.lstatSync(candidate).mode & 0o7777;
 }
 
 function fixtureModes(sample) {
@@ -55,6 +63,36 @@ function fixture(t) {
   fs.chmodSync(readOnlyEvidence, 0o444);
   fs.chmodSync(readOnlyExecutable, 0o555);
   return { root, workspace, plain, executable, readOnlyEvidence, readOnlyExecutable };
+}
+
+function protectedSharedLayoutFixture(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-runtime-permissions-shared-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const research = path.join(root, 'autonomous-research');
+  const handoff = path.join(research, 'submission-handoff');
+  const database = path.join(handoff, 'submission-handoff.sqlite');
+  const challenges = path.join(handoff, 'dispatcher-challenges');
+  const cycles = path.join(handoff, 'dispatcher-cycles');
+  const unrelatedDirectory = path.join(root, 'automation-workspaces');
+  const unrelatedFile = path.join(unrelatedDirectory, 'draft.tex');
+  fs.mkdirSync(handoff, { recursive: true });
+  fs.mkdirSync(challenges);
+  fs.mkdirSync(cycles);
+  fs.writeFileSync(database, 'SQLite format 3\0protected fixture\n');
+  fs.mkdirSync(unrelatedDirectory);
+  fs.writeFileSync(unrelatedFile, 'unrelated private draft\n');
+  fs.chmodSync(root, 0o710);
+  fs.chmodSync(research, 0o710);
+  fs.chmodSync(handoff, 0o3770);
+  fs.chmodSync(database, 0o660);
+  fs.chmodSync(challenges, 0o2750);
+  fs.chmodSync(cycles, 0o2750);
+  fs.chmodSync(unrelatedDirectory, 0o775);
+  fs.chmodSync(unrelatedFile, 0o664);
+  return {
+    root, research, handoff, database, challenges, cycles,
+    unrelatedDirectory, unrelatedFile,
+  };
 }
 
 test('runtime permission maintenance is read-only by default and execute converges idempotently', (t) => {
@@ -134,6 +172,35 @@ test('a symlink escape blocks the entire execute plan without touching either si
   assertReceiptHash(report);
 });
 
+test('an ancestor-symlink runtime-root alias is rejected before inventory or chmod', (t) => {
+  const sample = fixture(t);
+  const aliasContainer = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'hepta-runtime-root-alias-'),
+  );
+  t.after(() => fs.rmSync(aliasContainer, { recursive: true, force: true }));
+  const aliasParent = path.join(aliasContainer, 'parent');
+  fs.symlinkSync(path.dirname(sample.root), aliasParent, 'dir');
+  const aliasRoot = path.join(aliasParent, path.basename(sample.root));
+  const before = fixtureModes(sample);
+
+  const report = auditRuntimePermissions({
+    runtimeRoot: aliasRoot,
+    execute: true,
+    writerQuiescenceConfirmed: true,
+  });
+
+  assert.equal(report.status, 'runtime_permissions_blocked');
+  assert.equal(report.summary.entriesSeen, 0);
+  assert.equal(report.summary.appliedCount, 0);
+  assert.ok(report.blockers.some((row) => (
+    row.relativePath === '.'
+      && row.reason === 'runtime_permission_root_noncanonical'
+      && row.phase === 'initial_scan'
+  )));
+  assert.deepEqual(fixtureModes(sample), before);
+  assertReceiptHash(report);
+});
+
 test('a multiply linked file is blocked because chmod would affect an external name', (t) => {
   const sample = fixture(t);
   const externalRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-runtime-hardlink-'));
@@ -158,7 +225,7 @@ test('a multiply linked file is blocked because chmod would affect an external n
   assert.equal(mode(sample.plain), 0o664);
 });
 
-test('runtime permission v3 uses constant defaults and rejects every invalid or over-hard-cap limit', (t) => {
+test('runtime permission v4 uses constant defaults and rejects every invalid or over-hard-cap limit', (t) => {
   const sample = fixture(t);
   const report = auditRuntimePermissions({ runtimeRoot: sample.root });
   assert.deepEqual(report.limits, {
@@ -218,6 +285,233 @@ test('runtime permission v3 uses constant defaults and rejects every invalid or 
       new RegExp(reason),
     );
   }
+});
+
+test('production shared-layout preservation requires the native exact-principal receipt verifier', () => {
+  const verifiedReceipt = Object.freeze({
+    status: 'autonomous_submission_handoff_layout_receipt_verified',
+    ready: true,
+    databaseOpenedReadOnly: true,
+    databaseContentCreated: false,
+    credentialContentCreated: false,
+    authorityContentCreated: false,
+    databaseSha256: `sha256:${'a'.repeat(64)}`,
+  });
+  let invocation = null;
+  assert.equal(verifyRuntimePermissionProductionSharedLayoutAuthority({
+    runtimeRoot: '/var/lib/hepta-paper/runtime',
+    verifier: (input) => {
+      invocation = input;
+      return verifiedReceipt;
+    },
+  }), true);
+  assert.deepEqual(invocation, {
+    runtimeRoot: '/var/lib/hepta-paper/runtime',
+    receiptPath: '/run/hepta-paper-handoff-layout/'
+      + 'autonomous-submission-handoff-layout.receipt.json',
+  });
+  for (const verifier of [
+    () => { throw new Error('wrong_uid'); },
+    () => ({ ...verifiedReceipt, ready: false }),
+    () => ({ ...verifiedReceipt, databaseSha256: null }),
+  ]) {
+    assert.equal(verifyRuntimePermissionProductionSharedLayoutAuthority({
+      runtimeRoot: '/var/lib/hepta-paper/runtime', verifier,
+    }), false);
+  }
+  assert.equal(verifyRuntimePermissionProductionSharedLayoutAuthority({
+    runtimeRoot: '/tmp/not-production', verifier: () => verifiedReceipt,
+  }), false);
+});
+
+test('protected shared handoff layout is inventoried without chmod while unrelated entries harden', (t) => {
+  const sample = protectedSharedLayoutFixture(t);
+  const protectedModes = Object.fromEntries([
+    'root', 'research', 'handoff', 'database', 'challenges', 'cycles',
+  ].map((name) => [name, fullMode(sample[name])]));
+
+  const planned = auditRuntimePermissions({ runtimeRoot: sample.root });
+  assert.equal(planned.status, 'runtime_permissions_changes_planned');
+  assert.equal(planned.initialInventory.protectedSharedLayout.status, 'protected');
+  assert.equal(planned.initialInventory.protectedSharedLayout.detected, true);
+  assert.equal(planned.summary.plannedCount, 2);
+  assert.deepEqual(
+    planned.planned.map((row) => row.relativePath),
+    ['automation-workspaces', 'automation-workspaces/draft.tex'],
+  );
+  const protectedSkipped = planned.skipped.filter(
+    (row) => row.reason === 'protected_shared_layout',
+  );
+  assert.ok(protectedSkipped.some((row) => row.relativePath === '.'));
+  assert.ok(protectedSkipped.some((row) => row.relativePath === 'autonomous-research'));
+  assert.ok(protectedSkipped.some((row) => row.currentMode === '3770'));
+  assert.ok(protectedSkipped.some((row) => row.currentMode === '2750'));
+
+  const applied = auditRuntimePermissions({
+    runtimeRoot: sample.root,
+    execute: true,
+    writerQuiescenceConfirmed: true,
+  });
+  assert.equal(applied.status, 'runtime_permissions_hardened');
+  assert.equal(applied.summary.appliedCount, 2);
+  assert.deepEqual(Object.fromEntries(Object.keys(protectedModes).map(
+    (name) => [name, fullMode(sample[name])],
+  )), protectedModes);
+  assert.equal(fullMode(sample.unrelatedDirectory), 0o700);
+  assert.equal(fullMode(sample.unrelatedFile), 0o600);
+  assert.equal(applied.postconditionInventory.protectedSharedLayout.status, 'protected');
+  assertReceiptHash(applied);
+});
+
+test('a production shared-layout inode exposed at a bind alias is not downgraded to non-production', (t) => {
+  const sample = protectedSharedLayoutFixture(t);
+  const productionRoot =
+    RUNTIME_PERMISSION_PROTECTED_SHARED_LAYOUT_POLICY.productionRuntimeRoot;
+  const originalLstatSync = fs.lstatSync;
+  const originalOpenSync = fs.openSync;
+  const originalRealpathNative = fs.realpathSync.native;
+  const productionPathSelected = (candidate) => (
+    typeof candidate === 'string' && path.resolve(candidate) === productionRoot
+  );
+  fs.lstatSync = (candidate, ...args) => (
+    productionPathSelected(candidate)
+      ? originalLstatSync(sample.root, ...args)
+      : originalLstatSync(candidate, ...args)
+  );
+  fs.openSync = (candidate, ...args) => (
+    productionPathSelected(candidate)
+      ? originalOpenSync(sample.root, ...args)
+      : originalOpenSync(candidate, ...args)
+  );
+  fs.realpathSync.native = (candidate, ...args) => (
+    productionPathSelected(candidate)
+      ? productionRoot
+      : originalRealpathNative(candidate, ...args)
+  );
+  t.after(() => {
+    fs.lstatSync = originalLstatSync;
+    fs.openSync = originalOpenSync;
+    fs.realpathSync.native = originalRealpathNative;
+  });
+  const before = Object.fromEntries(Object.entries(sample).map(
+    ([name, candidate]) => [name, fullMode(candidate)],
+  ));
+
+  const report = auditRuntimePermissions({
+    runtimeRoot: sample.root,
+    execute: true,
+    writerQuiescenceConfirmed: true,
+  });
+
+  assert.equal(report.status, 'runtime_permissions_blocked');
+  assert.equal(report.summary.appliedCount, 0);
+  assert.equal(report.initialInventory.protectedSharedLayout.status, 'invalid');
+  assert.equal(
+    report.initialInventory.protectedSharedLayout.failure,
+    'runtime_permission_production_root_alias_forbidden',
+  );
+  assert.ok(report.blockers.some((row) => (
+    row.reason === 'runtime_permission_protected_shared_layout_invalid'
+      && row.details?.failure === 'runtime_permission_production_root_alias_forbidden'
+  )));
+  assert.deepEqual(Object.fromEntries(Object.entries(sample).map(
+    ([name, candidate]) => [name, fullMode(candidate)],
+  )), before);
+  assertReceiptHash(report);
+});
+
+test('a symlink inside the protected shared layout still blocks every chmod', (t) => {
+  const sample = protectedSharedLayoutFixture(t);
+  const externalRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-runtime-shared-external-'));
+  t.after(() => fs.rmSync(externalRoot, { recursive: true, force: true }));
+  const external = path.join(externalRoot, 'credential.txt');
+  fs.writeFileSync(external, 'external protected content\n');
+  fs.chmodSync(external, 0o664);
+  fs.symlinkSync(external, path.join(sample.challenges, 'escape'));
+
+  const report = auditRuntimePermissions({
+    runtimeRoot: sample.root,
+    execute: true,
+    writerQuiescenceConfirmed: true,
+  });
+  assert.equal(report.status, 'runtime_permissions_blocked');
+  assert.equal(report.summary.appliedCount, 0);
+  assert.ok(report.blockers.some((row) => (
+    row.relativePath
+      === 'autonomous-research/submission-handoff/dispatcher-challenges/escape'
+      && row.reason === 'runtime_permission_symbolic_link_forbidden'
+  )));
+  assert.equal(fullMode(sample.unrelatedDirectory), 0o775);
+  assert.equal(fullMode(sample.unrelatedFile), 0o664);
+  assert.equal(fullMode(external), 0o664);
+  assertReceiptHash(report);
+});
+
+test('a metadata-mismatched shared layout blocks before unrelated chmod', (t) => {
+  const sample = protectedSharedLayoutFixture(t);
+  fs.chmodSync(sample.challenges, 0o750);
+
+  const report = auditRuntimePermissions({
+    runtimeRoot: sample.root,
+    execute: true,
+    writerQuiescenceConfirmed: true,
+  });
+  assert.equal(report.status, 'runtime_permissions_blocked');
+  assert.equal(report.summary.appliedCount, 0);
+  assert.equal(report.initialInventory.protectedSharedLayout.status, 'invalid');
+  assert.ok(report.blockers.some((row) => (
+    row.relativePath === 'autonomous-research/submission-handoff'
+      && row.reason === 'runtime_permission_protected_shared_layout_invalid'
+  )));
+  assert.equal(fullMode(sample.unrelatedDirectory), 0o775);
+  assert.equal(fullMode(sample.unrelatedFile), 0o664);
+  assertReceiptHash(report);
+});
+
+test('an unsafe mode below the shared layout is blocked instead of preserved', (t) => {
+  const sample = protectedSharedLayoutFixture(t);
+  const unsafe = path.join(sample.challenges, 'unsafe-request');
+  fs.writeFileSync(unsafe, 'unsafe fixture\n');
+  fs.chmodSync(unsafe, 0o4777);
+
+  const report = auditRuntimePermissions({
+    runtimeRoot: sample.root,
+    execute: true,
+    writerQuiescenceConfirmed: true,
+  });
+  assert.equal(report.status, 'runtime_permissions_blocked');
+  assert.equal(report.summary.appliedCount, 0);
+  assert.ok(report.blockers.some((row) => (
+    row.relativePath
+      === 'autonomous-research/submission-handoff/dispatcher-challenges/unsafe-request'
+      && row.reason
+        === 'runtime_permission_protected_shared_layout_entry_mode_invalid'
+  )));
+  assert.equal(fullMode(unsafe), 0o4777);
+  assert.equal(fullMode(sample.unrelatedFile), 0o664);
+  assertReceiptHash(report);
+});
+
+test('a protected anchor chmod race during one scan fails closed', (t) => {
+  const sample = protectedSharedLayoutFixture(t);
+  const originalOpendirSync = fs.opendirSync;
+  let injected = false;
+  fs.opendirSync = (...args) => {
+    if (!injected) {
+      injected = true;
+      fs.chmodSync(sample.challenges, 0o2770);
+    }
+    return originalOpendirSync(...args);
+  };
+  t.after(() => { fs.opendirSync = originalOpendirSync; });
+
+  const report = auditRuntimePermissions({ runtimeRoot: sample.root });
+  assert.equal(report.status, 'runtime_permissions_audit_blocked');
+  assert.ok(report.blockers.some((row) => [
+    'runtime_permission_protected_shared_layout_entry_mode_invalid',
+    'runtime_permission_protected_shared_layout_changed_during_scan',
+  ].includes(row.reason)));
+  assertReceiptHash(report);
 });
 
 test('bounded report pages preserve exact counts and complete hashes bind omitted rows', (t) => {
@@ -326,6 +620,72 @@ test('a race discovered after the first chmod rolls the batch back and commits n
   )));
   assert.deepEqual(fixtureModes(sample), before);
   assert.equal(report.postconditionInventory.plannedCount, 6);
+  assertReceiptHash(report);
+});
+
+test('a chown race after fchmod is detected and the changed principal is never chmod-rolled back', (t) => {
+  const sample = fixture(t);
+  const originalFchmodSync = fs.fchmodSync;
+  const alternateGroupId = process.getgroups().find(
+    (groupId) => groupId !== process.getgid(),
+  );
+  assert.notEqual(alternateGroupId, undefined);
+  let injected = false;
+  fs.fchmodSync = (descriptor, selectedMode) => {
+    originalFchmodSync(descriptor, selectedMode);
+    if (!injected) {
+      injected = true;
+      fs.fchownSync(descriptor, process.getuid(), alternateGroupId);
+    }
+  };
+  t.after(() => { fs.fchmodSync = originalFchmodSync; });
+
+  const report = auditRuntimePermissions({
+    runtimeRoot: sample.root,
+    execute: true,
+    writerQuiescenceConfirmed: true,
+  });
+
+  assert.equal(report.status, 'runtime_permissions_blocked');
+  assert.equal(report.summary.appliedCount, 0);
+  assert.equal(report.summary.mutationAttemptCount, 1);
+  assert.equal(report.summary.rolledBackCount, 0);
+  assert.equal(report.summary.rollbackIncomplete, true);
+  assert.equal(fs.lstatSync(sample.root).gid, alternateGroupId);
+  assert.equal(fullMode(sample.root), 0o700);
+  assert.ok(report.blockers.some((row) => (
+    row.relativePath === '.'
+      && row.reason === 'runtime_permission_post_chmod_verification_failed'
+      && row.phase === 'apply'
+  )));
+  assert.ok(report.blockers.some((row) => (
+    row.relativePath === '.'
+      && row.reason === 'runtime_permission_entry_identity_changed'
+      && row.phase === 'rollback'
+  )));
+  assertReceiptHash(report);
+});
+
+test('rollback restores and verifies directory special permission bits', (t) => {
+  const sample = fixture(t);
+  fs.chmodSync(sample.root, 0o2775);
+  const originalFchmodSync = fs.fchmodSync;
+  let mutationCalls = 0;
+  fs.fchmodSync = (descriptor, selectedMode) => {
+    originalFchmodSync(descriptor, selectedMode);
+    mutationCalls += 1;
+    if (mutationCalls === 1) fs.appendFileSync(sample.plain, 'force rollback\n');
+  };
+  t.after(() => { fs.fchmodSync = originalFchmodSync; });
+
+  const report = auditRuntimePermissions({
+    runtimeRoot: sample.root,
+    execute: true,
+    writerQuiescenceConfirmed: true,
+  });
+  assert.equal(report.status, 'runtime_permissions_blocked');
+  assert.equal(report.summary.rollbackIncomplete, false);
+  assert.equal(fullMode(sample.root), 0o2775);
   assertReceiptHash(report);
 });
 

@@ -454,6 +454,20 @@ function same(left, right) {
     === hashRecord('AnalysisProtocolBindingExpected', right);
 }
 
+export function verifyHarnessOperatorAnalysisProtocolAuthority(receipt, design) {
+  if (!design?.analysisProtocol || !design.analysisProtocolHash) return false;
+  const datasetBacked = receipt?.benchmarkSelector?.selectorType
+    === 'authorized_dataset_mount';
+  const operatorAuthority = receipt?.operatorDatasetHarnessAuthority;
+  if (!datasetBacked) return operatorAuthority === null;
+  const operatorTemplateHash = design.analysisProtocolTemplateHash
+    || design.analysisProtocolHash;
+  const operatorTemplate = design.analysisProtocolTemplate
+    || design.analysisProtocol;
+  return operatorAuthority?.analysisProtocolHash === operatorTemplateHash
+    && same(operatorAuthority?.analysisProtocol, operatorTemplate);
+}
+
 export function verifyHarnessAnalysisProtocolBinding(receipt, design) {
   if (!receipt || !design?.analysisProtocol || !design.analysisProtocolHash) return false;
   let inputs;
@@ -468,14 +482,7 @@ export function verifyHarnessAnalysisProtocolBinding(receipt, design) {
     || receipt.analysisProtocolHash !== design.analysisProtocolHash
     || !same(receipt.analysisObservationAuthority, inputs.observationAuthority)
     || !same(receipt.analysisProtocolEvaluation, expected)) return false;
-  const academic = receipt.assuranceScope === 'operator-authorized-hidden-evaluation-v1';
-  const operatorAuthority = receipt.operatorDatasetHarnessAuthority;
-  const operatorTemplateHash = design.analysisProtocolTemplateHash || design.analysisProtocolHash;
-  const operatorTemplate = design.analysisProtocolTemplate || design.analysisProtocol;
-  if (academic && (operatorAuthority?.analysisProtocolHash !== operatorTemplateHash
-    || !same(operatorAuthority?.analysisProtocol, operatorTemplate))) return false;
-  if (!academic && operatorAuthority !== null) return false;
-  return true;
+  return verifyHarnessOperatorAnalysisProtocolAuthority(receipt, design);
 }
 
 export function analysisProtocolResultDocumentFields(receipt) {

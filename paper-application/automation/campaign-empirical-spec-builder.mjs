@@ -1,5 +1,8 @@
 import { buildDatasetAuthorizationSet } from '../../paper-domain/automation/experiment-run-contract.mjs';
 import {
+  buildCampaignEmpiricalAttemptRootId,
+} from '../../paper-domain/automation/campaign-empirical-attempt-identity.mjs';
+import {
   buildCampaignBenchmarkSelector,
   verifyCampaignBenchmarkSelector,
 } from '../../paper-domain/automation/campaign-benchmark-selector.mjs';
@@ -36,6 +39,8 @@ function confirmatoryAnchor({ node, context, language }) {
       || anchor?.result?.experimentRunReceipt?.harnessExecutionReceipt?.armAdapterSet || null,
   });
 }
+
+export { buildCampaignEmpiricalAttemptRootId };
 
 export function buildCampaignEmpiricalSpec({
   primitives,
@@ -128,7 +133,11 @@ export function buildCampaignEmpiricalSpec({
     datasetEnvironmentName(mount.name),
     `/datasets/${mount.name}`,
   ]));
-  const empiricalAttemptRootId = `${campaign.campaignId || campaign.campaign_id}:${node.nodeId || node.node_id}:${node.attemptId || node.attempt_id || 'direct'}`;
+  const empiricalAttemptRootId = buildCampaignEmpiricalAttemptRootId({
+    campaignId: campaign.campaignId || campaign.campaign_id,
+    nodeId: node.nodeId || node.node_id,
+    attemptId: node.attemptId || node.attempt_id || 'direct',
+  });
   const preparation = campaign.spec.autonomousResearchPreparation || null;
   const researchFeasibility = preparation?.researchAgendaIr?.resourceFeasibility || null;
   const maximumWallTimeMs = Math.min(

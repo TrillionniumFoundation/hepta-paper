@@ -28,8 +28,12 @@ import {
   buildCampaignAgentInstructions,
   buildCampaignAgentExecutionRequest,
   buildFormalProofRepairRequest,
+  bindFormalProofSearchCandidateRequest,
 } from '../../paper-application/automation/campaign-agent-policy.mjs';
 import { buildCampaignBenchmarkSelector } from '../../paper-domain/automation/campaign-benchmark-selector.mjs';
+import {
+  selectAutonomousFormalSupportTemplate,
+} from '../../paper-domain/automation/autonomous-formal-support-registry.mjs';
 import {
   buildCampaignWorkerAllowedRoots,
   buildCampaignWorkerRuntimeImageConfiguration,
@@ -122,6 +126,8 @@ test('campaign coder contract writes canonical metric artifacts only through HEP
   });
   assert.match(instructions, /HEPTA_OUTPUT_DIR\/results\.json/);
   assert.match(instructions, /HEPTA_OUTPUT_DIR\/results\.csv/);
+  assert.match(instructions, /writable surface is exactly experiments\/run\.py\./);
+  assert.doesNotMatch(instructions, /run\.treatment\.py|run\.baseline\.py|run\.ablation\.py/);
   assert.match(instructions, /exact header metric,value/);
   assert.match(instructions, /do not fall back to the working directory/i);
   const executor = createMultiLanguageEmpiricalExecutor({
@@ -145,23 +151,43 @@ test('system benchmark coder contract locates cases under each cell challenge', 
   });
   assert.match(instructions, /iterate cell\.challenge\.cases, never cell\.cases/i);
   assert.match(instructions, /cell\.cases does not exist/i);
+  assert.match(
+    instructions,
+    /writable surface is exactly experiments\/run\.R, experiments\/run\.treatment\.R, experiments\/run\.baseline\.R, experiments\/run\.ablation\.R/,
+  );
+  assert.match(instructions, /Inspect only RESEARCH_PLAN\.md and those writable files/);
+  assert.match(instructions, /do not inspect, restate, or rewrite another language's entrypoints/);
+  assert.match(instructions, /make no edits and report only concise checks/);
+  assert.match(instructions, /replacement bodies only for writable files whose bytes must change/);
 });
 
-test('formal author contract requires source types canonical with kernel check output', () => {
+test('formal author contract distinguishes exact source contracts from generic kernel output', () => {
   const instructions = buildCampaignAgentInstructions({
     kind: 'formal-author', manuscript: 'main.tex',
   });
-  assert.match(instructions, /explicit '∀ \(\.\.\.\)' form/);
-  assert.match(instructions, /'Nat\.min', never bare 'min'/);
+  assert.match(instructions, /place explicit binders before the declaration colon/);
+  assert.match(instructions, /spell the result type exactly as '#check' prints it/);
+  assert.match(instructions, /dynamic claim.*declare exactly 'theorem leanDeclarationName : leanTypeSource/);
+  assert.match(instructions, /preserving leanTypeSource after the colon even when it begins with '∀'/);
+  assert.match(instructions, /exact non-dynamic registry-bound claim is also an exception/);
+  assert.match(instructions, /preserve the registry expectedType byte-for-byte/);
+  assert.match(instructions, /Do not put the complete type after the colon as an explicit '∀.*generic claim/);
   assert.match(instructions, /SYSTEM_ALLOWED_FORMAL_AXIOMS=\[\]/);
-  assert.match(instructions, /expanding 'Nat\.min_def'/);
-  assert.match(instructions, /rather than using 'Nat\.min_le_left' or 'Nat\.min_le_right'/);
-  assert.match(instructions, /change \(if loss ≤ cap then loss else cap\) ≤ cap/);
-  assert.match(instructions, /RESEARCH_WORKER_PLAN\.json.*system-finalized after your turn/);
-  assert.match(instructions, /do not calculate or self-author their SHA-256 values/);
+  assert.match(instructions, /reports propext, Quot\.sound, or any other axiom/);
+  assert.match(instructions, /unfold the defining function before splitting its cases/);
+  assert.doesNotMatch(instructions, /Nat\.min|loss_cap_upper_bound|change \(if loss ≤ cap/);
+  assert.match(instructions, /host unconditionally rebuilds RESEARCH_WORKER_PLAN\.json/);
+  assert.match(instructions, /lakefile\.lean, and lake-manifest\.json/);
+  assert.match(instructions, /never create or edit those system-owned files/);
+  assert.match(instructions, /never calculate or self-author their SHA-256 values/);
+  assert.match(instructions, /exactly one top-level theorem or lemma declaration for each canonical claim/);
+  assert.match(instructions, /do not create helper theorem or lemma declarations/);
+  assert.match(instructions, /requires at least one non-lakefile \.lean source/);
+  assert.match(instructions, /stale verification commentary.*never a reason to skip Lean authoring/);
+  assert.match(instructions, /run the pinned local Lean executable directly against each source/);
 });
 
-test('formal author and repair execution requests pin the kernel-audited loss-cap proof', () => {
+test('kernel-audited loss-cap proof is scoped to the exact registry-bound obligation', () => {
   const campaign = {
     campaignId: 'campaign-formal-proof-contract',
     paperId: 'paper-formal-proof-contract',
@@ -187,11 +213,170 @@ test('formal author and repair execution requests pin the kernel-audited loss-ca
     iteration: 1,
     remainingTokenCount: 10_000,
   });
-  for (const request of [author, repair]) {
+  const candidate = Object.freeze({
+    ordinal: 0,
+    strategy: 'direct_elaboration',
+    requiredOperations: Object.freeze([]),
+    theoremSpecificationHash: `sha256:${'e'.repeat(64)}`,
+    typedTheoremObligationBundleHash: `sha256:${'a'.repeat(64)}`,
+  });
+  const formalProofSearchPlan = Object.freeze({
+    candidateCount: 1,
+    candidates: Object.freeze([candidate]),
+    theoremSpecificationHash: candidate.theoremSpecificationHash,
+    typedTheoremObligationBundleHash: candidate.typedTheoremObligationBundleHash,
+    formalProofSearchPlanHash: `sha256:${'b'.repeat(64)}`,
+  });
+  const genericSpecification = (proofObligation) => Object.freeze({
+    theoremSpecificationHash: candidate.theoremSpecificationHash,
+    claims: Object.freeze([Object.freeze({
+      proofObligationContracts: Object.freeze([Object.freeze({
+        displayText: proofObligation,
+      })]),
+    })]),
+  });
+  const bindRequest = (request, theoremSpecification) => bindFormalProofSearchCandidateRequest({
+    request,
+    typedTheoremObligationBundle: Object.freeze({
+      obligations: Object.freeze([]),
+      theoremSpecificationHash: candidate.theoremSpecificationHash,
+      typedTheoremObligationBundleHash: candidate.typedTheoremObligationBundleHash,
+    }),
+    theoremSpecification,
+    formalProofSearchPlan,
+    candidate,
+  });
+  const baseRequests = [author, repair];
+  for (const request of baseRequests) {
+    assert.match(request.instructions, /dynamic claim.*leanTypeSource/);
+    assert.match(request.instructions, /preserving leanTypeSource after the colon even when it begins with '∀'/);
+    assert.match(request.instructions, /registry expectedType byte-for-byte after the (?:declaration )?colon/);
+    assert.match(request.instructions, /explicit binders before the declaration colon/);
+    assert.match(request.instructions, /propext, Quot\.sound/);
+    assert.match(request.instructions, /reduction is definitional/);
+  }
+  const genericRequests = baseRequests.map(
+    (request) => bindRequest(request, genericSpecification('prove_reflexive_identity')),
+  );
+  const nameOnlyLossCapRequests = baseRequests.map(
+    (request) => bindRequest(request, genericSpecification('loss_cap_upper_bound')),
+  );
+  for (const request of [...baseRequests, ...genericRequests, ...nameOnlyLossCapRequests]) {
+    assert.doesNotMatch(request.instructions, /use this already kernel-audited declaration verbatim/);
+    assert.doesNotMatch(request.instructions, /theorem loss_cap_upper_bound/);
+    assert.doesNotMatch(request.instructions, /theorem length_filter_le/);
+  }
+  const claimAuthorityBindingHash = `sha256:${'c'.repeat(64)}`;
+  const claimAuthorityBundleHash = `sha256:${'d'.repeat(64)}`;
+  const registryBoundSpecification = (template, claimKey) => Object.freeze({
+    theoremSpecificationHash: candidate.theoremSpecificationHash,
+    claimAuthorityType: 'machine-policy-authorized',
+    proposalClaimLineageRequired: true,
+    claimAuthorityBindingHash,
+    claimAuthorityBundleHash,
+    claims: Object.freeze([Object.freeze({
+      claimKey,
+      assumptions: template.scope.assumptions,
+      quantifiers: template.scope.quantifiers,
+      negativeBoundaries: template.scope.negativeBoundaries,
+      proofObligations: template.scope.proofObligations,
+      proposalClaimSource: Object.freeze({
+        claimAuthorityType: 'machine-policy-authorized',
+        claimAuthorityBindingHash,
+        claimAuthorityBundleHash,
+        proposalClaimText: template.scope.statement,
+        scientificClaimKey: claimKey,
+        assumptions: template.scope.assumptions,
+        quantifiers: template.scope.quantifiers,
+        negativeBoundaries: template.scope.negativeBoundaries,
+        proofObligations: template.scope.proofObligations,
+      }),
+      proofObligationContracts: Object.freeze([Object.freeze({
+        displayText: template.leanTypeContract.proofObligation,
+      })]),
+    })]),
+  });
+  const template = selectAutonomousFormalSupportTemplate('finance_asset_pricing_benchmark');
+  const registryBoundLossCapSpecification = registryBoundSpecification(
+    template,
+    'registry-loss-cap',
+  );
+  const lossCapRequests = baseRequests.map(
+    (request) => bindRequest(request, registryBoundLossCapSpecification),
+  );
+  for (const request of lossCapRequests) {
     assert.match(request.instructions, /use this already kernel-audited declaration verbatim/);
     assert.match(request.instructions, /theorem loss_cap_upper_bound : ∀ \(loss cap : Nat\), Nat\.min loss cap ≤ cap := by/);
     assert.match(request.instructions, /change \(if loss ≤ cap then loss else cap\) ≤ cap/);
     assert.match(request.instructions, /Do not replace its change step with rw, simp, omega/);
+  }
+  const scheduleTemplate = selectAutonomousFormalSupportTemplate('ml_algorithm_benchmark');
+  const registryBoundScheduleSpecification = registryBoundSpecification(
+    scheduleTemplate,
+    'registry-schedule-filter',
+  );
+  const scheduleRequests = baseRequests.map(
+    (request) => bindRequest(request, registryBoundScheduleSpecification),
+  );
+  for (const request of scheduleRequests) {
+    assert.match(request.instructions, /exact registry-bound length_filter_le obligation/);
+    assert.match(request.instructions, /theorem length_filter_le : ∀ \{α : Type\}/);
+    assert.match(request.instructions, /unfold List\.filter/);
+    assert.match(request.instructions, /Nat\.le_succ_of_le ih/);
+    assert.match(request.instructions, /Nat\.succ_le_succ ih/);
+    assert.match(request.instructions, /preserves the registry's explicit-∀ expectedType source identity/);
+    assert.doesNotMatch(request.instructions, /theorem loss_cap_upper_bound/);
+  }
+  for (const protocolFamily of [
+    'econometrics_panel_benchmark',
+    'operations_optimization_benchmark',
+    'rl_stochastic_control_benchmark',
+  ]) {
+    const auditedTemplate = selectAutonomousFormalSupportTemplate(protocolFamily);
+    const specification = registryBoundSpecification(
+      auditedTemplate,
+      `registry-${protocolFamily}`,
+    );
+    const request = bindRequest(author, specification);
+    assert.equal(request.instructions.includes(
+      `theorem ${auditedTemplate.leanTypeContract.canonicalTheoremName} : ${auditedTemplate.leanTypeContract.expectedType} := by`,
+    ), true, protocolFamily);
+    assert.match(request.instructions, /already kernel-audited declaration verbatim/);
+    assert.match(request.instructions, /explicit-∀ expectedType source identity/);
+  }
+  const scalarTemplate = selectAutonomousFormalSupportTemplate(
+    'registered_scalar_response_benchmark',
+  );
+  assert.throws(() => bindRequest(author, registryBoundSpecification(
+    scalarTemplate,
+    'registry-scalar-response',
+  )), (error) => {
+    assert.equal(error.retryable, false);
+    assert.match(error.message,
+      /formal_registry_template_execution_closure_unavailable:registered_scalar_interval_preservation/);
+    return true;
+  });
+  const invalidRegistrySpecifications = [
+    (specification) => { specification.claimAuthorityType = 'operator-signed'; },
+    (specification) => {
+      specification.claims[0].proposalClaimSource.dynamicFormalClaimSeedHash = `sha256:${'f'.repeat(64)}`;
+    },
+    (specification) => {
+      specification.claims[0].proposalClaimSource.claimAuthorityBindingHash = `sha256:${'f'.repeat(64)}`;
+    },
+    (specification) => {
+      specification.claims[0].proposalClaimSource.assumptions = ['different scope'];
+    },
+  ].map((mutate) => {
+    const specification = structuredClone(registryBoundLossCapSpecification);
+    mutate(specification);
+    return specification;
+  });
+  for (const theoremSpecification of invalidRegistrySpecifications) {
+    for (const request of baseRequests.map((base) => bindRequest(base, theoremSpecification))) {
+      assert.doesNotMatch(request.instructions, /use this already kernel-audited declaration verbatim/);
+      assert.doesNotMatch(request.instructions, /theorem loss_cap_upper_bound/);
+    }
   }
 });
 
@@ -204,6 +389,97 @@ test('formal reviewer copies system-finalized domain identities without comparin
   assert.match(instructions, /not manuscriptSource\.contentHash/);
   assert.match(instructions, /sourceManuscriptHash is a domain-separated FormalManuscriptCorpus record hash/);
   assert.match(instructions, /comparing those two different hash domains is invalid/);
+});
+
+test('local formal reviewer requires the same system-finalized worker binding', () => {
+  const instructions = buildCampaignAgentInstructions({
+    kind: 'formal-review', manuscript: 'main.tex',
+  });
+  assert.match(instructions, /RESEARCH_WORKER_PLAN\.json is rebuilt by the system immediately before each review/);
+  assert.match(instructions, /binder relocation alone is not a semantic or type mismatch/);
+  assert.match(instructions, /dynamic claim.*exact bound leanTypeSource/);
+  assert.match(instructions, /Copy claimId, theoremName, manuscriptClaimHash/);
+});
+
+test('machine-authorized campaign referee treats a missing entailment contract as a revise finding', () => {
+  const instructions = buildCampaignAgentInstructions({
+    kind: 'referee-1', manuscript: 'main.tex', roundIndex: 1,
+    claimAuthorityType: 'machine-policy-authorized',
+  });
+  assert.match(instructions, /If the contract is absent, return a completed revise review/);
+  assert.match(instructions, /omit evidenceEntailmentReview/);
+  assert.match(instructions, /is not a transport blocker/);
+});
+
+test('generic local campaign referee does not require an inapplicable entailment contract', () => {
+  const instructions = buildCampaignAgentInstructions({
+    kind: 'referee-1', manuscript: 'main.tex', roundIndex: 1,
+  });
+  assert.match(instructions, /not in the trusted autonomous manuscript entailment mode/);
+  assert.match(instructions, /do not report its presence or absence as a manuscript finding/);
+  assert.doesNotMatch(instructions, /absence prevents acceptance/);
+});
+
+test('operator-signed campaign referee does not require the autonomous entailment contract', () => {
+  const instructions = buildCampaignAgentInstructions({
+    kind: 'referee-1', manuscript: 'main.tex', roundIndex: 1,
+    claimAuthorityType: 'operator-signed',
+  });
+  assert.match(instructions, /not in the trusted autonomous manuscript entailment mode/);
+  assert.match(instructions, /AUTONOMOUS_MANUSCRIPT_ENTAILMENT\.json is not applicable/);
+  assert.doesNotMatch(instructions, /absence prevents acceptance/);
+});
+
+test('pre-revision referee leaves current formal binding to downstream stages', () => {
+  const instructions = buildCampaignAgentInstructions({
+    kind: 'referee-1', manuscript: 'main.tex', roundIndex: 1,
+    formalVerificationScheduled: true,
+  });
+  assert.match(instructions, /graph runs revise, then theorem-spec, then formal-verify/);
+  assert.match(instructions, /not a manuscript deficiency/);
+  assert.match(instructions, /Do not ask the reviser to create, rebind, or verify/);
+});
+
+test('referee-only graph does not promise unscheduled formal stages', () => {
+  const instructions = buildCampaignAgentInstructions({
+    kind: 'referee-1', manuscript: 'main.tex', roundIndex: 1,
+  });
+  assert.doesNotMatch(instructions, /graph runs revise, then theorem-spec, then formal-verify/);
+  assert.doesNotMatch(instructions, /current-round canonical THEOREM_SPEC\.json/);
+});
+
+test('agent request derives the formal stage boundary from the persisted graph', () => {
+  const campaign = {
+    campaignId: 'campaign-stage-boundary',
+    paperId: 'paper-stage-boundary',
+    spec: {
+      datasetMounts: [],
+      manuscript: 'main.tex',
+      paperQualityProfiles: ['formal_theorem_or_proof'],
+    },
+  };
+  const node = {
+    nodeId: 'campaign-stage-boundary:1:referee-1',
+    kind: 'referee-1',
+    roundIndex: 1,
+  };
+  const request = (campaignNodes) => buildCampaignAgentExecutionRequest({
+    campaign, node, campaignNodes,
+    workspace: '/tmp/stage-boundary', manuscript: 'main.tex', reviews: [],
+    executionBudget: { remainingTokenCount: 10_000, remainingWallTimeMs: 60_000 },
+  });
+  assert.doesNotMatch(
+    request([node]).instructions,
+    /graph runs revise, then theorem-spec, then formal-verify/,
+  );
+  assert.match(
+    request([
+      node,
+      { kind: 'theorem-spec', roundIndex: 1 },
+      { kind: 'formal-verify', roundIndex: 1 },
+    ]).instructions,
+    /graph runs revise, then theorem-spec, then formal-verify/,
+  );
 });
 
 test('generic campaign writers cannot invent research evidence or scholarly identities', () => {

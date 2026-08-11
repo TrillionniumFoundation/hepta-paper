@@ -13,6 +13,7 @@ import {
   executePortalTargetQualificationRegistryImport,
   inspectPortalTargetQualificationRegistry,
   planPortalTargetQualificationRegistryImport,
+  preflightPortalTargetQualificationRegistry,
 } from '../../paper-adapters/submission/portal-target-qualification-registry-repository.mjs';
 import {
   applyInspectedPortalTargetQualifications,
@@ -29,6 +30,9 @@ import {
 import {
   JOURNAL_SUBMISSION_CONNECTOR_COVERAGE,
 } from '../../paper-domain/submission/journal-connector-coverage.mjs';
+import {
+  inspectPortalTargetQualificationPreflightContinuity,
+} from '../../paper-domain/submission/portal-target-qualification-preflight-continuity.mjs';
 import {
   getJournalSubmissionTargetProfile,
 } from '../../paper-domain/submission/journal-submission-target-registry.mjs';
@@ -60,7 +64,11 @@ function sha(label) {
   return hashRecord('PortalTargetQualificationTestValue', { label });
 }
 
-function qualificationFixture({ sharedKeyPair = null, signEvidence = true } = {}) {
+function qualificationFixture({
+  sharedKeyPair = null,
+  signEvidence = true,
+  issuerOverrides = {},
+} = {}) {
   const owner = authority(
     PORTAL_TARGET_QUALIFICATION_AUTHORITY_ROLES.owner,
     'owner',
@@ -83,6 +91,7 @@ function qualificationFixture({ sharedKeyPair = null, signEvidence = true } = {}
     dispatcherChallenge: observer.trustKey.subjectId,
     cycleRecovery: observer.trustKey.subjectId,
     productionAuthorization: authorizer.trustKey.subjectId,
+    ...issuerOverrides,
   };
   const target = getJournalSubmissionTargetProfile('tmlr');
   const targetBinding = {
@@ -208,6 +217,228 @@ test('signed production qualification remains unable to authorize live commit', 
   assert.equal(registry.entries[0].liveCommitPermitHash, null);
   assert.equal(registry.liveCommitAuthorizationIncluded, false);
   assert.equal(registry.humanSingleUseAuthorizationRequired, true);
+});
+
+test('redacted preflight reports a missing external registry without producing evidence', () => {
+  const report = preflightPortalTargetQualificationRegistry({
+    targetVenueIds: ['tmlr'],
+    now: NOW,
+  });
+  assert.equal(report.ready, false);
+  assert.equal(report.targets.length, 1);
+  assert.equal(report.targets[0].liveCommitAuthorized, false);
+  assert.equal(report.targets[0].evidence.filter((item) => item.required).length, 6);
+  assert.ok(report.blockers.some(({ errorCode }) => (
+    errorCode === 'portal_target_qualification_preflight_registry_missing'
+  )));
+  assert.deepEqual(
+    report.blockers.filter(({ errorCode }) => (
+      errorCode === 'portal_target_qualification_preflight_evidence_missing'
+    )).map(({ evidenceType }) => evidenceType).sort(),
+    Object.keys(PORTAL_TARGET_QUALIFICATION_EVIDENCE_POLICIES).sort(),
+  );
+  assert.deepEqual(report.safety, {
+    readOnly: true,
+    mutationPerformed: false,
+    registryProduced: false,
+    evidenceProduced: false,
+    networkActionPerformed: false,
+    credentialUsed: false,
+    portalLoginPerformed: false,
+    uploadPerformed: false,
+    signatureProduced: false,
+    authorizationProduced: false,
+    liveCommitAuthorized: false,
+    liveCommitPermitProduced: false,
+    liveCommitPermitConsumed: false,
+  });
+  assert.equal(JSON.stringify(report).includes(process.cwd()), false);
+
+  const unbounded = preflightPortalTargetQualificationRegistry({
+    targetVenueIds: ['tmlr', 'iclr', 'jmlr'],
+    now: NOW,
+  });
+  assert.equal(unbounded.targets.length, 0);
+  assert.ok(unbounded.blockers.some(({ errorCode }) => (
+    errorCode === 'portal_target_qualification_preflight_target_count_invalid'
+  )));
+});
+
+test('pinned preflight recognizes a valid target but redacts authority material', (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-portal-preflight-'));
+  t.after(() => fs.rmSync(directory, { force: true, recursive: true }));
+  const fixture = qualificationFixture();
+  const registryPath = path.join(directory, 'registry.json');
+  const trustStorePath = path.join(directory, 'trust.json');
+  writeSecureJson(registryPath, fixture.registry);
+  const trustStoreHash = writeSecureJson(trustStorePath, fixture.trustStore);
+  const options = {
+    targetVenueIds: ['tmlr'],
+    registryPath,
+    expectedRegistryHash: fixture.registry.portalTargetQualificationRegistryHash,
+    trustStorePath,
+    expectedTrustStoreHash: trustStoreHash,
+    now: NOW,
+  };
+  const report = preflightPortalTargetQualificationRegistry(options);
+  assert.equal(report.ready, true, JSON.stringify(report.blockers));
+  assert.equal(report.targets[0].productionQualified, true);
+  assert.equal(report.targets[0].liveCommitAuthorized, false);
+  const serialized = JSON.stringify(report);
+  assert.equal(serialized.includes(directory), false);
+  assert.equal(serialized.includes('principal:'), false);
+  assert.equal(serialized.includes('BEGIN PUBLIC KEY'), false);
+  assert.equal(serialized.includes('"signatures"'), false);
+
+  const mismatched = preflightPortalTargetQualificationRegistry({
+    ...options,
+    expectedTargetBindings: {
+      tmlr: {
+        portalTargetSubjectHash: sha('wrong-subject'),
+        submissionRouteHash: sha('wrong-route'),
+        schemaFingerprintHash: sha('wrong-schema'),
+      },
+    },
+  });
+  assert.deepEqual(
+    [...new Set(mismatched.blockers.map(({ errorCode }) => errorCode))]
+      .filter((code) => /_(subject|route|schema)_mismatch$/u.test(code)).sort(),
+    [
+      'portal_target_qualification_preflight_route_mismatch',
+      'portal_target_qualification_preflight_schema_mismatch',
+      'portal_target_qualification_preflight_subject_mismatch',
+    ],
+  );
+  const pinDrift = preflightPortalTargetQualificationRegistry({
+    ...options,
+    expectedRegistryHash: sha('wrong-registry'),
+  });
+  assert.ok(pinDrift.blockers.some(({ errorCode }) => (
+    errorCode === 'portal_target_qualification_preflight_registry_pin_drift'
+  )));
+});
+
+test('successor preflight preserves subject, route, and schema across a revoked replacement', () => {
+  const priorQualificationHash = sha('prior-qualification');
+  const priorRegistryHash = sha('prior-registry');
+  const findings = inspectPortalTargetQualificationPreflightContinuity({
+    currentRegistry: {
+      generation: 1,
+      issuedAt: '2026-08-08T01:00:00.000Z',
+      portalTargetQualificationRegistryHash: priorRegistryHash,
+      entries: [{
+        venueId: 'tmlr',
+        portalTargetQualificationHash: priorQualificationHash,
+        portalTargetSubjectHash: sha('prior-subject'),
+        submissionRouteHash: sha('prior-route'),
+        schemaFingerprintHash: sha('prior-schema'),
+      }],
+    },
+    candidateRegistry: {
+      generation: 2,
+      issuedAt: '2026-08-08T01:20:00.000Z',
+      predecessorRegistryHash: priorRegistryHash,
+      revokedQualificationHashes: [priorQualificationHash],
+      entries: [{
+        venueId: 'tmlr',
+        portalTargetQualificationHash: sha('replacement-qualification'),
+        portalTargetSubjectHash: sha('replacement-subject'),
+        submissionRouteHash: sha('replacement-route'),
+        schemaFingerprintHash: sha('replacement-schema'),
+      }],
+    },
+  });
+  assert.deepEqual(findings.map(({ errorCode }) => errorCode).sort(), [
+    'portal_target_qualification_preflight_route_mismatch',
+    'portal_target_qualification_preflight_schema_mismatch',
+    'portal_target_qualification_preflight_subject_mismatch',
+  ]);
+});
+
+test('candidate preflight verifies active authority and never reports candidate as active qualification', (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-portal-candidate-preflight-'));
+  t.after(() => fs.rmSync(directory, { force: true, recursive: true }));
+  const fixture = qualificationFixture();
+  let candidate = buildPortalTargetQualificationRegistry({
+    generation: 2,
+    issuedAt: '2026-08-08T01:10:00.000Z',
+    expiresAt: '2026-08-08T01:25:00.000Z',
+    entries: [fixture.entry],
+    predecessorRegistryHash: fixture.registry.portalTargetQualificationRegistryHash,
+    revokedQualificationHashes: [],
+    signatures: [],
+  });
+  for (const signer of Object.values(fixture.authorities)) {
+    candidate = signAuthorityDocument(candidate, {
+      privateKeyPem: signer.privateKeyPem,
+      keyId: signer.trustKey.keyId,
+      role: signer.trustKey.roles[0],
+    });
+  }
+  const registryPath = path.join(directory, 'active.json');
+  const candidatePath = path.join(directory, 'candidate.json');
+  const trustStorePath = path.join(directory, 'trust.json');
+  writeSecureJson(registryPath, fixture.registry);
+  const expectedCandidateFileHash = writeSecureJson(candidatePath, candidate);
+  const expectedTrustStoreHash = writeSecureJson(trustStorePath, fixture.trustStore);
+  const options = {
+    targetVenueIds: ['tmlr'],
+    registryPath,
+    expectedRegistryHash: fixture.registry.portalTargetQualificationRegistryHash,
+    candidatePath,
+    expectedCandidateFileHash,
+    trustStorePath,
+    expectedTrustStoreHash,
+    now: new Date('2026-08-08T01:12:00.000Z'),
+  };
+  const valid = preflightPortalTargetQualificationRegistry(options);
+  assert.equal(valid.ready, true, JSON.stringify(valid.blockers));
+  assert.equal(valid.targets[0].sandboxQualified, false);
+  assert.equal(valid.targets[0].productionQualified, false);
+  assert.equal(valid.targets[0].candidateSandboxQualificationVerified, true);
+  assert.equal(valid.targets[0].candidateProductionQualificationVerified, true);
+
+  fs.unlinkSync(registryPath);
+  const missingCurrent = preflightPortalTargetQualificationRegistry(options);
+  assert.equal(missingCurrent.ready, false);
+  assert.ok(missingCurrent.blockers.some(({ errorCode }) => (
+    errorCode === 'portal_target_qualification_preflight_current_registry_invalid'
+  )));
+  assert.ok(missingCurrent.blockers.some(({ errorCode }) => (
+    errorCode === 'portal_target_qualification_preflight_registry_pin_drift'
+  )));
+  fs.symlinkSync('missing-active-registry.json', registryPath);
+  const danglingCurrent = preflightPortalTargetQualificationRegistry(options);
+  assert.equal(danglingCurrent.ready, false);
+  assert.ok(danglingCurrent.blockers.some(({ errorCode }) => (
+    errorCode === 'portal_target_qualification_preflight_current_registry_invalid'
+  )));
+  fs.unlinkSync(registryPath);
+  writeSecureJson(registryPath, fixture.registry);
+
+  const mismatchedSelection = preflightPortalTargetQualificationRegistry({
+    ...options,
+    targetVenueIds: ['iclr'],
+  });
+  assert.equal(mismatchedSelection.ready, false);
+  assert.ok(mismatchedSelection.blockers.some(({ errorCode, targetVenueId }) => (
+    errorCode === 'portal_target_qualification_preflight_candidate_target_set_mismatch'
+      && targetVenueId === null
+  )));
+
+  const invalidCurrent = {
+    ...fixture.registry,
+    signatures: fixture.registry.signatures.map((signature, index) => (
+      index === 0 ? { ...signature, value: 'invalid-signature' } : signature
+    )),
+  };
+  assert.equal(verifyPortalTargetQualificationRegistryStructure(invalidCurrent), true);
+  writeSecureJson(registryPath, invalidCurrent);
+  const blocked = preflightPortalTargetQualificationRegistry(options);
+  assert.equal(blocked.ready, false);
+  assert.ok(blocked.blockers.some(({ errorCode }) => (
+    errorCode === 'portal_target_qualification_preflight_signature_verification_failed'
+  )));
 });
 
 test('SPKI alias defense preserves the historical verified-signature wire shape', () => {
@@ -341,6 +572,17 @@ test('registry freshness and non-fixture evidence fail closed', () => {
     });
     assert.equal(expired.ready, false);
     assert.ok(expired.blockers.includes('portal_target_qualification_registry_expired'));
+    const preflight = preflightPortalTargetQualificationRegistry({
+      targetVenueIds: ['tmlr'],
+      registryPath,
+      expectedRegistryHash: registry.portalTargetQualificationRegistryHash,
+      trustStorePath,
+      expectedTrustStoreHash,
+      now: new Date(REGISTRY_EXPIRES_AT),
+    });
+    assert.ok(preflight.blockers.some(({ errorCode }) => (
+      errorCode === 'portal_target_qualification_preflight_registry_expired'
+    )));
   } finally {
     fs.rmSync(directory, { force: true, recursive: true });
   }
@@ -411,6 +653,52 @@ test('authority aliases sharing one Ed25519 SPKI cannot satisfy independence', (
   assert.ok(inspection.blockers.includes(
     'portal_target_qualification_authority_spki_not_independent',
   ));
+
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-portal-spki-lint-'));
+  t.after(() => fs.rmSync(directory, { force: true, recursive: true }));
+  const registryPath = path.join(directory, 'registry.json');
+  const trustStorePath = path.join(directory, 'trust.json');
+  writeSecureJson(registryPath, fixture.registry);
+  const trustStoreHash = writeSecureJson(trustStorePath, fixture.trustStore);
+  const preflight = preflightPortalTargetQualificationRegistry({
+    targetVenueIds: ['tmlr'],
+    registryPath,
+    expectedRegistryHash: fixture.registry.portalTargetQualificationRegistryHash,
+    trustStorePath,
+    expectedTrustStoreHash: trustStoreHash,
+    now: NOW,
+  });
+  assert.ok(preflight.blockers.some(({ errorCode }) => (
+    errorCode === 'portal_target_qualification_preflight_issuer_spki_not_independent'
+  )));
+});
+
+test('redacted preflight types issuer-role mismatch without exposing principals', (t) => {
+  const valid = qualificationFixture();
+  const fixture = qualificationFixture({
+    issuerOverrides: {
+      sandboxCanary: valid.authorities.owner.trustKey.subjectId,
+    },
+  });
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-portal-role-lint-'));
+  t.after(() => fs.rmSync(directory, { force: true, recursive: true }));
+  const registryPath = path.join(directory, 'registry.json');
+  const trustStorePath = path.join(directory, 'trust.json');
+  writeSecureJson(registryPath, fixture.registry);
+  const trustStoreHash = writeSecureJson(trustStorePath, fixture.trustStore);
+  const report = preflightPortalTargetQualificationRegistry({
+    targetVenueIds: ['tmlr'],
+    registryPath,
+    expectedRegistryHash: fixture.registry.portalTargetQualificationRegistryHash,
+    trustStorePath,
+    expectedTrustStoreHash: trustStoreHash,
+    now: NOW,
+  });
+  assert.ok(report.blockers.some(({ errorCode, evidenceType }) => (
+    errorCode === 'portal_target_qualification_preflight_issuer_role_mismatch'
+      && evidenceType === 'sandboxCanary'
+  )));
+  assert.equal(JSON.stringify(report).includes('principal:'), false);
 });
 
 test('duplicate trust key identifiers cannot split verification from SPKI identity', (t) => {
@@ -511,9 +799,9 @@ test('a signed successor can revoke a qualification but cannot silently remove i
   t.after(() => fs.rmSync(directory, { force: true, recursive: true }));
   const fixture = qualificationFixture();
   const { owner, observer } = fixture.authorities;
-  function successor(revokedQualificationHashes) {
+  function successor(revokedQualificationHashes, generation = 2) {
     let registry = buildPortalTargetQualificationRegistry({
-      generation: 2,
+      generation,
       issuedAt: '2026-08-08T01:20:00.000Z',
       expiresAt: '2026-08-08T01:35:00.000Z',
       entries: [],
@@ -538,6 +826,18 @@ test('a signed successor can revoke a qualification but cannot silently remove i
   const expectedTrustStoreHash = writeSecureJson(trustStorePath, fixture.trustStore);
   const silentlyRemoved = successor([]);
   let expectedCandidateFileHash = writeSecureJson(candidatePath, silentlyRemoved);
+  const revocationLint = preflightPortalTargetQualificationRegistry({
+    targetVenueIds: ['tmlr'],
+    registryPath,
+    candidatePath,
+    expectedCandidateFileHash,
+    trustStorePath,
+    expectedTrustStoreHash,
+    now: new Date('2026-08-08T01:25:00.000Z'),
+  });
+  assert.ok(revocationLint.blockers.some(({ errorCode }) => (
+    errorCode === 'portal_target_qualification_preflight_revocation_drift'
+  )));
   assert.throws(() => planPortalTargetQualificationRegistryImport({
     registryPath,
     candidatePath,
@@ -546,6 +846,23 @@ test('a signed successor can revoke a qualification but cannot silently remove i
     expectedTrustStoreHash,
     now: new Date('2026-08-08T01:25:00.000Z'),
   }), /portal_target_qualification_revocation_required:tmlr/);
+
+  const skippedGeneration = successor([
+    fixture.entry.portalTargetQualificationHash,
+  ], 3);
+  expectedCandidateFileHash = writeSecureJson(candidatePath, skippedGeneration);
+  const generationLint = preflightPortalTargetQualificationRegistry({
+    targetVenueIds: ['tmlr'],
+    registryPath,
+    candidatePath,
+    expectedCandidateFileHash,
+    trustStorePath,
+    expectedTrustStoreHash,
+    now: new Date('2026-08-08T01:25:00.000Z'),
+  });
+  assert.ok(generationLint.blockers.some(({ errorCode }) => (
+    errorCode === 'portal_target_qualification_preflight_generation_drift'
+  )));
 
   const revoked = successor([fixture.entry.portalTargetQualificationHash]);
   expectedCandidateFileHash = writeSecureJson(candidatePath, revoked);

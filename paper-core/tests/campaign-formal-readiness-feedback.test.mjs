@@ -64,6 +64,53 @@ test('a later revise receives prior theorem readiness blockers and revision mate
   assert.equal(request.timeoutMs, 60_000);
 });
 
+test('revision instructions preserve theorem and proof adjacency', () => {
+  const request = buildCampaignAgentExecutionRequest({
+    campaign: {
+      campaignId: 'campaign', paperId: 'paper-formal-adjacency',
+      spec: { datasetMounts: [], paperQualityProfile: 'formal_theorem_or_proof' },
+    },
+    node: { nodeId: 'campaign:1:revise', kind: 'revise', roundIndex: 1 },
+    workspace: '/tmp/formal-adjacency',
+    manuscript: 'main.tex',
+    reviews: [],
+    empiricalOutcomeObserved: true,
+    executionBudget: { remainingTokenCount: 4096, remainingWallTimeMs: 60_000 },
+    executionSignal: null,
+  });
+  assert.match(request.instructions, /proof environment immediately adjacent/i);
+  assert.match(request.instructions, /limitations after the proof/i);
+});
+
+test('revise treats current-round formal bindings and generic entailment as downstream', () => {
+  const finding = 'THEOREM_SPEC belongs to another campaign; create AUTONOMOUS_MANUSCRIPT_ENTAILMENT.json';
+  const request = buildCampaignAgentExecutionRequest({
+    campaign: {
+      campaignId: 'campaign', paperId: 'paper-stage-boundary',
+      spec: {
+        datasetMounts: [],
+        paperQualityProfiles: ['formal_theorem_or_proof', 'empirical_or_experiment'],
+      },
+    },
+    node: { nodeId: 'campaign:1:revise', kind: 'revise', roundIndex: 1 },
+    workspace: '/tmp/formal-stage-boundary',
+    manuscript: 'main.tex',
+    reviews: [{ verdict: 'revise', findings: [finding] }],
+    empiricalOutcomeObserved: true,
+    executionBudget: { remainingTokenCount: 4096, remainingWallTimeMs: 60_000 },
+    executionSignal: null,
+  });
+  assert.equal(request.context.evidenceEntailmentMode, 'not_applicable');
+  assert.match(request.instructions, /system-owned downstream artifacts/);
+  assert.match(request.instructions, /must not make the task status blocked/);
+  assert.match(request.instructions, /not in trusted autonomous manuscript entailment mode/);
+  assert.match(request.instructions, /must not make this task blocked/);
+  assert.match(request.instructions, /never create or edit it/);
+  assert.match(request.instructions, /do not return blocked solely because it is absent/);
+  assert.match(request.instructions, /Complete every actionable manuscript-local change/);
+  assert.match(request.instructions, /THEOREM_SPEC belongs to another campaign/);
+});
+
 test('agent requests cap one call below the whole-campaign wall-time budget', () => {
   const request = buildCampaignAgentExecutionRequest({
     campaign: {
@@ -97,6 +144,7 @@ test('machine-authorized initial writer is confined to manuscript and IR draft',
         paperQualityProfile: 'formal_theorem_or_proof',
         scientificClaimAuthority: {
           status: 'autonomous_research_seed_bound',
+          claimAuthorityType: 'machine-policy-authorized',
           contractPath: 'AUTONOMOUS_RESEARCH_SEED_CONTRACTS.json',
           autonomousResearchSeedBindingHash: `sha256:${'a'.repeat(64)}`,
         },

@@ -294,6 +294,44 @@ export function resolveAutonomousFormalSupportTemplateForClaim(claim) {
   return matches[0];
 }
 
+export function exactAutonomousFormalSupportTemplateForTheoremClaim({
+  theoremSpecification,
+  claim,
+} = {}) {
+  const source = claim?.proposalClaimSource;
+  if (theoremSpecification?.claimAuthorityType !== 'machine-policy-authorized'
+    || theoremSpecification?.proposalClaimLineageRequired !== true
+    || source?.claimAuthorityType !== 'machine-policy-authorized'
+    || source?.dynamicFormalClaimSeedHash
+    || claim?.claimKey !== source.scientificClaimKey
+    || !theoremSpecification.claimAuthorityBindingHash
+    || theoremSpecification.claimAuthorityBindingHash
+      !== source.claimAuthorityBindingHash
+    || !theoremSpecification.claimAuthorityBundleHash
+    || theoremSpecification.claimAuthorityBundleHash
+      !== source.claimAuthorityBundleHash
+    || ['assumptions', 'quantifiers', 'negativeBoundaries', 'proofObligations']
+      .some((field) => JSON.stringify(claim?.[field]) !== JSON.stringify(source[field]))) {
+    return null;
+  }
+  let template;
+  try {
+    template = resolveAutonomousFormalSupportTemplateForClaim({
+      statement: source.proposalClaimText,
+      assumptions: source.assumptions,
+      quantifiers: source.quantifiers,
+      negativeBoundaries: source.negativeBoundaries,
+      proofObligations: source.proofObligations,
+    });
+  } catch {
+    return null;
+  }
+  return JSON.stringify(claim?.proofObligationContracts?.map((contract) => (
+    contract?.displayText
+  ))) === JSON.stringify(template.scope.proofObligations)
+    ? template : null;
+}
+
 export function verifyAutonomousFormalSupportTemplate(value, { protocolFamily = null } = {}) {
   let expected = null;
   try { expected = selectAutonomousFormalSupportTemplate(protocolFamily || value?.protocolFamily); }

@@ -22,6 +22,21 @@ export function campaignBudgetOverrides(options = {}) {
 }
 
 function extendedCampaignPlan(existing, campaignId, options) {
+  const persistedPaperTask = existing.spec.researchVerificationInput?.paperTask || null;
+  const approvedProposalSeed = existing.spec.approvedProposalSeed || null;
+  const paperTask = persistedPaperTask && approvedProposalSeed
+    ? {
+      ...persistedPaperTask,
+      registry: {
+        inventorySource: 'proposal_materialization',
+        proposalEnvelopeHash: approvedProposalSeed.proposalEnvelopeHash,
+        productionPlanEnvelopeHash: approvedProposalSeed.productionPlanEnvelopeHash,
+        reviewGateHash: approvedProposalSeed.reviewGateHash,
+        proposalSeedContractBundleHash: approvedProposalSeed.proposalSeedContractBundleHash,
+      },
+      source: { proposalSeedContracts: approvedProposalSeed.contractPath },
+    }
+    : persistedPaperTask;
   return buildPaperCampaignPlan({
     paperId: existing.paperId,
     sourceWorkspace: existing.spec.sourceWorkspace,
@@ -42,7 +57,16 @@ function extendedCampaignPlan(existing, campaignId, options) {
     benchmarkId: existing.spec.benchmarkId || null,
     empiricalClaimUniverse: existing.spec.empiricalClaimUniverse || null,
     scientificClaimAuthority: existing.spec.scientificClaimAuthority || null,
+    paperTask,
+    paperState: existing.spec.researchVerificationInput?.state || null,
     autonomousResearchPreparation: existing.spec.autonomousResearchPreparation || null,
+    autonomousResearchMachineIntake: existing.spec.autonomousResearchMachineIntake || null,
+    autonomousResearchMachineIntakeAdmission:
+      existing.spec.autonomousResearchMachineIntakeAdmission || null,
+    localOnly: existing.spec.localOnly === true,
+    directLocalRunBudgetWaiver: existing.spec.directLocalRunBudgetWaiver || null,
+    advancedNumericalExecutionPlan:
+      existing.spec.advancedNumericalExecutionPlan || null,
     applyManuscript: Boolean(existing.spec.applyManuscript),
     budgets: { ...existing.spec.budgets, ...campaignBudgetOverrides(options) },
     parentCampaignId: existing.parentCampaignId || existing.spec.parentCampaignId || null,
@@ -138,6 +162,9 @@ export class CampaignCommandService {
       datasetMounts,
       metricSchema,
       benchmarkId,
+      mode: options.mode || 'full-campaign',
+      localOnly: Boolean(options['local-only']),
+      applyManuscript: Boolean(options['apply-manuscript']),
       paperQualityProfile: options['quality-profile'] || task.paperQualityProfile || null,
       paperQualityProfiles: task.paperQualityProfiles || [],
       venueTarget: task.venueTarget || null,
@@ -149,6 +176,8 @@ export class CampaignCommandService {
       parentCampaignId: options['parent-campaign-id'] || null,
       supersedesCampaignId: options['supersedes-campaign-id'] || null,
       recoveryOfCampaignId: options['recovery-of-campaign-id'] || null,
+      advancedNumericalExecutionPlan:
+        options.advancedNumericalExecutionPlan || null,
     })));
   }
 
@@ -243,7 +272,13 @@ export class CampaignCommandService {
       result = this.campaignStore.cancelCampaign(campaignId, options.reason || 'operator_cancelled');
     } else if (action === 'cancel-node') {
       result = this.campaignStore.cancelNode(options['node-id'], options.reason || 'operator_node_cancelled');
-    } else if (action === 'retry') result = this.campaignStore.retryNode(options['node-id']);
+    } else if (action === 'retry') {
+      const nodeId = options['node-id'];
+      const node = this.campaignStore.listNodes(campaignId)
+        .find((candidate) => candidate.nodeId === nodeId);
+      if (!node) throw new Error('campaign node not found for retry');
+      result = this.campaignStore.retryNode(nodeId);
+    }
     else throw new Error(`unsupported campaign action: ${action}`);
     const presented = options.details
       ? result

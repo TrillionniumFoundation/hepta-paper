@@ -118,6 +118,7 @@ export const NATIVE_STORE_CAMPAIGN_STATEMENT_IDS = Object.freeze({
   resumeNodes: 'campaign.lifecycle.resume-nodes.v1',
   retryCampaign: 'campaign.lifecycle.retry-campaign.v1',
   retryNode: 'campaign.lifecycle.retry-node.v1',
+  retrySiblingNode: 'campaign.lifecycle.retry-sibling-node.v1',
   skipFutureNode: 'campaign.lifecycle.skip-future-node.v1',
   startNode: 'campaign.lease.start-node.v1',
   startNodeCampaign: 'campaign.lease.start-node-campaign.v1',
@@ -413,6 +414,25 @@ const plans = [
       prepared_integrated_at=iif(prepared_integration_status='integrated',prepared_integrated_at,NULL),
       node_revision=node_revision+1,updated_at=?
       WHERE node_id=? AND status='failed_terminal' AND node_revision=?`),
+    statement(S.retrySiblingNode, `UPDATE campaign_nodes SET status='queued',attempt_count=0,
+      failure_class=NULL,failure_json=NULL,failure_sha256=NULL,lease_owner=NULL,
+      lease_expires_at=NULL,attempt_id=NULL,
+      prepared_result_json=iif(prepared_integration_status='integrated',prepared_result_json,NULL),
+      prepared_result_sha256=iif(prepared_integration_status='integrated',prepared_result_sha256,NULL),
+      prepared_attempt_id=iif(prepared_integration_status='integrated',prepared_attempt_id,NULL),
+      prepared_at=iif(prepared_integration_status='integrated',prepared_at,NULL),
+      prepared_requires_integration=iif(prepared_integration_status='integrated',prepared_requires_integration,0),
+      prepared_integration_key=iif(prepared_integration_status='integrated',prepared_integration_key,NULL),
+      prepared_integration_status=iif(prepared_integration_status='integrated','integrated','none'),
+      prepared_integration_started_at=iif(prepared_integration_status='integrated',prepared_integration_started_at,NULL),
+      prepared_integration_receipt_json=iif(prepared_integration_status='integrated',prepared_integration_receipt_json,NULL),
+      prepared_integration_receipt_sha256=iif(prepared_integration_status='integrated',prepared_integration_receipt_sha256,NULL),
+      prepared_integrated_at=iif(prepared_integration_status='integrated',prepared_integrated_at,NULL),
+      node_revision=node_revision+1,updated_at=?
+      WHERE node_id=? AND campaign_id=? AND status='skipped'
+        AND failure_class='campaign_terminal_sibling_cancelled'
+        AND json_extract(failure_json,'$.terminalNodeId')=?
+        AND prepared_integration_status=? AND node_revision=?`),
   ]),
   operation(NATIVE_STORE_CAMPAIGN_OPERATION_IDS.recordUsage, [
     statement(S.recordUsage, `UPDATE paper_campaigns SET ${USAGE_SET},updated_at=?

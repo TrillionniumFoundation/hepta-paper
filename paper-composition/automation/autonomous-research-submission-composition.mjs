@@ -10,6 +10,9 @@ import {
 import {
   inspectAutonomousResearchSubmissionHandoff,
 } from '../../paper-application/automation/autonomous-research-submission-recovery.mjs';
+import {
+  verifyAutonomousLiveSubmissionAuthorization,
+} from '../../paper-adapters/submission/live-authorization.mjs';
 
 function configuredPortalConfiguration(environment) {
   return readConfiguredAutonomousSubmissionPortalDescriptorConfiguration({
@@ -32,8 +35,10 @@ function configuredPortalDescriptor(environment) {
 }
 
 export function composeAutonomousResearchSubmissionServices({
+  root,
   environment = process.env,
   runtimeRoot,
+  clock = null,
   autonomousSubmissionRequestVerifier,
 } = {}) {
   const autonomousSubmissionPortal = configuredPortalDescriptor(environment);
@@ -42,6 +47,13 @@ export function composeAutonomousResearchSubmissionServices({
     autonomousVenueComplianceInspector: autonomousSubmissionPortal
       ? createLocalAutonomousVenueComplianceInspector({ runtimeRoot }) : null,
     autonomousSubmissionRequestVerifier,
+    verifyAutonomousSubmissionHumanAuthorization: autonomousSubmissionPortal
+      ? (input = {}) => verifyAutonomousLiveSubmissionAuthorization({
+        root,
+        runtimeRoot,
+        ...input,
+        now: input.now || (typeof clock?.now === 'function' ? clock.now() : new Date()),
+      }) : null,
   });
 }
 

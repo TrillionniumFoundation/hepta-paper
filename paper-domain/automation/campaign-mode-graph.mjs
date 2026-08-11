@@ -4,6 +4,11 @@ import {
   formalVerificationChain,
   sealedEmpiricalChains,
 } from './campaign-source-closure-graph.mjs';
+import {
+  ADVANCED_NUMERICAL_CAMPAIGN_NODE_KIND,
+  advancedNumericalCampaignNodeId,
+  verifyAdvancedNumericalCampaignExecutionPlan,
+} from './advanced-numerical-campaign-execution-contract.mjs';
 
 const FULL_CAMPAIGN_MODE = 'full-campaign';
 const FORMAL_CANDIDATE_MAX_AGENT_CALLS = 6;
@@ -55,9 +60,13 @@ export function empiricalExecutionProfiles(languages, requiresGpu, { excludeLean
 
 function empiricalChains({ campaignId, dependencies, executionProfiles, executionIntent }) {
   const singleEmpirical = executionProfiles.length === 1;
+  let previousReproduceNodeId = null;
   return executionProfiles.map((profile) => {
     const suffix = singleEmpirical ? '' : `-${profile.label}`;
-    const coder = node(campaignId, `coder${suffix}`, dependencies, {
+    const coderDependencies = previousReproduceNodeId
+      ? [...dependencies, previousReproduceNodeId]
+      : dependencies;
+    const coder = node(campaignId, `coder${suffix}`, coderDependencies, {
       priority: 20,
       role: `coder-${profile.label}`,
       language: profile.language,
@@ -77,6 +86,7 @@ function empiricalChains({ campaignId, dependencies, executionProfiles, executio
       executionIntent,
       sourceMutationPolicy: 'forbid',
     });
+    previousReproduceNodeId = reproduce.nodeId;
     return { coder, empirical, reproduce };
   });
 }
@@ -202,7 +212,7 @@ function appendReviewRounds({
   });
 }
 
-function appendFullCampaign({ nodes, campaignId, rounds, reviewers, executionProfiles, executionIntent, integrateManuscript = true, formalRequested = false, researchVerificationRequired = false }) {
+function appendFullCampaign({ nodes, campaignId, rounds, reviewers, executionProfiles, executionIntent, integrateManuscript = true, formalRequested = false, researchVerificationRequired = false, advancedNumericalExecutionPlan = null }) {
   const research = node(campaignId, 'research-plan', [], { priority: 10, executionIntent });
   const writer = node(campaignId, 'writer', [research.nodeId], { priority: 20, role: 'writer', executionIntent });
   // The writer declares literal empirical claim ranges. Every empirical attempt
@@ -274,10 +284,24 @@ function appendFullCampaign({ nodes, campaignId, rounds, reviewers, executionPro
     executionIntent,
   });
   const sourceClosureReplayNodeIds = sourceClosureEmpirical.map((chain) => chain.reproduce.nodeId);
+  const advancedNumerical = advancedNumericalExecutionPlan ? node(
+    campaignId,
+    ADVANCED_NUMERICAL_CAMPAIGN_NODE_KIND,
+    sourceClosureReplayNodeIds.length ? sourceClosureReplayNodeIds : [sourceClosureRoot],
+    {
+      priority: 98,
+      executionIntent,
+      sourceClosureTerminal: true,
+      sourceMutationPolicy: 'forbid',
+      advancedNumericalExecutionPlanHash:
+        advancedNumericalExecutionPlan.advancedNumericalCampaignExecutionPlanHash,
+    },
+  ) : null;
   const finalCompile = node(campaignId, 'final-compile', [
     ...review.convergenceNodeIds,
     ...(sourceClosureFormal ? [sourceClosureFormal.formalVerify.nodeId] : []),
     ...sourceClosureReplayNodeIds,
+    ...(advancedNumerical ? [advancedNumerical.nodeId] : []),
   ], {
     roundIndex: rounds,
     priority: 100,
@@ -302,6 +326,7 @@ function appendFullCampaign({ nodes, campaignId, rounds, reviewers, executionPro
       finalCompile.nodeId,
       ...releaseFormalVerifyNodeIds,
       ...releaseEmpiricalReplayNodeIds,
+      ...(advancedNumerical ? [advancedNumerical.nodeId] : []),
     ], { roundIndex: rounds + 1, priority: 105, executionIntent })
     : null;
   const packageNode = node(campaignId, 'package', [finalCompile.nodeId, ...(researchVerify ? [researchVerify.nodeId] : [])], {
@@ -312,6 +337,7 @@ function appendFullCampaign({ nodes, campaignId, rounds, reviewers, executionPro
       ? [sourceClosureFormal.theoremSpecification, sourceClosureFormal.formalVerify]
       : []),
     ...sourceClosureEmpirical.flatMap((chain) => [chain.empirical, chain.reproduce]),
+    ...(advancedNumerical ? [advancedNumerical] : []),
     finalCompile,
     ...(researchVerify ? [researchVerify] : []),
     packageNode,
@@ -396,10 +422,22 @@ export function buildCampaignModeNodes({
   applyManuscript,
   formalRequested = false,
   researchVerificationRequired = false,
+  advancedNumericalExecutionPlan = null,
 }) {
+  if (advancedNumericalExecutionPlan
+    && !verifyAdvancedNumericalCampaignExecutionPlan(
+      advancedNumericalExecutionPlan,
+      {
+        campaignId,
+        paperId: advancedNumericalExecutionPlan.paperId,
+        nodeId: advancedNumericalCampaignNodeId(campaignId),
+      },
+    )) {
+    throw new Error('campaign_advanced_numerical_execution_plan_invalid');
+  }
   const nodes = [];
   if (mode === FULL_CAMPAIGN_MODE) {
-    appendFullCampaign({ nodes, campaignId, rounds, reviewers, executionProfiles, executionIntent, integrateManuscript: true, formalRequested, researchVerificationRequired });
+    appendFullCampaign({ nodes, campaignId, rounds, reviewers, executionProfiles, executionIntent, integrateManuscript: true, formalRequested, researchVerificationRequired, advancedNumericalExecutionPlan });
   } else if (mode === PAPER_BATCH_MODES.LOCAL_BUILD) {
     nodes.push(node(campaignId, 'compile', [], { priority: 10, language: 'latex', executionIntent }));
   } else if (mode === PAPER_BATCH_MODES.LOCAL_PACKAGE

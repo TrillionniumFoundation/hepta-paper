@@ -5,6 +5,9 @@ import { composeAutonomousResearchCampaignAction } from '../../paper-composition
 import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../src/workspace-layout.mjs';
 import { parseStrictCliArguments } from '../src/strict-cli-arguments.mjs';
 import {
+  AUTONOMOUS_RESEARCH_CLI_ARGUMENT_SCHEMA,
+} from '../src/command-registry.mjs';
+import {
   autonomousResearchCommandExitCode,
   isLocalAutonomousResearchCliLaunchMode,
   LOCAL_AUTONOMOUS_RESEARCH_LAUNCH_MODE,
@@ -12,29 +15,10 @@ import {
   resolveAutonomousResearchDirectLocalRunBudgetWaiver,
 } from '../../paper-application/automation/autonomous-research-cli-policy.mjs';
 
-const args = parseStrictCliArguments(process.argv.slice(2), {
-  booleanFlags: [
-    'help', 'human-subjects', 'private-data', 'require-launch-ready', 'require-full-ready',
-    'require-bounded-golden-ready', 'unlimited-tokens', 'unlimited-cost',
-  ],
-  valueFlags: [
-    'action', 'launch-mode', 'paper-id', 'campaign-id', 'objective', 'protocol-family', 'revision-rounds',
-    'referee-count', 'root', 'runtime-root', 'dataset-mount-file', 'concurrency', 'agent-slots',
-    'cpu-slots', 'gpu-slots', 'memory-mib', 'max-wall-ms', 'max-agent-calls', 'max-cpu-jobs',
-    'max-gpu-jobs', 'max-tokens', 'max-cost-usd', 'agent-provider', 'model',
-    'formal-review-provider', 'formal-review-model', 'formal-review-codex-binary',
-    'formal-review-codex-home', 'codex-home', 'codex-binary',
-    'external-qualification-config',
-    'qualification-maximum-attempts', 'qualification-maximum-epochs',
-    'qualification-maximum-total-attempts', 'qualification-initial-backoff-ms',
-    'qualification-maximum-backoff-ms', 'qualification-deadline-ms',
-    'qualification-epoch-cooldown-ms', 'qualification-global-deadline-ms',
-    'qualification-exhausted-cooldown-ms', 'qualification-attempt-lease-ms',
-    'qualification-maximum-total-cost-usd', 'qualification-attempt-reservation-cost-usd',
-    'qualification-renewal-lead-ms',
-  ],
-  positional: false,
-});
+const args = parseStrictCliArguments(
+  process.argv.slice(2),
+  AUTONOMOUS_RESEARCH_CLI_ARGUMENT_SCHEMA,
+);
 
 function numericOptions() {
   return Object.fromEntries([

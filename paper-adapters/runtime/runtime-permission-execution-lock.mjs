@@ -440,7 +440,7 @@ export function rollbackRuntimePermissionRows({
       fs.fchmodSync(opened.descriptor, originalMode);
       const verified = fs.fstatSync(opened.descriptor, { bigint: true });
       if (!sameIdentity(row.identity, verified)
-        || Number(verified.mode & 0o777n) !== originalMode) {
+        || Number(verified.mode & 0o7777n) !== originalMode) {
         throw new Error('runtime_permission_rollback_verification_failed');
       }
       rolledBackCount += 1;

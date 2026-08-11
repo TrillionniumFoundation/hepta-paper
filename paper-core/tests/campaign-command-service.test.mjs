@@ -9,18 +9,62 @@ import { CampaignCommandService } from '../../paper-application/automation/campa
 import { buildPaperCampaignPlan } from '../../paper-domain/automation/campaign-plan.mjs';
 import { readEmpiricalClaimUniverse } from '../../paper-adapters/research-verify/empirical-claim-universe-reader.mjs';
 
-function fixture(planOverride = null) {
-  const plan = planOverride || buildPaperCampaignPlan({
-    paperId: 'paper-1',
-    sourceWorkspace: '/tmp/paper-1',
+const FIXTURE_PAPER_TASK = Object.freeze({
+  version: 'fixture',
+  kind: 'PaperTask',
+  paperId: 'paper-1',
+  taskKey: 'paper:paper-1',
+  semanticIdentityHash: `sha256:${'1'.repeat(64)}`,
+  sourceWorkspace: '/tmp/paper-1',
+  evidenceRefs: Object.freeze([]),
+});
+
+function fixturePlan({ mode = 'full-campaign' } = {}) {
+  return buildPaperCampaignPlan({
+    paperId: FIXTURE_PAPER_TASK.paperId,
+    sourceWorkspace: FIXTURE_PAPER_TASK.sourceWorkspace,
+    campaignId: 'campaign-1',
+    mode,
+    maxRounds: 2,
+    refereeCount: 2,
+    languages: ['latex'],
+    paperTask: FIXTURE_PAPER_TASK,
+    paperState: { evidenceRefs: [] },
+  });
+}
+
+function proposalExtensionPlan() {
+  const paperTask = Object.freeze({
+    ...FIXTURE_PAPER_TASK,
+    paperQualityProfiles: Object.freeze(['formal_theorem_or_proof']),
+    registry: Object.freeze({
+      inventorySource: 'proposal_materialization',
+      proposalEnvelopeHash: `sha256:${'2'.repeat(64)}`,
+      productionPlanEnvelopeHash: `sha256:${'3'.repeat(64)}`,
+      reviewGateHash: `sha256:${'4'.repeat(64)}`,
+      proposalSeedContractBundleHash: `sha256:${'5'.repeat(64)}`,
+    }),
+    source: Object.freeze({ proposalSeedContracts: 'PROPOSAL_SEED.json' }),
+  });
+  return buildPaperCampaignPlan({
+    paperId: paperTask.paperId,
+    sourceWorkspace: paperTask.sourceWorkspace,
     campaignId: 'campaign-1',
     maxRounds: 2,
     refereeCount: 2,
     languages: ['latex'],
+    paperTask,
+    paperState: { evidenceRefs: [] },
+    localOnly: true,
   });
+}
+
+function fixture(planOverride = null) {
+  const plan = planOverride || fixturePlan();
   const campaign = { ...plan, spec: plan, status: 'running', maxRounds: plan.maxRounds };
   const nodes = [{
     nodeId: 'writer',
+    campaignId: campaign.campaignId,
     kind: 'writer',
     status: 'running',
     createdAt: '2026-07-15T00:00:00.000Z',
@@ -29,7 +73,10 @@ function fixture(planOverride = null) {
   const calls = [];
   const campaignStore = {
     listCampaigns: (query) => { calls.push(['listCampaigns', query]); return [campaign]; },
-    listNodes: (campaignId) => { calls.push(['listNodes', campaignId]); return nodes; },
+    listNodes: (campaignId) => {
+      calls.push(['listNodes', campaignId]);
+      return campaignId === campaign.campaignId ? nodes : [];
+    },
     listEvents: (campaignId, query) => { calls.push(['listEvents', campaignId, query]); return []; },
     listTelemetry: () => [],
     getCampaign: () => campaign,
@@ -38,7 +85,7 @@ function fixture(planOverride = null) {
     extendCampaign: (nextPlan) => { calls.push(['extendCampaign', nextPlan]); return nextPlan; },
     cancelCampaign: (campaignId, reason) => ({ ...campaign, campaignId, status: 'cancelled', stopReason: reason }),
     cancelNode: (nodeId, reason) => ({ ...nodes[0], nodeId, status: 'cancelled', reason }),
-    retryNode: (nodeId) => ({ ...nodes[0], nodeId, status: 'queued' }),
+    retryNode: (nodeId) => { calls.push(['retryNode', nodeId]); return { ...nodes[0], nodeId, status: 'queued' }; },
   };
   const service = new CampaignCommandService({
     campaignStore,
@@ -100,7 +147,12 @@ test('CampaignCommandService owns bounded queries and campaign control policy', 
   assert.equal(service.execute({ action: 'pause', campaignId: 'campaign-1' }).result.status, 'paused');
   assert.equal(service.execute({ action: 'cancel', campaignId: 'campaign-1' }).result.status, 'cancelled');
   assert.equal(service.execute({ action: 'cancel-node', options: { 'node-id': 'writer' } }).result.status, 'cancelled');
-  assert.equal(service.execute({ action: 'retry', options: { 'node-id': 'writer' } }).result.status, 'queued');
+  assert.equal(service.execute({
+    action: 'retry', campaignId: 'campaign-1', options: { 'node-id': 'writer' },
+  }).result.status, 'queued');
+  assert.throws(() => service.execute({
+    action: 'retry', campaignId: 'campaign-2', options: { 'node-id': 'writer' },
+  }), /campaign node not found for retry/);
   service.execute({
     action: 'resume',
     campaignId: 'campaign-1',
@@ -121,6 +173,14 @@ test('CampaignCommandService preserves extension budgets and retention/SLO behav
   const extended = calls.find(([name]) => name === 'extendCampaign')[1];
   assert.equal(extended.maxRounds, 4);
   assert.equal(extended.budgets.maxCostUsd, 25);
+  assert.equal(
+    extended.researchVerificationInput.paperTask.taskKey,
+    FIXTURE_PAPER_TASK.taskKey,
+  );
+  assert.equal(
+    extended.researchVerificationInput.paperSemanticIdentityHash,
+    FIXTURE_PAPER_TASK.semanticIdentityHash,
+  );
   const slo = service.execute({ action: 'slo' }).result;
   assert.equal(slo.kind, 'CampaignSloReport');
   assert.equal(slo.observed.runtimeBytes, 64);
@@ -130,6 +190,23 @@ test('CampaignCommandService preserves extension budgets and retention/SLO behav
   const applied = service.execute({ action: 'gc', options: { apply: true } }).result;
   assert.equal(applied.recovery.status, 'runtime_retention_recovery_completed');
   assert.equal(applied.receipt.status, 'runtime_retention_applied');
+});
+
+test('CampaignCommandService preserves proposal authority and local-only scope on extension', () => {
+  const original = proposalExtensionPlan();
+  const { service, calls } = fixture(original);
+  service.execute({
+    action: 'extend',
+    campaignId: original.campaignId,
+    options: { rounds: '3' },
+  });
+  const extended = calls.find(([name]) => name === 'extendCampaign')[1];
+  assert.deepEqual(extended.approvedProposalSeed, original.approvedProposalSeed);
+  assert.equal(extended.localOnly, true);
+  assert.equal(
+    extended.researchVerificationInput.paperTask.taskKey,
+    original.researchVerificationInput.paperTask.taskKey,
+  );
 });
 
 test('CampaignCommandService preserves frozen empirical claim authority across automatic round extension', (t) => {
@@ -179,16 +256,24 @@ test('CampaignCommandService owns worker selection and inventory-to-plan policy'
     options: {
       paper: ['paper-2'],
       'campaign-id': 'campaign-2',
-      languages: 'latex',
+      languages: 'python,latex',
       rounds: '4',
       referees: '2',
       'max-cpu-jobs': '9',
+      mode: 'local-review-loop',
+      'local-only': true,
+      'apply-manuscript': true,
     },
+    benchmarkId: 'ml_algorithm_benchmark',
   });
   assert.equal(plans[0].campaignId, 'campaign-2');
   assert.equal(plans[0].maxRounds, 4);
   assert.equal(plans[0].refereeCount, 2);
   assert.equal(plans[0].budgets.maxCpuJobs, 9);
+  assert.equal(plans[0].mode, 'local-review-loop');
+  assert.equal(plans[0].localOnly, true);
+  assert.equal(plans[0].applyManuscript, true);
+  assert.equal(plans[0].externalSubmissionEnabled, false);
 });
 
 test('CampaignCommandService fails closed for unsupported commands and missing log nodes', () => {

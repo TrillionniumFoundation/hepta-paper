@@ -2,6 +2,37 @@
 
 ## Unreleased (0.21.0 development)
 
+- Formally retired THUNDERO and all 15 historical `NDU_Nature_work` derived
+  entries from the 0.21 release scope. Their prior six-rebuildable/nine-missing
+  disposition remains in the hash-bound contract for audit, while the active
+  entry count is zero and cold CAS/import/restore report not-required instead
+  of demanding synthetic content. The three observed OpenNeuro roots remain
+  non-release-blocking raw-source inventory on the exact TOSHIBA UUID/PARTUUID.
+  SMR policy still permits sequential reads and one append-new-files writer
+  with no in-place mutation; the co-resident WORM namespace makes no
+  independent-custody claim.
+- Corrected the sealed release launcher's action-scoped supplementary-group
+  matrix so store trust can inspect the protected handoff database while other
+  actions retain their exact least-privilege group sets.
+- Added a write-free one-shot campaign plan with typed redacted blockers,
+  immutable read-only native/journal inspection, static-only provider checks,
+  and explicit reviewer-independence non-proof. Campaign 57 remains
+  intentionally non-executable until a new reviewed ordinal is pinned to a real
+  v4 local-golden dataset mount and independent reviewer authority.
+- Bounded resident/strict systemd restart bursts and made missing fixed
+  provisioning paths fail as skipped unit conditions instead of restart storms.
+- Replaced the restore drill's global mutation claim with an exact v3 causal
+  receipt; its post-ledger database hash is explicitly diagnostic and not
+  ledger-authenticated.
+- Moved the same-host external-disk WORM target from an operator media path to
+  the fixed root-managed `/mnt/hepta-paper-external` mount. Production status
+  can now verify the pinned UUID/PARTUUID through the reduced service principal;
+  this does not upgrade the disk to off-host/offsite custody.
+- Made runtime permission hygiene preserve the separately owned submission
+  handoff layout, including its group-access and setgid bits, only after exact
+  production role/mode checks. Unsafe descendants and in-scan layout drift now
+  block the complete chmod batch, while unrelated runtime entries retain the
+  locked owner-only hardening policy.
 - Added a fail-closed unattended research campaign: a hash-bound machine agenda
   produces separate empirical and non-circular formal-support claims, system
   policy authorizes only bounded capabilities, and launch/status/resume operate

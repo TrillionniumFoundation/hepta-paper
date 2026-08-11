@@ -81,6 +81,7 @@ try {
       paperId,
       sourceWorkspace: workspace,
       campaignId,
+      mode: 'local-review-loop',
       maxRounds: 3,
       minimumRevisionRounds: 2,
       refereeCount: 3,

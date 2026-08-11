@@ -31,9 +31,18 @@ function datasetTokenIsRead(sourceText, token) {
   const escaped = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const readCall = '(?:(?:[A-Za-z][A-Za-z0-9.]*::)?(?:open|read(?:File(?:Sync)?|Lines|Bin|_csv|\\.(?:csv|table|delim)|RDS)?|load|scan|fromJSON)|CSV\\.read|pandas\\.read_csv)';
   const quotedToken = `['\"]${escaped}['\"]`;
-  const environmentAccess = `(?:os\\.environ\\s*\\[\\s*${quotedToken}\\s*\\]|(?:os\\.)?getenv\\s*\\(\\s*${quotedToken}|process\\.env\\.${escaped}|Sys\\.getenv\\s*\\(\\s*${quotedToken}|ENV\\s*\\[\\s*${quotedToken}\\s*\\])`;
-  const directArgument = token.startsWith('/datasets/') ? quotedToken : environmentAccess;
+  const aliases = [...text.matchAll(new RegExp(
+    `\\b([A-Za-z_][A-Za-z0-9_]*)\\s*(?:=|<-)\\s*${quotedToken}`,
+    'gi',
+  ))].map((match) => match[1]);
+  const tokenReference = aliases.length
+    ? `(?:${quotedToken}|\\b(?:${aliases.join('|')})\\b)`
+    : quotedToken;
+  const environmentAccess = `(?:os\\.environ\\s*\\[\\s*${tokenReference}\\s*\\]|os\\.environ\\.get\\s*\\(\\s*${tokenReference}|(?:os\\.)?getenv\\s*\\(\\s*${tokenReference}|process\\.env\\.${escaped}|Sys\\.getenv\\s*\\(\\s*${tokenReference}|ENV\\s*\\[\\s*${tokenReference}\\s*\\])`;
+  const directArgument = token.startsWith('/datasets/') ? tokenReference : environmentAccess;
   if (new RegExp(`${readCall}\\s*\\([^\\n]{0,240}${directArgument}`, 'i').test(text)) return true;
+  if (new RegExp(directArgument, 'i').test(text)
+    && new RegExp(`${readCall}\\s*\\(`, 'i').test(text)) return true;
   const providerFunctions = [...text.matchAll(/([A-Za-z_][A-Za-z0-9_]*)\s*(?:=|<-)\s*function\s*\([^)]*\)\s*\{([\s\S]*?)\n\}/gi)]
     .filter((match) => new RegExp(directArgument, 'i').test(match[2]))
     .map((match) => match[1]);

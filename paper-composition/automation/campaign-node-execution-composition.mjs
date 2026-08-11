@@ -57,5 +57,6 @@ export function createCampaignNodeExecutor(options = {}) {
       verifySignedReviewerReceipt: reviewerPool.verifySignedReviewerReceipt,
       verifySessionReviewerReceipt: reviewerPool.verifySessionReviewerReceipt,
     }) : null,
+    advancedNumericalExecution: options.advancedNumericalExecution || null,
   });
 }

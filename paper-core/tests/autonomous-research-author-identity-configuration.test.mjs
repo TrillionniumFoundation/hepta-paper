@@ -1177,6 +1177,7 @@ test('campaign worker revalidates and forwards the pinned author identity to the
     });
   const workerInput = {
     options: { 'agent-provider': 'codex', model },
+    executionRequested: false,
     plans: [{
       sourceWorkspace: root,
       requiresGpu: false,

@@ -4,6 +4,10 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { validateExternallyFencedSqliteMutationCoordinatorConfiguration } from './externally-fenced-sqlite-mutation-coordinator-configuration.mjs';
 import { createAutonomousResearchSupervisorExternalActionRepositorySupport } from './autonomous-research-supervisor-external-action-repository-support.mjs';
+import {
+  autonomousResearchStateMutationValue,
+  buildAutonomousResearchStateMutationInput,
+} from './autonomous-research-state-mutation-support.mjs';
 import { createAutonomousResearchSupervisorDispatchStateOperations } from './autonomous-research-supervisor-dispatch-state-operations.mjs';
 import { autonomousResearchSupervisorProviderCanaryProgressEvidenceValid, autonomousResearchSupervisorProviderCanarySuccessEvidenceValid, createAutonomousResearchSupervisorProviderCanaryStateOperations } from './autonomous-research-supervisor-provider-canary-state-operations.mjs';
 import {
@@ -114,20 +118,12 @@ export function createAutonomousResearchSupervisorStateRepository({
     return current;
   }
 
-  function mutationValue(receipt) {
-    if (!receipt || !Object.prototype.hasOwnProperty.call(receipt, 'value')) {
-      throw new Error('autonomous_research_supervisor_state_mutation_receipt_invalid');
-    }
-    return receipt.value;
-  }
-
-  const mutationInput = Object.freeze({
-      database,
-      databaseInstanceId,
-      schemaContractId,
-      writerId,
-      authorizationReceiptHashes: Object.freeze([]),
-      sideEffectReservationHashes: Object.freeze([]),
+  const mutationValue = autonomousResearchStateMutationValue;
+  const mutationInput = buildAutonomousResearchStateMutationInput({
+    database,
+    databaseInstanceId,
+    schemaContractId,
+    writerId,
   });
 
   externalActionSupport = createAutonomousResearchSupervisorExternalActionRepositorySupport({

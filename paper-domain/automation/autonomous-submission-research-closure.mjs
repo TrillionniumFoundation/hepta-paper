@@ -78,7 +78,7 @@ export function verifyAutonomousSubmissionResearchClosure({
     releaseBinding,
     requireResearchClosure,
   });
-  if (request?.version !== 6) return required === false;
+  if (![6, 7].includes(request?.version)) return required === false;
   const receipt = request?.researchClosureReceipt || null;
   return verifyResearchClosureReceipt(receipt, {
     campaignId: request?.campaignId,

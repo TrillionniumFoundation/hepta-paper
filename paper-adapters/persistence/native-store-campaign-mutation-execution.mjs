@@ -140,6 +140,12 @@ function applyRetryNode(transaction, input) {
   required(transaction, S.retryNode, [
     now, node.nodeId, node.nodeRevision,
   ], 'campaign_node_retry_failed');
+  for (const sibling of input.reopenedSiblingNodes || []) {
+    required(transaction, S.retrySiblingNode, [
+      now, sibling.nodeId, node.campaignId, node.nodeId,
+      sibling.preparedIntegrationStatus, Number(sibling.nodeRevision),
+    ], 'campaign_node_retry_failed');
+  }
   required(transaction, S.retryCampaign, [
     node.kind, Math.max(0, Number(node.roundIndex || 0)), now, now,
     node.campaignId, campaign.status, campaign.revision,

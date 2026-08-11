@@ -11,6 +11,9 @@ import {
   verifyAutonomousSubmissionPortalLookupOutcome,
 } from '../../paper-domain/automation/autonomous-submission-delivery-contract.mjs';
 import {
+  autonomousLiveSubmissionAuthorizationBinding,
+} from '../../paper-domain/submission/autonomous-live-submission-authorization-contract.mjs';
+import {
   AUTONOMOUS_SUBMISSION_PORTAL_READINESS_CANARY_SUBJECT_KIND,
   buildAutonomousSubmissionPortalReadinessCanaryEvidence,
   buildAutonomousSubmissionPortalReadinessCanaryRequest,
@@ -284,8 +287,19 @@ export function createHttpAutonomousSubmissionPortalAdapter({
       });
     },
     async submit({ request, sideEffectPermit, signal = null } = {}) {
+      const humanAuthorization = autonomousLiveSubmissionAuthorizationBinding(request, {
+        observedAt: clock.now(),
+        verifyAuthorityDocument: () => true,
+      });
       if (submissionRequestVerifier.verify(request) !== true
-        || request.portalConfigurationHash !== selected.configurationHash) {
+        || request.portalConfigurationHash !== selected.configurationHash
+        || request.portalId !== selected.portalId
+        || request.portalDescriptorHash !== portalDescriptorHash
+        || request.portalServiceIdentityHash !== selected.serviceIdentityHash
+        || request.portalAccountIdentityHash !== selected.portalAccountIdentityHash
+        || request.portalTrustDomainIdentityHash
+          !== selected.portalTrustDomainIdentityHash
+        || !humanAuthorization) {
         throw new Error('autonomous_submission_portal_request_invalid');
       }
       dispatchCapability.consumeDispatchPermit({

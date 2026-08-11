@@ -55,6 +55,10 @@ semantic-hash pin, and a separately pinned authority trust store. Inspect or
 import one generation with:
 
 ```bash
+npm run automation:portal-target-qualification -- --action preflight \
+  --target tmlr --qualification-level production \
+  --registry <active.json> --registry-hash sha256:... \
+  --trust-store <trust.json> --trust-store-hash sha256:... --require-ready
 npm run automation:portal-target-qualification -- --action status \
   --registry <active.json> --registry-hash sha256:... \
   --trust-store <trust.json> --trust-store-hash sha256:... --require-ready
@@ -67,6 +71,14 @@ npm run automation:portal-target-qualification -- --action import-execute \
   --candidate <candidate.json> --candidate-hash sha256:... \
   --trust-store <trust.json> --trust-store-hash sha256:...
 ```
+
+The preflight action is a redacted, read-only lint over exactly one or two
+targets already present in the canonical discovery registry. It reports typed
+missing-evidence, expiration, binding, authority-independence, continuity, and
+pin-drift blockers without returning paths, signatures, issuer/key identities,
+SPKI values, or evidence hashes. See
+`paper-core/docs/portal-target-qualification-preflight.md` for candidate mode
+and optional subject/route/schema pins.
 
 The execute command performs only a locked local atomic file replacement. It
 does not contact a portal, use credentials, or create or consume a live-commit

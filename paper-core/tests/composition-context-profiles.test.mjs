@@ -22,7 +22,11 @@ import {
   convergeAutonomousSubmissionHandoff,
 } from '../../paper-composition/bootstrap/autonomous-submission-handoff-migration-composition.mjs';
 import { bootstrapLegacyPaperExecutionContext } from '../../paper-composition/compat/legacy-context-bootstrap.mjs';
-import { resolveCampaignWorkerModelConfiguration } from '../../paper-composition/automation/campaign-worker-composition.mjs';
+import {
+  composeCampaignWorkerExecution,
+  preflightCampaignFormalRuntime,
+  resolveCampaignWorkerModelConfiguration,
+} from '../../paper-composition/automation/campaign-worker-composition.mjs';
 import {
   inspectAutomationStoreOperationalIntegrity,
   inspectFullResearchQualification,
@@ -692,6 +696,37 @@ test('campaign CLI plans without a store but writable execution requires migrati
   assert.notEqual(initializedExecution.status, 0);
   assert.match(initializedExecution.stderr,
     /autonomous_submission_handoff_external_mutation_coordinator_required/);
+
+  const localOnlyExecution = runCampaignCli(roots, [
+    '--execute', '--local-only', '--mode', 'local-review-loop',
+  ]);
+  assert.equal(localOnlyExecution.status, 0, localOnlyExecution.stderr);
+  assert.equal(
+    JSON.parse(localOnlyExecution.stdout).status,
+    'paper_campaign_worker_idle',
+  );
+
+  const unsafeLocalOnlyExecution = runCampaignCli(roots, [
+    '--execute', '--local-only', '--mode', 'reviewed-submit',
+  ]);
+  assert.notEqual(unsafeLocalOnlyExecution.status, 0);
+  assert.match(unsafeLocalOnlyExecution.stderr, /paper_campaign_local_only_mode_invalid/);
+
+  const paperId = 'local-golden-resource-preflight';
+  const draftRoot = path.join(roots.root, 'drafts', paperId);
+  fs.mkdirSync(draftRoot, { recursive: true });
+  fs.writeFileSync(path.join(draftRoot, 'main.tex'), '\\documentclass{article}\\begin{document}seed\\end{document}\n');
+  const mismatchedResourceExecution = runCampaignCli(roots, [
+    '--execute', '--inline', '--local-only', '--mode', 'local-review-loop',
+    '--paper', paperId, '--agent-slots', '2',
+  ]);
+  assert.notEqual(mismatchedResourceExecution.status, 0);
+  assert.match(mismatchedResourceExecution.stderr, /resource_limit_configuration_mismatch:agent/);
+  const store = createReadOnlyPaperStore(roots);
+  try {
+    const rows = store.query(`SELECT count(*) AS count FROM paper_campaigns WHERE paper_id='${paperId}';`).rows;
+    assert.equal(Number(rows[0]?.count || 0), 0);
+  } finally { store.close(); }
 });
 
 test('scoped writable roots reject schema 20 read-only and leave database bytes unchanged', (t) => {
@@ -799,6 +834,41 @@ test('campaign worker model composition resolves author and reviewer models from
     researchAuthorModel: 'author-cli',
     formalReviewModel: 'reviewer-cli',
   });
+});
+
+test('executing a formal campaign preflights the pinned Lean runtime before agent composition', () => {
+  const plans = [{ nodes: [{ kind: 'writer' }, { kind: 'formal-verify' }] }];
+  assert.throws(() => composeCampaignWorkerExecution({
+    plans,
+    runtimeRoot: '/fixture/runtime',
+    campaignExecutionContext: {},
+    services: {},
+  }), /campaign_formal_execution_intent_required/);
+  assert.equal(preflightCampaignFormalRuntime({ plans }), null);
+  assert.equal(preflightCampaignFormalRuntime({
+    executionRequested: true,
+    plans: [{ nodes: [{ kind: 'writer' }] }],
+  }), null);
+  assert.throws(() => preflightCampaignFormalRuntime({
+    executionRequested: true,
+    plans,
+    environment: {},
+  }), /campaign_formal_runtime_preflight_failed:formal_pinned_elan_home_absolute_required/);
+  const ready = Object.freeze({
+    status: 'formal_pinned_lake_resolved',
+    leanExecutable: '/pinned/lean',
+    lakeExecutable: '/pinned/lake',
+    blockers: Object.freeze([]),
+  });
+  assert.equal(preflightCampaignFormalRuntime({
+    executionRequested: true,
+    plans,
+    environment: { ELAN_HOME: '/pinned/elan' },
+    resolvePinnedRuntime: ({ environment }) => {
+      assert.equal(environment.ELAN_HOME, '/pinned/elan');
+      return ready;
+    },
+  }), ready);
 });
 
 function automationStatusTestStore({

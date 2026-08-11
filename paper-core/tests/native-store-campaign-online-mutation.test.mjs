@@ -500,6 +500,15 @@ test('strict terminal failure skips a queued peer whose integration already comp
   assert.equal(settled.failureDetail.preparedIntegrationStatus, 'integrated');
   assert.equal(settled.attemptId, null);
   assert.equal(fixtureState.campaigns.getCampaign(campaignId).status, 'failed');
+  fixtureState.campaigns.retryNode(fences.get('terminal').nodeId);
+  const reopened = fixtureState.campaigns.listNodes(campaignId)
+    .find((node) => node.kind === 'integrated-retry');
+  assert.equal(reopened.status, 'queued');
+  assert.equal(reopened.preparedIntegrationStatus, 'integrated');
+  assert.equal(reopened.preparedResultHash, settled.preparedResultHash);
+  assert.deepEqual(reopened.preparedResult, settled.preparedResult);
+  assert.equal(reopened.preparedAttemptId, settled.preparedAttemptId);
+  assert.equal(fixtureState.campaigns.getCampaign(campaignId).status, 'running');
   assert.equal(fixtureState.genericWriteAttempts(), 0);
 });
 
@@ -557,6 +566,60 @@ test('strict queued peer settlement failure rolls back the full terminal transac
   assert.equal(fixtureState.campaigns.listEvents(campaignId)
     .filter((event) => ['campaign_node_failed', 'campaign_terminal_sibling_settled']
       .includes(event.kind)).length, 0);
+  assert.equal(fixtureState.genericWriteAttempts(), 0);
+});
+
+test('strict sibling reopen failure rolls back the full manual retry transaction', (t) => {
+  const fixtureState = fixture(t, {
+    failStatementId: NATIVE_STORE_CAMPAIGN_STATEMENT_IDS.retrySiblingNode,
+  });
+  const campaignId = 'strict-retry-sibling-rollback';
+  fixtureState.campaigns.createCampaign(plan(campaignId, {
+    terminalSiblingSettlementPolicyVersion: 1,
+    nodes: Object.freeze([
+      Object.freeze({
+        nodeId: `${campaignId}:terminal`,
+        kind: 'terminal',
+        priority: 10,
+        dependencies: Object.freeze([]),
+        maxAttempts: 1,
+      }),
+      Object.freeze({
+        nodeId: `${campaignId}:sibling`,
+        kind: 'sibling',
+        priority: 20,
+        dependencies: Object.freeze([`${campaignId}:terminal`]),
+        maxAttempts: 1,
+      }),
+    ]),
+  }));
+  const workerId = 'worker:retry-sibling-rollback';
+  const [claim] = fixtureState.campaigns.claimReady({ campaignId, workerId });
+  const fence = {
+    nodeId: claim.nodeId,
+    workerId,
+    attemptId: claim.attemptId,
+    leaseGeneration: claim.leaseGeneration,
+  };
+  fixtureState.campaigns.startNode(fence);
+  fixtureState.campaigns.failNode({
+    ...fence,
+    retryable: false,
+    failureClass: 'strict_terminal_failure',
+  });
+  const beforeCampaign = fixtureState.campaigns.getCampaign(campaignId);
+  const beforeNodes = fixtureState.campaigns.listNodes(campaignId);
+  const beforeEventCount = fixtureState.campaigns.listEvents(campaignId).length;
+  assert.throws(
+    () => fixtureState.campaigns.retryNode(claim.nodeId),
+    /injected_native_campaign_statement_failure|campaign_node_retry_failed/,
+  );
+  assert.equal(fixtureState.campaigns.getCampaign(campaignId).status, 'failed');
+  assert.equal(fixtureState.campaigns.getCampaign(campaignId).revision,
+    beforeCampaign.revision);
+  assert.deepEqual(fixtureState.campaigns.listNodes(campaignId), beforeNodes);
+  assert.equal(fixtureState.campaigns.listEvents(campaignId).length,
+    beforeEventCount);
   assert.equal(fixtureState.genericWriteAttempts(), 0);
 });
 
@@ -902,11 +965,22 @@ test('strict lifecycle and recovery plans execute every remaining fixed paramete
   fixtureState.campaigns.createCampaign(plan('strict-fail-campaign'));
   fixtureState.campaigns.failCampaign('strict-fail-campaign');
 
-  const first = buildPaperCampaignPlan({
+  const extendPaperTask = Object.freeze({
+    version: 'fixture',
+    kind: 'PaperTask',
     paperId: 'strict-extend:paper',
+    taskKey: 'paper:strict-extend:paper',
+    semanticIdentityHash: `sha256:${'e'.repeat(64)}`,
+    sourceWorkspace: fixtureState.root,
+    evidenceRefs: Object.freeze([]),
+  });
+  const first = buildPaperCampaignPlan({
+    paperId: extendPaperTask.paperId,
     sourceWorkspace: fixtureState.root,
     campaignId: 'strict-extend',
     maxRounds: 1,
+    paperTask: extendPaperTask,
+    paperState: { evidenceRefs: [] },
   });
   fixtureState.campaigns.createCampaign(first);
   fixtureState.campaigns.stopCampaign(
@@ -922,28 +996,96 @@ test('strict lifecycle and recovery plans execute every remaining fixed paramete
       ...first.budgets,
       maxAgentCalls: first.budgets.maxAgentCalls + 4,
     },
+    paperTask: extendPaperTask,
+    paperState: { evidenceRefs: [] },
   });
   fixtureState.campaigns.extendCampaign(second);
 
-  fixtureState.campaigns.createCampaign(plan('strict-retry'));
-  const [retryClaim] = fixtureState.campaigns.claimReady({
+  fixtureState.campaigns.createCampaign(plan('strict-retry', {
+    terminalSiblingSettlementPolicyVersion: 1,
+    nodes: Object.freeze([
+      Object.freeze({
+        nodeId: 'strict-retry:writer',
+        kind: 'writer',
+        dependencies: Object.freeze([]),
+      }),
+      Object.freeze({
+        nodeId: 'strict-retry:compile',
+        kind: 'compile',
+        dependencies: Object.freeze([]),
+      }),
+    ]),
+  }));
+  const retryClaims = fixtureState.campaigns.claimReady({
     campaignId: 'strict-retry',
     workerId: 'worker:retry',
+    limit: 2,
   });
+  const retryClaim = retryClaims.find((claim) => claim.kind === 'writer');
+  const retrySiblingClaim = retryClaims.find((claim) => claim.kind === 'compile');
   const retryFence = {
     nodeId: retryClaim.nodeId,
     workerId: 'worker:retry',
     attemptId: retryClaim.attemptId,
     leaseGeneration: retryClaim.leaseGeneration,
   };
+  const retrySiblingFence = {
+    nodeId: retrySiblingClaim.nodeId,
+    workerId: 'worker:retry',
+    attemptId: retrySiblingClaim.attemptId,
+    leaseGeneration: retrySiblingClaim.leaseGeneration,
+  };
   fixtureState.campaigns.startNode(retryFence);
+  fixtureState.campaigns.startNode(retrySiblingFence);
+  const retrySiblingIntegrationKey = 'sha256:strict-retry-pending-sibling';
+  fixtureState.campaigns.prepareNodeResult({
+    ...retrySiblingFence,
+    result: {
+      status: 'prepared_pending_sibling',
+      workspaceAttemptIntegration: {
+        workspaceAttemptIntegrationDescriptorHash: retrySiblingIntegrationKey,
+      },
+    },
+    requiresIntegration: true,
+    integrationKey: retrySiblingIntegrationKey,
+  });
   fixtureState.campaigns.failNode({
     ...retryFence,
     retryable: false,
     failureClass: 'strict_terminal_failure',
     failureDetail: { injected: true },
   });
+  const retrySiblingNodeIds = fixtureState.campaigns.listNodes('strict-retry')
+    .filter((node) => node.status === 'skipped'
+      && node.failureClass === 'campaign_terminal_sibling_cancelled'
+      && node.failureDetail?.terminalNodeId === retryClaim.nodeId)
+    .map((node) => node.nodeId)
+    .sort();
+  assert.ok(retrySiblingNodeIds.length > 0);
+  assert.ok(fixtureState.campaigns.listNodes('strict-retry')
+    .find((node) => node.nodeId === retrySiblingClaim.nodeId).preparedResultHash);
+  assert.equal(fixtureState.campaigns.listNodes('strict-retry')
+    .find((node) => node.nodeId === retrySiblingClaim.nodeId)
+    .preparedIntegrationStatus, 'pending');
   fixtureState.campaigns.retryNode(retryClaim.nodeId);
+  assert.deepEqual(
+    fixtureState.campaigns.listNodes('strict-retry')
+      .filter((node) => retrySiblingNodeIds.includes(node.nodeId))
+      .map((node) => node.status),
+    retrySiblingNodeIds.map(() => 'queued'),
+  );
+  const reopenedPreparedSibling = fixtureState.campaigns.listNodes('strict-retry')
+    .find((node) => node.nodeId === retrySiblingClaim.nodeId);
+  assert.equal(reopenedPreparedSibling.preparedResult, null);
+  assert.equal(reopenedPreparedSibling.preparedResultHash, null);
+  assert.equal(reopenedPreparedSibling.preparedAttemptId, null);
+  assert.equal(reopenedPreparedSibling.preparedRequiresIntegration, false);
+  assert.equal(reopenedPreparedSibling.preparedIntegrationStatus, 'none');
+  assert.deepEqual(
+    fixtureState.campaigns.listEvents('strict-retry').at(-1).event.detail
+      .reopenedSiblingNodeIds,
+    retrySiblingNodeIds,
+  );
 
   fixtureState.campaigns.createCampaign(plan('strict-recover'));
   fixtureState.campaigns.claimReady({

@@ -220,6 +220,78 @@ test('semantic projections remove observation time but retain signed evidence ti
   });
   assert.deepEqual(firstStatus, secondStatus);
 
+  const firstMountBinding = projectReleaseEvidenceSemanticContract('coldVolumeStatus', {
+    mountObservationHash: hash('1'),
+    targetDirectoryIdentity: { dev: '8', ino: '9' },
+    targetDeviceMajorMinor: '8:1',
+    targetMountId: '42',
+    mountDeviceMatchesTarget: true,
+    mountIdMatchesTarget: true,
+    mountBindingStable: true,
+    expectedStorageIdentityHash: hash('2'),
+    storageIdentityMatchesContract: true,
+  });
+  const changedMountBinding = projectReleaseEvidenceSemanticContract('coldVolumeStatus', {
+    mountObservationHash: hash('3'),
+    targetDirectoryIdentity: { dev: '8', ino: '10' },
+    targetDeviceMajorMinor: '8:1',
+    targetMountId: '43',
+    mountDeviceMatchesTarget: true,
+    mountIdMatchesTarget: false,
+    mountBindingStable: false,
+    expectedStorageIdentityHash: hash('2'),
+    storageIdentityMatchesContract: true,
+  });
+  assert.notDeepEqual(firstMountBinding, changedMountBinding);
+  assert.equal(firstMountBinding.mountBindingStable, true);
+  assert.equal(changedMountBinding.mountBindingStable, false);
+
+  const dispositionBinding = projectReleaseEvidenceSemanticContract('coldVolumeStatus', {
+    storageAccessPolicyHash: hash('6'),
+    coldCasRoot: '/data/home-data/hepta-paper-cold-object-store',
+    dispositionHash: hash('7'),
+    releaseScopeHash: hash('8'),
+    releaseScopeRetired: true,
+    releaseGateSatisfied: true,
+    retiredEntryCount: 15,
+    retiredLogicalPathCount: 0,
+    rawDatasetRootCount: 3,
+    presentDispositionCount: 0,
+    rebuildableDispositionCount: 6,
+    missingDispositionCount: 9,
+    rawDatasetRows: [{
+      datasetId: 'openneuro:ds000030',
+      role: 'raw_source_only_not_derived_artifact',
+      present: true,
+    }],
+  });
+  assert.equal(dispositionBinding.dispositionHash, hash('7'));
+  assert.equal(dispositionBinding.releaseScopeHash, hash('8'));
+  assert.equal(dispositionBinding.releaseScopeRetired, true);
+  assert.equal(dispositionBinding.releaseGateSatisfied, true);
+  assert.equal(dispositionBinding.retiredEntryCount, 15);
+  assert.equal(dispositionBinding.retiredLogicalPathCount, 0);
+  assert.equal(dispositionBinding.presentDispositionCount, 0);
+  assert.equal(dispositionBinding.rebuildableDispositionCount, 6);
+  assert.equal(dispositionBinding.missingDispositionCount, 9);
+  assert.equal(dispositionBinding.rawDatasetRows[0].role,
+    'raw_source_only_not_derived_artifact');
+
+  const offhostMountBinding = projectReleaseEvidenceSemanticContract('offhostWormStatus', {
+    mountObservationHash: hash('4'),
+    expectedStorageIdentityHash: hash('5'),
+    storageIdentityMatchesContract: true,
+    mountDeviceMatchesTarget: true,
+    mountIdMatchesTarget: true,
+  });
+  assert.deepEqual(offhostMountBinding, {
+    expectedStorageIdentityHash: hash('5'),
+    mountDeviceMatchesTarget: true,
+    mountIdMatchesTarget: true,
+    mountObservationHash: hash('4'),
+    storageIdentityMatchesContract: true,
+  });
+
   const firstReceipt = projectReleaseEvidenceSemanticContract('verificationReceiptEvidence', {
     status: 'release_verification_current_evidence_verified',
     receipt: { completedAt: '2026-08-01T00:00:00.000Z' },

@@ -64,11 +64,34 @@ function empiricalBaseline(nodes, node, classification) {
   });
 }
 
+function revisionReviewProjection(result) {
+  const score = Number(result?.score || 0);
+  const criticalFindingCount = Number(result?.criticalFindingCount || 0);
+  return Object.freeze({
+    reviewerId: result?.reviewerId || null,
+    role: result?.role || null,
+    verdict: result?.verdict === 'accept' ? 'accept' : 'revise',
+    score: Number.isFinite(score) ? score : 0,
+    criticalFindingCount: Number.isSafeInteger(criticalFindingCount)
+      && criticalFindingCount >= 0 ? criticalFindingCount : 0,
+    findings: Object.freeze((Array.isArray(result?.findings)
+      ? result.findings : []).map(String)),
+    summary: String(result?.summary || ''),
+    reviewHash: result?.reviewHash || null,
+    manuscriptHash: result?.manuscriptHash || null,
+  });
+}
+
 export function deriveCampaignNodeExecutionContext({ node, allNodes = [] } = {}) {
   const nodes = Array.isArray(allNodes) ? allNodes : [];
   const empirical = campaignEmpiricalNodeClassification(node?.kind);
   const directFormalReview = directDependency(nodes, node, (item) => item.kind === 'formal-review');
   const directFormalVerification = latestCompletedDirectDependency(nodes, node, (item) => item.kind === 'formal-verify');
+  const directAdvancedNumerical = latestCompletedDirectDependency(
+    nodes,
+    node,
+    (item) => item.kind === 'advanced-numerical-analysis',
+  );
   const priorConvergence = latestPriorConvergence(nodes, node);
   return Object.freeze({
     operation: campaignNodeOperation(node?.kind),
@@ -76,7 +99,8 @@ export function deriveCampaignNodeExecutionContext({ node, allNodes = [] } = {})
     reviews: nodes
       .filter((item) => item.roundIndex === node?.roundIndex && /^referee-\d+$/.test(item.kind))
       .map((item) => item.result)
-      .filter(Boolean),
+      .filter(Boolean)
+      .map(revisionReviewProjection),
     priorConvergence,
     qualityGateBlockers: priorConvergence?.qualityGateBlockers || Object.freeze([]),
     revisionMaterialization: priorConvergence?.revisionMaterialization || null,
@@ -85,6 +109,7 @@ export function deriveCampaignNodeExecutionContext({ node, allNodes = [] } = {})
     theoremSpecificationNode: directDependency(nodes, node, (item) => item.kind === 'theorem-spec'),
     formalReviewNode: node?.kind === 'formal-verify' ? directFormalReview : latestFormalReview(nodes),
     formalVerificationNode: directFormalVerification,
+    advancedNumericalNode: directAdvancedNumerical,
     finalCompileNode: directDependency(nodes, node, (item) => item.kind === 'final-compile'),
     researchVerifyNode: directDependency(nodes, node, (item) => item.kind === 'research-verify'),
     empirical,

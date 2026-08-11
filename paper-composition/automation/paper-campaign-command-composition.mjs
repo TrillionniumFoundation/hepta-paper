@@ -11,6 +11,8 @@ import {
   loadOperatorDatasetAuthorityTrustStoreSync,
 } from './campaign-worker-composition.mjs';
 
+const LOCAL_ONLY_CAMPAIGN_MODES = new Set(['empirical-analysis', 'local-review-loop']);
+
 function namedValues(values, { flag, syntax }, transform = (value) => value) {
   const entries = (values || []).map((value) => {
     const separator = String(value).indexOf('=');
@@ -81,6 +83,10 @@ export async function executePaperCampaignCommand({
   options = {}, root, runtimeRoot, environment = {},
 } = {}) {
   if (!root || !runtimeRoot) throw new Error('paper_campaign_command_roots_required');
+  if (options['local-only'] === true
+    && !LOCAL_ONLY_CAMPAIGN_MODES.has(String(options.mode || ''))) {
+    throw new Error('paper_campaign_local_only_mode_invalid');
+  }
   if (options['campaign-id'] && options['run-id']) throw new Error('--campaign-id and --run-id cannot be combined');
   const runId = options['run-id'] ? String(options['run-id']).replace(/[^A-Za-z0-9_.-]/g, '_') : null;
   if (options['run-id'] && !runId) throw new Error('--run-id must contain at least one safe character');
@@ -94,6 +100,7 @@ export async function executePaperCampaignCommand({
     execute: Boolean(options.execute),
     readOnly: Boolean(planOnly || readOnlyAction),
     allowMissingReadOnlyStore: planOnly,
+    submissionHandoffReadOnly: options['local-only'] === true,
   });
   const { context } = campaignExecutionContext;
   const campaignStore = context.services.campaignStore;
@@ -147,6 +154,14 @@ export async function executePaperCampaignCommand({
     });
   }
   if (!plans.length) return Object.freeze({ status: 'paper_campaign_worker_idle', campaignCount: 0 });
+  const governor = workAction || options.inline
+    ? context.services.resourceGovernorFactory({
+      agent: Number(options['agent-slots'] || 4),
+      cpu: Number(options['cpu-slots'] || 4),
+      gpu: Number(options['gpu-slots'] || 1),
+      memoryMiB: Number(options['memory-mib'] || 8192),
+    })
+    : null;
   const { nodeExecutor } = composeCampaignWorkerExecution({
     options,
     plans,
@@ -156,6 +171,7 @@ export async function executePaperCampaignCommand({
     campaignExecutionContext,
     services: context.services,
     environment,
+    executionRequested: workAction || options.inline === true,
   });
   if (!workAction) for (const plan of plans) campaignStore.createCampaign(plan);
   if (!workAction && !options.inline) {
@@ -166,12 +182,6 @@ export async function executePaperCampaignCommand({
       campaignIds: plans.map((plan) => plan.campaignId),
     });
   }
-  const governor = context.services.resourceGovernorFactory({
-    agent: Number(options['agent-slots'] || 4),
-    cpu: Number(options['cpu-slots'] || 4),
-    gpu: Number(options['gpu-slots'] || 1),
-    memoryMiB: Number(options['memory-mib'] || 8192),
-  });
   const results = await Promise.all(plans.map((plan) => runPaperCampaign({
     campaignId: plan.campaignId,
     campaignStore,

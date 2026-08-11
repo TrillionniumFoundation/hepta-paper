@@ -141,11 +141,28 @@ writeLines(c('metric,value', sprintf('bytes,%d', length(content))), '/output/res
   return { root, source, datasets, artifacts, mount, authorizationSet };
 }
 
+function localGoldenMount(mount, root) {
+  return {
+    ...mount,
+    authorityScope: 'local-operator-golden-runtime-only-v1',
+    evidenceClass: 'local_operator_dataset_authority',
+    academicPromotionEligible: false,
+    externalTrustClaimed: false,
+    localGoldenRuntimeScope: {
+      version: 1,
+      kind: 'LocalGoldenDatasetRuntimeScope',
+      isolationId: 'dataset-supervisor-test',
+      runtimeRootHash: hashBytes(root),
+    },
+  };
+}
+
 function runnerFor(f, {
   runtime = AUTOMATION_RUNTIME_IMAGES.python,
   image = runtime.image,
   resolvedDigest = runtime.imageDigest,
   trustedProfiles = [trustedProfile(runtime)],
+  executor,
 } = {}) {
   return createOsSandboxedWorkerRunner({
     allowedExecutables: [runtime.executable],
@@ -156,8 +173,47 @@ function runnerFor(f, {
     trustedDatasetSupervisorImages: trustedProfiles,
     imageDigestResolver: () => resolvedDigest,
     probe: { available: true, backend: 'docker', status: 'os_sandbox_available', processLimit: { available: true, mechanism: 'docker-pids-cgroup' } },
+    ...(executor ? { executor } : {}),
   });
 }
+
+test('local-golden authority metadata survives sandbox dataset normalization', (t) => {
+  const f = fixture(t);
+  f.mount = localGoldenMount(f.mount, f.root);
+  f.authorizationSet = buildDatasetAuthorizationSet([f.mount]);
+  let executed = false;
+  const runner = runnerFor(f, {
+    executor: () => {
+      executed = true;
+      return { status: 1, signal: null, stdout: '', stderr: 'expected test execution stop' };
+    },
+  });
+  const identity = runner.resolveExecutionRuntimeIdentity({
+    executable: AUTOMATION_RUNTIME_IMAGES.python.executable,
+    containerImage: AUTOMATION_RUNTIME_IMAGES.python.image,
+    containerExecutable: AUTOMATION_RUNTIME_IMAGES.python.executable,
+  });
+  const result = runner.run({
+    executable: AUTOMATION_RUNTIME_IMAGES.python.executable,
+    args: ['main.py'],
+    cwd: f.source,
+    sourceRoot: f.source,
+    outputPaths: ['results.json', 'results.csv'],
+    outputDirectory: f.artifacts,
+    requireSeparateOutputRoot: true,
+    containerImage: AUTOMATION_RUNTIME_IMAGES.python.image,
+    containerExecutable: AUTOMATION_RUNTIME_IMAGES.python.executable,
+    executionIdentity: identity,
+    datasetMounts: [f.mount],
+    requireDatasetAccessProof: false,
+    env: {
+      HEPTA_OUTPUT_DIR: '/output',
+      HEPTA_DATASET_AUTHORIZATION_SET_HASH: f.authorizationSet.datasetAuthorizationSetHash,
+    },
+  });
+  assert.equal(executed, true);
+  assert.equal(result.blockers.includes('worker_dataset_authorization_set_mismatch'), false);
+});
 
 function runSpec(f, runner, {
   runtime = AUTOMATION_RUNTIME_IMAGES.python,
@@ -566,6 +622,8 @@ test('dataset access rejects a caller-forged execution capability', (t) => {
 
 test('system Python and R supervisors produce domain-verified v3 access receipts', { skip: !dockerImagesPresent }, (t) => {
   const f = fixture(t);
+  f.mount = localGoldenMount(f.mount, f.root);
+  f.authorizationSet = buildDatasetAuthorizationSet([f.mount]);
   const receipts = [];
   for (const [language, runtime] of [['python', AUTOMATION_RUNTIME_IMAGES.python], ['r', AUTOMATION_RUNTIME_IMAGES.r]]) {
     const outputDirectory = path.join(f.artifacts, language);

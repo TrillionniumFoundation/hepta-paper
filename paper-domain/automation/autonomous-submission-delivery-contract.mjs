@@ -3,6 +3,9 @@ import { hasExactObjectKeys } from '../../workflow-kernel/exact-object-keys.mjs'
 import {
   verifyAutonomousSubmissionReceipt,
 } from './autonomous-submission-contract.mjs';
+import {
+  autonomousLiveSubmissionAuthorizationBinding,
+} from '../submission/autonomous-live-submission-authorization-contract.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:@/-]{0,255}$/;
@@ -313,6 +316,10 @@ export function buildAutonomousSubmissionDispatchPermit({
   authoritativeNotFoundReceiptHash = null,
   onlineMutationSideEffectPermitHash = null,
 } = {}) {
+  const humanAuthorization = autonomousLiveSubmissionAuthorizationBinding(request, {
+    observedAt: new Date(request?.requestedAt),
+    verifyAuthorityDocument: () => true,
+  });
   const initial = previousState === AUTONOMOUS_SUBMISSION_DELIVERY_STATES.PREPARED
     && resolution === 'initial-dispatch'
     && authoritativeNotFoundReceiptHash === null;
@@ -328,6 +335,8 @@ export function buildAutonomousSubmissionDispatchPermit({
     || !SHA256.test(String(dispatchStateReceiptHash || ''))
     || (onlineMutationSideEffectPermitHash !== null
       && !SHA256.test(String(onlineMutationSideEffectPermitHash || '')))
+    || request?.version !== 7
+    || !humanAuthorization
     || (!initial && !redrive)) {
     throw new Error('autonomous_submission_dispatch_permit_invalid');
   }
@@ -338,6 +347,10 @@ export function buildAutonomousSubmissionDispatchPermit({
     idempotencyKey: request.idempotencyKey,
     portalId: String(portalId),
     portalConfigurationHash: request.portalConfigurationHash,
+    humanAuthorizationReceiptHash: request.humanAuthorizationReceiptHash,
+    humanAuthorizationSubjectHash: request.humanAuthorizationSubjectHash,
+    humanAuthorizationNonce: request.humanAuthorizationNonce,
+    humanAuthorizationExpiresAt: request.humanAuthorizationExpiresAt,
     attempt,
     previousState,
     previousStateReceiptHash,

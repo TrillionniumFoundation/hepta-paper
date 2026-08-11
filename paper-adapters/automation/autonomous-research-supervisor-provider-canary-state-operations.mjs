@@ -5,6 +5,10 @@ import {
 import {
   verifyAutonomousResearchProviderCanarySideEffectInspection,
 } from '../../paper-domain/automation/autonomous-research-provider-canary-side-effect-inspection.mjs';
+import {
+  autonomousResearchStateMutationValue,
+  buildAutonomousResearchStateMutationInput,
+} from './autonomous-research-state-mutation-support.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 
@@ -179,20 +183,12 @@ export function createAutonomousResearchSupervisorProviderCanaryStateOperations(
   requireExternallyFencedMutations = false,
 } = {}) {
   const providerCanaryActionPermits = new WeakMap();
-  function mutationValue(receipt) {
-    if (!receipt || !Object.prototype.hasOwnProperty.call(receipt, 'value')) {
-      throw new Error('autonomous_research_supervisor_state_mutation_receipt_invalid');
-    }
-    return receipt.value;
-  }
-
-  const mutationInput = Object.freeze({
-      database,
-      databaseInstanceId,
-      schemaContractId,
-      writerId,
-      authorizationReceiptHashes: Object.freeze([]),
-      sideEffectReservationHashes: Object.freeze([]),
+  const mutationValue = autonomousResearchStateMutationValue;
+  const mutationInput = buildAutonomousResearchStateMutationInput({
+    database,
+    databaseInstanceId,
+    schemaContractId,
+    writerId,
   });
 
   return Object.freeze({

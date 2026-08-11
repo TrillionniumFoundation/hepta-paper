@@ -237,6 +237,13 @@ export function createOsSandboxWorkerExecutionFinalizer({
               operatorDatasetResearchSemanticsHash:
                 mount.operatorDatasetResearchSemanticsHash || null,
             } : {}),
+            ...(mount.authorityScope ? {
+              authorityScope: mount.authorityScope,
+              evidenceClass: mount.evidenceClass || null,
+              academicPromotionEligible: mount.academicPromotionEligible === true,
+              externalTrustClaimed: mount.externalTrustClaimed === true,
+              localGoldenRuntimeScope: mount.localGoldenRuntimeScope || null,
+            } : {}),
             splitManifestHash: mount.splitManifestHash || null, benchmarkHarnessDocumentHash: mount.benchmarkHarnessDocumentHash || null,
             benchmarkHarnessDefinitionHash: mount.benchmarkHarnessDefinitionHash || null, benchmarkFamily: mount.benchmarkFamily || null, benchmarkSeedSchedule: mount.benchmarkSeedSchedule || [], benchmarkMinimumRepetitions: mount.benchmarkMinimumRepetitions || 0, analysisProtocol: mount.analysisProtocol || null, analysisProtocolHash: mount.analysisProtocolHash || null })),
           datasetAccessReceipt,
@@ -276,4 +283,3 @@ export function createOsSandboxWorkerExecutionFinalizer({
         return { ok: passed, ...receiptPayload, receiptHash: hashRecord('OsSandboxWorkerReceipt', receiptPayload), blockers: [...(result.aborted ? ['os_sandbox_command_aborted'] : []), ...(result.timedOut ? ['os_sandbox_command_timed_out'] : []), ...(!commandPassed && !result.aborted && !result.timedOut ? ['os_sandbox_command_failed'] : []), ...(sourceMutationDetected ? ['source_mutation_detected', ...sourceExecutionSnapshotAfter.blockers] : []), ...(datasetMutationDetected ? ['worker_dataset_manifest_changed_during_execution'] : []), ...(datasetSnapshotMutationDetected ? ['worker_dataset_snapshot_changed_during_execution'] : []), ...datasetAccessBlockers, ...(!runtimeExecutableSnapshotVerified ? ['worker_runtime_executable_snapshot_changed_during_execution'] : []), ...artifactBlockers, ...containerRecoveryBlockers] };
       };
 }
-

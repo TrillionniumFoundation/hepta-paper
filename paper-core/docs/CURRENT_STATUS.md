@@ -371,6 +371,25 @@ provisioned, the research campaign itself has no human checkpoint:
   Explicit operator pauses remain stopped; only an execution-admitted initial
   pause or a supervisor-owned recovery reason is resumed automatically.
 
+The dedicated fixed one-shot attempt CLI now exposes `plan`/`preflight` as a
+write-free local inspection. It never reserves an attempt, mutates the journal
+or native store, invokes a provider/gateway/network, or launches a campaign.
+It may open an existing append-only journal in immutable read-only mode to find
+a prior target campaign. Native campaign state is read only from a sidecar-free
+immutable SQLite image whose file identity must remain unchanged. Provider
+configuration is checked statically; runtime readiness is deliberately reported
+as `not_proven`. Independent reviewer principal/service/organization/credential
+roots are likewise `not_proven`, so this path can establish only
+`candidate_only`, never golden qualification.
+
+The historical Campaign 57 target remains terminal in both native state and
+the append-only journal and pins the old v2 dataset-mount array. A valid v4
+local-golden authority necessarily changes that array, so the current plan
+reports both dataset-binding and prior-journal blockers. Execution must not
+reuse or rewrite Campaign 57; it requires a new reviewed campaign ordinal, a
+target definition pinned to the real v4 mount, and independent reviewer
+authority.
+
 Runtime availability and scientific validity remain separate. The status probe
 reports ordinary automation, academic empirical readiness, provider
 configuration preflight, live selected-model canaries and release-attestor

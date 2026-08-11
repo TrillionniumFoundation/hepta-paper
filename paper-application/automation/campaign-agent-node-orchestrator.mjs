@@ -200,6 +200,7 @@ export async function executeCampaignAgentNode({
   const request = buildCampaignAgentExecutionRequest({
     campaign,
     node,
+    campaignNodes: context.campaignNodes,
     workspace,
     manuscript,
     reviews: context.reviews,

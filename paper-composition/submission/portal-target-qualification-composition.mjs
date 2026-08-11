@@ -3,6 +3,7 @@ import {
   executePortalTargetQualificationRegistryImport,
   inspectPortalTargetQualificationRegistry,
   planPortalTargetQualificationRegistryImport,
+  preflightPortalTargetQualificationRegistry,
 } from '../../paper-adapters/submission/portal-target-qualification-registry-repository.mjs';
 
 export function inspectPortalTargetQualification(options = {}) {
@@ -11,6 +12,10 @@ export function inspectPortalTargetQualification(options = {}) {
 
 export function planPortalTargetQualificationImport(options = {}) {
   return planPortalTargetQualificationRegistryImport(options);
+}
+
+export function preflightPortalTargetQualification(options = {}) {
+  return preflightPortalTargetQualificationRegistry(options);
 }
 
 export function executePortalTargetQualificationImport(options = {}) {

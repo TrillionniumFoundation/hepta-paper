@@ -14,6 +14,10 @@ import {
   resolveAutonomousSubmissionResearchClosure,
   verifyAutonomousSubmissionResearchClosure,
 } from './autonomous-submission-research-closure.mjs';
+import {
+  autonomousLiveSubmissionAuthorizationBinding,
+  buildAutonomousLiveSubmissionAuthorizationSubject,
+} from '../submission/autonomous-live-submission-authorization-contract.mjs';
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}$/;
 const MANUSCRIPT_PROOF_FIELDS = Object.freeze([
@@ -49,9 +53,13 @@ export function buildAutonomousSubmissionRequest({
   qualificationInspection,
   venueComplianceReceipt,
   portalConfigurationHash,
+  portalDescriptor = null,
   requestedAt,
   researchClosureReceipt = null,
   requireResearchClosure = false,
+  humanAuthorizationReceipt = null,
+  requireHumanAuthorization = false,
+  verifyHumanAuthorization = null,
   verifyQualificationSignature = null,
   verifyIndependentQualificationEvidence = null,
 } = {}) {
@@ -153,8 +161,59 @@ export function buildAutonomousSubmissionRequest({
     verifyQualificationSignature,
     verifyIndependentQualificationEvidence,
   });
+  let humanAuthorization = null;
+  if (requireHumanAuthorization === true) {
+    let expectedSubject = null;
+    try {
+      expectedSubject = buildAutonomousLiveSubmissionAuthorizationSubject({
+        campaignId,
+        paperId,
+        immutableCampaignPackageOutputHash:
+          releaseBundle.immutableCampaignPackageOutputHash,
+        campaignReleaseBundleHash: campaignReleaseAuthority.campaignReleaseBundleHash,
+        qualificationReceiptHash: qualificationInspection.qualificationReceiptHash,
+        researchClosureReceiptHash: closureReceipt?.researchClosureReceiptHash,
+        venueComplianceReceiptHash:
+          venueComplianceReceipt.autonomousVenueComplianceReceiptHash,
+        submissionMetadataReceiptHash:
+          venueComplianceReceipt.submissionMetadataReceiptHash,
+        venueProfileSelectionHash:
+          venueProfileSelection.autonomousVenueProfileSelectionReceiptHash,
+        venueId: venueProfileSelection.venueId,
+        submissionPortalProfileId:
+          venueProfileSelection.profile.submissionPortalProfileId,
+        portalId: portalDescriptor?.portalId,
+        portalConfigurationHash,
+        portalDescriptorHash: portalDescriptor?.portalDescriptorHash,
+        serviceIdentityHash: portalDescriptor?.serviceIdentityHash,
+        portalAccountIdentityHash: portalDescriptor?.portalAccountIdentityHash,
+        portalTrustDomainIdentityHash:
+          portalDescriptor?.portalTrustDomainIdentityHash,
+      });
+    } catch {
+      throw new Error('autonomous_submission_human_authorization_invalid');
+    }
+    if (typeof verifyHumanAuthorization !== 'function') {
+      throw new Error('autonomous_submission_human_authorization_verifier_required');
+    }
+    try {
+      if (verifyHumanAuthorization({
+        receipt: humanAuthorizationReceipt,
+        expectedSubject,
+        observedAt: new Date(timestamp),
+      }) !== true) {
+        throw new Error('invalid');
+      }
+    } catch {
+      throw new Error('autonomous_submission_human_authorization_invalid');
+    }
+    humanAuthorization = Object.freeze({
+      receipt: humanAuthorizationReceipt,
+      subject: expectedSubject,
+    });
+  }
   const payload = {
-    version: closureReceipt ? 6 : 5,
+    version: humanAuthorization ? 7 : closureReceipt ? 6 : 5,
     kind: 'AutonomousSubmissionRequest',
     campaignId: String(campaignId),
     paperId: String(paperId),
@@ -203,6 +262,21 @@ export function buildAutonomousSubmissionRequest({
     independentRebuiltPdfHash: venueComplianceReceipt.independentRebuiltPdfHash,
     pageCount: venueComplianceReceipt.pageCount,
     portalConfigurationHash: sha(portalConfigurationHash),
+    ...(humanAuthorization ? {
+      portalId: portalDescriptor.portalId,
+      portalDescriptorHash: portalDescriptor.portalDescriptorHash,
+      portalServiceIdentityHash: portalDescriptor.serviceIdentityHash,
+      portalAccountIdentityHash: portalDescriptor.portalAccountIdentityHash,
+      portalTrustDomainIdentityHash:
+        portalDescriptor.portalTrustDomainIdentityHash,
+      humanAuthorizationReceiptHash:
+        humanAuthorization.receipt.liveSubmissionAuthorizationReceiptHash,
+      humanAuthorizationSubjectHash:
+        humanAuthorization.subject.liveSubmissionAuthorizationSubjectHash,
+      humanAuthorizationNonce: humanAuthorization.receipt.nonce,
+      humanAuthorizationExpiresAt: humanAuthorization.receipt.expiresAt,
+      humanAuthorizationReceipt: humanAuthorization.receipt,
+    } : {}),
     idempotencyKey: hashRecord('AutonomousSubmissionIdempotencyKey', {
       immutableCampaignPackageOutputHash:
         sha(releaseBundle.immutableCampaignPackageOutputHash),
@@ -238,8 +312,22 @@ export function buildAutonomousSubmissionRequest({
         researchClosureReceiptHash: closureReceipt.researchClosureReceiptHash,
       } : {}),
       portalConfigurationHash,
+      ...(humanAuthorization ? {
+        portalId: portalDescriptor.portalId,
+        portalDescriptorHash: portalDescriptor.portalDescriptorHash,
+        portalServiceIdentityHash: portalDescriptor.serviceIdentityHash,
+        portalAccountIdentityHash: portalDescriptor.portalAccountIdentityHash,
+        portalTrustDomainIdentityHash:
+          portalDescriptor.portalTrustDomainIdentityHash,
+        humanAuthorizationReceiptHash:
+          humanAuthorization.receipt.liveSubmissionAuthorizationReceiptHash,
+        humanAuthorizationSubjectHash:
+          humanAuthorization.subject.liveSubmissionAuthorizationSubjectHash,
+        humanAuthorizationNonce: humanAuthorization.receipt.nonce,
+        humanAuthorizationExpiresAt: humanAuthorization.receipt.expiresAt,
+      } : {}),
     }),
-    humanApprovalPerformed: false,
+    humanApprovalPerformed: humanAuthorization !== null,
     requestedAt: timestamp,
   };
   if ([
@@ -261,6 +349,8 @@ export function verifyAutonomousSubmissionRequest(request, {
   verifyQualificationSignature = null,
   authorityObservedAt = null,
   requireResearchClosure = false,
+  requireHumanAuthorization = false,
+  verifyHumanAuthorization = null,
   verifyIndependentQualificationEvidence = null,
 } = {}) {
   const observedAt = authorityObservedAt || request?.requestedAt || null;
@@ -289,10 +379,21 @@ export function verifyAutonomousSubmissionRequest(request, {
     agentWorkspacePostimageBindingHash:
       request?.agentWorkspacePostimageBindingHash,
     venueComplianceReceiptHash: request?.venueComplianceReceiptHash,
-    ...(request?.version === 6 ? {
+    ...([6, 7].includes(request?.version) ? {
       researchClosureReceiptHash: request?.researchClosureReceiptHash,
     } : {}),
     portalConfigurationHash: request?.portalConfigurationHash,
+    ...(request?.version === 7 ? {
+      portalId: request?.portalId,
+      portalDescriptorHash: request?.portalDescriptorHash,
+      portalServiceIdentityHash: request?.portalServiceIdentityHash,
+      portalAccountIdentityHash: request?.portalAccountIdentityHash,
+      portalTrustDomainIdentityHash: request?.portalTrustDomainIdentityHash,
+      humanAuthorizationReceiptHash: request?.humanAuthorizationReceiptHash,
+      humanAuthorizationSubjectHash: request?.humanAuthorizationSubjectHash,
+      humanAuthorizationNonce: request?.humanAuthorizationNonce,
+      humanAuthorizationExpiresAt: request?.humanAuthorizationExpiresAt,
+    } : {}),
   });
   const authority = request?.campaignReleaseAuthority || null;
   const releaseBundle = authority?.releaseBundle || null;
@@ -354,7 +455,7 @@ export function verifyAutonomousSubmissionRequest(request, {
       isolatedAgentMergeReceiptHash: request?.isolatedAgentMergeReceiptHash,
       agentWorkspacePostimageBindingHash:
         request?.agentWorkspacePostimageBindingHash,
-      ...(request?.version === 6 ? {
+      ...([6, 7].includes(request?.version) ? {
         autonomousResearchReleaseBindingHash:
           releaseBinding?.autonomousResearchReleaseBindingHash,
         researchAgendaIrHash: releaseBinding?.researchAgendaIrHash,
@@ -371,10 +472,22 @@ export function verifyAutonomousSubmissionRequest(request, {
     verifyQualificationSignature,
     verifyIndependentQualificationEvidence,
   });
-  const structurallyValid = [5, 6].includes(request?.version)
+  const humanAuthorizationBinding = request?.version === 7
+    ? autonomousLiveSubmissionAuthorizationBinding(request, {
+      observedAt: new Date(observedAt),
+      verifyAuthorityDocument: typeof verifyHumanAuthorization === 'function'
+        ? (input) => verifyHumanAuthorization({
+          receipt: request?.humanAuthorizationReceipt,
+          expectedSubject: input.expectedSubject,
+          observedAt: input.observedAt,
+        }) : null,
+    }) : null;
+  const structurallyValid = [5, 6, 7].includes(request?.version)
     && request?.kind === 'AutonomousSubmissionRequest'
-    && (requireResearchClosure !== true || request?.version === 6)
-    && (request?.version !== 6 || releaseBinding?.version === 4)
+    && (requireResearchClosure !== true || [6, 7].includes(request?.version))
+    && (![6, 7].includes(request?.version) || releaseBinding?.version === 4)
+    && (requireHumanAuthorization !== true || request?.version === 7)
+    && (request?.version !== 7 || Boolean(humanAuthorizationBinding))
     && recursiveResearchClosureValid
     && recursiveAuthorityValid
     && recursiveVenueValid
@@ -419,7 +532,16 @@ export function verifyAutonomousSubmissionRequest(request, {
     && sha(request?.researchEvidenceCapsuleManifestHash)
     && sha(request?.qualificationReceiptHash)
     && sha(request?.portalConfigurationHash)
-    && (request?.version !== 6 || sha(request?.researchClosureReceiptHash))
+    && (![6, 7].includes(request?.version) || sha(request?.researchClosureReceiptHash))
+    && (request?.version !== 7 || (
+      sha(request?.portalDescriptorHash)
+      && sha(request?.portalServiceIdentityHash)
+      && sha(request?.portalAccountIdentityHash)
+      && sha(request?.portalTrustDomainIdentityHash)
+      && sha(request?.humanAuthorizationReceiptHash)
+      && sha(request?.humanAuthorizationSubjectHash)
+      && request?.humanApprovalPerformed === true
+    ))
     && request?.qualificationScope === PRODUCTION_AGENT_AUTHORED_QUALIFICATION_SCOPE
     && request?.manuscriptProductionMode === 'agent-authored-evidence-bound-ir-v1'
     && MANUSCRIPT_PROOF_FIELDS.every((field) => sha(request?.[field]))
@@ -466,6 +588,8 @@ export function createAutonomousSubmissionRequestVerifier({
   verifyQualificationSignature = null,
   verifyIndependentQualificationEvidence = null,
   requireResearchClosure = false,
+  verifyHumanAuthorization = null,
+  requireHumanAuthorization = false,
 } = {}) {
   if (typeof verifyCurrentCampaignReleaseAuthority !== 'function'
     || typeof verifyQualificationAuthority !== 'function'
@@ -473,18 +597,22 @@ export function createAutonomousSubmissionRequestVerifier({
     || typeof verifyPortalConfigurationAuthority !== 'function'
     || (requireResearchClosure === true
       && (typeof verifyQualificationSignature !== 'function'
-      || typeof verifyIndependentQualificationEvidence !== 'function'))) {
+      || typeof verifyIndependentQualificationEvidence !== 'function'))
+    || (requireHumanAuthorization === true
+      && typeof verifyHumanAuthorization !== 'function')) {
     throw new Error('autonomous_submission_request_trust_verifier_required');
   }
   const qualificationSignatureVerifier =
     failClosedVerifier(verifyQualificationSignature);
   const qualificationEvidenceVerifier =
     failClosedVerifier(verifyIndependentQualificationEvidence);
+  const humanAuthorizationVerifier = failClosedVerifier(verifyHumanAuthorization);
   return Object.freeze({
     version: 1,
     kind: 'AutonomousSubmissionRequestVerifier',
     verifyQualificationSignature: qualificationSignatureVerifier,
     verifyIndependentQualificationEvidence: qualificationEvidenceVerifier,
+    verifyHumanAuthorization: humanAuthorizationVerifier,
     verify: (request) => verifyAutonomousSubmissionRequest(request, {
       verifyCurrentCampaignReleaseAuthority,
       verifyQualificationAuthority,
@@ -493,6 +621,8 @@ export function createAutonomousSubmissionRequestVerifier({
       verifyQualificationSignature: qualificationSignatureVerifier,
       verifyIndependentQualificationEvidence: qualificationEvidenceVerifier,
       requireResearchClosure,
+      verifyHumanAuthorization: humanAuthorizationVerifier,
+      requireHumanAuthorization,
     }),
   });
 }
@@ -518,6 +648,18 @@ export function buildAutonomousSubmissionReceipt({
       signatureHash,
       signatureVerificationReceiptHash,
     ].every((value) => sha(value))
+    || (request?.version === 7 && (
+      portalAccountIdentityHash !== request.portalAccountIdentityHash
+      || portalTrustDomainIdentityHash !== request.portalTrustDomainIdentityHash
+      || !autonomousLiveSubmissionAuthorizationBinding(request, {
+        observedAt: new Date(timestamp),
+        verifyAuthorityDocument: (input) => requestVerifier.verifyHumanAuthorization?.({
+          receipt: request.humanAuthorizationReceipt,
+          expectedSubject: input.expectedSubject,
+          observedAt: input.observedAt,
+        }) === true,
+      })
+    ))
     || !Number.isFinite(Date.parse(timestamp))
     || new Date(timestamp).toISOString() !== timestamp) {
     throw new Error('autonomous_submission_receipt_invalid');
@@ -537,6 +679,12 @@ export function buildAutonomousSubmissionReceipt({
     ...(request.researchClosureReceiptHash ? {
       researchClosureReceiptHash: request.researchClosureReceiptHash,
     } : {}),
+    ...(request.version === 7 ? {
+      humanAuthorizationReceiptHash: request.humanAuthorizationReceiptHash,
+      humanAuthorizationSubjectHash: request.humanAuthorizationSubjectHash,
+      humanAuthorizationNonce: request.humanAuthorizationNonce,
+      humanAuthorizationExpiresAt: request.humanAuthorizationExpiresAt,
+    } : {}),
     submissionMetadataReceiptHash: request.submissionMetadataReceiptHash,
     qualificationScope: request.qualificationScope,
     manuscriptProductionMode: request.manuscriptProductionMode,
@@ -547,7 +695,7 @@ export function buildAutonomousSubmissionReceipt({
     submissionArtifactManifestHash: sha(submissionArtifactManifestHash),
     signatureHash: sha(signatureHash),
     signatureVerificationReceiptHash: sha(signatureVerificationReceiptHash),
-    humanApprovalPerformed: false,
+    humanApprovalPerformed: request.version === 7,
     externalActionPerformed: true,
     submittedAt: timestamp,
   };
@@ -601,7 +749,7 @@ export function verifyLegacyAutonomousSubmissionReceipt(receipt, {
   return JSON.stringify(rebuilt) === JSON.stringify(receipt)
     && receipt.requestHash === request.requestHash
     && receipt.idempotencyKey === request.idempotencyKey
-    && (request?.version !== 6
+    && (![6, 7].includes(request?.version)
       || receipt.researchClosureReceiptHash === request.researchClosureReceiptHash);
 }
 function submissionCompletedVerificationPolicyHash(configuration) {
@@ -693,6 +841,12 @@ export function buildCryptographicAutonomousSubmissionReceipt({
     ...(request.researchClosureReceiptHash ? {
       researchClosureReceiptHash: request.researchClosureReceiptHash,
     } : {}),
+    ...(request.version === 7 ? {
+      humanAuthorizationReceiptHash: request.humanAuthorizationReceiptHash,
+      humanAuthorizationSubjectHash: request.humanAuthorizationSubjectHash,
+      humanAuthorizationNonce: request.humanAuthorizationNonce,
+      humanAuthorizationExpiresAt: request.humanAuthorizationExpiresAt,
+    } : {}),
     portalSubmissionId: legacyReceipt.portalSubmissionId,
     portalAccountIdentityHash: legacyReceipt.portalAccountIdentityHash,
     portalTrustDomainIdentityHash: legacyReceipt.portalTrustDomainIdentityHash,
@@ -710,7 +864,7 @@ export function buildCryptographicAutonomousSubmissionReceipt({
       ...portalVerificationConfiguration,
     }),
     cryptographicAuthorityReady: true,
-    humanApprovalPerformed: false,
+    humanApprovalPerformed: request.version === 7,
     externalActionPerformed: true,
     submittedAt: legacyReceipt.submittedAt,
   });

@@ -279,6 +279,7 @@ async function executionReport({
   autonomousSubmissionOutbox = null,
   autonomousVenueComplianceInspector = null,
   autonomousSubmissionRequestVerifier = null,
+  verifyAutonomousSubmissionHumanAuthorization = null,
   runtime = {},
 } = {}) {
   const campaign = campaignStore.getCampaign(campaignId);
@@ -367,6 +368,7 @@ async function executionReport({
     autonomousSubmissionOutbox,
     autonomousVenueComplianceInspector,
     autonomousSubmissionRequestVerifier,
+    verifyAutonomousSubmissionHumanAuthorization,
     requestedAt: action === 'status'
       ? null : autonomousResearchCampaignDispatchAuthorizationTime(runtime).toISOString(),
     localOnly,
@@ -441,6 +443,7 @@ export async function executeAutonomousResearchCampaign({
   autonomousSubmissionOutbox = null,
   autonomousVenueComplianceInspector = null,
   autonomousSubmissionRequestVerifier = null,
+  verifyAutonomousSubmissionHumanAuthorization = null,
   runtime = {},
 } = {}) {
   const store = requireCampaignStore(campaignStore);
@@ -597,6 +600,7 @@ export async function executeAutonomousResearchCampaign({
     autonomousSubmissionOutbox,
     autonomousVenueComplianceInspector,
     autonomousSubmissionRequestVerifier,
+    verifyAutonomousSubmissionHumanAuthorization,
     runtime,
   });
 }

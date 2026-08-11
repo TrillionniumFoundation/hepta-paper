@@ -21,6 +21,10 @@ import {
   autonomousResearchSupervisorSideEffectReservationHash,
   mapAutonomousResearchSupervisorExternalActionRow,
 } from './autonomous-research-supervisor-external-action-journal-storage.mjs';
+import {
+  autonomousResearchStateMutationValue,
+  buildAutonomousResearchStateMutationInput,
+} from './autonomous-research-state-mutation-support.mjs';
 
 export {
   installAutonomousResearchSupervisorExternalActionJournalSchema,
@@ -44,20 +48,12 @@ export function createAutonomousResearchSupervisorExternalActionRepositorySuppor
   requireExternallyFencedMutations = false,
 } = {}) {
   const externalActionPermits = new WeakMap();
-  function mutationValue(receipt) {
-    if (!receipt || !Object.prototype.hasOwnProperty.call(receipt, 'value')) {
-      throw new Error('autonomous_research_supervisor_state_mutation_receipt_invalid');
-    }
-    return receipt.value;
-  }
-
-  const mutationInput = Object.freeze({
-      database,
-      databaseInstanceId,
-      schemaContractId,
-      writerId,
-      authorizationReceiptHashes: Object.freeze([]),
-      sideEffectReservationHashes: Object.freeze([]),
+  const mutationValue = autonomousResearchStateMutationValue;
+  const mutationInput = buildAutonomousResearchStateMutationInput({
+    database,
+    databaseInstanceId,
+    schemaContractId,
+    writerId,
   });
 
   function externalActionRow(attemptId, transaction = null) {

@@ -5,6 +5,7 @@ import { preflightCodexFormalReviewer } from '../../paper-adapters/automation/co
 import { preflightCodexResearchAuthor } from '../../paper-adapters/automation/codex-research-author-preflight.mjs';
 import { createOllamaStructuredAgentExecutor } from '../../paper-adapters/automation/ollama-structured-agent-executor.mjs';
 import { createOpenClawAgentExecutor } from '../../paper-adapters/automation/openclaw-agent-executor.mjs';
+import { resolvePinnedLakeExecutable } from '../../paper-adapters/research-verify/pinned-lake-executable-resolver.mjs';
 import { createAgentBackendRouter } from '../../paper-adapters/automation/agent-backend-router.mjs';
 import { createIsolatedAgentExecutor } from '../../paper-adapters/automation/isolated-agent-executor.mjs';
 import {
@@ -38,6 +39,9 @@ import {
   campaignDatasetContentHash,
   composeCampaignWorkerEmpiricalExecution,
 } from './campaign-worker-empirical-composition.mjs';
+import {
+  composeCampaignAdvancedNumericalExecution,
+} from './advanced-numerical-plugin-composition.mjs';
 
 export {
   authorizeOperatorDatasetMount,
@@ -72,6 +76,25 @@ export function resolveCampaignWorkerModelConfiguration({
   });
 }
 
+export function preflightCampaignFormalRuntime({
+  executionRequested = false,
+  plans = [],
+  environment = {},
+  resolvePinnedRuntime = resolvePinnedLakeExecutable,
+} = {}) {
+  const formalVerificationScheduled = plans.some((plan) => (
+    (plan?.nodes || []).some((node) => node?.kind === 'formal-verify')
+  ));
+  if (!executionRequested || !formalVerificationScheduled) return null;
+  const inspection = resolvePinnedRuntime({ environment });
+  if (inspection?.status !== 'formal_pinned_lake_resolved') {
+    const blockers = inspection?.blockers?.length
+      ? inspection.blockers.join(',') : 'formal_pinned_runtime_unavailable';
+    throw new Error(`campaign_formal_runtime_preflight_failed:${blockers}`);
+  }
+  return inspection;
+}
+
 export function composeCampaignWorkerExecution({
   options = {},
   plans = [],
@@ -90,6 +113,8 @@ export function composeCampaignWorkerExecution({
   reviewerPrincipalPoolComposer = composeReviewerPrincipalExecutorPool,
   reviewerSessionPoolComposer = composeReviewerSessionExecutorPool,
   assertExternalSideEffectReady = null,
+  executionRequested = null,
+  advancedNumericalExecution = null,
 } = {}) {
   if (!runtimeRoot || !campaignExecutionContext || !services) {
     throw new Error('campaign_worker_composition_inputs_required');
@@ -115,6 +140,41 @@ export function composeCampaignWorkerExecution({
     : null;
   if (expectedHash && !boundProviderConfiguration) {
     throw new Error('autonomous_research_provider_configuration_required');
+  }
+  if (plans.some((plan) => (plan?.nodes || []).some((node) => (
+    node?.kind === 'formal-verify'
+  ))) && typeof executionRequested !== 'boolean') {
+    throw new Error('campaign_formal_execution_intent_required');
+  }
+  const formalRuntimePreflight = preflightCampaignFormalRuntime({
+    executionRequested: executionRequested === true,
+    plans,
+    environment,
+  });
+  const advancedNumericalPlans = plans
+    .map((plan) => plan?.advancedNumericalExecutionPlan || null)
+    .filter(Boolean);
+  const advancedNumericalPlanHashes = [...new Set(advancedNumericalPlans.map((plan) => (
+    plan.advancedNumericalCampaignExecutionPlanHash
+  )))];
+  if (advancedNumericalPlanHashes.length > 1) {
+    throw new Error('campaign_advanced_numerical_multiple_runtime_plans_unsupported');
+  }
+  let effectiveAdvancedNumericalExecution = advancedNumericalExecution;
+  let advancedNumericalComposition = null;
+  if (advancedNumericalPlans.length && !effectiveAdvancedNumericalExecution) {
+    const configurationPath = configuredValue(
+      options['advanced-numerical-config'],
+      environment.HEPTA_ADVANCED_NUMERICAL_PLUGIN_CONFIG,
+    );
+    if (!configurationPath) {
+      throw new Error('campaign_advanced_numerical_runtime_configuration_required');
+    }
+    advancedNumericalComposition = composeCampaignAdvancedNumericalExecution({
+      plan: advancedNumericalPlans[0],
+      configurationPath,
+    });
+    effectiveAdvancedNumericalExecution = advancedNumericalComposition.execution;
   }
   const { empiricalExecutor, workerRunner, runtimeImages } =
     composeCampaignWorkerEmpiricalExecution({
@@ -358,6 +418,7 @@ export function composeCampaignWorkerExecution({
       environment,
       spawnSyncImpl,
       dynamicFormalExecutionAuthority: services.dynamicFormalExecutionAuthority,
+      advancedNumericalExecution: effectiveAdvancedNumericalExecution,
     }),
     agentExecutor,
     formalReviewAgentExecutor,
@@ -370,6 +431,10 @@ export function composeCampaignWorkerExecution({
     runtimeImages,
     researchAuthorProviderPolicy,
     researchAuthorCapabilityReceipt: researchAuthorPreflight?.capabilityReceipt || null,
+    formalRuntimePreflight,
+    advancedNumericalExecution: effectiveAdvancedNumericalExecution,
+    advancedNumericalRuntime:
+      advancedNumericalComposition?.runtime || null,
     autonomousResearchProviderConfigurationHash:
       boundProviderConfiguration?.autonomousResearchProviderConfigurationHash || null,
   });

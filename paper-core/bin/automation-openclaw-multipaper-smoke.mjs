@@ -22,17 +22,42 @@ import {
 import { runPaperCampaign } from '../../paper-application/automation/campaign-engine.mjs';
 import { createResourceGovernor } from '../../paper-application/automation/resource-governor.mjs';
 import { buildPaperCampaignPlan } from '../../paper-domain/automation/campaign-plan.mjs';
+import { campaignGraphNode } from '../../paper-domain/automation/campaign-source-closure-graph.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 function concurrencyAcceptancePlan(input) {
-  const base = buildPaperCampaignPlan({ ...input, maxRounds: 1, refereeCount: 3 });
-  const writerId = base.nodes.find((node) => node.kind === 'writer').nodeId;
-  const coderId = base.nodes.find((node) => node.kind === 'coder').nodeId;
-  const nodes = base.nodes.filter((node) => ['research-plan', 'writer', 'coder'].includes(node.kind) || /^referee-\d+$/.test(node.kind)).map((node) => (
-    /^referee-\d+$/.test(node.kind) ? Object.freeze({ ...node, dependencies: [writerId, coderId] }) : node
-  ));
+  const base = buildPaperCampaignPlan({
+    ...input,
+    mode: 'local-review-loop',
+    maxRounds: 1,
+    refereeCount: 3,
+  });
+  const research = campaignGraphNode(base.campaignId, 'research-plan', [], {
+    priority: 10,
+    executionIntent: base.executionIntent,
+  });
+  const writer = campaignGraphNode(base.campaignId, 'writer', [research.nodeId], {
+    priority: 20,
+    role: 'writer',
+    executionIntent: base.executionIntent,
+  });
+  const coder = campaignGraphNode(base.campaignId, 'coder', [writer.nodeId], {
+    priority: 30,
+    role: 'coder-python',
+    language: 'python',
+    executionIntent: base.executionIntent,
+  });
+  const referees = base.nodes.filter((node) => /^referee-\d+$/.test(node.kind)).map((node) => Object.freeze({
+    ...node,
+    dependencies: Object.freeze([writer.nodeId, coder.nodeId]),
+  }));
+  const nodes = Object.freeze([research, writer, coder, ...referees]);
   const { campaignPlanHash: _discarded, ...rest } = base;
-  const payload = { ...rest, maxRounds: 1, nodes, acceptanceMode: 'openclaw_writer_coder_three_independent_referees' };
+  const payload = {
+    ...rest,
+    nodes,
+    acceptanceMode: 'openclaw_writer_coder_three_independent_referees',
+  };
   return Object.freeze({ ...payload, campaignPlanHash: hashRecord('PaperCampaignPlan', payload) });
 }
 

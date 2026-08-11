@@ -6,6 +6,14 @@ import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { buildRuntimeRetentionPlan, executeRuntimeRetentionPlan, reconcileRuntimeRetentionIntents } from '../../paper-adapters/automation/runtime-retention.mjs';
+import { preflightRemoval } from '../../paper-adapters/automation/runtime-retention-intent-operations.mjs';
+import {
+  assertPinnedRetentionCategoryLive,
+  openPinnedRetentionCategory,
+} from '../../paper-adapters/automation/runtime-retention-scope-repository.mjs';
+import {
+  withRuntimeRetentionCategoryLock,
+} from '../../paper-adapters/automation/runtime-retention-category-lock-repository.mjs';
 import { createWorkspaceRegistry } from '../../paper-adapters/automation/workspace-registry.mjs';
 import { exportWorkspaceSnapshot, restoreWorkspaceSnapshot } from '../../paper-adapters/automation/workspace-snapshot-exporter.mjs';
 import { createSqliteCampaignStore } from '../../paper-adapters/persistence/sqlite-campaign-store.mjs';
@@ -276,6 +284,360 @@ test('backup retention recomputes recoverable generations before every deletion'
   assert.equal(backupResults[1].blockers.includes('backup_minimum_recoverable_generations_would_be_violated'), true);
   assert.equal(fs.existsSync(paths[0].databasePath), false);
   assert.equal(fs.existsSync(paths[1].databasePath), true);
+});
+
+test('backup retention holds one runtime-root category lock across inspection and deletion', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-retention-backup-lock-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const backups = path.join(root, 'backups');
+  fs.mkdirSync(backups, { recursive: true });
+  const store = createDefaultPaperStore({
+    root,
+    runtimeRoot: root,
+    dbPath: path.join(root, 'ledger.sqlite'),
+  });
+  t.after(() => store.close());
+  const clock = { nowIso: () => '2026-07-14T00:00:00.000Z' };
+  const receiptLedger = trustedStoreAdminLedger(store, clock);
+  const retentionReceiptLedger = trustedRetentionLedger(store, clock);
+  const paths = Array.from(
+    { length: 3 },
+    (_value, index) => createRecoverableBackup({ backups, index, receiptLedger }),
+  );
+  const plan = buildRuntimeRetentionPlan({
+    runtimeRoot: root,
+    receiptLedger,
+    policies: {
+      backups: {
+        maxBytes: 1,
+        maxAgeMs: 0,
+        keepNewest: 0,
+        minimumRecoverableGenerations: 2,
+      },
+    },
+  });
+  let contentionObserved = false;
+  const applied = executeRuntimeRetentionPlan(plan, {
+    apply: true,
+    receiptLedger,
+    retentionReceiptLedger,
+    faultInjector(event) {
+      if (contentionObserved
+        || event.stage !== 'before_member_quarantined'
+        || event.entryIndex !== 0
+        || event.memberIndex !== 0) return;
+      const contender = openPinnedRetentionCategory(root, 'backups');
+      try {
+        assert.throws(
+          () => withRuntimeRetentionCategoryLock(contender, 'backups', () => {}),
+          /runtime_retention_category_lock_unavailable/,
+        );
+        contentionObserved = true;
+      } finally {
+        contender.close();
+      }
+    },
+  });
+  assert.equal(contentionObserved, true);
+  assert.equal(applied.removed[0].removed, true);
+  assert.equal(fs.existsSync(paths[0].databasePath), false);
+  assert.equal(fs.existsSync(paths[1].databasePath), true);
+  assert.equal(fs.existsSync(paths[2].databasePath), true);
+});
+
+test('backup category replacement cannot split the runtime-root lock domain', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-retention-backup-lock-scope-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const backups = path.join(root, 'backups');
+  const displaced = path.join(root, 'backups-displaced');
+  fs.mkdirSync(backups, { recursive: true });
+  const pinned = openPinnedRetentionCategory(root, 'backups');
+  try {
+    withRuntimeRetentionCategoryLock(pinned, 'backups', (held) => {
+      assert.equal(held.assertHeld(), true);
+      fs.renameSync(backups, displaced);
+      fs.mkdirSync(backups);
+      const replacement = openPinnedRetentionCategory(root, 'backups');
+      try {
+        assert.throws(
+          () => withRuntimeRetentionCategoryLock(replacement, 'backups', () => {}),
+          /runtime_retention_category_lock_unavailable/,
+        );
+      } finally {
+        replacement.close();
+      }
+      assert.throws(
+        () => assertPinnedRetentionCategoryLive(pinned, root, 'backups', pinned.scope),
+        /runtime_retention_scope_identity_changed/,
+      );
+      fs.rmdirSync(backups);
+      fs.renameSync(displaced, backups);
+      assert.equal(
+        assertPinnedRetentionCategoryLive(pinned, root, 'backups', pinned.scope),
+        true,
+      );
+      assert.equal(held.assertHeld(), true);
+    });
+  } finally {
+    if (fs.existsSync(displaced) && !fs.existsSync(backups)) {
+      fs.renameSync(displaced, backups);
+    }
+    pinned.close();
+  }
+});
+
+test('backup retention restores quarantine when the minimum changes immediately before removal', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-retention-backup-pre-remove-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const backups = path.join(root, 'backups');
+  fs.mkdirSync(backups, { recursive: true });
+  const store = createDefaultPaperStore({
+    root,
+    runtimeRoot: root,
+    dbPath: path.join(root, 'ledger.sqlite'),
+  });
+  t.after(() => store.close());
+  const clock = { nowIso: () => '2026-07-14T00:00:00.000Z' };
+  const receiptLedger = trustedStoreAdminLedger(store, clock);
+  const retentionReceiptLedger = trustedRetentionLedger(store, clock);
+  const paths = Array.from(
+    { length: 3 },
+    (_value, index) => createRecoverableBackup({ backups, index, receiptLedger }),
+  );
+  const plan = buildRuntimeRetentionPlan({
+    runtimeRoot: root,
+    receiptLedger,
+    policies: {
+      backups: {
+        maxBytes: 1,
+        maxAgeMs: 0,
+        keepNewest: 0,
+        minimumRecoverableGenerations: 2,
+      },
+    },
+  });
+  let invalidated = false;
+  const descriptorCountBefore = fs.readdirSync('/proc/self/fd').length;
+  assert.throws(() => executeRuntimeRetentionPlan(plan, {
+    apply: true,
+    receiptLedger,
+    retentionReceiptLedger,
+    faultInjector(event) {
+      if (invalidated || event.stage !== 'after_entry_quarantined') return;
+      invalidated = true;
+      fs.appendFileSync(paths[2].databasePath, 'changed-before-physical-removal');
+    },
+  }), /backup_minimum_recoverable_generations_would_be_violated/);
+  assert.equal(invalidated, true);
+  assert.equal(fs.readdirSync('/proc/self/fd').length, descriptorCountBefore);
+  for (const candidate of [
+    paths[0].databasePath,
+    paths[0].receiptPath,
+    paths[0].restoreReceiptPath,
+  ]) {
+    assert.equal(fs.existsSync(candidate), true);
+  }
+  assert.equal(
+    fs.readdirSync(backups).some((name) => name.endsWith('.quarantine')),
+    false,
+  );
+});
+
+test('backup minimum evaluation pins every counted generation and preflight closes all descriptors on race', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-retention-backup-generation-race-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const backups = path.join(root, 'backups');
+  fs.mkdirSync(backups, { recursive: true });
+  const store = createDefaultPaperStore({
+    root,
+    runtimeRoot: root,
+    dbPath: path.join(root, 'ledger.sqlite'),
+  });
+  t.after(() => store.close());
+  const clock = { nowIso: () => '2026-07-14T00:00:00.000Z' };
+  const receiptLedger = trustedStoreAdminLedger(store, clock);
+  const paths = Array.from(
+    { length: 3 },
+    (_value, index) => createRecoverableBackup({ backups, index, receiptLedger }),
+  );
+  const plan = buildRuntimeRetentionPlan({
+    runtimeRoot: root,
+    receiptLedger,
+    policies: {
+      backups: {
+        maxBytes: 1,
+        maxAgeMs: 0,
+        keepNewest: 0,
+        minimumRecoverableGenerations: 2,
+      },
+    },
+  });
+  const removal = plan.removals.find((entry) => entry.path === paths[0].databasePath);
+  assert.ok(removal);
+  const displaced = `${paths[1].databasePath}.displaced`;
+  let getCalls = 0;
+  let replaced = false;
+  const racingLedger = new Proxy(receiptLedger, {
+    get(target, property) {
+      const value = Reflect.get(target, property, target);
+      if (property === 'get') {
+        return (...args) => {
+          getCalls += 1;
+          if (!replaced && getCalls === 3) {
+            replaced = true;
+            fs.renameSync(paths[1].databasePath, displaced);
+            fs.writeFileSync(paths[1].databasePath, 'concurrent-replacement');
+          }
+          return value.apply(target, args);
+        };
+      }
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  const descriptorCountBefore = fs.readdirSync('/proc/self/fd').length;
+  try {
+    assert.throws(
+      () => preflightRemoval(plan, removal, racingLedger, null, null),
+      /backup_generation_changed_while_reading/,
+    );
+  } finally {
+    if (fs.existsSync(displaced)) {
+      fs.rmSync(paths[1].databasePath, { force: true });
+      fs.renameSync(displaced, paths[1].databasePath);
+    }
+  }
+  assert.equal(replaced, true);
+  assert.equal(fs.readdirSync('/proc/self/fd').length, descriptorCountBefore);
+});
+
+test('backup recovery holds the category lock while restoring a partial multi-member quarantine', async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-retention-backup-recovery-lock-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const backups = path.join(root, 'backups');
+  fs.mkdirSync(backups, { recursive: true });
+  const store = createDefaultPaperStore({
+    root,
+    runtimeRoot: root,
+    dbPath: path.join(root, 'ledger.sqlite'),
+  });
+  t.after(() => store.close());
+  const clock = { nowIso: () => '2026-07-14T00:00:00.000Z' };
+  const receiptLedger = trustedStoreAdminLedger(store, clock);
+  const retentionReceiptLedger = trustedRetentionLedger(store, clock);
+  const paths = Array.from(
+    { length: 3 },
+    (_value, index) => createRecoverableBackup({ backups, index, receiptLedger }),
+  );
+  const plan = buildRuntimeRetentionPlan({
+    runtimeRoot: root,
+    receiptLedger,
+    policies: {
+      backups: {
+        maxBytes: 1,
+        maxAgeMs: 0,
+        keepNewest: 0,
+        minimumRecoverableGenerations: 2,
+      },
+    },
+  });
+  assert.throws(() => executeRuntimeRetentionPlan(plan, {
+    apply: true,
+    receiptLedger,
+    retentionReceiptLedger,
+    faultInjector(event) {
+      if (event.stage === 'after_member_quarantined'
+        && event.entryIndex === 0
+        && event.memberIndex === 1) {
+        throw new Error('simulated_partial_backup_quarantine_crash');
+      }
+    },
+  }), /simulated_partial_backup_quarantine_crash/);
+  assert.equal(fs.existsSync(paths[0].databasePath), false);
+  assert.equal(fs.existsSync(paths[0].receiptPath), false);
+  assert.equal(fs.existsSync(paths[0].restoreReceiptPath), true);
+  assert.equal(
+    fs.readdirSync(backups).filter((name) => name.endsWith('.quarantine')).length,
+    2,
+  );
+
+  const readyPath = path.join(root, 'backup-recovery.ready');
+  const releasePath = path.join(root, 'backup-recovery.release');
+  const runner = `
+    import fs from 'node:fs';
+    import path from 'node:path';
+    import { reconcileRuntimeRetentionIntents } from './paper-adapters/automation/runtime-retention.mjs';
+    import { issueRuntimeRetentionWriter, issueStoreAdministratorWriter } from './paper-adapters/persistence/receipt-writer-broker.mjs';
+    import { createDefaultPaperStore } from './paper-adapters/persistence/store-provider.mjs';
+    import { createSqliteReceiptLedger } from './paper-adapters/persistence/sqlite-receipt-ledger.mjs';
+    const root = ${JSON.stringify(root)};
+    const store = createDefaultPaperStore({ root, runtimeRoot: root, dbPath: path.join(root, 'ledger.sqlite') });
+    const clock = { nowIso: () => '2026-07-14T00:00:00.000Z' };
+    const receiptLedger = createSqliteReceiptLedger({ store, clock, issuerCapability: issueStoreAdministratorWriter() });
+    const retentionReceiptLedger = createSqliteReceiptLedger({ store, clock, issuerCapability: issueRuntimeRetentionWriter() });
+    let paused = false;
+    try {
+      const result = reconcileRuntimeRetentionIntents({
+        runtimeRoot: root,
+        receiptLedger,
+        retentionReceiptLedger,
+        faultInjector(event) {
+          if (paused || event.stage !== 'before_member_quarantine_restore') return;
+          paused = true;
+          fs.writeFileSync(${JSON.stringify(readyPath)}, 'ready');
+          const wait = new Int32Array(new SharedArrayBuffer(4));
+          while (!fs.existsSync(${JSON.stringify(releasePath)})) Atomics.wait(wait, 0, 0, 10);
+        },
+      });
+      process.stdout.write(JSON.stringify(result));
+    } finally { store.close(); }
+  `;
+  const child = spawn(process.execPath, ['--input-type=module', '--eval', runner], {
+    cwd: path.resolve('.'),
+    env: process.env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (chunk) => { stdout += chunk; });
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+  const recovery = new Promise((resolve, reject) => {
+    child.on('error', reject);
+    child.on('exit', (code) => code === 0
+      ? resolve(JSON.parse(stdout))
+      : reject(new Error(`backup recovery child failed ${code}: ${stderr}`)));
+  });
+  for (let attempts = 0; attempts < 500 && !fs.existsSync(readyPath); attempts += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(fs.existsSync(readyPath), true, stderr);
+  try {
+    const descriptorCountBefore = fs.readdirSync('/proc/self/fd').length;
+    assert.throws(() => executeRuntimeRetentionPlan(plan, {
+      apply: true,
+      receiptLedger,
+      retentionReceiptLedger,
+    }), /runtime_retention_category_lock_unavailable/);
+    assert.equal(fs.readdirSync('/proc/self/fd').length, descriptorCountBefore);
+    assert.equal(
+      fs.readdirSync(backups).filter((name) => name.endsWith('.quarantine')).length,
+      2,
+    );
+  } finally {
+    fs.writeFileSync(releasePath, 'release');
+  }
+  const recovered = await recovery;
+  assert.equal(recovered.status, 'runtime_retention_recovery_complete');
+  for (const candidate of [
+    paths[0].databasePath,
+    paths[0].receiptPath,
+    paths[0].restoreReceiptPath,
+  ]) {
+    assert.equal(fs.existsSync(candidate), false);
+  }
+  assert.equal(
+    fs.readdirSync(backups).some((name) => name.endsWith('.quarantine')),
+    false,
+  );
 });
 
 test('backup retention protects forged local receipts and apply rechecks planned content hashes', (t) => {
@@ -832,9 +1194,98 @@ test('hepta-store CLI binds a selected backup to trusted admin backup and restor
   const restore = JSON.parse(restoreRun.stdout);
   assert.equal(restore.backupLedgerReceiptId, backup.ledgerReceipt.receiptId);
   assert.equal(restore.backupLedgerReceiptSha256, backup.ledgerReceipt.receiptHash);
-  assert.equal(restore.ledgerReceipt.receiptId, `store-admin:${restore.ledgerReceipt.receiptHash}`);
-  assert.notEqual(restore.ledgerReceipt.receiptHash, backup.ledgerReceipt.receiptHash);
-  assert.equal(restore.ledgerReceipt.writerTrusted, true);
-  assert.equal(restore.ledgerReceipt.issuerPolicyId, 'store-administrator');
+  assert.equal(restore.version, 3);
+  assert.equal(restore.restoreDrillBusinessWritePerformed, false);
+  assert.equal(restore.restoreDrillAdministrativeWritePerformed, true);
+  assert.equal(restore.concurrentBusinessStateChangesAttested, false);
+  assert.equal(restore.writerQuiescenceAttested, false);
+  assert.equal(restore.businessProjectionComparisonPerformed, false);
+  assert.equal(restore.diagnosticAfterHashAssurance, 'completion_self_hash_only');
+  assert.equal(restore.diagnosticAfterHashLedgerAuthenticated, false);
+  assert.notEqual(
+    restore.liveDatabaseSha256Before,
+    restore.diagnosticLiveDatabaseSha256After,
+  );
+  assert.equal(
+    restore.administrativeLedgerReceipt.receiptId,
+    `store-admin:${restore.administrativeLedgerReceipt.receiptSha256}`,
+  );
+  assert.notEqual(
+    restore.administrativeLedgerReceipt.receiptSha256,
+    backup.ledgerReceipt.receiptHash,
+  );
   assert.equal(fs.existsSync(`${backup.backupPath}.restore-drill.receipt.json`), true);
+
+  const store = createDefaultPaperStore({
+    root: env.HEPTA_PAPER_ASSET_ROOT,
+    runtimeRoot: env.HEPTA_PAPER_RUNTIME_ROOT,
+    dbPath: path.join(env.HEPTA_PAPER_RUNTIME_ROOT, 'hepta-paper.sqlite'),
+  });
+  t.after(() => store.close());
+  const receiptLedger = trustedStoreAdminLedger(store, {
+    nowIso: () => '2026-08-09T00:00:00.000Z',
+  });
+  const restoreRow = receiptLedger.get(restore.administrativeLedgerReceipt.receiptId);
+  assert.equal(restoreRow.receipt_sha256, restore.administrativeLedgerReceipt.receiptSha256);
+  assert.equal(Number(restoreRow.writer_trusted), 1);
+  assert.equal(restoreRow.issuer_policy_id, 'store-administrator');
+  assert.equal(restoreRow.environment, 'administrative');
+  assert.equal(restoreRow.evidence_class, 'restore_drill');
+  const restoreLedgerSubject = JSON.parse(restoreRow.receipt_json);
+  assert.equal(restoreLedgerSubject.restoreDrillBusinessWritePerformed, false);
+  assert.equal(restoreLedgerSubject.restoreDrillAdministrativeWritePerformed, true);
+  assert.equal(restoreLedgerSubject.concurrentBusinessStateChangesAttested, false);
+  assert.equal(restoreLedgerSubject.writerQuiescenceAttested, false);
+  assert.equal(restoreLedgerSubject.businessProjectionComparisonPerformed, false);
+  assert.equal(Object.hasOwn(
+    restoreLedgerSubject,
+    'diagnosticLiveDatabaseSha256After',
+  ), false);
+
+  const retentionPlan = buildRuntimeRetentionPlan({
+    runtimeRoot: env.HEPTA_PAPER_RUNTIME_ROOT,
+    receiptLedger,
+    policies: {
+      backups: {
+        maxBytes: Number.MAX_SAFE_INTEGER,
+        maxAgeMs: Number.MAX_SAFE_INTEGER,
+        keepNewest: 0,
+      },
+    },
+  });
+  const backupCategory = retentionPlan.categories.find((entry) => entry.category === 'backups');
+  assert.equal(backupCategory.recoverableGenerationCount, 1);
+
+  const resealedDiagnosticPayload = {
+    ...restore,
+    diagnosticLiveDatabaseSha256After: `sha256:${'f'.repeat(64)}`,
+  };
+  delete resealedDiagnosticPayload.completionReceiptSha256;
+  const resealedDiagnostic = {
+    ...resealedDiagnosticPayload,
+    completionReceiptSha256: hashRecord(
+      'HeptaStoreRestoreDrillCompletionReceiptV3',
+      resealedDiagnosticPayload,
+    ),
+  };
+  fs.writeFileSync(
+    `${backup.backupPath}.restore-drill.receipt.json`,
+    `${JSON.stringify(resealedDiagnostic)}\n`,
+  );
+  const diagnosticOnlyPlan = buildRuntimeRetentionPlan({
+    runtimeRoot: env.HEPTA_PAPER_RUNTIME_ROOT,
+    receiptLedger,
+    policies: {
+      backups: {
+        maxBytes: Number.MAX_SAFE_INTEGER,
+        maxAgeMs: Number.MAX_SAFE_INTEGER,
+        keepNewest: 0,
+      },
+    },
+  });
+  assert.equal(
+    diagnosticOnlyPlan.categories.find((entry) => entry.category === 'backups')
+      .recoverableGenerationCount,
+    1,
+  );
 });

@@ -6,6 +6,7 @@ import test from 'node:test';
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { createSqliteCampaignStore } from '../../paper-adapters/persistence/sqlite-campaign-store.mjs';
 import { buildPaperCampaignPlan } from '../../paper-domain/automation/campaign-plan.mjs';
+import { createPaperTask } from '../../paper-domain/contracts/workflow-contracts.mjs';
 import { evaluateRefereeConvergence, requiredRevalidationForChanges } from '../../paper-domain/automation/referee-convergence.mjs';
 import { runPaperCampaign as executePaperCampaign } from '../../paper-application/automation/campaign-engine.mjs';
 import { createResourceGovernor } from '../../paper-application/automation/resource-governor.mjs';
@@ -42,6 +43,14 @@ function fixture(t) {
   const campaignStore = createSqliteCampaignStore({ store, clock });
   campaignClocks.set(campaignStore, clock);
   return { root, clock, campaignStore };
+}
+
+function campaignPaperTask({ paperId, sourceWorkspace }) {
+  return createPaperTask({
+    paperId,
+    title: `${paperId} campaign fixture`,
+    sourceWorkspace,
+  });
 }
 
 function reviewEvidence(reviewerId, detail = {}) {
@@ -141,6 +150,7 @@ test('campaign plans and execution preserve explicit zero budgets', async (t) =>
     campaignId: 'zero-budget-campaign',
     maxRounds: 1,
     budgets: { maxAgentCalls: 0, maxCpuJobs: 0, maxGpuJobs: 0, maxTokenCount: 0, maxCostUsd: 0 },
+    paperTask: campaignPaperTask({ paperId: 'zero-budget-paper', sourceWorkspace: root }),
   });
   assert.deepEqual(plan.budgets, {
     maxWallTimeMs: 6 * 60 * 60 * 1000,
@@ -222,7 +232,13 @@ test('ten campaigns run concurrently, retry, converge, skip later rounds and rep
 
 test('expired running lease is recovered after a simulated crash', async (t) => {
   const { root, clock, campaignStore } = fixture(t);
-  const plan = buildPaperCampaignPlan({ paperId: 'crash-paper', sourceWorkspace: root, campaignId: 'crash-campaign', maxRounds: 1 });
+  const plan = buildPaperCampaignPlan({
+    paperId: 'crash-paper',
+    sourceWorkspace: root,
+    campaignId: 'crash-campaign',
+    maxRounds: 1,
+    paperTask: campaignPaperTask({ paperId: 'crash-paper', sourceWorkspace: root }),
+  });
   campaignStore.createCampaign(plan);
   const [leased] = campaignStore.claimReady({ campaignId: plan.campaignId, workerId: 'crashed-worker', leaseSeconds: 1 });
   campaignStore.startNode({ nodeId: leased.nodeId, workerId: 'crashed-worker', attemptId: leased.attemptId, leaseGeneration: leased.leaseGeneration });
@@ -252,7 +268,13 @@ test('expired running lease is recovered after a simulated crash', async (t) => 
 
 test('operator cancellation aborts an active agent node and leaves campaign cancelled', async (t) => {
   const { root, campaignStore } = fixture(t);
-  const plan = buildPaperCampaignPlan({ paperId: 'cancel-paper', sourceWorkspace: root, campaignId: 'cancel-campaign', maxRounds: 1 });
+  const plan = buildPaperCampaignPlan({
+    paperId: 'cancel-paper',
+    sourceWorkspace: root,
+    campaignId: 'cancel-campaign',
+    maxRounds: 1,
+    paperTask: campaignPaperTask({ paperId: 'cancel-paper', sourceWorkspace: root }),
+  });
   campaignStore.createCampaign(plan);
   const running = runPaperCampaign({
     campaignId: plan.campaignId,
@@ -650,7 +672,13 @@ test('single-node cancellation aborts active work and skips its dependency subtr
 
 test('campaign stops without packaging when final revised manuscript does not converge', async (t) => {
   const { root, campaignStore } = fixture(t);
-  const plan = buildPaperCampaignPlan({ paperId: 'nonconverged-paper', sourceWorkspace: root, campaignId: 'nonconverged-campaign', maxRounds: 1 });
+  const plan = buildPaperCampaignPlan({
+    paperId: 'nonconverged-paper',
+    sourceWorkspace: root,
+    campaignId: 'nonconverged-campaign',
+    maxRounds: 1,
+    paperTask: campaignPaperTask({ paperId: 'nonconverged-paper', sourceWorkspace: root }),
+  });
   campaignStore.createCampaign(plan);
   const result = await runPaperCampaign({
     campaignId: plan.campaignId,

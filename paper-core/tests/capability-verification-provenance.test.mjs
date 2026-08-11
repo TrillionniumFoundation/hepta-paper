@@ -416,6 +416,23 @@ if (args[0] === 'rev-parse' && args[1] === 'HEAD') {
   }), /code_provenance_git_output_required:head/);
 });
 
+test('every code-provenance Git probe disables optional repository locks', (t) => {
+  const root = createProvenanceRepository(t);
+  installGitWrapper(t, `
+if (process.env.GIT_OPTIONAL_LOCKS !== '0') {
+  process.stderr.write('optional-locks-not-disabled');
+  process.exitCode = 19;
+} else {
+  emit(runReal());
+}
+`);
+  const result = currentCodeProvenance({
+    workspaceRoot: root,
+    allowReleaseCommitEnvironment: false,
+  });
+  assert.equal(result.treeDirty, false);
+});
+
 test('a scan-time content mutation and restoration forces a complete snapshot retry', (t) => {
   const root = createProvenanceRepository(t);
   const sourcePath = path.join(root, 'source.mjs');
@@ -815,4 +832,19 @@ test('production replay capability families stay in bounded runner groups', () =
   );
   assert.match(runner, /for \(const capabilityId of Object\.keys\(CAPABILITY_CATALOG\)\.sort\(\)\)/u);
   assert.match(runner, /conformanceReceiptHashes: verified\.map\(\(item\) => item\.conformanceReceiptHash\)/u);
+});
+
+test('production sandbox replay binds its Docker fallback to a system-pinned image', () => {
+  const runner = fs.readFileSync(
+    path.join(
+      workspaceRoot,
+      'migration',
+      'bin',
+      'production-capability-replay-runtime-runners.mjs',
+    ),
+    'utf8',
+  );
+  assert.match(runner, /SYSTEM_DATASET_ACCESS_RUNTIME_IMAGES\.python/u);
+  assert.match(runner, /dockerImage: sandboxRuntime\.image/u);
+  assert.match(runner, /probe\.imageDigest !== sandboxRuntime\.imageDigest/u);
 });

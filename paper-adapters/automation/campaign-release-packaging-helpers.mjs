@@ -173,6 +173,12 @@ export function campaignReleasePackageNodeResult(releaseBundle, materializationR
       releaseBundle.empiricalAssertionUniverseBindingHash || null,
     empiricalAssertionManuscriptCorpusHash:
       releaseBundle.empiricalAssertionManuscriptCorpusHash || null,
+    advancedNumericalExecutionPlanHash:
+      releaseBundle.advancedNumericalExecutionPlanHash || null,
+    advancedNumericalCampaignExecutionReceiptHash:
+      releaseBundle.advancedNumericalCampaignExecutionReceiptHash || null,
+    advancedNumericalCampaignEvidenceHash:
+      releaseBundle.advancedNumericalCampaignEvidenceHash || null,
     releaseBundle,
     artifactPackage: releaseBundle.artifactPackage,
     packageVerificationReceipt: releaseBundle.packageVerificationReceipt,

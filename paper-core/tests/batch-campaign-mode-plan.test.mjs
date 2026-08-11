@@ -138,6 +138,43 @@ test('formal full campaign creates a system-finalized theorem spec and an atomic
   assert.equal(intentionallyBounded.budgets.maxAgentCalls, 7);
 });
 
+test('local formal campaign persists the paper-task binding required by formal review', () => {
+  const value = plan('local-review-loop', {
+    paperQualityProfile: 'formal_theorem_or_proof',
+    languages: ['lean', 'latex'],
+  });
+  assert.equal(value.researchVerificationRequired, false);
+  assert.equal(value.researchVerificationInput.paperId, PAPER.paperId);
+  assert.equal(value.researchVerificationInput.paperTask.taskKey, PAPER.taskKey);
+  assert.equal(
+    value.researchVerificationInput.paperSemanticIdentityHash,
+    PAPER.semanticIdentityHash,
+  );
+});
+
+test('formal full campaign rejects a missing paper-task binding before persistence', () => {
+  assert.throws(() => plan('full-campaign', {
+    paperTask: null,
+    paperQualityProfile: 'formal_theorem_or_proof',
+    languages: ['lean', 'latex'],
+  }), /campaign_research_verification_input_required/);
+});
+
+test('multi-language authoring chains serialize source writers before the next profile', () => {
+  const value = plan('local-review-loop', {
+    languages: ['python', 'r', 'latex'],
+    applyManuscript: true,
+  });
+  const research = value.nodes.find((item) => item.kind === 'research-plan');
+  const pythonReplay = value.nodes.find(
+    (item) => item.kind === 'empirical-reproduce-python',
+  );
+  const pythonCoder = value.nodes.find((item) => item.kind === 'coder-python');
+  const rCoder = value.nodes.find((item) => item.kind === 'coder-r');
+  assert.deepEqual(pythonCoder.dependencies, [research.nodeId]);
+  assert.deepEqual(rCoder.dependencies, [research.nodeId, pythonReplay.nodeId]);
+});
+
 test('formal full DAG brackets every trusted manuscript mutation and closes release over the final source', () => {
   const nodes = buildCampaignModeNodes({
     campaignId: 'campaign-formal-render-fence',
@@ -233,6 +270,42 @@ test('formal full DAG brackets every trusted manuscript mutation and closes rele
     assert.ok(ready.length > 0, 'full campaign graph must remain acyclic');
     ready.forEach((node) => visited.add(node.nodeId));
   }
+});
+
+test('revision context projects review decisions without embedding execution receipts', () => {
+  const reviewResult = {
+    reviewerId: 'referee-1',
+    role: 'referee-1',
+    verdict: 'revise',
+    score: 0.4,
+    criticalFindingCount: 1,
+    findings: ['Add the missing limitation.'],
+    summary: 'One bounded revision is required.',
+    reviewHash: `sha256:${'1'.repeat(64)}`,
+    manuscriptHash: `sha256:${'2'.repeat(64)}`,
+    unsignedAgentExecutionReceipt: { finalOutput: 'must not enter the revision prompt' },
+    signedReviewerReceipt: { signature: 'must not enter the revision prompt' },
+  };
+  const context = deriveCampaignNodeExecutionContext({
+    node: { nodeId: 'campaign:1:revise', kind: 'revise', roundIndex: 1 },
+    allNodes: [{
+      nodeId: 'campaign:1:referee-1',
+      kind: 'referee-1',
+      roundIndex: 1,
+      result: reviewResult,
+    }],
+  });
+  assert.deepEqual(context.reviews, [{
+    reviewerId: 'referee-1',
+    role: 'referee-1',
+    verdict: 'revise',
+    score: 0.4,
+    criticalFindingCount: 1,
+    findings: ['Add the missing limitation.'],
+    summary: 'One bounded revision is required.',
+    reviewHash: `sha256:${'1'.repeat(64)}`,
+    manuscriptHash: `sha256:${'2'.repeat(64)}`,
+  }]);
 });
 
 test('release graph closes formal, empirical replay, and final compile over one immutable terminal source', () => {

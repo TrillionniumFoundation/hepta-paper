@@ -11,13 +11,13 @@ const MAXIMUM_GIT_OUTPUT_BYTES = 1024 * 1024;
 const NO_FOLLOW = fs.constants.O_NOFOLLOW || 0;
 const LEGACY_V1_CLOSURE_HASH =
   'sha256:370574e9ce3cb982917fe2bc0c3a5479f037abbf72843472c5324fd0935568f2';
-const DEPLOYED_D6F3C3C_PREDECESSOR_CLOSURE_HASH =
-  'sha256:c2094b9f424b6264ba04ee24c1d91165a481e3be0d9b957eaeeba40d125cf89b';
+const DEPLOYED_AD55DFB_PREDECESSOR_CLOSURE_HASH =
+  'sha256:3dde5272fd12414d5d5f59be348228f2f1b0ffae6e2152f125c0ca1d2c0766ca';
 // Every release source explicitly pins the closure hashes from which its v2
 // deployment closure may inherit. A later v2 -> v2 release must add or replace
 // this entry with the actually deployed predecessor before its source is frozen.
 const APPROVED_PREDECESSOR_CLOSURE_HASHES = Object.freeze([
-  DEPLOYED_D6F3C3C_PREDECESSOR_CLOSURE_HASH,
+  DEPLOYED_AD55DFB_PREDECESSOR_CLOSURE_HASH,
 ]);
 const CODEX_DIRECTORY = 'codex-cli-0.144.1';
 const EXACT_SEAL_POLICY = Object.freeze({

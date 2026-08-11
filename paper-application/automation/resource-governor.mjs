@@ -17,7 +17,7 @@ function normalize(request = {}) {
 export function resourcesForCampaignNode(campaign, node) {
   const classification = campaignEmpiricalNodeClassification(node.kind);
   const agent = isCampaignAgentNode(node.kind);
-  const empirical = classification.empirical || ['formal-verify', 'package', 'revalidate-citations', 'revalidate-artifacts'].includes(node.kind);
+  const empirical = classification.empirical || ['advanced-numerical-analysis', 'formal-verify', 'package', 'revalidate-citations', 'revalidate-artifacts'].includes(node.kind);
   const gpuExecution = classification.primary || classification.reproduction || classification.revalidate;
   const gpu = gpuExecution && Boolean(node.spec?.requiresGpu || node.requiresGpu || campaign?.spec?.requiresGpu);
   const empiricalMemoryMiB = Math.max(1, Math.ceil(Number(campaign?.spec?.workerMemoryBytes || 4 * 1024 * 1024 * 1024) / (1024 * 1024)));

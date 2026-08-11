@@ -5,6 +5,7 @@ import { probeOsSandbox } from '../../paper-adapters/runtime/sandbox-backend-pro
 import { createFilesystemArtifactRepository } from '../../paper-adapters/artifacts/filesystem-artifact-repository.mjs';
 import { verifyArtifactWriteReceiptSource } from '../../paper-adapters/artifacts/artifact-write-receipt-verifier.mjs';
 import { createSqliteJobReceiptStore } from '../../paper-adapters/persistence/sqlite-job-receipt-store.mjs';
+import { SYSTEM_DATASET_ACCESS_RUNTIME_IMAGES } from '../../paper-domain/automation/dataset-access-supervisor-policy.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 export function createRuntimeCapabilityReplayRunners({
@@ -17,8 +18,12 @@ export function createRuntimeCapabilityReplayRunners({
 }) {
   async function replaySandbox(root) {
     await fsp.writeFile(path.join(root, 'source.txt'), `${paperId}\n${mainTexHash}\n`);
-    const probe = probeOsSandbox({ refresh: true });
-    const runner = createOsSandboxedWorkerRunner({ allowedExecutables: ['/usr/bin/true'], allowedRoots: [root], probe });
+    const sandboxRuntime = SYSTEM_DATASET_ACCESS_RUNTIME_IMAGES.python;
+    const probe = probeOsSandbox({ dockerImage: sandboxRuntime.image, refresh: true });
+    if (probe.backend === 'docker' && probe.imageDigest !== sandboxRuntime.imageDigest) {
+      throw new Error('operational OS sandbox trusted image digest mismatch');
+    }
+    const runner = createOsSandboxedWorkerRunner({ allowedExecutables: ['/usr/bin/true'], allowedRoots: [root], dockerImage: sandboxRuntime.image, probe });
     const receipt = runner.run({ executable: '/usr/bin/true', cwd: root, sourceRoot: root, outputPaths: [], timeoutMs: 120000 });
     if (receipt.status !== 'os_sandbox_worker_passed') throw new Error(`operational OS sandbox unavailable:${(receipt.blockers || []).join(',')}`);
     return { status: receipt.status, backend: receipt.backend, exitCode: receipt.exitCode, sourceMerkleHashBefore: receipt.sourceMerkleHashBefore, sourceMerkleHashAfter: receipt.sourceMerkleHashAfter, isolation: receipt.isolation, externalActionPerformed: receipt.externalActionPerformed };

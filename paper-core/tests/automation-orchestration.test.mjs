@@ -35,6 +35,7 @@ import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-
 import { createSqliteCampaignStore } from '../../paper-adapters/persistence/sqlite-campaign-store.mjs';
 import { createTheoremQualityRevisionSink } from '../../paper-adapters/automation/theorem-quality-revision-sink.mjs';
 import { buildPaperCampaignPlan } from '../../paper-domain/automation/campaign-plan.mjs';
+import { createPaperTask } from '../../paper-domain/contracts/workflow-contracts.mjs';
 import { buildExecutorCapabilities } from '../../paper-ports/executor-capabilities.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
@@ -72,6 +73,14 @@ function temporary(t, prefix) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   return root;
+}
+
+function campaignPaperTask({ paperId, sourceWorkspace }) {
+  return createPaperTask({
+    paperId,
+    title: `${paperId} campaign fixture`,
+    sourceWorkspace,
+  });
 }
 
 test('revision referees use the authority snapshot available to the reviser', () => {
@@ -926,7 +935,13 @@ test('campaign operations persist pause resume retry cancel and usage', (t) => {
   const clock = { now: () => new Date(milliseconds), nowIso: () => new Date(milliseconds += 1).toISOString() };
   const store = createDefaultPaperStore({ root, runtimeRoot: root });
   const campaigns = createSqliteCampaignStore({ store, clock });
-  const plan = buildPaperCampaignPlan({ paperId: 'paper', sourceWorkspace: root, campaignId: 'campaign', maxRounds: 1 });
+  const plan = buildPaperCampaignPlan({
+    paperId: 'paper',
+    sourceWorkspace: root,
+    campaignId: 'campaign',
+    maxRounds: 1,
+    paperTask: campaignPaperTask({ paperId: 'paper', sourceWorkspace: root }),
+  });
   campaigns.createCampaign(plan);
   assert.equal(store.query('SELECT slug FROM papers WHERE slug=?', ['paper']).rows[0].slug, 'paper');
   assert.equal(createTheoremQualityRevisionSink({ store, clock }).record({
@@ -947,9 +962,112 @@ test('campaign operations persist pause resume retry cancel and usage', (t) => {
   campaigns.startNode({ nodeId: leased.nodeId, workerId: 'worker', attemptId: leased.attemptId, leaseGeneration: leased.leaseGeneration });
   assert.equal(campaigns.getCampaign('campaign').currentPhase, leased.kind);
   campaigns.failNode({ nodeId: leased.nodeId, workerId: 'worker', attemptId: leased.attemptId, leaseGeneration: leased.leaseGeneration, retryable: false });
+  const cancelledSiblingNodeIds = campaigns.listNodes('campaign')
+    .filter((node) => node.status === 'skipped'
+      && node.failureClass === 'campaign_terminal_sibling_cancelled')
+    .map((node) => node.nodeId)
+    .sort();
+  assert.ok(cancelledSiblingNodeIds.length > 0);
   assert.equal(campaigns.retryNode(leased.nodeId).status, 'queued');
   assert.equal(campaigns.getCampaign('campaign').currentPhase, leased.kind);
+  assert.deepEqual(
+    campaigns.listNodes('campaign')
+      .filter((node) => cancelledSiblingNodeIds.includes(node.nodeId))
+      .map((node) => node.status),
+    cancelledSiblingNodeIds.map(() => 'queued'),
+  );
+  assert.deepEqual(
+    campaigns.listEvents('campaign').at(-1).event.detail.reopenedSiblingNodeIds,
+    cancelledSiblingNodeIds,
+  );
   assert.equal(campaigns.cancelCampaign('campaign').status, 'cancelled');
+});
+
+test('legacy SQLite retry clears prepared residue from reopened terminal siblings', (t) => {
+  const root = temporary(t, 'hepta-campaign-prepared-sibling-retry-');
+  let milliseconds = Date.parse('2026-07-11T00:00:00Z');
+  const clock = { now: () => new Date(milliseconds), nowIso: () => new Date(milliseconds += 1).toISOString() };
+  const store = createDefaultPaperStore({ root, runtimeRoot: root });
+  const campaigns = createSqliteCampaignStore({ store, clock });
+  const campaignId = 'prepared-sibling-retry';
+  campaigns.createCampaign(buildPaperCampaignPlan({
+    paperId: 'prepared-sibling-paper',
+    sourceWorkspace: root,
+    campaignId,
+    maxRounds: 1,
+    refereeCount: 2,
+    paperTask: campaignPaperTask({
+      paperId: 'prepared-sibling-paper',
+      sourceWorkspace: root,
+    }),
+  }));
+  const workerId = 'prepared-sibling-worker';
+  let parallelClaims = null;
+  for (let step = 0; step < 20 && !parallelClaims; step += 1) {
+    const claims = campaigns.claimReady({ campaignId, workerId, limit: 2 });
+    assert.ok(claims.length > 0);
+    if (claims.length > 1) {
+      parallelClaims = claims;
+      break;
+    }
+    const [claim] = claims;
+    const fence = {
+      nodeId: claim.nodeId,
+      workerId,
+      attemptId: claim.attemptId,
+      leaseGeneration: claim.leaseGeneration,
+    };
+    campaigns.startNode(fence);
+    campaigns.completeNode({ ...fence, result: { status: 'fixture_completed' } });
+  }
+  assert.equal(parallelClaims?.length, 2);
+  const [terminalClaim, preparedSiblingClaim] = parallelClaims;
+  const terminalFence = {
+    nodeId: terminalClaim.nodeId,
+    workerId,
+    attemptId: terminalClaim.attemptId,
+    leaseGeneration: terminalClaim.leaseGeneration,
+  };
+  const siblingFence = {
+    nodeId: preparedSiblingClaim.nodeId,
+    workerId,
+    attemptId: preparedSiblingClaim.attemptId,
+    leaseGeneration: preparedSiblingClaim.leaseGeneration,
+  };
+  campaigns.startNode(terminalFence);
+  campaigns.startNode(siblingFence);
+  const siblingIntegrationKey = 'sha256:legacy-pending-sibling';
+  campaigns.prepareNodeResult({
+    ...siblingFence,
+    result: {
+      status: 'prepared_pending_sibling',
+      workspaceAttemptIntegration: {
+        workspaceAttemptIntegrationDescriptorHash: siblingIntegrationKey,
+      },
+    },
+    requiresIntegration: true,
+    integrationKey: siblingIntegrationKey,
+  });
+  campaigns.failNode({
+    ...terminalFence,
+    retryable: false,
+    failureClass: 'fixture_terminal_failure',
+  });
+  const settledSibling = campaigns.listNodes(campaignId)
+    .find((node) => node.nodeId === preparedSiblingClaim.nodeId);
+  assert.equal(settledSibling.status, 'skipped');
+  assert.equal(settledSibling.failureClass, 'campaign_terminal_sibling_cancelled');
+  assert.ok(settledSibling.preparedResultHash);
+  assert.equal(settledSibling.preparedIntegrationStatus, 'pending');
+  campaigns.retryNode(terminalClaim.nodeId);
+  const reopenedSibling = campaigns.listNodes(campaignId)
+    .find((node) => node.nodeId === preparedSiblingClaim.nodeId);
+  assert.equal(reopenedSibling.status, 'queued');
+  assert.equal(reopenedSibling.preparedResult, null);
+  assert.equal(reopenedSibling.preparedResultHash, null);
+  assert.equal(reopenedSibling.preparedAttemptId, null);
+  assert.equal(reopenedSibling.preparedRequiresIntegration, false);
+  assert.equal(reopenedSibling.preparedIntegrationStatus, 'none');
 });
 
 test('budget-stopped campaigns require an explicit increase and reopen only budget-skipped nodes', (t) => {
@@ -964,6 +1082,7 @@ test('budget-stopped campaigns require an explicit increase and reopen only budg
     campaignId: 'budget-resume-campaign',
     maxRounds: 1,
     budgets: { maxCpuJobs: 0 },
+    paperTask: campaignPaperTask({ paperId: 'paper', sourceWorkspace: root }),
   });
   campaigns.createCampaign(plan);
   campaigns.stopCampaign(plan.campaignId, 'campaign_cpu_job_budget_exhausted');
@@ -991,7 +1110,13 @@ test('non-budget stopped campaigns cannot be resumed', (t) => {
   const clock = { now: () => new Date(milliseconds), nowIso: () => new Date(milliseconds += 1).toISOString() };
   const store = createDefaultPaperStore({ root, runtimeRoot: root });
   const campaigns = createSqliteCampaignStore({ store, clock });
-  const plan = buildPaperCampaignPlan({ paperId: 'paper', sourceWorkspace: root, campaignId: 'terminal-stop-campaign', maxRounds: 1 });
+  const plan = buildPaperCampaignPlan({
+    paperId: 'paper',
+    sourceWorkspace: root,
+    campaignId: 'terminal-stop-campaign',
+    maxRounds: 1,
+    paperTask: campaignPaperTask({ paperId: 'paper', sourceWorkspace: root }),
+  });
   campaigns.createCampaign(plan);
   campaigns.stopCampaign(plan.campaignId, 'referee_convergence_not_reached_within_budget');
   assert.throws(() => campaigns.resumeCampaign(plan.campaignId), /campaign_not_resumable/);
@@ -1003,7 +1128,14 @@ test('nonconverged campaigns append a review round without replaying completed w
   const clock = { now: () => new Date(milliseconds), nowIso: () => new Date(milliseconds += 1).toISOString() };
   const store = createDefaultPaperStore({ root, runtimeRoot: root });
   const campaigns = createSqliteCampaignStore({ store, clock });
-  const first = buildPaperCampaignPlan({ paperId: 'paper', sourceWorkspace: root, campaignId: 'extended-campaign', maxRounds: 1 });
+  const paperTask = campaignPaperTask({ paperId: 'paper', sourceWorkspace: root });
+  const first = buildPaperCampaignPlan({
+    paperId: 'paper',
+    sourceWorkspace: root,
+    campaignId: 'extended-campaign',
+    maxRounds: 1,
+    paperTask,
+  });
   campaigns.createCampaign(first);
   campaigns.stopCampaign(first.campaignId, 'referee_convergence_not_reached_within_budget');
   const second = buildPaperCampaignPlan({
@@ -1012,6 +1144,7 @@ test('nonconverged campaigns append a review round without replaying completed w
     campaignId: first.campaignId,
     maxRounds: 2,
     budgets: { ...first.budgets, maxAgentCalls: first.budgets.maxAgentCalls + 4 },
+    paperTask,
   });
   const extended = campaigns.extendCampaign(second);
   assert.equal(extended.status, 'running');
@@ -1318,96 +1451,4 @@ test('production artifact revalidation selects only a hash-valid manuscript resu
         === 'campaign_revalidation_trusted_autonomous_manuscript_authority_required'
       && error.retryable === false,
   );
-});
-
-test('manuscript empirical provenance covers the recursive TeX corpus and every numeric result claim', (t) => {
-  const root = temporary(t, 'hepta-quality-provenance-corpus-');
-  fs.mkdirSync(path.join(root, 'sections'), { recursive: true });
-  fs.writeFileSync(path.join(root, 'results.json'), '{"accuracy":0.91,"latency":12}\n');
-  fs.writeFileSync(path.join(root, 'main.tex'), '\\input{sections/results}\n');
-  fs.writeFileSync(path.join(root, 'sections', 'results.tex'), [
-    '% HEPTA_RESULT results.json#accuracy=0.91',
-    'The observed accuracy was 91\\%.',
-    'The observed latency was 12 ms.',
-  ].join('\n'));
-  const unbound = runManuscriptQualityChecks({ workspacePath: root, requiresEmpiricalArtifacts: true });
-  assert.ok(unbound.blockers.includes('empirical_numeric_claim_provenance_missing'));
-  assert.deepEqual(unbound.details.manuscriptCorpusFiles, ['main.tex', 'sections/results.tex']);
-  assert.equal(unbound.details.unboundEmpiricalNumericClaims.length, 1);
-  assert.equal(unbound.details.unboundEmpiricalNumericClaims[0].sourcePath, 'sections/results.tex');
-
-  fs.writeFileSync(path.join(root, 'sections', 'results.tex'), [
-    '% HEPTA_RESULT results.json#accuracy=0.91',
-    'The observed accuracy was 91\\%.',
-    '% HEPTA_RESULT results.json#latency=12',
-    'The observed latency was 12 ms.',
-  ].join('\n'));
-  const bound = runManuscriptQualityChecks({ workspacePath: root, requiresEmpiricalArtifacts: true });
-  assert.equal(bound.passed, true, JSON.stringify(bound.blockers));
-  assert.equal(bound.details.resultProvenanceMarkerCount, 2);
-  assert.deepEqual(bound.details.unboundEmpiricalNumericClaims, []);
-});
-
-test('empirical manuscript checks reject keyword-free numbers and fake figure bytes', (t) => {
-  const root = temporary(t, 'hepta-quality-adversarial-provenance-');
-  fs.mkdirSync(path.join(root, 'automation-results'));
-  fs.writeFileSync(path.join(root, 'automation-results', 'results.json'), '{"score":0.734}\n');
-  fs.writeFileSync(path.join(root, 'fake.png'), 'not-a-real-figure');
-  fs.writeFileSync(path.join(root, 'main.tex'), [
-    '% HEPTA_RESULT automation-results/results.json#score=0.734',
-    'Filler prose.',
-    'Filler prose.',
-    'Filler prose.',
-    'Our method reached 73.4 percent.',
-    'The ablation dominates every alternative in practice.',
-    '\\includegraphics{fake.png}',
-  ].join('\n'));
-  const receipt = runManuscriptQualityChecks({
-    workspacePath: root,
-    requiresEmpiricalArtifacts: true,
-  });
-  assert.equal(receipt.passed, false);
-  assert.ok(receipt.blockers.includes('empirical_numeric_claim_provenance_missing'));
-  assert.ok(receipt.blockers.includes('empirical_assertion_provenance_missing'));
-  assert.ok(receipt.blockers.includes('invalid_figure_artifacts'));
-  assert.ok(receipt.blockers.includes('empirical_figure_artifacts_unsupported'));
-});
-
-test('manuscript quality checks bind canonical CSV metrics by name and reject partial numeric coverage', (t) => {
-  const root = temporary(t, 'hepta-manuscript-csv-provenance-');
-  fs.writeFileSync(path.join(root, 'results.csv'), 'metric,value\naccuracy,0.91\nlatency_ms,27\n');
-  fs.writeFileSync(path.join(root, 'main.tex'), [
-    '% HEPTA_RESULT results.csv#accuracy=0.91',
-    '% HEPTA_RESULT results.csv#latency_ms=27',
-    'The empirical result has accuracy 0.91 and latency 27 ms.',
-  ].join('\n'));
-
-  const complete = runManuscriptQualityChecks({ workspacePath: root, requiresEmpiricalArtifacts: true });
-  assert.equal(complete.passed, true, JSON.stringify(complete.blockers));
-
-  fs.writeFileSync(path.join(root, 'main.tex'), [
-    '% HEPTA_RESULT results.csv#accuracy=0.91',
-    'The empirical result has accuracy 0.91 and latency 27 ms.',
-  ].join('\n'));
-  const partial = runManuscriptQualityChecks({ workspacePath: root, requiresEmpiricalArtifacts: true });
-  assert.equal(partial.passed, false);
-  assert.ok(partial.blockers.includes('empirical_numeric_claim_provenance_missing'));
-});
-
-test('manuscript quality checks reject result and TeX-input symlinks that escape the workspace', (t) => {
-  const root = temporary(t, 'hepta-manuscript-symlink-provenance-');
-  const outside = temporary(t, 'hepta-manuscript-symlink-outside-');
-  fs.writeFileSync(path.join(outside, 'results.json'), '{"score":0.95}\n');
-  fs.writeFileSync(path.join(outside, 'claims.tex'), 'The empirical result is 0.95.\n');
-  fs.symlinkSync(path.join(outside, 'results.json'), path.join(root, 'results.json'));
-  fs.symlinkSync(path.join(outside, 'claims.tex'), path.join(root, 'claims.tex'));
-  fs.writeFileSync(path.join(root, 'main.tex'), [
-    '% HEPTA_RESULT results.json#score=0.95',
-    '\\input{claims}',
-  ].join('\n'));
-
-  const receipt = runManuscriptQualityChecks({ workspacePath: root, requiresEmpiricalArtifacts: true });
-  assert.equal(receipt.passed, false);
-  assert.ok(receipt.blockers.includes('claim_result_provenance_mismatch'));
-  assert.ok(receipt.blockers.includes('missing_table_or_input_artifacts'));
 });

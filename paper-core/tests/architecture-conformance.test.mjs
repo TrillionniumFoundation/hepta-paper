@@ -405,6 +405,33 @@ test('every reachable production module stays within layer-aware complexity budg
   );
 });
 
+test('cold-volume CAS import staging stays behind one archives repository boundary', () => {
+  const archiveRoot = path.join(workspaceRoot, 'paper-adapters', 'archives');
+  const helperSpecifier = './cold-volume-cas-import-staging.mjs';
+  const importers = fs.readdirSync(archiveRoot)
+    .filter((name) => name.endsWith('.mjs'))
+    .filter((name) => fs.readFileSync(path.join(archiveRoot, name), 'utf8')
+      .includes(helperSpecifier))
+    .map((name) => `paper-adapters/archives/${name}`)
+    .sort();
+  assert.deepEqual(importers, [
+    'paper-adapters/archives/cold-volume-cas-repository.mjs',
+  ]);
+
+  const helper = fs.readFileSync(path.join(
+    archiveRoot, 'cold-volume-cas-import-staging.mjs',
+  ), 'utf8');
+  const dependencies = [...helper.matchAll(/from ['"]([^'"]+)['"]/g)]
+    .map((match) => match[1])
+    .sort();
+  assert.deepEqual(dependencies, [
+    './cold-volume-cas-path-boundary.mjs',
+    './cold-volume-cas-publication-repository.mjs',
+    'node:fs',
+    'node:path',
+  ]);
+});
+
 test('legacy cleanup is retired from the production adapter and mode surfaces', () => {
   assert.equal(fs.existsSync(path.join(workspaceRoot, 'paper-adapters', 'legacy-cleanup')), false);
   const modeRegistry = fs.readFileSync(path.join(workspaceRoot, 'paper-domain', 'workflow', 'mode-registry.mjs'), 'utf8');

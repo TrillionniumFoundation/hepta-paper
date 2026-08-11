@@ -48,6 +48,7 @@ export function bootstrapAutomationContext({
   autonomousSubmissionHandoffOnly = true,
   submissionHandoffMutationCoordinator = null,
   requireExternallyFencedSubmissionHandoff = null,
+  submissionHandoffReadOnly = false,
 } = {}) {
   for (const forbiddenOverride of [
     'experimentRegistryAuthorityVerifier',
@@ -96,7 +97,7 @@ export function bootstrapAutomationContext({
     handoffOnly: autonomousSubmissionHandoffOnly,
     outboxOverride: serviceOverrides.autonomousSubmissionOutbox || null,
     mutationCoordinator: submissionHandoffMutationCoordinator,
-    readOnly: Boolean(readOnly || !execute),
+    readOnly: Boolean(submissionHandoffReadOnly || readOnly || !execute),
     allowMissingReadOnlyStore,
     requireExternallyFenced:
       requireExternallyFencedSubmissionHandoff === null

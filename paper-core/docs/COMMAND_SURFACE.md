@@ -54,7 +54,23 @@ evidence and must never be included in a routine verification inventory.
 explicit execute mode reads a private signing key and writes signed production
 evidence. `store:restore-drill` remains an operational verification gate with
 intentional, scoped backup and restore-receipt writes rather than a read-only
-status command.
+status command. Its current `HeptaStoreRestoreDrillReceipt` v3 contract records
+the causal claims `restoreDrillBusinessWritePerformed=false` and
+`restoreDrillAdministrativeWritePerformed=true`. It also records
+`writerQuiescenceAttested=false`,
+`businessProjectionComparisonPerformed=false`, and
+`concurrentBusinessStateChangesAttested=false`; therefore it makes no claim
+that global production business state stayed unchanged while the command ran.
+The trusted `administrative_ledger_subject` binds the before hash of a
+consistent SQLite online-backup image and the restore-check result to the exact
+`store-admin` ledger receipt id and hash. The after image hash exists only as
+`diagnosticLiveDatabaseSha256After` in the companion `completion` record, with
+`diagnosticAfterHashAssurance=completion_self_hash_only` and
+`diagnosticAfterHashLedgerAuthenticated=false`. Retention does not treat that
+diagnostic as ledger-authenticated evidence or as byte-for-byte stability
+proof. Exact legacy v2 receipts remain readable for retention compatibility,
+but their former `productionStoreMutated=false` field is not emitted by v3 and
+is not reinterpreted as proof of either business or administrative immutability.
 `runtime:permissions` is also maintenance-only and is read-only unless the
 caller explicitly forwards both `--execute` and the cooperative-writer fencing
 assertion `--writer-quiesced`. It is not routed by `hepta-paper` and

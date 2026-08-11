@@ -11,7 +11,7 @@ import {
 } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { inspectScopedPathSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
 import { normalizeText, uniqueStrings } from '../../workflow-kernel/runtime/text-utils.mjs';
-import { resolveRepoPath } from '../../workflow-kernel/runtime/path-utils.mjs';
+import { isPathWithin, resolveRepoPath } from '../../workflow-kernel/runtime/path-utils.mjs';
 import { sortByMtimeDesc } from '../../workflow-kernel/runtime/time-utils.mjs';
 import { safeJsonParse } from '../../workflow-kernel/runtime/data-utils.mjs';
 import { readInventorySources } from './inventory-source-readers.mjs';
@@ -28,7 +28,18 @@ const TEX_IGNORE_RE = /(\.bak|\.backup|\.orig|\.old|\.tmp|\.synctex|supplementar
 const QUARANTINE_SLUG_RE = /(^rust_patch_queue_shadow|_fixture_|fixture_|test_fixture|shadow_review_|review_flow_(applied|rolled)_back_patch_queue)/i;
 const QUARANTINE_PATH_RE = /(logs\/paperctl\/_batches\/rust|logs\/paperctl\/.*fixture|tests\/fixtures|\/tmp\/|runtime\/)/i;
 
-function quarantineReason(paper = {}) {
+function localOnlyCampaignSourceBoundToRoot(root, paper, fields) {
+  const metadata = safeJsonParse(paper.metadata_json || '{}', {});
+  const selected = fields.filter(Boolean).map((value) => resolveRepoPath(root, value));
+  return normalizeText(paper.inventory_source) === 'hepta_sqlite'
+    && paper.campaign_local_only === true
+    && metadata.source === 'paper_campaign_creation'
+    && normalizeText(metadata.campaignId)
+    && selected.length > 0
+    && selected.every((candidate) => candidate && isPathWithin(root, candidate));
+}
+
+function quarantineReason(root, paper = {}) {
   const slug = normalizeText(paper.slug);
   const inventorySource = normalizeText(paper.inventory_source);
   const fields = [
@@ -39,7 +50,10 @@ function quarantineReason(paper = {}) {
   ].map((value) => normalizeText(value).replace(/\\/g, '/'));
   if (QUARANTINE_SLUG_RE.test(slug)) return 'fixture_or_shadow_slug';
   if (inventorySource === 'proposal_staging') return null;
-  if (fields.some((value) => QUARANTINE_PATH_RE.test(value))) return 'fixture_or_shadow_path';
+  if (fields.some((value) => QUARANTINE_PATH_RE.test(value))
+    && !localOnlyCampaignSourceBoundToRoot(root, paper, fields)) {
+    return 'fixture_or_shadow_path';
+  }
   return null;
 }
 
@@ -447,7 +461,7 @@ export async function discoverInventory({
   ];
   if (!includeRetired) papers = papers.filter((paper) => normalizeText(paper.status) !== 'retired_stale');
   const quarantine = papers
-    .map((paper) => ({ paper, reason: quarantineReason(paper) }))
+    .map((paper) => ({ paper, reason: quarantineReason(root, paper) }))
     .filter((item) => item.reason);
   if (!includeQuarantined) {
     const quarantinedSlugs = new Set(quarantine.map((item) => normalizeText(item.paper.slug)));

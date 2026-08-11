@@ -6,6 +6,31 @@ import {
 } from './command-registry-catalog.mjs';
 import { COMMAND_REGISTRY_SUPPORT_ROUTES } from './command-registry-support-routes.mjs';
 
+export const AUTONOMOUS_RESEARCH_CLI_ARGUMENT_SCHEMA = Object.freeze({
+  booleanFlags: Object.freeze([
+    'help', 'human-subjects', 'private-data', 'require-launch-ready',
+    'require-full-ready', 'require-bounded-golden-ready',
+    'unlimited-tokens', 'unlimited-cost',
+  ]),
+  valueFlags: Object.freeze([
+    'action', 'launch-mode', 'paper-id', 'campaign-id', 'objective', 'protocol-family',
+    'revision-rounds', 'referee-count', 'root', 'runtime-root', 'dataset-mount-file',
+    'concurrency', 'agent-slots', 'cpu-slots', 'gpu-slots', 'memory-mib',
+    'max-wall-ms', 'max-agent-calls', 'max-cpu-jobs', 'max-gpu-jobs', 'max-tokens',
+    'max-cost-usd', 'agent-provider', 'model', 'formal-review-provider',
+    'formal-review-model', 'formal-review-codex-binary', 'formal-review-codex-home',
+    'codex-home', 'codex-binary', 'external-qualification-config',
+    'qualification-maximum-attempts', 'qualification-maximum-epochs',
+    'qualification-maximum-total-attempts', 'qualification-initial-backoff-ms',
+    'qualification-maximum-backoff-ms', 'qualification-deadline-ms',
+    'qualification-epoch-cooldown-ms', 'qualification-global-deadline-ms',
+    'qualification-exhausted-cooldown-ms', 'qualification-attempt-lease-ms',
+    'qualification-maximum-total-cost-usd', 'qualification-attempt-reservation-cost-usd',
+    'qualification-renewal-lead-ms',
+  ]),
+  positional: false,
+});
+
 const ROUTES = Object.freeze([
   route({ group: 'operator', name: 'workspace', argv: ['node', 'paper-core/bin/workspace-status.mjs'], npmScript: 'workspace:status', forwardingPolicy: 'registry', forwardedArgumentSchema: { booleanFlags: ['require-decoupled'], positional: false } }),
   route({ group: 'operator', name: 'store', argv: ['node', 'paper-core/bin/hepta-store.mjs', 'status'], npmScript: 'store:status', forwardingPolicy: 'registry', forwardedArgumentSchema: { booleanFlags: ['allow-isolated-verification-evidence', 'require-trust-clean'], positional: false } }),
@@ -276,30 +301,7 @@ const ROUTES = Object.freeze([
       providerCost: 'argument-dependent',
     },
     forwardingPolicy: 'registry',
-    forwardedArgumentSchema: {
-      booleanFlags: [
-        'help', 'human-subjects', 'private-data', 'require-launch-ready',
-        'require-full-ready', 'require-bounded-golden-ready',
-        'unlimited-tokens', 'unlimited-cost',
-      ],
-      valueFlags: [
-        'action', 'launch-mode', 'paper-id', 'campaign-id', 'objective', 'protocol-family', 'revision-rounds',
-        'referee-count', 'root', 'runtime-root', 'dataset-mount-file', 'concurrency', 'agent-slots',
-        'cpu-slots', 'gpu-slots', 'memory-mib', 'max-wall-ms', 'max-agent-calls', 'max-cpu-jobs',
-        'max-gpu-jobs', 'max-tokens', 'max-cost-usd', 'agent-provider', 'model',
-        'formal-review-provider', 'formal-review-model', 'formal-review-codex-binary',
-        'formal-review-codex-home', 'codex-home', 'codex-binary',
-        'external-qualification-config',
-        'qualification-maximum-attempts', 'qualification-maximum-epochs',
-        'qualification-maximum-total-attempts', 'qualification-initial-backoff-ms',
-        'qualification-maximum-backoff-ms', 'qualification-deadline-ms',
-        'qualification-epoch-cooldown-ms', 'qualification-global-deadline-ms',
-        'qualification-exhausted-cooldown-ms', 'qualification-attempt-lease-ms',
-        'qualification-maximum-total-cost-usd', 'qualification-attempt-reservation-cost-usd',
-        'qualification-renewal-lead-ms',
-      ],
-      positional: false,
-    },
+    forwardedArgumentSchema: AUTONOMOUS_RESEARCH_CLI_ARGUMENT_SCHEMA,
   }),
   route({
     group: 'operator',

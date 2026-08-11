@@ -234,7 +234,8 @@ export function buildReleaseEvidenceBundle({
       coldVolumeCas,
       offhostWorm: offhostWormStatus,
     },
-    disasterRecoveryStatus: coldVolumeCas.status === 'cold_volume_cas_ready'
+    disasterRecoveryStatus: ['cold_volume_cas_ready', 'cold_volume_cas_not_required']
+      .includes(coldVolumeCas.status)
       && offhostWormStatus.offHostOrOffsiteCustodyQualified === true
       ? 'disaster_recovery_ready'
       : 'disaster_recovery_blocked',

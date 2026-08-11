@@ -143,9 +143,12 @@ export async function composeAutonomousResearchCampaignAction({
   const {
     autonomousSubmissionPortal,
     autonomousVenueComplianceInspector,
+    verifyAutonomousSubmissionHumanAuthorization,
   } = composeAutonomousResearchSubmissionServices({
+    root,
     environment: readinessEnvironment,
     runtimeRoot,
+    clock: serviceOverrides.clock || readinessClock || null,
     autonomousSubmissionRequestVerifier,
   });
   const providerPricingInspection = resolveAutonomousResearchProviderPricing({
@@ -584,6 +587,7 @@ export async function composeAutonomousResearchCampaignAction({
           plan.autonomousResearchPreparation
             ?.autonomousResearchProviderConfigurationHash || providerConfigurationHash,
         assertExternalSideEffectReady,
+        executionRequested: true,
       });
       executor = composed.nodeExecutor;
     }
@@ -633,6 +637,7 @@ export async function composeAutonomousResearchCampaignAction({
       autonomousSubmissionOutbox: context.services.autonomousSubmissionOutbox,
       autonomousVenueComplianceInspector,
       autonomousSubmissionRequestVerifier,
+      verifyAutonomousSubmissionHumanAuthorization,
       providerConfigurationBinding: Object.freeze({
         status: legacyProviderConfigurationBindingMissing
           ? 'autonomous_research_provider_configuration_binding_legacy_missing_read_only'

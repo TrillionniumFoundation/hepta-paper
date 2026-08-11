@@ -8,6 +8,9 @@ import {
   retentionMemberIdentity,
   retentionPathExists,
 } from './runtime-retention-scope-repository.mjs';
+import {
+  withRuntimeRetentionCategoryLock,
+} from './runtime-retention-category-lock-repository.mjs';
 
 const QUARANTINE_NAME = /^\.hepta-retention-[a-f0-9]{40}\.quarantine$/;
 const STABLE_IDENTITY_FIELDS = Object.freeze([
@@ -164,7 +167,10 @@ export function restoreRetentionQuarantines(intent, { faultInjector = null } = {
       entry.category,
       entry.categoryScope,
     );
-    try {
+    const restoreEntry = (categoryLock = null) => {
+      const assertLocked = () => categoryLock?.assertHeld();
+      assertLocked();
+      assertLiveCategoryScope(intent, entry);
       for (let memberIndex = 0; memberIndex < entry.members.length; memberIndex += 1) {
         const member = entry.members[memberIndex];
         const locations = memberPaths(pinned, intent.runtimeRoot, entry.category, member);
@@ -180,6 +186,8 @@ export function restoreRetentionQuarantines(intent, { faultInjector = null } = {
             stage: 'before_member_quarantine_restore', intent, entry, entryIndex,
             member, memberIndex,
           });
+          assertLocked();
+          assertLiveCategoryScope(intent, entry);
           fs.renameSync(locations.quarantine, locations.source);
           fs.fsyncSync(pinned.categoryDescriptor);
           assertExpectedMember(
@@ -198,6 +206,15 @@ export function restoreRetentionQuarantines(intent, { faultInjector = null } = {
           assertExpectedMember(source, member, locations.sourceRealPath);
         }
       }
+      assertLocked();
+      assertLiveCategoryScope(intent, entry);
+    };
+    try {
+      if (entry.category === 'backups') {
+        withRuntimeRetentionCategoryLock(pinned, entry.category, restoreEntry);
+      } else {
+        restoreEntry();
+      }
     } finally {
       pinned.close();
     }
@@ -209,8 +226,45 @@ export function removeRetentionEntryThroughQuarantine(
   entry,
   entryIndex,
   pinned,
-  { faultInjector = null, revalidateAuthority = null } = {},
+  {
+    faultInjector = null,
+    revalidateAuthority = null,
+    validateQuarantinedState = null,
+    validateRemovedState = null,
+    assertCategoryLock = null,
+  } = {},
 ) {
+  const assertLocked = () => {
+    if (typeof assertCategoryLock === 'function') assertCategoryLock();
+  };
+  const restoreQuarantinedMembers = (quarantinedMembers) => {
+    for (const { member, locations } of [...quarantinedMembers].reverse()) {
+      const source = inspectStableMember(locations.source);
+      const quarantined = inspectStableMember(locations.quarantine);
+      if (source.exists || !quarantined.exists) continue;
+      assertExpectedMember(quarantined, member, locations.quarantineRealPath);
+      assertLocked();
+      fs.renameSync(locations.quarantine, locations.source);
+      fs.fsyncSync(pinned.categoryDescriptor);
+      assertExpectedMember(
+        inspectStableMember(locations.source),
+        member,
+        locations.sourceRealPath,
+      );
+    }
+  };
+  const validateQuarantinedOrRestore = (quarantinedMembers) => {
+    if (!quarantinedMembers.length || typeof validateQuarantinedState !== 'function') return;
+    try {
+      assertLocked();
+      validateQuarantinedState({ intent, entry, entryIndex, pinned });
+      assertLocked();
+    } catch (error) {
+      restoreQuarantinedMembers(quarantinedMembers);
+      throw error;
+    }
+  };
+  assertLocked();
   const quarantinedMembers = [];
   let alreadyAbsent = true;
   for (let memberIndex = 0; memberIndex < entry.members.length; memberIndex += 1) {
@@ -232,6 +286,7 @@ export function removeRetentionEntryThroughQuarantine(
       revalidateQuarantinedAuthority({
         intent, entry, entryIndex, pinned, revalidateAuthority,
       });
+      assertLocked();
       assertLiveCategoryScope(intent, entry);
       fs.renameSync(locations.source, locations.quarantine);
       fs.fsyncSync(pinned.categoryDescriptor);
@@ -248,11 +303,13 @@ export function removeRetentionEntryThroughQuarantine(
     }
     quarantinedMembers.push({ member, memberIndex, locations });
   }
+  validateQuarantinedOrRestore(quarantinedMembers);
   faultInjector?.({ stage: 'after_entry_quarantined', intent, entry, entryIndex });
   if (quarantinedMembers.length) {
     revalidateQuarantinedAuthority({
       intent, entry, entryIndex, pinned, revalidateAuthority,
     });
+    assertLocked();
   }
   for (const { member, memberIndex } of quarantinedMembers) {
     faultInjector?.({
@@ -263,6 +320,9 @@ export function removeRetentionEntryThroughQuarantine(
       intent, entry, entryIndex, pinned, revalidateAuthority,
     });
   }
+  // Recheck immediately before the first irreversible removal. This closes the
+  // interval opened by fault hooks and live-authority restoration/requarantine.
+  validateQuarantinedOrRestore(quarantinedMembers);
   for (const { member, memberIndex, locations } of quarantinedMembers) {
     if (inspectStableMember(locations.source).exists) {
       throw new Error('runtime_retention_quarantine_source_advanced');
@@ -272,6 +332,7 @@ export function removeRetentionEntryThroughQuarantine(
       member,
       locations.quarantineRealPath,
     );
+    assertLocked();
     assertLiveCategoryScope(intent, entry);
     if (inspectStableMember(locations.source).exists) {
       throw new Error('runtime_retention_quarantine_source_advanced');
@@ -290,6 +351,11 @@ export function removeRetentionEntryThroughQuarantine(
       stage: 'after_member_removed', intent, entry, entryIndex,
       member, memberIndex,
     });
+  }
+  if (typeof validateRemovedState === 'function') {
+    assertLocked();
+    validateRemovedState({ intent, entry, entryIndex, pinned });
+    assertLocked();
   }
   return Object.freeze({ alreadyAbsent });
 }

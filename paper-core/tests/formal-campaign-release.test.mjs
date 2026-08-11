@@ -62,7 +62,7 @@ function stableAgentReceipt({ agentId, role, structuredOutput = null, changedPat
   });
 }
 
-test('approved proposal seed closes through writer theorem, system spec, Lean replay, aggregate verification, and release', async (t) => {
+test('approved natural-language proposal without typed authority remains semantic-only', async (t) => {
   assert.throws(() => createPinnedFormalSandboxRuntime({
     image: 'alpine:3.20',
     imageDigest: FORMAL_SANDBOX_IMAGE_DIGEST,
@@ -425,8 +425,29 @@ test('approved proposal seed closes through writer theorem, system spec, Lean re
       allNodes: [completedSpecificationNode, formalVerifyNode],
     });
   } catch (error) {
-    assert.fail(`${error.message}\n${JSON.stringify(error.receipt, null, 2)}`);
+    assert.match(error.message, /campaign_formal_verification_blocked/);
+    assert.equal(error.receipt?.status, 'formal_proof_search_exhausted');
+    assert.equal(error.receipt?.attempts?.every((attempt) => (
+      attempt.formalProofSearchOperationReceipt?.status
+        === 'formal_proof_search_operations_semantic_review_only'
+    )), true);
+    const finalizedPlan = JSON.parse(fs.readFileSync(
+      path.join(workspace, 'RESEARCH_WORKER_PLAN.json'),
+      'utf8',
+    ));
+    const finalizedBinding = finalizedPlan.workers[0].parameters.claimBindings[0];
+    assert.equal(
+      finalizedBinding.formalizationMode,
+      'semantic_review_only_no_independent_exact_type_authority',
+    );
+    assert.equal(finalizedBinding.machineClosedLoopPromotionAllowed, false);
+    assert.equal(
+      finalizedBinding.formalTypeAuthority.status,
+      'formal_exact_type_authority_unavailable',
+    );
+    return;
   }
+  assert.fail(`generic formalization unexpectedly promoted: ${JSON.stringify(formalResult)}`);
   assert.equal(
     authorCallCount,
     formalResult.formalProofSearchAttempts.length + 1,

@@ -369,7 +369,19 @@ function completePreparedPackage(preparedPackage) {
 }
 
 test('campaign plan packages only after final compile and research verification', () => {
-  const plan = buildPaperCampaignPlan({ paperId: 'paper', sourceWorkspace: '/paper', campaignId: 'campaign', maxRounds: 2 });
+  const paperTask = createPaperTask({
+    paperId: 'paper',
+    title: 'Campaign release plan fixture',
+    sourceWorkspace: '/paper',
+    mainTex: '/paper/main.tex',
+  });
+  const plan = buildPaperCampaignPlan({
+    paperId: paperTask.paperId,
+    sourceWorkspace: '/paper',
+    campaignId: 'campaign',
+    maxRounds: 2,
+    paperTask,
+  });
   const finalCompile = plan.nodes.find((node) => node.kind === 'final-compile');
   const researchVerify = plan.nodes.find((node) => node.kind === 'research-verify');
   const packageNode = plan.nodes.find((node) => node.kind === 'package');

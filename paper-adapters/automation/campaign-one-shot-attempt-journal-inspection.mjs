@@ -40,10 +40,11 @@ function eventFromRow(row, reservation, previousEvent, verifyEvent) {
 export function inspectCampaignOneShotAttemptFromPort(port, {
   attemptId = null,
   idempotencyKey = null,
+  campaignId = null,
 } = {}) {
   return inspectCampaignOneShotAttemptFromPortWithAuditPolicy(
     port,
-    { attemptId, idempotencyKey },
+    { attemptId, idempotencyKey, campaignId },
     {
       deriveRecoveryDisposition:
         deriveAutonomousResearchOneShotCampaignAttemptRecoveryDisposition,
@@ -61,10 +62,11 @@ export function inspectCampaignOneShotAttemptFromPort(port, {
 export function inspectHistoricalCampaignOneShotAttemptFromPort(port, {
   attemptId = null,
   idempotencyKey = null,
+  campaignId = null,
 } = {}) {
   return inspectCampaignOneShotAttemptFromPortWithAuditPolicy(
     port,
-    { attemptId, idempotencyKey },
+    { attemptId, idempotencyKey, campaignId },
     {
       deriveRecoveryDisposition:
         deriveAutonomousResearchOneShotCampaignAttemptRecoveryDispositionForHistoricalAudit,
@@ -83,6 +85,7 @@ export function inspectHistoricalCampaignOneShotAttemptFromPort(port, {
 function inspectCampaignOneShotAttemptFromPortWithAuditPolicy(port, {
   attemptId = null,
   idempotencyKey = null,
+  campaignId = null,
 } = {}, {
   deriveRecoveryDisposition,
   verifyEvent,
@@ -90,11 +93,13 @@ function inspectCampaignOneShotAttemptFromPortWithAuditPolicy(port, {
   verifyReservation,
   verifyTerminalReceipt,
 }) {
-  if (!attemptId && !idempotencyKey) {
+  if (!attemptId && !idempotencyKey && !campaignId) {
     throw invalid('campaign_one_shot_attempt_journal_lookup_invalid');
   }
-  const where = attemptId ? 'attempt_id=?' : 'idempotency_key=?';
-  const lookup = attemptId || idempotencyKey;
+  const where = attemptId
+    ? 'attempt_id=?'
+    : idempotencyKey ? 'idempotency_key=?' : 'campaign_id=?';
+  const lookup = attemptId || idempotencyKey || campaignId;
   const rows = port.query(`SELECT attempt_id,idempotency_key,campaign_id,
     protected_campaign_id,execution_binding_hash,reservation_hash,
     reservation_json,reserved_at FROM campaign_one_shot_attempts

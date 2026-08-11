@@ -98,9 +98,11 @@ The root-owned installed launcher verifies and opens the deployment authority,
 then executes `/usr/bin/env -i` and drops to the `hepta-paper` primary identity
 with `NoNewPrivileges=yes` before starting Node. Ambient `NODE_OPTIONS`,
 `NODE_PATH`, provider credentials and arbitrary configuration therefore cannot
-run or influence an import first. Only `formal:gate` and `release:verify` receive
-the host's exact Docker group because their sealed tests require the local
-daemon; every other action has no supplementary groups. The JavaScript
+run or influence an import first. `formal:gate` receives only the host's exact
+Docker group, `store:trust-gate` receives only the exact protected handoff group,
+and `release:verify` receives both because it runs both Docker gates and the
+production handoff-store inspection. Every other action has no supplementary
+groups. The JavaScript
 entrypoint then rebuilds the child environment again as a second defense. It
 fixes `ELAN_HOME=/opt/hepta-paper/elan`, the production asset/runtime roots, Git safe
 directories, locale and private scratch locations; it does not inherit provider
@@ -137,7 +139,9 @@ Membership in the Docker group is root-equivalent. The two Docker-dependent
 actions are therefore qualified only on a dedicated trusted verification host;
 this launcher is not a sandbox against malicious sealed test code. Their
 JavaScript preflight rechecks the root-owned mode-0660 Unix socket, the exact
-action-scoped group set and `NoNewPrivs: 1` before dispatch.
+action-scoped Docker/handoff group set and `NoNewPrivs: 1` before dispatch. The
+handoff GID is independently anchored to the root-owned, mode-03770 production
+handoff root rather than trusted from the launcher alone.
 
 `env -i` cannot undo code already loaded by the dynamic loader into the
 launcher's initial `/bin/sh`. A production invocation therefore must originate
@@ -238,14 +242,24 @@ non-isolated exact-commit `release:attest` flow may publish that receipt.
 A release tag may be created only from a clean worktree after that gate passes.
 The cold-volume CAS and external-disk WORM contracts are recorded in the signed
 bundle. The WORM target is the distinct ext4 device mounted at
-`/media/qian-qi/TOSHIBA_CLEAN3`; qualifying snapshots require inode-immutable
-objects and a hash/immutability restore drill. This is same-host external-disk
+`/mnt/hepta-paper-external`; qualifying snapshots require inode-immutable
+objects, the contract-pinned filesystem UUID and partition UUID, and a
+hash/immutability restore drill. This is same-host external-disk
 protection only, not an off-host/offsite custody claim. The latter additionally
 requires a continuously verifiable Object Lock receipt plus independent custody
 attestation. A historical offline-detachment receipt cannot establish current
-offsite custody after that device is reattached. The unrelated cold-data volume
-remains an explicit blocker until its 15 entries and signed sentinel are
-actually present.
+offsite custody after that device is reattached. The retired THUNDERO volume is
+not a release dependency. The cold-source and WORM namespaces now share this
+one contract-pinned TOSHIBA device and therefore one physical failure domain;
+that co-residence is not independent custody. Three observed raw dataset roots
+are source-only and cannot substitute for the 15 historical derived entries.
+Those 15 entries are formally retired from the 0.21 active release scope; their
+prior six-rebuildable/nine-missing disposition remains hash-bound audit data,
+not a request to reconstruct obsolete output. The active count is zero, so the
+cold sentinel, CAS import and CAS restore drill are not required for this
+release line. The three raw roots are inventory only and non-release-blocking.
+SMR access is still limited to sequential source reads and one append-new-files
+writer with no in-place mutation.
 
 The repository remains fail-closed. A tag does not authorize external actions,
 academic acceptance, destructive deletion, or functional-parity retirement of

@@ -44,13 +44,37 @@ test('systemd convergence retries unattended without receiving portal secrets', 
   assert.match(unit, /--execute --require-accepted/);
   assert.doesNotMatch(unit, /--plan-hash/);
   assert.match(unit, /^Restart=on-failure$/m);
-  assert.match(unit, /^StartLimitIntervalSec=0$/m);
+  for (const requiredPath of [
+    '/opt/hepta-paper/paper-core/bin/hepta-paper.mjs',
+    '/etc/hepta-paper/strict-full-auto-acceptance.env',
+    '/etc/hepta-paper/autonomous-research-provider.secrets.env',
+    '/srv/hepta-paper/assets',
+    '/srv/hepta-paper/datasets',
+    '/run/hepta-authority',
+    '/etc/hepta-paper/authority-rotation',
+    '/etc/hepta-paper/capabilities-public',
+    '/etc/hepta-paper/online-mutation-authority',
+    '/etc/hepta-paper/state-backup-authority',
+    '/etc/hepta-paper/release-attestor',
+    '/etc/hepta-paper/submission-portal',
+    '/etc/hepta-paper/submission-dispatcher-signer',
+    '/etc/hepta-paper/autonomous-submission-dispatcher.secrets.env',
+    '/var/lib/hepta-paper',
+    '/run/hepta',
+  ]) {
+    assert.ok(unit.split('\n').includes(`ConditionPathExists=${requiredPath}`));
+  }
+  assert.doesNotMatch(unit, /^StartLimitIntervalSec=0$/m);
+  assert.match(unit, /^StartLimitIntervalSec=15min$/m);
+  assert.match(unit, /^StartLimitBurst=5$/m);
   assert.match(unit, /^TimeoutStartSec=24h$/m);
   assert.doesNotMatch(unit, /^RemainAfterExit=yes$/m);
   assert.match(unit, /autonomous-research-supervisor\.service/);
   assert.match(unit, /autonomous-submission-dispatcher\.service/);
   assert.doesNotMatch(unit, /EnvironmentFile=.*autonomous-submission-dispatcher\.secrets\.env/);
   assert.match(unit, /InaccessiblePaths=.*autonomous-submission-dispatcher\.secrets\.env/);
+  assert.doesNotMatch(unit,
+    /^InaccessiblePaths=.*(?:^|\s)-\/etc\/hepta-paper\/(?:submission-portal|submission-dispatcher-signer|autonomous-submission-dispatcher\.secrets\.env)/m);
   assert.match(unit, /^ReadOnlyPaths=.*\/srv\/hepta-paper\/datasets(?:\s|$)/m);
   assert.doesNotMatch(unit, /^ReadWritePaths=.*\/srv\/hepta-paper\/datasets(?:\s|$)/m);
   assert.doesNotMatch(unit, /\/srv\/hepta-paper\/assets\/datasets/);

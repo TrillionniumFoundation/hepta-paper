@@ -594,6 +594,37 @@ test('managed snapshot reserves bounded capacity for every required file', () =>
   }
 });
 
+test('managed snapshot always includes the immutable empirical assertion authority', () => {
+  const value = fixture();
+  try {
+    fs.mkdirSync(path.join(value.workspace, 'automation-results'));
+    fs.writeFileSync(
+      path.join(value.workspace, 'automation-results', 'EMPIRICAL_ASSERTION_AUTHORITY.json'),
+      '{"kind":"EmpiricalAssertionAuthority"}\n',
+      { mode: 0o600 },
+    );
+    fs.mkdirSync(path.join(value.workspace, 'experiments'));
+    fs.writeFileSync(
+      path.join(value.workspace, 'experiments', 'optional.json'),
+      '{"optional":true}\n',
+      { mode: 0o600 },
+    );
+    const snapshot = buildManagedWorkspaceSnapshot({
+      workspace: value.workspace,
+      maximumContextBytes: 4096,
+      maximumFileCount: 3,
+    });
+    assert.deepEqual(snapshot.files.map((entry) => entry.path), [
+      'THEOREM_SPEC.json',
+      'main.tex',
+      'automation-results/EMPIRICAL_ASSERTION_AUTHORITY.json',
+    ]);
+    assert.equal(snapshot.omittedFileCount, 1);
+  } finally {
+    value.cleanup();
+  }
+});
+
 test('managed snapshot rejects limits outside the configured safety bounds', () => {
   const value = fixture();
   try {

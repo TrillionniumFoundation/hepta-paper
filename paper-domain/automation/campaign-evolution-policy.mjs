@@ -66,6 +66,8 @@ function nodeStructure(node = {}) {
     language: source.language || null,
     requiresGpu: Boolean(source.requiresGpu),
     executionIntent: executionIntentInvariant(source.executionIntent),
+    advancedNumericalExecutionPlanHash:
+      source.advancedNumericalExecutionPlanHash || null,
   };
 }
 

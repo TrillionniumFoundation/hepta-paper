@@ -147,6 +147,23 @@ test('one-shot CLI loads execute mounts and rejects malformed command input', as
   });
   assert.deepEqual(captured.datasetMounts, [{ name: 'fixed-dataset' }]);
   assert.match(captured.controlRoot, /one-shot-campaign-control$/);
+  const planOutput = outputCollector();
+  await runOneShotCampaignAttemptCli({
+    argv: ['--action', 'plan', '--dataset-mount-file', mountsPath],
+    stdout: planOutput.stream,
+    assetRoot: '/tmp/assets',
+    nativeRuntimeRoot: '/tmp/native-runtime',
+    async composeAttempt(input) {
+      captured = input;
+      return { status: 'autonomous_research_one_shot_campaign_preflight_passed' };
+    },
+  });
+  assert.equal(captured.action, 'plan');
+  assert.deepEqual(captured.datasetMounts, [{ name: 'fixed-dataset' }]);
+  assert.equal(
+    JSON.parse(planOutput.text()).status,
+    'autonomous_research_one_shot_campaign_preflight_passed',
+  );
   await assert.rejects(
     () => runOneShotCampaignAttemptCli({ argv: ['--action', 'invalid'] }),
     /autonomous_research_one_shot_action_invalid:invalid/,
@@ -1077,6 +1094,11 @@ test('one-shot composition completes once and terminal replay is side-effect fre
     ...actions,
   });
   assert.equal(first.terminalReceipt.terminalStatus, 'completed');
+  assert.equal(
+    repository.inspectHistoricalAttempt({ campaignId: reservation.campaignId })
+      .reservation.attemptId,
+    reservation.attemptId,
+  );
   assert.deepEqual(counts,
     { preconditions: 1, prepare: 1, provider: 1, launch: 1, monitor: 0 });
 

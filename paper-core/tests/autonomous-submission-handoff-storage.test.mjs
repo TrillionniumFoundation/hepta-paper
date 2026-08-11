@@ -51,6 +51,9 @@ import {
 import { fileSha256HashSync }
   from '../../paper-adapters/runtime/pinned-file-reader.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  buildAutonomousLiveSubmissionAuthorizationSubject,
+} from '../../paper-domain/submission/autonomous-live-submission-authorization-contract.mjs';
 
 const NOW = new Date('2026-07-21T08:00:00.000Z');
 const H = (label) => hashRecord('AutonomousSubmissionHandoffStorageTest', { label });
@@ -132,6 +135,7 @@ function requestVerifier() {
       const { requestHash, ...payload } = request || {};
       return requestHash === hashRecord('AutonomousSubmissionRequest', payload);
     },
+    verifyHumanAuthorization() { return true; },
   });
 }
 
@@ -144,10 +148,132 @@ function request(label) {
     qualificationReceiptHash: H(`qualification:${label}`),
     submissionMetadataReceiptHash: H('metadata'),
     venueComplianceReceiptHash: H(`compliance:${label}`),
+    researchClosureReceiptHash: H(`closure:${label}`),
     portalConfigurationHash: H('portal-configuration'),
   };
+  const portal = Object.freeze({
+    portalId: 'portal:test',
+    portalDescriptorHash: H('portal-descriptor'),
+    portalServiceIdentityHash: H('portal-service'),
+    portalAccountIdentityHash: H('portal-account'),
+    portalTrustDomainIdentityHash: H('portal-trust-domain'),
+  });
+  const authorizationSubject = buildAutonomousLiveSubmissionAuthorizationSubject({
+    campaignId: `campaign:${label}`,
+    paperId: `paper:${label}`,
+    immutableCampaignPackageOutputHash: bindings.immutableCampaignPackageOutputHash,
+    campaignReleaseBundleHash: bindings.campaignReleaseBundleHash,
+    qualificationReceiptHash: bindings.qualificationReceiptHash,
+    researchClosureReceiptHash: bindings.researchClosureReceiptHash,
+    venueComplianceReceiptHash: bindings.venueComplianceReceiptHash,
+    submissionMetadataReceiptHash: bindings.submissionMetadataReceiptHash,
+    venueProfileSelectionHash: H('venue-selection'),
+    venueId: bindings.venueId,
+    submissionPortalProfileId: 'autonomous-portal-v1',
+    portalId: portal.portalId,
+    portalConfigurationHash: bindings.portalConfigurationHash,
+    portalDescriptorHash: portal.portalDescriptorHash,
+    serviceIdentityHash: portal.portalServiceIdentityHash,
+    portalAccountIdentityHash: portal.portalAccountIdentityHash,
+    portalTrustDomainIdentityHash: portal.portalTrustDomainIdentityHash,
+  });
+  const authorizationDocument = {
+    version: 1,
+    kind: 'LiveSubmissionAuthorization',
+    paperId: `paper:${label}`,
+    taskKey: `campaign:${label}`,
+    allowLiveExternalAction: true,
+    environment: 'production',
+    portalAction: 'submit_manuscript',
+    singleUse: true,
+    nonce: `handoff-human-permit-${label}`,
+    provider: portal.portalId,
+    accountId: portal.portalAccountIdentityHash,
+    authorizationSubjectHash:
+      authorizationSubject.liveSubmissionAuthorizationSubjectHash,
+    signedAt: '2026-07-21T07:59:00.000Z',
+    validFrom: '2026-07-21T07:59:00.000Z',
+    expiresAt: '2026-07-21T08:30:00.000Z',
+    responseDueAt: '2026-07-21T08:20:00.000Z',
+    signatures: [],
+  };
+  const signatureVerification = {
+    status: 'authority_signatures_verified',
+    cryptographicSignaturesVerified: true,
+    requiredRoles: ['submission_operator', 'live_executor_authorizer'],
+    requiredSignatureCount: 2,
+    verifiedSignatures: [],
+    verifiedRoles: ['live_executor_authorizer', 'submission_operator'],
+    verifiedSubjectIds: ['handoff-executor', 'handoff-operator'],
+    blockers: [],
+  };
+  const timeWindow = {
+    valid: true,
+    signedAt: authorizationDocument.signedAt,
+    validFrom: authorizationDocument.validFrom,
+    expiresAt: authorizationDocument.expiresAt,
+    blockers: [],
+  };
+  const authorizationReport = {
+    version: 2,
+    kind: 'LiveSubmissionAuthorizationReceipt',
+    authorizationMode: 'autonomous_submission_handoff',
+    paperId: `paper:${label}`,
+    taskKey: `campaign:${label}`,
+    status: 'live_submission_authorization_verified',
+    liveExternalActionAuthorized: true,
+    cryptographicSignaturesVerified: true,
+    authorizationPath: 'fixture/LIVE_SUBMISSION_AUTHORIZATION.json',
+    authorizationSubject,
+    authorizationSubjectHash:
+      authorizationSubject.liveSubmissionAuthorizationSubjectHash,
+    authorizationDocument,
+    authorizationDocumentHash: hashRecord(
+      'LiveSubmissionAuthorizationDocument', authorizationDocument,
+    ),
+    provider: portal.portalId,
+    accountId: portal.portalAccountIdentityHash,
+    portalRoute: 'autonomous-portal-v1',
+    portalAction: 'submit_manuscript',
+    environment: 'production',
+    nonce: authorizationDocument.nonce,
+    singleUse: true,
+    signedAt: authorizationDocument.signedAt,
+    validFrom: authorizationDocument.validFrom,
+    expiresAt: authorizationDocument.expiresAt,
+    authorizerSubjectIds: signatureVerification.verifiedSubjectIds,
+    signatureVerification,
+    timeWindow,
+    consumed: false,
+    responseDueAt: authorizationDocument.responseDueAt,
+    blockers: [],
+    safety: {
+      humanReviewRequired: true,
+      dualControlRequired: true,
+      singleUseAuthorization: true,
+      authorizationLifetimeHoursMaximum: 24,
+      separatedDutiesEnforced: true,
+      grantsExecutionInsideOverlay: false,
+      externalActionPerformed: false,
+    },
+  };
+  const humanAuthorizationReceipt = {
+    ...authorizationReport,
+    liveSubmissionAuthorizationReceiptHash: hashRecord(
+      'LiveSubmissionAuthorizationReceipt', authorizationReport,
+    ),
+  };
+  Object.assign(bindings, {
+    ...portal,
+    humanAuthorizationReceiptHash:
+      humanAuthorizationReceipt.liveSubmissionAuthorizationReceiptHash,
+    humanAuthorizationSubjectHash:
+      authorizationSubject.liveSubmissionAuthorizationSubjectHash,
+    humanAuthorizationNonce: humanAuthorizationReceipt.nonce,
+    humanAuthorizationExpiresAt: humanAuthorizationReceipt.expiresAt,
+  });
   const payload = {
-    version: 3,
+    version: 7,
     kind: 'AutonomousSubmissionRequest',
     campaignId: `campaign:${label}`,
     paperId: `paper:${label}`,
@@ -160,6 +286,7 @@ function request(label) {
     sourceSnapshotHash: H(`source:${label}`),
     sourceTreeManifestHash: H(`tree:${label}`),
     researchEvidenceCapsuleManifestHash: H(`capsule:${label}`),
+    researchClosureReceiptHash: bindings.researchClosureReceiptHash,
     qualificationReceiptHash: bindings.qualificationReceiptHash,
     venueComplianceReceiptHash: bindings.venueComplianceReceiptHash,
     submissionMetadataReceiptHash: bindings.submissionMetadataReceiptHash,
@@ -168,8 +295,16 @@ function request(label) {
     independentRebuiltPdfHash: H(`independent-pdf:${label}`),
     pageCount: 8,
     portalConfigurationHash: bindings.portalConfigurationHash,
+    ...portal,
+    humanAuthorizationReceiptHash:
+      humanAuthorizationReceipt.liveSubmissionAuthorizationReceiptHash,
+    humanAuthorizationSubjectHash:
+      authorizationSubject.liveSubmissionAuthorizationSubjectHash,
+    humanAuthorizationNonce: humanAuthorizationReceipt.nonce,
+    humanAuthorizationExpiresAt: humanAuthorizationReceipt.expiresAt,
+    humanAuthorizationReceipt,
     idempotencyKey: hashRecord('AutonomousSubmissionIdempotencyKey', bindings),
-    humanApprovalPerformed: false,
+    humanApprovalPerformed: true,
     requestedAt: NOW.toISOString(),
   };
   return Object.freeze({
@@ -634,6 +769,7 @@ test('deployment grants native writes only to research and exact handoff writes 
     /^ExecStartPre=\/usr\/bin\/test ! -w \/var\/lib\/hepta-paper\/runtime\/autonomous-research\/submission-handoff\/dispatcher-cycles$/m);
   assert.match(supervisorService,
     /^InaccessiblePaths=\/etc\/hepta-paper\/submission-portal \/etc\/hepta-paper\/submission-dispatcher-signer$/m);
+  assert.doesNotMatch(supervisorService, /^InaccessiblePaths=(?:-|.* -)/m);
   assert.match(service,
     /^ExecStartPre=\/usr\/bin\/test ! -w \/var\/lib\/hepta-paper\/runtime\/autonomous-research\/submission-handoff\/dispatcher-challenges$/m);
   assert.match(service, /\/etc\/hepta-paper\/submission-handoff-authority/);

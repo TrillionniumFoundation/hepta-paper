@@ -241,6 +241,13 @@ export function createOsSandboxedWorkerRunner({
             operatorDatasetResearchSemanticsHash:
               mount.operatorDatasetResearchSemanticsHash || null,
           } : {}),
+          ...(mount?.authorityScope ? {
+            authorityScope: mount.authorityScope,
+            evidenceClass: mount.evidenceClass || null,
+            academicPromotionEligible: mount.academicPromotionEligible === true,
+            externalTrustClaimed: mount.externalTrustClaimed === true,
+            localGoldenRuntimeScope: mount.localGoldenRuntimeScope || null,
+          } : {}),
           splitManifestHash: mount?.splitManifestHash || null, benchmarkHarnessDocumentHash: mount?.benchmarkHarnessDocumentHash || null, benchmarkHarnessDefinitionHash: mount?.benchmarkHarnessDefinitionHash || null,
           benchmarkFamily: mount?.benchmarkFamily || null, benchmarkSeedSchedule: Array.isArray(mount?.benchmarkSeedSchedule) ? mount.benchmarkSeedSchedule.map(Number) : [], benchmarkMinimumRepetitions: Number(mount?.benchmarkMinimumRepetitions || 0), analysisProtocol: mount?.analysisProtocol || null, analysisProtocolHash: mount?.analysisProtocolHash || null,
           allowedDatasetRoot, sourceType, boundaryBlockers };

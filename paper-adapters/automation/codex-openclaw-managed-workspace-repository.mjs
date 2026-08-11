@@ -30,6 +30,9 @@ import {
 import {
   readCodexOpenClawManagedConfiguration,
 } from './codex-openclaw-managed-configuration.mjs';
+import {
+  EMPIRICAL_ASSERTION_AUTHORITY_PATH,
+} from './empirical-assertion-authority.mjs';
 import { workspaceMutationPolicyBlockers } from './workspace-change-tracker.mjs';
 
 const MAXIMUM_EDIT_COUNT = 128;
@@ -103,6 +106,7 @@ const PRIORITY_FILES = Object.freeze([
   'manuscript.tex',
   'AUTONOMOUS_MANUSCRIPT_IR_DRAFT.json',
   'AUTONOMOUS_MANUSCRIPT_ENTAILMENT.json',
+  EMPIRICAL_ASSERTION_AUTHORITY_PATH,
   'AUTONOMOUS_EMPIRICAL_CLAIM_LINEAGE.json',
   'AUTONOMOUS_RESEARCH_PROPOSAL.json',
   'AUTONOMOUS_RESEARCH_POLICY_AUTHORIZATION.json',

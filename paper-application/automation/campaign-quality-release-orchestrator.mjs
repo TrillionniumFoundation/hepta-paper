@@ -323,6 +323,17 @@ export async function executeCampaignPackageNode({
     error.retryable = false;
     throw error;
   }
+  const advancedNumericalExecutionEvidence =
+    researchNode.result?.advancedNumericalExecutionEvidence || null;
+  if (campaign.spec.advancedNumericalExecutionPlan
+    && (!advancedNumericalExecutionEvidence
+      || advancedNumericalExecutionEvidence.promotionEligible !== true)) {
+    const error = new Error(
+      'campaign_release_advanced_numerical_promotion_evidence_required',
+    );
+    error.retryable = false;
+    throw error;
+  }
   const createdAt = node.updatedAt || null;
   if (!createdAt) {
     const error = new Error('campaign_release_created_at_required');
@@ -440,6 +451,9 @@ export async function executeCampaignPackageNode({
     evidenceEntailmentReviewReceipt,
     reviewerEvidenceAuthority,
     experimentExecutionClosure,
+    advancedNumericalExecutionPlan:
+      campaign.spec.advancedNumericalExecutionPlan || null,
+    advancedNumericalExecutionEvidence,
     createdAt,
     executionSignal,
     assertExternalSideEffectReady:

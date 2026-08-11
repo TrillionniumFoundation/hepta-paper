@@ -13,17 +13,14 @@ import { normalizePaperQualityProfiles } from '../quality/paper-quality-profile-
 import { verifyAutonomousEmpiricalExecutionProfileSelection } from './autonomous-empirical-execution-profile-policy.mjs';
 import { verifyAutonomousResearchMachineIntake } from './autonomous-research-machine-intake-contract.mjs';
 import { verifyAutonomousResearchMachineIntakeAdmission } from './autonomous-research-machine-intake-admission-contract.mjs';
-import {
-  verifyAutonomousResearchAgendaProductionReceipt,
-} from './autonomous-research-agenda-production-contract.mjs';
-import {
-  inspectAutonomousResearchProductionProfilePreparation,
-} from './autonomous-research-production-profile-contract.mjs';
+import { verifyAutonomousResearchAgendaProductionReceipt } from './autonomous-research-agenda-production-contract.mjs';
+import { inspectAutonomousResearchProductionProfilePreparation } from './autonomous-research-production-profile-contract.mjs';
 import { verifyVenueRequirementIr } from './venue-requirement-ir.mjs';
 import {
   verifyResearchAgendaClaimBindingReceipt,
 } from './research-agenda-claim-binding-contract.mjs';
 import { assertAutonomousResearchDirectLocalRunBudgetWaiverBinding } from './autonomous-research-launch-mode-policy.mjs';
+import { requireAdvancedNumericalCampaignExecutionPlan } from './advanced-numerical-campaign-execution-contract.mjs';
 const FULL_CAMPAIGN_MODE = 'full-campaign';
 const ACADEMIC_EMPIRICAL_ASSURANCE_SCOPE = 'operator-authorized-hidden-evaluation-v1';
 const UNSUPPORTED_BATCH_MODES = new Set([
@@ -238,6 +235,7 @@ export function buildPaperCampaignPlan({
   autonomousResearchMachineIntakeAdmission = null,
   localOnly = false,
   directLocalRunBudgetWaiver = null,
+  advancedNumericalExecutionPlan = null,
 } = {}) {
   if (!paperId || !sourceWorkspace) throw new Error('paperId and sourceWorkspace are required');
   const requestedMode = normalizeOptional(mode) || FULL_CAMPAIGN_MODE;
@@ -247,6 +245,9 @@ export function buildPaperCampaignPlan({
   const rounds = roundDrivenMode ? requestedRounds : 1;
   const reviewers = Math.max(2, Math.min(7, Number(refereeCount) || 3));
   const id = campaignId || `paper-campaign:${paperId}`;
+  const verifiedAdvancedNumericalExecutionPlan = requireAdvancedNumericalCampaignExecutionPlan(
+    advancedNumericalExecutionPlan, { campaignId: id, paperId, mode: effectiveMode },
+  );
   const inferredRecovery = id.includes(':recovery-') ? id.slice(0, id.indexOf(':recovery-')) : null;
   const normalizedLanguages = [...new Set(languages.map((language) => String(language).trim().toLowerCase()).filter(Boolean))];
   const normalizedMounts = normalizeDatasetMounts(datasetMounts);
@@ -350,22 +351,19 @@ export function buildPaperCampaignPlan({
   if (effectiveMode === PAPER_BATCH_MODES.REVIEWED_SUBMIT && !canonicalVenueTarget) {
     throw new Error('campaign_reviewed_submit_venue_target_required');
   }
-  const researchVerificationModes = new Set([
-    FULL_CAMPAIGN_MODE,
-    PAPER_BATCH_MODES.LOCAL_PACKAGE,
-    PAPER_BATCH_MODES.RESEARCH_VERIFY,
-    PAPER_BATCH_MODES.LOCAL_DRY_RUN,
-    PAPER_BATCH_MODES.REVIEWED_SUBMIT,
-  ]);
+  const researchVerificationModes = new Set([FULL_CAMPAIGN_MODE,
+    PAPER_BATCH_MODES.LOCAL_PACKAGE, PAPER_BATCH_MODES.RESEARCH_VERIFY,
+    PAPER_BATCH_MODES.LOCAL_DRY_RUN, PAPER_BATCH_MODES.REVIEWED_SUBMIT]);
   const researchVerificationRequired = researchVerificationModes.has(effectiveMode);
-  const researchVerificationInput = researchVerificationRequired && paperTask
+  const researchVerificationInputRequired = researchVerificationRequired || formalRequested;
+  const researchVerificationInput = researchVerificationInputRequired && paperTask
     ? buildCampaignResearchVerificationInput({
       paperId,
       paperTask: { ...paperTask, paperQualityProfile: effectivePaperQualityProfile, paperQualityProfiles: effectivePaperQualityProfiles },
       paperState,
     })
     : null;
-  if (researchVerificationRequired && !researchVerificationInput && effectiveMode !== FULL_CAMPAIGN_MODE) {
+  if (researchVerificationInputRequired && !researchVerificationInput) {
     throw new Error('campaign_research_verification_input_required');
   }
   const executionIntent = Object.freeze({
@@ -402,6 +400,7 @@ export function buildPaperCampaignPlan({
     applyManuscript: Boolean(applyManuscript),
     formalRequested,
     researchVerificationRequired,
+    advancedNumericalExecutionPlan: verifiedAdvancedNumericalExecutionPlan,
   });
   if (!nodes.length) throw new Error(`campaign_mode_plan_empty:${requestedMode}`);
   const defaultMaxAgentCalls = Math.max(30, plannedAgentCallUpperBound(nodes));
@@ -481,6 +480,7 @@ export function buildPaperCampaignPlan({
     ...(empiricalClaimUniverse ? { empiricalClaimUniverse } : {}),
     applyManuscript: executionIntent.applyManuscript,
     ...(researchVerificationInput ? { researchVerificationInput } : {}),
+    ...(verifiedAdvancedNumericalExecutionPlan ? { advancedNumericalExecutionPlan: verifiedAdvancedNumericalExecutionPlan } : {}),
     datasetMounts: normalizedMounts,
     metricSchema: {
       version: 1,

@@ -3,7 +3,20 @@ Description=Hepta Paper autonomous submission dispatcher
 Requires=hepta-paper-host-bootstrap.service autonomous-submission-handoff-layout-provision.service
 After=hepta-paper-host-bootstrap.service autonomous-submission-handoff-layout-provision.service network-online.target autonomous-research-supervisor.service
 Wants=autonomous-submission-handoff-layout-provision.path network-online.target
-StartLimitIntervalSec=0
+# Missing provisioning is a skipped start, while repeated runtime failures are
+# bounded and require an operator to inspect the failed generation.
+ConditionPathExists=/opt/hepta-paper/paper-core/bin/hepta-paper.mjs
+ConditionPathExists=/etc/hepta-paper/autonomous-submission-dispatcher.env
+ConditionPathExists=/etc/hepta-paper/autonomous-submission-dispatcher.secrets.env
+ConditionPathExists=/var/lib/hepta-paper/runtime/autonomous-research/submission-handoff/submission-handoff.sqlite
+ConditionPathExists=/srv/hepta-paper/assets
+ConditionPathExists=/etc/hepta-paper/capabilities-public
+ConditionPathExists=/etc/hepta-paper/submission-portal
+ConditionPathExists=/etc/hepta-paper/submission-dispatcher-signer
+ConditionPathExists=/etc/hepta-paper/release-attestor
+ConditionPathExists=/etc/hepta-paper/submission-handoff-authority
+StartLimitIntervalSec=15min
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -17,6 +30,19 @@ Environment=TMPDIR=/run/hepta-paper-submission-dispatcher
 EnvironmentFile=/etc/hepta-paper/autonomous-submission-dispatcher.env
 # Only this OS principal receives the dynamically named portal token variable.
 EnvironmentFile=/etc/hepta-paper/autonomous-submission-dispatcher.secrets.env
+# These conditions run as the dispatcher principal after the environment files
+# are loaded. They check presence/readability only; the application still
+# validates every configuration identity, hash, permission and trust binding.
+ExecCondition=/usr/bin/test -d ${HEPTA_PAPER_ASSET_ROOT}
+ExecCondition=/usr/bin/test -d ${HEPTA_PAPER_RUNTIME_ROOT}
+ExecCondition=/usr/bin/test -r ${HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_CONFIG}
+ExecCondition=/usr/bin/test -r ${HEPTA_AUTONOMOUS_SUBMISSION_PORTAL_DESCRIPTOR_CONFIG}
+ExecCondition=/usr/bin/test -r ${HEPTA_SUBMISSION_DISPATCHER_IDENTITY_CONFIG_PATH}
+ExecCondition=/usr/bin/test -r ${HEPTA_SUBMISSION_DISPATCHER_CYCLE_SIGNING_CONFIG}
+ExecCondition=/usr/bin/test -r ${HEPTA_AUTONOMOUS_VENUE_PROFILE_CONFIG}
+ExecCondition=/usr/bin/test -r ${HEPTA_AUTONOMOUS_SUBMISSION_METADATA_CONFIG}
+ExecCondition=/usr/bin/test -r ${HEPTA_RESEARCH_EXECUTION_RELEASE_ATTESTOR_CONFIG}
+ExecCondition=/usr/bin/test -r ${HEPTA_AUTONOMOUS_SUBMISSION_HANDOFF_MUTATION_AUTHORITY_PROCESS_CONFIG}
 # The native runtime is deliberately read-only to this principal. Only the
 # separately provisioned handoff subtree is writable.
 ExecStartPre=/usr/bin/test ! -w /var/lib/hepta-paper/runtime/hepta-paper.sqlite

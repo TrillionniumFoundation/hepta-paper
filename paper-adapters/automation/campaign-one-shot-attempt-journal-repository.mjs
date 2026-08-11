@@ -221,7 +221,11 @@ export function createCampaignOneShotAttemptJournalRepository({
       return null;
     }
     assertPathIdentities();
-    const port = readOnlyStoreFactory({ dbPath: databasePath, busyTimeoutMs });
+    const port = readOnlyStoreFactory({
+      dbPath: databasePath,
+      busyTimeoutMs,
+      immutable: true,
+    });
     try {
       assertPathIdentities();
       assertJournalPragmas(port);
@@ -317,17 +321,27 @@ export function createCampaignOneShotAttemptJournalRepository({
 
   provision();
 
-  function inspectAttempt({ attemptId = null, idempotencyKey = null } = {}) {
+  function inspectAttempt({
+    attemptId = null,
+    idempotencyKey = null,
+    campaignId = null,
+  } = {}) {
     return withReadOnlyPort((port) => inspectionFromPort(port, {
       attemptId,
       idempotencyKey,
+      campaignId,
     }));
   }
 
-  function inspectHistoricalAttempt({ attemptId = null, idempotencyKey = null } = {}) {
+  function inspectHistoricalAttempt({
+    attemptId = null,
+    idempotencyKey = null,
+    campaignId = null,
+  } = {}) {
     return withReadOnlyPort((port) => historicalInspectionFromPort(port, {
       attemptId,
       idempotencyKey,
+      campaignId,
     }));
   }
 

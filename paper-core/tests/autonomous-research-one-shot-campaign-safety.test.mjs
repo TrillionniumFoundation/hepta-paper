@@ -168,7 +168,7 @@ test('one-shot terminal receipts persist only normalized provider failure diagno
       'AutonomousResearchOneShotCampaignAttemptFailureDiagnostic',
       {
         version: 1,
-        phase: 'provider_started',
+        failingStage: 'provider_action',
         failureClass: expectedFailureClass,
         diagnosticSource: 'unclassified_failure',
       },
@@ -176,9 +176,9 @@ test('one-shot terminal receipts persist only normalized provider failure diagno
     assert.deepEqual(report.terminalReceipt.outcome, {
       version: 1,
       kind: 'AutonomousResearchOneShotCampaignAttemptFailure',
-      phase: 'provider_started',
       errorCode: expectedErrorCode,
       failureClass: expectedFailureClass,
+      failingStage: 'provider_action',
       diagnosticHash: effectiveDiagnosticHash,
     });
     return report.terminalReceipt.outcome;
@@ -223,7 +223,7 @@ test('one-shot terminal receipts persist only normalized provider failure diagno
     'AutonomousResearchOneShotCampaignAttemptFailureDiagnostic',
     {
       version: 1,
-      phase: 'provider_started',
+      failingStage: 'provider_action',
       failureClass: 'unknown',
       diagnosticSource: 'unclassified_failure',
     },
@@ -261,6 +261,70 @@ test('one-shot terminal receipts persist only normalized provider failure diagno
   assert.equal(firstUnknown.diagnosticHash, secondUnknown.diagnosticHash);
   assert.equal(firstUnknown.diagnosticHash, quota.diagnosticHash);
   assert.equal(firstUnknown.diagnosticHash, fallbackUnknownHash);
+});
+
+test('pre-provider journal failure is typed, redacted, and terminally immutable', async (t) => {
+  const { repository, reservation } = fixture(t, 'safe-pre-provider-receipt');
+  const counts = { preconditions: 0, prepare: 0, provider: 0, launch: 0, monitor: 0 };
+  const sensitivePath = '/private/pre-provider/credential.json';
+  const sensitiveDiagnostic = 'synthetic-pre-provider-sensitive-diagnostic';
+  const error = Object.assign(
+    new Error('autonomous_research_one_shot_prepare_not_launch_ready'),
+    {
+      credentialPath: sensitivePath,
+      stderr: sensitiveDiagnostic,
+      cause: new Error(`${sensitivePath}:${sensitiveDiagnostic}`),
+    },
+  );
+  const actions = callbacks(counts, {
+    async prepareCampaign() {
+      counts.prepare += 1;
+      throw error;
+    },
+  });
+  const first = await composeAutonomousResearchOneShotCampaignAttempt({
+    repository,
+    reservation,
+    ...actions,
+  });
+  const outcome = first.terminalReceipt.outcome;
+  const firstReceipt = JSON.stringify(first.terminalReceipt);
+  const databaseBytes = fs.readFileSync(repository.databasePath);
+
+  assert.equal(first.terminalReceipt.terminalStatus, 'blocked_pre_provider');
+  assert.deepEqual(Object.keys(outcome).sort(), [
+    'diagnosticHash',
+    'errorCode',
+    'failingStage',
+    'failureClass',
+    'kind',
+    'version',
+  ]);
+  assert.equal(
+    outcome.errorCode,
+    'autonomous_research_one_shot_prepare_not_launch_ready',
+  );
+  assert.equal(outcome.failureClass, 'campaign_not_ready');
+  assert.equal(outcome.failingStage, 'campaign_preparation');
+  assert.match(outcome.diagnosticHash, /^sha256:[0-9a-f]{64}$/);
+  for (const sensitive of [sensitivePath, sensitiveDiagnostic]) {
+    assert.equal(firstReceipt.includes(sensitive), false);
+    assert.equal(databaseBytes.includes(Buffer.from(sensitive)), false);
+  }
+
+  const replay = await composeAutonomousResearchOneShotCampaignAttempt({
+    repository,
+    reservation,
+    ...actions,
+  });
+  assert.equal(JSON.stringify(replay.terminalReceipt), firstReceipt);
+  assert.deepEqual(counts, {
+    preconditions: 1,
+    prepare: 1,
+    provider: 0,
+    launch: 0,
+    monitor: 0,
+  });
 });
 
 test('launch-started recovery monitors without issuing another launch', async (t) => {

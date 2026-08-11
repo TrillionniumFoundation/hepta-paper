@@ -24,6 +24,7 @@ function safeErrorToken(value, fallback) {
 function git(operation, args, workspaceRoot, { emptyOutputAllowed = false } = {}) {
   const result = spawnSync('git', args, {
     cwd: workspaceRoot,
+    env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
     encoding: null,
     maxBuffer: MAX_GIT_OUTPUT_BYTES,
   });

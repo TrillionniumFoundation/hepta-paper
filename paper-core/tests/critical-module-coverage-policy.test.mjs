@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import test from 'node:test';
+import * as coldVolumeCasImportStaging from '../../paper-adapters/archives/cold-volume-cas-import-staging.mjs';
 import * as coldVolumeCasObjectInspection from '../../paper-adapters/archives/cold-volume-cas-object-inspection.mjs';
 import * as coldVolumeCasPathBoundary from '../../paper-adapters/archives/cold-volume-cas-path-boundary.mjs';
 import * as coldVolumeCasPublicationRepository from '../../paper-adapters/archives/cold-volume-cas-publication-repository.mjs';
+import * as coldVolumeCasRecordValidation from '../../paper-adapters/archives/cold-volume-cas-record-validation.mjs';
 import * as coldVolumeCasRestoreBoundary from '../../paper-adapters/archives/cold-volume-cas-restore-boundary.mjs';
 import * as offhostWormCustodyEvidence from '../../paper-adapters/archives/offhost-worm-custody-evidence.mjs';
 import * as offhostWormTargetVerification from '../../paper-adapters/archives/offhost-worm-target-verification.mjs';
@@ -91,9 +93,11 @@ const RELEASE_INTEGRITY_TRUST_BOUNDARIES = Object.freeze([
 ]);
 
 const SHARED_TRUST_BOUNDARIES = Object.freeze([
+  'paper-adapters/archives/cold-volume-cas-import-staging.mjs',
   'paper-adapters/archives/cold-volume-cas-object-inspection.mjs',
   'paper-adapters/archives/cold-volume-cas-path-boundary.mjs',
   'paper-adapters/archives/cold-volume-cas-publication-repository.mjs',
+  'paper-adapters/archives/cold-volume-cas-record-validation.mjs',
   'paper-adapters/archives/cold-volume-cas-repository.mjs',
   'paper-adapters/archives/cold-volume-cas-restore-boundary.mjs',
   'paper-adapters/archives/offhost-worm-repository.mjs',
@@ -291,6 +295,22 @@ test('cold-volume CAS path boundary has one exact trust surface', () => {
   ]);
 });
 
+test('cold-volume CAS import staging has one exact internal surface', () => {
+  assert.deepEqual(Object.keys(coldVolumeCasImportStaging), [
+    'acquireColdVolumeCasImportLease',
+    'coldVolumeCasImportArchivePath',
+    'combineColdVolumeCasImportCleanupError',
+    'inspectColdVolumeCasImportArchive',
+    'openColdVolumeCasImportStaging',
+    'openColdVolumeCasImportTempDirectory',
+    'publishColdVolumeCasImportArchive',
+    'releaseColdVolumeCasImportLease',
+    'removeColdVolumeCasImportArchive',
+    'removeColdVolumeCasImportTempDirectory',
+    'sealColdVolumeCasImportArchive',
+  ]);
+});
+
 test('cold-volume CAS object inspection has one exact trust surface', () => {
   assert.deepEqual(Object.keys(coldVolumeCasObjectInspection), [
     'closePinnedCasObjectInspection',
@@ -307,6 +327,14 @@ test('cold-volume CAS publication boundary has one exact trust surface', () => {
   ]);
 });
 
+test('cold-volume CAS record validation has one exact trust surface', () => {
+  assert.deepEqual(Object.keys(coldVolumeCasRecordValidation), [
+    'expectedColdVolumeCasContractBinding',
+    'isColdVolumeCasCurrentPointer',
+    'validateColdVolumeCasManifest',
+  ]);
+});
+
 test('cold-volume CAS restore boundary has one exact trust surface', () => {
   assert.deepEqual(Object.keys(coldVolumeCasRestoreBoundary), [
     'inspectPinnedCasArchiveListing',
@@ -316,6 +344,7 @@ test('cold-volume CAS restore boundary has one exact trust surface', () => {
 
 test('offhost target verifier has one exact trust surface', () => {
   assert.deepEqual(Object.keys(offhostWormTargetVerification), [
+    'assertOffhostWormTargetMountBinding',
     'verifyOffhostWormTarget',
   ]);
 });

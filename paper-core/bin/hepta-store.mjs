@@ -21,6 +21,10 @@ import {
   convergeAutonomousSubmissionHandoff,
   inspectAutonomousSubmissionHandoff,
 } from '../../paper-composition/bootstrap/autonomous-submission-handoff-migration-composition.mjs';
+import {
+  buildHeptaStoreRestoreDrillCompletionReceiptV3,
+  buildHeptaStoreRestoreDrillLedgerSubjectV3,
+} from '../../paper-domain/evidence/hepta-store-restore-drill-receipt-contract.mjs';
 import { assertWorkspaceLayoutPhysicallyDecoupled, resolveWorkspaceLayout } from '../src/workspace-layout.mjs';
 import { pathWithin } from '../../workflow-kernel/runtime/file-utils.mjs';
 
@@ -58,6 +62,17 @@ const fileSha256 = (file) => fileSha256HashSync(file, { prefix: false });
 const within = pathWithin;
 const writeDurableJson = writeDurableJsonSync;
 const jsonFile = readRegularJsonFileSync;
+
+async function liveDatabaseSha256() {
+  const snapshotRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-store-live-hash-'));
+  const snapshotPath = path.join(snapshotRoot, 'live.sqlite');
+  try {
+    await copySqliteDatabase({ sourcePath: dbPath, destinationPath: snapshotPath });
+    return `sha256:${fileSha256(snapshotPath)}`;
+  } finally {
+    fs.rmSync(snapshotRoot, { recursive: true, force: true });
+  }
+}
 
 function regularFileIdentity(candidate) {
   const stat = fs.lstatSync(candidate);
@@ -261,6 +276,7 @@ async function backup() {
 }
 
 async function restoreDrill({ backupPath = null } = {}) {
+  const liveDatabaseSha256Before = await liveDatabaseSha256();
   let selected = resolveBackupReceipt(backupPath);
   if (!selected) {
     const created = await backup();
@@ -284,25 +300,36 @@ async function restoreDrill({ backupPath = null } = {}) {
       hashMatches = `sha256:${fileSha256(drillPath)}` === backupReceipt.backupSha256;
     } finally { drillStore.close(); }
   } finally { fs.rmSync(drillRoot, { recursive: true, force: true }); }
-  const receipt = {
-    version: 2,
-    kind: 'HeptaStoreRestoreDrillReceipt',
-    status: quick.ok && quick.rows?.[0]?.quick_check === 'ok' && foreignKeys.ok && foreignKeys.rows.length === 0 && hashMatches
+  const status = quick.ok && quick.rows?.[0]?.quick_check === 'ok'
+    && foreignKeys.ok && foreignKeys.rows.length === 0 && hashMatches
       ? 'hepta_store_restore_drill_passed'
-      : 'hepta_store_restore_drill_blocked',
+      : 'hepta_store_restore_drill_blocked';
+  const ledgerSubject = buildHeptaStoreRestoreDrillLedgerSubjectV3({
+    status,
     backupPath: backupReceipt.backupPath,
     backupSha256: backupReceipt.backupSha256,
     backupLedgerReceiptSha256: selected.identity.receiptHash,
     backupLedgerReceiptId: selected.identity.receiptId,
     hashMatches,
     quickCheck: quick.rows?.[0]?.quick_check || 'unknown',
-    foreignKeyViolationCount: foreignKeys.rows?.length ?? null,
+    foreignKeyViolationCount: foreignKeys.ok ? foreignKeys.rows.length : null,
     performedAt: new Date().toISOString(),
-    productionStoreMutated: false,
-  };
+    liveDatabaseSha256Before,
+  });
+  const ledgerReceipt = receiptLedger().record(ledgerSubject, {
+    stream: 'store-admin',
+    environment: 'administrative',
+    evidenceClass: 'restore_drill',
+    strictInsert: true,
+  });
+  const diagnosticLiveDatabaseSha256After = await liveDatabaseSha256();
+  const receipt = buildHeptaStoreRestoreDrillCompletionReceiptV3({
+    ledgerSubject,
+    diagnosticLiveDatabaseSha256After,
+    ledgerReceipt,
+  });
   writeDurableJson(`${backupReceipt.backupPath}.restore-drill.receipt.json`, receipt);
-  const ledgerReceipt = receiptLedger().record(receipt, { stream: 'store-admin', environment: 'administrative', evidenceClass: 'restore_drill' });
-  return { ...receipt, ledgerReceipt };
+  return receipt;
 }
 
 const command = process.argv[2] || 'status';

@@ -60,17 +60,41 @@ export function createCampaignLifecycleTerminalOperations({
       if (!decideManualNodeRetry(node).apply) return node;
       const now = clock.nowIso();
       const campaign = getApi().getCampaign(node.campaignId);
-      const eventRow = eventStatement(node.campaignId, nodeId, 'campaign_node_manually_retried', {}, now);
+      const reopenedSiblingNodes = getApi().listNodes(node.campaignId)
+        .filter((candidate) => candidate.status === 'skipped'
+          && candidate.failureClass === 'campaign_terminal_sibling_cancelled'
+          && candidate.failureDetail?.terminalNodeId === nodeId
+          && ['none', 'pending', 'integrated'].includes(
+            candidate.preparedIntegrationStatus,
+          ))
+        .map((candidate) => Object.freeze({
+          nodeId: candidate.nodeId,
+          nodeRevision: candidate.nodeRevision,
+          preparedIntegrationStatus: candidate.preparedIntegrationStatus,
+        }))
+        .sort((left, right) => left.nodeId.localeCompare(right.nodeId));
+      const reopenedSiblingNodeIds = reopenedSiblingNodes.map((candidate) => (
+        candidate.nodeId
+      ));
+      const reopenSiblingStatements = reopenedSiblingNodes.map((sibling) => guarded(
+        `UPDATE campaign_nodes SET status='queued',attempt_count=0,failure_class=NULL,failure_json=NULL,failure_sha256=NULL,lease_owner=NULL,lease_expires_at=NULL,attempt_id=NULL,prepared_result_json=CASE WHEN prepared_integration_status='integrated' THEN prepared_result_json ELSE NULL END,prepared_result_sha256=CASE WHEN prepared_integration_status='integrated' THEN prepared_result_sha256 ELSE NULL END,prepared_attempt_id=CASE WHEN prepared_integration_status='integrated' THEN prepared_attempt_id ELSE NULL END,prepared_at=CASE WHEN prepared_integration_status='integrated' THEN prepared_at ELSE NULL END,prepared_requires_integration=CASE WHEN prepared_integration_status='integrated' THEN prepared_requires_integration ELSE 0 END,prepared_integration_key=CASE WHEN prepared_integration_status='integrated' THEN prepared_integration_key ELSE NULL END,prepared_integration_status=CASE WHEN prepared_integration_status='integrated' THEN 'integrated' ELSE 'none' END,prepared_integration_started_at=CASE WHEN prepared_integration_status='integrated' THEN prepared_integration_started_at ELSE NULL END,prepared_integration_receipt_json=CASE WHEN prepared_integration_status='integrated' THEN prepared_integration_receipt_json ELSE NULL END,prepared_integration_receipt_sha256=CASE WHEN prepared_integration_status='integrated' THEN prepared_integration_receipt_sha256 ELSE NULL END,prepared_integrated_at=CASE WHEN prepared_integration_status='integrated' THEN prepared_integrated_at ELSE NULL END,node_revision=node_revision+1,updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(node.campaignId)} AND node_id=${sqlText(sibling.nodeId)} AND status='skipped' AND failure_class='campaign_terminal_sibling_cancelled' AND json_extract(failure_json,'$.terminalNodeId')=${sqlText(nodeId)} AND prepared_integration_status=${sqlText(sibling.preparedIntegrationStatus)} AND node_revision=${Number(sibling.nodeRevision)};`,
+      ));
+      const eventRow = eventStatement(node.campaignId, nodeId, 'campaign_node_manually_retried', {
+        reopenedSiblingNodeIds,
+      }, now);
       mutation({
         databaseRole: 'native-store',
         operationId: 'native-store.campaign-lifecycle.retryNode.v1',
         statements: [
           guarded(`UPDATE campaign_nodes SET status='queued',attempt_count=0,failure_class=NULL,failure_json=NULL,failure_sha256=NULL,lease_owner=NULL,lease_expires_at=NULL,attempt_id=NULL,prepared_result_json=CASE WHEN prepared_integration_status='integrated' THEN prepared_result_json ELSE NULL END,prepared_result_sha256=CASE WHEN prepared_integration_status='integrated' THEN prepared_result_sha256 ELSE NULL END,prepared_attempt_id=CASE WHEN prepared_integration_status='integrated' THEN prepared_attempt_id ELSE NULL END,prepared_at=CASE WHEN prepared_integration_status='integrated' THEN prepared_at ELSE NULL END,prepared_requires_integration=CASE WHEN prepared_integration_status='integrated' THEN prepared_requires_integration ELSE 0 END,prepared_integration_key=CASE WHEN prepared_integration_status='integrated' THEN prepared_integration_key ELSE NULL END,prepared_integration_status=CASE WHEN prepared_integration_status='integrated' THEN 'integrated' ELSE 'none' END,prepared_integration_started_at=CASE WHEN prepared_integration_status='integrated' THEN prepared_integration_started_at ELSE NULL END,prepared_integration_receipt_json=CASE WHEN prepared_integration_status='integrated' THEN prepared_integration_receipt_json ELSE NULL END,prepared_integration_receipt_sha256=CASE WHEN prepared_integration_status='integrated' THEN prepared_integration_receipt_sha256 ELSE NULL END,prepared_integrated_at=CASE WHEN prepared_integration_status='integrated' THEN prepared_integrated_at ELSE NULL END,node_revision=node_revision+1,updated_at=${sqlText(now)} WHERE node_id=${sqlText(nodeId)} AND status='failed_terminal' AND node_revision=${node.nodeRevision};`),
+          ...reopenSiblingStatements,
           guarded(`UPDATE paper_campaigns SET status='running',current_phase=${sqlText(node.kind)},current_review_round=max(current_review_round,${Math.max(0, Number(node.roundIndex || 0))}),stop_reason=NULL,last_resumed_at=coalesce(last_resumed_at,${sqlText(now)}),revision=revision+1,updated_at=${sqlText(now)} WHERE campaign_id=${sqlText(node.campaignId)} AND status=${sqlText(campaign.status)} AND revision=${campaign.revision};`),
           eventRow.sql,
         ],
         fallback: 'campaign_node_retry_failed',
-        input: { node, campaign, now, eventRow },
+        input: {
+          node, campaign, reopenedSiblingNodes, reopenedSiblingNodeIds, now, eventRow,
+        },
       });
       return parseNode(store.query(`SELECT * FROM campaign_nodes WHERE node_id=${sqlText(nodeId)} LIMIT 1;`).rows[0]);
     },

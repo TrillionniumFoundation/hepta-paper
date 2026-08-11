@@ -20,12 +20,14 @@ const AUTOMATION_TESTS = Object.freeze([...new Set([
   'paper-core/tests/automation-campaign.test.mjs',
   'paper-core/tests/automation-executor-entry-boundaries.test.mjs',
   'paper-core/tests/automation-executors.test.mjs',
+  'paper-core/tests/automation-empirical-cache.test.mjs',
   'paper-core/tests/os-sandboxed-worker-dataset-exclusion.test.mjs',
   'paper-core/tests/latex-manuscript-surface-readers.test.mjs',
   'paper-core/tests/local-golden-dataset-provisioning.test.mjs',
   'paper-core/tests/automation-agent-repair-executors.test.mjs',
   'paper-core/tests/campaign-empirical-repair-semantics.test.mjs',
   'paper-core/tests/automation-orchestration.test.mjs',
+  'paper-core/tests/automation-orchestration-manuscript-quality-provenance.test.mjs',
   'paper-core/tests/automation-runtime-reconciler.test.mjs',
   'paper-core/tests/legacy-terminal-active-residue-settlement.test.mjs',
   'paper-core/tests/automation-readiness-policy.test.mjs',
@@ -229,6 +231,7 @@ const AUTOMATION_TESTS = Object.freeze([...new Set([
 
 const AUTOMATION_DEDUPLICATED_ELSEWHERE = new Set([
   'paper-core/tests/automation-executors.test.mjs',
+  'paper-core/tests/automation-empirical-cache.test.mjs',
   'paper-core/tests/campaign-empirical-repair-semantics.test.mjs',
   'paper-core/tests/runtime-retention.test.mjs',
   'paper-core/tests/campaign-slo.test.mjs',

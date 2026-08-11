@@ -15,19 +15,38 @@ case "$release_uid:$release_gid" in
   *[!0-9:]*|:*|*:) exit 1 ;;
 esac
 group_option=--clear-groups
+resolve_named_group_gid() {
+  resolved_group_name="$1"
+  resolved_group_record="$(/usr/bin/getent group "$resolved_group_name")"
+  case "$resolved_group_record" in
+    "$resolved_group_name":*:*:*) ;;
+    *) exit 1 ;;
+  esac
+  resolved_group_tail="${resolved_group_record#*:*:}"
+  resolved_group_gid="${resolved_group_tail%%:*}"
+  case "$resolved_group_gid" in
+    ''|*[!0-9]*) exit 1 ;;
+  esac
+  test "$resolved_group_gid" != "$release_gid"
+}
 case "${1-}" in
-  formal:gate|release:verify)
-    docker_group_record="$(/usr/bin/getent group docker)"
-    case "$docker_group_record" in
-      docker:*:*:*) ;;
-      *) exit 1 ;;
-    esac
-    docker_gid="${docker_group_record#*:*:}"
-    docker_gid="${docker_gid%%:*}"
-    case "$docker_gid" in
-      ''|*[!0-9]*) exit 1 ;;
-    esac
+  formal:gate)
+    resolve_named_group_gid docker
+    docker_gid="$resolved_group_gid"
     group_option="--groups=$docker_gid"
+    ;;
+  release:verify)
+    resolve_named_group_gid docker
+    docker_gid="$resolved_group_gid"
+    resolve_named_group_gid hepta-runtime-handoff
+    handoff_gid="$resolved_group_gid"
+    test "$docker_gid" != "$handoff_gid"
+    group_option="--groups=$docker_gid,$handoff_gid"
+    ;;
+  store:trust-gate)
+    resolve_named_group_gid hepta-runtime-handoff
+    handoff_gid="$resolved_group_gid"
+    group_option="--groups=$handoff_gid"
     ;;
 esac
 

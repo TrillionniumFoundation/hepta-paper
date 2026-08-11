@@ -24,6 +24,8 @@ export const AUTONOMOUS_SUBMISSION_HANDOFF_STATEMENT_IDS = Object.freeze({
   getAutonomousSubmission: 'submission.handoff.autonomous.get.v1',
   prepareAutonomousSubmission: 'submission.handoff.autonomous.prepare.v1',
   beginAutonomousSubmissionAttempt: 'submission.handoff.autonomous.begin-attempt.v1',
+  consumeAutonomousAuthorization:
+    'submission.handoff.autonomous.authorization-consume.v1',
   recordAutonomousSubmissionOutcome: 'submission.handoff.autonomous.record-outcome.v1',
   receiptInsertIgnore: 'submission.handoff.receipt.insert-ignore.v1',
 });
@@ -56,6 +58,9 @@ const plans = [
     receiptInsert,
   ]),
   operation(O.beginAttempt, [
+    run(S.consumeAutonomousAuthorization, `INSERT INTO submission_authorization_consumptions(
+      nonce,authorization_receipt_hash,replay_key,dispatch_cycle_hash,paper_id,message_id,consumed_at
+    ) VALUES(?,?,?,?,?,?,?)`),
     run(S.beginAutonomousSubmissionAttempt, `UPDATE submission_outbox SET
       status='in_flight',attempt_count=?,payload_json=?,next_attempt_at=?,updated_at=?
       WHERE delivery_kind='autonomous' AND message_id=? AND status=?

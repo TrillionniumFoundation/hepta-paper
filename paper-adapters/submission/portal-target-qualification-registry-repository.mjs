@@ -15,6 +15,9 @@ import {
   requiredPortalTargetQualificationAuthorityRoles,
   verifyPortalTargetQualificationRegistryStructure,
 } from '../../paper-domain/submission/portal-target-qualification-contract.mjs';
+import {
+  buildPortalTargetQualificationPreflightPlan,
+} from '../../paper-domain/submission/portal-target-qualification-preflight-contract.mjs';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
@@ -235,6 +238,103 @@ function readTrustStore({ trustStorePath, expectedTrustStoreHash } = {}) {
   return readSecureJson(trustStorePath, {
     expectedFileHash: pin,
     errorCode: 'portal_target_qualification_trust_store_invalid',
+  });
+}
+
+function readPortalTargetQualificationPreflightSource(filePath) {
+  const configured = typeof filePath === 'string' && filePath.trim().length > 0;
+  if (!configured) return Object.freeze({ configured: false, missing: true, read: null });
+  const selected = path.resolve(filePath);
+  if (!fs.existsSync(selected)) {
+    return Object.freeze({ configured: true, missing: true, read: null });
+  }
+  try {
+    return Object.freeze({
+      configured: true,
+      missing: false,
+      read: readSecureJson(selected),
+    });
+  } catch {
+    return Object.freeze({ configured: true, missing: false, read: null });
+  }
+}
+
+function preflightSourceContract(source) {
+  return Object.freeze({
+    configured: source.configured,
+    missing: source.missing,
+    readable: source.read !== null,
+    contractValid: source.read !== null
+      && verifyPortalTargetQualificationRegistryStructure(source.read.value),
+    document: source.read?.value || null,
+  });
+}
+
+function preflightPin(value, observedValue) {
+  const configured = value !== null && value !== undefined && value !== '';
+  const selected = configured ? String(value).toLowerCase() : null;
+  const valid = configured && SHA256.test(selected);
+  return Object.freeze({
+    configured,
+    valid,
+    matched: valid && observedValue !== null && selected === observedValue,
+  });
+}
+
+export function preflightPortalTargetQualificationRegistry({
+  registryPath = null,
+  expectedRegistryHash = null,
+  candidatePath = null,
+  expectedCandidateFileHash = null,
+  trustStorePath = null,
+  expectedTrustStoreHash = null,
+  now = new Date(),
+  ...contractOptions
+} = {}) {
+  const active = readPortalTargetQualificationPreflightSource(registryPath);
+  const candidate = readPortalTargetQualificationPreflightSource(candidatePath);
+  const trust = readPortalTargetQualificationPreflightSource(trustStorePath);
+  const selected = candidate.configured ? candidate : active;
+  let authorityVerificationBlockers = [];
+  if (selected.read && trust.read
+    && verifyPortalTargetQualificationRegistryStructure(selected.read.value)) {
+    const registry = buildPortalTargetQualificationRegistry(selected.read.value);
+    authorityVerificationBlockers = authorityBlockers(
+      registry,
+      trust.read.value,
+    ).blockers;
+  }
+  if (candidate.configured && active.read && trust.read
+    && verifyPortalTargetQualificationRegistryStructure(active.read.value)) {
+    const currentRegistry = buildPortalTargetQualificationRegistry(active.read.value);
+    authorityVerificationBlockers = [
+      ...authorityVerificationBlockers,
+      ...authorityBlockers(currentRegistry, trust.read.value).blockers,
+    ];
+  }
+  return buildPortalTargetQualificationPreflightPlan({
+    ...contractOptions,
+    now,
+    activeSource: preflightSourceContract(active),
+    candidateSource: preflightSourceContract(candidate),
+    trustSource: Object.freeze({
+      configured: trust.configured,
+      missing: trust.missing,
+      readable: trust.read !== null,
+    }),
+    registryPin: preflightPin(
+      expectedRegistryHash,
+      active.read?.value?.portalTargetQualificationRegistryHash || null,
+    ),
+    candidatePin: preflightPin(
+      expectedCandidateFileHash,
+      candidate.read?.fileHash || null,
+    ),
+    trustPin: preflightPin(
+      expectedTrustStoreHash,
+      trust.read?.fileHash || null,
+    ),
+    authorityVerificationBlockers,
   });
 }
 

@@ -10,4 +10,5 @@ const contractPath = path.join(workspaceRoot, 'paper-core', 'config', 'cold-volu
 const contract = JSON.parse(fs.readFileSync(contractPath, 'utf8'));
 const status = verifyColdVolumeContract({ assetRoot: defaultPaperAssetRoot(), contract, contractPath });
 process.stdout.write(`${JSON.stringify(status, null, 2)}\n`);
-if (!status.contractValid || (process.argv.includes('--require-mounted') && !status.operationalReplayReady)) process.exitCode = 1;
+if (!status.contractValid
+  || (process.argv.includes('--require-mounted') && !status.releaseGateSatisfied)) process.exitCode = 1;

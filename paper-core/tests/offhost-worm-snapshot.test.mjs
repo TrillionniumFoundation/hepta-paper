@@ -30,6 +30,149 @@ const AUTHORITY_LIMIT =
   'build_and_archive_integrity_only_not_owner_academic_referee_or_submission_authority';
 const CUSTODY_NOW = new Date('2026-08-09T00:10:00.000Z');
 
+function deviceMajorMinor(candidate) {
+  const value = fs.lstatSync(candidate, { bigint: true }).dev;
+  const major = ((value & 0x00000000000fff00n) >> 8n)
+    | ((value & 0xfffff00000000000n) >> 32n);
+  const minor = (value & 0x00000000000000ffn)
+    | ((value & 0x00000ffffff00000n) >> 12n);
+  return `${major}:${minor}`;
+}
+
+function directoryMountId(candidate) {
+  const descriptor = fs.openSync(candidate, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY);
+  try {
+    const match = fs.readFileSync(`/proc/self/fdinfo/${descriptor}`, 'utf8')
+      .match(/^mnt_id:\s*([0-9]+)$/mu);
+    assert.ok(match);
+    return match[1];
+  } finally {
+    fs.closeSync(descriptor);
+  }
+}
+
+test('production WORM contract uses the root-managed external mount', () => {
+  const contract = JSON.parse(fs.readFileSync(path.join(
+    WORKSPACE_ROOT,
+    'paper-core',
+    'config',
+    'offhost-worm-contract.v1.json',
+  ), 'utf8'));
+  assert.equal(contract.contractId, 'hepta-paper-offhost-worm-toshiba-clean3-v2');
+  assert.equal(contract.targetMountRoot, '/mnt/hepta-paper-external');
+  assert.doesNotMatch(contract.targetMountRoot, /^\/media\//u);
+  assert.deepEqual(contract.expectedStorageIdentity, {
+    filesystemType: 'ext4',
+    filesystemUuid: '39324240-9c85-4d8a-a1b2-711f26c4ff77',
+    partitionUuid: '7cb85044-3be4-4756-9c7e-bfd6be3eb49f',
+  });
+  assert.equal(contract.offHostOrOffsiteCustodyQualified, false);
+});
+
+test('offhost target rejects a mounted device that does not match the contract pin', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-offhost-pin-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const targetMountRoot = path.join(root, 'target');
+  fs.mkdirSync(targetMountRoot);
+  const expectedStorageIdentity = {
+    filesystemType: 'ext4',
+    filesystemUuid: '11111111-1111-1111-1111-111111111111',
+    partitionUuid: '22222222-2222-2222-2222-222222222222',
+  };
+  const contract = {
+    version: 1,
+    kind: 'OffhostWormSnapshotContract',
+    contractId: 'pinned-storage-fixture',
+    targetMountRoot,
+    expectedStorageIdentity,
+    requireDistinctFilesystemDevice: true,
+    offHostOrOffsiteCustodyQualified: false,
+  };
+  const targetMajorMinor = deviceMajorMinor(targetMountRoot);
+  const targetMountId = directoryMountId(targetMountRoot);
+  const matching = verifyOffhostWormTarget({
+    workspaceRoot: root,
+    contract,
+    mountAvailableOverride: true,
+    distinctDeviceOverride: true,
+    mountedStorageOverride: {
+      target: targetMountRoot,
+      source: '/dev/fixture',
+      fstype: 'ext4',
+      uuid: expectedStorageIdentity.filesystemUuid,
+      partuuid: expectedStorageIdentity.partitionUuid,
+      id: targetMountId,
+      'maj:min': targetMajorMinor,
+      fsroot: '/',
+    },
+  });
+  assert.equal(matching.status, 'offhost_worm_target_ready');
+  assert.equal(matching.storageIdentityMatchesContract, true);
+  assert.equal(matching.mountDeviceMatchesTarget, true);
+
+  const replaced = verifyOffhostWormTarget({
+    workspaceRoot: root,
+    contract,
+    mountAvailableOverride: true,
+    distinctDeviceOverride: true,
+    mountedStorageOverride: {
+      target: targetMountRoot,
+      source: '/dev/replaced',
+      fstype: 'ext4',
+      uuid: '33333333-3333-3333-3333-333333333333',
+      partuuid: expectedStorageIdentity.partitionUuid,
+      id: targetMountId,
+      'maj:min': targetMajorMinor,
+      fsroot: '/',
+    },
+  });
+  assert.equal(replaced.status, 'offhost_worm_target_blocked');
+  assert.equal(replaced.storageIdentityMatchesContract, false);
+  assert.ok(replaced.blockers.includes('offhost_worm_storage_identity_mismatch'));
+
+  const wrongDevice = verifyOffhostWormTarget({
+    workspaceRoot: root,
+    contract,
+    mountAvailableOverride: true,
+    distinctDeviceOverride: true,
+    mountedStorageOverride: {
+      target: targetMountRoot,
+      source: '/dev/wrong-device',
+      fstype: 'ext4',
+      uuid: expectedStorageIdentity.filesystemUuid,
+      partuuid: expectedStorageIdentity.partitionUuid,
+      id: targetMountId,
+      'maj:min': '4095:1048575',
+      fsroot: '/',
+    },
+  });
+  assert.equal(wrongDevice.status, 'offhost_worm_target_blocked');
+  assert.equal(wrongDevice.storageIdentityMatchesContract, true);
+  assert.equal(wrongDevice.mountDeviceMatchesTarget, false);
+  assert.ok(wrongDevice.blockers.includes('offhost_worm_mount_device_mismatch'));
+
+  const wrongMountIdentity = verifyOffhostWormTarget({
+    workspaceRoot: root,
+    contract,
+    mountAvailableOverride: true,
+    distinctDeviceOverride: true,
+    mountedStorageOverride: {
+      target: targetMountRoot,
+      source: '/dev/remounted-fixture',
+      fstype: 'ext4',
+      uuid: expectedStorageIdentity.filesystemUuid,
+      partuuid: expectedStorageIdentity.partitionUuid,
+      id: String(Number(targetMountId) + 1),
+      'maj:min': targetMajorMinor,
+      fsroot: '/',
+    },
+  });
+  assert.equal(wrongMountIdentity.status, 'offhost_worm_target_blocked');
+  assert.equal(wrongMountIdentity.mountDeviceMatchesTarget, true);
+  assert.equal(wrongMountIdentity.mountIdMatchesTarget, false);
+  assert.ok(wrongMountIdentity.blockers.includes('offhost_worm_mount_identity_mismatch'));
+});
+
 function custodyEvidenceFixture({ contract, targetMountRoot, receiptType = 'object_lock' }) {
   const pair = crypto.generateKeyPairSync('ed25519');
   const keyId = 'custody-key-1';
@@ -644,6 +787,124 @@ test('offhost WORM snapshot binds immutable objects and supports restore verific
   assert.equal(mutableDrill.status, 'offhost_worm_restore_drill_blocked');
   assert.equal(mutableDrill.verifiedObjectCount, 0);
   assert.deepEqual(mutableDrill.blockers, ['offhost_worm_object_not_immutable:fixture']);
+});
+
+test('offhost WORM snapshot blocks a storage-identity swap before the first target write', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-offhost-mount-swap-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const workspaceRoot = path.join(root, 'workspace');
+  const targetMountRoot = path.join(root, 'target');
+  fs.mkdirSync(workspaceRoot);
+  fs.mkdirSync(targetMountRoot);
+  const source = path.join(workspaceRoot, 'source.json');
+  fs.writeFileSync(source, '{"mount":"original"}\n');
+  const original = {
+    target: targetMountRoot,
+    source: '/dev/original',
+    fstype: 'ext4',
+    uuid: '11111111-1111-1111-1111-111111111111',
+    partuuid: '22222222-2222-2222-2222-222222222222',
+    id: directoryMountId(targetMountRoot),
+    'maj:min': deviceMajorMinor(targetMountRoot),
+    fsroot: '/',
+  };
+  const replacement = {
+    ...original,
+    id: String(Number(original.id) + 1),
+  };
+  let mountedStorage = original;
+  const result = createOffhostWormSnapshot({
+    workspaceRoot,
+    contract: {
+      version: 1,
+      kind: 'OffhostWormSnapshotContract',
+      contractId: 'mount-swap-before-write',
+      targetMountRoot,
+      expectedStorageIdentity: {
+        filesystemType: original.fstype,
+        filesystemUuid: original.uuid,
+        partitionUuid: original.partuuid,
+      },
+      requireDistinctFilesystemDevice: true,
+      requireFilesystemImmutableObjects: true,
+    },
+    sources: [{ role: 'subject', path: source }],
+    execute: true,
+    mountAvailableOverride: true,
+    distinctDeviceOverride: true,
+    mountedStorageOverride: () => mountedStorage,
+    immutableOverride: true,
+    faultInjector({ stage }) {
+      if (stage === 'after_sources_prepared') mountedStorage = replacement;
+    },
+    ...TEST_MANIFEST_AUTHORITY,
+  });
+  assert.equal(result.status, 'offhost_worm_snapshot_blocked');
+  assert.deepEqual(result.blockers, ['offhost_worm_target_mount_binding_changed']);
+  assert.equal(fs.existsSync(path.join(targetMountRoot, 'hepta-paper-worm')), false);
+});
+
+test('offhost WORM snapshot removes a just-published manifest when the storage pin changes', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-offhost-post-publish-swap-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const workspaceRoot = path.join(root, 'workspace');
+  const targetMountRoot = path.join(root, 'target');
+  fs.mkdirSync(workspaceRoot);
+  fs.mkdirSync(targetMountRoot);
+  const source = path.join(workspaceRoot, 'source.json');
+  fs.writeFileSync(source, '{"mount":"publish"}\n');
+  const original = {
+    target: targetMountRoot,
+    source: '/dev/original',
+    fstype: 'ext4',
+    uuid: '44444444-4444-4444-4444-444444444444',
+    partuuid: '55555555-5555-5555-5555-555555555555',
+    id: directoryMountId(targetMountRoot),
+    'maj:min': deviceMajorMinor(targetMountRoot),
+    fsroot: '/',
+  };
+  let mountedStorage = original;
+  const result = createOffhostWormSnapshot({
+    workspaceRoot,
+    contract: {
+      version: 1,
+      kind: 'OffhostWormSnapshotContract',
+      contractId: 'mount-swap-after-publish',
+      targetMountRoot,
+      expectedStorageIdentity: {
+        filesystemType: original.fstype,
+        filesystemUuid: original.uuid,
+        partitionUuid: original.partuuid,
+      },
+      requireDistinctFilesystemDevice: true,
+      requireFilesystemImmutableObjects: true,
+    },
+    sources: [{ role: 'subject', path: source }],
+    execute: true,
+    mountAvailableOverride: true,
+    distinctDeviceOverride: true,
+    mountedStorageOverride: () => mountedStorage,
+    immutableOverride: true,
+    faultInjector({ stage }) {
+      if (stage === 'after_manifest_publish') {
+        mountedStorage = {
+          ...original,
+          source: '/dev/replacement',
+          partuuid: '66666666-6666-6666-6666-666666666666',
+          id: String(Number(original.id) + 1),
+        };
+      }
+    },
+    ...TEST_MANIFEST_AUTHORITY,
+  });
+  assert.equal(result.status, 'offhost_worm_snapshot_blocked');
+  assert.deepEqual(result.blockers, ['offhost_worm_target_mount_binding_changed']);
+  assert.equal(result.objects.length, 1);
+  const snapshotRoot = path.dirname(path.dirname(result.objects[0].objectPath));
+  assert.equal(
+    fs.existsSync(path.join(snapshotRoot, 'OFFHOST_WORM_SNAPSHOT_MANIFEST.json')),
+    false,
+  );
 });
 
 test('new snapshot never inherits a prior snapshot custody qualification', (t) => {

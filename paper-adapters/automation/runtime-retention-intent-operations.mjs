@@ -9,6 +9,7 @@ import {
   verifyBackupRetentionEvidence,
 } from './runtime-retention-evidence-policy.mjs';
 import {
+  assertPinnedRetentionCategoryLive,
   DEFAULT_RETENTION_POLICIES,
   REACHABILITY_GOVERNED_RETENTION_CATEGORIES,
   openPinnedRetentionCategory,
@@ -21,6 +22,9 @@ import {
   runtimeRetentionCategoryRoot,
   verifyRuntimeRetentionDeletionEvidence,
 } from './runtime-retention-scope-repository.mjs';
+import {
+  withRuntimeRetentionCategoryLock,
+} from './runtime-retention-category-lock-repository.mjs';
 import { freshReachabilityManifestForIntent } from './runtime-retention-live-authority.mjs';
 import {
   bindRetentionQuarantineMembers,
@@ -74,17 +78,14 @@ function currentReachabilityRemoval(plan, entry, reachabilityManifest) {
   return Object.freeze({ verification, blockers: [...new Set(blockers)] });
 }
 
-export function preflightRemoval(plan, entry, receiptLedger, workspaceRegistry, reachabilityManifest) {
-  const blockers = [];
-  const categoryRoot = runtimeRetentionCategoryRoot(plan.runtimeRoot, entry.category);
-  let pinned = null;
-  let members = retentionMemberPaths(entry).map((candidate) => ({ path: candidate, contentHash: null }));
-  try {
-    pinned = openPinnedRetentionCategory(plan.runtimeRoot, entry.category, entry.categoryScope);
-    members = retentionRemovalMembers(entry, pinned, plan.runtimeRoot);
-  } catch (error) {
-    blockers.push(String(error?.message || error));
-  }
+function buildPreflightRemovalResult(
+  plan,
+  entry,
+  receiptLedger,
+  workspaceRegistry,
+  reachabilityManifest,
+  { blockers, categoryRoot, members, pinned },
+) {
   if (!DEFAULT_RETENTION_POLICIES[entry.category]
     || !entry.categoryScope
     || !pathWithin(categoryRoot, entry.path)
@@ -107,10 +108,14 @@ export function preflightRemoval(plan, entry, receiptLedger, workspaceRegistry, 
     blockers.push(...current.blockers);
   }
   if (!blockers.length && entry.category === 'backups') {
-    const evidence = verifyBackupRetentionEvidence(entry, receiptLedger);
+    const evidence = verifyBackupRetentionEvidence(entry, receiptLedger, {
+      pinned,
+      runtimeRoot: plan.runtimeRoot,
+    });
     if (!evidence.verified) blockers.push(...evidence.blockers);
     if (evidence.backupReceiptId !== entry.backupEvidence?.backupReceiptId
-      || evidence.restoreDrillReceiptId !== entry.backupEvidence?.restoreDrillReceiptId) {
+      || evidence.restoreDrillReceiptId !== entry.backupEvidence?.restoreDrillReceiptId
+      || evidence.generationIdentity !== entry.backupEvidence?.generationIdentity) {
       blockers.push('backup_retention_evidence_changed_after_plan');
     }
     blockers.push(...verifyBackupDeletionMinimum(
@@ -118,7 +123,15 @@ export function preflightRemoval(plan, entry, receiptLedger, workspaceRegistry, 
       entry,
       receiptLedger,
       entry.minimumRecoverableGenerations,
+      { pinned },
     ).blockers);
+    try {
+      assertPinnedRetentionCategoryLive(
+        pinned, plan.runtimeRoot, entry.category, entry.categoryScope,
+      );
+    } catch (error) {
+      blockers.push(String(error?.message || error));
+    }
   }
   let retentionDeletionEvidence = entry.retentionDeletionEvidence || null;
   let reachabilityManifestHash = entry.reachabilityManifestHash || null;
@@ -128,7 +141,7 @@ export function preflightRemoval(plan, entry, receiptLedger, workspaceRegistry, 
     reachabilityManifestHash = current.verification.reachabilityManifestHash;
     blockers.push(...current.blockers);
   }
-  const result = Object.freeze({
+  return Object.freeze({
     category: entry.category,
     path: path.resolve(entry.path),
     companionPaths: (entry.companionPaths || []).map((candidate) => path.resolve(candidate)),
@@ -146,8 +159,37 @@ export function preflightRemoval(plan, entry, receiptLedger, workspaceRegistry, 
     blockers,
     members,
   });
-  if (pinned) pinned.close();
-  return result;
+}
+
+export function preflightRemoval(plan, entry, receiptLedger, workspaceRegistry, reachabilityManifest) {
+  const blockers = [];
+  const categoryRoot = runtimeRetentionCategoryRoot(plan.runtimeRoot, entry.category);
+  let pinned = null;
+  let members = retentionMemberPaths(entry).map(
+    (candidate) => ({ path: candidate, contentHash: null }),
+  );
+  try {
+    try {
+      pinned = openPinnedRetentionCategory(
+        plan.runtimeRoot,
+        entry.category,
+        entry.categoryScope,
+      );
+      members = retentionRemovalMembers(entry, pinned, plan.runtimeRoot);
+    } catch (error) {
+      blockers.push(String(error?.message || error));
+    }
+    return buildPreflightRemovalResult(
+      plan,
+      entry,
+      receiptLedger,
+      workspaceRegistry,
+      reachabilityManifest,
+      { blockers, categoryRoot, members, pinned },
+    );
+  } finally {
+    pinned?.close();
+  }
 }
 
 export function buildRetentionIntent(plan, entries, { operationId, createdAt }) {
@@ -203,12 +245,21 @@ function inspectRetentionIntentEntry(intent, entry, {
   receiptLedger = null,
   reachabilityManifest = null,
   freshReachabilityManifest = null,
+  pinnedCategory = null,
 } = {}) {
   const blockers = [...(entry.blockers || [])];
-  let pinned = null;
+  let pinned = pinnedCategory;
   let existingMembers = [];
   try {
-    pinned = openPinnedRetentionCategory(intent.runtimeRoot, entry.category, entry.categoryScope);
+    if (!pinned) {
+      pinned = openPinnedRetentionCategory(
+        intent.runtimeRoot, entry.category, entry.categoryScope,
+      );
+    } else {
+      assertPinnedRetentionCategoryLive(
+        pinned, intent.runtimeRoot, entry.category, entry.categoryScope,
+      );
+    }
     existingMembers = entry.members.map((member) => ({
       member,
       descriptorPath: pinnedRetentionMemberPath(pinned, intent.runtimeRoot, entry.category, member.path),
@@ -218,7 +269,10 @@ function inspectRetentionIntentEntry(intent, entry, {
         if (retentionMemberHash(descriptorPath) !== member.contentHash) blockers.push('retention_entry_hash_changed_after_intent');
       }
       if (!blockers.length && entry.category === 'backups' && existingMembers.length === entry.members.length) {
-        const evidence = verifyBackupRetentionEvidence({ path: entry.path, companionPaths: entry.companionPaths }, receiptLedger);
+        const evidence = verifyBackupRetentionEvidence({
+          path: entry.path,
+          companionPaths: entry.companionPaths,
+        }, receiptLedger, { pinned, runtimeRoot: intent.runtimeRoot });
         if (!evidence.verified) blockers.push(...evidence.blockers);
         if (evidence.backupReceiptId !== entry.backupEvidence?.backupReceiptId
           || evidence.restoreDrillReceiptId !== entry.backupEvidence?.restoreDrillReceiptId) {
@@ -229,7 +283,11 @@ function inspectRetentionIntentEntry(intent, entry, {
           entry,
           receiptLedger,
           entry.minimumRecoverableGenerations,
+          { pinned },
         ).blockers);
+        assertPinnedRetentionCategoryLive(
+          pinned, intent.runtimeRoot, entry.category, entry.categoryScope,
+        );
       }
       if (!blockers.length && entry.category === 'automation-workspaces' && existingMembers.length === entry.members.length) {
         const current = verifyCurrentWorkspaceRemoval(entry, receiptLedger, workspaceRegistry);
@@ -296,37 +354,112 @@ function applyRetentionIntent(intent, {
   const removed = [];
   for (let entryIndex = 0; entryIndex < intent.entries.length; entryIndex += 1) {
     const entry = intent.entries[entryIndex];
-    const inspection = inspectRetentionIntentEntry(intent, entry, {
-      workspaceRegistry,
-      receiptLedger,
-      reachabilityManifest,
-      freshReachabilityManifest,
-    });
-    const { blockers } = inspection;
+    let inspection = null;
+    let pinnedCategory = null;
+    const inspectAndApply = (pinnedCategory = null, categoryLock = null) => {
+      inspection = inspectRetentionIntentEntry(intent, entry, {
+        workspaceRegistry,
+        receiptLedger,
+        reachabilityManifest,
+        freshReachabilityManifest,
+        pinnedCategory,
+      });
+      const { blockers } = inspection;
+      if (!entry.authorized || blockers.length) return;
+
+      const validateBackupMinimum = entry.category === 'backups'
+        ? ({ requireCurrentMinimum }) => {
+          categoryLock?.assertHeld();
+          assertPinnedRetentionCategoryLive(
+            inspection.pinned,
+            intent.runtimeRoot,
+            entry.category,
+            entry.categoryScope,
+          );
+          const minimum = verifyBackupDeletionMinimum(
+            intent.runtimeRoot,
+            entry,
+            receiptLedger,
+            entry.minimumRecoverableGenerations,
+            {
+              pinned: inspection.pinned,
+              requireCurrentMinimum,
+            },
+          );
+          if (!minimum.allowed) {
+            throw new Error(
+              minimum.blockers[0]
+                || 'backup_minimum_recoverable_generations_would_be_violated',
+            );
+          }
+          assertPinnedRetentionCategoryLive(
+            inspection.pinned,
+            intent.runtimeRoot,
+            entry.category,
+            entry.categoryScope,
+          );
+          categoryLock?.assertHeld();
+        } : null;
+
+      removeRetentionEntryThroughQuarantine(
+        intent,
+        entry,
+        entryIndex,
+        inspection.pinned,
+        {
+          faultInjector,
+          revalidateAuthority: REACHABILITY_GOVERNED.has(entry.category)
+            ? () => freshReachabilityManifestForIntent({
+              intent,
+              originalManifest: reachabilityManifest,
+              provider: reachabilityManifestProvider,
+              activeNodeIds,
+              entries: [entry],
+            })
+            : null,
+          validateQuarantinedState: validateBackupMinimum
+            ? () => validateBackupMinimum({ requireCurrentMinimum: true }) : null,
+          validateRemovedState: validateBackupMinimum
+            ? () => validateBackupMinimum({ requireCurrentMinimum: true }) : null,
+          assertCategoryLock: categoryLock?.assertHeld || null,
+        },
+      );
+    };
+
     try {
-      if (entry.authorized && !blockers.length) {
-        removeRetentionEntryThroughQuarantine(
-          intent,
-          entry,
-          entryIndex,
-          inspection.pinned,
-          {
-            faultInjector,
-            revalidateAuthority: REACHABILITY_GOVERNED.has(entry.category)
-              ? () => freshReachabilityManifestForIntent({
-                intent,
-                originalManifest: reachabilityManifest,
-                provider: reachabilityManifestProvider,
-                activeNodeIds,
-                entries: [entry],
-              })
-              : null,
-          },
-        );
+      if (entry.category !== 'backups') {
+        inspectAndApply();
+      } else {
+        try {
+          pinnedCategory = openPinnedRetentionCategory(
+            intent.runtimeRoot,
+            entry.category,
+            entry.categoryScope,
+          );
+        } catch (error) {
+          inspection = {
+            pinned: null,
+            existingMembers: [],
+            blockers: [...new Set([
+              ...(entry.blockers || []),
+              String(error?.message || error),
+            ])],
+          };
+        }
+        if (pinnedCategory) {
+          withRuntimeRetentionCategoryLock(
+            pinnedCategory,
+            entry.category,
+            (categoryLock) => {
+              inspectAndApply(pinnedCategory, categoryLock);
+            },
+          );
+        }
       }
     } finally {
-      inspection.pinned?.close();
+      (inspection?.pinned || pinnedCategory)?.close();
     }
+    const blockers = inspection?.blockers || ['runtime_retention_entry_inspection_failed'];
     removed.push({
       category: entry.category,
       path: entry.path,
@@ -489,5 +622,3 @@ export function completeRetentionIntent(intent, intentPath, {
   writeDurableJsonSync(receiptPath, receipt);
   return Object.freeze({ ...receipt, receiptPath });
 }
-
-

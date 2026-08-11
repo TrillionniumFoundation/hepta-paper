@@ -41,6 +41,7 @@ function normalizeSqlitePaper(row = {}, inventorySource = 'hepta_sqlite') {
     next_action: row.next_action,
     updated_at: row.updated_at,
     inventory_source: inventorySource,
+    campaign_local_only: Number(row.campaign_local_only) === 1,
     metadata_json: row.metadata_json || '{}',
     ledger_lifecycle_stage: row.ledger_lifecycle_stage || '',
     ledger_submission_state: row.ledger_submission_state || '',
@@ -61,8 +62,9 @@ function readSqliteRegistry({ store = null } = {}) {
   }
   const papersResult = sqliteJson(store, [
     'select p.slug,p.title,p.status,p.venue_target,p.paper_type,p.canonical_dir,p.source_dir,p.current_pdf,p.current_source_zip,p.current_verdict,p.next_action,p.updated_at,p.metadata_json,',
+    "case when json_extract(c.spec_json,'$.localOnly')=1 then 1 else 0 end as campaign_local_only,",
     'l.lifecycle_stage as ledger_lifecycle_stage,l.submission_state as ledger_submission_state,l.next_action as ledger_next_action,l.evidence_json as ledger_evidence_json',
-    'from papers p left join submission_ledger l on p.slug=l.slug order by p.slug',
+    "from papers p left join submission_ledger l on p.slug=l.slug left join paper_campaigns c on c.campaign_id=json_extract(p.metadata_json,'$.campaignId') and c.paper_id=p.slug order by p.slug",
   ].join(' '));
   const venuesResult = sqliteJson(store, [
     'select venue_id,name,kind,cycle,deadline,metadata_json',

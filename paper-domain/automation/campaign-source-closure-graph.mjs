@@ -13,6 +13,10 @@ export function campaignGraphNode(campaignId, kind, dependencies = [], options =
     ...(options.sourceClosureTerminal ? { sourceClosureTerminal: true } : {}),
     ...(options.sourceMutationPolicy ? { sourceMutationPolicy: options.sourceMutationPolicy } : {}),
     ...(options.executionIntent ? { executionIntent: options.executionIntent } : {}),
+    ...(options.advancedNumericalExecutionPlanHash ? {
+      advancedNumericalExecutionPlanHash:
+        options.advancedNumericalExecutionPlanHash,
+    } : {}),
   });
 }
 

@@ -48,6 +48,9 @@ import {
   AUTONOMOUS_RESEARCH_ONLINE_MUTATION_PROTOCOL,
 } from '../../paper-domain/automation/autonomous-research-online-mutation-contract.mjs';
 import {
+  requestFixture as autonomousSubmissionRequestFixture,
+} from './autonomous-submission-durable-outbox-fixtures.mjs';
+import {
   autonomousResearchOnlineWriterOperationManifestHash,
   AUTONOMOUS_RESEARCH_ONLINE_WRITER_INTEGRATED_PROTOCOL_STATUS,
   AUTONOMOUS_RESEARCH_ONLINE_WRITER_MANIFEST_KIND,
@@ -64,6 +67,7 @@ const submissionRequestVerifier = Object.freeze({
     const { requestHash, ...payload } = request || {};
     return requestHash === hashRecord('AutonomousSubmissionRequest', payload);
   },
+  verifyHumanAuthorization() { return true; },
 });
 
 const SOURCE_ENTRYPOINTS = Object.freeze({
@@ -393,49 +397,6 @@ function fullyAuthorizedDispatch(label) {
   });
 }
 
-function autonomousSubmissionRequest(label) {
-  const bindings = {
-    immutableCampaignPackageOutputHash: H(`autonomous-package:${label}`),
-    venueId: 'venue:autonomous',
-    campaignReleaseBundleHash: H(`autonomous-release:${label}`),
-    venueProfileHash: H('autonomous-venue-profile'),
-    qualificationReceiptHash: H(`autonomous-qualification:${label}`),
-    submissionMetadataReceiptHash: H('autonomous-metadata'),
-    venueComplianceReceiptHash: H(`autonomous-compliance:${label}`),
-    portalConfigurationHash: H('autonomous-portal-configuration'),
-  };
-  const payload = {
-    version: 3,
-    kind: 'AutonomousSubmissionRequest',
-    campaignId: `campaign:${label}`,
-    paperId: `paper:${label}`,
-    venueId: bindings.venueId,
-    venueProfileHash: bindings.venueProfileHash,
-    venueProfileSelectionHash: H('autonomous-venue-selection'),
-    submissionPortalProfileId: 'autonomous-portal-v1',
-    campaignReleaseBundleHash: bindings.campaignReleaseBundleHash,
-    immutableCampaignPackageOutputHash: bindings.immutableCampaignPackageOutputHash,
-    sourceSnapshotHash: H(`autonomous-source:${label}`),
-    sourceTreeManifestHash: H(`autonomous-tree:${label}`),
-    researchEvidenceCapsuleManifestHash: H(`autonomous-capsule:${label}`),
-    qualificationReceiptHash: bindings.qualificationReceiptHash,
-    venueComplianceReceiptHash: bindings.venueComplianceReceiptHash,
-    submissionMetadataReceiptHash: bindings.submissionMetadataReceiptHash,
-    renderedSourceHash: H(`autonomous-rendered:${label}`),
-    compiledPdfHash: H(`autonomous-pdf:${label}`),
-    independentRebuiltPdfHash: H(`autonomous-independent-pdf:${label}`),
-    pageCount: 8,
-    portalConfigurationHash: bindings.portalConfigurationHash,
-    idempotencyKey: hashRecord('AutonomousSubmissionIdempotencyKey', bindings),
-    humanApprovalPerformed: false,
-    requestedAt: NOW.toISOString(),
-  };
-  return Object.freeze({
-    ...payload,
-    requestHash: hashRecord('AutonomousSubmissionRequest', payload),
-  });
-}
-
 test('submission strict native store rejects unactivated coordination before filesystem I/O', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-native-submission-blocked-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -515,7 +476,11 @@ test('strict submission plans atomically bind authorization and prepared ledger 
 
 test('strict autonomous outbox finalizes durable intent before issuing side-effect permit', (t) => {
   const { authority, store } = setup(t);
-  const clock = Object.freeze({ now: () => NOW, nowIso: () => NOW.toISOString() });
+  const authorizationNow = new Date('2026-07-19T02:00:00.000Z');
+  const clock = Object.freeze({
+    now: () => authorizationNow,
+    nowIso: () => authorizationNow.toISOString(),
+  });
   const submissionDispatchAuthority = createAutonomousSubmissionDispatchAuthority();
   const api = createAutonomousSubmissionOutboxRepository({
     store,
@@ -524,15 +489,15 @@ test('strict autonomous outbox finalizes durable intent before issuing side-effe
     submissionRequestVerifier,
     dispatchCapability: submissionDispatchAuthority.outbox,
   });
-  const request = autonomousSubmissionRequest('fenced');
+  const request = autonomousSubmissionRequestFixture();
   const prepared = api.prepareAutonomousSubmission({
     request,
-    portalId: 'portal:autonomous',
+    portalId: request.portalId,
   });
   assert.equal(prepared.stateReceipt.state, 'prepared');
   const dispatching = api.beginAutonomousSubmissionAttempt({
     request,
-    portalId: 'portal:autonomous',
+    portalId: request.portalId,
   });
   assert.equal(dispatching.stateReceipt.state, 'dispatching');
   assert.match(dispatching.sideEffectPermitHash, /^sha256:[0-9a-f]{64}$/);

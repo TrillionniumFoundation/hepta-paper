@@ -12,7 +12,7 @@ import {
 } from '../../paper-application/automation/autonomous-research-submission-recovery.mjs';
 import {
   verifyAutonomousLiveSubmissionAuthorization,
-} from '../../paper-adapters/submission/live-authorization.mjs';
+} from '../../paper-adapters/automation/autonomous-live-submission-authorization-verifier.mjs';
 
 function configuredPortalConfiguration(environment) {
   return readConfiguredAutonomousSubmissionPortalDescriptorConfiguration({

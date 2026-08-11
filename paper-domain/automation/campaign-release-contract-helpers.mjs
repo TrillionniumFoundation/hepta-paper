@@ -3,6 +3,82 @@ import { workspaceExecutionMerkleHash } from '../../workflow-kernel/runtime/work
 import { hashPaperRecord, hashPaperSemanticIdentity } from '../contracts/primitives.mjs';
 import { verifyExperimentRegistry } from '../research/experiment-registry-verifier.mjs';
 import { verifyCampaignResearchSourceSnapshot } from './campaign-research-contract.mjs';
+import {
+  verifyAdvancedNumericalCampaignExecutionPlan,
+  verifyCampaignAdvancedNumericalExecutionResult,
+} from './advanced-numerical-campaign-execution-contract.mjs';
+
+export const EMPIRICAL_ASSERTION_RELEASE_HASH_FIELDS = Object.freeze([
+  'empiricalAssertionAuthorityHash',
+  'empiricalAssertionUniverseHash',
+  'empiricalAssertionUniverseBindingHash',
+  'empiricalAssertionManuscriptCorpusHash',
+]);
+
+export function empiricalAssertionReleaseHashes(record) {
+  return Object.fromEntries(
+    EMPIRICAL_ASSERTION_RELEASE_HASH_FIELDS.map((field) => [field, record?.[field] || null]),
+  );
+}
+
+export function empiricalAssertionReleaseHashesMatch(left, right) {
+  return EMPIRICAL_ASSERTION_RELEASE_HASH_FIELDS.every(
+    (field) => (left?.[field] || null) === (right?.[field] || null),
+  );
+}
+
+export function advancedNumericalReleaseEvidenceValid({
+  campaignPlanHash,
+  campaignId,
+  paperId,
+  plan,
+  evidence,
+} = {}) {
+  if (!plan && !evidence) return true;
+  if (!plan || !evidence
+    || !verifyAdvancedNumericalCampaignExecutionPlan(plan, {
+      campaignId,
+      paperId,
+      nodeId: evidence.nodeId,
+    })) return false;
+  const node = {
+    nodeId: evidence.nodeId,
+    kind: 'advanced-numerical-analysis',
+    attemptId: evidence.attemptId,
+    leaseGeneration: evidence.leaseGeneration,
+  };
+  const campaign = {
+    campaignId,
+    paperId,
+    spec: { campaignPlanHash },
+  };
+  const result = evidence.result;
+  return verifyCampaignAdvancedNumericalExecutionResult(result, {
+    campaign,
+    node,
+    plan,
+    requirePromotionEligible: true,
+  })
+    && evidence.executionPlanHash
+      === plan.advancedNumericalCampaignExecutionPlanHash
+    && evidence.executionReceiptHash
+      === result.advancedNumericalCampaignExecutionReceiptHash
+    && evidence.evidenceHash === result.advancedNumericalCampaignEvidenceHash
+    && evidence.evidenceDocumentHash === result.evidenceDocumentHash
+    && evidence.productionQualified === true
+    && evidence.promotionEligible === true;
+}
+
+export function autonomousManuscriptSourceRowsMatch(binding, sourceTreeManifest) {
+  if (!binding) return true;
+  const rows = new Map((sourceTreeManifest?.rows || []).map((row) => [row.path, row]));
+  const expected = [
+    [binding.manuscriptPath, binding.renderedManuscriptHash],
+    ['AUTONOMOUS_MANUSCRIPT_IR.json', binding.manuscriptIrFileHash],
+    ['AUTONOMOUS_MANUSCRIPT_IR_DRAFT.json', binding.agentAuthoredSourceDraftFileHash],
+  ].filter(([, hash]) => hash);
+  return expected.every(([path, hash]) => rows.get(path)?.hash === hash);
+}
 
 export function required(value, name) {
   const normalized = String(value || '').trim();

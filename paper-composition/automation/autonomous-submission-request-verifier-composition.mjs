@@ -50,7 +50,7 @@ import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
 import {
   verifyAutonomousLiveSubmissionAuthorizationReceiptAuthority,
-} from '../../paper-adapters/submission/live-authorization.mjs';
+} from '../../paper-adapters/automation/autonomous-live-submission-authorization-verifier.mjs';
 
 function observedNow(clock) {
   const value = typeof clock?.now === 'function' ? clock.now() : new Date();

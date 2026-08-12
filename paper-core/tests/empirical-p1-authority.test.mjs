@@ -35,10 +35,10 @@ import {
   verifyArtifactWriteReceiptSource,
   verifyIndependentRawEventArtifactRecomputation,
 } from '../../paper-adapters/research-verify/experiment-registry-authority-verifier.mjs';
-import { buildEmpiricalEnvironmentBom } from '../../paper-domain/automation/environment-bom-contract.mjs';
 import {
+  buildEmpiricalEnvironmentBom,
   runRawEventRecomputationInSandboxTestFixture,
-} from './support/raw-event-recomputation-sandbox-fixture.mjs';
+} from './support/empirical-authority-fixture.mjs';
 
 function fixtureEmpiricalClaimDeclarations(protocol) {
   return protocol.hypotheses.map((hypothesis) => ({

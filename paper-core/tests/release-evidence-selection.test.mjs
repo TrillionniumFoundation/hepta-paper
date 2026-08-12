@@ -476,6 +476,214 @@ test('retirement lifecycle never infers deletion authority from an unverified re
   assert.deepEqual(status.restoreDrillEvidenceBlockers, ['signature_invalid']);
 });
 
+test('retirement lifecycle property matrix distinguishes presence and current authority', () => {
+  const immutableReceipt = {
+    status: 'legacy_reference_ext4_inode_immutable',
+    immutableContentObjectClaimed: true,
+  };
+  const immutableSnapshotEvidence = {
+    status: 'legacy_immutable_snapshot_current_evidence_verified',
+    releaseEvidenceReady: true,
+    receipt: immutableReceipt,
+    blockers: [],
+  };
+  const cases = [
+    [true, true, 'legacy_root_present'],
+    [false, true, 'legacy_root_deleted_with_current_authorization'],
+    [false, false, 'legacy_root_deleted_under_prior_authorization_current_gate_blocked'],
+  ];
+  for (const [liveLegacyRootPresent, authorized, expectedStatus] of cases) {
+    const status = retirementLifecycleStatus({
+      liveLegacyRootPresent,
+      deletionDrill: authorized
+        ? { status: 'passed', physicalDeletionAllowed: true }
+        : null,
+      deletionDrillEvidence: authorized
+        ? { status: 'legacy_deletion_drill_current_evidence_verified', blockers: [] }
+        : null,
+      immutableReceipt,
+      immutableSnapshotEvidence,
+    });
+    assert.equal(status.deletionLifecycleStatus, expectedStatus);
+    assert.equal(status.currentPhysicalDeletionAuthorization, authorized);
+  }
+  const absenceUnverified = retirementLifecycleStatus({
+    liveLegacyRootPresent: false,
+    immutableReceipt,
+    immutableSnapshotEvidence: {
+      ...immutableSnapshotEvidence,
+      releaseEvidenceReady: false,
+    },
+  });
+  assert.equal(absenceUnverified.deletionLifecycleStatus, 'legacy_root_absence_unverified');
+  assert.equal(absenceUnverified.immutableContentObjectClaimed, true);
+});
+
+test('release integrity primitives reject provenance and signature mutations', (t) => {
+  const digest = (character) => `sha256:${character.repeat(64)}`;
+  const provenance = {
+    version: 2,
+    kind: 'CodeProvenance',
+    packageVersion: '1.0.0',
+    commit: 'a'.repeat(40),
+    commitTree: 'b'.repeat(40),
+    tags: [],
+    treeDirty: false,
+    indexStateHash: digest('1'),
+    repositoryEntryCount: 1,
+    repositoryContentHash: digest('2'),
+    worktreeStateHash: digest('3'),
+    evidenceEnvironment: 'verification',
+    evidenceClass: 'technical_conformance',
+  };
+  assert.deepEqual(releaseIntegrityEvidence.exactCleanCodeProvenanceBlockers(provenance), []);
+  assert.equal(releaseIntegrityEvidence.assertExactCleanCodeProvenance(provenance, {
+    releaseCommitAssertion: provenance.commit,
+  }), provenance);
+  assert.equal(releaseIntegrityEvidence.exactCodeProvenanceMatches(provenance, provenance), true);
+  const provenanceMutations = [
+    (value) => { value.extra = true; },
+    (value) => { value.version = 1; },
+    (value) => { value.commit = 'invalid'; },
+    (value) => { value.commitTree = 'invalid'; },
+    (value) => { value.indexStateHash = 'invalid'; },
+    (value) => { value.repositoryContentHash = 'invalid'; },
+    (value) => { value.worktreeStateHash = 'invalid'; },
+    (value) => { value.repositoryEntryCount = 0; },
+    (value) => { value.tags = ['v1', 'v1']; },
+    (value) => { value.packageVersion = ''; },
+    (value) => { value.evidenceClass = ''; },
+    (value) => { value.treeDirty = true; },
+  ];
+  for (const mutate of provenanceMutations) {
+    const changed = structuredClone(provenance);
+    mutate(changed);
+    assert.ok(releaseIntegrityEvidence.exactCleanCodeProvenanceBlockers(changed).length > 0);
+    assert.equal(releaseIntegrityEvidence.exactCodeProvenanceMatches(changed, provenance), false);
+  }
+  assert.throws(
+    () => releaseIntegrityEvidence.assertExactCleanCodeProvenance(provenance, {
+      releaseCommitAssertion: 'c'.repeat(40),
+    }),
+    /release_commit_environment_mismatch/,
+  );
+
+  const payload = { version: 1, kind: 'ReleaseSignatureMutationFixture' };
+  const pair = crypto.generateKeyPairSync('ed25519');
+  const publicKeyPem = pair.publicKey.export({ type: 'spki', format: 'pem' });
+  const canonical = Buffer.from(JSON.stringify(payload), 'utf8');
+  const signature = {
+    version: 1,
+    kind: 'ReleaseIntegritySignature',
+    role: 'local_release_integrity',
+    algorithm: 'ed25519',
+    publicKeyFingerprint: releaseIntegrityEvidence.sha256Bytes(publicKeyPem),
+    publicKeyPem,
+    payloadHash: releaseIntegrityEvidence.sha256Bytes(canonical),
+    signature: crypto.sign(null, canonical, pair.privateKey).toString('base64'),
+    authorityLimit: RELEASE_INTEGRITY_AUTHORITY_LIMIT,
+  };
+  assert.equal(releaseIntegrityEvidence.verifyReleaseIntegritySignature(payload, signature), true);
+  const rsa = crypto.generateKeyPairSync('rsa', { modulusLength: 1024 });
+  const signatureMutations = [
+    (value) => { value.extra = true; },
+    (value) => { value.version = 2; },
+    (value) => { value.kind = 'Other'; },
+    (value) => { value.role = 'owner'; },
+    (value) => { value.algorithm = 'rsa'; },
+    (value) => { value.authorityLimit = 'unbounded'; },
+    (value) => { value.payloadHash = 'invalid'; },
+    (value) => { value.publicKeyFingerprint = 'invalid'; },
+    (value) => { value.publicKeyPem = 1; },
+    (value) => { value.signature = '*'; },
+    (value) => { value.signature = Buffer.alloc(63).toString('base64'); },
+    (value) => {
+      value.publicKeyPem = rsa.publicKey.export({ type: 'spki', format: 'pem' });
+      value.publicKeyFingerprint = releaseIntegrityEvidence.sha256Bytes(value.publicKeyPem);
+    },
+    (value) => { value.publicKeyFingerprint = digest('f'); },
+    (value) => { value.payloadHash = digest('e'); },
+  ];
+  for (const mutate of signatureMutations) {
+    const changed = structuredClone(signature);
+    mutate(changed);
+    assert.equal(releaseIntegrityEvidence.verifyReleaseIntegritySignature(payload, changed), false);
+  }
+  assert.equal(releaseIntegrityEvidence.verifyReleaseIntegritySignature(payload, signature, {
+    pinnedPublicKeyPem: 'different',
+  }), false);
+  assert.equal(releaseIntegrityEvidence.verifyReleaseIntegritySignature(payload, signature, {
+    pinnedPublicKeyFingerprint: digest('d'),
+  }), false);
+  assert.equal(releaseIntegrityEvidence.verifyReleaseIntegritySignature(payload, {
+    ...signature,
+    payloadHash: null,
+  }), false);
+  assert.equal(releaseIntegrityEvidence.verifyReleaseIntegritySignature(payload, {
+    ...signature,
+    publicKeyFingerprint: null,
+  }), false);
+  const invalidPem = {
+    ...signature,
+    publicKeyPem: 'not-a-public-key',
+    publicKeyFingerprint: releaseIntegrityEvidence.sha256Bytes('not-a-public-key'),
+  };
+  assert.equal(
+    releaseIntegrityEvidence.verifyReleaseIntegritySignature(payload, invalidPem),
+    false,
+  );
+  assert.ok(releaseIntegrityEvidence.exactCleanCodeProvenanceBlockers(null).length > 0);
+  const releaseCommit = process.env.HEPTA_RELEASE_COMMIT;
+  delete process.env.HEPTA_RELEASE_COMMIT;
+  try {
+    assert.equal(releaseIntegrityEvidence.assertExactCleanCodeProvenance(provenance), provenance);
+  } finally {
+    if (releaseCommit === undefined) delete process.env.HEPTA_RELEASE_COMMIT;
+    else process.env.HEPTA_RELEASE_COMMIT = releaseCommit;
+  }
+  assert.throws(
+    () => releaseIntegrityEvidence.signReleasePayload(payload, '/unused', {
+      allowKeyCreation: true,
+    }),
+    /release_integrity_key_explicit_provision_required/,
+  );
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-release-primitives-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const child = path.join(root, 'child');
+  fs.mkdirSync(child);
+  assert.equal(releaseIntegrityEvidence.pathWithin(root, child), 'child');
+  assert.equal(releaseIntegrityEvidence.pathWithin(root, root), null);
+  assert.equal(releaseIntegrityEvidence.pathWithin(root, path.dirname(root)), null);
+  assert.equal(releaseIntegrityEvidence.existingDirectoryWithinRuntime(root, child), 'child');
+  assert.equal(releaseIntegrityEvidence.existingDirectoryWithinRuntime(root, path.join(root, 'missing')), null);
+  assert.equal(releaseIntegrityEvidence.isPlainObject(Object.create(null)), true);
+  assert.equal(releaseIntegrityEvidence.isPlainObject([]), false);
+  assert.equal(releaseIntegrityEvidence.removeExactPublishedFile({ preexisting: true }), true);
+  assert.equal(releaseIntegrityEvidence.removeExactPublishedFile({}), false);
+
+  for (const entries of [null, [{}], [{ path: child }]]) {
+    assert.throws(
+      () => releaseIntegrityEvidence.writeNoClobberJsonFiles(entries),
+      /release_evidence_artifact_set_invalid/,
+    );
+  }
+  assert.throws(
+    () => releaseIntegrityEvidence.writeNoClobberJsonFiles([
+      { path: path.join(root, 'same.json'), value: 1 },
+      { path: path.join(root, '.', 'same.json'), value: 2 },
+    ]),
+    /release_evidence_artifact_paths_not_unique/,
+  );
+  const pointerPath = path.join(root, 'CURRENT.json');
+  fs.writeFileSync(path.join(root, '.release-integrity-publication.lock'), 'held');
+  assert.throws(() => releaseIntegrityEvidence.publishJsonArtifactSet({
+    entries: [],
+    pointerPath,
+    pointerValue: { version: 1 },
+  }), /release_evidence_publication_locked/);
+});
+
 test('release verification selection accepts only the exact signed v2 receipt and pinned key', (t) => {
   const fixture = verificationFixture(t);
   const document = signedVerificationDocument(fixture);

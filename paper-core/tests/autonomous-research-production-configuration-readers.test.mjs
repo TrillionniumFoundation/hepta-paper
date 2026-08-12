@@ -387,6 +387,75 @@ test('campaign status treats a required but absent autonomous submission as pend
   );
 });
 
+test('campaign submission resolution covers local completion and fails closed before handoff', async () => {
+  const portalConfigurationHash = digest('portal-config');
+  const metadataReceiptHash = digest('metadata-receipt');
+  const preparation = {
+    autonomousSubmissionPortalConfigurationHash: portalConfigurationHash,
+    submissionMetadataReceipt: {
+      autonomousSubmissionMetadataReceiptHash: metadataReceiptHash,
+    },
+    venueProfileSelection: {
+      venueId: 'machine-research-journal',
+      profile: {
+        externalSubmissionEnabled: true,
+        submissionPortalProfileId: 'machine-research-article-v1',
+      },
+      requireExternalSubmission: true,
+    },
+  };
+  const campaign = { paperId: 'paper-submit-coverage', status: 'completed' };
+  const local = await resolveAutonomousResearchCampaignSubmission({
+    action: 'execute',
+    campaign,
+    campaignId: 'campaign-submit-coverage',
+    preparation,
+    campaignReleaseAuthority: {},
+    qualificationEligibility: { campaignFullyQualified: false },
+    localOnly: true,
+  });
+  assert.equal(local.submissionRequired, false);
+  assert.equal(local.localResearchWritingReady, true);
+  assert.equal(
+    local.campaignExecutionStatus,
+    'autonomous_research_campaign_completed_local',
+  );
+
+  const common = {
+    action: 'execute',
+    campaign,
+    campaignId: 'campaign-submit-coverage',
+    preparation,
+    campaignReleaseAuthority: {},
+    qualificationEligibility: { campaignFullyQualified: true },
+  };
+  await assert.rejects(
+    () => resolveAutonomousResearchCampaignSubmission(common),
+    /autonomous_submission_portal_descriptor_required/,
+  );
+  await assert.rejects(
+    () => resolveAutonomousResearchCampaignSubmission({
+      ...common,
+      autonomousSubmissionPortal: {
+        kind: 'AutonomousSubmissionPortalDescriptor',
+        portalId: 'machine-portal',
+        configurationHash: portalConfigurationHash,
+      },
+      autonomousVenueComplianceInspector: {
+        kind: 'AutonomousVenueComplianceInspector',
+        async inspect() {
+          return { submissionMetadataReceiptHash: metadataReceiptHash };
+        },
+      },
+      autonomousSubmissionRequestVerifier: {
+        kind: 'AutonomousSubmissionRequestVerifier',
+        verify() { return true; },
+      },
+    }),
+    /autonomous_submission_human_authorization_verifier_required/,
+  );
+});
+
 test('online mutation ports reject every missing trust-boundary method', () => {
   const cases = [
     [assertAutonomousResearchOnlineAuthorityJournalInstallerPort,

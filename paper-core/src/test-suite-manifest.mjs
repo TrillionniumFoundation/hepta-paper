@@ -100,6 +100,7 @@ const AUTOMATION_TESTS = Object.freeze([...new Set([
   'paper-core/tests/local-release-attestor-runtime.test.mjs',
   'paper-core/tests/local-release-attestor-deployment-preflight.test.mjs',
   'paper-core/tests/release-evidence-selection.test.mjs',
+  'paper-core/tests/release-integrity-evidence-mutation.test.mjs',
   'paper-core/tests/release-verification-receipt-selection.test.mjs',
   'paper-core/tests/release-evidence-input-snapshot.test.mjs',
   'paper-core/tests/legacy-immutable-snapshot.test.mjs',

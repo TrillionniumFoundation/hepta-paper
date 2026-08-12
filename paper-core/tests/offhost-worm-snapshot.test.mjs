@@ -499,6 +499,134 @@ function signedReleaseFixture({
   return Object.freeze({ root, pointerPath, bundlePath, signaturePath, bundle, pointer });
 }
 
+test('release evidence selection property matrix fails closed on filesystem and key mutations', () => {
+  const scenarios = [
+    ['missing evidence root', (_runtimeRoot) => {}, 'release_evidence_selection_missing',
+      'offhost_release_evidence_missing'],
+    ['empty evidence root', (runtimeRoot) => {
+      fs.mkdirSync(path.join(runtimeRoot, 'release-evidence'));
+    }, 'release_evidence_selection_missing', 'offhost_release_evidence_missing'],
+    ['non-directory evidence root', (runtimeRoot) => {
+      fs.writeFileSync(path.join(runtimeRoot, 'release-evidence'), 'unsafe');
+    }, 'release_evidence_selection_blocked', 'offhost_release_evidence_root_unsafe'],
+    ['empty highest version', (runtimeRoot) => {
+      fs.mkdirSync(path.join(runtimeRoot, 'release-evidence', '1.0.0'), { recursive: true });
+    }, 'release_evidence_selection_blocked', 'offhost_release_highest_version_empty'],
+    ['invalid commit directory', (runtimeRoot) => {
+      installSigningKey(runtimeRoot);
+      fs.mkdirSync(
+        path.join(runtimeRoot, 'release-evidence', '1.0.0', 'not-a-commit'),
+        { recursive: true },
+      );
+    }, 'release_evidence_selection_blocked', 'offhost_release_commit_invalid'],
+    ['stale pointer self hash', (runtimeRoot) => {
+      const signingKey = installSigningKey(runtimeRoot);
+      const release = signedReleaseFixture({
+        runtimeRoot,
+        signingKey,
+        packageVersion: '1.0.0',
+        commit: 'b'.repeat(40),
+        generatedAt: '2026-07-11T00:00:00.000Z',
+      });
+      const pointer = JSON.parse(fs.readFileSync(release.pointerPath, 'utf8'));
+      pointer.generatedAt = '2026-07-12T00:00:00.000Z';
+      fs.chmodSync(release.pointerPath, 0o600);
+      writeJsonReadOnly(release.pointerPath, pointer);
+      fs.chmodSync(release.pointerPath, 0o444);
+    }, 'release_evidence_selection_blocked', 'offhost_release_pointer_hash_invalid'],
+    ['stale bundle self hash', (runtimeRoot) => {
+      const signingKey = installSigningKey(runtimeRoot);
+      const release = signedReleaseFixture({
+        runtimeRoot,
+        signingKey,
+        packageVersion: '1.0.0',
+        commit: 'c'.repeat(40),
+        generatedAt: '2026-07-11T00:00:00.000Z',
+      });
+      const bundle = JSON.parse(fs.readFileSync(release.bundlePath, 'utf8'));
+      bundle.authorityStatus.mutated = true;
+      fs.chmodSync(release.bundlePath, 0o600);
+      writeJsonReadOnly(release.bundlePath, bundle);
+      fs.chmodSync(release.bundlePath, 0o444);
+    }, 'release_evidence_selection_blocked', 'offhost_release_bundle_not_ready_or_bound'],
+    ['unexpected signing key entry', (runtimeRoot) => {
+      const signingKey = installSigningKey(runtimeRoot);
+      signedReleaseFixture({
+        runtimeRoot,
+        signingKey,
+        packageVersion: '1.0.0',
+        commit: '7'.repeat(40),
+        generatedAt: '2026-07-11T00:00:00.000Z',
+      });
+      fs.writeFileSync(path.join(runtimeRoot, 'release-signing', 'unexpected'), 'x');
+    }, 'release_evidence_selection_blocked', 'offhost_release_signing_root_unsafe'],
+    ['unsafe private key mode', (runtimeRoot) => {
+      const signingKey = installSigningKey(runtimeRoot);
+      signedReleaseFixture({
+        runtimeRoot,
+        signingKey,
+        packageVersion: '1.0.0',
+        commit: '8'.repeat(40),
+        generatedAt: '2026-07-11T00:00:00.000Z',
+      });
+      fs.chmodSync(path.join(
+        runtimeRoot,
+        'release-signing',
+        'release-integrity-ed25519-private.pem',
+      ), 0o444);
+    }, 'release_evidence_selection_blocked', 'offhost_release_signing_key_pair_unsafe'],
+    ['unsafe public key mode', (runtimeRoot) => {
+      const signingKey = installSigningKey(runtimeRoot);
+      signedReleaseFixture({
+        runtimeRoot,
+        signingKey,
+        packageVersion: '1.0.0',
+        commit: '9'.repeat(40),
+        generatedAt: '2026-07-11T00:00:00.000Z',
+      });
+      fs.chmodSync(path.join(
+        runtimeRoot,
+        'release-signing',
+        'release-integrity-ed25519-public.pem',
+      ), 0o600);
+    }, 'release_evidence_selection_blocked', 'offhost_release_public_key_unsafe'],
+    ['non-Ed25519 public key', (runtimeRoot) => {
+      const signingKey = installSigningKey(runtimeRoot);
+      signedReleaseFixture({
+        runtimeRoot,
+        signingKey,
+        packageVersion: '1.0.0',
+        commit: 'a'.repeat(40),
+        generatedAt: '2026-07-11T00:00:00.000Z',
+      });
+      const rsa = crypto.generateKeyPairSync('rsa', { modulusLength: 1024 });
+      const publicKeyPath = path.join(
+        runtimeRoot,
+        'release-signing',
+        'release-integrity-ed25519-public.pem',
+      );
+      fs.chmodSync(publicKeyPath, 0o600);
+      fs.writeFileSync(
+        publicKeyPath,
+        rsa.publicKey.export({ type: 'spki', format: 'pem' }),
+        { mode: 0o600 },
+      );
+      fs.chmodSync(publicKeyPath, 0o444);
+    }, 'release_evidence_selection_blocked', 'offhost_release_public_key_invalid'],
+  ];
+  for (const [name, setup, status, blocker] of scenarios) {
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-release-mutation-'));
+    try {
+      setup(runtimeRoot);
+      const selection = selectLatestVerifiedReleaseEvidence(runtimeRoot);
+      assert.equal(selection.status, status, name);
+      assert.ok(selection.blockers.includes(blocker), name);
+    } finally {
+      fs.rmSync(runtimeRoot, { recursive: true, force: true });
+    }
+  }
+});
+
 test('release evidence selection orders semantic versions numerically', (t) => {
   const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-release-pointer-'));
   t.after(() => fs.rmSync(runtimeRoot, { recursive: true, force: true }));

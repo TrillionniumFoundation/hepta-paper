@@ -195,33 +195,34 @@ function signReleasePayload(payload, runtimeRoot, {
 function writeNoClobberJsonFile(file, value, {
   mode = 0o444,
   beforePostimageInspection = () => {},
+  fileSystem = fs,
 } = {}) {
   const bytes = Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
   const parent = path.dirname(file);
-  const parentStat = fs.lstatSync(parent);
+  const parentStat = fileSystem.lstatSync(parent);
   if (!parentStat.isDirectory() || parentStat.isSymbolicLink()) throw new Error('release_evidence_output_directory_unsafe');
   let descriptor;
   let identity;
   try {
-    descriptor = fs.openSync(
+    descriptor = fileSystem.openSync(
       file,
-      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL
-        | (fs.constants.O_NOFOLLOW || 0),
+      fileSystem.constants.O_WRONLY | fileSystem.constants.O_CREAT
+        | fileSystem.constants.O_EXCL | (fileSystem.constants.O_NOFOLLOW || 0),
       0o600,
     );
-    const opened = fs.fstatSync(descriptor);
-    if (!opened.isFile() || Number(opened.nlink) !== 1) throw new Error('release_evidence_output_file_unsafe');
+    const opened = fileSystem.fstatSync(descriptor);
     identity = { dev: opened.dev, ino: opened.ino };
+    if (!opened.isFile() || Number(opened.nlink) !== 1) throw new Error('release_evidence_output_file_unsafe');
     let offset = 0;
-    while (offset < bytes.length) offset += fs.writeSync(descriptor, bytes, offset);
-    fs.fchmodSync(descriptor, mode);
-    fs.fsyncSync(descriptor);
-    fs.closeSync(descriptor);
+    while (offset < bytes.length) offset += fileSystem.writeSync(descriptor, bytes, offset);
+    fileSystem.fchmodSync(descriptor, mode);
+    fileSystem.fsyncSync(descriptor);
+    fileSystem.closeSync(descriptor);
     descriptor = undefined;
     beforePostimageInspection(Object.freeze({ file, identity: Object.freeze({ ...identity }) }));
-    const persisted = fs.lstatSync(file);
+    const persisted = fileSystem.lstatSync(file);
     const persistedHash = sha256RegularFileNoFollow(file);
-    const finalStat = fs.lstatSync(file);
+    const finalStat = fileSystem.lstatSync(file);
     if (!persisted.isFile() || persisted.isSymbolicLink()
       || persisted.dev !== identity.dev || persisted.ino !== identity.ino
       || finalStat.dev !== identity.dev || finalStat.ino !== identity.ino
@@ -237,8 +238,11 @@ function writeNoClobberJsonFile(file, value, {
       identity: Object.freeze({ ...identity }),
     });
   } catch (error) {
-    if (descriptor !== undefined) fs.closeSync(descriptor);
-    if (identity && !removeExactPublishedFile({ path: file, identity, preexisting: false })) {
+    if (descriptor !== undefined) fileSystem.closeSync(descriptor);
+    if (identity && !removeExactPublishedFile(
+      { path: file, identity, preexisting: false },
+      { fileSystem },
+    )) {
       throw new Error(`release_evidence_output_rollback_incomplete:${error.message}`);
     }
     throw error;

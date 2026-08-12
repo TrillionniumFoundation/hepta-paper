@@ -141,6 +141,7 @@ const explicitlyTargetedTests = [
   'paper-core/tests/release-trust-layer-gate.test.mjs',
   'paper-core/tests/external-intake-verifier.test.mjs',
   'paper-core/tests/release-evidence-selection.test.mjs',
+  'paper-core/tests/release-integrity-evidence-mutation.test.mjs',
   'paper-core/tests/release-verification-receipt-selection.test.mjs',
   'paper-core/tests/formal-claim-binding-policy.test.mjs',
   'paper-core/tests/campaign-independent-referee.test.mjs',

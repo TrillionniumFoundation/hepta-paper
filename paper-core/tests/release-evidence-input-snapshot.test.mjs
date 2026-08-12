@@ -2,13 +2,16 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { releaseIntegrityEvidence } from '../bin/release-integrity-evidence.mjs';
 import {
   assertReleaseEvidenceInputSnapshotUnchanged,
   assertValidReleaseEvidenceInputSnapshot,
   buildReleaseEvidenceProofSetSnapshot,
+  captureReleaseEvidenceInputSnapshot,
   projectReleaseEvidenceSemanticContract,
+  releaseAttestationCodeProvenance,
 } from '../bin/release-evidence-input-snapshot.mjs';
 import {
   buildReleaseEvidenceBundle,
@@ -21,6 +24,7 @@ import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 const { publishJsonArtifactSet } = releaseIntegrityEvidence;
 
+const WORKSPACE_ROOT = path.resolve(import.meta.dirname, '..', '..');
 const hash = (character) => `sha256:${character.repeat(64)}`;
 
 function fileCapture(file, character, present = true) {
@@ -195,6 +199,52 @@ test('proof-set snapshots sort map entries and bind proof content rather than co
     changed.releaseEvidenceProofSetSnapshotHash,
   );
   assert.deepEqual(first.entries.map((entry) => entry.key), ['alpha', 'beta']);
+});
+
+test('proof-set canonicalization is deterministic across rich values and rejects ambiguity', () => {
+  const snapshot = buildReleaseEvidenceProofSetSnapshot('rich-values', new Map([
+    ['rich', {
+      binary: Buffer.from('bound bytes'),
+      date: new Date('2026-08-01T00:00:00.000Z'),
+      integer: 42n,
+      set: new Set(['beta', 'alpha']),
+      array: [true, null, 3],
+      omitted: undefined,
+    }],
+  ]));
+  const rich = snapshot.entries[0].value;
+  assert.deepEqual(rich.binary, {
+    encoding: 'base64',
+    value: Buffer.from('bound bytes').toString('base64'),
+  });
+  assert.equal(rich.date, '2026-08-01T00:00:00.000Z');
+  assert.equal(rich.integer, '42');
+  assert.deepEqual(rich.set, ['alpha', 'beta']);
+  assert.equal(Object.hasOwn(rich, 'omitted'), false);
+
+  for (const [proofs, blocker] of [
+    [new Map([['number', Number.NaN]]), 'release_evidence_input_snapshot_number_invalid'],
+    [new Map([['date', new Date(Number.NaN)]]), 'release_evidence_input_snapshot_date_invalid'],
+    [new Map([[1, true], ['1', false]]), 'release_evidence_input_snapshot_map_key_collision'],
+    [new Map([['value', () => {}]]), 'release_evidence_input_snapshot_value_invalid'],
+  ]) {
+    assert.throws(
+      () => buildReleaseEvidenceProofSetSnapshot('invalid', proofs),
+      new RegExp(blocker),
+    );
+  }
+  for (const [kind, proofs] of [[null, new Map()], ['valid', {}]]) {
+    assert.throws(
+      () => buildReleaseEvidenceProofSetSnapshot(kind, proofs),
+      /release_evidence_proof_set_inputs_invalid/,
+    );
+  }
+  const provenance = releaseAttestationCodeProvenance({
+    commit: 'a'.repeat(40),
+    treeDirty: false,
+  });
+  assert.equal(provenance.evidenceEnvironment, 'administrative');
+  assert.equal(provenance.evidenceClass, 'release_attestation');
 });
 
 test('semantic projections remove observation time but retain signed evidence time', () => {
@@ -494,6 +544,95 @@ test('bundle construction consumes a supplied snapshot and binds its single hash
   );
 });
 
+test('bundle scope and nullable evidence mutations remain fail-closed', () => {
+  const snapshot = readySnapshot();
+  assert.throws(() => buildReleaseEvidenceBundle({
+    workspaceRoot: '/different/workspace',
+    runtimeRoot: snapshot.inputs.runtimeRoot,
+    legacyRoot: snapshot.inputs.legacyRoot.path,
+    inputSnapshot: snapshot,
+  }), /release_evidence_input_snapshot_scope_mismatch/);
+
+  const blocked = mutatedSnapshot(snapshot, (value) => {
+    value.verificationReceiptEvidence.receiptHash = null;
+    value.verificationReceiptEvidence.candidateFileHash = null;
+    value.verificationReceiptEvidence.candidateRelativePath = null;
+    value.verificationReceiptEvidence.pinnedPublicKeyFingerprint = null;
+    value.capabilityManifestEvidence.pointer = null;
+    value.capabilityManifestEvidence.targetFileHash = null;
+    value.capabilityManifestEvidence.targetRelativePath = null;
+    value.capabilityManifestEvidence.pointerFileHash = null;
+    value.capabilityManifestEvidence.pointerRelativePath = null;
+    value.capabilityManifestEvidence.pinnedPublicKeyFingerprint = null;
+    value.deletionDrillEvidence.receiptHash = null;
+    value.deletionDrillEvidence.claimedReceiptHash = null;
+    value.deletionDrillEvidence.candidateFileHash = null;
+    value.deletionDrillEvidence.candidateRelativePath = null;
+    value.deletionDrillEvidence.pinnedPublicKeyFingerprint = null;
+    value.deletionDrillEvidence.receiptBlockers = undefined;
+    value.immutableSnapshotEvidence.currentArchive = null;
+    value.immutableSnapshotEvidence.receiptHash = null;
+    value.immutableSnapshotEvidence.candidateFileHash = null;
+    value.immutableSnapshotEvidence.candidatePath = null;
+    value.immutableSnapshotEvidence.signatureFileHash = null;
+    value.immutableSnapshotEvidence.signaturePath = null;
+    value.immutableSnapshotEvidence.pinnedPublicKeyFingerprint = null;
+    value.productionStoreLogicalIntegrity = null;
+    value.coldVolumeCas.status = 'cold_volume_cas_blocked';
+    value.offhostWormStatus.offHostOrOffsiteCustodyQualified = false;
+    value.trustLayerGate.status = 'code_release_trust_layers_blocked';
+  });
+  const bundle = buildReleaseEvidenceBundle({
+    workspaceRoot: blocked.inputs.workspaceRoot,
+    runtimeRoot: blocked.inputs.runtimeRoot,
+    legacyRoot: blocked.inputs.legacyRoot.path,
+    inputSnapshot: blocked,
+    now: '2026-08-01T00:00:00.000Z',
+  });
+  assert.equal(bundle.status, 'code_release_evidence_blocked');
+  assert.equal(bundle.disasterRecoveryStatus, 'disaster_recovery_blocked');
+  assert.equal(bundle.bindings.capabilityVerificationManifestHash, null);
+  assert.equal(bundle.bindings.productionStoreLogicalHash, null);
+});
+
+test('snapshot capture rejects an incomplete clean release workspace after provenance binding', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-input-capture-boundary-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const workspaceRoot = path.join(root, 'workspace');
+  const runtimeRoot = path.join(root, 'runtime');
+  const legacyRoot = path.join(root, 'legacy');
+  fs.mkdirSync(path.join(workspaceRoot, 'paper-core', 'docs'), { recursive: true });
+  fs.mkdirSync(runtimeRoot);
+  for (const relative of [
+    'package.json',
+    'package-lock.json',
+    'paper-core/docs/CURRENT_STATUS.md',
+    'RELEASE.md',
+    'CHANGELOG.md',
+  ]) {
+    fs.copyFileSync(path.join(WORKSPACE_ROOT, relative), path.join(workspaceRoot, relative));
+  }
+  for (const args of [
+    ['init', '-q'],
+    ['config', 'user.email', 'release-fixture@example.test'],
+    ['config', 'user.name', 'Release Fixture'],
+    ['add', '.'],
+    ['commit', '-qm', 'release fixture'],
+  ]) {
+    const child = spawnSync('git', args, { cwd: workspaceRoot, encoding: 'utf8' });
+    assert.equal(child.status, 0, child.stderr);
+  }
+  assert.throws(
+    () => captureReleaseEvidenceInputSnapshot({
+      workspaceRoot,
+      runtimeRoot,
+      legacyRoot,
+      environment: {},
+      now: new Date('2026-08-01T00:00:00.000Z'),
+    }),
+  );
+});
+
 test('every readiness input category changes the unified snapshot hash', async (context) => {
   const snapshot = readySnapshot();
   const cases = [
@@ -556,6 +695,28 @@ test('snapshot validation rejects stale self-hashes and capture failures fail cl
       capture: () => { throw new Error('input unavailable'); },
     }),
     /release_evidence_input_snapshot_changed/,
+  );
+
+  const invalidProofs = [
+    (value) => { value.implementationProofSet.version = 2; },
+    (value) => { value.conformanceProofSet.proofKind = 'implementation'; },
+    (value) => { value.operationalProofSet.count += 1; },
+    (value) => { value.implementationProofSet.entries[0].key = 1; },
+    (value) => { value.conformanceProofSet.entries.push(
+      structuredClone(value.conformanceProofSet.entries[0]),
+    ); },
+  ];
+  for (const mutate of invalidProofs) {
+    const invalid = structuredClone(snapshot);
+    mutate(invalid);
+    assert.throws(
+      () => assertValidReleaseEvidenceInputSnapshot(invalid),
+      /release_evidence_input_snapshot_invalid/,
+    );
+  }
+  assert.throws(
+    () => assertReleaseEvidenceInputSnapshotUnchanged({}),
+    /release_evidence_input_snapshot_boundary_invalid/,
   );
 });
 

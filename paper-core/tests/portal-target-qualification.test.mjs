@@ -31,6 +31,9 @@ import {
   JOURNAL_SUBMISSION_CONNECTOR_COVERAGE,
 } from '../../paper-domain/submission/journal-connector-coverage.mjs';
 import {
+  runPortalTargetQualificationCli,
+} from '../bin/portal-target-qualification.mjs';
+import {
   inspectPortalTargetQualificationPreflightContinuity,
 } from '../../paper-domain/submission/portal-target-qualification-preflight-continuity.mjs';
 import {
@@ -207,6 +210,72 @@ function inspectFixture(t, fixture, { pinRegistry = true } = {}) {
     now: NOW,
   });
 }
+
+test('portal qualification CLI stays read-only and fails closed across every action', () => {
+  const help = runPortalTargetQualificationCli({ argv: ['--help'], environment: {} });
+  assert.equal(help.kind, 'PortalTargetQualificationUsage');
+
+  const status = runPortalTargetQualificationCli({
+    argv: ['--action', 'status', '--require-ready'],
+    environment: {},
+    now: NOW,
+  });
+  assert.equal(status.exitCode, 2);
+  assert.equal(status.report.ready, false);
+
+  const expectedSubjectHash = `sha256:${'a'.repeat(64)}`;
+  const preflight = runPortalTargetQualificationCli({
+    argv: [
+      '--action', 'preflight',
+      '--target', 'openreview',
+      '--expected-subject-hash', `openreview=${expectedSubjectHash}`,
+      '--require-ready',
+    ],
+    environment: {},
+    now: NOW,
+  });
+  assert.equal(preflight.exitCode, 2);
+  assert.equal(preflight.report.ready, false);
+
+  assert.throws(
+    () => runPortalTargetQualificationCli({
+      argv: ['--action', 'import-plan'],
+      environment: {},
+      now: NOW,
+    }),
+    /portal_target_qualification_candidate_pin_required/,
+  );
+  assert.throws(
+    () => runPortalTargetQualificationCli({
+      argv: [
+        '--action', 'import-execute', '--execute',
+        '--plan-hash', expectedSubjectHash,
+      ],
+      environment: {},
+      now: NOW,
+    }),
+    /portal_target_qualification_candidate_pin_required/,
+  );
+  assert.throws(
+    () => runPortalTargetQualificationCli({
+      argv: ['--action', 'unknown'],
+      environment: {},
+      now: NOW,
+    }),
+    /portal_target_qualification_action_invalid/,
+  );
+  assert.throws(
+    () => runPortalTargetQualificationCli({
+      argv: [
+        '--action', 'preflight', '--target', 'openreview',
+        '--expected-route-hash', `tmlr=${expectedSubjectHash}`,
+      ],
+      environment: {},
+      now: NOW,
+    }),
+    /portal_target_qualification_preflight_binding_argument_invalid/,
+  );
+});
 
 test('signed production qualification remains unable to authorize live commit', () => {
   const { registry } = qualificationFixture();

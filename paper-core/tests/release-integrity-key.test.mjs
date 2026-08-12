@@ -76,6 +76,21 @@ test('narrow release signing API exposes only existing-key payload signing', (t)
   );
   assert.equal(signature.kind, 'ReleaseIntegritySignature');
   assert.equal(releaseIntegrityEvidence.verifyReleaseIntegritySignature(payload, signature), true);
+
+  const explicitAssetRoot = path.join(selected.root, 'asset-root');
+  fs.mkdirSync(explicitAssetRoot);
+  const explicitlyBound = releaseIntegrityEvidence.signReleasePayload(
+    payload,
+    selected.runtimeRoot,
+    {
+      assetRoot: explicitAssetRoot,
+      environment: NON_ISOLATED_TEST_ENVIRONMENT,
+    },
+  );
+  assert.equal(
+    releaseIntegrityEvidence.verifyReleaseIntegritySignature(payload, explicitlyBound),
+    true,
+  );
 });
 
 function sha256File(candidate) {

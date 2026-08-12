@@ -36,6 +36,9 @@ import {
   verifyIndependentRawEventArtifactRecomputation,
 } from '../../paper-adapters/research-verify/experiment-registry-authority-verifier.mjs';
 import { buildEmpiricalEnvironmentBom } from '../../paper-domain/automation/environment-bom-contract.mjs';
+import {
+  runRawEventRecomputationInSandboxTestFixture,
+} from './support/raw-event-recomputation-sandbox-fixture.mjs';
 
 function fixtureEmpiricalClaimDeclarations(protocol) {
   return protocol.hypotheses.map((hypothesis) => ({
@@ -359,7 +362,10 @@ test('host-supervised dataset trace and system-owned cells reject child spoofing
     benchmarkSelector: roots.selector, cachePolicy: 'bypass', sourceLineageHash,
     env: { HEPTA_EXPERIMENT_ATTEMPT_ID: attempt },
   });
-  const executor = createMultiLanguageEmpiricalExecutor({ workerRunner: fakeWorkerRunner });
+  const executor = createMultiLanguageEmpiricalExecutor({
+    workerRunner: fakeWorkerRunner,
+    runRawEventRecomputation: runRawEventRecomputationInSandboxTestFixture,
+  });
   const directRawReceipt = (execution, directory, { nodeId, attemptId, executionRole }) => persistCampaignExperimentRawArtifact({
     artifactRepositoryFactory,
     runtimeRoot: rawArtifactRuntimeRoot,

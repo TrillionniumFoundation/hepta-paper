@@ -1,7 +1,7 @@
 import { createWorkerEnvironmentBomPreparer } from '../../paper-adapters/runtime/worker-environment-bom-binding.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
-export const fixtureEnvironmentBomPreparer = createWorkerEnvironmentBomPreparer({
+const collectFixtureEnvironmentBom = createWorkerEnvironmentBomPreparer({
   maximumTimeoutMs: 120_000,
   maximumMemoryBytes: 1024 * 1024 * 1024,
   maximumCpuSeconds: 120,
@@ -9,6 +9,22 @@ export const fixtureEnvironmentBomPreparer = createWorkerEnvironmentBomPreparer(
   maximumOutputBytes: 256 * 1024 * 1024,
   maximumCapturedBytes: 4 * 1024 * 1024,
 });
+
+export function fixtureEnvironmentBomPreparer(input = {}) {
+  const runtimeIdentityHash = input.executionIdentity?.runtimeIdentityHash || null;
+  const executionIdentity = input.executionIdentity ? {
+    ...input.executionIdentity,
+    blasImplementationHash: hashRecord('FixtureBlasImplementation', {
+      runtimeIdentityHash,
+      language: input.language || 'unknown',
+    }),
+    numericalLibraryBehaviorHash: hashRecord('FixtureNumericalLibraryBehavior', {
+      runtimeIdentityHash,
+      language: input.language || 'unknown',
+    }),
+  } : input.executionIdentity;
+  return collectFixtureEnvironmentBom({ ...input, executionIdentity });
+}
 
 const DETERMINISTIC_CACHE_ENVIRONMENT = Object.freeze({
   HEPTA_SEED: '42',

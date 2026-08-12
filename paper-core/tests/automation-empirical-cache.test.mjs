@@ -176,12 +176,12 @@ test('empirical cache miss cannot store execution under a source hash changed af
   fs.writeFileSync(entrypoint, 'print("A")\n');
   let executions = 0;
   let cachePuts = 0;
-  const runner = createOsSandboxedWorkerRunner({
+  const runner = withFixtureEnvironmentBom(createOsSandboxedWorkerRunner({
     allowedExecutables: ['python3'], allowedRoots: [source], allowedOutputRoots: [output], allowedContainerImages: [image],
     probe: { available: true, backend: 'docker', status: 'os_sandbox_available', image },
     imageDigestResolver(candidate) { return candidate === image ? digest : null; },
     executor() { executions += 1; return { status: 0, stdout: '', stderr: '' }; },
-  });
+  }));
   const executor = createMultiLanguageEmpiricalExecutor({
     workerRunner: runner,
     runtimeImages: { python: { image, executable: 'python3' } },

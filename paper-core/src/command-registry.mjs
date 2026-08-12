@@ -524,6 +524,17 @@ export const HEPTA_PAPER_COMMAND_REGISTRY = Object.freeze(Object.fromEntries(ROU
 ])));
 
 const NPM_CLASSIFICATION = buildNpmCommandClassification(ROUTES);
+const RETAINED_NPM_ROUTE_ALIASES = new Set([
+  'coverage:critical-modules',
+  'legacy:deletion-drill',
+  'legacy:reference-verify',
+  'migration:capability-matrix-v3',
+  'migration:retirement-status',
+  'release:trust-gate',
+  'release:verify',
+  'store:logical-integrity',
+  'test',
+]);
 
 export function resolveHeptaPaperCommand(group, name) {
   return HEPTA_PAPER_COMMAND_REGISTRY[group]?.[name] || null;
@@ -543,7 +554,8 @@ export function heptaPaperCommandUsage() {
       Object.freeze(Object.fromEntries(Object.entries(HEPTA_PAPER_COMMAND_REGISTRY[group])
         .map(([name, entry]) => [name, Object.freeze({
           argv: entry.argv,
-          npmScript: entry.npmScript,
+          npmScript: RETAINED_NPM_ROUTE_ALIASES.has(entry.npmScript)
+            ? entry.npmScript : null,
           mutability: entry.mutability,
           effects: entry.effects,
         })]))),
@@ -556,13 +568,13 @@ export function heptaPaperCommandUsage() {
         unsupportedModes: entry.unsupportedModes,
         behavior: 'production_batch_fails_closed_use_explicit_compatibility_entrypoint',
       }))),
-    compatibility: 'this CLI is the supported command surface; npm scripts are classified operator, verification, maintenance, compatibility, retirement, experimental, or internal plumbing',
+    compatibility: 'this CLI is the supported command surface; retained npm scripts are verification and release plumbing, not alternate operator entrypoints',
   });
 }
 
 export function generatedNpmRouteScripts() {
   return Object.freeze(Object.fromEntries(ROUTES
-    .filter((entry) => entry.npmScript)
+    .filter((entry) => RETAINED_NPM_ROUTE_ALIASES.has(entry.npmScript))
     .map((entry) => [entry.npmScript, entry.npmCommand || entry.argv.join(' ')])));
 }
 
@@ -577,12 +589,19 @@ export function inspectNpmScriptRegistry(packageScripts = {}) {
       })],
   ));
   const surface = classifyNpmScriptSurface(Object.keys(packageScripts));
+  const retained = new Set(Object.keys(generatedAliases));
+  const retiredAliases = Object.freeze(ROUTES.map((entry) => entry.npmScript).filter(Boolean)
+    .filter((name) => !retained.has(name) && Object.hasOwn(packageScripts, name))
+    .sort());
   return Object.freeze({
-    version: 1,
+    version: 2,
     kind: 'NpmScriptRegistryInspection',
-    ready: aliasMismatches.length === 0 && surface.blocked.length === 0,
+    ready: aliasMismatches.length === 0
+      && retiredAliases.length === 0
+      && surface.blocked.length === 0,
     generatedAliases,
     aliasMismatches,
+    retiredAliases,
     blocked: surface.blocked,
   });
 }

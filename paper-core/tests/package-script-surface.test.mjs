@@ -106,7 +106,7 @@ test('root package declares the pinned reference and a non-duplicated verificati
   assert.equal(scripts['paper:real-pilot'], undefined);
   assert.equal(typeof scripts['compat:legacy-workflow-projection'], 'string');
   assert.equal(typeof scripts['experimental:real-paper-pilot'], 'string');
-  assert.equal(scripts['paper:submission-handoff'], 'node paper-core/bin/paper-submission-handoff.mjs');
+  assert.equal(scripts['paper:submission-handoff'], undefined);
   for (const name of [
     'core:baseline',
     'core:integrity',
@@ -369,13 +369,15 @@ test('full and deduplicated test suites are derived from one declarative manifes
 
 test('one declarative registry owns supported routes and npm command classification', () => {
   assert.deepEqual(inspectNpmScriptRegistry(scripts), {
-    version: 1,
+    version: 2,
     kind: 'NpmScriptRegistryInspection',
     ready: true,
     generatedAliases: generatedNpmRouteScripts(),
     aliasMismatches: [],
+    retiredAliases: [],
     blocked: [],
   });
+  assert.equal(Object.keys(scripts).length, 116);
   assert.deepEqual(heptaPaperCiCommandMatrix().nightly.map((entry) => entry.id), [
     'full-portable',
     'formal-cache',
@@ -407,16 +409,10 @@ test('one declarative registry owns supported routes and npm command classificat
     Object.values(surface.groups).flat().sort(),
     Object.keys(scripts).sort(),
   );
-  const expectedOperatorScripts = [
-    'hepta-paper',
-    ...Object.values(HEPTA_PAPER_COMMAND_REGISTRY.operator)
-      .map((entry) => entry.npmScript)
-      .filter(Boolean),
-  ].sort();
-  assert.deepEqual(surface.groups.operator, expectedOperatorScripts);
+  assert.deepEqual(surface.groups.operator, ['hepta-paper']);
   for (const entry of Object.values(HEPTA_PAPER_COMMAND_REGISTRY.operator)) {
     if (!entry.npmScript) continue;
-    assert.equal(scripts[entry.npmScript], entry.argv.join(' '), entry.npmScript);
+    assert.equal(scripts[entry.npmScript], undefined, entry.npmScript);
   }
   for (const name of [
     'check:syntax',
@@ -443,7 +439,6 @@ test('one declarative registry owns supported routes and npm command classificat
   }
   for (const name of [
     'assets:cold-volume-cas-import',
-    'automation:autonomous-research-online-schema-transition',
     'automation:runtime-build',
     'automation:runtime-bootstrap:python',
     'automation:runtime-bootstrap:r',
@@ -457,7 +452,6 @@ test('one declarative registry owns supported routes and npm command classificat
     'runtime:hygiene',
     'runtime:permissions',
     'security:sbom:write',
-    'scripts:sync',
     'store:repair-ledger-integrity',
   ]) assert.ok(surface.groups.maintenance.includes(name), name);
   for (const name of surface.groups.maintenance) {
@@ -466,7 +460,7 @@ test('one declarative registry owns supported routes and npm command classificat
     assert.equal(surface.groups.retirement.includes(name), false, name);
   }
   assert.deepEqual(surface.groups.compatibility, ['compat:legacy-workflow-projection']);
-  assert.ok(surface.groups.operator.includes('paper:submission-handoff'));
+  assert.equal(surface.groups.operator.includes('paper:submission-handoff'), false);
   for (const name of ['experimental:real-paper-pilot', 'experimental:taskflow-selftest', 'paper:real-provider-sandbox']) {
     assert.ok(surface.groups.experimental.includes(name), name);
     assert.equal(surface.groups.operator.includes(name), false, name);

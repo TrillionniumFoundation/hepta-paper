@@ -22,6 +22,9 @@ import {
   inspectStrictDatasetManifest,
 } from '../../../paper-adapters/runtime/execution-snapshot.mjs';
 import {
+  runRawEventRecomputationInSandboxTestFixture,
+} from './raw-event-recomputation-sandbox-fixture.mjs';
+import {
   buildCanonicalAnalysisProtocol,
   empiricalClaimDeclarationsFromAnalysisProtocol,
 } from '../../../paper-domain/automation/analysis-protocol-contract.mjs';
@@ -921,6 +924,7 @@ function executeHarness({
     sourceWorkspaceManifestHash,
     outputDirectory,
     armAdapterSet: adapterSet,
+    runRawEventRecomputation: runRawEventRecomputationInSandboxTestFixture,
     operatorDatasetAuthorityTrustStore: dataset.trustStore,
     runtimeRoot: dataset.runtimeRoot,
     absoluteDeadlineEpochMs: nowEpochMs + 1_200_000,

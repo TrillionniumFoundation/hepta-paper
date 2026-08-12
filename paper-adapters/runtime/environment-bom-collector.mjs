@@ -16,9 +16,14 @@ const THREAD_KEYS = Object.freeze([
   'VECLIB_MAXIMUM_THREADS',
 ]);
 
-function safeSpawn(spawnSyncImpl, executable, args) {
+function safeSpawn(spawnSyncImpl, executable, args, environment = {}) {
   try {
-    const result = spawnSyncImpl(executable, args, { encoding: 'utf8', timeout: 5000, env: { PATH: process.env.PATH || '' } });
+    const result = spawnSyncImpl(executable, args, {
+      encoding: 'utf8',
+      timeout: 5000,
+      maxBuffer: 1024 * 1024,
+      env: { PATH: process.env.PATH || '', ...environment },
+    });
     return result?.status === 0 ? String(result.stdout || '').trim() : '';
   } catch { return ''; }
 }
@@ -43,6 +48,28 @@ function cpuObservation({ readFileSyncImpl, osModule }) {
   });
 }
 
+function machineIdentityObservation(readFileSyncImpl) {
+  for (const candidate of ['/etc/machine-id', '/var/lib/dbus/machine-id']) {
+    try {
+      const value = String(readFileSyncImpl(candidate, 'utf8')).trim();
+      if (!/^[A-Za-z0-9-]{16,128}$/.test(value)) continue;
+      return Object.freeze({
+        machineIdentityHash: hashRecord('EmpiricalMachineIdentity', {
+          source: candidate,
+          value,
+        }),
+        machineIdentityObservation: candidate === '/etc/machine-id'
+          ? 'linux_etc_machine_id_hash'
+          : 'linux_dbus_machine_id_hash',
+      });
+    } catch {}
+  }
+  return Object.freeze({
+    machineIdentityHash: null,
+    machineIdentityObservation: 'unobserved',
+  });
+}
+
 function gpuObservation({ required, spawnSyncImpl }) {
   if (!required) return Object.freeze({ required: false, status: 'not_required', deviceCount: 0 });
   const csv = safeSpawn(spawnSyncImpl, 'nvidia-smi', ['--query-gpu=name,compute_cap,driver_version', '--format=csv,noheader,nounits']);
@@ -61,19 +88,115 @@ function gpuObservation({ required, spawnSyncImpl }) {
   });
 }
 
-function numericRuntimeObservation(env = {}) {
+function hostNumericalRuntimeObservation({ language, executable, env, spawnSyncImpl }) {
+  const normalizedLanguage = String(language || '').toLowerCase();
+  const probeEnvironment = Object.fromEntries(Object.entries(env || {})
+    .filter(([key]) => THREAD_KEYS.includes(key) || ['OMP_DYNAMIC', 'MKL_DYNAMIC'].includes(key)));
+  if (normalizedLanguage === 'node') {
+    const behavior = Object.freeze({
+      dot: [0.125, -0.25, 0.5, 1].reduce(
+        (sum, value, index) => sum + (value * [8, 4, 2, 1][index]),
+        0,
+      ),
+      hypot: Math.hypot(3, 4, 12),
+      log1p: Math.log1p(Number.EPSILON),
+      sqrt: Math.sqrt(2),
+    });
+    return Object.freeze({
+      blasImplementationHash: null,
+      blasImplementationObservation: 'unobserved',
+      numericalLibraryBehaviorHash: hashRecord(
+        'EmpiricalNumericalLibraryBehavior',
+        behavior,
+      ),
+      numericalLibraryBehaviorObservation: 'ecmascript_number_behavior_probe_v1',
+    });
+  }
+  const probes = {
+    python: {
+      implementation: ['-c', 'import numpy as n; n.show_config()'],
+      behavior: ['-c', 'import json,numpy as n; a=n.array([0.125,-0.25,0.5,1.0],dtype=n.float64); b=n.array([8.0,4.0,2.0,1.0],dtype=n.float64); print(json.dumps({"dot":float(n.dot(a,b)),"norm":float(n.linalg.norm(a)),"solve":float(n.linalg.solve(n.array([[3.0,1.0],[1.0,2.0]]),n.array([9.0,8.0]))[0])},sort_keys=True,separators=(",",":")))'],
+      observation: 'python_numpy_behavior_probe_v1',
+    },
+    r: {
+      implementation: ['-e', 'cat(capture.output(sessionInfo()), sep="\\n")'],
+      behavior: ['-e', 'cat(sprintf("dot=%.17g;norm=%.17g;solve=%.17g",crossprod(c(.125,-.25,.5,1),c(8,4,2,1)),sqrt(crossprod(c(.125,-.25,.5,1))),solve(matrix(c(3,1,1,2),2,2,byrow=TRUE),c(9,8))[1]))'],
+      observation: 'r_numeric_behavior_probe_v1',
+    },
+    julia: {
+      implementation: ['-e', 'using LinearAlgebra; println(BLAS.get_config())'],
+      behavior: ['-e', 'using LinearAlgebra, Printf; a=[.125,-.25,.5,1.0]; b=[8.0,4.0,2.0,1.0]; @printf("dot=%.17g;norm=%.17g;solve=%.17g",dot(a,b),norm(a),([3.0 1.0;1.0 2.0]\\[9.0,8.0])[1])'],
+      observation: 'julia_linear_algebra_behavior_probe_v1',
+    },
+  };
+  const selected = probes[normalizedLanguage];
+  if (!selected) return Object.freeze({
+    blasImplementationHash: null,
+    blasImplementationObservation: 'unobserved',
+    numericalLibraryBehaviorHash: null,
+    numericalLibraryBehaviorObservation: 'unobserved',
+  });
+  const implementation = safeSpawn(
+    spawnSyncImpl,
+    executable,
+    selected.implementation,
+    probeEnvironment,
+  );
+  const behavior = safeSpawn(
+    spawnSyncImpl,
+    executable,
+    selected.behavior,
+    probeEnvironment,
+  );
+  return Object.freeze({
+    blasImplementationHash: implementation
+      ? hashRecord('EmpiricalBlasImplementation', implementation) : null,
+    blasImplementationObservation: implementation
+      ? `${normalizedLanguage}_runtime_configuration_probe_v1` : 'unobserved',
+    numericalLibraryBehaviorHash: behavior
+      ? hashRecord('EmpiricalNumericalLibraryBehavior', behavior) : null,
+    numericalLibraryBehaviorObservation: behavior
+      ? selected.observation : 'unobserved',
+  });
+}
+
+function numericRuntimeObservation({
+  env = {}, language, executable, executionIdentity, spawnSyncImpl,
+}) {
   const threads = Object.freeze(Object.fromEntries(THREAD_KEYS
     .filter((key) => env[key] !== undefined)
     .map((key) => [key, String(env[key])])));
   const explicitSingleThreadPolicy = THREAD_KEYS.every((key) => String(env[key] || '') === '1');
   const dynamicThreadingDisabled = ['OMP_DYNAMIC', 'MKL_DYNAMIC']
     .every((key) => ['false', '0'].includes(String(env[key] || '').trim().toLowerCase()));
+  const suppliedBlasHash = SHA256.test(String(executionIdentity?.blasImplementationHash || ''))
+    ? String(executionIdentity.blasImplementationHash).toLowerCase() : null;
+  const suppliedBehaviorHash = SHA256.test(String(
+    executionIdentity?.numericalLibraryBehaviorHash || '',
+  )) ? String(executionIdentity.numericalLibraryBehaviorHash).toLowerCase() : null;
+  const observedRuntime = suppliedBlasHash || suppliedBehaviorHash
+    ? Object.freeze({
+      blasImplementationHash: suppliedBlasHash,
+      blasImplementationObservation: suppliedBlasHash
+        ? 'runtime_identity_attestation' : 'unobserved',
+      numericalLibraryBehaviorHash: suppliedBehaviorHash,
+      numericalLibraryBehaviorObservation: suppliedBehaviorHash
+        ? 'runtime_identity_attestation' : 'unobserved',
+    })
+    : executionIdentity?.runtimeType === 'container'
+      ? Object.freeze({
+        blasImplementationHash: null,
+        blasImplementationObservation: 'unobserved',
+        numericalLibraryBehaviorHash: null,
+        numericalLibraryBehaviorObservation: 'unobserved',
+      })
+      : hostNumericalRuntimeObservation({ language, executable, env, spawnSyncImpl });
   return Object.freeze({
     threads,
     dynamicThreadingDisabled,
     explicitSingleThreadPolicy,
     policyObservation: 'worker_environment_allowlist',
-    blasImplementationHash: null,
+    ...observedRuntime,
   });
 }
 
@@ -173,10 +296,17 @@ export function collectEmpiricalEnvironmentBom({
   fsModule = fs,
   osModule = os,
 } = {}) {
-  const numericRuntime = numericRuntimeObservation(env);
+  const numericRuntime = numericRuntimeObservation({
+    env,
+    language,
+    executable,
+    executionIdentity,
+    spawnSyncImpl,
+  });
   const runtime = runtimeObservation({ executionIdentity, language, executable, runtimePackageClosure, spawnSyncImpl, fsModule });
   const gpu = gpuObservation({ required: requiresGpu, spawnSyncImpl });
   const determinism = determinismObservation({ requiresGpu, determinismPolicy, deterministicSeed, numericRuntime });
+  const machineIdentity = machineIdentityObservation(readFileSyncImpl);
   const observedClaims = [
     'operating_system_and_architecture',
     'hashed_cpu_model_and_flags',
@@ -184,12 +314,18 @@ export function collectEmpiricalEnvironmentBom({
     runtime.type === 'container' ? 'container_image_content_digest' : 'host_executable_content_hash',
     ...(gpu.status === 'observed' ? ['hashed_gpu_model_compute_driver_and_runtime'] : []),
     ...(numericRuntime.explicitSingleThreadPolicy ? ['numeric_thread_environment_policy'] : []),
+    ...(machineIdentity.machineIdentityHash ? ['hashed_machine_identity'] : []),
+    ...(numericRuntime.blasImplementationHash ? ['blas_implementation_identity'] : []),
+    ...(numericRuntime.numericalLibraryBehaviorHash
+      ? ['numerical_library_behavior_identity'] : []),
   ];
   const unobservedClaims = [
-    'machine_identity',
     'bitwise_runtime_image_rebuild',
     'numerical_library_behavioral_equivalence',
+    ...(machineIdentity.machineIdentityHash ? [] : ['machine_identity']),
     ...(numericRuntime.blasImplementationHash ? [] : ['blas_implementation_identity']),
+    ...(numericRuntime.numericalLibraryBehaviorHash
+      ? [] : ['numerical_library_behavior_identity']),
     ...(runtime.packageClosure.basis === 'unobserved' ? ['runtime_package_closure'] : []),
     ...(requiresGpu && gpu.status !== 'observed' ? ['gpu_hardware_and_driver_identity'] : []),
   ];
@@ -198,6 +334,7 @@ export function collectEmpiricalEnvironmentBom({
       operatingSystem: process.platform,
       architecture: process.arch,
       kernelReleaseHash: hashRecord('EmpiricalKernelRelease', osModule.release()),
+      ...machineIdentity,
       cpu: cpuObservation({ readFileSyncImpl, osModule }),
     },
     runtime,

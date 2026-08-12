@@ -18,6 +18,7 @@ function deterministicCpuBom(overrides = {}) {
   return buildEmpiricalEnvironmentBom({
     platform: {
       operatingSystem: 'linux', architecture: 'x64', kernelReleaseHash: digest('kernel'),
+      machineIdentityHash: digest('machine'), machineIdentityObservation: 'fixture',
       cpu: { modelHash: digest('cpu-model'), flagsHash: digest('cpu-flags'), logicalProcessorCount: 8, observation: 'fixture' },
     },
     runtime: {
@@ -31,7 +32,10 @@ function deterministicCpuBom(overrides = {}) {
         OMP_NUM_THREADS: '1', OPENBLAS_NUM_THREADS: '1', MKL_NUM_THREADS: '1', NUMEXPR_NUM_THREADS: '1',
         BLIS_NUM_THREADS: '1', VECLIB_MAXIMUM_THREADS: '1',
       }, dynamicThreadingDisabled: true,
-      explicitSingleThreadPolicy: true, policyObservation: 'fixture', blasImplementationHash: null,
+      explicitSingleThreadPolicy: true, policyObservation: 'fixture',
+      blasImplementationHash: digest('blas'), blasImplementationObservation: 'fixture',
+      numericalLibraryBehaviorHash: digest('numeric-behavior'),
+      numericalLibraryBehaviorObservation: 'fixture',
     },
     limits: { timeoutMs: 30_000, memoryBytes: 512 * 1024 * 1024, cpuSeconds: 30, maximumPids: 32, maximumOutputBytes: 32 * 1024 * 1024, maximumCapturedBytes: 4 * 1024 * 1024 },
     determinism: {
@@ -114,7 +118,7 @@ test('academic, GPU, nondeterministic, and unknown executions always bypass cach
   }
 });
 
-test('collector records content identities and leaves unobservable closure/BLAS claims explicit', () => {
+test('collector records machine and numeric behavior identities while leaving unavailable BLAS explicit', () => {
   const runtimeIdentityHash = digest('host-runtime');
   const bom = collectEmpiricalEnvironmentBom({
     executionIdentity: { runtimeType: 'host', runtimeIdentityHash },
@@ -129,9 +133,35 @@ test('collector records content identities and leaves unobservable closure/BLAS 
   assert.equal(verifyEmpiricalEnvironmentBom(bom).valid, true);
   assert.match(bom.runtime.hostExecutableHash, /^sha256:[0-9a-f]{64}$/);
   assert.equal(bom.runtime.packageClosure.basis, 'unobserved');
+  assert.match(bom.platform.machineIdentityHash, /^sha256:[0-9a-f]{64}$/);
+  assert.match(bom.numericRuntime.numericalLibraryBehaviorHash, /^sha256:[0-9a-f]{64}$/);
+  assert.ok(bom.observedClaims.includes('hashed_machine_identity'));
+  assert.ok(bom.observedClaims.includes('numerical_library_behavior_identity'));
   assert.ok(bom.unobservedClaims.includes('runtime_package_closure'));
   assert.ok(bom.unobservedClaims.includes('blas_implementation_identity'));
   assert.equal(environmentBomSupportsDeterministicCpuCache(bom).cacheable, false);
+});
+
+test('collector binds runtime-attested BLAS and numerical behavior identities for container workers', () => {
+  const blasImplementationHash = digest('container-blas');
+  const numericalLibraryBehaviorHash = digest('container-numeric-behavior');
+  const bom = collectEmpiricalEnvironmentBom({
+    executionIdentity: {
+      runtimeType: 'container',
+      runtimeIdentityHash: digest('container-runtime'),
+      digest: digest('container-image'),
+      blasImplementationHash,
+      numericalLibraryBehaviorHash,
+    },
+    language: 'python',
+    executable: 'python3',
+    resourceLimits: { timeoutMs: 1000, memoryBytes: 128 * 1024 * 1024, cpuSeconds: 1, maximumPids: 8, maximumOutputBytes: 1024, maximumCapturedBytes: 1024 },
+  });
+  assert.equal(verifyEmpiricalEnvironmentBom(bom).valid, true);
+  assert.equal(bom.numericRuntime.blasImplementationHash, blasImplementationHash);
+  assert.equal(bom.numericRuntime.numericalLibraryBehaviorHash, numericalLibraryBehaviorHash);
+  assert.ok(bom.observedClaims.includes('blas_implementation_identity'));
+  assert.ok(bom.observedClaims.includes('numerical_library_behavior_identity'));
 });
 
 test('required GPU observation fails closed when the device identity is unavailable', () => {

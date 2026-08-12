@@ -21,6 +21,9 @@ import { buildDatasetAuthorizationSet } from '../../paper-domain/automation/expe
 import { systemBenchmarkArmBatchChallengeEnvironment } from '../../paper-domain/automation/system-benchmark-challenge.mjs';
 import { buildEmpiricalEnvironmentBom } from '../../paper-domain/automation/environment-bom-contract.mjs';
 import { empiricalClaimDeclarationsFromAnalysisProtocol } from '../../paper-domain/automation/analysis-protocol-contract.mjs';
+import {
+  runRawEventRecomputationInSandboxTestFixture,
+} from './support/raw-event-recomputation-sandbox-fixture.mjs';
 
 function fixture(t, prefix) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -225,6 +228,7 @@ function fixtureHarnessExecution(spec, selector, datasetMounts = []) {
     sourceWorkspaceManifestHash: `sha256:${'2'.repeat(64)}`,
     outputDirectory: spec.outputDirectory,
     armAdapterSet,
+    runRawEventRecomputation: runRawEventRecomputationInSandboxTestFixture,
     runArmBatch({ outputDirectory, batch }) {
       return fixtureRunnerReceipt({
         spec: {
@@ -427,6 +431,7 @@ test('multi-language empirical executor forwards the selector to all three syste
   const verifiedSelector = buildCampaignBenchmarkSelector({ benchmarkId: selector.benchmarkId });
   let workerRequest = null;
   const executor = createMultiLanguageEmpiricalExecutor({
+    runRawEventRecomputation: runRawEventRecomputationInSandboxTestFixture,
     workerRunner: {
       availability: { available: true },
       run(spec) {

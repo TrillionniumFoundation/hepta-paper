@@ -23,6 +23,9 @@ import { probeOsSandbox } from '../../paper-adapters/runtime/sandbox-backend-pro
 import {
   AUTONOMOUS_RESEARCH_STATE_DATABASE_ROLES,
 } from '../../paper-domain/automation/autonomous-research-state-backup-contract.mjs';
+import {
+  HEPTA_PAPER_COMMAND_REGISTRY,
+} from '../src/command-registry.mjs';
 
 function readyInput() {
   return {
@@ -464,10 +467,6 @@ test('handoff readiness can inspect an uninitialized store without weakening def
 
 test('automation-status keeps release-attestor verification behind an explicit live flag', () => {
   const source = fs.readFileSync(new URL('../bin/automation-status.mjs', import.meta.url), 'utf8');
-  const packageDocument = JSON.parse(fs.readFileSync(
-    new URL('../../package.json', import.meta.url),
-    'utf8',
-  ));
   assert.match(
     source,
     /activeReleaseAttestorVerification:\s*args\['live-release-attestor'\]\s*===\s*true/,
@@ -479,10 +478,11 @@ test('automation-status keeps release-attestor verification behind an explicit l
     /activeFormalSandboxProbe:\s*args\['live-formal-sandbox-probe'\]\s*===\s*true/,
   );
   assert.doesNotMatch(source, /activeFormalSandboxProbe:\s*true/);
-  assert.match(
-    packageDocument.scripts['automation:research-status'],
-    /--live-provider-canary --live-release-attestor$/,
-  );
+  const readinessRoute = HEPTA_PAPER_COMMAND_REGISTRY.operator['research-readiness'];
+  assert.deepEqual(readinessRoute.argv.slice(-2), [
+    '--live-provider-canary',
+    '--live-release-attestor',
+  ]);
 });
 
 test('automation-status help exits without performing readiness actions', () => {

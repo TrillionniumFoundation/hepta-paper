@@ -22,6 +22,7 @@ import {
 import {
   verifyIndependentTypedNumericOracleRecomputation,
 } from '../research/independent-typed-numeric-oracle-recomputation.mjs';
+import { verifyOsSandboxWorkerReceipt } from './os-sandbox-worker-receipt-contract.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 
@@ -29,22 +30,32 @@ function processIsolatedRecomputationEvidenceValid(independent) {
   const assurance = independent?.processIsolatedRawEventRecomputationAssurance;
   const worker = assurance?.workerReceipt;
   if (!assurance
-    || assurance.version !== 1
+    || assurance.version !== 2
     || assurance.kind !== 'ProcessIsolatedRawEventRecomputationAssurance'
     || assurance.status !== 'process_isolated_raw_event_recomputation_verified'
-    || assurance.assuranceScope !== 'process-isolated-independent-implementation-v1'
+    || assurance.assuranceScope !== 'os-sandboxed-process-independent-implementation-v1'
     || assurance.processIndependent !== true
+    || assurance.osSandboxed !== true
     || assurance.networkActionPerformed !== false
     || assurance.externalActionPerformed !== false
     || !Array.isArray(assurance.blockers) || assurance.blockers.length !== 0
     || !worker
     || worker.status !== 'process_isolated_raw_event_recomputation_verified'
+    || worker.assuranceScope !== 'process-isolated-independent-implementation-v1'
     || worker.processIndependent !== true
     || worker.networkActionPerformed !== false
     || worker.externalActionPerformed !== false
     || worker.workerPid === worker.parentPid
     || assurance.workerPid !== worker.workerPid
     || assurance.parentPid !== worker.parentPid
+    || !verifyOsSandboxWorkerReceipt(assurance.osSandboxWorkerReceipt)
+    || assurance.osSandboxWorkerReceiptHash
+      !== assurance.osSandboxWorkerReceipt?.receiptHash
+    || assurance.osSandboxEnvironmentBomHash
+      !== assurance.osSandboxWorkerReceipt?.environmentBomHash
+    || assurance.osSandboxBackend !== assurance.osSandboxWorkerReceipt?.backend
+    || JSON.stringify(worker)
+      !== String(assurance.osSandboxWorkerReceipt?.stdout || '').trim()
     || assurance.workerReceiptHash
       !== worker.processIsolatedRawEventRecomputationWorkerReceiptHash
     || assurance.rawEventRecomputationManifestHash
@@ -132,7 +143,7 @@ function rawObservationAuthorityFacts(receipt) {
     && independent?.versionedExperimentIrHash
       === receipt.versionedExperimentIrHash
     && independent?.assuranceScope
-      === 'process-isolated-independent-implementation-v1'
+      === 'os-sandboxed-process-independent-implementation-v1'
     && independent?.processIndependent === true
     && processIsolatedRecomputationEvidenceValid(independent)
     && independent?.producerManifestHash

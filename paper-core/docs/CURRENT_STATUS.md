@@ -493,16 +493,16 @@ npm run test:impacted:plan -- --base-ref <base>
 npm run test:impacted -- --base-ref <base> --shard-count 4 --shard-index 0
 npm run reference:integrity
 npm run safety:all
-npm run paper:architecture-selftest
+npm run hepta-paper -- verify architecture
 npm run coverage:architecture
 npm run coverage:critical-modules
 npm run coverage:repository
 npm run coverage:system
 npm run migration:retirement-status
-npm run owner:status
-npm run operational:status
-npm run automation:status
-npm run automation:research-status
+npm run hepta-paper -- verify owner
+npm run hepta-paper -- verify operational
+npm run hepta-paper -- operator automation
+npm run hepta-paper -- operator research-readiness
 npm run store:logical-integrity
 ```
 

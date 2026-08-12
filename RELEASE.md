@@ -202,7 +202,7 @@ acceptance timer or the final submission commit.
    every placeholder. The sealed release command also reruns the high-severity
    npm advisory audit; an unavailable advisory service or qualifying finding
    blocks the release instead of reusing a source-only or stale local result.
-5. Run `npm run release:attest`. It reruns the pure deletion/restore verification,
+5. Run `npm run hepta-paper -- maintenance release-attest`. It reruns the pure deletion/restore verification,
    publishes its current signed receipt, reselects all current evidence, and then
    publishes the signed release bundle and pointer.
 6. Require the attest result to be `code_release_evidence_ready`, recheck the

@@ -168,6 +168,7 @@ export function createMultiLanguageEmpiricalExecutor({
   cache = null,
   operatorDatasetAuthorityTrustStore = null,
   runtimeRoot = null,
+  runRawEventRecomputation = null,
 } = {}) {
   if (!workerRunner?.run) throw new Error('WorkerRunnerPort is required');
   if (cache) assertEmpiricalCachePort(cache);
@@ -391,7 +392,7 @@ export function createMultiLanguageEmpiricalExecutor({
       if (benchmarkSelector) {
         return executeSystemBenchmarkEmpiricalRun({ spec, benchmarkSelector, effectiveEnv, command, runtimeImage,
           executionIdentity, benchmarkSourceDescriptor, workerRunner, prepareRuntimeIdentity,
-          operatorDatasetAuthorityTrustStore, runtimeRoot });
+          operatorDatasetAuthorityTrustStore, runtimeRoot, runRawEventRecomputation });
       }
       const operation = () => workerRunner.run({
         executable: command.executable,

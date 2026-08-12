@@ -43,7 +43,7 @@ with `autonomous_research_supervisor_state_safety_required`; it cannot fall
 through to migration, reconciliation, or dispatch. Non-strict recovery mode is
 not admitted as fully autonomous and does not apply this startup gate.
 
-`npm run automation:autonomous-research-supervisor -- ...` is the equivalent
+`npm run hepta-paper -- operator autonomous-supervisor -- ...` is the equivalent
 package surface. The command stays in the foreground: it does not fork, write a
 PID file, or daemonize. `SIGTERM` and `SIGINT` stop new dispatch, abort the active
 worker through its execution signal, return leased nodes to a resumable paused
@@ -833,7 +833,7 @@ and validity windows are checked. The short-lived conformance and independence
 receipts therefore cannot be replayed into a replacement Pod.
 
 Run the same gate directly with
-`npm run automation:nested-runtime-platform-qualification -- --config ...`.
+`npm run hepta-paper -- operator nested-runtime-platform-qualification -- --config ...`.
 The complete command is
 `hepta-paper operator nested-runtime-platform-qualification -- ...`.
 `paper-core/deploy/nested-runtime-platform-qualification.config.example.json`

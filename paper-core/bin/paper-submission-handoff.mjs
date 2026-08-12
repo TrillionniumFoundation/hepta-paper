@@ -53,7 +53,7 @@ async function main() {
   const options = parseArguments(process.argv.slice(2));
   if (options.help) {
     process.stdout.write([
-      'Usage: npm run paper:submission-handoff -- --campaign-id <id> [options]',
+      'Usage: hepta-paper operator submission-handoff -- --campaign-id <id> [options]',
       '',
       '  --campaign-id <id>    completed campaign release to verify (required)',
       '  --root <path>         independent submission asset root',

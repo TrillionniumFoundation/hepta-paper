@@ -67,6 +67,7 @@ export function executeSystemBenchmarkHarness({
   outputDirectory,
   armAdapterSet,
   runArmBatch,
+  runRawEventRecomputation = runProcessIsolatedRawEventRecomputation,
   operatorDatasetAuthorityTrustStore = null,
   runtimeRoot = null,
   absoluteDeadlineEpochMs = Date.now() + (6 * 60 * 60 * 1000),
@@ -96,6 +97,7 @@ export function executeSystemBenchmarkHarness({
     || !Number.isSafeInteger(Number(attemptVersion)) || Number(attemptVersion) < 1
     || !Array.isArray(failedAttemptLineageHashes)
     || !outputDirectory || typeof runArmBatch !== 'function'
+    || typeof runRawEventRecomputation !== 'function'
     || !Number.isFinite(Number(absoluteDeadlineEpochMs))
     || !Number.isSafeInteger(Number(aggregateCpuSeconds)) || Number(aggregateCpuSeconds) < 1
     || !Number.isSafeInteger(Number(memoryBytes)) || Number(memoryBytes) < 1
@@ -122,6 +124,8 @@ export function executeSystemBenchmarkHarness({
         ...(!Array.isArray(failedAttemptLineageHashes) ? ['benchmark_harness_failed_attempt_lineage_invalid'] : []),
         ...(!outputDirectory ? ['benchmark_harness_output_directory_required'] : []),
         ...(typeof runArmBatch !== 'function' ? ['benchmark_harness_arm_batch_runner_required'] : []),
+        ...(typeof runRawEventRecomputation !== 'function'
+          ? ['benchmark_harness_raw_event_recomputation_runner_required'] : []),
         ...(!Number.isFinite(Number(absoluteDeadlineEpochMs)) ? ['benchmark_harness_absolute_deadline_required'] : []),
         ...(!Number.isSafeInteger(Number(aggregateCpuSeconds)) || Number(aggregateCpuSeconds) < 1 ? ['benchmark_harness_aggregate_cpu_budget_invalid'] : []),
         ...(!Number.isSafeInteger(Number(memoryBytes)) || Number(memoryBytes) < 1 ? ['benchmark_harness_memory_budget_invalid'] : []),
@@ -377,7 +381,7 @@ export function executeSystemBenchmarkHarness({
         versionedExperimentIrHash: experimentIr.versionedExperimentIrHash,
       });
       const processIsolatedRawEventRecomputationAssurance =
-        runProcessIsolatedRawEventRecomputation(independentRecomputationInput);
+        runRawEventRecomputation(independentRecomputationInput);
       const independentRawEventRecomputationAssurance =
         buildIndependentRecomputationAssurance({
           producerManifest: rawEventRecomputationManifest,

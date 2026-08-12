@@ -68,7 +68,7 @@ export function createOsSandboxedWorkerRunner({
   allowedExecutables = [], allowedRoots = [], allowedOutputRoots = [], allowGpu = false, bubblewrap = 'bwrap', prlimit = 'prlimit', docker = 'docker', dockerImage = null,
   expectedExecutableHashes = {},
   allowedContainerImages = [], allowedDatasetRoots = [], trustedDatasetSupervisorImages = [],
-  maximumTimeoutMs = 120000, maximumMemoryBytes = 1024 * 1024 * 1024, maximumCpuSeconds = 120, maximumPids = 128, maximumOutputBytes = 256 * 1024 * 1024, maximumCapturedBytes = 4 * 1024 * 1024,
+  maximumTimeoutMs = 120000, maximumMemoryBytes = 1024 * 1024 * 1024, maximumCpuSeconds = 120, maximumPids = 128, maximumOutputBytes = 256 * 1024 * 1024, maximumCapturedBytes = 4 * 1024 * 1024, maximumInputBytes = 4 * 1024 * 1024,
   executor = spawnSync, probe = null, imageDigestResolver = null, datasetSnapshotObserver = null, runtimeExecutableSnapshotObserver = null, workspaceSnapshotObserver = null,
   dockerContainerRecoveryExecutor = spawnSync,
 } = {}) {
@@ -137,7 +137,7 @@ export function createOsSandboxedWorkerRunner({
           isolation: { kernelNetworkIsolationVerified: false, filesystemNamespaceVerified: false, sourceReadOnlyVerified: false, resourceLimitsVerified: false },
         };
       }
-      const { executable, args = [], cwd, sourceRoot = null, timeoutMs = 30000, outputPaths = [], outputDirectory = null, requiresGpu = false, env = {}, executionIdentity: suppliedExecutionIdentity = null, containerImage = null, containerExecutable = null, datasetMounts = [], requireDatasetAccessProof = false, requireSeparateOutputRoot = false, requireImmutableWorkRoot = false, memoryBytes = null, cpuSeconds = null, maximumProcesses = null, requestedMaximumOutputBytes = null, language = 'unknown', determinismPolicy = 'unknown', deterministicSeed = null, runtimePackageClosure = null, runtimeBuildReproducibility = null, expectedSourceMerkleHash = null, expectedSourceWorkspaceManifestHash = null, signal = null } = spec;
+      const { executable, args = [], cwd, sourceRoot = null, timeoutMs = 30000, outputPaths = [], outputDirectory = null, requiresGpu = false, env = {}, executionIdentity: suppliedExecutionIdentity = null, containerImage = null, containerExecutable = null, datasetMounts = [], requireDatasetAccessProof = false, requireSeparateOutputRoot = false, requireImmutableWorkRoot = false, memoryBytes = null, cpuSeconds = null, maximumProcesses = null, requestedMaximumOutputBytes = null, language = 'unknown', determinismPolicy = 'unknown', deterministicSeed = null, runtimePackageClosure = null, runtimeBuildReproducibility = null, expectedSourceMerkleHash = null, expectedSourceWorkspaceManifestHash = null, standardInput = null, signal = null } = spec;
       const capabilityPreflight = evaluateExecutorCapabilityRequest({
         capabilities,
         request: { sandbox: 'kernel-isolated', requiresGpu, requiresWorkspaceIsolation: true, requiresNetworkIsolation: true, timeoutMs },
@@ -176,6 +176,16 @@ export function createOsSandboxedWorkerRunner({
       const allowedRoot = roots.find((root) => isPathWithin(root, resolvedCwd));
       const resolvedSourceRoot = path.resolve(sourceRoot || allowedRoot || resolvedCwd);
       const blockers = [];
+      const encodedStandardInput = standardInput === null
+        ? null
+        : Buffer.isBuffer(standardInput)
+          ? standardInput
+          : typeof standardInput === 'string'
+            ? Buffer.from(standardInput, 'utf8')
+            : null;
+      if (standardInput !== null && !encodedStandardInput) blockers.push('worker_standard_input_type_invalid');
+      if (encodedStandardInput && encodedStandardInput.length > maximumInputBytes) blockers.push('worker_standard_input_limit_exceeded');
+      if (signal && encodedStandardInput) blockers.push('worker_async_standard_input_unsupported');
       if (!executionAvailability.available) blockers.push('os_sandbox_runtime_unavailable');
       if (!processLimitProbe.available) blockers.push('os_sandbox_process_limit_unavailable');
       if (presentedExecutionIdentity && !issuedExecutionIdentity) blockers.push('worker_execution_identity_capability_invalid');
@@ -556,7 +566,12 @@ export function createOsSandboxedWorkerRunner({
       return finalize(withDockerContainerRecovery(executor(
         launcher,
         command,
-        { encoding: 'utf8', timeout: boundedTimeout, maxBuffer: maximumCapturedBytes },
+        {
+          encoding: 'utf8',
+          timeout: boundedTimeout,
+          maxBuffer: maximumCapturedBytes,
+          ...(encodedStandardInput ? { input: encodedStandardInput } : {}),
+        },
       )));
     },
   });

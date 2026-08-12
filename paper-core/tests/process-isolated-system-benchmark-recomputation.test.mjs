@@ -9,6 +9,9 @@ import {
 import { buildCampaignBenchmarkSelector } from '../../paper-domain/automation/campaign-benchmark-selector.mjs';
 import { buildCampaignBenchmarkSchedule } from '../../paper-domain/automation/experiment-run-contract.mjs';
 import { hashBytes } from '../../workflow-kernel/record-hash.mjs';
+import {
+  createRawEventRecomputationSandboxTestFixture,
+} from './support/raw-event-recomputation-sandbox-fixture.mjs';
 
 const workerUrl = new URL(
   '../../paper-adapters/research-verify/independent-system-benchmark-recomputation-worker.mjs',
@@ -49,11 +52,16 @@ function fixture() {
   };
 }
 
-test('numeric recomputation executes in a fresh process with a hash-bound receipt', () => {
+test('numeric recomputation executes in an OS-sandboxed process with a hash-bound receipt', () => {
   const input = fixture();
-  const assurance = runProcessIsolatedRawEventRecomputation(input);
+  const assurance = runProcessIsolatedRawEventRecomputation(input, {
+    sandboxWorkerRunner: createRawEventRecomputationSandboxTestFixture(),
+    environment: {},
+  });
   assert.equal(assurance.status, 'process_isolated_raw_event_recomputation_verified');
   assert.equal(assurance.processIndependent, true);
+  assert.equal(assurance.osSandboxed, true);
+  assert.equal(assurance.osSandboxWorkerReceipt.status, 'os_sandbox_worker_passed');
   assert.notEqual(assurance.workerPid, process.pid);
   assert.equal(assurance.parentPid, process.pid);
   assert.equal(
@@ -69,12 +77,15 @@ test('numeric recomputation executes in a fresh process with a hash-bound receip
 
 test('process verifier fails closed on a worker execution failure', () => {
   const assurance = runProcessIsolatedRawEventRecomputation(fixture(), {
-    spawnSyncImpl() {
+    sandboxWorkerRunner: createRawEventRecomputationSandboxTestFixture({
+      spawnSyncImpl() {
       return { status: 1, signal: null, error: null, stdout: '', stderr: '', pid: 99 };
-    },
+      },
+    }),
+    environment: {},
   });
   assert.equal(assurance.status, 'process_isolated_raw_event_recomputation_blocked');
-  assert.ok(assurance.blockers.includes('process_isolated_recomputation_worker_failed'));
+  assert.ok(assurance.blockers.includes('raw_event_recomputation_os_sandbox_invalid'));
 });
 
 test('numeric recomputation worker import completes without consuming open stdin', async (t) => {

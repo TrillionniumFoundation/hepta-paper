@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import {
   classifyNpmScriptSurface,
   generatedNpmRouteScripts,
+  HEPTA_PAPER_COMMAND_REGISTRY,
   heptaPaperCiCommandMatrix,
   heptaPaperCommandUsage,
   inspectNpmScriptRegistry,
@@ -17,10 +18,14 @@ const scripts = packageJson.scripts || {};
 const argumentsSet = new Set(process.argv.slice(2));
 
 if (argumentsSet.has('--write-package')) {
+  const routedScripts = new Set(Object.values(HEPTA_PAPER_COMMAND_REGISTRY)
+    .flatMap((commands) => Object.values(commands)
+      .map((command) => command.npmScript).filter(Boolean)));
   const nextPackage = {
     ...packageJson,
     scripts: {
-      ...scripts,
+      ...Object.fromEntries(Object.entries(scripts)
+        .filter(([name]) => !routedScripts.has(name))),
       ...generatedNpmRouteScripts(),
     },
   };

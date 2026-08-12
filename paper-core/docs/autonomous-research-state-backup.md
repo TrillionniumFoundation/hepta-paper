@@ -46,7 +46,7 @@ roles, and renames the complete staged root atomically; a partial failure never
 installs the target root:
 
 ```bash
-npm run automation:autonomous-research-state-provision -- \
+npm run hepta-paper -- maintenance autonomous-state-provision -- \
   --action plan \
   --runtime-root /var/lib/hepta-paper/runtime-next \
   --machine-intake-config /etc/hepta-paper/intake/config.json \
@@ -54,7 +54,7 @@ npm run automation:autonomous-research-state-provision -- \
   --dataset-root /srv/hepta-paper/datasets \
   --runtime-reproducibility-maximum-attempts-per-epoch 4 \
   --runtime-reproducibility-maximum-cost-usd-per-epoch 10
-npm run automation:autonomous-research-state-provision -- \
+npm run hepta-paper -- maintenance autonomous-state-provision -- \
   --action execute --execute --plan-id sha256:PLAN_ID \
   --runtime-root /var/lib/hepta-paper/runtime-next \
   --machine-intake-config /etc/hepta-paper/intake/config.json \
@@ -86,7 +86,7 @@ quiescence receipt covering the supervisor, submission dispatcher, strict
 acceptance process, and backup-renewal process. Plan is read-only:
 
 ```bash
-npm run automation:autonomous-research-state-partial-root-maintenance -- \
+npm run hepta-paper -- maintenance autonomous-state-partial-root-maintenance -- \
   --action plan \
   --runtime-root /var/lib/hepta-paper/runtime \
   --rescue-root /var/lib/hepta-paper-rescue \
@@ -109,7 +109,7 @@ collision fails rather than replacing a path. Existing business table schemas,
 row counts, and streamed row hashes must remain identical.
 
 ```bash
-npm run automation:autonomous-research-state-partial-root-maintenance -- \
+npm run hepta-paper -- maintenance autonomous-state-partial-root-maintenance -- \
   --action execute --execute --maintenance-plan-id sha256:PLAN_ID \
   --runtime-root /var/lib/hepta-paper/runtime \
   --rescue-root /var/lib/hepta-paper-rescue \
@@ -130,15 +130,15 @@ The supported production command is registered as
 operator route:
 
 ```bash
-npm run automation:autonomous-research-state-backup -- --action status
-npm run automation:autonomous-research-state-backup -- \
+npm run hepta-paper -- operator autonomous-state-backup -- --action status
+npm run hepta-paper -- operator autonomous-state-backup -- \
   --action backup --authority-config /run/hepta-authority/backup-client.json
-npm run automation:autonomous-research-state-backup -- \
+npm run hepta-paper -- operator autonomous-state-backup -- \
   --action restore-drill --authority-config /run/hepta-authority/backup-client.json \
   --bundle /srv/hepta-paper/runtime/backups/autonomous-research-state/<bundle-id>
-npm run automation:autonomous-research-state-backup -- \
+npm run hepta-paper -- operator autonomous-state-backup -- \
   --action renew --authority-config /run/hepta-authority/backup-client.json
-npm run automation:autonomous-research-state-backup -- \
+npm run hepta-paper -- operator autonomous-state-backup -- \
   --action reconcile-and-renew \
   --authority-config /run/hepta-authority/backup-client.json \
   --online-authority-process-config \

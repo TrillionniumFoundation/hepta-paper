@@ -44,11 +44,11 @@
       },
       {
         "name": "hepta:sbom:package-json-sha256",
-        "value": "sha256:539e576ecbe819b328c4463d5d774b52e59f0ef7cb4ddfa2bb07df5adadfac84"
+        "value": "sha256:c5fc0a106cb5d558b5303236522555fd6187abace2ce64a2c77889878791ce94"
       },
       {
         "name": "hepta:sbom:package-lock-sha256",
-        "value": "sha256:e34b7244828cd7fbf457cf28c0b94a55a99e6f71fba97c422ee080b76a8d461e"
+        "value": "sha256:d689c3532fe1c3e5bf5884e7d194cd359836bae8fd0f8d210978bf951f26b63d"
       }
     ]
   },

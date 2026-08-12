@@ -3,8 +3,7 @@
 `npm run scripts:surface` groups all package commands into seven explicit
 surfaces:
 
-- `operator`: only npm aliases backed by a route in the canonical
-  `hepta-paper` registry;
+- `operator`: only the canonical `hepta-paper` npm entrypoint;
 - `verification`: tests, coverage, CI and release gates;
 - `maintenance`: explicit repository-evidence writes, including accepting a
   vendored-reference baseline or refreshing migration hashes/receipts;
@@ -17,10 +16,11 @@ surfaces:
 - `internal`: implementation details invoked by wrapper commands.
 
 The registry lives in `paper-core/src/command-registry.mjs` and is the sole
-metadata source for the `hepta-paper` router, npm classification, generated npm
-route aliases, help output, CI command matrix, and surface tests. Run
+metadata source for the `hepta-paper` router, npm classification, retained npm
+gate aliases, help output, CI command matrix, and surface tests. Run
 `npm run scripts:check` to reject alias/classification drift or
-`npm run scripts:sync` to regenerate routed aliases. `command-surface.mjs`
+`npm run hepta-paper -- maintenance command-surface-sync` to regenerate the
+retained gate aliases and remove retired route aliases. `command-surface.mjs`
 emits the generated aliases, help, and CI matrix with `--npm-aliases`,
 `--help-artifact`, and `--ci-matrix`. A package script that is not registered
 defaults to `internal` and is reported in the top-level `blocked` list; it can
@@ -75,12 +75,12 @@ is not reinterpreted as proof of either business or administrative immutability.
 caller explicitly forwards both `--execute` and the cooperative-writer fencing
 assertion `--writer-quiesced`. It is not routed by `hepta-paper` and
 therefore cannot be mistaken for a supported operator command.
-`automation:status` emits JSON by default and accepts an explicit `--json` for
+`hepta-paper operator automation` emits JSON by default and accepts an explicit `--json` for
 machine callers. It keeps release-attestor inspection passive by default: a
 configured production backend is described, but no KMS/backend probe or
 active-key signature challenge is attempted. The explicit
 `--live-release-attestor` flag opts into those actions. The registered
-`automation:research-status` route supplies that flag together with
+`hepta-paper operator research-readiness` supplies that flag together with
 `--live-provider-canary`, so its author/reviewer canaries, independent backend
 probe, and fresh active-key challenge are all explicit external actions. Its
 external-action, network, and credential effects are classified accordingly in
@@ -110,7 +110,7 @@ publication.
 `safety:p0`, `safety:p1`, `safety:p2` and `safety:all` are the architecture
 hardening gates used by CI/test; `test` is the single root selftest entry.
 
-`paper:submission-handoff` is the read-only production bridge between the two
+`hepta-paper operator submission-handoff` is the read-only production bridge between the two
 runtime planes. It requires an explicit completed `--campaign-id`, opens the
 submission composition independently, verifies the current fenced release and
 its immutable package bytes, and emits a typed `CampaignReleaseSubmissionInput`.
@@ -144,8 +144,7 @@ human-reviewed single-use authorization.
 
 `hepta-paper operator autonomous-supervisor -- <arguments>` is the canonical
 foreground resident controller for persisted autonomous-research campaigns.
-Its registered npm alias is `automation:autonomous-research-supervisor`. The
-route is explicitly provider-costing and locally mutating; its immutable
+The route is explicitly provider-costing and locally mutating; its immutable
 lifecycle caps, signal behavior, SQLite lease/CAS recovery, and systemd/Kubernetes
 hosting contract are documented in
 `paper-core/docs/autonomous-research-supervisor.md`.

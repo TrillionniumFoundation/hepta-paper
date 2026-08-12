@@ -40,10 +40,10 @@ window has been verified.
 Inspect the exact machine-readable result with:
 
 ```bash
-npm run automation:journal-connector-coverage -- --summary
-npm run automation:journal-connector-coverage -- \
+npm run hepta-paper -- operator journal-connector-coverage -- --summary
+npm run hepta-paper -- operator journal-connector-coverage -- \
   --summary --kind journal --require-family-prototype
-npm run automation:journal-connector-coverage -- --venue <venue-id>
+npm run hepta-paper -- operator journal-connector-coverage -- --venue <venue-id>
 ```
 
 The stronger `--require-profile-resolved`, `--require-adapter-implemented`,

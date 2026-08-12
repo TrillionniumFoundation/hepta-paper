@@ -298,7 +298,7 @@ export function buildRepositoryAnalysisObservationAuthority({
       || !SHA256.test(String(independentRecomputationAssuranceHash || ''))
       || !SHA256.test(String(independentVerifierImplementationHash || ''))
       || residualCertificate?.assuranceScope
-        !== 'process-isolated-independent-implementation-v1'
+        !== 'os-sandboxed-process-independent-implementation-v1'
       || residualCertificate?.processIndependent !== true
       || residualCertificate?.verificationReceiptHash
         !== independentRecomputationAssuranceHash
@@ -482,7 +482,7 @@ export function verifyRepositoryAnalysisObservationAuthority(
       (certificate) => certificate?.oracleType === 'residual-bound-v1',
     );
     if (residualCertificate?.assuranceScope
-        !== 'process-isolated-independent-implementation-v1'
+        !== 'os-sandboxed-process-independent-implementation-v1'
       || residualCertificate?.processIndependent !== true
       || residualCertificate?.verificationReceiptHash
         !== authority.independentRecomputationAssuranceHash

@@ -1,10 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { hasExactObjectKeys } from '../../workflow-kernel/exact-object-keys.mjs';
+import { verifyOsSandboxWorkerReceipt } from '../../paper-domain/automation/os-sandbox-worker-receipt-contract.mjs';
+import { createOsSandboxedWorkerRunner } from '../runtime/os-sandboxed-worker-runner.mjs';
 import {
   INDEPENDENT_SYSTEM_BENCHMARK_RECOMPUTATION_IMPLEMENTATION,
 } from './independent-system-benchmark-recomputation.mjs';
@@ -22,12 +23,29 @@ const WORKER_RECEIPT_KEYS = Object.freeze([
 ]);
 
 export const PROCESS_ISOLATED_RAW_EVENT_RECOMPUTATION_ASSURANCE_SCOPE =
+  'os-sandboxed-process-independent-implementation-v1';
+const PROCESS_ISOLATED_RAW_EVENT_RECOMPUTATION_WORKER_SCOPE =
   'process-isolated-independent-implementation-v1';
 
 const workerPath = fileURLToPath(new URL(
   './independent-system-benchmark-recomputation-worker.mjs',
   import.meta.url,
 ));
+const repositoryRoot = path.resolve(path.dirname(workerPath), '..', '..');
+
+export function createRawEventRecomputationSandboxRunner({ timeoutMs = 120_000 } = {}) {
+  return createOsSandboxedWorkerRunner({
+    allowedExecutables: [process.execPath],
+    allowedRoots: [repositoryRoot],
+    maximumTimeoutMs: Number(timeoutMs),
+    maximumMemoryBytes: 1024 * 1024 * 1024,
+    maximumCpuSeconds: Math.max(1, Math.ceil(Number(timeoutMs) / 1000)),
+    maximumPids: 32,
+    maximumOutputBytes: MAXIMUM_RESPONSE_BYTES,
+    maximumCapturedBytes: MAXIMUM_RESPONSE_BYTES,
+    maximumInputBytes: MAXIMUM_REQUEST_BYTES,
+  });
+}
 
 function requestDocument(input = {}) {
   const versionedExperimentIrHash = SHA256.test(
@@ -48,15 +66,18 @@ function requestDocument(input = {}) {
   });
 }
 
-function parseWorkerReceipt(result, { request, workerSourceHash } = {}) {
+function parseWorkerReceipt(sandboxReceipt, { request, workerSourceHash } = {}) {
+  if (!verifyOsSandboxWorkerReceipt(sandboxReceipt)
+    || !Number.isSafeInteger(sandboxReceipt.executionProcessIdentity?.launcherPid)
+    || sandboxReceipt.executionProcessIdentity.launcherPid < 1) return null;
   let receipt = null;
-  try { receipt = JSON.parse(String(result?.stdout || '').trim()); }
+  try { receipt = JSON.parse(String(sandboxReceipt.stdout || '').trim()); }
   catch { return null; }
   if (!hasExactObjectKeys(receipt, WORKER_RECEIPT_KEYS)
     || receipt.version !== 1
     || receipt.kind !== 'ProcessIsolatedRawEventRecomputationWorkerReceipt'
     || receipt.status !== 'process_isolated_raw_event_recomputation_verified'
-    || receipt.assuranceScope !== PROCESS_ISOLATED_RAW_EVENT_RECOMPUTATION_ASSURANCE_SCOPE
+    || receipt.assuranceScope !== PROCESS_ISOLATED_RAW_EVENT_RECOMPUTATION_WORKER_SCOPE
     || receipt.processIndependent !== true
     || receipt.networkActionPerformed !== false
     || receipt.externalActionPerformed !== false
@@ -66,8 +87,8 @@ function parseWorkerReceipt(result, { request, workerSourceHash } = {}) {
       !== INDEPENDENT_SYSTEM_BENCHMARK_RECOMPUTATION_IMPLEMENTATION
         .independentSystemBenchmarkRecomputationImplementationHash
     || !Number.isSafeInteger(receipt.workerPid) || receipt.workerPid < 1
-    || receipt.workerPid === process.pid || receipt.workerPid !== result.pid
-    || receipt.parentPid !== process.pid
+    || !Number.isSafeInteger(receipt.parentPid) || receipt.parentPid < 0
+    || receipt.workerPid === receipt.parentPid
     || !Array.isArray(receipt.blockers) || receipt.blockers.length !== 0
     || receipt.manifest?.status !== 'raw_event_recomputation_verified'
     || receipt.rawEventRecomputationManifestHash
@@ -86,7 +107,7 @@ function parseWorkerReceipt(result, { request, workerSourceHash } = {}) {
 
 export function runProcessIsolatedRawEventRecomputation(input = {}, {
   timeoutMs = 120_000,
-  spawnSyncImpl = spawnSync,
+  sandboxWorkerRunner = null,
   environment = process.env,
 } = {}) {
   const request = requestDocument(input);
@@ -95,44 +116,58 @@ export function runProcessIsolatedRawEventRecomputation(input = {}, {
   if (Buffer.byteLength(encoded) > MAXIMUM_REQUEST_BYTES) {
     blockers.push('process_isolated_recomputation_request_too_large');
   }
-  let result = null;
+  let sandboxReceipt = null;
+  if (environment.HEPTA_AUTONOMOUS_EMPIRICAL_PLUGIN_BUNDLE
+    || environment.HEPTA_AUTONOMOUS_EMPIRICAL_PLUGIN_TRUST_STORE) {
+    blockers.push('raw_event_recomputation_external_plugin_configuration_not_sandbox_mounted');
+  }
   if (!blockers.length) {
-    result = spawnSyncImpl(process.execPath, [workerPath], {
-      cwd: path.dirname(workerPath),
-      env: {
-        PATH: String(environment.PATH || ''),
-        LANG: 'C.UTF-8',
-        LC_ALL: 'C.UTF-8',
-        TZ: 'UTC',
-        ...(environment.HEPTA_AUTONOMOUS_EMPIRICAL_PLUGIN_BUNDLE ? {
-          HEPTA_AUTONOMOUS_EMPIRICAL_PLUGIN_BUNDLE:
-            String(environment.HEPTA_AUTONOMOUS_EMPIRICAL_PLUGIN_BUNDLE),
-        } : {}),
-        ...(environment.HEPTA_AUTONOMOUS_EMPIRICAL_PLUGIN_TRUST_STORE ? {
-          HEPTA_AUTONOMOUS_EMPIRICAL_PLUGIN_TRUST_STORE:
-            String(environment.HEPTA_AUTONOMOUS_EMPIRICAL_PLUGIN_TRUST_STORE),
-        } : {}),
-      },
-      input: encoded,
-      encoding: 'utf8',
-      timeout: Number(timeoutMs),
-      maxBuffer: MAXIMUM_RESPONSE_BYTES,
-      windowsHide: true,
-    });
-    if (result.error || result.signal || result.status !== 0) {
-      blockers.push(result.error?.code === 'ETIMEDOUT'
-        ? 'process_isolated_recomputation_timed_out'
-        : 'process_isolated_recomputation_worker_failed');
+    const runner = sandboxWorkerRunner
+      || createRawEventRecomputationSandboxRunner({ timeoutMs });
+    try {
+      sandboxReceipt = runner?.run?.({
+        executable: process.execPath,
+        args: [workerPath],
+        cwd: repositoryRoot,
+        sourceRoot: repositoryRoot,
+        timeoutMs: Number(timeoutMs),
+        env: {
+          OMP_NUM_THREADS: '1',
+          OPENBLAS_NUM_THREADS: '1',
+          MKL_NUM_THREADS: '1',
+          NUMEXPR_NUM_THREADS: '1',
+          BLIS_NUM_THREADS: '1',
+          VECLIB_MAXIMUM_THREADS: '1',
+          OMP_DYNAMIC: 'FALSE',
+          MKL_DYNAMIC: 'FALSE',
+        },
+        standardInput: encoded,
+        requireImmutableWorkRoot: true,
+        language: 'node',
+        determinismPolicy: 'explicit_deterministic_cpu',
+        deterministicSeed: request.requestHash,
+        memoryBytes: 1024 * 1024 * 1024,
+        cpuSeconds: Math.max(1, Math.ceil(Number(timeoutMs) / 1000)),
+        maximumProcesses: 32,
+        requestedMaximumOutputBytes: MAXIMUM_RESPONSE_BYTES,
+      }) || null;
+    } catch {
+      sandboxReceipt = null;
+    }
+    if (!verifyOsSandboxWorkerReceipt(sandboxReceipt)) {
+      blockers.push('raw_event_recomputation_os_sandbox_invalid');
+      blockers.push(...(sandboxReceipt?.blockers || [])
+        .map((blocker) => `raw_event_recomputation_os_sandbox:${blocker}`));
     }
   }
   const workerSourceHash = hashBytes(fs.readFileSync(workerPath));
-  const receipt = blockers.length ? null : parseWorkerReceipt(result, {
+  const receipt = blockers.length ? null : parseWorkerReceipt(sandboxReceipt, {
     request,
     workerSourceHash,
   });
   if (!receipt) blockers.push('process_isolated_recomputation_receipt_invalid');
   const payload = {
-    version: 1,
+    version: 2,
     kind: 'ProcessIsolatedRawEventRecomputationAssurance',
     status: blockers.length
       ? 'process_isolated_raw_event_recomputation_blocked'
@@ -148,9 +183,14 @@ export function runProcessIsolatedRawEventRecomputation(input = {}, {
     independentImplementationHash:
       INDEPENDENT_SYSTEM_BENCHMARK_RECOMPUTATION_IMPLEMENTATION
         .independentSystemBenchmarkRecomputationImplementationHash,
-    parentPid: process.pid,
+    parentPid: receipt?.parentPid || null,
     workerPid: receipt?.workerPid || null,
     processIndependent: blockers.length === 0,
+    osSandboxed: blockers.length === 0,
+    osSandboxBackend: sandboxReceipt?.backend || null,
+    osSandboxWorkerReceiptHash: sandboxReceipt?.receiptHash || null,
+    osSandboxEnvironmentBomHash: sandboxReceipt?.environmentBomHash || null,
+    osSandboxWorkerReceipt: sandboxReceipt,
     networkActionPerformed: false,
     externalActionPerformed: false,
     workerReceipt: receipt,
@@ -170,11 +210,12 @@ export function verifyProcessIsolatedRawEventRecomputationAssurance(
   input = {},
 ) {
   if (!assurance
-    || assurance.version !== 1
+    || assurance.version !== 2
     || assurance.kind !== 'ProcessIsolatedRawEventRecomputationAssurance'
     || assurance.status !== 'process_isolated_raw_event_recomputation_verified'
     || assurance.assuranceScope !== PROCESS_ISOLATED_RAW_EVENT_RECOMPUTATION_ASSURANCE_SCOPE
     || assurance.processIndependent !== true
+    || assurance.osSandboxed !== true
     || assurance.networkActionPerformed !== false
     || assurance.externalActionPerformed !== false
     || !Array.isArray(assurance.blockers) || assurance.blockers.length !== 0
@@ -187,8 +228,16 @@ export function verifyProcessIsolatedRawEventRecomputationAssurance(
       !== assurance.workerReceipt?.workerImplementationSourceHash
     || assurance.workerImplementationHash
       !== assurance.workerReceipt?.workerImplementationHash
-    || assurance.parentPid !== process.pid
+    || assurance.parentPid !== assurance.workerReceipt?.parentPid
     || assurance.workerPid !== assurance.workerReceipt?.workerPid
+    || !verifyOsSandboxWorkerReceipt(assurance.osSandboxWorkerReceipt)
+    || assurance.osSandboxWorkerReceiptHash
+      !== assurance.osSandboxWorkerReceipt?.receiptHash
+    || assurance.osSandboxEnvironmentBomHash
+      !== assurance.osSandboxWorkerReceipt?.environmentBomHash
+    || assurance.osSandboxBackend !== assurance.osSandboxWorkerReceipt?.backend
+    || JSON.stringify(assurance.workerReceipt)
+      !== String(assurance.osSandboxWorkerReceipt?.stdout || '').trim()
     || !SHA256.test(String(assurance.processIsolatedRawEventRecomputationAssuranceHash || ''))) {
     return false;
   }

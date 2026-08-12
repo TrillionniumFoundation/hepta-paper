@@ -73,7 +73,8 @@ function canonicalObservationAuthority({ observations, protocol, attemptId, run 
       verificationReceiptHash: assurance,
       evidenceHashes: [assurance],
       assuranceScope: oracleType === 'property-oracle-v1'
-        ? 'producer-bound-self-check-v1' : 'process-isolated-independent-implementation-v1',
+        ? 'producer-bound-self-check-v1'
+        : 'os-sandboxed-process-independent-implementation-v1',
     })
   ));
   const typedNumericOracleCertificateSet = buildTypedNumericOracleCertificateSet({

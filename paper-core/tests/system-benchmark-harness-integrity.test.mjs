@@ -33,6 +33,9 @@ import {
   validateOperatorDatasetHarnessDefinition,
   validateOperatorDatasetSplitManifest,
 } from '../../paper-domain/automation/operator-dataset-harness-contract.mjs';
+import {
+  runRawEventRecomputationInSandboxTestFixture,
+} from './support/raw-event-recomputation-sandbox-fixture.mjs';
 
 const REPOSITORY_ROOT = process.cwd();
 const IDENTITY_EXCLUSIONS = new Set([
@@ -406,6 +409,7 @@ function runFixtureHarness(t, { ignoreArm = false, dropLastCell = false, tamperP
     sourceWorkspaceManifestHash: `sha256:${'2'.repeat(64)}`,
     outputDirectory: root,
     armAdapterSet: adapters,
+    runRawEventRecomputation: runRawEventRecomputationInSandboxTestFixture,
     ...(absoluteDeadlineEpochMs === undefined ? {} : { absoluteDeadlineEpochMs }),
     ...(aggregateCpuSeconds === undefined ? {} : { aggregateCpuSeconds }),
     ...(nowEpochMs === undefined ? {} : { nowEpochMs }),
@@ -495,6 +499,7 @@ test('academic harness proves signed dataset use and serial process isolation pe
     sourceWorkspaceManifestHash: `sha256:${'2'.repeat(64)}`,
     outputDirectory: fixture.outputDirectory,
     armAdapterSet: adapters,
+    runRawEventRecomputation: runRawEventRecomputationInSandboxTestFixture,
     operatorDatasetAuthorityTrustStore: fixture.trustStore,
     runtimeRoot: fixture.runtimeRoot,
     absoluteDeadlineEpochMs: 120_000,
@@ -552,6 +557,7 @@ test('local dataset harness keeps hidden evaluation while using one bounded proc
     sourceWorkspaceManifestHash: `sha256:${'2'.repeat(64)}`,
     outputDirectory: fixture.outputDirectory,
     armAdapterSet: adapters,
+    runRawEventRecomputation: runRawEventRecomputationInSandboxTestFixture,
     operatorDatasetAuthorityTrustStore: fixture.trustStore,
     runtimeRoot: fixture.runtimeRoot,
     absoluteDeadlineEpochMs: 120_000,
@@ -696,7 +702,7 @@ test('repository-owned challenges and hidden oracles bind candidate arm response
   );
   assert.equal(
     verified.independentRawEventRecomputationAssurance.assuranceScope,
-    'process-isolated-independent-implementation-v1',
+    'os-sandboxed-process-independent-implementation-v1',
   );
   assert.equal(
     verified.independentRawEventRecomputationAssurance.processIndependent,
@@ -852,7 +858,10 @@ test('host sandbox executes exactly three arm batches or reports the unavailable
     return;
   }
   const selector = buildCampaignBenchmarkSelector({ benchmarkId: 'ml_algorithm_benchmark', datasetMounts: [] });
-  const executor = createMultiLanguageEmpiricalExecutor({ workerRunner: runner });
+  const executor = createMultiLanguageEmpiricalExecutor({
+    workerRunner: runner,
+    runRawEventRecomputation: runRawEventRecomputationInSandboxTestFixture,
+  });
   const receipt = await executor.execute({
     language: 'node',
     entrypoint: 'run.mjs',

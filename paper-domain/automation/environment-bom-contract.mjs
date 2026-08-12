@@ -74,6 +74,11 @@ function normalizePlatform(platform = {}) {
     operatingSystem: String(platform.operatingSystem || '').toLowerCase(),
     architecture: String(platform.architecture || '').toLowerCase(),
     kernelReleaseHash: String(platform.kernelReleaseHash || '').toLowerCase(),
+    machineIdentityHash: platform.machineIdentityHash
+      ? String(platform.machineIdentityHash).toLowerCase() : null,
+    machineIdentityObservation: String(
+      platform.machineIdentityObservation || 'unobserved',
+    ),
     cpu,
   });
   return Object.freeze({
@@ -130,6 +135,14 @@ function normalizeNumericRuntime(numericRuntime = {}) {
     explicitSingleThreadPolicy: numericRuntime.explicitSingleThreadPolicy === true,
     policyObservation: String(numericRuntime.policyObservation || 'environment_allowlist'),
     blasImplementationHash: numericRuntime.blasImplementationHash ? String(numericRuntime.blasImplementationHash).toLowerCase() : null,
+    blasImplementationObservation: String(
+      numericRuntime.blasImplementationObservation || 'unobserved',
+    ),
+    numericalLibraryBehaviorHash: numericRuntime.numericalLibraryBehaviorHash
+      ? String(numericRuntime.numericalLibraryBehaviorHash).toLowerCase() : null,
+    numericalLibraryBehaviorObservation: String(
+      numericRuntime.numericalLibraryBehaviorObservation || 'unobserved',
+    ),
   });
   return Object.freeze({
     ...payload,
@@ -169,9 +182,9 @@ function normalizeBuildReproducibility(build = {}) {
 
 export function buildEmpiricalEnvironmentBom(input = {}) {
   const payload = Object.freeze({
-    version: 1,
+    version: 2,
     kind: 'EmpiricalEnvironmentBOM',
-    assurance: 'observed_runtime_hardware_and_execution_policy_not_bitwise_rebuild',
+    assurance: 'observed_runtime_hardware_numeric_behavior_and_execution_policy_not_bitwise_rebuild',
     platform: normalizePlatform(input.platform),
     runtime: normalizeRuntime(input.runtime),
     gpu: normalizeGpu(input.gpu),
@@ -190,8 +203,8 @@ export function buildEmpiricalEnvironmentBom(input = {}) {
 
 export function verifyEmpiricalEnvironmentBom(bom) {
   const blockers = [];
-  if (!bom || bom.version !== 1 || bom.kind !== 'EmpiricalEnvironmentBOM'
-    || bom.assurance !== 'observed_runtime_hardware_and_execution_policy_not_bitwise_rebuild') {
+  if (!bom || bom.version !== 2 || bom.kind !== 'EmpiricalEnvironmentBOM'
+    || bom.assurance !== 'observed_runtime_hardware_numeric_behavior_and_execution_policy_not_bitwise_rebuild') {
     return Object.freeze({ valid: false, blockers: Object.freeze(['environment_bom_shape_invalid']) });
   }
   if (!validHash(bom.environmentBomHash)
@@ -200,6 +213,12 @@ export function verifyEmpiricalEnvironmentBom(bom) {
   if (!platform.operatingSystem || !platform.architecture || !validHash(platform.kernelReleaseHash)
     || !validHash(platform.cpu?.modelHash) || !validHash(platform.cpu?.flagsHash)
     || !positiveInteger(platform.cpu?.logicalProcessorCount)
+    || (platform.machineIdentityHash !== null
+      && !validHash(platform.machineIdentityHash))
+    || (platform.machineIdentityHash === null
+      && platform.machineIdentityObservation !== 'unobserved')
+    || (validHash(platform.machineIdentityHash)
+      && platform.machineIdentityObservation === 'unobserved')
     || !validHash(platform.hardwareIdentityHash)
     || hashPayload('EmpiricalEnvironmentHardwareIdentity', platform, 'hardwareIdentityHash') !== platform.hardwareIdentityHash) blockers.push('environment_bom_hardware_identity_invalid');
   const runtime = bom.runtime || {};
@@ -237,6 +256,18 @@ export function verifyEmpiricalEnvironmentBom(bom) {
   if (!validHash(numeric.numericRuntimePolicyHash)
     || hashPayload('EmpiricalNumericRuntimePolicy', numeric, 'numericRuntimePolicyHash') !== numeric.numericRuntimePolicyHash
     || typeof numeric.threads !== 'object' || Array.isArray(numeric.threads)
+    || (numeric.blasImplementationHash !== null
+      && !validHash(numeric.blasImplementationHash))
+    || (numeric.blasImplementationHash === null
+      && numeric.blasImplementationObservation !== 'unobserved')
+    || (validHash(numeric.blasImplementationHash)
+      && numeric.blasImplementationObservation === 'unobserved')
+    || (numeric.numericalLibraryBehaviorHash !== null
+      && !validHash(numeric.numericalLibraryBehaviorHash))
+    || (numeric.numericalLibraryBehaviorHash === null
+      && numeric.numericalLibraryBehaviorObservation !== 'unobserved')
+    || (validHash(numeric.numericalLibraryBehaviorHash)
+      && numeric.numericalLibraryBehaviorObservation === 'unobserved')
     || Object.entries(numeric.threads).some(([key, value]) => !NUMERIC_THREAD_KEYS.has(key) || !/^[1-9][0-9]*$/.test(String(value)))) blockers.push('environment_bom_numeric_runtime_policy_invalid');
   if (numeric.explicitSingleThreadPolicy === true
     && (REQUIRED_SINGLE_THREAD_KEYS.some((key) => numeric.threads?.[key] !== '1')
@@ -276,6 +307,9 @@ export function environmentBomSupportsDeterministicCpuCache(bom) {
     || bom?.determinism?.threadPolicyVerified !== true) blockers.push('environment_bom_cache_determinism_unverified');
   if (bom?.numericRuntime?.explicitSingleThreadPolicy !== true
     || bom?.numericRuntime?.dynamicThreadingDisabled !== true) blockers.push('environment_bom_cache_thread_policy_unverified');
+  if (!validHash(bom?.platform?.machineIdentityHash)) blockers.push('environment_bom_cache_machine_identity_unverified');
+  if (!validHash(bom?.numericRuntime?.blasImplementationHash)) blockers.push('environment_bom_cache_blas_identity_unverified');
+  if (!validHash(bom?.numericRuntime?.numericalLibraryBehaviorHash)) blockers.push('environment_bom_cache_numeric_behavior_unverified');
   if (bom?.runtime?.packageClosure?.basis === 'unobserved'
     || !validHash(bom?.runtime?.packageClosure?.identityHash)) blockers.push('environment_bom_cache_runtime_closure_unverified');
   if (bom?.buildReproducibility?.runtimeContentIdentityPinned !== true) blockers.push('environment_bom_cache_runtime_content_unpinned');

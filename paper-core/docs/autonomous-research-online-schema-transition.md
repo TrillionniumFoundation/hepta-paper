@@ -27,7 +27,7 @@ stable `transitionId`. It does not create transition control state or write a
 database.
 
 ```bash
-npm run automation:autonomous-research-online-schema-transition -- \
+npm run hepta-paper -- maintenance autonomous-online-schema-transition -- \
   --action plan \
   --runtime-root /srv/hepta-paper/runtime \
   --authority-process-config /run/hepta-authority/online-mutation-process.json
@@ -37,7 +37,7 @@ After independently quiescing every registered writer, execute exactly that
 plan with both explicit confirmations:
 
 ```bash
-npm run automation:autonomous-research-online-schema-transition -- \
+npm run hepta-paper -- maintenance autonomous-online-schema-transition -- \
   --action execute --execute \
   --transition-id sha256:<transition-id-from-plan> \
   --runtime-root /srv/hepta-paper/runtime \

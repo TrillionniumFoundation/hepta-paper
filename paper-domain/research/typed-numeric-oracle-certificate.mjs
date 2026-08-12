@@ -34,6 +34,11 @@ const ASSURANCE_SCOPES = Object.freeze({
     processIndependent: true,
     externalTrustDomainVerified: false,
   }),
+  'os-sandboxed-process-independent-implementation-v1': Object.freeze({
+    independentlyRecomputed: true,
+    processIndependent: true,
+    externalTrustDomainVerified: false,
+  }),
   'external-trust-domain-independent-verifier-v1': Object.freeze({
     independentlyRecomputed: true,
     processIndependent: true,

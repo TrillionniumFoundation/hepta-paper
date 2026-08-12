@@ -17,19 +17,19 @@ root-owned `/usr/libexec/hepta-paper` launchers and records their hashes.
 ## Before running campaigns
 
 ```bash
-npm run store:migrate
-npm run store:status
-npm run automation:status
+npm run hepta-paper -- operator store-migrate
+npm run hepta-paper -- operator store
+npm run hepta-paper -- operator automation
 npm run safety:all
 ```
 
 Inspect universal submission coverage without network or credential access:
 
 ```bash
-npm run automation:journal-connector-coverage -- --summary
-npm run automation:journal-connector-coverage -- \
+npm run hepta-paper -- operator journal-connector-coverage -- --summary
+npm run hepta-paper -- operator journal-connector-coverage -- \
   --summary --kind journal --require-family-prototype
-npm run automation:journal-connector-coverage -- --venue <venue-id>
+npm run hepta-paper -- operator journal-connector-coverage -- --venue <venue-id>
 ```
 
 This is a source and target-registry inspection only. Do not interpret a
@@ -315,7 +315,7 @@ payload, verifies the result against the public trust store, and atomically
 renames a content-addressed release directory into place:
 
 ```bash
-npm run automation:autonomous-empirical-plugin-release -- \
+npm run hepta-paper -- operator autonomous-empirical-plugin-release -- \
   --action publish \
   --package-version 1.0.0 \
   --benchmark-family ml_algorithm_benchmark \
@@ -485,10 +485,10 @@ old/new-worker deployment across schema versions 20 and 25:
 2. Let outstanding leases expire or clear them through the supported recovery
    command, checkpoint and close the old store, then verify there are no job,
    campaign, delivery-outbox, or response-consumption lease markers left.
-3. Run `npm run store:migrate` while workers remain stopped. Its first pass is
+3. Run `npm run hepta-paper -- operator store-migrate` while workers remain stopped. Its first pass is
    read-only: an outstanding lease or active WAL sidecar rejects the cutover
    before the database schema or bytes are changed.
-4. Run `npm run store:status` and verify `schema_migrations` contains the
+4. Run `npm run hepta-paper -- operator store` and verify `schema_migrations` contains the
    hash-matched versions 21 through 25 (current native-store schema 25).
 5. Restart only workers built from the new release.
 
@@ -506,7 +506,7 @@ migration through 025 is absent or has a mismatched history hash. The explicit
 legacy compatibility root remains available for offline compatibility work;
 it is not a production worker escape hatch. Writable roots, including the
 legacy facade, never run migrations implicitly: initialize or upgrade with
-`npm run store:migrate` first.
+`npm run hepta-paper -- operator store-migrate` first.
 
 Start or inspect automation with `paper:campaign`. The campaign SQLite DAG is
 the sole execution authority. `final-compile` is followed by a formal `package`
@@ -528,7 +528,7 @@ After a campaign completes, verify the handoff from an independent submission
 root with an explicit campaign identity:
 
 ```bash
-npm run paper:submission-handoff -- \
+npm run hepta-paper -- operator submission-handoff -- \
   --campaign-id <completed-campaign-id> \
   --root <submission-root> \
   --runtime-root <shared-runtime-root>
@@ -727,9 +727,9 @@ reviewed reference-package update.
 ## Recovery and retention
 
 ```bash
-npm run automation:reconcile
+npm run hepta-paper -- operator reconcile
 npm run automation:workspace-backfill
-npm run store:backup
+npm run hepta-paper -- operator store-backup
 npm run store:restore-drill
 npm run store:logical-integrity
 ```
@@ -740,11 +740,11 @@ scoped and requires an explicit policy-v0 terminal campaign:
 
 ```bash
 # Plan only (default): no worker, provider, or external action is started.
-npm run automation:reconcile -- \
+npm run hepta-paper -- operator reconcile -- \
   --legacy-terminal-active-residue --campaign-id <campaign-id>
 
 # Apply the exact hash-bound plan atomically after operator review.
-npm run automation:reconcile:execute -- \
+npm run hepta-paper -- operator reconcile-apply -- \
   --legacy-terminal-active-residue --campaign-id <campaign-id>
 ```
 
@@ -768,10 +768,10 @@ provisioned autonomous-research runtime, inspect and back up the complete
 trust-bearing database inventory separately:
 
 ```bash
-npm run automation:autonomous-research-state-backup -- --action status
-npm run automation:autonomous-research-state-backup -- \
+npm run hepta-paper -- operator autonomous-state-backup -- --action status
+npm run hepta-paper -- operator autonomous-state-backup -- \
   --action backup --authority-config /run/hepta-authority/backup-client.json
-npm run automation:autonomous-research-state-backup -- \
+npm run hepta-paper -- operator autonomous-state-backup -- \
   --action restore-drill --authority-config /run/hepta-authority/backup-client.json \
   --bundle /srv/hepta-paper/runtime/backups/autonomous-research-state/<bundle-id>
 ```
@@ -785,7 +785,7 @@ writers stopped, take and drill a complete state backup, then review the
 read-only schema-transition plan:
 
 ```bash
-npm run automation:autonomous-research-online-schema-transition -- \
+npm run hepta-paper -- maintenance autonomous-online-schema-transition -- \
   --action plan --runtime-root /srv/hepta-paper/runtime \
   --authority-process-config /run/hepta-authority/online-mutation-process.json
 ```
@@ -793,7 +793,7 @@ npm run automation:autonomous-research-online-schema-transition -- \
 Execute only the exact reviewed transition ID:
 
 ```bash
-npm run automation:autonomous-research-online-schema-transition -- \
+npm run hepta-paper -- maintenance autonomous-online-schema-transition -- \
   --action execute --execute --transition-id sha256:<reviewed-transition-id> \
   --runtime-root /srv/hepta-paper/runtime \
   --authority-process-config /run/hepta-authority/online-mutation-process.json

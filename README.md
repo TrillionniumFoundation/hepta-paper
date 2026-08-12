@@ -38,15 +38,15 @@ re-executed. Referee convergence requires multiple reviews and is always a
 local automation decision, never an academic acceptance or submission grant.
 
 ```bash
-npm run store:migrate
-npm run automation:status
-npm run automation:research-status
+npm run hepta-paper -- operator store-migrate
+npm run hepta-paper -- operator automation
+npm run hepta-paper -- operator research-readiness
 npm run automation:selftest
 HEPTA_AGENT_LOCAL_PROVIDER=ollama \
   HEPTA_AGENT_MODEL=<local-model> npm run automation:agent-smoke
 HEPTA_AGENT_MODEL=<local-model> \
   HEPTA_SMOKE_MAX_ROUNDS=2 npm run automation:campaign-smoke
-npm run paper:campaign -- --help
+npm run hepta-paper -- operator campaign -- --help
 npm run hepta-paper -- operator autonomous-research -- --help
 ```
 
@@ -78,9 +78,9 @@ an operator can append another review/revise/revalidation round without
 replaying completed nodes:
 
 ```bash
-npm run paper:campaign -- --action resume --campaign-id <id> --max-cpu-jobs 20 --max-tokens 1800000
-npm run paper:campaign -- --action extend --campaign-id <id> --rounds 3 --max-agent-calls 30 --max-cpu-jobs 28 --max-tokens 2500000
-npm run paper:campaign -- --execute --paper <paper-id> --campaign-id <id> --rounds 3
+npm run hepta-paper -- operator campaign -- --action resume --campaign-id <id> --max-cpu-jobs 20 --max-tokens 1800000
+npm run hepta-paper -- operator campaign -- --action extend --campaign-id <id> --rounds 3 --max-agent-calls 30 --max-cpu-jobs 28 --max-tokens 2500000
+npm run hepta-paper -- operator campaign -- --execute --paper <paper-id> --campaign-id <id> --rounds 3
 ```
 
 Each amendment is persisted as a campaign event, recomputes the campaign plan
@@ -179,7 +179,7 @@ The clean overlay now lives outside the hepta snapshot:
 Run:
 
 ```bash
-npm run store:status
+npm run hepta-paper -- operator store
 npm run store:logical-integrity
 npm run workspace:verify-decoupled
 npm run store:restore-drill
@@ -188,15 +188,15 @@ npm run safety:all
 npm test
 npm run paper:selftest
 npm run paper:authority-selftest
-npm run paper:architecture-selftest
+npm run hepta-paper -- verify architecture
 npm run experimental:taskflow-selftest
 npm run coverage:architecture
 npm run coverage:critical-modules
 npm run coverage:repository
 npm run coverage:system
 npm run authority:status
-npm run owner:status
-npm run operational:status
+npm run hepta-paper -- verify owner
+npm run hepta-paper -- verify operational
 npm run external:intake-verify -- --staging /path/to/external/staging
 npm run assets:cold-volume-status
 npm run assets:cold-volume-cas-status
@@ -283,12 +283,12 @@ deletion.
 Deploy 021–025 as an offline cutover: stop all old job/campaign/submission
 workers, expire or recover/clear every outstanding job, campaign, delivery,
 and response-consumption lease marker, checkpoint and close the old store, then
-run `npm run store:migrate`. The migration command checks the old schema and
+run `npm run hepta-paper -- operator store-migrate`. The migration command checks the old schema and
 lease state through a read-only connection before opening the database for
 upgrade; live leases or an active WAL reject the cutover without changing its
 schema or bytes. Verify native-store schema version 25 and the hash-matched
 021–025 history
-with `npm run store:status`, then restart only new workers. Rolling mixed
+with `npm run hepta-paper -- operator store`, then restart only new workers. Rolling mixed
 old/new workers are unsupported. Scoped production roots refuse startup
 against an older or mismatched schema. No writable runtime root, including the
 explicit legacy compatibility facade, runs migrations implicitly; run

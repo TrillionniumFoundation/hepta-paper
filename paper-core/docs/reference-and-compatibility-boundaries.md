@@ -17,7 +17,7 @@ baseline is a deliberate maintenance action via
 `npm run reference:baseline:accept`; it is never part of CI or release.
 The external reference and its fresh-clone restore receipt are tracked by
 `paper-core/config/repository-asset-externalization.v1.json`.
-`npm run assets:repository-status` verifies the retained baseline identity,
+`npm run hepta-paper -- verify repository-assets` verifies the retained baseline identity,
 the `.gitmodules` URL, and the exact pinned commit.
 The production batch preview and execute paths neither import the integrity
 adapter nor walk the reference tree, and batch reports do not claim a reference

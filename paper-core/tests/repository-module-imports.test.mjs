@@ -520,7 +520,7 @@ test('production inventory is reachable only from declared executable entrypoint
   ));
   assert.deepEqual(forbiddenOperatorModules, []);
   const externalRuntimeImports = [];
-  for (const file of operator) {
+  for (const file of production) {
     const source = fs.readFileSync(file, 'utf8');
     for (const dynamicImport of dynamicImportExpressions(source)) {
       if (dynamicImport.nodeBuiltin) continue;

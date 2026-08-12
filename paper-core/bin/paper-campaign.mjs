@@ -83,7 +83,7 @@ async function main() {
   const options = args(process.argv.slice(2));
   if (options.help) {
     process.stdout.write([
-      'Usage: npm run paper:campaign -- [options]',
+      'Usage: hepta-paper operator campaign -- [options]',
       '',
       '  --paper <id>              select a paper; repeat for several papers',
       '  --execute                 persist campaigns for a worker (default is plan-only)',

@@ -76,7 +76,7 @@ export function inspectGenericDomainCapabilityEvidenceBindings({
       ?.systemBenchmarkHarnessExecutionReceiptHash
       === evidence?.experimentHarnessExecutionReceipt
         ?.systemBenchmarkHarnessExecutionReceiptHash
-    && evidence?.experimentHarnessExecutionReceipt?.experimentIr?.version === 3
+    && evidence?.experimentHarnessExecutionReceipt?.experimentIr?.version === 5
     && evidence?.experimentHarnessExecutionReceipt?.experimentIr?.benchmarkFamily
       === evidence?.researchAgendaIr?.protocolFamily;
   if (!experimentIrExecutionAuthorityValid) {

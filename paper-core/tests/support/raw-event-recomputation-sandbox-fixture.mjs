@@ -3,9 +3,6 @@ import { spawnSync } from 'node:child_process';
 import { buildEmpiricalEnvironmentBom } from '../../../paper-domain/automation/environment-bom-contract.mjs';
 import { buildDatasetAuthorizationSet } from '../../../paper-domain/automation/experiment-run-artifact-contract.mjs';
 import { selectAndValidateWorkerEnvironment } from '../../../paper-adapters/runtime/worker-environment-policy.mjs';
-import {
-  runProcessIsolatedRawEventRecomputation,
-} from '../../../paper-adapters/research-verify/process-isolated-system-benchmark-recomputation.mjs';
 import { hashRecord } from '../../../workflow-kernel/record-hash.mjs';
 
 const digest = (label) => hashRecord('RawEventRecomputationSandboxFixture', label);
@@ -167,6 +164,14 @@ export function createRawEventRecomputationSandboxTestFixture({
           ephemeralWorkRootVerified: true,
           separateOutputRootVerified: true,
           gpuAccessRequested: false,
+          memoryLimitVerified: true,
+          memoryLimitScope: 'process-address-space-not-descendant-tree-v1',
+          cpuLimitVerified: true,
+          cpuLimitScope: 'process-thread-group-not-descendant-tree-v1',
+          processLimitVerified: true,
+          processLimitMechanism: 'rlimit-nproc',
+          processLimitScope: 'real-uid-concurrent-processes-not-sandbox-local-v1',
+          resourceLimitsVerified: true,
         }),
         externalActionPerformed: false,
       };
@@ -177,13 +182,5 @@ export function createRawEventRecomputationSandboxTestFixture({
         blockers: Object.freeze([]),
       });
     },
-  });
-}
-
-export function runRawEventRecomputationInSandboxTestFixture(input, options = {}) {
-  return runProcessIsolatedRawEventRecomputation(input, {
-    ...options,
-    sandboxWorkerRunner: createRawEventRecomputationSandboxTestFixture(),
-    environment: {},
   });
 }

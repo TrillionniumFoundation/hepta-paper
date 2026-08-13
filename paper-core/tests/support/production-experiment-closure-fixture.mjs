@@ -4,14 +4,20 @@ import os from 'node:os';
 import path from 'node:path';
 
 import {
+  importExperimentIrExecutionAuthorityForTest,
+  importExperimentRegistryAuthorityForTest,
+  importExperimentRegistryForTest,
+  importExperimentRunContractForTest,
+  importSystemBenchmarkHarnessForTest,
+  withRawEventRecomputationSandboxFixtureForTest,
+} from './raw-event-recomputation-sandbox-test-seam.mjs';
+
+import {
   signAuthorityDocument,
 } from '../../../paper-adapters/authority/authority-signatures.mjs';
 import {
   authorizeOperatorDatasetMount,
 } from '../../../paper-adapters/automation/operator-dataset-harness-reader.mjs';
-import {
-  executeSystemBenchmarkHarness,
-} from '../../../paper-adapters/automation/system-benchmark-harness.mjs';
 import {
   RAW_EVENT_RECOMPUTATION_INDEPENDENCE_CONTRACT,
 } from '../../../paper-adapters/research-verify/independent-system-benchmark-recomputation.mjs';
@@ -22,9 +28,6 @@ import {
   inspectStrictDatasetManifest,
 } from '../../../paper-adapters/runtime/execution-snapshot.mjs';
 import {
-  runRawEventRecomputationInSandboxTestFixture,
-} from './raw-event-recomputation-sandbox-fixture.mjs';
-import {
   buildCanonicalAnalysisProtocol,
   empiricalClaimDeclarationsFromAnalysisProtocol,
 } from '../../../paper-domain/automation/analysis-protocol-contract.mjs';
@@ -32,28 +35,43 @@ import {
   buildCampaignBenchmarkSelector,
 } from '../../../paper-domain/automation/campaign-benchmark-selector.mjs';
 import {
-  buildExperimentIrExecutionAuthorityReceipt,
+  verifyExperimentIrExecutionAuthorityReceipt as
+    verifyProductionExperimentIrExecutionAuthorityReceipt,
 } from '../../../paper-domain/automation/experiment-ir-execution-authority-contract.mjs';
 import {
-  buildDatasetAuthorizationSet,
-  buildExperimentReplayReceipt,
-  buildExperimentRunReceipt,
+  verifyExperimentReplayReceipt as verifyProductionExperimentReplayReceipt,
+  verifyExperimentRunReceipt as verifyProductionExperimentRunReceipt,
 } from '../../../paper-domain/automation/experiment-run-contract.mjs';
 import {
   buildEmpiricalEnvironmentBom,
 } from '../../../paper-domain/automation/environment-bom-contract.mjs';
+import {
+  verifyProductionOsSandboxWorkerReceipt,
+} from '../../../paper-domain/automation/os-sandbox-worker-receipt-contract.mjs';
 import {
   campaignExperimentArtifactRole,
 } from '../../../paper-domain/research/campaign-experiment-artifact-identity.mjs';
 import {
   empiricalProtocolBindings,
 } from '../../../paper-domain/research/campaign-experiment-claim-lineage.mjs';
-import {
-  buildExperimentRegistry,
-} from '../../../paper-domain/research/experiment-registry.mjs';
-import {
-  createExperimentRegistryAuthorityVerifier,
-} from '../../../paper-domain/research/experiment-registry-authority.mjs';
+
+const [
+  { executeSystemBenchmarkHarness },
+  {
+    buildDatasetAuthorizationSet,
+    buildExperimentReplayReceipt,
+    buildExperimentRunReceipt,
+  },
+  { buildExperimentIrExecutionAuthorityReceipt },
+  { buildExperimentRegistry },
+  { createExperimentRegistryAuthorityVerifier },
+] = await Promise.all([
+  importSystemBenchmarkHarnessForTest(),
+  importExperimentRunContractForTest(),
+  importExperimentIrExecutionAuthorityForTest(),
+  importExperimentRegistryForTest(),
+  importExperimentRegistryAuthorityForTest(),
+]);
 import {
   resolveReceiptIssuerPolicy,
 } from '../../../paper-domain/evidence/receipt-issuer-policy-registry.mjs';
@@ -370,6 +388,14 @@ function workerReceipt({
       sourceReadOnlyVerified: true,
       ephemeralWorkRootVerified: true,
       separateOutputRootVerified: true,
+      memoryLimitVerified: true,
+      memoryLimitScope: 'process-address-space-not-descendant-tree-v1',
+      cpuLimitVerified: true,
+      cpuLimitScope: 'process-thread-group-not-descendant-tree-v1',
+      processLimitVerified: true,
+      processLimitMechanism: 'rlimit-nproc',
+      processLimitScope: 'real-uid-concurrent-processes-not-sandbox-local-v1',
+      resourceLimitsVerified: true,
       gpuAccessRequested: false,
     }),
     externalActionPerformed: false,
@@ -915,7 +941,8 @@ function executeHarness({
   );
   const adapterSet = armAdapterSet(dataset.selector);
   let invocationCount = 0;
-  const harness = executeSystemBenchmarkHarness({
+  const harness = withRawEventRecomputationSandboxFixtureForTest(
+    () => executeSystemBenchmarkHarness({
     benchmarkSelector: dataset.selector,
     datasetMounts: [dataset.mount],
     experimentAttemptId: attemptId,
@@ -924,7 +951,6 @@ function executeHarness({
     sourceWorkspaceManifestHash,
     outputDirectory,
     armAdapterSet: adapterSet,
-    runRawEventRecomputation: runRawEventRecomputationInSandboxTestFixture,
     operatorDatasetAuthorityTrustStore: dataset.trustStore,
     runtimeRoot: dataset.runtimeRoot,
     absoluteDeadlineEpochMs: nowEpochMs + 1_200_000,
@@ -935,7 +961,6 @@ function executeHarness({
     cpuCount: 1,
     executionEnvironment: 'signed-docker-runtime-v1',
     researchContext,
-    nowEpochMs: () => nowEpochMs,
     runArmBatch({ batch, outputDirectory: batchOutput }) {
       invocationCount += 1;
       const content = responseDocument(batch);
@@ -958,9 +983,14 @@ function executeHarness({
         sourceWorkspaceManifestHash,
       });
     },
-  });
+    }), { nowEpochMs: () => nowEpochMs },
+  );
   if (harness.status !== 'system_benchmark_harness_verified') {
     throw new Error(`production_fixture_harness_invalid:${JSON.stringify(harness.blockers)}`);
+  }
+  if (harness.armBatchExecutions.some((batch) =>
+    verifyProductionOsSandboxWorkerReceipt(batch.runnerReceipt))) {
+    throw new Error('production_fixture_arm_evidence_unexpectedly_promotable');
   }
   const rawEventDocument = fs.readFileSync(
     path.join(outputDirectory, 'raw-events.ndjson'),
@@ -1060,6 +1090,11 @@ export function productionExperimentClosureFixture({
         `production_fixture_replay_invalid:${JSON.stringify(experimentReplayReceipt.blockers)}`,
       );
     }
+    if (verifyProductionExperimentRunReceipt(originalRunReceipt)
+      || verifyProductionExperimentRunReceipt(replayRunReceipt)
+      || verifyProductionExperimentReplayReceipt(experimentReplayReceipt)) {
+      throw new Error('production_fixture_evidence_unexpectedly_promotable');
+    }
     const authorityInput = {
       campaignId,
       paperId,
@@ -1074,6 +1109,10 @@ export function productionExperimentClosureFixture({
     };
     const experimentIrExecutionAuthorityReceipt =
       buildExperimentIrExecutionAuthorityReceipt(authorityInput);
+    if (verifyProductionExperimentIrExecutionAuthorityReceipt(
+      experimentIrExecutionAuthorityReceipt,
+      authorityInput,
+    )) throw new Error('production_fixture_authority_unexpectedly_promotable');
     const registry = buildAcademicExperimentRegistryFixture({
       paperId,
       campaignId,

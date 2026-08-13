@@ -3,10 +3,8 @@ import crypto from 'node:crypto';
 import test from 'node:test';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
-  fullResearchQualificationSigningPayloadHash,
-  providerPrincipalIndependenceAttestationSigningPayloadHash,
-  verifyFullResearchQualificationReceipt,
-  verifyFullResearchQualificationReceiptEnvelope,
+  verifyFullResearchQualificationReceipt as verifyProductionFullResearchQualificationReceipt,
+  verifyFullResearchQualificationReceiptEnvelope as verifyProductionFullResearchQualificationReceiptEnvelope,
 } from '../../paper-domain/automation/full-research-qualification-contract.mjs';
 import {
   buildAutonomousResearchMachineIntake,
@@ -27,11 +25,21 @@ import {
   genericManuscriptReleaseFixture,
 } from './support/autonomous-research-generalization-fixture.mjs';
 import {
+  importFullResearchQualificationForTest,
+} from './support/production-experiment-closure-test-seam.mjs';
+import {
   REQUIRED_SCOPED_SCHEMA_VERSIONS,
 } from '../../paper-domain/automation/scoped-schema-version-contract.mjs';
 import {
   inspectResearchReportForClosure,
 } from '../../paper-domain/automation/research-closure-receipt-contract.mjs';
+
+const {
+  fullResearchQualificationSigningPayloadHash,
+  providerPrincipalIndependenceAttestationSigningPayloadHash,
+  verifyFullResearchQualificationReceipt,
+  verifyFullResearchQualificationReceiptEnvelope,
+} = await importFullResearchQualificationForTest();
 
 const ISSUED_AT = '2026-07-15T08:00:00.000Z';
 const NOW = new Date('2026-07-15T09:00:00.000Z');
@@ -494,6 +502,12 @@ test('a fresh attestor-signed qualification bound to current code, providers, sc
   const result = verifyFullResearchQualificationReceipt(f.receipt, f.context);
   assert.equal(result.ready, true, JSON.stringify(result.blockers));
   assert.equal(result.receiptAccepted, true);
+  const productionResult = verifyProductionFullResearchQualificationReceipt(
+    f.receipt,
+    f.context,
+  );
+  assert.equal(productionResult.ready, false);
+  assert.equal(productionResult.receiptAccepted, false);
   assert.equal(result.campaignReleaseBundleHash, f.authority.campaignReleaseBundleHash);
   assert.equal(result.independentHypothesisPriorArtReviewVerified, true);
   assert.equal(
@@ -790,8 +804,8 @@ test('self-signed, hash-tampered, missing live-canary and unverifiable current-r
   }).blockers.includes('golden_micro_campaign_release_authority_verification_failed'));
 });
 
-function verifyEnvelope(f, receipt = f.receipt, overrides = {}) {
-  return verifyFullResearchQualificationReceiptEnvelope(receipt, {
+function qualificationEnvelopeContext(f, overrides = {}) {
+  return {
     now: NOW,
     campaignReleaseAuthority: f.authority,
     expectedPaperId: f.receipt.paperId,
@@ -800,13 +814,24 @@ function verifyEnvelope(f, receipt = f.receipt, overrides = {}) {
     expectedSeedBindingHash: f.receipt.seedBindingHash,
     verifyQualificationSignature: f.context.verifyQualificationSignature,
     ...overrides,
-  });
+  };
+}
+
+function verifyEnvelope(f, receipt = f.receipt, overrides = {}) {
+  return verifyFullResearchQualificationReceiptEnvelope(
+    receipt,
+    qualificationEnvelopeContext(f, overrides),
+  );
 }
 
 test('qualification envelope verifies its complete release binding and fails closed per guard', () => {
   const valid = fixture();
   const accepted = verifyEnvelope(valid);
   assert.equal(accepted.ready, true, JSON.stringify(accepted.blockers));
+  assert.equal(verifyProductionFullResearchQualificationReceiptEnvelope(
+    valid.receipt,
+    qualificationEnvelopeContext(valid),
+  ).ready, false);
   assert.equal(accepted.signatureVerified, true);
   assert.equal(accepted.timeWindowVerified, true);
   assert.equal(accepted.releasePointerVerified, true);

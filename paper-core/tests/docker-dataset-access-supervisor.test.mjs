@@ -1202,7 +1202,7 @@ test('academic-docker-operational: actual Python and R academic dataset harnesse
         })}`);
       assert.equal(verifySystemBenchmarkHarnessExecutionReceipt(receipt.harnessExecutionReceipt), true);
       assert.equal(receipt.harnessExecutionReceipt.executionIsolationMode, 'academic-per-cell-process-v1');
-      assert.equal(receipt.experimentIr.version, 3);
+      assert.equal(receipt.experimentIr.version, 5);
       assert.equal(receipt.experimentIr.researchBinding.proposalHash,
         proposal.machineProposedScientificClaimSetHash);
       assert.equal(receipt.harnessExecutionReceipt.processExecutionCount, receipt.harnessExecutionReceipt.scheduleCellCount);

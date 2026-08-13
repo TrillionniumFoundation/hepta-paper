@@ -116,7 +116,7 @@ export function inspectSystemBenchmarkExperimentIrBinding(
     && receipt.experimentIr.provenance.sourceWorkspaceManifestHash
       === receipt.sourceWorkspaceManifestHash;
   const researchResolved = validBaseBinding
-    && receipt.experimentIr.version === 3;
+    && receipt.experimentIr.version === 5;
   const validResearchBinding = !researchResolved || (
     receipt.experimentIr.researchBinding.datasetCompatibility.datasetName
       === receipt.experimentIr.dataset.datasetMountName

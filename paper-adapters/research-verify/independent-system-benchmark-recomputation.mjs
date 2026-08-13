@@ -2,9 +2,12 @@ import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { hasExactObjectKeys as exactKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 import {
   REGISTERED_SCALAR_RESPONSE_BENCHMARK_FAMILY,
-  SYSTEM_BENCHMARK_EVALUATOR_REGISTRY,
   systemBenchmarkEvaluatorDescriptorFor,
 } from '../../paper-domain/automation/system-benchmark-evaluator-abi.mjs';
+import {
+  INDEPENDENT_SYSTEM_BENCHMARK_RECOMPUTATION_IMPLEMENTATION,
+  RAW_EVENT_RECOMPUTATION_INDEPENDENCE_CONTRACT,
+} from '../../paper-domain/automation/independent-system-benchmark-recomputation-identity.mjs';
 import {
   SYSTEM_BENCHMARK_CASE_COUNT,
   SYSTEM_BENCHMARK_CHALLENGE_MAXIMUM_PARTS,
@@ -22,54 +25,10 @@ function responseFieldFor(benchmarkFamily) {
   return autonomousEmpiricalFamilyPluginProfileFor(benchmarkFamily)?.responseField || null;
 }
 
-const INDEPENDENCE_PAYLOAD = Object.freeze({
-  version: 1,
-  kind: 'RawEventRecomputationIndependenceContract',
-  level: 'repository-separate-implementation-same-process-v1',
-  dataSourceIndependent: true,
-  fixtureOracleBuilderIndependent: true,
-  responseEventEvaluatorIndependent: true,
-  eventMetricAggregatorIndependent: true,
-  producerEvaluatorImportsAllowed: false,
-  processIndependent: false,
-  sharedTrustBase: Object.freeze([
-    'sha256-record-identity',
-    'scoped-cas-artifact-reader',
-    'signed-private-fixture-source-resolver',
-  ]),
-});
-
-export const RAW_EVENT_RECOMPUTATION_INDEPENDENCE_CONTRACT = Object.freeze({
-  ...INDEPENDENCE_PAYLOAD,
-  rawEventRecomputationIndependenceContractHash: hashRecord(
-    'RawEventRecomputationIndependenceContract',
-    INDEPENDENCE_PAYLOAD,
-  ),
-});
-
-const IMPLEMENTATION_PAYLOAD = Object.freeze({
-  version: 1,
-  kind: 'IndependentSystemBenchmarkRecomputationImplementation',
-  assuranceScope: RAW_EVENT_RECOMPUTATION_INDEPENDENCE_CONTRACT.level,
-  independenceContractHash:
-    RAW_EVENT_RECOMPUTATION_INDEPENDENCE_CONTRACT
-      .rawEventRecomputationIndependenceContractHash,
-  evaluatorRegistryHash:
-    SYSTEM_BENCHMARK_EVALUATOR_REGISTRY.systemBenchmarkEvaluatorRegistryHash,
-  producerEvaluatorImportsAllowed: false,
-  processIndependent: false,
-});
-
-// The release production-graph manifest binds the bytes of this module. This
-// record separately gives receipts a stable, typed identity for the verifier
-// implementation instead of reusing the producer harness identity.
-export const INDEPENDENT_SYSTEM_BENCHMARK_RECOMPUTATION_IMPLEMENTATION = Object.freeze({
-  ...IMPLEMENTATION_PAYLOAD,
-  independentSystemBenchmarkRecomputationImplementationHash: hashRecord(
-    'IndependentSystemBenchmarkRecomputationImplementation',
-    IMPLEMENTATION_PAYLOAD,
-  ),
-});
+export {
+  INDEPENDENT_SYSTEM_BENCHMARK_RECOMPUTATION_IMPLEMENTATION,
+  RAW_EVENT_RECOMPUTATION_INDEPENDENCE_CONTRACT,
+};
 
 function same(left, right, kind = 'IndependentRecomputationExpected') {
   return hashRecord(kind, left) === hashRecord(kind, right);

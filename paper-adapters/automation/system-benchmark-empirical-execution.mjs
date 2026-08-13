@@ -14,7 +14,6 @@ export function executeSystemBenchmarkEmpiricalRun({
   benchmarkSourceDescriptor,
   workerRunner,
   prepareRuntimeIdentity,
-  runRawEventRecomputation = null,
   operatorDatasetAuthorityTrustStore = null,
   runtimeRoot = null,
 } = {}) {
@@ -54,8 +53,6 @@ export function executeSystemBenchmarkEmpiricalRun({
     armAdapterSet: resolvedAdapters.adapterSet,
     operatorDatasetAuthorityTrustStore,
     runtimeRoot,
-    ...(typeof runRawEventRecomputation === 'function'
-      ? { runRawEventRecomputation } : {}),
     absoluteDeadlineEpochMs: spec.absoluteDeadlineEpochMs,
     aggregateCpuSeconds: spec.cpuSeconds,
     memoryBytes: spec.memoryBytes,

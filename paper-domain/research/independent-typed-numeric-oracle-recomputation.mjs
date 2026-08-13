@@ -328,6 +328,14 @@ export function verifyIndependentTypedNumericOracleRecomputation(
         || receipt.networkGuardInstalled !== true
         || receipt.networkActionPerformed !== false
         || receipt.externalActionPerformed !== false
+        || receipt.osSandboxed !== true
+        || receipt.osSandboxWorkerReceiptHash
+          !== receipt.osSandboxWorkerReceipt?.receiptHash
+        || receipt.osSandboxEnvironmentBomHash
+          !== receipt.osSandboxWorkerReceipt?.environmentBomHash
+        || receipt.osSandboxBackend !== receipt.osSandboxWorkerReceipt?.backend
+        || JSON.stringify(receipt.workerReceipt)
+          !== String(receipt.osSandboxWorkerReceipt?.stdout || '').trim()
         || receipt.parentPid !== receipt.workerReceipt.parentPid
         || receipt.workerPid !== receipt.workerReceipt.workerPid
         || receipt.workerPid === receipt.parentPid
@@ -347,6 +355,8 @@ export function verifyIndependentTypedNumericOracleRecomputation(
         request,
         workerImplementation,
         workerReceipt: receipt.workerReceipt,
+        osSandboxWorkerReceipt: receipt.osSandboxWorkerReceipt,
+        resourceBudget: receipt.resourceBudget,
         parentPid: receipt.parentPid,
         workerPid: receipt.workerPid,
         blockers: [],

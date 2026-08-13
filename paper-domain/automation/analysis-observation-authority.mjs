@@ -165,7 +165,7 @@ function verifyTypedNumericOracleProductionEvidenceBindingValue({
     || recomputation.empiricalPluginProfileHash
       !== pluginProfile.autonomousEmpiricalFamilyPluginProfileHash
     || production.analysisProtocolHash !== recomputation.analysisProtocolHash
-    || recomputation.version !== 2
+    || recomputation.version !== 3
     || recomputation.assuranceScope
       !== 'process-isolated-independent-implementation-v1'
     || recomputation.processIndependent !== true
@@ -327,7 +327,7 @@ export function buildRepositoryAnalysisObservationAuthority({
         },
       )
       || typedNumericOracleProduction?.version !== 2
-      || typedNumericOracleRecomputationReceipt?.version !== 2
+      || typedNumericOracleRecomputationReceipt?.version !== 3
       || !verifyVersionedExperimentIr(experimentIr, { profile: pluginProfile })
       || empiricalPluginProfileHash
         !== pluginProfile.autonomousEmpiricalFamilyPluginProfileHash
@@ -519,7 +519,7 @@ export function verifyRepositoryAnalysisObservationAuthority(
       ))
       || (advancedTypes.length && authority.typedNumericOracleProduction?.version !== 2)
       || (advancedTypes.length
-        && authority.typedNumericOracleRecomputationReceipt?.version !== 2)
+        && authority.typedNumericOracleRecomputationReceipt?.version !== 3)
       || (advancedTypes.length && authority.typedNumericOracleProduction?.analysisProtocolHash
         !== protocol.analysisProtocolHash)
       || (advancedTypes.length

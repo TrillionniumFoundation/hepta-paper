@@ -22,15 +22,49 @@ import {
 import {
   verifyIndependentTypedNumericOracleRecomputation,
 } from '../research/independent-typed-numeric-oracle-recomputation.mjs';
-import { verifyOsSandboxWorkerReceipt } from './os-sandbox-worker-receipt-contract.mjs';
+import {
+  verifyProductionOsSandboxWorkerReceipt,
+} from './os-sandbox-worker-receipt-contract.mjs';
+import {
+  SYSTEM_BENCHMARK_CPU_BUDGET_SEMANTICS,
+  verifyRawEventRecomputationResourceBudget,
+} from './system-benchmark-resource-budget-contract.mjs';
+import {
+  INDEPENDENT_SYSTEM_BENCHMARK_RECOMPUTATION_IMPLEMENTATION,
+} from './independent-system-benchmark-recomputation-identity.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
+const PROCESS_RECOMPUTATION_WORKER_PATH =
+  'paper-adapters/research-verify/independent-system-benchmark-recomputation-worker.mjs';
 
-function processIsolatedRecomputationEvidenceValid(independent) {
-  const assurance = independent?.processIsolatedRawEventRecomputationAssurance;
-  const worker = assurance?.workerReceipt;
-  if (!assurance
-    || assurance.version !== 2
+export function verifyProcessIsolatedSystemBenchmarkRecomputationEvidence(independent) {
+  try {
+    const assurance = independent?.processIsolatedRawEventRecomputationAssurance;
+    const worker = assurance?.workerReceipt;
+    const workerManifest = worker?.manifest;
+    const {
+      rawEventRecomputationManifestHash: workerManifestHash,
+      ...workerManifestPayload
+    } = workerManifest || {};
+    const canonicalWorkerSourceHash = SYSTEM_BENCHMARK_HARNESS_IMPLEMENTATION.targets
+      .find((target) => target.path === PROCESS_RECOMPUTATION_WORKER_PATH)?.sha256 || null;
+    const expectedWorkerImplementationHash = hashRecord(
+      'ProcessIsolatedRawEventRecomputationWorkerImplementation',
+      {
+        version: 1,
+        kind: 'ProcessIsolatedRawEventRecomputationWorkerImplementation',
+        sourceHash: canonicalWorkerSourceHash,
+        independentImplementationHash:
+          INDEPENDENT_SYSTEM_BENCHMARK_RECOMPUTATION_IMPLEMENTATION
+            .independentSystemBenchmarkRecomputationImplementationHash,
+        assuranceScope: 'process-isolated-independent-implementation-v1',
+        networkActionPerformed: false,
+        externalActionPerformed: false,
+      },
+    );
+    if (independent?.version !== 2
+    || !assurance
+    || assurance.version !== 3
     || assurance.kind !== 'ProcessIsolatedRawEventRecomputationAssurance'
     || assurance.status !== 'process_isolated_raw_event_recomputation_verified'
     || assurance.assuranceScope !== 'os-sandboxed-process-independent-implementation-v1'
@@ -38,17 +72,49 @@ function processIsolatedRecomputationEvidenceValid(independent) {
     || assurance.osSandboxed !== true
     || assurance.networkActionPerformed !== false
     || assurance.externalActionPerformed !== false
+    || assurance.independentImplementationHash
+      !== INDEPENDENT_SYSTEM_BENCHMARK_RECOMPUTATION_IMPLEMENTATION
+        .independentSystemBenchmarkRecomputationImplementationHash
+    || assurance.cpuBudgetSemantics !== SYSTEM_BENCHMARK_CPU_BUDGET_SEMANTICS
+    || !verifyRawEventRecomputationResourceBudget(assurance.resourceBudget)
+    || assurance.resourceBudget.timeoutMs
+      !== assurance.osSandboxWorkerReceipt?.limits?.timeoutMs
+    || assurance.resourceBudget.memoryBytes
+      !== assurance.osSandboxWorkerReceipt?.limits?.memoryBytes
+    || assurance.resourceBudget.cpuSeconds
+      !== assurance.osSandboxWorkerReceipt?.limits?.cpuSeconds
+    || assurance.resourceBudget.maximumProcesses
+      !== assurance.osSandboxWorkerReceipt?.limits?.maximumPids
     || !Array.isArray(assurance.blockers) || assurance.blockers.length !== 0
+    || assurance.osSandboxWorkerReceipt?.ok !== true
+    || !Array.isArray(assurance.osSandboxWorkerReceipt?.blockers)
+    || assurance.osSandboxWorkerReceipt.blockers.length !== 0
     || !worker
     || worker.status !== 'process_isolated_raw_event_recomputation_verified'
     || worker.assuranceScope !== 'process-isolated-independent-implementation-v1'
     || worker.processIndependent !== true
     || worker.networkActionPerformed !== false
     || worker.externalActionPerformed !== false
+    || !Array.isArray(worker.blockers) || worker.blockers.length !== 0
+    || worker.independentImplementationHash
+      !== assurance.independentImplementationHash
+    || assurance.requestHash !== worker.requestHash
+    || !workerManifest
+    || ![1, 2].includes(workerManifest.version)
+    || workerManifest.kind !== 'RawEventRecomputationManifest'
+    || workerManifest.status !== 'raw_event_recomputation_verified'
+    || !Array.isArray(workerManifest.blockers) || workerManifest.blockers.length !== 0
+    || !SHA256.test(String(workerManifestHash || ''))
+    || hashRecord('RawEventRecomputationManifest', workerManifestPayload)
+      !== workerManifestHash
+    || worker.rawEventRecomputationManifestHash !== workerManifestHash
+    || !SHA256.test(String(canonicalWorkerSourceHash || ''))
+    || worker.workerImplementationSourceHash !== canonicalWorkerSourceHash
+    || assurance.workerImplementationSourceHash !== canonicalWorkerSourceHash
     || worker.workerPid === worker.parentPid
     || assurance.workerPid !== worker.workerPid
     || assurance.parentPid !== worker.parentPid
-    || !verifyOsSandboxWorkerReceipt(assurance.osSandboxWorkerReceipt)
+    || !verifyProductionOsSandboxWorkerReceipt(assurance.osSandboxWorkerReceipt)
     || assurance.osSandboxWorkerReceiptHash
       !== assurance.osSandboxWorkerReceipt?.receiptHash
     || assurance.osSandboxEnvironmentBomHash
@@ -58,25 +124,31 @@ function processIsolatedRecomputationEvidenceValid(independent) {
       !== String(assurance.osSandboxWorkerReceipt?.stdout || '').trim()
     || assurance.workerReceiptHash
       !== worker.processIsolatedRawEventRecomputationWorkerReceiptHash
-    || assurance.rawEventRecomputationManifestHash
+    || assurance.rawEventRecomputationManifestHash !== workerManifestHash
+    || independent.independentManifestHash
+      !== assurance.rawEventRecomputationManifestHash
+    || independent.independentManifestHash
       !== worker.rawEventRecomputationManifestHash
+    || independent.independentManifestHash !== workerManifestHash
     || assurance.workerImplementationHash !== worker.workerImplementationHash
+    || assurance.workerImplementationHash !== expectedWorkerImplementationHash
     || assurance.workerImplementationSourceHash
       !== worker.workerImplementationSourceHash) return false;
-  const {
-    processIsolatedRawEventRecomputationWorkerReceiptHash: workerHash,
-    ...workerPayload
-  } = worker;
-  const {
-    processIsolatedRawEventRecomputationAssuranceHash: assuranceHash,
-    ...assurancePayload
-  } = assurance;
-  return SHA256.test(String(workerHash || ''))
-    && hashRecord('ProcessIsolatedRawEventRecomputationWorkerReceipt', workerPayload)
-      === workerHash
-    && SHA256.test(String(assuranceHash || ''))
-    && hashRecord('ProcessIsolatedRawEventRecomputationAssurance', assurancePayload)
-      === assuranceHash;
+    const {
+      processIsolatedRawEventRecomputationWorkerReceiptHash: workerHash,
+      ...workerPayload
+    } = worker;
+    const {
+      processIsolatedRawEventRecomputationAssuranceHash: assuranceHash,
+      ...assurancePayload
+    } = assurance;
+    return SHA256.test(String(workerHash || ''))
+      && hashRecord('ProcessIsolatedRawEventRecomputationWorkerReceipt', workerPayload)
+        === workerHash
+      && SHA256.test(String(assuranceHash || ''))
+      && hashRecord('ProcessIsolatedRawEventRecomputationAssurance', assurancePayload)
+        === assuranceHash;
+  } catch { return false; }
 }
 
 function rawObservationAuthorityFacts(receipt) {
@@ -132,12 +204,15 @@ function rawObservationAuthorityFacts(receipt) {
         && cell.systemBenchmarkArmProtocolExecutionReceiptHash === expected;
     });
   const independent = receipt?.independentRawEventRecomputationAssurance || null;
+  const processAssurance =
+    independent?.processIsolatedRawEventRecomputationAssurance || null;
+  const processWorker = processAssurance?.workerReceipt || null;
   const independentPayload = independent ? { ...independent } : null;
   if (independentPayload) {
     delete independentPayload.independentRawEventRecomputationAssuranceHash;
   }
   const independentResidualRecomputationVerified = rawObservationRecomputationVerified
-    && [1, 2].includes(independent?.version)
+    && independent?.version === 2
     && independent?.kind === 'IndependentRawEventRecomputationAssurance'
     && independent?.status === 'independent_raw_event_recomputation_assurance_verified'
     && independent?.versionedExperimentIrHash
@@ -145,11 +220,17 @@ function rawObservationAuthorityFacts(receipt) {
     && independent?.assuranceScope
       === 'os-sandboxed-process-independent-implementation-v1'
     && independent?.processIndependent === true
-    && processIsolatedRecomputationEvidenceValid(independent)
+    && verifyProcessIsolatedSystemBenchmarkRecomputationEvidence(independent)
     && independent?.producerManifestHash
       === recomputation?.rawEventRecomputationManifestHash
     && independent?.independentManifestHash
       === recomputation?.rawEventRecomputationManifestHash
+    && independent?.independentManifestHash
+      === processAssurance?.rawEventRecomputationManifestHash
+    && independent?.independentManifestHash
+      === processWorker?.rawEventRecomputationManifestHash
+    && independent?.independentManifestHash
+      === processWorker?.manifest?.rawEventRecomputationManifestHash
     && independent?.producerImplementationHash
       === receipt?.systemBenchmarkHarnessImplementationHash
     && SHA256.test(String(independent?.verifierImplementationHash || ''))
@@ -341,7 +422,7 @@ export function buildHarnessAnalysisObservationAuthority(receipt) {
         production: typedNumericOracleProduction,
       };
       processRecomputationVerified = Boolean(
-        suppliedRecomputation?.version === 2
+        suppliedRecomputation?.version === 3
         && suppliedRecomputation?.assuranceScope
           === 'process-isolated-independent-implementation-v1'
         && suppliedRecomputation?.processIndependent === true

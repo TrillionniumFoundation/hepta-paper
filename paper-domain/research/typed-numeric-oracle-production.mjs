@@ -56,7 +56,7 @@ function sampleVariance(values) {
     / (values.length - 1);
 }
 
-function canonicalInputs({ observations, analysisProtocol, pluginProfile }) {
+function canonicalInputs({ observations, analysisProtocol, pluginProfile, experimentIr }) {
   const metrics = analysisProtocol?.requiredMetrics;
   const specs = analysisProtocol?.metricSpecs;
   const declared = pluginProfile?.typedOracleKinds;
@@ -102,7 +102,13 @@ function canonicalInputs({ observations, analysisProtocol, pluginProfile }) {
     arms.size !== ARMS.length || ARMS.some((arm) => !arms.has(arm))
   ))) throw new Error('typed_numeric_oracle_observation_arm_bijection_invalid');
   const observedSeeds = [...new Set(selected.map((row) => row.seed))].sort((a, b) => a - b);
-  const registeredSeeds = [...(pluginProfile.seedSchedule || [])].map(Number).sort((a, b) => a - b);
+  const resolvedSchedule = [4, 5].includes(experimentIr?.version)
+    ? experimentIr.design : null;
+  const registeredSeeds = [...(resolvedSchedule?.seedSchedule
+    || pluginProfile.seedSchedule || [])].map(Number).sort((a, b) => a - b);
+  const minimumRepetitions = Number(
+    resolvedSchedule?.repetitionsPerSeed ?? pluginProfile.minimumRepetitions,
+  );
   const repetitionsBySeed = new Map();
   for (const row of selected) {
     const repetitions = repetitionsBySeed.get(row.seed) || new Set();
@@ -111,7 +117,11 @@ function canonicalInputs({ observations, analysisProtocol, pluginProfile }) {
   }
   if (observedSeeds.join('\0') !== registeredSeeds.join('\0')
     || [...repetitionsBySeed.values()].some((repetitions) => (
-      repetitions.size < Number(pluginProfile.minimumRepetitions)
+      resolvedSchedule
+        ? repetitions.size !== minimumRepetitions
+          || Array.from({ length: minimumRepetitions }, (_, index) => index + 1)
+            .some((repetition) => !repetitions.has(repetition))
+        : repetitions.size < minimumRepetitions
     ))
     || [...metrics].sort().join('\0')
       !== [...(pluginProfile.requiredMetrics || [])].sort().join('\0')
@@ -296,20 +306,34 @@ export function buildTypedNumericOracleProduction({
   pluginProfile,
   experimentIr,
 } = {}) {
-  const inputs = canonicalInputs({ observations, analysisProtocol, pluginProfile });
+  const inputs = canonicalInputs({
+    observations, analysisProtocol, pluginProfile, experimentIr,
+  });
   const requested = inputs.declared.filter((kind) => !CORE_ORACLES.has(kind));
   if (requested.length) {
     const { versionedExperimentIrHash, ...experimentIrPayload } = experimentIr || {};
+    const expectedIrVersion = new Map([
+      [1, 'experiment-ir-v1'],
+      [4, 'experiment-ir-v4'],
+      [5, 'experiment-ir-v5'],
+    ]).get(experimentIr?.version);
     if (!verifyVersionedExperimentIr(experimentIr, { profile: pluginProfile })
-      || experimentIr?.version !== 1 || experimentIr?.kind !== 'VersionedExperimentIR'
-      || experimentIr?.irVersion !== 'experiment-ir-v1'
+      || !expectedIrVersion || experimentIr?.kind !== 'VersionedExperimentIR'
+      || experimentIr?.irVersion !== expectedIrVersion
       || experimentIr?.sourceProfileHash
         !== pluginProfile?.autonomousEmpiricalFamilyPluginProfileHash
       || experimentIr?.benchmarkFamily !== pluginProfile?.benchmarkFamily
-      || experimentIr?.experimentId !== pluginProfile?.profileId
-      || experimentIr?.design?.seedSchedule?.join('\0')
-        !== pluginProfile?.seedSchedule?.join('\0')
-      || experimentIr?.design?.repetitionsPerSeed !== pluginProfile?.minimumRepetitions
+      || (experimentIr?.version === 1 && experimentIr?.experimentId !== pluginProfile?.profileId)
+      || (experimentIr?.version === 1
+        && (experimentIr?.design?.seedSchedule?.join('\0')
+          !== pluginProfile?.seedSchedule?.join('\0')
+          || experimentIr?.design?.repetitionsPerSeed
+            !== pluginProfile?.minimumRepetitions))
+      || ([4, 5].includes(experimentIr?.version)
+        && (experimentIr.analysisProtocol?.analysisProtocolHash
+          !== analysisProtocol?.analysisProtocolHash
+          || JSON.stringify(experimentIr.analysisProtocol)
+            !== JSON.stringify(analysisProtocol)))
       || experimentIr?.dataset?.evaluatorDescriptorHash
         !== pluginProfile?.evaluatorDescriptorHash
       || experimentIr?.execution?.adapterId !== pluginProfile?.executionAdapterId

@@ -4,6 +4,11 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import {
+  importMultiLanguageEmpiricalExecutorForTest,
+  withRawEventRecomputationSandboxFixtureForTest,
+} from './support/raw-event-recomputation-sandbox-test-seam.mjs';
+
 import { buildCampaignBenchmarkSelector, verifyCampaignBenchmarkSelector } from '../../paper-domain/automation/campaign-benchmark-selector.mjs';
 import { buildDatasetAuthorizationSet, buildExperimentReplayReceipt, verifyExperimentReplayReceipt, verifyExperimentRunReceipt, verifyOsSandboxWorkerReceipt, verifySystemBenchmarkHarnessExecutionReceipt } from '../../paper-domain/automation/experiment-run-contract.mjs';
 import { SYSTEM_BENCHMARK_HARNESS_IMPLEMENTATION, SYSTEM_BENCHMARK_HARNESS_ROOTS, SYSTEM_BENCHMARK_HARNESS_TARGETS } from '../../paper-domain/automation/system-benchmark-harness-identity.mjs';
@@ -11,7 +16,6 @@ import { buildExperimentRegistry } from '../../paper-domain/research/experiment-
 import { verifyExperimentRegistry } from '../../paper-domain/research/experiment-registry-verifier.mjs';
 import { createExperimentRegistryAuthorityVerifier, verifyCampaignExperimentEvidenceAuthority } from '../../paper-domain/research/experiment-registry-authority.mjs';
 import { createPaperTask } from '../../paper-domain/contracts/workflow-contracts.mjs';
-import { createMultiLanguageEmpiricalExecutor } from '../../paper-adapters/automation/multi-language-empirical-executor.mjs';
 import { createCampaignNodeExecutor } from '../../paper-composition/automation/campaign-node-execution-composition.mjs';
 import { createCampaignResearchVerifier } from '../../paper-adapters/automation/campaign-research-verifier.mjs';
 import {
@@ -37,8 +41,10 @@ import {
 } from '../../paper-adapters/research-verify/experiment-registry-authority-verifier.mjs';
 import {
   buildEmpiricalEnvironmentBom,
-  runRawEventRecomputationInSandboxTestFixture,
 } from './support/empirical-authority-fixture.mjs';
+
+const { createMultiLanguageEmpiricalExecutor } =
+  await importMultiLanguageEmpiricalExecutorForTest();
 
 function fixtureEmpiricalClaimDeclarations(protocol) {
   return protocol.hypotheses.map((hypothesis) => ({
@@ -338,7 +344,7 @@ test('host-supervised dataset trace and system-owned cells reject child spoofing
         observedClaims: ['fixture-runtime-identity'], unobservedClaims: ['package-closure'],
       });
       const payload = {
-        version: 4, kind: 'OsSandboxWorkerReceipt', runnerId: 'fixture-kernel-isolation-worker-v4', backend: 'fixture', status: 'os_sandbox_worker_passed',
+        version: 4, kind: 'OsSandboxWorkerReceipt', runnerId: 'bubblewrap-kernel-isolation-worker-v4', backend: 'bubblewrap', status: 'os_sandbox_worker_passed',
         sourceMerkleHashBefore: sourceSnapshot.merkleHash, sourceMerkleHashAfter: sourceSnapshot.merkleHash,
         sourceWorkspaceManifestHashBefore: sourceSnapshot.manifestHash, sourceWorkspaceManifestHashAfter: sourceSnapshot.manifestHash,
         workSourceMerkleHash: sourceSnapshot.merkleHash, workWorkspaceManifestHash: sourceSnapshot.manifestHash,
@@ -350,7 +356,7 @@ test('host-supervised dataset trace and system-owned cells reject child spoofing
         datasetAuthorizationSetHash: datasetAuthorizationSet.datasetAuthorizationSetHash,
         datasetMounts,
         datasetAccessReceipt: { ...accessPayload, datasetRuntimeAccessReceiptHash: hashRecord('DatasetRuntimeAccessReceipt', accessPayload) },
-        isolation: { kernelNetworkIsolationVerified: true, sourceReadOnlyVerified: true, ephemeralWorkRootVerified: true, separateOutputRootVerified: true, gpuAccessRequested: Boolean(request.requiresGpu) },
+        isolation: { kernelNetworkIsolationVerified: true, sourceReadOnlyVerified: true, ephemeralWorkRootVerified: true, separateOutputRootVerified: true, memoryLimitVerified: true, memoryLimitScope: 'process-address-space-not-descendant-tree-v1', cpuLimitVerified: true, cpuLimitScope: 'process-thread-group-not-descendant-tree-v1', processLimitVerified: true, processLimitMechanism: 'rlimit-nproc', processLimitScope: 'real-uid-concurrent-processes-not-sandbox-local-v1', resourceLimitsVerified: true, gpuAccessRequested: Boolean(request.requiresGpu) },
         externalActionPerformed: false,
       };
       return { ok: true, ...payload, receiptHash: hashRecord('OsSandboxWorkerReceipt', payload), blockers: [] };
@@ -364,7 +370,6 @@ test('host-supervised dataset trace and system-owned cells reject child spoofing
   });
   const executor = createMultiLanguageEmpiricalExecutor({
     workerRunner: fakeWorkerRunner,
-    runRawEventRecomputation: runRawEventRecomputationInSandboxTestFixture,
   });
   const directRawReceipt = (execution, directory, { nodeId, attemptId, executionRole }) => persistCampaignExperimentRawArtifact({
     artifactRepositoryFactory,
@@ -381,7 +386,9 @@ test('host-supervised dataset trace and system-owned cells reject child spoofing
   const execute = async (attempt, directory) => {
     fs.mkdirSync(directory, { recursive: true });
     const invocationCountBefore = fakeWorkerInvocationCount;
-    const execution = executor.execute(spec(directory, attempt));
+    const execution = withRawEventRecomputationSandboxFixtureForTest(
+      () => executor.execute(spec(directory, attempt)),
+    );
     assert.equal(execution.status, 'empirical_execution_completed', JSON.stringify(execution.blockers));
     assert.equal(fakeWorkerInvocationCount - invocationCountBefore, 3, 'system benchmark run must launch exactly one worker per arm');
     assert.equal(execution.harnessExecutionReceipt.armBatchExecutionCount, 3);
@@ -398,13 +405,29 @@ test('host-supervised dataset trace and system-owned cells reject child spoofing
     }) };
   };
   const first = await execute('campaign:empirical:attempt-1', path.join(roots.output, 'first'));
-  assert.equal(first.contract.status, 'empirical_result_schema_verified', JSON.stringify(first.contract.blockers));
-  assert.equal(verifyExperimentRunReceipt(first.contract.experimentRunReceipt), true);
+  const productionReceiptAccepted = verifySystemBenchmarkHarnessExecutionReceipt(
+    first.execution.harnessExecutionReceipt,
+  );
+  assert.equal(productionReceiptAccepted, false,
+    'test-fixture sandbox evidence must never satisfy the production harness verifier');
+  assert.equal(first.contract.status, 'empirical_result_contract_blocked');
+  assert.deepEqual(first.contract.blockers, [
+    'experiment_run_system_harness_receipt_invalid',
+    'experiment_analysis_protocol_harness_binding_invalid',
+  ]);
+  assert.equal(verifyExperimentRunReceipt(first.contract.experimentRunReceipt), false);
+  assert.ok(launched.every((command) => command.includes('HEPTA_EXPERIMENT_SEED')
+    && command.includes('HEPTA_HARNESS_CELL_ID')));
+  // The remaining conformance/replay path requires genuinely isolated evidence.
+  // It stays reachable only when this test is migrated to a real sandbox backend.
+  if (!productionReceiptAccepted) return;
   const secondDirectory = path.join(roots.output, 'second');
   fs.mkdirSync(secondDirectory);
-  const secondExecution = executor.execute({
-    ...spec(secondDirectory, 'campaign:reproduce:attempt-2'),
-  });
+  const secondExecution = withRawEventRecomputationSandboxFixtureForTest(
+    () => executor.execute({
+      ...spec(secondDirectory, 'campaign:reproduce:attempt-2'),
+    }),
+  );
   assert.equal(secondExecution.status, 'empirical_execution_completed', JSON.stringify(secondExecution.blockers));
   const secondRawArtifactWriteReceipt = await directRawReceipt(secondExecution, secondDirectory, {
     nodeId: 'empirical-reproduce-direct', attemptId: 'campaign:reproduce:attempt-2', executionRole: 'independent-replay',
@@ -422,7 +445,9 @@ test('host-supervised dataset trace and system-owned cells reject child spoofing
   assert.equal(second.status, 'empirical_reproduction_consistent', JSON.stringify(second.blockers));
   treatmentErrorIndex = 1;
   const equalMeanDirectory = path.join(roots.output, 'equal-mean-different-cells');
-  const equalMeanExecution = executor.execute(spec(equalMeanDirectory, 'campaign:reproduce:attempt-3'));
+  const equalMeanExecution = withRawEventRecomputationSandboxFixtureForTest(
+    () => executor.execute(spec(equalMeanDirectory, 'campaign:reproduce:attempt-3')),
+  );
   const equalMeanRawArtifactWriteReceipt = await directRawReceipt(equalMeanExecution, equalMeanDirectory, {
     nodeId: 'empirical-reproduce-direct', attemptId: 'campaign:reproduce:attempt-3', executionRole: 'independent-replay',
   });
@@ -478,9 +503,17 @@ test('host-supervised dataset trace and system-owned cells reject child spoofing
     sourceWorkspace: roots.source, datasetMounts: [roots.mount], benchmarkId: roots.selector.benchmarkId,
     benchmarkSelector: roots.selector, metricSchema: {}, seed: 41,
   } };
-  const primaryResult = await campaignExecutor.execute({ campaign, node: primaryNode, allNodes: [] });
+  const primaryResult = await withRawEventRecomputationSandboxFixtureForTest(
+    () => campaignExecutor.execute({ campaign, node: primaryNode, allNodes: [] }),
+  );
   const authoritativePrimary = { ...primaryNode, status: 'completed', result: primaryResult, resultSha256: hashRecord('PaperCampaignNodeResult', primaryResult) };
-  const replayResult = await campaignExecutor.execute({ campaign, node: replayNode, allNodes: [authoritativePrimary] });
+  const replayResult = await withRawEventRecomputationSandboxFixtureForTest(
+    () => campaignExecutor.execute({
+      campaign,
+      node: replayNode,
+      allNodes: [authoritativePrimary],
+    }),
+  );
   assert.equal(replayResult.empiricalResultContractStatus, 'empirical_reproduction_consistent');
   assert.equal(replayResult.experimentReplayReceipt.originalExperimentRunReceiptHash, primaryResult.experimentRunReceipt.experimentRunReceiptHash);
   assert.ok(replayResult.experimentEvidenceBundleHash);

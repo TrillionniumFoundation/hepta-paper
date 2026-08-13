@@ -36,3 +36,25 @@ export function verifyOsSandboxWorkerReceipt(receipt) {
     && receipt.sourceWorkspaceManifestHashBefore === receipt.sourceWorkspaceManifestHashAfter
     && receipt.sourceWorkspaceManifestHashBefore === receipt.workWorkspaceManifestHash;
 }
+
+export function verifyProductionOsSandboxWorkerReceipt(receipt) {
+  try {
+    return verifyOsSandboxWorkerReceipt(receipt)
+      && ['bubblewrap', 'docker'].includes(receipt.backend)
+      && receipt.runnerId === `${receipt.backend}-kernel-isolation-worker-v4`
+      && receipt.isolation?.memoryLimitVerified === true
+      && receipt.isolation?.memoryLimitScope === (receipt.backend === 'docker'
+        ? 'container-cgroup-aggregate-v1'
+        : 'process-address-space-not-descendant-tree-v1')
+      && receipt.isolation?.cpuLimitVerified === true
+      && receipt.isolation?.cpuLimitScope
+        === 'process-thread-group-not-descendant-tree-v1'
+      && receipt.isolation?.processLimitVerified === true
+      && receipt.isolation?.resourceLimitsVerified === true
+      && receipt.isolation?.processLimitMechanism === (receipt.backend === 'docker'
+        ? 'docker-pids-cgroup' : 'rlimit-nproc')
+      && receipt.isolation?.processLimitScope === (receipt.backend === 'docker'
+        ? 'container-cgroup-concurrent-tasks-v1'
+        : 'real-uid-concurrent-processes-not-sandbox-local-v1');
+  } catch { return false; }
+}

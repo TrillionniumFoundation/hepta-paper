@@ -10,6 +10,9 @@ import {
   verifyResearchAgendaClaimBindingReceipt,
 } from './research-agenda-claim-binding-contract.mjs';
 import { verifyResearchAgendaIr } from './research-agenda-ir.mjs';
+import {
+  SYSTEM_BENCHMARK_CPU_BUDGET_SEMANTICS,
+} from './system-benchmark-resource-budget-contract.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const BINDING_KEYS = Object.freeze([
@@ -32,7 +35,7 @@ const DATASET_COMPATIBILITY_KEYS = Object.freeze([
   'schemaCompatibilityMode', 'selectorHash', 'status', 'version',
 ]);
 const EXECUTION_BUDGET_KEYS = Object.freeze([
-  'aggregateCpuSeconds', 'cpuCount', 'executionEnvironment', 'maximumWallTimeMs',
+  'aggregateCpuSeconds', 'cpuBudgetSemantics', 'cpuCount', 'executionEnvironment', 'maximumWallTimeMs',
   'memoryBytes',
 ]);
 
@@ -173,6 +176,7 @@ function canonicalExecutionBudget({
     memoryBytes: Number(memoryBytes),
     cpuCount: Number(cpuCount),
     aggregateCpuSeconds: Number(aggregateCpuSeconds),
+    cpuBudgetSemantics: SYSTEM_BENCHMARK_CPU_BUDGET_SEMANTICS,
     executionEnvironment: String(executionEnvironment || ''),
   };
   const feasibility = researchAgendaIr?.resourceFeasibility;
@@ -184,6 +188,7 @@ function canonicalExecutionBudget({
     || !Number.isSafeInteger(budget.memoryBytes) || budget.memoryBytes < 1
     || !Number.isSafeInteger(budget.cpuCount) || budget.cpuCount < 1
     || !Number.isSafeInteger(budget.aggregateCpuSeconds) || budget.aggregateCpuSeconds < 1
+    || budget.cpuBudgetSemantics !== SYSTEM_BENCHMARK_CPU_BUDGET_SEMANTICS
     || budget.maximumWallTimeMs > feasibility.maximumWallTimeMs
     || budget.memoryBytes > feasibility.maximumMemoryBytes
     || budget.cpuCount > feasibility.maximumCpuCount
@@ -253,7 +258,7 @@ export function buildExperimentResearchBinding({
     researchAgendaIr.resourceFeasibility,
   ));
   const payload = {
-    version: 1,
+    version: 2,
     kind: 'ExperimentResearchBinding',
     status: 'experiment_research_binding_verified',
     paperId: researchAgendaIr.paperId,
@@ -296,7 +301,7 @@ export function buildExperimentResearchBinding({
 export function verifyExperimentResearchBinding(value) {
   try {
     if (!hasExactObjectKeys(value, BINDING_KEYS)
-      || value.version !== 1 || value.kind !== 'ExperimentResearchBinding'
+      || value.version !== 2 || value.kind !== 'ExperimentResearchBinding'
       || value.status !== 'experiment_research_binding_verified'
       || value.productionGenericEligible !== true
       || !verifyResearchAgendaIr(value.researchAgendaIr)
@@ -335,6 +340,9 @@ export function verifyExperimentResearchBinding(value) {
         !== value.falsifiersHash
       || hashRecord('ExperimentResearchResourceFeasibility', value.resourceFeasibility)
         !== value.resourceFeasibilityHash
+      || !hasExactObjectKeys(value.executionBudget, EXECUTION_BUDGET_KEYS)
+      || value.executionBudget.cpuBudgetSemantics
+        !== SYSTEM_BENCHMARK_CPU_BUDGET_SEMANTICS
       || hashRecord('ExperimentResearchExecutionBudget', value.executionBudget)
         !== value.executionBudgetHash) return false;
     const compatibility = value.datasetCompatibility;
@@ -383,12 +391,13 @@ export function verifyExperimentResearchBinding(value) {
       || datasetResearchCompatibilityHash !== value.datasetResearchCompatibilityHash) {
       return false;
     }
-    canonicalExecutionBudget({
+    const expectedExecutionBudget = canonicalExecutionBudget({
       researchAgendaIr: value.researchAgendaIr,
       ...value.executionBudget,
       language: value.proposal?.protocolFamily === 'econometrics_panel_benchmark'
         || value.proposal?.protocolFamily === 'finance_asset_pricing_benchmark' ? 'r' : 'python',
     });
+    if (!same(value.executionBudget, expectedExecutionBudget)) return false;
     const { experimentResearchBindingHash, ...payload } = value;
     return sha(experimentResearchBindingHash)
       && hashRecord('ExperimentResearchBinding', payload) === experimentResearchBindingHash;

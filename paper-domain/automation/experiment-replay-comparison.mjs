@@ -37,8 +37,13 @@ export function compareExperimentReplayRuns({
   if (originalIr?.experimentPlanHash !== replayIr?.experimentPlanHash) {
     identityBlockers.push('experiment_replay_identity_mismatch:experimentPlanHash');
   }
-  if (originalIr?.version === 3 || replayIr?.version === 3) {
-    if (originalIr?.version !== 3 || replayIr?.version !== 3
+  const currentNonResearchReplay = originalIr?.version === 4 && replayIr?.version === 4
+    && originalIr.researchBinding === undefined && replayIr.researchBinding === undefined;
+  if (!currentNonResearchReplay) {
+    if (originalIr?.version !== 5 || replayIr?.version !== 5) {
+      identityBlockers.push('experiment_replay_identity_mismatch:experimentIrVersion');
+    }
+    if (originalIr?.version !== 5 || replayIr?.version !== 5
       || !productionExperimentResearchBindingsMatch(
         originalIr.researchBinding,
         replayIr.researchBinding,

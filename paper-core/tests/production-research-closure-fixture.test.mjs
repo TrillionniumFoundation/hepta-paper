@@ -3,23 +3,27 @@ import crypto from 'node:crypto';
 import test from 'node:test';
 
 import {
-  buildResearchClosureReceipt,
-  inspectResearchReportForClosure,
-  verifyResearchClosureReceipt,
+  importAutonomousSubmissionContractForTest,
+  importAutonomousVenueComplianceContractForTest,
+  importResearchClosureReceiptContractForTest,
+} from './support/production-experiment-closure-test-seam.mjs';
+import {
+  buildResearchClosureReceipt as buildProductionResearchClosureReceipt,
+  verifyResearchClosureReceipt as verifyProductionResearchClosureReceipt,
 } from '../../paper-domain/automation/research-closure-receipt-contract.mjs';
 import {
   formalClosureClaimBindingsFromProposalBinding,
   verifyGenericFormalCertificateIntakeClosureBinding,
 } from '../../paper-domain/research/formal-certificate-intake.mjs';
 import {
-  verifyAutonomousSubmissionRequest,
+  verifyAutonomousSubmissionRequest as verifyProductionAutonomousSubmissionRequest,
 } from '../../paper-domain/automation/autonomous-submission-contract.mjs';
 import {
   fullResearchQualificationSigningPayloadHash,
 } from '../../paper-domain/automation/full-research-qualification-contract.mjs';
 import {
-  buildVenueRequirementObservations,
-  verifyAutonomousVenueComplianceReceipt,
+  verifyAutonomousVenueComplianceReceipt as
+    verifyProductionAutonomousVenueComplianceReceipt,
 } from '../../paper-domain/automation/autonomous-venue-compliance-contract.mjs';
 import {
   deriveVenueRequirementObservationsFromSourceEvidence,
@@ -42,6 +46,22 @@ import {
 import {
   assertProductionExperimentClosureResult,
 } from './support/production-experiment-closure-fixture.mjs';
+
+const [
+  {
+    inspectResearchReportForClosure,
+    verifyResearchClosureReceipt,
+  },
+  { verifyAutonomousSubmissionRequest },
+  {
+    buildVenueRequirementObservations,
+    verifyAutonomousVenueComplianceReceipt,
+  },
+] = await Promise.all([
+  importResearchClosureReceiptContractForTest(),
+  importAutonomousSubmissionContractForTest(),
+  importAutonomousVenueComplianceContractForTest(),
+]);
 
 const deeplyFrozenFixtureValues = new WeakSet();
 
@@ -757,6 +777,14 @@ test('production research closure fixture is recursive and rejects rehashed agen
   assert.equal(fixture.manuscript.experimentRegistry.status, 'experiment_registry_ready');
   assert.equal(fixture.manuscript.experimentRegistry.academicExperimentCount, 1);
   assert.equal(fixture.venueComplianceReceipt.version, 3);
+  assert.equal(verifyAutonomousVenueComplianceReceipt(
+    fixture.venueComplianceReceipt,
+    { campaignReleaseAuthority: fixture.campaignReleaseAuthority },
+  ), true);
+  assert.equal(verifyProductionAutonomousVenueComplianceReceipt(
+    fixture.venueComplianceReceipt,
+    { campaignReleaseAuthority: fixture.campaignReleaseAuthority },
+  ), false, 'fixture venue evidence must not pass production verification');
   const releaseCreatedAt = Date.parse(fixture.releaseBundle.createdAt);
   const qualificationIssuedAt = Date.parse(
     fixture.qualificationInspection.qualificationReceipt.issuedAt,
@@ -792,12 +820,21 @@ test('production research closure fixture is recursive and rejects rehashed agen
   );
   assert.equal(fixture.submissionRequest.version, 6);
   assert.equal(verifyFixtureClosure(fixture, fixture.researchClosureReceipt), true);
+  assert.equal(verifyProductionResearchClosureReceipt(
+    fixture.researchClosureReceipt,
+    {},
+    {
+      verifyQualificationSignature: fixture.qualificationSignatureVerifier,
+      verifyIndependentQualificationEvidence:
+        fixture.qualificationIndependentEvidenceVerifier,
+    },
+  ), false, 'fixture closure evidence must not pass production verification');
   assert.equal(
-    verifyResearchClosureReceipt(fixture.researchClosureReceipt),
+    verifyProductionResearchClosureReceipt(fixture.researchClosureReceipt),
     false,
     'closure verification must fail closed without a qualification signature verifier',
   );
-  assert.throws(() => buildResearchClosureReceipt({
+  assert.throws(() => buildProductionResearchClosureReceipt({
     campaignReleaseAuthority: fixture.campaignReleaseAuthority,
     qualificationInspection: fixture.qualificationInspection,
     venueComplianceReceipt: fixture.venueComplianceReceipt,
@@ -1029,6 +1066,20 @@ test('production research closure fixture is recursive and rejects rehashed agen
     verifyVenueComplianceAuthority: () => true,
     verifyPortalConfigurationAuthority: () => true,
   }), true);
+  assert.equal(verifyProductionAutonomousSubmissionRequest(
+    fixture.submissionRequest,
+    {
+      authorityObservedAt: fixture.closureTime,
+      requireResearchClosure: true,
+      verifyCurrentCampaignReleaseAuthority: () => true,
+      verifyQualificationAuthority: () => true,
+      verifyQualificationSignature: fixture.qualificationSignatureVerifier,
+      verifyIndependentQualificationEvidence:
+        fixture.qualificationIndependentEvidenceVerifier,
+      verifyVenueComplianceAuthority: () => true,
+      verifyPortalConfigurationAuthority: () => true,
+    },
+  ), false, 'fixture submission evidence must not pass production verification');
 
   const forgedNoncompliant = forgedVerifiedNoncompliantSourceReceipt(fixture);
   assert.equal(forgedNoncompliant.derived.templateAssetPresent, false);

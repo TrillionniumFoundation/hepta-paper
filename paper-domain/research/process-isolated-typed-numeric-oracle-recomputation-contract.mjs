@@ -1,5 +1,11 @@
 import { hasExactObjectKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { verifyProductionOsSandboxWorkerReceipt } from '../automation/os-sandbox-worker-receipt-contract.mjs';
+import {
+  SYSTEM_BENCHMARK_CPU_BUDGET_SEMANTICS,
+  typedNumericRecomputationResourceBudgetsEqual,
+  verifyTypedNumericRecomputationResourceBudget,
+} from '../automation/system-benchmark-resource-budget-contract.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 
@@ -30,15 +36,18 @@ const WORKER_RECEIPT_KEYS = Object.freeze([
 ]);
 const PROCESS_RECEIPT_KEYS = Object.freeze([
   'analysisProtocolHash', 'assuranceScope', 'blockers',
-  'candidateAuthoredValuesAccepted', 'comparisons', 'externalActionPerformed',
+  'candidateAuthoredValuesAccepted', 'comparisons', 'cpuBudgetSemantics',
+  'externalActionPerformed',
   'empiricalPluginProfileHash', 'experimentId', 'experimentIrVersion',
   'independentAlgorithmImplementationHash',
   'independentTypedNumericOracleRecomputationHash', 'independentlyRecomputed',
   'kind', 'networkActionPerformed', 'networkGuardInstalled',
   'networkIsolationPolicy', 'numericInputManifestHash', 'numericTupleManifest',
-  'numericTupleManifestHash', 'parentPid', 'processIndependent', 'productionHash',
+  'numericTupleManifestHash', 'osSandboxBackend', 'osSandboxEnvironmentBomHash',
+  'osSandboxed', 'osSandboxWorkerReceipt', 'osSandboxWorkerReceiptHash',
+  'parentPid', 'processIndependent', 'productionHash',
   'producerImplementationHash', 'recomputation', 'requestHash', 'status',
-  'verifierImplementationHash', 'version', 'workerImplementation',
+  'resourceBudget', 'verifierImplementationHash', 'version', 'workerImplementation',
   'workerImplementationHash', 'workerImplementationSourceHash', 'workerPid',
   'versionedExperimentIrHash', 'workerReceipt', 'workerReceiptHash', 'workerSourceClosureHash',
 ]);
@@ -49,6 +58,10 @@ function unique(values) {
 
 function finitePid(value) {
   return Number.isSafeInteger(value) && value > 0;
+}
+
+function finiteParentPid(value) {
+  return Number.isSafeInteger(value) && value >= 0;
 }
 
 export function buildProcessIsolatedTypedNumericOracleRequest({
@@ -212,7 +225,7 @@ export function buildProcessIsolatedTypedNumericOracleWorkerReceipt({
     ...(!recomputation
       || recomputation.status !== 'independent_typed_numeric_oracle_recomputation_verified'
       ? ['process_isolated_typed_numeric_recomputation_invalid'] : []),
-    ...(!finitePid(workerPid) || !finitePid(parentPid) || workerPid === parentPid
+    ...(!finitePid(workerPid) || !finiteParentPid(parentPid) || workerPid === parentPid
       ? ['process_isolated_typed_numeric_process_identity_invalid'] : []),
     ...(networkGuardInstalled === true
       ? [] : ['process_isolated_typed_numeric_network_guard_missing']),
@@ -242,8 +255,9 @@ export function buildProcessIsolatedTypedNumericOracleWorkerReceipt({
     independentAlgorithmImplementationHash:
       workerImplementation?.independentAlgorithmImplementationHash || null,
     workerPid: finitePid(workerPid) ? workerPid : null,
-    parentPid: finitePid(parentPid) ? parentPid : null,
-    processIndependent: finitePid(workerPid) && finitePid(parentPid) && workerPid !== parentPid,
+    parentPid: finiteParentPid(parentPid) ? parentPid : null,
+    processIndependent: finitePid(workerPid) && finiteParentPid(parentPid)
+      && workerPid !== parentPid,
     networkIsolationPolicy: TYPED_NUMERIC_ORACLE_NETWORK_ISOLATION_POLICY,
     networkGuardInstalled: networkGuardInstalled === true,
     networkActionPerformed: networkActionPerformed === true,
@@ -273,7 +287,7 @@ export function verifyProcessIsolatedTypedNumericOracleWorkerReceipt(
     || receipt.networkGuardInstalled !== true
     || receipt.networkActionPerformed !== false
     || receipt.externalActionPerformed !== false
-    || !finitePid(receipt.workerPid) || !finitePid(receipt.parentPid)
+    || !finitePid(receipt.workerPid) || !finiteParentPid(receipt.parentPid)
     || receipt.workerPid === receipt.parentPid
     || !Array.isArray(receipt.blockers) || receipt.blockers.length !== 0
     || !verifyTypedNumericOracleWorkerImplementation(receipt.workerImplementation)
@@ -309,16 +323,47 @@ export function buildProcessIsolatedTypedNumericOracleRecomputationReceipt({
   request,
   workerImplementation,
   workerReceipt = null,
+  osSandboxWorkerReceipt = null,
+  resourceBudget = null,
   parentPid,
   workerPid = null,
   blockers = [],
 } = {}) {
   const recomputation = workerReceipt?.recomputation || null;
   const tupleManifest = workerReceipt?.numericTupleManifest || null;
-  const uniqueBlockers = unique(blockers);
+  let sandboxVerified = false;
+  try {
+    sandboxVerified = verifyProductionOsSandboxWorkerReceipt(osSandboxWorkerReceipt)
+      && Array.isArray(osSandboxWorkerReceipt.blockers)
+      && osSandboxWorkerReceipt.blockers.length === 0
+      && osSandboxWorkerReceipt.externalActionPerformed === false;
+  }
+  catch { sandboxVerified = false; }
+  const resourceBudgetVerified = verifyTypedNumericRecomputationResourceBudget(resourceBudget);
+  const resourceBudgetBound = resourceBudgetVerified
+    && typedNumericRecomputationResourceBudgetsEqual(resourceBudget, {
+      timeoutMs: osSandboxWorkerReceipt?.limits?.timeoutMs,
+      memoryBytes: osSandboxWorkerReceipt?.limits?.memoryBytes,
+      cpuSeconds: osSandboxWorkerReceipt?.limits?.cpuSeconds,
+      maximumProcesses: osSandboxWorkerReceipt?.limits?.maximumPids,
+    });
+  const uniqueBlockers = unique([
+    ...blockers,
+    ...(!workerReceipt
+      ? ['process_isolated_typed_numeric_recomputation_receipt_invalid'] : []),
+    ...(workerReceipt && (parentPid !== workerReceipt.parentPid
+      || workerPid !== workerReceipt.workerPid
+      || !finiteParentPid(parentPid) || !finitePid(workerPid) || parentPid === workerPid)
+      ? ['process_isolated_typed_numeric_process_identity_invalid'] : []),
+    ...(sandboxVerified ? [] : ['process_isolated_typed_numeric_os_sandbox_invalid']),
+    ...(resourceBudgetVerified
+      ? [] : ['process_isolated_typed_numeric_resource_budget_invalid']),
+    ...(resourceBudgetBound
+      ? [] : ['process_isolated_typed_numeric_os_sandbox_resource_budget_mismatch']),
+  ]);
   const verified = uniqueBlockers.length === 0 && Boolean(workerReceipt);
   const payload = {
-    version: 2,
+    version: 3,
     kind: 'IndependentTypedNumericOracleRecomputation',
     status: verified
       ? 'independent_typed_numeric_oracle_recomputation_verified'
@@ -346,12 +391,19 @@ export function buildProcessIsolatedTypedNumericOracleRecomputationReceipt({
     workerImplementationSourceHash:
       workerImplementation?.workerImplementationSourceHash || null,
     workerSourceClosureHash: workerImplementation?.workerSourceClosureHash || null,
-    parentPid: finitePid(parentPid) ? parentPid : null,
+    parentPid: finiteParentPid(parentPid) ? parentPid : null,
     workerPid: finitePid(workerPid) ? workerPid : null,
     networkIsolationPolicy: TYPED_NUMERIC_ORACLE_NETWORK_ISOLATION_POLICY,
     networkGuardInstalled: verified && workerReceipt?.networkGuardInstalled === true,
     networkActionPerformed: workerReceipt?.networkActionPerformed === true,
     externalActionPerformed: workerReceipt?.externalActionPerformed === true,
+    osSandboxed: verified,
+    osSandboxBackend: osSandboxWorkerReceipt?.backend || null,
+    osSandboxWorkerReceiptHash: osSandboxWorkerReceipt?.receiptHash || null,
+    osSandboxEnvironmentBomHash: osSandboxWorkerReceipt?.environmentBomHash || null,
+    osSandboxWorkerReceipt,
+    resourceBudget,
+    cpuBudgetSemantics: SYSTEM_BENCHMARK_CPU_BUDGET_SEMANTICS,
     numericTupleManifest: tupleManifest,
     numericTupleManifestHash: tupleManifest?.numericTupleManifestHash || null,
     recomputation,
@@ -369,7 +421,7 @@ export function buildProcessIsolatedTypedNumericOracleRecomputationReceipt({
 
 export function verifyProcessIsolatedTypedNumericOracleRecomputationReceiptShape(receipt) {
   return hasExactObjectKeys(receipt, PROCESS_RECEIPT_KEYS)
-    && receipt.version === 2
+    && receipt.version === 3
     && receipt.kind === 'IndependentTypedNumericOracleRecomputation'
     && receipt.assuranceScope === PROCESS_ISOLATED_TYPED_NUMERIC_ORACLE_ASSURANCE_SCOPE;
 }

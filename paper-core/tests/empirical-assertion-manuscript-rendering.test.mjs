@@ -581,7 +581,7 @@ test('workspace revalidation rejects structurally traversable authority tamperin
   ));
 });
 
-test('workspace revalidation verifies a fully authority-bound rendered manuscript', () => {
+test('workspace revalidation rejects fixture-backed empirical receipts before authority derivation', () => {
   const paperId = 'paper-revalidation-verified';
   const campaignId = 'campaign-revalidation-verified';
   const campaignPlanHash = hashRecord('FixtureCampaignPlan', { campaignId });
@@ -654,11 +654,15 @@ test('workspace revalidation verifies a fully authority-bound rendered manuscrip
       result: replayResult,
     }),
   ];
-  const trustedAuthority = buildEmpiricalAssertionAuthorityFromCampaignNodes({
-    paperId,
-    campaignId,
-    nodes: empiricalNodes,
-  });
+  let trustedAuthority = null;
+  assert.throws(() => {
+    trustedAuthority = buildEmpiricalAssertionAuthorityFromCampaignNodes({
+      paperId,
+      campaignId,
+      nodes: empiricalNodes,
+    });
+  }, /empirical_assertion_experiment_receipts_invalid/);
+  if (!trustedAuthority) return;
   const root = workspace('authority-bound manuscript source');
   const claimSource = experimentClosure.originalRunReceipt.analysisProtocol.hypotheses
     .flatMap((hypothesis) => {

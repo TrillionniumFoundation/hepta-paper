@@ -6,12 +6,14 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
-  buildAutonomousSubmissionReceipt,
-  createAutonomousSubmissionRequestVerifier,
-  verifyAutonomousSubmissionReceipt,
-  verifyLegacyAutonomousSubmissionReceipt,
-  verifyAutonomousSubmissionRequest,
+  verifyAutonomousSubmissionReceipt as
+    verifyProductionAutonomousSubmissionReceipt,
+  verifyAutonomousSubmissionRequest as
+    verifyProductionAutonomousSubmissionRequest,
 } from '../../paper-domain/automation/autonomous-submission-contract.mjs';
+import {
+  importAutonomousSubmissionContractForTest,
+} from './support/production-experiment-closure-test-seam.mjs';
 import {
   autonomousSubmissionOutboxMessageId,
   autonomousSubmissionSideEffectReservationHash,
@@ -59,6 +61,13 @@ import {
   qualificationSignatureVerifier,
 } from './support/autonomous-research-generalization-closure-fixture.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+
+const {
+  buildAutonomousSubmissionReceipt,
+  createAutonomousSubmissionRequestVerifier,
+  verifyAutonomousSubmissionReceipt,
+  verifyLegacyAutonomousSubmissionReceipt,
+} = await importAutonomousSubmissionContractForTest();
 
 const H = (label) => hashRecord('AutonomousSubmissionOwnerCoverageTest', { label });
 const SUBMISSION_FIXTURES = new Map();
@@ -344,7 +353,11 @@ test('submission request owner rejects independently mutated recursive and top-l
   const fixture = submissionFixture();
   const verifier = trustVerifier();
   assert.equal(verifier.verify(fixture.request), true);
-  assert.equal(verifyAutonomousSubmissionRequest(fixture.request), false);
+  assert.equal(
+    verifyProductionAutonomousSubmissionRequest(fixture.request),
+    false,
+    'fixture-backed submission request must remain non-promotable',
+  );
 
   for (const propertyPath of [
     'version',
@@ -429,6 +442,9 @@ test('submission receipt and delivery owner cover valid state transitions and in
     request: fixture.request,
     requestVerifier: verifier,
   }), true);
+  assert.equal(verifyProductionAutonomousSubmissionReceipt(receipt, {
+    request: fixture.request,
+  }), false, 'fixture-backed submission receipt must remain non-promotable');
   assert.equal(verifyAutonomousSubmissionReceipt(receipt, {
     request: fixture.request,
     requestVerifier: verifier,

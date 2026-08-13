@@ -5,16 +5,29 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { executeSystemBenchmarkHarness } from '../../paper-adapters/automation/system-benchmark-harness.mjs';
+import {
+  importAnalysisProtocolRunBindingForTest,
+  importExperimentRunContractForTest,
+  importMultiLanguageEmpiricalExecutorForTest,
+  importSystemBenchmarkHarnessForTest,
+  withRawEventRecomputationSandboxFixtureForTest,
+  withRawEventRecomputationSandboxRunnerForTest,
+  withSystemBenchmarkWallClockForTest,
+} from './support/raw-event-recomputation-sandbox-test-seam.mjs';
 import { signAuthorityDocument } from '../../paper-adapters/authority/authority-signatures.mjs';
 import { authorizeOperatorDatasetMount } from '../../paper-adapters/automation/operator-dataset-harness-reader.mjs';
-import { createMultiLanguageEmpiricalExecutor } from '../../paper-adapters/automation/multi-language-empirical-executor.mjs';
 import { resolveSystemBenchmarkArmAdapterSet } from '../../paper-adapters/automation/system-benchmark-arm-adapter-repository.mjs';
 import { inspectStrictDatasetManifest } from '../../paper-adapters/runtime/execution-snapshot.mjs';
 import { createOsSandboxedWorkerRunner } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
 import { selectAndValidateWorkerEnvironment } from '../../paper-adapters/runtime/worker-environment-policy.mjs';
 import { buildCampaignBenchmarkSelector, verifyCampaignBenchmarkSelector } from '../../paper-domain/automation/campaign-benchmark-selector.mjs';
-import { buildCampaignBenchmarkSchedule, buildDatasetAuthorizationSet, verifyOsSandboxWorkerReceipt, verifySystemBenchmarkHarnessExecutionReceipt } from '../../paper-domain/automation/experiment-run-contract.mjs';
+import {
+  buildCampaignBenchmarkSchedule,
+  buildDatasetAuthorizationSet,
+  verifyOsSandboxWorkerReceipt,
+  verifySystemBenchmarkHarnessExecutionReceipt as
+    verifyProductionSystemBenchmarkHarnessExecutionReceipt,
+} from '../../paper-domain/automation/experiment-run-contract.mjs';
 import {
   buildSystemBenchmarkArmBatchChallenge,
   decodeSystemBenchmarkArmBatchChallengeEnvironment,
@@ -28,15 +41,33 @@ import {
 } from '../../paper-domain/automation/system-benchmark-harness-identity.mjs';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { buildEmpiricalEnvironmentBom } from '../../paper-domain/automation/environment-bom-contract.mjs';
+import {
+  SYSTEM_BENCHMARK_CPU_BUDGET_SEMANTICS,
+  verifySystemBenchmarkHarnessResourceBudget,
+} from '../../paper-domain/automation/system-benchmark-resource-budget-contract.mjs';
 import { buildCanonicalAnalysisProtocol } from '../../paper-domain/automation/analysis-protocol-contract.mjs';
 import {
   validateOperatorDatasetHarnessDefinition,
   validateOperatorDatasetSplitManifest,
 } from '../../paper-domain/automation/operator-dataset-harness-contract.mjs';
 import {
-  runRawEventRecomputationInSandboxTestFixture,
+  createRawEventRecomputationSandboxTestFixture,
 } from './support/raw-event-recomputation-sandbox-fixture.mjs';
 
+const {
+  executeSystemBenchmarkHarness,
+  verifySystemBenchmarkHarnessExecutionReceipt,
+} =
+  await importSystemBenchmarkHarnessForTest();
+const {
+  verifyProcessIsolatedSystemBenchmarkRecomputationEvidence,
+} = await importAnalysisProtocolRunBindingForTest();
+const { createMultiLanguageEmpiricalExecutor } =
+  await importMultiLanguageEmpiricalExecutorForTest();
+const {
+  buildExperimentRunReceipt: buildFixtureExperimentRunReceipt,
+  verifyExperimentRunReceipt: verifyFixtureExperimentRunReceipt,
+} = await importExperimentRunContractForTest();
 const REPOSITORY_ROOT = process.cwd();
 const IDENTITY_EXCLUSIONS = new Set([
   'paper-domain/automation/system-benchmark-harness-identity.mjs',
@@ -186,8 +217,8 @@ function workerReceipt({ batch, content, datasetMounts = [], processOrdinal = nu
   const payload = {
     version: 4,
     kind: 'OsSandboxWorkerReceipt',
-    runnerId: 'fixture-kernel-isolation-worker-v4',
-    backend: 'fixture',
+    runnerId: 'bubblewrap-kernel-isolation-worker-v4',
+    backend: 'bubblewrap',
     status: 'os_sandbox_worker_passed',
     sourceMerkleHashBefore: `sha256:${'1'.repeat(64)}`,
     sourceMerkleHashAfter: `sha256:${'1'.repeat(64)}`,
@@ -214,7 +245,7 @@ function workerReceipt({ batch, content, datasetMounts = [], processOrdinal = nu
     } : null,
     artifacts,
     artifactManifestHash: hashRecord('OsSandboxWorkerArtifactManifest', artifacts),
-    isolation: { kernelNetworkIsolationVerified: true, sourceReadOnlyVerified: true, ephemeralWorkRootVerified: true, separateOutputRootVerified: true, gpuAccessRequested: false },
+    isolation: { kernelNetworkIsolationVerified: true, sourceReadOnlyVerified: true, ephemeralWorkRootVerified: true, separateOutputRootVerified: true, gpuAccessRequested: false, memoryLimitVerified: true, memoryLimitScope: 'process-address-space-not-descendant-tree-v1', cpuLimitVerified: true, cpuLimitScope: 'process-thread-group-not-descendant-tree-v1', processLimitVerified: true, processLimitMechanism: 'rlimit-nproc', processLimitScope: 'real-uid-concurrent-processes-not-sandbox-local-v1', resourceLimitsVerified: true },
     externalActionPerformed: false,
   };
   return { ok: true, ...payload, receiptHash: hashRecord('OsSandboxWorkerReceipt', payload), blockers: [] };
@@ -391,14 +422,18 @@ function academicHarnessFixture(t) {
   return { benchmarkId, mount, outputDirectory, runtimeRoot, selector, trustStore };
 }
 
-function runFixtureHarness(t, { ignoreArm = false, dropLastCell = false, tamperProtocol = false, identicalAdapters = false, runId = 'fixture-experiment-attempt', attemptVersion = 1, failedAttemptLineageHashes = [], absoluteDeadlineEpochMs, aggregateCpuSeconds, nowEpochMs, runRawEventRecomputation = runRawEventRecomputationInSandboxTestFixture } = {}) {
+function runFixtureHarness(t, { ignoreArm = false, dropLastCell = false, tamperProtocol = false, malformedRunnerReceipt = null, identicalAdapters = false, runId = 'fixture-experiment-attempt', attemptVersion = 1, failedAttemptLineageHashes = [], absoluteDeadlineEpochMs, aggregateCpuSeconds, memoryBytes, maximumProcesses, nowEpochMs, legacyNowEpochMs, legacyRunRawEventRecomputation, rawEventRecomputationSandboxWorkerRunner = createRawEventRecomputationSandboxTestFixture() } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-system-benchmark-integrity-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const selector = buildCampaignBenchmarkSelector({ benchmarkId: 'ml_algorithm_benchmark', datasetMounts: [] });
   const adapters = adapterSet(selector.experimentDesign.benchmarkHarness.armProtocolSet, { identical: identicalAdapters });
   let invocationCount = 0;
   const resourceBudgets = [];
-  const receipt = executeSystemBenchmarkHarness({
+  const receipt = withSystemBenchmarkWallClockForTest(
+    nowEpochMs || (() => 0),
+    () => withRawEventRecomputationSandboxRunnerForTest(
+      rawEventRecomputationSandboxWorkerRunner,
+      () => executeSystemBenchmarkHarness({
     benchmarkSelector: selector,
     datasetMounts: [],
     experimentAttemptId: runId,
@@ -409,10 +444,13 @@ function runFixtureHarness(t, { ignoreArm = false, dropLastCell = false, tamperP
     sourceWorkspaceManifestHash: `sha256:${'2'.repeat(64)}`,
     outputDirectory: root,
     armAdapterSet: adapters,
-    runRawEventRecomputation,
+    ...(legacyRunRawEventRecomputation === undefined
+      ? {} : { runRawEventRecomputation: legacyRunRawEventRecomputation }),
+    ...(legacyNowEpochMs === undefined ? {} : { nowEpochMs: legacyNowEpochMs }),
     ...(absoluteDeadlineEpochMs === undefined ? {} : { absoluteDeadlineEpochMs }),
     ...(aggregateCpuSeconds === undefined ? {} : { aggregateCpuSeconds }),
-    ...(nowEpochMs === undefined ? {} : { nowEpochMs }),
+    ...(memoryBytes === undefined ? {} : { memoryBytes }),
+    ...(maximumProcesses === undefined ? {} : { maximumProcesses }),
     runArmBatch({ batch, outputDirectory }) {
       invocationCount += 1;
       resourceBudgets.push(batch.resourceBudget);
@@ -429,10 +467,61 @@ function runFixtureHarness(t, { ignoreArm = false, dropLastCell = false, tamperP
       const worker = workerReceipt({ batch: effectiveBatch, content });
       fs.mkdirSync(outputDirectory, { recursive: true });
       fs.writeFileSync(path.join(outputDirectory, 'observation.json'), content);
-      return worker;
+      return malformedRunnerReceipt && batch.arm === 'treatment'
+        ? malformedRunnerReceipt : worker;
     },
-  });
-  return { receipt, invocationCount, resourceBudgets };
+      }),
+    ),
+  );
+  return { receipt, invocationCount, resourceBudgets, outputDirectory: root };
+}
+
+function rehashIndependentProcessEvidence(independent) {
+  const assurance = independent.processIsolatedRawEventRecomputationAssurance;
+  const worker = assurance.workerReceipt;
+  const {
+    processIsolatedRawEventRecomputationWorkerReceiptHash: ignoredWorkerHash,
+    ...workerPayload
+  } = worker;
+  void ignoredWorkerHash;
+  worker.processIsolatedRawEventRecomputationWorkerReceiptHash = hashRecord(
+    'ProcessIsolatedRawEventRecomputationWorkerReceipt', workerPayload,
+  );
+  assurance.workerReceiptHash = worker
+    .processIsolatedRawEventRecomputationWorkerReceiptHash;
+  const sandbox = assurance.osSandboxWorkerReceipt;
+  sandbox.stdout = JSON.stringify(worker);
+  const {
+    ok: ignoredSandboxOk,
+    receiptHash: ignoredSandboxHash,
+    blockers: ignoredSandboxBlockers,
+    ...sandboxPayload
+  } = sandbox;
+  void ignoredSandboxOk;
+  void ignoredSandboxHash;
+  void ignoredSandboxBlockers;
+  sandbox.receiptHash = hashRecord('OsSandboxWorkerReceipt', sandboxPayload);
+  assurance.osSandboxWorkerReceiptHash = sandbox.receiptHash;
+  const {
+    processIsolatedRawEventRecomputationAssuranceHash: ignoredAssuranceHash,
+    ...assurancePayload
+  } = assurance;
+  void ignoredAssuranceHash;
+  assurance.processIsolatedRawEventRecomputationAssuranceHash = hashRecord(
+    'ProcessIsolatedRawEventRecomputationAssurance', assurancePayload,
+  );
+  independent.independenceContractHash = assurance
+    .processIsolatedRawEventRecomputationAssuranceHash;
+  independent.processIsolatedWorkerReceiptHash = assurance.workerReceiptHash;
+  const {
+    independentRawEventRecomputationAssuranceHash: ignoredIndependentHash,
+    ...independentPayload
+  } = independent;
+  void ignoredIndependentHash;
+  independent.independentRawEventRecomputationAssuranceHash = hashRecord(
+    'IndependentRawEventRecomputationAssurance', independentPayload,
+  );
+  return independent;
 }
 
 test('R arm adapters reject top-level caller-frame path discovery before execution', (t) => {
@@ -455,12 +544,32 @@ test('R arm adapters reject top-level caller-frame path discovery before executi
 });
 
 test('benchmark harness fails before dispatch when its absolute deadline or aggregate CPU budget cannot cover every execution unit', (t) => {
-  const expired = runFixtureHarness(t, { absoluteDeadlineEpochMs: 1000, nowEpochMs: () => 1000 });
+  let legacyClockReads = 0;
+  const expired = runFixtureHarness(t, {
+    absoluteDeadlineEpochMs: 1000,
+    nowEpochMs: () => 1000,
+    legacyNowEpochMs() { legacyClockReads += 1; return 0; },
+  });
   assert.equal(expired.invocationCount, 0);
+  assert.equal(legacyClockReads, 0);
   assert.ok(expired.receipt.blockers.includes('benchmark_harness_absolute_deadline_exhausted'));
   const cpuExhausted = runFixtureHarness(t, { aggregateCpuSeconds: 2 });
   assert.equal(cpuExhausted.invocationCount, 0);
   assert.ok(cpuExhausted.receipt.blockers.includes('benchmark_harness_aggregate_cpu_budget_exhausted'));
+});
+
+test('benchmark harness fails closed on hostile or malformed arm receipts', (t) => {
+  for (const malformedRunnerReceipt of [
+    { blockers: 'not-an-array', artifacts: 'not-an-array' },
+    new Proxy({}, { get() { throw new Error('hostile_arm_receipt'); } }),
+  ]) {
+    const execution = runFixtureHarness(t, { malformedRunnerReceipt });
+    assert.equal(execution.receipt.status, 'system_benchmark_harness_blocked');
+    assert.ok(execution.receipt.blockers.some(
+      (blocker) => blocker.startsWith('benchmark_arm_batch_runner_receipt_invalid:')
+        || blocker.startsWith('benchmark_arm_batch_execution_threw:'),
+    ));
+  }
 });
 
 test('benchmark harness keeps per-unit wall-time limits reproducible while enforcing its absolute deadline', (t) => {
@@ -486,14 +595,17 @@ test('benchmark harness keeps per-unit wall-time limits reproducible while enfor
 
 test('benchmark harness caps raw-event recomputation wall time and preserves cleanup reserve', (t) => {
   const capturedTimeouts = [];
-  const runRawEventRecomputation = (input, options) => {
-    capturedTimeouts.push(options.timeoutMs);
-    return runRawEventRecomputationInSandboxTestFixture(input, options);
-  };
+  const fixture = createRawEventRecomputationSandboxTestFixture();
+  const rawEventRecomputationSandboxWorkerRunner = Object.freeze({
+    run(spec) {
+      capturedTimeouts.push(spec.timeoutMs);
+      return fixture.run(spec);
+    },
+  });
   const capped = runFixtureHarness(t, {
     absoluteDeadlineEpochMs: 900_000,
     nowEpochMs: () => 0,
-    runRawEventRecomputation,
+    rawEventRecomputationSandboxWorkerRunner,
   });
   assert.equal(capped.receipt.status, 'system_benchmark_harness_verified');
   assert.deepEqual(capturedTimeouts, [300_000]);
@@ -502,10 +614,22 @@ test('benchmark harness caps raw-event recomputation wall time and preserves cle
   const narrowed = runFixtureHarness(t, {
     absoluteDeadlineEpochMs: 200_000,
     nowEpochMs: () => 0,
-    runRawEventRecomputation,
+    rawEventRecomputationSandboxWorkerRunner,
   });
   assert.equal(narrowed.receipt.status, 'system_benchmark_harness_verified');
   assert.deepEqual(capturedTimeouts, [110_000]);
+});
+
+test('benchmark harness ignores the removed outer recomputation callback seam', (t) => {
+  let legacyInvocationCount = 0;
+  const execution = runFixtureHarness(t, {
+    legacyRunRawEventRecomputation() {
+      legacyInvocationCount += 1;
+      throw new Error('removed_recomputation_callback_must_not_run');
+    },
+  });
+  assert.equal(execution.receipt.status, 'system_benchmark_harness_verified');
+  assert.equal(legacyInvocationCount, 0);
 });
 
 test('benchmark harness does not start raw-event recomputation without cleanup reserve', (t) => {
@@ -513,9 +637,11 @@ test('benchmark harness does not start raw-event recomputation without cleanup r
   const execution = runFixtureHarness(t, {
     absoluteDeadlineEpochMs: 90_000,
     nowEpochMs: () => 0,
-    runRawEventRecomputation() {
-      recomputationInvocationCount += 1;
-      throw new Error('raw_event_recomputation_must_not_start');
+    rawEventRecomputationSandboxWorkerRunner: {
+      run() {
+        recomputationInvocationCount += 1;
+        throw new Error('raw_event_recomputation_must_not_start');
+      },
     },
   });
   assert.equal(execution.invocationCount, 3);
@@ -538,13 +664,200 @@ test('benchmark harness does not start raw-event recomputation without cleanup r
   );
 });
 
+test('benchmark harness reserves recomputation CPU and narrows every worker resource limit', (t) => {
+  const capturedOptions = [];
+  const fixture = createRawEventRecomputationSandboxTestFixture();
+  const memoryBytes = 64 * 1024 * 1024;
+  const execution = runFixtureHarness(t, {
+    aggregateCpuSeconds: 10,
+    memoryBytes,
+    maximumProcesses: 3,
+    rawEventRecomputationSandboxWorkerRunner: {
+      run(spec) {
+        capturedOptions.push({
+          timeoutMs: spec.timeoutMs,
+          cpuSeconds: spec.cpuSeconds,
+          memoryBytes: spec.memoryBytes,
+          maximumProcesses: spec.maximumProcesses,
+        });
+        return fixture.run(spec);
+      },
+    },
+  });
+  assert.equal(execution.receipt.status, 'system_benchmark_harness_verified');
+  assert.equal(execution.receipt.allocatedCpuSeconds, 3);
+  assert.equal(execution.receipt.cpuBudgetSemantics, SYSTEM_BENCHMARK_CPU_BUDGET_SEMANTICS);
+  assert.ok(execution.resourceBudgets.every((budget) => budget.cpuSeconds === 1));
+  assert.deepEqual(capturedOptions, [{
+    timeoutMs: 300_000,
+    cpuSeconds: 7,
+    memoryBytes,
+    maximumProcesses: 3,
+  }]);
+  const recomputationBudget = execution.receipt.independentRawEventRecomputationAssurance
+    .processIsolatedRawEventRecomputationAssurance.resourceBudget;
+  assert.equal(execution.receipt.allocatedCpuSeconds + recomputationBudget.cpuSeconds, 10);
+  assert.equal(recomputationBudget.memoryBytes, memoryBytes);
+  assert.equal(recomputationBudget.maximumProcesses, 3);
+  assert.equal(verifySystemBenchmarkHarnessExecutionReceipt(execution.receipt), true);
+  assert.equal(
+    verifyProductionSystemBenchmarkHarnessExecutionReceipt(execution.receipt),
+    false,
+  );
+  assert.equal(verifySystemBenchmarkHarnessResourceBudget({
+    ...execution.receipt,
+    cpuBudgetSemantics: 'process-tree-cumulative-cpu-v1',
+  }, { executionUnitCount: execution.resourceBudgets.length }), false);
+});
+
+test('benchmark harness rejects a sandbox receipt claiming authority above its request', (t) => {
+  const fixture = createRawEventRecomputationSandboxTestFixture();
+  const execution = runFixtureHarness(t, {
+    absoluteDeadlineEpochMs: 200_000,
+    nowEpochMs: () => 0,
+    rawEventRecomputationSandboxWorkerRunner: {
+      run(spec) {
+        return fixture.run({
+          ...spec,
+          timeoutMs: 300_000,
+        });
+      },
+    },
+  });
+  assert.equal(execution.receipt.status, 'system_benchmark_harness_blocked');
+  assert.ok(execution.receipt.blockers.includes(
+    'independent_raw_event_recomputation_process:raw_event_recomputation_os_sandbox_resource_budget_mismatch',
+  ));
+  assert.equal(
+    execution.receipt.independentRawEventRecomputationAssurance.processIndependent,
+    false,
+  );
+});
+
+test('benchmark harness rejects recomputation that settles inside its cleanup reserve', (t) => {
+  let now = 0;
+  const fixture = createRawEventRecomputationSandboxTestFixture();
+  const execution = runFixtureHarness(t, {
+    absoluteDeadlineEpochMs: 300_000,
+    nowEpochMs: () => now,
+    rawEventRecomputationSandboxWorkerRunner: {
+      run(spec) {
+        const receipt = fixture.run(spec);
+        now = 250_000;
+        return receipt;
+      },
+    },
+  });
+  assert.equal(execution.receipt.status, 'system_benchmark_harness_blocked');
+  assert.ok(execution.receipt.blockers.includes(
+    'benchmark_raw_event_recomputation_deadline_exhausted',
+  ));
+  assert.equal(
+    execution.receipt.independentRawEventRecomputationAssurance.status,
+    'independent_raw_event_recomputation_assurance_blocked',
+  );
+});
+
+test('academic recomputation evidence rejects hash-consistent nested manifest and request forgeries', (t) => {
+  const verified = runFixtureHarness(t).receipt
+    .independentRawEventRecomputationAssurance;
+  assert.equal(
+    verifyProcessIsolatedSystemBenchmarkRecomputationEvidence(verified),
+    true,
+  );
+  const mutations = [
+    ['request hash detached from worker request', (independent) => {
+      independent.processIsolatedRawEventRecomputationAssurance.requestHash =
+        hashRecord('ForgedRawEventRecomputationRequest', {});
+    }],
+    ['worker manifest bytes detached from its canonical hash', (independent) => {
+      independent.processIsolatedRawEventRecomputationAssurance.workerReceipt
+        .manifest.maximumAbsoluteResidual = 1;
+    }],
+    ['canonical nested manifest detached from independent manifest', (independent) => {
+      const assurance = independent.processIsolatedRawEventRecomputationAssurance;
+      const manifest = assurance.workerReceipt.manifest;
+      manifest.cells[0].metrics.mean_score += 0.125;
+      const { rawEventRecomputationManifestHash: ignoredHash, ...payload } = manifest;
+      void ignoredHash;
+      manifest.rawEventRecomputationManifestHash = hashRecord(
+        'RawEventRecomputationManifest', payload,
+      );
+      assurance.workerReceipt.rawEventRecomputationManifestHash =
+        manifest.rawEventRecomputationManifestHash;
+      assurance.rawEventRecomputationManifestHash =
+        manifest.rawEventRecomputationManifestHash;
+    }],
+    ['independent assurance schema downgrade', (independent) => {
+      independent.version = 1;
+    }],
+    ['verified worker carrying blockers', (independent) => {
+      independent.processIsolatedRawEventRecomputationAssurance
+        .workerReceipt.blockers = ['forged_worker_blocker'];
+    }],
+    ['passed sandbox receipt carrying blockers', (independent) => {
+      independent.processIsolatedRawEventRecomputationAssurance
+        .osSandboxWorkerReceipt.blockers = ['forged_sandbox_blocker'];
+    }],
+  ];
+  for (const [label, mutate] of mutations) {
+    const forged = structuredClone(verified);
+    mutate(forged);
+    rehashIndependentProcessEvidence(forged);
+    assert.equal(
+      verifyProcessIsolatedSystemBenchmarkRecomputationEvidence(forged),
+      false,
+      label,
+    );
+  }
+});
+
+test('benchmark harness rolls back published results when receipt signing reaches the deadline', (t) => {
+  let clockReads = 0;
+  const deadline = 300_000;
+  const execution = runFixtureHarness(t, {
+    absoluteDeadlineEpochMs: deadline,
+    nowEpochMs: () => (clockReads++ < 10 ? 0 : deadline),
+  });
+  assert.equal(execution.receipt.status, 'system_benchmark_harness_blocked');
+  assert.ok(execution.receipt.blockers.includes('benchmark_harness_absolute_deadline_exhausted'));
+  assert.equal(execution.receipt.scientificVerdict, 'not_evaluable');
+  assert.equal(execution.receipt.resultDocument, null);
+  assert.equal(execution.receipt.csvDocument, null);
+  assert.equal(execution.receipt.resultJsonHash, null);
+  assert.equal(execution.receipt.resultCsvHash, null);
+  assert.deepEqual(execution.receipt.artifacts, []);
+  for (const name of ['results.json', 'results.csv', 'raw-events.ndjson']) {
+    assert.equal(fs.existsSync(path.join(execution.outputDirectory, name)), false, name);
+  }
+});
+
+test('benchmark harness resource receipt is bound directly to immutable Experiment IR authority', (t) => {
+  const execution = runFixtureHarness(t);
+  const options = { executionUnitCount: execution.resourceBudgets.length };
+  assert.equal(verifySystemBenchmarkHarnessResourceBudget(execution.receipt, options), true);
+  for (const [field, value] of [
+    ['absoluteDeadlineEpochMs', execution.receipt.absoluteDeadlineEpochMs + 1],
+    ['aggregateCpuSeconds', execution.receipt.aggregateCpuSeconds + 1],
+    ['workerMemoryBytes', execution.receipt.workerMemoryBytes + 1],
+    ['workerMaximumProcesses', execution.receipt.workerMaximumProcesses + 1],
+    ['gpuRequired', !execution.receipt.gpuRequired],
+  ]) {
+    assert.equal(verifySystemBenchmarkHarnessResourceBudget({
+      ...execution.receipt,
+      [field]: value,
+    }, options), false, field);
+  }
+});
+
 test('academic harness proves signed dataset use and serial process isolation per cell', async (t) => {
   const fixture = academicHarnessFixture(t);
   const adapters = adapterSet(fixture.selector.experimentDesign.benchmarkHarness.armProtocolSet);
   let invocationCount = 0;
   let activeCount = 0;
   let maximumActiveCount = 0;
-  const receipt = await executeSystemBenchmarkHarness({
+  const receipt = await withRawEventRecomputationSandboxFixtureForTest(
+    () => executeSystemBenchmarkHarness({
     benchmarkSelector: fixture.selector,
     datasetMounts: [fixture.mount],
     experimentAttemptId: 'academic-system-harness-attempt',
@@ -553,11 +866,9 @@ test('academic harness proves signed dataset use and serial process isolation pe
     sourceWorkspaceManifestHash: `sha256:${'2'.repeat(64)}`,
     outputDirectory: fixture.outputDirectory,
     armAdapterSet: adapters,
-    runRawEventRecomputation: runRawEventRecomputationInSandboxTestFixture,
     operatorDatasetAuthorityTrustStore: fixture.trustStore,
     runtimeRoot: fixture.runtimeRoot,
     absoluteDeadlineEpochMs: 120_000,
-    nowEpochMs: () => 0,
     async runArmBatch({ batch, outputDirectory }) {
       invocationCount += 1;
       const processOrdinal = invocationCount;
@@ -583,7 +894,8 @@ test('academic harness proves signed dataset use and serial process isolation pe
       activeCount -= 1;
       return receipt;
     },
-  });
+    }), { nowEpochMs: () => 0 },
+  );
   assert.equal(receipt.status, 'system_benchmark_harness_verified', JSON.stringify(receipt.blockers));
   assert.equal(receipt.executionIsolationMode, 'academic-per-cell-process-v1');
   assert.equal(invocationCount, receipt.scheduleCellCount);
@@ -595,14 +907,63 @@ test('academic harness proves signed dataset use and serial process isolation pe
   assert.equal(receipt.datasetEvaluationDependencyReceipt.status, 'dataset_evaluation_dependency_verified');
   assert.equal(new Set(receipt.armBatchExecutions.map((batch) => batch.executionProcessIdentityHash)).size,
     receipt.scheduleCellCount);
+  assert.equal(receipt.experimentIr.version, 4);
+  assert.equal(receipt.academicPromotionEligible, false);
   assert.equal(verifySystemBenchmarkHarnessExecutionReceipt(receipt), true);
+  const forged = structuredClone(receipt);
+  forged.academicPromotionEligible = true;
+  forged.resultDocument.academicPromotionEligible = true;
+  const { systemBenchmarkHarnessExecutionReceiptHash: ignoredHash, ...forgedPayload } = forged;
+  void ignoredHash;
+  forged.systemBenchmarkHarnessExecutionReceiptHash = hashRecord(
+    'SystemBenchmarkHarnessExecutionReceipt', forgedPayload,
+  );
+  assert.equal(verifySystemBenchmarkHarnessExecutionReceipt(forged), false);
+  const rawArtifactWritePayload = {
+    version: 2,
+    kind: 'ArtifactWriteReceipt',
+    role: 'campaign-experiment-raw-events:primary',
+    path: `raw-events-${receipt.rawEventArtifactHash.slice('sha256:'.length)}.ndjson`,
+    hash: receipt.rawEventArtifactHash,
+    bytes: receipt.rawEventArtifactBytes,
+    contentType: 'application/octet-stream',
+    contentAddress: receipt.rawEventArtifactHash,
+    immutableObject: true,
+    atomic: true,
+  };
+  const runReceipt = buildFixtureExperimentRunReceipt({
+    resultDocument: receipt.resultDocument,
+    csvDocument: receipt.csvDocument,
+    benchmarkSelector: fixture.selector,
+    datasetMounts: [fixture.mount],
+    executionReceiptHash: receipt.systemBenchmarkHarnessExecutionReceiptHash,
+    runtimeIdentityHash: receipt.runtimeIdentityHash,
+    sourceMerkleHash: receipt.sourceMerkleHash,
+    sourceWorkspaceManifestHash: receipt.sourceWorkspaceManifestHash,
+    cacheHit: false,
+    resultJsonHash: receipt.resultJsonHash,
+    resultCsvHash: receipt.resultCsvHash,
+    experimentAttemptId: receipt.experimentAttemptId,
+    harnessExecutionReceipt: receipt,
+    sourceLineageHash: receipt.sourceLineageHash,
+    rawArtifactWriteReceipt: {
+      ...rawArtifactWritePayload,
+      writeReceiptHash: hashRecord('ArtifactWriteReceipt', rawArtifactWritePayload),
+      ledgerReceiptId: `artifact-writes:${receipt.experimentAttemptId}`,
+    },
+  });
+  assert.equal(verifyFixtureExperimentRunReceipt(runReceipt), true);
+  assert.equal(runReceipt.academicPromotionEligible, false);
+  assert.equal(runReceipt.evidenceClass, 'software-conformance-evidence');
+  assert.equal(runReceipt.promotionScope, 'software-conformance-only');
 });
 
 test('local dataset harness keeps hidden evaluation while using one bounded process per arm', async (t) => {
   const fixture = academicHarnessFixture(t);
   const adapters = adapterSet(fixture.selector.experimentDesign.benchmarkHarness.armProtocolSet);
   let invocationCount = 0;
-  const receipt = await executeSystemBenchmarkHarness({
+  const receipt = await withRawEventRecomputationSandboxFixtureForTest(
+    () => executeSystemBenchmarkHarness({
     benchmarkSelector: fixture.selector,
     datasetMounts: [fixture.mount],
     experimentAttemptId: 'local-system-harness-attempt',
@@ -611,11 +972,9 @@ test('local dataset harness keeps hidden evaluation while using one bounded proc
     sourceWorkspaceManifestHash: `sha256:${'2'.repeat(64)}`,
     outputDirectory: fixture.outputDirectory,
     armAdapterSet: adapters,
-    runRawEventRecomputation: runRawEventRecomputationInSandboxTestFixture,
     operatorDatasetAuthorityTrustStore: fixture.trustStore,
     runtimeRoot: fixture.runtimeRoot,
     absoluteDeadlineEpochMs: 120_000,
-    nowEpochMs: () => 0,
     localOnly: true,
     async runArmBatch({ batch, outputDirectory }) {
       invocationCount += 1;
@@ -636,7 +995,8 @@ test('local dataset harness keeps hidden evaluation while using one bounded proc
         processOrdinal: invocationCount,
       });
     },
-  });
+    }), { nowEpochMs: () => 0 },
+  );
   assert.equal(receipt.status, 'system_benchmark_harness_verified', JSON.stringify(receipt.blockers));
   assert.equal(receipt.executionIsolationMode, 'local-authorized-per-arm-batch-process-v1');
   assert.equal(receipt.executionAssuranceProfile, 'local-bounded-hidden-evaluation-v1');
@@ -736,6 +1096,27 @@ test('repository-owned challenges and hidden oracles bind candidate arm response
       verified.empiricalPreDataAccessFreezeHash);
   }
   assert.equal(verifySystemBenchmarkHarnessExecutionReceipt(verified), true);
+  assert.equal(verified.version, 5);
+  assert.ok(Number.isSafeInteger(verified.resultPersistenceCompletedAtEpochMs));
+  assert.ok(Number.isSafeInteger(verified.receiptFinalizedAtEpochMs));
+  assert.ok(verified.resultPersistenceCompletedAtEpochMs <= verified.receiptFinalizedAtEpochMs);
+  assert.ok(verified.receiptFinalizedAtEpochMs < verified.absoluteDeadlineEpochMs);
+  for (const mutate of [
+    (receipt) => { receipt.version = 4; },
+    (receipt) => { receipt.resultPersistenceCompletedAtEpochMs = null; },
+    (receipt) => { receipt.resultPersistenceCompletedAtEpochMs = receipt.absoluteDeadlineEpochMs; },
+    (receipt) => { receipt.receiptFinalizedAtEpochMs = receipt.resultPersistenceCompletedAtEpochMs - 1; },
+    (receipt) => { receipt.receiptFinalizedAtEpochMs = receipt.absoluteDeadlineEpochMs; },
+  ]) {
+    const forged = structuredClone(verified);
+    mutate(forged);
+    const { systemBenchmarkHarnessExecutionReceiptHash: ignoredHash, ...forgedPayload } = forged;
+    void ignoredHash;
+    forged.systemBenchmarkHarnessExecutionReceiptHash = hashRecord(
+      'SystemBenchmarkHarnessExecutionReceipt', forgedPayload,
+    );
+    assert.equal(verifySystemBenchmarkHarnessExecutionReceipt(forged), false);
+  }
   const cachedHashTamper = structuredClone(verified);
   cachedHashTamper.rawEventArtifactHash = `sha256:${'d'.repeat(64)}`;
   assert.equal(
@@ -914,9 +1295,9 @@ test('host sandbox executes exactly three arm batches or reports the unavailable
   const selector = buildCampaignBenchmarkSelector({ benchmarkId: 'ml_algorithm_benchmark', datasetMounts: [] });
   const executor = createMultiLanguageEmpiricalExecutor({
     workerRunner: runner,
-    runRawEventRecomputation: runRawEventRecomputationInSandboxTestFixture,
   });
-  const receipt = await executor.execute({
+  const receipt = await withRawEventRecomputationSandboxFixtureForTest(
+    () => executor.execute({
     language: 'node',
     entrypoint: 'run.mjs',
     cwd: root,
@@ -925,7 +1306,8 @@ test('host sandbox executes exactly three arm batches or reports the unavailable
     env: { HEPTA_EXPERIMENT_ATTEMPT_ID: 'real-host-batch-attempt' },
     sourceLineageHash: hashBytes(fs.readFileSync(path.join(root, 'main.tex'))),
     benchmarkSelector: selector,
-  });
+    }),
+  );
   assert.equal(receipt.status, 'empirical_execution_completed', JSON.stringify(receipt.blockers));
   assert.equal(receipt.harnessExecutionReceipt.armBatchExecutionCount, 3);
   assert.equal(receipt.harnessExecutionReceipt.armBatchExecutions.length, 3);

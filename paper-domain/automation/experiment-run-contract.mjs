@@ -92,8 +92,10 @@ export function buildExperimentRunReceipt({
   if (!SHA256.test(String(resultJsonHash || '')) || !SHA256.test(String(resultCsvHash || ''))) blockers.push('experiment_run_result_artifact_hash_missing');
   if (cacheHit) blockers.push('experiment_run_cache_hit_not_independent');
   if (!harnessExecutionReceipt) blockers.push('experiment_run_system_harness_required');
+  const systemHarnessVerified = harnessExecutionReceipt
+    ? verifySystemBenchmarkHarnessExecutionReceipt(harnessExecutionReceipt) : false;
   if (harnessExecutionReceipt) {
-    if (!verifySystemBenchmarkHarnessExecutionReceipt(harnessExecutionReceipt)
+    if (!systemHarnessVerified
       || harnessExecutionReceipt.systemBenchmarkHarnessExecutionReceiptHash !== executionReceiptHash) blockers.push('experiment_run_system_harness_receipt_invalid');
     if (harnessExecutionReceipt.experimentAttemptId !== experimentAttemptId
       || harnessExecutionReceipt.sourceLineageHash !== sourceLineageHash) blockers.push('experiment_run_harness_lineage_invalid');
@@ -167,6 +169,9 @@ export function buildExperimentRunReceipt({
     !== hashRecord('SystemBenchmarkStatisticalEvaluationExpected', statisticalEvaluation)) blockers.push('experiment_statistical_evaluation_binding_invalid');
   const analysisBinding = buildExperimentRunAnalysisProtocolBinding({ harnessExecutionReceipt, design, resultDocument: document });
   blockers.push(...analysisBinding.blockers);
+  const academicPromotionEligible = systemHarnessVerified
+    && harnessExecutionReceipt?.experimentIr?.version === 5
+    && harnessExecutionReceipt.academicPromotionEligible === true;
   const payload = {
     version: 1,
     kind: 'ExperimentRunReceipt',
@@ -186,10 +191,10 @@ export function buildExperimentRunReceipt({
     benchmarkHarnessHash: design?.benchmarkHarnessHash || null,
     assuranceScope: benchmarkSelector?.assuranceScope || null,
     executionAssuranceProfile: harnessExecutionReceipt?.executionAssuranceProfile || null,
-    academicPromotionEligible: harnessExecutionReceipt?.academicPromotionEligible === true,
-    evidenceClass: harnessExecutionReceipt?.academicPromotionEligible === true
+    academicPromotionEligible,
+    evidenceClass: academicPromotionEligible
       ? 'academic-experiment-evidence' : 'software-conformance-evidence',
-    promotionScope: harnessExecutionReceipt?.academicPromotionEligible === true
+    promotionScope: academicPromotionEligible
       ? 'academic-research-promotion' : 'software-conformance-only',
     systemBenchmarkHarnessImplementationHash: design?.benchmarkHarness?.systemBenchmarkHarnessImplementationHash || null,
     datasetAuthorizationSetHash: datasetAuthorizationSet.datasetAuthorizationSetHash,
@@ -280,6 +285,8 @@ export function verifyExperimentRunReceipt(receipt) {
       === receipt.harnessExecutionReceipt?.executionAssuranceProfile
     && receipt.academicPromotionEligible
       === receipt.harnessExecutionReceipt?.academicPromotionEligible
+    && (!receipt.academicPromotionEligible
+      || receipt.harnessExecutionReceipt?.experimentIr?.version === 5)
     && receipt.evidenceClass === (receipt.academicPromotionEligible ? 'academic-experiment-evidence' : 'software-conformance-evidence')
     && receipt.promotionScope === (receipt.academicPromotionEligible ? 'academic-research-promotion' : 'software-conformance-only')
     && verifyExperimentRawArtifactWriteReceipt(receipt.rawArtifactWriteReceipt, {

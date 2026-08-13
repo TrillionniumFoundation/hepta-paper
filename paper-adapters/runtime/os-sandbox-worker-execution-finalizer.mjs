@@ -269,9 +269,16 @@ export function createOsSandboxWorkerExecutionFinalizer({
               ? datasetAccessReceipt?.status === 'dataset_runtime_access_verified'
               : true,
             memoryLimitVerified: true,
+            memoryLimitScope: executionBackend === 'docker'
+              ? 'container-cgroup-aggregate-v1'
+              : 'process-address-space-not-descendant-tree-v1',
             cpuLimitVerified: true,
+            cpuLimitScope: 'process-thread-group-not-descendant-tree-v1',
             processLimitVerified: processLimitProbe.available,
             processLimitMechanism: processLimitProbe.mechanism,
+            processLimitScope: executionBackend === 'docker'
+              ? 'container-cgroup-concurrent-tasks-v1'
+              : 'real-uid-concurrent-processes-not-sandbox-local-v1',
             resourceLimitsVerified: processLimitProbe.available,
             gpuAccessRequested: Boolean(requiresGpu),
             gpuDeviceIsolationVerified: !requiresGpu || gpuDevices.length > 0,

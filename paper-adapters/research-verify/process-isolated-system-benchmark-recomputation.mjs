@@ -4,20 +4,33 @@ import { fileURLToPath } from 'node:url';
 
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { hasExactObjectKeys } from '../../workflow-kernel/exact-object-keys.mjs';
-import { verifyOsSandboxWorkerReceipt } from '../../paper-domain/automation/os-sandbox-worker-receipt-contract.mjs';
 import {
-  SYSTEM_DATASET_ACCESS_RUNTIME_IMAGES,
-} from '../../paper-domain/automation/dataset-access-supervisor-policy.mjs';
-import { createOsSandboxedWorkerRunner } from '../runtime/os-sandboxed-worker-runner.mjs';
+  verifyProductionOsSandboxWorkerReceipt,
+} from '../../paper-domain/automation/os-sandbox-worker-receipt-contract.mjs';
+import {
+  RAW_EVENT_RECOMPUTATION_RESOURCE_LIMITS,
+  SYSTEM_BENCHMARK_CPU_BUDGET_SEMANTICS,
+  verifyRawEventRecomputationResourceBudget,
+} from '../../paper-domain/automation/system-benchmark-resource-budget-contract.mjs';
 import {
   INDEPENDENT_SYSTEM_BENCHMARK_RECOMPUTATION_IMPLEMENTATION,
-} from './independent-system-benchmark-recomputation.mjs';
+} from '../../paper-domain/automation/independent-system-benchmark-recomputation-identity.mjs';
+import {
+  createRawEventRecomputationSandboxRunner,
+  RAW_EVENT_RECOMPUTATION_DOCKER_FALLBACK_IMAGE,
+} from './raw-event-recomputation-sandbox-runner-factory.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 const MAXIMUM_REQUEST_BYTES = 24 * 1024 * 1024;
 const MAXIMUM_RESPONSE_BYTES = 24 * 1024 * 1024;
-export const RAW_EVENT_RECOMPUTATION_MAXIMUM_WALL_TIME_MS = 300_000;
-export const RAW_EVENT_RECOMPUTATION_MAXIMUM_CPU_SECONDS = 120;
+export const RAW_EVENT_RECOMPUTATION_MAXIMUM_WALL_TIME_MS =
+  RAW_EVENT_RECOMPUTATION_RESOURCE_LIMITS.maximumWallTimeMs;
+export const RAW_EVENT_RECOMPUTATION_MAXIMUM_CPU_SECONDS =
+  RAW_EVENT_RECOMPUTATION_RESOURCE_LIMITS.maximumCpuSeconds;
+export const RAW_EVENT_RECOMPUTATION_MAXIMUM_MEMORY_BYTES =
+  RAW_EVENT_RECOMPUTATION_RESOURCE_LIMITS.maximumMemoryBytes;
+export const RAW_EVENT_RECOMPUTATION_MAXIMUM_PROCESSES =
+  RAW_EVENT_RECOMPUTATION_RESOURCE_LIMITS.maximumProcesses;
 const WORKER_RECEIPT_KEYS = Object.freeze([
   'assuranceScope', 'blockers', 'externalActionPerformed',
   'independentImplementationHash', 'kind', 'manifest',
@@ -38,9 +51,7 @@ const workerPath = fileURLToPath(new URL(
 ));
 const repositoryRoot = path.resolve(path.dirname(workerPath), '..', '..');
 
-export const RAW_EVENT_RECOMPUTATION_DOCKER_FALLBACK_IMAGE =
-  `${SYSTEM_DATASET_ACCESS_RUNTIME_IMAGES.python.image}`
-  + `@${SYSTEM_DATASET_ACCESS_RUNTIME_IMAGES.python.imageDigest}`;
+export { RAW_EVENT_RECOMPUTATION_DOCKER_FALLBACK_IMAGE };
 
 function validateRawEventRecomputationTimeout(timeoutMs) {
   const value = Number(timeoutMs);
@@ -52,22 +63,12 @@ function validateRawEventRecomputationTimeout(timeoutMs) {
   return value;
 }
 
-export function createRawEventRecomputationSandboxRunner({
-  timeoutMs = RAW_EVENT_RECOMPUTATION_MAXIMUM_WALL_TIME_MS,
-} = {}) {
-  const boundedTimeoutMs = validateRawEventRecomputationTimeout(timeoutMs);
-  return createOsSandboxedWorkerRunner({
-    allowedExecutables: [process.execPath],
-    allowedRoots: [repositoryRoot],
-    dockerImage: RAW_EVENT_RECOMPUTATION_DOCKER_FALLBACK_IMAGE,
-    maximumTimeoutMs: boundedTimeoutMs,
-    maximumMemoryBytes: 1024 * 1024 * 1024,
-    maximumCpuSeconds: RAW_EVENT_RECOMPUTATION_MAXIMUM_CPU_SECONDS,
-    maximumPids: 32,
-    maximumOutputBytes: MAXIMUM_RESPONSE_BYTES,
-    maximumCapturedBytes: MAXIMUM_RESPONSE_BYTES,
-    maximumInputBytes: MAXIMUM_REQUEST_BYTES,
-  });
+function validateRawEventRecomputationResource(value, maximum) {
+  const bounded = Number(value);
+  if (!Number.isSafeInteger(bounded) || bounded < 1 || bounded > maximum) {
+    throw new TypeError('process_isolated_recomputation_resource_budget_invalid');
+  }
+  return bounded;
 }
 
 function requestDocument(input = {}) {
@@ -94,8 +95,31 @@ function workerProcessIdentityMatchesSandbox(workerReceipt, sandboxReceipt) {
     || (workerReceipt?.workerPid === 1 && workerReceipt?.parentPid === 0);
 }
 
+function expectedWorkerImplementationHash(workerSourceHash) {
+  return hashRecord('ProcessIsolatedRawEventRecomputationWorkerImplementation', {
+    version: 1,
+    kind: 'ProcessIsolatedRawEventRecomputationWorkerImplementation',
+    sourceHash: workerSourceHash,
+    independentImplementationHash:
+      INDEPENDENT_SYSTEM_BENCHMARK_RECOMPUTATION_IMPLEMENTATION
+        .independentSystemBenchmarkRecomputationImplementationHash,
+    assuranceScope: PROCESS_ISOLATED_RAW_EVENT_RECOMPUTATION_WORKER_SCOPE,
+    networkActionPerformed: false,
+    externalActionPerformed: false,
+  });
+}
+
+function snapshotSandboxReceipt(receipt) {
+  try {
+    if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) return null;
+    const snapshot = JSON.parse(JSON.stringify(receipt));
+    return snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot)
+      ? snapshot : null;
+  } catch { return null; }
+}
+
 function parseWorkerReceipt(sandboxReceipt, { request, workerSourceHash } = {}) {
-  if (!verifyOsSandboxWorkerReceipt(sandboxReceipt)
+  if (!verifyProductionOsSandboxWorkerReceipt(sandboxReceipt)
     || !Number.isSafeInteger(sandboxReceipt.executionProcessIdentity?.launcherPid)
     || sandboxReceipt.executionProcessIdentity.launcherPid < 1) return null;
   let receipt = null;
@@ -111,6 +135,8 @@ function parseWorkerReceipt(sandboxReceipt, { request, workerSourceHash } = {}) 
     || receipt.externalActionPerformed !== false
     || receipt.requestHash !== request.requestHash
     || receipt.workerImplementationSourceHash !== workerSourceHash
+    || receipt.workerImplementationHash
+      !== expectedWorkerImplementationHash(workerSourceHash)
     || receipt.independentImplementationHash
       !== INDEPENDENT_SYSTEM_BENCHMARK_RECOMPUTATION_IMPLEMENTATION
         .independentSystemBenchmarkRecomputationImplementationHash
@@ -136,31 +162,53 @@ function parseWorkerReceipt(sandboxReceipt, { request, workerSourceHash } = {}) 
 
 export function runProcessIsolatedRawEventRecomputation(input = {}, {
   timeoutMs = RAW_EVENT_RECOMPUTATION_MAXIMUM_WALL_TIME_MS,
-  sandboxWorkerRunner = null,
-  environment = process.env,
+  memoryBytes = RAW_EVENT_RECOMPUTATION_MAXIMUM_MEMORY_BYTES,
+  cpuSeconds = RAW_EVENT_RECOMPUTATION_MAXIMUM_CPU_SECONDS,
+  maximumProcesses = RAW_EVENT_RECOMPUTATION_MAXIMUM_PROCESSES,
 } = {}) {
-  const request = requestDocument(input);
-  const encoded = `${JSON.stringify(request)}\n`;
   const blockers = [];
+  let request = null;
+  let encoded = '';
+  try {
+    request = requestDocument(input);
+    encoded = `${JSON.stringify(request)}\n`;
+  } catch {
+    blockers.push('process_isolated_recomputation_request_invalid');
+  }
   if (Buffer.byteLength(encoded) > MAXIMUM_REQUEST_BYTES) {
     blockers.push('process_isolated_recomputation_request_too_large');
   }
   let boundedTimeoutMs = null;
+  let resourceBudget = null;
   try {
     boundedTimeoutMs = validateRawEventRecomputationTimeout(timeoutMs);
+    resourceBudget = Object.freeze({
+      timeoutMs: boundedTimeoutMs,
+      memoryBytes: validateRawEventRecomputationResource(
+        memoryBytes,
+        RAW_EVENT_RECOMPUTATION_MAXIMUM_MEMORY_BYTES,
+      ),
+      cpuSeconds: validateRawEventRecomputationResource(
+        cpuSeconds,
+        RAW_EVENT_RECOMPUTATION_MAXIMUM_CPU_SECONDS,
+      ),
+      maximumProcesses: validateRawEventRecomputationResource(
+        maximumProcesses,
+        RAW_EVENT_RECOMPUTATION_MAXIMUM_PROCESSES,
+      ),
+    });
   } catch (error) {
-    blockers.push(String(error?.message || 'process_isolated_recomputation_timeout_invalid'));
+    blockers.push(String(error?.message || 'process_isolated_recomputation_resource_budget_invalid'));
   }
   let sandboxReceipt = null;
-  if (environment.HEPTA_AUTONOMOUS_EMPIRICAL_PLUGIN_BUNDLE
-    || environment.HEPTA_AUTONOMOUS_EMPIRICAL_PLUGIN_TRUST_STORE) {
+  if (process.env.HEPTA_AUTONOMOUS_EMPIRICAL_PLUGIN_BUNDLE
+    || process.env.HEPTA_AUTONOMOUS_EMPIRICAL_PLUGIN_TRUST_STORE) {
     blockers.push('raw_event_recomputation_external_plugin_configuration_not_sandbox_mounted');
   }
   if (!blockers.length) {
-    const runner = sandboxWorkerRunner
-      || createRawEventRecomputationSandboxRunner({ timeoutMs: boundedTimeoutMs });
     try {
-      sandboxReceipt = runner?.run?.({
+      const runner = createRawEventRecomputationSandboxRunner(resourceBudget);
+      sandboxReceipt = snapshotSandboxReceipt(runner?.run?.({
         executable: process.execPath,
         args: [workerPath],
         cwd: repositoryRoot,
@@ -181,34 +229,53 @@ export function runProcessIsolatedRawEventRecomputation(input = {}, {
         language: 'node',
         determinismPolicy: 'explicit_deterministic_cpu',
         deterministicSeed: request.requestHash,
-        memoryBytes: 1024 * 1024 * 1024,
-        cpuSeconds: RAW_EVENT_RECOMPUTATION_MAXIMUM_CPU_SECONDS,
-        maximumProcesses: 32,
+        memoryBytes: resourceBudget.memoryBytes,
+        cpuSeconds: resourceBudget.cpuSeconds,
+        maximumProcesses: resourceBudget.maximumProcesses,
         requestedMaximumOutputBytes: MAXIMUM_RESPONSE_BYTES,
-      }) || null;
+      }) || null);
     } catch {
       sandboxReceipt = null;
     }
-    if (!verifyOsSandboxWorkerReceipt(sandboxReceipt)) {
+    let sandboxReceiptVerified = false;
+    try {
+      sandboxReceiptVerified = verifyProductionOsSandboxWorkerReceipt(sandboxReceipt);
+    } catch { sandboxReceiptVerified = false; }
+    if (!sandboxReceiptVerified) {
       blockers.push('raw_event_recomputation_os_sandbox_invalid');
-      blockers.push(...(sandboxReceipt?.blockers || [])
-        .map((blocker) => `raw_event_recomputation_os_sandbox:${blocker}`));
+      try {
+        if (Array.isArray(sandboxReceipt?.blockers)) {
+          blockers.push(...sandboxReceipt.blockers.map(
+            (blocker) => `raw_event_recomputation_os_sandbox:${blocker}`,
+          ));
+        }
+      } catch { /* malformed receipt remains blocked */ }
+      sandboxReceipt = null;
+    } else {
+      try {
+        if (sandboxReceipt.limits?.timeoutMs !== resourceBudget.timeoutMs
+          || sandboxReceipt.limits?.memoryBytes !== resourceBudget.memoryBytes
+          || sandboxReceipt.limits?.cpuSeconds !== resourceBudget.cpuSeconds
+          || sandboxReceipt.limits?.maximumPids !== resourceBudget.maximumProcesses) {
+          blockers.push('raw_event_recomputation_os_sandbox_resource_budget_mismatch');
+        }
+      } catch { blockers.push('raw_event_recomputation_os_sandbox_invalid'); }
     }
   }
   const workerSourceHash = hashBytes(fs.readFileSync(workerPath));
-  const receipt = blockers.length ? null : parseWorkerReceipt(sandboxReceipt, {
+  const receipt = blockers.length || !request ? null : parseWorkerReceipt(sandboxReceipt, {
     request,
     workerSourceHash,
   });
   if (!receipt) blockers.push('process_isolated_recomputation_receipt_invalid');
   const payload = {
-    version: 2,
+    version: 3,
     kind: 'ProcessIsolatedRawEventRecomputationAssurance',
     status: blockers.length
       ? 'process_isolated_raw_event_recomputation_blocked'
       : 'process_isolated_raw_event_recomputation_verified',
     assuranceScope: PROCESS_ISOLATED_RAW_EVENT_RECOMPUTATION_ASSURANCE_SCOPE,
-    requestHash: request.requestHash,
+    requestHash: request?.requestHash || null,
     workerReceiptHash:
       receipt?.processIsolatedRawEventRecomputationWorkerReceiptHash || null,
     rawEventRecomputationManifestHash:
@@ -226,6 +293,8 @@ export function runProcessIsolatedRawEventRecomputation(input = {}, {
     osSandboxWorkerReceiptHash: sandboxReceipt?.receiptHash || null,
     osSandboxEnvironmentBomHash: sandboxReceipt?.environmentBomHash || null,
     osSandboxWorkerReceipt: sandboxReceipt,
+    resourceBudget,
+    cpuBudgetSemantics: SYSTEM_BENCHMARK_CPU_BUDGET_SEMANTICS,
     networkActionPerformed: false,
     externalActionPerformed: false,
     workerReceipt: receipt,
@@ -244,8 +313,15 @@ export function verifyProcessIsolatedRawEventRecomputationAssurance(
   assurance,
   input = {},
 ) {
-  if (!assurance
-    || assurance.version !== 2
+  try {
+    const request = requestDocument(input);
+    const workerSourceHash = hashBytes(fs.readFileSync(workerPath));
+    const verifiedWorkerReceipt = parseWorkerReceipt(
+      assurance?.osSandboxWorkerReceipt,
+      { request, workerSourceHash },
+    );
+    if (!assurance
+    || assurance.version !== 3
     || assurance.kind !== 'ProcessIsolatedRawEventRecomputationAssurance'
     || assurance.status !== 'process_isolated_raw_event_recomputation_verified'
     || assurance.assuranceScope !== PROCESS_ISOLATED_RAW_EVENT_RECOMPUTATION_ASSURANCE_SCOPE
@@ -253,19 +329,36 @@ export function verifyProcessIsolatedRawEventRecomputationAssurance(
     || assurance.osSandboxed !== true
     || assurance.networkActionPerformed !== false
     || assurance.externalActionPerformed !== false
+    || assurance.independentImplementationHash
+      !== INDEPENDENT_SYSTEM_BENCHMARK_RECOMPUTATION_IMPLEMENTATION
+        .independentSystemBenchmarkRecomputationImplementationHash
+    || assurance.cpuBudgetSemantics !== SYSTEM_BENCHMARK_CPU_BUDGET_SEMANTICS
+    || !verifyRawEventRecomputationResourceBudget(assurance.resourceBudget)
+    || assurance.resourceBudget.timeoutMs
+      !== assurance.osSandboxWorkerReceipt?.limits?.timeoutMs
+    || assurance.resourceBudget.memoryBytes
+      !== assurance.osSandboxWorkerReceipt?.limits?.memoryBytes
+    || assurance.resourceBudget.cpuSeconds
+      !== assurance.osSandboxWorkerReceipt?.limits?.cpuSeconds
+    || assurance.resourceBudget.maximumProcesses
+      !== assurance.osSandboxWorkerReceipt?.limits?.maximumPids
     || !Array.isArray(assurance.blockers) || assurance.blockers.length !== 0
-    || assurance.requestHash !== requestDocument(input).requestHash
+    || assurance.requestHash !== request.requestHash
+    || !verifiedWorkerReceipt
     || assurance.workerReceiptHash
       !== assurance.workerReceipt?.processIsolatedRawEventRecomputationWorkerReceiptHash
     || assurance.rawEventRecomputationManifestHash
       !== assurance.workerReceipt?.rawEventRecomputationManifestHash
     || assurance.workerImplementationSourceHash
       !== assurance.workerReceipt?.workerImplementationSourceHash
+    || assurance.workerImplementationSourceHash !== workerSourceHash
     || assurance.workerImplementationHash
       !== assurance.workerReceipt?.workerImplementationHash
+    || assurance.independentImplementationHash
+      !== assurance.workerReceipt?.independentImplementationHash
     || assurance.parentPid !== assurance.workerReceipt?.parentPid
     || assurance.workerPid !== assurance.workerReceipt?.workerPid
-    || !verifyOsSandboxWorkerReceipt(assurance.osSandboxWorkerReceipt)
+    || !verifyProductionOsSandboxWorkerReceipt(assurance.osSandboxWorkerReceipt)
     || assurance.osSandboxWorkerReceiptHash
       !== assurance.osSandboxWorkerReceipt?.receiptHash
     || assurance.osSandboxEnvironmentBomHash
@@ -277,10 +370,12 @@ export function verifyProcessIsolatedRawEventRecomputationAssurance(
     )
     || JSON.stringify(assurance.workerReceipt)
       !== String(assurance.osSandboxWorkerReceipt?.stdout || '').trim()
+    || JSON.stringify(assurance.workerReceipt) !== JSON.stringify(verifiedWorkerReceipt)
     || !SHA256.test(String(assurance.processIsolatedRawEventRecomputationAssuranceHash || ''))) {
-    return false;
-  }
-  const { processIsolatedRawEventRecomputationAssuranceHash, ...payload } = assurance;
-  return hashRecord('ProcessIsolatedRawEventRecomputationAssurance', payload)
-    === processIsolatedRawEventRecomputationAssuranceHash;
+      return false;
+    }
+    const { processIsolatedRawEventRecomputationAssuranceHash, ...payload } = assurance;
+    return hashRecord('ProcessIsolatedRawEventRecomputationAssurance', payload)
+      === processIsolatedRawEventRecomputationAssuranceHash;
+  } catch { return false; }
 }

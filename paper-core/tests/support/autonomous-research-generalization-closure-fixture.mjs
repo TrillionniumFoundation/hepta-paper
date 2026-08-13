@@ -4,33 +4,18 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
-  buildResearchClosureReceipt,
-} from '../../../paper-domain/automation/research-closure-receipt-contract.mjs';
-import {
-  buildAutonomousSubmissionRequest,
-} from '../../../paper-domain/automation/autonomous-submission-contract.mjs';
-import {
-  buildIndependentExternalResearchQualificationVerificationEvidence,
-  buildIndependentExternalResearchQualificationVerificationRequest,
-  externalResearchQualificationPreparationBindingFromReleaseAuthority,
-  independentExternalResearchQualificationResponseSigningPayloadHash,
-} from '../../../paper-domain/automation/external-research-qualification-verification-evidence-contract.mjs';
-import {
-  INDEPENDENT_EXTERNAL_RESEARCH_QUALIFICATION_RESPONSE_VERSION,
-} from '../../../paper-domain/automation/external-research-qualification-verification-policy-contract.mjs';
-import {
-  fullResearchQualificationSigningPayloadHash,
-} from '../../../paper-domain/automation/full-research-qualification-contract.mjs';
+  importAutonomousSubmissionContractForTest,
+  importExternalResearchQualificationAttestationForTest,
+  importExternalResearchQualificationEvidenceForTest,
+  importExternalResearchQualificationPolicyForTest,
+  importFullResearchQualificationForTest,
+  importLocalAutonomousVenueComplianceInspectorForTest,
+  importResearchClosureReceiptContractForTest,
+} from './production-experiment-closure-test-seam.mjs';
 import {
   REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES,
   RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE,
 } from '../../../paper-domain/automation/runtime-image-reproducibility-receipt-contract.mjs';
-import {
-  createLocalAutonomousVenueComplianceInspector,
-} from '../../../paper-adapters/automation/local-autonomous-venue-compliance-inspector.mjs';
-import {
-  verifyIndependentExternalResearchQualificationVerificationEvidence,
-} from '../../../paper-adapters/automation/external-research-qualification-verifier-attestation.mjs';
 import {
   FIXED_TIME,
   PRODUCTION_VENUE_TEMPLATE_PATH,
@@ -44,6 +29,29 @@ import {
   buildProductionCampaignReleaseClosureFixture,
 } from './production-campaign-release-closure-fixture.mjs';
 import { hashBytes, hashRecord } from '../../../workflow-kernel/record-hash.mjs';
+
+const [
+  { buildResearchClosureReceipt },
+  { buildAutonomousSubmissionRequest },
+  {
+    buildIndependentExternalResearchQualificationVerificationEvidence,
+    buildIndependentExternalResearchQualificationVerificationRequest,
+    externalResearchQualificationPreparationBindingFromReleaseAuthority,
+    independentExternalResearchQualificationResponseSigningPayloadHash,
+  },
+  { INDEPENDENT_EXTERNAL_RESEARCH_QUALIFICATION_RESPONSE_VERSION },
+  { fullResearchQualificationSigningPayloadHash },
+  { createLocalAutonomousVenueComplianceInspector },
+  { verifyIndependentExternalResearchQualificationVerificationEvidence },
+] = await Promise.all([
+  importResearchClosureReceiptContractForTest(),
+  importAutonomousSubmissionContractForTest(),
+  importExternalResearchQualificationEvidenceForTest(),
+  importExternalResearchQualificationPolicyForTest(),
+  importFullResearchQualificationForTest(),
+  importLocalAutonomousVenueComplianceInspectorForTest(),
+  importExternalResearchQualificationAttestationForTest(),
+]);
 
 const qualificationAttestorPair = crypto.generateKeyPairSync('ed25519');
 const independentVerifierAttestorPair = crypto.generateKeyPairSync('ed25519');

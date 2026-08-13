@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { importExternalQualificationSignedEvidenceForTest, importExternalResearchQualificationProcessAdapterForTest } from './support/production-experiment-closure-test-seam.mjs';
 import { deepFreezeJsonValue } from '../../workflow-kernel/deep-freeze-json-value.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { executeAutonomousResearchCampaign } from '../../paper-application/automation/autonomous-research-campaign.mjs';
@@ -32,11 +33,14 @@ import {
 import {
   genericManuscriptReleaseFixture,
 } from './support/autonomous-research-generalization-fixture.mjs';
-import { exerciseExternalQualificationSignedEvidence } from './support/external-qualification-signed-evidence.data.mjs';
 import {
   productionReleaseInspection,
 } from './support/external-qualification-release-inspection-builder.mjs';
-
+const { createExternalResearchQualificationProcessAdapter:
+  createFixtureExternalResearchQualificationProcessAdapter } =
+  await importExternalResearchQualificationProcessAdapterForTest();
+const { exerciseExternalQualificationSignedEvidence } =
+  await importExternalQualificationSignedEvidenceForTest();
 const H = (label) => hashRecord('AutonomousExternalQualificationTestHash', { label });
 
 function memoryQualificationStateStore({ read, write }) {
@@ -56,7 +60,6 @@ function memoryQualificationStateStore({ read, write }) {
     },
   });
 }
-
 function receipt({
   privateKey,
   signer,
@@ -123,7 +126,6 @@ function receipt({
       hashRecord('FullResearchGoldenMicroCampaignQualificationReceipt', signed),
   });
 }
-
 function resignQualificationReceipt(receiptValue, privateKey, mutate) {
   const {
     signature: _signature,
@@ -143,12 +145,10 @@ function resignQualificationReceipt(receiptValue, privateKey, mutate) {
       hashRecord('FullResearchGoldenMicroCampaignQualificationReceipt', signed),
   });
 }
-
 function writeFile(candidate, value, mode) {
   fs.writeFileSync(candidate, value, { mode });
   fs.chmodSync(candidate, mode);
 }
-
 function processFixture(t, {
   receiptValue,
   trustedSignerValues = null,
@@ -452,7 +452,6 @@ process.stdin.on('end', () => {
     verifierSigner,
   };
 }
-
 function qualifiedReleaseFixture({
   campaignId,
   paperId,
@@ -468,7 +467,6 @@ function qualifiedReleaseFixture({
     externalSubmission: true,
   });
 }
-
 function releaseAuthority(releaseHash, qualifiedFixture) {
   const {
     releaseBinding: autonomousResearchReleaseBinding,
@@ -581,7 +579,7 @@ test('process qualifier and distinct verifier enforce signature, time, and curre
     fixedVerifierCredentialTime,
   );
   let now = new Date('2026-07-15T12:30:00.000Z');
-  const adapter = createExternalResearchQualificationProcessAdapter({
+  const adapter = createFixtureExternalResearchQualificationProcessAdapter({
     configPath: fixture.configPath,
     cwd: fixture.base,
     clock: { now: () => now },
@@ -600,14 +598,14 @@ test('process qualifier and distinct verifier enforce signature, time, and curre
   const missingInputBlocked = await adapter.verifier.verify();
   assert.equal(missingInputBlocked.ready, false);
 
-  const implicitClockAdapter = createExternalResearchQualificationProcessAdapter({
+  const implicitClockAdapter = createFixtureExternalResearchQualificationProcessAdapter({
     configPath: fixture.configPath,
     cwd: fixture.base,
   });
   const implicitClockBlocked = await implicitClockAdapter.verifier.verify();
   assert.equal(implicitClockBlocked.ready, false);
 
-  const stringClockAdapter = createExternalResearchQualificationProcessAdapter({
+  const stringClockAdapter = createFixtureExternalResearchQualificationProcessAdapter({
     configPath: fixture.configPath,
     cwd: fixture.base,
     clock: { now: () => now.toISOString() },
@@ -615,7 +613,7 @@ test('process qualifier and distinct verifier enforce signature, time, and curre
   const stringClockBlocked = await stringClockAdapter.verifier.verify();
   assert.equal(stringClockBlocked.ready, false);
 
-  const invalidClockAdapter = createExternalResearchQualificationProcessAdapter({
+  const invalidClockAdapter = createFixtureExternalResearchQualificationProcessAdapter({
     configPath: fixture.configPath,
     cwd: fixture.base,
     clock: { now: () => 'not-an-instant' },
@@ -623,7 +621,7 @@ test('process qualifier and distinct verifier enforce signature, time, and curre
   const invalidClockBlocked = await invalidClockAdapter.verifier.verify();
   assert.equal(invalidClockBlocked.ready, false);
 
-  const unavailableAdapter = createExternalResearchQualificationProcessAdapter({
+  const unavailableAdapter = createFixtureExternalResearchQualificationProcessAdapter({
     configPath: fixture.configPath,
     cwd: fixture.base,
     clock: { now: () => now.toISOString() },
@@ -637,8 +635,8 @@ test('process qualifier and distinct verifier enforce signature, time, and curre
   assert.equal(unavailable.ready, false);
   assert.ok(unavailable.failureCodes.includes(
     'external_qualification.independent_verifier_unavailable',
-  ));
-  const missingReceiptAdapter = createExternalResearchQualificationProcessAdapter({
+  ), JSON.stringify(unavailable));
+  const missingReceiptAdapter = createFixtureExternalResearchQualificationProcessAdapter({
     configPath: fixture.configPath,
     cwd: fixture.base,
     clock: { now: () => now },
@@ -718,7 +716,7 @@ test('process qualifier and distinct verifier enforce signature, time, and curre
       receiptValue,
       verifierBehavior,
     });
-    const policyAttackAdapter = createExternalResearchQualificationProcessAdapter({
+    const policyAttackAdapter = createFixtureExternalResearchQualificationProcessAdapter({
       configPath: policyAttackFixture.configPath,
       cwd: policyAttackFixture.base,
       clock: { now: () => now },
@@ -754,7 +752,7 @@ test('process qualifier and distinct verifier enforce signature, time, and curre
       }),
     }),
   });
-  const fullDomainAdapter = createExternalResearchQualificationProcessAdapter({
+  const fullDomainAdapter = createFixtureExternalResearchQualificationProcessAdapter({
     configPath: fixture.configPath,
     cwd: fixture.base,
     clock: { now: () => now },

@@ -8,8 +8,10 @@ import {
 } from '../../paper-domain/automation/system-benchmark-challenge.mjs';
 import {
   verifyDatasetRuntimeAccessReceiptAgainstWorkerReceipt,
-  verifyOsSandboxWorkerReceipt,
 } from '../../paper-domain/automation/experiment-run-contract.mjs';
+import {
+  verifyProductionOsSandboxWorkerReceipt,
+} from '../../paper-domain/automation/os-sandbox-worker-receipt-contract.mjs';
 import { verifyWorkerProcessExecutionIdentity } from '../../paper-domain/automation/worker-process-execution-contract.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
@@ -76,13 +78,22 @@ export function buildSystemBenchmarkObservationCsv(observations, requiredMetrics
 }
 
 export function verifySystemBenchmarkArmBatchExecution({ batch, runnerReceipt, datasetRequired }) {
+  try {
+  let snapshot = null;
+  try { snapshot = JSON.parse(JSON.stringify(runnerReceipt)); }
+  catch { /* invalid receipt stays null */ }
+  runnerReceipt = snapshot;
   const blockers = [];
-  if (!verifyOsSandboxWorkerReceipt(runnerReceipt)) {
+  if (!verifyProductionOsSandboxWorkerReceipt(runnerReceipt)) {
     blockers.push(`benchmark_arm_batch_runner_receipt_invalid:${batch.arm}`);
   }
-  blockers.push(...(runnerReceipt?.blockers || []).map(
-    (blocker) => `benchmark_arm_batch_runner:${batch.arm}:${blocker}`,
-  ));
+  try {
+    if (Array.isArray(runnerReceipt?.blockers)) blockers.push(
+      ...runnerReceipt.blockers.map(
+        (blocker) => `benchmark_arm_batch_runner:${batch.arm}:${blocker}`,
+      ),
+    );
+  } catch { blockers.push(`benchmark_arm_batch_runner_receipt_invalid:${batch.arm}`); }
   const bindings = runnerReceipt?.executionBindings || {};
   const boundChallenge = decodeSystemBenchmarkArmBatchChallengeEnvironment(bindings);
   if (!boundChallenge || hashRecord('SystemBenchmarkArmBatchChallengeExpected', boundChallenge)
@@ -109,10 +120,14 @@ export function verifySystemBenchmarkArmBatchExecution({ batch, runnerReceipt, d
     || Number(runnerReceipt?.limits?.memoryBytes) !== Number(batch.resourceBudget?.memoryBytes)
     || Number(runnerReceipt?.limits?.cpuSeconds) !== Number(batch.resourceBudget?.cpuSeconds)
     || Number(runnerReceipt?.limits?.maximumPids) !== Number(batch.resourceBudget?.maximumProcesses)
+    || runnerReceipt?.isolation?.cpuLimitVerified !== true
+    || runnerReceipt?.isolation?.cpuLimitScope
+      !== 'process-thread-group-not-descendant-tree-v1'
     || Boolean(runnerReceipt?.isolation?.gpuAccessRequested) !== Boolean(batch.resourceBudget?.requiresGpu)) {
     blockers.push(`benchmark_arm_batch_resource_budget_binding_invalid:${batch.arm}`);
   }
-  const artifact = (runnerReceipt?.artifacts || []).find(
+  const artifact = (Array.isArray(runnerReceipt?.artifacts)
+    ? runnerReceipt.artifacts : []).find(
     (item) => item.path === 'observation.json',
   ) || null;
   if (!artifact || !SHA256.test(String(artifact.sha256 || ''))) {
@@ -126,4 +141,10 @@ export function verifySystemBenchmarkArmBatchExecution({ batch, runnerReceipt, d
     blockers.push(`benchmark_arm_batch_dataset_access_unverified:${batch.arm}`);
   }
   return { blockers, artifact };
+  } catch {
+    return {
+      blockers: [`benchmark_arm_batch_runner_receipt_invalid:${batch?.arm}`],
+      artifact: null,
+    };
+  }
 }

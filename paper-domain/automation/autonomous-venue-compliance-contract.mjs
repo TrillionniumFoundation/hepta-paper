@@ -653,9 +653,16 @@ export function verifyAutonomousVenueComplianceReceipt(receipt, expected = {}) {
   } = expected;
   const releaseBundle = campaignReleaseAuthority?.releaseBundle || null;
   const releaseBinding = releaseBundle?.autonomousResearchReleaseBinding || null;
+  const releaseBindingValid = verifyAutonomousResearchReleaseBinding(releaseBinding, {
+    campaignId: campaignReleaseAuthority?.campaignId,
+    paperId: campaignReleaseAuthority?.paperId,
+    campaignPlanHash: releaseBundle?.campaignPlanHash,
+    authorityObservedAt: receipt?.inspectedAt,
+  }).valid;
   const { autonomousVenueComplianceReceiptHash: claimedHash, ...payload } = receipt || {};
   const recursiveVenueRequirementValid = receipt?.version !== 3 || (
-    verifyResearchAgendaIr(receipt?.researchAgendaIr)
+    releaseBindingValid
+    && verifyResearchAgendaIr(receipt?.researchAgendaIr)
     && receipt?.researchAgendaIrHash
       === receipt?.researchAgendaIr?.researchAgendaIrHash
     && verifyVenueRequirementIr(receipt?.venueRequirementIr, {

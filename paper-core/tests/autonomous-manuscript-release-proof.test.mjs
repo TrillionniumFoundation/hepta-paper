@@ -17,8 +17,7 @@ import {
 import {
   BOUNDED_CAPABILITY_QUALIFICATION_SCOPE,
   PRODUCTION_AGENT_AUTHORED_QUALIFICATION_SCOPE,
-  createAutonomousResearchReleaseBinding,
-  verifyAutonomousResearchReleaseBinding,
+  verifyAutonomousResearchReleaseBinding as verifyProductionAutonomousResearchReleaseBinding,
 } from '../../paper-domain/automation/autonomous-research-release-binding-contract.mjs';
 import {
   inspectAutonomousManuscriptReleaseProof,
@@ -52,6 +51,14 @@ import {
   productionContentLineageFixture,
   productionSubmissionAuthoritiesFixture,
 } from './support/autonomous-research-generalization-fixture.mjs';
+import {
+  importAutonomousResearchReleaseBindingForTest,
+} from './support/production-experiment-closure-test-seam.mjs';
+
+const {
+  createAutonomousResearchReleaseBinding,
+  verifyAutonomousResearchReleaseBinding,
+} = await importAutonomousResearchReleaseBindingForTest();
 
 const HASH = (value) => hashBytes(Buffer.from(String(value), 'utf8'));
 const PAPER_ID = 'paper-release-proof';
@@ -431,6 +438,11 @@ test('production release qualification is inseparable from agent, merge, postima
   assert.equal(binding.fullResearchQualificationEligible, true);
   assert.equal(binding.genericContentCanaryVerified, true);
   assert.equal(verifyAutonomousResearchReleaseBinding(binding).valid, true);
+  const productionVerification = verifyProductionAutonomousResearchReleaseBinding(binding);
+  assert.equal(productionVerification.valid, false);
+  assert.ok(productionVerification.blockers.includes(
+    'autonomous_research_release_binding_recursive_closure_source_invalid',
+  ));
   assert.equal(verifyAutonomousResearchReleaseBinding(binding, {
     campaignId: binding.campaignId,
     paperId: binding.paperId,

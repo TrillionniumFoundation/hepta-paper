@@ -47,11 +47,11 @@ export function createWorkerEnvironmentBomPreparer({
 } = {}) {
   return (input = {}) => {
     const limits = Object.freeze({
-      timeoutMs: Math.max(1, Math.min(Number(input.timeoutMs || 30_000), maximumTimeoutMs)),
-      memoryBytes: Math.max(64 * 1024 * 1024, Math.min(Number(input.memoryBytes || maximumMemoryBytes), maximumMemoryBytes)),
-      cpuSeconds: Math.max(1, Math.min(Number(input.cpuSeconds || maximumCpuSeconds), maximumCpuSeconds)),
-      maximumPids: Math.max(8, Math.min(Number(input.maximumProcesses || maximumPids), maximumPids)),
-      maximumOutputBytes: Math.max(1, Math.min(Number(input.requestedMaximumOutputBytes || maximumOutputBytes), maximumOutputBytes)),
+      timeoutMs: Math.min(Number(input.timeoutMs ?? 30_000), maximumTimeoutMs),
+      memoryBytes: Math.min(Number(input.memoryBytes ?? maximumMemoryBytes), maximumMemoryBytes),
+      cpuSeconds: Math.min(Number(input.cpuSeconds ?? maximumCpuSeconds), maximumCpuSeconds),
+      maximumPids: Math.min(Number(input.maximumProcesses ?? maximumPids), maximumPids),
+      maximumOutputBytes: Math.min(Number(input.requestedMaximumOutputBytes ?? maximumOutputBytes), maximumOutputBytes),
       maximumCapturedBytes,
     });
     const binding = prepareWorkerEnvironmentBom({ ...input, limits });

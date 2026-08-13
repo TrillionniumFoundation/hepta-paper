@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import {
@@ -13,7 +12,18 @@ import {
   INDEPENDENT_TYPED_NUMERIC_ORACLE_IMPLEMENTATION,
   verifyIndependentTypedNumericOracleRecomputation,
 } from '../../paper-domain/research/independent-typed-numeric-oracle-recomputation.mjs';
+import {
+  TYPED_NUMERIC_RECOMPUTATION_RESOURCE_LIMITS,
+  verifyTypedNumericRecomputationResourceBudget,
+} from '../../paper-domain/automation/system-benchmark-resource-budget-contract.mjs';
+import {
+  verifyProductionOsSandboxWorkerReceipt,
+} from '../../paper-domain/automation/os-sandbox-worker-receipt-contract.mjs';
 import { hashBytes } from '../../workflow-kernel/record-hash.mjs';
+import {
+  createTypedNumericOracleSandboxRunner,
+  TYPED_NUMERIC_RECOMPUTATION_DOCKER_FALLBACK_IMAGE,
+} from './typed-numeric-oracle-sandbox-runner-factory.mjs';
 
 const MAXIMUM_REQUEST_BYTES = 24 * 1024 * 1024;
 const MAXIMUM_RESPONSE_BYTES = 24 * 1024 * 1024;
@@ -21,6 +31,7 @@ const workerPath = fileURLToPath(new URL(
   './independent-typed-numeric-oracle-recomputation-worker.mjs',
   import.meta.url,
 ));
+const repositoryRoot = path.resolve(path.dirname(workerPath), '..', '..');
 const sourcePaths = Object.freeze({
   workerImplementationSourceHash: workerPath,
   recomputationImplementationSourceHash: fileURLToPath(new URL(
@@ -37,6 +48,8 @@ const sourcePaths = Object.freeze({
   )),
 });
 
+export { TYPED_NUMERIC_RECOMPUTATION_DOCKER_FALLBACK_IMAGE };
+
 function currentWorkerImplementation(
   readSource = (sourcePath) => fs.readFileSync(sourcePath),
 ) {
@@ -51,16 +64,34 @@ function currentWorkerImplementation(
   });
 }
 
-function parseWorkerReceipt(result, {
+function snapshotSandboxReceipt(receipt) {
+  try {
+    if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)) return null;
+    const snapshot = JSON.parse(JSON.stringify(receipt));
+    return snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot)
+      ? snapshot : null;
+  } catch { return null; }
+}
+
+function workerProcessIdentityMatchesSandbox(workerReceipt, sandboxReceipt) {
+  return sandboxReceipt?.backend !== 'docker'
+    || (workerReceipt?.workerPid === 1 && workerReceipt?.parentPid === 0);
+}
+
+function parseWorkerReceipt(sandboxReceipt, {
   request,
   inputs,
   workerImplementation,
 } = {}) {
+  if (!verifyProductionOsSandboxWorkerReceipt(sandboxReceipt)
+    || !Array.isArray(sandboxReceipt.blockers) || sandboxReceipt.blockers.length !== 0
+    || sandboxReceipt.externalActionPerformed !== false
+    || !Number.isSafeInteger(sandboxReceipt.executionProcessIdentity?.launcherPid)
+    || sandboxReceipt.executionProcessIdentity.launcherPid < 1) return null;
   let receipt = null;
-  try { receipt = JSON.parse(String(result?.stdout || '').trim()); }
+  try { receipt = JSON.parse(String(sandboxReceipt.stdout || '').trim()); }
   catch { return null; }
-  if (receipt?.workerPid !== result?.pid
-    || receipt?.parentPid !== process.pid
+  if (!workerProcessIdentityMatchesSandbox(receipt, sandboxReceipt)
     || !verifyProcessIsolatedTypedNumericOracleWorkerReceipt(receipt, {
       request,
       workerImplementation,
@@ -72,52 +103,107 @@ function parseWorkerReceipt(result, {
 }
 
 export function runProcessIsolatedTypedNumericOracleRecomputation(input = {}, {
-  timeoutMs = 120_000,
-  spawnSyncImpl = spawnSync,
-  environment = process.env,
+  timeoutMs = TYPED_NUMERIC_RECOMPUTATION_RESOURCE_LIMITS.maximumWallTimeMs,
+  memoryBytes = TYPED_NUMERIC_RECOMPUTATION_RESOURCE_LIMITS.maximumMemoryBytes,
+  cpuSeconds = TYPED_NUMERIC_RECOMPUTATION_RESOURCE_LIMITS.maximumCpuSeconds,
+  maximumProcesses = TYPED_NUMERIC_RECOMPUTATION_RESOURCE_LIMITS.maximumProcesses,
   readSource,
 } = {}) {
-  const request = buildProcessIsolatedTypedNumericOracleRequest(input);
-  const encoded = `${JSON.stringify(request)}\n`;
-  const implementation = currentWorkerImplementation(readSource);
   const blockers = [];
+  let request = null;
+  let encoded = '';
+  try {
+    request = buildProcessIsolatedTypedNumericOracleRequest(input);
+    encoded = `${JSON.stringify(request)}\n`;
+  } catch { blockers.push('process_isolated_typed_numeric_request_invalid'); }
   if (Buffer.byteLength(encoded) > MAXIMUM_REQUEST_BYTES) {
     blockers.push('process_isolated_typed_numeric_request_too_large');
   }
-  let result = null;
+  const resourceBudget = Object.freeze({
+    timeoutMs: Number(timeoutMs),
+    memoryBytes: Number(memoryBytes),
+    cpuSeconds: Number(cpuSeconds),
+    maximumProcesses: Number(maximumProcesses),
+  });
+  if (!verifyTypedNumericRecomputationResourceBudget(resourceBudget)) {
+    blockers.push('process_isolated_typed_numeric_resource_budget_invalid');
+  }
+  let implementation = null;
+  try { implementation = currentWorkerImplementation(readSource); }
+  catch { blockers.push('process_isolated_typed_numeric_worker_implementation_invalid'); }
+  let sandboxReceipt = null;
   if (!blockers.length) {
-    result = spawnSyncImpl(process.execPath, [workerPath], {
-      cwd: path.dirname(workerPath),
-      env: {
-        PATH: String(environment.PATH || ''),
-        LANG: 'C.UTF-8',
-        LC_ALL: 'C.UTF-8',
-        TZ: 'UTC',
-      },
-      input: encoded,
-      encoding: 'utf8',
-      timeout: Number(timeoutMs),
-      maxBuffer: MAXIMUM_RESPONSE_BYTES,
-      windowsHide: true,
-    });
-    if (result.error || result.signal || result.status !== 0) {
-      blockers.push(result.error?.code === 'ETIMEDOUT'
-        ? 'process_isolated_typed_numeric_recomputation_timed_out'
-        : 'process_isolated_typed_numeric_recomputation_worker_failed');
+    try {
+      const runner = createTypedNumericOracleSandboxRunner(resourceBudget);
+      sandboxReceipt = snapshotSandboxReceipt(runner?.run?.({
+        executable: process.execPath,
+        args: [workerPath],
+        cwd: repositoryRoot,
+        sourceRoot: repositoryRoot,
+        timeoutMs: resourceBudget.timeoutMs,
+        env: {
+          OMP_NUM_THREADS: '1',
+          OPENBLAS_NUM_THREADS: '1',
+          MKL_NUM_THREADS: '1',
+          NUMEXPR_NUM_THREADS: '1',
+          BLIS_NUM_THREADS: '1',
+          VECLIB_MAXIMUM_THREADS: '1',
+          OMP_DYNAMIC: 'FALSE',
+          MKL_DYNAMIC: 'FALSE',
+        },
+        standardInput: encoded,
+        requireImmutableWorkRoot: true,
+        language: 'node',
+        determinismPolicy: 'explicit_deterministic_cpu',
+        deterministicSeed: request.requestHash,
+        memoryBytes: resourceBudget.memoryBytes,
+        cpuSeconds: resourceBudget.cpuSeconds,
+        maximumProcesses: resourceBudget.maximumProcesses,
+        requestedMaximumOutputBytes: MAXIMUM_RESPONSE_BYTES,
+      }) || null);
+    } catch { sandboxReceipt = null; }
+    let sandboxVerified = false;
+    try {
+      sandboxVerified = verifyProductionOsSandboxWorkerReceipt(sandboxReceipt)
+        && Array.isArray(sandboxReceipt.blockers) && sandboxReceipt.blockers.length === 0
+        && sandboxReceipt.externalActionPerformed === false;
+    }
+    catch { sandboxVerified = false; }
+    if (!sandboxVerified) {
+      blockers.push('process_isolated_typed_numeric_os_sandbox_invalid');
+      try {
+        if (Array.isArray(sandboxReceipt?.blockers)) {
+          blockers.push(...sandboxReceipt.blockers.map(
+            (blocker) => `process_isolated_typed_numeric_os_sandbox:${blocker}`,
+          ));
+          if (sandboxReceipt.blockers.includes('os_sandbox_command_timed_out')) {
+            blockers.push('process_isolated_typed_numeric_recomputation_timed_out');
+          }
+        }
+      } catch { /* malformed receipt remains blocked */ }
+    } else if (sandboxReceipt.limits?.timeoutMs !== resourceBudget.timeoutMs
+      || sandboxReceipt.limits?.memoryBytes !== resourceBudget.memoryBytes
+      || sandboxReceipt.limits?.cpuSeconds !== resourceBudget.cpuSeconds
+      || sandboxReceipt.limits?.maximumPids !== resourceBudget.maximumProcesses) {
+      blockers.push('process_isolated_typed_numeric_os_sandbox_resource_budget_mismatch');
     }
   }
-  const receipt = blockers.length ? null : parseWorkerReceipt(result, {
+  const workerReceipt = blockers.length ? null : parseWorkerReceipt(sandboxReceipt, {
     request,
     inputs: input,
     workerImplementation: implementation,
   });
-  if (!receipt) blockers.push('process_isolated_typed_numeric_recomputation_receipt_invalid');
+  if (!workerReceipt) {
+    blockers.push('process_isolated_typed_numeric_recomputation_receipt_invalid');
+  }
   return buildProcessIsolatedTypedNumericOracleRecomputationReceipt({
     request,
     workerImplementation: implementation,
-    workerReceipt: receipt,
-    parentPid: process.pid,
-    workerPid: receipt?.workerPid || null,
+    workerReceipt,
+    osSandboxWorkerReceipt: sandboxReceipt,
+    resourceBudget,
+    parentPid: workerReceipt?.parentPid || null,
+    workerPid: workerReceipt?.workerPid || null,
     blockers,
   });
 }

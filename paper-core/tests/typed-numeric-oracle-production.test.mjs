@@ -17,12 +17,16 @@ import { immutableAuthoritySigningPayload } from './workflow-kernel/runtime/immu
 const source = AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_BUILTIN_RAW_PROFILES.find(
   (profile) => profile.benchmarkFamily === 'ml_algorithm_benchmark',
 );
-const registry = compileAutonomousEmpiricalFamilyPluginRegistry([{
-  ...source,
-  typedOracleKinds: ['property-oracle-v1', 'residual-bound-v1',
-    'condition-number-bound-v1', 'convergence-rate-bound-v1',
-    'error-bound-v1', 'optimality-gap-bound-v1'],
-}]);
+const rlSource = AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_BUILTIN_RAW_PROFILES.find(
+  (profile) => profile.benchmarkFamily === 'rl_stochastic_control_benchmark',
+);
+const advancedKinds = ['property-oracle-v1', 'residual-bound-v1',
+  'condition-number-bound-v1', 'convergence-rate-bound-v1',
+  'error-bound-v1', 'optimality-gap-bound-v1'];
+const registry = compileAutonomousEmpiricalFamilyPluginRegistry([source, rlSource].map((profile) => ({
+  ...profile,
+  typedOracleKinds: advancedKinds,
+})));
 const pluginPackage = compileAutonomousEmpiricalFamilyPluginPackage({
   packageId: 'test.signed.numeric-profile', packageVersion: '1.0.0', registry,
 });
@@ -65,6 +69,14 @@ process.env.HEPTA_AUTONOMOUS_EMPIRICAL_PLUGIN_TRUST_STORE = signedTrustStorePath
 process.on('exit', () => fs.rmSync(signedFixtureRoot, { recursive: true, force: true }));
 
 const {
+  withTypedNumericOracleSandboxFixtureForTest,
+  withTypedNumericOracleSandboxRunnerForTest,
+} = await import('./support/typed-numeric-oracle-sandbox-test-seam.mjs');
+const {
+  createRawEventRecomputationSandboxTestFixture,
+} = await import('./support/raw-event-recomputation-sandbox-fixture.mjs');
+
+const {
   AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_BUILTIN_RAW_PROFILES,
   AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_REGISTRY,
   compileAutonomousEmpiricalFamilyPluginRegistry,
@@ -98,8 +110,24 @@ const {
   runSystemBenchmarkTypedNumericProcess,
 } = await import('../../paper-adapters/automation/system-benchmark-typed-numeric-process.mjs');
 const {
+  TYPED_NUMERIC_RECOMPUTATION_RESOURCE_LIMITS,
+  allocateSystemBenchmarkVerifierCpuSeconds,
+  buildTypedNumericRecomputationResourceBudget,
+  verifyTypedNumericRecomputationResourceBudget,
+} = await import('../../paper-domain/automation/system-benchmark-resource-budget-contract.mjs');
+const {
+  verifyProductionOsSandboxWorkerReceipt,
+} = await import('../../paper-domain/automation/os-sandbox-worker-receipt-contract.mjs');
+const {
   buildVersionedExperimentIr,
+  buildResolvedVersionedExperimentIr,
 } = await import('../../paper-domain/automation/versioned-experiment-ir.mjs');
+const {
+  buildCampaignBenchmarkSelector,
+} = await import('../../paper-domain/automation/campaign-benchmark-selector.mjs');
+const {
+  buildDatasetAuthorizationSet,
+} = await import('../../paper-domain/automation/experiment-run-artifact-contract.mjs');
 const { hashRecord } = await import('../../workflow-kernel/record-hash.mjs');
 const {
   buildRepositoryAnalysisObservationAuthority,
@@ -115,9 +143,23 @@ const ADVANCED = Object.freeze([
   'optimality-gap-bound-v1',
 ]);
 const ARMS = Object.freeze(['treatment', 'baseline', 'ablation']);
+const DEFAULT_TYPED_NUMERIC_RESOURCE_BUDGET = Object.freeze({
+  timeoutMs: TYPED_NUMERIC_RECOMPUTATION_RESOURCE_LIMITS.maximumWallTimeMs,
+  cpuSeconds: TYPED_NUMERIC_RECOMPUTATION_RESOURCE_LIMITS.maximumCpuSeconds,
+  memoryBytes: TYPED_NUMERIC_RECOMPUTATION_RESOURCE_LIMITS.maximumMemoryBytes,
+  maximumProcesses: TYPED_NUMERIC_RECOMPUTATION_RESOURCE_LIMITS.maximumProcesses,
+});
+
+function runFixtureProcess(input, resourceBudget = DEFAULT_TYPED_NUMERIC_RESOURCE_BUDGET) {
+  return withTypedNumericOracleSandboxFixtureForTest(
+    () => runProcessIsolatedTypedNumericOracleRecomputation(input, resourceBudget),
+  );
+}
 
 function fixture() {
-  const pluginProfile = AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_REGISTRY.profiles[0];
+  const pluginProfile = AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_REGISTRY.profiles.find(
+    (profile) => profile.benchmarkFamily === 'ml_algorithm_benchmark',
+  );
   const protocolPayload = {
     benchmarkFamily: pluginProfile.benchmarkFamily,
     requiredMetrics: pluginProfile.requiredMetrics,
@@ -154,9 +196,81 @@ function fixture() {
   return { pluginProfile, analysisProtocol, observations, experimentIr };
 }
 
+function resolvedAdvancedFixture(benchmarkFamily) {
+  const pluginProfile = AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_REGISTRY.profiles.find(
+    (profile) => profile.benchmarkFamily === benchmarkFamily,
+  );
+  const selector = buildCampaignBenchmarkSelector({ benchmarkId: benchmarkFamily });
+  const adapterPayload = {
+    version: 1,
+    kind: 'SystemBenchmarkArmAdapterSet',
+    entrypointConvention: 'sibling-arm-entrypoints-v1',
+    adapters: selector.experimentDesign.benchmarkHarness.armProtocolSet.protocols.map(
+      (protocol, index) => ({
+        version: 1,
+        kind: 'SystemBenchmarkArmAdapterIdentity',
+        arm: protocol.arm,
+        relativePath: `fixture.${protocol.arm}.mjs`,
+        sourceHash: hashRecord('TypedNumericResolvedAdapterSource', { index }),
+        systemBenchmarkArmProtocolHash: protocol.systemBenchmarkArmProtocolHash,
+        sourceReadReceiptHash: hashRecord('TypedNumericResolvedAdapterRead', { index }),
+      }),
+    ),
+  };
+  const stableAdapterPayload = {
+    ...adapterPayload,
+    adapters: adapterPayload.adapters.map(({ sourceReadReceiptHash, ...adapter }) => {
+      void sourceReadReceiptHash;
+      return adapter;
+    }),
+  };
+  const armAdapterSet = {
+    ...adapterPayload,
+    systemBenchmarkArmAdapterSetHash: hashRecord(
+      'SystemBenchmarkArmAdapterSet', stableAdapterPayload,
+    ),
+  };
+  const experimentIr = buildResolvedVersionedExperimentIr(pluginProfile, {
+    selector,
+    armAdapterSet,
+    datasetAuthorizationSet: buildDatasetAuthorizationSet([]),
+    experimentAttemptId: `typed-numeric-resolved:${benchmarkFamily}`,
+    sourceLineageHash: hashRecord('TypedNumericResolvedSourceLineage', {}),
+    sourceMerkleHash: hashRecord('TypedNumericResolvedSourceMerkle', {}),
+    sourceWorkspaceManifestHash: hashRecord('TypedNumericResolvedSourceManifest', {}),
+    absoluteDeadlineEpochMs: 1_900_000_000_000,
+    aggregateCpuSeconds: 10_000,
+    memoryBytes: 1_073_741_824,
+    maximumProcesses: 32,
+  });
+  const analysisProtocol = experimentIr.analysisProtocol;
+  const observations = [];
+  for (const [seedIndex, seed] of experimentIr.design.seedSchedule.entries()) {
+    for (let repetition = 1;
+      repetition <= experimentIr.design.repetitionsPerSeed;
+      repetition += 1) {
+      for (const [armIndex, arm] of ARMS.entries()) {
+        observations.push({
+          seed,
+          repetition,
+          arm,
+          metrics: Object.fromEntries(analysisProtocol.requiredMetrics.map((metric, metricIndex) => {
+            const spec = analysisProtocol.metricSpecs[metric];
+            const fraction = 0.2 + (((seedIndex + 1) * (metricIndex + 1)
+              + (repetition * 3) + (armIndex * 5)) % 50) / 100;
+            return [metric, Number(spec.minimum)
+              + ((Number(spec.maximum) - Number(spec.minimum)) * fraction)];
+          })),
+        });
+      }
+    }
+  }
+  return { pluginProfile, analysisProtocol, observations, experimentIr };
+}
+
 function evidence(fixtureValue) {
   const production = buildTypedNumericOracleProduction(fixtureValue);
-  const recomputation = runProcessIsolatedTypedNumericOracleRecomputation({
+  const recomputation = runFixtureProcess({
     ...fixtureValue,
     production,
   });
@@ -250,6 +364,26 @@ function tamperedWorkerSpawn(mutate) {
   };
 }
 
+function strictProcessVerifierProbe(receipt, input) {
+  const program = `
+import fs from 'node:fs';
+const value = JSON.parse(fs.readFileSync(0, 'utf8'));
+const { verifyProcessIsolatedTypedNumericOracleRecomputation } = await import(
+  './paper-adapters/research-verify/process-isolated-typed-numeric-oracle-recomputation.mjs'
+);
+process.stdout.write(JSON.stringify(
+  verifyProcessIsolatedTypedNumericOracleRecomputation(value.receipt, value.input),
+));`;
+  const result = spawnSync(process.execPath, ['--input-type=module', '--eval', program], {
+    cwd: path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..'),
+    input: JSON.stringify({ receipt, input }),
+    encoding: 'utf8',
+    maxBuffer: 24 * 1024 * 1024,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  return JSON.parse(result.stdout);
+}
+
 function netConnectionProbe() {
   return net.createConnection({ host: '127.0.0.1', port: 9 });
 }
@@ -261,7 +395,8 @@ test('registered advanced oracle kinds produce data-bound, independently recompu
   assert.deepEqual(result.production.producedOracleTypes, [...ADVANCED].sort());
   assert.equal(verifyTypedNumericOracleProduction(result.production, selected), true);
   assert.equal(result.recomputation.status,
-    'independent_typed_numeric_oracle_recomputation_verified');
+    'independent_typed_numeric_oracle_recomputation_verified',
+    JSON.stringify(result.recomputation.blockers));
   assert.equal(verifyIndependentTypedNumericOracleRecomputation(
     result.recomputation, { ...selected, production: result.production },
   ), true);
@@ -269,6 +404,20 @@ test('registered advanced oracle kinds produce data-bound, independently recompu
     result.recomputation, { ...selected, production: result.production },
   ), true);
   assert.equal(result.recomputation.processIndependent, true);
+  assert.equal(result.recomputation.version, 3);
+  assert.deepEqual(result.recomputation.resourceBudget,
+    DEFAULT_TYPED_NUMERIC_RESOURCE_BUDGET);
+  assert.equal(result.recomputation.cpuBudgetSemantics,
+    'nominal-sum-of-per-worker-rlimit-cpu-v1');
+  assert.equal(result.recomputation.osSandboxed, true);
+  assert.equal(result.recomputation.osSandboxBackend, 'fixture');
+  assert.equal(verifyProductionOsSandboxWorkerReceipt(
+    result.recomputation.osSandboxWorkerReceipt,
+  ), false);
+  assert.equal(strictProcessVerifierProbe(
+    result.recomputation,
+    { ...selected, production: result.production },
+  ), false);
   assert.notEqual(result.recomputation.workerPid, process.pid);
   assert.equal(result.recomputation.parentPid, process.pid);
   assert.equal(result.recomputation.networkGuardInstalled, true);
@@ -404,9 +553,15 @@ test('process-isolated numeric recomputation rejects rehashed tuple, network, pi
     },
   ];
   for (const alter of alterations) {
-    const blocked = runProcessIsolatedTypedNumericOracleRecomputation(input, {
+    const runner = createRawEventRecomputationSandboxTestFixture({
       spawnSyncImpl: tamperedWorkerSpawn(alter),
     });
+    const blocked = withTypedNumericOracleSandboxRunnerForTest(
+      runner,
+      () => runProcessIsolatedTypedNumericOracleRecomputation(
+        input, DEFAULT_TYPED_NUMERIC_RESOURCE_BUDGET,
+      ),
+    );
     assert.equal(blocked.status,
       'independent_typed_numeric_oracle_recomputation_blocked');
     assert.ok(blocked.blockers.includes(
@@ -421,18 +576,117 @@ test('process-isolated numeric recomputation fails closed on worker failure and 
   const production = buildTypedNumericOracleProduction(selected);
   const input = { ...selected, production };
   for (const [error, expected] of [
-    [null, 'process_isolated_typed_numeric_recomputation_worker_failed'],
+    [null, 'process_isolated_typed_numeric_os_sandbox_invalid'],
     [{ code: 'ETIMEDOUT' }, 'process_isolated_typed_numeric_recomputation_timed_out'],
   ]) {
-    const blocked = runProcessIsolatedTypedNumericOracleRecomputation(input, {
-      spawnSyncImpl() {
-        return { status: 1, signal: null, error, stdout: '', stderr: '', pid: 99 };
+    const runner = Object.freeze({
+      run() {
+        return Object.freeze({
+          ok: false,
+          status: 'os_sandbox_worker_failed',
+          blockers: Object.freeze(error?.code === 'ETIMEDOUT'
+            ? ['os_sandbox_command_timed_out'] : ['fixture_sandbox_command_failed']),
+        });
       },
     });
+    const blocked = withTypedNumericOracleSandboxRunnerForTest(
+      runner,
+      () => runProcessIsolatedTypedNumericOracleRecomputation(
+        input, DEFAULT_TYPED_NUMERIC_RESOURCE_BUDGET,
+      ),
+    );
     assert.equal(blocked.status,
       'independent_typed_numeric_oracle_recomputation_blocked');
     assert.ok(blocked.blockers.includes(expected));
     assert.equal(blocked.processIndependent, false);
+  }
+});
+
+test('typed numeric sandbox rejects expanded, over-ceiling, and deadline-exhausted budgets', () => {
+  const selected = fixture();
+  const production = buildTypedNumericOracleProduction(selected);
+  const input = { ...selected, production };
+  const fixtureRunner = createRawEventRecomputationSandboxTestFixture();
+  let expansionCalls = 0;
+  const expanded = withTypedNumericOracleSandboxRunnerForTest({
+    run(spec) {
+      expansionCalls += 1;
+      return fixtureRunner.run({
+        ...spec,
+        memoryBytes: spec.memoryBytes + 1,
+        maximumProcesses: spec.maximumProcesses + 1,
+      });
+    },
+  }, () => runProcessIsolatedTypedNumericOracleRecomputation(
+    input, DEFAULT_TYPED_NUMERIC_RESOURCE_BUDGET,
+  ));
+  assert.equal(expansionCalls, 1);
+  assert.equal(expanded.status, 'independent_typed_numeric_oracle_recomputation_blocked');
+  assert.ok(expanded.blockers.includes(
+    'process_isolated_typed_numeric_os_sandbox_resource_budget_mismatch',
+  ));
+  assert.equal(verifyProcessIsolatedTypedNumericOracleRecomputation(expanded, input), false);
+
+  let forbiddenDispatches = 0;
+  const poisonRunner = Object.freeze({ run() { forbiddenDispatches += 1; } });
+  const overCeiling = withTypedNumericOracleSandboxRunnerForTest(
+    poisonRunner,
+    () => runProcessIsolatedTypedNumericOracleRecomputation(input, {
+      ...DEFAULT_TYPED_NUMERIC_RESOURCE_BUDGET,
+      cpuSeconds: TYPED_NUMERIC_RECOMPUTATION_RESOURCE_LIMITS.maximumCpuSeconds + 1,
+    }),
+  );
+  assert.ok(overCeiling.blockers.includes(
+    'process_isolated_typed_numeric_resource_budget_invalid',
+  ));
+  const exhausted = buildTypedNumericRecomputationResourceBudget({
+    remainingWallTimeMs:
+      TYPED_NUMERIC_RECOMPUTATION_RESOURCE_LIMITS.finalizationReserveMs,
+    cpuSeconds: 1,
+    memoryBytes: 64 * 1024 * 1024,
+    maximumProcesses: 8,
+  });
+  assert.equal(exhausted.timeoutMs, 0);
+  assert.equal(verifyTypedNumericRecomputationResourceBudget(exhausted), false);
+  const deadlineBlocked = withTypedNumericOracleSandboxRunnerForTest(
+    poisonRunner,
+    () => runProcessIsolatedTypedNumericOracleRecomputation(input, exhausted),
+  );
+  assert.ok(deadlineBlocked.blockers.includes(
+    'process_isolated_typed_numeric_resource_budget_invalid',
+  ));
+  assert.equal(forbiddenDispatches, 0);
+});
+
+test('typed verifier allocation is aggregate-bound and resource hash forgeries fail closed', () => {
+  const selected = fixture();
+  const production = buildTypedNumericOracleProduction(selected);
+  const input = { ...selected, production };
+  const allocation = allocateSystemBenchmarkVerifierCpuSeconds(
+    10, 3, selected.experimentIr,
+  );
+  assert.deepEqual(allocation, {
+    typedNumericRequired: true,
+    typedNumericCpuSeconds: 3,
+    rawEventCpuSeconds: 4,
+  });
+  assert.equal(3 + allocation.rawEventCpuSeconds
+    + allocation.typedNumericCpuSeconds, 10);
+  const receipt = runFixtureProcess(input);
+  for (const alteration of [
+    (forged) => { forged.version = 2; },
+    (forged) => { forged.resourceBudget.cpuSeconds -= 1; },
+    (forged) => { forged.osSandboxBackend = 'bubblewrap'; },
+  ]) {
+    const forged = structuredClone(receipt);
+    alteration(forged);
+    const { independentTypedNumericOracleRecomputationHash, ...payload } = forged;
+    forged.independentTypedNumericOracleRecomputationHash = hashRecord(
+      'IndependentTypedNumericOracleRecomputation', payload,
+    );
+    assert.notEqual(forged.independentTypedNumericOracleRecomputationHash,
+      independentTypedNumericOracleRecomputationHash);
+    assert.equal(verifyProcessIsolatedTypedNumericOracleRecomputation(forged, input), false);
   }
 });
 
@@ -459,21 +713,46 @@ test('typed numeric worker validates a bounded request and emits its process rec
   assert.equal(emitted.workerReceiptHash, receipt.workerReceiptHash);
 });
 
+test('typed numeric worker accepts Docker PID namespace identity one with parent zero', () => {
+  const selected = fixture();
+  const production = buildTypedNumericOracleProduction(selected);
+  const request = buildProcessIsolatedTypedNumericOracleRequest({ ...selected, production });
+  const receipt = runIndependentTypedNumericOracleRecomputationWorker({
+    readRequestBytes: () => Buffer.from(JSON.stringify(request)),
+    writeReceipt: () => {},
+    workerPid: 1,
+    parentPid: 0,
+    installNetworkGuard: () => ({
+      installed: true,
+      policy: 'deny-node-network-client-and-server-apis-v1',
+    }),
+  });
+  assert.equal(receipt.status,
+    'process_isolated_typed_numeric_oracle_recomputation_verified');
+  assert.equal(receipt.processIndependent, true);
+});
+
 test('system benchmark numeric boundary invokes the process verifier for advanced profiles', () => {
   const selected = fixture();
-  const result = runSystemBenchmarkTypedNumericProcess({
-    benchmarkFamily: selected.pluginProfile.benchmarkFamily,
-    observations: selected.observations,
-    analysisProtocol: selected.analysisProtocol,
-    experimentIr: selected.experimentIr,
-    independentRawEventRecomputationAssurance: {
-      status: 'independent_raw_event_recomputation_assurance_verified',
-    },
-  }, {
-    pluginProfileFor: () => selected.pluginProfile,
-    buildExperimentIr: () => { throw new Error('late_experiment_ir_build_forbidden'); },
-  });
-  assert.equal(result.blockers.length, 0);
+  let injectedRunnerCalls = 0;
+  const result = withTypedNumericOracleSandboxFixtureForTest(() => (
+    runSystemBenchmarkTypedNumericProcess({
+      benchmarkFamily: selected.pluginProfile.benchmarkFamily,
+      observations: selected.observations,
+      analysisProtocol: selected.analysisProtocol,
+      experimentIr: selected.experimentIr,
+      resourceBudget: DEFAULT_TYPED_NUMERIC_RESOURCE_BUDGET,
+      independentRawEventRecomputationAssurance: {
+        status: 'independent_raw_event_recomputation_assurance_verified',
+      },
+    }, {
+      pluginProfileFor: () => selected.pluginProfile,
+      buildExperimentIr: () => { throw new Error('late_experiment_ir_build_forbidden'); },
+      runRecomputation() { injectedRunnerCalls += 1; },
+    })
+  ));
+  assert.equal(injectedRunnerCalls, 0);
+  assert.equal(result.blockers.length, 0, JSON.stringify(result.blockers));
   assert.equal(result.typedNumericOracleProduction.status,
     'typed_numeric_oracle_production_verified');
   assert.equal(result.typedNumericOracleRecomputationReceipt.status,
@@ -516,6 +795,23 @@ test('Experiment IR tampering and cross-profile replay fail at production and re
     evidence(selected).recomputation,
     { ...selected, experimentIr: tamperedIr, production },
   ), false);
+});
+
+test('resolved IR schedule and analysis protocol are the typed-numeric authority', () => {
+  const selected = resolvedAdvancedFixture('rl_stochastic_control_benchmark');
+  assert.ok(selected.experimentIr.design.seedSchedule.length
+    > selected.pluginProfile.seedSchedule.length);
+  const production = buildTypedNumericOracleProduction(selected);
+  assert.equal(production.status, 'typed_numeric_oracle_production_verified');
+  assert.equal(production.analysisProtocolHash,
+    selected.experimentIr.analysisProtocol.analysisProtocolHash);
+  assert.throws(() => buildTypedNumericOracleProduction({
+    ...selected,
+    analysisProtocol: {
+      ...selected.analysisProtocol,
+      analysisProtocolHash: hashRecord('TypedNumericMismatchedResolvedProtocol', {}),
+    },
+  }), /typed_numeric_oracle_experiment_ir_invalid/);
 });
 
 test('self-consistent custom profile and self-hashed IR cannot cross the production boundary', () => {

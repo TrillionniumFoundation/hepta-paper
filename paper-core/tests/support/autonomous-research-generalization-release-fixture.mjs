@@ -28,13 +28,17 @@ import {
   buildAutonomousResearchCapabilityScopeManifest,
 } from '../../../paper-domain/automation/autonomous-research-capability-scope-manifest.mjs';
 import {
-  createAutonomousResearchReleaseBinding,
-} from '../../../paper-domain/automation/autonomous-research-release-binding-contract.mjs';
+  importAutonomousResearchReleaseBindingForTest,
+} from './production-experiment-closure-test-seam.mjs';
 import {
   buildAutonomousResearchSeedBinding,
   buildAutonomousResearchSeedContractBundle,
   evaluateAutonomousResearchPolicy,
 } from '../../../paper-domain/automation/autonomous-research-policy-contract.mjs';
+
+const {
+  createAutonomousResearchReleaseBinding,
+} = await importAutonomousResearchReleaseBindingForTest();
 import {
   evaluateAutonomousResearchQualificationEligibility,
 } from '../../../paper-domain/automation/autonomous-research-readiness-policy.mjs';

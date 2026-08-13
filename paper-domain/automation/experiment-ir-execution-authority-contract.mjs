@@ -62,7 +62,7 @@ function executionEvidence(experimentReplayReceipt) {
     || !verifySystemBenchmarkHarnessExecutionReceipt(replayHarness)
     || !verifyVersionedExperimentIr(originalIr)
     || !verifyVersionedExperimentIr(replayIr)
-    || originalIr.version !== 3 || replayIr.version !== 3
+    || originalIr.version !== 5 || replayIr.version !== 5
     || originalRun.academicPromotionEligible !== true
     || replayRun.academicPromotionEligible !== true
     || originalRun.assuranceScope !== 'operator-authorized-hidden-evaluation-v1'

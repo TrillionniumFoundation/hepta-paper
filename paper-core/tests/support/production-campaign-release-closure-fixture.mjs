@@ -2,6 +2,9 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
+  importCampaignReleaseContractsForTest,
+} from './production-experiment-closure-test-seam.mjs';
+import {
   createPaperArtifactPackage,
 } from '../../../paper-domain/contracts/workflow-contracts.mjs';
 import {
@@ -13,13 +16,6 @@ import {
 import {
   nativeFormalClosureBindingFromExecution,
 } from '../../../paper-domain/research/formal-certificate-intake.mjs';
-import {
-  createCampaignReleasePromotionReceipt,
-  createAutomationPromotionCandidate,
-  createCampaignReleaseBundle,
-  verifyCampaignReleaseAuthorityRecord,
-  verifyCampaignReleaseBundle,
-} from '../../../paper-domain/automation/campaign-release-contracts.mjs';
 import {
   buildCampaignResearchSourceSnapshot,
 } from '../../../paper-domain/automation/campaign-research-contract.mjs';
@@ -54,6 +50,14 @@ import {
   workspaceExecutionManifestHash,
 } from '../../../workflow-kernel/runtime/workspace-execution-identity.mjs';
 import { hashBytes, hashRecord } from '../../../workflow-kernel/record-hash.mjs';
+
+const {
+  createCampaignReleasePromotionReceipt,
+  createAutomationPromotionCandidate,
+  createCampaignReleaseBundle,
+  verifyCampaignReleaseAuthorityRecord,
+  verifyCampaignReleaseBundle,
+} = await importCampaignReleaseContractsForTest();
 
 const releaseAttestorPair = crypto.generateKeyPairSync('ed25519');
 

@@ -10,19 +10,23 @@ import {
 } from '../../paper-domain/automation/versioned-experiment-ir.mjs';
 import {
   runProcessIsolatedTypedNumericOracleRecomputation,
+  verifyProcessIsolatedTypedNumericOracleRecomputation,
 } from '../research-verify/process-isolated-typed-numeric-oracle-recomputation.mjs';
+import {
+  verifyTypedNumericRecomputationResourceBudget,
+} from '../../paper-domain/automation/system-benchmark-resource-budget-contract.mjs';
 
 export function runSystemBenchmarkTypedNumericProcess({
   benchmarkFamily,
   observations,
   analysisProtocol,
   independentRawEventRecomputationAssurance,
+  resourceBudget = null,
   experimentIr: prebuiltExperimentIr = null,
 } = {}, {
   pluginProfileFor = autonomousEmpiricalFamilyPluginProfileFor,
   buildExperimentIr = buildVersionedExperimentIr,
   buildProduction = buildTypedNumericOracleProduction,
-  runRecomputation = runProcessIsolatedTypedNumericOracleRecomputation,
 } = {}) {
   const pluginProfile = pluginProfileFor(benchmarkFamily);
   let experimentIr = null;
@@ -64,16 +68,30 @@ export function runSystemBenchmarkTypedNumericProcess({
       ]),
     });
   }
+  if (!verifyTypedNumericRecomputationResourceBudget(resourceBudget)) {
+    return Object.freeze({
+      typedNumericOracleProduction: null,
+      typedNumericOracleRecomputationReceipt: null,
+      experimentIr,
+      blockers: Object.freeze([
+        'typed_numeric_oracle_process:resource_budget_invalid',
+      ]),
+    });
+  }
   try {
     const numericInputs = {
       observations, analysisProtocol, pluginProfile, experimentIr,
     };
     const typedNumericOracleProduction = buildProduction(numericInputs);
     const typedNumericOracleRecomputationReceipt =
-      runRecomputation({
+      runProcessIsolatedTypedNumericOracleRecomputation({
         ...numericInputs,
         production: typedNumericOracleProduction,
-      });
+      }, resourceBudget);
+    if (!verifyProcessIsolatedTypedNumericOracleRecomputation(
+      typedNumericOracleRecomputationReceipt,
+      { ...numericInputs, production: typedNumericOracleProduction },
+    )) throw new Error('typed_numeric_oracle_process_receipt_invalid');
     return Object.freeze({
       typedNumericOracleProduction,
       typedNumericOracleRecomputationReceipt,

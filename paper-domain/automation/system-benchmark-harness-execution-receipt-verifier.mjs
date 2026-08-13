@@ -23,7 +23,9 @@ import {
 } from './analysis-protocol-run-binding.mjs';
 import { verifyDatasetRuntimeAccessReceiptAgainstWorkerReceipt } from './dataset-runtime-access-contract.mjs';
 import { buildDatasetAuthorizationSet } from './experiment-run-artifact-contract.mjs';
-import { verifyOsSandboxWorkerReceipt } from './os-sandbox-worker-receipt-contract.mjs';
+import {
+  verifyProductionOsSandboxWorkerReceipt,
+} from './os-sandbox-worker-receipt-contract.mjs';
 import {
   buildCampaignBenchmarkSchedule,
   REQUIRED_SYSTEM_BENCHMARK_ARMS as REQUIRED_ARMS,
@@ -47,7 +49,7 @@ const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 const utf8Bytes = (value) => new TextEncoder().encode(value).byteLength;
 
 export function verifySystemBenchmarkHarnessExecutionReceipt(receipt) {
-  if (!receipt || receipt.version !== 4 || receipt.kind !== 'SystemBenchmarkHarnessExecutionReceipt') return false;
+  if (!receipt || receipt.version !== 5 || receipt.kind !== 'SystemBenchmarkHarnessExecutionReceipt') return false;
   const preflight = verifiedReceiptPreflight(receipt, 'SystemBenchmarkHarnessExecutionReceipt', 'systemBenchmarkHarnessExecutionReceiptHash', verifiedHarnessReceiptHashes);
   if (!preflight || preflight.cached) return preflight?.cached === true;
   const selector = verifyCampaignBenchmarkSelector(receipt.benchmarkSelector, {
@@ -89,6 +91,12 @@ export function verifySystemBenchmarkHarnessExecutionReceipt(receipt) {
     { operatorDatasetHarnessAuthority },
   );
   if (!experimentIrBinding.valid) return false;
+  if (!Number.isSafeInteger(receipt.resultPersistenceCompletedAtEpochMs)
+    || receipt.resultPersistenceCompletedAtEpochMs < 0
+    || !Number.isSafeInteger(receipt.receiptFinalizedAtEpochMs)
+    || receipt.receiptFinalizedAtEpochMs < receipt.resultPersistenceCompletedAtEpochMs
+    || !Number.isSafeInteger(receipt.absoluteDeadlineEpochMs)
+    || receipt.receiptFinalizedAtEpochMs >= receipt.absoluteDeadlineEpochMs) return false;
   const { researchResolved } = experimentIrBinding;
   const localGoldenAuthority = selector.expected.authorityScope
     === LOCAL_GOLDEN_DATASET_AUTHORITY_SCOPE;
@@ -113,7 +121,7 @@ export function verifySystemBenchmarkHarnessExecutionReceipt(receipt) {
     : REQUIRED_ARMS.map((arm) => expected.filter((cell) => cell.arm === arm));
   if (receipt.executionIsolationMode !== executionIsolationMode
     || receipt.executionAssuranceProfile !== expectedExecutionAssuranceProfile
-    || receipt.academicPromotionEligible !== (academicDatasetExecution
+    || receipt.academicPromotionEligible !== (researchResolved && academicDatasetExecution
       && receipt.assuranceScope === 'operator-authorized-hidden-evaluation-v1')
     || (localGoldenAuthority && (
       receipt.evidenceClass !== LOCAL_GOLDEN_DATASET_EVIDENCE_CLASS
@@ -170,7 +178,7 @@ export function verifySystemBenchmarkHarnessExecutionReceipt(receipt) {
       || batchReceipt.systemBenchmarkArmBatchChallengeHash !== expectedBatchChallengeHash
       || batchReceipt.versionedExperimentIrHash !== receipt.versionedExperimentIrHash
       || boundChallenge.versionedExperimentIrHash !== receipt.versionedExperimentIrHash
-      || !verifyOsSandboxWorkerReceipt(batchReceipt.runnerReceipt)
+      || !verifyProductionOsSandboxWorkerReceipt(batchReceipt.runnerReceipt)
       || (datasetBacked && !verifyWorkerProcessExecutionIdentity(batchReceipt.runnerReceipt, { requireObservedProcess: true }))
       || batchReceipt.runnerReceiptHash !== batchReceipt.runnerReceipt.receiptHash
       || batchReceipt.observationArtifactHash !== (batchReceipt.runnerReceipt.artifacts || []).find((item) => item.path === 'observation.json')?.sha256) return false;
@@ -383,7 +391,7 @@ export function verifySystemBenchmarkHarnessExecutionReceipt(receipt) {
     datasetEvaluationDependencyReceipt: receipt.datasetEvaluationDependencyReceipt,
     assuranceScope: selector.expected.assuranceScope,
     executionAssuranceProfile: expectedExecutionAssuranceProfile,
-    academicPromotionEligible: academicDatasetExecution
+    academicPromotionEligible: researchResolved && academicDatasetExecution
       && selector.expected.assuranceScope === 'operator-authorized-hidden-evaluation-v1',
     ...(localGoldenAuthority ? {
       evidenceClass: LOCAL_GOLDEN_DATASET_EVIDENCE_CLASS,

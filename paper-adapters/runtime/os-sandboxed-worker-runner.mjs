@@ -130,7 +130,7 @@ export function createOsSandboxedWorkerRunner({
     resolveExecutionRuntimeIdentity,
     prepareEnvironmentBom,
     availability,
-    isolation: Object.freeze({ backend, sourceReadOnly: true, ephemeralWorkRoot: true, separateOutputRoot: true, hostEtcMounted: false, userNamespace: backend === 'bubblewrap', mountNamespace: true, pidNamespace: true, networkNamespace: true, readOnlyRuntime: true, memoryLimit: true, cpuLimit: true, processLimit: advertisedProcessLimit.available, processLimitMechanism: advertisedProcessLimit.mechanism }),
+    isolation: Object.freeze({ backend, sourceReadOnly: true, ephemeralWorkRoot: true, separateOutputRoot: true, hostEtcMounted: false, userNamespace: backend === 'bubblewrap', mountNamespace: true, pidNamespace: true, networkNamespace: true, readOnlyRuntime: true, memoryLimit: true, memoryLimitScope: backend === 'docker' ? 'container-cgroup-aggregate-v1' : 'process-address-space-not-descendant-tree-v1', cpuLimit: true, cpuLimitScope: 'process-thread-group-not-descendant-tree-v1', processLimit: advertisedProcessLimit.available, processLimitMechanism: advertisedProcessLimit.mechanism, processLimitScope: backend === 'docker' ? 'container-cgroup-concurrent-tasks-v1' : 'real-uid-concurrent-processes-not-sandbox-local-v1' }),
     run(spec = {}) {
       const removedInputs = ['containerImageIdentity', 'containerImageDigest']
         .filter((name) => Object.prototype.hasOwnProperty.call(spec, name));

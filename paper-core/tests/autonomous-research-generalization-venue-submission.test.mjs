@@ -3,19 +3,31 @@ import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import {
-  verifyAutonomousVenueComplianceReceipt,
+  verifyAutonomousVenueComplianceReceipt as
+    verifyProductionAutonomousVenueComplianceReceipt,
 } from '../../paper-domain/automation/autonomous-venue-compliance-contract.mjs';
 import {
   autonomousSubmissionQualificationInspectionValid,
 } from '../../paper-domain/automation/autonomous-submission-qualification-inspection.mjs';
 import {
-  createLocalAutonomousVenueComplianceInspector,
-  inspectLocalAutonomousVenueComplianceRuntime,
-} from '../../paper-adapters/automation/local-autonomous-venue-compliance-inspector.mjs';
+  importAutonomousVenueComplianceContractForTest,
+  importLocalAutonomousVenueComplianceInspectorForTest,
+} from './support/production-experiment-closure-test-seam.mjs';
 import {
   productionResearchClosureFixture,
 } from './support/autonomous-research-generalization-fixture.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+
+const [
+  { verifyAutonomousVenueComplianceReceipt },
+  {
+    createLocalAutonomousVenueComplianceInspector,
+    inspectLocalAutonomousVenueComplianceRuntime,
+  },
+] = await Promise.all([
+  importAutonomousVenueComplianceContractForTest(),
+  importLocalAutonomousVenueComplianceInspectorForTest(),
+]);
 
 const MANUSCRIPT_PROOF_FIELDS = Object.freeze([
   'trustedAutonomousManuscriptRenderReceiptHash',
@@ -91,6 +103,10 @@ test('venue compliance is gated by the archived IR, prior art, seed, agent proof
     agentExecutionReceiptHash: releaseBinding.agentExecutionReceiptHash,
     isolatedAgentMergeReceiptHash: releaseBinding.isolatedAgentMergeReceiptHash,
   }), true);
+  assert.equal(verifyProductionAutonomousVenueComplianceReceipt(
+    complianceReceipt,
+    { campaignReleaseAuthority: fixture.campaignReleaseAuthority },
+  ), false, 'fixture-backed venue evidence must remain non-promotable');
   assert.equal(complianceReceipt.pageCount, fixture.venueComplianceReceipt.pageCount);
   assert.equal(Number.isSafeInteger(complianceReceipt.pageCount), true);
   assert.equal(complianceReceipt.pageCount > 0, true);

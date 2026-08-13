@@ -376,6 +376,104 @@ test('experimental exposure cannot downgrade a shared maintenance module budget'
   assert.deepEqual(architectureBudgetViolations(metrics, experimentalOnlyLabels), []);
 });
 
+test('production recomputation composition cannot import verification seams or inject runners', () => {
+  const taxonomy = classifyRepositoryModules();
+  const productionFiles = [...taxonomy.reachable.production];
+  assert.deepEqual(productionFiles
+    .map((file) => posix(path.relative(workspaceRoot, file)))
+    .filter((file) => file.startsWith('paper-core/tests/')), []);
+  for (const file of productionFiles) {
+    assert.doesNotMatch(fs.readFileSync(file, 'utf8'), /\bregisterHooks\b/);
+  }
+
+  const publicCompositionFiles = [
+    'paper-adapters/automation/multi-language-empirical-executor.mjs',
+    'paper-adapters/automation/system-benchmark-empirical-execution.mjs',
+    'paper-adapters/automation/system-benchmark-harness.mjs',
+    'paper-adapters/automation/system-benchmark-independent-recomputation-assurance.mjs',
+    'paper-adapters/research-verify/process-isolated-system-benchmark-recomputation.mjs',
+    'paper-adapters/automation/system-benchmark-typed-numeric-process.mjs',
+    'paper-adapters/research-verify/process-isolated-typed-numeric-oracle-recomputation.mjs',
+  ];
+  const injectedRunner = /\b(?:runRawEventRecomputation|rawEventRecomputationSandboxWorkerRunner|sandboxWorkerRunner|authorizeSynchronousRawEventRecomputationRunner)\b/;
+  for (const relative of publicCompositionFiles) {
+    assert.doesNotMatch(fs.readFileSync(path.join(workspaceRoot, relative), 'utf8'), injectedRunner);
+  }
+  for (const relative of publicCompositionFiles.slice(2, 4)) {
+    assert.doesNotMatch(fs.readFileSync(path.join(workspaceRoot, relative), 'utf8'), /\bnowEpochMs\b/);
+  }
+
+  const factory = path.join(
+    workspaceRoot,
+    'paper-adapters/research-verify/raw-event-recomputation-sandbox-runner-factory.mjs',
+  );
+  assert.deepEqual(productionFiles
+    .filter((file) => moduleDependencies(file).includes(factory))
+    .map((file) => posix(path.relative(workspaceRoot, file)))
+    .sort(), [
+    'paper-adapters/research-verify/process-isolated-system-benchmark-recomputation.mjs',
+  ]);
+  const typedFactory = path.join(
+    workspaceRoot,
+    'paper-adapters/research-verify/typed-numeric-oracle-sandbox-runner-factory.mjs',
+  );
+  assert.deepEqual(productionFiles
+    .filter((file) => moduleDependencies(file).includes(typedFactory))
+    .map((file) => posix(path.relative(workspaceRoot, file)))
+    .sort(), [
+    'paper-adapters/research-verify/process-isolated-typed-numeric-oracle-recomputation.mjs',
+  ]);
+  const wallClock = path.join(
+    workspaceRoot,
+    'paper-adapters/automation/system-benchmark-wall-clock.mjs',
+  );
+  assert.deepEqual(productionFiles
+    .filter((file) => moduleDependencies(file).includes(wallClock))
+    .map((file) => posix(path.relative(workspaceRoot, file)))
+    .sort(), [
+    'paper-adapters/automation/system-benchmark-independent-recomputation-assurance.mjs',
+    'paper-adapters/automation/system-benchmark-result-repository.mjs',
+  ]);
+
+  const seamSource = fs.readFileSync(path.join(
+    workspaceRoot,
+    'paper-core/tests/support/raw-event-recomputation-sandbox-test-seam.mjs',
+  ), 'utf8');
+  const fixtureSource = fs.readFileSync(path.join(
+    workspaceRoot,
+    'paper-core/tests/support/raw-event-recomputation-sandbox-fixture.mjs',
+  ), 'utf8');
+  const closureSeamSource = fs.readFileSync(path.join(
+    workspaceRoot,
+    'paper-core/tests/support/production-experiment-closure-test-seam.mjs',
+  ), 'utf8');
+  const closureFixtureSource = fs.readFileSync(path.join(
+    workspaceRoot,
+    'paper-core/tests/support/production-experiment-closure-fixture.mjs',
+  ), 'utf8');
+  const verifierDoubleSource = fs.readFileSync(path.join(
+    workspaceRoot,
+    'paper-core/tests/test-doubles/raw-event-recomputation-os-sandbox-worker-receipt-contract.mjs',
+  ), 'utf8');
+  assert.match(seamSource, /const exactTestEdgeRedirects = new Map/);
+  assert.match(seamSource, /context\.parentURL, resolved\.url/);
+  assert.doesNotMatch(seamSource, /backend:\s*['"]bubblewrap['"]/);
+  assert.match(closureSeamSource, /const redirects = new Map/);
+  assert.match(closureSeamSource, /context\.parentURL, resolved\.url/);
+  assert.doesNotMatch(closureSeamSource, /context\.parentURL\?\.split/);
+  assert.doesNotMatch(closureSeamSource, /backend:\s*['"](?:bubblewrap|docker)['"]/);
+  assert.doesNotMatch(closureFixtureSource, /backend:\s*['"](?:bubblewrap|docker)['"]/);
+  assert.match(closureFixtureSource, /backend:\s*['"]fixture['"]/);
+  assert.match(fixtureSource, /runnerId:\s*['"]fixture-kernel-isolation-worker-v4['"]/);
+  assert.match(fixtureSource, /backend:\s*['"]fixture['"]/);
+  assert.doesNotMatch(fixtureSource, /\bbackend\s*=/);
+  assert.match(verifierDoubleSource, /receipt\.backend === ['"]fixture['"]/);
+  assert.match(
+    verifierDoubleSource,
+    /verifyRealProductionOsSandboxWorkerReceipt\(receipt\)/,
+  );
+});
+
 test('production inventory is reachable only from declared executable entrypoints', async () => {
   const taxonomy = classifyRepositoryModules();
   const {

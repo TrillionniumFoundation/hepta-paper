@@ -4,26 +4,38 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
+import {
+  importMultiLanguageEmpiricalExecutorForTest,
+  importSystemBenchmarkHarnessForTest,
+  withRawEventRecomputationSandboxFixtureForTest,
+} from './support/raw-event-recomputation-sandbox-test-seam.mjs';
+import {
+  withTypedNumericOracleSandboxFixtureForTest,
+} from './support/typed-numeric-oracle-sandbox-test-seam.mjs';
+
 import { createCampaignNodeExecutor } from '../../paper-composition/automation/campaign-node-execution-composition.mjs';
 import {
   createCampaignResearchVerifier,
   runFencedFormalNativeResearchWorkers,
 } from '../../paper-adapters/automation/campaign-research-verifier.mjs';
-import { createMultiLanguageEmpiricalExecutor } from '../../paper-adapters/automation/multi-language-empirical-executor.mjs';
-import { executeSystemBenchmarkHarness } from '../../paper-adapters/automation/system-benchmark-harness.mjs';
 import { createFilesystemArtifactRepository } from '../../paper-adapters/artifacts/filesystem-artifact-repository.mjs';
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { composeArtifactReceiptLedger } from '../../paper-composition/bootstrap/receipt-ledger-composition.mjs';
 import { buildBatchCampaignCommand } from '../../paper-application/automation/batch-campaign-command.mjs';
 import { createPaperTask } from '../../paper-domain/contracts/workflow-contracts.mjs';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
-import { buildDatasetAuthorizationSet } from '../../paper-domain/automation/experiment-run-contract.mjs';
+import {
+  buildDatasetAuthorizationSet,
+  verifySystemBenchmarkHarnessExecutionReceipt,
+} from '../../paper-domain/automation/experiment-run-contract.mjs';
 import { systemBenchmarkArmBatchChallengeEnvironment } from '../../paper-domain/automation/system-benchmark-challenge.mjs';
 import { buildEmpiricalEnvironmentBom } from '../../paper-domain/automation/environment-bom-contract.mjs';
 import { empiricalClaimDeclarationsFromAnalysisProtocol } from '../../paper-domain/automation/analysis-protocol-contract.mjs';
-import {
-  runRawEventRecomputationInSandboxTestFixture,
-} from './support/raw-event-recomputation-sandbox-fixture.mjs';
+
+const { createMultiLanguageEmpiricalExecutor } =
+  await importMultiLanguageEmpiricalExecutorForTest();
+const { executeSystemBenchmarkHarness } =
+  await importSystemBenchmarkHarnessForTest();
 
 function fixture(t, prefix) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -176,7 +188,8 @@ function fixtureRunnerReceipt({ spec, outputDirectory, requiredMetrics, datasetM
   const payload = {
     version: 4,
     kind: 'OsSandboxWorkerReceipt',
-    runnerId: 'fixture-kernel-isolation-worker-v4',
+    runnerId: 'bubblewrap-kernel-isolation-worker-v4',
+    backend: 'bubblewrap',
     status: 'os_sandbox_worker_passed',
     sourceMerkleHashBefore: sourceMerkleHash,
     sourceMerkleHashAfter: sourceMerkleHash,
@@ -200,6 +213,14 @@ function fixtureRunnerReceipt({ spec, outputDirectory, requiredMetrics, datasetM
       sourceReadOnlyVerified: true,
       ephemeralWorkRootVerified: true,
       separateOutputRootVerified: true,
+      memoryLimitVerified: true,
+      memoryLimitScope: 'process-address-space-not-descendant-tree-v1',
+      cpuLimitVerified: true,
+      cpuLimitScope: 'process-thread-group-not-descendant-tree-v1',
+      processLimitVerified: true,
+      processLimitMechanism: 'rlimit-nproc',
+      processLimitScope: 'real-uid-concurrent-processes-not-sandbox-local-v1',
+      resourceLimitsVerified: true,
       gpuAccessRequested: Boolean(resourceBudget?.requiresGpu),
     },
   };
@@ -219,7 +240,8 @@ function fixtureHarnessExecution(spec, selector, datasetMounts = []) {
     })),
   };
   const armAdapterSet = { ...adapterPayload, systemBenchmarkArmAdapterSetHash: hashRecord('SystemBenchmarkArmAdapterSet', adapterPayload) };
-  const harnessExecutionReceipt = executeSystemBenchmarkHarness({
+  const harnessExecutionReceipt = withRawEventRecomputationSandboxFixtureForTest(
+    () => withTypedNumericOracleSandboxFixtureForTest(() => executeSystemBenchmarkHarness({
     benchmarkSelector: selector,
     datasetMounts,
     experimentAttemptId: spec.env.HEPTA_EXPERIMENT_ATTEMPT_ID,
@@ -228,7 +250,6 @@ function fixtureHarnessExecution(spec, selector, datasetMounts = []) {
     sourceWorkspaceManifestHash: `sha256:${'2'.repeat(64)}`,
     outputDirectory: spec.outputDirectory,
     armAdapterSet,
-    runRawEventRecomputation: runRawEventRecomputationInSandboxTestFixture,
     runArmBatch({ outputDirectory, batch }) {
       return fixtureRunnerReceipt({
         spec: {
@@ -256,7 +277,8 @@ function fixtureHarnessExecution(spec, selector, datasetMounts = []) {
         resourceBudget: batch.resourceBudget,
       });
     },
-  });
+    })),
+  );
   return Object.freeze({
     status: 'empirical_execution_completed',
     runnerReceiptHash: harnessExecutionReceipt.systemBenchmarkHarnessExecutionReceiptHash,
@@ -353,6 +375,7 @@ test('benchmark selector is consumed from batch command through plan and empiric
     '',
   ].join('\n'));
   let empiricalRequest = null;
+  let empiricalExecution = null;
   const clock = {
     now: () => new Date('2026-07-15T00:00:00.000Z'),
     nowIso: () => '2026-07-15T00:00:00.000Z',
@@ -375,17 +398,26 @@ test('benchmark selector is consumed from batch command through plan and empiric
       fs.mkdirSync(spec.outputDirectory, { recursive: true });
       const execution = fixtureHarnessExecution(spec, spec.benchmarkSelector, []);
       assert.equal(execution.harnessExecutionReceipt.status, 'system_benchmark_harness_verified', JSON.stringify(execution.harnessExecutionReceipt.blockers));
+      empiricalExecution = execution;
       return execution;
     } },
   });
   const node = command.campaignPlan.nodes.find((candidate) => candidate.kind === 'empirical');
-  const result = await executor.execute({ campaign: campaignFor(command), node: { ...node, spec: node, attemptId: 'attempt-1' }, allNodes: [] });
+  await assert.rejects(
+    () => executor.execute({ campaign: campaignFor(command), node: { ...node, spec: node, attemptId: 'attempt-1' }, allNodes: [] }),
+    (error) => error.retryable === false
+      && error.message.includes('experiment_run_system_harness_receipt_invalid'),
+  );
   assert.equal(empiricalRequest.benchmarkSelector.benchmarkSelectorTemplateHash, selector.campaignBenchmarkSelectorHash);
   assert.notEqual(empiricalRequest.benchmarkSelector.campaignBenchmarkSelectorHash, selector.campaignBenchmarkSelectorHash);
   assert.equal(empiricalRequest.env.HEPTA_BENCHMARK_ID, 'ml_algorithm_benchmark');
   assert.equal(empiricalRequest.env.HEPTA_BENCHMARK_SELECTOR_HASH, empiricalRequest.benchmarkSelector.campaignBenchmarkSelectorHash);
   assert.equal(empiricalRequest.env.HEPTA_EXPERIMENT_DESIGN_HASH, empiricalRequest.benchmarkSelector.experimentDesignHash);
-  assert.equal(result.campaignBenchmarkSelectorHash, empiricalRequest.benchmarkSelector.campaignBenchmarkSelectorHash);
+  assert.equal(empiricalExecution.harnessExecutionReceipt.campaignBenchmarkSelectorHash,
+    empiricalRequest.benchmarkSelector.campaignBenchmarkSelectorHash);
+  assert.equal(verifySystemBenchmarkHarnessExecutionReceipt(
+    empiricalExecution.harnessExecutionReceipt,
+  ), false);
 
   await assert.rejects(
     () => executor.execute({
@@ -431,7 +463,6 @@ test('multi-language empirical executor forwards the selector to all three syste
   const verifiedSelector = buildCampaignBenchmarkSelector({ benchmarkId: selector.benchmarkId });
   let workerRequest = null;
   const executor = createMultiLanguageEmpiricalExecutor({
-    runRawEventRecomputation: runRawEventRecomputationInSandboxTestFixture,
     workerRunner: {
       availability: { available: true },
       run(spec) {
@@ -444,7 +475,8 @@ test('multi-language empirical executor forwards the selector to all three syste
       },
     },
   });
-  const receipt = await executor.execute({
+  const receipt = await withRawEventRecomputationSandboxFixtureForTest(
+    () => executor.execute({
     language: 'node',
     entrypoint: 'run.mjs',
     cwd: roots.workspace,
@@ -453,7 +485,8 @@ test('multi-language empirical executor forwards the selector to all three syste
     env: { HEPTA_EXPERIMENT_ATTEMPT_ID: 'fixture:empirical:attempt-1' },
     sourceLineageHash: hashBytes(fs.readFileSync(path.join(roots.workspace, 'main.tex'))),
     benchmarkSelector: verifiedSelector,
-  });
+    }),
+  );
   assert.equal(workerRequest.env.HEPTA_BENCHMARK_ID, verifiedSelector.benchmarkId);
   assert.equal(workerRequest.env.HEPTA_EXPERIMENT_DESIGN_HASH, verifiedSelector.experimentDesignHash);
   assert.equal(workerRequest.env.HEPTA_BENCHMARK_SELECTOR_HASH, verifiedSelector.campaignBenchmarkSelectorHash);

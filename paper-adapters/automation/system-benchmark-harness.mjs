@@ -26,27 +26,23 @@ import {
   buildDatasetAuthorizationSet,
   verifySystemBenchmarkHarnessExecutionReceipt,
 } from '../../paper-domain/automation/experiment-run-contract.mjs';
-import { writeSystemBenchmarkResults } from './system-benchmark-result-repository.mjs';
+import { finalizeSystemBenchmarkReceiptBeforeDeadline, writeSystemBenchmarkResults } from './system-benchmark-result-repository.mjs';
 import { readOperatorDatasetHarness } from './operator-dataset-harness-reader.mjs';
 import { academicAnalysisPromotionBlockers, evaluateAnalysisProtocol } from '../../paper-domain/automation/analysis-protocol-evaluator.mjs';
-import { buildHarnessAnalysisObservationAuthority, buildRawEventRecomputationManifest } from '../../paper-domain/automation/analysis-protocol-run-binding.mjs';
+import { buildHarnessAnalysisObservationAuthority } from '../../paper-domain/automation/analysis-protocol-run-binding.mjs';
 import { verifyEmpiricalEnvironmentBom } from '../../paper-domain/automation/environment-bom-contract.mjs';
 import { buildEmpiricalPreDataAccessFreeze } from '../../paper-domain/automation/empirical-pre-data-access-freeze.mjs';
-import {
-  RAW_EVENT_RECOMPUTATION_MAXIMUM_WALL_TIME_MS,
-  runProcessIsolatedRawEventRecomputation,
-} from '../research-verify/process-isolated-system-benchmark-recomputation.mjs';
-import {
-  runSystemBenchmarkTypedNumericProcess,
-} from './system-benchmark-typed-numeric-process.mjs';
+import { runSystemBenchmarkTypedNumericProcess } from './system-benchmark-typed-numeric-process.mjs';
 import { buildDatasetEvaluationDependencyReceipt } from '../../paper-domain/automation/dataset-evaluation-dependency-contract.mjs';
 import {
   buildSystemBenchmarkObservationCsv,
   parseSystemBenchmarkArmBatchObservation,
   verifySystemBenchmarkArmBatchExecution,
 } from './system-benchmark-harness-batch-verification.mjs';
+import { allocateSystemBenchmarkVerifierCpuSeconds, buildTypedNumericRecomputationResourceBudget, SYSTEM_BENCHMARK_CPU_BUDGET_SEMANTICS } from '../../paper-domain/automation/system-benchmark-resource-budget-contract.mjs';
 import {
-  buildIndependentRecomputationAssurance,
+  runDeadlineBoundedIndependentRecomputationAssurance,
+  systemBenchmarkNowEpochMs,
 } from './system-benchmark-independent-recomputation-assurance.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
@@ -55,8 +51,6 @@ const MAXIMUM_RAW_EVENT_BYTES = 16 * 1024 * 1024;
 const MAXIMUM_RAW_EVENTS_PER_CELL = 64;
 const ACADEMIC_PER_CELL_MINIMUM_TIMEOUT_MS = 60_000;
 const ACADEMIC_PER_CELL_MAXIMUM_CONCURRENCY = 1;
-const RAW_EVENT_RECOMPUTATION_DEADLINE_RESERVE_MS = 90_000;
-
 export function executeSystemBenchmarkHarness({
   benchmarkSelector,
   datasetMounts = [],
@@ -69,10 +63,9 @@ export function executeSystemBenchmarkHarness({
   outputDirectory,
   armAdapterSet,
   runArmBatch,
-  runRawEventRecomputation = runProcessIsolatedRawEventRecomputation,
   operatorDatasetAuthorityTrustStore = null,
   runtimeRoot = null,
-  absoluteDeadlineEpochMs = Date.now() + (6 * 60 * 60 * 1000),
+  absoluteDeadlineEpochMs = systemBenchmarkNowEpochMs() + (6 * 60 * 60 * 1000),
   aggregateCpuSeconds = 3600,
   memoryBytes = 4 * 1024 * 1024 * 1024,
   maximumProcesses = 128,
@@ -82,7 +75,6 @@ export function executeSystemBenchmarkHarness({
   executionEnvironment = null,
   localOnly = false,
   researchContext = null,
-  nowEpochMs = () => Date.now(),
 } = {}) {
   const selector = verifyCampaignBenchmarkSelector(benchmarkSelector, {
     benchmarkId: benchmarkSelector?.benchmarkId,
@@ -99,16 +91,14 @@ export function executeSystemBenchmarkHarness({
     || !Number.isSafeInteger(Number(attemptVersion)) || Number(attemptVersion) < 1
     || !Array.isArray(failedAttemptLineageHashes)
     || !outputDirectory || typeof runArmBatch !== 'function'
-    || typeof runRawEventRecomputation !== 'function'
-    || !Number.isFinite(Number(absoluteDeadlineEpochMs))
+    || !Number.isSafeInteger(Number(absoluteDeadlineEpochMs)) || Number(absoluteDeadlineEpochMs) < 0
     || !Number.isSafeInteger(Number(aggregateCpuSeconds)) || Number(aggregateCpuSeconds) < 1
     || !Number.isSafeInteger(Number(memoryBytes)) || Number(memoryBytes) < 1
     || !Number.isSafeInteger(Number(maximumProcesses)) || Number(maximumProcesses) < 1
-    || typeof nowEpochMs !== 'function'
     || (localGoldenAuthority && localOnly !== true)
     || (researchContext !== null && (
       !Number.isSafeInteger(Number(maximumWallTimeMs)) || Number(maximumWallTimeMs) < 1
-      || Number(absoluteDeadlineEpochMs) - Number(nowEpochMs()) > Number(maximumWallTimeMs)
+      || Number(absoluteDeadlineEpochMs) - Number(systemBenchmarkNowEpochMs()) > Number(maximumWallTimeMs)
       || Number(cpuCount) !== 1
       || !String(executionEnvironment || '')
     ))) {
@@ -126,9 +116,7 @@ export function executeSystemBenchmarkHarness({
         ...(!Array.isArray(failedAttemptLineageHashes) ? ['benchmark_harness_failed_attempt_lineage_invalid'] : []),
         ...(!outputDirectory ? ['benchmark_harness_output_directory_required'] : []),
         ...(typeof runArmBatch !== 'function' ? ['benchmark_harness_arm_batch_runner_required'] : []),
-        ...(typeof runRawEventRecomputation !== 'function'
-          ? ['benchmark_harness_raw_event_recomputation_runner_required'] : []),
-        ...(!Number.isFinite(Number(absoluteDeadlineEpochMs)) ? ['benchmark_harness_absolute_deadline_required'] : []),
+        ...(!Number.isSafeInteger(Number(absoluteDeadlineEpochMs)) || Number(absoluteDeadlineEpochMs) < 0 ? ['benchmark_harness_absolute_deadline_required'] : []),
         ...(!Number.isSafeInteger(Number(aggregateCpuSeconds)) || Number(aggregateCpuSeconds) < 1 ? ['benchmark_harness_aggregate_cpu_budget_invalid'] : []),
         ...(!Number.isSafeInteger(Number(memoryBytes)) || Number(memoryBytes) < 1 ? ['benchmark_harness_memory_budget_invalid'] : []),
         ...(localGoldenAuthority && localOnly !== true
@@ -136,8 +124,7 @@ export function executeSystemBenchmarkHarness({
         ...(!Number.isSafeInteger(Number(maximumProcesses)) || Number(maximumProcesses) < 1 ? ['benchmark_harness_process_budget_invalid'] : []),
         ...(researchContext !== null && (
           !Number.isSafeInteger(Number(maximumWallTimeMs)) || Number(maximumWallTimeMs) < 1
-          || typeof nowEpochMs !== 'function'
-          || Number(absoluteDeadlineEpochMs) - Number(nowEpochMs()) > Number(maximumWallTimeMs)
+          || Number(absoluteDeadlineEpochMs) - Number(systemBenchmarkNowEpochMs()) > Number(maximumWallTimeMs)
           || Number(cpuCount) !== 1 || !String(executionEnvironment || '')
         ) ? ['benchmark_harness_research_resource_budget_invalid'] : []),
       ],
@@ -198,7 +185,7 @@ export function executeSystemBenchmarkHarness({
       attemptVersion: Number(attemptVersion),
       failedAttemptLineageHashes,
       versionedExperimentIrHash: experimentIr.versionedExperimentIrHash,
-      ...(experimentIr.version === 3 ? {
+      ...(experimentIr.version === 5 ? {
         experimentResearchBindingHash:
           experimentIr.researchBinding.experimentResearchBindingHash,
         datasetResearchCompatibilityHash:
@@ -363,57 +350,32 @@ export function executeSystemBenchmarkHarness({
         bytes: rawEventArtifactBytes,
         manifestHash: rawEventManifestHash,
       });
-      const rawEventRecomputationManifest = buildRawEventRecomputationManifest({
+      const independentRecomputation = runDeadlineBoundedIndependentRecomputationAssurance({
         cells,
-        rawEventRows: rawEventRows.map((row) => ({ cellId: row.document.cellId, document: row.document, line: row.line })),
+        rawEventRows,
         requiredMetrics,
         metricSpecs,
         versionedExperimentIrHash: experimentIr.versionedExperimentIrHash,
+        absoluteDeadlineEpochMs,
+        cpuSeconds: rawEventRecomputationCpuSeconds,
+        memoryBytes,
+        maximumProcesses,
+        producerImplementationHash:
+          SYSTEM_BENCHMARK_HARNESS_IMPLEMENTATION.systemBenchmarkHarnessImplementationHash,
       });
-      blockers.push(...rawEventRecomputationManifest.blockers);
-      const independentRecomputationInput = Object.freeze({
-        cells,
-        rawEventRows: rawEventRows.map((row) => ({
-          cellId: row.document.cellId,
-          document: row.document,
-          line: row.line,
-        })),
-        requiredMetrics,
-        metricSpecs,
-        versionedExperimentIrHash: experimentIr.versionedExperimentIrHash,
-      });
-      const recomputationRemainingWallTimeMs = Math.floor(
-        Number(absoluteDeadlineEpochMs) - Number(nowEpochMs()),
-      );
-      const recomputationTimeoutMs = Math.min(
-        RAW_EVENT_RECOMPUTATION_MAXIMUM_WALL_TIME_MS,
-        recomputationRemainingWallTimeMs - RAW_EVENT_RECOMPUTATION_DEADLINE_RESERVE_MS,
-      );
-      let processIsolatedRawEventRecomputationAssurance = null;
-      if (!Number.isFinite(recomputationRemainingWallTimeMs)
-        || recomputationTimeoutMs < 1) {
-        blockers.push('benchmark_raw_event_recomputation_deadline_exhausted');
-      } else {
-        processIsolatedRawEventRecomputationAssurance = runRawEventRecomputation(
-          independentRecomputationInput,
-          Object.freeze({ timeoutMs: recomputationTimeoutMs }),
-        );
-      }
-      const independentRawEventRecomputationAssurance =
-        buildIndependentRecomputationAssurance({
-          producerManifest: rawEventRecomputationManifest,
-          processAssurance: processIsolatedRawEventRecomputationAssurance,
-          producerImplementationHash:
-            SYSTEM_BENCHMARK_HARNESS_IMPLEMENTATION.systemBenchmarkHarnessImplementationHash,
-          recomputationInput: independentRecomputationInput,
-          versionedExperimentIrHash: experimentIr.versionedExperimentIrHash,
-        });
-      blockers.push(...independentRawEventRecomputationAssurance.blockers);
+      const {
+        rawEventRecomputationManifest,
+        independentRawEventRecomputationAssurance,
+      } = independentRecomputation;
+      blockers.push(...independentRecomputation.blockers);
       const typedNumericProcess = runSystemBenchmarkTypedNumericProcess({
         benchmarkFamily: selector.expected.experimentDesign.benchmarkFamily,
         observations,
         analysisProtocol,
         independentRawEventRecomputationAssurance,
+        resourceBudget: buildTypedNumericRecomputationResourceBudget({
+          remainingWallTimeMs: Number(absoluteDeadlineEpochMs) - Number(systemBenchmarkNowEpochMs()), cpuSeconds: verifierCpuBudget.typedNumericCpuSeconds, memoryBytes, maximumProcesses,
+        }),
         experimentIr,
       });
       blockers.push(...typedNumericProcess.blockers);
@@ -484,57 +446,6 @@ export function executeSystemBenchmarkHarness({
         !== 'dataset_evaluation_dependency_verified') {
         blockers.push(...datasetEvaluationDependencyReceipt.blockers);
       }
-      const resultDocument = {
-        version: 5,
-        kind: 'SystemBenchmarkRunObservations',
-        executionStatus: 'system_benchmark_execution_completed',
-        integrityStatus: blockers.length ? 'system_benchmark_integrity_blocked' : 'system_benchmark_integrity_verified',
-        scientificVerdict: blockers.length ? 'not_evaluable' : analysisProtocolEvaluation.scientificVerdict,
-        scientificFindings: blockers.length ? [] : analysisProtocolEvaluation.scientificFindings,
-        preDataAccessFreeze,
-        empiricalPreDataAccessFreezeHash: preDataAccessFreeze.empiricalPreDataAccessFreezeHash,
-        experimentIr,
-        versionedExperimentIrHash: experimentIr.versionedExperimentIrHash,
-        experimentDesignHash: selector.expected.experimentDesignHash,
-        benchmarkHarnessHash: selector.expected.experimentDesign.benchmarkHarnessHash,
-        armProtocolSet: selector.expected.experimentDesign.benchmarkHarness.armProtocolSet,
-        systemBenchmarkArmProtocolSetHash: selector.expected.experimentDesign.benchmarkHarness.systemBenchmarkArmProtocolSetHash,
-        armAdapterSet,
-        systemBenchmarkArmAdapterSetHash: armAdapterSet.systemBenchmarkArmAdapterSetHash,
-        systemBenchmarkHarnessImplementationHash: SYSTEM_BENCHMARK_HARNESS_IMPLEMENTATION.systemBenchmarkHarnessImplementationHash,
-        datasetAuthorizationSetHash: authorizations.datasetAuthorizationSetHash,
-        operatorDatasetHarnessAuthority,
-        datasetEvaluationDependencyReceipt,
-        assuranceScope: selector.expected.assuranceScope,
-        executionAssuranceProfile,
-        academicPromotionEligible: academicPerCell
-          && selector.expected.assuranceScope === 'operator-authorized-hidden-evaluation-v1',
-        ...(localGoldenAuthority ? {
-          evidenceClass: LOCAL_GOLDEN_DATASET_EVIDENCE_CLASS,
-          externalTrustClaimed: false,
-        } : {}),
-        rawEventManifestHash,
-        rawEventArtifactHash,
-        rawEventArtifactBytes,
-        rawEventArtifact,
-        rawEventRecomputationManifest,
-        independentRawEventRecomputationAssurance,
-        statisticalEvaluation,
-        analysisProtocol,
-        analysisProtocolHash: analysisProtocol.analysisProtocolHash,
-        analysisObservationAuthority,
-        analysisProtocolEvaluation,
-        observations,
-      };
-      const csvDocument = buildSystemBenchmarkObservationCsv(observations, requiredMetrics);
-      let resultJsonHash = null;
-      let resultCsvHash = null;
-      let resultArtifacts = [];
-      if (!blockers.length) {
-        const persisted = writeSystemBenchmarkResults({ outputDirectory, resultDocument, csvDocument, rawEventDocument });
-        ({ resultJsonHash, resultCsvHash, artifacts: resultArtifacts } = persisted);
-        if (persisted.rawEventArtifactHash !== rawEventArtifactHash || persisted.rawEventArtifactBytes !== rawEventArtifactBytes) blockers.push('benchmark_raw_event_artifact_persistence_mismatch');
-      }
       const runtimeIdentityHashes = [...new Set(armBatchExecutions.map((batch) => batch.runnerReceipt.runtimeIdentityHash))];
       const sourceMerkleHashes = [...new Set(armBatchExecutions.map((batch) => batch.runnerReceipt.workSourceMerkleHash))];
       const sourceManifestHashes = [...new Set(armBatchExecutions.map((batch) => batch.runnerReceipt.workWorkspaceManifestHash))];
@@ -567,8 +478,63 @@ export function executeSystemBenchmarkHarness({
         || new Set(processExecutionManifest.map((item) => item.environmentBindingHash)).size !== schedule.length)) {
         blockers.push('benchmark_harness_per_cell_process_isolation_unverified');
       }
+      const resultDocument = {
+        version: 5,
+        kind: 'SystemBenchmarkRunObservations',
+        executionStatus: 'system_benchmark_execution_completed',
+        integrityStatus: blockers.length ? 'system_benchmark_integrity_blocked' : 'system_benchmark_integrity_verified',
+        scientificVerdict: blockers.length ? 'not_evaluable' : analysisProtocolEvaluation.scientificVerdict,
+        scientificFindings: blockers.length ? [] : analysisProtocolEvaluation.scientificFindings,
+        preDataAccessFreeze,
+        empiricalPreDataAccessFreezeHash: preDataAccessFreeze.empiricalPreDataAccessFreezeHash,
+        experimentIr,
+        versionedExperimentIrHash: experimentIr.versionedExperimentIrHash,
+        experimentDesignHash: selector.expected.experimentDesignHash,
+        benchmarkHarnessHash: selector.expected.experimentDesign.benchmarkHarnessHash,
+        armProtocolSet: selector.expected.experimentDesign.benchmarkHarness.armProtocolSet,
+        systemBenchmarkArmProtocolSetHash: selector.expected.experimentDesign.benchmarkHarness.systemBenchmarkArmProtocolSetHash,
+        armAdapterSet,
+        systemBenchmarkArmAdapterSetHash: armAdapterSet.systemBenchmarkArmAdapterSetHash,
+        systemBenchmarkHarnessImplementationHash: SYSTEM_BENCHMARK_HARNESS_IMPLEMENTATION.systemBenchmarkHarnessImplementationHash,
+        datasetAuthorizationSetHash: authorizations.datasetAuthorizationSetHash,
+        operatorDatasetHarnessAuthority,
+        datasetEvaluationDependencyReceipt,
+        assuranceScope: selector.expected.assuranceScope,
+        executionAssuranceProfile,
+        academicPromotionEligible: experimentIr.version === 5 && academicPerCell
+          && selector.expected.assuranceScope === 'operator-authorized-hidden-evaluation-v1',
+        ...(localGoldenAuthority ? {
+          evidenceClass: LOCAL_GOLDEN_DATASET_EVIDENCE_CLASS,
+          externalTrustClaimed: false,
+        } : {}),
+        rawEventManifestHash,
+        rawEventArtifactHash,
+        rawEventArtifactBytes,
+        rawEventArtifact,
+        rawEventRecomputationManifest,
+        independentRawEventRecomputationAssurance,
+        statisticalEvaluation,
+        analysisProtocol,
+        analysisProtocolHash: analysisProtocol.analysisProtocolHash,
+        analysisObservationAuthority,
+        analysisProtocolEvaluation,
+        observations,
+      };
+      const csvDocument = buildSystemBenchmarkObservationCsv(observations, requiredMetrics);
+      let resultJsonHash = null;
+      let resultCsvHash = null;
+      let resultArtifacts = [];
+      let resultPersistenceCompletedAtEpochMs = null;
+      let rollbackAuthority = null;
+      if (!blockers.length) {
+        const persisted = writeSystemBenchmarkResults({ outputDirectory, resultDocument, csvDocument, rawEventDocument, absoluteDeadlineEpochMs });
+        blockers.push(...persisted.blockers);
+        ({ resultJsonHash, resultCsvHash, artifacts: resultArtifacts } = persisted);
+        ({ resultPersistenceCompletedAtEpochMs, rollbackAuthority } = persisted);
+        if (persisted.rawEventArtifactHash !== rawEventArtifactHash || persisted.rawEventArtifactBytes !== rawEventArtifactBytes) blockers.push('benchmark_raw_event_artifact_persistence_mismatch');
+      }
       const payload = {
-        version: 4,
+        version: 5,
         kind: 'SystemBenchmarkHarnessExecutionReceipt',
         status: blockers.length ? 'system_benchmark_harness_blocked' : 'system_benchmark_harness_verified',
         executionStatus: armBatchExecutions.length === expectedProcessExecutionCount
@@ -595,7 +561,7 @@ export function executeSystemBenchmarkHarness({
         datasetEvaluationDependencyReceipt,
         assuranceScope: selector.expected.assuranceScope,
         executionAssuranceProfile,
-        academicPromotionEligible: academicPerCell
+        academicPromotionEligible: experimentIr.version === 5 && academicPerCell
           && selector.expected.assuranceScope === 'operator-authorized-hidden-evaluation-v1',
         ...(localGoldenAuthority ? {
           evidenceClass: LOCAL_GOLDEN_DATASET_EVIDENCE_CLASS,
@@ -617,8 +583,10 @@ export function executeSystemBenchmarkHarness({
         processExecutionCount: armBatchExecutions.length,
         processExecutionManifestHash: hashRecord('SystemBenchmarkProcessExecutionManifest', processExecutionManifest),
         absoluteDeadlineEpochMs: Number(absoluteDeadlineEpochMs),
+        resultPersistenceCompletedAtEpochMs,
         aggregateCpuSeconds: Number(aggregateCpuSeconds),
         allocatedCpuSeconds: armBatchExecutions.reduce((sum, batch) => sum + Number(batch.resourceBudget?.cpuSeconds || 0), 0),
+        cpuBudgetSemantics: SYSTEM_BENCHMARK_CPU_BUDGET_SEMANTICS,
         workerMemoryBytes: Number(memoryBytes),
         workerMaximumProcesses: Number(maximumProcesses),
         gpuRequired: Boolean(requiresGpu),
@@ -638,15 +606,17 @@ export function executeSystemBenchmarkHarness({
         analysisProtocolHash: analysisProtocol.analysisProtocolHash,
         analysisObservationAuthority,
         analysisProtocolEvaluation,
-        resultDocument,
-        csvDocument,
+        resultDocument: blockers.length ? null : resultDocument,
+        csvDocument: blockers.length ? null : csvDocument,
         resultJsonHash,
         resultCsvHash,
         artifacts: blockers.length ? [] : resultArtifacts,
         blockers: [...new Set(blockers)],
         externalActionPerformed: false,
       };
-      return Object.freeze({ ...payload, systemBenchmarkHarnessExecutionReceiptHash: hashRecord('SystemBenchmarkHarnessExecutionReceipt', payload) });
+      return finalizeSystemBenchmarkReceiptBeforeDeadline({
+        payload, outputDirectory, rollbackAuthority,
+      });
     } finally {
       fs.rmSync(harnessRoot, { recursive: true, force: true });
     }
@@ -664,20 +634,28 @@ export function executeSystemBenchmarkHarness({
     ? schedule.map((cell) => Object.freeze({ arm: cell.arm, cells: Object.freeze([cell]) }))
     : ARMS.map((arm) => Object.freeze({ arm, cells: Object.freeze(schedule.filter((cell) => cell.arm === arm)) }));
   const expectedProcessExecutionCount = executionUnits.length;
+  const verifierCpuBudget = allocateSystemBenchmarkVerifierCpuSeconds(aggregateCpuSeconds, executionUnits.length, experimentIr);
+  const rawEventRecomputationCpuSeconds = verifierCpuBudget.rawEventCpuSeconds;
+  const armAggregateCpuSeconds = Number(aggregateCpuSeconds) - Math.max(0, rawEventRecomputationCpuSeconds)
+    - Math.max(0, verifierCpuBudget.typedNumericCpuSeconds);
+  if (rawEventRecomputationCpuSeconds < 1 || (verifierCpuBudget.typedNumericRequired
+      && verifierCpuBudget.typedNumericCpuSeconds < 1)) {
+    blockers.push('benchmark_harness_aggregate_cpu_budget_exhausted');
+  }
   const nominalPerUnitWallTimeMs = Math.floor(
-    (Number(absoluteDeadlineEpochMs) - Number(nowEpochMs())) / executionUnits.length,
+    (Number(absoluteDeadlineEpochMs) - Number(systemBenchmarkNowEpochMs())) / executionUnits.length,
   );
   const perUnitWallTimeMs = academicPerCell
     ? Math.max(ACADEMIC_PER_CELL_MINIMUM_TIMEOUT_MS, nominalPerUnitWallTimeMs)
     : nominalPerUnitWallTimeMs;
   const startUnit = (index) => {
-    const remainingWallTimeMs = Math.floor(Number(absoluteDeadlineEpochMs) - Number(nowEpochMs()));
+    const remainingWallTimeMs = Math.floor(Number(absoluteDeadlineEpochMs) - Number(systemBenchmarkNowEpochMs()));
     if (perUnitWallTimeMs < 1 || remainingWallTimeMs < 1) {
       blockers.push('benchmark_harness_absolute_deadline_exhausted');
       return null;
     }
     const timeoutMs = Math.min(perUnitWallTimeMs, remainingWallTimeMs);
-    const baseCpuSeconds = Math.floor(Number(aggregateCpuSeconds) / executionUnits.length);
+    const baseCpuSeconds = Math.floor(armAggregateCpuSeconds / executionUnits.length);
     const cpuSeconds = baseCpuSeconds;
     if (cpuSeconds < 1) {
       blockers.push('benchmark_harness_aggregate_cpu_budget_exhausted');
@@ -705,7 +683,7 @@ export function executeSystemBenchmarkHarness({
       armAdapterSetHash: armAdapterSet.systemBenchmarkArmAdapterSetHash,
       empiricalPreDataAccessFreezeHash: preDataAccessFreeze.empiricalPreDataAccessFreezeHash,
       versionedExperimentIrHash: experimentIr.versionedExperimentIrHash,
-      ...(experimentIr.version === 3 ? {
+      ...(experimentIr.version === 5 ? {
         experimentResearchBindingHash:
           experimentIr.researchBinding.experimentResearchBindingHash,
         datasetResearchCompatibilityHash:
@@ -746,7 +724,12 @@ export function executeSystemBenchmarkHarness({
       if (unit) started.push(unit);
     }
     if (!started.length || blockers.length) return finalize();
-    if (started.some((unit) => typeof unit.pending?.then === 'function')) {
+    const asynchronous = started.some((unit) => {
+      try { return typeof unit.pending?.then === 'function'; }
+      catch { blockers.push(`benchmark_arm_batch_execution_threw:${unit.arm}:invalid_thenable`); return false; }
+    });
+    if (blockers.length) return finalize();
+    if (asynchronous) {
       return Promise.all(started.map(async (unit) => {
         try { return { unit, receipt: await unit.pending, error: null }; }
         catch (error) { return { unit, receipt: null, error }; }

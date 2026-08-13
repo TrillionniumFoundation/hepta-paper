@@ -18,6 +18,7 @@ import {
   MAXIMUM_LAKE_FORMAL_BUILD_TIMEOUT_MS,
   resolveLakeFormalBuildTimeout,
 } from '../../paper-adapters/research-verify/lake-formal-worker.mjs';
+import { hashBytes } from '../../workflow-kernel/record-hash.mjs';
 
 function writeFile(filePath, content, mode = 0o644) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -55,6 +56,50 @@ function formalDependencyFixture(t) {
 
 test('formal closure default file ceiling admits an official Mathlib-sized workspace while remaining bounded', () => {
   assert.equal(DEFAULT_MAXIMUM_FORMAL_PROJECT_FILES, 150000);
+});
+
+test('formal snapshot seal excludes root runtime state but binds nested runtime code', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-formal-runtime-boundary-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const files = [
+    ['runtime/mutable-state.json', '{"state":1}\n'],
+    ['paper-adapters/runtime/adapter.mjs', 'export const adapter = true;\n'],
+    ['workflow-kernel/runtime/kernel.mjs', 'export const kernel = true;\n'],
+  ];
+  for (const [relative, content] of files) writeFile(path.join(root, relative), content);
+  const snapshot = createFormalProjectSnapshotRepository().materialize({
+    projectRoot: root,
+    dependencyScopeRoot: root,
+    projectFiles: files.map(([relative, content]) => ({
+      path: relative,
+      sourcePath: relative,
+      projectPath: relative,
+      hash: hashBytes(content),
+      bytes: Buffer.byteLength(content),
+      posixMode: 0o644,
+      role: 'lean_source',
+    })),
+  });
+  try {
+    const seal = snapshot.seal();
+    const executionSnapshot = inspectWorkspaceExecutionSnapshot(snapshot.scopeRoot, {
+      excludeNames: sourceTreeExcludedNames(snapshot.scopeRoot),
+    });
+    assert.deepEqual(executionSnapshot.blockers, []);
+    assert.equal(executionSnapshot.fileRecords.some(
+      (entry) => entry.path === 'runtime/mutable-state.json',
+    ), false);
+    assert.equal(executionSnapshot.fileRecords.some(
+      (entry) => entry.path === 'paper-adapters/runtime/adapter.mjs',
+    ), true);
+    assert.equal(executionSnapshot.fileRecords.some(
+      (entry) => entry.path === 'workflow-kernel/runtime/kernel.mjs',
+    ), true);
+    assert.equal(seal.workspaceExecutionMerkleHash, executionSnapshot.merkleHash);
+    assert.equal(seal.workspaceExecutionManifestHash, executionSnapshot.manifestHash);
+  } finally {
+    snapshot.cleanup();
+  }
 });
 
 test('formal closure binds .lake package and external dependency modes while snapshots preserve only safe authority', async (t) => {

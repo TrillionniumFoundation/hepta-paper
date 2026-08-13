@@ -16,15 +16,26 @@ export function buildIndependentRecomputationAssurance({
     recomputationInput,
   );
   const independentManifest = processAssurance?.workerReceipt?.manifest || null;
-  const sameManifest = JSON.stringify(producerManifest) === JSON.stringify(independentManifest);
-  const blockers = Object.freeze([
+  const sameManifest = producerManifest && independentManifest
+    ? JSON.stringify(producerManifest) === JSON.stringify(independentManifest)
+    : null;
+  const processBlockers = Array.isArray(processAssurance?.blockers)
+    ? processAssurance.blockers
+    : [];
+  const maximumAbsoluteResidual = Number(independentManifest?.maximumAbsoluteResidual);
+  const blockers = Object.freeze([...new Set([
     ...(processAssuranceVerified
       && independentManifest?.status === 'raw_event_recomputation_verified'
       && Array.isArray(independentManifest.blockers)
       && independentManifest.blockers.length === 0
       ? [] : ['independent_raw_event_recomputation_blocked']),
-    ...(sameManifest ? [] : ['independent_raw_event_recomputation_manifest_mismatch']),
-  ]);
+    ...processBlockers.map((blocker) => (
+      `independent_raw_event_recomputation_process:${blocker}`
+    )),
+    ...(sameManifest === false
+      ? ['independent_raw_event_recomputation_manifest_mismatch']
+      : []),
+  ])]);
   const payload = {
     version: 2,
     kind: 'IndependentRawEventRecomputationAssurance',
@@ -40,7 +51,9 @@ export function buildIndependentRecomputationAssurance({
       processAssurance?.workerImplementationHash || null,
     independenceContractHash:
       processAssurance?.processIsolatedRawEventRecomputationAssuranceHash || null,
-    maximumAbsoluteResidual: Number(independentManifest?.maximumAbsoluteResidual),
+    maximumAbsoluteResidual: Number.isFinite(maximumAbsoluteResidual)
+      ? maximumAbsoluteResidual
+      : null,
     processIndependent: processAssuranceVerified,
     processIsolatedRawEventRecomputationAssurance: processAssurance || null,
     processIsolatedWorkerReceiptHash: processAssurance?.workerReceiptHash || null,

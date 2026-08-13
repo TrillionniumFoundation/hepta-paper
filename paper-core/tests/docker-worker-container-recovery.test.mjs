@@ -142,15 +142,16 @@ test('create-to-start launcher timeout removes only the exact ownership-verified
     },
   });
   assert.equal(result.receipt.ok, false);
-  assert.ok(result.receipt.blockers.includes('os_sandbox_command_failed'));
+  assert.ok(result.receipt.blockers.includes('os_sandbox_command_timed_out'));
+  assert.equal(result.receipt.blockers.includes('os_sandbox_command_failed'), false);
   assert.equal(result.removalCount, 1);
   assert.equal(
     result.receipt.dockerWorkerContainerRecoveryReceipt.status,
     'docker_worker_container_recovery_removed',
   );
-  assert.match(
+  assert.equal(
     result.receipt.dockerWorkerContainerRecoveryReceipt.trigger,
-    /^launcher_error:ETIMEDOUT$/,
+    'launcher_timeout',
   );
   assert.equal(
     verifyDockerWorkerContainerRecoveryReceipt(
@@ -172,6 +173,8 @@ test('create-to-start launcher kill removes the exact owned container without ac
     },
   });
   assert.equal(result.receipt.ok, false);
+  assert.ok(result.receipt.blockers.includes('os_sandbox_command_failed'));
+  assert.equal(result.receipt.blockers.includes('os_sandbox_command_timed_out'), false);
   assert.equal(result.removalCount, 1);
   assert.equal(
     result.receipt.dockerWorkerContainerRecoveryReceipt.trigger,
@@ -199,6 +202,11 @@ test('ownership mismatch never removes a container and preserves the recovery wo
     recoveryMode: 'ownership-mismatch',
   });
   assert.equal(result.receipt.ok, false);
+  assert.ok(result.receipt.blockers.includes('os_sandbox_command_timed_out'));
+  assert.equal(
+    result.receipt.dockerWorkerContainerRecoveryReceipt.trigger,
+    'launcher_timeout',
+  );
   assert.equal(result.removalCount, 0);
   assert.ok(result.receipt.blockers.includes(
     'worker_container_recovery_ownership_mismatch',
@@ -224,6 +232,11 @@ test('partial cleanup action remains blocked and preserves its recovery workspac
     recoveryMode: 'partial',
   });
   assert.equal(result.receipt.ok, false);
+  assert.ok(result.receipt.blockers.includes('os_sandbox_command_timed_out'));
+  assert.equal(
+    result.receipt.dockerWorkerContainerRecoveryReceipt.trigger,
+    'launcher_timeout',
+  );
   assert.equal(result.removalCount, 1);
   assert.ok(result.receipt.blockers.includes(
     'worker_container_recovery_unresolved',

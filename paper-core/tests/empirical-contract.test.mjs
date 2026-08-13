@@ -6,7 +6,11 @@ import test from 'node:test';
 import { buildPaperCampaignPlan } from '../../paper-domain/automation/campaign-plan.mjs';
 import { buildCampaignBenchmarkSelector } from '../../paper-domain/automation/campaign-benchmark-selector.mjs';
 import { datasetEnvironmentName, evaluateDatasetConsumptionContract, evaluateEmpiricalResultContract } from '../../paper-adapters/automation/empirical-contract-reader.mjs';
-import { directoryMerkleHash, sourceTreeExcludedNames } from '../../paper-adapters/runtime/execution-snapshot.mjs';
+import {
+  directoryMerkleHash,
+  inspectWorkspaceExecutionSnapshot,
+  sourceTreeExcludedNames,
+} from '../../paper-adapters/runtime/execution-snapshot.mjs';
 
 test('non-release campaign DAG creates independent Python R GPU and LaTeX execution paths', () => {
   const plan = buildPaperCampaignPlan({
@@ -230,4 +234,45 @@ test('source Merkle excludes a separately hash-bound dataset root', (t) => {
   fs.writeFileSync(path.join(virtualenv, 'environment.bin'), Buffer.alloc(1024, 2));
   fs.writeFileSync(path.join(recovery, 'completed-operation.tombstone'), 'after\n');
   assert.equal(directoryMerkleHash(root, { excludeRoots: [dataset], excludeNames: sourceTreeExcludedNames(root) }), sourceHash);
+});
+
+test('source snapshots exclude only the root runtime state while retaining nested runtime code', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-source-runtime-boundary-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const runtimeState = path.join(root, 'runtime');
+  const nestedRuntime = path.join(root, 'workflow-kernel', 'runtime');
+  const adapterRuntime = path.join(root, 'paper-adapters', 'runtime');
+  const nestedDependency = path.join(root, 'workflow-kernel', 'node_modules', 'dependency');
+  fs.mkdirSync(runtimeState);
+  fs.mkdirSync(nestedRuntime, { recursive: true });
+  fs.mkdirSync(adapterRuntime, { recursive: true });
+  fs.mkdirSync(nestedDependency, { recursive: true });
+  fs.writeFileSync(path.join(runtimeState, 'mutable-state.json'), '{"state":1}\n');
+  fs.writeFileSync(path.join(nestedRuntime, 'module.mjs'), 'export const value = 1;\n');
+  fs.writeFileSync(path.join(adapterRuntime, 'adapter.mjs'), 'export const value = 1;\n');
+  fs.writeFileSync(path.join(nestedDependency, 'index.mjs'), 'export const vendor = 1;\n');
+  const excludeNames = sourceTreeExcludedNames(root);
+  const before = inspectWorkspaceExecutionSnapshot(root, { excludeNames });
+  assert.deepEqual(before.blockers, []);
+  assert.equal(before.fileRecords.some((entry) => entry.path === 'runtime/mutable-state.json'), false);
+  assert.equal(before.fileRecords.some((entry) => (
+    entry.path === 'workflow-kernel/runtime/module.mjs'
+  )), true);
+  assert.equal(before.fileRecords.some((entry) => (
+    entry.path === 'paper-adapters/runtime/adapter.mjs'
+  )), true);
+  assert.equal(before.fileRecords.some((entry) => (
+    entry.path === 'workflow-kernel/node_modules/dependency/index.mjs'
+  )), false);
+
+  fs.writeFileSync(path.join(runtimeState, 'mutable-state.json'), '{"state":2}\n');
+  assert.equal(
+    inspectWorkspaceExecutionSnapshot(root, { excludeNames }).manifestHash,
+    before.manifestHash,
+  );
+  fs.writeFileSync(path.join(nestedRuntime, 'module.mjs'), 'export const value = 2;\n');
+  assert.notEqual(
+    inspectWorkspaceExecutionSnapshot(root, { excludeNames }).manifestHash,
+    before.manifestHash,
+  );
 });

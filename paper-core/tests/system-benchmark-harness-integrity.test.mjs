@@ -391,7 +391,7 @@ function academicHarnessFixture(t) {
   return { benchmarkId, mount, outputDirectory, runtimeRoot, selector, trustStore };
 }
 
-function runFixtureHarness(t, { ignoreArm = false, dropLastCell = false, tamperProtocol = false, identicalAdapters = false, runId = 'fixture-experiment-attempt', attemptVersion = 1, failedAttemptLineageHashes = [], absoluteDeadlineEpochMs, aggregateCpuSeconds, nowEpochMs } = {}) {
+function runFixtureHarness(t, { ignoreArm = false, dropLastCell = false, tamperProtocol = false, identicalAdapters = false, runId = 'fixture-experiment-attempt', attemptVersion = 1, failedAttemptLineageHashes = [], absoluteDeadlineEpochMs, aggregateCpuSeconds, nowEpochMs, runRawEventRecomputation = runRawEventRecomputationInSandboxTestFixture } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-system-benchmark-integrity-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const selector = buildCampaignBenchmarkSelector({ benchmarkId: 'ml_algorithm_benchmark', datasetMounts: [] });
@@ -409,7 +409,7 @@ function runFixtureHarness(t, { ignoreArm = false, dropLastCell = false, tamperP
     sourceWorkspaceManifestHash: `sha256:${'2'.repeat(64)}`,
     outputDirectory: root,
     armAdapterSet: adapters,
-    runRawEventRecomputation: runRawEventRecomputationInSandboxTestFixture,
+    runRawEventRecomputation,
     ...(absoluteDeadlineEpochMs === undefined ? {} : { absoluteDeadlineEpochMs }),
     ...(aggregateCpuSeconds === undefined ? {} : { aggregateCpuSeconds }),
     ...(nowEpochMs === undefined ? {} : { nowEpochMs }),
@@ -467,7 +467,7 @@ test('benchmark harness keeps per-unit wall-time limits reproducible while enfor
   const observedTimes = [0, 10, 20];
   let timeReadCount = 0;
   const execution = runFixtureHarness(t, {
-    absoluteDeadlineEpochMs: 300,
+    absoluteDeadlineEpochMs: 300_000,
     nowEpochMs: () => observedTimes[Math.min(timeReadCount++, observedTimes.length - 1)],
   });
   assert.equal(
@@ -477,11 +477,65 @@ test('benchmark harness keeps per-unit wall-time limits reproducible while enfor
   );
   assert.deepEqual(
     execution.resourceBudgets.map((budget) => budget.timeoutMs),
-    [100, 100, 100],
+    [100_000, 100_000, 100_000],
   );
   assert.ok(execution.resourceBudgets.every(
-    (budget) => budget.absoluteDeadlineEpochMs === 300,
+    (budget) => budget.absoluteDeadlineEpochMs === 300_000,
   ));
+});
+
+test('benchmark harness caps raw-event recomputation wall time and preserves cleanup reserve', (t) => {
+  const capturedTimeouts = [];
+  const runRawEventRecomputation = (input, options) => {
+    capturedTimeouts.push(options.timeoutMs);
+    return runRawEventRecomputationInSandboxTestFixture(input, options);
+  };
+  const capped = runFixtureHarness(t, {
+    absoluteDeadlineEpochMs: 900_000,
+    nowEpochMs: () => 0,
+    runRawEventRecomputation,
+  });
+  assert.equal(capped.receipt.status, 'system_benchmark_harness_verified');
+  assert.deepEqual(capturedTimeouts, [300_000]);
+
+  capturedTimeouts.length = 0;
+  const narrowed = runFixtureHarness(t, {
+    absoluteDeadlineEpochMs: 200_000,
+    nowEpochMs: () => 0,
+    runRawEventRecomputation,
+  });
+  assert.equal(narrowed.receipt.status, 'system_benchmark_harness_verified');
+  assert.deepEqual(capturedTimeouts, [110_000]);
+});
+
+test('benchmark harness does not start raw-event recomputation without cleanup reserve', (t) => {
+  let recomputationInvocationCount = 0;
+  const execution = runFixtureHarness(t, {
+    absoluteDeadlineEpochMs: 90_000,
+    nowEpochMs: () => 0,
+    runRawEventRecomputation() {
+      recomputationInvocationCount += 1;
+      throw new Error('raw_event_recomputation_must_not_start');
+    },
+  });
+  assert.equal(execution.invocationCount, 3);
+  assert.equal(recomputationInvocationCount, 0);
+  assert.equal(execution.receipt.status, 'system_benchmark_harness_blocked');
+  assert.equal(execution.receipt.executionStatus, 'system_benchmark_execution_completed');
+  assert.equal(execution.receipt.scientificVerdict, 'not_evaluable');
+  assert.deepEqual(execution.receipt.artifacts, []);
+  assert.ok(execution.receipt.blockers.includes(
+    'benchmark_raw_event_recomputation_deadline_exhausted',
+  ));
+  assert.equal(
+    execution.receipt.independentRawEventRecomputationAssurance.status,
+    'independent_raw_event_recomputation_assurance_blocked',
+  );
+  assert.equal(
+    execution.receipt.independentRawEventRecomputationAssurance
+      .processIsolatedRawEventRecomputationAssurance,
+    null,
+  );
 });
 
 test('academic harness proves signed dataset use and serial process isolation per cell', async (t) => {

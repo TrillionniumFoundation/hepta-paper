@@ -6,12 +6,13 @@ export function buildDockerWorkerCommand({
   limits, uid, gid, environment, requiresGpu, systemMounts, workRoot, outputRoot, supervisorRoot,
   runtimeExecutableSnapshot, runtimeExecutableOverlayTarget, mountedDatasets, relativeCwd,
   containerImageDigest, datasetSupervisor, executable, arguments: workerArguments,
-  immutableWorkRoot = false, containerOwnership = null,
+  immutableWorkRoot = false, containerOwnership = null, attachStandardInput = false,
 } = {}) {
   return [
     'run',
     ...(containerOwnership
       ? dockerWorkerContainerOwnershipArguments(containerOwnership) : []),
+    ...(attachStandardInput ? ['--interactive'] : []),
     '--pull', 'never', '--rm', '--network', 'none', '--read-only', '--cap-drop', 'ALL',
     ...(datasetSupervisor ? ['--cap-add', 'SYS_PTRACE', '--cap-add', 'SETUID', '--cap-add', 'SETGID', '--cap-add', 'SETPCAP', '--cap-add', 'DAC_OVERRIDE'] : []),
     '--security-opt', 'no-new-privileges', '--memory', String(limits.memory), '--cpus', '1',

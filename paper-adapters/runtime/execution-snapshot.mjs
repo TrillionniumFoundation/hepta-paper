@@ -14,9 +14,31 @@ import {
 import { workspaceExecutionManifestHash, workspaceExecutionMerkleHash } from '../../workflow-kernel/runtime/workspace-execution-identity.mjs';
 
 const SOURCE_EXCLUDED_NAMES = new Set(['.git', 'node_modules', 'runtime', 'automation-results', '.hepta-materialization-recovery', '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache']);
+// Source-tree policy: mutable repository-root runtime state is excluded, while
+// nested directories named runtime contain executable code and remain sealed.
+const SOURCE_ROOT_ONLY_EXCLUDED_NAMES = new Set(['runtime']);
 
 function sourceExcludedName(name) {
   return SOURCE_EXCLUDED_NAMES.has(name) || /^\.venv(?:-|$)/.test(name) || name === 'venv';
+}
+
+function sourceEntryExcluded(resolvedRoot, current, name, names) {
+  return names.has(name) && (!SOURCE_ROOT_ONLY_EXCLUDED_NAMES.has(name)
+    || path.resolve(current) === resolvedRoot);
+}
+
+export function sourceTreePathExcluded(root, candidate, excludeNames = []) {
+  const resolvedRoot = path.resolve(root);
+  const resolvedCandidate = path.resolve(candidate);
+  const relative = path.relative(resolvedRoot, resolvedCandidate);
+  if (!relative || relative === '.' || relative.startsWith(`..${path.sep}`)
+    || path.isAbsolute(relative) || !isPathWithin(resolvedRoot, resolvedCandidate)) {
+    return false;
+  }
+  const names = excludeNames instanceof Set ? excludeNames : new Set(excludeNames);
+  return relative.split(path.sep).some((name, index) => (
+    names.has(name) && (!SOURCE_ROOT_ONLY_EXCLUDED_NAMES.has(name) || index === 0)
+  ));
 }
 
 export function sourceTreeExcludedNames(root) {
@@ -25,12 +47,13 @@ export function sourceTreeExcludedNames(root) {
 }
 
 export function directoryMerkleHash(root, { excludeRoots = [], excludeNames = [] } = {}) {
+  const resolvedRoot = path.resolve(root);
   const excluded = excludeRoots.map((candidate) => path.resolve(candidate));
   const names = new Set(excludeNames);
   const records = [];
   const walk = (current) => {
     for (const entry of fs.readdirSync(current, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-      if (names.has(entry.name)) continue;
+      if (sourceEntryExcluded(resolvedRoot, current, entry.name, names)) continue;
       const candidate = path.join(current, entry.name);
       if (excluded.some((blocked) => isPathWithin(blocked, candidate))) continue;
       const relative = path.relative(root, candidate).replace(/\\/g, '/');
@@ -53,7 +76,7 @@ export function inspectWorkspaceExecutionSnapshot(root, { excludeRoots = [], exc
   const walk = (current) => {
     const entries = fs.readdirSync(current, { withFileTypes: true }).sort((left, right) => left.name.localeCompare(right.name));
     for (const entry of entries) {
-      if (names.has(entry.name)) continue;
+      if (sourceEntryExcluded(resolvedRoot, current, entry.name, names)) continue;
       const candidate = path.join(current, entry.name);
       if (excluded.some((blocked) => isPathWithin(blocked, candidate))) continue;
       const relative = path.relative(resolvedRoot, candidate).replace(/\\/g, '/');

@@ -95,3 +95,60 @@ test('sandbox rejects invalid and oversized standard input before execution', (t
   assert.ok(oversized.blockers.includes('worker_standard_input_limit_exceeded'));
   assert.equal(executions, 0);
 });
+
+test('sandbox copy excludes root runtime state and preserves nested runtime code', (t) => {
+  const source = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-sandbox-runtime-boundary-'));
+  t.after(() => fs.rmSync(source, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(source, 'runtime'));
+  fs.mkdirSync(path.join(source, 'paper-adapters', 'runtime'), { recursive: true });
+  fs.mkdirSync(path.join(source, 'workflow-kernel', 'runtime'), { recursive: true });
+  fs.writeFileSync(path.join(source, 'run.mjs'), 'void 0;\n');
+  fs.writeFileSync(path.join(source, 'runtime', 'mutable-state.json'), '{}\n');
+  fs.writeFileSync(
+    path.join(source, 'paper-adapters', 'runtime', 'adapter.mjs'),
+    'export const adapter = true;\n',
+  );
+  fs.writeFileSync(
+    path.join(source, 'workflow-kernel', 'runtime', 'kernel.mjs'),
+    'export const kernel = true;\n',
+  );
+  let copiedWorkspaceInspected = false;
+  const runner = createOsSandboxedWorkerRunner({
+    allowedExecutables: [process.execPath],
+    allowedRoots: [source],
+    probe: {
+      available: true,
+      backend: 'bubblewrap',
+      status: 'os_sandbox_available',
+      processLimit: { available: true, mechanism: 'fixture' },
+    },
+    executor(_launcher, args) {
+      const workTargetIndex = args.indexOf('/work');
+      assert.ok(workTargetIndex > 0);
+      const workSnapshotRoot = args[workTargetIndex - 1];
+      assert.equal(fs.existsSync(path.join(workSnapshotRoot, 'runtime')), false);
+      assert.equal(fs.existsSync(path.join(
+        workSnapshotRoot,
+        'paper-adapters',
+        'runtime',
+        'adapter.mjs',
+      )), true);
+      assert.equal(fs.existsSync(path.join(
+        workSnapshotRoot,
+        'workflow-kernel',
+        'runtime',
+        'kernel.mjs',
+      )), true);
+      copiedWorkspaceInspected = true;
+      return { status: 0, stdout: '', stderr: '' };
+    },
+  });
+  const receipt = runner.run({
+    executable: process.execPath,
+    args: ['run.mjs'],
+    cwd: source,
+    sourceRoot: source,
+  });
+  assert.equal(receipt.ok, true, JSON.stringify(receipt.blockers));
+  assert.equal(copiedWorkspaceInspected, true);
+});

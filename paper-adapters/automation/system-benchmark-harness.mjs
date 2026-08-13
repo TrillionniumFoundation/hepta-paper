@@ -33,6 +33,7 @@ import { buildHarnessAnalysisObservationAuthority, buildRawEventRecomputationMan
 import { verifyEmpiricalEnvironmentBom } from '../../paper-domain/automation/environment-bom-contract.mjs';
 import { buildEmpiricalPreDataAccessFreeze } from '../../paper-domain/automation/empirical-pre-data-access-freeze.mjs';
 import {
+  RAW_EVENT_RECOMPUTATION_MAXIMUM_WALL_TIME_MS,
   runProcessIsolatedRawEventRecomputation,
 } from '../research-verify/process-isolated-system-benchmark-recomputation.mjs';
 import {
@@ -54,6 +55,7 @@ const MAXIMUM_RAW_EVENT_BYTES = 16 * 1024 * 1024;
 const MAXIMUM_RAW_EVENTS_PER_CELL = 64;
 const ACADEMIC_PER_CELL_MINIMUM_TIMEOUT_MS = 60_000;
 const ACADEMIC_PER_CELL_MAXIMUM_CONCURRENCY = 1;
+const RAW_EVENT_RECOMPUTATION_DEADLINE_RESERVE_MS = 90_000;
 
 export function executeSystemBenchmarkHarness({
   benchmarkSelector,
@@ -380,8 +382,23 @@ export function executeSystemBenchmarkHarness({
         metricSpecs,
         versionedExperimentIrHash: experimentIr.versionedExperimentIrHash,
       });
-      const processIsolatedRawEventRecomputationAssurance =
-        runRawEventRecomputation(independentRecomputationInput);
+      const recomputationRemainingWallTimeMs = Math.floor(
+        Number(absoluteDeadlineEpochMs) - Number(nowEpochMs()),
+      );
+      const recomputationTimeoutMs = Math.min(
+        RAW_EVENT_RECOMPUTATION_MAXIMUM_WALL_TIME_MS,
+        recomputationRemainingWallTimeMs - RAW_EVENT_RECOMPUTATION_DEADLINE_RESERVE_MS,
+      );
+      let processIsolatedRawEventRecomputationAssurance = null;
+      if (!Number.isFinite(recomputationRemainingWallTimeMs)
+        || recomputationTimeoutMs < 1) {
+        blockers.push('benchmark_raw_event_recomputation_deadline_exhausted');
+      } else {
+        processIsolatedRawEventRecomputationAssurance = runRawEventRecomputation(
+          independentRecomputationInput,
+          Object.freeze({ timeoutMs: recomputationTimeoutMs }),
+        );
+      }
       const independentRawEventRecomputationAssurance =
         buildIndependentRecomputationAssurance({
           producerManifest: rawEventRecomputationManifest,

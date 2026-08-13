@@ -941,8 +941,10 @@ test('immutable formal work roots are kernel-mounted read-only and reject writes
     executable: '/bin/sh',
     arguments: ['-c', 'true'],
     immutableWorkRoot: true,
+    attachStandardInput: true,
   });
   assert.ok(dockerCommand.includes('/fixture/work:/work:ro'));
+  assert.ok(dockerCommand.includes('--interactive'));
   const bubblewrapCommand = buildBubblewrapWorkerCommand({
     limits: { memory: 1024, cpu: 1, pids: 8 },
     bubblewrap: 'bwrap',

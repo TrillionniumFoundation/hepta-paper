@@ -10,7 +10,10 @@ import {
   workspaceExecutionMerkleHash,
 } from '../../workflow-kernel/runtime/workspace-execution-identity.mjs';
 import { ensureScopedDirectorySync } from '../runtime/scoped-file-materialization-path-io.mjs';
-import { sourceTreeExcludedNames } from '../runtime/execution-snapshot.mjs';
+import {
+  sourceTreeExcludedNames,
+  sourceTreePathExcluded,
+} from '../runtime/execution-snapshot.mjs';
 
 function safeRelativeFile(value) {
   const relative = String(value || '').replace(/\\/g, '/');
@@ -200,8 +203,10 @@ function sealSnapshotTree(root) {
   const directories = [];
   const hashBuffer = Buffer.allocUnsafe(COPY_BUFFER_BYTES);
   const executionExcludedNames = new Set(sourceTreeExcludedNames(root));
-  const executionPathIncluded = (relative) => (
-    relative.split('/').every((segment) => !executionExcludedNames.has(segment))
+  const executionPathIncluded = (relative) => !sourceTreePathExcluded(
+    root,
+    path.join(root, relative),
+    executionExcludedNames,
   );
   const visit = (directory) => {
     directories.push(directory);

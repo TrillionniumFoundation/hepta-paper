@@ -25,6 +25,7 @@ import {
   materializeDatasetSnapshot,
   materializeRuntimeExecutableSnapshot,
   sourceTreeExcludedNames,
+  sourceTreePathExcluded,
 } from './execution-snapshot.mjs';
 export {
   directoryMerkleHash,
@@ -63,6 +64,11 @@ import {
   inspectWorkerExecutableHash,
   prepareWorkerExecutableIdentityAllowlist,
 } from './os-sandbox-worker-execution-identity.mjs';
+
+function normalizeSynchronousLauncherResult(result) {
+  if (result?.error?.code !== 'ETIMEDOUT' || result.timedOut === true) return result;
+  return { ...result, timedOut: true };
+}
 
 export function createOsSandboxedWorkerRunner({
   allowedExecutables = [], allowedRoots = [], allowedOutputRoots = [], allowGpu = false, bubblewrap = 'bwrap', prlimit = 'prlimit', docker = 'docker', dockerImage = null,
@@ -381,7 +387,11 @@ export function createOsSandboxedWorkerRunner({
           filter: (candidate) => {
             if (path.resolve(candidate) === resolvedSourceRoot) return true;
             if (sourceDatasetRoots.some((blocked) => isPathWithin(blocked, candidate))) return false;
-            return !sourceExcludedNames.includes(path.basename(candidate));
+            return !sourceTreePathExcluded(
+              resolvedSourceRoot,
+              candidate,
+              sourceExcludedNames,
+            );
           },
         });
         workspaceSnapshotObserver?.(Object.freeze({ phase: 'after_workspace_copy', sourceRoot: resolvedSourceRoot, workRoot, sourceMerkleHashBefore, sourceWorkspaceManifestHashBefore }));
@@ -480,6 +490,7 @@ export function createOsSandboxedWorkerRunner({
           arguments: args.map((argument) => mapWorkArgument(argument, resolvedSourceRoot)),
           immutableWorkRoot: requireImmutableWorkRoot,
           containerOwnership: dockerContainerOwnership,
+          attachStandardInput: encodedStandardInput !== null,
         });
       }
       if (requireDatasetAccessProof && executionBackend === 'bubblewrap') {
@@ -563,7 +574,7 @@ export function createOsSandboxedWorkerRunner({
             (error) => { removePrivateSandboxRoot(sandboxRoot); throw error; },
           );
       }
-      return finalize(withDockerContainerRecovery(executor(
+      const synchronousResult = normalizeSynchronousLauncherResult(executor(
         launcher,
         command,
         {
@@ -572,7 +583,8 @@ export function createOsSandboxedWorkerRunner({
           maxBuffer: maximumCapturedBytes,
           ...(encodedStandardInput ? { input: encodedStandardInput } : {}),
         },
-      )));
+      ));
+      return finalize(withDockerContainerRecovery(synchronousResult));
     },
   });
 }

@@ -180,8 +180,9 @@ export function createRawEventRecomputationSandboxTestFixture({
   });
 }
 
-export function runRawEventRecomputationInSandboxTestFixture(input) {
+export function runRawEventRecomputationInSandboxTestFixture(input, options = {}) {
   return runProcessIsolatedRawEventRecomputation(input, {
+    ...options,
     sandboxWorkerRunner: createRawEventRecomputationSandboxTestFixture(),
     environment: {},
   });

@@ -5,6 +5,9 @@ import { fileURLToPath } from 'node:url';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { hasExactObjectKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 import { verifyOsSandboxWorkerReceipt } from '../../paper-domain/automation/os-sandbox-worker-receipt-contract.mjs';
+import {
+  SYSTEM_DATASET_ACCESS_RUNTIME_IMAGES,
+} from '../../paper-domain/automation/dataset-access-supervisor-policy.mjs';
 import { createOsSandboxedWorkerRunner } from '../runtime/os-sandboxed-worker-runner.mjs';
 import {
   INDEPENDENT_SYSTEM_BENCHMARK_RECOMPUTATION_IMPLEMENTATION,
@@ -13,6 +16,8 @@ import {
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 const MAXIMUM_REQUEST_BYTES = 24 * 1024 * 1024;
 const MAXIMUM_RESPONSE_BYTES = 24 * 1024 * 1024;
+export const RAW_EVENT_RECOMPUTATION_MAXIMUM_WALL_TIME_MS = 300_000;
+export const RAW_EVENT_RECOMPUTATION_MAXIMUM_CPU_SECONDS = 120;
 const WORKER_RECEIPT_KEYS = Object.freeze([
   'assuranceScope', 'blockers', 'externalActionPerformed',
   'independentImplementationHash', 'kind', 'manifest',
@@ -33,13 +38,31 @@ const workerPath = fileURLToPath(new URL(
 ));
 const repositoryRoot = path.resolve(path.dirname(workerPath), '..', '..');
 
-export function createRawEventRecomputationSandboxRunner({ timeoutMs = 120_000 } = {}) {
+export const RAW_EVENT_RECOMPUTATION_DOCKER_FALLBACK_IMAGE =
+  `${SYSTEM_DATASET_ACCESS_RUNTIME_IMAGES.python.image}`
+  + `@${SYSTEM_DATASET_ACCESS_RUNTIME_IMAGES.python.imageDigest}`;
+
+function validateRawEventRecomputationTimeout(timeoutMs) {
+  const value = Number(timeoutMs);
+  if (!Number.isSafeInteger(value)
+    || value < 1
+    || value > RAW_EVENT_RECOMPUTATION_MAXIMUM_WALL_TIME_MS) {
+    throw new TypeError('process_isolated_recomputation_timeout_invalid');
+  }
+  return value;
+}
+
+export function createRawEventRecomputationSandboxRunner({
+  timeoutMs = RAW_EVENT_RECOMPUTATION_MAXIMUM_WALL_TIME_MS,
+} = {}) {
+  const boundedTimeoutMs = validateRawEventRecomputationTimeout(timeoutMs);
   return createOsSandboxedWorkerRunner({
     allowedExecutables: [process.execPath],
     allowedRoots: [repositoryRoot],
-    maximumTimeoutMs: Number(timeoutMs),
+    dockerImage: RAW_EVENT_RECOMPUTATION_DOCKER_FALLBACK_IMAGE,
+    maximumTimeoutMs: boundedTimeoutMs,
     maximumMemoryBytes: 1024 * 1024 * 1024,
-    maximumCpuSeconds: Math.max(1, Math.ceil(Number(timeoutMs) / 1000)),
+    maximumCpuSeconds: RAW_EVENT_RECOMPUTATION_MAXIMUM_CPU_SECONDS,
     maximumPids: 32,
     maximumOutputBytes: MAXIMUM_RESPONSE_BYTES,
     maximumCapturedBytes: MAXIMUM_RESPONSE_BYTES,
@@ -66,6 +89,11 @@ function requestDocument(input = {}) {
   });
 }
 
+function workerProcessIdentityMatchesSandbox(workerReceipt, sandboxReceipt) {
+  return sandboxReceipt?.backend !== 'docker'
+    || (workerReceipt?.workerPid === 1 && workerReceipt?.parentPid === 0);
+}
+
 function parseWorkerReceipt(sandboxReceipt, { request, workerSourceHash } = {}) {
   if (!verifyOsSandboxWorkerReceipt(sandboxReceipt)
     || !Number.isSafeInteger(sandboxReceipt.executionProcessIdentity?.launcherPid)
@@ -89,6 +117,7 @@ function parseWorkerReceipt(sandboxReceipt, { request, workerSourceHash } = {}) 
     || !Number.isSafeInteger(receipt.workerPid) || receipt.workerPid < 1
     || !Number.isSafeInteger(receipt.parentPid) || receipt.parentPid < 0
     || receipt.workerPid === receipt.parentPid
+    || !workerProcessIdentityMatchesSandbox(receipt, sandboxReceipt)
     || !Array.isArray(receipt.blockers) || receipt.blockers.length !== 0
     || receipt.manifest?.status !== 'raw_event_recomputation_verified'
     || receipt.rawEventRecomputationManifestHash
@@ -106,7 +135,7 @@ function parseWorkerReceipt(sandboxReceipt, { request, workerSourceHash } = {}) 
 }
 
 export function runProcessIsolatedRawEventRecomputation(input = {}, {
-  timeoutMs = 120_000,
+  timeoutMs = RAW_EVENT_RECOMPUTATION_MAXIMUM_WALL_TIME_MS,
   sandboxWorkerRunner = null,
   environment = process.env,
 } = {}) {
@@ -116,6 +145,12 @@ export function runProcessIsolatedRawEventRecomputation(input = {}, {
   if (Buffer.byteLength(encoded) > MAXIMUM_REQUEST_BYTES) {
     blockers.push('process_isolated_recomputation_request_too_large');
   }
+  let boundedTimeoutMs = null;
+  try {
+    boundedTimeoutMs = validateRawEventRecomputationTimeout(timeoutMs);
+  } catch (error) {
+    blockers.push(String(error?.message || 'process_isolated_recomputation_timeout_invalid'));
+  }
   let sandboxReceipt = null;
   if (environment.HEPTA_AUTONOMOUS_EMPIRICAL_PLUGIN_BUNDLE
     || environment.HEPTA_AUTONOMOUS_EMPIRICAL_PLUGIN_TRUST_STORE) {
@@ -123,14 +158,14 @@ export function runProcessIsolatedRawEventRecomputation(input = {}, {
   }
   if (!blockers.length) {
     const runner = sandboxWorkerRunner
-      || createRawEventRecomputationSandboxRunner({ timeoutMs });
+      || createRawEventRecomputationSandboxRunner({ timeoutMs: boundedTimeoutMs });
     try {
       sandboxReceipt = runner?.run?.({
         executable: process.execPath,
         args: [workerPath],
         cwd: repositoryRoot,
         sourceRoot: repositoryRoot,
-        timeoutMs: Number(timeoutMs),
+        timeoutMs: boundedTimeoutMs,
         env: {
           OMP_NUM_THREADS: '1',
           OPENBLAS_NUM_THREADS: '1',
@@ -147,7 +182,7 @@ export function runProcessIsolatedRawEventRecomputation(input = {}, {
         determinismPolicy: 'explicit_deterministic_cpu',
         deterministicSeed: request.requestHash,
         memoryBytes: 1024 * 1024 * 1024,
-        cpuSeconds: Math.max(1, Math.ceil(Number(timeoutMs) / 1000)),
+        cpuSeconds: RAW_EVENT_RECOMPUTATION_MAXIMUM_CPU_SECONDS,
         maximumProcesses: 32,
         requestedMaximumOutputBytes: MAXIMUM_RESPONSE_BYTES,
       }) || null;
@@ -183,8 +218,8 @@ export function runProcessIsolatedRawEventRecomputation(input = {}, {
     independentImplementationHash:
       INDEPENDENT_SYSTEM_BENCHMARK_RECOMPUTATION_IMPLEMENTATION
         .independentSystemBenchmarkRecomputationImplementationHash,
-    parentPid: receipt?.parentPid || null,
-    workerPid: receipt?.workerPid || null,
+    parentPid: receipt?.parentPid ?? null,
+    workerPid: receipt?.workerPid ?? null,
     processIndependent: blockers.length === 0,
     osSandboxed: blockers.length === 0,
     osSandboxBackend: sandboxReceipt?.backend || null,
@@ -236,6 +271,10 @@ export function verifyProcessIsolatedRawEventRecomputationAssurance(
     || assurance.osSandboxEnvironmentBomHash
       !== assurance.osSandboxWorkerReceipt?.environmentBomHash
     || assurance.osSandboxBackend !== assurance.osSandboxWorkerReceipt?.backend
+    || !workerProcessIdentityMatchesSandbox(
+      assurance.workerReceipt,
+      assurance.osSandboxWorkerReceipt,
+    )
     || JSON.stringify(assurance.workerReceipt)
       !== String(assurance.osSandboxWorkerReceipt?.stdout || '').trim()
     || !SHA256.test(String(assurance.processIsolatedRawEventRecomputationAssuranceHash || ''))) {

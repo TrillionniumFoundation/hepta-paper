@@ -1,6 +1,6 @@
 import { verifyProposalClaimToTheoremBinding } from '../research/proposal-claim-to-theorem-binding.mjs';
 import { hashPaperRecord } from '../contracts/primitives.mjs';
-import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
   formalClosureClaimBindingsFromProposalBinding,
   verifyGenericFormalCertificateIntakeClosureBinding,
@@ -14,6 +14,15 @@ import {
 import {
   inspectAutonomousResearchReleaseReviewerEvidence,
 } from './autonomous-research-release-reviewer-evidence-contract.mjs';
+import { CAMPAIGN_RELEASE_GPU_SCIENTIFIC_ARCHIVE_MANIFEST_ROLE,
+  CAMPAIGN_RELEASE_GPU_SCIENTIFIC_QUALIFICATION_EVIDENCE_ROLE,
+  verifyCampaignReleaseGpuScientificEvidenceDescriptor } from './campaign-release-gpu-scientific-evidence-capsule-contract.mjs';
+import { campaignReleaseExecutionAttestationDocumentFileHash,
+  verifyCampaignReleaseExecutionAttestationManifestBinding } from './campaign-release-execution-attestation-contract.mjs';
+import { verifyGpuScientificCampaignPromotionEvidence } from './gpu-scientific-campaign-promotion-contract.mjs';
+import {
+  verifyGpuScientificReleaseAuthorityFreshnessReceipt,
+} from './gpu-scientific-release-authority-freshness-receipt-contract.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 
@@ -36,6 +45,228 @@ const REQUIRED_MANUSCRIPT_RELEASE_PROOF_FIELDS = Object.freeze(
     'submissionMetadataReceiptHash',
   ].includes(field)),
 );
+
+const GPU_SCIENTIFIC_RELEASE_PROJECTION_FIELDS = Object.freeze([
+  'gpuScientificExecutionPlanHash', 'gpuScientificExecutionPlan',
+  'gpuScientificCampaignExecutionResultHash', 'gpuScientificExecutionEvidence',
+  'gpuScientificArtifactBodyArchiveManifestHash', 'gpuScientificCampaignQualificationEvidenceHash',
+  'gpuScientificCampaignPromotionEvidenceHash', 'gpuScientificCampaignPromotionEvidence',
+  'campaignResearchGpuScientificEvidenceHash',
+  'gpuScientificCampaignQualificationAuthorityInspectionHash',
+  'gpuScientificReleaseAuthorityFreshnessReceiptHash',
+  'gpuScientificReleaseAuthorityFreshnessReceipt',
+]);
+
+function hashedRecordValid(record, kind, hashField) {
+  if (!record || typeof record !== 'object') return false;
+  const { [hashField]: claimedHash, ...payload } = record;
+  return SHA256.test(String(claimedHash || ''))
+    && hashRecord(kind, payload) === claimedHash;
+}
+
+function singlePackageFile(packageOutput, predicate) {
+  const matches = (packageOutput?.files || []).filter(predicate);
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function gpuScientificReleaseRequired(bundle) {
+  const records = [bundle, bundle?.promotionCandidate];
+  return bundle?.researchEvidenceCapsuleManifest?.gpuScientificEvidenceIncluded === true
+    || records.some((record) => GPU_SCIENTIFIC_RELEASE_PROJECTION_FIELDS.some(
+      (field) => Object.hasOwn(record || {}, field),
+    ));
+}
+
+function releaseAuthorityInspectionVerifier(verifier) {
+  if (typeof verifier?.verifyReleaseSnapshot === 'function') {
+    return (input) => verifier.verifyReleaseSnapshot(input);
+  }
+  return null;
+}
+
+export function inspectFullResearchGpuScientificCampaignLineage(bundle, {
+  gpuScientificPromotionAuthorityVerifier = null,
+  gpuScientificAuthorityVerificationTime = null,
+} = {}) {
+  const required = gpuScientificReleaseRequired(bundle);
+  if (!required) return Object.freeze({
+    required: false, verified: true,
+    researchVerificationProjectionVerified: true,
+    promotionEvidenceHash: null, qualificationEvidenceHash: null,
+    artifactArchiveManifestHash: null,
+    blockers: Object.freeze([]),
+  });
+  const blockers = [];
+  const candidate = bundle?.promotionCandidate || null;
+  const promotion = bundle?.gpuScientificCampaignPromotionEvidence || null;
+  const qualification = promotion?.gpuScientificCampaignQualificationEvidence || null;
+  const request = qualification?.gpuScientificCampaignQualificationRequest || null;
+  const manifest = bundle?.researchEvidenceCapsuleManifest || null;
+  const descriptor = manifest?.gpuScientificEvidence || null;
+  const packageOutput = bundle?.packageOutput || null;
+  const attestation = bundle?.researchExecutionReleaseAttestation || null;
+  const manifestFileHash = packageOutput?.researchEvidenceCapsuleManifestFileHash || null;
+  const freshnessReceipt =
+    bundle?.gpuScientificReleaseAuthorityFreshnessReceipt || null;
+  const freshnessVerification =
+    verifyGpuScientificReleaseAuthorityFreshnessReceipt(
+      freshnessReceipt,
+      {
+        qualificationEvidence: qualification,
+        researchEvidenceCapsuleManifest: manifest,
+        researchEvidenceCapsuleManifestFileHash: manifestFileHash,
+        researchExecutionReleaseAttestationHash:
+          bundle?.researchExecutionReleaseAttestationHash,
+        authorityInspectionVerifier: releaseAuthorityInspectionVerifier(
+          gpuScientificPromotionAuthorityVerifier,
+        ),
+        verificationTime: gpuScientificAuthorityVerificationTime,
+      },
+    );
+  if (!freshnessVerification.valid
+    || bundle?.gpuScientificReleaseAuthorityFreshnessReceiptHash
+      !== freshnessReceipt
+        ?.gpuScientificReleaseAuthorityFreshnessReceiptHash
+    || candidate?.gpuScientificReleaseAuthorityFreshnessReceiptHash
+      !== bundle?.gpuScientificReleaseAuthorityFreshnessReceiptHash
+    || JSON.stringify(
+      candidate?.gpuScientificReleaseAuthorityFreshnessReceipt || null,
+    ) !== JSON.stringify(freshnessReceipt)) {
+    blockers.push(
+      'golden_micro_campaign_gpu_scientific_authority_freshness_invalid',
+      ...freshnessVerification.blockers,
+    );
+  }
+  if (!verifyGpuScientificCampaignPromotionEvidence(promotion, {
+    campaignId: bundle?.campaignId,
+    paperId: bundle?.paperId,
+    gpuScientificCampaignExecutionResultHash:
+      bundle?.gpuScientificCampaignExecutionResultHash,
+    artifactArchiveManifestHash:
+      bundle?.gpuScientificArtifactBodyArchiveManifestHash,
+    researchEvidenceCapsuleManifestHash:
+      bundle?.researchEvidenceCapsuleManifestHash,
+    researchEvidenceCapsuleManifestFileHash: manifestFileHash,
+    researchExecutionReleaseAttestationHash:
+      bundle?.researchExecutionReleaseAttestationHash,
+  })) blockers.push('golden_micro_campaign_gpu_scientific_promotion_evidence_invalid');
+  const projection = [
+    ['gpuScientificCampaignExecutionResultHash', promotion?.gpuScientificCampaignExecutionResultHash],
+    ['gpuScientificArtifactBodyArchiveManifestHash', promotion?.artifactArchiveManifestHash],
+    ['gpuScientificCampaignQualificationEvidenceHash', promotion?.gpuScientificCampaignQualificationEvidenceHash],
+    ['gpuScientificCampaignPromotionEvidenceHash', promotion?.gpuScientificCampaignPromotionEvidenceHash],
+  ];
+  if (!hashedRecordValid(bundle, 'CampaignReleaseBundle', 'campaignReleaseBundleHash')
+    || !hashedRecordValid(candidate, 'AutomationPromotionCandidate',
+      'automationPromotionCandidateHash')
+    || bundle?.automationPromotionCandidateHash
+      !== candidate?.automationPromotionCandidateHash
+    || candidate?.campaignId !== bundle?.campaignId
+    || candidate?.paperId !== bundle?.paperId
+    || candidate?.campaignPlanHash !== bundle?.campaignPlanHash
+    || projection.some(([field, value]) => (
+      bundle?.[field] !== value || candidate?.[field] !== value
+    ))
+    || request?.campaignPlanHash !== bundle?.campaignPlanHash
+    || request?.executionPlanHash !== bundle?.gpuScientificExecutionPlanHash
+    || bundle?.gpuScientificExecutionPlanHash
+      !== bundle?.gpuScientificExecutionPlan?.gpuScientificCampaignExecutionPlanHash
+    || bundle?.gpuScientificCampaignExecutionResultHash
+      !== bundle?.gpuScientificExecutionEvidence
+        ?.gpuScientificCampaignExecutionResultHash
+    || JSON.stringify(candidate?.gpuScientificExecutionPlan)
+      !== JSON.stringify(bundle?.gpuScientificExecutionPlan)
+    || JSON.stringify(candidate?.gpuScientificExecutionEvidence)
+      !== JSON.stringify(bundle?.gpuScientificExecutionEvidence)
+    || JSON.stringify(candidate?.gpuScientificCampaignPromotionEvidence)
+      !== JSON.stringify(promotion)) {
+    blockers.push('golden_micro_campaign_gpu_scientific_research_projection_mismatch');
+  }
+  const qualificationBytes = qualification
+    ? Buffer.from(`${JSON.stringify(qualification, null, 2)}\n`, 'utf8') : null;
+  if (!hashedRecordValid(manifest, 'CampaignReleaseResearchEvidenceCapsuleManifest',
+    'researchEvidenceCapsuleManifestHash')
+    || manifest?.version !== 3 || manifest?.gpuScientificEvidenceIncluded !== true
+    || manifest?.campaignId !== bundle?.campaignId
+    || manifest?.paperId !== bundle?.paperId
+    || bundle?.researchEvidenceCapsuleManifestHash
+      !== manifest?.researchEvidenceCapsuleManifestHash
+    || !verifyCampaignReleaseGpuScientificEvidenceDescriptor(manifest)
+    || descriptor?.gpuScientificCampaignExecutionResultHash
+      !== promotion?.gpuScientificCampaignExecutionResultHash
+    || descriptor?.gpuScientificArtifactBodyArchiveManifestHash
+      !== promotion?.artifactArchiveManifestHash
+    || descriptor?.gpuScientificCampaignQualificationEvidenceHash
+      !== promotion?.gpuScientificCampaignQualificationEvidenceHash
+    || descriptor?.scientificOutputCommitmentHash
+      !== promotion?.scientificOutputCommitmentHash
+    || descriptor?.executionPlanHash !== request?.executionPlanHash
+    || !qualificationBytes
+    || descriptor?.qualificationEvidenceFileHash !== hashBytes(qualificationBytes)
+    || Number(descriptor?.qualificationEvidenceFileBytes)
+      !== qualificationBytes?.length) {
+    blockers.push('golden_micro_campaign_gpu_scientific_capsule_binding_invalid');
+  }
+  const requiredCapsuleFiles = [
+    [CAMPAIGN_RELEASE_GPU_SCIENTIFIC_QUALIFICATION_EVIDENCE_ROLE,
+      descriptor?.qualificationEvidencePath, descriptor?.qualificationEvidenceFileHash,
+      descriptor?.qualificationEvidenceFileBytes],
+    [CAMPAIGN_RELEASE_GPU_SCIENTIFIC_ARCHIVE_MANIFEST_ROLE,
+      descriptor?.artifactArchiveManifestPath, descriptor?.artifactArchiveManifestFileHash,
+      descriptor?.artifactArchiveManifestFileBytes],
+    ...(descriptor?.archiveEntries || []).map((entry) => [
+      entry.role, entry.path, entry.hash, entry.bytes,
+    ]),
+  ];
+  const manifestFile = singlePackageFile(
+    packageOutput,
+    (file) => file?.role === 'research_evidence_capsule_manifest',
+  );
+  if (!hashedRecordValid(packageOutput, 'ImmutableCampaignPackageOutput',
+    'immutableCampaignPackageOutputHash')
+    || bundle?.immutableCampaignPackageOutputHash
+      !== packageOutput?.immutableCampaignPackageOutputHash
+    || packageOutput?.researchEvidenceCapsuleManifestHash
+      !== manifest?.researchEvidenceCapsuleManifestHash
+    || manifestFile?.hash !== manifestFileHash
+    || requiredCapsuleFiles.some(([role, path, hash, bytes]) => {
+      const file = singlePackageFile(
+        packageOutput,
+        (item) => item?.capsuleRole === role,
+      );
+      return file?.packageRelativePath !== path || file?.hash !== hash
+        || Number(file?.bytes) !== Number(bytes);
+    })) blockers.push('golden_micro_campaign_gpu_scientific_package_output_binding_invalid');
+  const attestationFile = singlePackageFile(
+    packageOutput,
+    (file) => file?.role === 'research_execution_release_attestation',
+  );
+  if (!verifyCampaignReleaseExecutionAttestationManifestBinding({
+    manifest, attestation, manifestFileHash,
+  }).valid
+    || promotion?.researchExecutionReleaseAttestationHash
+      !== attestation?.campaignReleaseExecutionAttestationHash
+    || bundle?.researchExecutionReleaseAttestationHash
+      !== attestation?.campaignReleaseExecutionAttestationHash
+    || packageOutput?.researchExecutionReleaseAttestationHash
+      !== attestation?.campaignReleaseExecutionAttestationHash
+    || packageOutput?.researchExecutionReleaseAttestationFileHash
+      !== campaignReleaseExecutionAttestationDocumentFileHash(attestation)
+    || attestationFile?.hash
+      !== packageOutput?.researchExecutionReleaseAttestationFileHash) {
+    blockers.push('golden_micro_campaign_gpu_scientific_release_attestation_binding_invalid');
+  }
+  return Object.freeze({
+    required: true, verified: blockers.length === 0,
+    researchVerificationProjectionVerified: !blockers.includes(
+      'golden_micro_campaign_gpu_scientific_research_projection_mismatch',
+    ),
+    promotionEvidenceHash: promotion?.gpuScientificCampaignPromotionEvidenceHash || null,
+    qualificationEvidenceHash: promotion?.gpuScientificCampaignQualificationEvidenceHash || null,
+    artifactArchiveManifestHash: promotion?.artifactArchiveManifestHash || null,
+    blockers: Object.freeze([...new Set(blockers)]),
+  });
+}
 
 function formalProposalBindingMatchesReleaseAuthority(proposalBinding, releaseBinding) {
   return proposalBinding?.paperId === releaseBinding?.paperId
@@ -122,6 +353,8 @@ export function inspectSuccessfulFullResearchRelease({
   allowBoundedGoldenCapability = false,
   runtimePrincipalBinding = null,
   reviewerEvidenceAuthority = null,
+  gpuScientificPromotionAuthorityVerifier = null,
+  gpuScientificAuthorityVerificationTime = null,
 } = {}) {
   const blockers = [];
   if (!authority || authority.status !== 'current_completed_release'
@@ -132,6 +365,12 @@ export function inspectSuccessfulFullResearchRelease({
     });
   }
   const bundle = authority.releaseBundle;
+  const gpuScientificLineageInspection =
+    inspectFullResearchGpuScientificCampaignLineage(bundle, {
+      gpuScientificPromotionAuthorityVerifier,
+      gpuScientificAuthorityVerificationTime,
+    });
+  blockers.push(...gpuScientificLineageInspection.blockers);
   const scope = inspectAutonomousResearchReleaseQualificationScope({
     authority, receipt, allowBoundedGoldenCapability,
   });

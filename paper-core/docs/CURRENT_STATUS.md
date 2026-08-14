@@ -107,10 +107,32 @@ classification debt.
 
 - Local-admin-delegated owner acceptance: 249/249 across 19 families.
 - Independent external-owner acceptance: 0/249.
-- Production-source-bound conformance replay: 14/14 after a release-bound
+- Production-source-bound conformance replay: 16/16 after a release-bound
   replay is run.
-- Independent production operational proof: 0/14 until distinct external
+- Independent production operational proof: 0/16 until distinct external
   owner and observer signatures are ingested.
+
+The 16-capability catalog now includes the bounded single-GPU CuPy PDE and
+deep-learning paths. Their raw receipts remain deliberately non-promotable.
+Per-campaign promotion additionally requires a cross-process UUID lease,
+hash-bound artifact-body archive, independent same-device replay, external
+production qualification, and release-manifest authority. Cooperative local
+serialization is not a claim of physical multi-tenant GPU isolation.
+
+The lease, archive rollback, and authorized package-retention implementations
+provide concurrency integrity and fail-closed recovery only among
+repository-owned cooperating processes sharing one trusted Unix principal.
+Any non-cooperating process that can mutate the runtime, package, archive, or
+lease roots as that same UID is part of the trusted computing base. These
+mechanisms do not claim hostile same-UID isolation. Deployments requiring that
+threat model must place the operation behind a separate UID, an inaccessible
+mount namespace, or a separately authorized broker. Archive rollback may
+retain the exact owned inode in a sibling quarantine rather than perform an
+unsafe path-based unlink after a controlled integrity failure. That stable,
+per-package lane requires operator reconciliation: automatic package retention
+intentionally treats a quarantine without a lifecycle receipt as
+recovery-protected and does not reclaim it. The quarantine is not evidence of
+offline scientific replay.
 
 Local conformance is intentionally not labeled production operational history.
 The code-release gate has three explicit layers: implementation verification

@@ -4,15 +4,44 @@ import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import path from 'node:path';
 import { readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
 import { isPathWithin } from '../../workflow-kernel/runtime/path-utils.mjs';
-import { experimentRegistryAuthorityVerifierForReleaseAuthority } from '../persistence/sqlite-campaign-release-query-repository.mjs';
+import {
+  experimentRegistryAuthorityVerifierForReleaseAuthority,
+  gpuScientificPromotionAuthorityVerifierForReleaseAuthority,
+} from '../persistence/sqlite-campaign-release-query-repository.mjs';
+import {
+  assertSealedImmutableCampaignPackageFilesSync,
+} from '../automation/campaign-release-materialization.mjs';
 
-export function verifyCampaignReleaseBundleForSubmission({ releaseAuthority = null, releaseBundle = releaseAuthority?.releaseBundle || null, expected = {}, runtimeRoot = null } = {}) {
+export function verifyCampaignReleaseBundleForSubmission({
+  releaseAuthority = null,
+  releaseBundle = releaseAuthority?.releaseBundle || null,
+  expected = {},
+  runtimeRoot = null,
+  clock = null,
+  verificationTime = null,
+} = {}) {
   const experimentRegistryAuthorityVerifier = experimentRegistryAuthorityVerifierForReleaseAuthority(releaseAuthority);
-  const verification = verifyCampaignReleaseBundle(releaseBundle, expected, { experimentRegistryAuthorityVerifier });
+  const gpuScientificPromotionAuthorityVerifier =
+    gpuScientificPromotionAuthorityVerifierForReleaseAuthority(releaseAuthority);
+  const gpuScientificAuthorityVerificationTime = verificationTime
+    ?? (typeof clock?.now === 'function' ? clock.now() : new Date());
+  const verification = verifyCampaignReleaseBundle(releaseBundle, expected, {
+    experimentRegistryAuthorityVerifier,
+    gpuScientificPromotionAuthorityVerifier,
+    gpuScientificAuthorityVerificationTime,
+  });
   const blockers = [...verification.blockers];
   if (!releaseAuthority) blockers.push('campaign_release_authority_required');
   else {
-    const authorityVerification = verifyCampaignReleaseAuthorityRecord(releaseAuthority, expected, { experimentRegistryAuthorityVerifier });
+    const authorityVerification = verifyCampaignReleaseAuthorityRecord(
+      releaseAuthority,
+      expected,
+      {
+        experimentRegistryAuthorityVerifier,
+        gpuScientificPromotionAuthorityVerifier,
+        gpuScientificAuthorityVerificationTime,
+      },
+    );
     blockers.push(...authorityVerification.blockers);
     if (releaseAuthority.releaseBundle !== releaseBundle
       && releaseAuthority.campaignReleaseBundleHash !== releaseBundle?.campaignReleaseBundleHash) {
@@ -48,6 +77,15 @@ export function verifyCampaignReleaseBundleForSubmission({ releaseAuthority = nu
         if (Number(read.bytes) !== Number(file.bytes)) blockers.push(`campaign_release_package_output_file_size_mismatch:${file.role || 'unknown'}`);
       }
     }
+    try {
+      assertSealedImmutableCampaignPackageFilesSync(output, resolvedRuntimeRoot);
+    } catch (error) {
+      blockers.push(
+        `campaign_release_package_output_seal_invalid:${String(
+          error?.message || 'verification_failed',
+        )}`,
+      );
+    }
     const materialization = releaseAuthority?.materializationReceipt;
     const materializedBundlePath = path.resolve(materialization?.path || '.');
     const expectedBundlePath = path.join(releaseRoot, 'CAMPAIGN_RELEASE_BUNDLE.json');
@@ -61,7 +99,15 @@ export function verifyCampaignReleaseBundleForSubmission({ releaseAuthority = nu
         if (Number(read.bytes) !== Number(materialization?.bytes)) blockers.push('campaign_release_materialized_bundle_size_mismatch');
         try {
           const materializedBundle = JSON.parse(read.content.toString('utf8'));
-          const materializedVerification = verifyCampaignReleaseBundle(materializedBundle, expected, { experimentRegistryAuthorityVerifier });
+          const materializedVerification = verifyCampaignReleaseBundle(
+            materializedBundle,
+            expected,
+            {
+              experimentRegistryAuthorityVerifier,
+              gpuScientificPromotionAuthorityVerifier,
+              gpuScientificAuthorityVerificationTime,
+            },
+          );
           if (!materializedVerification.valid
             || materializedBundle.campaignReleaseBundleHash !== releaseBundle?.campaignReleaseBundleHash) {
             blockers.push('campaign_release_materialized_bundle_content_invalid');

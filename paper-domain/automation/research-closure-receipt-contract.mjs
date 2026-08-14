@@ -370,6 +370,8 @@ function closureInputsValid({
 } = {}, {
   verifyQualificationSignature = null,
   verifyIndependentQualificationEvidence = null,
+  gpuScientificPromotionAuthorityVerifier = null,
+  gpuScientificAuthorityVerificationTime = null,
 } = {}) {
   if (typeof verifyQualificationSignature !== 'function'
     || typeof verifyIndependentQualificationEvidence !== 'function') {
@@ -403,6 +405,9 @@ function closureInputsValid({
     {
       experimentRegistryAuthorityVerifier:
         experimentRegistryAuthorityVerifier(releaseBinding),
+      gpuScientificPromotionAuthorityVerifier,
+      gpuScientificAuthorityVerificationTime:
+        gpuScientificAuthorityVerificationTime ?? timestamp,
     },
   );
   const qualificationSignatureVerifier =
@@ -545,6 +550,8 @@ export function buildResearchClosureReceipt({
 } = {}, {
   verifyQualificationSignature = null,
   verifyIndependentQualificationEvidence = null,
+  gpuScientificPromotionAuthorityVerifier = null,
+  gpuScientificAuthorityVerificationTime = null,
 } = {}) {
   if (!closureInputsValid({
     campaignReleaseAuthority,
@@ -554,6 +561,8 @@ export function buildResearchClosureReceipt({
   }, {
     verifyQualificationSignature,
     verifyIndependentQualificationEvidence,
+    gpuScientificPromotionAuthorityVerifier,
+    gpuScientificAuthorityVerificationTime,
   })) throw new Error('research_closure_receipt_input_invalid');
   const releaseBundle = campaignReleaseAuthority.releaseBundle;
   const releaseBinding = releaseBundle.autonomousResearchReleaseBinding;
@@ -605,6 +614,8 @@ export function buildResearchClosureReceipt({
 export function verifyResearchClosureReceipt(receipt, expected = {}, {
   verifyQualificationSignature = null,
   verifyIndependentQualificationEvidence = null,
+  gpuScientificPromotionAuthorityVerifier = null,
+  gpuScientificAuthorityVerificationTime = null,
 } = {}) {
   if (!hasExactObjectKeys(receipt, RECEIPT_KEYS)
     || receipt?.version !== 1
@@ -629,6 +640,9 @@ export function verifyResearchClosureReceipt(receipt, expected = {}, {
     }, {
       verifyQualificationSignature,
       verifyIndependentQualificationEvidence,
+      gpuScientificPromotionAuthorityVerifier,
+      gpuScientificAuthorityVerificationTime:
+        gpuScientificAuthorityVerificationTime ?? receipt.closedAt,
     });
   } catch { return false; }
   return JSON.stringify(rebuilt) === JSON.stringify(receipt);

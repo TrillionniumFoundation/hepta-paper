@@ -10,7 +10,11 @@ import { prepareSubmissionAuthorities } from '../../paper-adapters/submission/su
 import { createSqliteCampaignReleaseQueryRepository } from '../../paper-adapters/persistence/sqlite-campaign-release-query-repository.mjs';
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { buildPaperCampaignPlan } from '../../paper-domain/automation/campaign-plan.mjs';
-import { createCampaignReleaseBundle, verifyCampaignReleaseBundle } from '../../paper-domain/automation/campaign-release-contracts.mjs';
+import {
+  createAutomationPromotionCandidate,
+  createCampaignReleaseBundle,
+  verifyCampaignReleaseBundle,
+} from '../../paper-domain/automation/campaign-release-contracts.mjs';
 import { buildCampaignResearchSourceSnapshot } from '../../paper-domain/automation/campaign-research-contract.mjs';
 import { buildExperimentRegistry } from '../../paper-domain/research/experiment-registry.mjs';
 import { buildTargetScopeReceipt } from '../../paper-domain/automation/target-scope-policy.mjs';
@@ -68,6 +72,27 @@ function runSubmissionHandoffCli({ campaignId, root, runtimeRoot } = {}) {
   ], { encoding: 'utf8', timeout: 30_000 });
 }
 
+function removeFixtureTree(root) {
+  function restoreOwnerWrite(candidate) {
+    let entry;
+    try {
+      entry = fs.lstatSync(candidate);
+    } catch (error) {
+      if (error?.code === 'ENOENT') return;
+      throw error;
+    }
+    if (entry.isSymbolicLink()) return;
+    fs.chmodSync(candidate, entry.isDirectory() ? 0o700 : 0o600);
+    if (entry.isDirectory()) {
+      for (const name of fs.readdirSync(candidate)) {
+        restoreOwnerWrite(path.join(candidate, name));
+      }
+    }
+  }
+  restoreOwnerWrite(root);
+  fs.rmSync(root, { recursive: true, force: true });
+}
+
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-campaign-release-'));
   const workspace = path.join(root, 'source');
@@ -86,7 +111,7 @@ function fixture(t) {
     path.join(workspace, 'automation-results', 'final', 'main.pdf'),
     buildDeterministicPdfFixture({ marker: 'campaign-release-authoritative' }),
   );
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(() => removeFixtureTree(root));
   return { root, workspace, runtimeRoot };
 }
 
@@ -600,6 +625,115 @@ test('prepared bundle becomes submission-consumable only through the current com
   assert.match(capsuleSums, /  evidence\/PUBLIC_AUTHORITY_TRUST_SNAPSHOT\.json$/m);
   assert.match(first.releaseBundle.researchEvidenceCapsuleManifest.publicAuthorityTrustSnapshotHash, /^sha256:[0-9a-f]{64}$/);
   assert.doesNotMatch(capsuleSums, /campaign-releases|\/runtime\//);
+  const releaseCandidate = first.releaseBundle.promotionCandidate;
+  const authoritativeNodes = preparedPackage.campaignStore.listNodes('campaign');
+  const finalCompileNode = authoritativeNodes.find(
+    (candidate) => candidate.kind === 'final-compile',
+  );
+  const researchVerifyNode = authoritativeNodes.find(
+    (candidate) => candidate.kind === 'research-verify',
+  );
+  const fakeGpuPlan = Object.freeze({
+    version: 1,
+    kind: 'GpuScientificCampaignExecutionPlan',
+    gpuScientificCampaignExecutionPlanHash:
+      hashRecord('GpuScientificCampaignExecutionPlanFixture', {}),
+  });
+  const fakeResearchEvidence = (label) => {
+    const authorityPayload = {
+      valid: true,
+      cryptographicSignaturesVerified: true,
+      qualificationEvidenceHash:
+        hashRecord('GpuScientificQualificationEvidenceFixture', { label }),
+    };
+    const authorityInspection = {
+      ...authorityPayload,
+      gpuScientificCampaignQualificationAuthorityInspectionHash: hashRecord(
+        'GpuScientificCampaignQualificationAuthorityInspection',
+        authorityPayload,
+      ),
+    };
+    const payload = {
+      version: 1,
+      kind: 'CampaignResearchGpuScientificEvidence',
+      executionResultHash:
+        hashRecord('GpuScientificExecutionResultFixture', { label }),
+      artifactArchiveManifestHash:
+        hashRecord('GpuScientificArtifactArchiveFixture', { label }),
+      qualificationEvidenceHash: authorityPayload.qualificationEvidenceHash,
+      authorityInspection,
+    };
+    return {
+      ...payload,
+      campaignResearchGpuScientificEvidenceHash: hashRecord(
+        'CampaignResearchGpuScientificEvidence',
+        payload,
+      ),
+    };
+  };
+  const authoritativeGpuResearchEvidence = fakeResearchEvidence('authority');
+  const researchResultWithGpuAuthority = {
+    ...researchVerifyNode.result,
+    gpuScientificCampaignExecutionResultHash:
+      authoritativeGpuResearchEvidence.executionResultHash,
+    gpuScientificArtifactBodyArchiveManifestHash:
+      authoritativeGpuResearchEvidence.artifactArchiveManifestHash,
+    gpuScientificCampaignQualificationEvidenceHash:
+      authoritativeGpuResearchEvidence.qualificationEvidenceHash,
+    gpuScientificQualificationEvidence: authoritativeGpuResearchEvidence,
+  };
+  const researchNodeWithGpuAuthority = {
+    ...researchVerifyNode,
+    result: researchResultWithGpuAuthority,
+    resultSha256: hashRecord(
+      'PaperCampaignNodeResult',
+      researchResultWithGpuAuthority,
+    ),
+  };
+  const gpuCandidateInput = {
+    campaignPlanHash: releaseCandidate.campaignPlanHash,
+    campaignId: releaseCandidate.campaignId,
+    paperId: releaseCandidate.paperId,
+    venueTarget: releaseCandidate.venueTarget,
+    packageNode: preparedPackage.packageRunning,
+    finalCompileNode,
+    researchVerifyNode: researchNodeWithGpuAuthority,
+    researchReport: first.releaseBundle.researchReport,
+    campaignResearchSourceSnapshot:
+      releaseCandidate.campaignResearchSourceSnapshot,
+    verifiedSourceMerkleHash: releaseCandidate.verifiedSourceMerkleHash,
+    verifiedSourceWorkspaceManifestHash:
+      releaseCandidate.verifiedSourceWorkspaceManifestHash,
+    sourceWorkspace: releaseCandidate.sourceWorkspace,
+    sourceSnapshotHash: releaseCandidate.sourceSnapshotHash,
+    sourceTreeManifest: releaseCandidate.sourceTreeManifest,
+    researchEvidenceCapsuleManifest:
+      first.releaseBundle.researchEvidenceCapsuleManifest,
+    researchEvidenceCapsuleManifestFileHash:
+      first.releaseBundle.packageOutput
+        .researchEvidenceCapsuleManifestFileHash,
+    researchExecutionReleaseAttestation:
+      first.releaseBundle.researchExecutionReleaseAttestation,
+    autonomousResearchReleaseBinding:
+      releaseCandidate.autonomousResearchReleaseBinding,
+    gpuScientificExecutionPlan: fakeGpuPlan,
+    gpuScientificExecutionEvidence: {},
+    gpuScientificPromotionEvidence: {},
+    createdAt: releaseCandidate.createdAt,
+  };
+  assert.throws(() => createAutomationPromotionCandidate({
+    ...gpuCandidateInput,
+    gpuScientificResearchEvidence: null,
+  }), /automation_promotion_gpu_scientific_research_evidence_binding_invalid/);
+  assert.throws(() => createAutomationPromotionCandidate({
+    ...gpuCandidateInput,
+    gpuScientificResearchEvidence: fakeResearchEvidence('spliced'),
+  }), /automation_promotion_gpu_scientific_research_evidence_binding_invalid/);
+  assert.throws(() => createAutomationPromotionCandidate({
+    ...gpuCandidateInput,
+    researchVerifyNode,
+    gpuScientificResearchEvidence: fakeResearchEvidence('self-declared'),
+  }), /automation_promotion_gpu_scientific_research_evidence_binding_invalid/);
   const incompleteGpuPlan = {
     version: 1,
     kind: 'GpuScientificCampaignExecutionPlan',
@@ -908,14 +1042,35 @@ test('prepared bundle becomes submission-consumable only through the current com
     sourceScopeRoots: [workspace, runtimeRoot],
   }).blockers.includes('campaign_release_authority_experiment_registry_binding_mismatch'));
 
+  const sealedPackageDir = first.releaseBundle.packageOutput.packageDir;
+  const extraPackageFile = path.join(sealedPackageDir, 'UNDECLARED_EXTRA.txt');
+  fs.chmodSync(sealedPackageDir, 0o755);
+  fs.writeFileSync(extraPackageFile, 'undeclared package content');
+  const extraFileTamper = verifyCampaignReleaseBundleForSubmission({
+    releaseAuthority: authority,
+    runtimeRoot,
+    sourceScopeRoots: [workspace, runtimeRoot],
+  });
+  assert.ok(extraFileTamper.blockers.includes(
+    'campaign_release_package_output_seal_invalid:campaign_release_package_output_exact_tree_invalid',
+  ));
+  fs.rmSync(extraPackageFile);
+  fs.chmodSync(sealedPackageDir, 0o555);
+
   const sourceZip = first.releaseBundle.packageOutput.files.find((item) => item.role === 'generated_source_zip');
   fs.chmodSync(sourceZip.path, 0o600);
   fs.appendFileSync(sourceZip.path, 'tamper');
   const fileTamper = verifyCampaignReleaseBundleForSubmission({ releaseAuthority: authority, runtimeRoot, sourceScopeRoots: [workspace, runtimeRoot] });
   assert.ok(fileTamper.blockers.includes('campaign_release_package_output_file_hash_mismatch:generated_source_zip'));
+  assert.ok(fileTamper.blockers.some((blocker) => (
+    blocker.startsWith('campaign_release_package_output_seal_invalid:')
+  )));
   const tamperedCli = runSubmissionHandoffCli({ campaignId: 'campaign', root: submissionRoot, runtimeRoot });
   assert.notEqual(tamperedCli.status, 0);
-  assert.match(tamperedCli.stderr, /campaign_release_package_output_file_hash_mismatch:generated_source_zip/);
+  assert.match(
+    tamperedCli.stderr,
+    /campaign_release_package_output_(?:file_hash_mismatch|file_invalid):generated_source_zip/,
+  );
 });
 
 test('release promotion is atomic with fenced completion across a simulated crash', async (t) => {

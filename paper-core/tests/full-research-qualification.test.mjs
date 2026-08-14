@@ -516,6 +516,101 @@ test('a fresh attestor-signed qualification bound to current code, providers, sc
   );
 });
 
+test('full research qualification fails closed on missing, tampered, and spliced GPU lineage', () => {
+  const attacks = [
+    {
+      label: 'missing promotion evidence',
+      blocker: 'golden_micro_campaign_gpu_scientific_promotion_evidence_invalid',
+      alter(bundle) {
+        bundle.gpuScientificCampaignPromotionEvidenceHash =
+          HASH('declared-but-missing-gpu-promotion');
+      },
+    },
+    {
+      label: 'research GPU evidence hash remnant',
+      blocker: 'golden_micro_campaign_gpu_scientific_promotion_evidence_invalid',
+      alter(bundle) {
+        bundle.campaignResearchGpuScientificEvidenceHash =
+          HASH('partial-gpu-research-evidence-remnant');
+      },
+    },
+    {
+      label: 'research authority inspection hash remnant',
+      blocker: 'golden_micro_campaign_gpu_scientific_promotion_evidence_invalid',
+      alter(bundle) {
+        bundle.gpuScientificCampaignQualificationAuthorityInspectionHash =
+          HASH('partial-gpu-authority-inspection-remnant');
+      },
+    },
+    {
+      label: 'tampered capsule descriptor',
+      blocker: 'golden_micro_campaign_gpu_scientific_capsule_binding_invalid',
+      alter(bundle) {
+        bundle.researchEvidenceCapsuleManifest.gpuScientificEvidenceIncluded = true;
+        bundle.researchEvidenceCapsuleManifest.gpuScientificEvidence = {
+          gpuScientificEvidenceDescriptorHash: HASH('tampered-gpu-descriptor'),
+        };
+      },
+    },
+    {
+      label: 'foreign promotion candidate splice',
+      blocker: 'golden_micro_campaign_gpu_scientific_research_projection_mismatch',
+      alter(bundle) {
+        bundle.gpuScientificExecutionPlanHash = HASH('gpu-plan');
+        bundle.gpuScientificExecutionPlan = {
+          gpuScientificCampaignExecutionPlanHash:
+            bundle.gpuScientificExecutionPlanHash,
+        };
+        bundle.promotionCandidate = {
+          campaignId: 'foreign-campaign',
+          paperId: bundle.researchReport.paperId,
+          campaignPlanHash: bundle.campaignPlanHash,
+          gpuScientificExecutionPlanHash: bundle.gpuScientificExecutionPlanHash,
+          gpuScientificExecutionPlan: bundle.gpuScientificExecutionPlan,
+        };
+      },
+    },
+    {
+      label: 'tampered package GPU file binding',
+      blocker: 'golden_micro_campaign_gpu_scientific_package_output_binding_invalid',
+      alter(bundle) {
+        bundle.gpuScientificCampaignPromotionEvidenceHash = HASH('gpu-promotion');
+        bundle.packageOutput.files = [{
+          role: 'research_evidence_capsule_file',
+          capsuleRole: 'gpu_scientific_campaign_qualification_evidence',
+          packageRelativePath: 'evidence/gpu-scientific/FOREIGN.json',
+          hash: HASH('foreign-gpu-package-file'),
+          bytes: 1,
+        }];
+      },
+    },
+    {
+      label: 'foreign release attestation splice',
+      blocker: 'golden_micro_campaign_gpu_scientific_release_attestation_binding_invalid',
+      alter(bundle) {
+        bundle.gpuScientificCampaignPromotionEvidenceHash = HASH('gpu-promotion');
+        bundle.researchExecutionReleaseAttestationHash =
+          HASH('expected-gpu-release-attestation');
+        bundle.researchExecutionReleaseAttestation
+          .campaignReleaseExecutionAttestationHash =
+            HASH('foreign-gpu-release-attestation');
+      },
+    },
+  ];
+  for (const { label, blocker, alter } of attacks) {
+    const f = fixture();
+    const authority = structuredClone(f.authority);
+    alter(authority.releaseBundle);
+    const result = verifyFullResearchQualificationReceipt(f.receipt, {
+      ...f.context,
+      resolveCampaignReleaseAuthority: () => authority,
+    });
+    assert.equal(result.ready, false, label);
+    assert.ok(result.blockers.includes(blocker),
+      `${label}: ${JSON.stringify(result.blockers)}`);
+  }
+});
+
 test('persisted global readiness rejects an authentic production-run qualification substitution', () => {
   const goldenFixture = fixture();
   const golden = globallyBoundAuthority(goldenFixture, { launchMode: 'golden-bootstrap' });

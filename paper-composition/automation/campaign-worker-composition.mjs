@@ -178,6 +178,7 @@ export function composeCampaignWorkerExecution({
     advancedNumericalComposition = composeCampaignAdvancedNumericalExecution({
       plan: advancedNumericalPlans[0],
       configurationPath,
+      runtimeRoot,
     });
     effectiveAdvancedNumericalExecution = advancedNumericalComposition.execution;
   }
@@ -189,6 +190,7 @@ export function composeCampaignWorkerExecution({
   if (gpuScientificPlans.length && !effectiveGpuScientificExecution) {
     gpuScientificComposition = composeCampaignGpuScientificExecution({
       outputRoot: prepareCampaignAutomationArtifactRoot(runtimeRoot),
+      runtimeRoot,
       plans: gpuScientificPlans,
     });
     effectiveGpuScientificExecution = gpuScientificComposition.execution;

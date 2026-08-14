@@ -294,6 +294,17 @@ async function writePackageRecords({
       independentPdfRebuildReceipt?.independentPdfRebuildVerificationReceiptHash || null,
     independentRebuiltPdfHash: independentPdfRebuildReceipt?.rebuiltPdf?.hash || null,
     researchEvidenceCapsuleEntryCount: researchEvidenceCapsule?.manifest?.entryCount || 0,
+    ...(researchEvidenceCapsule?.manifest?.gpuScientificEvidenceIncluded === true ? {
+      gpuScientificArtifactBodyArchiveManifestHash:
+        researchEvidenceCapsule.gpuScientificArtifactBodyArchiveManifest
+          ?.gpuScientificArtifactBodyArchiveManifestHash || null,
+      gpuScientificCampaignQualificationEvidenceHash:
+        researchEvidenceCapsule.gpuScientificQualificationEvidence
+          ?.gpuScientificCampaignQualificationEvidenceHash || null,
+      gpuScientificArtifactBodyCount:
+        researchEvidenceCapsule.gpuScientificArtifactBodyArchiveManifest
+          ?.bodyCount || 0,
+    } : {}),
     sourceTreeManifest,
     artifactCount: artifactPackage.artifactCount,
     artifacts: artifactPackage.artifacts,
@@ -329,6 +340,11 @@ export async function runPackageAdapter({
   operatorDatasetAuthorityTrustStore = null,
   researchExecutionReleaseAttestor = null,
   assertExternalSideEffectReady = null,
+  gpuScientificExecutionPlan = null,
+  gpuScientificExecutionNode = null,
+  gpuScientificExecutionResult = null,
+  gpuScientificQualificationEvidence = null,
+  gpuScientificArtifactBodyArchiveManifest = null,
   independentPdfRebuild = null,
   evidenceEntailmentReviewReceipt = null,
   requireEvidenceEntailmentReview = false,
@@ -509,6 +525,12 @@ export async function runPackageAdapter({
         researchExecutionReleaseAttestor,
         assertExternalSideEffectReady,
         academicEvidenceRequired: profiles.has('empirical_or_experiment'),
+        runtimeRoot,
+        gpuScientificExecutionPlan,
+        gpuScientificExecutionNode,
+        gpuScientificExecutionResult,
+        gpuScientificQualificationEvidence,
+        gpuScientificArtifactBodyArchiveManifest,
         createdAt: packageObservedAt,
       });
     }

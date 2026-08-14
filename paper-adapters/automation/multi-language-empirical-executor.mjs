@@ -400,6 +400,7 @@ export function createMultiLanguageEmpiricalExecutor({
         cwd: spec.cwd,
         sourceRoot: spec.sourceRoot || spec.cwd,
         timeoutMs: spec.timeoutMs,
+        absoluteDeadlineEpochMs: spec.absoluteDeadlineEpochMs ?? null,
         outputPaths: spec.outputPaths || [],
         outputDirectory: spec.outputDirectory,
         requiresGpu: Boolean(spec.requiresGpu),

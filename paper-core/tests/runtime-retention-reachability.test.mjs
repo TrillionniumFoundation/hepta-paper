@@ -11,7 +11,12 @@ import {
 } from '../../paper-adapters/automation/runtime-retention.mjs';
 import {
   listRuntimeRetentionEntries,
+  retentionMemberHash,
+  retentionMemberIdentity,
 } from '../../paper-adapters/automation/runtime-retention-scope-repository.mjs';
+import {
+  removeAuthorizedSealedPackageTreeSync,
+} from '../../paper-adapters/automation/runtime-retention-authorized-package-removal.mjs';
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqlite-receipt-ledger.mjs';
 import { issueRuntimeRetentionWriter } from '../../paper-adapters/persistence/receipt-writer-broker.mjs';
@@ -105,6 +110,28 @@ function fixedManifestProvider(manifest) {
   });
 }
 
+function makePackageTreeReadOnly(candidate) {
+  const stat = fs.lstatSync(candidate);
+  if (stat.isDirectory()) {
+    for (const name of fs.readdirSync(candidate)) {
+      makePackageTreeReadOnly(path.join(candidate, name));
+    }
+    fs.chmodSync(candidate, 0o500);
+  } else {
+    fs.chmodSync(candidate, 0o400);
+  }
+}
+
+function restoreOwnerWrite(candidate) {
+  if (!fs.existsSync(candidate)) return;
+  const stat = fs.lstatSync(candidate);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) return;
+  fs.chmodSync(candidate, 0o700);
+  for (const name of fs.readdirSync(candidate)) {
+    restoreOwnerWrite(path.join(candidate, name));
+  }
+}
+
 test('new runtime scopes report inventory and quota pressure but protect every unknown entry by default', (t) => {
   const { root, entries } = fixture(t);
   const plan = buildRuntimeRetentionPlan({ runtimeRoot: root, policies: governedPolicies() });
@@ -170,6 +197,323 @@ test('complete reachability evidence closes dry-run and trusted apply for snapsh
   assert.equal(applied.status, 'runtime_retention_applied');
   for (const category of GOVERNED_CATEGORIES) assert.equal(fs.existsSync(entries[category].path), false, category);
   assert.equal(fs.existsSync(entries['workspace-snapshots'].companionPaths[0]), false);
+});
+
+test('trusted retention explicitly unseals and removes an authorized immutable package tree', (t) => {
+  const { root, entries } = fixture(t);
+  const packagePath = entries.packages.path;
+  const nested = path.join(packagePath, 'evidence', 'gpu-scientific');
+  fs.mkdirSync(nested, { recursive: true });
+  fs.writeFileSync(path.join(nested, 'artifact.json'), '{"immutable":true}\n');
+  makePackageTreeReadOnly(packagePath);
+  assert.equal(fs.lstatSync(packagePath).mode & 0o222, 0);
+  assert.equal(fs.lstatSync(nested).mode & 0o222, 0);
+
+  const currentEntries = {
+    ...entries,
+    packages: listRuntimeRetentionEntries(root, 'packages').entries[0],
+  };
+  const reachabilityManifest = manifestFor({ root, entries: currentEntries });
+  const plan = buildRuntimeRetentionPlan({
+    runtimeRoot: root,
+    reachabilityManifest,
+    policies: governedPolicies(),
+  });
+  const { store, ledger } = trustedRetentionLedger(root);
+  t.after(() => store.close());
+  const applied = executeRuntimeRetentionPlan(plan, {
+    apply: true,
+    reachabilityManifest,
+    reachabilityManifestProvider: fixedManifestProvider(reachabilityManifest),
+    retentionReceiptLedger: ledger,
+  });
+
+  assert.equal(applied.status, 'runtime_retention_applied');
+  assert.equal(applied.removed.find((entry) => entry.category === 'packages')?.removed, true);
+  assert.equal(fs.existsSync(packagePath), false);
+});
+
+test('authorized package removal preserves a candidate replacement raced after isolation', (t) => {
+  const { root, entries } = fixture(t);
+  const packagePath = entries.packages.path;
+  const nested = path.join(packagePath, 'evidence');
+  fs.mkdirSync(nested);
+  fs.writeFileSync(path.join(nested, 'authorized.json'), '{"authorized":true}\n');
+  makePackageTreeReadOnly(packagePath);
+  const packageEntry = listRuntimeRetentionEntries(root, 'packages').entries[0];
+  const reachabilityManifest = manifestFor({
+    root,
+    entries: { ...entries, packages: packageEntry },
+  });
+  const retentionDeletionEvidence = reachabilityManifest.categories
+    .find((entry) => entry.category === 'packages').deletionEvidence[0];
+  const originalFsyncSync = fs.fsyncSync;
+  let replacementInstalled = false;
+  fs.fsyncSync = (descriptor) => {
+    const result = originalFsyncSync(descriptor);
+    const isolated = fs.existsSync(path.dirname(packagePath))
+      && fs.readdirSync(path.dirname(packagePath))
+        .some((name) => name.startsWith('.hepta-retention-package-delete-')
+          && fs.existsSync(path.join(path.dirname(packagePath), name, 'package')));
+    if (!replacementInstalled && !fs.existsSync(packagePath) && isolated) {
+      replacementInstalled = true;
+      fs.mkdirSync(packagePath);
+      fs.writeFileSync(path.join(packagePath, 'LATER.txt'), 'must survive\n');
+      makePackageTreeReadOnly(packagePath);
+    }
+    return result;
+  };
+  t.after(() => {
+    fs.fsyncSync = originalFsyncSync;
+    if (!fs.existsSync(root)) return;
+    for (const name of fs.readdirSync(path.dirname(packagePath))) {
+      restoreOwnerWrite(path.join(path.dirname(packagePath), name));
+    }
+  });
+
+  try {
+    assert.throws(() => removeAuthorizedSealedPackageTreeSync({
+      candidate: packagePath,
+      expectedContentHash: packageEntry.contentHash,
+      expectedIdentity: retentionMemberIdentity(packagePath),
+      authorization: {
+        authorized: true,
+        category: 'packages',
+        sourcePath: packagePath,
+        retentionDeletionEvidence,
+      },
+    }), /runtime_retention_package_removal_source_advanced/);
+  } finally {
+    fs.fsyncSync = originalFsyncSync;
+  }
+
+  assert.equal(replacementInstalled, true);
+  assert.equal(fs.readFileSync(path.join(packagePath, 'LATER.txt'), 'utf8'), 'must survive\n');
+  assert.equal(fs.lstatSync(packagePath).mode & 0o222, 0);
+  const isolationNames = fs.readdirSync(path.dirname(packagePath))
+    .filter((name) => name.startsWith('.hepta-retention-package-delete-'));
+  assert.equal(isolationNames.length, 1);
+  const isolatedPackage = path.join(path.dirname(packagePath), isolationNames[0], 'package');
+  assert.equal(fs.readFileSync(path.join(isolatedPackage, 'PACKAGE_RECORD.json'), 'utf8'), '{"superseded":true}\n');
+  assert.equal(fs.lstatSync(isolatedPackage).mode & 0o222, 0);
+  assert.equal(fs.lstatSync(path.dirname(isolatedPackage)).mode & 0o222, 0);
+  restoreOwnerWrite(packagePath);
+  restoreOwnerWrite(path.join(path.dirname(packagePath), isolationNames[0]));
+});
+
+test('authorized package removal rejects a preoccupied isolation destination without replacing it', (t) => {
+  const { root, entries } = fixture(t);
+  const packagePath = entries.packages.path;
+  makePackageTreeReadOnly(packagePath);
+  const expectedContentHash = retentionMemberHash(packagePath);
+  const expectedIdentity = retentionMemberIdentity(packagePath);
+  const packageEntry = listRuntimeRetentionEntries(root, 'packages').entries[0];
+  const reachabilityManifest = manifestFor({
+    root,
+    entries: { ...entries, packages: packageEntry },
+  });
+  const retentionDeletionEvidence = reachabilityManifest.categories
+    .find((entry) => entry.category === 'packages').deletionEvidence[0];
+  const originalMkdtempSync = fs.mkdtempSync;
+  let collisionInstalled = false;
+  fs.mkdtempSync = (prefix, ...args) => {
+    const created = originalMkdtempSync(prefix, ...args);
+    if (!collisionInstalled
+      && String(prefix).includes('.hepta-retention-package-delete-')) {
+      collisionInstalled = true;
+      const collision = path.join(created, 'package');
+      fs.mkdirSync(collision);
+      fs.writeFileSync(path.join(collision, 'COLLISION.txt'), 'must not be replaced\n');
+      makePackageTreeReadOnly(collision);
+    }
+    return created;
+  };
+  t.after(() => { fs.mkdtempSync = originalMkdtempSync; });
+
+  try {
+    assert.throws(() => removeAuthorizedSealedPackageTreeSync({
+      candidate: packagePath,
+      expectedContentHash,
+      expectedIdentity,
+      authorization: {
+        authorized: true,
+        category: 'packages',
+        sourcePath: packagePath,
+        retentionDeletionEvidence,
+      },
+    }), /runtime_retention_package_removal_no_replace_move_failed/);
+  } finally {
+    fs.mkdtempSync = originalMkdtempSync;
+  }
+
+  assert.equal(collisionInstalled, true);
+  assert.equal(fs.readFileSync(path.join(packagePath, 'PACKAGE_RECORD.json'), 'utf8'), '{"superseded":true}\n');
+  assert.equal(fs.lstatSync(packagePath).mode & 0o222, 0);
+  const isolationName = fs.readdirSync(path.dirname(packagePath))
+    .find((name) => name.startsWith('.hepta-retention-package-delete-'));
+  const collision = path.join(path.dirname(packagePath), isolationName, 'package');
+  assert.equal(fs.readFileSync(path.join(collision, 'COLLISION.txt'), 'utf8'), 'must not be replaced\n');
+  assert.equal(fs.lstatSync(collision).mode & 0o222, 0);
+  restoreOwnerWrite(packagePath);
+  restoreOwnerWrite(path.join(path.dirname(packagePath), isolationName));
+});
+
+test('authorized package removal preserves a child replacement injected before its isolation move', (t) => {
+  const { root, entries } = fixture(t);
+  const packagePath = entries.packages.path;
+  makePackageTreeReadOnly(packagePath);
+  const expectedContentHash = retentionMemberHash(packagePath);
+  const expectedIdentity = retentionMemberIdentity(packagePath);
+  const packageEntry = listRuntimeRetentionEntries(root, 'packages').entries[0];
+  const reachabilityManifest = manifestFor({
+    root,
+    entries: { ...entries, packages: packageEntry },
+  });
+  const retentionDeletionEvidence = reachabilityManifest.categories
+    .find((entry) => entry.category === 'packages').deletionEvidence[0];
+  const originalMkdtempSync = fs.mkdtempSync;
+  let childReplaced = false;
+  fs.mkdtempSync = (prefix, ...args) => {
+    const created = originalMkdtempSync(prefix, ...args);
+    if (!childReplaced && String(prefix).endsWith('/.entry-')) {
+      const isolationName = fs.readdirSync(path.dirname(packagePath))
+        .find((name) => name.startsWith('.hepta-retention-package-delete-'));
+      const isolatedPackage = path.join(path.dirname(packagePath), isolationName, 'package');
+      const authorizedChild = path.join(isolatedPackage, 'PACKAGE_RECORD.json');
+      const displacedChild = path.join(isolatedPackage, 'PACKAGE_RECORD.authorized-original.json');
+      fs.renameSync(authorizedChild, displacedChild);
+      fs.writeFileSync(authorizedChild, 'later child must survive\n');
+      fs.chmodSync(authorizedChild, 0o400);
+      childReplaced = true;
+    }
+    return created;
+  };
+  t.after(() => { fs.mkdtempSync = originalMkdtempSync; });
+
+  try {
+    assert.throws(() => removeAuthorizedSealedPackageTreeSync({
+      candidate: packagePath,
+      expectedContentHash,
+      expectedIdentity,
+      authorization: {
+        authorized: true,
+        category: 'packages',
+        sourcePath: packagePath,
+        retentionDeletionEvidence,
+      },
+    }), /runtime_retention_package_removal_failed_and_reseal_failed/);
+  } finally {
+    fs.mkdtempSync = originalMkdtempSync;
+  }
+
+  assert.equal(childReplaced, true);
+  assert.equal(fs.existsSync(packagePath), false);
+  const isolationName = fs.readdirSync(path.dirname(packagePath))
+    .find((name) => name.startsWith('.hepta-retention-package-delete-'));
+  const isolatedPackage = path.join(path.dirname(packagePath), isolationName, 'package');
+  assert.equal(fs.readFileSync(path.join(isolatedPackage, 'PACKAGE_RECORD.json'), 'utf8'), 'later child must survive\n');
+  assert.equal(fs.readFileSync(
+    path.join(isolatedPackage, 'PACKAGE_RECORD.authorized-original.json'),
+    'utf8',
+  ), '{"superseded":true}\n');
+  assert.equal(fs.lstatSync(isolatedPackage).mode & 0o222, 0);
+  restoreOwnerWrite(path.join(path.dirname(packagePath), isolationName));
+});
+
+test('package retention never unseals or deletes a sealed tree whose physical preimage changed', (t) => {
+  const { root, entries } = fixture(t);
+  const packagePath = entries.packages.path;
+  const packageFile = path.join(packagePath, 'PACKAGE_RECORD.json');
+  makePackageTreeReadOnly(packagePath);
+  const currentEntries = {
+    ...entries,
+    packages: listRuntimeRetentionEntries(root, 'packages').entries[0],
+  };
+  const reachabilityManifest = manifestFor({ root, entries: currentEntries });
+  const plan = buildRuntimeRetentionPlan({
+    runtimeRoot: root,
+    reachabilityManifest,
+    policies: governedPolicies(),
+  });
+
+  fs.chmodSync(packagePath, 0o700);
+  fs.chmodSync(packageFile, 0o600);
+  fs.writeFileSync(packageFile, '{"superseded":"tampered"}\n');
+  fs.chmodSync(packageFile, 0o400);
+  fs.symlinkSync('/dev/null', path.join(packagePath, 'UNBOUND.bin'));
+  fs.chmodSync(packagePath, 0o500);
+  const { store, ledger } = trustedRetentionLedger(root);
+  t.after(() => store.close());
+  const applied = executeRuntimeRetentionPlan(plan, {
+    apply: true,
+    reachabilityManifest,
+    reachabilityManifestProvider: fixedManifestProvider(reachabilityManifest),
+    retentionReceiptLedger: ledger,
+  });
+
+  assert.equal(applied.status, 'runtime_retention_partially_blocked');
+  const packageResult = applied.removed.find((entry) => entry.category === 'packages');
+  assert.equal(packageResult.removed, false);
+  assert.equal(packageResult.blockers.includes('retention_entry_hash_changed_after_plan'), true);
+  assert.equal(fs.existsSync(packagePath), true);
+  assert.equal(fs.lstatSync(packagePath).mode & 0o222, 0);
+  restoreOwnerWrite(packagePath);
+});
+
+test('sealed package unsealing requires explicit trusted deletion authority', (t) => {
+  const { entries } = fixture(t);
+  const packagePath = entries.packages.path;
+  makePackageTreeReadOnly(packagePath);
+  const expectedContentHash = retentionMemberHash(packagePath);
+  const expectedIdentity = retentionMemberIdentity(packagePath);
+
+  assert.throws(() => removeAuthorizedSealedPackageTreeSync({
+    candidate: packagePath,
+    expectedContentHash,
+    expectedIdentity,
+    authorization: {
+      authorized: false,
+      category: 'packages',
+      sourcePath: packagePath,
+      retentionDeletionEvidence: null,
+    },
+  }), /runtime_retention_package_removal_authorization_invalid/);
+  assert.equal(fs.existsSync(packagePath), true);
+  assert.equal(fs.lstatSync(packagePath).mode & 0o222, 0);
+  restoreOwnerWrite(packagePath);
+});
+
+test('authorized package retention rejects and restores a sealed hardlinked tree', (t) => {
+  const { root, entries } = fixture(t);
+  const packagePath = entries.packages.path;
+  const packageFile = path.join(packagePath, 'PACKAGE_RECORD.json');
+  fs.linkSync(packageFile, path.join(packagePath, 'PACKAGE_RECORD.alias.json'));
+  makePackageTreeReadOnly(packagePath);
+  const currentEntries = {
+    ...entries,
+    packages: listRuntimeRetentionEntries(root, 'packages').entries[0],
+  };
+  const reachabilityManifest = manifestFor({ root, entries: currentEntries });
+  const plan = buildRuntimeRetentionPlan({
+    runtimeRoot: root,
+    reachabilityManifest,
+    policies: governedPolicies(),
+  });
+  const { store, ledger } = trustedRetentionLedger(root);
+  t.after(() => store.close());
+
+  assert.throws(() => executeRuntimeRetentionPlan(plan, {
+    apply: true,
+    reachabilityManifest,
+    reachabilityManifestProvider: fixedManifestProvider(reachabilityManifest),
+    retentionReceiptLedger: ledger,
+  }), /runtime_retention_package_removal_tree_not_sealed/);
+  assert.equal(fs.existsSync(packagePath), true);
+  assert.equal(fs.lstatSync(packagePath).mode & 0o222, 0);
+  assert.equal(fs.lstatSync(packageFile).nlink, 2);
+  assert.equal(fs.readdirSync(path.dirname(packagePath))
+    .some((name) => name.endsWith('.quarantine')), false);
+  restoreOwnerWrite(packagePath);
 });
 
 test('active, referenced, release-dependent, and recovery-protected entries cannot conflict with deletion evidence', (t) => {

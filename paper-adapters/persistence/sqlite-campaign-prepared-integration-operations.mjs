@@ -4,7 +4,18 @@ import { createCampaignReleasePromotionReceipt } from '../../paper-domain/automa
 import { buildSqliteCampaignProjectionStatement } from './sqlite-campaign-projection.mjs';
 import { mapCampaignNodeRow as parseNode } from './sqlite-campaign-row-mappers.mjs';
 
-export function createCampaignPreparedIntegrationOperations({ store, clock, mutation, guarded, eventStatement, usageSql, assertLiveNodeAttempt, getApi, experimentRegistryAuthorityVerifier = null } = {}) {
+export function createCampaignPreparedIntegrationOperations({
+  store,
+  clock,
+  mutation,
+  guarded,
+  eventStatement,
+  usageSql,
+  assertLiveNodeAttempt,
+  getApi,
+  experimentRegistryAuthorityVerifier = null,
+  gpuScientificPromotionAuthorityVerifier = null,
+} = {}) {
   return {
     prepareNodeResult({ nodeId, workerId, attemptId, leaseGeneration, result = {}, requiresIntegration = false, integrationKey = null } = {}) {
       if (!attemptId || !Number.isInteger(Number(leaseGeneration))) throw new Error('campaign_node_attempt_fence_required');
@@ -140,7 +151,14 @@ export function createCampaignPreparedIntegrationOperations({ store, clock, muta
       const now = clock.nowIso();
       const campaign = getApi().getCampaign(node.campaignId);
       const releasePromotionReceipt = node.kind === 'package' && prepared?.releaseBundle
-        ? createCampaignReleasePromotionReceipt({ campaign, packageNode: node, packageResult: prepared, promotedAt: now, experimentRegistryAuthorityVerifier })
+        ? createCampaignReleasePromotionReceipt({
+          campaign,
+          packageNode: node,
+          packageResult: prepared,
+          promotedAt: now,
+          experimentRegistryAuthorityVerifier,
+          gpuScientificPromotionAuthorityVerifier,
+        })
         : null;
       const eventRow = eventStatement(node.campaignId, nodeId, 'campaign_node_completed', {
         resultHash: node.preparedResultHash,

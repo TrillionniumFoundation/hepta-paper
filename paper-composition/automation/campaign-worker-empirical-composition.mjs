@@ -110,6 +110,7 @@ export function composeCampaignWorkerEmpiricalExecution({
     allowedContainerImages,
     dockerImage,
     trustedDatasetSupervisorImages,
+    runtimeRoot,
     allowGpu: requiresGpu,
     maximumTimeoutMs: Number(options['max-wall-ms'] || 6 * 60 * 60 * 1000),
     maximumMemoryBytes: Number(options['worker-memory-mib'] || 4096) * 1024 * 1024,

@@ -3,6 +3,9 @@ import path from 'node:path';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { pathWithin, sha256FileSync } from '../../workflow-kernel/runtime/file-utils.mjs';
 import { retentionMemberHash } from './runtime-retention-scope-repository.mjs';
+import {
+  assertSealedImmutableCampaignPackageFilesSync,
+} from './campaign-release-materialization.mjs';
 
 function walkRegularTree(candidate) {
   const stat = fs.lstatSync(candidate, { bigint: true });
@@ -80,10 +83,12 @@ export function createPackageLifecycleMaterializationInspector({ runtimeRoot } =
       throw new Error('package_lifecycle_release_package_binding_invalid');
     }
     const before = pinnedDirectoryIdentity(packagePath);
+    assertSealedImmutableCampaignPackageFilesSync(packageOutput, root);
     walkRegularTree(packagePath);
     const firstHash = retentionMemberHash(packagePath);
     walkRegularTree(packagePath);
     const secondHash = retentionMemberHash(packagePath);
+    assertSealedImmutableCampaignPackageFilesSync(packageOutput, root);
     const after = pinnedDirectoryIdentity(packagePath);
     if (!sameIdentity(before, after) || firstHash !== secondHash) {
       throw new Error('package_lifecycle_package_changed_during_inspection');

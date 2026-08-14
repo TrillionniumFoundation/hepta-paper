@@ -9,6 +9,7 @@ import {
   assertWorkspaceReleaseReady,
   inspectWorkspaceReleaseState,
 } from '../src/release-state-repository.mjs';
+import { CAPABILITY_CATALOG } from '../../paper-domain/governance/capability-catalog.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
 const packageJson = JSON.parse(fs.readFileSync(path.join(workspaceRoot, 'package.json'), 'utf8'));
@@ -215,6 +216,19 @@ test('repository release-state command verifies development but release gate req
   assert.deepEqual(JSON.parse(releaseGate.stdout).errors, [
     'required_release_state_mismatch:release_ready:development',
   ]);
+});
+
+test('operator-facing capability counts are derived from the live catalog size', () => {
+  const count = Object.keys(CAPABILITY_CATALOG).length;
+  const currentStatus = fs.readFileSync(
+    path.join(workspaceRoot, 'paper-core', 'docs', 'CURRENT_STATUS.md'),
+    'utf8',
+  );
+  const readme = fs.readFileSync(path.join(workspaceRoot, 'README.md'), 'utf8');
+  for (const document of [currentStatus, readme]) {
+    assert.match(document, new RegExp(`${count}/${count}`));
+    assert.match(document, new RegExp(`0/${count}`));
+  }
 });
 
 test('release-state CLI rejects unknown, missing, duplicate, and override arguments', () => {

@@ -284,6 +284,7 @@ export function createOutOfProcessAdvancedNumericalPluginRunner({
         });
       }
       const requestBase64 = Buffer.from(JSON.stringify(request), 'utf8').toString('base64');
+      const absoluteDeadlineEpochMs = Date.now() + descriptor.limits.timeoutMs;
       const workerReceipt = await sandbox.run({
         executable: descriptor.runtime.executable,
         args: [
@@ -302,6 +303,7 @@ export function createOutOfProcessAdvancedNumericalPluginRunner({
         expectedSourceWorkspaceManifestHash:
           descriptor.sourceIdentity.workspaceManifestHash,
         timeoutMs: descriptor.limits.timeoutMs,
+        absoluteDeadlineEpochMs,
         memoryBytes: descriptor.limits.memoryBytes,
         cpuSeconds: descriptor.limits.cpuSeconds,
         maximumProcesses: descriptor.limits.maximumProcesses,

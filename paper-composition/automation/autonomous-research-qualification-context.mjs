@@ -35,6 +35,13 @@ import {
 import {
   createReviewerReceiptVerificationAuthority,
 } from '../../paper-adapters/automation/reviewer-principal-executor-pool.mjs';
+import {
+  loadOperatorDatasetAuthorityTrustStoreSync,
+} from '../../paper-adapters/automation/operator-dataset-harness-reader.mjs';
+import {
+  createGpuScientificCampaignForbiddenIdentityProvider,
+  createGpuScientificCampaignPromotionAuthorityVerifier,
+} from '../../paper-adapters/automation/gpu-scientific-campaign-promotion-authority-verifier.mjs';
 
 function observedPinnedImageDigest(profile, spawnSyncImpl) {
   const inspection = inspectDockerRuntimeImageManifest({
@@ -124,11 +131,23 @@ export function createAutonomousResearchQualificationContextProvider({
   reviewerReceiptVerificationAuthorityFactory =
     createReviewerReceiptVerificationAuthority,
   runtimePrincipalBindingBuilder = buildAutonomousResearchRuntimePrincipalBinding,
+  gpuScientificPromotionAuthorityVerifier: suppliedGpuScientificVerifier = null,
 } = {}) {
   const configuration = requireAutonomousResearchProviderConfiguration(
     providerConfiguration,
     { expectedHash: expectedProviderConfigurationHash },
   );
+  const gpuScientificPromotionAuthorityVerifier = suppliedGpuScientificVerifier
+    || createGpuScientificCampaignPromotionAuthorityVerifier({
+      trustStoreProvider: () =>
+        loadOperatorDatasetAuthorityTrustStoreSync({ runtimeRoot }),
+      clock,
+      forbiddenIdentityProvider:
+        createGpuScientificCampaignForbiddenIdentityProvider({
+          environment,
+          clock,
+        }),
+    });
   return async function provideAutonomousResearchQualificationContext({
     preparation,
     onSynchronousProgress: invocationSynchronousProgress = null,
@@ -319,6 +338,7 @@ export function createAutonomousResearchQualificationContextProvider({
       formalReviewerProviderCanaryReceipt: reviewerCanary,
       reviewerEvidenceAuthority,
       runtimePrincipalBinding,
+      gpuScientificPromotionAuthorityVerifier,
     });
   };
 }

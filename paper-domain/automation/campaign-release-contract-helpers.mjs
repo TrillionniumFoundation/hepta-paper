@@ -12,6 +12,15 @@ import {
   verifyGpuScientificCampaignExecutionPlan,
   verifyGpuScientificCampaignExecutionResult,
 } from './gpu-scientific-campaign-execution-contract.mjs';
+import {
+  verifyGpuScientificCampaignPromotionEvidence,
+} from './gpu-scientific-campaign-promotion-contract.mjs';
+import {
+  verifyCampaignResearchGpuScientificEvidence,
+} from './campaign-research-gpu-scientific-evidence-contract.mjs';
+import {
+  verifyCampaignReleaseGpuScientificEvidenceDescriptor,
+} from './campaign-release-gpu-scientific-evidence-capsule-contract.mjs';
 
 export const EMPIRICAL_ASSERTION_RELEASE_HASH_FIELDS = Object.freeze([
   'empiricalAssertionAuthorityHash',
@@ -80,15 +89,22 @@ export function gpuScientificReleaseEvidenceValid({
   paperId,
   plan,
   evidence,
+  qualificationEvidence,
+  promotionEvidence,
+  researchEvidenceCapsuleManifestHash,
+  researchEvidenceCapsuleManifestFileHash,
+  researchExecutionReleaseAttestationHash,
 } = {}) {
-  if (!plan && !evidence) return true;
-  if (!plan || !evidence
+  if (!plan && !evidence && !qualificationEvidence && !promotionEvidence) {
+    return true;
+  }
+  if (!plan || !evidence || !qualificationEvidence || !promotionEvidence
     || !verifyGpuScientificCampaignExecutionPlan(plan, {
       campaignId,
       paperId,
       nodeId: evidence.nodeId,
     })) return false;
-  return verifyGpuScientificCampaignExecutionResult(evidence, {
+  const rawResultValid = verifyGpuScientificCampaignExecutionResult(evidence, {
     campaign: { campaignId, paperId, spec: { campaignPlanHash } },
     node: {
       nodeId: evidence.nodeId,
@@ -102,11 +118,40 @@ export function gpuScientificReleaseEvidenceValid({
           .gpuScientificCampaignResourceBudgetHash,
     },
     plan,
-    requirePromotionEligible: true,
+    requirePromotionEligible: false,
   });
+  const request = qualificationEvidence
+    ?.gpuScientificCampaignQualificationRequest;
+  return rawResultValid
+    && evidence.promotionEligible === false
+    && verifyGpuScientificCampaignPromotionEvidence(promotionEvidence, {
+      campaignId,
+      paperId,
+      gpuScientificCampaignExecutionResultHash:
+        evidence.gpuScientificCampaignExecutionResultHash,
+      artifactArchiveManifestHash:
+        qualificationEvidence.artifactArchiveManifestHash,
+      scientificOutputCommitmentHash:
+        qualificationEvidence.scientificOutputCommitmentHash,
+      researchEvidenceCapsuleManifestHash,
+      researchEvidenceCapsuleManifestFileHash,
+      researchExecutionReleaseAttestationHash,
+    })
+    && promotionEvidence.gpuScientificCampaignQualificationEvidenceHash
+      === qualificationEvidence.gpuScientificCampaignQualificationEvidenceHash
+    && JSON.stringify(
+      promotionEvidence.gpuScientificCampaignQualificationEvidence,
+    ) === JSON.stringify(qualificationEvidence)
+    && request?.campaignPlanHash === campaignPlanHash
+    && request?.executionPlanHash
+      === plan.gpuScientificCampaignExecutionPlanHash
+    && request?.taskSetHash === plan.taskSetHash
+    && request?.nodeId === evidence.nodeId
+    && request?.attemptId === evidence.attemptId
+    && request?.leaseGeneration === evidence.leaseGeneration;
 }
 
-export function gpuScientificReleaseFields(plan, evidence) {
+export function gpuScientificReleaseFields(plan, evidence, promotionEvidence) {
   return plan ? {
     gpuScientificExecutionPlanHash:
       plan.gpuScientificCampaignExecutionPlanHash,
@@ -114,7 +159,99 @@ export function gpuScientificReleaseFields(plan, evidence) {
       evidence.gpuScientificCampaignExecutionResultHash,
     gpuScientificExecutionPlan: plan,
     gpuScientificExecutionEvidence: evidence,
+    gpuScientificArtifactBodyArchiveManifestHash:
+      promotionEvidence.artifactArchiveManifestHash,
+    gpuScientificCampaignQualificationEvidenceHash:
+      promotionEvidence.gpuScientificCampaignQualificationEvidenceHash,
+    gpuScientificCampaignPromotionEvidenceHash:
+      promotionEvidence.gpuScientificCampaignPromotionEvidenceHash,
+    gpuScientificCampaignPromotionEvidence: promotionEvidence,
   } : {};
+}
+
+export function gpuScientificPromotionCandidateEvidenceValid({
+  campaignPlanHash, campaignId, paperId, plan, evidence, researchEvidence,
+  promotionEvidence, researchEvidenceCapsuleManifestHash,
+  researchEvidenceCapsuleManifest,
+  researchEvidenceCapsuleManifestFileHash,
+  researchExecutionReleaseAttestationHash,
+} = {}) {
+  const node = evidence ? {
+    nodeId: evidence.nodeId,
+    kind: 'gpu-scientific-execution',
+    attemptId: evidence.attemptId,
+    leaseGeneration: evidence.leaseGeneration,
+    gpuScientificExecutionPlanHash:
+      plan?.gpuScientificCampaignExecutionPlanHash || null,
+    gpuScientificResourceBudgetHash:
+      GPU_SCIENTIFIC_CAMPAIGN_RESOURCE_BUDGET
+        .gpuScientificCampaignResourceBudgetHash,
+    resultSha256: researchEvidence?.nodeResultHash,
+    result: evidence,
+  } : null;
+  if ((plan && !verifyCampaignResearchGpuScientificEvidence(researchEvidence, {
+    campaign: { campaignId, paperId, spec: { campaignPlanHash } }, node, plan,
+  })) || (!plan && researchEvidence)) return false;
+  return gpuScientificReleaseEvidenceValid({
+    campaignPlanHash, campaignId, paperId, plan, evidence,
+    qualificationEvidence: researchEvidence?.qualificationEvidence || null,
+    promotionEvidence,
+    researchEvidenceCapsuleManifestHash,
+    researchEvidenceCapsuleManifestFileHash,
+    researchExecutionReleaseAttestationHash,
+  }) && gpuScientificReleaseCapsuleLineageValid({
+    gpuScientificExecutionPlanHash:
+      plan?.gpuScientificCampaignExecutionPlanHash,
+    gpuScientificCampaignExecutionResultHash:
+      evidence?.gpuScientificCampaignExecutionResultHash,
+    gpuScientificArtifactBodyArchiveManifestHash:
+      promotionEvidence?.artifactArchiveManifestHash,
+    gpuScientificCampaignQualificationEvidenceHash:
+      promotionEvidence?.gpuScientificCampaignQualificationEvidenceHash,
+    gpuScientificCampaignPromotionEvidence: promotionEvidence,
+  }, {
+    manifest: researchEvidenceCapsuleManifest,
+    manifestFileHash: researchEvidenceCapsuleManifestFileHash,
+    attestationHash: researchExecutionReleaseAttestationHash,
+  });
+}
+
+export function gpuScientificReleaseCapsuleLineageValid(record, {
+  manifest, manifestFileHash, attestationHash,
+} = {}) {
+  const planHash = record?.gpuScientificExecutionPlanHash;
+  if (!planHash) return manifest?.gpuScientificEvidenceIncluded !== true;
+  const promotion = record?.gpuScientificCampaignPromotionEvidence;
+  const descriptor = manifest?.gpuScientificEvidence;
+  const qualification = promotion
+    ?.gpuScientificCampaignQualificationEvidence;
+  const replay = qualification
+    ?.gpuScientificCampaignSameDeviceReplayReceipt;
+  const production = qualification
+    ?.gpuScientificCampaignProductionQualificationAuthority;
+  const observedAt = Date.parse(String(manifest?.createdAt || ''));
+  const authorityCurrent = [replay, production].every((authority) => (
+    Number.isFinite(observedAt)
+      && observedAt >= Date.parse(String(authority?.validFrom || ''))
+      && observedAt < Date.parse(String(authority?.expiresAt || ''))
+  ));
+  return manifest?.version === 3
+    && manifest?.gpuScientificEvidenceIncluded === true
+    && verifyCampaignReleaseGpuScientificEvidenceDescriptor(manifest)
+    && descriptor?.executionPlanHash === planHash
+    && descriptor?.gpuScientificCampaignExecutionResultHash
+      === record.gpuScientificCampaignExecutionResultHash
+    && descriptor?.gpuScientificArtifactBodyArchiveManifestHash
+      === record.gpuScientificArtifactBodyArchiveManifestHash
+    && descriptor?.gpuScientificCampaignQualificationEvidenceHash
+      === record.gpuScientificCampaignQualificationEvidenceHash
+    && descriptor?.scientificOutputCommitmentHash
+      === promotion?.scientificOutputCommitmentHash
+    && authorityCurrent
+    && promotion?.researchEvidenceCapsuleManifestHash
+      === manifest?.researchEvidenceCapsuleManifestHash
+    && promotion?.researchEvidenceCapsuleManifestFileHash === manifestFileHash
+    && promotion?.researchExecutionReleaseAttestationHash === attestationHash;
 }
 
 export function gpuScientificReleaseLineageValid({
@@ -123,12 +260,22 @@ export function gpuScientificReleaseLineageValid({
   paperId,
   plan,
   evidence,
+  promotionEvidence,
   planHash,
   resultHash,
   candidate = null,
 } = {}) {
   return gpuScientificReleaseEvidenceValid({
     campaignPlanHash, campaignId, paperId, plan, evidence,
+    qualificationEvidence:
+      promotionEvidence?.gpuScientificCampaignQualificationEvidence,
+    promotionEvidence,
+    researchEvidenceCapsuleManifestHash:
+      promotionEvidence?.researchEvidenceCapsuleManifestHash,
+    researchEvidenceCapsuleManifestFileHash:
+      promotionEvidence?.researchEvidenceCapsuleManifestFileHash,
+    researchExecutionReleaseAttestationHash:
+      promotionEvidence?.researchExecutionReleaseAttestationHash,
   })
     && planHash === plan?.gpuScientificCampaignExecutionPlanHash
     && resultHash === evidence?.gpuScientificCampaignExecutionResultHash
@@ -139,6 +286,10 @@ export function gpuScientificReleaseLineageValid({
         === JSON.stringify(candidate.gpuScientificExecutionPlan || null)
       && JSON.stringify(evidence || null)
         === JSON.stringify(candidate.gpuScientificExecutionEvidence || null)
+      && JSON.stringify(promotionEvidence || null)
+        === JSON.stringify(
+          candidate.gpuScientificCampaignPromotionEvidence || null,
+        )
     ));
 }
 
@@ -149,6 +300,8 @@ export function gpuScientificReleaseRecordValid(record, candidate = null) {
     paperId: record?.paperId,
     plan: record?.gpuScientificExecutionPlan || null,
     evidence: record?.gpuScientificExecutionEvidence || null,
+    promotionEvidence:
+      record?.gpuScientificCampaignPromotionEvidence || null,
     planHash: record?.gpuScientificExecutionPlanHash,
     resultHash: record?.gpuScientificCampaignExecutionResultHash,
     candidate,

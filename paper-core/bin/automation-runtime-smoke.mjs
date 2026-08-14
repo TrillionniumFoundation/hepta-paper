@@ -450,6 +450,7 @@ export function runAutomationRuntimeSmoke(configuration = parseRuntimeSmokeArgum
       allowedOutputRoots: [output],
       allowedDatasetRoots: [rFixture.root],
       allowedContainerImages: images,
+      runtimeRoot: root,
       allowGpu: true,
       maximumTimeoutMs: stageTimeoutMs,
       maximumMemoryBytes: 6 * 1024 * 1024 * 1024,

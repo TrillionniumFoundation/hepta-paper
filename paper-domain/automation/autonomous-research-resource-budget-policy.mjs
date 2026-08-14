@@ -48,6 +48,7 @@ export function inspectAutonomousResearchProfileResourceBudgetClosure({
   empiricalExecutionProfileSelectionHash = null,
   benchmarkSelector,
   budgets = {},
+  gpuScientificExecutionRequired = false,
 } = {}) {
   const id = String(campaignId || 'autonomous-research:budget-preview');
   if (!benchmarkSelector?.experimentDesign) {
@@ -59,8 +60,8 @@ export function inspectAutonomousResearchProfileResourceBudgetClosure({
   const plannedCells = plannedBenchmarkCellJobUpperBounds(nodes, benchmarkSelector);
   const requiredBudgets = Object.freeze({
     maxAgentCalls: plannedAgentCallUpperBound(nodes),
-    maxCpuJobs: plannedCells.cpu,
-    maxGpuJobs: plannedCells.gpu,
+    maxCpuJobs: plannedCells.cpu + (gpuScientificExecutionRequired ? 1 : 0),
+    maxGpuJobs: plannedCells.gpu + (gpuScientificExecutionRequired ? 1 : 0),
   });
   const effectiveBudgets = Object.freeze(Object.fromEntries(
     RESOURCE_BUDGET_KEYS.map((key) => [key, canonicalBudget(budgets?.[key], key)]),
@@ -124,6 +125,8 @@ export function inspectAutonomousResearchResourceBudgetClosure({
       ?.autonomousEmpiricalExecutionProfileSelectionHash || null,
     benchmarkSelector,
     budgets,
+    gpuScientificExecutionRequired:
+      loopPreparation?.launchMode === 'production-run',
   });
 }
 

@@ -34,6 +34,9 @@ import {
 import {
   composeAutonomousSubmissionDispatchContext,
 } from './autonomous-submission-runtime-composition.mjs';
+import {
+  buildAutonomousResearchGpuScientificExecutionPlan,
+} from './autonomous-research-gpu-scientific-plan.mjs';
 export { composeAutonomousResearchQualificationRenewal,
   issueAutonomousResearchSupervisorDispatchAuthorization,
   qualificationRetryBoundToExternalCostAuthority, requireExistingProductionPricingEnvelope,
@@ -543,6 +546,13 @@ export async function composeAutonomousResearchCampaignAction({
         loopPreparation: preparation,
         datasetMounts,
       });
+      const gpuScientificExecutionPlan =
+        buildAutonomousResearchGpuScientificExecutionPlan({
+          campaignId: id,
+          loopPreparation: preparation,
+          budgets: effectiveBudgets,
+          productionReadiness,
+        });
       plan = buildAutonomousResearchCampaignPlan({
         loopPreparation: preparation,
         materialization,
@@ -551,6 +561,7 @@ export async function composeAutonomousResearchCampaignAction({
         budgets: effectiveBudgets,
         localOnly,
         directLocalRunBudgetWaiver: effectiveBudgetWaiver,
+        gpuScientificExecutionPlan,
       });
     }
     if (!qualificationStateStore && existing && !legacyProviderConfigurationBindingMissing) {
@@ -622,6 +633,7 @@ export async function composeAutonomousResearchCampaignAction({
       requireCampaignAbsentAtLaunch,
       executor,
       preparedMaterialization: materialization,
+      gpuScientificExecutionPlan: plan?.gpuScientificExecutionPlan || null,
       ...(campaignRunner ? { campaignRunner } : {}),
       campaignReleaseAuthorityReader: ({ campaignId: releaseCampaignId }) => readCurrentRelease({
         root, runtimeRoot, campaignId: releaseCampaignId,

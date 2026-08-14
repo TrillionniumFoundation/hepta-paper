@@ -2,6 +2,11 @@ import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { verifyEmpiricalEnvironmentBom } from './environment-bom-contract.mjs';
 import { EXPERIMENT_REPLAY_ASSURANCE_SCOPE } from './experiment-environment-bom-binding.mjs';
 import { campaignReleaseExecutionAttestationDocumentFileHash } from './campaign-release-execution-attestation-contract.mjs';
+import {
+  buildCampaignReleaseGpuScientificEvidenceDescriptor,
+  campaignReleaseGpuScientificExpectedEntryRoles,
+  verifyCampaignReleaseGpuScientificEvidenceDescriptor,
+} from './campaign-release-gpu-scientific-evidence-capsule-contract.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 const SAFE_RELATIVE_PATH = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9_.\/-]{1,512}$/;
@@ -147,6 +152,9 @@ export function verifyCampaignReleasePortableEnvironmentBindings({
 
 function expectedEntryKeys(manifest) {
   const expected = new Set(CAMPAIGN_RELEASE_CAPSULE_BASE_ROLES.map((role) => `base\0\0${role}`));
+  for (const role of campaignReleaseGpuScientificExpectedEntryRoles(manifest)) {
+    expected.add(`base\0\0${role}`);
+  }
   for (const experiment of manifest.experiments || []) {
     for (const execution of experiment.executions || []) {
       for (const role of CAMPAIGN_RELEASE_CAPSULE_EXECUTION_ROLES) {
@@ -199,6 +207,8 @@ export function buildCampaignReleaseEvidenceCapsuleManifest({
   publicAuthorityTrustSnapshotHash,
   experiments = [],
   entries = [],
+  gpuScientificArtifactBodyArchiveManifest = null,
+  gpuScientificQualificationEvidence = null,
   createdAt,
 } = {}) {
   const normalizedExperiments = experiments.map((experiment) => Object.freeze({
@@ -214,8 +224,18 @@ export function buildCampaignReleaseEvidenceCapsuleManifest({
     executionRole: String(entry.executionRole || 'base'),
     experimentId: entry.experimentId ? String(entry.experimentId) : null,
   })).sort((left, right) => entryKey(left).localeCompare(entryKey(right)));
+  if (Boolean(gpuScientificArtifactBodyArchiveManifest)
+    !== Boolean(gpuScientificQualificationEvidence)) {
+    throw new Error('campaign_release_gpu_scientific_evidence_incomplete');
+  }
+  const gpuScientificEvidence = gpuScientificArtifactBodyArchiveManifest
+    ? buildCampaignReleaseGpuScientificEvidenceDescriptor({
+      entries: normalizedEntries,
+      artifactArchiveManifest: gpuScientificArtifactBodyArchiveManifest,
+      qualificationEvidence: gpuScientificQualificationEvidence,
+    }) : null;
   const payload = {
-    version: 2,
+    version: gpuScientificEvidence ? 3 : 2,
     kind: 'CampaignReleaseResearchEvidenceCapsuleManifest',
     status: 'research_evidence_capsule_ready',
     campaignId: String(campaignId || ''),
@@ -230,11 +250,17 @@ export function buildCampaignReleaseEvidenceCapsuleManifest({
     researchVerifyLeaseGeneration: Number(researchVerifyLeaseGeneration),
     publicAuthorityTrustSnapshotHash: String(publicAuthorityTrustSnapshotHash || ''),
     empiricalEvidenceIncluded: normalizedExperiments.length > 0,
-    externalAuthorityTrustAnchorRequired: normalizedExperiments.length > 0,
-    externalExecutionAttestationRequired: normalizedExperiments.length > 0,
+    externalAuthorityTrustAnchorRequired:
+      normalizedExperiments.length > 0 || Boolean(gpuScientificEvidence),
+    externalExecutionAttestationRequired:
+      normalizedExperiments.length > 0 || Boolean(gpuScientificEvidence),
     academicExperimentCount: normalizedExperiments.filter((item) => item.academicPromotionEligible === true).length,
     experimentCount: normalizedExperiments.length,
     experiments: Object.freeze(normalizedExperiments),
+    ...(gpuScientificEvidence ? {
+      gpuScientificEvidenceIncluded: true,
+      gpuScientificEvidence,
+    } : {}),
     entryCount: normalizedEntries.length,
     entries: Object.freeze(normalizedEntries),
     redactionPolicy: 'public-research-evidence-no-host-paths-no-private-authority-v1',
@@ -253,7 +279,7 @@ export function buildCampaignReleaseEvidenceCapsuleManifest({
 export function verifyCampaignReleaseEvidenceCapsuleManifest(manifest, expected = {}) {
   const blockers = [];
   const payload = recordPayload(manifest, 'researchEvidenceCapsuleManifestHash');
-  if (manifest?.version !== 2 || manifest?.kind !== 'CampaignReleaseResearchEvidenceCapsuleManifest'
+  if (![2, 3].includes(manifest?.version) || manifest?.kind !== 'CampaignReleaseResearchEvidenceCapsuleManifest'
     || manifest?.status !== 'research_evidence_capsule_ready') blockers.push('research_evidence_capsule_shape_invalid');
   if (!payload || !SHA256.test(String(manifest?.researchEvidenceCapsuleManifestHash || ''))
     || hashRecord('CampaignReleaseResearchEvidenceCapsuleManifest', payload) !== manifest?.researchEvidenceCapsuleManifestHash) {
@@ -282,14 +308,26 @@ export function verifyCampaignReleaseEvidenceCapsuleManifest(manifest, expected 
   if (!Number.isFinite(Date.parse(String(manifest?.createdAt || '')))) blockers.push('research_evidence_capsule_created_at_invalid');
   const entries = Array.isArray(manifest?.entries) ? manifest.entries : [];
   const experiments = Array.isArray(manifest?.experiments) ? manifest.experiments : [];
+  const gpuScientificEvidenceIncluded = manifest?.version === 3
+    && manifest?.gpuScientificEvidenceIncluded === true;
+  if ((manifest?.version === 2
+      && (Object.hasOwn(manifest, 'gpuScientificEvidenceIncluded')
+        || Object.hasOwn(manifest, 'gpuScientificEvidence')))
+    || (manifest?.version === 3
+      && (!gpuScientificEvidenceIncluded
+        || !verifyCampaignReleaseGpuScientificEvidenceDescriptor(manifest)))) {
+    blockers.push('research_evidence_capsule_gpu_scientific_evidence_invalid');
+  }
   if (entries.length !== Number(manifest?.entryCount) || !entries.every(validEntry)
     || new Set(entries.map((entry) => entry.path)).size !== entries.length) blockers.push('research_evidence_capsule_entries_invalid');
   if (experiments.length !== Number(manifest?.experimentCount)
     || new Set(experiments.map((item) => item?.experimentId)).size !== experiments.length
     || !experiments.every(experimentDescriptorValid)) blockers.push('research_evidence_capsule_experiments_invalid');
   if (manifest?.empiricalEvidenceIncluded !== (experiments.length > 0)
-    || manifest?.externalAuthorityTrustAnchorRequired !== (experiments.length > 0)
-    || manifest?.externalExecutionAttestationRequired !== (experiments.length > 0)
+    || manifest?.externalAuthorityTrustAnchorRequired
+      !== (experiments.length > 0 || gpuScientificEvidenceIncluded)
+    || manifest?.externalExecutionAttestationRequired
+      !== (experiments.length > 0 || gpuScientificEvidenceIncluded)
     || Number(manifest?.academicExperimentCount) !== experiments.filter((item) => item?.academicPromotionEligible === true).length) {
     blockers.push('research_evidence_capsule_experiment_summary_invalid');
   }
@@ -298,6 +336,10 @@ export function verifyCampaignReleaseEvidenceCapsuleManifest(manifest, expected 
     && (Number(manifest?.academicExperimentCount) < 1
       || experiments.some((experiment) => experiment.academicPromotionEligible !== true))) {
     blockers.push('research_evidence_capsule_academic_evidence_required');
+  }
+  if (expected.gpuScientificEvidenceRequired === true
+    && !gpuScientificEvidenceIncluded) {
+    blockers.push('research_evidence_capsule_gpu_scientific_evidence_required');
   }
   if (manifest?.redactionPolicy !== 'public-research-evidence-no-host-paths-no-private-authority-v1'
     || manifest?.externalActionPerformed !== false) blockers.push('research_evidence_capsule_publication_policy_invalid');

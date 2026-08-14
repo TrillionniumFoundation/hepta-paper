@@ -100,6 +100,10 @@ export async function resolveAutonomousResearchCampaignSubmission({
       verifyIndependentQualificationEvidence:
         autonomousSubmissionRequestVerifier
           ?.verifyIndependentQualificationEvidence,
+      gpuScientificPromotionAuthorityVerifier:
+        autonomousSubmissionRequestVerifier
+          ?.gpuScientificPromotionAuthorityVerifier || null,
+      gpuScientificAuthorityVerificationTime: requestedAt,
     });
     const humanAuthorizationReceipt =
       await verifyAutonomousSubmissionHumanAuthorization({
@@ -151,6 +155,10 @@ export async function resolveAutonomousResearchCampaignSubmission({
       verifyIndependentQualificationEvidence:
         autonomousSubmissionRequestVerifier
           ?.verifyIndependentQualificationEvidence,
+      gpuScientificPromotionAuthorityVerifier:
+        autonomousSubmissionRequestVerifier
+          ?.gpuScientificPromotionAuthorityVerifier || null,
+      gpuScientificAuthorityVerificationTime: requestedAt,
       humanAuthorizationReceipt,
       requireHumanAuthorization: true,
       verifyHumanAuthorization:

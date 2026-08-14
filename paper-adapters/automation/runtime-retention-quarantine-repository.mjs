@@ -11,6 +11,9 @@ import {
 import {
   withRuntimeRetentionCategoryLock,
 } from './runtime-retention-category-lock-repository.mjs';
+import {
+  removeAuthorizedSealedPackageTreeSync,
+} from './runtime-retention-authorized-package-removal.mjs';
 
 const QUARANTINE_NAME = /^\.hepta-retention-[a-f0-9]{40}\.quarantine$/;
 const STABLE_IDENTITY_FIELDS = Object.freeze([
@@ -342,7 +345,27 @@ export function removeRetentionEntryThroughQuarantine(
       member,
       locations.quarantineRealPath,
     );
-    fs.rmSync(locations.quarantine, { recursive: true, force: false });
+    if (entry.category === 'packages' && member.identity?.entryKind === 'directory'
+      && (Number(member.identity.mode) & 0o222) === 0) {
+      try {
+        removeAuthorizedSealedPackageTreeSync({
+          candidate: locations.quarantine,
+          expectedContentHash: member.contentHash,
+          expectedIdentity: member.identity,
+          authorization: {
+            authorized: entry.authorized,
+            category: entry.category,
+            sourcePath: member.path,
+            retentionDeletionEvidence: entry.retentionDeletionEvidence,
+          },
+        });
+      } catch (error) {
+        restoreQuarantinedMembers([{ member, locations }]);
+        throw error;
+      }
+    } else {
+      fs.rmSync(locations.quarantine, { recursive: true, force: false });
+    }
     fs.fsyncSync(pinned.categoryDescriptor);
     if (retentionPathExists(locations.quarantine)) {
       throw new Error('runtime_retention_quarantine_removal_postimage_invalid');

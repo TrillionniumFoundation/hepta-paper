@@ -4,7 +4,6 @@ import {
   campaignTrustedAutonomousManuscriptAuthorshipReceipt,
   inspectAutonomousManuscriptReleaseProof,
 } from '../../paper-domain/automation/autonomous-manuscript-release-proof-contract.mjs';
-import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
   inspectAutonomousResearchProductionProfilePreparation,
 } from '../../paper-domain/automation/autonomous-research-production-profile-contract.mjs';
@@ -17,6 +16,12 @@ import {
 import {
   verifyGpuScientificCampaignExecutionResult,
 } from '../../paper-domain/automation/gpu-scientific-campaign-execution-contract.mjs';
+import {
+  verifyCampaignResearchGpuScientificEvidence,
+} from '../../paper-domain/automation/campaign-research-gpu-scientific-evidence-contract.mjs';
+import {
+  authoritativeRefereeConvergence,
+} from './campaign-quality-release-authoritative-referee-convergence.mjs';
 
 function profiles(campaign) {
   return campaign.spec.paperQualityProfiles || [campaign.spec.paperQualityProfile].filter(Boolean);
@@ -73,25 +78,6 @@ function authoritativeManuscriptResult({ primitives, campaign, context, workspac
     resultHash: selected.resultSha256,
     result: selected.result,
   }) : null;
-}
-
-function authoritativeRefereeConvergence({ campaign, context, manuscriptHash }) {
-  const finalDependencies = new Set(context.finalCompileNode?.dependencies || []);
-  const candidates = (context.campaignNodes || []).filter((candidate) => {
-    const decision = candidate?.result || null;
-    const { refereeConvergenceDecisionHash: claimedHash, ...payload } = decision || {};
-    return candidate?.kind === 'convergence'
-      && candidate?.status === 'completed'
-      && finalDependencies.has(candidate.nodeId)
-      && decision?.kind === 'RefereeConvergenceDecision'
-      && decision?.paperId === campaign.paperId
-      && decision?.status === 'referee_convergence_reached'
-      && decision?.accepted === true
-      && decision?.expectedManuscriptHash === manuscriptHash
-      && hashRecord('RefereeConvergenceDecision', payload) === claimedHash
-      && hashRecord('PaperCampaignNodeResult', decision) === candidate?.resultSha256;
-  });
-  return candidates.length === 1 ? candidates[0].result : null;
 }
 
 function authoritativeExperimentExecution({ campaign, context, researchReport }) {
@@ -280,14 +266,32 @@ export async function executeCampaignPackageNode({
       campaign,
       node: context.gpuScientificNode,
       plan: gpuScientificPlan,
-      requirePromotionEligible: true,
+      requirePromotionEligible: false,
     },
   )) {
     const error = new Error(
-      'campaign_release_gpu_scientific_promotion_authority_required',
+      'campaign_release_gpu_scientific_raw_evidence_invalid',
     );
     error.retryable = false;
     error.receipt = context.gpuScientificNode?.result || null;
+    throw error;
+  }
+  const researchNode = context.researchVerifyNode;
+  const gpuScientificResearchEvidence =
+    researchNode?.result?.gpuScientificQualificationEvidence || null;
+  if ((gpuScientificPlan && !verifyCampaignResearchGpuScientificEvidence(
+    gpuScientificResearchEvidence,
+    {
+      campaign,
+      node: context.gpuScientificNode,
+      plan: gpuScientificPlan,
+    },
+  )) || (!gpuScientificPlan && gpuScientificResearchEvidence)) {
+    const error = new Error(
+      'campaign_release_gpu_scientific_pre_release_qualification_required',
+    );
+    error.retryable = false;
+    error.receipt = gpuScientificResearchEvidence;
     throw error;
   }
   const paperQualityProfiles = profiles(campaign);
@@ -334,7 +338,6 @@ export async function executeCampaignPackageNode({
     error.retryable = false;
     throw error;
   }
-  const researchNode = context.researchVerifyNode;
   if (researchNode?.status !== 'completed'
     || researchNode.result?.researchPromotionStatus !== 'research_promotion_ready'
     || !researchReport?.researchReportHash
@@ -476,6 +479,7 @@ export async function executeCampaignPackageNode({
     advancedNumericalExecutionEvidence,
     gpuScientificExecutionPlan: gpuScientificPlan,
     gpuScientificExecutionEvidence: context.gpuScientificNode?.result || null,
+    gpuScientificResearchEvidence,
     createdAt,
     executionSignal,
     assertExternalSideEffectReady:

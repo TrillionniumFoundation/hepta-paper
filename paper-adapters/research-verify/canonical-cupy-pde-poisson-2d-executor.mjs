@@ -29,7 +29,7 @@ const GPU_UUID = /^GPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const EXECUTOR_OPTION_KEYS = new Set([
   'cpuSeconds', 'maximumOutputBytes', 'maximumProcesses', 'memoryBytes',
-  'outputRoot', 'timeoutMs',
+  'outputRoot', 'runtimeRoot', 'timeoutMs',
 ]);
 const OUTPUT_PATHS = Object.freeze([
   'solutions/n31.f64le',
@@ -192,6 +192,7 @@ export function createCanonicalCupyPdePoisson2dExecutor(options = {}) {
   }
   const {
     outputRoot,
+    runtimeRoot = null,
     timeoutMs = 15 * 60 * 1_000,
     memoryBytes = 2 * 1024 ** 3,
     cpuSeconds = 900,
@@ -213,6 +214,7 @@ export function createCanonicalCupyPdePoisson2dExecutor(options = {}) {
   }
   const sandbox = createCanonicalCupyPdePoisson2dSandboxRunner({
     outputRoot: selectedOutputRoot,
+    runtimeRoot,
     timeoutMs,
     memoryBytes,
     cpuSeconds,
@@ -245,6 +247,7 @@ export function createCanonicalCupyPdePoisson2dExecutor(options = {}) {
       absoluteDeadlineEpochMs,
       executionAuthorityHash = null,
       executionSignal = null,
+      gpuSelectorExecutionLeaseDelegation = null,
     } = {}) {
       const startedAt = readTrustedWallClockEpochMs();
       if (typeof runId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}$/.test(runId)
@@ -323,6 +326,7 @@ export function createCanonicalCupyPdePoisson2dExecutor(options = {}) {
         containerImage: AUTOMATION_RUNTIME_IMAGES.pythonGpu.image,
         containerExecutable: AUTOMATION_RUNTIME_IMAGES.pythonGpu.executable,
         timeoutMs: selectedTimeoutMs,
+        absoluteDeadlineEpochMs,
         memoryBytes,
         cpuSeconds,
         maximumProcesses,
@@ -357,6 +361,11 @@ export function createCanonicalCupyPdePoisson2dExecutor(options = {}) {
         },
         standardInput,
         signal: executionSignal,
+        ...(gpuSelectorExecutionLeaseDelegation ? {
+          gpuSelectorExecutionLeaseDelegation,
+          gpuSelectorExecutionLeaseDelegationAuthorityHash:
+            executionAuthorityHash,
+        } : {}),
       });
       if (!exactWorkerReceipt(workerReceipt, {
         gpuDeviceSelector,

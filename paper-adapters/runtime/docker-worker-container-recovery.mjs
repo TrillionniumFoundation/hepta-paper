@@ -6,6 +6,7 @@ import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const CONTAINER_ID = /^[0-9a-f]{64}$/;
+const GPU_SELECTOR = /^GPU-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const LOCAL_DOCKER_HOST = 'unix:///var/run/docker.sock';
 const WORKER_CONTAINER_PREFIX = 'hepta-os-worker-';
 const WORKER_CONTAINER_KIND = 'os-sandbox-worker-v4';
@@ -14,6 +15,25 @@ const CLEANUP_RETRY_DELAYS_MS = Object.freeze([0, 100, 250, 500, 1_000]);
 
 function ownershipHash(kind, value) {
   return value ? hashRecord(kind, { value: String(value) }) : null;
+}
+
+function expectedOwnershipLabels(payload, ownershipHashValue) {
+  return {
+    'io.hepta.worker.kind': WORKER_CONTAINER_KIND,
+    'io.hepta.worker.id': payload.containerName,
+    'io.hepta.worker.invocation-id': payload.processInvocationId,
+    'io.hepta.worker.ownership-hash': ownershipHashValue,
+    'io.hepta.worker.experiment-run-hash':
+      payload.experimentRunIdHash || 'unbound',
+    'io.hepta.worker.experiment-attempt-hash':
+      payload.experimentAttemptIdHash || 'unbound',
+    ...(payload.gpuDeviceSelector ? {
+      'io.hepta.worker.gpu-selector': payload.gpuDeviceSelector,
+      'io.hepta.worker.gpu-lease-id': payload.gpuSelectorExecutionLeaseId,
+      'io.hepta.worker.gpu-fencing-token':
+        payload.gpuSelectorExecutionFencingToken,
+    } : {}),
+  };
 }
 
 function controlledDockerEnvironment(environment) {
@@ -58,6 +78,7 @@ export function buildDockerWorkerContainerOwnership({
   experimentRunId = null,
   experimentAttemptId = null,
   containerIdPath,
+  gpuSelectorExecutionLease = null,
 } = {}) {
   if (!SHA256.test(String(processInvocationId || '')) || !containerIdPath) {
     throw new Error('docker_worker_container_ownership_invalid');
@@ -72,6 +93,23 @@ export function buildDockerWorkerContainerOwnership({
     'DockerWorkerExperimentAttemptOwnership',
     experimentAttemptId,
   );
+  const gpuLeaseBinding = gpuSelectorExecutionLease ? {
+    gpuDeviceSelector: String(
+      gpuSelectorExecutionLease.gpuDeviceSelector || '',
+    ),
+    gpuSelectorExecutionLeaseId: String(
+      gpuSelectorExecutionLease.leaseId || '',
+    ),
+    gpuSelectorExecutionFencingToken: String(
+      gpuSelectorExecutionLease.fencingToken || '',
+    ),
+  } : null;
+  if (gpuLeaseBinding && (!GPU_SELECTOR.test(
+    gpuLeaseBinding.gpuDeviceSelector,
+  ) || !SHA256.test(gpuLeaseBinding.gpuSelectorExecutionLeaseId)
+    || !SHA256.test(gpuLeaseBinding.gpuSelectorExecutionFencingToken))) {
+    throw new Error('docker_worker_container_ownership_invalid');
+  }
   const ownershipPayload = Object.freeze({
     version: 1,
     kind: 'DockerWorkerContainerOwnership',
@@ -79,19 +117,16 @@ export function buildDockerWorkerContainerOwnership({
     processInvocationId,
     experimentRunIdHash,
     experimentAttemptIdHash,
+    ...(gpuLeaseBinding || {}),
   });
   const dockerWorkerContainerOwnershipHash = hashRecord(
     'DockerWorkerContainerOwnership',
     ownershipPayload,
   );
-  const labels = Object.freeze({
-    'io.hepta.worker.kind': WORKER_CONTAINER_KIND,
-    'io.hepta.worker.id': containerName,
-    'io.hepta.worker.invocation-id': processInvocationId,
-    'io.hepta.worker.ownership-hash': dockerWorkerContainerOwnershipHash,
-    'io.hepta.worker.experiment-run-hash': experimentRunIdHash || 'unbound',
-    'io.hepta.worker.experiment-attempt-hash': experimentAttemptIdHash || 'unbound',
-  });
+  const labels = Object.freeze(expectedOwnershipLabels(
+    ownershipPayload,
+    dockerWorkerContainerOwnershipHash,
+  ));
   return Object.freeze({
     ...ownershipPayload,
     dockerWorkerContainerOwnershipHash,
@@ -100,11 +135,66 @@ export function buildDockerWorkerContainerOwnership({
   });
 }
 
+export function verifyDockerWorkerContainerOwnership(value) {
+  if (!value || value.version !== 1
+    || value.kind !== 'DockerWorkerContainerOwnership'
+    || !SHA256.test(String(value.processInvocationId || ''))
+    || value.containerName !== `${WORKER_CONTAINER_PREFIX}${String(
+      value.processInvocationId,
+    ).slice('sha256:'.length, 'sha256:'.length + 32)}`
+    || (value.experimentRunIdHash !== null
+      && !SHA256.test(String(value.experimentRunIdHash || '')))
+    || (value.experimentAttemptIdHash !== null
+      && !SHA256.test(String(value.experimentAttemptIdHash || '')))
+    || !SHA256.test(String(value.dockerWorkerContainerOwnershipHash || ''))
+    || !path.isAbsolute(String(value.containerIdPath || ''))
+    || !value.labels || typeof value.labels !== 'object') return false;
+  const gpuFields = [
+    value.gpuDeviceSelector,
+    value.gpuSelectorExecutionLeaseId,
+    value.gpuSelectorExecutionFencingToken,
+  ];
+  const gpuBound = gpuFields.every((item) => item !== undefined);
+  if (gpuFields.some((item) => item !== undefined) !== gpuBound
+    || (gpuBound && (!GPU_SELECTOR.test(String(value.gpuDeviceSelector || ''))
+      || !SHA256.test(String(value.gpuSelectorExecutionLeaseId || ''))
+      || !SHA256.test(String(value.gpuSelectorExecutionFencingToken || ''))))) {
+    return false;
+  }
+  const payload = {
+    version: 1,
+    kind: 'DockerWorkerContainerOwnership',
+    containerName: value.containerName,
+    processInvocationId: value.processInvocationId,
+    experimentRunIdHash: value.experimentRunIdHash,
+    experimentAttemptIdHash: value.experimentAttemptIdHash,
+    ...(gpuBound ? {
+      gpuDeviceSelector: value.gpuDeviceSelector,
+      gpuSelectorExecutionLeaseId: value.gpuSelectorExecutionLeaseId,
+      gpuSelectorExecutionFencingToken:
+        value.gpuSelectorExecutionFencingToken,
+    } : {}),
+  };
+  const expectedHash = hashRecord('DockerWorkerContainerOwnership', payload);
+  const expectedLabels = expectedOwnershipLabels(payload, expectedHash);
+  const expectedKeys = [
+    ...Object.keys(payload),
+    'dockerWorkerContainerOwnershipHash',
+    'containerIdPath',
+    'labels',
+  ].sort();
+  return expectedHash === value.dockerWorkerContainerOwnershipHash
+    && JSON.stringify(Object.keys(value).sort()) === JSON.stringify(expectedKeys)
+    && JSON.stringify(Object.entries(value.labels).sort())
+      === JSON.stringify(Object.entries(expectedLabels).sort());
+}
+
 export function buildDockerWorkerContainerOwnershipForEnvironment({
   executionBackend,
   processInvocationId,
   permittedEnvironment,
   sandboxRoot,
+  gpuSelectorExecutionLease = null,
 } = {}) {
   if (executionBackend !== 'docker') return null;
   const environment = Object.fromEntries(permittedEnvironment || []);
@@ -113,6 +203,7 @@ export function buildDockerWorkerContainerOwnershipForEnvironment({
     experimentRunId: environment.HEPTA_EXPERIMENT_RUN_ID || null,
     experimentAttemptId: environment.HEPTA_EXPERIMENT_ATTEMPT_ID || null,
     containerIdPath: path.join(sandboxRoot, 'docker-container.cid'),
+    gpuSelectorExecutionLease,
   });
 }
 

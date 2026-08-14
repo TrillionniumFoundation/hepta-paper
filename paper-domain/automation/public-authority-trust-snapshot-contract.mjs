@@ -1,4 +1,8 @@
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  GPU_SCIENTIFIC_PRODUCTION_QUALIFICATION_AUTHORITY_ROLE,
+  GPU_SCIENTIFIC_SAME_DEVICE_REPLAY_AUTHORITY_ROLE,
+} from './gpu-scientific-campaign-promotion-contract.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 const KEY_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$/;
@@ -9,6 +13,9 @@ function canonicalKey(value) {
     keyId: String(value?.keyId || ''),
     subjectId: String(value?.subjectId || ''),
     organization: value?.organization ? String(value.organization) : null,
+    ...(value?.processIdentityHash ? {
+      processIdentityHash: String(value.processIdentityHash).toLowerCase(),
+    } : {}),
     algorithm: String(value?.algorithm || ''),
     publicKeyPem: String(value?.publicKeyPem || ''),
     roles: Object.freeze(roles),
@@ -23,8 +30,15 @@ function canonicalKey(value) {
 function keyValid(value) {
   try {
     const key = canonicalKey(value);
+    const gpuAuthority = key.roles.some((role) => [
+      GPU_SCIENTIFIC_PRODUCTION_QUALIFICATION_AUTHORITY_ROLE,
+      GPU_SCIENTIFIC_SAME_DEVICE_REPLAY_AUTHORITY_ROLE,
+    ].includes(role));
     return KEY_ID.test(key.keyId)
       && Boolean(key.subjectId)
+      && (!Object.hasOwn(key, 'processIdentityHash')
+        || SHA256.test(key.processIdentityHash))
+      && (!gpuAuthority || SHA256.test(String(key.processIdentityHash || '')))
       && key.algorithm === 'ed25519'
       && /^-----BEGIN PUBLIC KEY-----[\s\S]+-----END PUBLIC KEY-----\s*$/.test(key.publicKeyPem)
       && !/PRIVATE KEY/.test(key.publicKeyPem)
@@ -83,7 +97,11 @@ export function buildPublicAuthorityTrustSnapshot({ trustStore, referencedKeyIds
   return snapshot;
 }
 
-export function verifyPublicAuthorityTrustSnapshot(snapshot, { requiredKeyIds = [], capturedAt = null } = {}) {
+export function verifyPublicAuthorityTrustSnapshot(snapshot, {
+  requiredKeyIds = [],
+  capturedAt = null,
+  allowAdditionalReferencedKeys = false,
+} = {}) {
   const blockers = [];
   const payload = recordPayload(snapshot);
   if (snapshot?.version !== 1 || snapshot?.kind !== 'CampaignReleasePublicAuthorityTrustSnapshot'
@@ -111,7 +129,9 @@ export function verifyPublicAuthorityTrustSnapshot(snapshot, { requiredKeyIds = 
   if (!keys.every(keyValid) || new Set(ids).size !== ids.length
     || JSON.stringify(ids) !== JSON.stringify([...ids].sort())
     || JSON.stringify(declaredIds) !== JSON.stringify([...new Set(ids)].sort())
-    || (required.length > 0 && JSON.stringify(declaredIds) !== JSON.stringify(required))) {
+    || (required.length > 0 && (allowAdditionalReferencedKeys
+      ? required.some((keyId) => !declaredIds.includes(keyId))
+      : JSON.stringify(declaredIds) !== JSON.stringify(required)))) {
     blockers.push('public_authority_trust_snapshot_keys_invalid');
   }
   return Object.freeze({ valid: blockers.length === 0, blockers: Object.freeze([...new Set(blockers)]) });

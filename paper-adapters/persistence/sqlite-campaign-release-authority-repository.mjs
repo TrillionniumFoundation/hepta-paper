@@ -17,6 +17,7 @@ export function createSqliteCampaignReleaseAuthorityRepository({
   operatorDatasetHarnessAuthorityVerifier = null,
   runtimeRoot = null,
   operatorDatasetAuthorityTrustStoreProvider = null,
+  gpuScientificPromotionAuthorityVerifier = null,
 } = {}) {
   if (!store?.query || !store?.execute) throw new Error('Campaign release authority repository requires StorePort');
   const readOnlyReceiptLedger = receiptLedger || Object.freeze({
@@ -41,6 +42,7 @@ export function createSqliteCampaignReleaseAuthorityRepository({
     operatorDatasetHarnessAuthorityVerifier,
     runtimeRoot,
     operatorDatasetAuthorityTrustStoreProvider,
+    gpuScientificPromotionAuthorityVerifier,
     clock,
     rawEventRecomputationVerifier,
   });
@@ -77,7 +79,14 @@ export function createSqliteCampaignReleaseAuthorityRepository({
         spec: parseJsonOrThrow(row.campaign_spec_json, 'campaign_release_authority_campaign_spec_invalid'),
       };
       const promotedAt = row.integrated_at || row.updated_at || clock.nowIso();
-      const promotion = createCampaignReleasePromotionReceipt({ campaign, packageNode, packageResult, promotedAt, experimentRegistryAuthorityVerifier });
+      const promotion = createCampaignReleasePromotionReceipt({
+        campaign,
+        packageNode,
+        packageResult,
+        promotedAt,
+        experimentRegistryAuthorityVerifier,
+        gpuScientificPromotionAuthorityVerifier,
+      });
       let insert;
       if (typeof store.mutate === 'function') {
         insert = store.mutate({

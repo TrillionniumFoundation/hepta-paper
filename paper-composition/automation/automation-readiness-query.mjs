@@ -23,7 +23,6 @@ import {
   inspectResearchExecutionReleaseAttestorConfiguration,
 } from '../bootstrap/operator-automation-composition.mjs';
 import { createReadOnlyPaperStore } from '../bootstrap/operator-persistence-composition.mjs';
-import { bootstrapSubmissionHandoffContext } from '../bootstrap/submission-handoff-context-bootstrap.mjs';
 import {
   createFullResearchQualificationReceiptPointerRepository,
   fullResearchQualificationReceiptPointerPath,
@@ -66,6 +65,9 @@ import {
 import {
   inspectAutonomousSubmissionDispatcherReadiness,
 } from './autonomous-submission-dispatcher-readiness-composition.mjs';
+import {
+  openAutomationFullResearchReleaseQueryContext,
+} from './automation-full-research-release-query-context.mjs';
 export {
   evaluateFullyAutonomousResearchSystemReadiness,
   inspectAutonomousResearchMachineIntakeStatus,
@@ -328,7 +330,13 @@ export function queryAutomationReadiness({
   let fullResearchQualification;
   try {
     const qualificationReceipt = qualificationReceiptRead.receipt;
-    if (qualificationReceipt) qualificationReleaseContext = bootstrapSubmissionHandoffContext({ root, runtimeRoot });
+    if (qualificationReceipt) {
+      qualificationReleaseContext = openAutomationFullResearchReleaseQueryContext({
+        root,
+        runtimeRoot,
+        environment,
+      });
+    }
     const releaseAttestor = releaseAttestorTrust.attestor;
     const observedRuntimeImageDigests = Object.freeze(Object.fromEntries(
       REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES.map((profile) => [
@@ -355,13 +363,15 @@ export function queryAutomationReadiness({
       releaseAttestorInspection: researchExecutionReleaseAttestor,
       requireGlobalGoldenAuthority: true,
       resolveCampaignReleaseAuthority: qualificationReleaseContext
-        ? ({ campaignId }) => qualificationReleaseContext.services.campaignReleaseQuery.getCurrentRelease({ campaignId })
+        ? qualificationReleaseContext.resolveCampaignReleaseAuthority
         : null,
       verifyReleaseAttestation: (input) => releaseAttestor.verifyAttestation(input),
       verifyQualificationSignature: (input) => releaseAttestor.verifyDetachedSignature(input),
+      gpuScientificPromotionAuthorityVerifier:
+        qualificationReleaseContext?.gpuScientificPromotionAuthorityVerifier || null,
     });
   } finally {
-    qualificationReleaseContext?.services?.persistenceSession?.close?.();
+    qualificationReleaseContext?.close?.();
   }
   const readiness = evaluateAutomationReadiness({
     runtimes,

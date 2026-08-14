@@ -32,6 +32,7 @@ export function composePackageLifecycleAuthority({
   operatorDatasetHarnessAuthorityVerifier,
   rawEventRecomputationVerifier,
   operatorDatasetAuthorityTrustStoreProvider,
+  gpuScientificPromotionAuthorityVerifier,
 } = {}) {
   const campaignReleaseQuery = createSqliteCampaignReleaseQueryRepository({
     store,
@@ -40,6 +41,7 @@ export function composePackageLifecycleAuthority({
     rawEventRecomputationVerifier,
     runtimeRoot,
     operatorDatasetAuthorityTrustStoreProvider,
+    gpuScientificPromotionAuthorityVerifier,
     clock,
   });
   const policy = receiptIssuerPolicies()['package-lifecycle-authority'];
@@ -68,6 +70,7 @@ export function composeRuntimeRetentionReachabilityAuthority({
   operatorDatasetHarnessAuthorityVerifier,
   rawEventRecomputationVerifier,
   operatorDatasetAuthorityTrustStoreProvider,
+  gpuScientificPromotionAuthorityVerifier,
 } = {}) {
   const campaignReleaseQuery = createSqliteCampaignReleaseQueryRepository({
     store,
@@ -76,6 +79,7 @@ export function composeRuntimeRetentionReachabilityAuthority({
     rawEventRecomputationVerifier,
     runtimeRoot,
     operatorDatasetAuthorityTrustStoreProvider,
+    gpuScientificPromotionAuthorityVerifier,
     clock,
   });
   return createLedgerBackedRuntimeRetentionReachabilityProvider({

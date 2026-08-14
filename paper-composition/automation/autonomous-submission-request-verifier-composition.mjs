@@ -47,10 +47,15 @@ import {
   bootstrapSubmissionHandoffContext,
 } from '../bootstrap/submission-handoff-context-bootstrap.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
-import { readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
 import {
   verifyAutonomousLiveSubmissionAuthorizationReceiptAuthority,
 } from '../../paper-adapters/automation/autonomous-live-submission-authorization-verifier.mjs';
+import {
+  readCurrentLiveAuthorizationTrustStore,
+} from './autonomous-submission-live-authorization-trust-store.mjs';
+import {
+  createPinnedAutonomousSubmissionGpuScientificAuthorityVerifier,
+} from './autonomous-submission-gpu-scientific-authority-verifier.mjs';
 
 function observedNow(clock) {
   const value = typeof clock?.now === 'function' ? clock.now() : new Date();
@@ -61,15 +66,6 @@ function observedNow(clock) {
   return now;
 }
 
-function readCurrentLiveAuthorizationTrustStore(runtimeRoot) {
-  const trustRoot = path.join(path.resolve(runtimeRoot), 'trust');
-  const candidate = path.join(trustRoot, 'AUTHORITY_TRUST_STORE.json');
-  const read = readScopedFileSync({ scopeRoot: trustRoot, candidate });
-  if (read.status !== 'scoped_file_read_verified') return null;
-  try { return JSON.parse(read.content.toString('utf8')); }
-  catch { return null; }
-}
-
 function sameRecord(left, right) {
   try {
     return hashRecord('AutonomousSubmissionTrustedSnapshot', left)
@@ -77,10 +73,11 @@ function sameRecord(left, right) {
   } catch { return false; }
 }
 
-function currentRelease({ root, runtimeRoot, campaignId, clock }) {
+function currentRelease({ root, runtimeRoot, campaignId, clock, environment }) {
   const context = bootstrapSubmissionHandoffContext({
     root,
     runtimeRoot,
+    environment,
     serviceOverrides: { clock },
   });
   try {
@@ -120,6 +117,12 @@ export function composePinnedAutonomousSubmissionRequestVerifier({
   });
   const verifyQualificationSignature = (input) =>
     releaseAttestor.verifyDetachedSignature(input);
+  const gpuScientificPromotionAuthorityVerifier =
+    createPinnedAutonomousSubmissionGpuScientificAuthorityVerifier({
+      runtimeRoot,
+      environment,
+      clock: verifierClock,
+    });
   const verifyIndependentQualificationEvidence = ({
     evidence,
     receipt,
@@ -191,6 +194,9 @@ export function composePinnedAutonomousSubmissionRequestVerifier({
     requireHumanAuthorization: true,
     verifyQualificationSignature,
     verifyIndependentQualificationEvidence,
+    gpuScientificPromotionAuthorityVerifier,
+    gpuScientificAuthorityVerificationTimeProvider: () =>
+      observedNow(verifierClock),
     verifyHumanAuthorization({ receipt, expectedSubject, observedAt } = {}) {
       if (receipt?.authorizationSubjectHash
           !== expectedSubject?.liveSubmissionAuthorizationSubjectHash) return false;
@@ -250,6 +256,7 @@ export function composePinnedAutonomousSubmissionRequestVerifier({
           runtimeRoot,
           campaignId: request?.campaignId,
           clock: verifierClock,
+          environment,
         });
         return Boolean(authority
           && sameRecord(authority, campaignReleaseAuthority)
@@ -269,6 +276,7 @@ export function composePinnedAutonomousSubmissionRequestVerifier({
           runtimeRoot,
           campaignId: request?.campaignId,
           clock: verifierClock,
+          environment,
         });
         const releaseBinding = authority?.releaseBundle
           ?.autonomousResearchReleaseBinding || null;
@@ -302,6 +310,7 @@ export function composePinnedAutonomousSubmissionRequestVerifier({
           runtimeRoot,
           campaignId: request?.campaignId,
           clock: verifierClock,
+          environment,
         });
         if (!authority || !sameRecord(authority, campaignReleaseAuthority)
           || !releaseAuthoritySignatureValid(authority, releaseAttestor)) return false;
@@ -364,4 +373,3 @@ export function composePinnedAutonomousSubmissionRequestVerifier({
     },
   });
 }
-import path from 'node:path';

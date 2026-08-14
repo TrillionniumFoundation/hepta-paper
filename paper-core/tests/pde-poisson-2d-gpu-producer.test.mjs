@@ -91,6 +91,7 @@ function fixtureRunner(outputRoot, selectedGpu, mutateDiagnostics = null) {
     allowedOutputRoots: [outputRoot],
     allowedContainerImages: [AUTOMATION_RUNTIME_IMAGES.pythonGpu.image],
     dockerImage: AUTOMATION_RUNTIME_IMAGES.pythonGpu.image,
+    runtimeRoot: path.join(outputRoot, '.runtime'),
     allowGpu: true,
     maximumTimeoutMs: 60_000,
     maximumMemoryBytes: 128 * 1024 * 1024,

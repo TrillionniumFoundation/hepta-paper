@@ -6,14 +6,37 @@ import { parseJsonOrThrow } from '../../workflow-kernel/runtime/data-utils.mjs';
 import { createExperimentRegistryAuthorityVerifier } from '../../paper-domain/research/experiment-registry-authority.mjs';
 import { verifyArtifactWriteReceiptSource } from '../artifacts/artifact-write-receipt-verifier.mjs';
 import { createIndependentRawEventArtifactRecomputationVerifier } from '../research-verify/raw-event-artifact-recomputation-verifier.mjs';
+import {
+  assertSealedImmutableCampaignPackageFilesSync,
+} from '../automation/campaign-release-materialization.mjs';
 
 const RELEASE_AUTHORITY_VERIFIERS = new WeakMap();
+const RELEASE_AUTHORITY_GPU_VERIFIERS = new WeakMap();
+const RELEASE_AUTHORITY_GPU_VERIFICATION_TIMES = new WeakMap();
+const RELEASE_QUERY_GPU_VERIFIERS = new WeakMap();
 
 export function experimentRegistryAuthorityVerifierForReleaseAuthority(record) {
   return record && RELEASE_AUTHORITY_VERIFIERS.get(record) || null;
 }
 
-function authorityFromRow(row, experimentRegistryAuthorityVerifier) {
+export function gpuScientificPromotionAuthorityVerifierForReleaseAuthority(record) {
+  return record && RELEASE_AUTHORITY_GPU_VERIFIERS.get(record) || null;
+}
+
+export function gpuScientificAuthorityVerificationTimeForReleaseAuthority(record) {
+  return record && RELEASE_AUTHORITY_GPU_VERIFICATION_TIMES.get(record) || null;
+}
+
+export function gpuScientificPromotionAuthorityVerifierForReleaseQuery(query) {
+  return query && RELEASE_QUERY_GPU_VERIFIERS.get(query) || null;
+}
+
+function authorityFromRow(
+  row,
+  experimentRegistryAuthorityVerifier,
+  gpuScientificPromotionAuthorityVerifier,
+  gpuScientificAuthorityVerificationTime,
+) {
   if (!row) return null;
   const releaseBundle = parseJsonOrThrow(row.release_bundle_json, 'campaign_release_authority_bundle_json_invalid');
   const promotionReceipt = parseJsonOrThrow(row.promotion_receipt_json, 'campaign_release_authority_promotion_json_invalid');
@@ -67,12 +90,24 @@ function authorityFromRow(row, experimentRegistryAuthorityVerifier) {
     materializationReceipt: packageResult.materializationReceipt || null,
     releaseBundle,
   });
-  const verification = verifyCampaignReleaseAuthorityRecord(record, {}, { experimentRegistryAuthorityVerifier });
+  const verification = verifyCampaignReleaseAuthorityRecord(record, {}, {
+    experimentRegistryAuthorityVerifier,
+    gpuScientificPromotionAuthorityVerifier,
+    gpuScientificAuthorityVerificationTime,
+  });
   if (!verification.valid) throw new Error(`campaign_release_authority_record_invalid:${verification.blockers.join(',')}`);
   if (promotionReceipt.campaignReleasePromotionReceiptHash !== row.promotion_receipt_hash) {
     throw new Error('campaign_release_authority_promotion_hash_binding_invalid');
   }
   RELEASE_AUTHORITY_VERIFIERS.set(record, experimentRegistryAuthorityVerifier);
+  RELEASE_AUTHORITY_GPU_VERIFIERS.set(
+    record,
+    gpuScientificPromotionAuthorityVerifier,
+  );
+  RELEASE_AUTHORITY_GPU_VERIFICATION_TIMES.set(
+    record,
+    gpuScientificAuthorityVerificationTime,
+  );
   return record;
 }
 
@@ -103,6 +138,7 @@ export function createSqliteCampaignReleaseQueryRepository({
   operatorDatasetHarnessAuthorityVerifier = null,
   runtimeRoot = null,
   operatorDatasetAuthorityTrustStoreProvider = null,
+  gpuScientificPromotionAuthorityVerifier = null,
   clock = { now: () => new Date() },
 } = {}) {
   if (typeof store?.query !== 'function') throw new Error('Campaign release query repository requires query capability');
@@ -123,18 +159,45 @@ export function createSqliteCampaignReleaseQueryRepository({
     rawEventRecomputationVerifier,
     operatorDatasetHarnessAuthorityVerifier,
   });
-  return Object.freeze(assertCampaignReleaseQueryPort({
+  const repository = Object.freeze(assertCampaignReleaseQueryPort({
     version: 1,
     kind: 'SqliteCampaignReleaseQueryRepository',
     getCurrentRelease({ campaignId, ...expected } = {}) {
       if (!campaignId) throw new Error('campaign_release_authority_campaign_id_required');
       const result = store.query(CURRENT_RELEASE_SQL, [campaignId]);
       if (!result?.ok) throw new Error(result?.error || 'campaign_release_authority_query_failed');
-      const record = authorityFromRow(result.rows?.[0], experimentRegistryAuthorityVerifier);
+      const gpuScientificAuthorityVerificationTime =
+        typeof clock?.now === 'function' ? clock.now() : new Date();
+      const record = authorityFromRow(
+        result.rows?.[0],
+        experimentRegistryAuthorityVerifier,
+        gpuScientificPromotionAuthorityVerifier,
+        gpuScientificAuthorityVerificationTime,
+      );
       if (!record) return null;
-      const verification = verifyCampaignReleaseAuthorityRecord(record, { campaignId, ...expected }, { experimentRegistryAuthorityVerifier });
+      if (!runtimeRoot) {
+        throw new Error('campaign_release_authority_runtime_root_required');
+      }
+      assertSealedImmutableCampaignPackageFilesSync(
+        record.releaseBundle?.packageOutput,
+        runtimeRoot,
+      );
+      const verification = verifyCampaignReleaseAuthorityRecord(
+        record,
+        { campaignId, ...expected },
+        {
+          experimentRegistryAuthorityVerifier,
+          gpuScientificPromotionAuthorityVerifier,
+          gpuScientificAuthorityVerificationTime,
+        },
+      );
       if (!verification.valid) throw new Error(`campaign_release_authority_mismatch:${verification.blockers.join(',')}`);
       return record;
     },
   }));
+  RELEASE_QUERY_GPU_VERIFIERS.set(
+    repository,
+    gpuScientificPromotionAuthorityVerifier,
+  );
+  return repository;
 }

@@ -25,10 +25,10 @@ import {
 import { recordCampaignExperimentReceipts } from './campaign-experiment-receipt-recorder.mjs';
 import { runCampaignExternalResearchReplay } from './campaign-external-research-replay.mjs';
 import { verifyCampaignFormalResearch } from './campaign-formal-research-verifier.mjs';
-import {
-  verifyCampaignAdvancedNumericalExecutionResult,
-} from '../../paper-domain/automation/advanced-numerical-campaign-execution-contract.mjs';
 import { requireCampaignResearchGpuScientificEvidence } from './campaign-research-gpu-scientific-evidence.mjs';
+import {
+  requireCampaignResearchAdvancedNumericalEvidence,
+} from './campaign-research-advanced-numerical-evidence.mjs';
 
 export {
   runFencedFormalNativeResearchWorkers,
@@ -49,6 +49,8 @@ export function createCampaignResearchVerifier({
   trustedFormalSandboxRuntime = null,
   dynamicFormalExecutionAuthority = null,
   dynamicFormalExecutionEnvironment = process.env,
+  gpuScientificQualificationIntakeRepository = null,
+  gpuScientificPromotionAuthorityVerifier = null,
 } = {}) {
   if (!runtimeRoot || !clock?.now) throw new Error('campaign research verifier requires runtimeRoot and ClockPort');
   return Object.freeze(assertCampaignResearchVerifierPort({
@@ -262,60 +264,23 @@ export function createCampaignResearchVerifier({
       } else if (formalDependencyNodes.length || formalVerificationReceipt) {
         throw new Error('campaign_research_unrequested_formal_verification_dependency');
       }
-      const advancedNumericalPlan = campaign.spec.advancedNumericalExecutionPlan || null;
-      const advancedNumericalDependencyNodes = authoritativeNodes.filter((candidate) => (
-        directDependencies.has(candidate.nodeId)
-          && candidate.kind === 'advanced-numerical-analysis'
-      ));
-      let advancedNumericalExecutionEvidence = null;
-      if (advancedNumericalPlan) {
-        if (advancedNumericalDependencyNodes.length !== 1) {
-          throw new Error('campaign_research_advanced_numerical_dependency_required');
-        }
-        const advancedNode = assertCompletedNodeResult(
-          advancedNumericalDependencyNodes[0],
-          'advanced_numerical_node',
-        );
-        if (!verifyCampaignAdvancedNumericalExecutionResult(advancedNode.result, {
+      const advancedNumericalExecutionEvidence =
+        requireCampaignResearchAdvancedNumericalEvidence({
           campaign,
-          node: advancedNode,
-          plan: advancedNumericalPlan,
-        })) {
-          throw new Error('campaign_research_advanced_numerical_evidence_invalid');
-        }
-        const {
-          workspaceAttemptIntegration: _workspaceAttemptIntegration,
-          ...advancedNumericalSemanticResult
-        } = advancedNode.result;
-        advancedNumericalExecutionEvidence = Object.freeze({
-          nodeId: advancedNode.nodeId,
-          attemptId: advancedNode.attemptId,
-          leaseGeneration: advancedNode.leaseGeneration,
-          nodeResultHash: advancedNode.resultSha256,
-          executionPlanHash:
-            advancedNumericalPlan.advancedNumericalCampaignExecutionPlanHash,
-          executionReceiptHash:
-            advancedNode.result.advancedNumericalCampaignExecutionReceiptHash,
-          evidenceHash: advancedNode.result.advancedNumericalCampaignEvidenceHash,
-          evidenceDocumentHash: advancedNode.result.evidenceDocumentHash,
-          productionQualified: advancedNode.result.productionQualified,
-          promotionEligible: advancedNode.result.promotionEligible,
-          result: Object.freeze(advancedNumericalSemanticResult),
+          authoritativeNodes,
+          directDependencies,
         });
-        if (!advancedNumericalExecutionEvidence.promotionEligible) {
-          const error = new Error(
-            'campaign_research_advanced_numerical_production_qualification_required',
-          );
-          error.retryable = false;
-          error.receipt = advancedNode.result;
-          throw error;
-        }
-      } else if (advancedNumericalDependencyNodes.length) {
-        throw new Error('campaign_research_unplanned_advanced_numerical_dependency');
-      }
-      requireCampaignResearchGpuScientificEvidence({
-        campaign, authoritativeNodes, directDependencies,
-      });
+      const gpuScientificQualificationEvidence =
+        requireCampaignResearchGpuScientificEvidence({
+          campaign,
+          authoritativeNodes,
+          directDependencies,
+          runtimeRoot,
+          qualificationIntakeRepository:
+            gpuScientificQualificationIntakeRepository,
+          promotionAuthorityVerifier:
+            gpuScientificPromotionAuthorityVerifier,
+        });
       const latestReplayByProfile = new Map();
       for (const candidate of authoritativeNodes) {
         if (!directDependencies.has(candidate.nodeId) || candidate.status !== 'completed'
@@ -433,6 +398,14 @@ export function createCampaignResearchVerifier({
             advancedNumericalExecutionEvidence?.executionReceiptHash || null,
           advancedNumericalCampaignEvidenceHash:
             advancedNumericalExecutionEvidence?.evidenceHash || null,
+          gpuScientificCampaignExecutionResultHash:
+            gpuScientificQualificationEvidence?.executionResultHash || null,
+          gpuScientificArtifactBodyArchiveManifestHash:
+            gpuScientificQualificationEvidence
+              ?.artifactArchiveManifestHash || null,
+          gpuScientificCampaignQualificationEvidenceHash:
+            gpuScientificQualificationEvidence
+              ?.qualificationEvidenceHash || null,
         }),
         campaignResearchSourceSnapshot,
         operatorDatasetHarnessAuthorityVerifier,
@@ -487,7 +460,18 @@ export function createCampaignResearchVerifier({
         advancedNumericalCampaignEvidenceHash:
           advancedNumericalExecutionEvidence?.evidenceHash || null,
         advancedNumericalExecutionEvidence,
-        externalActionPerformed: Boolean(externalReplayReceipt),
+        gpuScientificCampaignExecutionResultHash:
+          gpuScientificQualificationEvidence?.executionResultHash || null,
+        gpuScientificArtifactBodyArchiveManifestHash:
+          gpuScientificQualificationEvidence?.artifactArchiveManifestHash
+          || null,
+        gpuScientificCampaignQualificationEvidenceHash:
+          gpuScientificQualificationEvidence?.qualificationEvidenceHash
+          || null,
+        gpuScientificQualificationEvidence,
+        externalActionPerformed: Boolean(
+          externalReplayReceipt || gpuScientificQualificationEvidence,
+        ),
       };
       return Object.freeze({
         ...payload,

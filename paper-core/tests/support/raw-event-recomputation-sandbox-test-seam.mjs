@@ -54,6 +54,10 @@ const CAMPAIGN_RELEASE_CONTRACTS = new URL(
   '../../../paper-domain/automation/campaign-release-contracts.mjs',
   import.meta.url,
 );
+const CAMPAIGN_RELEASE_PROMOTION_CANDIDATE_CONTRACT = new URL(
+  '../../../paper-domain/automation/campaign-release-promotion-candidate-contract.mjs',
+  import.meta.url,
+);
 const ANALYSIS_RUN_BINDING = new URL(
   '../../../paper-domain/automation/analysis-protocol-run-binding.mjs',
   import.meta.url,
@@ -140,6 +144,8 @@ const AUTONOMOUS_RESEARCH_RECURSIVE_RELEASE_CLOSURE_TEST_MODULE =
 const CAMPAIGN_RELEASE_CONTRACTS_TEST_MODULE = testVerificationGraphUrl(
   CAMPAIGN_RELEASE_CONTRACTS,
 );
+const CAMPAIGN_RELEASE_PROMOTION_CANDIDATE_CONTRACT_TEST_MODULE =
+  testVerificationGraphUrl(CAMPAIGN_RELEASE_PROMOTION_CANDIDATE_CONTRACT);
 const ANALYSIS_RUN_BINDING_TEST_MODULE = testVerificationGraphUrl(
   ANALYSIS_RUN_BINDING,
 );
@@ -230,6 +236,12 @@ const exactTestEdgeRedirects = new Map([
     EXPERIMENT_IR_EXECUTION_AUTHORITY.href].join('\n'),
   EXPERIMENT_IR_EXECUTION_AUTHORITY_TEST_MODULE.href],
   [[CAMPAIGN_RELEASE_CONTRACTS_TEST_MODULE.href,
+    AUTONOMOUS_RESEARCH_RELEASE_BINDING.href].join('\n'),
+  AUTONOMOUS_RESEARCH_RELEASE_BINDING_TEST_MODULE.href],
+  [[CAMPAIGN_RELEASE_CONTRACTS_TEST_MODULE.href,
+    CAMPAIGN_RELEASE_PROMOTION_CANDIDATE_CONTRACT.href].join('\n'),
+  CAMPAIGN_RELEASE_PROMOTION_CANDIDATE_CONTRACT_TEST_MODULE.href],
+  [[CAMPAIGN_RELEASE_PROMOTION_CANDIDATE_CONTRACT_TEST_MODULE.href,
     AUTONOMOUS_RESEARCH_RELEASE_BINDING.href].join('\n'),
   AUTONOMOUS_RESEARCH_RELEASE_BINDING_TEST_MODULE.href],
 ]);

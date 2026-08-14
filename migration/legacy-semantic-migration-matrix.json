@@ -10225,7 +10225,7 @@
       },
       "target": {
         "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "e91405e489f3a314ab6d98e0246ca2fd6e7c761756e7d310ac83a7897afeeacd",
+        "sha256": "5a3fcf2600776510a5de83c5960c7d9c1f945fc882981d55303cd3634fad15d0",
         "symbols": [
           "runLatexBuildAdapter",
           "runPackageAdapter"
@@ -10358,7 +10358,7 @@
       },
       "target": {
         "path": "hepta-paper-workspace/paper-adapters/build-package/index.mjs",
-        "sha256": "e91405e489f3a314ab6d98e0246ca2fd6e7c761756e7d310ac83a7897afeeacd",
+        "sha256": "5a3fcf2600776510a5de83c5960c7d9c1f945fc882981d55303cd3634fad15d0",
         "symbols": [
           "runLatexBuildAdapter",
           "runPackageAdapter"

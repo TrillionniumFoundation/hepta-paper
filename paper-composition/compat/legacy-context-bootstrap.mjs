@@ -5,6 +5,10 @@ import { createSqliteCampaignReleaseAuthorityRepository } from '../../paper-adap
 import { composeLegacyStagePorts } from './legacy-stage-port-composition.mjs';
 import { createOperatorDatasetHarnessAuthorityReceiptVerifier } from '../../paper-adapters/automation/operator-dataset-harness-authority-receipt-verifier.mjs';
 import { loadOperatorDatasetAuthorityTrustStoreSync } from '../../paper-adapters/automation/operator-dataset-harness-reader.mjs';
+import {
+  createGpuScientificCampaignForbiddenIdentityProvider,
+  createGpuScientificCampaignPromotionAuthorityVerifier,
+} from '../../paper-adapters/automation/gpu-scientific-campaign-promotion-authority-verifier.mjs';
 
 // Compatibility façade for callers that have not selected a capability scope.
 // Production batch, automation and submission roots never import this module.
@@ -35,14 +39,27 @@ export function bootstrapLegacyPaperExecutionContext({
       trustStoreProvider: () => loadOperatorDatasetAuthorityTrustStoreSync({ runtimeRoot }),
       clock: foundation.clock,
     });
+  const operatorDatasetAuthorityTrustStoreProvider = () =>
+    loadOperatorDatasetAuthorityTrustStoreSync({ runtimeRoot });
+  const gpuScientificPromotionAuthorityVerifier =
+    serviceOverrides.gpuScientificPromotionAuthorityVerifier
+    || createGpuScientificCampaignPromotionAuthorityVerifier({
+      trustStoreProvider: operatorDatasetAuthorityTrustStoreProvider,
+      clock: foundation.clock,
+      forbiddenIdentityProvider:
+        createGpuScientificCampaignForbiddenIdentityProvider({
+          environment: serviceOverrides.environment || process.env,
+          clock: foundation.clock,
+        }),
+    });
   const campaignReleaseAuthorityRepository = serviceOverrides.campaignReleaseAuthorityRepository
     || createSqliteCampaignReleaseAuthorityRepository({
       store: foundation.store,
       clock: foundation.clock,
       operatorDatasetHarnessAuthorityVerifier,
+      gpuScientificPromotionAuthorityVerifier,
       runtimeRoot,
-      operatorDatasetAuthorityTrustStoreProvider: () =>
-        loadOperatorDatasetAuthorityTrustStoreSync({ runtimeRoot }),
+      operatorDatasetAuthorityTrustStoreProvider,
     });
   const legacyStagePorts = composeLegacyStagePorts({
     registry: paperStageAdapters,
@@ -52,6 +69,7 @@ export function bootstrapLegacyPaperExecutionContext({
   const typedCompatibilityOverrides = {
     ...compatibilityOverrides,
     operatorDatasetHarnessAuthorityVerifier,
+    gpuScientificPromotionAuthorityVerifier,
     campaignReleaseAuthorityRepository,
     stageExecution: serviceOverrides.stageExecution || legacyStagePorts.stageExecution,
     journalPolicy: serviceOverrides.journalPolicy || legacyStagePorts.journalPolicy,

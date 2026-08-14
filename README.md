@@ -247,14 +247,28 @@ Legacy capability decisions and the current target layering are documented in
 `paper-core/docs/history/`. The 249 retired legacy source decisions
 are grouped into 19 hash-bound families. All 249 currently have
 `local_admin_delegated` acceptance; none is represented as independent
-external-owner acceptance. Fourteen production-source-bound conformance
+external-owner acceptance. Sixteen production-source-bound conformance
 replays are separate from production operational proof. Operational proof
 requires distinct externally trusted capability-owner and operational-observer
-signatures and remains 0/14 until such evidence is ingested.
+signatures and remains 0/16 until such evidence is ingested.
 This independent operational layer is external-assurance reporting, not a code
 release blocker; implementation and release-bound conformance are the two
-blocking 14/14 layers. A local deployment must leave the external count at zero
+blocking 16/16 layers. A local deployment must leave the external count at zero
 rather than manufacture nominally independent signers.
+
+The two added capabilities are the bounded single-GPU CuPy Poisson solver and
+deterministic CuPy MLP trainer. Their local execution receipts do not establish
+physical multi-tenant GPU isolation, independent same-device replay, or a
+per-campaign promotion authority; those claims remain fail-closed until the
+corresponding external, campaign-bound evidence is verified.
+
+GPU lease coordination, archive rollback, and authorized package retention
+assume repository-owned cooperating processes running as one trusted Unix
+principal. A non-cooperating process that can mutate the same runtime, package,
+archive, or lease roots under that UID is part of the trusted computing base;
+these mechanisms are not a security boundary against such a process. A
+deployment that requires hostile same-UID isolation must use a separate UID,
+an inaccessible mount namespace, or a separately authorized broker.
 
 The retired `THUNDERO_EXT4` volume is no longer part of the cold-data contract.
 `paper-core/config/cold-volume-contract.v1.json` now binds the exact ext4

@@ -12,6 +12,43 @@ function singleFileForRole(packageOutput, role) {
   return matches.length === 1 ? matches[0] : null;
 }
 
+function gpuScientificV3PackageFilesBound({ packageOutput, manifest } = {}) {
+  const gpu = manifest?.gpuScientificEvidence;
+  if (manifest?.version !== 3 || manifest?.gpuScientificEvidenceIncluded !== true) {
+    return manifest?.version === 2;
+  }
+  const capsuleFiles = (packageOutput?.files || []).filter((item) => (
+    item?.role === 'research_evidence_capsule_file'
+  ));
+  const byCapsuleRole = new Map();
+  for (const file of capsuleFiles) {
+    if (!file?.capsuleRole || byCapsuleRole.has(file.capsuleRole)) return false;
+    byCapsuleRole.set(file.capsuleRole, file);
+  }
+  const qualification = byCapsuleRole.get(
+    'gpu_scientific_campaign_qualification_evidence',
+  );
+  const archiveManifest = byCapsuleRole.get(
+    'gpu_scientific_artifact_body_archive_manifest',
+  );
+  return qualification?.packageRelativePath === gpu.qualificationEvidencePath
+    && qualification?.hash === gpu.qualificationEvidenceFileHash
+    && Number(qualification?.bytes) === Number(gpu.qualificationEvidenceFileBytes)
+    && archiveManifest?.packageRelativePath
+      === gpu.artifactArchiveManifestPath
+    && archiveManifest?.hash === gpu.artifactArchiveManifestFileHash
+    && Number(archiveManifest?.bytes)
+      === Number(gpu.artifactArchiveManifestFileBytes)
+    && Array.isArray(gpu.archiveEntries)
+    && gpu.archiveEntries.length === 9
+    && gpu.archiveEntries.every((entry) => {
+      const file = byCapsuleRole.get(entry.role);
+      return file?.packageRelativePath === entry.path
+        && file?.hash === entry.hash
+        && Number(file?.bytes) === Number(entry.bytes);
+    });
+}
+
 export function verifyCampaignReleasePackageBinding({
   packageOutput,
   artifactPackage,
@@ -60,6 +97,10 @@ export function verifyCampaignReleasePackageBinding({
       packageOutput,
       manifest: researchEvidenceCapsuleManifest,
       executionAttestation: researchExecutionReleaseAttestation,
+    })
+    || !gpuScientificV3PackageFilesBound({
+      packageOutput,
+      manifest: researchEvidenceCapsuleManifest,
     })
     || !campaignReleaseImmutablePackageLineageValid({
       artifactPackage,

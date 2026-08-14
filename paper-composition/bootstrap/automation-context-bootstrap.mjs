@@ -29,6 +29,13 @@ import { composeAutomationCampaignState } from './automation-campaign-state-comp
 import {
   bootstrapAutonomousSubmissionHandoffContext,
 } from './autonomous-submission-handoff-context-bootstrap.mjs';
+import {
+  createGpuScientificCampaignQualificationIntakeRepository,
+} from '../../paper-adapters/automation/gpu-scientific-campaign-qualification-intake-repository.mjs';
+import {
+  createGpuScientificCampaignForbiddenIdentityProvider,
+  createGpuScientificCampaignPromotionAuthorityVerifier,
+} from '../../paper-adapters/automation/gpu-scientific-campaign-promotion-authority-verifier.mjs';
 
 // Automation processes receive no portal credentials or external executor. The
 // only submission capability exposed here is a durable local intent/outcome
@@ -60,6 +67,8 @@ export function bootstrapAutomationContext({
     'autonomousSubmissionRequestVerifier',
     'packageLifecycleAuthority',
     'runtimeRetentionReachabilityProvider',
+    'gpuScientificQualificationIntakeRepository',
+    'gpuScientificPromotionAuthorityVerifier',
   ]) {
     if (Object.hasOwn(serviceOverrides, forbiddenOverride)) {
       throw new Error(`automation_${forbiddenOverride}_override_forbidden`);
@@ -133,6 +142,18 @@ export function bootstrapAutomationContext({
     rawEventRecomputationVerifier,
     externalResearchReplay,
   } = composeAutomationResearchAuthority({ runtimeRoot, receiptLedger, clock, environment });
+  const gpuScientificQualificationIntakeRepository =
+    createGpuScientificCampaignQualificationIntakeRepository({ runtimeRoot });
+  const gpuScientificPromotionAuthorityVerifier =
+    createGpuScientificCampaignPromotionAuthorityVerifier({
+      trustStoreProvider: operatorDatasetAuthorityTrustStoreProvider,
+      clock,
+      forbiddenIdentityProvider:
+        createGpuScientificCampaignForbiddenIdentityProvider({
+          environment,
+          clock,
+        }),
+    });
   const researchExecutionReleaseAttestor = createResearchExecutionReleaseAttestor({
     runtimeRoot,
     clock,
@@ -176,6 +197,7 @@ export function bootstrapAutomationContext({
     operatorDatasetHarnessAuthorityVerifier,
     rawEventRecomputationVerifier,
     operatorDatasetAuthorityTrustStoreProvider,
+    gpuScientificPromotionAuthorityVerifier,
   });
   const nativeFoundationServices = exposeScopedFoundationServices(foundation, { schemaVersion });
   const automationServices = Object.freeze({
@@ -198,6 +220,7 @@ export function bootstrapAutomationContext({
       runtimeRoot,
       operatorDatasetAuthorityTrustStoreProvider,
       clock,
+      gpuScientificPromotionAuthorityVerifier,
       researchExecutionReleaseAttestor,
       independentPdfRebuildVerifier,
       externalResearchReplay: serviceOverrides.externalResearchReplay || externalResearchReplay,
@@ -217,6 +240,8 @@ export function bootstrapAutomationContext({
       trustedFormalSandboxRuntime,
       dynamicFormalExecutionAuthority,
       dynamicFormalExecutionEnvironment: environment,
+      gpuScientificQualificationIntakeRepository,
+      gpuScientificPromotionAuthorityVerifier,
     }),
     theoremQualityRevisionSink: serviceOverrides.theoremQualityRevisionSink || createTheoremQualityRevisionSink({ store, clock }),
     resourceGovernorFactory: serviceOverrides.resourceGovernorFactory || ((limits) => createSqliteResourceGovernor({ store, clock, limits })),

@@ -35,6 +35,7 @@ function preparePrivateOutputRoot(selected) {
 
 export function composeCanonicalDeepLearningGpuTraining({
   outputRoot,
+  runtimeRoot,
   timeoutMs = 60 * 60 * 1_000,
   memoryBytes = 8 * 1024 ** 3,
   cpuSeconds = 3_600,
@@ -44,6 +45,7 @@ export function composeCanonicalDeepLearningGpuTraining({
   const selectedOutputRoot = preparePrivateOutputRoot(outputRoot);
   const trainingExecutor = createCanonicalCupyDeepLearningTrainingExecutor({
     outputRoot: selectedOutputRoot,
+    runtimeRoot,
     timeoutMs,
     memoryBytes,
     cpuSeconds,

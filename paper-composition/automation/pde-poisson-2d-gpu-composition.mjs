@@ -37,10 +37,15 @@ function preparePrivateOutputRoot(selected) {
   return root;
 }
 
-export function composeCanonicalPdePoisson2dGpuSolver({ outputRoot, ...limits } = {}) {
+export function composeCanonicalPdePoisson2dGpuSolver({
+  outputRoot,
+  runtimeRoot,
+  ...limits
+} = {}) {
   const selectedOutputRoot = preparePrivateOutputRoot(outputRoot);
   const gpuExecutor = createCanonicalCupyPdePoisson2dExecutor({
     outputRoot: selectedOutputRoot,
+    runtimeRoot,
     ...limits,
   });
   return Object.freeze({

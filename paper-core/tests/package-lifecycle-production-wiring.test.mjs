@@ -13,13 +13,25 @@ import { createSqliteReceiptLedger } from '../../paper-adapters/persistence/sqli
 import { createDefaultPaperStore } from '../../paper-adapters/persistence/store-provider.mjs';
 import { createPackageRetentionLegalHoldReceipt } from '../../paper-domain/automation/package-lifecycle-authority-contract.mjs';
 import { createPackageLifecycleRecordingIntent } from '../../paper-domain/automation/package-lifecycle-recording-intent.mjs';
-import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 const h = (value) => hashRecord('PackageLifecycleProductionWiringTest', value);
 
 function testRoot(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-package-lifecycle-production-'));
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(() => {
+    const restore = (candidate) => {
+      if (!fs.existsSync(candidate)) return;
+      const stat = fs.lstatSync(candidate);
+      if (!stat.isDirectory() || stat.isSymbolicLink()) return;
+      fs.chmodSync(candidate, 0o700);
+      for (const name of fs.readdirSync(candidate)) {
+        restore(path.join(candidate, name));
+      }
+    };
+    restore(root);
+    fs.rmSync(root, { recursive: true, force: true });
+  });
   return root;
 }
 
@@ -44,12 +56,34 @@ function campaignFixture({ campaignId, paperId = 'paper', predecessor = null } =
 }
 
 function releaseFixture({ campaign, packagePath, promotedAt, attempt = 'attempt-1' }) {
-  const packageOutput = Object.freeze({
+  const packageRecordPath = path.join(packagePath, 'PACKAGE_RECORD.json');
+  const packageRecord = fs.readFileSync(packageRecordPath);
+  fs.chmodSync(packageRecordPath, 0o444);
+  fs.chmodSync(packagePath, 0o500);
+  const packageOutputPayload = {
     version: 1,
     kind: 'ImmutableCampaignPackageOutput',
     immutable: true,
+    releaseRoot: path.join(
+      path.dirname(path.dirname(packagePath)),
+      'campaign-releases',
+      campaign.campaignId,
+    ),
     packageDir: packagePath,
-    immutableCampaignPackageOutputHash: h(`${campaign.campaignId}:output`),
+    files: [{
+      role: 'package_record',
+      path: packageRecordPath,
+      hash: hashBytes(packageRecord),
+      bytes: packageRecord.length,
+    }],
+    fileCount: 1,
+  };
+  const packageOutput = Object.freeze({
+    ...packageOutputPayload,
+    immutableCampaignPackageOutputHash: hashRecord(
+      'ImmutableCampaignPackageOutput',
+      packageOutputPayload,
+    ),
   });
   const releaseBundle = Object.freeze({
     version: 1,
@@ -310,10 +344,13 @@ test('post-intent package mutation and non-current releases fail closed without 
   fixture.releases.set(campaign.campaignId, built.release);
   assert.equal(service.reconcileCampaign({ campaignId: campaign.campaignId }).reconciledCount, 0);
   fixture.complete({ campaign, node: built.node, release: built.release });
-  fs.writeFileSync(path.join(packagePath, 'PACKAGE_RECORD.json'), 'after\n');
+  const packageRecordPath = path.join(packagePath, 'PACKAGE_RECORD.json');
+  fs.chmodSync(packageRecordPath, 0o644);
+  fs.writeFileSync(packageRecordPath, 'after\n');
+  fs.chmodSync(packageRecordPath, 0o444);
   assert.throws(
     () => service.reconcileCampaign({ campaignId: campaign.campaignId }),
-    /package_lifecycle_recording_intent_postimage_mismatch/,
+    /campaign_release_package_output_file_invalid/,
   );
   assert.equal(rows(fixture.receiptLedger, 'package-lifecycle').length, 0);
 });
@@ -346,6 +383,64 @@ test('campaign package generation is a direct packages member and traversal or s
       },
     },
   }), /package_lifecycle_release_package_binding_invalid|package_lifecycle_package_directory_invalid/);
+});
+
+test('lifecycle materialization rejects post-release physical package tree tampering', (t) => {
+  const root = testRoot(t);
+  const inspector = createPackageLifecycleMaterializationInspector({
+    runtimeRoot: root,
+  });
+  const createRelease = (label) => {
+    const campaign = campaignFixture({ campaignId: `physical-${label}` });
+    const packagePath = packageFixture(root, `physical-${label}`);
+    const built = releaseFixture({
+      campaign,
+      packagePath,
+      promotedAt: '2026-07-21T08:05:00.000Z',
+    });
+    assert.doesNotThrow(() => inspector.inspectRelease({
+      releaseBundle: built.release.releaseBundle,
+    }));
+    return { built, packagePath };
+  };
+
+  const extra = createRelease('extra');
+  fs.chmodSync(extra.packagePath, 0o700);
+  fs.writeFileSync(path.join(extra.packagePath, 'UNBOUND.bin'), 'unbound', {
+    mode: 0o444,
+  });
+  fs.chmodSync(extra.packagePath, 0o500);
+  assert.throws(() => inspector.inspectRelease({
+    releaseBundle: extra.built.release.releaseBundle,
+  }), /campaign_release_package_output_exact_tree_invalid/);
+
+  const symlink = createRelease('symlink');
+  const symlinkRecord = path.join(symlink.packagePath, 'PACKAGE_RECORD.json');
+  fs.chmodSync(symlink.packagePath, 0o700);
+  fs.unlinkSync(symlinkRecord);
+  fs.symlinkSync('/dev/null', symlinkRecord);
+  fs.chmodSync(symlink.packagePath, 0o500);
+  assert.throws(() => inspector.inspectRelease({
+    releaseBundle: symlink.built.release.releaseBundle,
+  }), /campaign_release_package_output_(?:file_invalid|entry_unsafe)/);
+
+  const hardlink = createRelease('hardlink');
+  fs.linkSync(
+    path.join(hardlink.packagePath, 'PACKAGE_RECORD.json'),
+    path.join(root, 'hardlink-alias.json'),
+  );
+  assert.throws(() => inspector.inspectRelease({
+    releaseBundle: hardlink.built.release.releaseBundle,
+  }), /campaign_release_package_output_(?:file_invalid|entry_unsafe)/);
+
+  const content = createRelease('content');
+  const contentRecord = path.join(content.packagePath, 'PACKAGE_RECORD.json');
+  fs.chmodSync(contentRecord, 0o644);
+  fs.writeFileSync(contentRecord, 'tampered\n');
+  fs.chmodSync(contentRecord, 0o444);
+  assert.throws(() => inspector.inspectRelease({
+    releaseBundle: content.built.release.releaseBundle,
+  }), /campaign_release_package_output_file_invalid/);
 });
 
 test('attempt fence and forged intent ledger metadata are rejected', (t) => {

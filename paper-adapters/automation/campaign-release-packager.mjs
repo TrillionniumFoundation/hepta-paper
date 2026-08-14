@@ -11,10 +11,20 @@ import {
 } from '../../paper-domain/automation/autonomous-manuscript-release-proof-contract.mjs';
 import { verifyCampaignResearchSourceSnapshot } from '../../paper-domain/automation/campaign-research-contract.mjs';
 import { hashPaperRecord } from '../../paper-domain/contracts/primitives.mjs';
+import {
+  buildGpuScientificCampaignPromotionEvidence,
+} from '../../paper-domain/automation/gpu-scientific-campaign-promotion-contract.mjs';
 import { createTrustedExperimentRegistryAuthorityVerifier } from '../research-verify/experiment-registry-authority-verifier.mjs';
 import { createOperatorDatasetHarnessAuthorityReceiptVerifier } from './operator-dataset-harness-authority-receipt-verifier.mjs';
 import {
-  assertImmutableCampaignPackageFilesSync, campaignReleasePackageRootFor,
+  assertCurrentGpuScientificQualificationAuthority,
+  campaignReleaseGpuScientificAuthorityObservedAt,
+  freezeCampaignReleaseGpuScientificAuthorityTrustStore,
+  verifyPackagedGpuScientificAuthorityFreshness,
+} from './campaign-release-gpu-scientific-authority-freshness.mjs';
+import {
+  assertImmutableCampaignPackageFilesSync,
+  assertSealedImmutableCampaignPackageFilesSync, campaignReleasePackageRootFor,
   campaignReleaseRebuildRootFor, campaignReleaseRootFor,
   fsyncCampaignReleasePackageDirectorySync, initializeCampaignReleaseRootSync,
   initializeCampaignReleasePackageScopeSync,
@@ -51,6 +61,7 @@ export function createCampaignReleasePackager({
   runtimeRoot: configuredRuntimeRoot = null,
   operatorDatasetAuthorityTrustStoreProvider = null,
   clock = null,
+  gpuScientificPromotionAuthorityVerifier = null,
   researchExecutionReleaseAttestor = null,
   independentPdfRebuildVerifier: suppliedPdfRebuildVerifier = null,
   externalResearchReplay = null,
@@ -81,6 +92,7 @@ export function createCampaignReleasePackager({
       advancedNumericalExecutionEvidence = null,
       gpuScientificExecutionPlan = null,
       gpuScientificExecutionEvidence = null,
+      gpuScientificResearchEvidence = null,
       runtimeRoot,
       createdAt,
       executionSignal = null,
@@ -114,17 +126,64 @@ export function createCampaignReleasePackager({
         throw new Error('campaign_release_runtime_root_mismatch');
       }
       const resolvedRuntimeRoot = requestedRuntimeRoot;
-      const runtimeTrustStoreProvider = typeof operatorDatasetAuthorityTrustStoreProvider === 'function'
-        ? () => operatorDatasetAuthorityTrustStoreProvider({ runtimeRoot: resolvedRuntimeRoot })
+      const sourceRuntimeTrustStoreProvider =
+        typeof operatorDatasetAuthorityTrustStoreProvider === 'function'
+          ? operatorDatasetAuthorityTrustStoreProvider : null;
+      const frozenGpuScientificAuthorityTrustStore =
+        gpuScientificExecutionPlan
+          ? freezeCampaignReleaseGpuScientificAuthorityTrustStore({
+            trustStoreProvider: sourceRuntimeTrustStoreProvider,
+            runtimeRoot: resolvedRuntimeRoot,
+          }) : null;
+      const runtimeTrustStoreProvider = sourceRuntimeTrustStoreProvider
+        ? (gpuScientificExecutionPlan
+          ? () => frozenGpuScientificAuthorityTrustStore
+          : () => sourceRuntimeTrustStoreProvider({
+            runtimeRoot: resolvedRuntimeRoot,
+          }))
         : null;
-      const operatorDatasetHarnessAuthorityVerifier = suppliedDatasetAuthorityVerifier
+      const initialGpuScientificAuthorityObservedAt =
+        gpuScientificExecutionPlan
+          ? campaignReleaseGpuScientificAuthorityObservedAt(clock) : null;
+      const initialGpuScientificAuthorityInspection =
+        assertCurrentGpuScientificQualificationAuthority({
+        gpuScientificExecutionPlan,
+        gpuScientificResearchEvidence,
+        gpuScientificPromotionAuthorityVerifier,
+        trustStore: frozenGpuScientificAuthorityTrustStore,
+          observedAt: initialGpuScientificAuthorityObservedAt,
+        });
+      const releaseScopedGpuScientificPromotionAuthorityVerifier =
+        gpuScientificExecutionPlan
+          ? Object.freeze({
+            version: 1,
+            kind: 'ExternallyAnchoredGpuScientificPromotionAuthorityVerifier',
+            trustStoreExternallyAnchored: true,
+            verify: (input) => gpuScientificPromotionAuthorityVerifier.verify(input),
+            verifyReleaseSnapshot(input) {
+              const snapshotInspection =
+                gpuScientificPromotionAuthorityVerifier.verify(input);
+              const frozenStoreInspection =
+                gpuScientificPromotionAuthorityVerifier.verify({
+                  ...input,
+                  trustStore: frozenGpuScientificAuthorityTrustStore,
+                });
+              return JSON.stringify(snapshotInspection)
+                  === JSON.stringify(frozenStoreInspection)
+                ? snapshotInspection : frozenStoreInspection;
+            },
+          })
+          : gpuScientificPromotionAuthorityVerifier;
+      const operatorDatasetHarnessAuthorityVerifier =
+        (!gpuScientificExecutionPlan && suppliedDatasetAuthorityVerifier)
         || (runtimeTrustStoreProvider && typeof clock?.now === 'function'
           ? createOperatorDatasetHarnessAuthorityReceiptVerifier({
             trustStoreProvider: runtimeTrustStoreProvider,
             clock,
           })
           : null);
-      const experimentRegistryAuthorityVerifier = suppliedAuthorityVerifier
+      const experimentRegistryAuthorityVerifier =
+        (!gpuScientificExecutionPlan && suppliedAuthorityVerifier)
         || createTrustedExperimentRegistryAuthorityVerifier({
           receiptLedger,
           operatorDatasetHarnessAuthorityVerifier,
@@ -296,11 +355,21 @@ export function createCampaignReleasePackager({
           gpuScientificCampaignExecutionResultHash:
             gpuScientificExecutionEvidence
               ?.gpuScientificCampaignExecutionResultHash || null,
+          gpuScientificArtifactBodyArchiveManifestHash:
+            gpuScientificResearchEvidence
+              ?.artifactArchiveManifestHash || null,
+          gpuScientificCampaignQualificationEvidenceHash:
+            gpuScientificResearchEvidence
+              ?.qualificationEvidenceHash || null,
         } : {}),
       };
       const existing = readCampaignReleaseMaterializationSync({ runtimeRoot: resolvedRuntimeRoot, releaseRoot });
       if (existing) {
-        const verification = verifyCampaignReleaseBundle(existing.bundle, expected, { experimentRegistryAuthorityVerifier });
+        const verification = verifyCampaignReleaseBundle(existing.bundle, expected, {
+          experimentRegistryAuthorityVerifier,
+          gpuScientificPromotionAuthorityVerifier:
+            releaseScopedGpuScientificPromotionAuthorityVerifier,
+        });
         if (!verification.valid) throw new Error(`campaign_release_immutable_bundle_invalid:${verification.blockers.join(',')}`);
         if (productionEntailmentRequired
           && (existing.bundle?.manuscriptPromotionGate?.version !== 2
@@ -322,7 +391,37 @@ export function createCampaignReleasePackager({
             errorCode: 'campaign_release_immutable_reviewer_evidence_invalid',
           });
         }
-        assertImmutableCampaignPackageFilesSync(existing.bundle.packageOutput, resolvedRuntimeRoot);
+        assertSealedImmutableCampaignPackageFilesSync(
+          existing.bundle.packageOutput,
+          resolvedRuntimeRoot,
+        );
+        if (gpuScientificExecutionPlan) {
+          const persistedQualificationEvidence = existing.bundle
+            ?.gpuScientificCampaignPromotionEvidence
+            ?.gpuScientificCampaignQualificationEvidence || null;
+          verifyPackagedGpuScientificAuthorityFreshness({
+            packageResult: {
+              packageDirAbsolute: existing.bundle?.packageOutput?.packageDir,
+              researchEvidenceCapsule: {
+                manifest: existing.bundle?.researchEvidenceCapsuleManifest,
+                manifestFile: {
+                  hash: existing.bundle?.packageOutput
+                    ?.researchEvidenceCapsuleManifestFileHash,
+                },
+                researchExecutionReleaseAttestationHash:
+                  existing.bundle?.researchExecutionReleaseAttestationHash,
+              },
+            },
+            qualificationEvidence: persistedQualificationEvidence,
+            initialAuthorityInspection:
+              initialGpuScientificAuthorityInspection,
+            initialObservedAt: initialGpuScientificAuthorityObservedAt,
+            frozenAuthorityTrustStore:
+              frozenGpuScientificAuthorityTrustStore,
+            gpuScientificPromotionAuthorityVerifier,
+            clock,
+          });
+        }
         const materializationReceipt = persistCampaignReleaseMaterializationSync({ runtimeRoot: resolvedRuntimeRoot, releaseRoot, bundle: existing.bundle });
         return campaignReleasePackageNodeResult(existing.bundle, materializationReceipt);
       }
@@ -386,11 +485,30 @@ export function createCampaignReleasePackager({
         experimentRegistryAuthorityVerifier,
         expectedCampaignId: campaign.campaignId,
         receiptLedger,
-        operatorDatasetAuthorityTrustStore: runtimeTrustStoreProvider
-          ? runtimeTrustStoreProvider()
-          : null,
+        operatorDatasetAuthorityTrustStore: gpuScientificExecutionPlan
+          ? frozenGpuScientificAuthorityTrustStore
+          : runtimeTrustStoreProvider ? runtimeTrustStoreProvider() : null,
         researchExecutionReleaseAttestor,
         assertExternalSideEffectReady,
+        gpuScientificExecutionPlan,
+        gpuScientificExecutionNode: gpuScientificExecutionPlan ? {
+          nodeId: gpuScientificExecutionEvidence?.nodeId,
+          kind: 'gpu-scientific-execution',
+          attemptId: gpuScientificExecutionEvidence?.attemptId,
+          leaseGeneration: gpuScientificExecutionEvidence?.leaseGeneration,
+          gpuScientificExecutionPlanHash:
+            gpuScientificExecutionPlan
+              .gpuScientificCampaignExecutionPlanHash,
+          gpuScientificResourceBudgetHash:
+            gpuScientificExecutionPlan.resourceBudgetHash,
+          resultSha256: gpuScientificResearchEvidence?.nodeResultHash,
+          result: gpuScientificExecutionEvidence,
+        } : null,
+        gpuScientificExecutionResult: gpuScientificExecutionEvidence,
+        gpuScientificQualificationEvidence:
+          gpuScientificResearchEvidence?.qualificationEvidence || null,
+        gpuScientificArtifactBodyArchiveManifest:
+          gpuScientificResearchEvidence?.artifactArchiveManifest || null,
         independentPdfRebuild,
         sourceArchiveDefinition: archiveDefinition,
         evidenceEntailmentReviewReceipt,
@@ -454,6 +572,34 @@ export function createCampaignReleasePackager({
         }
       }
       fsyncCampaignReleasePackageDirectorySync(packageDir);
+      const gpuScientificReleaseAuthorityFreshnessReceipt =
+        gpuScientificExecutionPlan
+          ? verifyPackagedGpuScientificAuthorityFreshness({
+            packageResult,
+            qualificationEvidence:
+              gpuScientificResearchEvidence?.qualificationEvidence || null,
+            initialAuthorityInspection:
+              initialGpuScientificAuthorityInspection,
+            initialObservedAt: initialGpuScientificAuthorityObservedAt,
+            frozenAuthorityTrustStore:
+              frozenGpuScientificAuthorityTrustStore,
+            gpuScientificPromotionAuthorityVerifier,
+            clock,
+          }) : null;
+      const gpuScientificPromotionEvidence = gpuScientificExecutionPlan
+        ? buildGpuScientificCampaignPromotionEvidence({
+          qualificationEvidence:
+            gpuScientificResearchEvidence?.qualificationEvidence,
+          researchEvidenceCapsuleManifestHash:
+            packageResult.researchEvidenceCapsule
+              ?.researchEvidenceCapsuleManifestHash,
+          researchEvidenceCapsuleManifestFileHash:
+            packageResult.researchEvidenceCapsule?.manifestFile?.hash,
+          researchExecutionReleaseAttestationHash:
+            packageResult.researchEvidenceCapsule
+              ?.researchExecutionReleaseAttestationHash,
+        })
+        : null;
       const promotionCandidate = createAutomationPromotionCandidate({
         campaignPlanHash: campaign.spec.campaignPlanHash,
         campaignId: campaign.campaignId,
@@ -470,6 +616,8 @@ export function createCampaignReleasePackager({
         sourceSnapshotHash: packageResult.sourceTreeManifest.sourceTreeManifestHash,
         sourceTreeManifest: packageResult.sourceTreeManifest,
         researchEvidenceCapsuleManifest: packageResult.researchEvidenceCapsule?.manifest || null,
+        researchEvidenceCapsuleManifestFileHash:
+          packageResult.researchEvidenceCapsule?.manifestFile?.hash || null,
         researchExecutionReleaseAttestation:
           packageResult.researchEvidenceCapsule?.researchExecutionReleaseAttestation || null,
         autonomousResearchReleaseBinding,
@@ -477,8 +625,13 @@ export function createCampaignReleasePackager({
         advancedNumericalExecutionEvidence,
         gpuScientificExecutionPlan,
         gpuScientificExecutionEvidence,
+        gpuScientificResearchEvidence,
+        gpuScientificPromotionEvidence,
+        gpuScientificReleaseAuthorityFreshnessReceipt,
         createdAt,
         experimentRegistryAuthorityVerifier,
+        gpuScientificPromotionAuthorityVerifier:
+          releaseScopedGpuScientificPromotionAuthorityVerifier,
       });
       const packageOutputFiles = [
         ['generated_source_zip', packageResult.sourceZip, packageResult.sourceZip?.path ? path.resolve(packageResult.artifactBaseRoot, packageResult.sourceZip.path) : null],
@@ -556,8 +709,14 @@ export function createCampaignReleasePackager({
         packageOutput,
         createdAt,
         experimentRegistryAuthorityVerifier,
+        gpuScientificPromotionAuthorityVerifier:
+          releaseScopedGpuScientificPromotionAuthorityVerifier,
       });
-      const verification = verifyCampaignReleaseBundle(releaseBundle, expected, { experimentRegistryAuthorityVerifier });
+      const verification = verifyCampaignReleaseBundle(releaseBundle, expected, {
+        experimentRegistryAuthorityVerifier,
+        gpuScientificPromotionAuthorityVerifier:
+          releaseScopedGpuScientificPromotionAuthorityVerifier,
+      });
       if (!verification.valid) throw new Error(`campaign_release_bundle_self_verification_failed:${verification.blockers.join(',')}`);
       assertImmutableCampaignPackageFilesSync(releaseBundle.packageOutput, resolvedRuntimeRoot);
       const materializationReceipt = persistCampaignReleaseMaterializationSync({ runtimeRoot: resolvedRuntimeRoot, releaseRoot, bundle: releaseBundle });

@@ -11,6 +11,10 @@ import { composeTrustedReceiptLedgers } from './receipt-ledger-composition.mjs';
 import { buildExecutionContext, composeScopedFoundationServices, exposeScopedFoundationServices } from './context-foundation-composition.mjs';
 import { createOperatorDatasetHarnessAuthorityReceiptVerifier } from '../../paper-adapters/automation/operator-dataset-harness-authority-receipt-verifier.mjs';
 import { loadOperatorDatasetAuthorityTrustStoreSync } from '../../paper-adapters/automation/operator-dataset-harness-reader.mjs';
+import {
+  createGpuScientificCampaignForbiddenIdentityProvider,
+  createGpuScientificCampaignPromotionAuthorityVerifier,
+} from '../../paper-adapters/automation/gpu-scientific-campaign-promotion-authority-verifier.mjs';
 
 const SUBMISSION_POLICY_MODES = new Set([
   PAPER_BATCH_MODES.LOCAL_DRY_RUN,
@@ -66,6 +70,17 @@ export function composeBatchServices({
     });
   const operatorDatasetAuthorityTrustStoreProvider = () =>
     loadOperatorDatasetAuthorityTrustStoreSync({ runtimeRoot });
+  const gpuScientificPromotionAuthorityVerifier =
+    serviceOverrides.gpuScientificPromotionAuthorityVerifier
+    || createGpuScientificCampaignPromotionAuthorityVerifier({
+      trustStoreProvider: operatorDatasetAuthorityTrustStoreProvider,
+      clock,
+      forbiddenIdentityProvider:
+        createGpuScientificCampaignForbiddenIdentityProvider({
+          environment: serviceOverrides.environment || process.env,
+          clock,
+        }),
+    });
   const campaignReleaseAuthorityRepository = includeSubmissionPolicy
     ? (serviceOverrides.campaignReleaseAuthorityRepository
       || createSqliteCampaignReleaseAuthorityRepository({
@@ -74,6 +89,7 @@ export function composeBatchServices({
         operatorDatasetHarnessAuthorityVerifier,
         runtimeRoot,
         operatorDatasetAuthorityTrustStoreProvider,
+        gpuScientificPromotionAuthorityVerifier,
       }))
     : null;
   const services = {

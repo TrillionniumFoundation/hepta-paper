@@ -5,6 +5,10 @@ import {
   publicTrustStoreFromSnapshot,
   verifyPublicAuthorityTrustSnapshot,
 } from '../../paper-domain/automation/public-authority-trust-snapshot-contract.mjs';
+import {
+  GPU_SCIENTIFIC_PRODUCTION_QUALIFICATION_AUTHORITY_ROLE,
+  GPU_SCIENTIFIC_SAME_DEVICE_REPLAY_AUTHORITY_ROLE,
+} from '../../paper-domain/automation/gpu-scientific-campaign-promotion-contract.mjs';
 
 function unique(values = []) {
   return [...new Set(values.filter(Boolean))];
@@ -53,15 +57,27 @@ function normalizedTrustAnchor(key) {
     return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : 'invalid';
   };
   const publicKeySpkiHash = publicKeyFingerprint(key?.publicKeyPem);
+  const roles = [...new Set(
+    (Array.isArray(key?.roles) ? key.roles : []).map(String),
+  )].sort();
+  const gpuAuthority = roles.some((role) => [
+    GPU_SCIENTIFIC_PRODUCTION_QUALIFICATION_AUTHORITY_ROLE,
+    GPU_SCIENTIFIC_SAME_DEVICE_REPLAY_AUTHORITY_ROLE,
+  ].includes(role));
+  const processIdentityHash = key?.processIdentityHash
+    ? String(key.processIdentityHash).toLowerCase() : null;
   if (!key?.keyId || !key?.subjectId || key?.algorithm !== 'ed25519' || !publicKeySpkiHash
-    || !Array.isArray(key?.roles) || key.roles.length < 1 || !key?.status) return null;
+    || !roles.length || !key?.status
+    || (processIdentityHash && !/^sha256:[0-9a-f]{64}$/.test(processIdentityHash))
+    || (gpuAuthority && !processIdentityHash)) return null;
   return Object.freeze({
     keyId: String(key.keyId),
     subjectId: String(key.subjectId),
     organization: key.organization ? String(key.organization) : null,
     algorithm: 'ed25519',
     publicKeySpkiHash,
-    roles: Object.freeze([...new Set(key.roles.map(String))].sort()),
+    ...(processIdentityHash ? { processIdentityHash } : {}),
+    roles: Object.freeze(roles),
     status: String(key.status),
     revoked: key.revoked === true || key.status === 'revoked' || Boolean(key.revokedAt),
     effectiveFrom: date(key.effectiveFrom || key.validFrom),
@@ -100,6 +116,58 @@ function externalTrustAnchorBlockers({ trustSnapshot, keyIds, trustedAuthorityRo
     }
   }
   return blockers;
+}
+
+export function verifyOfflinePublicAuthorityTrustAnchors({
+  trustSnapshot,
+  keyIds = [],
+  trustedAuthorityRoots = null,
+  verificationTime = new Date(),
+} = {}) {
+  const selectedKeyIds = unique(keyIds.map(String).filter(Boolean)).sort();
+  const now = verificationTime instanceof Date
+    ? verificationTime : new Date(verificationTime);
+  const internalBlockers = [];
+  const snapshotVerification = verifyPublicAuthorityTrustSnapshot(
+    trustSnapshot,
+  );
+  internalBlockers.push(...snapshotVerification.blockers.map((blocker) => (
+    `offline_authority:${blocker}`
+  )));
+  if (!selectedKeyIds.length) {
+    internalBlockers.push('offline_authority_referenced_key_missing');
+  }
+  const declared = new Set(
+    (trustSnapshot?.referencedKeyIds || []).map(String),
+  );
+  if (selectedKeyIds.some((keyId) => !declared.has(keyId))) {
+    internalBlockers.push('offline_authority_referenced_key_not_in_snapshot');
+  }
+  if (!Number.isFinite(now.getTime())) {
+    internalBlockers.push('offline_authority_verification_time_invalid');
+  } else {
+    const capturedAt = Date.parse(String(trustSnapshot?.capturedAt || ''));
+    if (Number.isFinite(capturedAt) && now.getTime() < capturedAt) {
+      internalBlockers.push('offline_authority_verification_precedes_trust_snapshot');
+    }
+    internalBlockers.push(...keyStateBlockers(trustSnapshot, now));
+  }
+  const anchorBlockers = externalTrustAnchorBlockers({
+    trustSnapshot,
+    keyIds: selectedKeyIds,
+    trustedAuthorityRoots,
+  });
+  const blockers = unique([...internalBlockers, ...anchorBlockers]);
+  return Object.freeze({
+    valid: blockers.length === 0,
+    packageInternalTrustSnapshotVerified: internalBlockers.length === 0,
+    externalTrustAnchorVerified:
+      selectedKeyIds.length > 0 && anchorBlockers.length === 0,
+    externallyAnchoredKeyIds: Object.freeze(
+      anchorBlockers.length ? [] : selectedKeyIds,
+    ),
+    blockers: Object.freeze(blockers),
+  });
 }
 
 export function buildOfflineOperatorDatasetAuthorityEvidence({ originalRunReceipt, replayRunReceipt } = {}) {
@@ -148,7 +216,10 @@ export function verifyOfflineOperatorDatasetAuthorityEvidence({
     internalBlockers.push('offline_operator_dataset_authority_evidence_invalid');
   }
   const keyIds = referencedKeyIds(evidence);
-  const snapshotVerification = verifyPublicAuthorityTrustSnapshot(trustSnapshot, { requiredKeyIds: keyIds });
+  const snapshotVerification = verifyPublicAuthorityTrustSnapshot(trustSnapshot, {
+    requiredKeyIds: keyIds,
+    allowAdditionalReferencedKeys: true,
+  });
   internalBlockers.push(...snapshotVerification.blockers.map((blocker) => `offline_authority:${blocker}`));
   if (!keyIds.length) internalBlockers.push('offline_authority_referenced_key_missing');
   if (Number.isFinite(now.getTime()) && Number.isFinite(Date.parse(String(trustSnapshot?.capturedAt || '')))

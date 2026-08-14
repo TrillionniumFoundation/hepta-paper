@@ -24,6 +24,7 @@ function bounded(value, minimum, maximum, blocker) {
 
 export function createCanonicalCupyPdePoisson2dSandboxRunner({
   outputRoot,
+  runtimeRoot,
   timeoutMs,
   memoryBytes,
   cpuSeconds,
@@ -36,6 +37,7 @@ export function createCanonicalCupyPdePoisson2dSandboxRunner({
     allowedOutputRoots: [outputRoot],
     allowedContainerImages: [AUTOMATION_RUNTIME_IMAGES.pythonGpu.image],
     dockerImage: AUTOMATION_RUNTIME_IMAGES.pythonGpu.image,
+    runtimeRoot,
     allowGpu: true,
     maximumTimeoutMs: bounded(timeoutMs, 1, LIMITS.timeoutMs,
       'pde_gpu_timeout_invalid'),

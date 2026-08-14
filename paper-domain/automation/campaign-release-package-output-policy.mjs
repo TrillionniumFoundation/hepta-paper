@@ -1,3 +1,13 @@
+import {
+  GPU_SCIENTIFIC_ARTIFACT_BODY_ARCHIVE_ENTRY_SPECIFICATIONS,
+  GPU_SCIENTIFIC_ARTIFACT_BODY_ARCHIVE_MANIFEST_PATH,
+} from './gpu-scientific-artifact-body-archive-contract.mjs';
+import {
+  CAMPAIGN_RELEASE_GPU_SCIENTIFIC_ARCHIVE_MANIFEST_ROLE,
+  CAMPAIGN_RELEASE_GPU_SCIENTIFIC_QUALIFICATION_EVIDENCE_PATH,
+  CAMPAIGN_RELEASE_GPU_SCIENTIFIC_QUALIFICATION_EVIDENCE_ROLE,
+} from './campaign-release-gpu-scientific-evidence-capsule-contract.mjs';
+
 const REQUIRED_PACKAGE_OUTPUT_ROLES = Object.freeze([
   'compiled_pdf', 'generated_source_zip', 'package_record', 'sha256sums',
   'independent_rebuilt_pdf', 'independent_pdf_rebuild_receipt',
@@ -10,9 +20,43 @@ export function campaignReleasePackageOutputFilesValid(packageOutput) {
     .every((role) => files.filter((item) => item?.role === role).length === 1);
   const capsuleFiles = files.filter((item) => item?.role === 'research_evidence_capsule_file');
   const attestationFiles = files.filter((item) => item?.role === 'research_execution_release_attestation');
+  const qualificationFiles = capsuleFiles.filter((item) => (
+    item?.capsuleRole
+      === CAMPAIGN_RELEASE_GPU_SCIENTIFIC_QUALIFICATION_EVIDENCE_ROLE
+  ));
+  const archiveManifestFiles = capsuleFiles.filter((item) => (
+    item?.capsuleRole === CAMPAIGN_RELEASE_GPU_SCIENTIFIC_ARCHIVE_MANIFEST_ROLE
+  ));
+  const gpuBodyFiles = capsuleFiles.filter((item) => (
+    GPU_SCIENTIFIC_ARTIFACT_BODY_ARCHIVE_ENTRY_SPECIFICATIONS
+      .some((specification) => specification.role === item?.capsuleRole)
+  ));
+  const gpuEvidencePresent = qualificationFiles.length > 0
+    || archiveManifestFiles.length > 0 || gpuBodyFiles.length > 0;
+  const gpuEvidenceValid = !gpuEvidencePresent || (
+    qualificationFiles.length === 1
+    && qualificationFiles[0].packageRelativePath
+      === CAMPAIGN_RELEASE_GPU_SCIENTIFIC_QUALIFICATION_EVIDENCE_PATH
+    && archiveManifestFiles.length === 1
+    && archiveManifestFiles[0].packageRelativePath
+      === GPU_SCIENTIFIC_ARTIFACT_BODY_ARCHIVE_MANIFEST_PATH
+    && gpuBodyFiles.length
+      === GPU_SCIENTIFIC_ARTIFACT_BODY_ARCHIVE_ENTRY_SPECIFICATIONS.length
+    && GPU_SCIENTIFIC_ARTIFACT_BODY_ARCHIVE_ENTRY_SPECIFICATIONS.every(
+      (specification) => gpuBodyFiles.some((file) => (
+        file.capsuleRole === specification.role
+        && file.packageRelativePath === specification.packageRelativePath
+      )),
+    )
+    && capsuleFiles.filter((item) => String(
+      item?.packageRelativePath || '',
+    ).startsWith('evidence/gpu-scientific/')).length
+      === GPU_SCIENTIFIC_ARTIFACT_BODY_ARCHIVE_ENTRY_SPECIFICATIONS.length + 1
+  );
   const paths = files.map((item) => item?.path);
   return files.length === Number(packageOutput?.fileCount)
     && requiredRoles && capsuleFiles.length >= 4 && attestationFiles.length <= 1
+    && gpuEvidenceValid
     && files.every((item) => REQUIRED_PACKAGE_OUTPUT_ROLES.includes(item?.role)
       || item?.role === 'research_evidence_capsule_file'
       || item?.role === 'research_execution_release_attestation')

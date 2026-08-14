@@ -5,12 +5,16 @@ import {
 } from './autonomous-research-release-binding-contract.mjs';
 
 export { createAutonomousResearchReleaseBinding };
+export { createAutomationPromotionCandidate } from './campaign-release-promotion-candidate-contract.mjs';
 import {
   verifyCampaignReleaseEvidenceCapsuleManifest,
 } from './campaign-release-evidence-capsule-contract.mjs';
 import { manuscriptPromotionEvidenceEntailmentValid } from '../research/manuscript-promotion-entailment-release-policy.mjs';
 import { verifyCampaignReleaseExecutionAttestationManifestBinding } from './campaign-release-execution-attestation-contract.mjs';
 import { verifyCampaignReleasePackageBinding } from './campaign-release-package-binding-policy.mjs';
+import {
+  verifyGpuScientificReleaseAuthorityFreshnessReceipt,
+} from './gpu-scientific-release-authority-freshness-receipt-contract.mjs';
 import {
   EMPIRICAL_ASSERTION_RELEASE_HASH_FIELDS,
   advancedNumericalReleaseEvidenceValid,
@@ -19,205 +23,81 @@ import {
   empiricalAssertionReleaseHashes,
   empiricalAssertionReleaseHashesMatch,
   explicitTimestamp,
-  gpuScientificReleaseEvidenceValid,
+  gpuScientificReleaseCapsuleLineageValid,
   gpuScientificReleaseFields,
   gpuScientificReleaseRecordValid,
   matchesRecordHash,
-  required,
   researchReportValid,
   researchSourceLineageValid,
   sourceRowsMerkleHash,
 } from './campaign-release-contract-helpers.mjs';
 
-export function createAutomationPromotionCandidate({
-  campaignPlanHash,
-  campaignId,
-  paperId,
-  venueTarget = null,
-  packageNode,
-  finalCompileNode,
-  researchVerifyNode = null,
-  researchReport = null,
-  campaignResearchSourceSnapshot = null,
-  verifiedSourceMerkleHash,
-  verifiedSourceWorkspaceManifestHash,
-  sourceWorkspace,
-  sourceSnapshotHash,
-  sourceTreeManifest,
-  researchEvidenceCapsuleManifest,
-  researchExecutionReleaseAttestation = null,
-  autonomousResearchReleaseBinding = null,
-  createdAt,
-  experimentRegistryAuthorityVerifier = null,
-  advancedNumericalExecutionPlan = null,
-  advancedNumericalExecutionEvidence = null,
-  gpuScientificExecutionPlan = null,
-  gpuScientificExecutionEvidence = null,
+function gpuScientificResearchLineageHashesValid(record, boundRecord = null) {
+  const planPresent = Boolean(record?.gpuScientificExecutionPlanHash);
+  const researchEvidenceHash =
+    record?.campaignResearchGpuScientificEvidenceHash || null;
+  const authorityInspectionHash = record
+    ?.gpuScientificCampaignQualificationAuthorityInspectionHash || null;
+  if (!planPresent) return !researchEvidenceHash && !authorityInspectionHash;
+  if (!/^sha256:[0-9a-f]{64}$/.test(String(researchEvidenceHash || ''))
+    || !/^sha256:[0-9a-f]{64}$/.test(String(authorityInspectionHash || ''))) {
+    return false;
+  }
+  return !boundRecord || (
+    researchEvidenceHash
+      === boundRecord.campaignResearchGpuScientificEvidenceHash
+    && authorityInspectionHash
+      === boundRecord
+        .gpuScientificCampaignQualificationAuthorityInspectionHash
+  );
+}
+
+function releaseAuthorityInspectionVerifier(verifier) {
+  if (typeof verifier?.verifyReleaseSnapshot === 'function') {
+    return (input) => verifier.verifyReleaseSnapshot(input);
+  }
+  return null;
+}
+
+function gpuScientificAuthorityFreshnessValid(record, {
+  boundRecord = null,
+  researchEvidenceCapsuleManifest = null,
+  researchEvidenceCapsuleManifestFileHash = null,
+  researchExecutionReleaseAttestationHash = null,
+  gpuScientificPromotionAuthorityVerifier = null,
+  gpuScientificAuthorityVerificationTime = null,
 } = {}) {
-  if (packageNode?.kind !== 'package') throw new Error('automation_promotion_package_node_required');
-  if (finalCompileNode?.kind !== 'final-compile') throw new Error('automation_promotion_final_compile_node_required');
-  if (!(packageNode.dependencies || []).includes(finalCompileNode.nodeId)) {
-    throw new Error('automation_promotion_final_compile_dependency_missing');
-  }
-  if (sourceTreeManifest?.status !== 'scoped_source_tree_verified' || !sourceTreeManifest?.sourceTreeManifestHash) {
-    throw new Error('automation_promotion_source_manifest_not_verified');
-  }
-  if (!matchesRecordHash(sourceTreeManifest, 'ScopedSourceTreeManifest', 'sourceTreeManifestHash')) {
-    throw new Error('automation_promotion_source_manifest_hash_invalid');
-  }
-  if (sourceRowsMerkleHash(sourceTreeManifest) !== verifiedSourceMerkleHash) {
-    throw new Error('automation_promotion_source_archive_merkle_mismatch');
-  }
-  const capsuleVerification = verifyCampaignReleaseEvidenceCapsuleManifest(researchEvidenceCapsuleManifest, {
-    campaignId,
-    paperId,
-    researchReportHash: researchReport?.researchReportHash,
-    experimentRegistryHash: researchReport?.capabilities?.experimentRegistry?.experimentRegistryHash,
-    campaignResearchSourceSnapshotHash: campaignResearchSourceSnapshot?.campaignResearchSourceSnapshotHash,
-    verifiedSourceMerkleHash,
-    verifiedSourceWorkspaceManifestHash,
-    researchVerifyNodeId: researchVerifyNode?.nodeId,
-    researchVerifyAttemptId: researchVerifyNode?.attemptId,
-    researchVerifyLeaseGeneration: researchVerifyNode?.leaseGeneration,
-  });
-  if (!capsuleVerification.valid) {
-    throw new Error(`automation_promotion_research_evidence_capsule_invalid:${capsuleVerification.blockers.join(',')}`);
-  }
-  const executionAttestationVerification = verifyCampaignReleaseExecutionAttestationManifestBinding({
-    manifest: researchEvidenceCapsuleManifest, attestation: researchExecutionReleaseAttestation,
-  });
-  if (!executionAttestationVerification.valid) {
-    throw new Error(`automation_promotion_research_execution_attestation_invalid:${executionAttestationVerification.blockers.join(',')}`);
-  }
-  if (autonomousResearchReleaseBinding) {
-    const autonomousBindingVerification = verifyAutonomousResearchReleaseBinding(
-      autonomousResearchReleaseBinding,
-      { campaignId, paperId, campaignPlanHash },
-    );
-    if (!autonomousBindingVerification.valid) {
-      throw new Error(`automation_promotion_autonomous_research_binding_invalid:${autonomousBindingVerification.blockers.join(',')}`);
-    }
-    if (!autonomousManuscriptSourceRowsMatch(
-      autonomousResearchReleaseBinding,
-      sourceTreeManifest,
-    )) {
-      throw new Error('automation_promotion_autonomous_manuscript_source_binding_invalid');
-    }
-  }
-  if (researchVerifyNode) {
-    if (researchVerifyNode.kind !== 'research-verify' || !(packageNode.dependencies || []).includes(researchVerifyNode.nodeId)
-      || !(researchVerifyNode.dependencies || []).includes(finalCompileNode.nodeId)) {
-      throw new Error('automation_promotion_research_dependency_invalid');
-    }
-    if (!researchVerifyNode.attemptId || !Number.isInteger(researchVerifyNode.leaseGeneration) || researchVerifyNode.leaseGeneration < 1
-      || !researchVerifyNode.resultSha256 || hashRecord('PaperCampaignNodeResult', researchVerifyNode.result) !== researchVerifyNode.resultSha256
-      || !researchReportValid(researchReport, experimentRegistryAuthorityVerifier)
-      || researchVerifyNode.result?.researchNodeId !== researchVerifyNode.nodeId
-      || researchVerifyNode.result?.researchAttemptId !== researchVerifyNode.attemptId
-      || researchVerifyNode.result?.researchLeaseGeneration !== researchVerifyNode.leaseGeneration
-      || researchVerifyNode.result?.campaignResearchSourceSnapshotHash !== campaignResearchSourceSnapshot?.campaignResearchSourceSnapshotHash
-      || researchVerifyNode.result?.verifiedSourceMerkleHash !== verifiedSourceMerkleHash
-      || researchVerifyNode.result?.verifiedSourceWorkspaceManifestHash !== verifiedSourceWorkspaceManifestHash
-      || researchVerifyNode.result?.proposalClaimToTheoremBindingHash
-        !== researchReport?.proposalClaimToTheoremBindingHash) {
-      throw new Error('automation_promotion_research_report_not_verified');
-    }
-  } else throw new Error('automation_promotion_research_node_required');
-  if (!advancedNumericalReleaseEvidenceValid({
-    campaignPlanHash,
-    campaignId,
-    paperId,
-    plan: advancedNumericalExecutionPlan,
-    evidence: advancedNumericalExecutionEvidence,
-  })) {
-    throw new Error('automation_promotion_advanced_numerical_evidence_invalid');
-  }
-  if (!gpuScientificReleaseEvidenceValid({
-    campaignPlanHash,
-    campaignId,
-    paperId,
-    plan: gpuScientificExecutionPlan,
-    evidence: gpuScientificExecutionEvidence,
-  })) {
-    throw new Error('automation_promotion_gpu_scientific_authority_invalid');
-  }
-  const finalCompileResultHash = finalCompileNode.resultSha256 || null;
-  if (!finalCompileResultHash || hashRecord('PaperCampaignNodeResult', finalCompileNode.result) !== finalCompileResultHash) throw new Error('automation_promotion_final_compile_result_hash_required');
-  if (finalCompileNode.result?.sourceMerkleHash !== verifiedSourceMerkleHash
-    || finalCompileNode.result?.sourceWorkspaceManifestHash !== verifiedSourceWorkspaceManifestHash) {
-    throw new Error('automation_promotion_final_compile_source_identity_mismatch');
-  }
-  const packageAttemptId = packageNode.attemptId || null;
-  if (!packageAttemptId) throw new Error('automation_promotion_package_attempt_id_required');
-  if (researchVerifyNode || researchReport) {
-    if (researchVerifyNode?.kind !== 'research-verify' || researchVerifyNode.status !== 'completed' || !(packageNode.dependencies || []).includes(researchVerifyNode.nodeId)) throw new Error('automation_promotion_research_dependency_invalid');
-    if (researchReport?.kind !== 'PaperResearchVerifyReport' || !researchReport.researchReportHash || researchReport.promotionEligibility?.status !== 'research_promotion_ready') throw new Error('automation_promotion_research_report_invalid');
-    if (!researchSourceLineageValid({
-      researchReport,
-      campaignResearchSourceSnapshot,
-      campaignId,
-      paperId,
-      researchVerifyNodeId: researchVerifyNode.nodeId,
-      researchVerifyAttemptId: researchVerifyNode.attemptId,
-      researchVerifyLeaseGeneration: researchVerifyNode.leaseGeneration,
-      verifiedSourceMerkleHash,
-      verifiedSourceWorkspaceManifestHash,
-    })) throw new Error('automation_promotion_research_source_lineage_invalid');
-  } else if (campaignResearchSourceSnapshot) {
-    throw new Error('automation_promotion_research_source_snapshot_without_report');
-  }
-  const payload = {
-    version: 1,
-    kind: 'AutomationPromotionCandidate',
-    status: 'automation_promotion_candidate_ready',
-    campaignPlanHash: required(campaignPlanHash, 'automation_promotion_campaign_plan_hash'),
-    campaignId: required(campaignId, 'automation_promotion_campaign_id'),
-    paperId: required(paperId, 'automation_promotion_paper_id'),
-    venueTarget: String(venueTarget || '').trim() || null,
-    packageNodeId: required(packageNode.nodeId, 'automation_promotion_package_node_id'),
-    packageAttemptId,
-    finalCompileNodeId: required(finalCompileNode.nodeId, 'automation_promotion_final_compile_node_id'),
-    finalCompileResultHash,
-    researchVerifyNodeId: researchVerifyNode?.nodeId || null,
-    researchVerifyAttemptId: researchVerifyNode?.attemptId || null,
-    researchVerifyLeaseGeneration: researchVerifyNode?.leaseGeneration || null,
-    researchVerifyResultHash: researchVerifyNode?.resultSha256 || null,
-    researchReportHash: researchReport?.researchReportHash || null,
-    proposalClaimToTheoremBindingHash:
-      researchReport?.proposalClaimToTheoremBindingHash || null,
-    experimentRegistryHash: researchReport?.capabilities?.experimentRegistry?.experimentRegistryHash || null,
-    ...empiricalAssertionReleaseHashes(researchReport),
-    campaignResearchSourceSnapshotHash: campaignResearchSourceSnapshot?.campaignResearchSourceSnapshotHash || null,
-    campaignResearchSourceSnapshot,
-    verifiedSourceMerkleHash: required(verifiedSourceMerkleHash, 'automation_promotion_verified_source_merkle_hash'),
-    verifiedSourceWorkspaceManifestHash: required(verifiedSourceWorkspaceManifestHash, 'automation_promotion_verified_source_workspace_manifest_hash'),
-    sourceWorkspace: required(sourceWorkspace, 'automation_promotion_source_workspace'),
-    sourceSnapshotHash: required(sourceSnapshotHash, 'automation_promotion_source_snapshot_hash'),
-    sourceTreeManifestHash: sourceTreeManifest.sourceTreeManifestHash,
-    sourceTreeManifest,
-    researchEvidenceCapsuleManifestHash: researchEvidenceCapsuleManifest.researchEvidenceCapsuleManifestHash,
-    researchExecutionReleaseAttestationHash:
-      researchExecutionReleaseAttestation?.campaignReleaseExecutionAttestationHash || null,
-    ...(autonomousResearchReleaseBinding ? {
-      autonomousResearchReleaseBindingHash:
-        autonomousResearchReleaseBinding.autonomousResearchReleaseBindingHash,
-      autonomousResearchReleaseBinding,
-    } : {}),
-    ...(advancedNumericalExecutionPlan ? {
-      advancedNumericalExecutionPlanHash:
-        advancedNumericalExecutionPlan.advancedNumericalCampaignExecutionPlanHash,
-      advancedNumericalCampaignExecutionReceiptHash:
-        advancedNumericalExecutionEvidence.executionReceiptHash,
-      advancedNumericalCampaignEvidenceHash:
-        advancedNumericalExecutionEvidence.evidenceHash,
-      advancedNumericalExecutionPlan,
-      advancedNumericalExecutionEvidence,
-    } : {}),
-    ...gpuScientificReleaseFields(gpuScientificExecutionPlan, gpuScientificExecutionEvidence),
-    createdAt: explicitTimestamp(createdAt),
-    externalActionPerformed: false,
-  };
-  return Object.freeze({ ...payload, automationPromotionCandidateHash: hashRecord('AutomationPromotionCandidate', payload) });
+  const planPresent = Boolean(record?.gpuScientificExecutionPlanHash);
+  const receipt = record?.gpuScientificReleaseAuthorityFreshnessReceipt || null;
+  const receiptHash =
+    record?.gpuScientificReleaseAuthorityFreshnessReceiptHash || null;
+  if (!planPresent) return !receipt && !receiptHash;
+  const verification = verifyGpuScientificReleaseAuthorityFreshnessReceipt(
+    receipt,
+    {
+      qualificationEvidence: record
+        ?.gpuScientificCampaignPromotionEvidence
+        ?.gpuScientificCampaignQualificationEvidence || null,
+      researchEvidenceCapsuleManifest,
+      researchEvidenceCapsuleManifestFileHash,
+      researchExecutionReleaseAttestationHash,
+      authorityInspectionVerifier: releaseAuthorityInspectionVerifier(
+        gpuScientificPromotionAuthorityVerifier,
+      ),
+      verificationTime: gpuScientificAuthorityVerificationTime,
+    },
+  );
+  return verification.valid
+    && receiptHash
+      === receipt?.gpuScientificReleaseAuthorityFreshnessReceiptHash
+    && (!boundRecord || (
+      receiptHash
+        === boundRecord.gpuScientificReleaseAuthorityFreshnessReceiptHash
+      && JSON.stringify(receipt)
+        === JSON.stringify(
+          boundRecord.gpuScientificReleaseAuthorityFreshnessReceipt,
+        )
+    ));
 }
 
 export function createCampaignReleaseBundle({
@@ -231,6 +111,8 @@ export function createCampaignReleaseBundle({
   packageOutput,
   createdAt,
   experimentRegistryAuthorityVerifier = null,
+  gpuScientificPromotionAuthorityVerifier = null,
+  gpuScientificAuthorityVerificationTime = null,
 } = {}) {
   if (!matchesRecordHash(promotionCandidate, 'AutomationPromotionCandidate', 'automationPromotionCandidateHash')) {
     throw new Error('campaign_release_promotion_candidate_hash_invalid');
@@ -244,7 +126,24 @@ export function createCampaignReleaseBundle({
   })) {
     throw new Error('campaign_release_advanced_numerical_evidence_invalid');
   }
-  if (!gpuScientificReleaseRecordValid(promotionCandidate)) {
+  if (!gpuScientificReleaseRecordValid(promotionCandidate)
+    || !gpuScientificResearchLineageHashesValid(promotionCandidate)
+    || !gpuScientificReleaseCapsuleLineageValid(promotionCandidate, {
+      manifest: researchEvidenceCapsuleManifest,
+      manifestFileHash: packageOutput?.researchEvidenceCapsuleManifestFileHash,
+      attestationHash: researchExecutionReleaseAttestation
+        ?.campaignReleaseExecutionAttestationHash || null,
+    })
+    || !gpuScientificAuthorityFreshnessValid(promotionCandidate, {
+      researchEvidenceCapsuleManifest,
+      researchEvidenceCapsuleManifestFileHash:
+        packageOutput?.researchEvidenceCapsuleManifestFileHash,
+      researchExecutionReleaseAttestationHash:
+        researchExecutionReleaseAttestation
+          ?.campaignReleaseExecutionAttestationHash || null,
+      gpuScientificPromotionAuthorityVerifier,
+      gpuScientificAuthorityVerificationTime,
+    })) {
     throw new Error('campaign_release_gpu_scientific_evidence_invalid');
   }
   if (promotionCandidate.autonomousResearchReleaseBinding) {
@@ -405,8 +304,24 @@ export function createCampaignReleaseBundle({
       advancedNumericalExecutionEvidence:
         promotionCandidate.advancedNumericalExecutionEvidence,
     } : {}),
-    ...gpuScientificReleaseFields(promotionCandidate.gpuScientificExecutionPlan,
-      promotionCandidate.gpuScientificExecutionEvidence),
+    ...gpuScientificReleaseFields(
+      promotionCandidate.gpuScientificExecutionPlan,
+      promotionCandidate.gpuScientificExecutionEvidence,
+      promotionCandidate.gpuScientificCampaignPromotionEvidence,
+    ),
+    ...(promotionCandidate.gpuScientificExecutionPlan ? {
+      campaignResearchGpuScientificEvidenceHash:
+        promotionCandidate.campaignResearchGpuScientificEvidenceHash,
+      gpuScientificCampaignQualificationAuthorityInspectionHash:
+        promotionCandidate
+          .gpuScientificCampaignQualificationAuthorityInspectionHash,
+      gpuScientificReleaseAuthorityFreshnessReceiptHash:
+        promotionCandidate
+          .gpuScientificReleaseAuthorityFreshnessReceiptHash,
+      gpuScientificReleaseAuthorityFreshnessReceipt:
+        promotionCandidate
+          .gpuScientificReleaseAuthorityFreshnessReceipt,
+    } : {}),
     immutableCampaignPackageOutputHash: packageOutput.immutableCampaignPackageOutputHash,
     packageOutput: Object.freeze({ ...packageOutput }),
     createdAt: explicitTimestamp(createdAt),
@@ -415,7 +330,11 @@ export function createCampaignReleaseBundle({
   return Object.freeze({ ...payload, campaignReleaseBundleHash: hashRecord('CampaignReleaseBundle', payload) });
 }
 
-export function verifyCampaignReleaseBundle(bundle, expected = {}, { experimentRegistryAuthorityVerifier = null } = {}) {
+export function verifyCampaignReleaseBundle(bundle, expected = {}, {
+  experimentRegistryAuthorityVerifier = null,
+  gpuScientificPromotionAuthorityVerifier = null,
+  gpuScientificAuthorityVerificationTime = null,
+} = {}) {
   const blockers = [];
   if (bundle?.version !== 1 || bundle?.kind !== 'CampaignReleaseBundle' || bundle?.status !== 'campaign_release_bundle_prepared') {
     blockers.push('campaign_release_bundle_shape_invalid');
@@ -443,7 +362,25 @@ export function verifyCampaignReleaseBundle(bundle, expected = {}, { experimentR
       !== JSON.stringify(candidate?.advancedNumericalExecutionEvidence || null)) {
     blockers.push('campaign_release_advanced_numerical_evidence_invalid');
   }
-  if (!gpuScientificReleaseRecordValid(bundle, candidate)) {
+  if (!gpuScientificReleaseRecordValid(bundle, candidate)
+    || !gpuScientificResearchLineageHashesValid(bundle, candidate)
+    || !gpuScientificReleaseCapsuleLineageValid(bundle, {
+      manifest: bundle?.researchEvidenceCapsuleManifest,
+      manifestFileHash:
+        bundle?.packageOutput?.researchEvidenceCapsuleManifestFileHash,
+      attestationHash: bundle?.researchExecutionReleaseAttestationHash,
+    })
+    || !gpuScientificAuthorityFreshnessValid(bundle, {
+      boundRecord: candidate,
+      researchEvidenceCapsuleManifest:
+        bundle?.researchEvidenceCapsuleManifest,
+      researchEvidenceCapsuleManifestFileHash:
+        bundle?.packageOutput?.researchEvidenceCapsuleManifestFileHash,
+      researchExecutionReleaseAttestationHash:
+        bundle?.researchExecutionReleaseAttestationHash,
+      gpuScientificPromotionAuthorityVerifier,
+      gpuScientificAuthorityVerificationTime,
+    })) {
     blockers.push('campaign_release_gpu_scientific_evidence_invalid');
   }
   if (bundle?.autonomousResearchReleaseBinding || candidate?.autonomousResearchReleaseBinding) {
@@ -476,6 +413,12 @@ export function verifyCampaignReleaseBundle(bundle, expected = {}, { experimentR
     'advancedNumericalCampaignEvidenceHash',
     'gpuScientificExecutionPlanHash',
     'gpuScientificCampaignExecutionResultHash',
+    'gpuScientificArtifactBodyArchiveManifestHash',
+    'gpuScientificCampaignQualificationEvidenceHash',
+    'gpuScientificCampaignPromotionEvidenceHash',
+    'campaignResearchGpuScientificEvidenceHash',
+    'gpuScientificCampaignQualificationAuthorityInspectionHash',
+    'gpuScientificReleaseAuthorityFreshnessReceiptHash',
     ...EMPIRICAL_ASSERTION_RELEASE_HASH_FIELDS,
     'researchEvidenceCapsuleManifestHash', 'researchExecutionReleaseAttestationHash']
     .some((field) => bundle?.[field] !== candidate?.[field])) blockers.push('campaign_release_candidate_lineage_mismatch');
@@ -610,11 +553,24 @@ export function verifyCampaignReleaseBundle(bundle, expected = {}, { experimentR
     ['advancedNumericalCampaignEvidenceHash', 'campaign_release_advanced_numerical_evidence_mismatch'],
     ['gpuScientificExecutionPlanHash', 'campaign_release_gpu_scientific_plan_mismatch'],
     ['gpuScientificCampaignExecutionResultHash', 'campaign_release_gpu_scientific_result_mismatch'],
+    ['gpuScientificArtifactBodyArchiveManifestHash', 'campaign_release_gpu_scientific_archive_mismatch'],
+    ['gpuScientificCampaignQualificationEvidenceHash', 'campaign_release_gpu_scientific_qualification_mismatch'],
+    ['gpuScientificCampaignPromotionEvidenceHash', 'campaign_release_gpu_scientific_promotion_mismatch'],
+    ['campaignResearchGpuScientificEvidenceHash', 'campaign_release_gpu_scientific_research_evidence_mismatch'],
+    ['gpuScientificCampaignQualificationAuthorityInspectionHash', 'campaign_release_gpu_scientific_authority_inspection_mismatch'],
+    ['gpuScientificReleaseAuthorityFreshnessReceiptHash', 'campaign_release_gpu_scientific_authority_freshness_mismatch'],
   ]) if (expected[field] && bundle?.[field] !== expected[field]) blockers.push(blocker);
   return Object.freeze({ valid: blockers.length === 0, blockers: [...new Set(blockers)] });
 }
 
-export function createCampaignReleasePromotionReceipt({ campaign, packageNode, packageResult, promotedAt, experimentRegistryAuthorityVerifier = null } = {}) {
+export function createCampaignReleasePromotionReceipt({
+  campaign,
+  packageNode,
+  packageResult,
+  promotedAt,
+  experimentRegistryAuthorityVerifier = null,
+  gpuScientificPromotionAuthorityVerifier = null,
+} = {}) {
   const releaseBundle = packageResult?.releaseBundle;
   const expected = {
     campaignId: campaign?.campaignId,
@@ -624,7 +580,11 @@ export function createCampaignReleasePromotionReceipt({ campaign, packageNode, p
     packageNodeId: packageNode?.nodeId,
     packageAttemptId: packageNode?.attemptId,
   };
-  const verification = verifyCampaignReleaseBundle(releaseBundle, expected, { experimentRegistryAuthorityVerifier });
+  const verification = verifyCampaignReleaseBundle(releaseBundle, expected, {
+    experimentRegistryAuthorityVerifier,
+    gpuScientificPromotionAuthorityVerifier,
+    gpuScientificAuthorityVerificationTime: promotedAt,
+  });
   if (!verification.valid) throw new Error(`campaign_release_promotion_bundle_invalid:${verification.blockers.join(',')}`);
   const {
     campaignReleasePackageResultHash: claimedPackageResultHash,
@@ -687,7 +647,11 @@ export function createCampaignReleasePromotionReceipt({ campaign, packageNode, p
   return Object.freeze({ ...payload, campaignReleasePromotionReceiptHash: hashRecord('CampaignReleasePromotionReceipt', payload) });
 }
 
-export function verifyCampaignReleaseAuthorityRecord(record, expected = {}, { experimentRegistryAuthorityVerifier = null } = {}) {
+export function verifyCampaignReleaseAuthorityRecord(record, expected = {}, {
+  experimentRegistryAuthorityVerifier = null,
+  gpuScientificPromotionAuthorityVerifier = null,
+  gpuScientificAuthorityVerificationTime = null,
+} = {}) {
   const blockers = [];
   if (record?.version !== 1 || record?.kind !== 'CurrentCampaignReleaseAuthority' || record?.status !== 'current_completed_release') {
     blockers.push('campaign_release_authority_shape_invalid');
@@ -715,7 +679,11 @@ export function verifyCampaignReleaseAuthorityRecord(record, expected = {}, { ex
     venueTarget: record?.venueTarget || null,
     packageNodeId: record?.packageNodeId,
     packageAttemptId: record?.packageAttemptId,
-  }, { experimentRegistryAuthorityVerifier });
+  }, {
+    experimentRegistryAuthorityVerifier,
+    gpuScientificPromotionAuthorityVerifier,
+    gpuScientificAuthorityVerificationTime,
+  });
   blockers.push(...bundleVerification.blockers);
   for (const field of [
     'campaignId', 'paperId', 'venueTarget', 'campaignPlanHash', 'packageNodeId', 'packageAttemptId', 'leaseGeneration',

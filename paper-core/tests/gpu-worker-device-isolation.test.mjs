@@ -104,13 +104,15 @@ test('Bubblewrap refuses GPU requests because device UUID isolation is not estab
   }), /bubblewrap_gpu_device_isolation_unsupported/);
 });
 
-test('GPU dispatch admission rechecks free VRAM immediately before execution', (t) => {
+test('GPU dispatch admission rechecks free VRAM immediately before execution', async (t) => {
   if (!fs.existsSync('/dev/nvidia0')) {
     t.skip('NVIDIA GPU device unavailable');
     return;
   }
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-gpu-admission-'));
+  const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-gpu-admission-runtime-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(runtimeRoot, { recursive: true, force: true }));
   fs.writeFileSync(path.join(root, 'run.py'), 'print(1)\n');
   const image = 'fixture/python-gpu:locked';
   const digest = `sha256:${'d'.repeat(64)}`;
@@ -134,12 +136,14 @@ test('GPU dispatch admission rechecks free VRAM immediately before execution', (
     executable: 'python3', containerImage: image, containerExecutable: 'python3',
     args: ['run.py'], cwd: root, sourceRoot: root, requiresGpu: true,
     gpuDeviceSelector: GPU_UUID, gpuDispatchMemoryAdmission: admission,
+    absoluteDeadlineEpochMs: Date.now() + 5_000,
   };
   const runnerFor = (dispatchFreeMiB, onExecute) => {
     let observations = 0;
     return createOsSandboxedWorkerRunner({
       allowedExecutables: ['python3'], allowedRoots: [root],
       allowedContainerImages: [image], allowGpu: true,
+      runtimeRoot,
       probe: { available: true, backend: 'docker', status: 'os_sandbox_available', image },
       imageDigestResolver: (candidate) => candidate === image ? digest : null,
       gpuDeviceCapacityObserver() {
@@ -154,7 +158,7 @@ test('GPU dispatch admission rechecks free VRAM immediately before execution', (
     });
   };
   let insufficientExecutions = 0;
-  const insufficient = runnerFor(700, () => { insufficientExecutions += 1; })
+  const insufficient = await runnerFor(700, () => { insufficientExecutions += 1; })
     .run(runSpec);
   assert.equal(insufficient.ok, false);
   assert.deepEqual(insufficient.blockers,
@@ -165,7 +169,7 @@ test('GPU dispatch admission rechecks free VRAM immediately before execution', (
 
   let sufficientExecutions = 0;
   const sufficientRunner = runnerFor(1_024, () => { sufficientExecutions += 1; });
-  const sufficient = sufficientRunner.run(runSpec);
+  const sufficient = await sufficientRunner.run(runSpec);
   assert.equal(sufficient.ok, true, JSON.stringify(sufficient.blockers));
   assert.equal(sufficientExecutions, 1);
   assert.equal(sufficient.gpuDeviceRequest.version, 3);
@@ -187,7 +191,7 @@ test('GPU dispatch admission rechecks free VRAM immediately before execution', (
   assert.equal(sufficientExecutions, 1);
 });
 
-test('GPU fixture worker binds one observed UUID but cannot mint production evidence', (t) => {
+test('GPU fixture worker binds one observed UUID but cannot mint production evidence', async (t) => {
   const observation = spawnSync('/usr/bin/nvidia-smi', [
     '--query-gpu=uuid', '--format=csv,noheader',
   ], { encoding: 'utf8', timeout: 5000 });
@@ -198,7 +202,9 @@ test('GPU fixture worker binds one observed UUID but cannot mint production evid
     return;
   }
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-gpu-selector-'));
+  const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-gpu-selector-runtime-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  t.after(() => fs.rmSync(runtimeRoot, { recursive: true, force: true }));
   fs.writeFileSync(path.join(root, 'run.py'), 'print(1)\n');
   const image = 'fixture/python-gpu:locked';
   const digest = `sha256:${'d'.repeat(64)}`;
@@ -208,6 +214,7 @@ test('GPU fixture worker binds one observed UUID but cannot mint production evid
     allowedRoots: [root],
     allowedContainerImages: [image],
     allowGpu: true,
+    runtimeRoot,
     probe: { available: true, backend: 'docker', status: 'os_sandbox_available', image },
     imageDigestResolver: (candidate) => candidate === image ? digest : null,
     executor(_launcher, args) {
@@ -221,10 +228,11 @@ test('GPU fixture worker binds one observed UUID but cannot mint production evid
   });
   assert.equal(missing.ok, false);
   assert.ok(missing.blockers.includes('worker_gpu_device_selector_invalid'));
-  const receipt = runner.run({
+  const receipt = await runner.run({
     executable: 'python3', containerImage: image, containerExecutable: 'python3',
     args: ['run.py'], cwd: root, sourceRoot: root, requiresGpu: true,
     gpuDeviceSelector: selector,
+    absoluteDeadlineEpochMs: Date.now() + 5_000,
   });
   assert.equal(receipt.ok, true, JSON.stringify(receipt.blockers));
   assert.equal(receipt.version, 5);
@@ -254,6 +262,13 @@ test('GPU fixture worker binds one observed UUID but cannot mint production evid
   assert.equal(receipt.isolation.gpuDeviceIsolationVerified, true);
   assert.equal(receipt.isolation.gpuMemoryIsolationVerified, false);
   assert.equal(receipt.isolation.gpuMigIsolationVerified, false);
+  assert.equal(receipt.isolation.gpuSelectorExecutionLeaseVerified, true);
+  assert.equal(receipt.gpuSelectorExecutionLeaseBinding
+    .productionExclusivityClaimed, false);
+  assert.equal(receipt.gpuSelectorExecutionLeaseBinding
+    .multiTenantExclusivityClaimed, false);
+  assert.equal(receipt.gpuSelectorExecutionLeaseBinding
+    .dockerDeterministicContainerNameCrashRecoveryBackstopVerified, false);
   assert.equal(receipt.evidenceClass, 'verification-fixture-v1');
   assert.equal(receipt.productionEvidenceEligible, false);
   assert.ok(command.includes(`device=${selector}`));
@@ -264,6 +279,9 @@ test('GPU fixture worker binds one observed UUID but cannot mint production evid
   legacy.version = 4;
   delete legacy.executionProcessInvocation;
   delete legacy.executionProcessInvocationHash;
+  delete legacy.gpuSelectorExecutionLeaseBinding;
+  delete legacy.gpuSelectorExecutionLeaseBindingHash;
+  delete legacy.isolation.gpuSelectorExecutionLeaseVerified;
   const legacyPayload = { ...legacy };
   delete legacyPayload.ok;
   delete legacyPayload.receiptHash;
@@ -310,6 +328,16 @@ test('GPU fixture worker binds one observed UUID but cannot mint production evid
     'OsSandboxWorkerReceipt', freeCapacityPayload,
   );
   assert.equal(verifyOsSandboxWorkerReceipt(freeCapacityForgery), false);
+  const leaseForgery = structuredClone(receipt);
+  leaseForgery.gpuSelectorExecutionLeaseBinding.multiTenantExclusivityClaimed = true;
+  const leaseForgeryPayload = { ...leaseForgery };
+  delete leaseForgeryPayload.ok;
+  delete leaseForgeryPayload.receiptHash;
+  delete leaseForgeryPayload.blockers;
+  leaseForgery.receiptHash = hashRecord(
+    'OsSandboxWorkerReceipt', leaseForgeryPayload,
+  );
+  assert.equal(verifyOsSandboxWorkerReceipt(leaseForgery), false);
 });
 
 test('production GPU runner facade rejects all dependency injection', () => {

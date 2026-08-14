@@ -8,6 +8,9 @@ import {
   verifyGpuDispatchMemoryAdmissionRequirement,
   verifyNvidiaGpuDeviceCapacityObservation,
 } from './nvidia-gpu-device-capacity-contract.mjs';
+import {
+  verifyGpuSelectorExecutionLeaseWorkerBinding,
+} from './gpu-selector-execution-lease-contract.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/i;
 const NVIDIA_GPU_UUID = /^GPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -90,7 +93,10 @@ function verifyGpuDeviceBinding(receipt) {
   const requested = receipt.isolation?.gpuAccessRequested === true;
   const request = receipt.gpuDeviceRequest;
   if (!requested) {
-    return request === undefined || (
+    const leaseBindingAbsent =
+      receipt.gpuSelectorExecutionLeaseBinding == null
+      && receipt.gpuSelectorExecutionLeaseBindingHash == null;
+    return leaseBindingAbsent && (request === undefined || (
       exactKeys(request, CPU_DEVICE_REQUEST_KEYS)
       && request?.version === 1
       && request?.kind === 'GpuDeviceRequest'
@@ -99,9 +105,18 @@ function verifyGpuDeviceBinding(receipt) {
       && request?.requestedDeviceCount === 0
       && request?.hostDeviceObserved === null
       && request?.hostDeviceEnumerationMechanism === null
-    );
+    ));
   }
   const admitted = request?.version === 3;
+  const selectorExecutionLeaseVerified = receipt.version === 4
+    ? receipt.gpuSelectorExecutionLeaseBinding == null
+      && receipt.gpuSelectorExecutionLeaseBindingHash == null
+    : verifyGpuSelectorExecutionLeaseWorkerBinding(
+      receipt.gpuSelectorExecutionLeaseBinding,
+      { workerReceipt: receipt },
+    ) && receipt.gpuSelectorExecutionLeaseBindingHash
+      === receipt.gpuSelectorExecutionLeaseBinding
+        ?.gpuSelectorExecutionLeaseBindingHash;
   return receipt.backend === 'docker'
     && exactKeys(request, admitted
       ? GPU_ADMITTED_DEVICE_REQUEST_KEYS : GPU_DEVICE_REQUEST_KEYS)
@@ -119,6 +134,7 @@ function verifyGpuDeviceBinding(receipt) {
       === request.capacityObservation.nvidiaGpuDeviceCapacityObservationHash
     && request.observedTotalMemoryBytes === request.capacityObservation.totalMemoryBytes
     && request.observedFreeMemoryBytes === request.capacityObservation.freeMemoryBytes
+    && selectorExecutionLeaseVerified
     && (!admitted || (
       verifyGpuDispatchMemoryAdmissionRequirement(
         request.dispatchMemoryAdmissionRequirement,
@@ -139,6 +155,8 @@ function verifyGpuDeviceBinding(receipt) {
         === request.deviceSelector
     ))
     && receipt.isolation?.gpuDeviceIsolationVerified === true
+    && (receipt.version === 4
+      || receipt.isolation?.gpuSelectorExecutionLeaseVerified === true)
     && receipt.isolation?.gpuDeviceSelectionMechanism
       === 'docker-nvidia-explicit-device-v1'
     && receipt.isolation?.gpuDeviceIsolationScope

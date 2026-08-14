@@ -28,6 +28,7 @@ function bounded(value, minimum, maximum, blocker) {
 
 export function createCanonicalCupyDeepLearningSandboxRunner({
   outputRoot,
+  runtimeRoot,
   timeoutMs,
   memoryBytes,
   cpuSeconds,
@@ -40,6 +41,7 @@ export function createCanonicalCupyDeepLearningSandboxRunner({
     allowedOutputRoots: [outputRoot],
     allowedContainerImages: [AUTOMATION_RUNTIME_IMAGES.pythonGpu.image],
     dockerImage: AUTOMATION_RUNTIME_IMAGES.pythonGpu.image,
+    runtimeRoot,
     allowGpu: true,
     maximumTimeoutMs: bounded(
       timeoutMs, 1, LIMITS.timeoutMs, 'deep_learning_training_timeout_invalid',

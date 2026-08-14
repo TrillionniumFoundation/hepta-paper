@@ -105,6 +105,7 @@ export function createCampaignGpuScientificExecutionAdapter({
       plan,
       executionBudget,
       executionSignal = null,
+      gpuSelectorExecutionLeaseDelegation = null,
     } = {}) {
       const nodeBinding = gpuScientificCampaignNodeBinding(node);
       if (!verifyGpuScientificCampaignExecutionPlan(plan, {
@@ -157,6 +158,7 @@ export function createCampaignGpuScientificExecutionAdapter({
             executionAuthorityHash:
               attemptAuthority.gpuScientificCampaignAttemptAuthorityHash,
             executionSignal,
+            gpuSelectorExecutionLeaseDelegation,
           });
         } catch (error) {
           throw gpuTaskExecutionError('pde', null, error);
@@ -180,6 +182,7 @@ export function createCampaignGpuScientificExecutionAdapter({
             executionAuthorityHash:
               attemptAuthority.gpuScientificCampaignAttemptAuthorityHash,
             executionSignal,
+            gpuSelectorExecutionLeaseDelegation,
           });
           if (!verifyCanonicalCupyDeepLearningTrainingReceipt(
             deepLearningTrainingReceipt,

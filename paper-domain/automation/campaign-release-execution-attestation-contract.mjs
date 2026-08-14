@@ -144,9 +144,9 @@ export function verifyCampaignReleaseExecutionAttestationStructure(attestation, 
   }
   if (!Number.isSafeInteger(Number(attestation?.researchVerifyLeaseGeneration))
     || Number(attestation.researchVerifyLeaseGeneration) < 1
-    || !Number.isSafeInteger(Number(attestation?.experimentCount)) || Number(attestation.experimentCount) < 1
+    || !Number.isSafeInteger(Number(attestation?.experimentCount)) || Number(attestation.experimentCount) < 0
     || !Number.isSafeInteger(Number(attestation?.academicExperimentCount))
-    || Number(attestation.academicExperimentCount) < 1
+    || Number(attestation.academicExperimentCount) < 0
     || Number(attestation.academicExperimentCount) > Number(attestation.experimentCount)) {
     blockers.push('campaign_release_execution_attestation_counts_invalid');
   }
@@ -160,6 +160,11 @@ export function verifyCampaignReleaseExecutionAttestationStructure(attestation, 
   }
   if (expected.manifest) {
     const manifest = expected.manifest;
+    if (manifest?.gpuScientificEvidenceIncluded !== true
+      && (Number(attestation?.experimentCount) < 1
+        || Number(attestation?.academicExperimentCount) < 1)) {
+      blockers.push('campaign_release_execution_attestation_counts_invalid');
+    }
     for (const field of ['campaignId', 'paperId', 'researchReportHash', 'experimentRegistryHash',
       'campaignResearchSourceSnapshotHash', 'verifiedSourceMerkleHash', 'verifiedSourceWorkspaceManifestHash',
       'researchVerifyNodeId', 'researchVerifyAttemptId', 'researchVerifyLeaseGeneration',

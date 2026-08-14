@@ -375,7 +375,7 @@ test('fixture/nonproduction task evidence remains non-promotable and release fai
     campaign,
     node: { kind: 'package' },
     context: { gpuScientificNode: { ...node, result } },
-  }), /campaign_release_gpu_scientific_promotion_authority_required/);
+  }), /campaign_release_gpu_scientific_pre_release_qualification_required/);
 });
 
 test('GPU execution validates resource authority before creating an attempt output tree', async (t) => {
@@ -404,6 +404,7 @@ test('GPU execution validates resource authority before creating an attempt outp
   const outputRoot = path.join(root, 'automation-artifacts');
   const composition = composeCampaignGpuScientificExecution({
     outputRoot,
+    runtimeRoot: root,
     plans: [executionPlan],
   });
   await assert.rejects(() => composition.execution.execute({
@@ -459,6 +460,7 @@ test('real canonical PDE and DL evidence completes non-promotably and cannot be 
   });
   const composition = composeCampaignGpuScientificExecution({
     outputRoot: path.join(root, 'execution'),
+    runtimeRoot: root,
     plans: [executionPlan],
   });
   const firstExecution = composition.execution.execute({
@@ -478,6 +480,7 @@ test('real canonical PDE and DL evidence completes non-promotably and cannot be 
   const queuedOutputRoot = path.join(root, 'queued-execution');
   const queuedComposition = composeCampaignGpuScientificExecution({
     outputRoot: queuedOutputRoot,
+    runtimeRoot: root,
     plans: [executionPlan],
   });
   const queuedController = new AbortController();
@@ -493,7 +496,7 @@ test('real canonical PDE and DL evidence completes non-promotably and cannot be 
   });
   queuedController.abort('test-selector-wait-cancelled');
   await assert.rejects(queuedExecution,
-    /gpu_scientific_selector_lease_acquire_aborted/);
+    /gpu_selector_execution_lease_acquire_aborted/);
   assert.deepEqual(fs.readdirSync(queuedOutputRoot), []);
   const result = await firstExecution;
   const attemptAuthority = buildGpuScientificCampaignAttemptAuthority({
@@ -550,6 +553,19 @@ test('real canonical PDE and DL evidence completes non-promotably and cannot be 
     result.taskResults[1].receipt.executionAuthorityHash,
     attemptAuthority.gpuScientificCampaignAttemptAuthorityHash,
   );
+  const pdeLeaseBinding = result.taskResults[0].receipt.gpuReceipt
+    .artifactManifest.osSandboxWorkerReceipt.gpuSelectorExecutionLeaseBinding;
+  const deepLearningLeaseBinding = result.taskResults[1].receipt.workerReceipt
+    .gpuSelectorExecutionLeaseBinding;
+  assert.equal(pdeLeaseBinding.gpuSelectorExecutionLeaseReceipt.leaseId,
+    deepLearningLeaseBinding.gpuSelectorExecutionLeaseReceipt.leaseId);
+  assert.equal(pdeLeaseBinding.gpuSelectorExecutionLeaseReceipt
+    .ownerAuthorityHash,
+  attemptAuthority.gpuScientificCampaignAttemptAuthorityHash);
+  assert.equal(pdeLeaseBinding.productionExclusivityClaimed, false);
+  assert.equal(pdeLeaseBinding.multiTenantExclusivityClaimed, false);
+  assert.equal(pdeLeaseBinding
+    .dockerDeterministicContainerNameCrashRecoveryBackstopVerified, false);
 
   const attemptReplay = buildGpuScientificCampaignExecutionResult({
     campaign,

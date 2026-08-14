@@ -35,6 +35,9 @@ import {
 import {
   closeAutonomousResearchResourceBudgets,
 } from './autonomous-research-resource-budget-composition.mjs';
+import {
+  buildAutonomousResearchGpuScientificExecutionPlan,
+} from './autonomous-research-gpu-scientific-plan.mjs';
 
 export async function composeAutonomousResearchMachineIntakeEnqueue({
   intake,
@@ -240,6 +243,13 @@ export async function composeAutonomousResearchMachineIntakeEnqueue({
       loopPreparation: preparation,
       datasetMounts: intake.datasetMounts,
     });
+    const gpuScientificExecutionPlan =
+      buildAutonomousResearchGpuScientificExecutionPlan({
+        campaignId: intake.campaignId,
+        loopPreparation: preparation,
+        budgets: launchModeGate.effectiveBudgets,
+        productionReadiness,
+      });
     fence({ renew: true, action: 'before_campaign_enqueue_commit' });
     const enqueued = enqueuePreparedAutonomousResearchCampaign({
       readinessReport,
@@ -249,6 +259,7 @@ export async function composeAutonomousResearchMachineIntakeEnqueue({
       machineIntake: intake,
       machineIntakeAdmission,
       admissionPreflightExecutionInspection: admissionPreflightSandbox.inspection(),
+      gpuScientificExecutionPlan,
       campaignStore: context.services.campaignStore,
       preparedMaterialization: materialization,
     });

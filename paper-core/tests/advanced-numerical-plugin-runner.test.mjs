@@ -688,6 +688,7 @@ test('GPU fixture runner cannot promote a fabricated container receipt', async (
     allowedRoots: [fixture.pluginRoot],
     allowedOutputRoots: [fixture.outputRoot],
     allowedContainerImages: [GPU_IMAGE, GPU_IMAGE_DIGEST],
+    runtimeRoot: path.join(fixture.root, '.gpu-runtime'),
     allowGpu: true,
     maximumTimeoutMs: fixture.descriptor.limits.timeoutMs,
     maximumMemoryBytes: fixture.descriptor.limits.memoryBytes,

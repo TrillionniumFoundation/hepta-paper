@@ -214,6 +214,7 @@ export function verifyFullResearchQualificationReceipt(receipt, {
   requireGlobalGoldenAuthority = false,
   runtimePrincipalBinding = null,
   reviewerEvidenceAuthority = null,
+  gpuScientificPromotionAuthorityVerifier = null,
 } = {}) {
   const blockers = [];
   const nowMs = now instanceof Date ? now.getTime() : Date.parse(String(now));
@@ -357,6 +358,8 @@ export function verifyFullResearchQualificationReceipt(receipt, {
     allowBoundedGoldenCapability: requireGlobalGoldenAuthority,
     runtimePrincipalBinding,
     reviewerEvidenceAuthority,
+    gpuScientificPromotionAuthorityVerifier,
+    gpuScientificAuthorityVerificationTime: now,
   }) : null;
   if (releaseInspection) blockers.push(...releaseInspection.blockers);
   const bundle = releaseInspection?.bundle || null;

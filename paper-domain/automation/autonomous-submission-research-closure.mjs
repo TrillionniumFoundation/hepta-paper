@@ -24,6 +24,8 @@ export function resolveAutonomousSubmissionResearchClosure({
   requireResearchClosure = false,
   verifyQualificationSignature = null,
   verifyIndependentQualificationEvidence = null,
+  gpuScientificPromotionAuthorityVerifier = null,
+  gpuScientificAuthorityVerificationTime = null,
 } = {}) {
   const releaseBinding = campaignReleaseAuthority?.releaseBundle
     ?.autonomousResearchReleaseBinding || null;
@@ -40,6 +42,9 @@ export function resolveAutonomousSubmissionResearchClosure({
   }, {
     verifyQualificationSignature,
     verifyIndependentQualificationEvidence,
+    gpuScientificPromotionAuthorityVerifier,
+    gpuScientificAuthorityVerificationTime:
+      gpuScientificAuthorityVerificationTime ?? requestedAt,
   });
   if (!verifyResearchClosureReceipt(receipt, {
     campaignId,
@@ -52,6 +57,9 @@ export function resolveAutonomousSubmissionResearchClosure({
   }, {
     verifyQualificationSignature,
     verifyIndependentQualificationEvidence,
+    gpuScientificPromotionAuthorityVerifier,
+    gpuScientificAuthorityVerificationTime:
+      gpuScientificAuthorityVerificationTime ?? requestedAt,
   })
     || JSON.stringify(receipt.campaignReleaseAuthority)
       !== JSON.stringify(campaignReleaseAuthority)
@@ -73,6 +81,8 @@ export function verifyAutonomousSubmissionResearchClosure({
   requireResearchClosure = false,
   verifyQualificationSignature = null,
   verifyIndependentQualificationEvidence = null,
+  gpuScientificPromotionAuthorityVerifier = null,
+  gpuScientificAuthorityVerificationTime = null,
 } = {}) {
   const required = autonomousSubmissionResearchClosureRequired({
     releaseBinding,
@@ -105,6 +115,9 @@ export function verifyAutonomousSubmissionResearchClosure({
   }, {
     verifyQualificationSignature,
     verifyIndependentQualificationEvidence,
+    gpuScientificPromotionAuthorityVerifier,
+    gpuScientificAuthorityVerificationTime:
+      gpuScientificAuthorityVerificationTime ?? request?.requestedAt,
   })
     && request?.researchClosureReceiptHash === receipt?.researchClosureReceiptHash
     && JSON.stringify(receipt?.campaignReleaseAuthority) === JSON.stringify(authority)

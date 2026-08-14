@@ -38,10 +38,7 @@ export {
   inspectWorkspaceExecutionSnapshot,
   sourceTreeExcludedNames,
 } from './execution-snapshot.mjs';
-import {
-  buildDockerWorkerContainerOwnershipForEnvironment,
-  recoverDockerWorkerContainerAfterLauncher,
-} from './docker-worker-container-recovery.mjs';
+import { buildDockerWorkerContainerOwnershipForEnvironment } from './docker-worker-container-recovery.mjs';
 import {
   buildRuntimeDatasetAuthorizationSet,
   DATASET_ACCESS_SUPERVISOR_TRACER,
@@ -74,6 +71,7 @@ import {
   inspectWorkerExecutableHash,
   prepareWorkerExecutableIdentityAllowlist,
 } from './os-sandbox-worker-execution-identity.mjs';
+import { bindOsSandboxWorkerGpuSelectorLeaseAtLaunch, blockedOsSandboxWorkerGpuSelectorLease, createOsSandboxWorkerGpuSelectorLeaseCoordinator, recoverDockerWorkerContainerAndFenceGpuSelectorLease } from './os-sandbox-worker-gpu-selector-lease.mjs';
 
 function normalizeSynchronousLauncherResult(result) {
   if (result?.error?.code !== 'ETIMEDOUT' || result.timedOut === true) return result;
@@ -82,6 +80,7 @@ function normalizeSynchronousLauncherResult(result) {
 
 export function createOsSandboxedWorkerRunnerEngine({
   allowedExecutables = [], allowedRoots = [], allowedOutputRoots = [], allowGpu = false, bubblewrap = 'bwrap', prlimit = 'prlimit', docker = 'docker', dockerImage = null,
+  runtimeRoot = null,
   expectedExecutableHashes = {},
   allowedContainerImages = [], allowedDatasetRoots = [], trustedDatasetSupervisorImages = [],
   maximumTimeoutMs = 120000, maximumMemoryBytes = 1024 * 1024 * 1024, maximumCpuSeconds = 120, maximumPids = 128, maximumOutputBytes = 256 * 1024 * 1024, maximumCapturedBytes = 4 * 1024 * 1024, maximumInputBytes = 4 * 1024 * 1024,
@@ -141,6 +140,11 @@ export function createOsSandboxedWorkerRunnerEngine({
     provider: backend,
   });
   const prepareEnvironmentBom = createWorkerEnvironmentBomPreparer({ maximumTimeoutMs, maximumMemoryBytes, maximumCpuSeconds, maximumPids, maximumOutputBytes, maximumCapturedBytes });
+  const gpuSelectorExecutionLeaseCoordinator =
+    createOsSandboxWorkerGpuSelectorLeaseCoordinator({
+      allowGpu, runtimeRoot, availability, docker, dockerContainerRecoveryExecutor,
+      environment: process.env,
+    });
   return assertWorkerRunnerPort({
     version: 4,
     kind: 'OsSandboxedWorkerRunner',
@@ -152,6 +156,7 @@ export function createOsSandboxedWorkerRunnerEngine({
     availability,
     isolation: Object.freeze({ backend, sourceReadOnly: true, ephemeralWorkRoot: true, separateOutputRoot: true, hostEtcMounted: false, userNamespace: backend === 'bubblewrap', mountNamespace: true, pidNamespace: true, networkNamespace: true, readOnlyRuntime: true, memoryLimit: true, memoryLimitScope: backend === 'docker' ? 'container-cgroup-aggregate-v1' : 'process-address-space-not-descendant-tree-v1', cpuLimit: true, cpuLimitScope: 'process-thread-group-not-descendant-tree-v1', processLimit: advertisedProcessLimit.available, processLimitMechanism: advertisedProcessLimit.mechanism, processLimitScope: backend === 'docker' ? 'container-cgroup-concurrent-tasks-v1' : 'real-uid-concurrent-processes-not-sandbox-local-v1' }),
     run(spec = {}) {
+      return gpuSelectorExecutionLeaseCoordinator.run(spec, (injectedGpuSelectorExecutionLease) => {
       const removedInputs = ['containerImageIdentity', 'containerImageDigest']
         .filter((name) => Object.prototype.hasOwnProperty.call(spec, name));
       if (removedInputs.length) {
@@ -163,7 +168,7 @@ export function createOsSandboxedWorkerRunnerEngine({
           isolation: { kernelNetworkIsolationVerified: false, filesystemNamespaceVerified: false, sourceReadOnlyVerified: false, resourceLimitsVerified: false },
         };
       }
-      const { executable, args = [], cwd, sourceRoot = null, timeoutMs = 30000, outputPaths = [], outputDirectory = null, requiresGpu = false, gpuDeviceSelector = null, gpuDispatchMemoryAdmission = null, env = {}, executionIdentity: suppliedExecutionIdentity = null, containerImage = null, containerExecutable = null, datasetMounts = [], requireDatasetAccessProof = false, requireSeparateOutputRoot = false, requireImmutableWorkRoot = false, memoryBytes = null, cpuSeconds = null, maximumProcesses = null, requestedMaximumOutputBytes = null, language = 'unknown', determinismPolicy = 'unknown', deterministicSeed = null, runtimePackageClosure = null, runtimeBuildReproducibility = null, expectedSourceMerkleHash = null, expectedSourceWorkspaceManifestHash = null, standardInput = null, signal = null } = spec;
+      const { executable, args = [], cwd, sourceRoot = null, timeoutMs = 30000, absoluteDeadlineEpochMs = null, outputPaths = [], outputDirectory = null, requiresGpu = false, gpuDeviceSelector = null, gpuDispatchMemoryAdmission = null, env = {}, executionIdentity: suppliedExecutionIdentity = null, containerImage = null, containerExecutable = null, datasetMounts = [], requireDatasetAccessProof = false, requireSeparateOutputRoot = false, requireImmutableWorkRoot = false, memoryBytes = null, cpuSeconds = null, maximumProcesses = null, requestedMaximumOutputBytes = null, language = 'unknown', determinismPolicy = 'unknown', deterministicSeed = null, runtimePackageClosure = null, runtimeBuildReproducibility = null, expectedSourceMerkleHash = null, expectedSourceWorkspaceManifestHash = null, standardInput = null, signal = null } = spec;
       const capabilityPreflight = evaluateExecutorCapabilityRequest({
         capabilities,
         request: { sandbox: 'kernel-isolated', requiresGpu, requiresWorkspaceIsolation: true, requiresNetworkIsolation: true, timeoutMs },
@@ -256,6 +261,15 @@ export function createOsSandboxedWorkerRunnerEngine({
       if (requiresGpu && (!allowGpu || gpuDevices.length === 0)) blockers.push('worker_gpu_not_available_or_not_allowed');
       if (requiresGpu && executionBackend !== 'docker') blockers.push('worker_gpu_requires_docker_device_isolation');
       if (requiresGpu && !normalizedGpuDeviceSelector) blockers.push('worker_gpu_device_selector_invalid');
+      if (requiresGpu && (!injectedGpuSelectorExecutionLease
+        || injectedGpuSelectorExecutionLease.gpuDeviceSelector
+          !== normalizedGpuDeviceSelector)) {
+        blockers.push('worker_gpu_selector_execution_lease_invalid');
+      }
+      if (requiresGpu && (!Number.isSafeInteger(Number(absoluteDeadlineEpochMs))
+        || Number(absoluteDeadlineEpochMs) <= Date.now())) {
+        blockers.push('worker_gpu_absolute_deadline_invalid_or_exhausted');
+      }
       if (requiresGpu && normalizedGpuDeviceSelector && !gpuDeviceSelectorObserved) {
         blockers.push('worker_gpu_device_capacity_observation_invalid');
       }
@@ -510,7 +524,11 @@ export function createOsSandboxedWorkerRunnerEngine({
           isolation: { kernelNetworkIsolationVerified: false, filesystemNamespaceVerified: false, sourceReadOnlyVerified: false, resourceLimitsVerified: false },
         };
       }
-      const dockerContainerOwnership = buildDockerWorkerContainerOwnershipForEnvironment({ executionBackend, processInvocationId, permittedEnvironment, sandboxRoot });
+      const dockerContainerOwnership = buildDockerWorkerContainerOwnershipForEnvironment({
+        executionBackend, processInvocationId, permittedEnvironment, sandboxRoot,
+        gpuSelectorExecutionLease: requiresGpu
+          ? injectedGpuSelectorExecutionLease : null,
+      });
       const environmentBomBinding = prepareEnvironmentBom({ executionIdentity: activeExecutionIdentity, language, executable: containerImage ? containerExecutable : resolvedExecutable, requiresGpu, determinismPolicy, deterministicSeed: deterministicSeed ?? env.HEPTA_EXPERIMENT_SEED ?? env.HEPTA_SEED ?? env.PYTHONHASHSEED ?? null, timeoutMs, memoryBytes, cpuSeconds, maximumProcesses, requestedMaximumOutputBytes, env: Object.fromEntries(permittedEnvironment), runtimePackageClosure, runtimeBuildReproducibility });
       if (environmentBomBinding.blockers.length) { removePrivateSandboxRoot(sandboxRoot); return { ok: false, status: 'os_sandbox_worker_blocked', blockers: environmentBomBinding.blockers, availability: executionAvailability, isolation: { kernelNetworkIsolationVerified: false, filesystemNamespaceVerified: false, sourceReadOnlyVerified: false, resourceLimitsVerified: false } }; }
       const { timeoutMs: boundedTimeout, memoryBytes: boundedMemory, cpuSeconds: boundedCpu, maximumPids: boundedPids, maximumOutputBytes: boundedOutput } = environmentBomBinding.limits;
@@ -612,6 +630,37 @@ export function createOsSandboxedWorkerRunnerEngine({
             resourceLimitsVerified: false },
         };
       }
+      const processInvocationBinding = buildWorkerProcessInvocationBinding({
+        arguments: mappedWorkerArguments,
+        executableTarget: executionBackend === 'docker'
+          ? (containerImage ? containerExecutable : runtimeExecutableInvocationTarget)
+          : runtimeExecutableInvocationTarget,
+        executionClass: expectedExecutionClass,
+        processInvocationId,
+        sourceMerkleHash: sourceMerkleHashBefore,
+        sourceWorkspaceManifestHash: sourceWorkspaceManifestHashBefore,
+        standardInput: encodedStandardInput,
+        workingDirectory: sandboxWorkingDirectory,
+      });
+      let gpuLeaseLaunch = Object.freeze({ leaseBoundAtLaunchEpochMs: null,
+        launchTimeoutMs: boundedTimeout, workerInvocationAuthorityHash: null });
+      if (requiresGpu) {
+        try {
+          gpuLeaseLaunch = bindOsSandboxWorkerGpuSelectorLeaseAtLaunch({
+            lease: injectedGpuSelectorExecutionLease,
+            gpuDeviceSelector: normalizedGpuDeviceSelector,
+            absoluteDeadlineEpochMs,
+            boundedTimeout,
+            processInvocationBinding,
+            runtimeIdentityHash: activeExecutionIdentity.runtimeIdentityHash,
+            containerImageDigest,
+            dockerContainerOwnership,
+          });
+        } catch (error) {
+          removePrivateSandboxRoot(sandboxRoot);
+          return blockedOsSandboxWorkerGpuSelectorLease(executionAvailability, error);
+        }
+      }
       const finalize = createOsSandboxWorkerExecutionFinalizer({
         activeExecutionIdentity,
         allowedOutputRoot,
@@ -634,6 +683,15 @@ export function createOsSandboxedWorkerRunnerEngine({
         gpuDeviceSelectorObserved: gpuDispatchSelectorObserved,
         gpuDispatchMemoryAdmissionRequirement: gpuDispatchMemoryAdmission,
         gpuDispatchMemoryAdmissionEvaluation,
+        gpuSelectorExecutionLease: injectedGpuSelectorExecutionLease,
+        gpuSelectorExecutionLeaseAbsoluteDeadlineEpochMs:
+          requiresGpu ? Number(absoluteDeadlineEpochMs) : null,
+        gpuSelectorExecutionLeaseBoundAtLaunchEpochMs:
+          gpuLeaseLaunch.leaseBoundAtLaunchEpochMs,
+        gpuSelectorExecutionLeaseLaunchTimeoutMs:
+          requiresGpu ? gpuLeaseLaunch.launchTimeoutMs : null,
+        gpuSelectorExecutionLeaseWorkerAuthorityHash:
+          gpuLeaseLaunch.workerInvocationAuthorityHash,
         immutableWorkRootMountVerified,
         maximumCapturedBytes,
         mountedDatasets,
@@ -641,18 +699,7 @@ export function createOsSandboxedWorkerRunnerEngine({
         outputRoot,
         permittedEnvironment,
         processInvocationId,
-        processInvocationBinding: buildWorkerProcessInvocationBinding({
-          arguments: mappedWorkerArguments,
-          executableTarget: executionBackend === 'docker'
-            ? (containerImage ? containerExecutable : runtimeExecutableInvocationTarget)
-            : runtimeExecutableInvocationTarget,
-          executionClass: expectedExecutionClass,
-          processInvocationId,
-          sourceMerkleHash: sourceMerkleHashBefore,
-          sourceWorkspaceManifestHash: sourceWorkspaceManifestHashBefore,
-          standardInput: encodedStandardInput,
-          workingDirectory: sandboxWorkingDirectory,
-        }),
+        processInvocationBinding,
         processLimitProbe,
         requireDatasetAccessProof,
         requireSeparateOutputRoot,
@@ -673,9 +720,9 @@ export function createOsSandboxedWorkerRunnerEngine({
         workWorkspaceManifestHash,
         productionEvidenceEligible,
       });
-      const withDockerContainerRecovery = (result) => recoverDockerWorkerContainerAfterLauncher({ result, executionBackend, docker, ownership: dockerContainerOwnership, spawnSyncImpl: dockerContainerRecoveryExecutor, environment: process.env });
+      const withDockerContainerRecovery = (result) => recoverDockerWorkerContainerAndFenceGpuSelectorLease({ result, executionBackend, docker, ownership: dockerContainerOwnership, spawnSyncImpl: dockerContainerRecoveryExecutor, environment: process.env, lease: injectedGpuSelectorExecutionLease });
       if (signal) {
-        return runBoundedChildProcess({ executable: launcher, args: command, cwd: resolvedCwd, timeoutMs: boundedTimeout, signal, maximumCapturedBytes })
+        return runBoundedChildProcess({ executable: launcher, args: command, cwd: resolvedCwd, timeoutMs: gpuLeaseLaunch.launchTimeoutMs, signal, maximumCapturedBytes })
           .then(
             (result) => finalize(withDockerContainerRecovery({
               ...result,
@@ -690,12 +737,14 @@ export function createOsSandboxedWorkerRunnerEngine({
         command,
         {
           encoding: 'utf8',
-          timeout: boundedTimeout,
+          timeout: gpuLeaseLaunch.launchTimeoutMs,
           maxBuffer: maximumCapturedBytes,
           ...(encodedStandardInput ? { input: encodedStandardInput } : {}),
         },
       ));
       return finalize(withDockerContainerRecovery(synchronousResult));
+        },
+      );
     },
   });
 }

@@ -5,6 +5,24 @@ import { readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-id
 import { isPathWithin } from '../../workflow-kernel/runtime/path-utils.mjs';
 import { verifyCampaignReleaseBundleForSubmission } from './campaign-release-bundle-consumer.mjs';
 
+function blockedExportReceipt(blockers, paperId, externalActionPerformed = false) {
+  const blocked = {
+    version: 1,
+    kind: 'SubmissionHandoffBundleExportReceipt',
+    status: 'submission_handoff_bundle_blocked',
+    paperId: paperId || null,
+    blockers: [...new Set(blockers)],
+    externalActionPerformed,
+  };
+  return Object.freeze({
+    ...blocked,
+    submissionHandoffBundleExportReceiptHash: hashRecord(
+      'SubmissionHandoffBundleExportReceipt',
+      blocked,
+    ),
+  });
+}
+
 function safeName(value) {
   return String(value || 'artifact').replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 160) || 'artifact';
 }
@@ -33,9 +51,10 @@ export async function exportSubmissionHandoffBundle({
 } = {}) {
   assertArtifactRepository(artifactRepository);
   const blockers = [];
+  let releaseRuntimeRoot = null;
   if (campaignReleaseBundle) {
     const releaseRoot = path.resolve(campaignReleaseBundle.packageOutput?.releaseRoot || '.');
-    const releaseRuntimeRoot = artifactScopeRoots.map((item) => path.resolve(item)).find((item) => isPathWithin(item, releaseRoot)) || null;
+    releaseRuntimeRoot = artifactScopeRoots.map((item) => path.resolve(item)).find((item) => isPathWithin(item, releaseRoot)) || null;
     const releaseVerification = verifyCampaignReleaseBundleForSubmission({
       releaseAuthority: campaignReleaseAuthority,
       releaseBundle: campaignReleaseBundle,
@@ -85,15 +104,7 @@ export async function exportSubmissionHandoffBundle({
     artifactReads.push({ index, artifact, read });
   }
   if (blockers.length) {
-    const blocked = {
-      version: 1,
-      kind: 'SubmissionHandoffBundleExportReceipt',
-      status: 'submission_handoff_bundle_blocked',
-      paperId: manifest?.paperId || null,
-      blockers: [...new Set(blockers)],
-      externalActionPerformed: false,
-    };
-    return Object.freeze({ ...blocked, submissionHandoffBundleExportReceiptHash: hashRecord('SubmissionHandoffBundleExportReceipt', blocked) });
+    return blockedExportReceipt(blockers, manifest?.paperId, false);
   }
   const copiedArtifacts = [];
   for (const { index, artifact, read } of artifactReads) {
@@ -109,6 +120,24 @@ export async function exportSubmissionHandoffBundle({
       sourceReadReceiptHash: read.scopedFileReadReceiptHash,
       writeReceiptHash: write.writeReceiptHash,
     });
+  }
+  if (campaignReleaseBundle) {
+    const postCopyReleaseVerification =
+      verifyCampaignReleaseBundleForSubmission({
+        releaseAuthority: campaignReleaseAuthority,
+        releaseBundle: campaignReleaseBundle,
+        runtimeRoot: releaseRuntimeRoot,
+        sourceScopeRoots: [artifactBaseRoot, ...artifactScopeRoots]
+          .filter(Boolean),
+      });
+    if (postCopyReleaseVerification.status
+        !== 'submission_campaign_release_verified') {
+      return blockedExportReceipt(
+        postCopyReleaseVerification.blockers,
+        manifest?.paperId,
+        copiedArtifacts.length > 0,
+      );
+    }
   }
   const bundleManifest = {
     version: 1,

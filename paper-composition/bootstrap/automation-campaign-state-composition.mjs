@@ -23,12 +23,14 @@ export function composeAutomationCampaignState({
   operatorDatasetHarnessAuthorityVerifier,
   rawEventRecomputationVerifier,
   operatorDatasetAuthorityTrustStoreProvider,
+  gpuScientificPromotionAuthorityVerifier,
 } = {}) {
   const campaignStore = assertCampaignStorePort(campaignStoreOverride
     || createSqliteCampaignStore({
       store,
       clock,
       experimentRegistryAuthorityVerifier,
+      gpuScientificPromotionAuthorityVerifier,
       externalResearchReplay,
     }));
   const workspaceRegistry = workspaceRegistryOverride
@@ -42,6 +44,7 @@ export function composeAutomationCampaignState({
     operatorDatasetHarnessAuthorityVerifier,
     rawEventRecomputationVerifier,
     operatorDatasetAuthorityTrustStoreProvider,
+    gpuScientificPromotionAuthorityVerifier,
   });
   const runtimeRetentionReachabilityProvider =
     composeRuntimeRetentionReachabilityAuthority({
@@ -54,6 +57,7 @@ export function composeAutomationCampaignState({
       operatorDatasetHarnessAuthorityVerifier,
       rawEventRecomputationVerifier,
       operatorDatasetAuthorityTrustStoreProvider,
+      gpuScientificPromotionAuthorityVerifier,
     });
   return Object.freeze({
     campaignStore,

@@ -46,6 +46,7 @@ export function buildAutonomousResearchCampaignPlan({
   machineIntakeAdmission = null,
   localOnly = false,
   directLocalRunBudgetWaiver = null,
+  gpuScientificExecutionPlan = null,
 } = {}) {
   const proposal = loopPreparation?.proposal;
   const empiricalProfileSelection = loopPreparation?.empiricalExecutionProfileSelection;
@@ -138,6 +139,7 @@ export function buildAutonomousResearchCampaignPlan({
     autonomousResearchMachineIntakeAdmission: machineIntakeAdmission,
     localOnly,
     directLocalRunBudgetWaiver,
+    gpuScientificExecutionPlan,
     budgets,
   });
   assertAutonomousResearchResourceBudgetClosure({
@@ -178,6 +180,7 @@ export function enqueuePreparedAutonomousResearchCampaign({
   machineIntake = null,
   machineIntakeAdmission = null,
   admissionPreflightExecutionInspection = null,
+  gpuScientificExecutionPlan = null,
 } = {}) {
   const store = requireCampaignStore(campaignStore);
   const preparation = loopPreparationFrom(readinessReport);
@@ -200,6 +203,7 @@ export function enqueuePreparedAutonomousResearchCampaign({
     budgets,
     machineIntake,
     machineIntakeAdmission,
+    gpuScientificExecutionPlan,
   });
   if (plan?.campaignId !== id
     || plan?.scientificClaimAuthority?.autonomousResearchSeedBindingHash
@@ -445,6 +449,7 @@ export async function executeAutonomousResearchCampaign({
   autonomousSubmissionRequestVerifier = null,
   verifyAutonomousSubmissionHumanAuthorization = null,
   runtime = {},
+  gpuScientificExecutionPlan = null,
 } = {}) {
   const store = requireCampaignStore(campaignStore);
   if (!['launch', 'status', 'resume', 'converge'].includes(action)) {
@@ -491,6 +496,7 @@ export async function executeAutonomousResearchCampaign({
       loopPreparation: preparation, materialization, datasetMounts, campaignId: id, budgets,
       localOnly,
       directLocalRunBudgetWaiver,
+      gpuScientificExecutionPlan,
     });
     if (plan?.campaignId !== id
       || plan?.scientificClaimAuthority?.autonomousResearchSeedBindingHash

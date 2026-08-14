@@ -32,6 +32,7 @@ export function composeAdvancedNumericalPluginRuntime({
   qualificationTrustStore = null,
   pluginRoot,
   outputRoot,
+  runtimeRoot = null,
   now = new Date(),
 } = {}) {
   const verifiedBundle = verifyAdvancedNumericalPluginSignedBundle(bundle, {
@@ -48,6 +49,7 @@ export function composeAdvancedNumericalPluginRuntime({
     allowGpu: Boolean(gpuRuntimeAuthority),
     allowedRoots: [pluginRoot],
     allowedOutputRoots: [outputRoot],
+    runtimeRoot,
     maximumTimeoutMs: descriptor.limits.timeoutMs,
     maximumMemoryBytes: descriptor.limits.memoryBytes,
     maximumCpuSeconds: descriptor.limits.cpuSeconds,
@@ -77,6 +79,7 @@ export function composeAdvancedNumericalPluginRuntime({
 
 export function composeConfiguredAdvancedNumericalPluginRuntime({
   configurationPath,
+  runtimeRoot = null,
   expectedConfigurationHash = null,
   requireProductionQualification = false,
   now,
@@ -94,6 +97,7 @@ export function composeConfiguredAdvancedNumericalPluginRuntime({
     qualificationTrustStore: runtimeConfiguration.qualificationTrustStore,
     pluginRoot: runtimeConfiguration.pluginRoot,
     outputRoot: runtimeConfiguration.outputRoot,
+    runtimeRoot,
     now,
   });
   return Object.freeze({
@@ -105,6 +109,7 @@ export function composeConfiguredAdvancedNumericalPluginRuntime({
 export function composeCampaignAdvancedNumericalExecution({
   plan,
   configurationPath,
+  runtimeRoot,
   now,
 } = {}) {
   if (!verifyAdvancedNumericalCampaignExecutionPlan(plan)) {
@@ -112,6 +117,7 @@ export function composeCampaignAdvancedNumericalExecution({
   }
   const runtime = composeConfiguredAdvancedNumericalPluginRuntime({
     configurationPath,
+    runtimeRoot,
     expectedConfigurationHash:
       plan.pluginRuntimeIdentity.configurationHash,
     requireProductionQualification: false,

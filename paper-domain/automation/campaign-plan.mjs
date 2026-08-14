@@ -280,6 +280,7 @@ export function buildPaperCampaignPlan({
   if (Boolean(explicitScientificClaimAuthority) !== Boolean(explicitAutonomousPreparation)) {
     throw new Error('campaign_autonomous_research_authority_preparation_pair_required');
   }
+  if (explicitAutonomousPreparation?.launchMode === 'production-run' && !verifiedGpuScientificExecutionPlan) throw new Error('campaign_autonomous_research_production_gpu_scientific_execution_plan_required');
   if (Boolean(autonomousResearchMachineIntake)
       !== Boolean(autonomousResearchMachineIntakeAdmission)
     || (autonomousResearchMachineIntake
@@ -495,5 +496,4 @@ export function buildPaperCampaignPlan({
     externalSubmissionEnabled: false,
     releaseHandoffRequired: effectiveMode === PAPER_BATCH_MODES.REVIEWED_SUBMIT,
   };
-  return Object.freeze({ ...payload, campaignPlanHash: hashRecord('PaperCampaignPlan', payload) });
-}
+  return Object.freeze({ ...payload, campaignPlanHash: hashRecord('PaperCampaignPlan', payload) }); }

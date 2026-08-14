@@ -3,9 +3,12 @@ import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { readScopedFileSync } from '../../workflow-kernel/runtime/scoped-file-identity.mjs';
 import {
   buildCampaignReleaseEvidenceCapsuleManifest,
-  verifyCampaignReleasePortableEnvironmentBindings,
   verifyCampaignReleaseEvidenceCapsuleManifest,
 } from '../../paper-domain/automation/campaign-release-evidence-capsule-contract.mjs';
+import {
+  prepareCampaignReleaseGpuScientificCapsuleEvidenceSync,
+  verifyCampaignReleaseGpuScientificCapsuleDirectorySync,
+} from './research-evidence-capsule-gpu-scientific.mjs';
 import {
   verifyExperimentReplayReceipt,
   verifyExperimentRunReceipt,
@@ -38,8 +41,9 @@ import {
   empiricalAssertionResearchReportValid,
   portableExperimentRegistryWithAssertionDerivation,
 } from './research-evidence-empirical-assertion-binding.mjs';
-import { researchEvidenceRecomputationIndependenceMatches, researchEvidenceRecomputationIndependenceSummary } from './research-evidence-recomputation-binding.mjs';
+import { researchEvidenceRecomputationIndependenceSummary } from './research-evidence-recomputation-binding.mjs';
 import { buildCampaignReleaseFormalReadableProofEvidence } from './research-evidence-formal-readable-proof.mjs';
+import { portableExperimentBindingsValid } from './research-evidence-capsule-portable-bindings-verifier.mjs';
 export { createResearchExecutionReleaseAttestor } from './research-execution-release-attestor.mjs';
 const MAXIMUM_CAPSULE_FILE_BYTES = 256 * 1024 * 1024;
 const SAFE_RELATIVE_PATH = /^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9_.\/-]{1,512}$/;
@@ -67,6 +71,7 @@ function fileEntry({ role, relativePath, content, executionRole = 'base', experi
     content: bytes,
   });
 }
+
 function ledgerReceiptSummary(receiptLedger, receiptId, expectedHash) {
   if (!receiptLedger || typeof receiptLedger.get !== 'function' || !receiptId) {
     throw new Error('research_evidence_capsule_ledger_authority_required');
@@ -291,6 +296,12 @@ export async function materializeCampaignReleaseEvidenceCapsule({
   researchExecutionReleaseAttestor = null,
   assertExternalSideEffectReady = null,
   academicEvidenceRequired = false,
+  runtimeRoot = null,
+  gpuScientificExecutionPlan = null,
+  gpuScientificExecutionNode = null,
+  gpuScientificExecutionResult = null,
+  gpuScientificQualificationEvidence = null,
+  gpuScientificArtifactBodyArchiveManifest = null,
   createdAt,
 } = {}) {
   if (!packageDir || researchReport?.kind !== 'PaperResearchVerifyReport' || !researchReport?.researchReportHash
@@ -313,10 +324,28 @@ export async function materializeCampaignReleaseEvidenceCapsule({
   if (academicEvidenceRequired && academicExperiments.length < 1) {
     throw new Error('research_evidence_capsule_academic_evidence_required');
   }
+  const gpuScientificCapsuleEvidence =
+    prepareCampaignReleaseGpuScientificCapsuleEvidenceSync({
+      runtimeRoot,
+      packageDir,
+      campaignId,
+      paperId,
+      gpuScientificExecutionPlan,
+      gpuScientificExecutionNode,
+      gpuScientificExecutionResult,
+      gpuScientificQualificationEvidence,
+      gpuScientificArtifactBodyArchiveManifest,
+      createdAt,
+    });
+  const gpuScientificEvidenceIncluded =
+    gpuScientificCapsuleEvidence.included;
   const materialized = academicExperiments.map((experiment) => experimentFilesAndEvidence(experiment, receiptLedger));
   const publicAuthorityTrustSnapshot = buildPublicAuthorityTrustSnapshot({
     trustStore: operatorDatasetAuthorityTrustStore || { version: 1, kind: 'AuthorityTrustStore', keys: [] },
-    referencedKeyIds: materialized.flatMap((item) => item.referencedAuthorityKeyIds),
+    referencedKeyIds: [
+      ...materialized.flatMap((item) => item.referencedAuthorityKeyIds),
+      ...gpuScientificCapsuleEvidence.referencedAuthorityKeyIds,
+    ],
     capturedAt: createdAt,
   });
   const portableReport = portableDocument('PortablePaperResearchVerifyReport', 'sourceResearchReportHash', researchReport.researchReportHash, researchReport);
@@ -353,14 +382,21 @@ export async function materializeCampaignReleaseEvidenceCapsule({
     experimentRegistryHash: registry.experimentRegistryHash,
     publicAuthorityTrustSnapshotHash: publicAuthorityTrustSnapshot.publicAuthorityTrustSnapshotHash,
     publicAuthorityTrustAssurance: 'package-internal-public-key-disclosure-not-trust-anchor-v1',
-    sourceAuthenticityRequiresExternalTrustAnchor: academicExperiments.length > 0,
+    sourceAuthenticityRequiresExternalTrustAnchor:
+      academicExperiments.length > 0 || gpuScientificEvidenceIncluded,
     experiments: materialized.map((item) => item.publicAuthority),
+    ...(gpuScientificEvidenceIncluded ? {
+      gpuScientificQualificationAuthority:
+        gpuScientificCapsuleEvidence.authoritySummary,
+    } : {}),
     ledgerEvidenceAssurance: 'structural-receipt-summaries-not-cryptographic-inclusion-proof-v1',
     privateKeysIncluded: false,
     hiddenOracleIncluded: false,
     hostAbsolutePathsIncluded: false,
   });
   const formalReadableProofEvidence = buildCampaignReleaseFormalReadableProofEvidence({ researchReport, campaignId, paperId });
+  const gpuScientificQualificationFile =
+    gpuScientificCapsuleEvidence.qualificationFile;
   const files = [
     fileEntry({ role: 'portable_research_report', relativePath: 'evidence/RESEARCH_REPORT.json', content: jsonBytes(portableReport) }),
     fileEntry({ role: 'portable_experiment_registry', relativePath: 'evidence/EXPERIMENT_REGISTRY.json', content: jsonBytes(portableRegistry) }),
@@ -369,11 +405,18 @@ export async function materializeCampaignReleaseEvidenceCapsule({
     fileEntry({ role: 'public_authority_trust_snapshot', relativePath: 'evidence/PUBLIC_AUTHORITY_TRUST_SNAPSHOT.json', content: jsonBytes(publicAuthorityTrustSnapshot) }),
     ...(formalReadableProofEvidence ? [fileEntry({ role: 'formal_readable_proof_explanations', relativePath: 'evidence/FORMAL_READABLE_PROOF_EXPLANATIONS.json', content: jsonBytes(formalReadableProofEvidence) })] : []),
     ...materialized.flatMap((item) => item.files),
+    ...gpuScientificCapsuleEvidence.files,
   ];
   for (const file of files.filter((entry) => /\.(?:json|ndjson)$/i.test(entry.path))) {
+    const content = file.content || readResearchEvidenceCapsuleFile(
+      path.resolve(packageDir),
+      file.path,
+      MAXIMUM_CAPSULE_FILE_BYTES,
+    ).content;
+    if (!content) throw new Error(`research_evidence_capsule_file_unreadable:${file.path}`);
     const documents = file.path.endsWith('.ndjson')
-      ? file.content.toString('utf8').split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line))
-      : [JSON.parse(file.content.toString('utf8'))];
+      ? content.toString('utf8').split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line))
+      : [JSON.parse(content.toString('utf8'))];
     const privateBlockers = documents.flatMap((document) => assertNoPrivateMaterial(document));
     if (privateBlockers.length) throw new Error(`research_evidence_capsule_private_material_forbidden:${file.path}:${privateBlockers.join(',')}`);
   }
@@ -391,6 +434,10 @@ export async function materializeCampaignReleaseEvidenceCapsule({
     publicAuthorityTrustSnapshotHash: publicAuthorityTrustSnapshot.publicAuthorityTrustSnapshotHash,
     experiments: materialized.map((item) => item.descriptor),
     entries: files,
+    gpuScientificArtifactBodyArchiveManifest:
+      gpuScientificCapsuleEvidence.artifactBodyArchive?.manifest || null,
+    gpuScientificQualificationEvidence:
+      gpuScientificQualificationEvidence || null,
     createdAt,
   });
   const manifestFile = fileEntry({
@@ -431,9 +478,12 @@ export async function materializeCampaignReleaseEvidenceCapsule({
     });
   }
   const allFiles = [...files, manifestFile, ...(executionAttestationFile ? [executionAttestationFile] : [])];
-  materializeResearchEvidenceCapsuleFilesSync({ packageDir, files: allFiles });
+  materializeResearchEvidenceCapsuleFilesSync({
+    packageDir,
+    files: allFiles.filter((file) => file.content),
+  });
   return Object.freeze({
-    version: 2,
+    version: manifest.version,
     kind: 'MaterializedCampaignReleaseResearchEvidenceCapsule',
     status: 'research_evidence_capsule_materialized',
     manifest,
@@ -443,79 +493,26 @@ export async function materializeCampaignReleaseEvidenceCapsule({
     manifestFile: Object.freeze({ ...manifestFile, content: undefined }),
     executionAttestationFile: executionAttestationFile
       ? Object.freeze({ ...executionAttestationFile, content: undefined }) : null,
+    gpuScientificArtifactBodyArchive:
+      gpuScientificCapsuleEvidence.artifactBodyArchive,
+    gpuScientificArtifactBodyArchiveManifest:
+      gpuScientificCapsuleEvidence.artifactBodyArchive?.manifest || null,
+    gpuScientificArtifactBodyArchiveManifestFile:
+      gpuScientificCapsuleEvidence.artifactBodyArchive?.manifestFile || null,
+    gpuScientificArtifactBodyArchiveBodyFiles:
+      gpuScientificCapsuleEvidence.artifactBodyArchive?.bodyFiles
+        || Object.freeze([]),
+    gpuScientificQualificationEvidence:
+      gpuScientificQualificationEvidence || null,
+    gpuScientificQualificationEvidenceFile:
+      gpuScientificQualificationFile
+        ? Object.freeze({
+          ...gpuScientificQualificationFile,
+          content: undefined,
+        }) : null,
     files: Object.freeze(files.map((file) => Object.freeze({ ...file, content: undefined }))),
     allFiles: Object.freeze(allFiles.map((file) => Object.freeze({ ...file, content: undefined }))),
   });
-}
-
-function portableExperimentBindingsValid({ manifest, registry, environment, authority } = {}) {
-  if (!verifyCampaignReleasePortableEnvironmentBindings({ manifest, registry, environment, authority }).valid) return false;
-  const registryExperiments = new Map((registry?.document?.experiments || []).map((item) => [item?.experimentId, item]));
-  const environmentExperiments = new Map((environment?.experiments || []).map((item) => [item?.experimentId, item]));
-  const authorityExperiments = new Map((authority?.experiments || []).map((item) => [item?.experimentId, item]));
-  for (const experiment of manifest?.experiments || []) {
-    const registered = registryExperiments.get(experiment.experimentId);
-    const runtime = environmentExperiments.get(experiment.experimentId);
-    const publicAuthority = authorityExperiments.get(experiment.experimentId);
-    const offlineOriginal = publicAuthority?.offlineOperatorDatasetAuthorityEvidence?.executions?.original;
-    const operatorAnalysisProtocolTemplateHash = offlineOriginal?.benchmarkSelector?.experimentDesign?.analysisProtocolTemplateHash
-      || experiment.analysisProtocolHash;
-    if (registered?.evidenceBinding?.experimentEvidenceBindingHash !== experiment.experimentEvidenceBindingHash
-      || registered?.evidenceBinding?.sourceLineageHash !== experiment.sourceLineageHash
-      || runtime?.sourceLineageHash !== experiment.sourceLineageHash
-      || publicAuthority?.experimentEvidenceBindingHash !== experiment.experimentEvidenceBindingHash
-      || publicAuthority?.experimentReplayReceiptHash !== experiment.experimentReplayReceiptHash
-      || publicAuthority?.sourceLineageHash !== experiment.sourceLineageHash
-      || registered?.evidenceBinding?.analysisProtocolHash !== experiment.analysisProtocolHash
-      || registered?.evidenceBinding?.originalAnalysisEvaluationHash !== experiment.originalAnalysisEvaluationHash
-      || registered?.evidenceBinding?.replayAnalysisEvaluationHash !== experiment.replayAnalysisEvaluationHash
-      || registered?.evidenceBinding?.analysisProtocolReplayBindingHash !== experiment.analysisProtocolReplayBindingHash
-      || !researchEvidenceRecomputationIndependenceMatches(registered?.evidenceBinding, experiment)
-      || publicAuthority?.analysisProtocolHash !== experiment.analysisProtocolHash
-      || publicAuthority?.originalAnalysisEvaluationHash !== experiment.originalAnalysisEvaluationHash
-      || publicAuthority?.replayAnalysisEvaluationHash !== experiment.replayAnalysisEvaluationHash
-      || publicAuthority?.analysisProtocolReplayBindingHash !== experiment.analysisProtocolReplayBindingHash
-      || !researchEvidenceRecomputationIndependenceMatches(publicAuthority, experiment)
-      || publicAuthority?.offlineOperatorDatasetAuthorityEvidence?.executions?.original?.authorityReceipt?.analysisProtocolHash
-        !== operatorAnalysisProtocolTemplateHash
-      || publicAuthority?.offlineOperatorDatasetAuthorityEvidence?.executions?.['independent-replay']?.authorityReceipt?.analysisProtocolHash
-        !== operatorAnalysisProtocolTemplateHash
-      || publicAuthority?.offlineOperatorDatasetAuthorityEvidence?.kind !== 'OfflineOperatorDatasetAuthorityEvidence'
-      || publicAuthority?.ledgerEvidenceAssurance !== 'structural-receipt-summaries-not-cryptographic-inclusion-proof-v1'
-      || !Array.isArray(publicAuthority?.trustedLedgerReceiptSummaries)
-      || publicAuthority.trustedLedgerReceiptSummaries.length !== 3
-      || publicAuthority.trustedLedgerReceiptSummaries
-        .some((item) => item?.writerTrusted !== true || !item?.receiptHash || !item?.receiptId)) return false;
-    const runtimeExecutions = new Map((runtime.executions || []).map((item) => [item?.executionRole, item]));
-    for (const execution of experiment.executions) {
-      const runtimeExecution = runtimeExecutions.get(execution.executionRole);
-      const artifact = publicAuthority?.artifactAuthority?.[execution.executionRole];
-      const worker = execution.executionRole === 'original' ? publicAuthority?.workerReceipt : publicAuthority?.replayWorkerReceipt;
-      if (runtimeExecution?.experimentRunReceiptHash !== execution.experimentRunReceiptHash
-        || runtimeExecution?.experimentAttemptId !== execution.experimentAttemptId
-        || runtimeExecution?.executionReceiptHash !== execution.executionReceiptHash
-        || runtimeExecution?.runtimeIdentityHash !== execution.runtimeIdentityHash
-        || runtimeExecution?.environmentBindingHash !== execution.environmentBindingHash
-        || runtimeExecution?.sourceLineageHash !== experiment.sourceLineageHash
-        || artifact?.contentHash !== execution.rawEventArtifactHash
-        || Number(artifact?.bytes) !== Number(execution.rawEventArtifactBytes)
-        || artifact?.artifactWriteReceiptHash !== execution.rawArtifactWriteReceiptHash
-        || artifact?.ledgerReceiptId !== execution.rawArtifactLedgerReceiptId
-        || artifact?.ledgerEvidenceAssurance !== 'trusted-runtime-row-summary-structural-only-v1'
-        || artifact?.ledgerReceiptSummary?.receiptId !== execution.rawArtifactLedgerReceiptId
-        || artifact?.ledgerReceiptSummary?.receiptHash !== execution.rawArtifactWriteReceiptHash
-        || artifact?.ledgerReceiptSummary?.writerTrusted !== true
-        || worker?.experimentRunReceiptHash !== execution.experimentRunReceiptHash
-        || worker?.rawArtifactWriteReceiptHash !== execution.rawArtifactWriteReceiptHash
-        || worker?.rawArtifactLedgerReceiptId !== execution.rawArtifactLedgerReceiptId
-        || worker?.sourceLineageHash !== experiment.sourceLineageHash) return false;
-    }
-    if (publicAuthority?.reproducibilityLedgerReceipt?.experimentReplayReceiptHash !== experiment.experimentReplayReceiptHash
-      || publicAuthority?.reproducibilityLedgerReceipt?.sourceLineageHash !== experiment.sourceLineageHash) return false;
-  }
-  return registryExperiments.size >= Number(manifest?.experimentCount)
-    && environmentExperiments.size === Number(manifest?.experimentCount)
-    && authorityExperiments.size === Number(manifest?.experimentCount);
 }
 
 export function verifyCampaignReleaseEvidenceCapsuleDirectory({ packageDir, expected = {} } = {}) {
@@ -575,6 +572,22 @@ export function verifyCampaignReleaseEvidenceCapsuleDirectory({ packageDir, expe
   const authority = documents.get('evidence/PUBLIC_AUTHORITY_EVIDENCE.json');
   const trustSnapshot = documents.get('evidence/PUBLIC_AUTHORITY_TRUST_SNAPSHOT.json');
   const executionAttestation = documents.get(RESEARCH_EXECUTION_RELEASE_ATTESTATION_PATH) || null;
+  const gpuScientificVerification =
+    verifyCampaignReleaseGpuScientificCapsuleDirectorySync({
+      packageDir: root,
+      manifest,
+      documents,
+      publicAuthorityTrustSnapshot: trustSnapshot,
+      trustedAuthorityRoots: expected.trustedAuthorityRoots,
+      verificationTime: manifest?.createdAt,
+    });
+  blockers.push(...gpuScientificVerification.blockers);
+  const gpuScientificQualificationEvidence =
+    gpuScientificVerification.qualificationEvidence;
+  const gpuScientificArtifactBodyArchiveManifest =
+    gpuScientificVerification.artifactArchiveManifest;
+  const gpuScientificArtifactBodyArchiveVerification =
+    gpuScientificVerification.artifactBodyArchiveVerification;
   const trustSnapshotVerification = verifyPublicAuthorityTrustSnapshot(trustSnapshot, { capturedAt: manifest?.createdAt });
   blockers.push(...trustSnapshotVerification.blockers.map((blocker) => `research_evidence_capsule:${blocker}`));
   if (report?.kind !== 'PortablePaperResearchVerifyReport'
@@ -608,7 +621,10 @@ export function verifyCampaignReleaseEvidenceCapsuleDirectory({ packageDir, expe
     || authority?.hostAbsolutePathsIncluded !== false
     || authority?.ledgerEvidenceAssurance !== 'structural-receipt-summaries-not-cryptographic-inclusion-proof-v1'
     || authority?.publicAuthorityTrustAssurance !== 'package-internal-public-key-disclosure-not-trust-anchor-v1'
-    || authority?.sourceAuthenticityRequiresExternalTrustAnchor !== (Number(manifest?.experimentCount || 0) > 0)
+    || authority?.sourceAuthenticityRequiresExternalTrustAnchor !== (
+      Number(manifest?.experimentCount || 0) > 0
+        || manifest?.gpuScientificEvidenceIncluded === true
+    )
     || authority?.publicAuthorityTrustSnapshotHash !== manifest?.publicAuthorityTrustSnapshotHash
     || trustSnapshot?.publicAuthorityTrustSnapshotHash !== manifest?.publicAuthorityTrustSnapshotHash
     || trustSnapshot?.capturedAt !== manifest?.createdAt) blockers.push('research_evidence_capsule_authority_disclosure_invalid');
@@ -649,27 +665,68 @@ export function verifyCampaignReleaseEvidenceCapsuleDirectory({ packageDir, expe
       && !blocker.startsWith('research_evidence_capsule_execution_attestation_invalid:')
   ));
   const hasAcademicEvidence = Number(manifest?.experimentCount || 0) > 0;
+  const hasGpuScientificEvidence =
+    manifest?.gpuScientificEvidenceIncluded === true;
+  const hasExternallyAttestedEvidence = hasAcademicEvidence
+    || hasGpuScientificEvidence;
+  const academicInternalAuthorityVerified = !hasAcademicEvidence
+    || (offlineAuthorityVerifications.length
+      === Number(manifest?.experimentCount || 0)
+      && offlineAuthorityVerifications.every((verification) => (
+        verification.packageInternalCryptographicConsistencyVerified === true
+      )));
+  const academicExternalAuthorityVerified = !hasAcademicEvidence
+    || (offlineAuthorityVerifications.length
+      === Number(manifest?.experimentCount || 0)
+      && offlineAuthorityVerifications.every((verification) => (
+        verification.externalTrustAnchorVerified === true
+      )));
+  const externalManifestAuthorityVerified =
+    executionAttestationVerification
+      ?.capsuleManifestExternalSignatureVerified === true;
+  const gpuInternalAuthorityVerified = !hasGpuScientificEvidence
+    || gpuScientificVerification.qualificationAuthorityInspection?.valid
+      === true;
+  const gpuExternalAuthorityVerified = !hasGpuScientificEvidence
+    || gpuScientificVerification.externalAuthorityTrustVerification
+      ?.externalTrustAnchorVerified === true;
   return Object.freeze({
-    version: 2,
+    version: manifest?.version || 2,
     kind: 'CampaignReleaseResearchEvidenceCapsuleVerification',
     status: blockers.length ? 'research_evidence_capsule_verification_blocked' : 'research_evidence_capsule_verification_passed',
     valid: uniqueBlockers.length === 0,
     researchEvidenceCapsuleManifestHash: manifest?.researchEvidenceCapsuleManifestHash || null,
     publicAuthorityTrustSnapshotHash: manifest?.publicAuthorityTrustSnapshotHash || null,
-    packageInternalCryptographicConsistencyVerified: hasAcademicEvidence
+    packageInternalCryptographicConsistencyVerified:
+      hasExternallyAttestedEvidence
       && nonExternalAnchorBlockers.length === 0
-      && offlineAuthorityVerifications.every((verification) => verification.packageInternalCryptographicConsistencyVerified === true),
-    externalAuthorityTrustAnchorVerified: hasAcademicEvidence
-      && offlineAuthorityVerifications.length === Number(manifest?.experimentCount || 0)
-      && offlineAuthorityVerifications.every((verification) => verification.externalTrustAnchorVerified === true),
-    offlineCryptographicAuthorityVerified: uniqueBlockers.length === 0 && hasAcademicEvidence,
-    capsuleManifestExternalSignatureVerified: hasAcademicEvidence
-      ? executionAttestationVerification?.capsuleManifestExternalSignatureVerified === true : false,
-    recordedExecutionLineageExternallyAttested: hasAcademicEvidence
+      && academicInternalAuthorityVerified
+      && gpuInternalAuthorityVerified
+      && (!hasGpuScientificEvidence
+        || gpuScientificArtifactBodyArchiveVerification?.valid === true),
+    externalAuthorityTrustAnchorVerified: hasExternallyAttestedEvidence
+      && academicExternalAuthorityVerified
+      && gpuExternalAuthorityVerified
+      && externalManifestAuthorityVerified,
+    offlineCryptographicAuthorityVerified: uniqueBlockers.length === 0
+      && hasExternallyAttestedEvidence,
+    capsuleManifestExternalSignatureVerified: hasExternallyAttestedEvidence
+      ? externalManifestAuthorityVerified : false,
+    recordedExecutionLineageExternallyAttested: hasExternallyAttestedEvidence
       ? executionAttestationVerification?.recordedExecutionLineageExternallyAttested === true : false,
     executionAuthenticityExternallyAttested: false,
     ledgerEvidenceAssurance: 'structural-receipt-summaries-not-cryptographic-inclusion-proof-v1',
     verifiedFileCount: expectedFiles.length,
+    gpuScientificEvidenceIncluded: hasGpuScientificEvidence,
+    gpuScientificArtifactBodyArchiveManifestHash:
+      gpuScientificArtifactBodyArchiveManifest
+        ?.gpuScientificArtifactBodyArchiveManifestHash || null,
+    gpuScientificCampaignQualificationEvidenceHash:
+      gpuScientificQualificationEvidence
+        ?.gpuScientificCampaignQualificationEvidenceHash || null,
+    gpuScientificArtifactBodyArchiveVerified:
+      hasGpuScientificEvidence
+        && gpuScientificArtifactBodyArchiveVerification?.valid === true,
     blockers: Object.freeze(uniqueBlockers),
   });
 }

@@ -3,12 +3,17 @@ import { assertCampaignReleaseQueryPort, createCampaignReleaseQueryCapability } 
 import { buildExecutionContext, exposeScopedFoundationServices, openScopedPaperStore } from './context-foundation-composition.mjs';
 import { createOperatorDatasetHarnessAuthorityReceiptVerifier } from '../../paper-adapters/automation/operator-dataset-harness-authority-receipt-verifier.mjs';
 import { loadOperatorDatasetAuthorityTrustStoreSync } from '../../paper-adapters/automation/operator-dataset-harness-reader.mjs';
+import {
+  createGpuScientificCampaignForbiddenIdentityProvider,
+  createGpuScientificCampaignPromotionAuthorityVerifier,
+} from '../../paper-adapters/automation/gpu-scientific-campaign-promotion-authority-verifier.mjs';
 
 export function bootstrapSubmissionHandoffContext({
   root,
   runtimeRoot,
   mode = 'campaign-release-submission-handoff',
   serviceOverrides = {},
+  environment = process.env,
 } = {}) {
   if (serviceOverrides.campaignReleaseAuthorityRepository) {
     throw new Error('submission_handoff_authority_repository_override_forbidden_use_campaign_release_query');
@@ -36,6 +41,17 @@ export function bootstrapSubmissionHandoffContext({
         trustStoreProvider: operatorDatasetAuthorityTrustStoreProvider,
         clock,
       });
+    const gpuScientificPromotionAuthorityVerifier =
+      serviceOverrides.gpuScientificPromotionAuthorityVerifier
+      || createGpuScientificCampaignPromotionAuthorityVerifier({
+        trustStoreProvider: operatorDatasetAuthorityTrustStoreProvider,
+        clock,
+        forbiddenIdentityProvider:
+          createGpuScientificCampaignForbiddenIdentityProvider({
+            environment,
+            clock,
+          }),
+      });
     const campaignReleaseQuery = createCampaignReleaseQueryCapability(
       serviceOverrides.campaignReleaseQuery
         ? assertCampaignReleaseQueryPort(serviceOverrides.campaignReleaseQuery)
@@ -44,6 +60,7 @@ export function bootstrapSubmissionHandoffContext({
           operatorDatasetHarnessAuthorityVerifier,
           runtimeRoot,
           operatorDatasetAuthorityTrustStoreProvider,
+          gpuScientificPromotionAuthorityVerifier,
           clock,
         }),
     );
@@ -57,7 +74,11 @@ export function bootstrapSubmissionHandoffContext({
       options: {},
       serviceProfile: 'handoff',
       capabilities: ['submission-release-read'],
-      services: Object.freeze({ campaignReleaseQuery, persistenceSession, schemaVersion }),
+      services: Object.freeze({
+        campaignReleaseQuery,
+        persistenceSession,
+        schemaVersion,
+      }),
     });
   } catch (error) {
     if (scopedStore.owned) store.close?.();

@@ -62,6 +62,8 @@ export function buildAutonomousSubmissionRequest({
   verifyHumanAuthorization = null,
   verifyQualificationSignature = null,
   verifyIndependentQualificationEvidence = null,
+  gpuScientificPromotionAuthorityVerifier = null,
+  gpuScientificAuthorityVerificationTime = null,
 } = {}) {
   const releaseBundle = campaignReleaseAuthority?.releaseBundle || null;
   const releaseBinding = releaseBundle?.autonomousResearchReleaseBinding || null;
@@ -160,6 +162,9 @@ export function buildAutonomousSubmissionRequest({
     requireResearchClosure,
     verifyQualificationSignature,
     verifyIndependentQualificationEvidence,
+    gpuScientificPromotionAuthorityVerifier,
+    gpuScientificAuthorityVerificationTime:
+      gpuScientificAuthorityVerificationTime ?? timestamp,
   });
   let humanAuthorization = null;
   if (requireHumanAuthorization === true) {
@@ -352,6 +357,8 @@ export function verifyAutonomousSubmissionRequest(request, {
   requireHumanAuthorization = false,
   verifyHumanAuthorization = null,
   verifyIndependentQualificationEvidence = null,
+  gpuScientificPromotionAuthorityVerifier = null,
+  gpuScientificAuthorityVerificationTime = null,
 } = {}) {
   const observedAt = authorityObservedAt || request?.requestedAt || null;
   const { requestHash: claimedHash, ...payload } = request || {};
@@ -473,6 +480,9 @@ export function verifyAutonomousSubmissionRequest(request, {
     requireResearchClosure,
     verifyQualificationSignature,
     verifyIndependentQualificationEvidence,
+    gpuScientificPromotionAuthorityVerifier,
+    gpuScientificAuthorityVerificationTime:
+      gpuScientificAuthorityVerificationTime ?? observedAt,
   });
   const humanAuthorizationBinding = request?.version === 7
     ? autonomousLiveSubmissionAuthorizationBinding(request, {
@@ -589,6 +599,8 @@ export function createAutonomousSubmissionRequestVerifier({
   verifyPortalConfigurationAuthority,
   verifyQualificationSignature = null,
   verifyIndependentQualificationEvidence = null,
+  gpuScientificPromotionAuthorityVerifier = null,
+  gpuScientificAuthorityVerificationTimeProvider = null,
   requireResearchClosure = false,
   verifyHumanAuthorization = null,
   requireHumanAuthorization = false,
@@ -614,18 +626,30 @@ export function createAutonomousSubmissionRequestVerifier({
     kind: 'AutonomousSubmissionRequestVerifier',
     verifyQualificationSignature: qualificationSignatureVerifier,
     verifyIndependentQualificationEvidence: qualificationEvidenceVerifier,
+    gpuScientificPromotionAuthorityVerifier,
     verifyHumanAuthorization: humanAuthorizationVerifier,
-    verify: (request) => verifyAutonomousSubmissionRequest(request, {
-      verifyCurrentCampaignReleaseAuthority,
-      verifyQualificationAuthority,
-      verifyVenueComplianceAuthority,
-      verifyPortalConfigurationAuthority,
-      verifyQualificationSignature: qualificationSignatureVerifier,
-      verifyIndependentQualificationEvidence: qualificationEvidenceVerifier,
-      requireResearchClosure,
-      verifyHumanAuthorization: humanAuthorizationVerifier,
-      requireHumanAuthorization,
-    }),
+    verify(request) {
+      let gpuScientificAuthorityVerificationTime = request?.requestedAt || null;
+      if (typeof gpuScientificAuthorityVerificationTimeProvider === 'function') {
+        try {
+          gpuScientificAuthorityVerificationTime =
+            gpuScientificAuthorityVerificationTimeProvider();
+        } catch { return false; }
+      }
+      return verifyAutonomousSubmissionRequest(request, {
+        verifyCurrentCampaignReleaseAuthority,
+        verifyQualificationAuthority,
+        verifyVenueComplianceAuthority,
+        verifyPortalConfigurationAuthority,
+        verifyQualificationSignature: qualificationSignatureVerifier,
+        verifyIndependentQualificationEvidence: qualificationEvidenceVerifier,
+        gpuScientificPromotionAuthorityVerifier,
+        gpuScientificAuthorityVerificationTime,
+        requireResearchClosure,
+        verifyHumanAuthorization: humanAuthorizationVerifier,
+        requireHumanAuthorization,
+      });
+    },
   });
 }
 export {

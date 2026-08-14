@@ -2,19 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import {
-  AUTOMATION_RUNTIME_IMAGES,
-} from '../automation/runtime-image-registry.mjs';
-import {
-  inspectWorkspaceExecutionSnapshot,
-} from '../runtime/execution-snapshot.mjs';
+import { AUTOMATION_RUNTIME_IMAGES } from '../automation/runtime-image-registry.mjs';
+import { inspectWorkspaceExecutionSnapshot } from '../runtime/execution-snapshot.mjs';
 import { readTrustedWallClockEpochMs } from '../runtime/trusted-wall-clock.mjs';
 import {
   verifyProductionOsSandboxWorkerReceipt,
 } from '../../paper-domain/automation/os-sandbox-worker-receipt-contract.mjs';
-import {
-  deepFreezeJsonValue,
-} from '../../workflow-kernel/deep-freeze-json-value.mjs';
+import { deepFreezeJsonValue } from '../../workflow-kernel/deep-freeze-json-value.mjs';
 import {
   hashBytes,
   hashRecord,
@@ -110,7 +104,7 @@ export const CANONICAL_CUPY_DEEP_LEARNING_NON_PROMOTION_BLOCKERS = Object.freeze
 ]);
 const EXECUTOR_OPTION_KEYS = new Set([
   'cpuSeconds', 'maximumOutputBytes', 'maximumProcesses', 'memoryBytes',
-  'outputRoot', 'timeoutMs',
+  'outputRoot', 'runtimeRoot', 'timeoutMs',
 ]);
 
 export const CANONICAL_CUPY_DEEP_LEARNING_TRAINER_ROOT = fileURLToPath(
@@ -438,7 +432,7 @@ export function createCanonicalCupyDeepLearningTrainingExecutor(options = {}) {
     throw new Error('deep_learning_gpu_training_executor_options_invalid');
   }
   const {
-    outputRoot,
+    outputRoot, runtimeRoot = null,
     timeoutMs = 60 * 60 * 1_000,
     memoryBytes = 8 * 1024 ** 3,
     cpuSeconds = 3_600,
@@ -470,7 +464,7 @@ export function createCanonicalCupyDeepLearningTrainingExecutor(options = {}) {
     throw new Error('deep_learning_gpu_training_output_root_invalid');
   }
   const sandbox = createCanonicalCupyDeepLearningSandboxRunner({
-    outputRoot: selectedOutputRoot,
+    outputRoot: selectedOutputRoot, runtimeRoot,
     timeoutMs,
     memoryBytes,
     cpuSeconds,
@@ -516,6 +510,7 @@ export function createCanonicalCupyDeepLearningTrainingExecutor(options = {}) {
       absoluteDeadlineEpochMs,
       executionAuthorityHash = null,
       executionSignal = null,
+      gpuSelectorExecutionLeaseDelegation = null,
     } = {}) {
       const startedAt = readTrustedWallClockEpochMs();
       const selectedRunId = requiredDeepLearningId(trainingRunId);
@@ -648,7 +643,7 @@ export function createCanonicalCupyDeepLearningTrainingExecutor(options = {}) {
           CANONICAL_CUPY_DEEP_LEARNING_TRAINER_IDENTITY.workspaceManifestHash,
         containerImage: AUTOMATION_RUNTIME_IMAGES.pythonGpu.image,
         containerExecutable: AUTOMATION_RUNTIME_IMAGES.pythonGpu.executable,
-        timeoutMs: selectedTimeoutMs,
+        timeoutMs: selectedTimeoutMs, absoluteDeadlineEpochMs,
         memoryBytes,
         cpuSeconds,
         maximumProcesses,
@@ -683,6 +678,11 @@ export function createCanonicalCupyDeepLearningTrainingExecutor(options = {}) {
         },
         standardInput,
         signal: executionSignal,
+        ...(gpuSelectorExecutionLeaseDelegation ? {
+          gpuSelectorExecutionLeaseDelegation,
+          gpuSelectorExecutionLeaseDelegationAuthorityHash:
+            executionAuthorityHash,
+        } : {}),
       }); } catch (error) {
         removeOwnedOutputDirectory(selectedOutputRoot, outputDirectory);
         return blockedExecution([

@@ -38,10 +38,14 @@ import {
 import {
   campaignDatasetContentHash,
   composeCampaignWorkerEmpiricalExecution,
+  prepareCampaignAutomationArtifactRoot,
 } from './campaign-worker-empirical-composition.mjs';
 import {
   composeCampaignAdvancedNumericalExecution,
 } from './advanced-numerical-plugin-composition.mjs';
+import {
+  composeCampaignGpuScientificExecution,
+} from './gpu-scientific-campaign-composition.mjs';
 
 export {
   authorizeOperatorDatasetMount,
@@ -115,6 +119,7 @@ export function composeCampaignWorkerExecution({
   assertExternalSideEffectReady = null,
   executionRequested = null,
   advancedNumericalExecution = null,
+  gpuScientificExecution = null,
 } = {}) {
   if (!runtimeRoot || !campaignExecutionContext || !services) {
     throw new Error('campaign_worker_composition_inputs_required');
@@ -175,6 +180,18 @@ export function composeCampaignWorkerExecution({
       configurationPath,
     });
     effectiveAdvancedNumericalExecution = advancedNumericalComposition.execution;
+  }
+  const gpuScientificPlans = plans
+    .map((plan) => plan?.gpuScientificExecutionPlan || null)
+    .filter(Boolean);
+  let effectiveGpuScientificExecution = gpuScientificExecution;
+  let gpuScientificComposition = null;
+  if (gpuScientificPlans.length && !effectiveGpuScientificExecution) {
+    gpuScientificComposition = composeCampaignGpuScientificExecution({
+      outputRoot: prepareCampaignAutomationArtifactRoot(runtimeRoot),
+      plans: gpuScientificPlans,
+    });
+    effectiveGpuScientificExecution = gpuScientificComposition.execution;
   }
   const { empiricalExecutor, workerRunner, runtimeImages } =
     composeCampaignWorkerEmpiricalExecution({
@@ -419,6 +436,7 @@ export function composeCampaignWorkerExecution({
       spawnSyncImpl,
       dynamicFormalExecutionAuthority: services.dynamicFormalExecutionAuthority,
       advancedNumericalExecution: effectiveAdvancedNumericalExecution,
+      gpuScientificExecution: effectiveGpuScientificExecution,
     }),
     agentExecutor,
     formalReviewAgentExecutor,
@@ -435,6 +453,8 @@ export function composeCampaignWorkerExecution({
     advancedNumericalExecution: effectiveAdvancedNumericalExecution,
     advancedNumericalRuntime:
       advancedNumericalComposition?.runtime || null,
+    gpuScientificExecution: effectiveGpuScientificExecution,
+    gpuScientificComposition,
     autonomousResearchProviderConfigurationHash:
       boundProviderConfiguration?.autonomousResearchProviderConfigurationHash || null,
   });

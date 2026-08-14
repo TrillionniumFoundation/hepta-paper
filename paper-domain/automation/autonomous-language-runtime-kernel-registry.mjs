@@ -6,6 +6,7 @@ import {
   AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_PRODUCTION_PROFILES,
   AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_REGISTRY,
   AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_STARTUP_INSPECTION,
+  AUTONOMOUS_EMPIRICAL_PLUGIN_RUNTIME_LANGUAGES,
 } from './autonomous-empirical-family-plugin-registry.mjs';
 import {
   RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE,
@@ -167,8 +168,7 @@ function runtimeEntry(language) {
 }
 
 function buildRegistry() {
-  const languages = Object.freeze([...RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE
-    .requiredProfiles]);
+  const languages = Object.freeze([...AUTONOMOUS_EMPIRICAL_PLUGIN_RUNTIME_LANGUAGES]);
   const entries = Object.freeze(languages.map(runtimeEntry));
   const payload = Object.freeze({
     version: 1,
@@ -291,7 +291,7 @@ export function verifyRuntimeReproducibilityInspectionForLanguageRuntimeRegistry
     || !SHA256.test(String(inspection?.receiptHash || ''))
     || !Array.isArray(inspection?.blockers) || inspection.blockers.length !== 0
     || JSON.stringify(inspection.requiredProfiles)
-      !== JSON.stringify(AUTONOMOUS_LANGUAGE_RUNTIME_KERNEL_REGISTRY.languages)
+      !== JSON.stringify(RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE.requiredProfiles)
     || inspection.empiricalFamilyPluginPackageHash
       !== AUTONOMOUS_LANGUAGE_RUNTIME_KERNEL_REGISTRY.pluginPackageHash
     || inspection.empiricalFamilyPluginRegistryHash

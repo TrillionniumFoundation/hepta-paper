@@ -14,6 +14,7 @@ import {
   capabilityVerificationCodeProvenance,
   capabilityVerificationCodeProvenanceHash,
   loadCapabilityConformanceProofs,
+  loadCapabilityOperationalProofs,
   resolveCurrentCapabilityProductionSubject,
   verifyCapabilityConformanceReceipt,
   verifyCapabilityConformanceReplayEvidence,
@@ -101,7 +102,7 @@ function signedConformanceReceipt(owner, overrides = {}) {
 
 function writeJson(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
+  fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
 }
 
 test('production subject binds the current regular source file and rejects aliases', (t) => {
@@ -215,6 +216,145 @@ test('operational proof requires distinct externally independent owner and obser
   const blocked = verifyCapabilityOperationalReceipt({ document, trustStore: localTrustStore, capabilityId: common.capabilityId, targetBindings, releaseCommit });
   assert.equal(blocked.status, 'capability_operational_receipt_blocked');
   assert.ok(blocked.blockers.includes('operational_signer_assurance_not_external_independent'));
+});
+
+function operationalLoaderFixture(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'operational-proof-loader-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const runtimeRoot = path.join(root, 'runtime');
+  const workspaceRoot = path.join(root, 'workspace');
+  const targetPath = 'target.mjs';
+  const targetFile = path.join(workspaceRoot, targetPath);
+  fs.mkdirSync(workspaceRoot, { recursive: true });
+  fs.writeFileSync(targetFile, 'export const operational = true;\n');
+  const loaderTargetBindings = [{
+    path: targetPath,
+    sha256: `sha256:${crypto.createHash('sha256').update(fs.readFileSync(targetFile)).digest('hex')}`,
+  }];
+  const owner = signer('loader-owner-key', 'loader-owner', 'capability_owner');
+  const observer = signer(
+    'loader-observer-key',
+    'loader-observer',
+    'operational_observer',
+  );
+  const trustStore = {
+    version: 1,
+    kind: 'AuthorityTrustStore',
+    keys: [owner.trustKey, observer.trustKey],
+  };
+  let receipt = {
+    version: 2,
+    kind: 'CapabilityOperationalReceipt',
+    ...common,
+    targetHashes: loaderTargetBindings,
+    status: 'production_runtime_observation_verified',
+    executionClass: 'production_runtime_observation',
+    evidenceEnvironment: 'production',
+    evidenceClass: 'operational',
+    productionEligible: true,
+    signatures: [],
+  };
+  for (const authority of [owner, observer]) {
+    receipt = signAuthorityDocument(receipt, {
+      keyId: authority.keyId,
+      role: authority.role,
+      privateKeyPem: authority.privateKeyPem,
+    });
+  }
+  const trustStoreFile = path.join(
+    runtimeRoot,
+    'owner-acceptance',
+    'OWNER_TRUST_STORE.json',
+  );
+  const receiptFile = path.join(
+    runtimeRoot,
+    'operational-proof',
+    'capabilities',
+    common.capabilityId,
+    'receipt.json',
+  );
+  writeJson(trustStoreFile, trustStore);
+  writeJson(receiptFile, receipt);
+  const options = {
+    runtimeRoot,
+    workspaceRoot,
+    capabilityCatalog: { [common.capabilityId]: { target: targetPath } },
+    releaseCommit,
+  };
+  return { options, receiptFile, trustStoreFile };
+}
+
+test('operational loader pins secure proof files and rejects filesystem substitution', (t) => {
+  const fixture = operationalLoaderFixture(t);
+  const load = () => loadCapabilityOperationalProofs(fixture.options);
+  assert.equal(load().size, 1);
+
+  const hardlink = `${fixture.receiptFile}.hardlink`;
+  fs.linkSync(fixture.receiptFile, hardlink);
+  assert.equal(load().size, 0);
+  fs.unlinkSync(hardlink);
+  assert.equal(load().size, 1);
+
+  fs.chmodSync(fixture.receiptFile, 0o620);
+  assert.equal(load().size, 0);
+  fs.chmodSync(fixture.receiptFile, 0o600);
+
+  const symlinkTarget = `${fixture.receiptFile}.regular`;
+  fs.renameSync(fixture.receiptFile, symlinkTarget);
+  fs.symlinkSync(path.basename(symlinkTarget), fixture.receiptFile);
+  assert.equal(load().size, 0);
+  fs.unlinkSync(fixture.receiptFile);
+  fs.renameSync(symlinkTarget, fixture.receiptFile);
+
+  const originalReceiptBytes = fs.readFileSync(fixture.receiptFile);
+  const originalReadFileSync = fs.readFileSync;
+  const originalOpenForMutation = fs.openSync;
+  let receiptDescriptor = null;
+  let mutated = false;
+  fs.openSync = function openForReceiptMutation(candidate, ...args) {
+    const descriptor = originalOpenForMutation.call(fs, candidate, ...args);
+    if (path.resolve(String(candidate)) === fixture.receiptFile) {
+      receiptDescriptor = descriptor;
+    }
+    return descriptor;
+  };
+  fs.readFileSync = function readWithReceiptMutation(candidate, ...args) {
+    if (!mutated && candidate === receiptDescriptor) {
+      fs.appendFileSync(fixture.receiptFile, '\n');
+      mutated = true;
+    }
+    return originalReadFileSync.call(fs, candidate, ...args);
+  };
+  try {
+    assert.equal(load().size, 0);
+    assert.equal(mutated, true);
+  } finally {
+    fs.openSync = originalOpenForMutation;
+    fs.readFileSync = originalReadFileSync;
+    fs.writeFileSync(fixture.receiptFile, originalReceiptBytes);
+  }
+
+  const displacedTrustStore = `${fixture.trustStoreFile}.displaced`;
+  const originalOpenSync = fs.openSync;
+  let replaced = false;
+  fs.openSync = function openAfterTrustStoreReplacement(candidate, ...args) {
+    if (!replaced && path.resolve(String(candidate)) === fixture.receiptFile) {
+      fs.renameSync(fixture.trustStoreFile, displacedTrustStore);
+      fs.copyFileSync(displacedTrustStore, fixture.trustStoreFile);
+      fs.chmodSync(fixture.trustStoreFile, 0o600);
+      replaced = true;
+    }
+    return originalOpenSync.call(fs, candidate, ...args);
+  };
+  try {
+    assert.equal(load().size, 0);
+    assert.equal(replaced, true);
+  } finally {
+    fs.openSync = originalOpenSync;
+    fs.unlinkSync(fixture.trustStoreFile);
+    fs.renameSync(displacedTrustStore, fixture.trustStoreFile);
+  }
+  assert.equal(load().size, 1);
 });
 
 test('local-admin signed production-source replay is conformance, never operational', () => {

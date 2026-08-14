@@ -6,6 +6,11 @@ import path from 'node:path';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { isPathWithin } from '../../workflow-kernel/runtime/path-utils.mjs';
 import {
+  verifyGpuDispatchMemoryAdmissionEvaluation,
+  verifyGpuDispatchMemoryAdmissionRequirement,
+  verifyNvidiaGpuDeviceCapacityObservation,
+} from '../../paper-domain/automation/nvidia-gpu-device-capacity-contract.mjs';
+import {
   fileSha256Hash,
   inspectWorkspaceExecutionSnapshot,
   safeStrictDatasetManifestHash,
@@ -64,7 +69,11 @@ export function createOsSandboxWorkerExecutionFinalizer({
   executionBackend,
   expectedSourceMerkleHash,
   expectedSourceWorkspaceManifestHash,
-  gpuDevices,
+  gpuDeviceCapacityObservation,
+  gpuDeviceSelector,
+  gpuDeviceSelectorObserved,
+  gpuDispatchMemoryAdmissionEvaluation,
+  gpuDispatchMemoryAdmissionRequirement,
   immutableWorkRootMountVerified,
   maximumCapturedBytes,
   mountedDatasets,
@@ -72,7 +81,9 @@ export function createOsSandboxWorkerExecutionFinalizer({
   outputRoot,
   permittedEnvironment,
   processInvocationId,
+  processInvocationBinding,
   processLimitProbe,
+  productionEvidenceEligible,
   requireDatasetAccessProof,
   requireSeparateOutputRoot,
   requiresGpu,
@@ -133,7 +144,27 @@ export function createOsSandboxWorkerExecutionFinalizer({
         try { runtimeExecutableSnapshotHashAfter = runtimeExecutableSnapshot ? fileSha256Hash(runtimeExecutableSnapshot.path) : null; } catch { runtimeExecutableSnapshotHashAfter = null; }
         const runtimeExecutableSnapshotVerified = !runtimeExecutableSnapshot || runtimeExecutableSnapshotHashAfter === runtimeExecutableSnapshot.hash;
         const commandPassed = result.status === 0 && !result.error && !result.aborted && !result.timedOut;
-        let passed = commandPassed && !sourceMutationDetected && !datasetMutationDetected && !datasetAccessBlockers.length && runtimeExecutableSnapshotVerified;
+        const gpuDeviceBindingVerified = !requiresGpu || (
+          executionBackend === 'docker'
+          && /^GPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(String(gpuDeviceSelector || ''))
+          && gpuDeviceSelectorObserved === true
+          && verifyNvidiaGpuDeviceCapacityObservation(gpuDeviceCapacityObservation)
+          && gpuDeviceCapacityObservation.gpuDeviceSelector === gpuDeviceSelector
+          && (!gpuDispatchMemoryAdmissionRequirement || (
+            verifyGpuDispatchMemoryAdmissionRequirement(
+              gpuDispatchMemoryAdmissionRequirement,
+            )
+            && verifyGpuDispatchMemoryAdmissionEvaluation(
+              gpuDispatchMemoryAdmissionEvaluation,
+              {
+                requirement: gpuDispatchMemoryAdmissionRequirement,
+                dispatchCapacityObservation: gpuDeviceCapacityObservation,
+              },
+            )
+            && gpuDispatchMemoryAdmissionEvaluation.admissionSatisfied === true
+          ))
+        );
+        let passed = commandPassed && !sourceMutationDetected && !datasetMutationDetected && !datasetAccessBlockers.length && runtimeExecutableSnapshotVerified && gpuDeviceBindingVerified;
         const artifacts = [], artifactBlockers = []; let artifactOutputBytes = 0;
         if (passed && resolvedOutputDirectory) {
           for (const declared of outputPaths.map(String)) {
@@ -185,8 +216,12 @@ export function createOsSandboxWorkerExecutionFinalizer({
         }
         passed = passed && artifactBlockers.length === 0;
         const receiptPayload = {
-          version: 4,
+          version: 5,
           kind: 'OsSandboxWorkerReceipt',
+          evidenceClass: productionEvidenceEligible
+            ? 'production-runtime-observation-v1'
+            : 'verification-fixture-v1',
+          productionEvidenceEligible,
           runnerId: `${executionBackend}-kernel-isolation-worker-v4`,
           backend: executionBackend,
           status: result.aborted ? 'os_sandbox_worker_cancelled' : passed ? 'os_sandbox_worker_passed' : 'os_sandbox_worker_failed',
@@ -220,8 +255,42 @@ export function createOsSandboxWorkerExecutionFinalizer({
           containerImageDigest,
           environmentBindingHash,
           environmentBom: environmentBomBinding.environmentBom, environmentBomHash: environmentBomBinding.environmentBomHash,
+          gpuDeviceRequest: requiresGpu ? {
+            version: gpuDispatchMemoryAdmissionRequirement ? 3 : 2,
+            kind: 'GpuDeviceRequest',
+            required: true,
+            deviceSelector: gpuDeviceSelector,
+            requestedDeviceCount: 1,
+            hostDeviceObserved: gpuDeviceSelectorObserved === true,
+            hostDeviceEnumerationMechanism:
+              'nvidia-smi-query-gpu-uuid-memory.total-memory.free-v1',
+            capacityObservationHash:
+              gpuDeviceCapacityObservation.nvidiaGpuDeviceCapacityObservationHash,
+            observedTotalMemoryBytes: gpuDeviceCapacityObservation.totalMemoryBytes,
+            observedFreeMemoryBytes: gpuDeviceCapacityObservation.freeMemoryBytes,
+            capacityObservation: gpuDeviceCapacityObservation,
+            ...(gpuDispatchMemoryAdmissionRequirement ? {
+              dispatchMemoryAdmissionRequirement:
+                gpuDispatchMemoryAdmissionRequirement,
+              dispatchMemoryAdmissionRequirementHash:
+                gpuDispatchMemoryAdmissionRequirement.admissionRequirementHash,
+              dispatchMemoryAdmissionEvaluation:
+                gpuDispatchMemoryAdmissionEvaluation,
+              dispatchMemoryAdmissionEvaluationHash:
+                gpuDispatchMemoryAdmissionEvaluation.admissionEvaluationHash,
+            } : {}),
+          } : {
+            version: 1,
+            kind: 'GpuDeviceRequest',
+            required: false,
+            deviceSelector: null,
+            requestedDeviceCount: 0,
+            hostDeviceObserved: null,
+            hostDeviceEnumerationMechanism: null,
+          },
           dockerWorkerContainerRecoveryReceipt: result.dockerWorkerContainerRecoveryReceipt || null,
           ...completeWorkerProcessIdentity({ processInvocationId, result }),
+          ...processInvocationBinding,
           executionBindings: Object.freeze(Object.fromEntries(permittedEnvironment
             .filter(([key]) => key.startsWith('HEPTA_BENCHMARK_') || key.startsWith('HEPTA_EXPERIMENT_') || ['HEPTA_PRE_DATA_ACCESS_FREEZE_HASH', 'HEPTA_HARNESS_CELL_ID', 'HEPTA_DATASET_AUTHORIZATION_SET_HASH', 'HEPTA_DATASET_RESEARCH_COMPATIBILITY_HASH', 'HEPTA_SEED', 'PYTHONHASHSEED'].includes(key))
             .map(([key, value]) => [key, String(value)])
@@ -281,12 +350,19 @@ export function createOsSandboxWorkerExecutionFinalizer({
               : 'real-uid-concurrent-processes-not-sandbox-local-v1',
             resourceLimitsVerified: processLimitProbe.available,
             gpuAccessRequested: Boolean(requiresGpu),
-            gpuDeviceIsolationVerified: !requiresGpu || gpuDevices.length > 0,
+            gpuDeviceIsolationVerified: gpuDeviceBindingVerified,
+            gpuDeviceSelectionMechanism: requiresGpu
+              ? 'docker-nvidia-explicit-device-v1' : 'not-required-v1',
+            gpuDeviceIsolationScope: requiresGpu
+              ? 'single-requested-device-selector-not-mig-or-vram-isolation-v1'
+              : 'not-required-v1',
+            gpuMemoryIsolationVerified: false,
+            gpuMigIsolationVerified: false,
           },
           externalActionPerformed: false,
         };
         const containerRecoveryBlockers = result.dockerWorkerContainerRecoveryReceipt?.blockers || [];
         if (!containerRecoveryBlockers.length) removePrivateSandboxRoot(sandboxRoot);
-        return { ok: passed, ...receiptPayload, receiptHash: hashRecord('OsSandboxWorkerReceipt', receiptPayload), blockers: [...(result.aborted ? ['os_sandbox_command_aborted'] : []), ...(result.timedOut ? ['os_sandbox_command_timed_out'] : []), ...(!commandPassed && !result.aborted && !result.timedOut ? ['os_sandbox_command_failed'] : []), ...(sourceMutationDetected ? ['source_mutation_detected', ...sourceExecutionSnapshotAfter.blockers] : []), ...(datasetMutationDetected ? ['worker_dataset_manifest_changed_during_execution'] : []), ...(datasetSnapshotMutationDetected ? ['worker_dataset_snapshot_changed_during_execution'] : []), ...datasetAccessBlockers, ...(!runtimeExecutableSnapshotVerified ? ['worker_runtime_executable_snapshot_changed_during_execution'] : []), ...artifactBlockers, ...containerRecoveryBlockers] };
+        return { ok: passed, ...receiptPayload, receiptHash: hashRecord('OsSandboxWorkerReceipt', receiptPayload), blockers: [...(result.aborted ? ['os_sandbox_command_aborted'] : []), ...(result.timedOut ? ['os_sandbox_command_timed_out'] : []), ...(!commandPassed && !result.aborted && !result.timedOut ? ['os_sandbox_command_failed'] : []), ...(!gpuDeviceBindingVerified ? ['worker_gpu_device_binding_unverified'] : []), ...(sourceMutationDetected ? ['source_mutation_detected', ...sourceExecutionSnapshotAfter.blockers] : []), ...(datasetMutationDetected ? ['worker_dataset_manifest_changed_during_execution'] : []), ...(datasetSnapshotMutationDetected ? ['worker_dataset_snapshot_changed_during_execution'] : []), ...datasetAccessBlockers, ...(!runtimeExecutableSnapshotVerified ? ['worker_runtime_executable_snapshot_changed_during_execution'] : []), ...artifactBlockers, ...containerRecoveryBlockers] };
       };
 }

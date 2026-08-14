@@ -37,6 +37,7 @@ import { currentCodeProvenance } from '../../paper-adapters/runtime/code-provena
 import { defaultPaperAssetRoot, defaultPaperRuntimeRoot } from '../../paper-adapters/runtime/workspace-layout.mjs';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { createFormalCapabilityReplayRunners } from './production-capability-replay-formal-runners.mjs';
+import { createGpuScientificCapabilityReplayRunners } from './production-capability-replay-gpu-scientific-runners.mjs';
 import { createRuntimeCapabilityReplayRunners } from './production-capability-replay-runtime-runners.mjs';
 import { createSubmissionRepairCapabilityReplayRunners } from './production-capability-replay-submission-repair-runners.mjs';
 
@@ -328,6 +329,14 @@ const replayByCapability = Object.freeze({
   'research.evidence-quality-gate': (_root) => replayEvidenceQualityGate(),
   'research.experiment-registry': replayExperimentRegistry,
   ...createFormalCapabilityReplayRunners({ workspaceRoot }),
+  ...createGpuScientificCapabilityReplayRunners({
+    assetRoot,
+    codeProvenanceHash,
+    paperId,
+    productionSubject,
+    releaseCommit,
+    workspaceRoot,
+  }),
   'research.change-proposal': (_root) => replayChangeProposal(),
   ...createRuntimeCapabilityReplayRunners({
     clock,

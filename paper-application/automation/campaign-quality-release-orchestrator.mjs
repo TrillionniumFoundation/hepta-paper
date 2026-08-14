@@ -14,6 +14,9 @@ import {
 import {
   verifyExperimentIrExecutionAuthorityReceipt,
 } from '../../paper-domain/automation/experiment-ir-execution-authority-contract.mjs';
+import {
+  verifyGpuScientificCampaignExecutionResult,
+} from '../../paper-domain/automation/gpu-scientific-campaign-execution-contract.mjs';
 
 function profiles(campaign) {
   return campaign.spec.paperQualityProfiles || [campaign.spec.paperQualityProfile].filter(Boolean);
@@ -270,6 +273,23 @@ export async function executeCampaignPackageNode({
   experimentRegistryAuthorityVerifier = null,
   reviewerEvidenceAuthority = null,
 } = {}) {
+  const gpuScientificPlan = campaign.spec.gpuScientificExecutionPlan || null;
+  if (gpuScientificPlan && !verifyGpuScientificCampaignExecutionResult(
+    context.gpuScientificNode?.result,
+    {
+      campaign,
+      node: context.gpuScientificNode,
+      plan: gpuScientificPlan,
+      requirePromotionEligible: true,
+    },
+  )) {
+    const error = new Error(
+      'campaign_release_gpu_scientific_promotion_authority_required',
+    );
+    error.retryable = false;
+    error.receipt = context.gpuScientificNode?.result || null;
+    throw error;
+  }
   const paperQualityProfiles = profiles(campaign);
   const readiness = theoremReadiness(primitives, campaign, workspace, manuscript);
   const researchReport = context.researchVerifyNode?.result?.report || null;
@@ -454,6 +474,8 @@ export async function executeCampaignPackageNode({
     advancedNumericalExecutionPlan:
       campaign.spec.advancedNumericalExecutionPlan || null,
     advancedNumericalExecutionEvidence,
+    gpuScientificExecutionPlan: gpuScientificPlan,
+    gpuScientificExecutionEvidence: context.gpuScientificNode?.result || null,
     createdAt,
     executionSignal,
     assertExternalSideEffectReady:

@@ -10,6 +10,9 @@ import {
   resolveConformanceArtifact,
   resolveCurrentCapabilityProductionSubject,
 } from './capability-proof-verifier-support.mjs';
+import {
+  loadCapabilityProofDocuments,
+} from './capability-proof-document-loader.mjs';
 
 export {
   capabilityProductionSubject,
@@ -171,7 +174,9 @@ export function capabilityConformanceReplayManifestHash(document = {}) {
 }
 
 function trustedKeysForVerification(trustStore, verification) {
-  const verifiedKeyIds = new Set((verification?.verifiedSignatures || []).map((item) => item.keyId));
+  const verifiedKeyIds = new Set(
+    (verification?.verifiedSignatures || []).map((item) => item.keyId),
+  );
   return (trustStore?.keys || []).filter((key) => verifiedKeyIds.has(key.keyId));
 }
 
@@ -201,13 +206,15 @@ function verifyCommonReceipt({ document, capabilityId, targetBindings, releaseCo
 }
 
 export function capabilityTargetBindings(workspaceRoot, capabilityCatalog) {
-  return Object.fromEntries(Object.entries(capabilityCatalog).map(([capabilityId, catalog]) => {
+  const bindings = {};
+  for (const [capabilityId, catalog] of Object.entries(capabilityCatalog)) {
     const file = path.join(workspaceRoot, catalog.target);
-    return [capabilityId, [{
+    bindings[capabilityId] = [{
       path: catalog.target,
       sha256: fs.existsSync(file) ? sha256FileSync(file) : null,
-    }]];
-  }));
+    }];
+  }
+  return bindings;
 }
 
 export function verifyCapabilityOperationalReceipt({
@@ -471,71 +478,13 @@ export function verifyCapabilityConformanceReplayManifest({
   });
 }
 
-function loadProofs({
-  runtimeRoot,
-  workspaceRoot,
-  capabilityCatalog,
-  releaseCommit,
-  directoryName,
-  verify,
-  verifiedStatus,
-  hashField,
-  listField,
-}) {
-  const verified = new Map();
-  let trustStore = null;
-  try {
-    trustStore = JSON.parse(fs.readFileSync(
-      path.join(runtimeRoot, 'owner-acceptance', 'OWNER_TRUST_STORE.json'),
-      'utf8',
-    ));
-  } catch {
-    return verified;
-  }
-  const bindings = capabilityTargetBindings(workspaceRoot, capabilityCatalog);
-  const root = path.join(runtimeRoot, directoryName, 'capabilities');
-  for (const capabilityId of Object.keys(capabilityCatalog).sort()) {
-    const directory = path.join(root, capabilityId);
-    let files = [];
-    try {
-      files = fs.readdirSync(directory).filter((name) => name.endsWith('.json')).sort();
-    } catch {
-      continue;
-    }
-    const receipts = [];
-    const assurances = new Set();
-    for (const name of files) {
-      try {
-        const document = JSON.parse(fs.readFileSync(path.join(directory, name), 'utf8'));
-        const result = verify({
-          document,
-          trustStore,
-          capabilityId,
-          targetBindings: bindings[capabilityId],
-          releaseCommit,
-        });
-        if (result.status === verifiedStatus) {
-          receipts.push(result[hashField]);
-          assurances.add(result.issuerAssurance);
-        }
-      } catch {
-        // Malformed external intake stays unverified.
-      }
-    }
-    if (receipts.length) {
-      verified.set(capabilityId, Object.freeze({
-        capabilityId,
-        [listField]: [...new Set(receipts)].sort(),
-        issuerAssurances: [...assurances].sort(),
-      }));
-    }
-  }
-  return verified;
-}
-
 export function loadCapabilityOperationalProofs(options = {}) {
-  return loadProofs({
+  return loadCapabilityProofDocuments({
     ...options,
+    targetBindings: capabilityTargetBindings(
+      options.workspaceRoot,
+      options.capabilityCatalog,
+    ),
     directoryName: 'operational-proof',
     verify: verifyCapabilityOperationalReceipt,
     verifiedStatus: 'capability_operational_receipt_verified',

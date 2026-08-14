@@ -8,6 +8,7 @@ import {
 import {
   STRICT_FULL_AUTO_ACCEPTANCE_FINAL_VERIFICATION_STEP_ID,
   strictFullAutoAcceptanceHash,
+  strictFullAutoAcceptanceJsonEqual,
 } from '../../paper-domain/automation/strict-full-auto-acceptance-contract.mjs';
 import {
   inspectInstalledAutonomousEmpiricalPluginRelease,
@@ -224,7 +225,10 @@ export class StrictFullAutoAcceptanceCommandRunner {
     if (result.exitCode !== 0 && phase === 'verify') {
       const skips = reportedSkipCount(output);
       const failedAssertion = invocation.assertions.find((assertion) => (
-        jsonPointer(output, assertion.path) !== assertion.equals
+        !strictFullAutoAcceptanceJsonEqual(
+          jsonPointer(output, assertion.path),
+          assertion.equals,
+        )
       ));
       if (result.exitCode === SEMANTIC_NOT_READY_EXIT_CODE
         && skips === 0 && failedAssertion

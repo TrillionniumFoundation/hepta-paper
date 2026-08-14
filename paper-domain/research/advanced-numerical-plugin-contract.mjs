@@ -2,10 +2,28 @@ import { hasExactObjectKeys } from '../../workflow-kernel/exact-object-keys.mjs'
 import { deepFreezeJsonValue } from '../../workflow-kernel/deep-freeze-json-value.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
+export {
+  buildPdePoisson2dGpuArtifactManifest,
+  buildPdePoisson2dGpuProducerSpecification,
+  verifyPdePoisson2dGpuArtifactManifest,
+  verifyPdePoisson2dGpuProducerSpecification,
+} from './pde-poisson-2d-gpu-capability-contract.mjs';
+export {
+  buildPdePoisson2dIndependentCpuOracleReceipt,
+  verifyPdePoisson2dIndependentCpuOracleReceipt,
+} from './pde-poisson-2d-independent-cpu-oracle-contract.mjs';
+
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,191}$/;
 const PACKAGE_VERSION = /^\d{1,4}\.\d{1,4}\.\d{1,4}(?:-[A-Za-z0-9.-]{1,64})?$/;
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
 const SAFE_ENTRYPOINT = /^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*$/;
+const SAFE_CONTAINER_IMAGE = /^[a-z0-9][a-z0-9._/-]{0,191}:[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const NVIDIA_GPU_UUID = /^GPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+export const ADVANCED_NUMERICAL_GPU_DEVICE_ISOLATION_SCOPE =
+  'single-requested-device-selector-not-mig-or-vram-isolation-v1';
+export const ADVANCED_NUMERICAL_GPU_MEMORY_LIMIT_SCOPE =
+  'not-enforced-shared-device-vram-v1';
 
 export const ADVANCED_NUMERICAL_PLUGIN_ANALYSIS_FAMILIES = Object.freeze([
   'bayesian',
@@ -46,6 +64,16 @@ const DESCRIPTOR_KEYS = Object.freeze([
   'sourceIdentity',
   'version',
 ]);
+const CPU_RUNTIME_KEYS = Object.freeze([
+  'executable', 'executableHash', 'language', 'packageClosureHash',
+]);
+const GPU_RUNTIME_KEYS = Object.freeze([
+  'containerExecutable', 'containerImage', 'containerImageDigest',
+  'cpuFallbackPolicy', 'executable', 'executableHash',
+  'gpuDeviceIsolationScope', 'gpuDeviceSelector', 'gpuMemoryLimitBytes',
+  'gpuMemoryLimitEnforced', 'gpuMemoryLimitScope', 'language',
+  'packageClosureHash', 'requiresGpu', 'runtimeProfile',
+]);
 
 function safeId(value) {
   const selected = String(value || '').trim();
@@ -76,7 +104,74 @@ function compileAssuranceContracts(value) {
   })));
 }
 
+function compileRuntime(value, version) {
+  if (version === 1) {
+    if (!hasExactObjectKeys(value, CPU_RUNTIME_KEYS)
+      || !ADVANCED_NUMERICAL_PLUGIN_RUNTIME_LANGUAGES.includes(value.language)
+      || !safeId(value.executable) || !requiredHash(value.executableHash)
+      || !requiredHash(value.packageClosureHash)) {
+      throw new Error('advanced_numerical_plugin_runtime_invalid');
+    }
+    return Object.freeze({
+      language: value.language,
+      executable: value.executable,
+      executableHash: requiredHash(value.executableHash),
+      packageClosureHash: requiredHash(value.packageClosureHash),
+    });
+  }
+  if (version !== 2 || !hasExactObjectKeys(value, GPU_RUNTIME_KEYS)
+    || value.language !== 'python' || value.runtimeProfile !== 'pythonGpu'
+    || value.requiresGpu !== true || value.cpuFallbackPolicy !== 'forbidden'
+    || !safeId(value.executable) || value.executable !== value.containerExecutable
+    || !safeId(value.containerExecutable) || !requiredHash(value.executableHash)
+    || !requiredHash(value.packageClosureHash)
+    || !SAFE_CONTAINER_IMAGE.test(String(value.containerImage || ''))
+    || !requiredHash(value.containerImageDigest)
+    || requiredHash(value.packageClosureHash) !== requiredHash(value.containerImageDigest)
+    || !NVIDIA_GPU_UUID.test(String(value.gpuDeviceSelector || ''))
+    || value.gpuDeviceIsolationScope !== ADVANCED_NUMERICAL_GPU_DEVICE_ISOLATION_SCOPE
+    || value.gpuMemoryLimitBytes !== null || value.gpuMemoryLimitEnforced !== false
+    || value.gpuMemoryLimitScope !== ADVANCED_NUMERICAL_GPU_MEMORY_LIMIT_SCOPE) {
+    throw new Error('advanced_numerical_plugin_gpu_runtime_invalid');
+  }
+  return Object.freeze({
+    language: 'python',
+    executable: value.executable,
+    executableHash: requiredHash(value.executableHash),
+    packageClosureHash: requiredHash(value.packageClosureHash),
+    runtimeProfile: 'pythonGpu',
+    requiresGpu: true,
+    containerImage: value.containerImage,
+    containerImageDigest: requiredHash(value.containerImageDigest),
+    containerExecutable: value.containerExecutable,
+    gpuDeviceSelector: value.gpuDeviceSelector,
+    cpuFallbackPolicy: 'forbidden',
+    gpuDeviceIsolationScope: ADVANCED_NUMERICAL_GPU_DEVICE_ISOLATION_SCOPE,
+    gpuMemoryLimitBytes: null,
+    gpuMemoryLimitEnforced: false,
+    gpuMemoryLimitScope: ADVANCED_NUMERICAL_GPU_MEMORY_LIMIT_SCOPE,
+  });
+}
+
+export function buildAdvancedNumericalGpuRuntimeAuthority(descriptor) {
+  if (!verifyAdvancedNumericalPluginDescriptor(descriptor) || descriptor.version !== 2) {
+    throw new Error('advanced_numerical_plugin_gpu_runtime_authority_invalid');
+  }
+  const payload = {
+    version: 1,
+    kind: 'AdvancedNumericalGpuRuntimeAuthority',
+    pluginDescriptorHash: descriptor.advancedNumericalPluginDescriptorHash,
+    ...descriptor.runtime,
+  };
+  return Object.freeze({
+    ...payload,
+    advancedNumericalGpuRuntimeAuthorityHash:
+      hashRecord('AdvancedNumericalGpuRuntimeAuthority', payload),
+  });
+}
+
 export function compileAdvancedNumericalPluginDescriptor(value = {}) {
+  const version = value.version === undefined ? 1 : Number(value.version);
   const pluginId = safeId(value.pluginId);
   const pluginVersion = String(value.pluginVersion || '');
   const analysisFamily = String(value.analysisFamily || '');
@@ -86,13 +181,7 @@ export function compileAdvancedNumericalPluginDescriptor(value = {}) {
   const limits = value.limits;
   if (!pluginId || !PACKAGE_VERSION.test(pluginVersion)
     || !ADVANCED_NUMERICAL_PLUGIN_ANALYSIS_FAMILIES.includes(analysisFamily)
-    || !hasExactObjectKeys(runtime, [
-      'executable', 'executableHash', 'language', 'packageClosureHash',
-    ])
-    || !ADVANCED_NUMERICAL_PLUGIN_RUNTIME_LANGUAGES.includes(runtime.language)
-    || !safeId(runtime.executable)
-    || !requiredHash(runtime.executableHash)
-    || !requiredHash(runtime.packageClosureHash)
+    || ![1, 2].includes(version)
     || !hasExactObjectKeys(entrypoint, ['relativePath', 'sha256'])
     || !SAFE_ENTRYPOINT.test(String(entrypoint.relativePath || ''))
     || !requiredHash(entrypoint.sha256)
@@ -116,17 +205,12 @@ export function compileAdvancedNumericalPluginDescriptor(value = {}) {
     throw new Error('advanced_numerical_plugin_descriptor_invalid');
   }
   const payload = {
-    version: 1,
+    version,
     kind: 'AdvancedNumericalPluginDescriptor',
     pluginId,
     pluginVersion,
     analysisFamily,
-    runtime: Object.freeze({
-      language: runtime.language,
-      executable: runtime.executable,
-      executableHash: requiredHash(runtime.executableHash),
-      packageClosureHash: requiredHash(runtime.packageClosureHash),
-    }),
+    runtime: compileRuntime(runtime, version),
     entrypoint: Object.freeze({
       relativePath: entrypoint.relativePath,
       sha256: requiredHash(entrypoint.sha256),

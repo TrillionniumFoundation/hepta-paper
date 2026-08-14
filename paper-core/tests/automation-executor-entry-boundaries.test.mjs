@@ -21,8 +21,8 @@ import {
   executableRuntimePathSupported,
 } from '../../paper-adapters/runtime/runtime-resource-mounts.mjs';
 import {
-  createOsSandboxedWorkerRunner,
-} from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
+  createOsSandboxedWorkerRunnerForTest as createOsSandboxedWorkerRunner,
+} from './support/os-sandboxed-worker-runner-test-driver.mjs';
 import { fileSha256Hash } from '../../paper-adapters/runtime/execution-snapshot.mjs';
 import {
   buildCampaignAgentInstructions,

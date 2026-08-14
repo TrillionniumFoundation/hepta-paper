@@ -435,6 +435,80 @@ test('production recomputation composition cannot import verification seams or i
     'paper-adapters/automation/system-benchmark-result-repository.mjs',
   ]);
 
+  const sandboxRunnerEngine = path.join(
+    workspaceRoot,
+    'paper-adapters/runtime/os-sandboxed-worker-runner-engine.mjs',
+  );
+  const allRepositoryModules = moduleRoots
+    .flatMap((root) => modulesUnder(path.join(workspaceRoot, root)))
+    .map((relative) => path.join(workspaceRoot, relative));
+  assert.deepEqual(allRepositoryModules
+    .filter((file) => moduleDependencies(file).includes(sandboxRunnerEngine))
+    .map((file) => posix(path.relative(workspaceRoot, file)))
+    .sort(), [
+    'paper-adapters/runtime/os-sandboxed-worker-runner.mjs',
+    'paper-core/tests/support/os-sandboxed-worker-runner-test-driver.mjs',
+  ]);
+  const sandboxRunnerFacadeSource = fs.readFileSync(path.join(
+    workspaceRoot,
+    'paper-adapters/runtime/os-sandboxed-worker-runner.mjs',
+  ), 'utf8');
+  assert.match(sandboxRunnerFacadeSource,
+    /os_sandbox_worker_dependency_injection_forbidden/);
+  assert.doesNotMatch(sandboxRunnerFacadeSource,
+    /\b(?:executor|probe|imageDigestResolver)\s*=/);
+  assert.deepEqual(productionFiles
+    .filter((file) => file.includes(`${path.sep}paper-core${path.sep}tests${path.sep}`)), []);
+  const deepLearningSandboxFactory = path.join(
+    workspaceRoot,
+    'paper-adapters/research-verify/canonical-cupy-deep-learning-sandbox-runner-factory.mjs',
+  );
+  assert.deepEqual(productionFiles
+    .filter((file) => moduleDependencies(file).includes(deepLearningSandboxFactory))
+    .map((file) => posix(path.relative(workspaceRoot, file)))
+    .sort(), [
+    'paper-adapters/research-verify/canonical-cupy-deep-learning-training-executor.mjs',
+  ]);
+  const dynamicFormalReadinessEngine = path.join(
+    workspaceRoot,
+    'paper-adapters/research-verify/dynamic-formal-project-closure-readiness-engine.mjs',
+  );
+  assert.deepEqual(allRepositoryModules
+    .filter((file) => moduleDependencies(file).includes(dynamicFormalReadinessEngine))
+    .map((file) => posix(path.relative(workspaceRoot, file)))
+    .sort(), [
+    'paper-adapters/research-verify/dynamic-formal-project-closure-readiness.mjs',
+    'paper-core/tests/support/dynamic-formal-project-closure-readiness-test-driver.mjs',
+  ]);
+  const dynamicFormalSandboxEngine = path.join(
+    workspaceRoot,
+    'paper-adapters/research-verify/dynamic-formal-sandbox-probe-verifier-engine.mjs',
+  );
+  assert.deepEqual(allRepositoryModules
+    .filter((file) => moduleDependencies(file).includes(dynamicFormalSandboxEngine))
+    .map((file) => posix(path.relative(workspaceRoot, file)))
+    .sort(), [
+    'paper-adapters/research-verify/dynamic-formal-project-closure-readiness-engine.mjs',
+    'paper-adapters/research-verify/dynamic-formal-sandbox-probe-verifier.mjs',
+  ]);
+  const dynamicFormalSandboxFactory = path.join(
+    workspaceRoot,
+    'paper-adapters/research-verify/dynamic-formal-sandbox-probe-runner-factory.mjs',
+  );
+  assert.deepEqual(productionFiles
+    .filter((file) => moduleDependencies(file).includes(dynamicFormalSandboxFactory))
+    .map((file) => posix(path.relative(workspaceRoot, file)))
+    .sort(), [
+    'paper-adapters/research-verify/dynamic-formal-sandbox-probe-verifier-engine.mjs',
+  ]);
+  for (const relative of [
+    'paper-adapters/research-verify/dynamic-formal-project-closure-readiness.mjs',
+    'paper-adapters/research-verify/dynamic-formal-sandbox-probe-verifier.mjs',
+  ]) {
+    const source = fs.readFileSync(path.join(workspaceRoot, relative), 'utf8');
+    assert.match(source, /dynamic_formal_sandbox_dependency_injection_forbidden/);
+  }
+
   const seamSource = fs.readFileSync(path.join(
     workspaceRoot,
     'paper-core/tests/support/raw-event-recomputation-sandbox-test-seam.mjs',
@@ -467,7 +541,8 @@ test('production recomputation composition cannot import verification seams or i
   assert.match(fixtureSource, /runnerId:\s*['"]fixture-kernel-isolation-worker-v4['"]/);
   assert.match(fixtureSource, /backend:\s*['"]fixture['"]/);
   assert.doesNotMatch(fixtureSource, /\bbackend\s*=/);
-  assert.match(verifierDoubleSource, /receipt\.backend === ['"]fixture['"]/);
+  assert.match(verifierDoubleSource,
+    /receipt\.evidenceClass === ['"]verification-fixture-v1['"]/);
   assert.match(
     verifierDoubleSource,
     /verifyRealProductionOsSandboxWorkerReceipt\(receipt\)/,
@@ -585,7 +660,10 @@ test('production inventory is reachable only from declared executable entrypoint
     [],
   );
 
-  const runnerFile = path.join(workspaceRoot, 'paper-adapters/runtime/os-sandboxed-worker-runner.mjs');
+  const runnerFile = path.join(
+    workspaceRoot,
+    'paper-adapters/runtime/os-sandboxed-worker-runner-engine.mjs',
+  );
   const removedIdentityInputReferences = [...production]
     .filter((file) => file !== runnerFile)
     .filter((file) => fs.readFileSync(file, 'utf8').includes('containerImageIdentity'))
@@ -921,6 +999,7 @@ test('compatibility and experimental modules are explicitly classified outside t
 });
 
 test('compatibility re-export facades are catalogued, tiny, and owned', () => {
+  const production = reachableModules(entrypoints.production);
   const paths = new Set();
   for (const row of COMPATIBILITY_FACADE_CATALOG) {
     assert.equal(paths.has(row.path), false, row.path);
@@ -930,6 +1009,11 @@ test('compatibility re-export facades are catalogued, tiny, and owned', () => {
     const source = fs.readFileSync(path.join(workspaceRoot, row.path), 'utf8');
     assert.match(source, /export\s+(?:\*|\{)/, row.path);
     assert.ok(source.split(/\n/).length - 1 <= 10, row.path);
+    assert.equal(
+      production.has(path.join(workspaceRoot, row.path)),
+      false,
+      `compatibility_facade_reachable_from_production:${row.path}`,
+    );
   }
 
   const uncataloguedCrossOwnerFacades = modulesUnder(

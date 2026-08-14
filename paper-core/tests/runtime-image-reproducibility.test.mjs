@@ -359,8 +359,8 @@ test('GPU image is self-contained on a public immutable base and registry binds 
   const dockerfile = fs.readFileSync('runtime-images/python-gpu/Dockerfile', 'utf8');
   assert.match(dockerfile, /^FROM python:3\.12\.7-slim-bookworm@sha256:60d9996b6a8a3689d36db740b49f4327be3be09a21122bd02fb8895abb38b50d$/m);
   assert.doesNotMatch(dockerfile, /^FROM hepta\//m);
-  assert.equal(AUTOMATION_RUNTIME_IMAGES.pythonGpu.image, 'hepta/python-gpu:0.14.0');
-  assert.equal(AUTOMATION_RUNTIME_IMAGES.pythonGpu.imageDigest, 'sha256:a19945393646e79504b71e32833aa767216f4b1d013aa97930c00fd19cdcef57');
+  assert.equal(AUTOMATION_RUNTIME_IMAGES.pythonGpu.image, 'hepta/python-gpu:0.15.0');
+  assert.equal(AUTOMATION_RUNTIME_IMAGES.pythonGpu.imageDigest, 'sha256:21acb5fb016d9fd17131215d16e1834fcfeb081e047718d49b6d58d8afa97e2b');
   assert.deepEqual(AUTOMATION_RUNTIME_IMAGE_BUILD_DEFINITIONS.pythonGpu.definitionPaths, [
     'Dockerfile',
     'requirements.lock',

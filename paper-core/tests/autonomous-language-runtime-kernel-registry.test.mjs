@@ -60,7 +60,7 @@ function runtimeInspection() {
 }
 
 function reproducibilityInspection(overrides = {}) {
-  const entries = AUTONOMOUS_LANGUAGE_RUNTIME_KERNEL_REGISTRY.entries;
+  const profiles = RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE.requiredProfiles;
   return Object.freeze({
     version: 2,
     kind: 'RuntimeImageReproducibilityReceiptInspection',
@@ -71,7 +71,7 @@ function reproducibilityInspection(overrides = {}) {
     issuedAt: '2026-07-19T11:00:00.000Z',
     expiresAt: '2026-07-20T11:00:00.000Z',
     remainingValidityMs: 24 * 60 * 60 * 1000,
-    requiredProfiles: AUTONOMOUS_LANGUAGE_RUNTIME_KERNEL_REGISTRY.languages,
+    requiredProfiles: profiles,
     empiricalFamilyPluginPackageHash:
       RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE
         .empiricalFamilyPluginPackageHash,
@@ -87,13 +87,13 @@ function reproducibilityInspection(overrides = {}) {
       RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE
         .runtimeImageReproducibilityActivePluginScopeHash,
     definitionManifestHashes: Object.freeze(Object.fromEntries(
-      entries.map((entry) => [entry.language, H(`definition:${entry.language}`)]),
+      profiles.map((profile) => [profile, H(`definition:${profile}`)]),
     )),
     inputClosureHashes: Object.freeze(Object.fromEntries(
-      entries.map((entry) => [entry.language, H(`closure:${entry.language}`)]),
+      profiles.map((profile) => [profile, H(`closure:${profile}`)]),
     )),
     registeredImageDigests: Object.freeze(Object.fromEntries(
-      entries.map((entry) => [entry.language, entry.imageManifestDigest]),
+      profiles.map((profile) => [profile, AUTOMATION_RUNTIME_IMAGES[profile].imageDigest]),
     )),
     privateSigningKeyLoadedByController: false,
     twoIndependentExternalVerifiersRequired: true,

@@ -41,6 +41,7 @@ export function campaignEmpiricalNodeClassification(kind) {
 
 export function campaignNodeOperation(kind) {
   if (kind === 'advanced-numerical-analysis') return 'advanced-numerical';
+  if (kind === 'gpu-scientific-execution') return 'gpu-scientific';
   if (kind === 'formal-verify') return 'formal-verification';
   if (kind === 'research-verify') return 'research-verification';
   if (isCampaignAgentNode(kind)) return 'agent';

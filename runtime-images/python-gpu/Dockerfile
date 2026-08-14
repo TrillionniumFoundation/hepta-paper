@@ -44,10 +44,10 @@ RUN chmod 0555 /usr/local/libexec/hepta-dataset-access-supervisor \
  && test -x /usr/bin/strace \
  && test -x /usr/bin/setpriv
 COPY requirements.lock /tmp/gpu-requirements.lock
+ENV LD_LIBRARY_PATH=/usr/local/lib/python3.12/site-packages/nvidia/cublas/lib:/usr/local/lib/python3.12/site-packages/nvidia/cuda_nvrtc/lib:/usr/local/lib/python3.12/site-packages/nvidia/cuda_runtime/lib
 RUN pip install --no-cache-dir --only-binary=:all: --require-hashes --requirement /tmp/gpu-requirements.lock \
- && python -c "import cupy,numpy,pandas,scipy,matplotlib; assert cupy.cuda.runtime.runtimeGetVersion() >= 12000" \
+ && python -c "import ctypes,cupy,numpy,pandas,scipy,matplotlib,safetensors; ctypes.CDLL('libcublas.so.12'); assert cupy.cuda.runtime.runtimeGetVersion() >= 12000" \
  && rm -rf /root/.cache /root/.cupy
-ENV LD_LIBRARY_PATH=/usr/local/lib/python3.12/site-packages/nvidia/cuda_nvrtc/lib:/usr/local/lib/python3.12/site-packages/nvidia/cuda_runtime/lib
 LABEL io.hepta.dataset-supervisor.protocol="hepta-container-dataset-supervisor-v1" \
       io.hepta.dataset-supervisor.sha256="sha256:a62b96c00d1989398f2f94df878b0983e98f8db472f29a3c6db9a4c3ccfe0de0"
 WORKDIR /work

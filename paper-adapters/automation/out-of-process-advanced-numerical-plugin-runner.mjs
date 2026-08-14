@@ -3,10 +3,14 @@ import path from 'node:path';
 
 import {
   ADVANCED_NUMERICAL_PLUGIN_ANALYSIS_FAMILIES,
+  buildAdvancedNumericalGpuRuntimeAuthority,
   buildAdvancedNumericalPluginRequest,
   verifyAdvancedNumericalPluginDescriptor,
   verifyAdvancedNumericalPluginResult,
 } from '../../paper-domain/research/advanced-numerical-plugin-contract.mjs';
+import {
+  verifyProductionOsSandboxWorkerReceipt,
+} from '../../paper-domain/automation/os-sandbox-worker-receipt-contract.mjs';
 import {
   assertAdvancedNumericalPluginRunnerPort,
 } from '../../paper-ports/advanced-numerical-plugin-runner-port.mjs';
@@ -40,6 +44,26 @@ function blocked(blockers, details = {}) {
 
 function observedExecutableHash(identity) {
   return identity?.executableHash || identity?.hostExecutableHash || null;
+}
+
+function gpuRuntimeWorkerReceiptValid(receipt, descriptor) {
+  const runtime = descriptor.runtime;
+  return verifyProductionOsSandboxWorkerReceipt(receipt)
+    && receipt.runtimeIdentityType === 'container'
+    && receipt.containerImage === runtime.containerImage
+    && receipt.containerImageDigest === runtime.containerImageDigest
+    && receipt.gpuDeviceRequest?.required === true
+    && receipt.gpuDeviceRequest?.deviceSelector === runtime.gpuDeviceSelector
+    && receipt.gpuDeviceRequest?.requestedDeviceCount === 1
+    && receipt.limits?.timeoutMs === descriptor.limits.timeoutMs
+    && receipt.limits?.memoryBytes === descriptor.limits.memoryBytes
+    && receipt.limits?.cpuSeconds === descriptor.limits.cpuSeconds
+    && receipt.limits?.maximumPids === descriptor.limits.maximumProcesses
+    && receipt.limits?.maximumOutputBytes === descriptor.limits.maximumOutputBytes
+    && receipt.isolation?.gpuDeviceIsolationScope === runtime.gpuDeviceIsolationScope
+    && receipt.isolation?.gpuMemoryIsolationVerified === false
+    && runtime.gpuMemoryLimitBytes === null
+    && runtime.gpuMemoryLimitEnforced === false;
 }
 
 export function verifyAdvancedNumericalPluginSignedBundle(bundle, {
@@ -89,6 +113,8 @@ export function createOutOfProcessAdvancedNumericalPluginRunner({
     now,
   });
   const descriptor = verifiedBundle.descriptor;
+  const gpuRuntimeAuthority = descriptor.version === 2
+    ? buildAdvancedNumericalGpuRuntimeAuthority(descriptor) : null;
   if ([qualification, qualificationEvidence, qualificationTrustStore]
     .filter((value) => value !== null).length !== 0
     && [qualification, qualificationEvidence, qualificationTrustStore]
@@ -106,13 +132,21 @@ export function createOutOfProcessAdvancedNumericalPluginRunner({
       trustStore: qualificationTrustStore,
       now,
     });
-  const productionQualified = productionQualification?.productionQualified === true;
+  const productionQualified = productionQualification?.productionQualified === true
+    && (!gpuRuntimeAuthority || (
+      productionQualification.version === 3
+      && productionQualification.gpuRuntimeAuthorityHash
+        === gpuRuntimeAuthority.advancedNumericalGpuRuntimeAuthorityHash
+      && JSON.stringify(productionQualification.gpuRuntimeAuthority)
+        === JSON.stringify(gpuRuntimeAuthority)
+    ));
   const sandbox = assertWorkerRunnerPort(workerRunner);
   const sandboxCapabilities = sandbox.capabilities();
   if (!sandboxCapabilities.sandboxModes?.includes('kernel-isolated')
     || sandboxCapabilities.networkPolicy !== 'none'
     || sandboxCapabilities.workspaceIsolation !== true
-    || sandboxCapabilities.externalActions !== false) {
+    || sandboxCapabilities.externalActions !== false
+    || (gpuRuntimeAuthority && sandboxCapabilities.gpu !== true)) {
     throw new Error('advanced_numerical_plugin_worker_capability_invalid');
   }
   const selectedPluginRoot = path.resolve(String(pluginRoot || ''));
@@ -153,6 +187,10 @@ export function createOutOfProcessAdvancedNumericalPluginRunner({
     resourceLimits: true,
     networkPolicy: 'none',
     productionQualified,
+    runtimeProfile: descriptor.runtime.runtimeProfile || null,
+    requiresGpu: descriptor.runtime.requiresGpu === true,
+    gpuRuntimeAuthorityHash:
+      gpuRuntimeAuthority?.advancedNumericalGpuRuntimeAuthorityHash || null,
     qualifiedAnalysisFamilies: Object.freeze(
       productionQualified ? [descriptor.analysisFamily] : [],
     ),
@@ -223,11 +261,24 @@ export function createOutOfProcessAdvancedNumericalPluginRunner({
       }
       const executionIdentity = sandbox.resolveExecutionRuntimeIdentity({
         executable: descriptor.runtime.executable,
+        ...(gpuRuntimeAuthority ? {
+          containerImage: descriptor.runtime.containerImage,
+          containerExecutable: descriptor.runtime.containerExecutable,
+        } : {}),
       });
+      const runtimeIdentityMatches = gpuRuntimeAuthority
+        ? executionIdentity?.runtimeType === 'container'
+          && executionIdentity?.executionClass === 'explicit-container'
+          && executionIdentity?.backend === 'docker'
+          && executionIdentity?.requestedImage === descriptor.runtime.containerImage
+          && executionIdentity?.digest === descriptor.runtime.containerImageDigest
+          && executionIdentity?.containerExecutable
+            === descriptor.runtime.containerExecutable
+        : observedExecutableHash(executionIdentity)
+          === descriptor.runtime.executableHash;
       if (executionIdentity?.available !== true
         || executionIdentity?.allowlisted !== true
-        || observedExecutableHash(executionIdentity)
-          !== descriptor.runtime.executableHash) {
+        || !runtimeIdentityMatches) {
         return blockedExecution(['advanced_numerical_plugin_runtime_identity_mismatch'], {
           requestHash: request.advancedNumericalPluginRequestHash,
         });
@@ -255,13 +306,24 @@ export function createOutOfProcessAdvancedNumericalPluginRunner({
         cpuSeconds: descriptor.limits.cpuSeconds,
         maximumProcesses: descriptor.limits.maximumProcesses,
         requestedMaximumOutputBytes: descriptor.limits.maximumOutputBytes,
-        requiresGpu: false,
+        requiresGpu: Boolean(gpuRuntimeAuthority),
+        gpuDeviceSelector: gpuRuntimeAuthority
+          ? descriptor.runtime.gpuDeviceSelector : null,
+        ...(gpuRuntimeAuthority ? {
+          containerImage: descriptor.runtime.containerImage,
+          containerExecutable: descriptor.runtime.containerExecutable,
+        } : {}),
         requireSeparateOutputRoot: true,
         requireImmutableWorkRoot: true,
         language: descriptor.runtime.language,
         determinismPolicy: 'seeded-deterministic',
         deterministicSeed: seed,
-        runtimePackageClosure: Object.freeze({
+        runtimePackageClosure: gpuRuntimeAuthority ? Object.freeze({
+          basis: 'container_image_digest',
+          identityHash: descriptor.runtime.containerImageDigest,
+          manifestHash: null,
+          observedPackageCount: 0,
+        }) : Object.freeze({
           basis: 'signed-plugin-descriptor',
           identityHash: descriptor.runtime.packageClosureHash,
           manifestHash: descriptor.runtime.packageClosureHash,
@@ -274,6 +336,8 @@ export function createOutOfProcessAdvancedNumericalPluginRunner({
         || isolation.kernelNetworkIsolationVerified !== true
         || isolation.sourceReadOnlyVerified !== true
         || isolation.resourceLimitsVerified !== true
+        || (gpuRuntimeAuthority
+          && !gpuRuntimeWorkerReceiptValid(workerReceipt, descriptor))
         || !SHA256.test(String(workerReceipt?.receiptHash || ''))) {
         return blockedExecution([
           'advanced_numerical_plugin_worker_execution_blocked',
@@ -303,7 +367,7 @@ export function createOutOfProcessAdvancedNumericalPluginRunner({
         });
       }
       const payload = {
-        version: 1,
+        version: gpuRuntimeAuthority ? 2 : 1,
         kind: 'AdvancedNumericalPluginExecutionReceipt',
         status: productionQualified
           ? 'advanced_numerical_plugin_execution_completed_qualified'
@@ -311,6 +375,10 @@ export function createOutOfProcessAdvancedNumericalPluginRunner({
         pluginId: descriptor.pluginId,
         analysisFamily: descriptor.analysisFamily,
         pluginDescriptorHash: descriptor.advancedNumericalPluginDescriptorHash,
+        ...(gpuRuntimeAuthority ? {
+          gpuRuntimeAuthorityHash:
+            gpuRuntimeAuthority.advancedNumericalGpuRuntimeAuthorityHash,
+        } : {}),
         signedBundleHash: verifiedBundle.signedBundleHash,
         requestHash: request.advancedNumericalPluginRequestHash,
         resultHash: result.advancedNumericalPluginResultHash,

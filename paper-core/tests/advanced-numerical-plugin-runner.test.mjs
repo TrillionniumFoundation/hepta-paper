@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -10,6 +11,20 @@ import {
   verifyAdvancedNumericalPluginSignedBundle,
 } from '../../paper-adapters/automation/out-of-process-advanced-numerical-plugin-runner.mjs';
 import {
+  readAdvancedNumericalPluginRuntimeConfiguration,
+} from '../../paper-adapters/automation/advanced-numerical-plugin-runtime-configuration.mjs';
+import {
+  inspectWorkspaceExecutionSnapshot,
+} from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
+import {
+  createOsSandboxedWorkerRunnerForTest as createOsSandboxedWorkerRunner,
+} from './support/os-sandboxed-worker-runner-test-driver.mjs';
+import {
+  verifyProductionOsSandboxWorkerReceipt,
+} from '../../paper-domain/automation/os-sandbox-worker-receipt-contract.mjs';
+import {
+  ADVANCED_NUMERICAL_GPU_DEVICE_ISOLATION_SCOPE,
+  ADVANCED_NUMERICAL_GPU_MEMORY_LIMIT_SCOPE,
   ADVANCED_NUMERICAL_PLUGIN_ANALYSIS_FAMILIES,
   compileAdvancedNumericalPluginDescriptor,
 } from '../../paper-domain/research/advanced-numerical-plugin-contract.mjs';
@@ -31,7 +46,11 @@ import {
   immutableAuthoritySigningPayload,
 } from '../../workflow-kernel/runtime/immutable-signed-json-bundle.mjs';
 
-function signedPluginFixture() {
+const GPU_UUID = 'GPU-a33875b7-7eb7-679e-df08-19227d3decee';
+const GPU_IMAGE = 'hepta/python-gpu:0.15.0';
+const GPU_IMAGE_DIGEST = `sha256:${'d'.repeat(64)}`;
+
+function signedPluginFixture({ gpu = false, observedSourceIdentity = false } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-advanced-numeric-'));
   const pluginRoot = path.join(root, 'plugin');
   const outputRoot = path.join(root, 'output');
@@ -40,10 +59,27 @@ function signedPluginFixture() {
   const entrypoint = Buffer.from('print(\"fixture\")\n', 'utf8');
   fs.writeFileSync(path.join(pluginRoot, 'plugin.py'), entrypoint);
   const descriptor = compileAdvancedNumericalPluginDescriptor({
+    version: gpu ? 2 : 1,
     pluginId: 'organization.causal-estimator',
     pluginVersion: '1.2.0',
     analysisFamily: 'causal-inference',
-    runtime: {
+    runtime: gpu ? {
+      language: 'python',
+      executable: 'python',
+      executableHash: `sha256:${'1'.repeat(64)}`,
+      packageClosureHash: GPU_IMAGE_DIGEST,
+      runtimeProfile: 'pythonGpu',
+      requiresGpu: true,
+      containerImage: GPU_IMAGE,
+      containerImageDigest: GPU_IMAGE_DIGEST,
+      containerExecutable: 'python',
+      gpuDeviceSelector: GPU_UUID,
+      cpuFallbackPolicy: 'forbidden',
+      gpuDeviceIsolationScope: ADVANCED_NUMERICAL_GPU_DEVICE_ISOLATION_SCOPE,
+      gpuMemoryLimitBytes: null,
+      gpuMemoryLimitEnforced: false,
+      gpuMemoryLimitScope: ADVANCED_NUMERICAL_GPU_MEMORY_LIMIT_SCOPE,
+    } : {
       language: 'python',
       executable: 'python3',
       executableHash: `sha256:${'1'.repeat(64)}`,
@@ -53,10 +89,18 @@ function signedPluginFixture() {
       relativePath: 'plugin.py',
       sha256: hashBytes(entrypoint),
     },
-    sourceIdentity: {
-      merkleHash: `sha256:${'3'.repeat(64)}`,
-      workspaceManifestHash: `sha256:${'4'.repeat(64)}`,
-    },
+    sourceIdentity: observedSourceIdentity
+      ? (() => {
+        const snapshot = inspectWorkspaceExecutionSnapshot(pluginRoot);
+        return {
+          merkleHash: snapshot.merkleHash,
+          workspaceManifestHash: snapshot.manifestHash,
+        };
+      })()
+      : {
+        merkleHash: `sha256:${'3'.repeat(64)}`,
+        workspaceManifestHash: `sha256:${'4'.repeat(64)}`,
+      },
     limits: {
       timeoutMs: 30_000,
       cpuSeconds: 10,
@@ -134,7 +178,12 @@ function signedPluginFixture() {
   };
 }
 
-function sandboxRunner(descriptor, { invalidResult = false, networkPolicy = 'none' } = {}) {
+function sandboxRunner(descriptor, {
+  gpu = false,
+  invalidResult = false,
+  networkPolicy = 'none',
+  observeSpec = null,
+} = {}) {
   const capabilities = buildExecutorCapabilities({
     executorId: 'fixture-kernel-worker',
     sandboxModes: ['kernel-isolated'],
@@ -142,12 +191,25 @@ function sandboxRunner(descriptor, { invalidResult = false, networkPolicy = 'non
     workspaceIsolation: true,
     languages: ['python'],
     receiptKinds: ['OsSandboxWorkerReceipt'],
+    gpu,
   });
   return {
     version: 4,
     runnerId: 'fixture-kernel-worker',
     capabilities: () => capabilities,
     resolveExecutionRuntimeIdentity() {
+      if (descriptor.version === 2) {
+        return {
+          available: true,
+          allowlisted: true,
+          runtimeType: 'container',
+          executionClass: 'explicit-container',
+          backend: 'docker',
+          requestedImage: descriptor.runtime.containerImage,
+          digest: descriptor.runtime.containerImageDigest,
+          containerExecutable: descriptor.runtime.containerExecutable,
+        };
+      }
       return {
         available: true,
         allowlisted: true,
@@ -155,6 +217,7 @@ function sandboxRunner(descriptor, { invalidResult = false, networkPolicy = 'non
       };
     },
     async run(spec) {
+      observeSpec?.(spec);
       assert.equal(spec.expectedSourceMerkleHash, descriptor.sourceIdentity.merkleHash);
       assert.equal(spec.expectedSourceWorkspaceManifestHash,
         descriptor.sourceIdentity.workspaceManifestHash);
@@ -398,13 +461,24 @@ function productionQualification(fixture) {
   };
 }
 
+function writePrivateJson(root, name, value) {
+  const target = path.join(root, name);
+  const bytes = Buffer.from(JSON.stringify(value), 'utf8');
+  fs.writeFileSync(target, bytes);
+  fs.chmodSync(target, 0o600);
+  return { path: target, hash: hashBytes(bytes) };
+}
+
 test('signed advanced numerical plugins run out of process but remain unqualified', async (context) => {
   const fixture = signedPluginFixture();
   context.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+  let observedSpec = null;
   const runner = createOutOfProcessAdvancedNumericalPluginRunner({
     signedBundle: fixture.bundle,
     trustStore: fixture.trustStore,
-    workerRunner: sandboxRunner(fixture.descriptor),
+    workerRunner: sandboxRunner(fixture.descriptor, {
+      observeSpec: (spec) => { observedSpec = spec; },
+    }),
     pluginRoot: fixture.pluginRoot,
     outputRoot: fixture.outputRoot,
     now: fixture.now,
@@ -422,6 +496,12 @@ test('signed advanced numerical plugins run out of process but remain unqualifie
     'advanced_numerical_plugin_execution_completed_unqualified');
   assert.equal(receipt.productionQualified, false);
   assert.equal(receipt.blockers.length, 0);
+  assert.deepEqual(observedSpec.runtimePackageClosure, {
+    basis: 'signed-plugin-descriptor',
+    identityHash: fixture.descriptor.runtime.packageClosureHash,
+    manifestHash: fixture.descriptor.runtime.packageClosureHash,
+    observedPackageCount: 0,
+  });
   assert.match(receipt.advancedNumericalPluginExecutionReceiptHash,
     /^sha256:[0-9a-f]{64}$/);
 });
@@ -463,6 +543,221 @@ test('independently qualified plugins emit production-qualified receipts', async
   assert.equal(receipt.productionQualified, true);
   assert.match(receipt.qualificationStatementHash, /^sha256:[0-9a-f]{64}$/);
   assert.match(receipt.qualificationInspectionHash, /^sha256:[0-9a-f]{64}$/);
+});
+
+test('GPU descriptor v2 forbids fallback and makes non-enforced VRAM semantics explicit', () => {
+  const fixture = signedPluginFixture({ gpu: true });
+  try {
+    assert.equal(fixture.descriptor.version, 2);
+    assert.equal(fixture.descriptor.runtime.runtimeProfile, 'pythonGpu');
+    assert.equal(fixture.descriptor.runtime.requiresGpu, true);
+    assert.equal(fixture.descriptor.runtime.cpuFallbackPolicy, 'forbidden');
+    assert.equal(fixture.descriptor.runtime.gpuMemoryLimitBytes, null);
+    assert.equal(fixture.descriptor.runtime.gpuMemoryLimitEnforced, false);
+    for (const runtime of [
+      { ...fixture.descriptor.runtime, gpuDeviceSelector: 'all' },
+      { ...fixture.descriptor.runtime, cpuFallbackPolicy: 'allowed' },
+      { ...fixture.descriptor.runtime, gpuMemoryLimitEnforced: true },
+      { ...fixture.descriptor.runtime, containerImageDigest: `sha256:${'e'.repeat(63)}` },
+    ]) {
+      assert.throws(() => compileAdvancedNumericalPluginDescriptor({
+        ...fixture.descriptor,
+        runtime,
+        advancedNumericalPluginDescriptorHash: undefined,
+      }), /gpu_runtime_invalid/);
+    }
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('runtime configuration v2 repeats and pins the signed GPU execution authority', () => {
+  const fixture = signedPluginFixture({ gpu: true });
+  try {
+    const bundle = writePrivateJson(fixture.root, 'bundle.json', fixture.bundle);
+    const trustStore = writePrivateJson(fixture.root, 'trust.json', fixture.trustStore);
+    const qualification = writePrivateJson(fixture.root, 'qualification.json', {});
+    const evidence = writePrivateJson(fixture.root, 'evidence.json', {});
+    const qualificationTrust = writePrivateJson(fixture.root, 'qualification-trust.json', {});
+    const configuration = {
+      version: 2,
+      kind: 'AdvancedNumericalPluginRuntimeConfiguration',
+      pluginRoot: 'plugin',
+      outputRoot: 'output',
+      signedBundlePath: 'bundle.json',
+      signedBundleFileHash: bundle.hash,
+      trustStorePath: 'trust.json',
+      trustStoreFileHash: trustStore.hash,
+      qualificationPath: 'qualification.json',
+      qualificationFileHash: qualification.hash,
+      qualificationEvidencePath: 'evidence.json',
+      qualificationEvidenceFileHash: evidence.hash,
+      qualificationTrustStorePath: 'qualification-trust.json',
+      qualificationTrustStoreFileHash: qualificationTrust.hash,
+      runtimeProfile: fixture.descriptor.runtime.runtimeProfile,
+      requiresGpu: true,
+      containerImage: fixture.descriptor.runtime.containerImage,
+      containerImageDigest: fixture.descriptor.runtime.containerImageDigest,
+      containerExecutable: fixture.descriptor.runtime.containerExecutable,
+      gpuDeviceSelector: fixture.descriptor.runtime.gpuDeviceSelector,
+      cpuFallbackPolicy: fixture.descriptor.runtime.cpuFallbackPolicy,
+      gpuDeviceIsolationScope: fixture.descriptor.runtime.gpuDeviceIsolationScope,
+      gpuMemoryLimitBytes: null,
+      gpuMemoryLimitEnforced: false,
+      gpuMemoryLimitScope: fixture.descriptor.runtime.gpuMemoryLimitScope,
+    };
+    const config = writePrivateJson(fixture.root, 'runtime.json', configuration);
+    const loaded = readAdvancedNumericalPluginRuntimeConfiguration({
+      configurationPath: config.path,
+      expectedConfigurationHash: config.hash,
+    });
+    assert.equal(loaded.gpuRuntimeAuthority.containerImageDigest, GPU_IMAGE_DIGEST);
+    assert.equal(loaded.gpuRuntimeAuthority.gpuDeviceSelector, GPU_UUID);
+
+    const drifted = { ...configuration, gpuDeviceSelector: `GPU-${'1'.repeat(8)}-${'1'.repeat(4)}-${'1'.repeat(4)}-${'1'.repeat(4)}-${'1'.repeat(12)}` };
+    const driftedConfig = writePrivateJson(fixture.root, 'runtime-drifted.json', drifted);
+    assert.throws(() => readAdvancedNumericalPluginRuntimeConfiguration({
+      configurationPath: driftedConfig.path,
+      expectedConfigurationHash: driftedConfig.hash,
+    }), /gpu_configuration_binding_invalid/);
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('GPU runner calls only the fixed container path and rejects non-production worker evidence', async () => {
+  const fixture = signedPluginFixture({ gpu: true });
+  try {
+    const qualified = productionQualification(fixture);
+    let observed = null;
+    assert.throws(() => createOutOfProcessAdvancedNumericalPluginRunner({
+      signedBundle: fixture.bundle,
+      trustStore: fixture.trustStore,
+      workerRunner: sandboxRunner(fixture.descriptor),
+      pluginRoot: fixture.pluginRoot,
+      outputRoot: fixture.outputRoot,
+      now: fixture.now,
+    }), /worker_capability_invalid/);
+    const runner = createOutOfProcessAdvancedNumericalPluginRunner({
+      signedBundle: fixture.bundle,
+      trustStore: fixture.trustStore,
+      qualification: qualified.qualification,
+      qualificationEvidence: qualified.evidence,
+      qualificationTrustStore: qualified.trustStore,
+      workerRunner: sandboxRunner(fixture.descriptor, {
+        gpu: true,
+        observeSpec: (spec) => { observed = spec; },
+      }),
+      pluginRoot: fixture.pluginRoot,
+      outputRoot: fixture.outputRoot,
+      now: fixture.now,
+    });
+    assert.equal(runner.capabilities().productionQualified, true);
+    assert.equal(runner.capabilities().runtimeProfile, 'pythonGpu');
+    assert.match(runner.capabilities().gpuRuntimeAuthorityHash, /^sha256:[0-9a-f]{64}$/);
+    const receipt = await runner.run({
+      runId: 'gpu-runtime-binding',
+      input: { system: 'poisson-2d' },
+      seed: 23,
+      outputDirectory: path.join(fixture.outputRoot, 'gpu-runtime-binding'),
+    });
+    assert.equal(observed.containerImage, GPU_IMAGE);
+    assert.equal(observed.containerExecutable, 'python');
+    assert.equal(observed.requiresGpu, true);
+    assert.equal(observed.gpuDeviceSelector, GPU_UUID);
+    assert.equal(receipt.status, 'advanced_numerical_plugin_execution_blocked');
+    assert.ok(receipt.blockers.includes('advanced_numerical_plugin_worker_execution_blocked'));
+  } finally {
+    fs.rmSync(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('GPU fixture runner cannot promote a fabricated container receipt', async (t) => {
+  const observation = spawnSync('/usr/bin/nvidia-smi', [
+    '--query-gpu=uuid', '--format=csv,noheader',
+  ], { encoding: 'utf8', timeout: 5_000 });
+  const selector = String(observation.stdout || '').trim().split(/\r?\n/)[0];
+  if (observation.status !== 0 || selector !== GPU_UUID || !fs.existsSync('/dev/nvidia0')) {
+    t.skip('fixture GPU UUID unavailable');
+    return;
+  }
+  const fixture = signedPluginFixture({ gpu: true, observedSourceIdentity: true });
+  t.after(() => fs.rmSync(fixture.root, { recursive: true, force: true }));
+  const qualified = productionQualification(fixture);
+  const workerRunner = createOsSandboxedWorkerRunner({
+    allowedRoots: [fixture.pluginRoot],
+    allowedOutputRoots: [fixture.outputRoot],
+    allowedContainerImages: [GPU_IMAGE, GPU_IMAGE_DIGEST],
+    allowGpu: true,
+    maximumTimeoutMs: fixture.descriptor.limits.timeoutMs,
+    maximumMemoryBytes: fixture.descriptor.limits.memoryBytes,
+    maximumCpuSeconds: fixture.descriptor.limits.cpuSeconds,
+    maximumPids: fixture.descriptor.limits.maximumProcesses,
+    maximumOutputBytes: fixture.descriptor.limits.maximumOutputBytes,
+    maximumCapturedBytes: fixture.descriptor.limits.maximumCapturedBytes,
+    probe: {
+      available: true,
+      backend: 'docker',
+      status: 'os_sandbox_available',
+      image: GPU_IMAGE,
+    },
+    imageDigestResolver: (image) => image === GPU_IMAGE ? GPU_IMAGE_DIGEST : null,
+    executor(_launcher, args) {
+      const outputMount = args.find((argument) => String(argument).endsWith(':/output:rw'));
+      const sandboxOutput = String(outputMount).slice(0, -':/output:rw'.length);
+      const requestIndex = args.indexOf('--hepta-request-base64');
+      const request = JSON.parse(Buffer.from(args[requestIndex + 1], 'base64').toString('utf8'));
+      const resultPayload = {
+        version: 1,
+        kind: 'AdvancedNumericalPluginResult',
+        status: 'advanced_numerical_computation_completed',
+        pluginId: fixture.descriptor.pluginId,
+        analysisFamily: fixture.descriptor.analysisFamily,
+        requestHash: request.advancedNumericalPluginRequestHash,
+        oracleContractHash: fixture.descriptor.assuranceContracts.oracle.contractHash,
+        replayContractHash: fixture.descriptor.assuranceContracts.replay.contractHash,
+        uncertaintyContractHash:
+          fixture.descriptor.assuranceContracts.uncertainty.contractHash,
+        estimateArtifactHash: `sha256:${'8'.repeat(64)}`,
+        uncertaintyArtifactHash: `sha256:${'9'.repeat(64)}`,
+        oracleReceiptHash: `sha256:${'a'.repeat(64)}`,
+        replayReceiptHash: `sha256:${'b'.repeat(64)}`,
+        uncertaintyReceiptHash: `sha256:${'c'.repeat(64)}`,
+      };
+      const result = {
+        ...resultPayload,
+        advancedNumericalPluginResultHash:
+          hashRecord('AdvancedNumericalPluginResult', resultPayload),
+      };
+      fs.writeFileSync(path.join(sandboxOutput, 'result.json'), JSON.stringify(result));
+      fs.chmodSync(path.join(sandboxOutput, 'result.json'), 0o600);
+      return { status: 0, stdout: '', stderr: '', pid: process.pid };
+    },
+  });
+  const runner = createOutOfProcessAdvancedNumericalPluginRunner({
+    signedBundle: fixture.bundle,
+    trustStore: fixture.trustStore,
+    qualification: qualified.qualification,
+    qualificationEvidence: qualified.evidence,
+    qualificationTrustStore: qualified.trustStore,
+    workerRunner,
+    pluginRoot: fixture.pluginRoot,
+    outputRoot: fixture.outputRoot,
+    now: fixture.now,
+  });
+  const receipt = await runner.run({
+    runId: 'gpu-strict-production-receipt',
+    input: { system: 'poisson-2d' },
+    seed: 29,
+    outputDirectory: path.join(fixture.outputRoot, 'gpu-strict-production-receipt'),
+  });
+  assert.equal(receipt.status, 'advanced_numerical_plugin_execution_blocked');
+  assert.equal(receipt.productionQualified, true);
+  assert.ok(receipt.blockers.includes(
+    'advanced_numerical_plugin_worker_execution_blocked',
+  ));
+  assert.equal(receipt.workerReceipt.evidenceClass, 'verification-fixture-v1');
+  assert.equal(verifyProductionOsSandboxWorkerReceipt(receipt.workerReceipt), false);
 });
 
 test('qualification tampering and signer collusion fail closed', () => {

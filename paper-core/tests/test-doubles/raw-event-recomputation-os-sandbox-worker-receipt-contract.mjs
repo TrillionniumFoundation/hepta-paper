@@ -6,19 +6,26 @@ import {
 function verifyRawEventRecomputationFixtureReceipt(receipt) {
   try {
     return verifyOsSandboxWorkerReceipt(receipt)
-      && receipt.backend === 'fixture'
-      && receipt.runnerId === 'fixture-kernel-isolation-worker-v4'
+      && receipt.evidenceClass === 'verification-fixture-v1'
+      && receipt.productionEvidenceEligible === false
+      && ['bubblewrap', 'docker', 'fixture'].includes(receipt.backend)
+      && receipt.runnerId === `${receipt.backend}-kernel-isolation-worker-v4`
       && receipt.isolation?.memoryLimitVerified === true
       && receipt.isolation?.memoryLimitScope
-        === 'process-address-space-not-descendant-tree-v1'
+        === (receipt.backend === 'docker'
+          ? 'container-cgroup-aggregate-v1'
+          : 'process-address-space-not-descendant-tree-v1')
       && receipt.isolation?.cpuLimitVerified === true
       && receipt.isolation?.cpuLimitScope
         === 'process-thread-group-not-descendant-tree-v1'
       && receipt.isolation?.processLimitVerified === true
       && receipt.isolation?.resourceLimitsVerified === true
-      && receipt.isolation?.processLimitMechanism === 'rlimit-nproc'
+      && receipt.isolation?.processLimitMechanism === (receipt.backend === 'docker'
+        ? 'docker-pids-cgroup' : 'rlimit-nproc')
       && receipt.isolation?.processLimitScope
-        === 'real-uid-concurrent-processes-not-sandbox-local-v1';
+        === (receipt.backend === 'docker'
+          ? 'container-cgroup-concurrent-tasks-v1'
+          : 'real-uid-concurrent-processes-not-sandbox-local-v1');
   } catch {
     return false;
   }

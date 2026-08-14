@@ -28,6 +28,7 @@ import {
 } from '../src/command-registry.mjs';
 
 function readyInput() {
+  const proofHash = `sha256:${'b'.repeat(64)}`;
   return {
     runtimes: {
       agent: {
@@ -40,6 +41,9 @@ function readyInput() {
       python: { usable: true },
       latex: { usable: true },
       lean: { usable: true },
+      gpu: { usable: true },
+      gpuContainer: { usable: true },
+      images: { pythonGpu: { usable: true } },
       sandbox: {
         usable: true,
         academicEmpiricalReady: true,
@@ -57,6 +61,22 @@ function readyInput() {
       fullProductionReady: true,
     },
     runtimeImageReproducibility: { ready: true, blockers: [] },
+    gpuScientificCapabilityProofInspection: {
+      capabilities: {
+        pde: {
+          operationalProofReady: true,
+          operationalReceiptHashes: [proofHash],
+          productionQualificationReady: true,
+          conformanceReceiptHashes: [proofHash],
+        },
+        deepLearning: {
+          operationalProofReady: true,
+          operationalReceiptHashes: [proofHash],
+          productionQualificationReady: true,
+          conformanceReceiptHashes: [proofHash],
+        },
+      },
+    },
     fullResearchQualification: {
       ready: true,
       qualificationScope: 'bounded-capability-only-v1',
@@ -92,6 +112,19 @@ test('readiness policy requires every independent runtime and qualification bind
     (input) => { input.fullResearchQualification.independentHypothesisPriorArtReviewVerified = false; },
     (input) => { input.fullResearchQualification.independentHypothesisPriorArtReceiptHash = 'invalid'; },
     (input) => { input.runtimes.sandbox.academicEmpiricalReady = false; },
+    (input) => { input.runtimes.gpuContainer.usable = false; },
+    (input) => {
+      input.gpuScientificCapabilityProofInspection.capabilities.pde.operationalProofReady = false;
+    },
+    (input) => {
+      input.gpuScientificCapabilityProofInspection.capabilities.pde.productionQualificationReady = false;
+    },
+    (input) => {
+      input.gpuScientificCapabilityProofInspection.capabilities.deepLearning.operationalReceiptHashes = [];
+    },
+    (input) => {
+      input.gpuScientificCapabilityProofInspection.capabilities.deepLearning.conformanceReceiptHashes = ['invalid'];
+    },
   ]) {
     const input = structuredClone(readyInput());
     mutate(input);
@@ -111,6 +144,26 @@ test('readiness policy requires every independent runtime and qualification bind
   assert.equal(reproducibilityBlocked.fullAutomaticResearchWritingRuntimePreflightReady, false);
   assert.equal(reproducibilityBlocked.fullAutomaticResearchWritingReady, false);
   assert.ok(reproducibilityBlocked.blockers.includes('runtime_image_reproducibility_not_ready'));
+
+  const gpuBlockedInput = readyInput();
+  gpuBlockedInput.runtimes.images.pythonGpu.usable = false;
+  const gpuBlocked = evaluateAutomationReadiness(gpuBlockedInput);
+  assert.equal(gpuBlocked.automationRuntimeReady, true);
+  assert.equal(gpuBlocked.gpuScientificRuntimeReady, false);
+  assert.equal(gpuBlocked.fullAutomaticResearchWritingRuntimePreflightReady, false);
+  assert.ok(gpuBlocked.blockers.includes('gpu_scientific_runtime_not_ready'));
+
+  const legacyBooleanOnlyInput = readyInput();
+  delete legacyBooleanOnlyInput.gpuScientificCapabilityProofInspection;
+  legacyBooleanOnlyInput.gpuScientificOperationalProofReady = true;
+  legacyBooleanOnlyInput.gpuScientificProductionQualificationReady = true;
+  const legacyBooleanOnly = evaluateAutomationReadiness(legacyBooleanOnlyInput);
+  assert.equal(legacyBooleanOnly.gpuScientificCapabilityProofsReady, false);
+  assert.equal(legacyBooleanOnly.fullAutomaticResearchWritingRuntimePreflightReady, false);
+  assert.ok(legacyBooleanOnly.blockers.includes('gpu_pde_operational_proof_not_ready'));
+  assert.ok(legacyBooleanOnly.blockers.includes(
+    'gpu_deep_learning_production_qualification_not_ready',
+  ));
 
   const priorArtBlockedInput = readyInput();
   priorArtBlockedInput.fullResearchQualification.independentHypothesisPriorArtReviewVerified = false;

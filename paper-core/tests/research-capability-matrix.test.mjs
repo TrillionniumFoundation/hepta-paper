@@ -49,7 +49,7 @@ test('capability matrix distinguishes implementation, qualification, and product
     matrix.evidenceLevelDefinitions.map((entry) => entry.id),
     ['contract_fixture', 'real_runtime_fixture', 'live_model', 'external_trust'],
   );
-  assert.equal(matrix.capabilities.length, 8);
+  assert.equal(matrix.capabilities.length, 10);
   const formal = matrix.capabilities.find((entry) => entry.id === 'formal-proof-search');
   assert.equal(formal.implemented, true);
   assert.equal(formal.qualified, false);
@@ -86,6 +86,15 @@ test('capability matrix distinguishes implementation, qualification, and product
   assert.equal(submission.scope.humanReviewedSingleUseAuthorizationRequired, true);
   assert.equal(submission.qualified, false);
   assert.equal(submission.productionReady, false);
+  const pde = matrix.capabilities.find((entry) => entry.id === 'gpu-pde-solver');
+  const deepLearning = matrix.capabilities.find(
+    (entry) => entry.id === 'gpu-deep-learning-training',
+  );
+  assert.equal(pde.implemented, true);
+  assert.equal(pde.qualified, false);
+  assert.ok(pde.blockers.includes('gpu_scientific_runtime_not_ready'));
+  assert.equal(deepLearning.scope.numericMode, 'fp32-tf32-amp-disabled-v1');
+  assert.equal(deepLearning.productionReady, false);
   const { researchCapabilityMatrixHash, ...payload } = matrix;
   assert.equal(researchCapabilityMatrixHash, hashRecord('ResearchCapabilityMatrix', payload));
 });
@@ -137,6 +146,11 @@ test('capability matrix cannot infer universal readiness from runtime availabili
     fullyAutonomousResearchSystemReady: true,
     fullResearchQualificationReady: true,
     fullAutomaticResearchWritingReady: true,
+    gpuScientificRuntimeReady: true,
+    gpuPdeOperationalProofReady: true,
+    gpuPdeProductionQualificationReady: true,
+    gpuDeepLearningOperationalProofReady: true,
+    gpuDeepLearningProductionQualificationReady: true,
     autonomousSubmissionHandoffReady: true,
     autonomousSubmissionDispatcherReady: true,
     autonomousSubmissionDispatcherReadiness: { blockers: [] },
@@ -162,6 +176,11 @@ test('capability matrix rejects a split-brain autonomous readiness projection', 
     fullyAutonomousResearchSystemReady: false,
     fullResearchQualificationReady: true,
     fullAutomaticResearchWritingReady: true,
+    gpuScientificRuntimeReady: true,
+    gpuPdeOperationalProofReady: true,
+    gpuPdeProductionQualificationReady: true,
+    gpuDeepLearningOperationalProofReady: true,
+    gpuDeepLearningProductionQualificationReady: true,
     autonomousSubmissionHandoffReady: true,
     autonomousSubmissionDispatcherReady: true,
     autonomousSubmissionDispatcherReadiness: { blockers: [] },
@@ -186,6 +205,11 @@ test('capability matrix rejects a split-brain production readiness projection', 
     fullyAutonomousResearchSystemReady: true,
     fullResearchQualificationReady: true,
     fullAutomaticResearchWritingReady: true,
+    gpuScientificRuntimeReady: true,
+    gpuPdeOperationalProofReady: true,
+    gpuPdeProductionQualificationReady: true,
+    gpuDeepLearningOperationalProofReady: true,
+    gpuDeepLearningProductionQualificationReady: true,
     autonomousSubmissionHandoffReady: true,
     autonomousSubmissionDispatcherReady: true,
     autonomousSubmissionDispatcherReadiness: { blockers: [] },
@@ -198,6 +222,25 @@ test('capability matrix rejects a split-brain production readiness projection', 
     matrix.capabilityEntriesStatus,
     'research_capability_entries_production_ready',
   );
+});
+
+test('legacy generic GPU readiness booleans cannot promote PDE or deep learning', () => {
+  const matrix = buildResearchCapabilityMatrix({
+    productionReady: true,
+    gpuScientificRuntimeReady: true,
+    gpuScientificOperationalProofReady: true,
+    gpuScientificProductionQualificationReady: true,
+  });
+  const pde = matrix.capabilities.find((entry) => entry.id === 'gpu-pde-solver');
+  const deepLearning = matrix.capabilities.find(
+    (entry) => entry.id === 'gpu-deep-learning-training',
+  );
+  assert.equal(pde.qualified, false);
+  assert.equal(pde.productionReady, false);
+  assert.ok(pde.blockers.includes('gpu_pde_operational_proof_not_ready'));
+  assert.equal(deepLearning.qualified, false);
+  assert.equal(deepLearning.productionReady, false);
+  assert.ok(deepLearning.blockers.includes('gpu_deep_learning_operational_proof_not_ready'));
 });
 
 test('capability matrix reports canonical container-backed empirical languages', () => {

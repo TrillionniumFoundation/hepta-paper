@@ -19,6 +19,9 @@ import {
   empiricalAssertionReleaseHashes,
   empiricalAssertionReleaseHashesMatch,
   explicitTimestamp,
+  gpuScientificReleaseEvidenceValid,
+  gpuScientificReleaseFields,
+  gpuScientificReleaseRecordValid,
   matchesRecordHash,
   required,
   researchReportValid,
@@ -48,6 +51,8 @@ export function createAutomationPromotionCandidate({
   experimentRegistryAuthorityVerifier = null,
   advancedNumericalExecutionPlan = null,
   advancedNumericalExecutionEvidence = null,
+  gpuScientificExecutionPlan = null,
+  gpuScientificExecutionEvidence = null,
 } = {}) {
   if (packageNode?.kind !== 'package') throw new Error('automation_promotion_package_node_required');
   if (finalCompileNode?.kind !== 'final-compile') throw new Error('automation_promotion_final_compile_node_required');
@@ -127,6 +132,15 @@ export function createAutomationPromotionCandidate({
   })) {
     throw new Error('automation_promotion_advanced_numerical_evidence_invalid');
   }
+  if (!gpuScientificReleaseEvidenceValid({
+    campaignPlanHash,
+    campaignId,
+    paperId,
+    plan: gpuScientificExecutionPlan,
+    evidence: gpuScientificExecutionEvidence,
+  })) {
+    throw new Error('automation_promotion_gpu_scientific_authority_invalid');
+  }
   const finalCompileResultHash = finalCompileNode.resultSha256 || null;
   if (!finalCompileResultHash || hashRecord('PaperCampaignNodeResult', finalCompileNode.result) !== finalCompileResultHash) throw new Error('automation_promotion_final_compile_result_hash_required');
   if (finalCompileNode.result?.sourceMerkleHash !== verifiedSourceMerkleHash
@@ -199,6 +213,7 @@ export function createAutomationPromotionCandidate({
       advancedNumericalExecutionPlan,
       advancedNumericalExecutionEvidence,
     } : {}),
+    ...gpuScientificReleaseFields(gpuScientificExecutionPlan, gpuScientificExecutionEvidence),
     createdAt: explicitTimestamp(createdAt),
     externalActionPerformed: false,
   };
@@ -228,6 +243,9 @@ export function createCampaignReleaseBundle({
     evidence: promotionCandidate.advancedNumericalExecutionEvidence || null,
   })) {
     throw new Error('campaign_release_advanced_numerical_evidence_invalid');
+  }
+  if (!gpuScientificReleaseRecordValid(promotionCandidate)) {
+    throw new Error('campaign_release_gpu_scientific_evidence_invalid');
   }
   if (promotionCandidate.autonomousResearchReleaseBinding) {
     const autonomousBindingVerification = verifyAutonomousResearchReleaseBinding(
@@ -387,6 +405,8 @@ export function createCampaignReleaseBundle({
       advancedNumericalExecutionEvidence:
         promotionCandidate.advancedNumericalExecutionEvidence,
     } : {}),
+    ...gpuScientificReleaseFields(promotionCandidate.gpuScientificExecutionPlan,
+      promotionCandidate.gpuScientificExecutionEvidence),
     immutableCampaignPackageOutputHash: packageOutput.immutableCampaignPackageOutputHash,
     packageOutput: Object.freeze({ ...packageOutput }),
     createdAt: explicitTimestamp(createdAt),
@@ -423,6 +443,9 @@ export function verifyCampaignReleaseBundle(bundle, expected = {}, { experimentR
       !== JSON.stringify(candidate?.advancedNumericalExecutionEvidence || null)) {
     blockers.push('campaign_release_advanced_numerical_evidence_invalid');
   }
+  if (!gpuScientificReleaseRecordValid(bundle, candidate)) {
+    blockers.push('campaign_release_gpu_scientific_evidence_invalid');
+  }
   if (bundle?.autonomousResearchReleaseBinding || candidate?.autonomousResearchReleaseBinding) {
     const autonomousBindingVerification = verifyAutonomousResearchReleaseBinding(
       bundle?.autonomousResearchReleaseBinding,
@@ -451,6 +474,8 @@ export function verifyCampaignReleaseBundle(bundle, expected = {}, { experimentR
     'advancedNumericalExecutionPlanHash',
     'advancedNumericalCampaignExecutionReceiptHash',
     'advancedNumericalCampaignEvidenceHash',
+    'gpuScientificExecutionPlanHash',
+    'gpuScientificCampaignExecutionResultHash',
     ...EMPIRICAL_ASSERTION_RELEASE_HASH_FIELDS,
     'researchEvidenceCapsuleManifestHash', 'researchExecutionReleaseAttestationHash']
     .some((field) => bundle?.[field] !== candidate?.[field])) blockers.push('campaign_release_candidate_lineage_mismatch');
@@ -583,6 +608,8 @@ export function verifyCampaignReleaseBundle(bundle, expected = {}, { experimentR
     ['advancedNumericalExecutionPlanHash', 'campaign_release_advanced_numerical_plan_mismatch'],
     ['advancedNumericalCampaignExecutionReceiptHash', 'campaign_release_advanced_numerical_receipt_mismatch'],
     ['advancedNumericalCampaignEvidenceHash', 'campaign_release_advanced_numerical_evidence_mismatch'],
+    ['gpuScientificExecutionPlanHash', 'campaign_release_gpu_scientific_plan_mismatch'],
+    ['gpuScientificCampaignExecutionResultHash', 'campaign_release_gpu_scientific_result_mismatch'],
   ]) if (expected[field] && bundle?.[field] !== expected[field]) blockers.push(blocker);
   return Object.freeze({ valid: blockers.length === 0, blockers: [...new Set(blockers)] });
 }

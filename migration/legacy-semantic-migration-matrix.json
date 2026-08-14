@@ -44,7 +44,7 @@
       },
       "target": {
         "path": "hepta-paper-workspace/paper-core/bin/paper-production-core.mjs",
-        "sha256": "39d842c3c28a3f240f4b8e95947f2a27243f0ed1150590f256a027b3a46ecb7b",
+        "sha256": "eb6f7752ce2217aa129da37264842852b5619f671161bb9b4ed22f3e95dbd1bb",
         "symbols": [
           "main",
           "runPaperBatch",

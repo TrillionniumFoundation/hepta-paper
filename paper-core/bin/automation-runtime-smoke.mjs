@@ -19,11 +19,13 @@ const DEFAULT_STAGE_TIMEOUT_MS = 180_000;
 const MAXIMUM_STAGE_TIMEOUT_MS = 10 * 60 * 1000;
 const MINIMUM_STAGE_TIMEOUT_MS = 15_000;
 const MINIMUM_COMPILE_TIMEOUT_MS = 1000;
+const NVIDIA_GPU_UUID = /^GPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export const RUNTIME_SMOKE_FIXTURE_ROOT = fileURLToPath(new URL(
   '../fixtures/automation-runtime-smoke', import.meta.url,
 ));
 export const RUNTIME_SMOKE_STAGE_NAMES = Object.freeze([
-  'pythonCpu', 'pythonGpu', 'rDatasetHelper', 'cudaGpu', 'lean', 'latex',
+  'pythonCpu', 'pythonGpu', 'pdeGpu', 'deepLearningGpu',
+  'rDatasetHelper', 'cudaGpu', 'lean', 'latex',
 ]);
 export const RUNTIME_SMOKE_REPETITIONS = Object.freeze(['first', 'second']);
 const FIXTURE_OPERATOR_AUTHORIZATION_HASH = 'sha256:7aab397a9266d35a4061f97e2d0405a2bbc79ee55ca4829ffc82179317a0267a';
@@ -66,6 +68,9 @@ export function parseRuntimeSmokeArguments(argv = [], environment = process.env)
     blocker: 'compile_timeout_ms_invalid',
   }) || Math.min(stageTimeoutMs, 120_000);
   let keepFailedWorkspace = environment.HEPTA_RUNTIME_SMOKE_KEEP_FAILED_WORKSPACE === '1';
+  let gpuDeviceSelector = String(
+    environment.HEPTA_RUNTIME_SMOKE_GPU_DEVICE_SELECTOR || '',
+  ).trim() || null;
   let help = false;
   for (let index = 0; index < argv.length;) {
     const current = argv[index];
@@ -106,7 +111,16 @@ export function parseRuntimeSmokeArguments(argv = [], environment = process.env)
       index += compileTimeout.consumed;
       continue;
     }
+    const gpuDevice = optionValue(argv, index, '--gpu-device-selector');
+    if (gpuDevice) {
+      gpuDeviceSelector = String(gpuDevice.value).trim();
+      index += gpuDevice.consumed;
+      continue;
+    }
     throw new Error(`unknown_cli_option:${current}`);
+  }
+  if (gpuDeviceSelector !== null && !NVIDIA_GPU_UUID.test(gpuDeviceSelector)) {
+    throw new Error('gpu_device_selector_invalid');
   }
   return Object.freeze({
     rAssetRoot,
@@ -114,8 +128,34 @@ export function parseRuntimeSmokeArguments(argv = [], environment = process.env)
     stageTimeoutMs,
     compileTimeoutMs,
     keepFailedWorkspace,
+    gpuDeviceSelector,
     help,
   });
+}
+
+export function resolveRuntimeSmokeGpuDeviceSelector(configuration, {
+  spawnSyncImpl = spawnSync,
+  environment = process.env,
+} = {}) {
+  if (configuration.gpuDeviceSelector) return configuration.gpuDeviceSelector;
+  const result = spawnSyncImpl('nvidia-smi', [
+    '--query-gpu=uuid', '--format=csv,noheader',
+  ], {
+    encoding: 'utf8',
+    timeout: 10_000,
+    env: {
+      PATH: environment.PATH || '/usr/bin:/bin',
+      LC_ALL: 'C',
+      LANG: 'C',
+    },
+  });
+  const selectors = String(result.stdout || '').trim().split(/\r?\n/)
+    .map((item) => item.trim()).filter(Boolean);
+  if (result.status !== 0 || selectors.length !== 1
+    || !NVIDIA_GPU_UUID.test(selectors[0])) {
+    throw new Error('runtime_smoke_exact_gpu_device_selector_required');
+  }
+  return selectors[0];
 }
 
 export function createRuntimeSmokeProgressReporter({
@@ -345,7 +385,9 @@ function resolveRFixtureRoot(configuration) {
 
 function writeRuntimeSources(source) {
   const workloadRoot = path.join(RUNTIME_SMOKE_FIXTURE_ROOT, 'workload');
-  for (const name of ['cpu.py', 'gpu.cu', 'gpu.py', 'actual_asset.R']) {
+  for (const name of [
+    'cpu.py', 'gpu.cu', 'gpu.py', 'pde_gpu.py', 'deep_learning_gpu.py', 'actual_asset.R',
+  ]) {
     fs.copyFileSync(path.join(workloadRoot, name), path.join(source, name));
   }
   fs.writeFileSync(path.join(source, 'lakefile.lean'), `import Lake
@@ -381,6 +423,7 @@ export function runAutomationRuntimeSmoke(configuration = parseRuntimeSmokeArgum
   let passed = false;
   try {
     const { stageTimeoutMs, compileTimeoutMs } = configuration;
+    const gpuDeviceSelector = resolveRuntimeSmokeGpuDeviceSelector(configuration);
     const rFixture = resolveRFixtureRoot(configuration);
     fs.mkdirSync(source, { recursive: true });
     fs.mkdirSync(output, { recursive: true });
@@ -412,7 +455,10 @@ export function runAutomationRuntimeSmoke(configuration = parseRuntimeSmokeArgum
       maximumMemoryBytes: 6 * 1024 * 1024 * 1024,
       maximumCpuSeconds: 600,
     });
-    const execute = ({ language, entrypoint, image, requiresGpu = false, datasetMounts = [] }, suffix) => createMultiLanguageEmpiricalExecutor({
+    const execute = ({
+      language, entrypoint, image, requiresGpu = false, datasetMounts = [],
+      outputPaths = ['results.json', 'results.csv'],
+    }, suffix) => createMultiLanguageEmpiricalExecutor({
       workerRunner: runner,
       runtimeImages: { [language]: image },
     }).execute({
@@ -421,10 +467,11 @@ export function runAutomationRuntimeSmoke(configuration = parseRuntimeSmokeArgum
       cwd: source,
       sourceRoot: source,
       outputDirectory: path.join(output, suffix),
-      outputPaths: ['results.json', 'results.csv'],
+      outputPaths,
       requireSeparateOutputRoot: true,
       timeoutMs: stageTimeoutMs,
       requiresGpu,
+      gpuDeviceSelector: requiresGpu ? gpuDeviceSelector : null,
       datasetMounts,
       env: {
         HEPTA_SEED: '42',
@@ -452,6 +499,22 @@ export function runAutomationRuntimeSmoke(configuration = parseRuntimeSmokeArgum
         entrypoint: 'gpu.py',
         image: AUTOMATION_RUNTIME_IMAGES.pythonGpu,
         requiresGpu: true,
+      },
+      {
+        name: 'pdeGpu',
+        language: 'python',
+        entrypoint: 'pde_gpu.py',
+        image: AUTOMATION_RUNTIME_IMAGES.pythonGpu,
+        requiresGpu: true,
+        outputPaths: ['results.json', 'results.csv', 'solution.bin'],
+      },
+      {
+        name: 'deepLearningGpu',
+        language: 'python',
+        entrypoint: 'deep_learning_gpu.py',
+        image: AUTOMATION_RUNTIME_IMAGES.pythonGpu,
+        requiresGpu: true,
+        outputPaths: ['results.json', 'results.csv', 'model.bin'],
       },
       {
         name: 'rDatasetHelper',
@@ -490,6 +553,7 @@ export function runAutomationRuntimeSmoke(configuration = parseRuntimeSmokeArgum
         outputPaths: ['results.json'],
         timeoutMs: stageTimeoutMs,
         requiresGpu: true,
+        gpuDeviceSelector,
         env: { HEPTA_OUTPUT_DIR: '/output' },
         memoryBytes: 1024 * 1024 * 1024,
         cpuSeconds: 120,
@@ -523,7 +587,11 @@ export function runAutomationRuntimeSmoke(configuration = parseRuntimeSmokeArgum
       });
     }
 
-    const leanEnvironment = { ...process.env, ELAN_TOOLCHAIN: PRODUCTION_LEAN_TOOLCHAIN };
+    const leanEnvironment = {
+      ...process.env,
+      ELAN_HOME: process.env.ELAN_HOME || path.join(os.homedir(), '.elan'),
+      ELAN_TOOLCHAIN: PRODUCTION_LEAN_TOOLCHAIN,
+    };
     const leanFirst = runCommandStage({
       stage: 'lean.first',
       timeoutMs: stageTimeoutMs,
@@ -626,6 +694,7 @@ Options:
   --r-asset-root PATH        Use an explicitly supplied read-only R fixture
   --stage-timeout-ms MS      Per-probe hard timeout (15000-600000)
   --compile-timeout-ms MS    CUDA compilation hard timeout (1000-600000)
+  --gpu-device-selector UUID Exact NVIDIA GPU UUID; auto-detect requires one GPU
   --keep-failed-workspace    Retain only a failed temporary smoke workspace
   --help                     Show this help
 

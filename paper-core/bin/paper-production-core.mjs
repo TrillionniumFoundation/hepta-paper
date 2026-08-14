@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { runPaperBatch, renderBatchConsole } from '../src/paper-batch-runner.mjs';
+import {
+  runPaperBatch,
+  renderBatchConsole,
+} from '../../paper-composition/batch/paper-batch-application.mjs';
 import { ensureDir, readJsonIfExists } from '../../workflow-kernel/runtime/file-utils.mjs';
 import {
   runPaperProposalAdapter,

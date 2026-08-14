@@ -2,7 +2,6 @@
 // Every row needs an owner and an explicit retirement condition; adding an
 // untracked re-export is an architecture failure.
 export const COMPATIBILITY_FACADE_CATALOG = Object.freeze([
-  Object.freeze({ path: 'paper-core/src/core-integrity.mjs', owner: 'paper-core-verification', retireAfter: 'verification imports adapter owner directly' }),
   Object.freeze({ path: 'paper-core/src/paper-batch-runner.mjs', owner: 'migration-entrypoint-compatibility', retireAfter: 'legacy entrypoint parity verification is retired' }),
 ]);
 

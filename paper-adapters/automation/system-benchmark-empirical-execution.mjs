@@ -110,6 +110,7 @@ export function executeSystemBenchmarkEmpiricalRun({
         outputPaths: ['observation.json'],
         outputDirectory,
         requiresGpu: Boolean(spec.requiresGpu),
+        gpuDeviceSelector: spec.gpuDeviceSelector ?? null,
         env: batchEnv,
         executionIdentity: batchIdentity.capability,
         containerImage: runtimeImage?.image || null,

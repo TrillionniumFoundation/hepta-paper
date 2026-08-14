@@ -8,7 +8,9 @@ import { createCodexAgentExecutor } from '../../paper-adapters/automation/codex-
 import { createIsolatedAgentExecutor } from '../../paper-adapters/automation/isolated-agent-executor.mjs';
 import { createMultiLanguageEmpiricalExecutor } from '../../paper-adapters/automation/multi-language-empirical-executor.mjs';
 import { AUTOMATION_RUNTIME_IMAGES } from '../../paper-adapters/automation/runtime-image-registry.mjs';
-import { createOsSandboxedWorkerRunner } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
+import {
+  createOsSandboxedWorkerRunnerForTest as createOsSandboxedWorkerRunner,
+} from './support/os-sandboxed-worker-runner-test-driver.mjs';
 import { directoryMerkleHash, fileSha256Hash } from '../../paper-adapters/runtime/execution-snapshot.mjs';
 import { buildExecutorCapabilities } from '../../paper-ports/executor-capabilities.mjs';
 import { runBoundedChildProcess } from '../../paper-adapters/automation/bounded-child-process.mjs';

@@ -131,6 +131,6 @@
     "command": "automation-status",
     "arguments": ["--live-provider-canary", "--live-release-attestor", "--require-fully-autonomous"],
     "environmentReferences": { "@profile": "readiness" },
-    "assertions": [{ "path": "/fullyAutonomousResearchSystemStatus", "equals": "generic_domain_autonomous_research_system_ready" }, { "path": "/fullResearchQualification/paperId", "equals": "strict-acceptance-golden-paper" }]
+    "assertions": [{ "path": "/fullyAutonomousResearchSystemStatus", "equals": "generic_domain_autonomous_research_system_ready" }, { "path": "/runtimeImageReproducibilityReady", "equals": true }, { "path": "/runtimeImageReproducibility/requiredProfiles", "equals": ["python", "pythonGpu", "r"] }, { "path": "/gpuScientificRuntimeReady", "equals": true }, { "path": "/gpuPdeOperationalProofReady", "equals": true }, { "path": "/gpuPdeProductionQualificationReady", "equals": true }, { "path": "/gpuDeepLearningOperationalProofReady", "equals": true }, { "path": "/gpuDeepLearningProductionQualificationReady", "equals": true }, { "path": "/fullResearchQualification/paperId", "equals": "strict-acceptance-golden-paper" }]
   }
 }

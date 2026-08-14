@@ -7,6 +7,11 @@ import {
   verifyAdvancedNumericalCampaignExecutionPlan,
   verifyCampaignAdvancedNumericalExecutionResult,
 } from './advanced-numerical-campaign-execution-contract.mjs';
+import {
+  GPU_SCIENTIFIC_CAMPAIGN_RESOURCE_BUDGET,
+  verifyGpuScientificCampaignExecutionPlan,
+  verifyGpuScientificCampaignExecutionResult,
+} from './gpu-scientific-campaign-execution-contract.mjs';
 
 export const EMPIRICAL_ASSERTION_RELEASE_HASH_FIELDS = Object.freeze([
   'empiricalAssertionAuthorityHash',
@@ -67,6 +72,87 @@ export function advancedNumericalReleaseEvidenceValid({
     && evidence.evidenceDocumentHash === result.evidenceDocumentHash
     && evidence.productionQualified === true
     && evidence.promotionEligible === true;
+}
+
+export function gpuScientificReleaseEvidenceValid({
+  campaignPlanHash,
+  campaignId,
+  paperId,
+  plan,
+  evidence,
+} = {}) {
+  if (!plan && !evidence) return true;
+  if (!plan || !evidence
+    || !verifyGpuScientificCampaignExecutionPlan(plan, {
+      campaignId,
+      paperId,
+      nodeId: evidence.nodeId,
+    })) return false;
+  return verifyGpuScientificCampaignExecutionResult(evidence, {
+    campaign: { campaignId, paperId, spec: { campaignPlanHash } },
+    node: {
+      nodeId: evidence.nodeId,
+      kind: 'gpu-scientific-execution',
+      attemptId: evidence.attemptId,
+      leaseGeneration: evidence.leaseGeneration,
+      gpuScientificExecutionPlanHash:
+        plan.gpuScientificCampaignExecutionPlanHash,
+      gpuScientificResourceBudgetHash:
+        GPU_SCIENTIFIC_CAMPAIGN_RESOURCE_BUDGET
+          .gpuScientificCampaignResourceBudgetHash,
+    },
+    plan,
+    requirePromotionEligible: true,
+  });
+}
+
+export function gpuScientificReleaseFields(plan, evidence) {
+  return plan ? {
+    gpuScientificExecutionPlanHash:
+      plan.gpuScientificCampaignExecutionPlanHash,
+    gpuScientificCampaignExecutionResultHash:
+      evidence.gpuScientificCampaignExecutionResultHash,
+    gpuScientificExecutionPlan: plan,
+    gpuScientificExecutionEvidence: evidence,
+  } : {};
+}
+
+export function gpuScientificReleaseLineageValid({
+  campaignPlanHash,
+  campaignId,
+  paperId,
+  plan,
+  evidence,
+  planHash,
+  resultHash,
+  candidate = null,
+} = {}) {
+  return gpuScientificReleaseEvidenceValid({
+    campaignPlanHash, campaignId, paperId, plan, evidence,
+  })
+    && planHash === plan?.gpuScientificCampaignExecutionPlanHash
+    && resultHash === evidence?.gpuScientificCampaignExecutionResultHash
+    && (!candidate || (
+      planHash === candidate.gpuScientificExecutionPlanHash
+      && resultHash === candidate.gpuScientificCampaignExecutionResultHash
+      && JSON.stringify(plan || null)
+        === JSON.stringify(candidate.gpuScientificExecutionPlan || null)
+      && JSON.stringify(evidence || null)
+        === JSON.stringify(candidate.gpuScientificExecutionEvidence || null)
+    ));
+}
+
+export function gpuScientificReleaseRecordValid(record, candidate = null) {
+  return gpuScientificReleaseLineageValid({
+    campaignPlanHash: record?.campaignPlanHash,
+    campaignId: record?.campaignId,
+    paperId: record?.paperId,
+    plan: record?.gpuScientificExecutionPlan || null,
+    evidence: record?.gpuScientificExecutionEvidence || null,
+    planHash: record?.gpuScientificExecutionPlanHash,
+    resultHash: record?.gpuScientificCampaignExecutionResultHash,
+    candidate,
+  });
 }
 
 export function autonomousManuscriptSourceRowsMatch(binding, sourceTreeManifest) {

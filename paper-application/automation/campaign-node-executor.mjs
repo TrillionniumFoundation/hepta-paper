@@ -14,6 +14,9 @@ import {
   executeCampaignAdvancedNumericalNode,
 } from './campaign-advanced-numerical-node-orchestrator.mjs';
 import {
+  executeCampaignGpuScientificNode,
+} from './campaign-gpu-scientific-node-orchestrator.mjs';
+import {
   executeCampaignConvergenceNode,
   executeCampaignPackageNode,
   executeCampaignQualityRevalidationNode,
@@ -41,6 +44,7 @@ async function executeOperation({
   experimentRegistryAuthorityVerifier,
   reviewerEvidenceAuthority,
   advancedNumericalExecution,
+  gpuScientificExecution,
 }) {
   const { workspace, manuscript } = primitives.workspace.describe({ sourceWorkspace: campaign.spec.sourceWorkspace });
   const common = {
@@ -58,6 +62,10 @@ async function executeOperation({
     case 'advanced-numerical': return executeCampaignAdvancedNumericalNode({
       ...common,
       advancedNumericalExecution,
+    });
+    case 'gpu-scientific': return executeCampaignGpuScientificNode({
+      ...common,
+      gpuScientificExecution,
     });
     case 'formal-verification': return executeCampaignFormalVerificationNode(common);
     case 'research-verification': return executeCampaignResearchVerificationNode(common);
@@ -81,6 +89,7 @@ export function createCampaignNodeExecutor({
   sessionReviewerReceiptVerifier = null,
   reviewerEvidenceAuthority = null,
   advancedNumericalExecution = null,
+  gpuScientificExecution = null,
 } = {}) {
   if (signedReviewerReceiptVerifier !== null
     && typeof signedReviewerReceiptVerifier !== 'function') {
@@ -119,6 +128,7 @@ export function createCampaignNodeExecutor({
         experimentRegistryAuthorityVerifier,
         reviewerEvidenceAuthority,
         advancedNumericalExecution,
+        gpuScientificExecution,
       });
       if (!workspaceAttempt) return result;
       return Object.freeze({

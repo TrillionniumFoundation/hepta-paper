@@ -7,6 +7,8 @@ import { StrictFullAutoAcceptanceRepository } from '../../paper-adapters/automat
 import { StrictFullAutoAcceptanceCommandRunner } from '../../paper-adapters/automation/strict-full-auto-acceptance-command-runner.mjs';
 import { StrictFullAutoAcceptanceOrchestrator } from '../../paper-application/automation/strict-full-auto-acceptance-orchestrator.mjs';
 import {
+  assertInvocationOutput,
+  finalVerificationStep,
   RECOVERY_REEXECUTION_SAFE_STEPS,
 } from '../../paper-application/automation/strict-full-auto-acceptance-state.mjs';
 import {
@@ -117,7 +119,75 @@ test('plan preflights all external references without reading opaque material or
   assert.equal(RECOVERY_REEXECUTION_SAFE_STEPS.has(
     'generic-domain-capability-convergence',
   ), false);
+  const requiredProfiles = first.finalVerification.assertions.find((assertion) => (
+    assertion.path === '/runtimeImageReproducibility/requiredProfiles'
+  )).equals;
+  assert.deepEqual(requiredProfiles, ['python', 'pythonGpu', 'r']);
+  assert.equal(Object.isFrozen(requiredProfiles), true);
   assert.equal(fs.existsSync(path.join(value.controlRoot, 'state.json')), false);
+});
+
+test('final verification compares parsed array assertions by canonical JSON value', async (t) => {
+  const value = fixture(t);
+  const plan = orchestratorFor(
+    value.configurationPath,
+    successfulRunner(),
+  ).plan();
+  const clonedOutput = structuredClone(successfulOutput(plan.finalVerification));
+  assert.doesNotThrow(() => assertInvocationOutput(
+    plan.finalVerification,
+    clonedOutput,
+    'fixture-final-verification',
+  ));
+
+  const reordered = structuredClone(clonedOutput);
+  reordered.runtimeImageReproducibility.requiredProfiles = ['r', 'pythonGpu', 'python'];
+  assert.throws(() => assertInvocationOutput(
+    plan.finalVerification,
+    reordered,
+    'fixture-final-verification',
+  ), /assertion_failed:fixture-final-verification:\/runtimeImageReproducibility\/requiredProfiles/);
+
+  const notReady = structuredClone(clonedOutput);
+  notReady.fullyAutonomousResearchSystemStatus = 'fixture-not-ready';
+  const runner = new StrictFullAutoAcceptanceCommandRunner({
+    workspaceRoot: path.resolve('.'),
+    environment: { PATH: process.env.PATH },
+    runProcess: async () => ({
+      exitCode: 2,
+      timedOut: false,
+      aborted: false,
+      outputTruncated: false,
+      stdout: JSON.stringify(notReady),
+      stderr: '',
+    }),
+  });
+  const runnerPlan = Object.freeze({
+    ...plan,
+    operationalEnvironment: Object.freeze({
+      ...plan.operationalEnvironment,
+      HEPTA_AUTONOMOUS_EMPIRICAL_PLUGIN_ACTIVATION_POINTER: '',
+    }),
+  });
+  await assert.rejects(runner.run({
+    plan: runnerPlan,
+    step: finalVerificationStep(runnerPlan),
+    phase: 'verify',
+    invocation: runnerPlan.finalVerification,
+  }), (error) => (
+    error?.code === 'STRICT_FULL_AUTO_ACCEPTANCE_NOT_READY'
+    && error?.assertionPath === '/fullyAutonomousResearchSystemStatus'
+  ));
+
+  const reorderedConfiguration = fixture(t, ({ configuration }) => {
+    configuration.finalVerification.assertions.find((assertion) => (
+      assertion.path === '/runtimeImageReproducibility/requiredProfiles'
+    )).equals = ['r', 'pythonGpu', 'python'];
+  });
+  assert.throws(() => orchestratorFor(
+    reorderedConfiguration.configurationPath,
+    successfulRunner(),
+  ).plan(), /invocation_policy_mismatch:final-aggregate-live-verification/);
 });
 
 test('strict acceptance requires v3 KMS authority and preflights its pinned bundle', (t) => {

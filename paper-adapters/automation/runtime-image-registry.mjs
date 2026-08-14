@@ -59,7 +59,7 @@ export const RUNTIME_IMAGE_BUILD_REPRODUCIBILITY = Object.freeze({
   pythonGpu: buildRuntimeImageReproducibilityAssessment({
     image: SYSTEM_DATASET_ACCESS_RUNTIME_IMAGES.pythonGpu.image,
     imageDigest: SYSTEM_DATASET_ACCESS_RUNTIME_IMAGES.pythonGpu.imageDigest,
-    definitionManifestHash: 'sha256:98e1fa0742aa5e0efdfc9dc616235c7518a1bdfa652e388b874db5447fba6bd2',
+    definitionManifestHash: 'sha256:0cfd59b6df1151cdc128ce97e231234b0ebc17e5312c2aece8f4bbb45cf0cf2f',
     baseImageDigestPinned: true,
     osPackageSnapshotPinned: true,
     dependencyVersionsPinned: true,

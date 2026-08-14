@@ -17,6 +17,12 @@ export function campaignGraphNode(campaignId, kind, dependencies = [], options =
       advancedNumericalExecutionPlanHash:
         options.advancedNumericalExecutionPlanHash,
     } : {}),
+    ...(options.gpuScientificExecutionPlanHash ? {
+      gpuScientificExecutionPlanHash: options.gpuScientificExecutionPlanHash,
+    } : {}),
+    ...(options.gpuScientificResourceBudgetHash ? {
+      gpuScientificResourceBudgetHash: options.gpuScientificResourceBudgetHash,
+    } : {}),
   });
 }
 

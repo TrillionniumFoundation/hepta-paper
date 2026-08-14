@@ -102,6 +102,25 @@ function bindReleaseAuthority(plan) {
   return { ...bound, campaignPlanHash: hashRecord('PaperCampaignPlan', bound) };
 }
 
+function rehashAutomationPromotionCandidate(candidate) {
+  const payload = structuredClone(candidate);
+  delete payload.automationPromotionCandidateHash;
+  return {
+    ...payload,
+    automationPromotionCandidateHash:
+      hashRecord('AutomationPromotionCandidate', payload),
+  };
+}
+
+function rehashCampaignReleaseBundle(bundle) {
+  const payload = structuredClone(bundle);
+  delete payload.campaignReleaseBundleHash;
+  return {
+    ...payload,
+    campaignReleaseBundleHash: hashRecord('CampaignReleaseBundle', payload),
+  };
+}
+
 function readyResearchReport(identity = {}) {
   const researchGapPlanHash = hashRecord('ResearchGapPlanFixture', {});
   const promotionInputSnapshotHash = hashRecord('PromotionInputSnapshotFixture', {});
@@ -581,6 +600,72 @@ test('prepared bundle becomes submission-consumable only through the current com
   assert.match(capsuleSums, /  evidence\/PUBLIC_AUTHORITY_TRUST_SNAPSHOT\.json$/m);
   assert.match(first.releaseBundle.researchEvidenceCapsuleManifest.publicAuthorityTrustSnapshotHash, /^sha256:[0-9a-f]{64}$/);
   assert.doesNotMatch(capsuleSums, /campaign-releases|\/runtime\//);
+  const incompleteGpuPlan = {
+    version: 1,
+    kind: 'GpuScientificCampaignExecutionPlan',
+    gpuScientificCampaignExecutionPlanHash:
+      hashRecord('IncompleteGpuScientificCampaignExecutionPlanFixture', {}),
+  };
+  const missingGpuEvidenceCandidate = rehashAutomationPromotionCandidate({
+    ...first.releaseBundle.promotionCandidate,
+    gpuScientificExecutionPlanHash:
+      incompleteGpuPlan.gpuScientificCampaignExecutionPlanHash,
+    gpuScientificExecutionPlan: incompleteGpuPlan,
+  });
+  assert.throws(() => createCampaignReleaseBundle({
+    promotionCandidate: missingGpuEvidenceCandidate,
+    artifactPackage: first.releaseBundle.artifactPackage,
+    packageVerificationReceipt: first.releaseBundle.packageVerificationReceipt,
+    manuscriptPromotionGate: first.releaseBundle.manuscriptPromotionGate,
+    researchReport: first.releaseBundle.researchReport,
+    researchEvidenceCapsuleManifest:
+      first.releaseBundle.researchEvidenceCapsuleManifest,
+    researchExecutionReleaseAttestation:
+      first.releaseBundle.researchExecutionReleaseAttestation,
+    packageOutput: first.releaseBundle.packageOutput,
+    createdAt: first.releaseBundle.createdAt,
+  }), /campaign_release_gpu_scientific_evidence_invalid/);
+
+  const forgedGpuEvidence = {
+    version: 1,
+    kind: 'GpuScientificCampaignExecutionResult',
+    promotionEligible: true,
+    productionQualified: true,
+    gpuScientificCampaignExecutionResultHash:
+      hashRecord('ForgedGpuScientificCampaignExecutionResultFixture', {}),
+  };
+  const forgedGpuCandidate = rehashAutomationPromotionCandidate({
+    ...first.releaseBundle.promotionCandidate,
+    gpuScientificExecutionPlanHash:
+      incompleteGpuPlan.gpuScientificCampaignExecutionPlanHash,
+    gpuScientificCampaignExecutionResultHash:
+      forgedGpuEvidence.gpuScientificCampaignExecutionResultHash,
+    gpuScientificExecutionPlan: incompleteGpuPlan,
+    gpuScientificExecutionEvidence: forgedGpuEvidence,
+  });
+  const forgedGpuBundle = rehashCampaignReleaseBundle({
+    ...first.releaseBundle,
+    automationPromotionCandidateHash:
+      forgedGpuCandidate.automationPromotionCandidateHash,
+    promotionCandidate: forgedGpuCandidate,
+    gpuScientificExecutionPlanHash:
+      forgedGpuCandidate.gpuScientificExecutionPlanHash,
+    gpuScientificCampaignExecutionResultHash:
+      forgedGpuCandidate.gpuScientificCampaignExecutionResultHash,
+    gpuScientificExecutionPlan: incompleteGpuPlan,
+    gpuScientificExecutionEvidence: forgedGpuEvidence,
+  });
+  const forgedGpuVerification = verifyCampaignReleaseBundle(forgedGpuBundle);
+  assert.equal(forgedGpuVerification.valid, false);
+  assert.ok(forgedGpuVerification.blockers.includes(
+    'campaign_release_gpu_scientific_evidence_invalid',
+  ));
+  assert.equal(forgedGpuVerification.blockers.includes(
+    'campaign_release_bundle_hash_invalid',
+  ), false);
+  assert.equal(forgedGpuVerification.blockers.includes(
+    'automation_promotion_candidate_hash_invalid',
+  ), false);
   const { immutableCampaignPackageOutputHash: _outputHash, ...inconsistentOutputPayload } = first.releaseBundle.packageOutput;
   inconsistentOutputPayload.sourceZipHash = 'sha256:inconsistent-source-archive';
   const inconsistentOutput = {

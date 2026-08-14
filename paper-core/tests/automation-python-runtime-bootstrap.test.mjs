@@ -46,7 +46,7 @@ test('Python runtime bootstrap CLI binds one fixed profile and exposes no digest
 test('Python canonical builds are OCI-only, timestamp-rewritten, cacheless and pinned', () => {
   for (const [profile, image] of [
     ['python', 'hepta/python-scientific:0.14.0'],
-    ['pythonGpu', 'hepta/python-gpu:0.14.0'],
+    ['pythonGpu', 'hepta/python-gpu:0.15.0'],
   ]) {
     const args = canonicalPythonRuntimeBuildArguments({
       profile,

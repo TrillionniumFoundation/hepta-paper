@@ -18,6 +18,7 @@ export function evaluateAutomationReadiness({
   operationalIntegrity = null,
   researchExecutionReleaseAttestor = null,
   runtimeImageReproducibility = null,
+  gpuScientificCapabilityProofInspection = null,
   fullResearchQualification = null,
   liveProviderCanaryRequired = false,
 } = {}) {
@@ -30,6 +31,35 @@ export function evaluateAutomationReadiness({
   const academicEmpiricalReady = sandbox.academicEmpiricalReady === true;
   const academicEmpiricalReadinessReason = sandbox.academicEmpiricalReadinessReason
     || 'academic_empirical_readiness_not_reported';
+  const gpuScientificRuntimeReady = runtimes.gpu?.usable === true
+    && runtimes.gpuContainer?.usable === true
+    && runtimes.images?.pythonGpu?.usable === true;
+  const gpuPdeProof = gpuScientificCapabilityProofInspection?.capabilities?.pde;
+  const gpuDeepLearningProof =
+    gpuScientificCapabilityProofInspection?.capabilities?.deepLearning;
+  const gpuPdeOperationalProofReady = gpuPdeProof?.operationalProofReady === true
+    && Array.isArray(gpuPdeProof.operationalReceiptHashes)
+    && gpuPdeProof.operationalReceiptHashes.length > 0
+    && gpuPdeProof.operationalReceiptHashes.every((value) => SHA256.test(value));
+  const gpuPdeProductionQualificationReady =
+    gpuPdeProof?.productionQualificationReady === true
+    && Array.isArray(gpuPdeProof.conformanceReceiptHashes)
+    && gpuPdeProof.conformanceReceiptHashes.length > 0
+    && gpuPdeProof.conformanceReceiptHashes.every((value) => SHA256.test(value));
+  const gpuDeepLearningOperationalProofReady =
+    gpuDeepLearningProof?.operationalProofReady === true
+    && Array.isArray(gpuDeepLearningProof.operationalReceiptHashes)
+    && gpuDeepLearningProof.operationalReceiptHashes.length > 0
+    && gpuDeepLearningProof.operationalReceiptHashes.every((value) => SHA256.test(value));
+  const gpuDeepLearningProductionQualificationReady =
+    gpuDeepLearningProof?.productionQualificationReady === true
+    && Array.isArray(gpuDeepLearningProof.conformanceReceiptHashes)
+    && gpuDeepLearningProof.conformanceReceiptHashes.length > 0
+    && gpuDeepLearningProof.conformanceReceiptHashes.every((value) => SHA256.test(value));
+  const gpuScientificCapabilityProofsReady = gpuPdeOperationalProofReady
+    && gpuPdeProductionQualificationReady
+    && gpuDeepLearningOperationalProofReady
+    && gpuDeepLearningProductionQualificationReady;
   const campaignStoreReady = campaignQueryReady === true
     && nodeQueryReady === true
     && campaignStoreSchema?.status === 'scoped_schema_version_verified'
@@ -43,6 +73,8 @@ export function evaluateAutomationReadiness({
     && researchExecutionReleaseAttestor?.productionReady === true
     && researchExecutionReleaseAttestor?.fullProductionReady === true
     && runtimeImageReproducibility?.ready === true
+    && gpuScientificRuntimeReady
+    && gpuScientificCapabilityProofsReady
     && runtimes.lean?.usable === true;
   const independentHypothesisPriorArtQualificationReady =
     fullResearchQualification?.independentHypothesisPriorArtReviewVerified === true
@@ -88,6 +120,14 @@ export function evaluateAutomationReadiness({
     ...(runtimeImageReproducibility?.ready !== true
       ? ['runtime_image_reproducibility_not_ready'] : []),
     ...(runtimeImageReproducibility?.blockers || []),
+    ...(!gpuScientificRuntimeReady ? ['gpu_scientific_runtime_not_ready'] : []),
+    ...(!gpuPdeOperationalProofReady ? ['gpu_pde_operational_proof_not_ready'] : []),
+    ...(!gpuPdeProductionQualificationReady
+      ? ['gpu_pde_production_qualification_not_ready'] : []),
+    ...(!gpuDeepLearningOperationalProofReady
+      ? ['gpu_deep_learning_operational_proof_not_ready'] : []),
+    ...(!gpuDeepLearningProductionQualificationReady
+      ? ['gpu_deep_learning_production_qualification_not_ready'] : []),
     ...(runtimes.lean?.usable !== true ? ['lean_runtime_not_ready'] : []),
     ...(!providersReady ? ['qualified_provider_canaries_not_ready'] : []),
     ...(!independentHypothesisPriorArtQualificationReady
@@ -110,6 +150,12 @@ export function evaluateAutomationReadiness({
     automationOperationalReady: automationRuntimeReady && campaignStoreReady && operationalIntegrityReady,
     academicEmpiricalReady,
     academicEmpiricalReadinessReason,
+    gpuScientificRuntimeReady,
+    gpuPdeOperationalProofReady,
+    gpuPdeProductionQualificationReady,
+    gpuDeepLearningOperationalProofReady,
+    gpuDeepLearningProductionQualificationReady,
+    gpuScientificCapabilityProofsReady,
     campaignStoreReady,
     fullAutomaticResearchWritingRuntimePreflightReady,
     independentHypothesisPriorArtQualificationReady,

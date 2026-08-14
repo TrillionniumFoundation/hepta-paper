@@ -58,6 +58,7 @@ import {
   inspectAutomationDynamicFormalProjectClosure,
   inspectAutomationFormalSandboxRuntime,
   inspectAutomationAgentProviders,
+  inspectGpuScientificCapabilityProofs,
 } from './automation-readiness-runtime-probes.mjs';
 import {
   composeAutomationReadinessCapabilityScope,
@@ -65,7 +66,6 @@ import {
 import {
   inspectAutonomousSubmissionDispatcherReadiness,
 } from './autonomous-submission-dispatcher-readiness-composition.mjs';
-
 export {
   evaluateFullyAutonomousResearchSystemReadiness,
   inspectAutonomousResearchMachineIntakeStatus,
@@ -316,6 +316,13 @@ export function queryAutomationReadiness({
       registeredImageDigests: null,
       blockers: runtimeImageReproducibilityReport.blockers,
     });
+  const gpuScientificCapabilityProofInspection =
+    inspectGpuScientificCapabilityProofs({
+      runtimeRoot,
+      workspaceRoot: HEPTA_WORKSPACE_ROOT,
+      releaseCommit: codeProvenance.commit,
+      codeProvenance,
+    });
   const operationalIntegrity = inspectAutomationStoreOperationalIntegrity({ store, now });
   let qualificationReleaseContext = null;
   let fullResearchQualification;
@@ -365,6 +372,7 @@ export function queryAutomationReadiness({
     operationalIntegrity,
     researchExecutionReleaseAttestor,
     runtimeImageReproducibility,
+    gpuScientificCapabilityProofInspection,
     fullResearchQualification,
     liveProviderCanaryRequired: liveProviderCanaryRequested,
   });
@@ -549,6 +557,15 @@ export function queryAutomationReadiness({
     academicEmpiricalReady: readiness.academicEmpiricalReady,
     academicEmpiricalStatus: readiness.academicEmpiricalReady ? 'academic_empirical_runtime_ready' : 'academic_empirical_runtime_blocked',
     academicEmpiricalReadinessReason: readiness.academicEmpiricalReadinessReason,
+    gpuScientificRuntimeReady: readiness.gpuScientificRuntimeReady,
+    gpuPdeOperationalProofReady: readiness.gpuPdeOperationalProofReady,
+    gpuPdeProductionQualificationReady:
+      readiness.gpuPdeProductionQualificationReady,
+    gpuDeepLearningOperationalProofReady:
+      readiness.gpuDeepLearningOperationalProofReady,
+    gpuDeepLearningProductionQualificationReady:
+      readiness.gpuDeepLearningProductionQualificationReady,
+    gpuScientificCapabilityProofInspection,
     academicEmpiricalDatasetProofBackend: runtimes.sandbox.academicEmpiricalDatasetProofBackend || null,
     researchAuthorIdentityAttestation:
       capabilityScopeInspection.authorIdentityAttestation || null,

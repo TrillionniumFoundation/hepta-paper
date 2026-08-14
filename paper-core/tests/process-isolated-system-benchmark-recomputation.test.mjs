@@ -121,6 +121,8 @@ function rebindSandboxWorkerProcessIdentity(sandboxReceipt, {
     ...sandboxPayload,
     backend,
     runnerId: `${backend}-kernel-isolation-worker-v4`,
+    evidenceClass: 'verification-fixture-v1',
+    productionEvidenceEligible: false,
     isolation: {
       ...sandboxPayload.isolation,
       memoryLimitScope: backend === 'docker'
@@ -417,16 +419,18 @@ test('process assurance requires Docker PID-namespace worker evidence', () => {
   const fixtureRunner = createRawEventRecomputationSandboxTestFixture();
   const sandboxWorkerRunner = {
     run(spec) {
-      return rebindSandboxWorkerProcessIdentity(fixtureRunner.run(spec), {
+      const receipt = rebindSandboxWorkerProcessIdentity(fixtureRunner.run(spec), {
         backend: 'docker',
         parentPid: 0,
         workerPid: 1,
       });
+      assert.equal(verifyOsSandboxWorkerReceipt(receipt), true, JSON.stringify(receipt));
+      return receipt;
     },
   };
   const input = fixture();
   const assurance = runWithSandbox(sandboxWorkerRunner, input);
-  assert.equal(assurance.parentPid, 0);
+  assert.equal(assurance.parentPid, 0, JSON.stringify(assurance));
   assert.equal(assurance.workerPid, 1);
   assert.equal(verifyProcessIsolatedRawEventRecomputationAssurance(assurance, input), true);
 });

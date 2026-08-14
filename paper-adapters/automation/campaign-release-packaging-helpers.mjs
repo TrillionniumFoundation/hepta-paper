@@ -179,6 +179,10 @@ export function campaignReleasePackageNodeResult(releaseBundle, materializationR
       releaseBundle.advancedNumericalCampaignExecutionReceiptHash || null,
     advancedNumericalCampaignEvidenceHash:
       releaseBundle.advancedNumericalCampaignEvidenceHash || null,
+    gpuScientificExecutionPlanHash:
+      releaseBundle.gpuScientificExecutionPlanHash || null,
+    gpuScientificCampaignExecutionResultHash:
+      releaseBundle.gpuScientificCampaignExecutionResultHash || null,
     releaseBundle,
     artifactPackage: releaseBundle.artifactPackage,
     packageVerificationReceipt: releaseBundle.packageVerificationReceipt,

@@ -5,6 +5,8 @@ export const CAPABILITY_CATALOG = Object.freeze({
   'research.evidence-quality-gate': { boundedContext: 'research', target: 'paper-domain/research/evidence-quality-gate.mjs' },
   'research.experiment-registry': { boundedContext: 'research', target: 'paper-domain/research/experiment-registry.mjs' },
   'research.formal-verifier': { boundedContext: 'research', target: 'paper-ports/formal-verifier-port.mjs' },
+  'research.gpu-pde-solver': { boundedContext: 'research', target: 'paper-composition/automation/pde-poisson-2d-gpu-composition.mjs' },
+  'research.gpu-deep-learning-training': { boundedContext: 'research', target: 'paper-composition/automation/deep-learning-gpu-training-composition.mjs' },
   'research.change-proposal': { boundedContext: 'research', target: 'paper-domain/research/change-proposal.mjs' },
   'runtime.sandboxed-worker-runner': { boundedContext: 'runtime', target: 'paper-ports/worker-runner-port.mjs' },
   'runtime.artifact-repository': { boundedContext: 'runtime', target: 'paper-ports/artifact-repository-port.mjs' },

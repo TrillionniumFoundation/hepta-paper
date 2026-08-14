@@ -21,6 +21,25 @@ export function canonicalAcceptanceJson(value) {
   return JSON.stringify(value);
 }
 
+export function normalizeStrictFullAutoAcceptanceAssertionValue(value) {
+  if (value === null
+    || typeof value === 'string'
+    || typeof value === 'boolean'
+    || (typeof value === 'number' && Number.isFinite(value))) {
+    return value;
+  }
+  if (Array.isArray(value)
+    && value.length > 0
+    && value.every((item) => typeof item === 'string' && item.length > 0)) {
+    return Object.freeze([...value]);
+  }
+  throw new Error('strict_full_auto_acceptance_assertion_value_invalid');
+}
+
+export function strictFullAutoAcceptanceJsonEqual(left, right) {
+  return canonicalAcceptanceJson(left) === canonicalAcceptanceJson(right);
+}
+
 export function strictFullAutoAcceptanceHash(value) {
   return `sha256:${crypto.createHash('sha256').update(canonicalAcceptanceJson(value)).digest('hex')}`;
 }

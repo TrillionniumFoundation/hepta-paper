@@ -19,10 +19,13 @@ const PROFILE = /^[A-Za-z][A-Za-z0-9]{0,31}$/;
 const MAXIMUM_AGE_MS = 24 * 60 * 60 * 1000;
 const MAXIMUM_RECEIPT_ISSUANCE_LAG_MS = 60_000;
 
-const SUPPORTED_RUNTIME_IMAGE_PROFILES = new Set(['python', 'r']);
+const SUPPORTED_RUNTIME_IMAGE_PROFILES = new Set(['python', 'pythonGpu', 'r']);
 
 export const REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES = Object.freeze(
-  [...AUTONOMOUS_EMPIRICAL_PLUGIN_RUNTIME_LANGUAGES],
+  [...new Set([
+    ...AUTONOMOUS_EMPIRICAL_PLUGIN_RUNTIME_LANGUAGES,
+    'pythonGpu',
+  ])].sort(),
 );
 
 if (REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES.length < 1
@@ -50,6 +53,7 @@ const ACTIVE_PLUGIN_SCOPE_PAYLOAD = Object.freeze({
       .map((profile) => profile.autonomousEmpiricalFamilyPluginProfileHash),
   ),
   requiredProfiles: REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES,
+  requiredScientificRuntimeProfiles: Object.freeze(['pythonGpu']),
   productionGpuProfileCount: 0,
 });
 

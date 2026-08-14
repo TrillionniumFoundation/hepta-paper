@@ -18,7 +18,9 @@ import { signAuthorityDocument } from '../../paper-adapters/authority/authority-
 import { authorizeOperatorDatasetMount } from '../../paper-adapters/automation/operator-dataset-harness-reader.mjs';
 import { resolveSystemBenchmarkArmAdapterSet } from '../../paper-adapters/automation/system-benchmark-arm-adapter-repository.mjs';
 import { inspectStrictDatasetManifest } from '../../paper-adapters/runtime/execution-snapshot.mjs';
-import { createOsSandboxedWorkerRunner } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
+import {
+  createOsSandboxedWorkerRunnerForTest as createOsSandboxedWorkerRunner,
+} from './support/os-sandboxed-worker-runner-test-driver.mjs';
 import { selectAndValidateWorkerEnvironment } from '../../paper-adapters/runtime/worker-environment-policy.mjs';
 import { buildCampaignBenchmarkSelector, verifyCampaignBenchmarkSelector } from '../../paper-domain/automation/campaign-benchmark-selector.mjs';
 import {
@@ -217,6 +219,8 @@ function workerReceipt({ batch, content, datasetMounts = [], processOrdinal = nu
   const payload = {
     version: 4,
     kind: 'OsSandboxWorkerReceipt',
+    evidenceClass: 'verification-fixture-v1',
+    productionEvidenceEligible: false,
     runnerId: 'bubblewrap-kernel-isolation-worker-v4',
     backend: 'bubblewrap',
     status: 'os_sandbox_worker_passed',

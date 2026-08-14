@@ -6,7 +6,9 @@ import path from 'node:path';
 import test from 'node:test';
 import { createMultiLanguageEmpiricalExecutor } from '../../paper-adapters/automation/multi-language-empirical-executor.mjs';
 import { createFilesystemEmpiricalCacheRepository } from '../../paper-adapters/automation/empirical-cache-repository.mjs';
-import { createOsSandboxedWorkerRunner } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
+import {
+  createOsSandboxedWorkerRunnerForTest as createOsSandboxedWorkerRunner,
+} from './support/os-sandboxed-worker-runner-test-driver.mjs';
 import { fileSha256Hash } from '../../paper-adapters/runtime/execution-snapshot.mjs';
 import { evaluateEmpiricalCacheReproducibility } from '../../paper-domain/automation/empirical-cache-reproducibility-policy.mjs';
 import {

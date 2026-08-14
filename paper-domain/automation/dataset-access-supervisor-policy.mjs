@@ -17,8 +17,8 @@ export const SYSTEM_DATASET_ACCESS_RUNTIME_IMAGES = Object.freeze({
     setprivSha256: 'sha256:548074b1fad78aa213a5da4516accb9f886016e9401f8bfc04e3c569045d853b',
   }),
   pythonGpu: Object.freeze({
-    image: 'hepta/python-gpu:0.14.0',
-    imageDigest: 'sha256:a19945393646e79504b71e32833aa767216f4b1d013aa97930c00fd19cdcef57',
+    image: 'hepta/python-gpu:0.15.0',
+    imageDigest: 'sha256:21acb5fb016d9fd17131215d16e1834fcfeb081e047718d49b6d58d8afa97e2b',
     containerExecutable: 'python',
     tracerSha256: 'sha256:aebaf212ce84a12208c5fa25f08c892029e6f6949b778da55e071ac145404a1e',
     setprivSha256: 'sha256:548074b1fad78aa213a5da4516accb9f886016e9401f8bfc04e3c569045d853b',

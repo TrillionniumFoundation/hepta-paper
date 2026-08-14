@@ -14,6 +14,15 @@ import {
 import {
   verifyAdvancedNumericalCampaignExecutionPlan,
 } from '../../paper-domain/automation/advanced-numerical-campaign-execution-contract.mjs';
+import {
+  buildAdvancedNumericalGpuRuntimeAuthority,
+} from '../../paper-domain/research/advanced-numerical-plugin-contract.mjs';
+
+export {
+  PDE_POISSON_2D_CPU_ORACLE_DOCKER_IMAGE,
+  runProcessIsolatedPdePoisson2dIndependentCpuOracle,
+  verifyProcessIsolatedPdePoisson2dCpuOracleAgainstArtifacts,
+} from '../../paper-adapters/research-verify/process-isolated-pde-poisson-2d-independent-cpu-oracle.mjs';
 
 export function composeAdvancedNumericalPluginRuntime({
   bundle,
@@ -30,8 +39,13 @@ export function composeAdvancedNumericalPluginRuntime({
     now,
   });
   const descriptor = verifiedBundle.descriptor;
+  const gpuRuntimeAuthority = descriptor.version === 2
+    ? buildAdvancedNumericalGpuRuntimeAuthority(descriptor) : null;
   const workerRunner = createOsSandboxedWorkerRunner({
-    allowedExecutables: [descriptor.runtime.executable],
+    allowedExecutables: gpuRuntimeAuthority ? [] : [descriptor.runtime.executable],
+    allowedContainerImages: gpuRuntimeAuthority
+      ? [descriptor.runtime.containerImage, descriptor.runtime.containerImageDigest] : [],
+    allowGpu: Boolean(gpuRuntimeAuthority),
     allowedRoots: [pluginRoot],
     allowedOutputRoots: [outputRoot],
     maximumTimeoutMs: descriptor.limits.timeoutMs,
@@ -55,6 +69,7 @@ export function composeAdvancedNumericalPluginRuntime({
   return Object.freeze({
     verifiedBundle,
     descriptor,
+    gpuRuntimeAuthority,
     workerRunner,
     runner,
   });

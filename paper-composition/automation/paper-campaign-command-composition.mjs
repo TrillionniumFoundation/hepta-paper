@@ -10,6 +10,13 @@ import {
   composeCampaignWorkerExecution,
   loadOperatorDatasetAuthorityTrustStoreSync,
 } from './campaign-worker-composition.mjs';
+import {
+  buildCanonicalGpuScientificCampaignExecutionPlan,
+} from '../../paper-domain/automation/gpu-scientific-campaign-execution-contract.mjs';
+import {
+  inspectNvidiaGpuDeviceCapacity,
+  selectSingleNvidiaGpuDeviceCapacity,
+} from '../../paper-adapters/runtime/nvidia-gpu-device-capacity-observer.mjs';
 
 const LOCAL_ONLY_CAMPAIGN_MODES = new Set(['empirical-analysis', 'local-review-loop']);
 
@@ -79,6 +86,46 @@ function resolveInventoryRows(inventory, root) {
   });
 }
 
+function gpuScientificExecutionPlanFactory({ options, clock }) {
+  const requested = options['gpu-scientific'] === true;
+  const selectorRequested = options['gpu-device-selector'] !== undefined;
+  const deadlineRequested = options['gpu-scientific-deadline-ms'] !== undefined;
+  if (!requested) {
+    if (selectorRequested || deadlineRequested) {
+      throw new Error('--gpu-device-selector and --gpu-scientific-deadline-ms require --gpu-scientific');
+    }
+    return null;
+  }
+  if (options.gpuScientificExecutionPlan) {
+    throw new Error('campaign_gpu_scientific_execution_plan_ambiguous');
+  }
+  const observation = selectorRequested
+    ? inspectNvidiaGpuDeviceCapacity(String(options['gpu-device-selector']))
+    : selectSingleNvidiaGpuDeviceCapacity();
+  if (!observation) {
+    throw new Error(selectorRequested
+      ? 'campaign_gpu_scientific_device_unavailable'
+      : 'campaign_gpu_scientific_single_device_required');
+  }
+  const deadlineWindowMs = Number(
+    options['gpu-scientific-deadline-ms']
+      ?? options['max-wall-ms']
+      ?? 6 * 60 * 60 * 1_000,
+  );
+  if (!Number.isSafeInteger(deadlineWindowMs)
+    || deadlineWindowMs < 60_000
+    || deadlineWindowMs > 24 * 60 * 60 * 1_000) {
+    throw new Error('campaign_gpu_scientific_deadline_window_invalid');
+  }
+  const absoluteExecutionDeadlineEpochMs = clock.now().getTime() + deadlineWindowMs;
+  return ({ campaignId, paperId }) => buildCanonicalGpuScientificCampaignExecutionPlan({
+    campaignId,
+    paperId,
+    gpuDeviceSelector: observation.gpuDeviceSelector,
+    absoluteExecutionDeadlineEpochMs,
+  });
+}
+
 export async function executePaperCampaignCommand({
   options = {}, root, runtimeRoot, environment = {},
 } = {}) {
@@ -144,6 +191,10 @@ export async function executePaperCampaignCommand({
       benchmarkId,
       options,
       runId,
+      gpuScientificExecutionPlanFactory: gpuScientificExecutionPlanFactory({
+        options,
+        clock: context.services.clock,
+      }),
     });
   }
   if (!workAction && !options.execute) {

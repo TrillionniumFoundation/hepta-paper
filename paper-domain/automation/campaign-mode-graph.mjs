@@ -9,6 +9,7 @@ import {
   advancedNumericalCampaignNodeId,
   verifyAdvancedNumericalCampaignExecutionPlan,
 } from './advanced-numerical-campaign-execution-contract.mjs';
+import { buildGpuScientificCampaignGraphNode, requireGpuScientificCampaignGraphPlan } from './gpu-scientific-campaign-graph.mjs';
 
 const FULL_CAMPAIGN_MODE = 'full-campaign';
 export {
@@ -171,7 +172,7 @@ function appendReviewRounds({
   });
 }
 
-function appendFullCampaign({ nodes, campaignId, rounds, reviewers, executionProfiles, executionIntent, integrateManuscript = true, formalRequested = false, researchVerificationRequired = false, advancedNumericalExecutionPlan = null }) {
+function appendFullCampaign({ nodes, campaignId, rounds, reviewers, executionProfiles, executionIntent, integrateManuscript = true, formalRequested = false, researchVerificationRequired = false, advancedNumericalExecutionPlan = null, gpuScientificExecutionPlan = null }) {
   const research = node(campaignId, 'research-plan', [], { priority: 10, executionIntent });
   const writer = node(campaignId, 'writer', [research.nodeId], { priority: 20, role: 'writer', executionIntent });
   // The writer declares literal empirical claim ranges. Every empirical attempt
@@ -256,11 +257,19 @@ function appendFullCampaign({ nodes, campaignId, rounds, reviewers, executionPro
         advancedNumericalExecutionPlan.advancedNumericalCampaignExecutionPlanHash,
     },
   ) : null;
+  const gpuScientific = buildGpuScientificCampaignGraphNode({
+    campaignId,
+    dependencies: sourceClosureReplayNodeIds.length
+      ? sourceClosureReplayNodeIds : [sourceClosureRoot],
+    executionIntent,
+    plan: gpuScientificExecutionPlan,
+  });
   const finalCompile = node(campaignId, 'final-compile', [
     ...review.convergenceNodeIds,
     ...(sourceClosureFormal ? [sourceClosureFormal.formalVerify.nodeId] : []),
     ...sourceClosureReplayNodeIds,
     ...(advancedNumerical ? [advancedNumerical.nodeId] : []),
+    ...(gpuScientific ? [gpuScientific.nodeId] : []),
   ], {
     roundIndex: rounds,
     priority: 100,
@@ -286,6 +295,7 @@ function appendFullCampaign({ nodes, campaignId, rounds, reviewers, executionPro
       ...releaseFormalVerifyNodeIds,
       ...releaseEmpiricalReplayNodeIds,
       ...(advancedNumerical ? [advancedNumerical.nodeId] : []),
+      ...(gpuScientific ? [gpuScientific.nodeId] : []),
     ], { roundIndex: rounds + 1, priority: 105, executionIntent })
     : null;
   const packageNode = node(campaignId, 'package', [finalCompile.nodeId, ...(researchVerify ? [researchVerify.nodeId] : [])], {
@@ -297,6 +307,7 @@ function appendFullCampaign({ nodes, campaignId, rounds, reviewers, executionPro
       : []),
     ...sourceClosureEmpirical.flatMap((chain) => [chain.empirical, chain.reproduce]),
     ...(advancedNumerical ? [advancedNumerical] : []),
+    ...(gpuScientific ? [gpuScientific] : []),
     finalCompile,
     ...(researchVerify ? [researchVerify] : []),
     packageNode,
@@ -382,6 +393,7 @@ export function buildCampaignModeNodes({
   formalRequested = false,
   researchVerificationRequired = false,
   advancedNumericalExecutionPlan = null,
+  gpuScientificExecutionPlan = null,
 }) {
   if (advancedNumericalExecutionPlan
     && !verifyAdvancedNumericalCampaignExecutionPlan(
@@ -394,9 +406,10 @@ export function buildCampaignModeNodes({
     )) {
     throw new Error('campaign_advanced_numerical_execution_plan_invalid');
   }
+  requireGpuScientificCampaignGraphPlan(gpuScientificExecutionPlan, campaignId);
   const nodes = [];
   if (mode === FULL_CAMPAIGN_MODE) {
-    appendFullCampaign({ nodes, campaignId, rounds, reviewers, executionProfiles, executionIntent, integrateManuscript: true, formalRequested, researchVerificationRequired, advancedNumericalExecutionPlan });
+    appendFullCampaign({ nodes, campaignId, rounds, reviewers, executionProfiles, executionIntent, integrateManuscript: true, formalRequested, researchVerificationRequired, advancedNumericalExecutionPlan, gpuScientificExecutionPlan });
   } else if (mode === PAPER_BATCH_MODES.LOCAL_BUILD) {
     nodes.push(node(campaignId, 'compile', [], { priority: 10, language: 'latex', executionIntent }));
   } else if (mode === PAPER_BATCH_MODES.LOCAL_PACKAGE

@@ -2,8 +2,12 @@ cupy-cuda12x==13.3.0 \
     --hash=sha256:e206bd8664f0763732b6012431f484ee535bffd77a5ae95e9bfe1c7c72396625
 fastrlock==0.8.3 \
     --hash=sha256:5f13ec08f1adb1aa916c384b05ecb7dbebb8df9ea81abd045f60941c6283a670
+nvidia-cublas-cu12==12.6.4.1 \
+    --hash=sha256:08ed2686e9875d01b58e3cb379c6896df8e76c75e0d4a7f7dace3d7b6d9ef8eb
 nvidia-cuda-nvrtc-cu12==12.6.77 \
     --hash=sha256:35b0cc6ee3a9636d5409133e79273ce1f3fd087abb0532d2d2e8fff1fe9efc53
 nvidia-cuda-runtime-cu12==12.6.77 \
     --hash=sha256:ba3b56a4f896141e25e19ab287cd71e52a6a0f4b29d0d31609f60e3b4d5219b7 \
     --hash=sha256:a84d15d5e1da416dd4774cb42edf5e954a3e60cc945698dc1d5be02321c44dc8
+safetensors==0.5.3 \
+    --hash=sha256:cead1fa41fc54b1e61089fa57452e8834f798cb1dc7a09ba3524f1eb08e0317a

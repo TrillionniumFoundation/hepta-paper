@@ -2,12 +2,31 @@ import {
   dockerWorkerContainerOwnershipArguments,
 } from './docker-worker-container-recovery.mjs';
 
+const NVIDIA_GPU_UUID = /^GPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function normalizeNvidiaGpuDeviceSelector(value) {
+  const candidate = String(value || '').trim();
+  if (!NVIDIA_GPU_UUID.test(candidate)) return null;
+  return `GPU-${candidate.slice(4).toLowerCase()}`;
+}
+
+export function parseNvidiaGpuDeviceSelectorList(value) {
+  return Object.freeze([...new Set(String(value || '').split(/\r?\n/)
+    .map(normalizeNvidiaGpuDeviceSelector).filter(Boolean))].sort());
+}
+
 export function buildDockerWorkerCommand({
   limits, uid, gid, environment, requiresGpu, systemMounts, workRoot, outputRoot, supervisorRoot,
   runtimeExecutableSnapshot, runtimeExecutableOverlayTarget, mountedDatasets, relativeCwd,
   containerImageDigest, datasetSupervisor, executable, arguments: workerArguments,
   immutableWorkRoot = false, containerOwnership = null, attachStandardInput = false,
+  gpuDeviceSelector = null,
 } = {}) {
+  const selectedGpu = normalizeNvidiaGpuDeviceSelector(gpuDeviceSelector);
+  if (requiresGpu && !selectedGpu) throw new Error('docker_worker_gpu_device_selector_invalid');
+  if (!requiresGpu && gpuDeviceSelector !== null && gpuDeviceSelector !== undefined) {
+    throw new Error('docker_worker_gpu_device_selector_without_gpu_request');
+  }
   return [
     'run',
     ...(containerOwnership
@@ -20,7 +39,11 @@ export function buildDockerWorkerCommand({
     '--tmpfs', '/tmp:rw,noexec,nosuid,size=64m', ...(datasetSupervisor ? [] : ['--user', `${uid}:${gid}`]),
     '--env', 'HOME=/tmp', '--env', 'PATH=/usr/local/bin:/usr/bin:/bin',
     ...environment.flatMap(([key, value]) => ['--env', `${key}=${String(value)}`]),
-    ...(requiresGpu ? ['--runtime', 'nvidia', '--env', 'NVIDIA_VISIBLE_DEVICES=all', '--env', 'NVIDIA_DRIVER_CAPABILITIES=compute,utility'] : []),
+    ...(requiresGpu ? [
+      '--gpus', `device=${selectedGpu}`,
+      '--env', `NVIDIA_VISIBLE_DEVICES=${selectedGpu}`,
+      '--env', 'NVIDIA_DRIVER_CAPABILITIES=compute,utility',
+    ] : []),
     ...systemMounts,
     '--volume', `${workRoot}:/source:ro`, '--volume', `${workRoot}:/work:${datasetSupervisor || immutableWorkRoot ? 'ro' : 'rw'}`, '--volume', `${outputRoot}:/output:rw`,
     ...(datasetSupervisor ? ['--volume', `${supervisorRoot}:/hepta-supervisor:rw`] : []),
@@ -36,10 +59,11 @@ export function buildDockerWorkerCommand({
 
 export function buildBubblewrapWorkerCommand({
   limits, bubblewrap, texMounts, runtimeMounts, workRoot, outputRoot, runtimeExecutableSnapshot,
-  runtimeExecutableOverlayTarget, relativeCwd, mountedDatasets, requiresGpu, gpuDevices,
+  runtimeExecutableOverlayTarget, relativeCwd, mountedDatasets, requiresGpu,
   environment, executable, arguments: workerArguments,
   immutableWorkRoot = false,
 } = {}) {
+  if (requiresGpu) throw new Error('bubblewrap_gpu_device_isolation_unsupported');
   return [
     `--as=${limits.memory}`, `--cpu=${limits.cpu}`, `--nproc=${limits.pids}:${limits.pids}`, '--', bubblewrap,
     '--unshare-user-try', '--unshare-pid', '--unshare-ipc', '--unshare-uts', '--unshare-cgroup-try', '--unshare-net', '--die-with-parent', '--new-session',
@@ -49,7 +73,6 @@ export function buildBubblewrapWorkerCommand({
     ...(runtimeExecutableSnapshot ? ['--ro-bind', runtimeExecutableSnapshot.path, runtimeExecutableOverlayTarget] : []),
     '--chdir', `/work${relativeCwd ? `/${relativeCwd}` : ''}`,
     ...mountedDatasets.flatMap((mount) => ['--ro-bind', mount.mountSource, mount.target]),
-    ...(requiresGpu ? gpuDevices.flatMap((device) => ['--dev-bind', device, device]) : []),
     '--setenv', 'HOME', '/tmp', '--setenv', 'PATH', '/usr/local/bin:/usr/bin:/bin',
     ...environment.flatMap(([key, value]) => ['--setenv', key, String(value)]),
     executable, ...workerArguments,

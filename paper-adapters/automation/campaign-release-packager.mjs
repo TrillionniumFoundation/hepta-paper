@@ -79,6 +79,8 @@ export function createCampaignReleasePackager({
       experimentExecutionClosure = null,
       advancedNumericalExecutionPlan = null,
       advancedNumericalExecutionEvidence = null,
+      gpuScientificExecutionPlan = null,
+      gpuScientificExecutionEvidence = null,
       runtimeRoot,
       createdAt,
       executionSignal = null,
@@ -288,6 +290,13 @@ export function createCampaignReleasePackager({
           advancedNumericalCampaignEvidenceHash:
             advancedNumericalExecutionEvidence?.evidenceHash || null,
         } : {}),
+        ...(gpuScientificExecutionPlan ? {
+          gpuScientificExecutionPlanHash:
+            gpuScientificExecutionPlan.gpuScientificCampaignExecutionPlanHash,
+          gpuScientificCampaignExecutionResultHash:
+            gpuScientificExecutionEvidence
+              ?.gpuScientificCampaignExecutionResultHash || null,
+        } : {}),
       };
       const existing = readCampaignReleaseMaterializationSync({ runtimeRoot: resolvedRuntimeRoot, releaseRoot });
       if (existing) {
@@ -466,6 +475,8 @@ export function createCampaignReleasePackager({
         autonomousResearchReleaseBinding,
         advancedNumericalExecutionPlan,
         advancedNumericalExecutionEvidence,
+        gpuScientificExecutionPlan,
+        gpuScientificExecutionEvidence,
         createdAt,
         experimentRegistryAuthorityVerifier,
       });

@@ -2,14 +2,12 @@
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  buildCoreIntegrityReport,
-  writeCoreBaseline,
-} from '../src/core-integrity.mjs';
+import { composeCoreIntegrityOperations } from '../../paper-composition/runtime/core-integrity-composition.mjs';
 
 const workspaceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const write = process.argv.includes('--write-baseline');
 const fullJson = process.argv.includes('--json');
+const { buildCoreIntegrityReport, writeCoreBaseline } = composeCoreIntegrityOperations();
 
 let acceptedFromGitCommit = null;
 try {

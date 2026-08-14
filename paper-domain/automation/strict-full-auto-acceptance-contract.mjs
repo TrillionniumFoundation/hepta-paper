@@ -6,7 +6,9 @@ export {
 } from './strict-full-auto-acceptance-policy.mjs';
 export {
   canonicalAcceptanceJson,
+  normalizeStrictFullAutoAcceptanceAssertionValue,
   strictFullAutoAcceptanceHash,
+  strictFullAutoAcceptanceJsonEqual,
 } from './strict-full-auto-acceptance-primitives.mjs';
 export {
   buildStrictFullAutoAcceptancePlan,

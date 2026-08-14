@@ -110,6 +110,7 @@ function cacheDescriptor(spec, runtimeIdentity) {
     sourceWorkspaceManifestHash: sourceSnapshot.manifestHash,
     runtimeIdentity: Object.freeze({ runtimeType: runtimeIdentity.runtimeType, runtimeIdentityHash: runtimeIdentity.runtimeIdentityHash }),
     requiresGpu: Boolean(spec.requiresGpu),
+    gpuDeviceSelector: spec.requiresGpu ? String(spec.gpuDeviceSelector || '') : null,
     nonDeterministic: nonDeterministicExecution(spec),
     limits: {
       memoryBytes: Number(spec.memoryBytes || 0),
@@ -402,6 +403,7 @@ export function createMultiLanguageEmpiricalExecutor({
         outputPaths: spec.outputPaths || [],
         outputDirectory: spec.outputDirectory,
         requiresGpu: Boolean(spec.requiresGpu),
+        gpuDeviceSelector: spec.gpuDeviceSelector ?? null,
         env: effectiveEnv,
         executionIdentity: executionIdentity.capability,
         containerImage: runtimeImage?.image || null,

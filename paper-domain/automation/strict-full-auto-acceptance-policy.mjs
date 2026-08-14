@@ -379,6 +379,13 @@ export const FINAL_VERIFICATION_INVOCATION_POLICY = Object.freeze({
   assertions: [
     ['/fullyAutonomousResearchSystemStatus',
       'generic_domain_autonomous_research_system_ready'],
+    ['/runtimeImageReproducibilityReady', true],
+    ['/runtimeImageReproducibility/requiredProfiles', ['python', 'pythonGpu', 'r']],
+    ['/gpuScientificRuntimeReady', true],
+    ['/gpuPdeOperationalProofReady', true],
+    ['/gpuPdeProductionQualificationReady', true],
+    ['/gpuDeepLearningOperationalProofReady', true],
+    ['/gpuDeepLearningProductionQualificationReady', true],
     ['/fullResearchQualification/paperId', QUALIFICATION_PAPER_ID_ASSERTION],
   ],
   exactArguments: true,

@@ -68,6 +68,8 @@ function nodeStructure(node = {}) {
     executionIntent: executionIntentInvariant(source.executionIntent),
     advancedNumericalExecutionPlanHash:
       source.advancedNumericalExecutionPlanHash || null,
+    gpuScientificExecutionPlanHash:
+      source.gpuScientificExecutionPlanHash || null,
   };
 }
 

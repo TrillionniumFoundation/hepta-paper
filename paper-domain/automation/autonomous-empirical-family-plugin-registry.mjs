@@ -671,3 +671,7 @@ export const AUTONOMOUS_EMPIRICAL_PLUGIN_RUNTIME_LANGUAGES = Object.freeze(
   [...new Set(AUTONOMOUS_EMPIRICAL_FAMILY_PLUGIN_PRODUCTION_PROFILES
     .map((profile) => profile.executionProfile.language))].sort(),
 );
+
+// GPU training is intentionally a separate artifact-oriented evidence ABI, not
+// a scalar-response family smuggled through the system benchmark harness.
+export * from '../research/deep-learning-gpu-production-contract.mjs';

@@ -2,9 +2,11 @@ import { deepFreezeJsonValue } from '../../workflow-kernel/deep-freeze-json-valu
 import { hasExactObjectKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
+  buildAdvancedNumericalGpuRuntimeAuthority,
   verifyAdvancedNumericalPluginDescriptor,
 } from '../research/advanced-numerical-plugin-contract.mjs';
 import { verifyAnalysisProtocol } from './analysis-protocol-contract.mjs';
+import { verifyProductionOsSandboxWorkerReceipt } from './os-sandbox-worker-receipt-contract.mjs';
 import { verifyVersionedExperimentIr } from './versioned-experiment-ir.mjs';
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
@@ -25,13 +27,17 @@ const BUDGET_KEYS = Object.freeze([
   'cpuSeconds', 'maximumCapturedBytes', 'maximumOutputBytes',
   'maximumProcesses', 'memoryBytes', 'timeoutMs',
 ]);
-const PLAN_KEYS = Object.freeze([
+const PLAN_V1_KEYS = Object.freeze([
   'advancedNumericalCampaignExecutionPlanHash', 'analysisProtocol',
   'analysisProtocolHash', 'budget', 'campaignId', 'kind', 'nodeId',
   'nodeKind', 'paperId', 'pluginDescriptor', 'pluginDescriptorHash',
   'pluginRuntimeIdentity', 'pluginRuntimeIdentityHash', 'promotionPolicy',
   'seed', 'sourceMutationPolicy', 'status', 'typedInput', 'typedInputHash',
   'version', 'versionedExperimentIr', 'versionedExperimentIrHash',
+]);
+const PLAN_V2_KEYS = Object.freeze([
+  ...PLAN_V1_KEYS,
+  'gpuRuntimeAuthority', 'gpuRuntimeAuthorityHash',
 ]);
 
 function sha(value) {
@@ -80,12 +86,14 @@ function canonicalPluginInput({
   analysisProtocol,
   typedInput,
   budget,
+  gpuRuntimeAuthority = null,
 } = {}) {
   const input = Object.freeze({
     versionedExperimentIr,
     analysisProtocol,
     typedInput,
     budget,
+    ...(gpuRuntimeAuthority === null ? {} : { gpuRuntimeAuthority }),
   });
   if (Buffer.byteLength(JSON.stringify(input)) > 32 * 1024) {
     throw new Error('advanced_numerical_campaign_plugin_input_too_large');
@@ -210,18 +218,23 @@ export function buildAdvancedNumericalCampaignExecutionPlan({
     || !verifyAdvancedNumericalPluginDescriptor(pluginDescriptor)
     || !verifyAdvancedNumericalPluginRuntimeIdentity(pluginRuntimeIdentity)
     || !verifyAdvancedNumericalCampaignTypedInput(typedInput)
+    || (pluginDescriptor?.version === 2
+      && pluginRuntimeIdentity?.configurationVersion !== 2)
     || !Number.isSafeInteger(seed)) {
     throw new Error('advanced_numerical_campaign_execution_plan_invalid');
   }
   const selectedBudget = canonicalBudget(budget || pluginDescriptor.limits, pluginDescriptor);
+  const gpuRuntimeAuthority = pluginDescriptor.version === 2
+    ? buildAdvancedNumericalGpuRuntimeAuthority(pluginDescriptor) : null;
   canonicalPluginInput({
     versionedExperimentIr,
     analysisProtocol,
     typedInput,
     budget: selectedBudget,
+    gpuRuntimeAuthority,
   });
   const payload = {
-    version: 1,
+    version: pluginDescriptor.version === 2 ? 2 : 1,
     kind: 'AdvancedNumericalCampaignExecutionPlan',
     status: 'advanced_numerical_campaign_execution_planned',
     campaignId: selectedCampaignId,
@@ -243,6 +256,11 @@ export function buildAdvancedNumericalCampaignExecutionPlan({
     budget: selectedBudget,
     sourceMutationPolicy: 'forbid',
     promotionPolicy: 'production-qualification-required',
+    ...(gpuRuntimeAuthority === null ? {} : {
+      gpuRuntimeAuthority,
+      gpuRuntimeAuthorityHash:
+        gpuRuntimeAuthority.advancedNumericalGpuRuntimeAuthorityHash,
+    }),
   };
   return Object.freeze({
     ...payload,
@@ -259,7 +277,8 @@ export function advancedNumericalCampaignPluginInput(plan) {
 }
 
 export function verifyAdvancedNumericalCampaignExecutionPlan(value, expected = {}) {
-  if (!hasExactObjectKeys(value, PLAN_KEYS)) return false;
+  const keys = value?.version === 2 ? PLAN_V2_KEYS : PLAN_V1_KEYS;
+  if (!hasExactObjectKeys(value, keys)) return false;
   try {
     const rebuilt = buildAdvancedNumericalCampaignExecutionPlan({
       ...value,
@@ -292,7 +311,8 @@ export function requireAdvancedNumericalCampaignExecutionPlan(value, {
 }
 
 function pluginExecutionReceiptValid(value, plan) {
-  if (!value || value.version !== 1
+  const gpuExecution = plan?.version === 2;
+  if (!value || value.version !== (gpuExecution ? 2 : 1)
     || value.kind !== 'AdvancedNumericalPluginExecutionReceipt'
     || ![
       'advanced_numerical_plugin_execution_completed_qualified',
@@ -301,9 +321,21 @@ function pluginExecutionReceiptValid(value, plan) {
     || value.pluginId !== plan.pluginDescriptor.pluginId
     || value.analysisFamily !== plan.pluginDescriptor.analysisFamily
     || value.pluginDescriptorHash !== plan.pluginDescriptorHash
+    || (gpuExecution && value.gpuRuntimeAuthorityHash !== plan.gpuRuntimeAuthorityHash)
     || !sha(value.requestHash) || !sha(value.resultHash)
     || !sha(value.workerReceiptHash)
     || !sha(value.advancedNumericalPluginExecutionReceiptHash)
+    || (gpuExecution && (!verifyProductionOsSandboxWorkerReceipt(value.workerReceipt)
+      || value.workerReceiptHash !== value.workerReceipt.receiptHash
+      || value.workerReceipt.containerImage
+        !== plan.pluginDescriptor.runtime.containerImage
+      || value.workerReceipt.containerImageDigest
+        !== plan.pluginDescriptor.runtime.containerImageDigest
+      || value.workerReceipt.gpuDeviceRequest?.deviceSelector
+        !== plan.pluginDescriptor.runtime.gpuDeviceSelector
+      || value.workerReceipt.isolation?.gpuMemoryIsolationVerified !== false
+      || value.workerReceipt.isolation?.gpuDeviceIsolationScope
+        !== plan.pluginDescriptor.runtime.gpuDeviceIsolationScope))
     || value.productionQualified !== (value.status
       === 'advanced_numerical_plugin_execution_completed_qualified')) return false;
   const { advancedNumericalPluginExecutionReceiptHash: claimedHash, ...payload } = value;

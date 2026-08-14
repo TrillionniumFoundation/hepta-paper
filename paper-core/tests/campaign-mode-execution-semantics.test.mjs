@@ -188,6 +188,8 @@ function fixtureRunnerReceipt({ spec, outputDirectory, requiredMetrics, datasetM
   const payload = {
     version: 4,
     kind: 'OsSandboxWorkerReceipt',
+    evidenceClass: 'verification-fixture-v1',
+    productionEvidenceEligible: false,
     runnerId: 'bubblewrap-kernel-isolation-worker-v4',
     backend: 'bubblewrap',
     status: 'os_sandbox_worker_passed',

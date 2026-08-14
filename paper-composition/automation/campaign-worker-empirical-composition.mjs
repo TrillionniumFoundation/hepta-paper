@@ -15,6 +15,10 @@ import {
   fileSha256Hash,
 } from '../../paper-adapters/runtime/execution-snapshot.mjs';
 
+export {
+  composeCanonicalDeepLearningGpuTraining,
+} from './deep-learning-gpu-training-composition.mjs';
+
 export function campaignDatasetContentHash(source) {
   const resolved = path.resolve(source);
   return fs.statSync(resolved).isDirectory()

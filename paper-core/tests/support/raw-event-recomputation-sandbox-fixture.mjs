@@ -124,6 +124,8 @@ export function createRawEventRecomputationSandboxTestFixture({
       const payload = {
         version: 4,
         kind: 'OsSandboxWorkerReceipt',
+        evidenceClass: 'verification-fixture-v1',
+        productionEvidenceEligible: false,
         runnerId: 'fixture-kernel-isolation-worker-v4',
         backend: 'fixture',
         status: 'os_sandbox_worker_passed',

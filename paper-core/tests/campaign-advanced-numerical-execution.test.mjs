@@ -3,11 +3,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { resourcesForCampaignNode } from '../../paper-application/automation/resource-governor.mjs';
 
 import {
   createCampaignAdvancedNumericalExecutionAdapter,
 } from '../../paper-adapters/automation/campaign-advanced-numerical-execution-adapter.mjs';
 import {
+  advancedNumericalCampaignPluginInput,
   buildAdvancedNumericalCampaignExecutionPlan,
   buildAdvancedNumericalCampaignTypedInput,
   buildAdvancedNumericalPluginRuntimeIdentity,
@@ -21,6 +23,8 @@ import { buildCampaignModeNodes } from '../../paper-domain/automation/campaign-m
 import { buildPaperCampaignPlan } from '../../paper-domain/automation/campaign-plan.mjs';
 import { versionedExperimentIrFor } from '../../paper-domain/automation/versioned-experiment-ir.mjs';
 import {
+  ADVANCED_NUMERICAL_GPU_DEVICE_ISOLATION_SCOPE,
+  ADVANCED_NUMERICAL_GPU_MEMORY_LIMIT_SCOPE,
   ADVANCED_NUMERICAL_PLUGIN_ANALYSIS_FAMILIES,
   compileAdvancedNumericalPluginDescriptor,
 } from '../../paper-domain/research/advanced-numerical-plugin-contract.mjs';
@@ -62,6 +66,31 @@ function descriptor() {
       replay: { kind: 'deterministic-process-replay-v1', contractHash: H('replay') },
       uncertainty: { kind: 'typed-uncertainty-report-v1', contractHash: H('uncertainty') },
     },
+  });
+}
+
+function gpuDescriptor() {
+  return compileAdvancedNumericalPluginDescriptor({
+    ...descriptor(),
+    version: 2,
+    runtime: {
+      language: 'python',
+      executable: 'python',
+      executableHash: H('gpu-python'),
+      packageClosureHash: H('gpu-image'),
+      runtimeProfile: 'pythonGpu',
+      requiresGpu: true,
+      containerImage: 'hepta/python-gpu:0.15.0',
+      containerImageDigest: H('gpu-image'),
+      containerExecutable: 'python',
+      gpuDeviceSelector: 'GPU-a33875b7-7eb7-679e-df08-19227d3decee',
+      cpuFallbackPolicy: 'forbidden',
+      gpuDeviceIsolationScope: ADVANCED_NUMERICAL_GPU_DEVICE_ISOLATION_SCOPE,
+      gpuMemoryLimitBytes: null,
+      gpuMemoryLimitEnforced: false,
+      gpuMemoryLimitScope: ADVANCED_NUMERICAL_GPU_MEMORY_LIMIT_SCOPE,
+    },
+    advancedNumericalPluginDescriptorHash: undefined,
   });
 }
 
@@ -193,6 +222,22 @@ function campaignAndNode(plan, { attemptId = 'attempt-1', leaseGeneration = 1 } 
   return { campaign, node };
 }
 
+test('advanced numerical GPU profiles consume the campaign GPU lease budget', () => {
+  const campaign = { spec: { workerMemoryBytes: 512 * 1024 * 1024 } };
+  const cpu = resourcesForCampaignNode(campaign, {
+    kind: 'advanced-numerical-analysis',
+    spec: { requiresGpu: false },
+  });
+  const gpu = resourcesForCampaignNode(campaign, {
+    kind: 'advanced-numerical-analysis',
+    spec: { requiresGpu: true },
+  });
+  assert.equal(cpu.cpu, 1);
+  assert.equal(cpu.gpu, 0);
+  assert.equal(gpu.cpu, 1);
+  assert.equal(gpu.gpu, 1);
+});
+
 test('advanced numerical campaign plan binds IR, protocol, plugin/config, typed input, seed and budget', () => {
   const plan = executionPlan();
   assert.equal(verifyAdvancedNumericalCampaignExecutionPlan(plan, {
@@ -224,6 +269,53 @@ test('advanced numerical campaign plan binds IR, protocol, plugin/config, typed 
     ...plan,
     typedInput: oversizedTypedInput,
   }), /advanced_numerical_campaign_plugin_input_too_large/);
+});
+
+test('GPU plan v2 binds the pinned container, UUID selector and honest VRAM authority', () => {
+  const pluginDescriptor = gpuDescriptor();
+  const plan = buildAdvancedNumericalCampaignExecutionPlan({
+    campaignId: CAMPAIGN_ID,
+    paperId: PAPER_ID,
+    versionedExperimentIr: versionedExperimentIrFor(FAMILY),
+    analysisProtocol: analysisProtocol(),
+    pluginDescriptor,
+    pluginRuntimeIdentity: buildAdvancedNumericalPluginRuntimeIdentity({
+      configurationVersion: 2,
+      configurationHash: H('gpu-configuration'),
+      signedBundleHash: H('gpu-signed-bundle'),
+      dependencyFileHashes: {
+        signedBundleFileHash: H('gpu-bundle-file'),
+        trustStoreFileHash: H('gpu-trust-store-file'),
+      },
+    }),
+    typedInput: buildAdvancedNumericalCampaignTypedInput({
+      schemaId: 'poisson-2d-manufactured-v1',
+      schemaHash: H('pde-input-schema'),
+      value: { gridSizes: [31, 63, 127] },
+    }),
+    seed: 1729,
+  });
+  assert.equal(plan.version, 2);
+  assert.equal(plan.gpuRuntimeAuthority.containerImageDigest,
+    pluginDescriptor.runtime.containerImageDigest);
+  assert.equal(plan.gpuRuntimeAuthority.gpuMemoryLimitEnforced, false);
+  assert.equal(advancedNumericalCampaignPluginInput(plan).gpuRuntimeAuthority,
+    plan.gpuRuntimeAuthority);
+  assert.equal(verifyAdvancedNumericalCampaignExecutionPlan(plan), true);
+
+  const drifted = structuredClone(plan);
+  drifted.gpuRuntimeAuthority.cpuFallbackPolicy = 'allowed';
+  drifted.advancedNumericalCampaignExecutionPlanHash = hashRecord(
+    'AdvancedNumericalCampaignExecutionPlan',
+    Object.fromEntries(Object.entries(drifted).filter(([key]) => (
+      key !== 'advancedNumericalCampaignExecutionPlanHash'
+    ))),
+  );
+  assert.equal(verifyAdvancedNumericalCampaignExecutionPlan(drifted), false);
+  assert.throws(() => buildAdvancedNumericalCampaignExecutionPlan({
+    ...plan,
+    pluginRuntimeIdentity: runtimeIdentity(),
+  }), /execution_plan_invalid/);
 });
 
 test('full campaign graph inserts the optional node only for a verified plan and binds release dependencies', () => {

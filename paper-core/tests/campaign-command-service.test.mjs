@@ -7,6 +7,9 @@ import { buildCampaignBenchmarkSelector } from '../../paper-domain/automation/ca
 import { empiricalClaimDeclarationsFromAnalysisProtocol } from '../../paper-domain/automation/analysis-protocol-contract.mjs';
 import { CampaignCommandService } from '../../paper-application/automation/campaign-command-service.mjs';
 import { buildPaperCampaignPlan } from '../../paper-domain/automation/campaign-plan.mjs';
+import {
+  buildCanonicalGpuScientificCampaignExecutionPlan,
+} from '../../paper-domain/automation/gpu-scientific-campaign-execution-contract.mjs';
 import { readEmpiricalClaimUniverse } from '../../paper-adapters/research-verify/empirical-claim-universe-reader.mjs';
 
 const FIXTURE_PAPER_TASK = Object.freeze({
@@ -274,6 +277,52 @@ test('CampaignCommandService owns worker selection and inventory-to-plan policy'
   assert.equal(plans[0].localOnly, true);
   assert.equal(plans[0].applyManuscript, true);
   assert.equal(plans[0].externalSubmissionEnabled, false);
+});
+
+test('CampaignCommandService binds a generated canonical GPU scientific plan to the selected campaign id', () => {
+  const { service } = fixture();
+  const factoryCalls = [];
+  const plans = service.buildPlanBatch({
+    inventoryRows: [{
+      task: {
+        paperId: 'paper-gpu',
+        taskKey: 'paper:paper-gpu',
+        semanticIdentityHash: `sha256:${'9'.repeat(64)}`,
+        paperQualityProfiles: [],
+      },
+      state: { status: 'inventoried' },
+      sourceWorkspace: '/tmp/paper-gpu',
+    }],
+    options: {
+      paper: ['paper-gpu'],
+      'campaign-id': 'campaign-gpu',
+      languages: 'latex',
+      mode: 'full-campaign',
+    },
+    gpuScientificExecutionPlanFactory({ campaignId, paperId }) {
+      factoryCalls.push({ campaignId, paperId });
+      return buildCanonicalGpuScientificCampaignExecutionPlan({
+        campaignId,
+        paperId,
+        gpuDeviceSelector: 'GPU-11111111-2222-3333-4444-555555555555',
+        absoluteExecutionDeadlineEpochMs: Date.parse('2026-08-15T00:00:00.000Z'),
+      });
+    },
+  });
+  assert.deepEqual(factoryCalls, [{ campaignId: 'campaign-gpu', paperId: 'paper-gpu' }]);
+  assert.equal(plans.length, 1);
+  assert.equal(plans[0].gpuScientificExecutionPlan.campaignId, 'campaign-gpu');
+  assert.equal(plans[0].gpuScientificExecutionPlan.paperId, 'paper-gpu');
+  const gpuNode = plans[0].nodes.find(({ kind }) => kind === 'gpu-scientific-execution');
+  assert.ok(gpuNode);
+  assert.equal(
+    gpuNode.gpuScientificExecutionPlanHash,
+    plans[0].gpuScientificExecutionPlan.gpuScientificCampaignExecutionPlanHash,
+  );
+  assert.throws(() => service.buildPlanBatch({
+    inventoryRows: [],
+    gpuScientificExecutionPlanFactory: {},
+  }), /campaign_gpu_scientific_execution_plan_factory_invalid/);
 });
 
 test('CampaignCommandService fails closed for unsupported commands and missing log nodes', () => {

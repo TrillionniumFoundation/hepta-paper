@@ -174,7 +174,7 @@ test('external intake preflight requires external owner assurance and never auth
   assert.equal(result.ownerAccepted, 249);
   assert.equal(result.externallyOwnerAccepted, 249);
   assert.equal(result.ownerAcceptanceFamilyManifestBound, true);
-  assert.equal(result.operationallyProven, 14);
+  assert.equal(result.operationallyProven, 16);
   assert.equal(result.authorityDocuments.every((item) => item.envelopeVerified), true);
   assert.equal(result.installAuthorized, false);
   assert.equal(result.semanticValidationDeferredToProductionPipeline, true);
@@ -227,7 +227,7 @@ test('external intake preflight requires external owner assurance and never auth
   assert.equal(delegated.status, 'external_evidence_intake_blocked');
   assert.equal(delegated.ownerAccepted, 249);
   assert.equal(delegated.externallyOwnerAccepted, 0);
-  assert.equal(delegated.operationallyProven, 14);
+  assert.equal(delegated.operationallyProven, 16);
   assert.ok(delegated.blockers.includes('external_owner_acceptance_incomplete:0/249'));
   assert.equal(delegated.installAuthorized, false);
 

@@ -19,6 +19,7 @@ import { CAPABILITY_CATALOG } from '../../paper-domain/governance/capability-cat
 import { currentCodeProvenance } from '../../paper-adapters/runtime/code-provenance.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import { createFormalCapabilityReplayRunners } from '../../migration/bin/production-capability-replay-formal-runners.mjs';
+import { createGpuScientificCapabilityReplayRunners } from '../../migration/bin/production-capability-replay-gpu-scientific-runners.mjs';
 import { createRuntimeCapabilityReplayRunners } from '../../migration/bin/production-capability-replay-runtime-runners.mjs';
 import { createSubmissionRepairCapabilityReplayRunners } from '../../migration/bin/production-capability-replay-submission-repair-runners.mjs';
 import { relativeModuleSpecifiers } from '../verification/javascript-module-specifiers.mjs';
@@ -226,7 +227,7 @@ test('raw release-current capability evidence is never an audit-manifest fallbac
     'CAPABILITY_VERIFICATION_MANIFEST.json',
   );
   fs.mkdirSync(path.dirname(auditManifest), { recursive: true });
-  fs.writeFileSync(auditManifest, `${JSON.stringify(manifest)}\n`);
+  fs.writeFileSync(auditManifest, `${JSON.stringify(manifest)}\n`, { mode: 0o600 });
   assert.equal(validateCapabilityOperationalEvidence({
     runtimeRoot,
     codeProvenance,
@@ -793,6 +794,7 @@ test('production replay capability families stay in bounded runner groups', () =
   assert.ok(directDependencies.length <= 25, directDependencies.join('\n'));
   for (const group of [
     './production-capability-replay-formal-runners.mjs',
+    './production-capability-replay-gpu-scientific-runners.mjs',
     './production-capability-replay-runtime-runners.mjs',
     './production-capability-replay-submission-repair-runners.mjs',
   ]) assert.ok(directDependencies.includes(group), group);
@@ -804,9 +806,14 @@ test('production replay capability families stay in bounded runner groups', () =
   ]) assert.equal(directDependencies.some((item) => item.endsWith(delegatedDependency)), false);
 
   const formal = createFormalCapabilityReplayRunners({ workspaceRoot });
+  const gpuScientific = createGpuScientificCapabilityReplayRunners({});
   const runtime = createRuntimeCapabilityReplayRunners({});
   const submissionRepair = createSubmissionRepairCapabilityReplayRunners({});
   assert.deepEqual(Object.keys(formal), ['research.formal-verifier']);
+  assert.deepEqual(Object.keys(gpuScientific), [
+    'research.gpu-pde-solver',
+    'research.gpu-deep-learning-training',
+  ]);
   assert.deepEqual(Object.keys(runtime), [
     'runtime.sandboxed-worker-runner',
     'runtime.artifact-repository',
@@ -827,11 +834,34 @@ test('production replay capability families stay in bounded runner groups', () =
     'research.change-proposal',
   ];
   assert.deepEqual(
-    [...inlineResearch, ...Object.keys(formal), ...Object.keys(runtime), ...Object.keys(submissionRepair)].sort(),
+    [...inlineResearch, ...Object.keys(formal), ...Object.keys(gpuScientific),
+      ...Object.keys(runtime), ...Object.keys(submissionRepair)].sort(),
     Object.keys(CAPABILITY_CATALOG).sort(),
   );
   assert.match(runner, /for \(const capabilityId of Object\.keys\(CAPABILITY_CATALOG\)\.sort\(\)\)/u);
   assert.match(runner, /conformanceReceiptHashes: verified\.map\(\(item\) => item\.conformanceReceiptHash\)/u);
+});
+
+test('GPU scientific capability replay uses only canonical production paths', () => {
+  const runner = fs.readFileSync(
+    path.join(
+      workspaceRoot,
+      'migration',
+      'bin',
+      'production-capability-replay-gpu-scientific-runners.mjs',
+    ),
+    'utf8',
+  );
+  assert.match(runner, /composeCanonicalPdePoisson2dGpuSolver/u);
+  assert.match(runner, /composeCanonicalDeepLearningGpuTraining/u);
+  assert.match(runner, /verifyCanonicalCupyDeepLearningTrainingReceipt/u);
+  assert.match(runner, /verifyProcessIsolatedPdePoisson2dCpuOracleAgainstArtifacts/u);
+  assert.match(runner, /verifyProductionOsSandboxWorkerReceipt/u);
+  assert.match(runner, /currentCodeProvenance/u);
+  assert.match(runner, /resolveCurrentCapabilityProductionSubject/u);
+  assert.match(runner, /productionEligible: false/u);
+  assert.doesNotMatch(runner, /ForTest|test-seam|test-doubles|fixtureWorker|executor\s*:/u);
+  assert.doesNotMatch(runner, /createOsSandboxedWorkerRunner/u);
 });
 
 test('production sandbox replay binds its Docker fallback to a system-pinned image', () => {

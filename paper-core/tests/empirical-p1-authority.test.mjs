@@ -23,7 +23,9 @@ import {
   evaluateEmpiricalResultContract,
   normalizeDatasetMounts,
 } from '../../paper-adapters/automation/empirical-contract-reader.mjs';
-import { createOsSandboxedWorkerRunner } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
+import {
+  createOsSandboxedWorkerRunnerForTest as createOsSandboxedWorkerRunner,
+} from './support/os-sandboxed-worker-runner-test-driver.mjs';
 import { directoryMerkleHash, inspectWorkspaceExecutionSnapshot, sourceTreeExcludedNames } from '../../paper-adapters/runtime/execution-snapshot.mjs';
 import { runResearchVerifyAdapter } from '../../paper-adapters/research-verify/index.mjs';
 import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
@@ -344,7 +346,7 @@ test('host-supervised dataset trace and system-owned cells reject child spoofing
         observedClaims: ['fixture-runtime-identity'], unobservedClaims: ['package-closure'],
       });
       const payload = {
-        version: 4, kind: 'OsSandboxWorkerReceipt', runnerId: 'bubblewrap-kernel-isolation-worker-v4', backend: 'bubblewrap', status: 'os_sandbox_worker_passed',
+        version: 4, kind: 'OsSandboxWorkerReceipt', evidenceClass: 'verification-fixture-v1', productionEvidenceEligible: false, runnerId: 'bubblewrap-kernel-isolation-worker-v4', backend: 'bubblewrap', status: 'os_sandbox_worker_passed',
         sourceMerkleHashBefore: sourceSnapshot.merkleHash, sourceMerkleHashAfter: sourceSnapshot.merkleHash,
         sourceWorkspaceManifestHashBefore: sourceSnapshot.manifestHash, sourceWorkspaceManifestHashAfter: sourceSnapshot.manifestHash,
         workSourceMerkleHash: sourceSnapshot.merkleHash, workWorkspaceManifestHash: sourceSnapshot.manifestHash,

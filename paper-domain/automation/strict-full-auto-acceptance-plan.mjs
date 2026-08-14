@@ -15,7 +15,12 @@ import {
   STRICT_FULL_AUTO_ACCEPTANCE_REFERENCE_POLICY,
   STRICT_FULL_AUTO_ACCEPTANCE_STEP_ORDER,
 } from './strict-full-auto-acceptance-policy.mjs';
-import { exactKeys, strictFullAutoAcceptanceHash } from './strict-full-auto-acceptance-primitives.mjs';
+import {
+  exactKeys,
+  normalizeStrictFullAutoAcceptanceAssertionValue,
+  strictFullAutoAcceptanceHash,
+  strictFullAutoAcceptanceJsonEqual,
+} from './strict-full-auto-acceptance-primitives.mjs';
 
 function assertReferenceBindings(bindings) {
   if (!Array.isArray(bindings)
@@ -82,11 +87,16 @@ function assertReferenceBindings(bindings) {
 function assertJsonAssertion(assertion, label) {
   if (!exactKeys(assertion, ['path', 'equals'])
     || typeof assertion.path !== 'string' || !assertion.path.startsWith('/')
-    || assertion.path.includes('~') || assertion.equals === undefined
-    || (assertion.equals !== null && typeof assertion.equals === 'object')) {
+    || assertion.path.includes('~') || assertion.equals === undefined) {
     throw new Error(`strict_full_auto_acceptance_assertion_invalid:${label}`);
   }
-  return Object.freeze({ path: assertion.path, equals: assertion.equals });
+  let equals;
+  try {
+    equals = normalizeStrictFullAutoAcceptanceAssertionValue(assertion.equals);
+  } catch {
+    throw new Error(`strict_full_auto_acceptance_assertion_invalid:${label}`);
+  }
+  return Object.freeze({ path: assertion.path, equals });
 }
 
 function assertInvocationPolicy(invocation, stepId, phase, label, {
@@ -120,7 +130,7 @@ function assertInvocationPolicy(invocation, stepId, phase, label, {
           ? !IDENTIFIER.test(String(actual?.equals || ''))
           : expected === ONLINE_TRANSITION_ID_ASSERTION
             ? !SHA256.test(String(actual?.equals || ''))
-          : actual?.equals !== expected);
+          : !strictFullAutoAcceptanceJsonEqual(actual?.equals, expected));
     })) {
     throw new Error(`strict_full_auto_acceptance_invocation_policy_mismatch:${label}`);
   }

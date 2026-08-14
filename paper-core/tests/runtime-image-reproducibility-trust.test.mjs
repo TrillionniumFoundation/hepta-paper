@@ -27,6 +27,9 @@ import {
   inspectRuntimeImageReproducibilityConfiguration,
 } from '../../paper-composition/automation/runtime-image-reproducibility-composition.mjs';
 import {
+  FINAL_VERIFICATION_INVOCATION_POLICY,
+} from '../../paper-domain/automation/strict-full-auto-acceptance-policy.mjs';
+import {
   buildRuntimeImageReproducibilityReceipt,
   buildRuntimeImageReproducibilityRequest,
   REQUIRED_RUNTIME_IMAGE_REPRODUCIBILITY_PROFILES,
@@ -440,7 +443,23 @@ test('two independent Ed25519 verifier responses bind identical complete OCI dig
   assert.equal(inspection.ready, true, JSON.stringify(inspection.blockers));
   assert.equal(inspection.ociIndexManifestConfigAndLayerBlobDigestsCompared, true);
   assert.equal(inspection.canonicalContextTarMetadataAttested, true);
-  assert.deepEqual(inspection.requiredProfiles, ['python', 'r']);
+  assert.deepEqual(inspection.requiredProfiles, ['python', 'pythonGpu', 'r']);
+  assert.deepEqual(
+    FINAL_VERIFICATION_INVOCATION_POLICY.assertions.filter(([pointer]) =>
+      pointer.startsWith('/runtimeImageReproducibility')),
+    [
+      ['/runtimeImageReproducibilityReady', true],
+      ['/runtimeImageReproducibility/requiredProfiles', ['python', 'pythonGpu', 'r']],
+    ],
+  );
+  assert.deepEqual(
+    RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE.requiredScientificRuntimeProfiles,
+    ['pythonGpu'],
+  );
+  assert.equal(
+    RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE.productionGpuProfileCount,
+    0,
+  );
   assert.equal(inspection.runtimeImageReproducibilityActivePluginScopeHash,
     RUNTIME_IMAGE_REPRODUCIBILITY_ACTIVE_PLUGIN_SCOPE
       .runtimeImageReproducibilityActivePluginScopeHash);

@@ -1,6 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
+import {
+  buildAdvancedNumericalGpuRuntimeAuthority,
+  verifyAdvancedNumericalPluginDescriptor,
+} from '../../paper-domain/research/advanced-numerical-plugin-contract.mjs';
 import { hasExactObjectKeys } from '../../workflow-kernel/exact-object-keys.mjs';
 import { hashBytes } from '../../workflow-kernel/record-hash.mjs';
 
@@ -30,6 +34,13 @@ const V2_KEYS = Object.freeze([
   'trustStorePath',
   'version',
 ]);
+const GPU_CONFIGURATION_KEYS = Object.freeze([
+  'containerExecutable', 'containerImage', 'containerImageDigest',
+  'cpuFallbackPolicy', 'gpuDeviceIsolationScope', 'gpuDeviceSelector',
+  'gpuMemoryLimitBytes', 'gpuMemoryLimitEnforced', 'gpuMemoryLimitScope',
+  'requiresGpu', 'runtimeProfile',
+]);
+const V2_GPU_KEYS = Object.freeze([...V2_KEYS, ...GPU_CONFIGURATION_KEYS]);
 
 function configuredPath(configDirectory, value) {
   const selected = String(value || '').trim();
@@ -121,6 +132,29 @@ function readDependency(configDirectory, configuration, name, maximumBytes) {
   );
 }
 
+function gpuRuntimeAuthority(configuration, bundle, gpuConfiguration) {
+  const descriptor = bundle?.descriptor;
+  if (descriptor?.version !== 2) {
+    if (gpuConfiguration) {
+      throw new Error('advanced_numerical_plugin_gpu_configuration_descriptor_mismatch');
+    }
+    return null;
+  }
+  if (!verifyAdvancedNumericalPluginDescriptor(descriptor)) {
+    throw new Error('advanced_numerical_plugin_configuration_descriptor_invalid');
+  }
+  if (!gpuConfiguration) {
+    throw new Error('advanced_numerical_plugin_gpu_configuration_v2_required');
+  }
+  const authority = buildAdvancedNumericalGpuRuntimeAuthority(descriptor);
+  if (GPU_CONFIGURATION_KEYS.some((key) => (
+    JSON.stringify(configuration[key]) !== JSON.stringify(authority[key])
+  ))) {
+    throw new Error('advanced_numerical_plugin_gpu_configuration_binding_invalid');
+  }
+  return authority;
+}
+
 export function readAdvancedNumericalPluginRuntimeConfiguration({
   configurationPath,
   expectedConfigurationHash = null,
@@ -137,7 +171,9 @@ export function readAdvancedNumericalPluginRuntimeConfiguration({
     && hasExactObjectKeys(configuration, V1_KEYS);
   const versionTwo = configuration?.version === 2
     && configuration?.kind === 'AdvancedNumericalPluginRuntimeConfiguration'
-    && hasExactObjectKeys(configuration, V2_KEYS);
+    && (hasExactObjectKeys(configuration, V2_KEYS)
+      || hasExactObjectKeys(configuration, V2_GPU_KEYS));
+  const versionTwoGpu = versionTwo && hasExactObjectKeys(configuration, V2_GPU_KEYS);
   if (!versionOne && !versionTwo) {
     throw new Error('advanced_numerical_plugin_runtime_configuration_invalid');
   }
@@ -156,6 +192,9 @@ export function readAdvancedNumericalPluginRuntimeConfiguration({
       configuredPath(configDirectory, configuration.trustStorePath),
       { maximumBytes: 1024 * 1024 },
     );
+    if (bundle.value?.descriptor?.version === 2) {
+      throw new Error('advanced_numerical_plugin_gpu_configuration_v2_required');
+    }
     return Object.freeze({
       configuration,
       configurationPath: configurationRead.path,
@@ -167,6 +206,7 @@ export function readAdvancedNumericalPluginRuntimeConfiguration({
       qualification: null,
       qualificationEvidence: null,
       qualificationTrustStore: null,
+      gpuRuntimeAuthority: null,
       pluginRoot,
       outputRoot,
       dependencyFileHashes: Object.freeze({
@@ -208,6 +248,11 @@ export function readAdvancedNumericalPluginRuntimeConfiguration({
     'qualificationTrustStore',
     1024 * 1024,
   );
+  const selectedGpuRuntimeAuthority = gpuRuntimeAuthority(
+    configuration,
+    bundle.value,
+    versionTwoGpu,
+  );
   return Object.freeze({
     configuration,
     configurationPath: configurationRead.path,
@@ -219,6 +264,7 @@ export function readAdvancedNumericalPluginRuntimeConfiguration({
     qualification: qualification.value,
     qualificationEvidence: qualificationEvidence.value,
     qualificationTrustStore: qualificationTrustStore.value,
+    gpuRuntimeAuthority: selectedGpuRuntimeAuthority,
     pluginRoot,
     outputRoot,
     dependencyFileHashes: Object.freeze({

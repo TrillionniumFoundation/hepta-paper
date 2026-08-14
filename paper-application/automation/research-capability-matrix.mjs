@@ -149,6 +149,31 @@ export function buildResearchCapabilityMatrix(readiness = {}) {
   const submissionProviderDraftReady =
     readiness.autonomousSubmissionProviderDraftReady === true
     || submissionDispatcherReady;
+  const gpuScientificRuntimeReady = readiness.gpuScientificRuntimeReady === true;
+  const gpuPdeQualified = gpuScientificRuntimeReady
+    && readiness.gpuPdeOperationalProofReady === true;
+  const gpuPdeProductionReady = gpuPdeQualified
+    && readiness.gpuPdeProductionQualificationReady === true
+    && readiness.genericDomainCapabilityReady === true;
+  const gpuDeepLearningQualified = gpuScientificRuntimeReady
+    && readiness.gpuDeepLearningOperationalProofReady === true;
+  const gpuDeepLearningProductionReady = gpuDeepLearningQualified
+    && readiness.gpuDeepLearningProductionQualificationReady === true
+    && readiness.genericDomainCapabilityReady === true;
+  const gpuPdeBlockers = [
+    ...(!gpuScientificRuntimeReady ? ['gpu_scientific_runtime_not_ready'] : []),
+    ...(readiness.gpuPdeOperationalProofReady !== true
+      ? ['gpu_pde_operational_proof_not_ready'] : []),
+    ...(readiness.gpuPdeProductionQualificationReady !== true
+      ? ['gpu_pde_production_qualification_not_ready'] : []),
+  ];
+  const gpuDeepLearningBlockers = [
+    ...(!gpuScientificRuntimeReady ? ['gpu_scientific_runtime_not_ready'] : []),
+    ...(readiness.gpuDeepLearningOperationalProofReady !== true
+      ? ['gpu_deep_learning_operational_proof_not_ready'] : []),
+    ...(readiness.gpuDeepLearningProductionQualificationReady !== true
+      ? ['gpu_deep_learning_production_qualification_not_ready'] : []),
+  ];
   const capabilityEntry = (definition) => capability({
     ...definition,
     liveModelEvidenceReady:
@@ -236,6 +261,44 @@ export function buildResearchCapabilityMatrix(readiness = {}) {
       limitations: [
         'arbitrary statistical or numerical procedures outside a registered oracle ABI are unsupported',
         'numeric agreement does not establish scientific validity or external validity',
+      ],
+    }),
+    capabilityEntry({
+      id: 'gpu-pde-solver',
+      implemented: true,
+      qualified: gpuPdeQualified,
+      productionReady: gpuPdeProductionReady,
+      scope: {
+        profiles: Object.freeze(['pde_poisson_2d_manufactured_solution_v1']),
+        accelerator: 'single-pinned-nvidia-gpu-uuid-v1',
+        precision: 'ieee754-binary64',
+        independentCpuOracleRequired: true,
+        producerDiagnosticsAuthoritative: false,
+      },
+      blockers: gpuPdeBlockers,
+      limitations: [
+        'v1 covers a registered structured-grid Poisson problem, not arbitrary PDEs',
+        'GPU memory is observed and bounded by problem size but is not a hard VRAM cgroup limit',
+        'production promotion requires a fresh independent CPU recomputation for every solve',
+      ],
+    }),
+    capabilityEntry({
+      id: 'gpu-deep-learning-training',
+      implemented: true,
+      qualified: gpuDeepLearningQualified,
+      productionReady: gpuDeepLearningProductionReady,
+      scope: {
+        profiles: Object.freeze(['dl-supervised-classification-gpu-deterministic-v1']),
+        accelerator: 'single-pinned-nvidia-gpu-uuid-v1',
+        numericMode: 'fp32-tf32-amp-disabled-v1',
+        modelAuthority: 'allowlisted-declarative-model-ir-v1',
+        hiddenEvaluationAndFreshReplayRequired: true,
+      },
+      blockers: gpuDeepLearningBlockers,
+      limitations: [
+        'v1 covers bounded single-GPU MLP training, not arbitrary CNNs or foundation models',
+        'same-device replay does not establish cross-device or cross-driver bitwise reproducibility',
+        'custom CUDA, arbitrary executable models, pickle checkpoints, AMP, DDP, and NCCL are forbidden',
       ],
     }),
     capabilityEntry({

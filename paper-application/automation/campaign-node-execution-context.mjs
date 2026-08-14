@@ -92,6 +92,11 @@ export function deriveCampaignNodeExecutionContext({ node, allNodes = [] } = {})
     node,
     (item) => item.kind === 'advanced-numerical-analysis',
   );
+  const directGpuScientific = latestCompletedDirectDependency(
+    nodes,
+    node,
+    (item) => item.kind === 'gpu-scientific-execution',
+  );
   const priorConvergence = latestPriorConvergence(nodes, node);
   return Object.freeze({
     operation: campaignNodeOperation(node?.kind),
@@ -110,6 +115,9 @@ export function deriveCampaignNodeExecutionContext({ node, allNodes = [] } = {})
     formalReviewNode: node?.kind === 'formal-verify' ? directFormalReview : latestFormalReview(nodes),
     formalVerificationNode: directFormalVerification,
     advancedNumericalNode: directAdvancedNumerical,
+    gpuScientificNode: directGpuScientific || [...nodes]
+      .find((item) => item.kind === 'gpu-scientific-execution'
+        && item.status === 'completed' && item.result) || null,
     finalCompileNode: directDependency(nodes, node, (item) => item.kind === 'final-compile'),
     researchVerifyNode: directDependency(nodes, node, (item) => item.kind === 'research-verify'),
     empirical,

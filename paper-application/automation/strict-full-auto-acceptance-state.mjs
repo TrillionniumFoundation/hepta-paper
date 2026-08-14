@@ -2,6 +2,7 @@ import {
   STRICT_FULL_AUTO_ACCEPTANCE_FINAL_VERIFICATION_STEP_ID,
   STRICT_FULL_AUTO_ACCEPTANCE_STEP_ORDER,
   strictFullAutoAcceptanceHash,
+  strictFullAutoAcceptanceJsonEqual,
   verifyStrictFullAutoFinalVerificationReceipt,
 } from '../../paper-domain/automation/strict-full-auto-acceptance-contract.mjs';
 import { hasExactObjectKeys as exactKeys } from '../../workflow-kernel/exact-object-keys.mjs';
@@ -230,7 +231,10 @@ export function assertInvocationOutput(invocation, output, label) {
   const skips = skippedCount(output);
   if (skips !== 0) throw new Error(`strict_full_auto_acceptance_skip_forbidden:${label}:${skips}`);
   for (const assertion of invocation.assertions) {
-    if (jsonPointer(output, assertion.path) !== assertion.equals) {
+    if (!strictFullAutoAcceptanceJsonEqual(
+      jsonPointer(output, assertion.path),
+      assertion.equals,
+    )) {
       const error = new Error(
         `strict_full_auto_acceptance_assertion_failed:${label}:${assertion.path}`,
       );

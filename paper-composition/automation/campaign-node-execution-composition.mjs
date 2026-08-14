@@ -58,5 +58,6 @@ export function createCampaignNodeExecutor(options = {}) {
       verifySessionReviewerReceipt: reviewerPool.verifySessionReviewerReceipt,
     }) : null,
     advancedNumericalExecution: options.advancedNumericalExecution || null,
+    gpuScientificExecution: options.gpuScientificExecution || null,
   });
 }

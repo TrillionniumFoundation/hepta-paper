@@ -28,6 +28,7 @@ import { verifyCampaignFormalResearch } from './campaign-formal-research-verifie
 import {
   verifyCampaignAdvancedNumericalExecutionResult,
 } from '../../paper-domain/automation/advanced-numerical-campaign-execution-contract.mjs';
+import { requireCampaignResearchGpuScientificEvidence } from './campaign-research-gpu-scientific-evidence.mjs';
 
 export {
   runFencedFormalNativeResearchWorkers,
@@ -312,6 +313,9 @@ export function createCampaignResearchVerifier({
       } else if (advancedNumericalDependencyNodes.length) {
         throw new Error('campaign_research_unplanned_advanced_numerical_dependency');
       }
+      requireCampaignResearchGpuScientificEvidence({
+        campaign, authoritativeNodes, directDependencies,
+      });
       const latestReplayByProfile = new Map();
       for (const candidate of authoritativeNodes) {
         if (!directDependencies.has(candidate.nodeId) || candidate.status !== 'completed'

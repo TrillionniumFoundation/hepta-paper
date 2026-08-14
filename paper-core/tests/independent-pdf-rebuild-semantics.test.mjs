@@ -73,6 +73,8 @@ function workerRunner(rebuiltPdfBytes) {
       const payload = {
         version: 4,
         kind: 'OsSandboxWorkerReceipt',
+        evidenceClass: 'verification-fixture-v1',
+        productionEvidenceEligible: false,
         runnerId,
         backend: 'fixture',
         status: 'os_sandbox_worker_passed',

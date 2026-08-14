@@ -23,6 +23,9 @@ import {
   inspectConfiguredDynamicFormalProjectClosure,
 } from '../../paper-adapters/research-verify/dynamic-formal-project-closure-readiness.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+export {
+  inspectGpuScientificCapabilityProofs,
+} from './gpu-scientific-capability-proof-composition.mjs';
 
 const LOCAL_DOCKER_HOST = 'unix:///var/run/docker.sock';
 
@@ -255,6 +258,11 @@ function probeCommand({ name, args = ['--version'], env = {}, spawnSyncImpl, env
   };
 }
 
+function gpuDeviceSelectorFromProbe(probe) {
+  const match = String(probe?.detail || '').match(/\(UUID:\s*(GPU-[0-9A-Fa-f-]+)\)/);
+  return match ? match[1] : null;
+}
+
 function privateCodexHomeReady(candidate) {
   if (!candidate) return false;
   try {
@@ -343,15 +351,26 @@ export function buildAutomationRuntimeProbes({ configuration, spawnSyncImpl, env
       r: image(AUTOMATION_RUNTIME_IMAGES.r),
     },
   };
-  const gpuContainerProbe = runtimes.gpu.usable && runtimes.images.pythonGpu.usable
+  const gpuDeviceSelector = gpuDeviceSelectorFromProbe(runtimes.gpu);
+  const gpuContainerProbe = runtimes.gpu.usable && gpuDeviceSelector
+    && runtimes.images.pythonGpu.usable
     ? spawnSyncImpl('docker', [
-      'run', '--pull', 'never', '--rm', '--runtime', 'nvidia',
-      '--env', 'NVIDIA_VISIBLE_DEVICES=all',
+      'run', '--pull', 'never', '--rm',
+      '--gpus', `device=${gpuDeviceSelector}`,
+      '--env', `NVIDIA_VISIBLE_DEVICES=${gpuDeviceSelector}`,
       '--env', 'NVIDIA_DRIVER_CAPABILITIES=compute,utility',
       '--env', 'HOME=/tmp', '--tmpfs', '/tmp:rw,noexec,nosuid,size=64m',
       '--network', 'none', '--read-only', '--cap-drop', 'ALL',
       '--security-opt', 'no-new-privileges', AUTOMATION_RUNTIME_IMAGES.pythonGpu.image,
-      'python', '-c', 'import cupy as cp; x=cp.arange(32); assert int(cp.asnumpy((x*x)[17])) == 289; assert cp.cuda.runtime.getDeviceCount() > 0',
+      'python', '-c', [
+        'import cupy as cp, os',
+        'expected=os.environ["NVIDIA_VISIBLE_DEVICES"].removeprefix("GPU-").replace("-", "").lower()',
+        'assert cp.cuda.runtime.getDeviceCount() == 1',
+        'observed=bytes(cp.cuda.runtime.getDeviceProperties(0)["uuid"]).hex().lower()',
+        'assert observed == expected',
+        'x=cp.arange(32)',
+        'assert int(cp.asnumpy((x*x)[17])) == 289',
+      ].join('; '),
     ], {
       encoding: 'utf8', timeout: 30000,
       env: { ...restrictedChildEnvironment({
@@ -361,6 +380,7 @@ export function buildAutomationRuntimeProbes({ configuration, spawnSyncImpl, env
   runtimes.gpuContainer = {
     present: runtimes.images.pythonGpu.present,
     usable: gpuContainerProbe?.status === 0,
+    deviceSelector: gpuDeviceSelector,
     detail: gpuContainerProbe
       ? String(gpuContainerProbe.stderr || gpuContainerProbe.error?.message || '')
         .trim().slice(-1000) || 'cupy_cuda_probe_passed'

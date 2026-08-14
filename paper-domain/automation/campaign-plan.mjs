@@ -16,11 +16,10 @@ import { verifyAutonomousResearchMachineIntakeAdmission } from './autonomous-res
 import { verifyAutonomousResearchAgendaProductionReceipt } from './autonomous-research-agenda-production-contract.mjs';
 import { inspectAutonomousResearchProductionProfilePreparation } from './autonomous-research-production-profile-contract.mjs';
 import { verifyVenueRequirementIr } from './venue-requirement-ir.mjs';
-import {
-  verifyResearchAgendaClaimBindingReceipt,
-} from './research-agenda-claim-binding-contract.mjs';
+import { verifyResearchAgendaClaimBindingReceipt } from './research-agenda-claim-binding-contract.mjs';
 import { assertAutonomousResearchDirectLocalRunBudgetWaiverBinding } from './autonomous-research-launch-mode-policy.mjs';
 import { requireAdvancedNumericalCampaignExecutionPlan } from './advanced-numerical-campaign-execution-contract.mjs';
+import { requireGpuScientificCampaignExecutionPlan } from './gpu-scientific-campaign-execution-contract.mjs';
 const FULL_CAMPAIGN_MODE = 'full-campaign';
 const ACADEMIC_EMPIRICAL_ASSURANCE_SCOPE = 'operator-authorized-hidden-evaluation-v1';
 const UNSUPPORTED_BATCH_MODES = new Set([
@@ -43,7 +42,6 @@ function normalizeVenueTarget(value) {
   }
   return venueTarget;
 }
-
 function approvedProposalSeedBinding(paperTask, { formalRequested = false } = {}) {
   if (paperTask?.registry?.inventorySource !== 'proposal_materialization') return null;
   const contractPath = normalizeOptional(paperTask?.source?.proposalSeedContracts);
@@ -236,6 +234,7 @@ export function buildPaperCampaignPlan({
   localOnly = false,
   directLocalRunBudgetWaiver = null,
   advancedNumericalExecutionPlan = null,
+  gpuScientificExecutionPlan = null,
 } = {}) {
   if (!paperId || !sourceWorkspace) throw new Error('paperId and sourceWorkspace are required');
   const requestedMode = normalizeOptional(mode) || FULL_CAMPAIGN_MODE;
@@ -245,9 +244,8 @@ export function buildPaperCampaignPlan({
   const rounds = roundDrivenMode ? requestedRounds : 1;
   const reviewers = Math.max(2, Math.min(7, Number(refereeCount) || 3));
   const id = campaignId || `paper-campaign:${paperId}`;
-  const verifiedAdvancedNumericalExecutionPlan = requireAdvancedNumericalCampaignExecutionPlan(
-    advancedNumericalExecutionPlan, { campaignId: id, paperId, mode: effectiveMode },
-  );
+  const verifiedAdvancedNumericalExecutionPlan = requireAdvancedNumericalCampaignExecutionPlan(advancedNumericalExecutionPlan, { campaignId: id, paperId, mode: effectiveMode });
+  const verifiedGpuScientificExecutionPlan = requireGpuScientificCampaignExecutionPlan(gpuScientificExecutionPlan, { campaignId: id, paperId, mode: effectiveMode });
   const inferredRecovery = id.includes(':recovery-') ? id.slice(0, id.indexOf(':recovery-')) : null;
   const normalizedLanguages = [...new Set(languages.map((language) => String(language).trim().toLowerCase()).filter(Boolean))];
   const normalizedMounts = normalizeDatasetMounts(datasetMounts);
@@ -401,6 +399,7 @@ export function buildPaperCampaignPlan({
     formalRequested,
     researchVerificationRequired,
     advancedNumericalExecutionPlan: verifiedAdvancedNumericalExecutionPlan,
+    gpuScientificExecutionPlan: verifiedGpuScientificExecutionPlan,
   });
   if (!nodes.length) throw new Error(`campaign_mode_plan_empty:${requestedMode}`);
   const defaultMaxAgentCalls = Math.max(30, plannedAgentCallUpperBound(nodes));
@@ -481,6 +480,7 @@ export function buildPaperCampaignPlan({
     applyManuscript: executionIntent.applyManuscript,
     ...(researchVerificationInput ? { researchVerificationInput } : {}),
     ...(verifiedAdvancedNumericalExecutionPlan ? { advancedNumericalExecutionPlan: verifiedAdvancedNumericalExecutionPlan } : {}),
+    ...(verifiedGpuScientificExecutionPlan ? { gpuScientificExecutionPlan: verifiedGpuScientificExecutionPlan } : {}),
     datasetMounts: normalizedMounts,
     metricSchema: {
       version: 1,

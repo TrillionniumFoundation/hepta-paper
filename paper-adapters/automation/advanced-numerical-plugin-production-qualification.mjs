@@ -7,6 +7,9 @@ import {
 import {
   verifyAdvancedNumericalPluginQualificationEvidenceBundle,
 } from '../../paper-domain/research/advanced-numerical-plugin-qualification-evidence-contract.mjs';
+import {
+  buildAdvancedNumericalGpuRuntimeAuthority,
+} from '../../paper-domain/research/advanced-numerical-plugin-contract.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 import {
   verifyAuthoritySignatures,
@@ -280,8 +283,10 @@ export function verifyAdvancedNumericalPluginProductionQualification({
       ].sort().join(',')}`,
     );
   }
+  const gpuRuntimeAuthority = descriptor.version === 2
+    ? buildAdvancedNumericalGpuRuntimeAuthority(descriptor) : null;
   const payload = Object.freeze({
-    version: 2,
+    version: gpuRuntimeAuthority ? 3 : 2,
     kind: 'AdvancedNumericalPluginProductionQualificationInspection',
     status: 'advanced_numerical_plugin_production_qualified',
     productionQualified: true,
@@ -315,6 +320,11 @@ export function verifyAdvancedNumericalPluginProductionQualification({
       evidenceBundle.referenceExecutionReceipt.executionProcessIdentityHash,
     replayExecutionProcessIdentityHash:
       evidenceBundle.replayExecutionReceipt.executionProcessIdentityHash,
+    ...(gpuRuntimeAuthority ? {
+      gpuRuntimeAuthority,
+      gpuRuntimeAuthorityHash:
+        gpuRuntimeAuthority.advancedNumericalGpuRuntimeAuthorityHash,
+    } : {}),
     evidenceReceiptHashes: Object.freeze({
       independentNumericOracleReceiptHash:
         evidenceBundle.independentNumericOracleReceipt

@@ -6,8 +6,10 @@ import path from 'node:path';
 import test from 'node:test';
 
 import {
-  inspectConfiguredDynamicFormalProjectClosure,
-} from '../../paper-adapters/research-verify/dynamic-formal-project-closure-readiness.mjs';
+  inspectConfiguredDynamicFormalProjectClosureForTest as
+    inspectConfiguredDynamicFormalProjectClosure,
+  inspectProductionConfiguredDynamicFormalProjectClosure,
+} from './support/dynamic-formal-project-closure-readiness-test-driver.mjs';
 import {
   buildDynamicFormalExecutionAuthority,
   verifyDynamicFormalExecutionAuthority,
@@ -24,7 +26,9 @@ import {
   buildBubblewrapWorkerCommand,
   buildDockerWorkerCommand,
 } from '../../paper-adapters/runtime/docker-worker-command.mjs';
-import { createOsSandboxedWorkerRunner } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
+import {
+  createOsSandboxedWorkerRunnerForTest as createOsSandboxedWorkerRunner,
+} from './support/os-sandboxed-worker-runner-test-driver.mjs';
 import {
   SYSTEM_PINNED_FORMAL_SANDBOX_RUNTIME_CONFIGURATION,
 } from '../../paper-adapters/research-verify/pinned-formal-sandbox-runtime-configuration.mjs';
@@ -52,6 +56,21 @@ function write(filePath, content) {
   fs.writeFileSync(filePath, content);
   fs.chmodSync(filePath, 0o600);
 }
+
+test('production dynamic formal readiness rejects sandbox dependency injection', () => {
+  let poisonCalls = 0;
+  for (const injected of [
+    { sandboxProbeRunnerFactory() { poisonCalls += 1; } },
+    { verifySandboxProbeReceipt() { poisonCalls += 1; } },
+    { projectSnapshotRepository: { materialize() { poisonCalls += 1; } } },
+  ]) {
+    assert.throws(
+      () => inspectProductionConfiguredDynamicFormalProjectClosure(injected),
+      /dynamic_formal_sandbox_dependency_injection_forbidden/,
+    );
+  }
+  assert.equal(poisonCalls, 0);
+});
 
 function fixture(t) {
   const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hepta-dynamic-formal-'));

@@ -14,7 +14,9 @@ import {
   createDockerDatasetSupervisorProbeWorkspace,
 } from '../../paper-adapters/runtime/docker-dataset-supervisor-probe-repository.mjs';
 import { probeTrustedDockerDatasetSupervisors } from '../../paper-adapters/runtime/sandbox-backend-probe.mjs';
-import { createOsSandboxedWorkerRunner } from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
+import {
+  createOsSandboxedWorkerRunnerForTest as createOsSandboxedWorkerRunner,
+} from './support/os-sandboxed-worker-runner-test-driver.mjs';
 import {
   buildCampaignBenchmarkSelector,
 } from '../../paper-domain/automation/campaign-benchmark-selector.mjs';

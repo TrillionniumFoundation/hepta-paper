@@ -67,6 +67,8 @@ function extendedCampaignPlan(existing, campaignId, options) {
     directLocalRunBudgetWaiver: existing.spec.directLocalRunBudgetWaiver || null,
     advancedNumericalExecutionPlan:
       existing.spec.advancedNumericalExecutionPlan || null,
+    gpuScientificExecutionPlan:
+      existing.spec.gpuScientificExecutionPlan || null,
     applyManuscript: Boolean(existing.spec.applyManuscript),
     budgets: { ...existing.spec.budgets, ...campaignBudgetOverrides(options) },
     parentCampaignId: existing.parentCampaignId || existing.spec.parentCampaignId || null,
@@ -141,8 +143,31 @@ export class CampaignCommandService {
     return Object.freeze({ campaigns: Object.freeze(campaigns), plans: Object.freeze(plans), datasetMounts: Object.freeze(datasetMounts) });
   }
 
-  buildPlanBatch({ inventoryRows = [], datasetMounts = [], metricSchema = {}, benchmarkId = null, options = {}, runId = null } = {}) {
-    return Object.freeze(inventoryRows.map(({ task, state, sourceWorkspace }) => buildPaperCampaignPlan({
+  buildPlanBatch({
+    inventoryRows = [],
+    datasetMounts = [],
+    metricSchema = {},
+    benchmarkId = null,
+    options = {},
+    runId = null,
+    gpuScientificExecutionPlanFactory = null,
+  } = {}) {
+    if (gpuScientificExecutionPlanFactory !== null
+      && typeof gpuScientificExecutionPlanFactory !== 'function') {
+      throw new Error('campaign_gpu_scientific_execution_plan_factory_invalid');
+    }
+    return Object.freeze(inventoryRows.map(({ task, state, sourceWorkspace }) => {
+      const selectedCampaignId = options.paper?.length === 1 && options['campaign-id']
+        ? options['campaign-id']
+        : runId ? `paper-campaign:${task.paperId}:${runId}`
+          : `paper-campaign:${task.paperId}`;
+      const gpuScientificExecutionPlan = options.gpuScientificExecutionPlan
+        || gpuScientificExecutionPlanFactory?.({
+          campaignId: selectedCampaignId,
+          paperId: task.paperId,
+        })
+        || null;
+      return buildPaperCampaignPlan({
       paperId: task.paperId,
       sourceWorkspace,
       maxRounds: Number(options.rounds || 3),
@@ -170,15 +195,15 @@ export class CampaignCommandService {
       venueTarget: task.venueTarget || null,
       paperTask: task,
       paperState: state,
-      campaignId: options.paper?.length === 1 && options['campaign-id']
-        ? options['campaign-id']
-        : runId ? `paper-campaign:${task.paperId}:${runId}` : null,
+      campaignId: selectedCampaignId,
       parentCampaignId: options['parent-campaign-id'] || null,
       supersedesCampaignId: options['supersedes-campaign-id'] || null,
       recoveryOfCampaignId: options['recovery-of-campaign-id'] || null,
       advancedNumericalExecutionPlan:
         options.advancedNumericalExecutionPlan || null,
-    })));
+      gpuScientificExecutionPlan,
+      });
+    }));
   }
 
   slo(options = {}) {

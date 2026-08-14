@@ -4,8 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
-  createOsSandboxedWorkerRunner,
-} from '../../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
+  createOsSandboxedWorkerRunnerForTest as createOsSandboxedWorkerRunner,
+} from '../../../paper-core/tests/support/os-sandboxed-worker-runner-test-driver.mjs';
 import {
   dockerManifestMediaTypeAccepted,
   probeOsSandbox,

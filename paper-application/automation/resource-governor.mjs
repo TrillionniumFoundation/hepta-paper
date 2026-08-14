@@ -2,6 +2,10 @@ import {
   campaignEmpiricalNodeClassification,
   isCampaignAgentNode,
 } from './campaign-node-kind-policy.mjs';
+import {
+  GPU_SCIENTIFIC_CAMPAIGN_RESOURCE_BUDGET,
+  gpuScientificCampaignNodeBinding,
+} from '../../paper-domain/automation/gpu-scientific-campaign-execution-contract.mjs';
 
 const DEFAULTS = Object.freeze({ agent: 4, cpu: 4, gpu: 1, memoryMiB: 8192 });
 
@@ -15,10 +19,19 @@ function normalize(request = {}) {
 }
 
 export function resourcesForCampaignNode(campaign, node) {
+  if (node.kind === 'gpu-scientific-execution') {
+    if (gpuScientificCampaignNodeBinding(node).resourceBudgetHash
+      !== GPU_SCIENTIFIC_CAMPAIGN_RESOURCE_BUDGET
+        .gpuScientificCampaignResourceBudgetHash) {
+      throw new Error('gpu_scientific_campaign_resource_budget_binding_invalid');
+    }
+    return normalize(GPU_SCIENTIFIC_CAMPAIGN_RESOURCE_BUDGET.nodeReservation);
+  }
   const classification = campaignEmpiricalNodeClassification(node.kind);
   const agent = isCampaignAgentNode(node.kind);
-  const empirical = classification.empirical || ['advanced-numerical-analysis', 'formal-verify', 'package', 'revalidate-citations', 'revalidate-artifacts'].includes(node.kind);
-  const gpuExecution = classification.primary || classification.reproduction || classification.revalidate;
+  const empirical = classification.empirical || ['advanced-numerical-analysis', 'gpu-scientific-execution', 'formal-verify', 'package', 'revalidate-citations', 'revalidate-artifacts'].includes(node.kind);
+  const gpuExecution = classification.primary || classification.reproduction
+    || classification.revalidate || ['advanced-numerical-analysis', 'gpu-scientific-execution'].includes(node.kind);
   const gpu = gpuExecution && Boolean(node.spec?.requiresGpu || node.requiresGpu || campaign?.spec?.requiresGpu);
   const empiricalMemoryMiB = Math.max(1, Math.ceil(Number(campaign?.spec?.workerMemoryBytes || 4 * 1024 * 1024 * 1024) / (1024 * 1024)));
   return normalize({ agent: agent ? 1 : 0, cpu: empirical ? 1 : 0, gpu: gpu ? 1 : 0, memoryMiB: agent ? 2048 : empirical ? empiricalMemoryMiB : 128 });

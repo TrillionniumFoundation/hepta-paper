@@ -16,6 +16,28 @@ function sameFileIdentity(left, right) {
   return left?.dev === right?.dev && left?.ino === right?.ino;
 }
 
+function sameRegularFileSnapshot(left, right) {
+  return sameFileIdentity(left, right)
+    && left?.mode === right?.mode
+    && left?.nlink === right?.nlink
+    && left?.uid === right?.uid
+    && left?.gid === right?.gid
+    && left?.size === right?.size
+    && left?.mtimeNs === right?.mtimeNs
+    && left?.ctimeNs === right?.ctimeNs;
+}
+
+function assertSecureRegularProofFile(stat) {
+  if (!stat?.isFile()
+    || stat.isSymbolicLink()
+    || stat.nlink !== 1n
+    || (stat.mode & 0o022n) !== 0n
+    || stat.size < 1n
+    || stat.size > 16n * 1024n * 1024n) {
+    throw new Error('capability_proof_file_identity_invalid');
+  }
+}
+
 function assertPathIdentitySnapshot(snapshot, errorCode) {
   for (const entry of snapshot) {
     const current = fs.lstatSync(entry.path, { bigint: true });
@@ -129,7 +151,22 @@ export function resolveCurrentCapabilityProductionSubject({
   });
 }
 
-export function readBoundRegularJson(root, candidate) {
+export function assertBoundRegularJsonSnapshot(snapshot) {
+  if (!snapshot || !Array.isArray(snapshot.pathSnapshot)) {
+    throw new Error('capability_proof_snapshot_invalid');
+  }
+  assertPathIdentitySnapshot(
+    snapshot.pathSnapshot,
+    'capability_proof_path_changed_after_read',
+  );
+  const current = fs.lstatSync(snapshot.selected, { bigint: true });
+  assertSecureRegularProofFile(current);
+  if (!sameRegularFileSnapshot(current, snapshot.fileIdentity)) {
+    throw new Error('capability_proof_file_changed_after_read');
+  }
+}
+
+export function readBoundRegularJsonSnapshot(root, candidate) {
   const selectedRoot = path.resolve(root);
   const selected = path.resolve(candidate);
   const relative = path.relative(selectedRoot, selected);
@@ -163,26 +200,30 @@ export function readBoundRegularJson(root, candidate) {
       fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0),
     );
     const before = fs.fstatSync(descriptor, { bigint: true });
-    if (!before.isFile()
-      || !sameFileIdentity(before, selectedIdentity)
-      || before.size < 1n
-      || before.size > 16n * 1024n * 1024n) {
-      throw new Error('capability_proof_file_size_invalid');
+    assertSecureRegularProofFile(before);
+    if (!sameRegularFileSnapshot(before, selectedIdentity)) {
+      throw new Error('capability_proof_file_identity_invalid');
     }
     const bytes = fs.readFileSync(descriptor);
     const after = fs.fstatSync(descriptor, { bigint: true });
     assertPathIdentitySnapshot(pathSnapshot, 'capability_proof_path_changed_during_read');
-    if (!sameFileIdentity(before, after)
-      || before.size !== after.size
-      || before.mtimeNs !== after.mtimeNs
-      || before.ctimeNs !== after.ctimeNs
+    if (!sameRegularFileSnapshot(before, after)
       || BigInt(bytes.length) !== before.size) {
       throw new Error('capability_proof_file_changed_during_read');
     }
-    return JSON.parse(bytes.toString('utf8'));
+    return Object.freeze({
+      document: JSON.parse(bytes.toString('utf8')),
+      fileIdentity: before,
+      pathSnapshot: Object.freeze([...pathSnapshot]),
+      selected,
+    });
   } finally {
     if (descriptor !== undefined) fs.closeSync(descriptor);
   }
+}
+
+export function readBoundRegularJson(root, candidate) {
+  return readBoundRegularJsonSnapshot(root, candidate).document;
 }
 
 export function resolveConformanceArtifact(runtimeRoot, logicalPath) {

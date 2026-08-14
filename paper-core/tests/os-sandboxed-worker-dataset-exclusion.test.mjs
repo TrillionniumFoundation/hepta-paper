@@ -4,8 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import {
-  createOsSandboxedWorkerRunner,
-} from '../../paper-adapters/runtime/os-sandboxed-worker-runner.mjs';
+  createOsSandboxedWorkerRunnerForTest as createOsSandboxedWorkerRunner,
+} from './support/os-sandboxed-worker-runner-test-driver.mjs';
 import { fileSha256Hash } from '../../paper-adapters/runtime/execution-snapshot.mjs';
 
 test('sandbox excludes an in-workspace dataset from the execution snapshot and mounts only its sealed copy', (t) => {

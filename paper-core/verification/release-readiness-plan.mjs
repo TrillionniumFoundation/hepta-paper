@@ -7,6 +7,11 @@ import { inspectTrackedProductionGraph } from './tracked-production-graph.mjs';
 import {
   inspectSealedReadOnlySubmodules,
 } from '../../paper-adapters/runtime/sealed-readonly-submodule-provenance.mjs';
+import { currentCodeProvenance } from '../../paper-adapters/runtime/code-provenance.mjs';
+import { readTrustedWallClockEpochMs } from '../../paper-adapters/runtime/trusted-wall-clock.mjs';
+import {
+  verifyFormalOperationalReceipt,
+} from '../bin/dynamic-formal-kernel-operational.mjs';
 import {
   verifyProductionIntegrityPin,
 } from '../../paper-domain/operations/production-integrity-contract.mjs';
@@ -79,6 +84,12 @@ function requiredDirectory(absolutePath) {
   }
 }
 
+function pathWithin(root, candidate) {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return relative === '' || (relative !== '..'
+    && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+}
+
 function inspectFreeze(workspaceRoot, graph, environment = process.env) {
   const head = runGit(workspaceRoot, ['rev-parse', 'HEAD']);
   const tree = runGit(workspaceRoot, ['rev-parse', 'HEAD^{tree}']);
@@ -138,7 +149,7 @@ function inspectFreeze(workspaceRoot, graph, environment = process.env) {
   });
 }
 
-function inspectFormal(environment, runtimeRoot) {
+function inspectFormal(workspaceRoot, environment, runtimeRoot) {
   const elanHome = environment.ELAN_HOME || null;
   const absolute = typeof elanHome === 'string' && path.isAbsolute(elanHome);
   const root = absolute ? requiredDirectory(elanHome) : { present: false, path: elanHome };
@@ -149,6 +160,9 @@ function inspectFormal(environment, runtimeRoot) {
   );
   const receipt = requiredFile(path.dirname(receiptPath), path.basename(receiptPath));
   const blockers = [];
+  if (!pathWithin(runtimeRoot, receiptPath)) {
+    blockers.push('formal_release_plan_receipt_path_outside_runtime');
+  }
   if (!absolute) blockers.push('formal_release_plan_elan_home_absolute_required');
   if (!root.present) blockers.push('formal_release_plan_elan_home_unavailable');
   if (!launcher.present) blockers.push('formal_release_plan_elan_launcher_unavailable');
@@ -156,9 +170,23 @@ function inspectFormal(environment, runtimeRoot) {
   if (receipt.present) {
     try {
       const value = JSON.parse(fs.readFileSync(receiptPath, 'utf8'));
-      zeroSkipped = value.kind === 'FormalOperationalTestReceipt'
-        && value.tests === 23 && value.pass === 23 && value.fail === 0
-        && value.cancelled === 0 && value.skipped === 0 && value.todo === 0;
+      let current = null;
+      try {
+        current = currentCodeProvenance({
+          workspaceRoot,
+          allowReleaseCommitEnvironment: false,
+          requireSealedReadOnlySubmoduleClosure: environment
+            .HEPTA_RELEASE_ENV_LAUNCHER === 'sealed-v1',
+        });
+      } catch (error) {
+        blockers.push(`formal_release_plan_current_provenance_invalid:${safeError(error)}`);
+      }
+      zeroSkipped = verifyFormalOperationalReceipt(value, {
+        expectedCodeProvenance: current,
+      }) && value.codeProvenance?.treeDirty === false;
+      if (!zeroSkipped) {
+        blockers.push('formal_release_plan_receipt_provenance_or_hash_invalid');
+      }
     } catch (error) {
       blockers.push(`formal_release_plan_receipt_invalid:${safeError(error)}`);
     }
@@ -340,7 +368,8 @@ function inspectOperations(workspaceRoot, runtimeRoot) {
   if (integrity.present) {
     try {
       const value = JSON.parse(fs.readFileSync(integrityPath, 'utf8'));
-      integrityVerified = verifyProductionIntegrityPin(value)
+      const trustedNow = new Date(readTrustedWallClockEpochMs()).toISOString();
+      integrityVerified = verifyProductionIntegrityPin(value, { now: trustedNow })
         && value.kind === 'ProductionIntegrityPin'
         && value.status === 'production_integrity_pin_active'
         && value.externalActionPerformed === false;
@@ -414,7 +443,7 @@ export function buildReleaseReadinessPlan({
   const sections = Object.freeze({
     freeze: inspectFreeze(root, graph, environment),
     externalMaterials: inspectExternalMaterials(root),
-    formal: inspectFormal(environment, selectedRuntimeRoot),
+    formal: inspectFormal(root, environment, selectedRuntimeRoot),
     authorities: inspectAuthorities(selectedRuntimeRoot),
     compute: inspectCompute(root, selectedRuntimeRoot, environment),
     submission: inspectSubmission(root),

@@ -58,7 +58,11 @@ test('deployment and database generations reject rollback and equivocation', () 
     expiresAt: '2026-08-26T00:00:00.000Z',
   });
   assert.deepEqual(
-    inspectProductionIntegrityPinTransition({ currentPin: current, candidatePin: next }),
+    inspectProductionIntegrityPinTransition({
+      currentPin: current,
+      candidatePin: next,
+      now: '2026-08-24T12:00:00.000Z',
+    }),
     {
       version: 1,
       kind: 'ProductionIntegrityPinTransitionInspection',
@@ -74,7 +78,11 @@ test('deployment and database generations reject rollback and equivocation', () 
     deploymentGeneration: 1,
   });
   assert.equal(
-    inspectProductionIntegrityPinTransition({ currentPin: next, candidatePin: rollback })
+    inspectProductionIntegrityPinTransition({
+      currentPin: next,
+      candidatePin: rollback,
+      now: '2026-08-24T12:00:00.000Z',
+    })
       .blockers.includes('production_integrity_generation_rollback'),
     true,
   );
@@ -88,10 +96,25 @@ test('deployment and database generations reject rollback and equivocation', () 
     expiresAt: '2026-08-26T00:00:00.000Z',
   });
   assert.equal(
-    inspectProductionIntegrityPinTransition({ currentPin: current, candidatePin: dbRollback })
+    inspectProductionIntegrityPinTransition({
+      currentPin: current,
+      candidatePin: dbRollback,
+      now: '2026-08-24T12:00:00.000Z',
+    })
       .blockers.includes('production_integrity_database_head_rollback'),
     true,
   );
+  assert.equal(
+    inspectProductionIntegrityPinTransition({
+      currentPin: null,
+      candidatePin: next,
+      now: '2026-08-24T12:00:00.000Z',
+    }).blockers.includes('production_integrity_initial_anchor_required'),
+    true,
+  );
+  assert.equal(verifyProductionIntegrityPin(current, {
+    now: '2026-08-26T00:00:00.000Z',
+  }), false);
 });
 
 test('operational SLO policy alerts on missing data and threshold breaches', () => {
@@ -122,4 +145,16 @@ test('operational SLO policy alerts on missing data and threshold breaches', () 
     () => buildOperationalSloAlertPolicy({ alertOnMissingData: false }),
     /operational_slo_policy_invalid/,
   );
+  const negative = evaluateOperationalSloAlerts({
+    policy,
+    observed: {
+      terminalNodeSuccessRate: 1,
+      queueWaitP95Ms: -1,
+      recoveryP95Ms: 1,
+      runtimeBytes: 1,
+      restoreAgeMs: 1,
+      attestationAgeMs: 1,
+    },
+  });
+  assert.equal(negative.alerts[0].status, 'threshold_breached');
 });

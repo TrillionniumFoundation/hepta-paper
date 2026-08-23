@@ -60,6 +60,10 @@ const ALERT_KEYS = Object.freeze([
   'threshold',
   'version',
 ]);
+const ALERT_METRICS = Object.freeze([
+  'terminalNodeSuccessRate', 'queueWaitP95Ms', 'recoveryP95Ms',
+  'runtimeBytes', 'restoreAgeMs', 'attestationAgeMs',
+]);
 
 function sha(value, code) {
   const selected = String(value || '').toLowerCase();
@@ -251,12 +255,14 @@ export function verifyProductionIntegrityPin(pin, {
 export function inspectProductionIntegrityPinTransition({
   currentPin = null,
   candidatePin,
+  now = null,
 } = {}) {
   const blockers = [];
-  if (!verifyProductionIntegrityPin(candidatePin)) {
+  if (now === null) blockers.push('production_integrity_transition_clock_required');
+  if (!verifyProductionIntegrityPin(candidatePin, { now })) {
     blockers.push('production_integrity_candidate_invalid');
   }
-  if (currentPin !== null && !verifyProductionIntegrityPin(currentPin)) {
+  if (currentPin !== null && !verifyProductionIntegrityPin(currentPin, { now })) {
     blockers.push('production_integrity_current_invalid');
   }
   if (!blockers.length && currentPin) {
@@ -280,6 +286,9 @@ export function inspectProductionIntegrityPinTransition({
       && candidatePin.databaseHeadHash !== currentPin.databaseHeadHash) {
       blockers.push('production_integrity_database_head_equivocation');
     }
+  } else if (!blockers.length && !currentPin
+    && Number(candidatePin.deploymentGeneration) !== 1) {
+    blockers.push('production_integrity_initial_anchor_required');
   }
   return Object.freeze({
     version: 1,
@@ -383,8 +392,13 @@ export function verifyOperationalSloAlert(value, { policy = null } = {}) {
     || !SHA256.test(String(claimedHash || ''))
     || claimedHash !== hashRecord('OperationalSloAlert', payload)
     || payload.kind !== 'OperationalSloAlert'
+    || !ALERT_METRICS.includes(payload.metric)
     || !['missing_data', 'threshold_breached'].includes(payload.status)
     || payload.alertOnMissingData !== true
+    || (payload.observed !== null
+      && (typeof payload.observed !== 'number' || !Number.isFinite(payload.observed)))
+    || (typeof payload.threshold !== 'number' || !Number.isFinite(payload.threshold)
+      || payload.threshold < 0)
     || (policy && payload.policyHash !== policy.operationalSloAlertPolicyHash)) return false;
   return true;
 }
@@ -395,17 +409,18 @@ export function evaluateOperationalSloAlerts({ policy, observed = {} } = {}) {
   }
   const checks = [
     ['terminalNodeSuccessRate', observed.terminalNodeSuccessRate,
-      policy.minimumTerminalNodeSuccessRate, (value, threshold) => value >= threshold],
+      policy.minimumTerminalNodeSuccessRate,
+      (value, threshold) => value >= 0 && value <= 1 && value >= threshold],
     ['queueWaitP95Ms', observed.queueWaitP95Ms,
-      policy.maximumQueueWaitP95Ms, (value, threshold) => value <= threshold],
+      policy.maximumQueueWaitP95Ms, (value, threshold) => value >= 0 && value <= threshold],
     ['recoveryP95Ms', observed.recoveryP95Ms,
-      policy.maximumRecoveryP95Ms, (value, threshold) => value <= threshold],
+      policy.maximumRecoveryP95Ms, (value, threshold) => value >= 0 && value <= threshold],
     ['runtimeBytes', observed.runtimeBytes,
-      policy.maximumRuntimeBytes, (value, threshold) => value <= threshold],
+      policy.maximumRuntimeBytes, (value, threshold) => value >= 0 && value <= threshold],
     ['restoreAgeMs', observed.restoreAgeMs,
-      policy.restoreMaximumAgeMs, (value, threshold) => value <= threshold],
+      policy.restoreMaximumAgeMs, (value, threshold) => value >= 0 && value <= threshold],
     ['attestationAgeMs', observed.attestationAgeMs,
-      policy.attestationMaximumAgeMs, (value, threshold) => value <= threshold],
+      policy.attestationMaximumAgeMs, (value, threshold) => value >= 0 && value <= threshold],
   ];
   const alerts = checks.map(([metric, value, threshold, passes]) => {
     const numeric = typeof value === 'number' && Number.isFinite(value);

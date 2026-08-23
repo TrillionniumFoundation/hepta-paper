@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
@@ -10,6 +11,12 @@ import {
 import {
   currentDeepLearningCpuOracleWorkerImplementation,
 } from '../../paper-adapters/research-verify/independent-deep-learning-cpu-oracle-worker.mjs';
+import {
+  createDeepLearningCpuOracleSandboxRunner,
+} from '../../paper-adapters/research-verify/deep-learning-cpu-oracle-sandbox-runner-factory.mjs';
+import {
+  runProcessIsolatedDeepLearningIndependentCpuOracle,
+} from '../../paper-adapters/research-verify/process-isolated-deep-learning-independent-cpu-oracle.mjs';
 import {
   buildDeepLearningCheckpointManifest,
   buildDeepLearningGpuRuntimeBom,
@@ -233,4 +240,51 @@ test('process-isolated DL CPU oracle rejects request and budget drift', () => {
     }),
     false,
   );
+});
+
+test('worker implementation recursively binds every local import in stable order', () => {
+  const baseline = currentDeepLearningCpuOracleWorkerImplementation();
+  const transitive = baseline.sourceRecords.slice(5);
+  assert.ok(transitive.length > 0);
+  assert.ok(transitive.every((record) => record.role.startsWith('transitive:')));
+  assert.deepEqual(
+    transitive.map((record) => record.role),
+    transitive.map((record) => record.role).sort(),
+  );
+  assert.equal(new Set(transitive.map((record) => record.role)).size, transitive.length);
+  assert.ok(transitive.some((record) => record.role
+    === 'transitive:workflow-kernel/record-hash.mjs'));
+
+  const mutated = currentDeepLearningCpuOracleWorkerImplementation({
+    readSource(sourcePath) {
+      const bytes = fs.readFileSync(sourcePath);
+      return sourcePath.endsWith('/workflow-kernel/record-hash.mjs')
+        ? Buffer.concat([bytes, Buffer.from('\n// mutation fixture\n')]) : bytes;
+    },
+  });
+  assert.notEqual(mutated.sourceManifestHash, baseline.sourceManifestHash);
+  assert.notEqual(mutated.workerImplementationHash, baseline.workerImplementationHash);
+});
+
+test('OS sandbox factory and adapter reject invalid budgets and deadlines before execution', () => {
+  assert.throws(() => createDeepLearningCpuOracleSandboxRunner({
+    ...DEEP_LEARNING_CPU_ORACLE_RESOURCE_LIMITS,
+    maximumProcesses: 0,
+  }), /resource_budget_invalid/);
+
+  const { selected } = fixture();
+  const blocked = runProcessIsolatedDeepLearningIndependentCpuOracle({
+    executionReceipt: selected.executionReceipt,
+    trainingDataset: selected.trainingDataset,
+    tensorBundleBytes: selected.bundle.bytes,
+    expectedPredictions: [0, 0, 0, 0],
+    expectedMetrics: selected.executionReceipt.finalMetrics,
+    absoluteDeadlineEpochMs: 0,
+  });
+  assert.equal(blocked.status, 'process_isolated_deep_learning_cpu_oracle_blocked');
+  assert.equal(blocked.productionPromotionEligible, false);
+  assert.ok(blocked.blockers.includes(
+    'deep_learning_cpu_oracle_absolute_deadline_invalid',
+  ));
+  assert.equal(blocked.osSandboxWorkerReceipt, null);
 });

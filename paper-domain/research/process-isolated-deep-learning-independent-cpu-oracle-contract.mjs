@@ -1,5 +1,8 @@
 import { hasExactObjectKeys } from '../../workflow-kernel/exact-object-keys.mjs';
-import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import { hashBytes, hashRecord } from '../../workflow-kernel/record-hash.mjs';
+import {
+  verifyProductionOsSandboxWorkerReceipt,
+} from '../automation/os-sandbox-worker-receipt-contract.mjs';
 import {
   exactPlainObject,
   jsonEqual,
@@ -10,6 +13,10 @@ import {
 import {
   verifyDeepLearningTrainingExecutionReceipt,
 } from './deep-learning-training-execution-contract.mjs';
+import {
+  buildDeepLearningCpuOracleRuntimeAttestation,
+  verifyDeepLearningCpuOracleRuntimeAttestation,
+} from './deep-learning-cpu-oracle-runtime-attestation.mjs';
 
 // This contract is the process boundary for the independent DL CPU oracle.
 // The replay implementation itself is intentionally kept in the adapter
@@ -65,6 +72,20 @@ const RECEIPT_KEYS = Object.freeze([
   'replayReceipt', 'replayReceiptHash', 'requestHash', 'resourceBudget',
   'status', 'version', 'workerImplementation', 'workerImplementationHash',
   'workerPid',
+]);
+const ASSURANCE_KEYS = Object.freeze([
+  'absoluteDeadlineEpochMs', 'assuranceScope', 'blockers',
+  'deepLearningIndependentCpuOracleAssuranceHash',
+  'externalActionPerformed', 'kind', 'networkActionPerformed',
+  'oracleRuntimeIdentityHash', 'osSandboxBackend',
+  'osSandboxEnvironmentBomHash', 'osSandboxWorkerReceipt',
+  'osSandboxWorkerReceiptHash', 'processIndependent',
+  'productionBlockers', 'productionPromotionEligible', 'request',
+  'requestHash', 'resourceBudget', 'replayReceipt', 'replayReceiptHash',
+  'runtimeImageDigest', 'runtimePackageClosureHash', 'status', 'version',
+  'runtimeAttestation', 'runtimeAttestationHash',
+  'workerImplementation', 'workerImplementationHash', 'workerReceipt',
+  'workerReceiptHash',
 ]);
 
 function sha(value) {
@@ -373,6 +394,171 @@ export function verifyProcessIsolatedDeepLearningCpuOracleReceipt(value, {
       workerPid: value.workerPid,
       parentPid: value.parentPid,
       networkGuardInstalled: true,
+    })) === JSON.stringify(value);
+  } catch { return false; }
+}
+
+function sandboxWorkerReceiptValid({
+  request,
+  workerImplementation,
+  workerReceipt,
+  osSandboxWorkerReceipt,
+} = {}) {
+  try {
+    if (!verifyProductionOsSandboxWorkerReceipt(osSandboxWorkerReceipt)
+      || osSandboxWorkerReceipt.backend !== 'docker'
+      || osSandboxWorkerReceipt.externalActionPerformed !== false
+      || osSandboxWorkerReceipt.isolation?.gpuAccessRequested !== false
+      || osSandboxWorkerReceipt.runtimeIdentityHash
+        !== request?.replayRuntimeIdentityHash
+      || (osSandboxWorkerReceipt.backend === 'docker'
+        && (workerReceipt?.workerPid !== 1 || workerReceipt?.parentPid !== 0))
+      || JSON.stringify(workerReceipt)
+        !== String(osSandboxWorkerReceipt.stdout || '').trim()
+      || !verifyProcessIsolatedDeepLearningCpuOracleReceipt(workerReceipt, {
+        request,
+        workerImplementation,
+      })) return false;
+    const inputBytes = Buffer.from(`${JSON.stringify(request)}\n`, 'utf8');
+    return osSandboxWorkerReceipt.executionProcessInvocation?.standardInput?.present
+      === true
+      && osSandboxWorkerReceipt.executionProcessInvocation.standardInput.sha256
+        === hashBytes(inputBytes)
+      && osSandboxWorkerReceipt.executionProcessInvocation.standardInput.byteLength
+        === inputBytes.length;
+  } catch { return false; }
+}
+
+export function buildProcessIsolatedDeepLearningCpuOracleAssurance({
+  request,
+  workerImplementation,
+  workerReceipt,
+  osSandboxWorkerReceipt,
+  absoluteDeadlineEpochMs,
+  blockers = [],
+} = {}) {
+  const requestValid = verifyProcessIsolatedDeepLearningCpuOracleRequest(request, {
+    workerImplementation,
+  });
+  const sandboxValid = requestValid && sandboxWorkerReceiptValid({
+    request,
+    workerImplementation,
+    workerReceipt,
+    osSandboxWorkerReceipt,
+  });
+  let runtimeAttestation = null;
+  if (requestValid) {
+    try {
+      runtimeAttestation = buildDeepLearningCpuOracleRuntimeAttestation({
+        assuranceScope: PROCESS_ISOLATED_DEEP_LEARNING_CPU_ORACLE_ASSURANCE_SCOPE,
+        request,
+        workerImplementation,
+        workerReceipt,
+        osSandboxWorkerReceipt,
+      });
+    } catch { /* represented by the explicit blocker below */ }
+  }
+  const selectedBlockers = uniqueSorted([
+    ...blockers,
+    ...(!Number.isSafeInteger(absoluteDeadlineEpochMs)
+      || absoluteDeadlineEpochMs < 1
+      ? ['deep_learning_cpu_oracle_absolute_deadline_invalid'] : []),
+    ...(requestValid ? [] : ['deep_learning_cpu_oracle_request_invalid']),
+    ...(sandboxValid ? [] : ['deep_learning_cpu_oracle_os_sandbox_invalid']),
+    ...(runtimeAttestation
+      ? [] : ['deep_learning_cpu_oracle_runtime_attestation_invalid']),
+  ]);
+  const verified = selectedBlockers.length === 0;
+  const payload = {
+    version: 1,
+    kind: 'ProcessIsolatedDeepLearningCpuOracleAssurance',
+    status: verified
+      ? 'process_isolated_deep_learning_cpu_oracle_verified'
+      : 'process_isolated_deep_learning_cpu_oracle_blocked',
+    assuranceScope: PROCESS_ISOLATED_DEEP_LEARNING_CPU_ORACLE_ASSURANCE_SCOPE,
+    absoluteDeadlineEpochMs: Number.isSafeInteger(absoluteDeadlineEpochMs)
+      ? absoluteDeadlineEpochMs : null,
+    request: verified ? request : null,
+    requestHash: request?.requestHash || null,
+    oracleRuntimeIdentityHash: request?.replayRuntimeIdentityHash || null,
+    workerImplementation,
+    workerImplementationHash: workerImplementation?.workerImplementationHash || null,
+    workerReceipt: verified ? workerReceipt : null,
+    workerReceiptHash: verified ? workerReceipt?.deepLearningIndependentCpuOracleReceiptHash : null,
+    replayReceipt: verified ? workerReceipt?.replayReceipt : null,
+    replayReceiptHash: verified ? workerReceipt?.replayReceiptHash : null,
+    processIndependent: verified,
+    osSandboxBackend: osSandboxWorkerReceipt?.backend || null,
+    osSandboxWorkerReceiptHash: osSandboxWorkerReceipt?.receiptHash || null,
+    osSandboxEnvironmentBomHash: osSandboxWorkerReceipt?.environmentBomHash || null,
+    osSandboxWorkerReceipt: osSandboxWorkerReceipt || null,
+    runtimeImageDigest: osSandboxWorkerReceipt?.containerImageDigest || null,
+    runtimePackageClosureHash:
+      osSandboxWorkerReceipt?.environmentBom?.runtime?.packageClosure?.identityHash
+      || null,
+    runtimeAttestation: verified ? runtimeAttestation : null,
+    runtimeAttestationHash: verified
+      ? runtimeAttestation.deepLearningCpuOracleRuntimeAttestationHash : null,
+    resourceBudget: request?.resourceBudget || null,
+    networkActionPerformed: false,
+    externalActionPerformed: false,
+    productionPromotionEligible: false,
+    productionBlockers: DEEP_LEARNING_CPU_ORACLE_PRODUCTION_BLOCKERS,
+    blockers: selectedBlockers,
+  };
+  return Object.freeze({
+    ...payload,
+    deepLearningIndependentCpuOracleAssuranceHash: hashRecord(
+      'ProcessIsolatedDeepLearningCpuOracleAssurance', payload,
+    ),
+  });
+}
+
+export function verifyProcessIsolatedDeepLearningCpuOracleAssurance(value, {
+  request = value?.request,
+  workerImplementation = value?.workerImplementation,
+} = {}) {
+  if (!hasExactObjectKeys(value, ASSURANCE_KEYS)
+    || value.version !== 1
+    || value.status !== 'process_isolated_deep_learning_cpu_oracle_verified'
+    || value.productionPromotionEligible !== false
+    || !jsonEqual(value.productionBlockers, DEEP_LEARNING_CPU_ORACLE_PRODUCTION_BLOCKERS)
+    || value.requestHash !== request?.requestHash
+    || value.workerReceiptHash
+      !== value.workerReceipt?.deepLearningIndependentCpuOracleReceiptHash
+    || value.replayReceiptHash
+      !== value.workerReceipt?.replayReceiptHash
+    || value.osSandboxWorkerReceiptHash
+      !== value.osSandboxWorkerReceipt?.receiptHash
+    || value.runtimeImageDigest
+      !== value.osSandboxWorkerReceipt?.containerImageDigest
+    || value.runtimePackageClosureHash
+      !== value.osSandboxWorkerReceipt?.environmentBom?.runtime?.packageClosure?.identityHash
+    || !verifyDeepLearningCpuOracleRuntimeAttestation(
+      value.runtimeAttestation,
+      {
+        assuranceScope: value.assuranceScope,
+        request,
+        workerImplementation,
+        workerReceipt: value.workerReceipt,
+        osSandboxWorkerReceipt: value.osSandboxWorkerReceipt,
+      },
+    )
+    || value.runtimeAttestationHash
+      !== value.runtimeAttestation?.deepLearningCpuOracleRuntimeAttestationHash
+    || !Array.isArray(value.blockers) || value.blockers.length !== 0) return false;
+  try {
+    return sandboxWorkerReceiptValid({
+      request,
+      workerImplementation,
+      workerReceipt: value.workerReceipt,
+      osSandboxWorkerReceipt: value.osSandboxWorkerReceipt,
+    }) && JSON.stringify(buildProcessIsolatedDeepLearningCpuOracleAssurance({
+      request,
+      workerImplementation,
+      workerReceipt: value.workerReceipt,
+      osSandboxWorkerReceipt: value.osSandboxWorkerReceipt,
+      absoluteDeadlineEpochMs: value.absoluteDeadlineEpochMs,
     })) === JSON.stringify(value);
   } catch { return false; }
 }

@@ -439,7 +439,10 @@ test('one declarative registry owns supported routes and npm command classificat
     retiredAliases: [],
     blocked: [],
   });
-  assert.equal(Object.keys(scripts).length, 116);
+  // `release:plan` is the single observation-only readiness gate exposed to
+  // operators; keep the count explicit so an accidental script-surface
+  // expansion still fails this contract.
+  assert.equal(Object.keys(scripts).length, 117);
   assert.deepEqual(heptaPaperCiCommandMatrix().nightly.map((entry) => entry.id), [
     'full-portable',
     'formal-cache',

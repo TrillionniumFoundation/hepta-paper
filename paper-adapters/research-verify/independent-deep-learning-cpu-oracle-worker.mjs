@@ -23,7 +23,8 @@ import { hashBytes } from '../../workflow-kernel/record-hash.mjs';
 const MAXIMUM_REQUEST_BYTES = 64 * 1024 * 1024;
 const REQUEST_READ_CHUNK_BYTES = 64 * 1024;
 const WORKER_PATH = fileURLToPath(import.meta.url);
-const SOURCE_PATHS = Object.freeze([
+const REPOSITORY_ROOT = path.resolve(path.dirname(WORKER_PATH), '..', '..');
+const ROOT_SOURCE_PATHS = Object.freeze([
   Object.freeze({
     role: 'worker-entry',
     path: WORKER_PATH,
@@ -57,6 +58,8 @@ const SOURCE_PATHS = Object.freeze([
     )),
   }),
 ]);
+const LOCAL_IMPORT_PATTERN =
+  /(?:import|export)\s+(?:[\s\S]*?\s+from\s+)?['"]([^'"]+)['"]/gu;
 
 function isMain(moduleUrl) {
   return Boolean(process.argv[1])
@@ -121,6 +124,46 @@ export function installDeepLearningCpuOracleNetworkGuard() {
   });
 }
 
+function repositoryRelative(sourcePath) {
+  const relative = path.relative(REPOSITORY_ROOT, sourcePath);
+  if (!relative || relative.startsWith(`..${path.sep}`)
+    || path.isAbsolute(relative)) {
+    throw new Error('deep_learning_cpu_oracle_source_outside_repository');
+  }
+  return relative.split(path.sep).join('/');
+}
+
+function localImports(sourcePath, sourceBytes) {
+  const source = Buffer.isBuffer(sourceBytes)
+    ? sourceBytes.toString('utf8') : String(sourceBytes);
+  const imported = [];
+  for (const match of source.matchAll(LOCAL_IMPORT_PATTERN)) {
+    if (!match[1].startsWith('.')) continue;
+    const resolved = path.resolve(path.dirname(sourcePath), match[1]);
+    const candidate = path.extname(resolved) ? resolved : `${resolved}.mjs`;
+    repositoryRelative(candidate);
+    imported.push(candidate);
+  }
+  return imported;
+}
+
+function transitiveSourcePaths(readSource) {
+  const pending = ROOT_SOURCE_PATHS.map(({ path: sourcePath }) => sourcePath);
+  const sources = new Map();
+  while (pending.length) {
+    const sourcePath = pending.pop();
+    const relative = repositoryRelative(sourcePath);
+    if (sources.has(relative)) continue;
+    const bytes = readSource(sourcePath);
+    if (!Buffer.isBuffer(bytes) && typeof bytes !== 'string') {
+      throw new Error('deep_learning_cpu_oracle_source_read_invalid');
+    }
+    sources.set(relative, bytes);
+    pending.push(...localImports(sourcePath, bytes));
+  }
+  return sources;
+}
+
 function readBoundedRequestBytes() {
   const chunks = [];
   let totalBytes = 0;
@@ -138,11 +181,24 @@ function readBoundedRequestBytes() {
 export function currentDeepLearningCpuOracleWorkerImplementation({
   readSource = (sourcePath) => fs.readFileSync(sourcePath),
 } = {}) {
+  const sources = transitiveSourcePaths(readSource);
+  const rootRelatives = new Set(ROOT_SOURCE_PATHS.map(
+    ({ path: sourcePath }) => repositoryRelative(sourcePath),
+  ));
   return buildDeepLearningCpuOracleWorkerImplementation({
-    sourceRecords: SOURCE_PATHS.map(({ role, path: sourcePath }) => ({
-      role,
-      sha256: hashBytes(readSource(sourcePath)),
-    })),
+    sourceRecords: [
+      ...ROOT_SOURCE_PATHS.map(({ role, path: sourcePath }) => Object.freeze({
+        role,
+        sha256: hashBytes(sources.get(repositoryRelative(sourcePath))),
+      })),
+      ...[...sources.entries()]
+        .filter(([relative]) => !rootRelatives.has(relative))
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([relative, bytes]) => Object.freeze({
+          role: `transitive:${relative}`,
+          sha256: hashBytes(bytes),
+        })),
+    ],
   });
 }
 

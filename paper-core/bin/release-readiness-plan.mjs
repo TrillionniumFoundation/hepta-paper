@@ -40,7 +40,10 @@ export function runReleaseReadinessPlan({
   stdout.write(`${JSON.stringify(output, null, 2)}\n`);
   return Object.freeze({
     output,
-    exitCode: args['require-ready'] && output.status !== 'release_readiness_ready' ? 2 : 0,
+    // A readiness plan is a gate, not a best-effort status probe.  Keep the
+    // flag for CLI compatibility, but a blocked plan always has the documented
+    // blocked exit code so CI cannot silently accept missing evidence.
+    exitCode: output.status !== 'release_readiness_ready' ? 2 : 0,
   });
 }
 

@@ -81,6 +81,7 @@ export const ARCHITECTURE_ENTRYPOINT_MANIFEST = Object.freeze({
     'paper-core/bin/release-state-check.mjs',
     'paper-core/bin/release-trust-gate.mjs',
     'paper-core/bin/release-readiness-plan.mjs',
+    'paper-core/bin/p0-external-authority-preflight.mjs',
     'paper-core/bin/critical-module-coverage.mjs',
     'paper-core/bin/strict-npm-audit.mjs',
     'paper-core/bin/repository-asset-status.mjs',

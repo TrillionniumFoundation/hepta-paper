@@ -32,6 +32,27 @@ import {
   verifyDeepLearningReplayExecutionBinding,
   verifyDeepLearningReplayPlan,
 } from './deep-learning-independent-replay.mjs';
+import {
+  DEEP_LEARNING_CPU_ORACLE_DOCKER_IMAGE,
+  runProcessIsolatedDeepLearningIndependentCpuOracle,
+  verifyProcessIsolatedDeepLearningCpuOracleAgainstRequest,
+} from './process-isolated-deep-learning-independent-cpu-oracle.mjs';
+import {
+  buildDeepLearningCpuOracleRuntimeAttestation,
+  verifyDeepLearningCpuOracleRuntimeAttestation,
+} from '../../paper-domain/research/deep-learning-cpu-oracle-runtime-attestation.mjs';
+import {
+  buildGpuReplayObservation,
+  buildGpuReplayPlan,
+  buildGpuReplayReceipt,
+  buildScientificRunIrBinding,
+  GPU_REPLAY_ERROR_BUDGET,
+  GPU_REPLAY_SCOPES,
+  verifyGpuReplayObservation,
+  verifyGpuReplayPlan,
+  verifyGpuReplayReceipt,
+  verifyScientificRunIrBinding,
+} from '../../paper-domain/research/p0-pde-dl-assurance/gpu-replay-assurance-contract.mjs';
 
 // A single facade keeps the research-verify entrypoint's responsibility
 // surface bounded while making the independent replay interface reachable
@@ -45,6 +66,30 @@ export const DEEP_LEARNING_INDEPENDENT_REPLAY = Object.freeze({
   verifyDeepLearningIndependentReplayReceipt,
   verifyDeepLearningReplayExecutionBinding,
   verifyDeepLearningReplayPlan,
+});
+
+export const DEEP_LEARNING_PROCESS_ISOLATED_CPU_ORACLE = Object.freeze({
+  dockerImage: DEEP_LEARNING_CPU_ORACLE_DOCKER_IMAGE,
+  run: runProcessIsolatedDeepLearningIndependentCpuOracle,
+  verifyAgainstRequest: verifyProcessIsolatedDeepLearningCpuOracleAgainstRequest,
+  buildRuntimeAttestation: buildDeepLearningCpuOracleRuntimeAttestation,
+  verifyRuntimeAttestation: verifyDeepLearningCpuOracleRuntimeAttestation,
+});
+
+// Shared PDE/DL replay and IR bindings are exposed through the existing
+// research-verify facade so the production graph records the contract.  All
+// builders remain non-promotable; external authority is a separate boundary.
+export const GPU_REPLAY_ASSURANCE = Object.freeze({
+  scopes: GPU_REPLAY_SCOPES,
+  errorBudget: GPU_REPLAY_ERROR_BUDGET,
+  buildObservation: buildGpuReplayObservation,
+  verifyObservation: verifyGpuReplayObservation,
+  buildPlan: buildGpuReplayPlan,
+  verifyPlan: verifyGpuReplayPlan,
+  buildReceipt: buildGpuReplayReceipt,
+  verifyReceipt: verifyGpuReplayReceipt,
+  buildScientificRunIrBinding,
+  verifyScientificRunIrBinding,
 });
 
 export async function runResearchVerifyAdapter({

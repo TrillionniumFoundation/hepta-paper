@@ -44,6 +44,8 @@ const AUTOMATION_TESTS = Object.freeze([...new Set([
   'paper-core/tests/canonical-deep-learning-campaign-task-attestation.test.mjs',
   'paper-core/tests/deep-learning-canonical-training-executor.test.mjs',
   'paper-core/tests/deep-learning-independent-replay.test.mjs',
+  'paper-core/tests/p0-pde-dl-assurance.test.mjs',
+  'paper-core/tests/p0-external-authority-preflight.test.mjs',
   'paper-core/tests/deep-learning-gpu-memory-capacity.test.mjs',
   'paper-core/tests/deep-learning-gpu-production-contract.test.mjs',
   'paper-core/tests/autonomous-research-gpu-scientific-plan.test.mjs',

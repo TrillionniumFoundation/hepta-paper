@@ -1,6 +1,7 @@
 // Read-only audit of the frozen semantic migration matrix.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { HEPTA_WORKSPACE_ROOT } from '../../paper-adapters/runtime/workspace-layout.mjs';
@@ -26,6 +27,7 @@ function validateMatrixEntry({
   row,
   sourceEntry,
   behaviorTestCache,
+  environment = process.env,
 }) {
   const blockers = [];
   const sourcePath = String(row?.source?.path || '');
@@ -87,13 +89,34 @@ function validateMatrixEntry({
       testBlockers.push('behavior_test_file_missing_or_outside_workspace');
     } else {
       if (test.sha256 !== sha256File(absoluteTestPath)) testBlockers.push('behavior_test_hash_mismatch');
-      const result = spawnSync(process.execPath, [absoluteTestPath], {
-        cwd: workspaceRoot,
-        encoding: 'utf8',
-        timeout: 120000,
-        env: { ...process.env, HEPTA_MIGRATION_MATRIX_TEST: '1' },
-      });
-      if (result.status !== 0) testBlockers.push('behavior_test_failed');
+      // Every behavior test gets a fresh, private runtime.  Several legacy
+      // differential fixtures intentionally exercise SQLite writes; sharing
+      // the parent runtime makes later rows observe WAL/state left by earlier
+      // rows and turns a deterministic matrix into an order-dependent one.
+      const testRuntimeRoot = fs.mkdtempSync(
+        path.join(os.tmpdir(), 'hepta-migration-matrix-runtime-'),
+      );
+      try {
+        const result = spawnSync(process.execPath, [absoluteTestPath], {
+          cwd: workspaceRoot,
+          encoding: 'utf8',
+          timeout: 120000,
+          env: {
+            ...environment,
+            HEPTA_MIGRATION_MATRIX_TEST: '1',
+            // Matrix behavior tests must exercise the exact immutable legacy
+            // root supplied by the parent audit, while their runtime state is
+            // isolated per test and never points at the host's live SQLite.
+            PAPER_FACTORY_LEGACY_ROOT: root,
+            HEPTA_PAPER_RUNTIME_ROOT: testRuntimeRoot,
+            HEPTA_PRODUCTION_RUNTIME_ROOT: testRuntimeRoot,
+            HEPTA_PAPER_RUNTIME_ISOLATED: '1',
+          },
+        });
+        if (result.status !== 0) testBlockers.push('behavior_test_failed');
+      } finally {
+        fs.rmSync(testRuntimeRoot, { recursive: true, force: true });
+      }
     }
     behaviorTestCache.set(cacheKey, { blockers: [...testBlockers] });
     blockers.push(...testBlockers.map((blocker) => `${test?.id || testPath || 'unknown'}:${blocker}`));
@@ -141,7 +164,12 @@ function validateMatrixEntry({
   };
 }
 
-export function buildMigrationMatrixAudit({ root, entries, matrixOverride = null }) {
+export function buildMigrationMatrixAudit({
+  root,
+  entries,
+  matrixOverride = null,
+  environment = process.env,
+} = {}) {
   const workspaceRoot = HEPTA_WORKSPACE_ROOT;
   const matrixPath = path.join(workspaceRoot, 'migration', 'legacy-semantic-migration-matrix.json');
   const backlog = migrationBacklogEntries(entries);
@@ -175,6 +203,7 @@ export function buildMigrationMatrixAudit({ root, entries, matrixOverride = null
     row,
     sourceEntry: backlogByPath.get(String(row?.source?.path || '')),
     behaviorTestCache,
+    environment,
   }));
   const verifiedSourcePaths = new Set(rows.filter((row) => row.verified).map((row) => row.sourcePath));
   const verifiedRows = rows.filter((row) => row.verified);

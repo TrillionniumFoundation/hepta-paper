@@ -50,7 +50,12 @@ export async function runRetirementAudit({
   const files = [];
   for (const candidateRoot of candidateRoots) {
     const found = await walkFiles(candidateRoot, {
-      maxDepth: 3,
+      // The immutable legacy archive contains declared plugin sources at
+      // candidateRoot/plugins/<family>/<plugin>/<file>.  A depth of three
+      // silently omitted those files and made the matrix audit report a
+      // false 248/263 backlog.  Keep the scan bounded, but include the
+      // deepest path admitted by the frozen source matrix.
+      maxDepth: 4,
       maxFiles: 3000,
       match: (_full, name) => /\.(py|mjs|js|json|yaml|yml|md|sql)$/.test(name) || name === 'paperctl',
     });
@@ -78,7 +83,10 @@ export async function runRetirementAudit({
   const legacyEntrypointDeprecationPacket = buildLegacyEntrypointDeprecationPacket(entries, heptaCapabilities);
   const heptaDataAssetExportPlan = buildDataAssetExportPlan(entries);
   const migrationBacklogPacket = buildMigrationBacklogPacket(entries);
-  const migrationMatrixAudit = buildMigrationMatrixAudit({ root, entries });
+  const migrationMatrixAudit = buildMigrationMatrixAudit({
+    root,
+    entries,
+  });
   const p0P1BacklogDrainReceipt = buildP0P1BacklogDrainReceipt({
     entries,
     migrationBacklogPacket,

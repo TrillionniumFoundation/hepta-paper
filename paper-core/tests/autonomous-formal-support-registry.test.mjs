@@ -14,6 +14,8 @@ import {
   autonomousFormalSupportSurfaceBody,
   autonomousFormalTypeAuditForObligation,
   buildAutonomousFormalSupportSurfaceAuthority,
+  exactAutonomousFormalSupportTemplateForTheoremClaim,
+  resolveAutonomousFormalSupportTemplateForClaim,
   selectAutonomousFormalSupportTemplate,
   verifyAutonomousFormalSupportSurfaceAuthority,
   verifyAutonomousFormalSupportTemplate,
@@ -35,6 +37,7 @@ import { buildFormalClaimContract } from '../../paper-domain/research/formal-cla
 import {
   verifyScientificClaimLineageAuthority,
 } from '../../paper-domain/research/proposal-claim-to-theorem-binding.mjs';
+import { buildDynamicFormalClaimSeed } from '../../paper-domain/research/dynamic-formal-claim-seed-contract.mjs';
 import { hashRecord } from '../../workflow-kernel/record-hash.mjs';
 
 const FAMILIES = Object.freeze([
@@ -556,4 +559,224 @@ test('Lake exact-type audit compiles all five registry invariants with one check
       1,
     );
   }
+});
+
+function boundaryDigest(label, value = null) {
+  return hashRecord('AutonomousFormalSupportBoundaryFixture', { label, value });
+}
+
+function dynamicBoundaryFixture() {
+  const paperId = 'formal-registry-dynamic-boundary';
+  const protocolFamily = 'dynamic_boundary_protocol';
+  const seed = buildDynamicFormalClaimSeed({
+    claimKey: 'dynamic-boundary-claim',
+    statement: 'For every natural number, zero plus that number is itself.',
+    assumptions: ['The quantified value is a natural number.'],
+    quantifiers: ['For every natural number n.'],
+    negativeBoundaries: ['This fixture makes no empirical or semantic-equivalence claim.'],
+    proofObligations: ['Kernel replay checks the exact dynamic type.'],
+    leanDeclarationName: 'dynamicBoundaryZeroAdd',
+    leanTypeSource: '∀ n : Nat, 0 + n = n',
+    allowedImports: ['Init'],
+    generatorReceiptHash: boundaryDigest('generator'),
+    capabilityScopeManifestHash: boundaryDigest('capability'),
+  });
+  const claim = {
+    id: `${paperId}:autonomous_claim:1`,
+    kind: 'machine_proposed_claim_seed',
+    status: 'machine_proposed_policy_authorized_for_bounded_execution',
+    text: seed.statement,
+    scientificClaimKey: seed.claimKey,
+    verificationMode: 'formal_kernel',
+    dynamicFormalClaimSeedHash: seed.dynamicFormalClaimSeedHash,
+    leanDeclarationName: seed.leanDeclarationName,
+    leanNormalizedTypeHash: seed.leanNormalizedTypeHash,
+  };
+  const proposalPayload = {
+    version: 2,
+    formalSupportMode: 'dynamic-lean-type-v1',
+    paperId,
+    protocolFamily,
+    claims: [claim],
+    blockers: [],
+  };
+  const proposal = {
+    ...proposalPayload,
+    machineProposedScientificClaimSetHash: hashRecord(
+      'MachineProposedScientificClaimSet',
+      proposalPayload,
+    ),
+  };
+  const seedPayload = {
+    version: 2,
+    kind: 'AutonomousResearchSeedContractBundle',
+    status: 'autonomous_research_seed_contracts_ready',
+    paperId,
+    protocolFamily,
+    formalSupportMode: 'dynamic-lean-type-v1',
+    claimAuthorityType: 'machine-policy-authorized',
+    proposalHash: proposal.machineProposedScientificClaimSetHash,
+    scientificClaimInputHash: proposal.machineProposedScientificClaimSetHash,
+    claims: [claim],
+    dynamicFormalClaimSeed: seed,
+    dynamicFormalClaimSeedHash: seed.dynamicFormalClaimSeedHash,
+    blockers: [],
+  };
+  const seedBundle = {
+    ...seedPayload,
+    autonomousResearchSeedContractBundleHash: hashRecord(
+      'AutonomousResearchSeedContractBundle',
+      seedPayload,
+    ),
+  };
+  const formalClaimContract = {
+    status: 'formal_claim_contract_verified',
+    formalClaimContractHash: boundaryDigest('formal-claim-contract'),
+    dynamicFormalClaimAuthority: {
+      dynamicFormalClaimSeedHash: seed.dynamicFormalClaimSeedHash,
+    },
+  };
+  const certificateBundle = {
+    status: 'formal_claim_verified',
+    certificateBundleHash: boundaryDigest('certificate-bundle'),
+    claimBindings: [{
+      dynamicFormalClaimSeedHash: seed.dynamicFormalClaimSeedHash,
+      theoremName: seed.leanDeclarationName,
+      expectedTypeHash: seed.leanNormalizedTypeHash,
+      formalClaimContract,
+    }],
+    replayReceipt: {
+      status: 'formal_claim_replay_verified',
+      formalCertificateReplayReceiptHash: boundaryDigest('replay'),
+    },
+  };
+  const formalVerificationReceipt = {
+    status: 'campaign_formal_verification_completed',
+    blockers: [],
+    nativeResearchWorkerExecution: {
+      workerReceipts: [{
+        workerType: 'formal_verifier_lake',
+        result: certificateBundle,
+      }],
+    },
+  };
+  return { proposal, seedBundle, formalVerificationReceipt };
+}
+
+test('formal support registry exposes fail-closed boundary behavior for malformed claims and authority surfaces', () => {
+  assert.throws(
+    () => selectAutonomousFormalSupportTemplate('unsupported-boundary-family'),
+    /autonomous_formal_support_protocol_family_unsupported/,
+  );
+  assert.equal(verifyAutonomousFormalSupportTemplate(null), false);
+  assert.equal(
+    verifyAutonomousFormalSupportTemplate({}, { protocolFamily: 'unsupported-boundary-family' }),
+    false,
+  );
+  assert.throws(
+    () => resolveAutonomousFormalSupportTemplateForClaim({}),
+    /autonomous_formal_support_claim_not_registry_bound/,
+  );
+  assert.equal(exactAutonomousFormalSupportTemplateForTheoremClaim(), null);
+
+  const pipeline = researchPipeline('econometrics_panel_benchmark', 'boundary-static');
+  const formalClaim = pipeline.proposal.claims.find(
+    (claim) => claim.verificationMode === 'formal_kernel',
+  );
+  const source = {
+    claimAuthorityType: 'machine-policy-authorized',
+    scientificClaimKey: formalClaim.claimKey,
+    claimAuthorityBindingHash: boundaryDigest('claim-binding'),
+    claimAuthorityBundleHash: boundaryDigest('claim-bundle'),
+    // Keep the lineage fields internally consistent, but make the scope unregistered.
+    proposalClaimText: 'This text is deliberately not in the registry.',
+    assumptions: formalClaim.assumptions,
+    quantifiers: formalClaim.quantifiers,
+    negativeBoundaries: formalClaim.negativeBoundaries,
+    proofObligations: formalClaim.proofObligations,
+  };
+  const theoremClaim = {
+    claimKey: source.scientificClaimKey,
+    assumptions: source.assumptions,
+    quantifiers: source.quantifiers,
+    negativeBoundaries: source.negativeBoundaries,
+    proofObligations: source.proofObligations,
+    proposalClaimSource: source,
+    proofObligationContracts: [{ displayText: source.proofObligations[0] }],
+  };
+  assert.equal(exactAutonomousFormalSupportTemplateForTheoremClaim({
+    theoremSpecification: {
+      claimAuthorityType: 'machine-policy-authorized',
+      proposalClaimLineageRequired: true,
+      claimAuthorityBindingHash: source.claimAuthorityBindingHash,
+      claimAuthorityBundleHash: source.claimAuthorityBundleHash,
+    },
+    claim: theoremClaim,
+  }), null);
+
+  const authority = buildAutonomousFormalSupportSurfaceAuthority({
+    proposal: pipeline.proposal,
+    seedBundle: pipeline.seedBundle,
+  });
+  const malformedStatic = structuredClone(authority);
+  malformedStatic.protocolFamily = 'unsupported-boundary-family';
+  assert.equal(verifyAutonomousFormalSupportSurfaceAuthority(malformedStatic), false);
+  assert.throws(
+    () => autonomousFormalSupportSurfaceBody(malformedStatic),
+    /autonomous_formal_support_surface_authority_invalid/,
+  );
+  assert.throws(
+    () => autonomousFormalSupportMarkerDeclaration(malformedStatic),
+    /autonomous_formal_support_surface_authority_invalid/,
+  );
+  const marker = autonomousFormalSupportMarkerDeclaration(authority);
+  assert.equal(autonomousFormalSupportMarkerDeclarationValid({ ...marker, extra: true }, authority), false);
+  assert.equal(autonomousFormalSupportMarkerDeclarationValid(null, authority), false);
+
+  assert.equal(autonomousFormalLeanTypeContractForObligation('not/an_identifier'), null);
+  assert.equal(autonomousFormalLeanTypeContractForObligation('unknown-boundary-obligation'), null);
+  assert.equal(autonomousFormalTypeAuditForObligation({
+    proofObligation: 'unknown-boundary-obligation',
+    theoremName: 'validName',
+  }), null);
+  assert.equal(autonomousFormalTypeAuditForObligation({
+    proofObligation: authority.protocolFamily === 'econometrics_panel_benchmark'
+      ? 'panel_retention_accounting' : 'unknown',
+    theoremName: 'not a Lean identifier',
+  }), null);
+});
+
+test('dynamic formal support authority covers v2 fallback and rejects malformed v3/marker projections', () => {
+  const fixture = dynamicBoundaryFixture();
+  assert.throws(
+    () => buildAutonomousFormalSupportSurfaceAuthority({
+      proposal: { version: 2, formalSupportMode: 'dynamic-lean-type-v1' },
+      seedBundle: null,
+    }),
+    /autonomous_dynamic_formal_support_surface_authority_invalid/,
+  );
+  assert.throws(
+    () => buildAutonomousFormalSupportSurfaceAuthority({
+      proposal: fixture.proposal,
+      seedBundle: fixture.seedBundle,
+    }),
+    /autonomous_dynamic_formal_support_surface_authority_invalid/,
+  );
+  const authority = buildAutonomousFormalSupportSurfaceAuthority(fixture);
+  assert.equal(authority.version, 2);
+  assert.equal(authority.productionReadableProofReady, false);
+  assert.equal(verifyAutonomousFormalSupportSurfaceAuthority(authority), true);
+  assert.match(autonomousFormalSupportSurfaceBody(authority), /Bound dynamic formal obligation/);
+  const marker = autonomousFormalSupportMarkerDeclaration(authority);
+  assert.equal(autonomousFormalSupportMarkerDeclarationValid(marker, authority), true);
+  assert.equal(autonomousFormalSupportMarkerDeclarationValid({ ...marker, extra: true }, authority), false);
+
+  const malformed = structuredClone(authority);
+  malformed.kind = 'MalformedAuthority';
+  assert.equal(verifyAutonomousFormalSupportSurfaceAuthority(malformed), false);
+  const versionThreeWithoutReadableProof = structuredClone(authority);
+  versionThreeWithoutReadableProof.version = 3;
+  assert.equal(verifyAutonomousFormalSupportSurfaceAuthority(versionThreeWithoutReadableProof), false);
+  const tamperedMarker = { ...marker, authorityHash: boundaryDigest('tampered-authority') };
+  assert.equal(autonomousFormalSupportMarkerDeclarationValid(tamperedMarker, authority), false);
 });
